@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { Button, ProgressBar } from "@/app/_components/finser-ui";
+import { Button, ProgressBar, StatusPill } from "@/app/_components/finser-ui";
 import { paymentReminder } from "./credit-dashboard-presentation";
 import {
   Bell,
@@ -51,6 +51,7 @@ export type ClientActiveCreditDashboardProps = {
   clientFirstName: string;
   creditOptions?: ActiveCreditDashboardCreditOption[];
   device: ActiveCreditDashboardDevice;
+  extensionNotice?: string | null;
   lastPayment?: ActiveCreditDashboardPayment | null;
   nextInstallment: ActiveCreditDashboardInstallment | null;
   overduePayment?: { amount: number; count: number; dueDate: string } | null;
@@ -115,7 +116,7 @@ function compactDateLabel(value: string) {
 
 
 export default function ClientActiveCreditDashboard({
-  activeCreditId, creditNumber, clientFirstName, creditOptions = [], device, lastPayment,
+  activeCreditId, creditNumber, clientFirstName, creditOptions = [], device, extensionNotice, lastPayment,
   nextInstallment, overduePayment, notice, onOpenDevice, onOpenHistory, onOpenNotifications,
   onPayInstallment, onOpenPlan, onOpenProfile, onPayoff, onSelectCredit,
   paidInstallments, paying = false, payoff, profileActionLabel, profileInitials,
@@ -153,8 +154,13 @@ export default function ClientActiveCreditDashboard({
         <h1 className={styles.greeting}>Hola, {clientFirstName}</h1>
         {creditNumber ? <p className={styles.creditNumber}>Crédito <strong>{creditNumber}</strong></p> : null}
         <p className={`${styles.status} ${overdue ? styles.statusOverdue : ""}`} role="status">
-          <span aria-hidden="true" />{overdue ? "Pago pendiente" : statusLabel}
+          <span aria-hidden="true" />{statusLabel}
         </p>
+        {overdue && extensionNotice ? (
+          <StatusPill tone="warning" className={styles.extensionNotice} role="status">
+            {extensionNotice}
+          </StatusPill>
+        ) : null}
         {creditOptions.length > 1 ? (
           <label className={styles.creditSelector}>
             <span>Crédito consultado</span>

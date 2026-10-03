@@ -68,6 +68,29 @@ export async function listActiveMoraBlockExemptions(
   `;
 }
 
+export async function getActiveMoraBlockExemptionByDocument(
+  documento: unknown,
+  effectiveAt: Date = new Date()
+) {
+  const normalized = normalizeMoraExemptionDocument(documento);
+
+  if (!normalized) {
+    return null;
+  }
+
+  await ensureMoraBlockExemptionTable();
+  const rows = await prisma.$queryRaw<Array<{ fechaFin: Date | null }>>`
+    SELECT "fechaFin"
+    FROM "ExcepcionBloqueoMora"
+    WHERE documento = ${normalized}
+      AND activa = TRUE
+      AND ("fechaFin" IS NULL OR "fechaFin" >= ${effectiveAt})
+    LIMIT 1
+  `;
+
+  return rows[0] ?? null;
+}
+
 export async function getActiveMoraBlockExemptionDocuments(
   effectiveAt: Date = new Date()
 ) {

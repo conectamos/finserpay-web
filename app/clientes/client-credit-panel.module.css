@@ -85,6 +85,9 @@
 
 .content > * { min-width: 0; }
 
+.creditIdentity { display: grid; justify-items: start; gap: 10px; }
+.creditIdentity .extensionNotice { max-width: 100%; font-size: 14px; line-height: 1.4; white-space: normal; }
+
 .notice {
   border: 1px solid;
   border-radius: var(--fp-radius-md);

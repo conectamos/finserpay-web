@@ -19,6 +19,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import FinserSupportLink from "@/app/_components/finser-support-link";
+import { StatusPill } from "@/app/_components/finser-ui";
 import {
   COLOMBIA_TIME_ZONE,
   parseColombiaDate,
@@ -65,6 +66,7 @@ type PanelCredit = {
 
 type ClientCreditPanelProps = {
   credit: PanelCredit;
+  extensionNotice?: string | null;
   efectyPayoff: {
     amount: number;
     convenio: string;
@@ -169,6 +171,7 @@ function DateTile({ value }: { value: string }) {
 
 export default function ClientCreditPanel({
   credit,
+  extensionNotice,
   efectyPayoff,
   notice,
   onBack,
@@ -268,7 +271,14 @@ export default function ClientCreditPanel({
       </header>
 
       <div className={styles.content}>
-        <p className="text-sm text-[var(--fp-muted)]">Crédito <strong className="text-[var(--fp-graphite)]">{creditDisplayNumber(credit)}</strong></p>
+        <div className={styles.creditIdentity}>
+          <p className="text-sm text-[var(--fp-muted)]">Crédito <strong className="text-[var(--fp-graphite)]">{creditDisplayNumber(credit)}</strong></p>
+          {credit.estadoPago === "MORA" && extensionNotice ? (
+            <StatusPill tone="warning" className={styles.extensionNotice} role="status">
+              {extensionNotice}
+            </StatusPill>
+          ) : null}
+        </div>
         {notice ? (
           <div className={`${styles.notice} ${notice.tone === "red" ? styles.noticeError : styles.noticeSuccess}`} role={notice.tone === "red" ? "alert" : "status"}>
             {notice.text}

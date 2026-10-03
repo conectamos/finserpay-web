@@ -1,5 +1,6 @@
 "use client";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
+import { COLOMBIA_TIME_ZONE, parseColombiaDate } from "@/lib/colombia-date";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import ClientNequiPaymentDialog from "./client-nequi-payment-dialog";
@@ -43,6 +44,7 @@ type ClientCredit = {
   valorCuota: number;
   sedeNombre: string;
   estadoPago: "PAGADO" | "AL_DIA" | "MORA";
+  prorrogaMora?: { hasta: string | null } | null;
   saldoPendiente: number;
   pazYSalvoEmitidoAt?: string | null;
   liquidacionAnticipada?: {
@@ -131,6 +133,22 @@ declare global {
 const STORAGE_KEY = "finserpay.cliente.documento";
 const NEW_CREDIT_SUPPORT_MESSAGE =
   "Hola, equipo de FINSER PAY 👋 Finalicé mi crédito y quiero solicitar uno nuevo. ¿Podrían orientarme, por favor?";
+const prorrogaDateFormatter = new Intl.DateTimeFormat("es-CO", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  timeZone: COLOMBIA_TIME_ZONE,
+});
+
+function prorrogaMoraNotice(credit: ClientCredit | null) {
+  if (credit?.estadoPago !== "MORA" || !credit.prorrogaMora) return null;
+  if (!credit.prorrogaMora.hasta) return "Prórroga activa sin fecha límite";
+
+  const until = parseColombiaDate(credit.prorrogaMora.hasta);
+  return Number.isNaN(until.getTime())
+    ? "Prórroga activa, fecha límite por confirmar"
+    : `Prórroga activa hasta ${prorrogaDateFormatter.format(until)}`;
+}
 
 function normalizeDocument(value: string) {
   return value.replace(/\D/g, "");
@@ -811,6 +829,7 @@ export default function ClienteConsultaPage() {
   const confirmPaymentReference =
     confirmCredit?.clienteDocumento || activeDocumento || documento;
   const activePayoff = activeCredit?.liquidacionAnticipada || null;
+  const extensionNotice = prorrogaMoraNotice(activeCredit);
   const isPaidCredit = activeCredit?.estadoPago === "PAGADO";
   const canPayToday =
     activeCredit?.estadoPago === "AL_DIA" && Boolean(activePayoff?.disponible);
@@ -914,8 +933,11 @@ export default function ClienteConsultaPage() {
           }
           profileActionLabel="Cambiar cliente"
           profileInitials={profileInitials}
+          extensionNotice={extensionNotice}
           statusLabel={
-            activeCredit.estadoPago === "MORA" ? "Pago pendiente" : "Crédito al día"
+            activeCredit.estadoPago === "MORA"
+              ? extensionNotice ? "Crédito en mora" : "Pago pendiente"
+              : "Crédito al día"
           }
           statusTone={activeCredit.estadoPago === "MORA" ? "overdue" : "current"}
           totalInstallments={totalCount}
@@ -925,6 +947,7 @@ export default function ClienteConsultaPage() {
         {activePanel && activeCredit ? (
           <ClientCreditPanel
             credit={activeCredit}
+            extensionNotice={extensionNotice}
             efectyPayoff={efectyPayoff?.creditId === activeCredit.id && new Date(efectyPayoff.expiresAt).getTime() > Date.now() ? efectyPayoff : null}
             notice={notice}
             onBack={returnHome}

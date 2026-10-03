@@ -64,6 +64,29 @@ const panelSource = readFileSync(new URL("../app/clientes/client-credit-panel.ts
 const panelOutput = ts.transpileModule(panelSource, {
   compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const homeSource = readFileSync(new URL("../app/clientes/client-active-credit-dashboard.tsx", import.meta.url), "utf8");
+const homeOutput = ts.transpileModule(homeSource, {
+  compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+function renderHome(props) {
+  const Empty = () => null;
+  const dependencies = {
+    react: { useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}], useEffect: () => {} },
+    "react/jsx-runtime": jsxRuntime,
+    "next/image": { default: "img" },
+    "@/app/_components/finser-ui": { Button: "button", ProgressBar: "div", StatusPill: "span" },
+    "./credit-dashboard-presentation": presentation,
+    "@/lib/colombia-date": colombiaDate,
+    "./client-active-credit-dashboard.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
+    "lucide-react": new Proxy({}, { get: () => Empty }),
+  };
+  const testModule = { exports: {} };
+  runInNewContext(homeOutput, {
+    module: testModule, exports: testModule.exports, Date, Intl,
+    require: (name) => { assert.ok(name in dependencies, `Dependencia del inicio no simulada: ${name}`); return dependencies[name]; },
+  });
+  return testModule.exports.default(props);
+}
 function renderPanel(props) {
   const Empty = () => null;
   const dependencies = {
@@ -74,6 +97,7 @@ function renderPanel(props) {
     "./credit-dashboard-presentation": presentation,
     "./client-credit-panel.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
     "@/app/_components/finser-support-link": { default: Empty },
+    "@/app/_components/finser-ui": { StatusPill: "span" },
     "lucide-react": new Proxy({}, { get: () => Empty }),
   };
   const testModule = { exports: {} };
@@ -164,6 +188,7 @@ function harness(credit, { consultFirst = false } = {}) {
   const dependencies = {
     react, "react/jsx-runtime": jsxRuntime,
     "@/lib/credit-display-number": displayNumber,
+    "@/lib/colombia-date": colombiaDate,
     "./credit-dashboard-presentation": presentation,
     "./client-nequi-payment-dialog": { default: paymentDialog.Component },
     "@/app/clientes/client-active-credit-dashboard": { default: Dashboard },
@@ -215,6 +240,55 @@ function harness(credit, { consultFirst = false } = {}) {
   render();
   return { states, requests, stored, androidDocuments, render, login, dashboard, panel, dialog };
 }
+
+test("la prórroga activa muestra mora y su fecha Colombia sin alterar el pago vencido", () => {
+  const credit = { ...fixture(), prorrogaMora: { hasta: "2026-10-04T02:00:00.000Z" } };
+  const flow = harness(credit);
+  const homeProps = flow.dashboard();
+  assert.equal(homeProps.statusTone, "overdue");
+  assert.equal(homeProps.statusLabel, "Crédito en mora");
+  assert.equal(homeProps.extensionNotice, "Prórroga activa hasta 3 de octubre de 2026");
+  assert.equal(homeProps.overduePayment.amount, 411_000);
+  assert.equal(homeProps.overduePayment.count, 3);
+  const home = renderHome(homeProps);
+  assert.match(textContent(home), /Crédito en mora/);
+  assert.match(textContent(home), /Prórroga activa hasta 3 de octubre de 2026/);
+  assert.match(textContent(home), /Saldo en mora/);
+
+  homeProps.onOpenPlan();
+  flow.render();
+  const panel = renderPanel(flow.panel());
+  assert.match(textContent(panel), /Crédito en mora/);
+  assert.match(textContent(panel), /Prórroga activa hasta 3 de octubre de 2026/);
+  assert.match(textContent(panel), /411.000/);
+
+  flow.dashboard().onPayInstallment();
+  flow.render();
+  assert.equal(flow.states.selectedLimit[credit.id], 3);
+  assert.ok(textContent(flow.dialog()).includes(money(411_000)));
+});
+
+test("la prórroga sin fecha límite se muestra solo durante mora; sin prórroga sigue Pago pendiente", () => {
+  const withoutDate = harness({ ...fixture(), prorrogaMora: { hasta: null } });
+  assert.equal(withoutDate.dashboard().extensionNotice, "Prórroga activa sin fecha límite");
+  assert.match(textContent(renderHome(withoutDate.dashboard())), /Prórroga activa sin fecha límite/);
+
+  const withoutExtension = harness({ ...fixture(), prorrogaMora: null });
+  assert.equal(withoutExtension.dashboard().statusLabel, "Pago pendiente");
+  assert.equal(withoutExtension.dashboard().extensionNotice, null);
+  assert.doesNotMatch(textContent(renderHome(withoutExtension.dashboard())), /Prórroga activa/);
+  withoutExtension.dashboard().onOpenPlan();
+  withoutExtension.render();
+  assert.doesNotMatch(textContent(renderPanel(withoutExtension.panel())), /Prórroga activa/);
+
+  const current = harness({ ...fixture({ today: "2026-08-17" }), prorrogaMora: { hasta: null } });
+  assert.equal(current.dashboard().statusLabel, "Crédito al día");
+  assert.equal(current.dashboard().extensionNotice, null);
+  assert.doesNotMatch(textContent(renderHome(current.dashboard())), /Prórroga activa/);
+
+  const paid = harness({ ...fixture({ settled: true }), prorrogaMora: { hasta: null } });
+  assert.equal(paid.dashboard(), undefined, "Un crédito pagado conserva su vista finalizada");
+});
 
 for (const scenario of [
   { name: "tres vencidas", options: {}, amount: 411_000, numbers: [1, 2, 3], count: 3 },
