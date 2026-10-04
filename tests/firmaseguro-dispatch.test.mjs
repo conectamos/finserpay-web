@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
@@ -14,6 +17,66 @@ function sourceBetween(source, start, end) {
   assert.notEqual(endIndex, -1, `No se encontro ${end}`);
   return source.slice(startIndex, endIndex);
 }
+
+test("el envío admite UUID generados y explícitos y rechaza formatos inválidos", async () => {
+  const source = await readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts");
+  const core = sourceBetween(source, "async function requestDraftSignatureCore", "export async function POST");
+  const reachedLedger = new Error("reached ledger");
+  let observedKey;
+  const requestSignature = runInNewContext(
+    stripTypeScriptTypes(core) + "\nrequestDraftSignatureCore;",
+    {
+      randomUUID,
+      NextResponse: Response,
+      getDraftDispatch: async (key) => {
+        observedKey = key;
+        throw reachedLedger;
+      },
+    }
+  );
+  const send = (body) => requestSignature(1, {}, { id: 7, nombre: "Prueba" }, body, "commercial");
+  await assert.rejects(send({}), (error) => error === reachedLedger);
+  assert.equal(observedKey.length, 36);
+  for (const key of [randomUUID(), randomUUID().toUpperCase()]) {
+    await assert.rejects(send({ idempotencyKey: key }), (error) => error === reachedLedger);
+    assert.equal(observedKey, key);
+  }
+  for (const key of ["", "invalid", "550e8400-e29b-41d4-a446655440000", "550e8400-e29b-41d4-7716-446655440000"]) {
+    observedKey = undefined;
+    const response = await send({ idempotencyKey: key });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "DRAFT_DISPATCH_ID_INVALID");
+    assert.equal(observedKey, undefined);
+  }
+});
+
+test("POST convierte un rechazo asíncrono del envío en la respuesta de error", async () => {
+  const source = await readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts");
+  const post = sourceBetween(source, "export async function POST", "/** Shared business path")
+    .replace("export async function POST", "async function POST");
+  const failure = new Error("La validación del crédito falló");
+  let loggedError;
+  const handler = runInNewContext(stripTypeScriptTypes(post) + "\nPOST;", {
+    parseDraftId: Number,
+    NextResponse: Response,
+    readAuthorizedDraft: async () => ({ ok: true, row: {}, centralAdmin: false }),
+    getSessionUser: async () => ({ id: 7, nombre: "Prueba" }),
+    requestDraftSignatureCore: async () => { throw failure; },
+    documentBlacklistErrorResponse: () => null,
+    logFirmaSeguroDraftError: (_operation, _id, error) => { loggedError = error; },
+    firmaSeguroErrorResponse: (error) => {
+      assert.equal(error, failure);
+      return Response.json({ ok: false, error: error.message }, { status: 409 });
+    },
+  });
+  const response = await handler(
+    new Request("https://example.test/firma-seguro", { method: "POST" }),
+    { params: Promise.resolve({ id: "1" }) }
+  );
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { ok: false, error: failure.message });
+  assert.equal(loggedError, failure);
+});
 
 test("FirmaSeguro separa el canal de firma de los canales de notificacion", async () => {
   const source = await readProjectFile("lib/firmaseguro-credit.ts");

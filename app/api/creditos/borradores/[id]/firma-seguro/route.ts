@@ -1069,7 +1069,7 @@ async function requestDraftSignatureCore(
         error: "La sesión cambió. Actualiza el caso antes de enviar." }, { status: 409 });
     }
     const key = body.idempotencyKey === undefined ? randomUUID() : String(body.idempotencyKey);
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(key)) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(key)) {
       return NextResponse.json({ ok: false, code: "DRAFT_DISPATCH_ID_INVALID",
         error: "Actualiza el caso antes de confirmar el envío." }, { status: 400 });
     }
@@ -1331,7 +1331,7 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-    return requestDraftSignatureCore(draftId, authorized, actorUser, body, "commercial");
+    return await requestDraftSignatureCore(draftId, authorized, actorUser, body, "commercial");
   } catch (error) {
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
