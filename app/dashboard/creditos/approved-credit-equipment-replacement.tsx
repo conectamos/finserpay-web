@@ -37,6 +37,7 @@ type ReplacementSummary = {
   createdAt: string;
   completedAt: string | null;
   analystName: string | null;
+  source?: string;
 };
 
 type ReplacementResponse = {
@@ -533,7 +534,7 @@ export function ApprovedCreditEquipmentReplacement({
                 </div>
               ) : null}
 
-              {replacement.status === "ENROLLMENT_APPROVED" ? (
+              {replacement.status === "ENROLLMENT_APPROVED" && replacement.source !== "APPROVAL_OPERATIONS" ? (
                 <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime-strong)] bg-[var(--fp-lime-soft)] p-4 text-sm text-[var(--fp-graphite)]">
                   <div className="flex items-start gap-3">
                     <CheckCircle2
@@ -557,6 +558,12 @@ export function ApprovedCreditEquipmentReplacement({
                     Aplicar cambio
                   </Button>
                 </div>
+              ) : null}
+
+              {replacement.status === "ENROLLMENT_APPROVED" && replacement.source === "APPROVAL_OPERATIONS" ? (
+                <p className="mt-5 rounded-[var(--fp-radius-md)] bg-[var(--fp-lime-soft)] p-4 text-sm text-[var(--fp-graphite)]">
+                  Enrolamiento aprobado. Continúa en Aprobaciones → Detalle del crédito para aplicar el IMEI y enviar la nueva firma.
+                </p>
               ) : null}
 
               {canCancel ? (

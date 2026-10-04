@@ -37,46 +37,43 @@ test("FirmaSeguro separa el canal de firma de los canales de notificacion", asyn
 });
 
 test("el reenvio reutiliza un proceso activo antes de construir otro expediente", async () => {
-  const route = await readProjectFile(
-    "app/api/creditos/borradores/[id]/firma-seguro/route.ts"
-  );
-  const post = sourceBetween(route, "export async function POST", "\n}");
-  const currentLookup = post.indexOf(
+  const [route, ledger] = await Promise.all([
+    readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
+    readProjectFile("lib/firmaseguro-draft-dispatch-ledger.ts"),
+  ]);
+  const core = sourceBetween(route, "async function requestDraftSignatureCore", "export async function POST");
+  const replayLookup = core.indexOf("const replay = await getDraftDispatch(key)");
+  const currentLookup = core.indexOf(
     "const current = await getLatestFirmaSeguroProcessForDraft(draftId)"
   );
-  const idempotentReturn = post.indexOf(
+  const idempotentReturn = core.indexOf(
     "canReuseFirmaSeguroProcess(current)"
   );
-  const dispatchLock = post.indexOf("tryAcquireFirmaSeguroDraftDispatchLock");
-  const lockedAuthorization = post.indexOf(
-    "const lockedAuthorized = await readAuthorizedDraft"
-  );
-  const lockedLookup = post.indexOf("const lockedCurrent = await");
-  const buildCredit = post.indexOf(
+  const dispatchLock = core.indexOf("tryAcquireFirmaSeguroDraftDispatchLock");
+  const lockedLookup = core.indexOf("const lockedCurrent = await");
+  const buildCredit = core.indexOf(
     "await buildDraftCredit(lockedAuthorized.row)"
   );
-  const draftCas = post.indexOf("const updatedDraftRows = await");
-  const providerDispatch = post.indexOf("createFirmaSeguroProcessForDraft");
+  const reserve = core.indexOf("await reserveDraftDispatch(");
+  const providerDispatch = core.indexOf("await dispatchReservedDraft(reserved.id)");
 
-  assert.ok(currentLookup >= 0);
+  assert.ok(replayLookup >= 0);
+  assert.ok(currentLookup > replayLookup);
   assert.ok(idempotentReturn > currentLookup);
   assert.ok(dispatchLock > idempotentReturn);
-  assert.ok(lockedAuthorization > dispatchLock);
-  assert.ok(lockedLookup > lockedAuthorization);
+  assert.ok(lockedLookup > dispatchLock);
   assert.ok(buildCredit > lockedLookup);
-  assert.ok(draftCas > buildCredit);
-  assert.ok(providerDispatch > draftCas);
-  assert.match(post, /idempotent: true/);
-  assert.match(
-    post,
-    /WHERE "id" = \$1[\s\S]{0,180}"estado" = 'ABIERTO'[\s\S]{0,180}RETURNING "id"/
-  );
-  assert.match(post, /updatedDraftRows\.length !== 1/);
+  assert.ok(reserve > buildCredit);
+  assert.ok(providerDispatch > reserve);
+  assert.match(core, /idempotent: true/);
+  assert.match(ledger, /"payload"=\$3::jsonb RETURNING "id"/);
+  assert.match(ledger, /"status"='DISPATCHING'[\s\S]*"status"='PREPARING' RETURNING/);
+  assert.match(ledger, /const acknowledged = await prepared\.sendOnce\(\)/);
   assert.match(route, /if \(sanitizeText\(process\.lastError\)\) \{/);
   assert.match(route, /isFirmaSeguroCompletedStatus\(normalized\)/);
   assert.match(route, /isFirmaSeguroFailedStatus\(normalized\)/);
   assert.match(route, /FIRMASEGURO_DISPATCH_IN_PROGRESS/);
-  assert.match(route, /await dispatchLock\.release\(\)/);
+  assert.match(core, /await dispatchLock\.release\(\)/);
 });
 
 test("el bloqueo de despacho usa una sesion dedicada y una llave por borrador", async () => {
@@ -107,12 +104,14 @@ test("los errores previos al proveedor incluyen codigo y etapa trazables", async
   assert.match(route, /ERROR FIRMASEGURO BORRADOR/);
 });
 
-test("FirmaSeguro reemplaza un proceso con fecha vencida sin borrar su histórico", async () => {
-  const [route, storage] = await Promise.all([
+test("FirmaSeguro conserva el histórico al reservar un reemplazo", async () => {
+  const [route, storage, ledger, frozen] = await Promise.all([
     readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
     readProjectFile("lib/firmaseguro-storage.ts"),
+    readProjectFile("lib/firmaseguro-draft-dispatch-ledger.ts"),
+    readProjectFile("lib/firmaseguro-draft-frozen.ts"),
   ]);
-  const post = sourceBetween(route, "export async function POST", "\n}");
+  const core = sourceBetween(route, "async function requestDraftSignatureCore", "export async function POST");
   const supersedeHistory = sourceBetween(
     storage,
     "export async function markFirmaSeguroDraftProcessesSuperseded",
@@ -122,22 +121,16 @@ test("FirmaSeguro reemplaza un proceso con fecha vencida sin borrar su históric
   assert.match(route, /function getDraftFirstPaymentDateState/);
   assert.match(route, /function serializeDraftFirmaSeguroProcess/);
   assert.match(route, /resolveActivationFirstPaymentDate\(/);
-  assert.match(post, /getDraftFirstPaymentDateState\(/);
+  assert.match(core, /getDraftFirstPaymentDateState\(/);
   assert.match(
-    post,
+    core,
     /currentFirstPaymentState[\s\S]{0,300}!currentFirstPaymentState\.requiresFirstPaymentDateReissue/
   );
-  assert.match(post, /fechaPrimerPago:\s*firstPaymentDateKey/);
-  assert.match(post, /markFirmaSeguroDraftProcessesSuperseded\(/);
-  assert.match(
-    post,
-    /if \(requiresFirstPaymentDateReissue\) \{[\s\S]{0,260}markFirmaSeguroDraftProcessesSuperseded\(/
-  );
-  assert.ok(
-    post.indexOf("markFirmaSeguroDraftProcessesSuperseded(") <
-      post.indexOf("createFirmaSeguroProcessForDraft("),
-    "el proceso desactualizado debe marcarse antes de despachar el reemplazo"
-  );
+  assert.match(core, /fechaPrimerPago:\s*firstPaymentDateKey/);
+  assert.match(frozen, /FIRMASEGURO_FIRST_PAYMENT_DATE_CHANGED/);
+  assert.match(ledger, /markFirmaSeguroDraftProcessesSuperseded\(db/);
+  assert.ok(ledger.indexOf("markFirmaSeguroDraftProcessesSuperseded(db") <
+    ledger.indexOf('INSERT INTO "FirmaSeguroDraftDispatch"'));
 
   assert.match(supersedeHistory, /UPDATE "FirmaSeguroProcess"/);
   assert.match(supersedeHistory, /SET "supersededAt" = CURRENT_TIMESTAMP/);

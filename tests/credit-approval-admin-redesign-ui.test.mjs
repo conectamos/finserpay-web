@@ -6,7 +6,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 test("la ruta administrativa activa el muro rediseñado sin convertir su sesión en acceso compartido", () => {
   const page = read("app/dashboard/aprobaciones/page.tsx");
-  assert.match(page, /<ApprovalWorkspace redesigned\s*\/>/);
+  assert.match(page, /<ApprovalWorkspace redesigned allowOperations=\{sharedContext === undefined\}\s*\/>/);
   assert.doesNotMatch(page, /<ApprovalWorkspace shared\s*\/>/);
   const wrapper = read("app/dashboard/aprobaciones/approval-workspace.tsx");
   assert.match(wrapper, /<ApprovalConsole shared=\{shared\} redesigned=\{redesigned\}/);

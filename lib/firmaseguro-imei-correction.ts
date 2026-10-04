@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
+import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import { ensureIphoneEnrollmentSchema } from "@/lib/iphone-enrollment-storage";
 import {
   ensureFirmaSeguroSchema,
@@ -214,6 +215,9 @@ export async function correctFirmaSeguroDraftImei(input: {
   expectedEnrollmentReviewId: unknown;
   actorUserId: number;
   actorName: string;
+  onCorrected?: (transaction: Prisma.TransactionClient, correction: {
+    previousImei: string; imei: string; enrollmentReapprovalRequired: boolean;
+  }) => Promise<void>;
 }) {
   const imei = normalizeImei(input.imei);
   const expectedCurrentImei = normalizeImei(input.expectedCurrentImei);
@@ -278,6 +282,13 @@ export async function correctFirmaSeguroDraftImei(input: {
       `iphone-enrollment:${input.draftId}`
     );
     await lockSolicitudOperationMutation(transaction, input.draftId);
+    if (await getUnresolvedDraftDispatch(input.draftId, transaction)) {
+      throw new FirmaSeguroImeiCorrectionError(
+        "FIRMASEGURO_ENVIO_EN_CURSO",
+        "La solicitud tiene un envío de firma sin resultado confirmado. Espera o solicita conciliación.",
+        409
+      );
+    }
     const initialDraft = await readDraft(transaction, input.draftId);
     assertActiveDraft(initialDraft);
     const initialPayload = payloadObject(initialDraft?.payload);
@@ -559,6 +570,10 @@ export async function correctFirmaSeguroDraftImei(input: {
       activeProcess.processUuid,
       archivedEvidence ? JSON.stringify(archivedEvidence) : null
     );
+
+    await input.onCorrected?.(transaction, {
+      previousImei, imei, enrollmentReapprovalRequired: Boolean(activeEnrollmentReview),
+    });
 
     return {
       previousImei,

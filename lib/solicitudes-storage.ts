@@ -21,6 +21,7 @@ import {
   mergeDeliveryEvidenceDraftPayload,
 } from "@/lib/delivery-evidence-draft";
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
+import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import {
   SOLICITUD_FILTER_STATES,
   SOLICITUD_STATE_LABELS,
@@ -1047,7 +1048,12 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     }
     const storedDocument = normalizeDigits(preliminary?.clienteDocumento);
     const documentToLock = document || storedDocument;
-    if (targetId) await lockSolicitudOperationMutation(transaction, targetId);
+    if (targetId) {
+      await lockSolicitudOperationMutation(transaction, targetId);
+      if (await getUnresolvedDraftDispatch(targetId, transaction)) {
+        throw new SolicitudCanonicalMutationError("SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE");
+      }
+    }
     if (documentToLock) {
       await lockIdentity(transaction, "document", documentToLock);
     }

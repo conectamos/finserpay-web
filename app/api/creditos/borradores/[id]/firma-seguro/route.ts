@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
-import { getSessionUser } from "@/lib/auth";
+import { getCreditApprovalSessionUser, getSessionUser } from "@/lib/auth";
+import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isDirectSalesProfile } from "@/lib/solicitud-operation-access";
@@ -63,11 +65,14 @@ import {
 } from "@/lib/firmaseguro";
 import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
 import {
-  createFirmaSeguroProcessForDraft,
   getLatestFirmaSeguroProcessForDraft,
   refreshFirmaSeguroProcess,
   serializeFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
+import { buildFirmaSeguroCreditPdf } from "@/lib/firmaseguro-folio-pdf";
+import { buildFrozenDraftCorrection } from "@/lib/firmaseguro-draft-frozen";
+import { DraftDispatchError, dispatchReservedDraft, getDraftDispatch,
+  getUnresolvedDraftDispatch, reserveDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import {
   correctFirmaSeguroDraftImei,
   FirmaSeguroImeiCorrectionError,
@@ -75,7 +80,7 @@ import {
 } from "@/lib/firmaseguro-imei-correction";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import {
-  markFirmaSeguroDraftProcessesSuperseded,
+  getFirmaSeguroProcessByUuid,
   tryAcquireFirmaSeguroDraftDispatchLock,
 } from "@/lib/firmaseguro-storage";
 import { isAdminRole } from "@/lib/roles";
@@ -792,6 +797,10 @@ async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
 }
 
 function firmaSeguroErrorResponse(error: unknown) {
+  if (error instanceof DraftDispatchError) {
+    return NextResponse.json({ ok: false, code: error.code, stage: "provider_dispatch",
+      error: error.message }, { status: error.status });
+  }
   if (error instanceof FirmaSeguroImeiCorrectionError) {
     return NextResponse.json(
       {
@@ -1020,40 +1029,98 @@ export async function PATCH(
   }
 }
 
-export async function POST(
-  _request: Request,
-  context: { params: Promise<{ id: string }> }
+async function readOperationalDraft(draftId: number, actorUserId: number) {
+  const user = await getCreditApprovalSessionUser();
+  if (!user || user.id !== actorUserId) {
+    throw new DraftDispatchError("DRAFT_DISPATCH_UNAUTHORIZED",
+      "La sesión de Aprobaciones cambió. Actualiza el caso.", 403);
+  }
+  const rows = await prisma.$queryRawUnsafe<DraftRow[]>(`
+    SELECT d.*, u."nombre" AS "usuarioNombre", u."usuario" AS "usuarioLogin",
+      v."nombre" AS "vendedorNombre", v."documento" AS "vendedorDocumento",
+      v."telefono" AS "vendedorTelefono", v."email" AS "vendedorEmail",
+      s."nombre" AS "sedeNombre", s."codigo" AS "sedeCodigo", s."aliadoId" AS "sedeAliadoId"
+    FROM "CreditoBorrador" d
+    LEFT JOIN "Usuario" u ON u."id"=d."usuarioId"
+    LEFT JOIN "Vendedor" v ON v."id"=d."vendedorId"
+    LEFT JOIN "Sede" s ON s."id"=d."sedeId"
+    WHERE d."id"=$1 AND d."estado"='ABIERTO' AND d."creditoId" IS NULL
+      AND d."currentStep" IN (3,4)
+      AND COALESCE(d."expiresAt",d."createdAt"+INTERVAL '15 days')>CURRENT_TIMESTAMP
+      AND UPPER(COALESCE(d."plataforma",d."payload"->>'plataformaDispositivo',''))='IPHONE'
+    LIMIT 1`, draftId);
+  const row = rows[0];
+  if (!row) throw new DraftDispatchError("DRAFT_DISPATCH_CASE_UNAVAILABLE",
+    "La solicitud iPhone ya no está abierta en Identidad y firma.", 409);
+  await assertDocumentNotBlacklisted(row.clienteDocumento);
+  await assertDocumentNotBlacklisted(payloadObject(row.payload).clienteDocumento);
+  return { ok: true as const, row, centralAdmin: false };
+}
+
+async function requestDraftSignatureCore(
+  draftId: number,
+  authorized: { ok: true; row: DraftRow; centralAdmin: boolean },
+  actorUser: { id: number; nombre: string },
+  body: Record<string, unknown>,
+  scope: "commercial" | "operational"
 ) {
-  let draftIdForLog: number | null = null;
-  try {
-    const params = await context.params;
-    const draftId = parseDraftId(params.id);
-    draftIdForLog = draftId;
-
-    if (!draftId) {
-      return NextResponse.json(
-        { ok: false, error: "Borrador invalido" },
-        { status: 400 }
-      );
+    if (body.actorUserId !== undefined && body.actorUserId !== actorUser.id) {
+      return NextResponse.json({ ok: false, code: "DRAFT_DISPATCH_ACTOR_CHANGED",
+        error: "La sesión cambió. Actualiza el caso antes de enviar." }, { status: 409 });
     }
-
-    const authorized = await readAuthorizedDraft(draftId, { operate: true });
-    if (!authorized.ok) {
-      return NextResponse.json(
-        { ok: false, error: authorized.error },
-        { status: authorized.status }
-      );
+    const key = body.idempotencyKey === undefined ? randomUUID() : String(body.idempotencyKey);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(key)) {
+      return NextResponse.json({ ok: false, code: "DRAFT_DISPATCH_ID_INVALID",
+        error: "Actualiza el caso antes de confirmar el envío." }, { status: 400 });
     }
-
-    const actorUser = await getSessionUser();
-    if (!actorUser) {
-      return NextResponse.json(
-        { ok: false, error: "No autenticado" },
-        { status: 401 }
-      );
+    const reason = body.reason === undefined
+      ? "Envío del contrato de la solicitud a FirmaSeguro"
+      : String(body.reason).normalize("NFKC").trim().replace(/\s+/g, " ");
+    if (reason.length < 5 || reason.length > 500 || /[\u0000-\u001f\u007f]/.test(reason)) {
+      return NextResponse.json({ ok: false, code: "DRAFT_DISPATCH_REASON_INVALID",
+        error: "Describe el motivo en 5 a 500 caracteres." }, { status: 400 });
+    }
+    const explicitExpected = Object.prototype.hasOwnProperty.call(body, "expectedProcessUuid");
+    const expectedProcessUuid = explicitExpected
+      ? (typeof body.expectedProcessUuid === "string" ? body.expectedProcessUuid.trim() || null : null)
+      : undefined;
+    const replay = await getDraftDispatch(key);
+    if (replay) {
+      if (replay.draftId !== draftId || replay.actorUserId !== actorUser.id || replay.reason !== reason
+        || (explicitExpected && replay.expectedProcessUuid !== expectedProcessUuid)) {
+        throw new DraftDispatchError("DRAFT_DISPATCH_IDEMPOTENCY_CONFLICT",
+          "Esta confirmación corresponde a otra solicitud de firma.");
+      }
+      const resumed = replay.status === "PREPARING" ? await dispatchReservedDraft(key) : replay;
+      if (resumed.status !== "AWAITING_SIGNATURE" || !resumed.processUuid) {
+        throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
+          "El resultado del envío aún no está confirmado. Requiere conciliación antes de reenviar.");
+      }
+      const process = await getFirmaSeguroProcessByUuid(resumed.processUuid);
+      if (!process) throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_MISSING",
+        "FirmaSeguro confirmó el envío, pero el proceso ya no está vigente. Actualiza el caso.");
+      await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
+      return NextResponse.json({ ok: true, id: key, status: resumed.status, idempotent: true,
+        process: serializeDraftFirmaSeguroProcess(process),
+        message: "FirmaSeguro confirmó este envío anteriormente." });
+    }
+    if (await getUnresolvedDraftDispatch(draftId)) {
+      throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
+        "Existe un envío de firma sin resultado confirmado. Requiere conciliación antes de reenviar.");
     }
 
     const current = await getLatestFirmaSeguroProcessForDraft(draftId);
+    if (explicitExpected && (current?.processUuid || null) !== expectedProcessUuid) {
+      throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_CHANGED",
+        "La firma vigente cambió. Actualiza el caso.");
+    }
+    const currentPayload = payloadObject(authorized.row.payload);
+    if (body.requireCorrection === true &&
+      currentPayload.firmaSeguroCorrectionPending !== true &&
+      currentPayload.firmaSeguroContactCorrectionPending !== true) {
+      throw new DraftDispatchError("DRAFT_DISPATCH_CORRECTION_REQUIRED",
+        "Corrige primero el IMEI o el contacto y actualiza el expediente.");
+    }
     const currentFirstPaymentState = getDraftFirstPaymentDateState(current);
     if (
       current &&
@@ -1099,9 +1166,9 @@ export async function POST(
     }
 
     try {
-      const lockedAuthorized = await readAuthorizedDraft(draftId, {
-        operate: true,
-      });
+      const lockedAuthorized = scope === "operational"
+        ? await readOperationalDraft(draftId, actorUser.id)
+        : await readAuthorizedDraft(draftId, { operate: true });
       if (!lockedAuthorized.ok) {
         return NextResponse.json(
           { ok: false, error: lockedAuthorized.error },
@@ -1109,7 +1176,16 @@ export async function POST(
         );
       }
 
+      if (await getUnresolvedDraftDispatch(draftId)) {
+        throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
+          "Existe un envío de firma sin resultado confirmado. Requiere conciliación antes de reenviar.");
+      }
+
       const lockedCurrent = await getLatestFirmaSeguroProcessForDraft(draftId);
+      if (explicitExpected && (lockedCurrent?.processUuid || null) !== expectedProcessUuid) {
+        throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_CHANGED",
+          "La firma vigente cambió. Actualiza el caso.");
+      }
       const lockedCurrentFirstPaymentState =
         getDraftFirstPaymentDateState(lockedCurrent);
       const lockedCurrentReusable = Boolean(
@@ -1129,118 +1205,180 @@ export async function POST(
       }
 
       await requireApprovedVeriffBeforeFirmaSeguro(lockedAuthorized.row);
-      const built = await buildDraftCredit(lockedAuthorized.row);
-      const {
-        credit,
-        amortizationPlan,
-        financingParameters,
-        firstPaymentDateKey,
-      } = built;
-      const draftFolio = lockedCurrent?.draftFolio || credit.folio;
-      const dispatchFolio = requiresFirstPaymentDateReissue
-        ? generateCreditFolio()
-        : draftFolio;
-      const payload: Record<string, unknown> = {
-        ...payloadObject(lockedAuthorized.row.payload),
-        firmaSeguroDraftFolio: dispatchFolio,
-        fechaPrimerPago: firstPaymentDateKey,
-      };
+      const sourcePayload = payloadObject(lockedAuthorized.row.payload);
+      const correctionPending = sourcePayload.firmaSeguroCorrectionPending === true
+        || sourcePayload.firmaSeguroContactCorrectionPending === true;
+      const sourceRows = correctionPending ? await prisma.$queryRawUnsafe<
+        Array<import("@/lib/firmaseguro-storage").FirmaSeguroProcessRow>>(
+        `SELECT * FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
+          AND "supersededAt" IS NOT NULL
+          AND ("completedAt" IS NOT NULL OR "signedDocumentBase64" IS NOT NULL)
+          ORDER BY "createdAt" DESC,"id" DESC LIMIT 1`, draftId) : [];
+      const source = sourceRows[0] || null;
+      const priorProcess = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+        `SELECT "id" FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
+          ORDER BY "createdAt" DESC,"id" DESC LIMIT 1`, draftId);
+      if ((lockedCurrent || correctionPending || priorProcess.length > 0) &&
+        (!source || source.id !== priorProcess[0]?.id)) {
+        throw new CreditValidationError(
+          "No se puede conservar de forma verificable el contrato anterior. Requiere revisión técnica antes de reenviar.",
+          409, "FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE");
+      }
+      const draftFolio = lockedCurrent?.draftFolio ||
+        sanitizeText(sourcePayload.firmaSeguroDraftFolio) || generateCreditFolio();
+      const dispatchFolio = requiresFirstPaymentDateReissue ? generateCreditFolio() : draftFolio;
+      let credit: CreditForFirmaSeguroPdf;
+      let firstPaymentDateKey: string;
+      let seal: ReturnType<typeof createFinancingTermsSeal>;
+      if (source) {
+        try {
+          const frozen = buildFrozenDraftCorrection({ draft: lockedAuthorized.row, source,
+            folio: dispatchFolio, imei: sanitizeDeviceValue(sourcePayload.imei || sourcePayload.deviceUid).replace(/\D/g, "") });
+          credit = frozen.credit;
+          firstPaymentDateKey = frozen.firstPaymentDateKey;
+          seal = frozen.seal;
+        } catch (error) {
+          throw new CreditValidationError(
+            error instanceof Error && error.message === "FIRMASEGURO_FIRST_PAYMENT_DATE_CHANGED"
+              ? "La fecha de primer pago del contrato firmado cambió. Revisa las condiciones antes de emitir otra firma."
+              : "No se puede conservar el contrato firmado anterior. Requiere revisión técnica antes de reenviar.",
+            409,
+            error instanceof Error ? error.message : "FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE");
+        }
+      } else {
+        const built = await buildDraftCredit(lockedAuthorized.row);
+        credit = built.credit;
+        firstPaymentDateKey = built.firstPaymentDateKey;
+        credit.folio = dispatchFolio;
+        credit.referenciaPago = generatePaymentReference(dispatchFolio, credit.clienteDocumento || "");
+        seal = createFinancingTermsSeal({
+          folio: dispatchFolio,
+          documento: credit.clienteDocumento || "",
+          contrato: { tipoDocumento: credit.clienteTipoDocumento || "", clienteNombre: credit.clienteNombre,
+            clienteTelefono: credit.clienteTelefono || "", clienteCorreo: credit.clienteCorreo || "",
+            clienteDireccion: credit.clienteDireccion || "", equipoMarca: credit.equipoMarca || "",
+            equipoModelo: credit.equipoModelo || "", referenciaEquipo: credit.referenciaEquipo || "",
+            imei: credit.imei || credit.deviceUid || "" },
+          amortizacion: built.amortizationPlan,
+          parametros: built.financingParameters,
+        });
+      }
+      const payload: Record<string, unknown> = { ...sourcePayload,
+        firmaSeguroDraftFolio: dispatchFolio, fechaPrimerPago: firstPaymentDateKey };
       delete payload.financialTermsSeal;
-      const firmaSeguroDraftPayload: Record<string, unknown> = {
-        ...payload,
-      };
+      const firmaSeguroDraftPayload: Record<string, unknown> = { ...payload,
+        financialTermsSeal: seal };
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaDataUrl;
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaCapturedAt;
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaSource;
-
-      credit.folio = dispatchFolio;
-      credit.referenciaPago = generatePaymentReference(
-        dispatchFolio,
-        credit.clienteDocumento || ""
-      );
-      firmaSeguroDraftPayload.financialTermsSeal = createFinancingTermsSeal({
-        folio: dispatchFolio,
-        documento: credit.clienteDocumento || "",
-        contrato: {
-          tipoDocumento: credit.clienteTipoDocumento || "",
-          clienteNombre: credit.clienteNombre,
-          clienteTelefono: credit.clienteTelefono || "",
-          clienteCorreo: credit.clienteCorreo || "",
-          clienteDireccion: credit.clienteDireccion || "",
-          equipoMarca: credit.equipoMarca || "",
-          equipoModelo: credit.equipoModelo || "",
-          referenciaEquipo: credit.referenciaEquipo || "",
-          imei: credit.imei || credit.deviceUid || "",
-        },
-        amortizacion: amortizationPlan,
-        parametros: financingParameters,
-      });
-
-      await prisma.$transaction(async (database) => {
-        if (requiresFirstPaymentDateReissue) {
-          const supersededProcesses =
-            await markFirmaSeguroDraftProcessesSuperseded(database, {
-              draftId,
-              actorUserId: actorUser.id,
-              reason:
-                "La fecha automatica del primer pago cambio antes de activar el credito.",
-            });
-          if (supersededProcesses.length === 0) {
-            throw new CreditValidationError(
-              "El proceso de firma cambio antes de actualizar la fecha. Recarga el caso e intenta nuevamente.",
-              409,
-              "FIRMASEGURO_DRAFT_CHANGED"
-            );
-          }
-        }
-
-        const updatedDraftRows = await database.$queryRawUnsafe<
-          Array<{ id: number }>
-        >(
-          `
-            UPDATE "CreditoBorrador"
-            SET "payload" = $2::jsonb,
-                "updatedAt" = NOW()
-            WHERE "id" = $1
-              AND "estado" = 'ABIERTO'
-              AND "creditoId" IS NULL
-              AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') >
-                CURRENT_TIMESTAMP
-            RETURNING "id"
-          `,
-          draftId,
-          JSON.stringify(payload)
-        );
-        if (updatedDraftRows.length !== 1) {
-          throw new CreditValidationError(
-            "La solicitud cambio antes de enviar el contrato. Recarga el caso e intenta nuevamente.",
-            409,
-            "FIRMASEGURO_DRAFT_CHANGED"
-          );
-        }
-      });
-
-      const process = await createFirmaSeguroProcessForDraft(credit, {
-        draftId,
-        draftFolio: dispatchFolio,
-        draftPayload: firmaSeguroDraftPayload,
-      });
+      const document = await buildFirmaSeguroCreditPdf(credit);
+      const reserved = await reserveDraftDispatch({ id: key, draftId,
+        actor: { id: actorUser.id, nombre: actorUser.nombre }, reason,
+        expectedProcessUuid: lockedCurrent?.processUuid || null,
+        sourcePayload: lockedAuthorized.row.payload, updatedPayload: payload,
+        draftPayload: firmaSeguroDraftPayload, draftFolio: dispatchFolio,
+        frozenCredit: credit, document, supersedeActive: requiresFirstPaymentDateReissue });
+      const dispatched = await dispatchReservedDraft(reserved.id);
+      if (dispatched.status !== "AWAITING_SIGNATURE" || !dispatched.processUuid) {
+        throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
+          "El resultado del envío aún no está confirmado. Requiere conciliación antes de reenviar.");
+      }
+      const process = await getFirmaSeguroProcessByUuid(dispatched.processUuid);
+      if (!process) throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_MISSING",
+        "FirmaSeguro confirmó el envío, pero el proceso ya no está vigente. Actualiza el caso.");
       await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
-
-      return NextResponse.json({
-        ok: true,
+      return NextResponse.json({ ok: true, id: key, status: dispatched.status,
         process: serializeDraftFirmaSeguroProcess(process),
         message: requiresFirstPaymentDateReissue
-          ? "El proceso anterior quedo como historico. Se envio un contrato nuevo con la fecha de pago actualizada."
-          : "Proceso de firma enviado a FirmaSeguro",
-      });
+          ? "El proceso anterior quedó en el historial. FirmaSeguro confirmó el nuevo envío con la fecha de pago actualizada."
+          : "FirmaSeguro confirmó la solicitud de firma." });
     } finally {
       await dispatchLock.release();
     }
+}
+
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  let draftIdForLog: number | null = null;
+  try {
+    const params = await context.params;
+    const draftId = parseDraftId(params.id);
+    draftIdForLog = draftId;
+
+    if (!draftId) {
+      return NextResponse.json(
+        { ok: false, error: "Borrador invalido" },
+        { status: 400 }
+      );
+    }
+
+    const authorized = await readAuthorizedDraft(draftId, { operate: true });
+    if (!authorized.ok) {
+      return NextResponse.json(
+        { ok: false, error: authorized.error },
+        { status: authorized.status }
+      );
+    }
+
+    const actorUser = await getSessionUser();
+    if (!actorUser) {
+      return NextResponse.json(
+        { ok: false, error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    return requestDraftSignatureCore(draftId, authorized, actorUser, body, "commercial");
   } catch (error) {
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
     logFirmaSeguroDraftError("POST", draftIdForLog, error);
     return firmaSeguroErrorResponse(error);
   }
+}
+
+/** Shared business path with separate, nominal analyst authorization. */
+export async function requestSafeDraftSignatureFromRoute(input: {
+  draftId: number; actor: { id: number; nombre: string }; reason: string;
+  idempotencyKey: string; expectedProcessUuid: string | null;
+}) {
+  if ((await getApprovalSharedRequestActor()) !== undefined) {
+    throw new DraftDispatchError("DRAFT_DISPATCH_SHARED_ACCESS",
+      "Usa tu cuenta personal de Aprobaciones.", 403);
+  }
+  const user = await getCreditApprovalSessionUser();
+  if (!user || user.id !== input.actor.id) throw new DraftDispatchError(
+    "DRAFT_DISPATCH_UNAUTHORIZED", "La sesión de Aprobaciones cambió. Actualiza el caso.", 403);
+  const authorized = await readOperationalDraft(input.draftId, input.actor.id);
+  let response: NextResponse;
+  try {
+    response = await requestDraftSignatureCore(input.draftId,
+      authorized, user,
+      { actorUserId: input.actor.id, reason: input.reason,
+        idempotencyKey: input.idempotencyKey, expectedProcessUuid: input.expectedProcessUuid,
+        requireCorrection: true }, "operational");
+  } catch (error) {
+    if (error instanceof CreditValidationError) {
+      throw new DraftDispatchError(error.code, error.message, error.status);
+    }
+    throw error;
+  }
+  const body = await response.json() as Record<string, unknown>;
+  if (!response.ok || body.ok !== true) {
+    throw new DraftDispatchError(String(body.code || "DRAFT_DISPATCH_FAILED"),
+      String(body.error || "No se pudo confirmar el envío de firma."), response.status);
+  }
+  if (body.id !== input.idempotencyKey || body.status !== "AWAITING_SIGNATURE") {
+    throw new DraftDispatchError("DRAFT_DISPATCH_ALREADY_ACTIVE",
+      "La solicitud ya tiene una firma vigente. Actualiza el caso antes de reenviar.");
+  }
+  const process = body.process && typeof body.process === "object"
+    ? body.process as Record<string, unknown> : {};
+  return { id: input.idempotencyKey,
+    status: "AWAITING_SIGNATURE",
+    message: String(body.message || "FirmaSeguro confirmó la solicitud de firma."),
+    processUuid: typeof process.processUuid === "string" ? process.processUuid : undefined };
 }

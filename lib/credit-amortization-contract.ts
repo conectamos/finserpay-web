@@ -204,6 +204,24 @@ export function readFinancingTermsSeal(value: unknown): FinancingTermsSeal | nul
   return value as FinancingTermsSeal;
 }
 
+/** Keep every signed financial field while updating only contract identity fields. */
+export function resealFinancingTermsIdentity(
+  source: FinancingTermsSeal,
+  changes: Pick<FinancingTermsSnapshot,
+    "folio" | "clienteTelefono" | "clienteCorreo" | "imei">
+): FinancingTermsSeal {
+  const trusted = readFinancingTermsSeal(source);
+  if (!trusted) throw new Error("FIRMASEGURO_SOURCE_SEAL_INVALID");
+  const snapshot: FinancingTermsSnapshot = {
+    ...trusted.snapshot,
+    folio: String(changes.folio || "").trim(),
+    clienteTelefono: normalizedDocument(changes.clienteTelefono),
+    clienteCorreo: normalizedEmail(changes.clienteCorreo),
+    imei: normalizedDocument(changes.imei),
+  };
+  return { version: FINANCING_TERMS_SEAL_VERSION, checksum: checksum(snapshot), snapshot };
+}
+
 export function financingTermsSealsMatch(
   storedValue: unknown,
   current: FinancingTermsSeal
