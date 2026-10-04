@@ -6,6 +6,7 @@ import { runInNewContext } from "node:vm";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 import ts from "typescript";
+import { PGlite } from "@electric-sql/pglite";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,8 +17,7 @@ const carteraAccess = await jiti.import("../lib/cartera-access.ts");
 const carteraExport = await jiti.import("../lib/cartera-export.ts");
 const displayNumber = await jiti.import("../lib/credit-display-number.ts");
 
-function loadRoute(dependencies) {
-  const routePath = "app/api/dashboard/cartera/export/route.ts";
+function loadRoute(dependencies, routePath = "app/api/dashboard/cartera/export/route.ts") {
   const source = readFileSync(path.join(projectRoot, routePath), "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: {
@@ -98,7 +98,7 @@ function workbookRows(html) {
   );
 }
 
-test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas porcentuales numericas", async () => {
+test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas porcentuales numericas", async (t) => {
   const credits = [
     creditFixture(1, "INSCRITO", {
       clienteNombre: "CLIENTE_ACTIVO_EXPORTADO",
@@ -131,6 +131,28 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       clienteNombre: "CLIENTE_ANULADO_NO_EXPORTAR",
     }),
   ];
+  const database = new PGlite();
+  t.after(() => database.close());
+  const exemptions = loadRoute({
+    "@/lib/prisma": { default: {
+      $executeRawUnsafe: (sql) => database.query(sql),
+      $queryRaw: async (parts, ...values) => {
+        const sql = parts.reduce((text, part, index) => text + part + (index < values.length ? "$" + (index + 1) : ""), "");
+        return (await database.query(sql, values)).rows;
+      },
+    } },
+  }, "lib/mora-block-exemptions.ts");
+  await exemptions.ensureMoraBlockExemptionTable();
+  await database.query(`
+    INSERT INTO "ExcepcionBloqueoMora" (documento, motivo, activa, "fechaFin") VALUES
+      ('100000001', 'Vigente', TRUE, $1),
+      ('100000005', 'Vencida', TRUE, $2),
+      ('100000006', 'Desactivada', FALSE, $1),
+      ('100000008', 'Sin fecha de fin', TRUE, NULL),
+      ('SIN-CC', 'Documento historico invalido', TRUE, NULL)
+  `, [new Date(Date.now() + 86400000), new Date(Date.now() - 86400000)]);
+  let overdue = false;
+  const exemptionCalls = [];
   let findManyQuery = null;
   const displayNumberCalls = [];
   let sessionUser = {
@@ -157,7 +179,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
           : {
               fechaVencimiento: "2026-10-01",
               saldoPendiente: 400_000,
-              estaEnMora: false,
+              estaEnMora: overdue,
             };
 
         return {
@@ -220,6 +242,13 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       },
       withCreditDisplayNumber: (credit, numbers) => ({ ...credit, numeroCreditoVisible: numbers.get(credit.id) || credit.folio }),
     },
+    "@/lib/mora-block-exemptions": {
+      normalizeMoraExemptionDocument: exemptions.normalizeMoraExemptionDocument,
+      getActiveMoraBlockExemptionDocuments: async (effectiveAt) => {
+        exemptionCalls.push(effectiveAt);
+        return exemptions.getActiveMoraBlockExemptionDocuments(effectiveAt);
+      },
+    },
     "@/lib/roles": { isAdminRole: () => true },
     "@/lib/prisma": { default: prisma },
   });
@@ -232,6 +261,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
 
   assert.equal(response.status, 200);
   assert.equal(rows.length, 2);
+  assert.doesNotMatch(html, /PRORROGA ACTIVA/);
   assert.ok(findManyQuery);
   assert.match(html, /Interés mensual efectivo \(%\)/);
   assert.match(html, /Fianza total del crédito \(%\)/);
@@ -304,4 +334,52 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
 
   assert.equal(allyWithoutScopeResponse.status, 403);
   assert.equal(findManyQuery, null);
+  assert.equal(exemptionCalls.length, 0, "La cartera general no consulta excepciones");
+
+  await t.test("Excel mora marca SI/NO con excepciones vigentes, vencidas y desactivadas", async () => {
+    sessionUser = {
+      id: 1,
+      rolNombre: "ADMIN",
+      aliadoAccesoCodigo: "FINSERPAY",
+      aliadoAccesoId: 1,
+    };
+    overdue = true;
+    credits[0].clienteDocumento = "100.000.001";
+    credits.push(
+      creditFixture(5, "MORA"),
+      creditFixture(6, "MORA"),
+      creditFixture(7, "MORA"),
+      creditFixture(8, "MORA"),
+      creditFixture(9, "MORA", { clienteDocumento: "100 000 001" }),
+      creditFixture(10, "MORA", { clienteDocumento: null })
+    );
+
+    const moraResponse = await route.GET(
+      new Request("https://finserpay.test/api/dashboard/cartera/export?scope=mora")
+    );
+    const moraHtml = await moraResponse.text();
+    const moraRows = workbookRows(moraHtml);
+    assert.equal(moraResponse.status, 200);
+    assert.match(moraResponse.headers.get("Content-Disposition"), /clientes-en-mora-finserpay/);
+    assert.match(moraHtml, /<th>PRORROGA ACTIVA<\/th>/);
+    assert.equal(exemptionCalls.length, 1, "Una consulta de excepciones por descarga");
+    assert.equal(moraRows.length, 7, "La prorroga no excluye al cliente del reporte de mora");
+
+    for (const [name, expected] of [
+      ["CLIENTE_ACTIVO_EXPORTADO", "SI"],
+      ["CLIENTE_MORA_5", "NO"],
+      ["CLIENTE_MORA_6", "NO"],
+      ["CLIENTE_MORA_7", "NO"],
+      ["CLIENTE_MORA_8", "SI"],
+      ["CLIENTE_MORA_9", "SI"],
+      ["CLIENTE_MORA_10", "NO"],
+    ]) {
+      const row = moraRows.find((row) => row.includes(name));
+      assert.ok(row, name);
+      const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((match) => match[1]);
+      assert.equal(cells.length, 32, name);
+      assert.equal(cells.at(-1), expected, name);
+    }
+    assert.doesNotMatch(moraHtml, /Sin fecha de fin|Vencida|Desactivada|Documento historico invalido/);
+  });
 });
