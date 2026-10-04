@@ -26,11 +26,14 @@ type RemoteRead = { category: QueryCategory; payload: unknown };
 type RemoteStatus = { value: string; priority: number };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// FirmaSeguro also returns 32 hexadecimal characters without UUID separators.
+// Preserve that provider identifier as received; dispatch IDs remain PostgreSQL UUIDs.
+const PROVIDER_UUID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const READ_TIMEOUT_MS = 10_000;
 const ENVELOPES = new Set(["data", "result", "response", "value"]);
 const PROCESS_KEYS = new Set(["process", "processes"]);
 const PROCESS_UUID_KEYS = new Set(["processuuid", "processid"]);
-const STATUS_KEYS = new Set(["status", "state", "processstatus", "statusname"]);
+const STATUS_KEYS = new Set(["status", "state", "processstatus", "statusprocess", "statusname"]);
 
 function fail(code: string, message: string, status = 409): never {
   throw new DraftDispatchError(`DRAFT_DISPATCH_RECONCILIATION_${code}`, message, status);
@@ -61,7 +64,7 @@ function verifiedProviderStatus(statuses: RemoteStatus[]) {
   const priority = Math.max(...statuses.map((item) => item.priority));
   const selected = [...new Set(statuses.filter((item) => item.priority === priority).map((item) => item.value))];
   const pending = (value: string) => /^(?:PROCESS_)?(?:CREATED|PENDING|WAITING|SENT|IN_PROGRESS|IN_PROCESS|INITIATED|STARTED)$/.test(value)
-    || ["AWAITING_SIGNATURE", "PENDING_SIGNATURE"].includes(value);
+    || ["AWAITING_SIGNATURE", "PENDING_SIGNATURE", "CREADO", "EN_PROCESO", "ENVIADO"].includes(value);
   const successful = (value: string) => !/(?:^|_)(?:NOT|NO|SIN|PENDING|WAITING|AWAITING)(?:_|$)/.test(value)
     && isFirmaSeguroSuccessfulStatus(value);
   if (selected.some((value) => !validSyntax(value) || (!pending(value) && !successful(value)))) {
@@ -146,7 +149,7 @@ function readRemoteEvidence(reads: RemoteRead[]) {
           || (processLevel && ["uuid", "id"].includes(normalized))) {
           const internalId = normalized === "id" || normalized === "processid";
           if (typeof item === "string" && item.trim()) {
-            if (!internalId || UUID.test(item.trim())) processIds.add(item.trim().toLowerCase());
+            if (!internalId || PROVIDER_UUID.test(item.trim())) processIds.add(item.trim().toLowerCase());
           } else if (!internalId && item !== undefined && item !== null) {
             fail("UUID_MISMATCH", "El identificador del proceso no coincide con la consulta al proveedor.");
           }
@@ -156,7 +159,7 @@ function readRemoteEvidence(reads: RemoteRead[]) {
           const successEnvelope = !explicitProcess && ["SUCCESS", "SUCCESSFUL", "OK"].includes(status)
             && Object.keys(value).some((field) => ENVELOPES.has(normalizedKey(field)) || PROCESS_KEYS.has(normalizedKey(field)));
           if (!successEnvelope) statuses.push({ value: status,
-            priority: explicitProcess || normalized === "processstatus" ? 3 : depth > 0 ? 2 : 1 });
+            priority: explicitProcess || normalized === "processstatus" || normalized === "statusprocess" ? 3 : depth > 0 ? 2 : 1 });
         }
         if (category === "documents" && /base64/i.test(key)) readPdf(item);
         visit(item, depth + 1, PROCESS_KEYS.has(normalized)
@@ -165,9 +168,9 @@ function readRemoteEvidence(reads: RemoteRead[]) {
       }
     };
     if (category === "process_status" && typeof payload === "string") {
-      if (UUID.test(payload.trim())) processIds.add(payload.trim().toLowerCase());
+      if (PROVIDER_UUID.test(payload.trim())) processIds.add(payload.trim().toLowerCase());
       const status = normalizeProviderStatus(payload);
-      if (status && !UUID.test(payload.trim())) statuses.push({ value: status, priority: 1 });
+      if (status && !PROVIDER_UUID.test(payload.trim())) statuses.push({ value: status, priority: 1 });
     }
     if (category === "documents") readPdf(payload);
     visit(payload, 0, category === "process_status", true, false);
@@ -179,7 +182,7 @@ function readRemoteEvidence(reads: RemoteRead[]) {
 export async function verifyDraftDispatchReconciliation(input: ReconciliationInput) {
   const dispatchId = String(input.dispatchId || "").trim().toLowerCase();
   const processUuid = String(input.processUuid || "").trim().toLowerCase();
-  if (!UUID.test(dispatchId) || !UUID.test(processUuid)
+  if (!UUID.test(dispatchId) || !PROVIDER_UUID.test(processUuid)
     || !Number.isSafeInteger(input.actor?.id) || input.actor.id <= 0
     || !input.actor.nombre?.trim()) {
     fail("INVALID", "La solicitud de conciliación no es válida.", 400);

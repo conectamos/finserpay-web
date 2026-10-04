@@ -17,6 +17,7 @@ const otherUuid = "c76a9ce1-d0d3-428e-abce-af45d8f8c153";
 const originalPdf = Buffer.from("%PDF-1.7\nReserved immutable contract\n%%EOF");
 const documentHash = createHash("sha256").update(originalPdf).digest("hex");
 const input = { dispatchId, processUuid, actor: { id: 7, nombre: "Analista" } };
+const compactProcessUuid = processUuid.replaceAll("-", "");
 
 class DraftDispatchError extends Error {
   constructor(code, message, status = 409) {
@@ -143,6 +144,72 @@ test("rechaza UUID del proceso distinto o múltiples procesos remotos", async ()
   ]) {
     const f = fixture({ status });
     await assert.rejects(f.verifyDraftDispatchReconciliation(input), hasCode("UUID_MISMATCH"));
+  }
+});
+
+test("acepta el identificador hexadecimal de 32 caracteres del proveedor sin añadir guiones", async () => {
+  for (const identityKey of ["uuid", "id", "processId", "processUuid"]) {
+    const f = fixture({ status: { data: { process: {
+      [identityKey]: compactProcessUuid, status: "CREATED", tags: [{ reissue: dispatchId }],
+    } } } });
+    const verified = await f.verifyDraftDispatchReconciliation({ ...input, processUuid: compactProcessUuid });
+    assert.equal(verified.processUuid, compactProcessUuid);
+    assert.equal(verified.evidence.kind, "provider_tag");
+    const providerCalls = f.calls.filter((call) => ["process_status", "signatures", "documents"].includes(call.category));
+    assert.equal(providerCalls.length, 3);
+    assert.ok(providerCalls.every((call) => call.args.includes(compactProcessUuid)));
+  }
+});
+
+test("identificadores remotos compactos contradictorios impiden recuperar otro proceso", async () => {
+  for (const identityKey of ["id", "processId"]) {
+    const f = fixture({ status: { data: { process: {
+      uuid: compactProcessUuid, [identityKey]: otherUuid.replaceAll("-", ""),
+      status: "CREATED", tags: [{ reissue: dispatchId }],
+    } } } });
+    await assert.rejects(f.reconcileDraftDispatchFromProvider({ ...input, processUuid: compactProcessUuid }), hasCode("UUID_MISMATCH"));
+    assert.equal(f.calls.some((call) => ["receipt_write", "finalize"].includes(call.category)), false);
+  }
+});
+
+test("lee el estado español del proceso con el formato auténtico del proveedor", async () => {
+  for (const status of ["Creado", "En proceso", "Enviado"]) {
+    const f = fixture({
+      status: { processes: [{ uuid: compactProcessUuid, status, date_created: "2026-10-04T17:37:36Z" }] },
+      signatures: { signatures: [{ id: 42, status: "Enviado" }], status_process: status, uuid: compactProcessUuid },
+      documents: { documents: [null], status, uuid: compactProcessUuid },
+    });
+    // Real GET responses have no correlation tag/PDF: still fail closed.
+    await assert.rejects(f.verifyDraftDispatchReconciliation({ ...input, processUuid: compactProcessUuid }), hasCode("EVIDENCE_INSUFFICIENT"));
+    const withOriginal = fixture({
+      status: { processes: [{ uuid: compactProcessUuid, status }] },
+      documents: { originalPdfBase64: originalPdf.toString("base64") },
+    });
+    const verified = await withOriginal.verifyDraftDispatchReconciliation({ ...input, processUuid: compactProcessUuid });
+    assert.equal(verified.providerStatus, status.toUpperCase().replaceAll(" ", "_"));
+  }
+  const rejected = fixture({ status: { uuid: compactProcessUuid, status_process: "Declinado", tags: [{ reissue: dispatchId }] } });
+  assert.equal((await rejected.verifyDraftDispatchReconciliation({ ...input, processUuid: compactProcessUuid })).providerStatus, "DECLINADO");
+});
+
+test("solo el proceso admite formato compacto y la CLI conserva la misma restricción", async () => {
+  const cli = await readFile(new URL("../scripts/reconcile-firmaseguro-draft.mjs", import.meta.url), "utf8");
+  const validation = cli.slice(cli.indexOf("const draftId = Number("), cli.indexOf("const require = createRequire("));
+  const validateCli = (dispatch, process) => runInNewContext(validation, { options: {
+    "--draft-id": "1", "--actor-id": "7", "--dispatch-id": dispatch, "--process-uuid": process,
+  } });
+  assert.doesNotThrow(() => validateCli(dispatchId, processUuid));
+  assert.doesNotThrow(() => validateCli(dispatchId, compactProcessUuid));
+  for (const candidate of [
+    { dispatchId: dispatchId.replaceAll("-", ""), processUuid: compactProcessUuid },
+    { dispatchId, processUuid: compactProcessUuid.slice(1) },
+    { dispatchId, processUuid: "g" + compactProcessUuid.slice(1) },
+    { dispatchId, processUuid: `${compactProcessUuid}/other` },
+  ]) {
+    const f = fixture();
+    await assert.rejects(f.verifyDraftDispatchReconciliation({ ...input, ...candidate }), hasCode("INVALID"));
+    assert.equal(f.calls.length, 0);
+    assert.throws(() => validateCli(candidate.dispatchId, candidate.processUuid), /identificadores válidos/);
   }
 });
 

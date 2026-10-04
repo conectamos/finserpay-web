@@ -22,8 +22,9 @@ for (let i = 2; i < process.argv.length; i++) {
 const draftId = Number(options["--draft-id"]);
 const actorId = Number(options["--actor-id"]);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const providerUuid = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 if (!Number.isSafeInteger(draftId) || draftId < 1 || !Number.isSafeInteger(actorId) || actorId < 1 ||
-  !uuid.test(options["--dispatch-id"] || "") || !uuid.test(options["--process-uuid"] || "")) {
+  !uuid.test(options["--dispatch-id"] || "") || !providerUuid.test(options["--process-uuid"] || "")) {
   throw new Error("Faltan identificadores válidos; usa --help.");
 }
 
