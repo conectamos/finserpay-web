@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CalendarClock, CheckCircle2, FileClock, Mail, Paperclip, Phone, RefreshCw, Search, ShieldCheck, Smartphone, UploadCloud } from "lucide-react";
-import { Badge, Button, Card, EmptyState, Input, LoadingState, PageHeader, StatusPill } from "@/app/_components/finser-ui";
+import { ArrowRight, CalendarClock, CheckCircle2, FileClock, FilePenLine, Mail, Paperclip, Phone, Search, Smartphone, UserRound } from "lucide-react";
+import { Badge, Button, Card, Input, LoadingState, Select, StatusPill } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import type { OperationalCaseDetail, OperationalCaseSummary } from "@/lib/approval-operations-types";
 import styles from "./approval-operations.module.css";
@@ -38,6 +38,14 @@ function creditTone(status: string | null): "positive" | "warning" | "danger" | 
   if (/FINALIZ|PAGAD|APROB|ACTIV|VIGENTE/.test(normalized)) return "positive";
   if (/PEND|BORRADOR|FIRMA/.test(normalized)) return "warning";
   return "neutral";
+}
+
+function creditStatusLabel(status: string) {
+  const normalized = status.trim().toUpperCase();
+  if (/FINALIZ|PAGAD|CERRAD/.test(normalized)) return "Crédito finalizado";
+  if (/MORA|VENCID|ATRAS/.test(normalized)) return "Crédito en mora";
+  if (/ACTIV|VIGENTE/.test(normalized)) return "Crédito activo";
+  return status;
 }
 
 function signatureLabel(status: OperationalCaseDetail["signature"]["status"]) {
@@ -86,47 +94,92 @@ async function jsonRequest<T extends ApiResult>(url: string, init: RequestInit, 
   return payload;
 }
 
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
-  return <div className={styles.field}><dt>{label}</dt><dd>{visible(value)}</dd></div>;
+function Field({ label, value, icon: Icon }: { label: string; value: string | null | undefined; icon: typeof UserRound }) {
+  return <div className={styles.field}><dt className="sr-only">{label}</dt><dd><Icon size={17} strokeWidth={1.8} aria-hidden="true" />{value?.trim() || `${label} no disponible`}</dd></div>;
 }
 
 function CaseSummary({ detail }: { detail: OperationalCaseDetail }) {
+  const recentEvents = detail.timeline.slice(0, 3).reverse();
+  const olderEvents = detail.timeline.slice(3);
+  const renderEvent = (event: OperationalCaseDetail["timeline"][number]) => <li key={event.id}>
+    <span className={styles.timelineMark} aria-hidden="true" />
+    <div className={styles.eventBody}>
+      <div className={styles.eventTop}><strong>{event.label}</strong>
+        {event.status ? <span className={`${styles.eventStatus} ${/ERROR|FAIL|REJECT/i.test(event.status) ? styles.eventStatusDanger : /PENDING|WAIT/i.test(event.status) ? styles.eventStatusWarning : ""}`}>{eventStatusLabel(event.status, event.label)}</span> : null}</div>
+      <time dateTime={event.at}>{dateLabel(event.at)}</time>
+      {event.detail ? <p>{event.detail}</p> : null}
+      {event.actor ? <small>Por {event.actor}</small> : null}
+      {event.evidenceHref?.startsWith("/api/") ? <a className={styles.evidenceLink} href={event.evidenceHref} target="_blank" rel="noopener noreferrer">Ver evidencia</a> : null}
+    </div>
+  </li>;
   return <Card className={styles.summary}>
     <header className={styles.cardHeader}>
       <div>
-        <p className={styles.eyebrow}>Crédito {visible(detail.number)}</p>
         <h2>{visible(detail.clientName)}</h2>
+        <p className={styles.creditNumber}>Crédito {visible(detail.number)}</p>
       </div>
-      <Badge tone={creditTone(detail.status)}>{visible(detail.status)}</Badge>
+      <Badge tone={creditTone(detail.status)}>{creditStatusLabel(visible(detail.status))}</Badge>
     </header>
     <dl className={styles.customer}>
-      <Field label="Cédula" value={detail.document} />
-      <Field label="Celular" value={detail.phone} />
-      <Field label="Correo" value={detail.email} />
+      <Field label="Cédula" value={detail.document} icon={UserRound} />
+      <Field label="Celular" value={detail.phone} icon={Phone} />
+      <Field label="Correo" value={detail.email} icon={Mail} />
     </dl>
     <div className={styles.equipment}>
-      <div className={styles.equipmentIcon}><Smartphone aria-hidden="true" size={25} /></div>
-      <div>
-        <p className={styles.eyebrow}>Equipo financiado</p>
+      <div className={styles.equipmentIcon}><Smartphone aria-hidden="true" size={48} strokeWidth={1.35} /></div>
+      <div className={styles.equipmentDetails}>
         <strong>{visible(detail.equipment)}</strong>
-        <p>IMEI actual <span>{visible(detail.imei)}</span></p>
+        <p>Equipo financiado</p>
+        <dl><dt>IMEI actual</dt><dd>{visible(detail.imei)}</dd></dl>
       </div>
     </div>
     <section className={styles.timeline} aria-labelledby="operations-timeline-title">
       <h3 id="operations-timeline-title">Historial del crédito</h3>
-      {detail.timeline.length ? <ol>
-        {detail.timeline.map(event => <li key={event.id}>
-          <span className={styles.timelineMark} aria-hidden="true" />
-          <div><strong>{event.label}</strong><time dateTime={event.at}>{dateLabel(event.at)}</time>
-            {event.detail ? <p>{event.detail}</p> : null}
-            {event.actor ? <small>Por {event.actor}</small> : null}
-            {event.status ? <StatusPill tone={/ERROR|FAIL|REJECT/i.test(event.status) ? "danger" : /PENDING|WAIT/i.test(event.status) ? "warning" : "positive"}>{eventStatusLabel(event.status, event.label)}</StatusPill> : null}
-            {event.evidenceHref?.startsWith("/api/") ? <a className={styles.evidenceLink} href={event.evidenceHref} target="_blank" rel="noopener noreferrer">Ver evidencia</a> : null}
-          </div>
-        </li>)}
-      </ol> : <p className={styles.muted}>Aún no hay acciones registradas para este crédito.</p>}
+      {recentEvents.length ? <ol>{recentEvents.map(renderEvent)}</ol> : <p className={styles.muted}>Aún no hay acciones registradas para este crédito.</p>}
+      {olderEvents.length ? <details className={styles.olderEvents}><summary>Ver {olderEvents.length} acciones anteriores</summary>
+        <ol>{olderEvents.map(renderEvent)}</ol></details> : null}
     </section>
   </Card>;
+}
+
+function EmptyCreditWorkspace({ notFound = false }: { notFound?: boolean }) {
+  return <div aria-label="Detalle del crédito sin seleccionar">
+    <div className={styles.columns}>
+      <Card className={styles.summary}>
+        <div className={styles.emptySummary}>
+          <Search size={22} aria-hidden="true" />
+          <h2>{notFound ? "No se encontraron créditos" : "Selecciona un crédito"}</h2>
+          <p>{notFound ? "Comprueba la cédula, el número del crédito o los 15 dígitos del IMEI." :
+            "Busca por cédula, crédito o IMEI para ver los datos reales del cliente y su historial."}</p>
+        </div>
+        <div className={styles.emptyEquipment} aria-hidden="true"><Smartphone size={48} strokeWidth={1.35} /></div>
+        <p className={styles.emptySectionLabel}>Historial del crédito</p>
+        <p className={styles.muted}>Las acciones del crédito aparecerán aquí.</p>
+      </Card>
+      <Card className={styles.change}>
+        <header className={styles.sectionHeading}>
+          <span className={styles.sectionIcon}><Smartphone size={22} aria-hidden="true" /></span>
+          <div><h2>Cambio de IMEI</h2><p>Registra el nuevo IMEI del dispositivo y solicita una nueva firma del contrato.</p></div>
+        </header>
+        <div className={styles.changeForm} aria-disabled="true">
+          <div className={styles.imeiFields}><div><label htmlFor="empty-old-imei">IMEI anterior</label><Input id="empty-old-imei" disabled /></div>
+            <div><label htmlFor="empty-new-imei">Nuevo IMEI</label><Input id="empty-new-imei" disabled /></div></div>
+          <div><label htmlFor="empty-imei-reason">Motivo del cambio</label><Select id="empty-imei-reason" disabled><option>Selecciona un crédito</option></Select></div>
+          <div><span className={styles.emptySectionLabel}>Evidencia</span><div className={styles.emptyUpload}><Paperclip size={20} aria-hidden="true" />Adjuntar evidencia del cambio de IMEI</div></div>
+          <Button className={styles.primary} disabled>Guardar cambio y enviar nueva firma<ArrowRight size={20} aria-hidden="true" /></Button>
+        </div>
+      </Card>
+    </div>
+    <Card className={styles.signature}>
+      <div className={styles.signatureHead}><span className={styles.sectionIcon}><FilePenLine size={23} aria-hidden="true" /></span>
+        <div><div className={styles.signatureTitle}><h2>FirmaSeguro</h2><StatusPill>Sin consulta</StatusPill></div>
+          <p>Selecciona un crédito para consultar el estado de firma y los contactos de envío.</p></div></div>
+      <div className={styles.signatureBottom}><div className={styles.contacts}>
+        <div><label htmlFor="empty-contact-phone">Celular de envío</label><Input id="empty-contact-phone" disabled /></div>
+        <div><label htmlFor="empty-contact-email">Correo de envío</label><Input id="empty-contact-email" disabled /></div>
+      </div><div className={styles.signatureActions}><Button variant="secondary" disabled>Actualizar contacto</Button><Button disabled>Reenviar firma<ArrowRight size={18} aria-hidden="true" /></Button></div></div>
+    </Card>
+  </div>;
 }
 
 export default function ApprovalOperations() {
@@ -144,6 +197,7 @@ export default function ApprovalOperations() {
   const [busy, setBusy] = useState<Operation | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation>(null);
   const [newImei, setNewImei] = useState("");
+  const [reasonPreset, setReasonPreset] = useState("");
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState<File | null>(null);
   const [editingContact, setEditingContact] = useState(false);
@@ -151,9 +205,11 @@ export default function ApprovalOperations() {
   const [contactEmail, setContactEmail] = useState("");
   const [contactReason, setContactReason] = useState("");
   const [signatureReason, setSignatureReason] = useState("");
+  const [preparingResend, setPreparingResend] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const evidenceInput = useRef<HTMLInputElement | null>(null);
+  const resendReasonInput = useRef<HTMLInputElement | null>(null);
   const submitting = useRef(false);
   const operationKeys = useRef<{ contact: string | null; signature: string | null }>({ contact: null, signature: null });
   const imeiKeys = useRef<{ request: string | null; confirm: string | null }>({ request: null, confirm: null });
@@ -162,6 +218,10 @@ export default function ApprovalOperations() {
     searchController.current?.abort();
     detailController.current?.abort();
   }, []);
+
+  useEffect(() => {
+    if (preparingResend) resendReasonInput.current?.focus();
+  }, [preparingResend]);
 
   useEffect(() => {
     setContactPhone(detail?.phone || detail?.signature.sentPhone || "");
@@ -180,9 +240,11 @@ export default function ApprovalOperations() {
     setActionError("");
     setNotice("");
     setNewImei("");
+    setReasonPreset("");
     setReason("");
     setEvidence(null);
     setSignatureReason("");
+    setPreparingResend(false);
     operationKeys.current = { contact: null, signature: null };
     imeiKeys.current = { request: null, confirm: null };
     setLoadingDetail(true);
@@ -303,6 +365,7 @@ export default function ApprovalOperations() {
       if (action === "REQUEST") imeiKeys.current.request = null;
       else imeiKeys.current.confirm = null;
       setNewImei("");
+      setReasonPreset("");
       setReason("");
       setEvidence(null);
       if (evidenceInput.current) evidenceInput.current.value = "";
@@ -387,6 +450,8 @@ export default function ApprovalOperations() {
       if (technicalOperation(result.operation?.status)) setActionError(message);
       else setNotice(message);
       operationKeys.current.signature = null;
+      setPreparingResend(false);
+      setSignatureReason("");
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "No fue posible confirmar el reenvío de firma.");
     } finally {
@@ -405,32 +470,30 @@ export default function ApprovalOperations() {
     detail?.capabilities.canDispatchSignatureWithImei ? "Guardar cambio y enviar nueva firma" : "Guardar cambio de IMEI";
 
   return <main className={styles.root}>
-    <PageHeader eyebrow="Operación · Aprobaciones" title="Detalle del crédito"
-      description="Busca un crédito y gestiona el cambio de equipo y la firma desde un mismo lugar." />
     <form className={styles.search} onSubmit={searchCases} role="search">
       <label htmlFor="approval-operations-search" className="sr-only">Buscar por cédula, número de crédito o IMEI</label>
       <Search size={20} aria-hidden="true" />
       <Input id="approval-operations-search" type="search" autoComplete="off" maxLength={100}
         placeholder="Buscar por cédula, crédito o IMEI" value={query} onChange={event => setQuery(event.target.value)}
         disabled={Boolean(busy)} />
-      <Button variant="secondary" type="submit" disabled={Boolean(busy) || searching}>{searching ? "Buscando..." : "Buscar"}</Button>
+      <Button variant="ghost" type="submit" disabled={Boolean(busy) || searching}>{searching ? "Buscando..." : "Buscar"}</Button>
     </form>
     {searchError ? <p className={styles.error} role="alert">{searchError}</p> : null}
     {searching ? <LoadingState label="Buscando créditos..." /> : null}
-    {searched && !searching && !searchError && !results.length ? <Card><EmptyState title="No se encontraron créditos" description="Comprueba la cédula, el número del crédito o los 15 dígitos del IMEI." /></Card> : null}
+    {searched && !searching && !searchError && !results.length ? <EmptyCreditWorkspace notFound /> : null}
     {results.length > 1 ? <section className={styles.results} aria-label="Resultados de búsqueda">
       <h2>Selecciona un crédito</h2>
       <ul>{results.map(item => <li key={item.kind + ":" + item.id}>
         <button type="button" className={styles.result} onClick={() => void loadDetail(item)} disabled={Boolean(busy)}
           aria-current={selected?.id === item.id && selected.kind === item.kind ? "true" : undefined}>
           <span><strong>{visible(item.clientName)}</strong><small>{visible(item.document)} · {visible(item.equipment)}</small></span>
-          <span>Crédito {visible(item.number)} <Badge tone={creditTone(item.status)}>{visible(item.status)}</Badge></span>
+          <span>Crédito {visible(item.number)} <Badge tone={creditTone(item.status)}>{creditStatusLabel(visible(item.status))}</Badge></span>
         </button>
       </li>)}</ul>
     </section> : null}
     {loadingDetail ? <LoadingState label="Cargando detalle del crédito..." /> : null}
     {detailError ? <div className={styles.error} role="alert">{detailError}{selected ? <Button variant="secondary" onClick={() => void loadDetail(selected)}>Reintentar</Button> : null}</div> : null}
-    {!searched && !searching ? <Card><EmptyState title="Consulta un crédito" description="Ingresa la cédula, el número de crédito o el IMEI para abrir el detalle operativo." /></Card> : null}
+    {!searched && !searching ? <EmptyCreditWorkspace /> : null}
     {detail ? <>
       {notice ? <p className={styles.notice} role="status"><CheckCircle2 size={19} aria-hidden="true" />{notice}</p> : null}
       {actionError ? <p className={styles.error} role="alert">{actionError}</p> : null}
@@ -439,7 +502,7 @@ export default function ApprovalOperations() {
         <Card className={styles.change}>
           <header className={styles.sectionHeading}>
             <span className={styles.sectionIcon}><Smartphone size={22} aria-hidden="true" /></span>
-            <div><h2>Cambio de IMEI</h2><p>Registra el equipo actualizado y solicita una nueva firma del contrato.</p></div>
+            <div><h2>Cambio de IMEI</h2><p>Registra el nuevo IMEI del dispositivo y solicita una nueva firma del contrato.</p></div>
           </header>
           {detail.replacement ? <div className={`${styles.replacement} ${detail.replacement.status === "PENDING_ENROLLMENT" ? styles.replacementPending : ""}`} role="status">
             <FileClock size={18} aria-hidden="true" />
@@ -456,32 +519,42 @@ export default function ApprovalOperations() {
                 disabled={!detail.capabilities.canChangeImei || Boolean(busy)} required /></div>
             </div>
             <div><label htmlFor="approval-imei-reason">Motivo del cambio</label>
-              <Input id="approval-imei-reason" placeholder="Ej. Garantía" minLength={5} maxLength={500}
-                value={reason} onChange={event => setReason(event.target.value)} disabled={!detail.capabilities.canChangeImei || Boolean(busy)} required /></div>
+              <Select id="approval-imei-reason" value={reasonPreset}
+                onChange={event => { const next = event.target.value; setReasonPreset(next); setReason(next === "Otro" ? "" : next); }}
+                disabled={!detail.capabilities.canChangeImei || Boolean(busy)} required>
+                <option value="">Selecciona un motivo</option>
+                <option value="Garantía">Garantía</option>
+                <option value="Corrección de IMEI">Corrección de IMEI</option>
+                <option value="Otro">Otro motivo</option>
+              </Select>
+              {reasonPreset === "Otro" ? <Input className={styles.otherReason} aria-label="Describe el motivo del cambio"
+                placeholder="Describe el motivo del cambio" minLength={5} maxLength={500} value={reason}
+                onChange={event => setReason(event.target.value)} disabled={!detail.capabilities.canChangeImei || Boolean(busy)} required /> : null}
+            </div>
             <div><label htmlFor="approval-imei-evidence">Evidencia <span className={styles.muted}>(opcional)</span></label>
-              <label className={styles.upload} htmlFor="approval-imei-evidence"><UploadCloud size={20} aria-hidden="true" />
-                <span>{evidence ? evidence.name : "Adjuntar evidencia del cambio de IMEI"}<small>JPG, PNG o PDF · máximo 10 MB</small></span></label>
+              <label className={styles.upload} htmlFor="approval-imei-evidence"><span className={styles.uploadIcon}><Paperclip size={20} aria-hidden="true" /></span>
+                <span>{evidence ? evidence.name : "Adjuntar evidencia del cambio de IMEI"}<small>Puedes subir fotos, documentos o comprobantes. JPG, PNG o PDF · máximo 10 MB.</small></span></label>
               <input id="approval-imei-evidence" ref={evidenceInput} type="file" accept="image/jpeg,image/png,application/pdf"
                 onChange={event => setEvidence(event.target.files?.[0] || null)}
                 disabled={!detail.capabilities.canChangeImei || Boolean(busy)} className={styles.fileInput} />
             </div>
             {detail.capabilities.canChangeImei ? <Button type="submit" className={styles.primary} disabled={!canSubmitImei}>
-              <Paperclip size={18} aria-hidden="true" />{busy === "imei" ? "Guardando cambio..." : imeiRequestLabel}
+              {busy === "imei" ? "Guardando cambio..." : imeiRequestLabel}<ArrowRight size={20} aria-hidden="true" />
             </Button> : null}
             {detail.capabilities.canConfirmReplacement && detail.replacement ? <Button className={styles.primary}
               onClick={() => { setActionError(""); setConfirmation("imei-confirm"); }} disabled={Boolean(busy)}>
-              <ShieldCheck size={18} aria-hidden="true" />Guardar cambio y enviar nueva firma
+              Guardar cambio y enviar nueva firma<ArrowRight size={20} aria-hidden="true" />
             </Button> : null}
             {detail.capabilities.reason && !detail.capabilities.canChangeImei && !detail.capabilities.canConfirmReplacement ? <p className={styles.muted}>{detail.capabilities.reason}</p> : null}
             {(detail.capabilities.canChangeImei || detail.capabilities.canConfirmReplacement ||
               detail.replacement?.status === "PENDING_ENROLLMENT" || detail.requiresEnrollmentReapproval) ?
-              <p className={styles.explanation}>El contrato anterior se conserva en el historial. La nueva versión se enviará tras completar las aprobaciones y controles que correspondan.</p> : null}
+              <p className={styles.explanation}><CheckCircle2 size={20} aria-hidden="true" /><span>El contrato anterior se conserva. La nueva versión se enviará cuando terminen las aprobaciones y controles necesarios.</span></p> : null}
           </form>
         </Card>
       </div>
       <Card className={styles.signature}>
         <div className={styles.signatureHead}>
-          <span className={styles.sectionIcon}><ShieldCheck size={23} aria-hidden="true" /></span>
+          <span className={styles.sectionIcon}><FilePenLine size={23} aria-hidden="true" /></span>
           <div><div className={styles.signatureTitle}><h2>FirmaSeguro</h2><StatusPill tone={signatureTone}>{signatureLabel(signature!.status)}</StatusPill></div>
             <p>{signature?.status === "TECHNICAL_ERROR" ? "El envío necesita revisión técnica antes de continuar." :
               signature?.status === "SIGNED" ? "Contrato firmado. Puedes actualizar el contacto o solicitar una nueva firma cuando corresponda." :
@@ -504,17 +577,23 @@ export default function ApprovalOperations() {
               <Button variant="secondary" onClick={() => { setEditingContact(false); setContactReason(""); setContactPhone(detail.phone || signature?.sentPhone || ""); setContactEmail(detail.email || signature?.sentEmail || ""); }} disabled={Boolean(busy)}>Cancelar</Button>
               <Button variant="secondary" onClick={() => void updateContact()} disabled={Boolean(busy) || contactReason.trim().length < 5}>Guardar contacto</Button>
             </> : <Button variant="secondary" onClick={() => { setActionError(""); setEditingContact(true); }} disabled={Boolean(busy) || !detail.capabilities.canUpdateContact}>Actualizar contacto</Button>}
-            <Button onClick={() => { setActionError(""); setConfirmation("signature"); }} disabled={Boolean(busy) || editingContact || !detail.capabilities.canResendSignature || signatureReason.trim().length < 5}>
-              <RefreshCw size={17} aria-hidden="true" />{busy === "signature" ? "Enviando..." : "Reenviar firma"}
+            <Button className={styles.resendButton} onClick={() => { setActionError(""); setPreparingResend(true); }}
+              disabled={Boolean(busy) || editingContact || !detail.capabilities.canResendSignature}>
+              {busy === "signature" ? "Enviando..." : "Reenviar firma"}<ArrowRight size={18} aria-hidden="true" />
             </Button>
           </div>
         </div>
         {editingContact ? <div className={styles.reasonField}><label htmlFor="approval-contact-reason">Motivo de actualización del contacto</label>
           <Input id="approval-contact-reason" minLength={5} maxLength={500} value={contactReason}
             onChange={event => setContactReason(event.target.value)} disabled={Boolean(busy)} placeholder="Describe el motivo del cambio" /></div> : null}
-        {detail.capabilities.canResendSignature ? <div className={styles.reasonField}><label htmlFor="approval-signature-reason">Motivo del reenvío</label>
-          <Input id="approval-signature-reason" minLength={5} maxLength={500} value={signatureReason}
-            onChange={event => setSignatureReason(event.target.value)} disabled={Boolean(busy) || editingContact} placeholder="Describe por qué se reenvía la firma" /></div> : null}
+        {preparingResend && detail.capabilities.canResendSignature ? <div className={styles.resendReason}>
+          <div className={styles.reasonField}><label htmlFor="approval-signature-reason">Motivo del reenvío</label>
+            <Input id="approval-signature-reason" ref={resendReasonInput} minLength={5} maxLength={500} value={signatureReason}
+              onChange={event => setSignatureReason(event.target.value)} disabled={Boolean(busy) || editingContact} placeholder="Describe por qué se reenvía la firma" /></div>
+          <div className={styles.resendReasonActions}><Button variant="ghost" onClick={() => { setPreparingResend(false); setSignatureReason(""); }} disabled={Boolean(busy)}>Cancelar</Button>
+            <Button onClick={() => { setActionError(""); setConfirmation("signature"); }}
+              disabled={Boolean(busy) || signatureReason.trim().length < 5}>Continuar</Button></div>
+        </div> : null}
         {detail.capabilities.reason && !detail.capabilities.canResendSignature ? <p className={styles.muted}>{detail.capabilities.reason}</p> : null}
         {signature?.sentAt ? <p className={styles.sentAt}><CalendarClock size={15} aria-hidden="true" />Último envío: {dateLabel(signature.sentAt)}</p> : null}
       </Card>

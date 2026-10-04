@@ -1,7 +1,7 @@
 import type {
   ButtonHTMLAttributes,
+  ComponentPropsWithRef,
   HTMLAttributes,
-  InputHTMLAttributes,
   ReactNode,
   SelectHTMLAttributes,
 } from "react";
@@ -84,7 +84,7 @@ export function Button({
   );
 }
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, ...props }: ComponentPropsWithRef<"input">) {
   return <input className={classes("fp-ui-input", className)} {...props} />;
 }
 
