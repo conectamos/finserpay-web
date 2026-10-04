@@ -113,6 +113,44 @@ test("audited later receipt shows its interest and late charge without inventing
   assert.doesNotMatch(result.text, /Capital extraordinario|ABONO REGISTRADO/);
 });
 
+test("exact source categories override broad allocations on A4 and POS", async () => {
+  const auditedPayment = { document: "SYN-C", ordinaryInstallment: 0,
+    extraordinaryPrincipal: 87000, additionalInterest: 0, lateFee: 0, otherCharges: 6250,
+    sourceType: "CAPITAL", sourceComponents: {
+      capital: 87000, interes: 0, mora: 0, otros: 6250, seguro: 0,
+    } };
+  for (const presentation of [undefined, { format: "POS", showFullDocument: true }]) {
+    const result = await inspect({ ...ordinary, paymentAmount: 93250,
+      paymentType: "AUDITED_RECONCILIATION", auditedPayment, presentation });
+    for (const value of ["ABONO A CAPITAL CONCILIADO", "DISTRIBUCIÓN AUDITADA",
+      "Capital", "$ 87.000", "Otros", "$ 6.250", "SYN-C"]) {
+      assert.ok(result.text.includes(value), `Falta componente documentado: ${value}`);
+    }
+    assert.doesNotMatch(result.text, /Capital extraordinario|Cuota ordinaria|Interés adicional/);
+  }
+  const plural = await inspect({ ...ordinary, paymentAmount: 93250,
+    paymentType: "AUDITED_RECONCILIATION",
+    auditedPayment: { ...auditedPayment, sourceType: "CUOTAS" } });
+  assert.match(plural.text, /CUOTAS CONCILIADAS/);
+});
+
+test("exact source categories reject an incomplete or inconsistent source breakdown", async () => {
+  const base = { document: "SYN-C", ordinaryInstallment: 0, extraordinaryPrincipal: 87000,
+    additionalInterest: 0, lateFee: 0, otherCharges: 6250,
+    sourceType: "CAPITAL", sourceComponents: {
+      capital: 87000, interes: 0, mora: 0, otros: 6250, seguro: 0,
+    } };
+  for (const auditedPayment of [
+    { ...base, sourceComponents: { ...base.sourceComponents, otros: 6249 } },
+    { ...base, sourceComponents: { ...base.sourceComponents, seguro: undefined } },
+    { ...base, sourceType: "UNKNOWN" },
+    { ...base, otherCharges: 6249 },
+  ]) {
+    await assert.rejects(buildClientPaymentReceiptPdf({ ...ordinary, paymentAmount: 93250,
+      paymentType: "AUDITED_RECONCILIATION", auditedPayment }), /desglose auditado/);
+  }
+});
+
 test("audited receipt fails closed if its components do not sum to payment amount", async () => {
   for (const auditedPayment of [undefined, { document: "SYN-A", ordinaryInstallment: 180000,
     extraordinaryPrincipal: 330200, additionalInterest: 0, lateFee: 99 }]) {

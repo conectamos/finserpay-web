@@ -92,6 +92,39 @@ test("audit lookup is scoped to credit and payment without hardcoded source valu
   assert.equal(queried, true);
 });
 
+test("optional source components preserve the exact category of other charges", () => {
+  const documented = structuredClone(audit);
+  documented.sourceReceipt = "SYN-C";
+  documented.snapshotAfter.totalAbonadoAlCorte = 93250;
+  documented.snapshotAfter.abonosAlCorte = [{ id: 22, valor: 93250 }];
+  documented.allocations.receipts = [{
+    document: "SYN-C", date: "2030-01-11", received: 93250,
+    ordinaryInstallment: 0, extraordinaryPrincipal: 87000,
+    additionalInterest: 0, lateFee: 0, otherCharges: 6250,
+    sourceType: "CAPITAL",
+    sourceComponents: { capital: 87000, interes: 0, mora: 0, otros: 6250, seguro: 0 },
+  }];
+  const live = [{ id: 22, valor: 93250, fechaAbono: new Date("2030-01-11T12:00:00Z") }];
+  const result = parseAuditedReceiptAllocation(documented, 22, live);
+  assert.equal(result.otherCharges, 6250);
+  assert.equal(result.sourceType, "CAPITAL");
+  assert.deepEqual(result.sourceComponents,
+    { capital: 87000, interes: 0, mora: 0, otros: 6250, seguro: 0 });
+  const plural = structuredClone(documented);
+  plural.allocations.receipts[0].sourceType = "CUOTAS";
+  assert.equal(parseAuditedReceiptAllocation(plural, 22, live).sourceType, "CUOTAS");
+
+  const wrongGross = structuredClone(documented);
+  wrongGross.allocations.receipts[0].otherCharges -= 1;
+  assert.throws(() => parseAuditedReceiptAllocation(wrongGross, 22, live), /no concilia/);
+  const wrongSource = structuredClone(documented);
+  wrongSource.allocations.receipts[0].sourceComponents.otros -= 1;
+  assert.throws(() => parseAuditedReceiptAllocation(wrongSource, 22, live), /no concilia/);
+  const missingSourceType = structuredClone(documented);
+  delete missingSourceType.allocations.receipts[0].sourceType;
+  assert.throws(() => parseAuditedReceiptAllocation(missingSourceType, 22, live), /no concilia/);
+});
+
 test("tampered components, dates, cash or ambiguous receipt mapping fail closed", () => {
   const nonTextSource = structuredClone(audit);
   nonTextSource.sourceReceipt = 123;
