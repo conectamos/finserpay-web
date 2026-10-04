@@ -46,6 +46,8 @@ import {
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { completeOperationalSignatureVersion, isSupersededTerminalOperationalProcess,
+  markOperationalSignatureTerminalFailure, recordLateSupersededOperationalSignature } from "@/lib/approval-operational-signature-complete";
 
 type StoredFirmaSeguroCredit = Prisma.CreditoGetPayload<{
   omit: {
@@ -952,6 +954,9 @@ export async function markCreditoFirmaSeguroCompleted(
     }
     return null;
   }
+  if (await completeOperationalSignatureVersion(
+    database, creditoId, options.processUuid, current[0]?.signedDocumentBase64 || null
+  )) return null;
   const credito = await database.credito.findUnique({
     where: { id: creditoId },
     select: {
@@ -1304,8 +1309,12 @@ export async function refreshFirmaSeguroProcess(
   process: FirmaSeguroProcessRow,
   options: { credito?: FirmaSeguroCredit | null } = {}
 ) {
-  // Historic credit versions keep their signed bytes/status; callback payloads are archived by storage.
-  if (process.supersededAt && process.creditoId) return process;
+  // Signed historical versions stay immutable. A superseded terminal failure
+  // may still receive a late provider-confirmed PDF, recorded separately from
+  // the current credit snapshot and without reactivating that old process.
+  const lateOperational = Boolean(process.supersededAt && process.creditoId &&
+    await isSupersededTerminalOperationalProcess(process.creditoId, process.processUuid));
+  if (process.supersededAt && process.creditoId && !lateOperational) return process;
   const { result: refreshPayload } = await runWithFirmaSeguroAuth(
     async (token) => {
       const statusPayload = await firmaSeguroGetProcessStatus(
@@ -1510,20 +1519,41 @@ export async function refreshFirmaSeguroProcess(
     }
   }
 
+  const redactedDocuments = redactBase64Payload(
+    documentAttempts.length
+      ? { selected: documentsPayload, attempts: documentAttempts }
+      : documentsPayload
+  );
+  if (lateOperational) {
+    if (!completed || !signedDocumentBase64 || !process.creditoId) return process;
+    return await recordLateSupersededOperationalSignature({
+      creditId: process.creditoId, processUuid: process.processUuid, status,
+      signedDocumentBase64, signedDocumentFileName,
+      statusPayload, signaturesPayload, documentsPayload: redactedDocuments,
+    }) || process;
+  }
   const updated = await updateFirmaSeguroProcess(process.processUuid, {
     status,
     statusPayload,
     signaturesPayload,
-    documentsPayload: redactBase64Payload(
-      documentAttempts.length
-        ? { selected: documentsPayload, attempts: documentAttempts }
-        : documentsPayload
-    ),
+    documentsPayload: redactedDocuments,
     signedDocumentBase64,
     signedDocumentFileName,
     lastError: documentDownloadError,
     completedAt,
   });
+
+  // ACK may archive the process while this refresh is downloading the PDF.
+  // The ordinary updater intentionally discards signed bytes on archived
+  // rows, so reconcile that race through the narrow late-result ledger path.
+  if (updated?.supersededAt && updated.creditoId && completed && signedDocumentBase64) {
+    const recorded = await recordLateSupersededOperationalSignature({
+      creditId: updated.creditoId, processUuid: updated.processUuid, status,
+      signedDocumentBase64, signedDocumentFileName,
+      statusPayload, signaturesPayload, documentsPayload: redactedDocuments,
+    });
+    if (recorded) return recorded;
+  }
 
   if (updated && completed && updated.creditoId) {
     await markCreditoFirmaSeguroCompleted(updated.creditoId, {
@@ -1532,6 +1562,13 @@ export async function refreshFirmaSeguroProcess(
       signedDocumentFileName: updated.signedDocumentFileName,
       completedAt: updated.completedAt || completedAt,
     });
+  }
+
+  if (updated && !completed && updated.creditoId) {
+    // A callback alone is insufficient: only the status returned by this fresh
+    // provider GET may make an operational revision eligible for a new attempt.
+    await markOperationalSignatureTerminalFailure(prisma, updated.creditoId,
+      updated.processUuid, extractFirmaSeguroStatus(statusPayload));
   }
 
   return updated;

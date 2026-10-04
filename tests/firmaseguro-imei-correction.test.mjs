@@ -153,7 +153,7 @@ test("rechaza IMEI ocupado o vendido y reemplaza el enrolamiento aprobado con au
   assert.doesNotMatch(correctionSource, /DELETE FROM "IphoneEnrollmentReview"/);
 });
 
-test("actualiza el IMEI canonico, rebobina al paso interno 4 y fuerza folio nuevo", () => {
+test("actualiza el IMEI canonico, rebobina al paso interno 4 y regenera desde sello firmado", () => {
   assert.match(
     correctionSource,
     /UPDATE "CreditoBorrador"[\s\S]*SET "imei" = \$2,[\s\S]*"currentStep" = 4,[\s\S]*"payload" = \$3::jsonb/
@@ -161,7 +161,10 @@ test("actualiza el IMEI canonico, rebobina al paso interno 4 y fuerza folio nuev
   assert.match(correctionSource, /imei,[\s\S]*deviceUid: imei,[\s\S]*wizardStep: 4/);
   assert.match(correctionSource, /delete nextPayload\.firmaSeguroDraftFolio/);
   assert.match(correctionSource, /delete nextPayload\.financialTermsSeal/);
-  assert.match(routeSource, /const draftFolio = lockedCurrent\?\.draftFolio \|\| credit\.folio/);
+  assert.match(routeSource, /const draftFolio = lockedCurrent\?\.draftFolio \|\|/);
+  assert.match(routeSource, /const frozen = buildFrozenDraftCorrection\(/);
+  assert.match(routeSource, /const priorProcess = await prisma\.\$queryRawUnsafe/);
+  assert.match(routeSource, /FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE/);
   assert.match(routeSource, /createFinancingTermsSeal\([\s\S]*imei: credit\.imei \|\| credit\.deviceUid/);
   assert.match(routeSource, /recordFirmaSeguroImeiCorrectionReissue\(draftId, process\)/);
   assert.match(correctionSource, /reissueRequired: true as const/);

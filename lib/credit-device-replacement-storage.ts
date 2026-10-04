@@ -43,6 +43,7 @@ type ReplacementRow = {
   newImei: string;
   reason: string;
   status: CreditDeviceReplacementStatus;
+  source: string;
   requestedCreditUpdatedAt: Date | string;
   createdByUserId: number | null;
   createdByName: string;
@@ -171,6 +172,7 @@ export type CreditDeviceReplacementOverview = {
     createdAt: string;
     completedAt: string | null;
     analystName: string | null;
+    source: string;
   } | null;
 };
 
@@ -188,6 +190,7 @@ export class CreditDeviceReplacementError extends Error {
     | "REPLACEMENT_NOT_FOUND"
     | "REPLACEMENT_NOT_PENDING"
     | "ENROLLMENT_REQUIRED"
+    | "OPERATIONAL_SIGNATURE_REQUIRED"
     | "REPLACEMENT_CONCURRENT_CHANGE"
     | "REVIEW_INCONSISTENT"
     | "CASE_IDENTITY_CHANGED";
@@ -510,6 +513,17 @@ async function advisoryLocks(database: Database, keys: string[]) {
     );
   }
 }
+
+async function assertNoPendingOperationalSignature(database: Database, creditId: number) {
+  const table = await database.$queryRawUnsafe<Array<{ installed: string | null }>>(
+    `SELECT to_regclass('public."ApprovalOperationalContractVersion"')::text AS installed`);
+  if (!table[0]?.installed) return;
+  const rows = await database.$queryRawUnsafe<Array<{ id: string }>>(
+    `SELECT "id"::text FROM "ApprovalOperationalContractVersion" WHERE "creditoId"=$1
+     AND "status" IN ('PREPARING','DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN') LIMIT 1`, creditId);
+  if (rows[0]) throw new CreditDeviceReplacementError("OPERATIONAL_SIGNATURE_REQUIRED",
+    "Hay una firma nueva en curso. Consulta su estado antes de cambiar el equipo nuevamente.");
+}
 const CREDIT_CONTEXT_SELECT = `
   credit."id" AS "creditId", credit."folio", credit."clienteNombre",
   credit."clienteDocumento", credit."imei" AS "creditImei",
@@ -528,7 +542,7 @@ const CREDIT_CONTEXT_SELECT = `
 const REPLACEMENT_SELECT = `
   replacement."id"::text, replacement."creditId", replacement."solicitudId",
   replacement."previousImei", replacement."newImei", replacement."reason",
-  replacement."status", replacement."requestedCreditUpdatedAt",
+  replacement."status", replacement."source", replacement."requestedCreditUpdatedAt",
   replacement."createdByUserId", replacement."createdByName",
   replacement."createdByUsername", replacement."correlationId"::text,
   replacement."completedByUserId", replacement."completedByName",
@@ -769,6 +783,8 @@ async function applyApprovedReplacement(
     );
   }
 
+  await assertNoPendingOperationalSignature(database, input.row.creditId);
+
   await assertImeiAvailable(database, {
     imei: input.row.newImei,
     creditId: input.row.creditId,
@@ -897,6 +913,7 @@ export async function getCreditDeviceReplacementOverview(
           createdAt: toIso(row.createdAt),
           completedAt: row.completedAt ? toIso(row.completedAt) : null,
           analystName: row.reviewAnalystName || null,
+          source: row.source,
         }
       : null,
   };
@@ -907,6 +924,8 @@ export async function createCreditDeviceReplacement(input: {
   newImei: unknown;
   reason: unknown;
   actor: ReplacementActor;
+  source?: "APPROVAL_OPERATIONS";
+  onCreated?: (transaction: Prisma.TransactionClient, replacement: { id: string; previousImei: string; newImei: string }) => Promise<void>;
 }) {
   await ensureCreditDeviceReplacementSchema();
   const newImei = normalizeImei(input.newImei);
@@ -934,6 +953,7 @@ export async function createCreditDeviceReplacement(input: {
       );
     }
     assertEligibleCredit(credit);
+    await assertNoPendingOperationalSignature(transaction, input.creditId);
     const previousImei = normalizeImei(normalizedDigits(credit.creditImei));
     const previousDeviceUid = normalizeImei(
       normalizedDigits(credit.creditDeviceUid)
@@ -983,7 +1003,7 @@ export async function createCreditDeviceReplacement(input: {
         )
         VALUES (
           $1::uuid, $2, $3, $4, $5, $6, 'PENDING_ENROLLMENT', $7,
-          $8, $9, $10, 'ADMIN_PORTAL', $11::uuid,
+          $8, $9, $10, $12, $11::uuid,
           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
       `,
@@ -997,7 +1017,8 @@ export async function createCreditDeviceReplacement(input: {
       input.actor.userId,
       actorName,
       cleanText(input.actor.username, 120) || null,
-      correlationId
+      correlationId,
+      input.source || "ADMIN_PORTAL"
     );
     await insertEvent(transaction, {
       replacementId,
@@ -1017,6 +1038,7 @@ export async function createCreditDeviceReplacement(input: {
         newImeiHash: hashIphoneEnrollmentImei(newImei),
       },
     });
+    await input.onCreated?.(transaction, { id: replacementId, previousImei, newImei });
     return { id: replacementId, status: "PENDING_ENROLLMENT" as const };
   });
 }
@@ -1045,6 +1067,7 @@ async function replacementLockIdentity(
 export async function completeCreditDeviceReplacement(input: {
   creditId: number;
   actor: ReplacementActor;
+  onCompleted?: (transaction: Prisma.TransactionClient, replacement: { id: string; previousImei: string; newImei: string }) => Promise<void>;
 }) {
   await ensureCreditDeviceReplacementSchema();
   return prisma.$transaction(async (transaction) => {
@@ -1068,6 +1091,11 @@ export async function completeCreditDeviceReplacement(input: {
     ]);
     await lockSolicitudIdentityMutation(transaction, "imei", row.newImei);
     assertEligibleCredit(row);
+    await assertNoPendingOperationalSignature(transaction, input.creditId);
+    if (row.source === "APPROVAL_OPERATIONS" && !input.onCompleted) {
+      throw new CreditDeviceReplacementError("OPERATIONAL_SIGNATURE_REQUIRED",
+        "Este cambio requiere la reserva del nuevo contrato antes de aplicar el IMEI.");
+    }
     if (row.status !== "ENROLLMENT_APPROVED") {
       throw new CreditDeviceReplacementError(
         "ENROLLMENT_REQUIRED",
@@ -1093,6 +1121,7 @@ export async function completeCreditDeviceReplacement(input: {
       eventActorName: actorName,
       automatic: false,
     });
+    await input.onCompleted?.(transaction, { id: row.id, previousImei: row.previousImei, newImei: row.newImei });
     return { id: row.id, status: "COMPLETED" as const };
   });
 }
@@ -1370,6 +1399,9 @@ async function approveReplacementWith(
         "La aprobación existente no pudo verificarse."
       );
     }
+    if (row.source === "APPROVAL_OPERATIONS") {
+      return { review: serializeReview(existing, row.solicitudId), alreadyApproved: true };
+    }
     await applyApprovedReplacement(transaction, {
       row,
       review: existing,
@@ -1466,6 +1498,9 @@ async function approveReplacementWith(
       analystExternalId: cleanText(input.analyst.externalId, 120),
     },
   });
+  if (row.source === "APPROVAL_OPERATIONS") {
+    return { review: serializeReview(review, row.solicitudId), alreadyApproved: false };
+  }
   await applyApprovedReplacement(transaction, {
     row: { ...row, status: "ENROLLMENT_APPROVED" },
     review,
