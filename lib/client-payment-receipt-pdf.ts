@@ -24,6 +24,15 @@ export type ClientPaymentReceiptPdfInput = {
     extraordinaryPrincipal: number;
     additionalInterest: number;
     lateFee: number;
+    otherCharges?: number;
+    sourceType?: "CUOTA" | "CUOTAS" | "CAPITAL" | "MIXTO";
+    sourceComponents?: {
+      capital: number;
+      interes: number;
+      mora: number;
+      otros: number;
+      seguro: number;
+    };
   };
   creditClosed: boolean;
   settledAt?: Date | null;
@@ -100,14 +109,25 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
     throw new Error("El comprobante de capital requiere el resultado registrado de la operación.");
   }
   const audited = input.paymentType === "AUDITED_RECONCILIATION" ? input.auditedPayment : null;
+  const auditedSource = audited?.sourceComponents;
   if (input.paymentType === "AUDITED_RECONCILIATION" && (!audited ||
       !String(audited.document || "").trim() ||
       ![audited.ordinaryInstallment, audited.extraordinaryPrincipal,
-        audited.additionalInterest, audited.lateFee]
+        audited.additionalInterest, audited.lateFee, audited.otherCharges ?? 0]
         .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0 &&
           Math.round(value * 100) / 100 === value) ||
       Math.round((audited.ordinaryInstallment + audited.extraordinaryPrincipal +
-        audited.additionalInterest + audited.lateFee) * 100) !== Math.round(input.paymentAmount * 100))) {
+        audited.additionalInterest + audited.lateFee + (audited.otherCharges ?? 0)) * 100) !==
+        Math.round(input.paymentAmount * 100) ||
+      (auditedSource ? (
+        !["CUOTA", "CUOTAS", "CAPITAL", "MIXTO"].includes(String(audited.sourceType || "")) ||
+        ![auditedSource.capital, auditedSource.interes, auditedSource.mora,
+          auditedSource.otros, auditedSource.seguro]
+          .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0 &&
+            Math.round(value * 100) / 100 === value) ||
+        Math.round((auditedSource.capital + auditedSource.interes + auditedSource.mora +
+          auditedSource.otros + auditedSource.seguro) * 100) !== Math.round(input.paymentAmount * 100)
+      ) : audited.sourceType !== undefined))) {
     throw new Error("El comprobante conciliado requiere un desglose auditado que sume el recaudo.");
   }
   const pos = input.presentation?.format === "POS";
@@ -120,7 +140,11 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
   const blocks: ReceiptBlock[] = [
     { kind: "brand" },
     { kind: "rule", green: true },
-    { kind: "text", value: principal ? "ABONO A CAPITAL" : audited
+    { kind: "text", value: principal ? "ABONO A CAPITAL" : auditedSource
+      ? audited?.sourceType === "CAPITAL" ? "ABONO A CAPITAL CONCILIADO"
+        : audited?.sourceType === "MIXTO" ? "CUOTA Y ABONO A CAPITAL"
+        : audited?.sourceType === "CUOTAS" ? "CUOTAS CONCILIADAS" : "CUOTA CONCILIADA"
+      : audited
       ? audited.ordinaryInstallment > 0 && audited.extraordinaryPrincipal > 0
         ? "CUOTA Y ABONO A CAPITAL"
         : audited.extraordinaryPrincipal > 0 ? "ABONO A CAPITAL CONCILIADO" : "CUOTA CONCILIADA"
@@ -155,10 +179,19 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
     blocks.push(
       { kind: "rule" },
       { kind: "text", value: "DISTRIBUCIÓN AUDITADA", bold: true, size: baseSize, gap },
-      ...(audited.ordinaryInstallment > 0 ? [{ kind: "row" as const, label: "Cuota ordinaria", value: money(audited.ordinaryInstallment), bold: true }] : []),
-      ...(audited.extraordinaryPrincipal > 0 ? [{ kind: "row" as const, label: "Capital extraordinario", value: money(audited.extraordinaryPrincipal), bold: true }] : []),
-      ...(audited.additionalInterest > 0 ? [{ kind: "row" as const, label: "Interés adicional", value: money(audited.additionalInterest) }] : []),
-      ...(audited.lateFee > 0 ? [{ kind: "row" as const, label: "Mora", value: money(audited.lateFee) }] : []),
+      ...(auditedSource ? [
+        ...(auditedSource.capital > 0 ? [{ kind: "row" as const, label: "Capital", value: money(auditedSource.capital), bold: true }] : []),
+        ...(auditedSource.interes > 0 ? [{ kind: "row" as const, label: "Interés", value: money(auditedSource.interes) }] : []),
+        ...(auditedSource.mora > 0 ? [{ kind: "row" as const, label: "Mora", value: money(auditedSource.mora) }] : []),
+        ...(auditedSource.otros > 0 ? [{ kind: "row" as const, label: "Otros", value: money(auditedSource.otros) }] : []),
+        ...(auditedSource.seguro > 0 ? [{ kind: "row" as const, label: "Seguro", value: money(auditedSource.seguro) }] : []),
+      ] : [
+        ...(audited.ordinaryInstallment > 0 ? [{ kind: "row" as const, label: "Cuota ordinaria", value: money(audited.ordinaryInstallment), bold: true }] : []),
+        ...(audited.extraordinaryPrincipal > 0 ? [{ kind: "row" as const, label: "Capital extraordinario", value: money(audited.extraordinaryPrincipal), bold: true }] : []),
+        ...(audited.additionalInterest > 0 ? [{ kind: "row" as const, label: "Interés adicional", value: money(audited.additionalInterest) }] : []),
+        ...(audited.lateFee > 0 ? [{ kind: "row" as const, label: "Mora", value: money(audited.lateFee) }] : []),
+        ...((audited.otherCharges ?? 0) > 0 ? [{ kind: "row" as const, label: "Otros", value: money(audited.otherCharges ?? 0) }] : []),
+      ]),
       { kind: "row", label: "Recibo de origen", value: textValue(audited.document) },
     );
   }

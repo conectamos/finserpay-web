@@ -10,12 +10,23 @@ type StoredAudit = {
   snapshotAfter: unknown;
 };
 
+export type AuditedSourceComponents = {
+  capital: number;
+  interes: number;
+  mora: number;
+  otros: number;
+  seguro: number;
+};
+
 export type AuditedReceiptAllocation = {
   document: string;
   ordinaryInstallment: number;
   extraordinaryPrincipal: number;
   additionalInterest: number;
   lateFee: number;
+  otherCharges: number;
+  sourceComponents?: AuditedSourceComponents;
+  sourceType?: "CUOTA" | "CUOTAS" | "CAPITAL" | "MIXTO";
   isCutReceipt: boolean;
   isSourceReceipt: boolean;
   snapshotAfter: CapitalPlanSnapshot;
@@ -84,9 +95,30 @@ export function parseAuditedReceiptAllocation(
     const extraordinaryPrincipal = cents(row.extraordinaryPrincipal);
     const additionalInterest = cents(row.additionalInterest);
     const lateFee = cents(row.lateFee);
-    if (received !== ordinaryInstallment + extraordinaryPrincipal + additionalInterest + lateFee) fail();
+    const otherCharges = row.otherCharges === undefined ? 0 : cents(row.otherCharges);
+    if (received !== ordinaryInstallment + extraordinaryPrincipal +
+        additionalInterest + lateFee + otherCharges) fail();
+    let sourceComponents: AuditedSourceComponents | undefined;
+    let sourceType: AuditedReceiptAllocation["sourceType"];
+    if (row.sourceComponents !== undefined) {
+      sourceType = row.sourceType as AuditedReceiptAllocation["sourceType"];
+      if (sourceType !== "CUOTA" && sourceType !== "CUOTAS" &&
+          sourceType !== "CAPITAL" && sourceType !== "MIXTO") fail();
+      const components = record(row.sourceComponents);
+      const keys = ["capital", "interes", "mora", "otros", "seguro"] as const;
+      if (Object.keys(components).length !== keys.length ||
+          keys.some((key) => !Object.hasOwn(components, key))) fail();
+      const amounts = keys.map((key) => cents(components[key]));
+      if (received !== amounts.reduce((sum, amount) => sum + amount, 0)) fail();
+      sourceComponents = {
+        capital: amounts[0] / 100, interes: amounts[1] / 100,
+        mora: amounts[2] / 100, otros: amounts[3] / 100, seguro: amounts[4] / 100,
+      };
+    } else if (row.sourceType !== undefined) {
+      fail();
+    }
     return { document, date, received, ordinaryInstallment, extraordinaryPrincipal,
-      additionalInterest, lateFee };
+      additionalInterest, lateFee, otherCharges, sourceComponents, sourceType };
   });
   if (new Set(receipts.map((receipt) => receipt.document)).size !== receipts.length ||
       receipts.filter((receipt) => receipt.document === sourceReceipt).length !== 1 ||
@@ -129,6 +161,9 @@ export function parseAuditedReceiptAllocation(
     extraordinaryPrincipal: receipt.extraordinaryPrincipal / 100,
     additionalInterest: receipt.additionalInterest / 100,
     lateFee: receipt.lateFee / 100,
+    otherCharges: receipt.otherCharges / 100,
+    ...(receipt.sourceComponents ? { sourceComponents: receipt.sourceComponents,
+      sourceType: receipt.sourceType } : {}),
     isCutReceipt: index === receipts.length - 1,
     isSourceReceipt: receipt.document === sourceReceipt,
     snapshotAfter,

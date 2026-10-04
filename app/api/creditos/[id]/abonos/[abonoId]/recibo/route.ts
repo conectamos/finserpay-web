@@ -318,6 +318,9 @@ export async function GET(
         extraordinaryPrincipal: auditedReceipt.extraordinaryPrincipal,
         additionalInterest: auditedReceipt.additionalInterest,
         lateFee: auditedReceipt.lateFee,
+        otherCharges: auditedReceipt.otherCharges,
+        sourceType: auditedReceipt.sourceType,
+        sourceComponents: auditedReceipt.sourceComponents,
       } : undefined,
       principalPayment: principalQuote ? {
         capitalBefore: principalQuote.saldoCapitalAntes,
