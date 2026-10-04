@@ -187,12 +187,14 @@ function logFirmaSeguroDraftError(
     draftId,
     errorType: error instanceof Error ? error.name : "UnknownError",
     status:
+      error instanceof DraftDispatchError ||
       error instanceof CreditValidationError ||
       error instanceof FirmaSeguroApiError ||
       error instanceof FirmaSeguroImeiCorrectionError
         ? error.status
         : 500,
     code:
+      error instanceof DraftDispatchError ||
       error instanceof CreditValidationError ||
       error instanceof FirmaSeguroImeiCorrectionError
         ? error.code
