@@ -40,6 +40,21 @@ const statements = [
       "status" TEXT NOT NULL,
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
+  `CREATE TABLE IF NOT EXISTS "FirmaSeguroDraftDispatchReceipt" (
+      "dispatchId" UUID PRIMARY KEY REFERENCES "FirmaSeguroDraftDispatch"("id") ON DELETE RESTRICT,
+      "processUuid" TEXT NOT NULL UNIQUE CHECK (LENGTH(BTRIM("processUuid")) BETWEEN 1 AND 200),
+      "providerStatus" TEXT NOT NULL,
+      "createPayload" JSONB NOT NULL,
+      "source" TEXT NOT NULL CHECK ("source" IN ('send_response','provider_reconciliation')),
+      "actorUserId" INTEGER REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "actorName" TEXT,
+      "evidence" JSONB NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "FirmaSeguroDraftDispatchReceipt_evidence_check" CHECK
+        ("source" <> 'provider_reconciliation' OR
+          ("actorUserId" IS NOT NULL AND "actorName" IS NOT NULL AND LENGTH(BTRIM("actorName")) > 0
+            AND jsonb_typeof("evidence")='object' AND "evidence" <> '{}'::jsonb))
+    )`,
   `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_audit()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         IF TG_OP='INSERT' THEN
@@ -71,9 +86,25 @@ const statements = [
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_IMMUTABLE' USING ERRCODE='23514'; END IF;
         IF (OLD."status"='PREPARING' AND NEW."status" NOT IN ('PREPARING','DISPATCHING','FAILED_SAFE'))
           OR (OLD."status"='DISPATCHING' AND NEW."status" NOT IN ('DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN'))
-          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE','UNCERTAIN')
+          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE'))
+          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE')
             AND NEW."status" IS DISTINCT FROM OLD."status")
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_STATUS_INVALID' USING ERRCODE='23514'; END IF;
+        IF NEW."status"='AWAITING_SIGNATURE' AND OLD."status" IS DISTINCT FROM NEW."status"
+          AND NOT EXISTS (
+            SELECT 1 FROM "FirmaSeguroDraftDispatchReceipt" receipt
+            JOIN "FirmaSeguroProcess" process ON process."processUuid"=receipt."processUuid"
+            JOIN "CreditoBorrador" draft ON draft."id"=NEW."draftId"
+            WHERE receipt."dispatchId"=NEW."id" AND receipt."processUuid"=NEW."processUuid"
+              AND upper(receipt."providerStatus") !~
+                '(^|[^A-Z0-9])(ABORTADA|ABORTADO|ABORTED|ANULADA|ANULADO|CANCELADA|CANCELADO|CANCELED|CANCELLED|DECLINADA|DECLINADO|DECLINED|ERROR|EXPIRED|EXPIRADA|EXPIRADO|FAILED|FAILURE|RECHAZADA|RECHAZADO|REJECTED|REVOKED)([^A-Z0-9]|$)'
+              AND process."draftId"=NEW."draftId" AND process."creditoId" IS NULL
+              AND process."draftFolio"=NEW."draftFolio" AND process."draftPayload"=NEW."draftPayload"
+              AND process."supersededAt" IS NULL AND draft."estado"='ABIERTO'
+              AND draft."creditoId" IS NULL AND draft."payload"=NEW."updatedPayload"
+              AND draft."currentStep" IN (3,4)
+              AND COALESCE(draft."expiresAt",draft."createdAt"+INTERVAL '15 days')>CURRENT_TIMESTAMP
+          ) THEN RAISE EXCEPTION 'DRAFT_DISPATCH_RECEIPT_REQUIRED' USING ERRCODE='23514'; END IF;
         RETURN NEW;
       END $$`,
   `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatch_preserve"
@@ -86,6 +117,13 @@ const statements = [
   `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchEvent_immutable"
       BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchEvent"
       FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_event_immutable()`,
+  `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_receipt_immutable()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        RAISE EXCEPTION 'DRAFT_DISPATCH_RECEIPT_IMMUTABLE' USING ERRCODE='23514';
+      END $$`,
+  `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchReceipt_immutable"
+      BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchReceipt"
+      FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_receipt_immutable()`,
 ];
 
 const connectionString = String(process.env.DATABASE_URL || "").trim();

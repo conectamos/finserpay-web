@@ -25,6 +25,16 @@ export type DraftDispatchRow = {
   requestPayload: unknown; lastError: string | null;
 };
 
+export type DraftDispatchReceipt = {
+  dispatchId: string; processUuid: string; providerStatus: string; createPayload: unknown;
+  source: "send_response" | "provider_reconciliation";
+  actorUserId: number | null; actorName: string | null; evidence: unknown; createdAt: Date;
+};
+
+type ProviderAcknowledgement = {
+  processUuid: string; status: string; createPayload: unknown;
+};
+
 export class DraftDispatchError extends Error {
   constructor(readonly code: string, message: string, readonly status = 409) {
     super(message);
@@ -77,6 +87,21 @@ export function ensureDraftDispatchSchema() {
       "status" TEXT NOT NULL,
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
+    await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "FirmaSeguroDraftDispatchReceipt" (
+      "dispatchId" UUID PRIMARY KEY REFERENCES "FirmaSeguroDraftDispatch"("id") ON DELETE RESTRICT,
+      "processUuid" TEXT NOT NULL UNIQUE CHECK (LENGTH(BTRIM("processUuid")) BETWEEN 1 AND 200),
+      "providerStatus" TEXT NOT NULL,
+      "createPayload" JSONB NOT NULL,
+      "source" TEXT NOT NULL CHECK ("source" IN ('send_response','provider_reconciliation')),
+      "actorUserId" INTEGER REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "actorName" TEXT,
+      "evidence" JSONB NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "FirmaSeguroDraftDispatchReceipt_evidence_check" CHECK
+        ("source" <> 'provider_reconciliation' OR
+          ("actorUserId" IS NOT NULL AND "actorName" IS NOT NULL AND LENGTH(BTRIM("actorName")) > 0
+            AND jsonb_typeof("evidence")='object' AND "evidence" <> '{}'::jsonb))
+    )`);
     await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_audit()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         IF TG_OP='INSERT' THEN
@@ -108,9 +133,25 @@ export function ensureDraftDispatchSchema() {
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_IMMUTABLE' USING ERRCODE='23514'; END IF;
         IF (OLD."status"='PREPARING' AND NEW."status" NOT IN ('PREPARING','DISPATCHING','FAILED_SAFE'))
           OR (OLD."status"='DISPATCHING' AND NEW."status" NOT IN ('DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN'))
-          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE','UNCERTAIN')
+          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE'))
+          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE')
             AND NEW."status" IS DISTINCT FROM OLD."status")
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_STATUS_INVALID' USING ERRCODE='23514'; END IF;
+        IF NEW."status"='AWAITING_SIGNATURE' AND OLD."status" IS DISTINCT FROM NEW."status"
+          AND NOT EXISTS (
+            SELECT 1 FROM "FirmaSeguroDraftDispatchReceipt" receipt
+            JOIN "FirmaSeguroProcess" process ON process."processUuid"=receipt."processUuid"
+            JOIN "CreditoBorrador" draft ON draft."id"=NEW."draftId"
+            WHERE receipt."dispatchId"=NEW."id" AND receipt."processUuid"=NEW."processUuid"
+              AND upper(receipt."providerStatus") !~
+                '(^|[^A-Z0-9])(ABORTADA|ABORTADO|ABORTED|ANULADA|ANULADO|CANCELADA|CANCELADO|CANCELED|CANCELLED|DECLINADA|DECLINADO|DECLINED|ERROR|EXPIRED|EXPIRADA|EXPIRADO|FAILED|FAILURE|RECHAZADA|RECHAZADO|REJECTED|REVOKED)([^A-Z0-9]|$)'
+              AND process."draftId"=NEW."draftId" AND process."creditoId" IS NULL
+              AND process."draftFolio"=NEW."draftFolio" AND process."draftPayload"=NEW."draftPayload"
+              AND process."supersededAt" IS NULL AND draft."estado"='ABIERTO'
+              AND draft."creditoId" IS NULL AND draft."payload"=NEW."updatedPayload"
+              AND draft."currentStep" IN (3,4)
+              AND COALESCE(draft."expiresAt",draft."createdAt"+INTERVAL '15 days')>CURRENT_TIMESTAMP
+          ) THEN RAISE EXCEPTION 'DRAFT_DISPATCH_RECEIPT_REQUIRED' USING ERRCODE='23514'; END IF;
         RETURN NEW;
       END $$`);
     await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatch_preserve"
@@ -123,6 +164,13 @@ export function ensureDraftDispatchSchema() {
     await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchEvent_immutable"
       BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchEvent"
       FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_event_immutable()`);
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_receipt_immutable()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        RAISE EXCEPTION 'DRAFT_DISPATCH_RECEIPT_IMMUTABLE' USING ERRCODE='23514';
+      END $$`);
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchReceipt_immutable"
+      BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchReceipt"
+      FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_receipt_immutable()`);
   })().catch((error) => { setup = null; throw error; });
   return setup;
 }
@@ -135,6 +183,26 @@ export async function getDraftDispatch(id: string) {
   const rows = await prisma.$queryRawUnsafe<DraftDispatchRow[]>(
     `SELECT * FROM "FirmaSeguroDraftDispatch" WHERE "id"=$1::uuid`, id);
   return rows[0] || null;
+}
+
+async function readDispatchReceipt(column: "dispatchId" | "processUuid", value: string) {
+  const exists = await prisma.$queryRawUnsafe<Array<{ present: boolean }>>(
+    `SELECT to_regclass('public."FirmaSeguroDraftDispatchReceipt"') IS NOT NULL AS "present"`);
+  if (!exists[0]?.present) return null;
+  const rows = column === "dispatchId"
+    ? await prisma.$queryRawUnsafe<DraftDispatchReceipt[]>(
+      `SELECT * FROM "FirmaSeguroDraftDispatchReceipt" WHERE "dispatchId"=$1::uuid`, value)
+    : await prisma.$queryRawUnsafe<DraftDispatchReceipt[]>(
+      `SELECT * FROM "FirmaSeguroDraftDispatchReceipt" WHERE "processUuid"=$1`, value);
+  return rows[0] || null;
+}
+
+export async function getDraftDispatchReceipt(id: string) {
+  return UUID.test(id) ? readDispatchReceipt("dispatchId", id) : null;
+}
+
+export async function getDraftDispatchReceiptByProcessUuid(processUuid: string) {
+  return processUuid.trim() ? readDispatchReceipt("processUuid", processUuid.trim()) : null;
 }
 
 export async function getUnresolvedDraftDispatch(
@@ -227,6 +295,200 @@ export async function reserveDraftDispatch(input: {
   }, { timeout: 15000 });
 }
 
+function sanitizedReceiptJson(value: unknown) {
+  return JSON.parse(JSON.stringify(value ?? null, (key, item: unknown) => {
+    if (/token|password|authorization|secret/i.test(key)) return "[redacted]";
+    if (typeof item === "string" && /base64|string|document/i.test(key) && item.length > 500) {
+      return `[base64:${item.length}]`;
+    }
+    return item;
+  })) as unknown;
+}
+
+async function recordDispatchReceipt(input: {
+  dispatchId: string; acknowledgement: ProviderAcknowledgement;
+  source: DraftDispatchReceipt["source"];
+  actor?: { id: number; nombre: string }; evidence: Record<string, unknown>;
+}): Promise<DraftDispatchReceipt> {
+  const processUuid = input.acknowledgement.processUuid.trim();
+  if (!UUID.test(input.dispatchId) || !processUuid || processUuid.length > 200
+    || /[\u0000-\u001f\u007f]/.test(processUuid)) {
+    throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_INVALID", "La confirmación del proveedor no es válida.");
+  }
+  await ensureDraftDispatchSchema();
+  return prisma.$transaction(async (db) => {
+    const rows = await db.$queryRawUnsafe<DraftDispatchRow[]>(
+      `SELECT * FROM "FirmaSeguroDraftDispatch" WHERE "id"=$1::uuid FOR UPDATE`, input.dispatchId);
+    const row = rows[0];
+    if (!row) throw new DraftDispatchError("DRAFT_DISPATCH_NOT_FOUND", "Envío de firma no encontrado.", 404);
+    if (!["DISPATCHING", "UNCERTAIN", "AWAITING_SIGNATURE"].includes(row.status)
+      || (row.processUuid && row.processUuid !== processUuid)) {
+      throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT", "La confirmación no corresponde al envío reservado.");
+    }
+    const processOwners = await db.$queryRawUnsafe<Array<{ matches: boolean }>>(
+      `SELECT "draftId"=$2 AND "creditoId" IS NULL AND "draftFolio"=$3
+        AND "draftPayload"=$4::jsonb AS "matches"
+        FROM "FirmaSeguroProcess" WHERE "processUuid"=$1`,
+      processUuid, row.draftId, row.draftFolio, json(row.draftPayload));
+    if (processOwners.some((process) => process.matches !== true)) {
+      throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT", "El proceso del proveedor pertenece a otro expediente.");
+    }
+    const existing = await db.$queryRawUnsafe<DraftDispatchReceipt[]>(
+      `SELECT * FROM "FirmaSeguroDraftDispatchReceipt"
+        WHERE "dispatchId"=$1::uuid OR "processUuid"=$2`, input.dispatchId, processUuid);
+    if (existing.length) {
+      if (existing.length !== 1 || existing[0].dispatchId !== row.id
+        || existing[0].processUuid !== processUuid) {
+        throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT", "El proveedor ya está vinculado a otra confirmación.");
+      }
+      // A later verified lookup can report a newer provider status. Reuse the
+      // original acknowledgement rather than rewriting its immutable evidence.
+      return existing[0];
+    }
+    const receipts = await db.$queryRawUnsafe<DraftDispatchReceipt[]>(
+      `INSERT INTO "FirmaSeguroDraftDispatchReceipt"
+        ("dispatchId","processUuid","providerStatus","createPayload","source","actorUserId","actorName","evidence")
+        VALUES ($1::uuid,$2,$3,$4::jsonb,$5,$6::integer,$7,$8::jsonb)
+        ON CONFLICT DO NOTHING RETURNING *`,
+      input.dispatchId, processUuid, String(input.acknowledgement.status || "CREATED"),
+      json(sanitizedReceiptJson(input.acknowledgement.createPayload)), input.source,
+      input.actor?.id ?? null, input.actor?.nombre.trim() ?? null, json(sanitizedReceiptJson(input.evidence)));
+    if (!receipts[0]) throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT",
+      "El proveedor ya está vinculado a otra confirmación.");
+    return receipts[0];
+  }, { timeout: 15000 });
+}
+
+/** Internal server API: callers must first verify the provider's process, operation
+ * tag/document and recipient against the frozen dispatch. Never expose as a raw
+ * process-UUID mutation endpoint. Evidence records that completed verification. */
+export async function recordVerifiedDraftDispatchReceipt(input: {
+  dispatchId: string; processUuid: string; providerStatus: string; createPayload: unknown;
+  actor: { id: number; nombre: string }; evidence: Record<string, unknown>;
+}) {
+  if (!Number.isSafeInteger(input.actor?.id) || input.actor.id < 1
+    || !input.actor.nombre?.trim() || !input.evidence || typeof input.evidence !== "object"
+    || Array.isArray(input.evidence) || Object.keys(input.evidence).length === 0) {
+    throw new DraftDispatchError("DRAFT_DISPATCH_VERIFICATION_REQUIRED",
+      "La conciliación requiere un responsable y evidencia verificada del proveedor.");
+  }
+  return recordDispatchReceipt({
+    dispatchId: input.dispatchId, source: "provider_reconciliation", actor: input.actor,
+    evidence: input.evidence, acknowledgement: {
+      processUuid: input.processUuid, status: input.providerStatus, createPayload: input.createPayload,
+    },
+  });
+}
+
+/** Materialize a durable provider acknowledgement. This function never sends a contract. */
+export async function finalizeDraftDispatch(id: string): Promise<DraftDispatchRow> {
+  const initial = await getDraftDispatch(id);
+  if (!initial) throw new DraftDispatchError("DRAFT_DISPATCH_NOT_FOUND", "Envío de firma no encontrado.", 404);
+  if (["AWAITING_SIGNATURE", "FAILED_SAFE"].includes(initial.status)) return initial;
+  if (!await getDraftDispatchReceipt(id)) throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_REQUIRED",
+    "El envío requiere evidencia del proveedor antes de conciliarse.");
+  const veriffRequired = getDataCreditoPublicConfig().enabled || isVeriffRequired();
+  if (veriffRequired) await ensureVeriffSchema();
+  return prisma.$transaction(async (db) => {
+    await lockSolicitudOperationMutation(db, initial.draftId);
+    const dispatches = await db.$queryRawUnsafe<DraftDispatchRow[]>(
+      `SELECT * FROM "FirmaSeguroDraftDispatch" WHERE "id"=$1::uuid FOR UPDATE`, id);
+    const row = dispatches[0];
+    if (!row) throw new DraftDispatchError("DRAFT_DISPATCH_NOT_FOUND", "Envío de firma no encontrado.", 404);
+    if (["AWAITING_SIGNATURE", "FAILED_SAFE"].includes(row.status)) return row;
+    const receipts = await db.$queryRawUnsafe<DraftDispatchReceipt[]>(
+      `SELECT * FROM "FirmaSeguroDraftDispatchReceipt" WHERE "dispatchId"=$1::uuid`, id);
+    const receipt = receipts[0];
+    if (!receipt || !["DISPATCHING", "UNCERTAIN"].includes(row.status)
+      || (row.processUuid && row.processUuid !== receipt.processUuid)) {
+      throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT", "La confirmación no corresponde al envío reservado.");
+    }
+    const drafts = await db.$queryRawUnsafe<Array<{ samePayload: boolean }>>(
+      `SELECT "payload"=$2::jsonb AS "samePayload" FROM "CreditoBorrador"
+        WHERE "id"=$1 AND "estado"='ABIERTO' AND "creditoId" IS NULL
+          AND "currentStep" IN (3,4)
+          AND COALESCE("expiresAt","createdAt"+INTERVAL '15 days')>CURRENT_TIMESTAMP FOR UPDATE`,
+      row.draftId, json(row.updatedPayload));
+    let stillCurrent = Boolean(drafts[0]?.samePayload);
+    if (stillCurrent && veriffRequired) {
+      const payload = row.updatedPayload as Record<string, unknown>;
+      const validationId = Number(payload.veriffValidationId || 0);
+      const latest = await db.$queryRawUnsafe<VeriffValidationRow[]>(
+        `SELECT * FROM "VeriffIdentityValidation" WHERE "draftId"=$1 AND "creditoId" IS NULL
+          ORDER BY "id" DESC LIMIT 1 FOR SHARE`, row.draftId);
+      const validation = latest[0];
+      const document = String(payload.clienteDocumento || "").replace(/\D/g, "");
+      stillCurrent = Boolean(Number.isInteger(validationId) && validationId > 0
+        && validation?.id === validationId && isVeriffApproved(validation)
+        && document && String(validation.clienteDocumento || "").replace(/\D/g, "") === document);
+    }
+    const providerStatus = String(receipt.providerStatus || "CREATED");
+    const providerFailed = isFirmaSeguroFailedStatus(providerStatus);
+    const storedStatus = providerFailed ? providerStatus
+      : isFirmaSeguroCompletedStatus(providerStatus) ? "CREATED" : providerStatus;
+    const processes = await db.$queryRawUnsafe<Array<FirmaSeguroProcessRow & { matches: boolean }>>(
+      `SELECT *, "draftId"=$2 AND "creditoId" IS NULL AND "draftFolio"=$3
+        AND "draftPayload"=$4::jsonb AS "matches" FROM "FirmaSeguroProcess"
+        WHERE "processUuid"=$1 FOR UPDATE`, receipt.processUuid, row.draftId, row.draftFolio, json(row.draftPayload));
+    const existing = processes[0];
+    if (existing && (existing.matches !== true || (stillCurrent && existing.supersededAt))) {
+      throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT", "El proceso confirmado pertenece a otro expediente o ya fue reemplazado.");
+    }
+    const active = await db.$queryRawUnsafe<Array<{ processUuid: string }>>(
+      `SELECT "processUuid" FROM "FirmaSeguroProcess" WHERE "draftId"=$1
+        AND "creditoId" IS NULL AND "supersededAt" IS NULL AND "processUuid"<>$2`, row.draftId, receipt.processUuid);
+    if (active.length) throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT",
+      "El expediente ya tiene otro proceso de firma vigente.");
+    if (!existing) {
+      await db.$executeRawUnsafe(`INSERT INTO "FirmaSeguroProcess"
+        ("draftId","draftFolio","draftPayload","processUuid","status","requestPayload","createPayload",
+         "supersededAt","supersededByUserId","supersededReason")
+        VALUES ($1,$2,$3::jsonb,$4,$5,$6::jsonb,$7::jsonb,
+          CASE WHEN $8::boolean THEN NULL ELSE CURRENT_TIMESTAMP END,
+          CASE WHEN $8::boolean THEN NULL ELSE $9::integer END,
+          CASE WHEN $8::boolean THEN NULL ELSE 'La solicitud cambió durante el envío' END)`,
+        row.draftId, row.draftFolio, json(row.draftPayload), receipt.processUuid,
+        storedStatus, json(row.requestPayload), json(receipt.createPayload), stillCurrent, row.actorUserId);
+    } else if (!stillCurrent && !existing.supersededAt) {
+      await db.$executeRawUnsafe(`UPDATE "FirmaSeguroProcess" SET "supersededAt"=CURRENT_TIMESTAMP,
+        "supersededByUserId"=$2::integer,"supersededReason"='La solicitud cambió durante el envío'
+        WHERE "processUuid"=$1 AND "supersededAt" IS NULL`, receipt.processUuid, row.actorUserId);
+    }
+    const result = await db.$queryRawUnsafe<DraftDispatchRow[]>(`UPDATE "FirmaSeguroDraftDispatch"
+      SET "status"=CASE WHEN $3::boolean AND NOT $4::boolean THEN 'AWAITING_SIGNATURE' ELSE 'UNCERTAIN' END,
+        "processUuid"=$2,"acknowledgedAt"=COALESCE("acknowledgedAt",$5::timestamp),
+        "lastError"=CASE WHEN $4::boolean THEN 'FirmaSeguro devolvió un estado terminal de fallo'
+          WHEN $3::boolean THEN NULL ELSE 'La solicitud cambió durante el envío' END,
+        "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid AND "status" IN ('DISPATCHING','UNCERTAIN') RETURNING *`,
+      id, receipt.processUuid, stillCurrent, providerFailed, receipt.createdAt);
+    if (stillCurrent && !providerFailed) {
+      await db.$executeRawUnsafe(`UPDATE "CreditoBorrador"
+        SET "payload"="payload"-'firmaSeguroContactCorrectionPending',"updatedAt"=CURRENT_TIMESTAMP
+        WHERE "id"=$1 AND "payload"=$2::jsonb AND "payload"->>'firmaSeguroContactCorrectionPending'='true'`,
+        row.draftId, json(row.updatedPayload));
+    }
+    return result[0];
+  }, { timeout: 15000 });
+}
+
+function dispatchFailureSummary(error: unknown, stage: string) {
+  const detail = error instanceof Error ? error.message : "Error desconocido";
+  const code = error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN";
+  return `${stage} [${code}]: ${detail}`.slice(0, 500);
+}
+
+async function markDispatchUncertain(id: string, error: unknown, stage: string, acknowledgement?: ProviderAcknowledgement) {
+  // An acknowledged UUID survives even if the receipt INSERT failed. It is only a
+  // recovery locator: a receipt is still mandatory before materialization.
+  await prisma.$executeRawUnsafe(`UPDATE "FirmaSeguroDraftDispatch"
+    SET "status"='UNCERTAIN',"lastError"=$2,
+      "processUuid"=COALESCE("processUuid",$3::text),
+      "acknowledgedAt"=CASE WHEN $3::text IS NULL THEN "acknowledgedAt"
+        ELSE COALESCE("acknowledgedAt",CURRENT_TIMESTAMP) END,"updatedAt"=CURRENT_TIMESTAMP
+    WHERE "id"=$1::uuid AND "status" IN ('DISPATCHING','UNCERTAIN')`,
+    id, dispatchFailureSummary(error, stage), acknowledgement?.processUuid || null).catch(() => undefined);
+}
+
 export async function dispatchReservedDraft(id: string) {
   const row = await getDraftDispatch(id);
   if (!row) throw new DraftDispatchError("DRAFT_DISPATCH_NOT_FOUND", "Envío de firma no encontrado.", 404);
@@ -306,52 +568,26 @@ export async function dispatchReservedDraft(id: string) {
   }
   try {
     const acknowledged = await prepared.sendOnce();
-    await prisma.$transaction(async (db) => {
-      await lockSolicitudOperationMutation(db, row.draftId);
-      const dispatch = await db.$queryRawUnsafe<DraftDispatchRow[]>(
-        `SELECT * FROM "FirmaSeguroDraftDispatch" WHERE "id"=$1::uuid FOR UPDATE`, id);
-      if (dispatch[0]?.status !== "DISPATCHING") throw new Error("DRAFT_DISPATCH_STATE_CHANGED");
-      const drafts = await db.$queryRawUnsafe<Array<{ samePayload: boolean }>>(
-        `SELECT "payload"=$2::jsonb AS "samePayload" FROM "CreditoBorrador"
-          WHERE "id"=$1 AND "estado"='ABIERTO' AND "creditoId" IS NULL FOR UPDATE`,
-        row.draftId, json(row.updatedPayload));
-      const stillCurrent = Boolean(drafts[0]?.samePayload);
-      const providerStatus = String(acknowledged.status || "CREATED");
-      const providerFailed = isFirmaSeguroFailedStatus(providerStatus);
-      const storedStatus = providerFailed ? providerStatus
-        : isFirmaSeguroCompletedStatus(providerStatus) ? "CREATED" : providerStatus;
-      await db.$executeRawUnsafe(`INSERT INTO "FirmaSeguroProcess"
-        ("draftId","draftFolio","draftPayload","processUuid","status","requestPayload","createPayload",
-         "supersededAt","supersededByUserId","supersededReason")
-        VALUES ($1,$2,$3::jsonb,$4,$5,$6::jsonb,$7::jsonb,
-          CASE WHEN $8::boolean THEN NULL ELSE CURRENT_TIMESTAMP END,
-          CASE WHEN $8::boolean THEN NULL ELSE $9 END,
-          CASE WHEN $8::boolean THEN NULL ELSE 'La solicitud cambió durante el envío' END)`,
-        row.draftId, row.draftFolio, json(row.draftPayload), acknowledged.processUuid,
-        storedStatus, json(prepared.requestPayload), json(acknowledged.createPayload), stillCurrent, row.actorUserId);
-      await db.$executeRawUnsafe(`UPDATE "FirmaSeguroDraftDispatch"
-        SET "status"=CASE WHEN $3::boolean AND NOT $4::boolean THEN 'AWAITING_SIGNATURE' ELSE 'UNCERTAIN' END,
-          "processUuid"=$2,"acknowledgedAt"=CURRENT_TIMESTAMP,
-          "lastError"=CASE WHEN $4::boolean THEN 'FirmaSeguro devolvió un estado terminal de fallo'
-            WHEN $3::boolean THEN NULL ELSE 'La solicitud cambió durante el envío' END,
-          "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid AND "status"='DISPATCHING'`,
-        id, acknowledged.processUuid, stillCurrent, providerFailed);
-      if (stillCurrent && !providerFailed) {
-        await db.$executeRawUnsafe(`UPDATE "CreditoBorrador"
-          SET "payload"="payload"-'firmaSeguroContactCorrectionPending',
-            "updatedAt"=CURRENT_TIMESTAMP
-          WHERE "id"=$1 AND "payload"=$2::jsonb
-            AND "payload"->>'firmaSeguroContactCorrectionPending'='true'`,
-          row.draftId, json(row.updatedPayload));
-      }
-    }, { timeout: 15000 });
-    return (await getDraftDispatch(id))!;
+    try {
+      // This independent commit survives any failure creating FirmaSeguroProcess.
+      await recordDispatchReceipt({ dispatchId: id, acknowledgement: acknowledged,
+        source: "send_response", evidence: { operationId: id } });
+    } catch (error) {
+      await markDispatchUncertain(id, error, "receipt_persistence", acknowledged);
+      throw new DraftDispatchError("DRAFT_DISPATCH_ACK_PERSISTENCE_FAILED",
+        "FirmaSeguro confirmó el envío, pero no se guardó su comprobante. Requiere conciliación; no vuelvas a enviarlo.");
+    }
   } catch (error) {
-    await prisma.$executeRawUnsafe(`UPDATE "FirmaSeguroDraftDispatch"
-      SET "status"='UNCERTAIN',"lastError"=$2,"updatedAt"=CURRENT_TIMESTAMP
-      WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, id,
-      error instanceof Error ? error.message.slice(0, 500) : "Resultado del proveedor incierto").catch(() => undefined);
+    if (error instanceof DraftDispatchError && error.code === "DRAFT_DISPATCH_ACK_PERSISTENCE_FAILED") throw error;
+    await markDispatchUncertain(id, error, "provider_dispatch");
     throw new DraftDispatchError("DRAFT_DISPATCH_UNCERTAIN",
       "No se confirmó el resultado del envío. Requiere conciliación antes de intentar de nuevo.");
+  }
+  try {
+    return await finalizeDraftDispatch(id);
+  } catch (error) {
+    await markDispatchUncertain(id, error, "acknowledgement_materialization");
+    throw new DraftDispatchError("DRAFT_DISPATCH_PERSISTENCE_FAILED",
+      "FirmaSeguro confirmó el envío y su comprobante está guardado. Actualiza el estado para completar la conciliación.");
   }
 }

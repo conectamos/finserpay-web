@@ -45,7 +45,7 @@ test("predeploy matches both runtime schemas and packages their installers", () 
   assert.deepEqual(draft,
     statementsInRuntime("lib/firmaseguro-draft-dispatch-ledger.ts", "ensureDraftDispatchSchema"));
   assert.equal(operational.length, 18);
-  assert.equal(draft.length, 10);
+  assert.equal(draft.length, 13);
   for (const statement of [...operational, ...draft]) {
     assert.doesNotMatch(statement, /\b(?:DROP TABLE|TRUNCATE)\b/i);
   }

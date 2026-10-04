@@ -10,6 +10,10 @@ import {
   serializeFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
 import { updateFirmaSeguroProcess } from "@/lib/firmaseguro-storage";
+import {
+  finalizeDraftDispatch,
+  getDraftDispatchReceiptByProcessUuid,
+} from "@/lib/firmaseguro-draft-dispatch-ledger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +59,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const current = await getFirmaSeguroProcessForCallback(processUuid);
+    let current = await getFirmaSeguroProcessForCallback(processUuid);
+    if (!current) {
+      const receipt = await getDraftDispatchReceiptByProcessUuid(processUuid);
+      if (receipt) {
+        await finalizeDraftDispatch(receipt.dispatchId);
+        current = await getFirmaSeguroProcessForCallback(processUuid);
+      }
+    }
     if (!current) {
       return NextResponse.json(
         { ok: false, error: "Proceso FirmaSeguro no encontrado" },

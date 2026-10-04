@@ -71,7 +71,8 @@ import {
 } from "@/lib/firmaseguro-credit";
 import { buildFirmaSeguroCreditPdf } from "@/lib/firmaseguro-folio-pdf";
 import { buildFrozenDraftCorrection } from "@/lib/firmaseguro-draft-frozen";
-import { DraftDispatchError, dispatchReservedDraft, getDraftDispatch,
+import { DraftDispatchError, dispatchReservedDraft, finalizeDraftDispatch, getDraftDispatch,
+  getDraftDispatchReceipt,
   getUnresolvedDraftDispatch, reserveDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import {
   correctFirmaSeguroDraftImei,
@@ -848,6 +849,14 @@ function firmaSeguroErrorResponse(error: unknown) {
   return NextResponse.json({ ok: false, error: message }, { status: 500 });
 }
 
+// A confirmed provider response can be finalized without creating another contract.
+async function resumeAcknowledgedDraftDispatch(draftId: number) {
+  const pending = await getUnresolvedDraftDispatch(draftId);
+  if (pending && await getDraftDispatchReceipt(pending.id)) {
+    await finalizeDraftDispatch(pending.id);
+  }
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> }
@@ -874,6 +883,7 @@ export async function GET(
     }
 
 
+    await resumeAcknowledgedDraftDispatch(draftId);
     const current = await getLatestFirmaSeguroProcessForDraft(draftId);
     if (!current) {
       return NextResponse.json({ ok: true, process: null });
@@ -1093,7 +1103,9 @@ async function requestDraftSignatureCore(
         throw new DraftDispatchError("DRAFT_DISPATCH_IDEMPOTENCY_CONFLICT",
           "Esta confirmación corresponde a otra solicitud de firma.");
       }
-      const resumed = replay.status === "PREPARING" ? await dispatchReservedDraft(key) : replay;
+      const resumed = replay.status === "PREPARING"
+        ? await dispatchReservedDraft(key)
+        : await getDraftDispatchReceipt(key) ? await finalizeDraftDispatch(key) : replay;
       if (resumed.status !== "AWAITING_SIGNATURE" || !resumed.processUuid) {
         throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
           "El resultado del envío aún no está confirmado. Requiere conciliación antes de reenviar.");
@@ -1106,6 +1118,7 @@ async function requestDraftSignatureCore(
         process: serializeDraftFirmaSeguroProcess(process),
         message: "FirmaSeguro confirmó este envío anteriormente." });
     }
+    await resumeAcknowledgedDraftDispatch(draftId);
     if (await getUnresolvedDraftDispatch(draftId)) {
       throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
         "Existe un envío de firma sin resultado confirmado. Requiere conciliación antes de reenviar.");
