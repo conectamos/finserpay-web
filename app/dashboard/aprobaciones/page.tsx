@@ -41,8 +41,8 @@ export default async function AprobacionesPage() {
       {sharedContext !== undefined && <Card className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-4 border-[var(--fp-amber)] p-4 sm:mx-6 lg:mx-8">
         <div role="status"><p className="font-semibold">{sharedContext ? "Acceso compartido activo en este navegador" : "El acceso compartido venció o fue revocado"}</p>
           <p className="mt-1 text-sm text-[var(--fp-muted)]">{sharedContext
-            ? "Las revisiones se registrarán con el acceso compartido. Ciérralo para trabajar con tu cuenta personal."
-            : "Cierra ese acceso para continuar con tu cuenta personal."}</p></div>
+            ? "Las revisiones se registrarán con el acceso compartido. Cierra este acceso para abrir Detalle del crédito con tu cuenta personal."
+            : "Cierra este acceso para abrir Detalle del crédito con tu cuenta personal."}</p></div>
         <SharedLogout returnTo="/dashboard/aprobaciones" />
       </Card>}
       {canManageApprovalAnalysts(user) && <SharedAccessControl />}
