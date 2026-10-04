@@ -531,7 +531,7 @@ test("autosave, desistimiento y vencimiento comparten el lock de operacion", asy
   assert.match(firmaStorage, /tryAcquireSolicitudOperationLock/);
   assert.match(
     firmaStorage,
-    /tryAcquireFirmaSeguroDraftDispatchLock[\s\S]{0,120}tryAcquireSolicitudOperationLock/
+    /tryAcquireFirmaSeguroDraftDispatchLock[\s\S]{0,180}tryAcquireSolicitudSessionLock\(draftId, FIRMASEGURO_DISPATCH_LOCK_NAMESPACE\)/
   );
   assert.match(firmaStorage, /pg_advisory_xact_lock/);
   assert.match(

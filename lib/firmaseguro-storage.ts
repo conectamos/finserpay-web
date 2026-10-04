@@ -59,6 +59,9 @@ let firmaSeguroSchemaPromise: Promise<void> | null = null;
 export const SOLICITUD_OPERATION_LOCK_NAMESPACE = 1_179_865_177;
 export const FIRMASEGURO_DRAFT_LOCK_NAMESPACE =
   SOLICITUD_OPERATION_LOCK_NAMESPACE;
+// Dispatch owns a separate session lock: its ledger transactions acquire the
+// operation lock on other connections and must not wait on their own request.
+export const FIRMASEGURO_DISPATCH_LOCK_NAMESPACE = 1_179_865_178;
 
 function assertSolicitudOperationLockId(draftId: number) {
   if (!Number.isSafeInteger(draftId) || draftId <= 0 || draftId > 2_147_483_647) {
@@ -472,7 +475,10 @@ export async function getLatestFirmaSeguroProcessByDraft(draftId: number) {
   return rows[0] || null;
 }
 
-export async function tryAcquireSolicitudOperationLock(draftId: number) {
+async function tryAcquireSolicitudSessionLock(
+  draftId: number,
+  namespace: number
+) {
   assertSolicitudOperationLockId(draftId);
 
   const client = new Client({
@@ -488,7 +494,7 @@ export async function tryAcquireSolicitudOperationLock(draftId: number) {
     connected = true;
     const result = await client.query<{ acquired: boolean }>(
       `SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired`,
-      [SOLICITUD_OPERATION_LOCK_NAMESPACE, draftId]
+      [namespace, draftId]
     );
     acquired = result.rows[0]?.acquired === true;
     if (!acquired) {
@@ -509,7 +515,7 @@ export async function tryAcquireSolicitudOperationLock(draftId: number) {
         if (acquired) {
           await client.query(
             `SELECT pg_advisory_unlock($1::integer, $2::integer)`,
-            [SOLICITUD_OPERATION_LOCK_NAMESPACE, draftId]
+            [namespace, draftId]
           );
         }
       } catch (error) {
@@ -524,8 +530,12 @@ export async function tryAcquireSolicitudOperationLock(draftId: number) {
   };
 }
 
+export async function tryAcquireSolicitudOperationLock(draftId: number) {
+  return tryAcquireSolicitudSessionLock(draftId, SOLICITUD_OPERATION_LOCK_NAMESPACE);
+}
+
 export async function tryAcquireFirmaSeguroDraftDispatchLock(draftId: number) {
-  return tryAcquireSolicitudOperationLock(draftId);
+  return tryAcquireSolicitudSessionLock(draftId, FIRMASEGURO_DISPATCH_LOCK_NAMESPACE);
 }
 
 export async function getFirmaSeguroProcessByUuid(processUuid: string) {

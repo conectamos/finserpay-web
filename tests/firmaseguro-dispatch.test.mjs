@@ -18,6 +18,83 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
+async function loadSolicitudLockFunctions(Client, connectionString = "fixture") {
+  const source = await readProjectFile("lib/firmaseguro-storage.ts");
+  const mutationLocks = sourceBetween(
+    source,
+    "export const SOLICITUD_OPERATION_LOCK_NAMESPACE",
+    "function jsonValue"
+  );
+  const sessionStart = [
+    "async function tryAcquireSolicitudSessionLock",
+    "export async function tryAcquireSolicitudOperationLock",
+  ].map((marker) => source.indexOf(marker)).filter((index) => index >= 0);
+  assert.ok(sessionStart.length > 0, "No se encontraron los locks de sesión");
+  const sessionEnd = source.indexOf("export async function getFirmaSeguroProcessByUuid", Math.min(...sessionStart));
+  assert.ok(sessionEnd > Math.min(...sessionStart));
+  const sessionLocks = source.slice(Math.min(...sessionStart), sessionEnd);
+  const executable = stripTypeScriptTypes(
+    `${mutationLocks}\n${sessionLocks}`.replace(/^export /gm, "")
+  );
+  return runInNewContext(executable + `\n({
+    lockSolicitudOperationMutation,
+    tryAcquireSolicitudOperationLock,
+    tryAcquireFirmaSeguroDraftDispatchLock,
+  });`, {
+    Client,
+    console,
+    process: { env: { DATABASE_URL: connectionString } },
+  });
+}
+
+// Model PostgreSQL ownership: session and transaction advisory locks share keys,
+// and another connection cannot acquire a key until its owner releases it.
+function advisoryLockFixture() {
+  const owners = new Map();
+  const clients = [];
+  class Client {
+    constructor() {
+      this.ended = false;
+      this.endCalls = 0;
+      clients.push(this);
+    }
+    async connect() {}
+    async query(sql, values) {
+      assert.equal(this.ended, false, "No se debe usar una conexión cerrada");
+      const key = values.join(":");
+      const owner = owners.get(key);
+      if (sql.includes("pg_try_advisory_lock")) {
+        const acquired = !owner || owner === this;
+        if (acquired) owners.set(key, this);
+        return { rows: [{ acquired }] };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        assert.equal(owner, this, "Solo el dueño puede liberar el lock");
+        owners.delete(key);
+        return { rows: [{ pg_advisory_unlock: true }] };
+      }
+      assert.match(sql, /pg_advisory_xact_lock/);
+      if (owner && owner !== this) throw new Error("advisory lock blocked by another session");
+      owners.set(key, this);
+      return { rows: [{ locked: 1 }] };
+    }
+    async end() {
+      this.endCalls++;
+      this.ended = true;
+      for (const [key, owner] of owners) {
+        if (owner === this) owners.delete(key);
+      }
+    }
+  }
+  return { Client, owners, clients };
+}
+
+function transactionAdapter(client) {
+  return {
+    $queryRawUnsafe: async (sql, ...values) => (await client.query(sql, values)).rows,
+  };
+}
+
 test("el envío admite UUID generados y explícitos y rechaza formatos inválidos", async () => {
   const source = await readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts");
   const core = sourceBetween(source, "async function requestDraftSignatureCore", "export async function POST");
@@ -153,6 +230,106 @@ test("el bloqueo de despacho usa una sesion dedicada y una llave por borrador", 
     /SELECT 1::integer AS "locked"[\s\S]{0,100}FROM pg_advisory_xact_lock/
   );
   assert.match(storage, /FIRMASEGURO_DRAFT_LOCK_NAMESPACE/);
+});
+
+test("despacho y transacción avanzan sin bloquearse y conservan exclusión por solicitud", async () => {
+  const fixture = advisoryLockFixture();
+  const locks = await loadSolicitudLockFunctions(fixture.Client);
+  const held = [];
+  const transaction = new fixture.Client();
+  const blockedTransaction = new fixture.Client();
+  try {
+    const dispatch = await locks.tryAcquireFirmaSeguroDraftDispatchLock(41);
+    assert.ok(dispatch);
+    held.push(dispatch);
+    await locks.lockSolicitudOperationMutation(transactionAdapter(transaction), 41);
+
+    assert.equal(await locks.tryAcquireFirmaSeguroDraftDispatchLock(41), null);
+    const otherDraft = await locks.tryAcquireFirmaSeguroDraftDispatchLock(42);
+    assert.ok(otherDraft);
+    held.push(otherDraft);
+    assert.equal(await locks.tryAcquireSolicitudOperationLock(41), null);
+
+    await transaction.end();
+    const operation = await locks.tryAcquireSolicitudOperationLock(41);
+    assert.ok(operation);
+    held.push(operation);
+    await assert.rejects(
+      locks.lockSolicitudOperationMutation(transactionAdapter(blockedTransaction), 41),
+      /advisory lock blocked by another session/
+    );
+    await operation.release();
+    await operation.release();
+    await locks.lockSolicitudOperationMutation(transactionAdapter(blockedTransaction), 41);
+
+    await dispatch.release();
+    await dispatch.release();
+    const reacquired = await locks.tryAcquireFirmaSeguroDraftDispatchLock(41);
+    assert.ok(reacquired);
+    held.push(reacquired);
+  } finally {
+    for (const lock of held) await lock.release();
+    for (const client of fixture.clients) {
+      if (!client.ended) await client.end();
+      assert.equal(client.endCalls, 1, "Cada conexión debe cerrarse una sola vez");
+    }
+  }
+  assert.equal(fixture.owners.size, 0);
+});
+
+test("PostgreSQL permite reservar bajo el lock de despacho y mantiene los locks de operación", {
+  skip: !process.env.FIRMASEGURO_LOCK_TEST_DATABASE_URL,
+  timeout: 15_000,
+}, async () => {
+  const { Client } = await import("pg");
+  const connectionString = process.env.FIRMASEGURO_LOCK_TEST_DATABASE_URL;
+  const locks = await loadSolicitudLockFunctions(Client, connectionString);
+  const draftId = 1_000_000_000 + Number.parseInt(randomUUID().slice(0, 7), 16);
+  const transaction = new Client({ connectionString, connectionTimeoutMillis: 3000 });
+  const held = [];
+  try {
+    await transaction.connect();
+    const dispatch = await locks.tryAcquireFirmaSeguroDraftDispatchLock(draftId);
+    assert.ok(dispatch);
+    held.push(dispatch);
+    await transaction.query("BEGIN");
+    await transaction.query("SET LOCAL statement_timeout = '1000ms'");
+    await locks.lockSolicitudOperationMutation(transactionAdapter(transaction), draftId);
+
+    assert.equal(await locks.tryAcquireFirmaSeguroDraftDispatchLock(draftId), null);
+    const otherDraft = await locks.tryAcquireFirmaSeguroDraftDispatchLock(draftId + 1);
+    assert.ok(otherDraft);
+    held.push(otherDraft);
+    assert.equal(await locks.tryAcquireSolicitudOperationLock(draftId), null);
+    await transaction.query("ROLLBACK");
+
+    const operation = await locks.tryAcquireSolicitudOperationLock(draftId);
+    assert.ok(operation);
+    held.push(operation);
+    await transaction.query("BEGIN");
+    await transaction.query("SET LOCAL statement_timeout = '1000ms'");
+    await assert.rejects(
+      locks.lockSolicitudOperationMutation(transactionAdapter(transaction), draftId),
+      (error) => error.code === "57014"
+    );
+    await transaction.query("ROLLBACK");
+    await operation.release();
+    await operation.release();
+
+    await transaction.query("BEGIN");
+    await transaction.query("SET LOCAL statement_timeout = '1000ms'");
+    await locks.lockSolicitudOperationMutation(transactionAdapter(transaction), draftId);
+    await transaction.query("ROLLBACK");
+    await dispatch.release();
+    await dispatch.release();
+    const reacquired = await locks.tryAcquireFirmaSeguroDraftDispatchLock(draftId);
+    assert.ok(reacquired);
+    held.push(reacquired);
+  } finally {
+    await transaction.query("ROLLBACK").catch(() => undefined);
+    await transaction.end().catch(() => undefined);
+    for (const lock of held) await lock.release();
+  }
 });
 
 test("los errores previos al proveedor incluyen codigo y etapa trazables", async () => {
