@@ -55,6 +55,19 @@ const statements = [
           ("actorUserId" IS NOT NULL AND "actorName" IS NOT NULL AND LENGTH(BTRIM("actorName")) > 0
             AND jsonb_typeof("evidence")='object' AND "evidence" <> '{}'::jsonb))
     )`,
+  `CREATE TABLE IF NOT EXISTS "FirmaSeguroDraftDispatchReconciliation" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "dispatchId" UUID NOT NULL REFERENCES "FirmaSeguroDraftDispatch"("id") ON DELETE RESTRICT,
+      "processUuid" TEXT NOT NULL CHECK (LENGTH(BTRIM("processUuid")) BETWEEN 1 AND 200),
+      "providerStatus" TEXT NOT NULL,
+      "providerPayload" JSONB NOT NULL,
+      "actorUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "actorName" TEXT NOT NULL CHECK (LENGTH(BTRIM("actorName")) > 0),
+      "evidence" JSONB NOT NULL CHECK (jsonb_typeof("evidence")='object' AND "evidence" <> '{}'::jsonb),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+  `CREATE INDEX IF NOT EXISTS "FirmaSeguroDraftDispatchReconciliation_latest"
+      ON "FirmaSeguroDraftDispatchReconciliation"("dispatchId","id" DESC)`,
   `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_audit()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         IF TG_OP='INSERT' THEN
@@ -85,19 +98,44 @@ const statements = [
           OR (OLD."acknowledgedAt" IS NOT NULL AND NEW."acknowledgedAt" IS DISTINCT FROM OLD."acknowledgedAt")
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_IMMUTABLE' USING ERRCODE='23514'; END IF;
         IF (OLD."status"='PREPARING' AND NEW."status" NOT IN ('PREPARING','DISPATCHING','FAILED_SAFE'))
-          OR (OLD."status"='DISPATCHING' AND NEW."status" NOT IN ('DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN'))
-          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE'))
+          OR (OLD."status"='DISPATCHING' AND NEW."status" NOT IN ('DISPATCHING','AWAITING_SIGNATURE','FAILED_SAFE','UNCERTAIN'))
+          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE','FAILED_SAFE'))
           OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE')
             AND NEW."status" IS DISTINCT FROM OLD."status")
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_STATUS_INVALID' USING ERRCODE='23514'; END IF;
+        IF NEW."status"='FAILED_SAFE' AND OLD."status" IN ('DISPATCHING','UNCERTAIN')
+          AND NOT EXISTS (
+            SELECT 1 FROM "FirmaSeguroDraftDispatchReceipt" receipt
+            LEFT JOIN LATERAL (
+              SELECT reconciliation."providerStatus"
+              FROM "FirmaSeguroDraftDispatchReconciliation" reconciliation
+              WHERE reconciliation."dispatchId"=NEW."id"
+                AND reconciliation."processUuid"=receipt."processUuid"
+              ORDER BY reconciliation."id" DESC LIMIT 1
+            ) latest ON TRUE
+            WHERE receipt."dispatchId"=NEW."id" AND receipt."processUuid"=NEW."processUuid"
+              AND upper(btrim(COALESCE(latest."providerStatus",receipt."providerStatus"))) IN
+                ('ABORTADA','ABORTADO','ABORTED','ANULADA','ANULADO','CANCELADA','CANCELADO',
+                 'CANCELED','CANCELLED','DECLINADA','DECLINADO','DECLINED','EXPIRED','EXPIRADA',
+                 'EXPIRADO','RECHAZADA','RECHAZADO','REJECTED','REVOKED')
+          ) THEN RAISE EXCEPTION 'DRAFT_DISPATCH_TERMINAL_EVIDENCE_REQUIRED' USING ERRCODE='23514'; END IF;
         IF NEW."status"='AWAITING_SIGNATURE' AND OLD."status" IS DISTINCT FROM NEW."status"
           AND NOT EXISTS (
             SELECT 1 FROM "FirmaSeguroDraftDispatchReceipt" receipt
+            LEFT JOIN LATERAL (
+              SELECT reconciliation."providerStatus"
+              FROM "FirmaSeguroDraftDispatchReconciliation" reconciliation
+              WHERE reconciliation."dispatchId"=NEW."id"
+                AND reconciliation."processUuid"=receipt."processUuid"
+              ORDER BY reconciliation."id" DESC LIMIT 1
+            ) latest ON TRUE
             JOIN "FirmaSeguroProcess" process ON process."processUuid"=receipt."processUuid"
             JOIN "CreditoBorrador" draft ON draft."id"=NEW."draftId"
             WHERE receipt."dispatchId"=NEW."id" AND receipt."processUuid"=NEW."processUuid"
-              AND upper(receipt."providerStatus") !~
-                '(^|[^A-Z0-9])(ABORTADA|ABORTADO|ABORTED|ANULADA|ANULADO|CANCELADA|CANCELADO|CANCELED|CANCELLED|DECLINADA|DECLINADO|DECLINED|ERROR|EXPIRED|EXPIRADA|EXPIRADO|FAILED|FAILURE|RECHAZADA|RECHAZADO|REJECTED|REVOKED)([^A-Z0-9]|$)'
+              AND upper(COALESCE(latest."providerStatus",receipt."providerStatus")) ~
+                '(^|[^A-Z0-9])(CREATED|CREADO|PENDING|WAITING|SENT|IN_PROGRESS|IN_PROCESS|INITIATED|STARTED|AWAITING_SIGNATURE|PENDING_SIGNATURE|EN_PROCESO|ENVIADO|COMPLETED|COMPLETE|COMPLETADO|FINALIZED|FINALIZADO|FINISHED|SIGNED|FIRMADO|APROBADO|APROBADA|EXITOSO|EXITOSA|SUCCESS|SUCCESSFUL)([^A-Z0-9]|$)'
+              AND upper(COALESCE(latest."providerStatus",receipt."providerStatus")) !~
+                '(^|[^A-Z0-9])(NOT|NO|SIN|ABORTADA|ABORTADO|ABORTED|ANULADA|ANULADO|CANCELADA|CANCELADO|CANCELED|CANCELLED|DECLINADA|DECLINADO|DECLINED|ERROR|EXPIRED|EXPIRADA|EXPIRADO|FAILED|FAILURE|RECHAZADA|RECHAZADO|REJECTED|REVOKED)([^A-Z0-9]|$)'
               AND process."draftId"=NEW."draftId" AND process."creditoId" IS NULL
               AND process."draftFolio"=NEW."draftFolio" AND process."draftPayload"=NEW."draftPayload"
               AND process."supersededAt" IS NULL AND draft."estado"='ABIERTO'
@@ -124,6 +162,13 @@ const statements = [
   `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchReceipt_immutable"
       BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchReceipt"
       FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_receipt_immutable()`,
+  `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_reconciliation_immutable()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        RAISE EXCEPTION 'DRAFT_DISPATCH_RECONCILIATION_IMMUTABLE' USING ERRCODE='23514';
+      END $$`,
+  `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchReconciliation_immutable"
+      BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchReconciliation"
+      FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_reconciliation_immutable()`,
 ];
 
 const connectionString = String(process.env.DATABASE_URL || "").trim();

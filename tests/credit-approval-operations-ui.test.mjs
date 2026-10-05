@@ -428,3 +428,141 @@ test("FirmaSeguro permite corregir contacto y enviar una firma inicial sin antic
   assert.equal(requests[1].body.expectedProcessUuid, null);
   assert.equal(caseDetail.signature.status, "PENDING", "el envío no se presenta como firma aprobada");
 });
+
+test("una firma terminal fallida se redirige y reintenta con la misma idempotencia sin tocar el contacto ordinario", async () => {
+  const components = Object.fromEntries(["Badge", "Button", "Card", "Input", "LoadingState", "Select", "StatusPill"]
+    .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
+  const ConfirmDialog = () => null;
+  const node = (type, props) => ({ type, props });
+  const slots = [];
+  let cursor = 0;
+  const hooks = {
+    useState(initial) {
+      const index = cursor++;
+      slots[index] ||= { value: initial };
+      return [slots[index].value, value => { slots[index].value = typeof value === "function" ? value(slots[index].value) : value; }];
+    },
+    useRef(initial) { const index = cursor++; slots[index] ||= { current: initial }; return slots[index]; },
+    useEffect() { cursor++; },
+  };
+  const previousProcessUuid = "20000000-0000-4000-8000-000000000002";
+  const nextProcessUuid = "30000000-0000-4000-8000-000000000003";
+  const caseDetail = {
+    kind: "DRAFT", id: 22, number: "SOL-22", clientName: "Cliente pendiente", document: "1052962070",
+    phone: "3218928117", email: "cliente@example.com", status: "EN_FIRMA", equipment: "iPhone QA",
+    imei: "111111111111111", updatedAt: "2026-10-05T20:27:00Z", timeline: [],
+    signature: { status: "TECHNICAL_ERROR", rawStatus: null, processUuid: previousProcessUuid,
+      sentPhone: "3218928117", sentEmail: "cliente@example.com", sentAt: "2026-10-05T20:27:00Z", signedAt: null },
+    enrollmentReviewId: null, requiresEnrollmentReapproval: false, pendingVersion: null,
+    replacement: null, remission: null,
+    capabilities: { preSettlementApprovalCreditId: null, canChangeImei: false,
+      canDispatchSignatureWithImei: false, canFinalizeImei: false, canConfirmReplacement: false,
+      canUpdateContact: false, canSendSignature: false, canResendSignature: false,
+      canRedirectPendingSignature: true, pendingSignatureRedirectReason: null,
+      reason: null, signatureReason: null },
+  };
+  const requests = [];
+  let postAttempts = 0;
+  let uuidCalls = 0;
+  const response = (payload, ok = true) => ({ ok, json: async () => payload });
+  const compiled = ts.transpileModule(read("app/dashboard/aprobaciones/approval-operations.tsx"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const loaded = { exports: {} };
+  runInNewContext(compiled, {
+    module: loaded, exports: loaded.exports, AbortController, Intl, Date,
+    crypto: { randomUUID: () => { uuidCalls++; return "10000000-0000-4000-8000-000000000001"; } },
+    fetch: async (url, init) => {
+      if (url.startsWith("/api/aprobaciones/operativo?q=")) return response({ ok: true, items: [caseDetail] });
+      if (url === "/api/aprobaciones/operativo/draft/22" && (!init || !init.method))
+        return response({ ok: true, item: caseDetail });
+      if (url === "/api/aprobaciones/operativo/draft/22/firma/redireccion" && init?.method === "POST") {
+        const body = JSON.parse(init.body);
+        requests.push({ url, body });
+        postAttempts++;
+        if (postAttempts === 1) return response({ ok: false, error: "FirmaSeguro no respondió" }, false);
+        caseDetail.phone = body.phone;
+        caseDetail.signature = { ...caseDetail.signature, status: "PENDING", rawStatus: "CREATED", processUuid: nextProcessUuid,
+          sentPhone: body.phone, sentAt: "2026-10-05T20:30:00Z" };
+        return response({ ok: true, operation: { id: body.idempotencyKey, status: "AWAITING_SIGNATURE",
+          message: "Firma reenviada", processUuid: nextProcessUuid } });
+      }
+      if (url.endsWith("/contacto")) throw new Error("La redirección no debe usar PATCH contacto");
+      throw new Error("Unexpected request: " + url);
+    },
+    require(name) {
+      if (name === "react") return hooks;
+      if (name === "react/jsx-runtime") return { jsx: node, jsxs: node, Fragment: "fragment" };
+      if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
+      if (name === "@/app/_components/finser-ui") return components;
+      if (name === "@/app/_components/finser-confirm-dialog") return { default: ConfirmDialog };
+      if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
+      throw new Error("Unexpected import: " + name);
+    },
+  });
+  const render = () => { cursor = 0; return loaded.exports.default({}); };
+  const nodes = value => Array.isArray(value) ? value.flatMap(nodes) : !value || typeof value !== "object" ? [] :
+    [value, ...nodes(value.props?.children)];
+  const textOf = value => Array.isArray(value) ? value.map(textOf).join(" ") : typeof value === "string" ? value :
+    value && typeof value === "object" ? textOf(value.props?.children) : "";
+  const find = (tree, predicate) => nodes(tree).find(predicate);
+  const button = (tree, label) => find(tree, item => item.type === components.Button && textOf(item.props.children).includes(label));
+  const input = (tree, id) => find(tree, item => item.type === components.Input && item.props.id === id);
+
+  let tree = render();
+  input(tree, "approval-operations-search").props.onChange({ target: { value: "1052962070" } });
+  tree = render();
+  await find(tree, item => item.type === "form" && item.props.role === "search")
+    .props.onSubmit({ preventDefault() {} });
+  await setImmediate();
+  tree = render();
+  button(tree, "FirmaSeguro").props.onClick();
+  tree = render();
+  assert.equal(input(tree, "approval-signature-phone").props.readOnly, true);
+  assert.equal(input(tree, "approval-signature-email").props.readOnly, true);
+  assert.ok(button(tree, "Cambiar número y reenviar firma"));
+
+  button(tree, "Cambiar número y reenviar firma").props.onClick();
+  tree = render();
+  assert.equal(button(tree, "Cambiar número y reenviar firma").props.disabled, true,
+    "sin celular y motivo no se puede confirmar");
+  input(tree, "approval-signature-redirect-phone").props.onChange({ target: { value: "3218928117" } });
+  input(tree, "approval-signature-redirect-reason").props.onChange({ target: { value: "Número anterior sin WhatsApp" } });
+  tree = render();
+  assert.equal(button(tree, "Cambiar número y reenviar firma").props.disabled, true,
+    "el mismo celular del envío anterior no es un destino nuevo");
+  input(tree, "approval-signature-redirect-phone").props.onChange({ target: { value: "+57 311 987 6543" } });
+  tree = render();
+  assert.equal(button(tree, "Cambiar número y reenviar firma").props.disabled, false);
+  button(tree, "Cambiar número y reenviar firma").props.onClick();
+  tree = render();
+  let confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Cambiar número y reenviar firma");
+  assert.match(confirm.props.description, /3218928117/);
+  assert.match(confirm.props.description, /3119876543/);
+  assert.match(confirm.props.description, /conservará las mismas condiciones y valores/);
+  confirm.props.onConfirm();
+  confirm.props.onConfirm();
+  await setImmediate();
+  await setImmediate();
+  assert.equal(requests.length, 1, "un doble clic no inicia dos POST");
+  assert.deepEqual(requests[0].body, {
+    phone: "3119876543", reason: "Número anterior sin WhatsApp",
+    idempotencyKey: "10000000-0000-4000-8000-000000000001",
+    expectedProcessUuid: previousProcessUuid, confirmed: true,
+  });
+
+  tree = render();
+  button(tree, "Cambiar número y reenviar firma").props.onClick();
+  tree = render();
+  confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Cambiar número y reenviar firma");
+  confirm.props.onConfirm();
+  await setImmediate();
+  await setImmediate();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].body.idempotencyKey, requests[0].body.idempotencyKey,
+    "el retry de red conserva la misma clave idempotente");
+  assert.equal(uuidCalls, 1);
+  assert.equal(caseDetail.signature.processUuid, nextProcessUuid);
+  assert.equal(caseDetail.signature.sentPhone, "3119876543");
+  assert.equal(caseDetail.signature.status, "PENDING", "el reenvío no anticipa una firma completada");
+});

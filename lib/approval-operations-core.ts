@@ -65,6 +65,16 @@ export function isVerifiedTerminalSignatureFailure(status: unknown) {
   ]).has(normalized);
 }
 
+/** Only explicit provider states that mean an unsigned request is still in progress. */
+export function isVerifiedPendingSignatureStatus(status: unknown) {
+  const normalized = String(status ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return new Set([
+    "CREATED", "CREADO", "PENDING", "WAITING", "SENT", "IN_PROGRESS", "IN_PROCESS",
+    "INITIATED", "STARTED", "AWAITING_SIGNATURE", "PENDING_SIGNATURE", "EN_PROCESO", "ENVIADO",
+    "PROCESS_CREATED", "PROCESS_PENDING", "PROCESS_WAITING", "PROCESS_SENT",
+  ]).has(normalized);
+}
 export function isVerifiedTerminalOperationalRetry(version: {
   status: string; newProcessUuid: string | null; lastCheckedAt: Date | null;
 } | null, process: {

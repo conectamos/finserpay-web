@@ -176,6 +176,60 @@ test("FirmaSeguro separa el canal de firma de los canales de notificacion", asyn
   }
 });
 
+test("el preparador admite WhatsApp histórico sin correo y falla cerrado si correo es obligatorio", async () => {
+  const source = await readProjectFile("lib/firmaseguro-credit.ts");
+  const identity = sourceBetween(source, "function cleanText", "async function downloadFirmaSeguroSignedDocument");
+  const delivery = sourceBetween(source, "function getSignerEmail", "function optionalText");
+  const preparation = source.slice(source.indexOf("export async function prepareFirmaSeguroReissue("),
+    source.indexOf("export async function createFirmaSeguroProcessForCredit(",
+      source.indexOf("export async function prepareFirmaSeguroReissue(")))
+    .replace("export async function prepareFirmaSeguroReissue", "async function prepareFirmaSeguroReissue");
+  let notifyByEmail = false;
+  let signIns = 0;
+  let observed = null;
+  const config = () => ({ email: "remitente@firma.test", notifyByEmail,
+    notifyByWhatsApp: true, authMethodId: 2, nit: null, useCompanyEndpoint: false });
+  const prepare = runInNewContext(
+    stripTypeScriptTypes(`${identity}\n${delivery}\n${preparation}`) + "\nprepareFirmaSeguroReissue;",
+    {
+      Buffer,
+      process: { env: { FIRMASEGURO_DELIVERY_CHANNEL: "whatsapp" } },
+      isFirmaSeguroConfigured: () => true,
+      buildFirmaSeguroCallbackUrl: () => "https://finserpay.test/api/firmaseguro/callback",
+      getFirmaSeguroConfig: config,
+      firmaSeguroSignIn: async () => { signIns++; return { token: "token" }; },
+      resolveFirmaSeguroDeliveryAuth: async (_token, value) => value,
+      buildCreateFullByCompanyPayload: () => { throw new Error("company endpoint inesperado"); },
+      buildCreateFullPayload: (credit, person, _pdf, _callback, channels) => {
+        observed = { credit, person, channels };
+        return { tags: [], signatures: [] };
+      },
+      firmaSeguroCreateFullByCompany: async () => { throw new Error("envío inesperado"); },
+      firmaSeguroCreateFull: async () => { throw new Error("sendOnce no debe ejecutarse"); },
+      extractFirmaSeguroUuid: () => null,
+      extractFirmaSeguroStatus: () => null,
+    }
+  );
+  const credit = { folio: "SOL-HISTORICA", clienteNombre: "Cliente Historico",
+    clientePrimerNombre: "Cliente", clientePrimerApellido: "Historico",
+    clienteDocumento: "1000000001", clienteTelefono: "3218928117", clienteCorreo: "" };
+  const prepared = await prepare(credit, Buffer.from("%PDF-1.7\nphone only\n%%EOF"), randomUUID());
+  assert.ok(prepared.requestPayload);
+  assert.equal(signIns, 1);
+  assert.equal(observed.person.email, null);
+  assert.equal(observed.channels.signerEmail, null);
+  assert.equal(observed.channels.sendByEmail, false);
+  assert.equal(observed.channels.sendByWhatsApp, true);
+  assert.equal(observed.channels.notifyByEmail, false);
+
+  notifyByEmail = true;
+  await assert.rejects(
+    prepare(credit, Buffer.from("%PDF-1.7\nemail required\n%%EOF"), randomUUID()),
+    /REISSUE_CONTACT_UNAVAILABLE/
+  );
+  assert.equal(signIns, 1, "la política obligatoria de correo falla antes de autenticar o enviar");
+});
+
 test("el reenvio reutiliza un proceso activo antes de construir otro expediente", async () => {
   const [route, ledger] = await Promise.all([
     readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
