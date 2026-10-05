@@ -92,7 +92,10 @@ test("el guard acepta solo la configuracion completa ARES vigente sin reinterpre
 });
 
 function actualRouteGuard(relativePath) {
-  const source = readFileSync(path.join(root, relativePath), "utf8");
+  const routeSource = readFileSync(path.join(root, relativePath), "utf8");
+  const source = relativePath === routes.sign
+    ? readFileSync(path.join(root, "lib/firmaseguro-draft-credit-builder.ts"), "utf8")
+    : routeSource;
   const file = ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const found = [];
   function walk(node) {
@@ -113,7 +116,7 @@ function actualRouteGuard(relativePath) {
     constructor(message, status, code) { super(message); this.status = status; this.code = code; }
   }
   return {
-    source, guard,
+    source, routeSource, guard,
     run: (settings, signed = null) => execute(signed, settings, hasCurrentCreditOriginationTerms,
       { json: (body, options) => ({ body, status: options.status }) }, ValidationError,
       CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE),
@@ -136,7 +139,7 @@ test("el guard real de firma falla 409 antes de calcular y reutiliza procesos ac
   assert.throws(() => guard.run({ ...current, calculoVersion: "ARES_FRANCES_V1" }),
     (error) => error.status === 409 && error.code === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE);
   assert.equal(guard.run(current), undefined);
-  const post = guard.source.slice(guard.source.indexOf("export async function POST"));
+  const post = guard.routeSource.slice(guard.routeSource.indexOf("async function requestDraftSignatureCore"));
   assert.ok(post.indexOf("canReuseFirmaSeguroProcess(current)") < post.indexOf("await buildDraftCredit"));
   assert.ok(post.indexOf("canReuseFirmaSeguroProcess(lockedCurrent)") < post.indexOf("await buildDraftCredit"));
   assert.ok(guard.source.indexOf("async function buildDraftCredit") < guard.guard.pos);
@@ -145,7 +148,10 @@ test("el guard real de firma falla 409 antes de calcular y reutiliza procesos ac
 
 test("firma y creacion usan la cuota cobrable para el importe y para validar limites", () => {
   for (const relativePath of Object.values(routes)) {
-    const source = readFileSync(path.join(root, relativePath), "utf8");
+    const routeSource = readFileSync(path.join(root, relativePath), "utf8");
+    const source = relativePath === routes.sign
+      ? `${routeSource}\n${readFileSync(path.join(root, "lib/firmaseguro-draft-credit-builder.ts"), "utf8")}`
+      : routeSource;
     assert.match(source, /const financialPlan = \{[\s\S]{0,260}valorCuota: amortizationPlan\.cuotaCobro/);
     assert.match(source, /validateIphoneInstallmentLimit\(\{[\s\S]{0,160}valorCuota: amortizationPlan\.cuotaCobro/);
     assert.doesNotMatch(source, /valorCuota: amortizationPlan\.cuotaTotal\b/);

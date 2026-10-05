@@ -117,7 +117,11 @@ test("IMEI, deviceUid y plataforma quedan ligados a la solicitud antes de integr
   );
   assert.match(
     solicitudStorageSource,
-    /"imei" = COALESCE\(NULLIF\(\$3::text, ''\), "imei"\)[\s\S]{0,320}'deviceUid', \$3::text/
+    /"imei" = COALESCE\(NULLIF\(\$3::text, ''\), "imei"\)/
+  );
+  assert.match(
+    solicitudStorageSource,
+    /WHEN \$3::text <> '' THEN jsonb_build_object\([\s\S]*?'imei', \$3::text,[\s\S]*?'deviceUid', \$3::text/
   );
   assert.match(
     solicitudStorageSource,

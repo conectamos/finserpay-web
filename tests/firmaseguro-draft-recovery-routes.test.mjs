@@ -31,6 +31,7 @@ function getFixture({ authorized = true, receipt = true } = {}) {
     getLatestFirmaSeguroProcessForDraft: async () => current,
     refreshFirmaSeguroProcess: async () => { throw new Error("Unexpected provider refresh"); },
     serializeDraftFirmaSeguroProcess: (process) => process,
+    recordDraftCorrectionReissue: async () => { calls.push("record"); },
     documentBlacklistErrorResponse: () => null,
     logFirmaSeguroDraftError: () => {},
     firmaSeguroErrorResponse: (error) => { throw error; },
@@ -43,7 +44,7 @@ test("GET recupera una confirmación durable sin volver a enviar ni refrescar el
   const response = await fixture.invoke();
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, process: { processUuid: "provider-process" } });
-  assert.deepEqual(fixture.calls, ["pending", "receipt", "finalize"]);
+  assert.deepEqual(fixture.calls, ["pending", "receipt", "finalize", "record"]);
 });
 
 test("GET no libera un envío incierto sin confirmación ni accede a otra solicitud", async () => {

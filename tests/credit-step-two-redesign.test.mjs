@@ -92,7 +92,7 @@ test("el plan permanece en un fieldset bloqueado hasta tener equipo y política"
   );
   assert.match(
     derived,
-    /const stepTwoPlanLocked = !stepTwoEquipmentReady \|\| !stepTwoPolicyAvailable;/
+    /const stepTwoPlanLocked =\s*!stepTwoEquipmentReady \|\|\s*!stepTwoPolicyAvailable \|\|\s*signedContractEditLocked;/
   );
   assert.match(step, /stepTwoPlanLocked \? "is-locked" : ""/);
   assert.match(step, /id="step-two-plan-availability"/);

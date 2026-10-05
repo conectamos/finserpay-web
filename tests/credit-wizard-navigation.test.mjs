@@ -6,7 +6,7 @@ import { runInNewContext } from "node:vm";
 const source = readFileSync(
   new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url),
   "utf8"
-);
+).replace(/\r\n/g, "\n");
 
 function sourceBlock(start, end) {
   const startIndex = source.indexOf(start);
@@ -26,6 +26,43 @@ test("solo el administrador central FINSERPAY puede inspeccionar libremente la f
     source,
     /const canAdminMoveFreelyInFactory\s*=\s*canAdmin\s*&&/
   );
+});
+
+test("después de la firma el asesor no puede volver a pasos editables", () => {
+  assert.match(
+    source,
+    /const signedContractEditLocked =\s*!canSeeInternalPricing &&[\s\S]*firmaSeguroFinancialCorrectionPending[\s\S]*firmaSeguroFinancialCorrectionReissue/,
+  );
+  assert.match(
+    source,
+    /const advisorSignedContractStep =\s*firmaSeguroProcessUiState === "signed" &&\s*!firmaSeguroRequiresFirstPaymentDateReissue\s*\? 5\s*: 4;/,
+  );
+  for (const start of ["const goToStep", "const advanceToStep"]) {
+    const block = sourceBlock(start, start === "const goToStep" ? "const advanceToStep" : "const createWhatsAppOtp");
+    assert.match(
+      block,
+      /signedContractEditLocked &&\s*targetStep !== advisorSignedContractStep/,
+    );
+  }
+  assert.match(
+    source,
+    /signedContractEditLocked &&\s*step\.id !== advisorSignedContractStep/,
+  );
+  assert.match(source, /wizardStep > 1 && !signedContractEditLocked/);
+});
+
+test("la corrección de valores firmados se muestra solo al administrador central", () => {
+  const markerIndex = source.indexOf('data-testid="signed-financial-correction"');
+  const panelStart = source.lastIndexOf("{canSeeInternalPricing &&", markerIndex);
+  const panelEnd = source.indexOf("{canSeeInternalPricing &&", markerIndex + 1);
+  assert.ok(panelStart >= 0);
+  assert.ok(panelEnd > markerIndex);
+  const panel = source.slice(panelStart, panelEnd);
+  assert.match(panel, /canSeeInternalPricing[\s\S]*draftId[\s\S]*firmaSeguroProcessSigned/);
+  assert.match(panel, /Corregir valores del cierre/);
+  assert.match(panel, /correctSignedFinancialTerms/);
+  assert.match(panel, /Corregir y exigir nueva firma/);
+  assert.match(source, /creditInstallmentOptions\.map\(Number\)/);
 });
 
 test("el paso 2 exige datos completos incluso en la navegacion central", () => {

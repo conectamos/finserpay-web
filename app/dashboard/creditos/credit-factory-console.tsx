@@ -134,6 +134,7 @@ import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginatio
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import CreditRemissionNote from "@/app/dashboard/creditos/credit-remission-note";
+import type { CreditRemissionClosureData } from "@/lib/credit-remission";
 import stepFourStyles from "@/app/dashboard/creditos/step-four-delivery.module.css";
 import {
   findCreditCreatedAfterConnectionLoss,
@@ -873,10 +874,25 @@ type FirmaSeguroResponse = {
     firstPaymentDate?: string | null;
     canonicalFirstPaymentDate?: string | null;
     requiresFirstPaymentDateReissue?: boolean;
+    financialTermsChecksum?: string | null;
+    financialCorrectionReissue?: boolean;
+    remission?: CreditRemissionClosureData | null;
   } | null;
 };
 
 type FirmaSeguroProcess = NonNullable<FirmaSeguroResponse["process"]>;
+
+type FirmaSeguroFinancialCorrectionResponse = {
+  ok?: boolean;
+  correction?: {
+    afterFinancial?: {
+      valorEquipoTotal?: number;
+      cuotaInicial?: number;
+      plazoMeses?: number;
+    };
+  };
+  error?: string;
+};
 
 type CreditPaymentItem = {
   id: number;
@@ -3214,6 +3230,18 @@ export default function CreditFactoryConsole({
     useState("");
   const [firmaSeguroImeiCorrectionReason, setFirmaSeguroImeiCorrectionReason] =
     useState("");
+  const [signedTermsCorrectionBusy, setSignedTermsCorrectionBusy] =
+    useState(false);
+  const [signedTermsCorrectionSale, setSignedTermsCorrectionSale] =
+    useState("");
+  const [signedTermsCorrectionInitial, setSignedTermsCorrectionInitial] =
+    useState("");
+  const [signedTermsCorrectionInstallments, setSignedTermsCorrectionInstallments] =
+    useState("");
+  const [signedTermsCorrectionReason, setSignedTermsCorrectionReason] =
+    useState("");
+  const [firmaSeguroFinancialCorrectionPending, setFirmaSeguroFinancialCorrectionPending] =
+    useState(false);
   const [firmaSeguroDraftProcess, setFirmaSeguroDraftProcess] =
     useState<FirmaSeguroProcess | null>(null);
   // A null process is not evidence of an unsigned draft until its GET succeeds.
@@ -3282,6 +3310,10 @@ export default function CreditFactoryConsole({
   const firmaSeguroRequestInFlightRef = useRef(false);
   const veriffRefreshGenerationRef = useRef(0);
   const firmaSeguroRefreshGenerationRef = useRef(0);
+  const signedTermsCorrectionRequestRef = useRef<{
+    fingerprint: string;
+    idempotencyKey: string;
+  } | null>(null);
   const veriffRefreshFlightRef = useRef<{
     generation: number;
     validationId: number;
@@ -3869,6 +3901,9 @@ export default function CreditFactoryConsole({
   const firmaSeguroRequiresFirstPaymentDateReissue = Boolean(
     firmaSeguroDraftProcess?.requiresFirstPaymentDateReissue
   );
+  const firmaSeguroProcessResolutionPending =
+    draftResumeHydrating ||
+    Boolean(draftId && firmaSeguroPendingDraftId === draftId);
   const serverFirstPaymentDate =
     (firmaSeguroRequiresFirstPaymentDateReissue
       ? firmaSeguroDraftProcess?.canonicalFirstPaymentDate
@@ -3882,7 +3917,7 @@ export default function CreditFactoryConsole({
   }, [serverFirstPaymentDate]);
 
   const iphoneFactorySignaturePending = dataCreditoCreditCreationMode && iphoneFactory && (
-    draftResumeHydrating || Boolean(draftId && firmaSeguroPendingDraftId === draftId)
+    firmaSeguroProcessResolutionPending
   );
   const iphoneFactoryTermsLocked = shouldPreserveIphoneFactoryInstallments({
     platform: currentDevicePlatform,
@@ -5425,7 +5460,23 @@ export default function CreditFactoryConsole({
     : !dataCreditoCreditCreationMode ||
       dataCreditoBypassed ||
       Boolean(activeDataCreditoOffer);
-  const stepTwoPlanLocked = !stepTwoEquipmentReady || !stepTwoPolicyAvailable;
+  const firmaSeguroFinancialCorrectionReissue = Boolean(
+    firmaSeguroDraftProcess?.financialCorrectionReissue,
+  );
+  const signedContractEditLocked =
+    !canSeeInternalPricing &&
+    (firmaSeguroProcessUiState === "signed" ||
+      firmaSeguroFinancialCorrectionPending ||
+      firmaSeguroFinancialCorrectionReissue);
+  const advisorSignedContractStep =
+    firmaSeguroProcessUiState === "signed" &&
+    !firmaSeguroRequiresFirstPaymentDateReissue
+      ? 5
+      : 4;
+  const stepTwoPlanLocked =
+    !stepTwoEquipmentReady ||
+    !stepTwoPolicyAvailable ||
+    signedContractEditLocked;
   const stepTwoInitialMinimum = Math.max(
     0,
     Math.round(cuotaInicialMinimaNumero)
@@ -5493,6 +5544,65 @@ export default function CreditFactoryConsole({
   const firmaSeguroProcessSigned =
     firmaSeguroProcessUiState === "signed" &&
     !firmaSeguroRequiresFirstPaymentDateReissue;
+  const financialCorrectionAwaitingSignature =
+    (firmaSeguroFinancialCorrectionPending ||
+      firmaSeguroFinancialCorrectionReissue) &&
+    !firmaSeguroProcessSigned;
+  const signedCreditRemission = firmaSeguroProcessSigned
+    ? firmaSeguroDraftProcess?.remission || null
+    : null;
+  const creditRemissionData: CreditRemissionClosureData =
+    signedCreditRemission || {
+      clienteNombre,
+      clienteDocumento,
+      referenciaEquipo,
+      valorVenta: valorTotalEquipoNumero,
+      valorInicial: cuotaInicialNumero,
+      numeroCuotas: amortizationPlan?.numeroCuotas ?? plazoMesesNumero,
+      valorCuota: valorCuotaPactada,
+      fechaPrimerPago,
+      frecuenciaPago: frecuenciaPagoCredito,
+    };
+  const creditRemissionReady =
+    !firmaSeguroProcessResolutionPending &&
+    !financialCorrectionAwaitingSignature &&
+    firmaSeguroProcessSigned &&
+    Boolean(signedCreditRemission);
+  const creditRemissionVersionKey = firmaSeguroProcessSigned
+    ? [
+        draftId,
+        firmaSeguroDraftProcess?.processUuid,
+        firmaSeguroDraftProcess?.financialTermsChecksum,
+      ]
+        .filter(Boolean)
+        .join(":")
+    : "";
+  useEffect(() => {
+    if (!canSeeInternalPricing || !signedCreditRemission) return;
+    setSignedTermsCorrectionSale(String(signedCreditRemission.valorVenta));
+    setSignedTermsCorrectionInitial(String(signedCreditRemission.valorInicial));
+    setSignedTermsCorrectionInstallments(
+      String(signedCreditRemission.numeroCuotas)
+    );
+    setSignedTermsCorrectionReason("");
+  }, [
+    canSeeInternalPricing,
+    firmaSeguroDraftProcess?.processUuid,
+    signedCreditRemission,
+  ]);
+  const signedTermsCorrectionInstallmentOptions = [
+    ...new Set([
+      ...creditInstallmentOptions.map(Number),
+      Number(signedTermsCorrectionInstallments),
+    ]),
+  ]
+    .filter((value) => Number.isSafeInteger(value) && value > 0)
+    .sort((left, right) => left - right);
+  const signedTermsCorrectionFinancedAmount = Math.max(
+    0,
+    Number(signedTermsCorrectionSale || 0) -
+      Number(signedTermsCorrectionInitial || 0)
+  );
   const firmaSeguroProcessFailed =
     firmaSeguroProcessUiState === "error" &&
     !firmaSeguroRequiresFirstPaymentDateReissue;
@@ -5663,9 +5773,18 @@ export default function CreditFactoryConsole({
     deliveryRequirementReady;
   const creditClosureReady =
     ventaLista &&
-    (!firmaSeguroProcessExists || firmaSeguroProcessSigned);
+    (!firmaSeguroProcessExists || firmaSeguroProcessSigned) &&
+    creditRemissionReady;
   const creditClosurePendingMessage = veriffRequired && !veriffApproved
       ? "Veriff debe aprobar la identidad antes de finalizar el crédito."
+      : firmaSeguroProcessResolutionPending
+        ? "Espera mientras se validan la firma y los datos de cierre de la remisión."
+      : financialCorrectionAwaitingSignature
+        ? "Firma la nueva versión del contrato antes de generar la remisión corregida."
+      : firmaSeguroProcessSigned && !signedCreditRemission
+        ? "No fue posible validar los datos firmados de la remisión. Actualiza el expediente antes de finalizar."
+      : !firmaSeguroProcessSigned
+        ? "El contrato debe estar firmado antes de generar la remisión y finalizar el crédito."
       : deliveryPendingMessage;
   const paymentOverview = paymentSummary ||
     (selectedCredit
@@ -8467,6 +8586,17 @@ export default function CreditFactoryConsole({
   };
 
   const goToStep = (targetStep: number) => {
+    if (
+      signedContractEditLocked &&
+      targetStep !== advisorSignedContractStep
+    ) {
+      setNotice({
+        text: "El contrato ya fue firmado. Solo el administrador central puede habilitar una corrección y emitir una nueva versión.",
+        tone: "amber",
+      });
+      return;
+    }
+
     if (targetStep > 1 && dataCreditoVeriffDocumentRejected) {
       setNotice({
         text: dataCreditoVeriffDocumentRejectionMessage,
@@ -8592,6 +8722,17 @@ export default function CreditFactoryConsole({
   };
 
   const advanceToStep = async (targetStep: number) => {
+    if (
+      signedContractEditLocked &&
+      targetStep !== advisorSignedContractStep
+    ) {
+      setNotice({
+        text: "El contrato ya fue firmado. Solo el administrador central puede habilitar una corrección y emitir una nueva versión.",
+        tone: "amber",
+      });
+      return;
+    }
+
     if (targetStep > 1 && dataCreditoVeriffDocumentRejected) {
       setNotice({
         text: dataCreditoVeriffDocumentRejectionMessage,
@@ -9158,6 +9299,7 @@ export default function CreditFactoryConsole({
     setImei("");
     setFirmaSeguroImeiCorrectionValue("");
     setFirmaSeguroImeiCorrectionReason("");
+    setFirmaSeguroFinancialCorrectionPending(false);
     setValorEquipoTotal("");
     setCuotaInicial("");
     setPlazoMeses(
@@ -9516,6 +9658,7 @@ export default function CreditFactoryConsole({
       setImei(correctedImei);
       setFirmaSeguroImeiCorrectionValue(correctedImei);
       setFirmaSeguroImeiCorrectionReason("");
+      setFirmaSeguroFinancialCorrectionPending(false);
       setFirmaSeguroDraftProcess(null);
       setDeliveryValidation(null);
       setAndroidEnrollment(EMPTY_ANDROID_ENROLLMENT_STATE);
@@ -9596,6 +9739,204 @@ export default function CreditFactoryConsole({
       });
     } finally {
       setFirmaSeguroImeiCorrecting(false);
+    }
+  };
+
+  const correctSignedFinancialTerms = async () => {
+    const expectedProcessUuid = String(
+      firmaSeguroDraftProcess?.processUuid || ""
+    ).trim();
+    const expectedFinancialTermsChecksum = String(
+      firmaSeguroDraftProcess?.financialTermsChecksum || ""
+    ).trim();
+    const valorEquipoTotal = Number(
+      signedTermsCorrectionSale.replace(/\D/g, "")
+    );
+    const cuotaInicial = Number(
+      signedTermsCorrectionInitial.replace(/\D/g, "")
+    );
+    const plazoMeses = Number(
+      signedTermsCorrectionInstallments.replace(/\D/g, "")
+    );
+    const reason = signedTermsCorrectionReason.trim();
+
+    if (!canSeeInternalPricing || !draftId) {
+      setNotice({
+        text: "Solo el administrador central puede corregir valores después de la firma.",
+        tone: "red",
+      });
+      return;
+    }
+    if (
+      !expectedProcessUuid ||
+      !expectedFinancialTermsChecksum ||
+      !firmaSeguroProcessSigned
+    ) {
+      setNotice({
+        text: "Actualiza la firma vigente antes de corregir los valores.",
+        tone: "amber",
+      });
+      return;
+    }
+    if (
+      !Number.isSafeInteger(valorEquipoTotal) ||
+      valorEquipoTotal <= 0 ||
+      !Number.isSafeInteger(cuotaInicial) ||
+      cuotaInicial < 0 ||
+      cuotaInicial >= valorEquipoTotal ||
+      !Number.isSafeInteger(plazoMeses) ||
+      plazoMeses <= 0
+    ) {
+      setNotice({
+        text: "Revisa el valor de venta, la inicial y el plazo antes de continuar.",
+        tone: "red",
+      });
+      return;
+    }
+    if (reason.length < 5) {
+      setNotice({
+        text: "Escribe el motivo de la corrección de valores.",
+        tone: "amber",
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      [
+        "Confirma la corrección de los valores firmados:",
+        `Valor de venta: ${currency(valorEquipoTotal)}`,
+        `Inicial: ${currency(cuotaInicial)}`,
+        `Plazo: ${plazoMeses} cuotas`,
+        "El contrato actual quedará como histórico y el cliente deberá firmar una nueva versión.",
+        "La foto de remisión anterior se archivará y deberá cargarse de nuevo.",
+      ].join("\n")
+    );
+    if (!confirmed) return;
+
+    const requestFingerprint = JSON.stringify({
+      draftId,
+      expectedProcessUuid,
+      expectedFinancialTermsChecksum,
+      reason,
+      valorEquipoTotal,
+      cuotaInicial,
+      plazoMeses,
+    });
+    const previousRequest = signedTermsCorrectionRequestRef.current;
+    const idempotencyKey =
+      previousRequest?.fingerprint === requestFingerprint
+        ? previousRequest.idempotencyKey
+        : window.crypto.randomUUID();
+    signedTermsCorrectionRequestRef.current = {
+      fingerprint: requestFingerprint,
+      idempotencyKey,
+    };
+
+    try {
+      cancelPendingDraftAutosave();
+      firmaSeguroRefreshGenerationRef.current += 1;
+      setFirmaSeguroRefreshing(false);
+      setSignedTermsCorrectionBusy(true);
+      setNotice(null);
+      const result = await requestJson<FirmaSeguroFinancialCorrectionResponse>(
+        `/api/creditos/borradores/${draftId}/terminos-firmados`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idempotencyKey,
+            expectedProcessUuid,
+            expectedFinancialTermsChecksum,
+            reason,
+            valorEquipoTotal,
+            cuotaInicial,
+            plazoMeses,
+          }),
+        }
+      );
+      if (!result.ok || !result.data?.ok) {
+        throw new Error(
+          result.data?.error || "No se pudieron corregir los valores firmados"
+        );
+      }
+
+      setValorEquipoTotal(String(valorEquipoTotal));
+      setCuotaInicial(String(cuotaInicial));
+      setPlazoMeses(String(plazoMeses));
+      setFirmaSeguroFinancialCorrectionPending(true);
+      setFirmaSeguroDraftProcess(null);
+      setFirmaSeguroPendingDraftId(null);
+      setFotoRemisionDataUrl("");
+      setFotoRemisionAudit(null);
+      setPersistedIphoneClosureFingerprint("");
+      setWizardStep(4);
+      setDraftStatus("saved");
+      setSignedTermsCorrectionReason("");
+      signedTermsCorrectionRequestRef.current = null;
+      setNotice({
+        text: "Valores corregidos. El contrato anterior quedó en el historial; envía la nueva versión a FirmaSeguro. La remisión se generará con los valores de la nueva firma.",
+        tone: "amber",
+      });
+    } catch (error) {
+      let correctionWasCommitted = false;
+
+      try {
+        const params = new URLSearchParams({ id: String(draftId) });
+        const draftResult = await requestJson<CreditDraftSingleResponse>(
+          `/api/creditos/borradores?${params.toString()}`,
+          { timeoutMs: 20_000 }
+        );
+        const authoritativeDraft = draftResult.data?.item || null;
+        const authoritativePayload = authoritativeDraft?.payload || {};
+
+        if (
+          draftResult.ok &&
+          authoritativeDraft &&
+          authoritativePayload.firmaSeguroFinancialCorrectionPending === true &&
+          String(
+            authoritativePayload.firmaSeguroFinancialCorrectionId || ""
+          ).trim() === idempotencyKey
+        ) {
+          applyDraftPayload(authoritativeDraft);
+          const processResult = await requestJson<FirmaSeguroResponse>(
+            `/api/creditos/borradores/${draftId}/firma-seguro`
+          );
+          setFirmaSeguroDraftProcess(
+            processResult.ok && processResult.data?.ok
+              ? processResult.data.process || null
+              : null
+          );
+          setFirmaSeguroPendingDraftId(null);
+          setFirmaSeguroFinancialCorrectionPending(true);
+          setFotoRemisionDataUrl("");
+          setFotoRemisionAudit(null);
+          setPersistedIphoneClosureFingerprint("");
+          setWizardStep(4);
+          setDraftStatus("saved");
+          setSignedTermsCorrectionReason("");
+          signedTermsCorrectionRequestRef.current = null;
+          correctionWasCommitted = true;
+        }
+      } catch {
+        // Conserva el error original y la clave para reintentar la misma operación.
+      }
+
+      if (correctionWasCommitted) {
+        setNotice({
+          text: "La conexión se interrumpió, pero confirmamos que los valores sí fueron corregidos. Envía la nueva versión a FirmaSeguro.",
+          tone: "amber",
+        });
+        return;
+      }
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "No se pudieron corregir los valores firmados",
+        tone: "red",
+      });
+    } finally {
+      setSignedTermsCorrectionBusy(false);
     }
   };
 
@@ -10674,6 +11015,9 @@ export default function CreditFactoryConsole({
       return typeof current === "string" ? current : "";
     };
     const checked = (key: string) => payload[key] === true;
+    setFirmaSeguroFinancialCorrectionPending(
+      checked("firmaSeguroFinancialCorrectionPending")
+    );
     const restoredAssessmentId = value("dataCreditoAssessmentId") || null;
     const restoredDataCreditoErrorCode =
       value("dataCreditoErrorCode").trim().toUpperCase() || null;
@@ -12689,8 +13033,10 @@ export default function CreditFactoryConsole({
                 {visibleFactorySteps.map((step, stepIndex) => {
                   const active = step.id === activeFactoryStep.id;
                   const futureStepLocked =
-                    !canAdminMoveFreelyInFactory &&
-                    step.id > nextVisibleWizardStep(wizardStep);
+                    (signedContractEditLocked &&
+                      step.id !== advisorSignedContractStep) ||
+                    (!canAdminMoveFreelyInFactory &&
+                      step.id > nextVisibleWizardStep(wizardStep));
 
                   return (
                     <button
@@ -16590,11 +16936,11 @@ export default function CreditFactoryConsole({
                       <div className={stepFourStyles.saleData}>
                         <div>
                           <span>Referencia del equipo</span>
-                          <strong>{referenciaEquipo || "Equipo sin seleccionar"}</strong>
+                          <strong>{creditRemissionData.referenciaEquipo || "Equipo sin seleccionar"}</strong>
                         </div>
                         <div>
                           <span>Cliente</span>
-                          <strong>{clienteNombre || "Cliente sin registrar"}</strong>
+                          <strong>{creditRemissionData.clienteNombre || "Cliente sin registrar"}</strong>
                         </div>
                         <div>
                           <span>Número de solicitud</span>
@@ -16614,7 +16960,7 @@ export default function CreditFactoryConsole({
                           <div>
                             <span>Documento</span>
                             <strong>
-                              •••• {String(clienteDocumento || "").slice(-4) || "----"}
+                              •••• {String(creditRemissionData.clienteDocumento || "").slice(-4) || "----"}
                             </strong>
                           </div>
                           <div>
@@ -16623,7 +16969,7 @@ export default function CreditFactoryConsole({
                           </div>
                           <div>
                             <span>Valor cuota</span>
-                            <strong>{currency(valorCuota)}</strong>
+                            <strong>{currency(creditRemissionData.valorCuota)}</strong>
                           </div>
                         </div>
                       </details>
@@ -16647,22 +16993,18 @@ export default function CreditFactoryConsole({
                           <Check strokeWidth={2.5} />
                         </span>
                         <CreditRemissionNote
-                          clienteNombre={clienteNombre}
-                          clienteDocumento={clienteDocumento}
-                          referenciaEquipo={referenciaEquipo}
-                          valorVenta={valorTotalEquipoNumero}
-                          valorInicial={cuotaInicialNumero}
-                          numeroCuotas={amortizationPlan?.numeroCuotas ?? plazoMesesNumero}
-                          valorCuota={valorCuotaPactada}
-                          fechaPrimerPago={fechaPrimerPago}
-                          frecuenciaPago={frecuenciaPagoCredito}
-                          autoOpen={wizardStep === 5}
-                          ready={
-                            stepClienteReady &&
-                            stepEquipoReady &&
-                            financialPreviewReady &&
-                            Boolean(amortizationPlan)
-                          }
+                          clienteNombre={creditRemissionData.clienteNombre}
+                          clienteDocumento={creditRemissionData.clienteDocumento}
+                          referenciaEquipo={creditRemissionData.referenciaEquipo}
+                          valorVenta={creditRemissionData.valorVenta}
+                          valorInicial={creditRemissionData.valorInicial}
+                          numeroCuotas={creditRemissionData.numeroCuotas}
+                          valorCuota={creditRemissionData.valorCuota}
+                          fechaPrimerPago={creditRemissionData.fechaPrimerPago}
+                          frecuenciaPago={creditRemissionData.frecuenciaPago}
+                          versionKey={creditRemissionVersionKey}
+                          autoOpen={wizardStep === 5 && creditRemissionReady}
+                          ready={creditRemissionReady}
                         />
                       </div>
 
@@ -17060,6 +17402,134 @@ export default function CreditFactoryConsole({
                       </section>
                     ) : null}
                   </Card>
+
+                  {canSeeInternalPricing &&
+                  draftId &&
+                  firmaSeguroProcessSigned ? (
+                    <section
+                      className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-5 py-5"
+                      data-testid="signed-financial-correction"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span
+                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-white text-amber-700"
+                          aria-hidden="true"
+                        >
+                          <History className="h-5 w-5" strokeWidth={1.8} />
+                        </span>
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800">
+                            Control exclusivo FINSER PAY
+                          </p>
+                          <h4 className="mt-1 text-lg font-black text-slate-950">
+                            Corregir valores del cierre
+                          </h4>
+                          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
+                            Úsalo cuando el asesor solicite una corrección después de la firma.
+                            El contrato vigente se conserva en el historial, el cliente debe firmar
+                            una nueva versión y la remisión anterior queda archivada.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        <label className="block text-sm font-semibold text-slate-800">
+                          <span className="mb-2 block">Valor de venta</span>
+                          <input
+                            value={currencyInputValue(signedTermsCorrectionSale)}
+                            onChange={(event) =>
+                              setSignedTermsCorrectionSale(
+                                event.target.value.replace(/\D/g, "")
+                              )
+                            }
+                            inputMode="numeric"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </label>
+                        <label className="block text-sm font-semibold text-slate-800">
+                          <span className="mb-2 block">Cuota inicial</span>
+                          <input
+                            value={currencyInputValue(signedTermsCorrectionInitial)}
+                            onChange={(event) =>
+                              setSignedTermsCorrectionInitial(
+                                event.target.value.replace(/\D/g, "")
+                              )
+                            }
+                            inputMode="numeric"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </label>
+                        <label className="block text-sm font-semibold text-slate-800">
+                          <span className="mb-2 block">Número de cuotas</span>
+                          <select
+                            value={signedTermsCorrectionInstallments}
+                            onChange={(event) =>
+                              setSignedTermsCorrectionInstallments(event.target.value)
+                            }
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          >
+                            {signedTermsCorrectionInstallmentOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option} cuotas
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="rounded-md border border-amber-200 bg-white px-4 py-3">
+                          <span className="block text-xs font-semibold text-slate-500">
+                            Crédito solicitado
+                          </span>
+                          <strong className="mt-1 block text-base text-slate-950">
+                            {currency(signedTermsCorrectionFinancedAmount)}
+                          </strong>
+                          <small className="mt-1 block text-slate-500">
+                            La política vigente valida la inicial y el plazo. La cuota y el primer
+                            pago se recalculan en el servidor.
+                          </small>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(320px,1fr)_auto] lg:items-end">
+                        <label className="block text-sm font-semibold text-slate-800">
+                          <span className="mb-2 block">Motivo de la corrección</span>
+                          <input
+                            value={signedTermsCorrectionReason}
+                            onChange={(event) =>
+                              setSignedTermsCorrectionReason(
+                                event.target.value.slice(0, 500)
+                              )
+                            }
+                            minLength={5}
+                            maxLength={500}
+                            placeholder="Ej. Ajuste solicitado por el asesor antes del cierre"
+                            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => void correctSignedFinancialTerms()}
+                          disabled={
+                            signedTermsCorrectionBusy ||
+                            firmaSeguroSubmitting ||
+                            firmaSeguroRefreshing
+                          }
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#161a1b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {signedTermsCorrectionBusy ? (
+                            <LoaderCircle
+                              className="h-4 w-4 animate-spin"
+                              strokeWidth={2}
+                            />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" strokeWidth={2} />
+                          )}
+                          {signedTermsCorrectionBusy
+                            ? "Corrigiendo..."
+                            : "Corregir y exigir nueva firma"}
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
 
                   {canSeeInternalPricing &&
                   iphoneFactory &&
@@ -17767,7 +18237,7 @@ export default function CreditFactoryConsole({
                   </>
                 ) : (
                   <>
-                {wizardStep > 1 && (
+                {wizardStep > 1 && !signedContractEditLocked && (
                   <button
                     type="button"
                     onClick={() =>

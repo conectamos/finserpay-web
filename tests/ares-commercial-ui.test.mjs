@@ -69,6 +69,7 @@ function installmentCard(amortizationPlan, internal) {
   assert.ok(candidates.length);
   return renderToStaticMarkup(execute(`(${candidates[0].getText(parsed)})`, {
     ...presentation(amortizationPlan), amortizationPlan, financialPreviewReady: true,
+    stepTwoProposalReady: true,
     frecuenciaPagoLabel: "Quincenal", canSeeInternalPricing: internal, currency, exactCurrency,
   }));
 }
@@ -93,14 +94,13 @@ test("V1 conserva presentación comercial y obligación exacta histórica", () =
   assert.equal(legacy.cuotaInternaLabel, "Cuota exacta para recaudo");
 });
 
-test("vendedor y supervisor ven solo 90.850; el administrador distingue referencia matemática", () => {
+test("la tarjeta de vendedor, supervisor y administrador muestra solo la cuota pactada", () => {
   const seller = installmentCard(plan(), false);
-  assert.match(seller, />\$90\.850<\/strong>/);
+  assert.match(seller, />\$90\.850<\/dd>/);
   assert.doesNotMatch(seller, /90\.887|Referencia matemática|Cuota exacta|Fianza|Seguro/);
   const admin = installmentCard(plan(), true);
-  assert.match(admin, />\$90\.850<\/strong>/);
-  assert.match(admin, /Referencia matemática \(no se cobra\).*90\.887,54/);
-  assert.doesNotMatch(admin, /Cuota exacta para recaudo/);
+  assert.match(admin, />\$90\.850<\/dd>/);
+  assert.doesNotMatch(admin, /90\.887|Referencia matemática|Cuota exacta|Fianza|Seguro/);
 });
 
 test("los contratos de la interfaz usan la cuota pactada; V1 conserva la exacta", () => {

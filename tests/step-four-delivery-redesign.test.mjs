@@ -69,7 +69,10 @@ test("el flujo visual conserva remisión, enrolamiento y evidencias en ese orden
     /\{deliveryEnrollmentReady \? "COMPLETADO" : "EN PROCESO"\}/,
   );
   assert.match(deliveryStep, /5 fotografías obligatorias\./);
-  assert.match(deliveryStep, /autoOpen=\{wizardStep === 5\}/);
+  assert.match(
+    deliveryStep,
+    /autoOpen=\{wizardStep === 5 && creditRemissionReady\}/,
+  );
   assert.match(deliveryStep, /evidenceFinalizationReady/);
   assert.match(deliveryStep, /GUARDANDO/);
   assert.match(deliveryStep, /ERROR AL GUARDAR/);

@@ -86,11 +86,8 @@ test("el formulario, la creación final y FirmaSeguro comparten la misma regla",
     new URL("../app/api/creditos/route.ts", import.meta.url),
     "utf8"
   );
-  const firmaSeguroSource = readFileSync(
-    new URL(
-      "../app/api/creditos/borradores/[id]/firma-seguro/route.ts",
-      import.meta.url
-    ),
+  const firmaSeguroBuilderSource = readFileSync(
+    new URL("../lib/firmaseguro-draft-credit-builder.ts", import.meta.url),
     "utf8"
   );
   const stepClienteReadyBlock = clientSource.slice(
@@ -109,9 +106,9 @@ test("el formulario, la creación final y FirmaSeguro comparten la misma regla",
     createRouteSource.indexOf("const contactPhoneValidation"),
     createRouteSource.indexOf("if (clienteFechaNacimiento")
   );
-  const firmaSeguroPhoneBlock = firmaSeguroSource.slice(
-    firmaSeguroSource.indexOf("const contactPhoneValidation"),
-    firmaSeguroSource.indexOf("const contratoFotoDataUrl")
+  const firmaSeguroPhoneBlock = firmaSeguroBuilderSource.slice(
+    firmaSeguroBuilderSource.indexOf("const contactPhoneValidation"),
+    firmaSeguroBuilderSource.indexOf("const contratoFotoDataUrl")
   );
 
   assert.match(stepClienteReadyBlock, /contactPhoneValidation\.ok/);

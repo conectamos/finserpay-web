@@ -1188,6 +1188,52 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       canonicalPayload.firmaSeguroCorrectionPending = true;
       canonicalPayload.firmaSeguroCorrectionId = storedCorrectionId;
     }
+    const storedFinancialCorrectionId = String(
+      targetRow?.payload?.firmaSeguroFinancialCorrectionId || ""
+    ).trim();
+    const financialCorrectionPending = Boolean(
+      targetRow?.payload?.firmaSeguroFinancialCorrectionPending === true &&
+        isUuid(storedFinancialCorrectionId)
+    );
+    if (financialCorrectionPending && targetRow?.payload) {
+      // La corrección central se confirma en una mutación privilegiada y
+      // atómica. Hasta la nueva firma, ningún autosave (incluida una pestaña
+      // antigua del asesor) puede cambiar los valores corregidos ni restaurar
+      // la remisión anterior.
+      for (const marker of [
+        "firmaSeguroFinancialCorrectionPending",
+        "firmaSeguroFinancialCorrectionId",
+        "firmaSeguroFinancialCorrectionPreviousProcessUuid",
+        "firmaSeguroFinancialCorrectionPreviousChecksum",
+      ] as const) {
+        if (Object.prototype.hasOwnProperty.call(targetRow.payload, marker)) {
+          canonicalPayload[marker] = targetRow.payload[marker];
+        }
+      }
+      for (const field of FIRMASEGURO_SIGNED_DRAFT_FIELDS) {
+        const storedValue = targetRow.payload[field];
+        if (
+          Object.prototype.hasOwnProperty.call(canonicalPayload, field) &&
+          !isOmittedSignedDraftAutosaveValue(canonicalPayload[field]) &&
+          comparableSignedDraftValue(canonicalPayload[field]) !==
+            comparableSignedDraftValue(storedValue)
+        ) {
+          throw new SolicitudCanonicalMutationError(
+            "SOLICITUD_CORRECCION_FINANCIERA_PENDIENTE"
+          );
+        }
+        if (Object.prototype.hasOwnProperty.call(targetRow.payload, field)) {
+          canonicalPayload[field] = storedValue;
+        }
+      }
+      for (const field of [
+        "fotoRemisionDataUrl",
+        "fotoRemisionCapturedAt",
+        "fotoRemisionSource",
+      ] as const) {
+        delete canonicalPayload[field];
+      }
+    }
     const firmaSeguroRows = targetId
       ? await transaction.$queryRawUnsafe<FirmaSeguroDraftTermsRow[]>(
           `
@@ -1249,7 +1295,9 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       storedStep
     );
     const incomingStep = normalizeDraftStep(input.currentStep);
-    const persistedStep = Math.max(storedStep, storedPayloadStep, incomingStep);
+    const persistedStep = financialCorrectionPending
+      ? 4
+      : Math.max(storedStep, storedPayloadStep, incomingStep);
     const storedImei = normalizeDigits(targetRow?.imei);
     const storedIdentityImei = isCompleteImei(storedImei) ? storedImei : "";
     const payloadImei = normalizeDigits(canonicalPayload.imei);
@@ -1322,7 +1370,10 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       const updated = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
         `
           UPDATE "CreditoBorrador"
-          SET "currentStep" = GREATEST("currentStep", $2),
+          SET "currentStep" = CASE
+                WHEN $10::boolean THEN 4
+                ELSE GREATEST("currentStep", $2)
+              END,
               "clienteNombre" = $3,
               "clienteDocumento" = COALESCE(
                 NULLIF($4::text, ''), "clienteDocumento"
@@ -1351,7 +1402,8 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         canonicalImei,
         normalizePlatform(input.plataforma),
         canonical.dataCreditoAssessmentId,
-        payloadJson
+        payloadJson,
+        financialCorrectionPending
       );
       if (!updated[0]) throw new Error("SOLICITUD_NO_DISPONIBLE");
       return { id: updated[0].id, created: false };
