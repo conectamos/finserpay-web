@@ -16,6 +16,7 @@ import { Button } from "@/app/_components/finser-ui";
 import {
   formatCreditRemissionCurrency,
   formatCreditRemissionDate,
+  getCreditRemissionFingerprint,
   getCreditRemissionPaymentSchedule,
   isCreditRemissionReady,
   type CreditRemissionData,
@@ -26,6 +27,7 @@ type CreditRemissionNoteProps = CreditRemissionData & {
   frecuenciaPago: string;
   ready: boolean;
   autoOpen: boolean;
+  versionKey?: string;
 };
 
 const BRAND_LOGO_PATH = "/branding/finserpay-logo.jpg";
@@ -45,6 +47,7 @@ export default function CreditRemissionNote({
   frecuenciaPago,
   ready,
   autoOpen,
+  versionKey = "",
 }: CreditRemissionNoteProps) {
   const [portalReady, setPortalReady] = useState(false);
   const [logoReady, setLogoReady] = useState(false);
@@ -60,8 +63,23 @@ export default function CreditRemissionNote({
   const downloadDialogId = useId();
   const downloadDialogTitleId = useId();
   const downloadDialogDescriptionId = useId();
+  const remissionVersionKey =
+    versionKey.trim() ||
+    getCreditRemissionFingerprint(
+      {
+        clienteNombre,
+        clienteDocumento,
+        referenciaEquipo,
+        valorVenta,
+        valorInicial,
+        numeroCuotas,
+        valorCuota,
+        fechaPrimerPago,
+      },
+      frecuenciaPago,
+    );
   const remissionSessionKey = `${REMISSION_SESSION_PREFIX}:${encodeURIComponent(
-    [clienteDocumento, referenciaEquipo, fechaPrimerPago].join("|"),
+    remissionVersionKey,
   )}`;
 
   useEffect(() => {

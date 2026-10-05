@@ -4,8 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  creditRemissionFromSignedSnapshot,
   formatCreditRemissionCurrency,
   formatCreditRemissionDate,
+  getCreditRemissionFingerprint,
   getCreditRemissionPaymentSchedule,
   isCreditRemissionReady,
 } from "../lib/credit-remission.ts";
@@ -76,6 +78,107 @@ test("habilita la remisión solo cuando todos los datos imprimibles son válidos
   );
 });
 
+test("la remisión usa exclusivamente los valores del sello financiero firmado", () => {
+  const base = {
+    clienteNombre: "CLIENTE DE PRUEBA",
+    documento: "1000000001",
+    referenciaEquipo: "EQUIPO DE PRUEBA 128GB",
+    valorVenta: "2930000.000000",
+    cuotaInicial: "903000.000000",
+    numeroCuotas: 25,
+    fechaPrimerPago: "2026-10-17",
+    frecuenciaPago: "QUINCENAL",
+  };
+
+  assert.deepEqual(
+    creditRemissionFromSignedSnapshot({
+      ...base,
+      calculoVersion: "ARES_FRANCES_V2",
+      cuotaPactada: "154300.000000",
+      cuotaComercial: "154500.000000",
+      cuotaTotalExacta: "154321.120000",
+    }),
+    {
+      clienteNombre: "CLIENTE DE PRUEBA",
+      clienteDocumento: "1000000001",
+      referenciaEquipo: "EQUIPO DE PRUEBA 128GB",
+      valorVenta: 2_930_000,
+      valorInicial: 903_000,
+      numeroCuotas: 25,
+      valorCuota: 154_300,
+      fechaPrimerPago: "2026-10-17",
+      frecuenciaPago: "QUINCENAL",
+    },
+  );
+  assert.equal(
+    creditRemissionFromSignedSnapshot({
+      ...base,
+      calculoVersion: "ARES_FRANCES_V1",
+      cuotaComercial: "154500.000000",
+      cuotaTotalExacta: "154321.120000",
+    })?.valorCuota,
+    154321.12,
+  );
+  assert.equal(
+    creditRemissionFromSignedSnapshot({
+      ...base,
+      calculoVersion: "ARES_FRANCES_V2",
+      cuotaPactada: "",
+      cuotaTotalExacta: "154321.120000",
+    }),
+    null,
+  );
+  assert.equal(
+    creditRemissionFromSignedSnapshot({
+      ...base,
+      calculoVersion: "ARES_FRANCES_V1",
+      cuotaTotalExacta: null,
+    }),
+    null,
+  );
+  assert.equal(
+    creditRemissionFromSignedSnapshot({
+      ...base,
+      calculoVersion: "VERSION_FUTURA_NO_RECONOCIDA",
+      cuotaPactada: "154300.000000",
+      cuotaTotalExacta: "154321.120000",
+    }),
+    null,
+  );
+});
+
+test("la clave local es opaca y cambia con cualquier dato imprimible", () => {
+  const frequency = "QUINCENAL";
+  const original = getCreditRemissionFingerprint(completeRemission, frequency);
+  assert.match(original, /^[a-f0-9]{16}$/);
+  assert.equal(original.includes(completeRemission.clienteDocumento), false);
+  assert.equal(original.includes(completeRemission.clienteNombre), false);
+
+  for (const [field, value] of Object.entries({
+    clienteNombre: "OTRO CLIENTE",
+    clienteDocumento: "1000000002",
+    referenciaEquipo: "OTRO EQUIPO",
+    valorVenta: completeRemission.valorVenta + 1,
+    valorInicial: completeRemission.valorInicial + 1,
+    numeroCuotas: completeRemission.numeroCuotas + 1,
+    valorCuota: completeRemission.valorCuota + 1,
+    fechaPrimerPago: "2026-10-17",
+  })) {
+    assert.notEqual(
+      getCreditRemissionFingerprint(
+        { ...completeRemission, [field]: value },
+        frequency,
+      ),
+      original,
+      `debe cambiar al modificar ${field}`,
+    );
+  }
+  assert.notEqual(
+    getCreditRemissionFingerprint(completeRemission, "MENSUAL"),
+    original,
+  );
+});
+
 test("el paso 4 visible usa la remisión con la cuota pactada y los datos del crédito", async () => {
   const source = await readProjectFile(
     "app/dashboard/creditos/credit-factory-console.tsx",
@@ -87,14 +190,24 @@ test("el paso 4 visible usa la remisión con la cuota pactada y los datos del cr
   assert.ok(deliveryStart >= 0, "Debe existir el paso de entrega");
   assert.ok(remediation > deliveryStart, "La remisión debe estar dentro del paso 4 visible");
   assert.ok(internalControls > remediation, "La remisión debe aparecer antes de los controles de entrega");
-  assert.match(source.slice(remediation, internalControls), /valorCuota=\{valorCuotaPactada\}/);
-  assert.match(source.slice(remediation, internalControls), /valorVenta=\{valorTotalEquipoNumero\}/);
-  assert.match(source.slice(remediation, internalControls), /valorInicial=\{cuotaInicialNumero\}/);
-  assert.match(source.slice(remediation, internalControls), /clienteDocumento=\{clienteDocumento\}/);
-  assert.match(source.slice(remediation, internalControls), /fechaPrimerPago=\{fechaPrimerPago\}/);
+  assert.match(
+    source,
+    /const creditRemissionReady =\s*!firmaSeguroProcessResolutionPending &&\s*!financialCorrectionAwaitingSignature &&\s*firmaSeguroProcessSigned &&\s*Boolean\(signedCreditRemission\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const creditRemissionReady =[\s\S]{0,300}!firmaSeguroProcessExists/,
+  );
+  assert.match(source.slice(remediation, internalControls), /valorCuota=\{creditRemissionData\.valorCuota\}/);
+  assert.match(source.slice(remediation, internalControls), /valorVenta=\{creditRemissionData\.valorVenta\}/);
+  assert.match(source.slice(remediation, internalControls), /valorInicial=\{creditRemissionData\.valorInicial\}/);
+  assert.match(source.slice(remediation, internalControls), /clienteDocumento=\{creditRemissionData\.clienteDocumento\}/);
+  assert.match(source.slice(remediation, internalControls), /fechaPrimerPago=\{creditRemissionData\.fechaPrimerPago\}/);
+  assert.match(source.slice(remediation, internalControls), /versionKey=\{creditRemissionVersionKey\}/);
+  assert.match(source.slice(remediation, internalControls), /ready=\{creditRemissionReady\}/);
   assert.match(
     source.slice(remediation, internalControls),
-    /autoOpen=\{wizardStep === 5\}/,
+    /autoOpen=\{wizardStep === 5 && creditRemissionReady\}/,
   );
 });
 
@@ -143,6 +256,7 @@ test("abre un diálogo accesible para descargar la remisión al llegar al paso 4
 
   assert.match(source, /useState\(false\)/);
   assert.match(source, /window\.sessionStorage\.getItem\(remissionSessionKey\)/);
+  assert.match(source, /versionKey\.trim\(\) \|\|/);
   assert.match(source, /setDownloadDialogOpen\(true\)/);
   assert.match(source, /window\.sessionStorage\.setItem\(remissionSessionKey, "confirmed"\)/);
   assert.match(source, /role="dialog"/);

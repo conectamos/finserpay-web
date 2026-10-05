@@ -333,13 +333,14 @@ test("PostgreSQL permite reservar bajo el lock de despacho y mantiene los locks 
 });
 
 test("los errores previos al proveedor incluyen codigo y etapa trazables", async () => {
-  const route = await readProjectFile(
-    "app/api/creditos/borradores/[id]/firma-seguro/route.ts"
-  );
+  const [route, builder] = await Promise.all([
+    readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
+    readProjectFile("lib/firmaseguro-draft-credit-builder.ts"),
+  ]);
 
   assert.match(route, /code: error\.code/);
   assert.match(route, /stage: "credit_validation"/);
-  assert.match(route, /"DATACREDITO_ASSESSMENT_INVALID"/);
+  assert.match(builder, /"DATACREDITO_ASSESSMENT_INVALID"/);
   assert.match(route, /stage: "provider_dispatch"/);
   assert.match(route, /ERROR FIRMASEGURO BORRADOR/);
 });

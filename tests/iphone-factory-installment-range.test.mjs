@@ -92,7 +92,8 @@ test("selector y avance usan el mismo rango y no cambian plazos enviados o firma
   assert.match(source, /!iphoneFactory \|\|\s*iphoneFactoryTermsLocked \|\|\s*creditInstallmentOptions.length === 0/);
   assert.match(source, /Sin plazos dentro del rango/);
   assert.match(source, /No hay plazos disponibles/);
-  assert.match(source, /draftResumeHydrating \|\| Boolean\(draftId && firmaSeguroPendingDraftId === draftId\)/);
+  assert.match(source, /const firmaSeguroProcessResolutionPending =\s*draftResumeHydrating \|\|\s*Boolean\(draftId && firmaSeguroPendingDraftId === draftId\)/);
+  assert.match(source, /const iphoneFactorySignaturePending = dataCreditoCreditCreationMode && iphoneFactory && \(\s*firmaSeguroProcessResolutionPending/);
   assert.match(source, /setFirmaSeguroPendingDraftId\(draft.id\)/);
   assert.match(source, /else if \(!cancelled\) \{[\s\S]{0,250}setFirmaSeguroPendingDraftId/);
   assert.match(source, /plazoMesesNumero > 0 &&\s*!iphoneFactorySignaturePending/);
@@ -127,7 +128,10 @@ test("DataCredito rapido y FirmaSeguro lento o fallido nunca alteran un plazo pr
 });
 
 test("firma y cierre validan el rango en servidor sin invalidar el sello anterior", () => {
-  const signature = read("app/api/creditos/borradores/[id]/firma-seguro/route.ts");
+  const signature = [
+    read("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
+    read("lib/firmaseguro-draft-credit-builder.ts"),
+  ].join("\n");
   const close = read("app/api/creditos/route.ts");
   assert.match(signature, /validateIphoneInstallmentLimit\(\{[\s\S]{0,160}enforceFactoryRange: true/);
   assert.match(signature, /if \(iphoneInstallmentLimit.outsideRange\)/);

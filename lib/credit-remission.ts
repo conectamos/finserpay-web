@@ -11,6 +11,82 @@ export type CreditRemissionData = {
   fechaPrimerPago: string;
 };
 
+export type CreditRemissionClosureData = CreditRemissionData & {
+  frecuenciaPago: string;
+};
+
+type SignedCreditRemissionSnapshot = {
+  clienteNombre?: unknown;
+  documento?: unknown;
+  referenciaEquipo?: unknown;
+  valorVenta?: unknown;
+  cuotaInicial?: unknown;
+  numeroCuotas?: unknown;
+  calculoVersion?: unknown;
+  cuotaPactada?: unknown;
+  cuotaComercial?: unknown;
+  cuotaTotalExacta?: unknown;
+  fechaPrimerPago?: unknown;
+  frecuenciaPago?: unknown;
+};
+
+function finiteNumber(value: unknown) {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && !value.trim())
+  ) {
+    return Number.NaN;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function opaqueFingerprint(value: string) {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
+  }
+
+  return [first, second]
+    .map((part) => (part >>> 0).toString(16).padStart(8, "0"))
+    .join("");
+}
+
+export function creditRemissionFromSignedSnapshot(
+  snapshot: SignedCreditRemissionSnapshot,
+): CreditRemissionClosureData | null {
+  const calculationVersion = String(snapshot.calculoVersion || "").trim();
+  const cuotaPactada = finiteNumber(snapshot.cuotaPactada);
+  const cuotaTotalExacta = finiteNumber(snapshot.cuotaTotalExacta);
+  const valorCuota =
+    calculationVersion === "ARES_FRANCES_V2"
+      ? cuotaPactada
+      : calculationVersion === "ARES_FRANCES_V1" ||
+          calculationVersion === "FRANCES_V1"
+        ? cuotaTotalExacta
+        : Number.NaN;
+  const data: CreditRemissionClosureData = {
+    clienteNombre: String(snapshot.clienteNombre ?? "").trim(),
+    clienteDocumento: String(snapshot.documento ?? "").trim(),
+    referenciaEquipo: String(snapshot.referenciaEquipo ?? "").trim(),
+    valorVenta: finiteNumber(snapshot.valorVenta),
+    valorInicial: finiteNumber(snapshot.cuotaInicial),
+    numeroCuotas: finiteNumber(snapshot.numeroCuotas),
+    valorCuota,
+    fechaPrimerPago: String(snapshot.fechaPrimerPago ?? "").trim(),
+    frecuenciaPago: String(snapshot.frecuenciaPago ?? "").trim(),
+  };
+
+  return isCreditRemissionReady(data) && data.frecuenciaPago
+    ? data
+    : null;
+}
+
 function getDateOnlyParts(value: string) {
   const match = DATE_ONLY_PATTERN.exec(value.trim());
   if (!match) return null;
@@ -96,5 +172,24 @@ export function isCreditRemissionReady(data: CreditRemissionData) {
       Number.isFinite(data.valorCuota) &&
       data.valorCuota > 0 &&
       getDateOnlyParts(data.fechaPrimerPago),
+  );
+}
+
+export function getCreditRemissionFingerprint(
+  data: CreditRemissionData,
+  frecuenciaPago: string,
+) {
+  return opaqueFingerprint(
+    JSON.stringify([
+      data.clienteNombre,
+      data.clienteDocumento,
+      data.referenciaEquipo,
+      data.valorVenta,
+      data.valorInicial,
+      data.numeroCuotas,
+      data.valorCuota,
+      data.fechaPrimerPago,
+      frecuenciaPago,
+    ]),
   );
 }

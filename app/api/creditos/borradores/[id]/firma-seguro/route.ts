@@ -8,62 +8,31 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isDirectSalesProfile } from "@/lib/solicitud-operation-access";
 import prisma from "@/lib/prisma";
+import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import {
-  allowsDataCreditoNonProductionProvider,
-  getDataCreditoPublicConfig,
-} from "@/lib/datacredito";
-import {
-  getApprovedDataCreditoAssessmentForCredit,
-  isDataCreditoAuditConfigured,
-} from "@/lib/datacredito/storage";
-import {
-  DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT,
-  resolveDataCreditoOfferFinancingTerms,
-  type DataCreditoPolicyFinancialSettings,
-} from "@/lib/datacredito/policy";
-import { resolveDataCreditoManualCreditLimit } from "@/lib/datacredito/manual-credit-limits";
-import {
-  DEFAULT_CREDIT_INSTALLMENTS,
   generateCreditFolio,
   generatePaymentReference,
   resolveActivationFirstPaymentDate,
-  resolveCreditEquipmentPlatform,
-  normalizeCreditInstallmentLimit,
-  normalizeCreditInstallments,
-  normalizePaymentFrequency,
-  parseCreditInstallmentSelection,
-  resolveRequiredInitialPaymentByPlatform,
   sanitizeDeviceValue,
-  sanitizeImageDataUrl,
   sanitizeText,
   toNumber,
-  validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
-import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
-import {
-  ARES_COMMERCIAL_AMORTIZATION_VERSION,
-  calculateFrenchAmortization,
-} from "@/lib/credit-amortization";
-import {
-  CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE,
-  CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
-  hasCurrentCreditOriginationTerms,
-} from "@/lib/credit-current-origination-terms";
 import {
   createFinancingTermsSeal,
   readFinancingTermsSeal,
 } from "@/lib/credit-amortization-contract";
-import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
-import { getEffectiveCreditSettings } from "@/lib/credit-settings";
-import {
-  findEquipmentCatalogItem,
-  findEquipmentCatalogItemById,
-} from "@/lib/equipment-catalog";
+import { creditRemissionFromSignedSnapshot } from "@/lib/credit-remission";
 import {
   FirmaSeguroApiError,
   isFirmaSeguroCompletedStatus,
 } from "@/lib/firmaseguro";
 import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
+import {
+  buildDraftCredit,
+  CreditValidationError,
+  type DraftPayload,
+  type DraftRow,
+} from "@/lib/firmaseguro-draft-credit-builder";
 import {
   getLatestFirmaSeguroProcessForDraft,
   refreshFirmaSeguroProcess,
@@ -79,6 +48,7 @@ import {
   FirmaSeguroImeiCorrectionError,
   recordFirmaSeguroImeiCorrectionReissue,
 } from "@/lib/firmaseguro-imei-correction";
+import { recordFirmaSeguroFinancialCorrectionReissue } from "@/lib/firmaseguro-financial-correction";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import {
   getFirmaSeguroProcessByUuid,
@@ -94,66 +64,6 @@ import { isVeriffRequired } from "@/lib/veriff";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type DraftPayload = Record<string, unknown>;
-
-type DraftRow = {
-  id: number;
-  clienteDocumento: string | null;
-  estado: string;
-  usuarioId: number;
-  vendedorId: number | null;
-  sedeId: number;
-  currentStep: number;
-  payload: unknown;
-  usuarioNombre: string | null;
-  usuarioLogin: string | null;
-  vendedorNombre: string | null;
-  vendedorDocumento: string | null;
-  vendedorTelefono: string | null;
-  vendedorEmail: string | null;
-  sedeNombre: string | null;
-  sedeCodigo: string | null;
-  sedeAliadoId: number | null;
-};
-
-type DraftDataCreditoOffer = {
-  assessmentId: string;
-  policyVersion: number;
-  policyRevisionId: string;
-  initialPaymentPercentage: number;
-  suretyPercentage: number;
-  maxFinancedAmount: number;
-  installmentCount: number;
-  maxInstallmentAmount: number | null;
-  usedLegacyFinancingTermsFallback: boolean;
-  financialSettings: DataCreditoPolicyFinancialSettings | null;
-};
-
-type BuiltDraftCredit = {
-  credit: CreditForFirmaSeguroPdf;
-  amortizationPlan: ReturnType<typeof calculateFrenchAmortization>;
-  financingParameters: Parameters<
-    typeof createFinancingTermsSeal
-  >[0]["parametros"];
-  firstPaymentDateKey: string;
-};
-
-class CreditValidationError extends Error {
-  readonly status: number;
-  readonly code: string;
-
-  constructor(
-    message: string,
-    status = 400,
-    code = "FIRMASEGURO_CREDIT_INVALID"
-  ) {
-    super(message);
-    this.name = "CreditValidationError";
-    this.status = status;
-    this.code = code;
-  }
-}
 
 function canReuseFirmaSeguroProcess(process: {
   completedAt?: unknown;
@@ -334,469 +244,30 @@ function serializeDraftFirmaSeguroProcess(
 ) {
   const serialized = serializeFirmaSeguroProcess(process, options);
   if (!serialized) return null;
+  const processPayload = payloadObject(process?.draftPayload);
+  const signedSeal = readFinancingTermsSeal(
+    processPayload.financialTermsSeal
+  );
 
   return {
     ...serialized,
     ...getDraftFirstPaymentDateState(process),
-  };
-}
-
-async function getDraftDataCreditoOffer(
-  row: DraftRow,
-  payload: DraftPayload,
-  platform: "ANDROID" | "IPHONE"
-): Promise<DraftDataCreditoOffer | null> {
-  const dataCreditoProvider = getDataCreditoPublicConfig();
-
-  if (!dataCreditoProvider.enabled) {
-    return null;
-  }
-
-  if (!dataCreditoProvider.configured || !isDataCreditoAuditConfigured()) {
-    throw new CreditValidationError(
-      "La precalificacion de DataCredito esta habilitada, pero su configuracion segura esta incompleta.",
-      503
-    );
-  }
-
-  if (
-    process.env.NODE_ENV === "production" &&
-    !dataCreditoProvider.productionReady &&
-    !allowsDataCreditoNonProductionProvider()
-  ) {
-    throw new CreditValidationError(
-      "El ambiente de certificacion no puede autorizar ventas reales.",
-      503
-    );
-  }
-
-  if (sanitizeText(payload.clienteTipoDocumento) !== "CEDULA_DE_CIUDADANIA") {
-    throw new CreditValidationError(
-      "La precalificacion actual de DataCredito solo admite cedula de ciudadania.",
-      409
-    );
-  }
-
-  const documentNumber = sanitizeText(payload.clienteDocumento);
-  if (!/^\d{3,13}$/.test(documentNumber)) {
-    throw new CreditValidationError(
-      "La cedula debe contener entre 3 y 13 digitos, sin puntos ni espacios."
-    );
-  }
-
-  const assessment = await getApprovedDataCreditoAssessmentForCredit({
-    assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
-    documentNumber,
-    firstSurname: sanitizeText(payload.clientePrimerApellido),
-    platform,
-    providerEnvironment: dataCreditoProvider.environment,
-    userId: row.usuarioId,
-    sellerId: row.vendedorId,
-    sedeId: row.sedeId,
-    aliadoId: row.sedeAliadoId,
-  });
-
-  if (!assessment) {
-    throw new CreditValidationError(
-      "La precalificacion no esta aprobada, vencio o no coincide con la cedula y el primer apellido consultados para este credito.",
-      409,
-      "DATACREDITO_ASSESSMENT_INVALID"
-    );
-  }
-
-  const initialPaymentPercentage = Number(
-    assessment.offer?.initialPaymentPercentage
-  );
-  const suretyPercentage = Number(assessment.offer?.suretyPercentage);
-  const maxFinancedAmount = Number(assessment.offer?.maxFinancedAmount);
-  const financingTerms = resolveDataCreditoOfferFinancingTerms(
-    platform,
-    assessment.offer
-  );
-  const validOffer =
-    Number.isFinite(initialPaymentPercentage) &&
-    initialPaymentPercentage >= 0 &&
-    initialPaymentPercentage <= 100 &&
-    Number.isFinite(suretyPercentage) &&
-    suretyPercentage >= 0 &&
-    suretyPercentage <= 100 &&
-    Number.isSafeInteger(maxFinancedAmount) &&
-    maxFinancedAmount > 0 &&
-    maxFinancedAmount <= DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT &&
-    Boolean(financingTerms);
-
-  if (!validOffer || !financingTerms) {
-    throw new CreditValidationError(
-      "La oferta de la precalificacion no es valida. Solicita revision de la politica de puntajes.",
-      503
-    );
-  }
-
-  return {
-    assessmentId: assessment.id,
-    policyVersion: assessment.policyVersion,
-    policyRevisionId: assessment.policyRevisionId,
-    initialPaymentPercentage,
-    suretyPercentage,
-    maxFinancedAmount,
-    installmentCount: financingTerms.installmentCount,
-    maxInstallmentAmount: financingTerms.maxInstallmentAmount,
-    usedLegacyFinancingTermsFallback: financingTerms.usedLegacyFallback,
-    financialSettings: assessment.offer?.financialSettings || null,
-  };
-}
-
-async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
-  const payload = payloadObject(row.payload);
-  const clientePrimerNombre = sanitizeText(payload.clientePrimerNombre);
-  const clientePrimerApellido = sanitizeText(payload.clientePrimerApellido);
-  const clienteNombre =
-    sanitizeText(payload.clienteNombre) ||
-    [clientePrimerNombre, clientePrimerApellido].filter(Boolean).join(" ");
-  const clienteDocumento = sanitizeText(payload.clienteDocumento);
-  const clienteTelefono = sanitizeText(payload.clienteTelefono);
-  const referenciaFamiliar1Telefono = sanitizeText(
-    payload.referenciaFamiliar1Telefono
-  );
-  const referenciaFamiliar2Telefono = sanitizeText(
-    payload.referenciaFamiliar2Telefono
-  );
-  const clienteCorreo = sanitizeText(payload.clienteCorreo);
-  const clienteDireccion = sanitizeText(payload.clienteDireccion);
-  const equipoMarca = sanitizeText(payload.equipoMarca);
-  const equipoModelo = sanitizeText(payload.equipoModelo);
-  const contactPhoneValidation = validateCreditContactPhones({
-    clienteTelefono,
-    referenciaFamiliar1Telefono,
-    referenciaFamiliar2Telefono,
-  });
-  if (!contactPhoneValidation.ok) {
-    throw new CreditValidationError(contactPhoneValidation.message);
-  }
-  const contratoFotoDataUrl = sanitizeImageDataUrl(
-    payload.contratoSelfieDataUrl || payload.contratoFotoDataUrl
-  );
-  const contratoCedulaFrenteDataUrl = sanitizeImageDataUrl(
-    payload.contratoCedulaFrenteDataUrl || payload.cedulaFrenteDataUrl
-  );
-  const contratoCedulaRespaldoDataUrl = sanitizeImageDataUrl(
-    payload.contratoCedulaRespaldoDataUrl || payload.cedulaRespaldoDataUrl
-  );
-  const referenciaEquipo =
-    sanitizeText(payload.referenciaEquipo) ||
-    [equipoMarca, equipoModelo].filter(Boolean).join(" ");
-  const imei = sanitizeDeviceValue(payload.imei || payload.deviceUid)
-    .replace(/\D/g, "");
-  if (!/^\d{15}$/.test(imei)) {
-    throw new CreditValidationError(
-      "El IMEI debe tener exactamente 15 numeros antes de enviar a FirmaSeguro.",
-      400,
-      "FIRMASEGURO_IMEI_INVALID"
-    );
-  }
-  const rawEquipmentCatalogId = payload.equipoCatalogoId;
-  const hasEquipmentCatalogId =
-    rawEquipmentCatalogId !== null &&
-    rawEquipmentCatalogId !== undefined &&
-    sanitizeText(rawEquipmentCatalogId) !== "";
-  const parsedEquipmentCatalogId = Number(rawEquipmentCatalogId);
-  const equipoCatalogoId =
-    hasEquipmentCatalogId &&
-    Number.isInteger(parsedEquipmentCatalogId) &&
-    parsedEquipmentCatalogId > 0
-      ? parsedEquipmentCatalogId
-      : null;
-
-  if (hasEquipmentCatalogId && !equipoCatalogoId) {
-    throw new CreditValidationError(
-      "El identificador del equipo de catalogo es invalido."
-    );
-  }
-
-  const catalogItem = equipoCatalogoId
-    ? await findEquipmentCatalogItemById(equipoCatalogoId)
-    : equipoMarca && equipoModelo
-      ? await findEquipmentCatalogItem({ marca: equipoMarca, modelo: equipoModelo })
-      : null;
-  const platformResolution = resolveCreditEquipmentPlatform({
-    requestedPlatform: payload.plataformaDispositivo,
-    equipoMarca,
-    equipoModelo,
-    catalogItemId: equipoCatalogoId,
-    catalogItem,
-  });
-
-  if (!platformResolution.ok) {
-    throw new CreditValidationError(platformResolution.message);
-  }
-
-  const plataformaDispositivo = platformResolution.platform;
-  const valorEquipoTotalInput = toNumber(payload.valorEquipoTotal);
-  const precioBaseVentaCatalogo = catalogItem?.activo
-    ? catalogItem.precioBaseVenta
-    : null;
-  const effectiveCreditSettings = await getEffectiveCreditSettings(
-    undefined,
-    plataformaDispositivo
-  );
-  const dataCreditoOffer = await getDraftDataCreditoOffer(
-    row,
-    payload,
-    plataformaDispositivo
-  );
-  const dataCreditoCreditLimit = dataCreditoOffer
-    ? await resolveDataCreditoManualCreditLimit({
-        documento: clienteDocumento,
-        policyMaxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
-      })
-    : null;
-  const dataCreditoMaxFinancedAmount =
-    dataCreditoCreditLimit?.maxFinancedAmount || 0;
-  const creditSettings = dataCreditoOffer
-    ? {
-        ...effectiveCreditSettings.globalSettings,
-        cuotaInicialPorcentaje: dataCreditoOffer.initialPaymentPercentage,
-        fianzaPorcentaje: dataCreditoOffer.suretyPercentage,
-      }
-    : effectiveCreditSettings.globalSettings;
-  const initialPaymentBreakdown = resolveRequiredInitialPaymentByPlatform({
-    valorTotalEquipo: valorEquipoTotalInput,
-    precioBaseVenta: precioBaseVentaCatalogo,
-    initialPaymentPercentage: creditSettings.cuotaInicialPorcentaje,
-    platform: plataformaDispositivo,
-    iphoneMaxFinancedAmount: creditSettings.iphoneTopeFinanciado,
-    maxFinancedAmount: dataCreditoOffer
-      ? dataCreditoMaxFinancedAmount
-      : undefined,
-  });
-  const cuotaInicialMinima =
-    initialPaymentBreakdown.requiredInitialPayment;
-  const cuotaInicialInput = toNumber(payload.cuotaInicial);
-  const cuotaInicial =
-    cuotaInicialInput > 0
-      ? Math.max(cuotaInicialMinima, cuotaInicialInput)
-      : cuotaInicialMinima;
-  const selectedDataCreditoInstallmentCount = dataCreditoOffer
-    ? parseCreditInstallmentSelection(
-        payload.plazoMeses,
-        dataCreditoOffer.installmentCount
-      )
-    : null;
-  if (dataCreditoOffer && selectedDataCreditoInstallmentCount === null) {
-    throw new CreditValidationError(
-      `El número de cuotas debe ser un entero entre 1 y ${dataCreditoOffer.installmentCount}.`
-    );
-  }
-  const plazoMeses = dataCreditoOffer
-    ? selectedDataCreditoInstallmentCount!
-    : normalizeCreditInstallments(
-        toNumber(payload.plazoMeses),
-        creditSettings.plazoCuotas || DEFAULT_CREDIT_INSTALLMENTS,
-        normalizeCreditInstallmentLimit(creditSettings.plazoMaximoCuotas)
-      );
-  const resolvedPolicyFinancialSettings =
-    resolveCreditPolicyFinancialSettings({
-      globalSettings: effectiveCreditSettings.globalSettings,
-      policyFinancialSettings: dataCreditoOffer?.financialSettings,
-      legacyOfferSuretyPercentage:
-        dataCreditoOffer?.suretyPercentage ?? null,
-      numeroCuotas: plazoMeses,
-    });
-  if (!hasCurrentCreditOriginationTerms(resolvedPolicyFinancialSettings)) {
-    throw new CreditValidationError(
-      CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
-      409,
-      CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE
-    );
-  }
-  const frecuenciaPago = normalizePaymentFrequency(
-    resolvedPolicyFinancialSettings.frecuenciaPago
-  );
-  const fechaCredito = new Date();
-  const firstPaymentResolution = resolveActivationFirstPaymentDate({
-    frequency: frecuenciaPago,
-    activatedAt: fechaCredito,
-  });
-  const fechaPrimerPago = firstPaymentResolution.date;
-  const amortizationPlan = calculateFrenchAmortization({
-    calculoVersion: resolvedPolicyFinancialSettings.calculoVersion,
-    tasaPeriodoDecimales:
-      resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
-    redondeoComercial:
-      resolvedPolicyFinancialSettings.redondeoComercial,
-    valorVenta: valorEquipoTotalInput,
-    cuotaInicial,
-    numeroCuotas: plazoMeses,
-    tasaInteresEa: resolvedPolicyFinancialSettings.tasaInteresEa,
-    fianzaCuotaPorcentaje:
-      resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje,
-    seguroCuotaPorcentaje:
-      resolvedPolicyFinancialSettings.seguroCuotaPorcentaje,
-    frecuenciaPago,
-    fechaPrimerPago,
-  });
-  const financialPlan = {
-    montoCreditoTotal:
-      Math.round(amortizationPlan.montoTotal * 100) / 100,
-    valorCuota: amortizationPlan.cuotaCobro,
-    cuotaComercial: amortizationPlan.cuotaComercial,
-    valorFianza:
-      Math.round(amortizationPlan.valorFianzaTotal * 100) / 100,
-  };
-  const financingParameters: BuiltDraftCredit["financingParameters"] = {
-    fianzaTotalPorcentaje:
-      resolvedPolicyFinancialSettings.fianzaTotalPorcentaje,
-    fianzaModalidad:
-      resolvedPolicyFinancialSettings.fianzaModalidad,
-    fianzaFuente: resolvedPolicyFinancialSettings.fianzaSource,
-    tasaPeriodoDecimales:
-      resolvedPolicyFinancialSettings.tasaPeriodoDecimales,
-    redondeoComercial:
-      resolvedPolicyFinancialSettings.redondeoComercial,
-    policyVersion: dataCreditoOffer?.policyVersion || null,
-    policyRevisionId:
-      dataCreditoOffer?.policyRevisionId || null,
-  };
-  const iphoneInstallmentLimit = validateIphoneInstallmentLimit({
-    platform: plataformaDispositivo,
-    valorCuota: amortizationPlan.cuotaCobro,
-    enforceFactoryRange: true,
-    iphoneMaxInstallmentValue: dataCreditoOffer
-      ? dataCreditoOffer.maxInstallmentAmount
-      : creditSettings.iphoneTopeCuota,
-  });
-
-  if (iphoneInstallmentLimit.outsideRange) {
-    throw new CreditValidationError(iphoneInstallmentLimit.message);
-  }
-
-  const folio = sanitizeText(payload.firmaSeguroDraftFolio) || generateCreditFolio();
-  const referenciaPago = generatePaymentReference(folio, clienteDocumento);
-
-  return {
-    credit: {
-      folio,
-    contratoSnapshot: {
-      borradorId: row.id,
-      origen: "BORRADOR_FIRMASEGURO",
-      ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
-        ? {
-            financiero: {
-              calculoVersion: amortizationPlan.version,
-              cuotaPactada: amortizationPlan.cuotaCobro,
-              cuotaTotalExacta: amortizationPlan.cuotaTotal,
-              cuotaComercial: amortizationPlan.cuotaComercial,
-              totalPagarExacto: amortizationPlan.montoTotalExacto,
-              descuentoRedondeo: amortizationPlan.descuentoRedondeo,
-            },
-          }
-        : {}),
-      dataCredito: dataCreditoOffer
-        ? {
-            assessmentId: dataCreditoOffer.assessmentId,
-            policyVersion: dataCreditoOffer.policyVersion,
-            policyRevisionId: dataCreditoOffer.policyRevisionId,
-            policyMaxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
-            manualMaxFinancedAmount:
-              dataCreditoCreditLimit?.manualLimit?.maxFinancedAmount ?? null,
-            resolvedMaxFinancedAmount: dataCreditoMaxFinancedAmount,
-            maxFinancedAmount: dataCreditoMaxFinancedAmount,
-            financingLimitSource:
-              dataCreditoCreditLimit?.source || "POLICY",
-            manualCreditLimitId:
-              dataCreditoCreditLimit?.manualLimit?.id || null,
-            manualCreditLimitVersion:
-              dataCreditoCreditLimit?.manualLimit?.version || null,
-            manualCreditLimitDocumentLast4:
-              dataCreditoCreditLimit?.manualLimit?.documentLast4 || null,
-            effectiveMaxFinancedAmount:
-              dataCreditoMaxFinancedAmount,
-            initialPaymentCalculationVersion: "BALANCE_LIMIT_V2",
-            platformInitialPayment:
-              initialPaymentBreakdown.platformInitialPayment,
-            dataCreditoInitialPayment:
-              initialPaymentBreakdown.dataCreditoInitialPayment,
-            dataCreditoInitialPaymentAdjustment:
-              initialPaymentBreakdown.dataCreditoInitialPaymentAdjustment,
-            installmentCount: dataCreditoOffer.installmentCount,
-            maxInstallmentCount: dataCreditoOffer.installmentCount,
-            selectedInstallmentCount: plazoMeses,
-            maxInstallmentAmount: dataCreditoOffer.maxInstallmentAmount,
-            usedLegacyFinancingTermsFallback:
-              dataCreditoOffer.usedLegacyFinancingTermsFallback,
-            documentExceptionId: null,
-          }
-        : null,
-    },
-    clienteTipoDocumento: sanitizeText(payload.clienteTipoDocumento) || null,
-    clienteNombre,
-    clientePrimerNombre,
-    clientePrimerApellido,
-    clienteDocumento,
-    clienteTelefono,
-    clienteCorreo,
-    clienteDireccion,
-    referenciaEquipo,
-    equipoMarca,
-    equipoModelo,
-    imei,
-    deviceUid: imei,
-    valorEquipoTotal: valorEquipoTotalInput,
-    montoCredito: financialPlan.montoCreditoTotal,
-    cuotaInicial,
-    valorCuota: financialPlan.valorCuota,
-    valorCuotaComercial: financialPlan.cuotaComercial,
-    calculoVersion: amortizationPlan.version,
-    cuotaTotalExacta: amortizationPlan.cuotaTotal,
-    ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
-      ? { descuentoRedondeo: amortizationPlan.descuentoRedondeo }
-      : {}),
-    tasaInteresEa: amortizationPlan.tasaInteresEa,
-    tasaPeriodo: amortizationPlan.tasaPeriodo,
-    fianzaCuotaPorcentaje: amortizationPlan.fianzaCuotaPorcentaje,
-    fianzaTotalPorcentaje:
-      resolvedPolicyFinancialSettings.fianzaTotalPorcentaje,
-    fianzaModalidad:
-      resolvedPolicyFinancialSettings.fianzaModalidad,
-    seguroCuotaPorcentaje: amortizationPlan.seguroCuotaPorcentaje,
-    redondeoComercialModo:
-      resolvedPolicyFinancialSettings.redondeoComercial.modo,
-    redondeoComercialMultiplo:
-      resolvedPolicyFinancialSettings.redondeoComercial.multiplo,
-    valorSeguro: amortizationPlan.valorSeguroTotal,
-    plazoMeses,
-    frecuenciaPago,
-    fechaPrimerPago,
-    fechaCredito,
-    referenciaPago,
-    valorFianza: financialPlan.valorFianza,
-    contratoIp: sanitizeText(payload.contratoIp) || null,
-    contratoFotoDataUrl,
-    contratoSelfieDataUrl: contratoFotoDataUrl,
-    contratoCedulaFrenteDataUrl,
-    contratoCedulaRespaldoDataUrl,
-    usuario: {
-      nombre: row.usuarioNombre || "Usuario FINSER PAY",
-      usuario: row.usuarioLogin || null,
-    },
-    vendedor: row.vendedorId
-      ? {
-          nombre: row.vendedorNombre,
-          documento: row.vendedorDocumento,
-          telefono: row.vendedorTelefono,
-          email: row.vendedorEmail,
-        }
+    financialTermsChecksum: signedSeal?.checksum || null,
+    financialCorrectionReissue: Boolean(
+      processPayload.firmaSeguroFinancialCorrectionId,
+    ),
+    remission: signedSeal
+      ? creditRemissionFromSignedSnapshot(signedSeal.snapshot)
       : null,
-      sede: {
-        nombre: row.sedeNombre || "Sede",
-        codigo: row.sedeCodigo,
-        aliadoId: row.sedeAliadoId,
-      },
-    },
-    amortizationPlan,
-    financingParameters,
-    firstPaymentDateKey: firstPaymentResolution.dateKey,
   };
+}
+
+async function recordDraftCorrectionReissue(
+  draftId: number,
+  process: import("@/lib/firmaseguro-storage").FirmaSeguroProcessRow | null,
+) {
+  await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
+  await recordFirmaSeguroFinancialCorrectionReissue(draftId, process);
 }
 
 function firmaSeguroErrorResponse(error: unknown) {
@@ -892,6 +363,7 @@ export async function GET(
     const url = new URL(request.url);
     const shouldRefresh = url.searchParams.get("refresh") === "1";
     const process = shouldRefresh ? await refreshFirmaSeguroProcess(current) : current;
+    await recordDraftCorrectionReissue(draftId, process);
 
     return NextResponse.json({
       ok: true,
@@ -1113,7 +585,7 @@ async function requestDraftSignatureCore(
       const process = await getFirmaSeguroProcessByUuid(resumed.processUuid);
       if (!process) throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_MISSING",
         "FirmaSeguro confirmó el envío, pero el proceso ya no está vigente. Actualiza el caso.");
-      await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
+      await recordDraftCorrectionReissue(draftId, process);
       return NextResponse.json({ ok: true, id: key, status: resumed.status, idempotent: true,
         process: serializeDraftFirmaSeguroProcess(process),
         message: "FirmaSeguro confirmó este envío anteriormente." });
@@ -1132,7 +604,8 @@ async function requestDraftSignatureCore(
     const currentPayload = payloadObject(authorized.row.payload);
     if (body.requireCorrection === true &&
       currentPayload.firmaSeguroCorrectionPending !== true &&
-      currentPayload.firmaSeguroContactCorrectionPending !== true) {
+      currentPayload.firmaSeguroContactCorrectionPending !== true &&
+      currentPayload.firmaSeguroFinancialCorrectionPending !== true) {
       throw new DraftDispatchError("DRAFT_DISPATCH_CORRECTION_REQUIRED",
         "Corrige primero el IMEI o el contacto y actualiza el expediente.");
     }
@@ -1142,7 +615,7 @@ async function requestDraftSignatureCore(
       canReuseFirmaSeguroProcess(current) &&
       !currentFirstPaymentState.requiresFirstPaymentDateReissue
     ) {
-      await recordFirmaSeguroImeiCorrectionReissue(draftId, current);
+      await recordDraftCorrectionReissue(draftId, current);
       return NextResponse.json({
         ok: true,
         idempotent: true,
@@ -1160,7 +633,7 @@ async function requestDraftSignatureCore(
         canReuseFirmaSeguroProcess(concurrentProcess) &&
         !concurrentFirstPaymentState.requiresFirstPaymentDateReissue
       ) {
-        await recordFirmaSeguroImeiCorrectionReissue(draftId, concurrentProcess);
+        await recordDraftCorrectionReissue(draftId, concurrentProcess);
         return NextResponse.json({
           ok: true,
           idempotent: true,
@@ -1210,7 +683,7 @@ async function requestDraftSignatureCore(
         lockedCurrentReusable &&
         lockedCurrentFirstPaymentState.requiresFirstPaymentDateReissue;
       if (lockedCurrentReusable && !requiresFirstPaymentDateReissue) {
-        await recordFirmaSeguroImeiCorrectionReissue(draftId, lockedCurrent);
+        await recordDraftCorrectionReissue(draftId, lockedCurrent);
         return NextResponse.json({
           ok: true,
           idempotent: true,
@@ -1221,8 +694,13 @@ async function requestDraftSignatureCore(
 
       await requireApprovedVeriffBeforeFirmaSeguro(lockedAuthorized.row);
       const sourcePayload = payloadObject(lockedAuthorized.row.payload);
-      const correctionPending = sourcePayload.firmaSeguroCorrectionPending === true
-        || sourcePayload.firmaSeguroContactCorrectionPending === true;
+      const frozenCorrectionPending =
+        sourcePayload.firmaSeguroCorrectionPending === true ||
+        sourcePayload.firmaSeguroContactCorrectionPending === true;
+      const financialCorrectionPending =
+        sourcePayload.firmaSeguroFinancialCorrectionPending === true;
+      const correctionPending =
+        frozenCorrectionPending || financialCorrectionPending;
       const sourceRows = correctionPending ? await prisma.$queryRawUnsafe<
         Array<import("@/lib/firmaseguro-storage").FirmaSeguroProcessRow>>(
         `SELECT * FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
@@ -1233,8 +711,18 @@ async function requestDraftSignatureCore(
       const priorProcess = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
         `SELECT "id" FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
           ORDER BY "createdAt" DESC,"id" DESC LIMIT 1`, draftId);
+      const financialRetryProcess = Boolean(
+        financialCorrectionPending &&
+        lockedCurrent &&
+        !lockedCurrentReusable &&
+        payloadObject(lockedCurrent.draftPayload)
+          .firmaSeguroFinancialCorrectionId ===
+          sourcePayload.firmaSeguroFinancialCorrectionId
+      );
       if ((lockedCurrent || correctionPending || priorProcess.length > 0) &&
-        (!source || source.id !== priorProcess[0]?.id)) {
+        (!source ||
+          (source.id !== priorProcess[0]?.id &&
+            !(financialRetryProcess && lockedCurrent?.id === priorProcess[0]?.id)))) {
         throw new CreditValidationError(
           "No se puede conservar de forma verificable el contrato anterior. Requiere revisión técnica antes de reenviar.",
           409, "FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE");
@@ -1245,7 +733,7 @@ async function requestDraftSignatureCore(
       let credit: CreditForFirmaSeguroPdf;
       let firstPaymentDateKey: string;
       let seal: ReturnType<typeof createFinancingTermsSeal>;
-      if (source) {
+      if (source && frozenCorrectionPending) {
         try {
           const frozen = buildFrozenDraftCorrection({ draft: lockedAuthorized.row, source,
             folio: dispatchFolio, imei: sanitizeDeviceValue(sourcePayload.imei || sourcePayload.deviceUid).replace(/\D/g, "") });
@@ -1278,8 +766,18 @@ async function requestDraftSignatureCore(
           parametros: built.financingParameters,
         });
       }
-      const payload: Record<string, unknown> = { ...sourcePayload,
-        firmaSeguroDraftFolio: dispatchFolio, fechaPrimerPago: firstPaymentDateKey };
+      // Persist the exact values used to build the contract. Policy rules may
+      // raise the minimum initial payment, so keeping the browser inputs here
+      // would make the draft disagree with the signed seal and the remision.
+      const payload: Record<string, unknown> = {
+        ...sourcePayload,
+        firmaSeguroDraftFolio: dispatchFolio,
+        valorEquipoTotal: String(credit.valorEquipoTotal),
+        cuotaInicial: String(credit.cuotaInicial),
+        plazoMeses: String(credit.plazoMeses),
+        frecuenciaPago: credit.frecuenciaPago,
+        fechaPrimerPago: firstPaymentDateKey,
+      };
       delete payload.financialTermsSeal;
       const firmaSeguroDraftPayload: Record<string, unknown> = { ...payload,
         financialTermsSeal: seal };
@@ -1292,7 +790,9 @@ async function requestDraftSignatureCore(
         expectedProcessUuid: lockedCurrent?.processUuid || null,
         sourcePayload: lockedAuthorized.row.payload, updatedPayload: payload,
         draftPayload: firmaSeguroDraftPayload, draftFolio: dispatchFolio,
-        frozenCredit: credit, document, supersedeActive: requiresFirstPaymentDateReissue });
+        frozenCredit: credit, document,
+        supersedeActive:
+          requiresFirstPaymentDateReissue || financialRetryProcess });
       const dispatched = await dispatchReservedDraft(reserved.id);
       if (dispatched.status !== "AWAITING_SIGNATURE" || !dispatched.processUuid) {
         throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
@@ -1301,10 +801,12 @@ async function requestDraftSignatureCore(
       const process = await getFirmaSeguroProcessByUuid(dispatched.processUuid);
       if (!process) throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_MISSING",
         "FirmaSeguro confirmó el envío, pero el proceso ya no está vigente. Actualiza el caso.");
-      await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
+      await recordDraftCorrectionReissue(draftId, process);
       return NextResponse.json({ ok: true, id: key, status: dispatched.status,
         process: serializeDraftFirmaSeguroProcess(process),
-        message: requiresFirstPaymentDateReissue
+        message: financialCorrectionPending
+          ? "FirmaSeguro confirmó el nuevo contrato con los valores corregidos."
+          : requiresFirstPaymentDateReissue
           ? "El proceso anterior quedó en el historial. FirmaSeguro confirmó el nuevo envío con la fecha de pago actualizada."
           : "FirmaSeguro confirmó la solicitud de firma." });
     } finally {

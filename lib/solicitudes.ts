@@ -117,6 +117,7 @@ export type SolicitudCanonicalMutationCode =
   | "SOLICITUD_APELLIDO_INMUTABLE"
   | "SOLICITUD_DATACREDITO_INMUTABLE"
   | "SOLICITUD_IMEI_INMUTABLE"
+  | "SOLICITUD_CORRECCION_FINANCIERA_PENDIENTE"
   | "SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE";
 
 export class SolicitudCanonicalMutationError extends Error {
@@ -133,6 +134,8 @@ export class SolicitudCanonicalMutationError extends Error {
             ? "La consulta de DataCredito asociada a la solicitud no se puede cambiar."
             : code === "SOLICITUD_IMEI_INMUTABLE"
               ? "El IMEI no se puede cambiar después de iniciar la firma del contrato."
+              : code === "SOLICITUD_CORRECCION_FINANCIERA_PENDIENTE"
+                ? "Existe una corrección de valores pendiente de nueva firma. Actualiza la solicitud antes de continuar."
               : "Los datos incluidos en el contrato no se pueden cambiar después de enviarlo a firma."
     );
     this.code = code;
