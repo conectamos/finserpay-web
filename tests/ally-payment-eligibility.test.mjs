@@ -104,6 +104,12 @@ function fixtureQuery(input, credits, paidCreditIds = [], excludedCreditIds = []
       "CreditApprovalNovelty" AS (
         SELECT NULL::integer AS "creditoId", NULL::text AS "status" WHERE false
       ),
+      "CreditDeviceReplacement" AS (
+        SELECT NULL::integer AS "creditId", NULL::text AS "source", NULL::text AS "status" WHERE false
+      ),
+      "ApprovalOperationalContractVersion" AS (
+        SELECT NULL::integer AS "creditoId", NULL::integer AS "version", NULL::text AS "status" WHERE false
+      ),
       "Sede" ("id", "aliadoId") AS (
         VALUES (1::integer, 65588::integer), (2::integer, 65589::integer),
           (3::integer, 1::integer)
@@ -161,6 +167,8 @@ test("la misma consulta elegible admite el bloqueo transaccional sin cambiar par
     serializedValues.includes(input.endExclusive.toISOString()),
     true
   );
+  assert.match(preview.query, /"CreditDeviceReplacement" replacement[\s\S]*'PENDING_ENROLLMENT'/);
+  assert.match(preview.query, /"ApprovalOperationalContractVersion" version[\s\S]*"status"<>'COMPLETED'/);
 });
 
 test("SQL real: excepcion puntual, fechas historicas, permisos y pendientes", {

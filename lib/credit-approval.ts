@@ -38,7 +38,7 @@ export type ApprovalCredit = Record<EvidenceField, string | null> & {
   aliadoNombre: string; aliadoCodigo: string; valorEquipoTotal: number;
   cuotaInicial: number; saldoBaseFinanciado: number; contratoSnapshot: unknown;
   imei: string; referenciaEquipo: string | null; equipoMarca: string | null; equipoModelo: string | null;
-  required: boolean; paid: boolean;
+  required: boolean; paid: boolean; operationalImeiPending?: boolean;
 };
 export type ApprovalReview = {
   status: "PENDING" | "APPROVED"; revision: number; approvedRevision: number | null;
@@ -165,6 +165,14 @@ async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
       ${APPROVAL_EVIDENCE.map(({ field }) => `credit."${field}"`).join(", ")},
       ally."id" AS "aliadoId", ally."nombre" AS "aliadoNombre", ally."codigo" AS "aliadoCodigo",
       ${requiredSql} AS required,
+      (EXISTS (SELECT 1 FROM "CreditDeviceReplacement" replacement
+        WHERE replacement."creditId"=credit."id" AND replacement."source"='APPROVAL_OPERATIONS'
+          AND replacement."status" IN ('PENDING_ENROLLMENT','ENROLLMENT_APPROVED'))
+       OR EXISTS (SELECT 1 FROM "ApprovalOperationalContractVersion" version
+        WHERE version."creditoId"=credit."id"
+          AND version."version"=(SELECT MAX(latest."version") FROM "ApprovalOperationalContractVersion" latest
+            WHERE latest."creditoId"=credit."id")
+          AND version."status"<>'COMPLETED')) AS "operationalImeiPending",
       EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId" = credit."id") AS paid
     FROM "Credito" credit JOIN "Sede" site ON site."id" = credit."sedeId"
     JOIN "Aliado" ally ON ally."id" = site."aliadoId"
@@ -225,6 +233,7 @@ function isApprovedReview(review: ApprovalReview | null) {
 }
 
 export function buildCreditApprovalDetail(credit: ApprovalCredit, review: ApprovalReview | null, assessment: ApprovalAssessment | null, document: ApprovalDocument | null, reissue: Awaited<ReturnType<typeof getCreditApprovalReissueState>> = { available: true, blocked: false, operation: null }, novelties: Awaited<ReturnType<typeof getCreditApprovalNoveltyState>> = { available: true, blocksApproval: false, blocksSettlement: false, pendingCount: 0, answeredCount: 0, novelty: null }, callState: ApprovalCallState = { available: true, recording: null }, reviewHash = creditApprovalReviewHash(credit, assessment, document, review?.reviewHashVersion === 1 ? 1 : 2), canSkipCallRecording = false) {
+  const operationalImeiPending = credit.operationalImeiPending === true;
   const evidence = APPROVAL_EVIDENCE.map((item) => ({
     key: item.key, label: item.label, available: Boolean(approvalImage(credit[item.field])),
     href: `/api/aprobaciones/${credit.id}/evidencias?tipo=${item.key}`,
@@ -250,6 +259,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
     : credit.paid ? "Este crédito ya está incluido en una liquidación pagada."
     : cancelled ? "El crédito está anulado o cancelado."
     : reissue.blocked ? "Resuelve el reenvío de firma en curso antes de corregir o aprobar este expediente."
+    : operationalImeiPending ? "Espera la remisión, el enrolamiento y la nueva firma del equipo antes de aprobar este expediente."
     : !reissue.available ? "No se pudo verificar el estado de la firma. Actualiza el expediente." : null;
   const dataCorrectionBlockedReason = correctionBlockedReason;
   const recordingRequired = credit.required && !approved && !canSkipCallRecording;
@@ -267,6 +277,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
   if (!novelties.available) blockingReasons.push("No se pudo verificar el estado de las novedades. Actualiza el expediente.");
   else if (novelties.blocksApproval) blockingReasons.push("Hay novedades pendientes de corrección. Revisa las respuestas antes de confirmar el OK.");
   if (reissue.blocked || !reissue.available) blockingReasons.push(correctionBlockedReason || "La firma está pendiente de verificación.");
+  if (operationalImeiPending) blockingReasons.push("Completa la remisión, el enrolamiento y la nueva firma del equipo antes de confirmar el OK.");
   if (!credit.required) blockingReasons.push("Este crédito conserva las reglas anteriores a la activación.");
   if (credit.paid) blockingReasons.push("Este crédito ya está incluido en una liquidación pagada.");
   if (cancelled) blockingReasons.push("El crédito está anulado o cancelado.");

@@ -51,6 +51,15 @@ export function buildAllyPaymentEligibilityQuery(input: {
       LEFT JOIN "LiquidacionAliadoCredito" paid
         ON paid."creditoId" = credit."id"
       WHERE paid."id" IS NULL
+        AND NOT EXISTS (SELECT 1 FROM "CreditDeviceReplacement" replacement
+          WHERE replacement."creditId"=credit."id"
+            AND replacement."source"='APPROVAL_OPERATIONS'
+            AND replacement."status" IN ('PENDING_ENROLLMENT','ENROLLMENT_APPROVED'))
+        AND NOT EXISTS (SELECT 1 FROM "ApprovalOperationalContractVersion" version
+          WHERE version."creditoId"=credit."id"
+            AND version."version"=(SELECT MAX(latest."version") FROM "ApprovalOperationalContractVersion" latest
+              WHERE latest."creditoId"=credit."id")
+            AND version."status"<>'COMPLETED')
         AND NOT EXISTS (SELECT 1 FROM "CreditAllyPaymentExclusion" excluded WHERE excluded."creditoId" = credit."id")
         AND NOT EXISTS (SELECT 1 FROM "CreditApprovalNovelty" novelty WHERE novelty."creditoId"=credit."id" AND novelty."status"<>'RESOLVED')
         AND EXISTS (SELECT 1 FROM "CreditApprovalPolicy" WHERE "id" = 1)

@@ -53,8 +53,21 @@ export type OperationalCaseDetail = OperationalCaseSummary & {
     reason: string;
     createdAt: string;
   } | null;
+  remission: {
+    id: string;
+    replacementId: string;
+    version: number;
+    status: "PENDING_UPLOAD" | "PENDING_REVIEW" | "VERIFIED" | "REJECTED";
+    photoSha256: string | null;
+    requestedAt: string;
+    uploadedAt: string | null;
+    reviewedAt: string | null;
+    uploadedByName: string | null;
+  } | null;
   timeline: OperationalTimelineEvent[];
   capabilities: {
+    /** A signed credit still in approval must use the pre-settlement workflow. */
+    preSettlementApprovalCreditId: number | null;
     canChangeImei: boolean;
     canDispatchSignatureWithImei: boolean;
     canFinalizeImei: boolean;

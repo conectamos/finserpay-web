@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { Badge, Button, Card, DataTable, EmptyState, LoadingState, PageHeader, Select, StatusPill } from "@/app/_components/finser-ui";
 import PendingItemEditor from "./pending-item-editor";
+import PendingRemissions from "./pending-remissions";
 import { listPendingCredits, readPendingCredit, type PendingCredit, type PendingDetail, type PendingStatus } from "./pending-client";
 
 function NoveltyStatus({ item }: { item: PendingCredit }) {
@@ -104,6 +105,7 @@ export default function PendingConsole() {
       actions={<Button variant="secondary" disabled={busy} onClick={() => { void afterResponse().catch(() => undefined); if (!selectedId) void loadList(filter); }}>
         <RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar
       </Button>} />
+    <PendingRemissions />
     <Card className="min-w-0 overflow-hidden">
       <div className="flex flex-wrap items-end justify-between gap-4 p-4 sm:p-5">
         <div><h2 className="text-base font-bold">Créditos con novedades</h2><p className="mt-1 text-sm text-[var(--fp-muted)]">Los créditos aprobados dejan de aparecer aquí.</p></div>
