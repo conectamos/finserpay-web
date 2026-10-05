@@ -97,9 +97,15 @@ export async function requestCreditApprovalReissue(creditoId: number, input: Req
     if (review.revision !== input.expectedRevision || !current || current.processUuid !== input.expectedProcessUuid) {
       throw new CreditApprovalError("REVIEW_CHANGED", "La firma o la revisión cambió. Actualiza el expediente.", 409);
     }
-    const callContinuity = captureCreditApprovalCallContinuity(
-      await getCreditApprovalDetail(db, creditoId),
-    );
+    const approvalDetail = await getCreditApprovalDetail(db, creditoId);
+    // Re-check while the credit and review are locked. An IMEI replacement or
+    // another operational contract version must not race a signature reissue.
+    if (!approvalDetail.capabilities.canReissueSignature) {
+      throw new CreditApprovalError("REISSUE_NOT_ALLOWED",
+        approvalDetail.capabilities.correctionBlockedReason ||
+          "La firma vigente no está verificada para solicitar otra versión.", 409);
+    }
+    const callContinuity = captureCreditApprovalCallContinuity(approvalDetail);
     const originalPdf = approvalPdf(current.signedDocumentBase64);
     if (!originalPdf || originalPdf.length > 32 * 1024 * 1024 || !(current.completedAt || isFirmaSeguroCompletedStatus(current.status))) {
       throw new CreditApprovalError("SIGNED_DOCUMENT_REQUIRED", "Se necesita el documento firmado vigente antes de solicitar otra firma.", 409);

@@ -60,11 +60,16 @@ test("Aprobaciones abre el detalle con cuenta personal y conserva el muro para a
   findAll(tree, item => item.type === operations)[0].props.onOpenApproval(42);
   tree = render(personalProps);
   assert.ok(has(tree, consoleView));
+  assert.ok(has(tree, operations), "la ficha se mantiene montada para conservar el crédito seleccionado");
+  assert.equal(findAll(tree, item => item.type === operations)[0].props.active, false);
   assert.equal(findAll(tree, item => item.type === consoleView)[0].props.focusCreditId, 42,
     "el botón de FirmaSeguro debe abrir el expediente exacto");
   assert.ok(has(tree, sharedAccess), "el enlace compartido permanece en la bandeja");
   findAll(tree, item => item.type === "button" && item.props?.children === "Detalle del crédito")[0].props.onClick();
-  assert.ok(has(render(personalProps), operations));
+  tree = render(personalProps);
+  assert.ok(has(tree, operations));
+  assert.equal(findAll(tree, item => item.type === operations)[0].props.active, true,
+    "al regresar se vuelve a consultar el estado real del expediente");
 
   states.length = 0;
   tree = render({ shared: true });
@@ -133,6 +138,9 @@ test("las gestiones se abren bajo demanda y la remisión firmada requiere revisi
   };
   let openedCreditId = null;
   let remissionRequest = null;
+  let contactRequest = null;
+  let signatureRequest = null;
+  let approvalReviewReads = 0;
   const response = payload => ({ ok: true, json: async () => payload });
   const source = read("app/dashboard/aprobaciones/approval-operations.tsx");
   const compiled = ts.transpileModule(source, {
@@ -144,6 +152,21 @@ test("las gestiones se abren bajo demanda y la remisión firmada requiere revisi
     fetch: async (url, init) => {
       if (url.startsWith("/api/aprobaciones/operativo?q=")) return response({ ok: true, items: [caseDetail] });
       if (url === "/api/aprobaciones/operativo/credit/8") return response({ ok: true, item: caseDetail });
+      if (url === "/api/aprobaciones/8/datos") {
+        approvalReviewReads++;
+        return response({ ok: true, item: { review: { revision: 3, reviewHash: "a".repeat(64) } } });
+      }
+      if (url === "/api/aprobaciones/operativo/credit/8/contacto" && init?.method === "PATCH") {
+        contactRequest = JSON.parse(init.body);
+        caseDetail.phone = contactRequest.phone;
+        caseDetail.email = contactRequest.email;
+        return response({ ok: true, message: "Contacto actualizado" });
+      }
+      if (url === "/api/aprobaciones/operativo/credit/8/firma" && init?.method === "POST") {
+        signatureRequest = JSON.parse(init.body);
+        caseDetail.signature.status = "PENDING";
+        return response({ ok: true, operation: { id: "signature-8", status: "REQUESTED", message: "Solicitud enviada" } });
+      }
       if (url === "/api/aprobaciones/operativo/credit/8/remision" && init?.method === "POST") {
         remissionRequest = JSON.parse(init.body);
         return response({ ok: true, remission: caseDetail.remission });
@@ -195,6 +218,72 @@ test("las gestiones se abren bajo demanda y la remisión firmada requiere revisi
   button(tree, "Gestionar firma en aprobaciones").props.onClick();
   assert.equal(openedCreditId, 8);
 
+  caseDetail.capabilities.canUpdateContact = true;
+  caseDetail.capabilities.canResendSignature = true;
+  tree = render();
+  button(tree, "Actualizar contacto").props.onClick();
+  tree = render();
+  find(tree, item => item.type === components.Input && item.props.id === "approval-signature-phone")
+    .props.onChange({ target: { value: "3119876543" } });
+  find(tree, item => item.type === components.Input && item.props.id === "approval-signature-email")
+    .props.onChange({ target: { value: "nuevo@example.com" } });
+  find(tree, item => item.type === components.Input && item.props.id === "approval-contact-reason")
+    .props.onChange({ target: { value: "Corrección de contacto solicitada" } });
+  tree = render();
+  assert.equal(button(tree, "Reenviar firma")?.props.disabled, true,
+    "no permite enviar antes de guardar el contacto editado");
+  button(tree, "Guardar contacto").props.onClick();
+  await setImmediate();
+  assert.equal(contactRequest.expectedRevision, 3);
+  assert.equal(contactRequest.expectedReviewHash, "a".repeat(64));
+
+  tree = render();
+  button(tree, "Reenviar firma").props.onClick();
+  tree = render();
+  find(tree, item => item.type === components.Input && item.props.id === "approval-signature-reason")
+    .props.onChange({ target: { value: "Nueva versión solicitada" } });
+  tree = render();
+  button(tree, "Continuar").props.onClick();
+  tree = render();
+  const reissueConfirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Reenviar firma");
+  assert.match(reissueConfirm.props.description, /3119876543.*nuevo@example\.com/);
+  reissueConfirm.props.onConfirm();
+  await setImmediate();
+  assert.equal(approvalReviewReads, 2, "el cliente obtiene la revisión vigente antes de cada acción");
+  assert.equal(signatureRequest.expectedRevision, 3);
+  assert.equal(signatureRequest.expectedReviewHash, "a".repeat(64));
+  assert.equal(signatureRequest.expectedProcessUuid, "process-8");
+  assert.equal(caseDetail.signature.status, "PENDING", "el POST no adelanta la firma a completada");
+
+  caseDetail.signature.status = "NOT_SENT";
+  caseDetail.capabilities.canResendSignature = false;
+  caseDetail.capabilities.signatureReason = "Error técnico: requiere revisión. No se pudo verificar el origen contractual.";
+  tree = render();
+  assert.equal(button(tree, "Enviar firma"), undefined,
+    "un crédito sin firma verificable no puede ofrecer un envío que el servidor no autoriza");
+  assert.ok(textOf(tree).includes(caseDetail.capabilities.signatureReason));
+  assert.ok(button(tree, "Abrir revisión"));
+
+  caseDetail.capabilities.canSendSignature = true;
+  caseDetail.capabilities.signatureReason = null;
+  caseDetail.signature.processUuid = null;
+  tree = render();
+  assert.ok(button(tree, "Enviar firma"), "la firma inicial se habilita solo cuando el servidor expone la capacidad");
+  button(tree, "Enviar firma").props.onClick();
+  tree = render();
+  find(tree, item => item.type === components.Input && item.props.id === "approval-signature-reason")
+    .props.onChange({ target: { value: "Firma inicial del contrato" } });
+  tree = render();
+  button(tree, "Continuar").props.onClick();
+  tree = render();
+  find(tree, item => item.type === ConfirmDialog && item.props.title === "Enviar firma")
+    .props.onConfirm();
+  await setImmediate();
+  assert.equal(signatureRequest.expectedRevision, 3);
+  assert.equal(signatureRequest.expectedReviewHash, "a".repeat(64));
+  assert.equal(signatureRequest.expectedProcessUuid, null);
+  assert.equal(caseDetail.signature.status, "PENDING");
+
   caseDetail.capabilities.canChangeImei = false;
   caseDetail.replacement = { id: "replacement-8", status: "PENDING_ENROLLMENT", previousImei: caseDetail.imei,
     newImei: "222222222222222", reason: "Garantía", createdAt: "2026-10-04T12:00:00Z" };
@@ -220,4 +309,122 @@ test("las gestiones se abren bajo demanda y la remisión firmada requiere revisi
   assert.equal(remissionRequest.replacementId, "replacement-8");
   assert.equal(remissionRequest.action, "REJECT");
   assert.equal(remissionRequest.note, "Falta la firma del cliente");
+});
+
+test("FirmaSeguro permite corregir contacto y enviar una firma inicial sin anticipar la aprobación", async () => {
+  const components = Object.fromEntries(["Badge", "Button", "Card", "Input", "LoadingState", "Select", "StatusPill"]
+    .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
+  const ConfirmDialog = () => null;
+  const node = (type, props) => ({ type, props });
+  const slots = [];
+  let cursor = 0;
+  const hooks = {
+    useState(initial) {
+      const index = cursor++;
+      slots[index] ||= { value: initial };
+      return [slots[index].value, value => { slots[index].value = typeof value === "function" ? value(slots[index].value) : value; }];
+    },
+    useRef(initial) { const index = cursor++; slots[index] ||= { current: initial }; return slots[index]; },
+    useEffect() { cursor++; },
+  };
+  const caseDetail = {
+    kind: "DRAFT", id: 12, number: "B-12", clientName: "Cliente QA", document: "12345678",
+    phone: "3001234567", email: "qa@example.com", status: "EN_FIRMA", equipment: "iPhone QA",
+    imei: "111111111111111", updatedAt: "2026-10-04T12:00:00Z", timeline: [],
+    signature: { status: "NOT_SENT", rawStatus: null, processUuid: null, sentPhone: null,
+      sentEmail: null, sentAt: null, signedAt: null },
+    enrollmentReviewId: null, requiresEnrollmentReapproval: false, pendingVersion: null,
+    replacement: null, remission: null,
+    capabilities: { preSettlementApprovalCreditId: null, canChangeImei: false,
+      canDispatchSignatureWithImei: false, canFinalizeImei: false, canConfirmReplacement: false,
+      canUpdateContact: true, canSendSignature: true, canResendSignature: false, reason: null },
+  };
+  const requests = [];
+  const response = payload => ({ ok: true, json: async () => payload });
+  const compiled = ts.transpileModule(read("app/dashboard/aprobaciones/approval-operations.tsx"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const loaded = { exports: {} };
+  runInNewContext(compiled, {
+    module: loaded, exports: loaded.exports, AbortController, Intl, Date,
+    crypto: { randomUUID: () => "operation-12" },
+    fetch: async (url, init) => {
+      if (url.startsWith("/api/aprobaciones/operativo?q=")) return response({ ok: true, items: [caseDetail] });
+      if (url === "/api/aprobaciones/operativo/draft/12" && (!init || !init.method)) return response({ ok: true, item: caseDetail });
+      if (url === "/api/aprobaciones/operativo/draft/12/contacto" && init?.method === "PATCH") {
+        const body = JSON.parse(init.body);
+        requests.push({ action: "contact", body });
+        caseDetail.phone = body.phone;
+        caseDetail.email = body.email;
+        return response({ ok: true, message: "Contacto actualizado" });
+      }
+      if (url === "/api/aprobaciones/operativo/draft/12/firma" && init?.method === "POST") {
+        const body = JSON.parse(init.body);
+        requests.push({ action: "signature", body });
+        caseDetail.signature.status = "PENDING";
+        return response({ ok: true, operation: { id: "operation-12", status: "REQUESTED", message: "Solicitud enviada" } });
+      }
+      throw new Error("Unexpected request: " + url);
+    },
+    require(name) {
+      if (name === "react") return hooks;
+      if (name === "react/jsx-runtime") return { jsx: node, jsxs: node, Fragment: "fragment" };
+      if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
+      if (name === "@/app/_components/finser-ui") return components;
+      if (name === "@/app/_components/finser-confirm-dialog") return { default: ConfirmDialog };
+      if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
+      throw new Error("Unexpected import: " + name);
+    },
+  });
+  const render = () => { cursor = 0; return loaded.exports.default({}); };
+  const nodes = value => Array.isArray(value) ? value.flatMap(nodes) : !value || typeof value !== "object" ? [] :
+    [value, ...nodes(value.props?.children)];
+  const textOf = value => Array.isArray(value) ? value.map(textOf).join(" ") : typeof value === "string" ? value :
+    value && typeof value === "object" ? textOf(value.props?.children) : "";
+  const find = (tree, predicate) => nodes(tree).find(predicate);
+  const button = (tree, label) => find(tree, item => item.type === components.Button && textOf(item.props.children).includes(label));
+  const input = (tree, id) => find(tree, item => item.type === components.Input && item.props.id === id);
+
+  let tree = render();
+  input(tree, "approval-operations-search").props.onChange({ target: { value: "B-12" } });
+  tree = render();
+  await find(tree, item => item.type === "form" && item.props.role === "search")
+    .props.onSubmit({ preventDefault() {} });
+  await setImmediate();
+  tree = render();
+  button(tree, "FirmaSeguro").props.onClick();
+  tree = render();
+  assert.ok(button(tree, "Actualizar contacto"));
+  assert.ok(button(tree, "Enviar firma"));
+  assert.equal(button(tree, "Reenviar firma"), undefined);
+  assert.equal(textOf(tree).includes("El cambio por garantía requiere"), false);
+
+  button(tree, "Actualizar contacto").props.onClick();
+  tree = render();
+  assert.equal(input(tree, "approval-signature-phone").props.readOnly, false);
+  input(tree, "approval-signature-phone").props.onChange({ target: { value: "3119876543" } });
+  input(tree, "approval-signature-email").props.onChange({ target: { value: "nuevo@example.com" } });
+  input(tree, "approval-contact-reason").props.onChange({ target: { value: "Corrección solicitada por cliente" } });
+  tree = render();
+  button(tree, "Guardar contacto").props.onClick();
+  await setImmediate();
+  assert.equal(requests[0].action, "contact");
+  assert.equal(requests[0].body.phone, "3119876543");
+  assert.equal(requests[0].body.email, "nuevo@example.com");
+
+  tree = render();
+  button(tree, "Enviar firma").props.onClick();
+  tree = render();
+  input(tree, "approval-signature-reason").props.onChange({ target: { value: "Firma inicial con contacto corregido" } });
+  tree = render();
+  button(tree, "Continuar").props.onClick();
+  tree = render();
+  const confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Enviar firma");
+  assert.match(confirm.props.description, /3119876543.*nuevo@example\.com/);
+  confirm.props.onConfirm();
+  await setImmediate();
+  assert.equal(requests[1].action, "signature");
+  assert.equal(requests[1].body.confirmed, true);
+  assert.equal(requests[1].body.expectedProcessUuid, null);
+  assert.equal(caseDetail.signature.status, "PENDING", "el envío no se presenta como firma aprobada");
 });

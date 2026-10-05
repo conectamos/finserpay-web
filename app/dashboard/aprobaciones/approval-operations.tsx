@@ -12,6 +12,7 @@ type ActivePanel = "imei" | "signature" | null;
 type ApiResult = { ok: boolean; error?: string; message?: string; operation?: { id: string; status: string; message: string } };
 type SearchResult = ApiResult & { items: OperationalCaseSummary[] };
 type DetailResult = ApiResult & { item: OperationalCaseDetail };
+type ApprovalReviewResult = ApiResult & { item: { review: { revision: number; reviewHash: string | null } } };
 type Confirmation = "imei-request" | "imei-confirm" | "signature" | "remission-verify" | "remission-reject" | null;
 
 const casePath = (item: Pick<OperationalCaseSummary, "kind" | "id">) =>
@@ -105,6 +106,19 @@ async function jsonRequest<T extends ApiResult>(url: string, init: RequestInit, 
   return payload;
 }
 
+async function reviewGuard(detail: OperationalCaseDetail) {
+  const approvalCreditId = detail.kind === "CREDIT" ? detail.capabilities.preSettlementApprovalCreditId : null;
+  if (approvalCreditId == null) return {};
+  const result = await jsonRequest<ApprovalReviewResult>(`/api/aprobaciones/${approvalCreditId}/datos`, {},
+    "No fue posible verificar la versión actual del expediente. Actualiza el crédito e intenta de nuevo.");
+  const revision = result.item?.review?.revision;
+  const reviewHash = result.item?.review?.reviewHash;
+  if (!Number.isSafeInteger(revision) || revision < 1 || !reviewHash || !/^[a-f0-9]{64}$/i.test(reviewHash)) {
+    throw new Error("El expediente necesita una revisión actual antes de modificar el contacto o la firma.");
+  }
+  return { expectedRevision: revision, expectedReviewHash: reviewHash };
+}
+
 function Field({ label, value, icon: Icon }: { label: string; value: string | null | undefined; icon: typeof UserRound }) {
   return <div className={styles.field}><dt className="sr-only">{label}</dt><dd><Icon size={17} strokeWidth={1.8} aria-hidden="true" />{value?.trim() || `${label} no disponible`}</dd></div>;
 }
@@ -164,7 +178,10 @@ function EmptyCreditWorkspace({ notFound = false }: { notFound?: boolean }) {
   </Card>;
 }
 
-export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?: (creditId: number) => void }) {
+export default function ApprovalOperations({ onOpenApproval, active = true }: {
+  onOpenApproval?: (creditId: number) => void;
+  active?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<OperationalCaseSummary[]>([]);
   const [selected, setSelected] = useState<OperationalCaseSummary | null>(null);
@@ -188,14 +205,15 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
   const [contactEmail, setContactEmail] = useState("");
   const [contactReason, setContactReason] = useState("");
   const [signatureReason, setSignatureReason] = useState("");
-  const [preparingResend, setPreparingResend] = useState(false);
+  const [preparingSignature, setPreparingSignature] = useState(false);
   const [rejectingRemission, setRejectingRemission] = useState(false);
   const [remissionRejectNote, setRemissionRejectNote] = useState("");
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const evidenceInput = useRef<HTMLInputElement | null>(null);
-  const resendReasonInput = useRef<HTMLInputElement | null>(null);
+  const signatureReasonInput = useRef<HTMLInputElement | null>(null);
   const submitting = useRef(false);
+  const wasActive = useRef(active);
   const operationKeys = useRef<{ contact: string | null; signature: string | null }>({ contact: null, signature: null });
   const imeiKeys = useRef<{ request: string | null; confirm: string | null }>({ request: null, confirm: null });
 
@@ -205,8 +223,23 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
   }, []);
 
   useEffect(() => {
-    if (preparingResend) resendReasonInput.current?.focus();
-  }, [preparingResend]);
+    const returnedToDetail = active && !wasActive.current;
+    wasActive.current = active;
+    if (!returnedToDetail || !selected || !detail) return;
+    const target = selected;
+    const controller = new AbortController();
+    void jsonRequest<DetailResult>(casePath(target), { signal: controller.signal },
+      "No fue posible actualizar el estado del crédito.")
+      .then(result => setDetail(current => current?.id === target.id && current.kind === target.kind ? result.item : current))
+      .catch(() => {
+        if (!controller.signal.aborted) setActionError("No fue posible actualizar el estado. Busca nuevamente el crédito.");
+      });
+    return () => controller.abort();
+  }, [active, selected, detail]);
+
+  useEffect(() => {
+    if (preparingSignature) signatureReasonInput.current?.focus();
+  }, [preparingSignature]);
 
   useEffect(() => {
     setContactPhone(detail?.phone || detail?.signature.sentPhone || "");
@@ -214,6 +247,43 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
     setEditingContact(false);
     setContactReason("");
   }, [detail?.id, detail?.kind, detail?.signature.sentPhone, detail?.signature.sentEmail, detail?.phone, detail?.email]);
+
+  useEffect(() => {
+    if (!active || activePanel !== "signature" || detail?.signature.status !== "PENDING" || !selected ||
+        selected.id !== detail.id || selected.kind !== detail.kind) return;
+    const target = selected;
+    let closed = false;
+    let inFlight = false;
+    let controller: AbortController | null = null;
+    const poll = async () => {
+      if (closed || inFlight || document.hidden || submitting.current) return;
+      inFlight = true;
+      controller = new AbortController();
+      try {
+        const result = await jsonRequest<DetailResult>(casePath(target), { signal: controller.signal },
+          "No fue posible actualizar el estado de la firma.");
+        if (closed) return;
+        setDetail(current => current?.id === target.id && current.kind === target.kind ? result.item : current);
+        if (result.item.signature.status === "SIGNED") {
+          setNotice("Firma aprobada. El estado del expediente se actualizó.");
+        }
+      } catch {
+        // Un fallo transitorio de consulta no cambia el estado de la firma; el siguiente ciclo vuelve a intentarlo.
+      } finally {
+        inFlight = false;
+        controller = null;
+      }
+    };
+    const onVisible = () => { if (!document.hidden) void poll(); };
+    const interval = window.setInterval(() => void poll(), 15_000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      closed = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      controller?.abort();
+    };
+  }, [active, activePanel, detail?.id, detail?.kind, detail?.signature.status, selected]);
 
   async function loadDetail(item: OperationalCaseSummary) {
     detailController.current?.abort();
@@ -230,7 +300,7 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
     setReason("");
     setEvidence(null);
     setSignatureReason("");
-    setPreparingResend(false);
+    setPreparingSignature(false);
     setRejectingRemission(false);
     setRemissionRejectNote("");
     operationKeys.current = { contact: null, signature: null };
@@ -248,7 +318,7 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
 
   async function refreshDetail(item: OperationalCaseSummary) {
     const result = await jsonRequest<DetailResult>(casePath(item), {}, "No fue posible actualizar el crédito.");
-    setDetail(result.item);
+    setDetail(current => current?.id === item.id && current.kind === item.kind ? result.item : current);
     return result.item;
   }
 
@@ -396,32 +466,42 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
     setActionError("");
     setNotice("");
     const target = detail;
+    let saved = false;
     try {
+      const approvalGuard = await reviewGuard(target);
       const result = await jsonRequest<ApiResult>(casePath(target) + "/contacto", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...(phoneChanged ? { phone: nextPhone } : {}),
           ...(emailChanged ? { email: nextEmail } : {}),
           reason: contactReason.trim(), idempotencyKey: operationKeys.current.contact ||= crypto.randomUUID(),
-          expectedProcessUuid: target.signature.processUuid }),
+          expectedProcessUuid: target.signature.processUuid, ...approvalGuard }),
       }, "No fue posible actualizar el contacto.");
       setNotice(result.operation?.message || result.message || "Contacto actualizado para el próximo envío.");
-      operationKeys.current.contact = null;
-      setEditingContact(false);
-      setContactReason("");
+      saved = true;
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "No fue posible actualizar el contacto.");
     } finally {
-      try { await refreshDetail(target); }
-      catch { setActionError("Actualiza el crédito para comprobar los datos antes de reenviar la firma."); }
+      try {
+        await refreshDetail(target);
+        if (saved) {
+          operationKeys.current.contact = null;
+          setEditingContact(false);
+          setContactReason("");
+        }
+      } catch {
+        setActionError("No fue posible verificar el contacto actualizado. Busca nuevamente el crédito antes de enviar la firma.");
+      }
       submitting.current = false;
       setBusy(null);
     }
   }
 
-  async function resendSignature() {
-    if (!detail || busy || submitting.current || !detail.capabilities.canResendSignature) return;
+  async function sendSignature() {
+    if (!detail || busy || submitting.current ||
+        !(detail.capabilities.canSendSignature || detail.capabilities.canResendSignature)) return;
+    const firstSend = detail.capabilities.canSendSignature;
     if (signatureReason.trim().length < 5) {
-      setActionError("Describe el motivo del reenvío en al menos 5 caracteres.");
+      setActionError("Describe el motivo del envío en al menos 5 caracteres.");
       return;
     }
     submitting.current = true;
@@ -429,24 +509,34 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
     setActionError("");
     setNotice("");
     const target = detail;
+    let accepted = false;
     try {
+      const approvalGuard = await reviewGuard(target);
       const result = await jsonRequest<ApiResult>(casePath(target) + "/firma", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: signatureReason.trim(), idempotencyKey: operationKeys.current.signature ||= crypto.randomUUID(),
-          expectedProcessUuid: target.signature.processUuid, confirmed: true }),
-      }, "No fue posible confirmar el reenvío de firma.");
-      const message = result.operation?.message || result.message || "Solicitud de firma enviada. Consulta el estado actualizado.";
+          expectedProcessUuid: target.signature.processUuid, confirmed: true, ...approvalGuard }),
+      }, firstSend ? "No fue posible enviar la firma." : "No fue posible confirmar el reenvío de firma.");
+      const message = result.operation?.message || result.message || "Solicitud de firma registrada. Consulta el estado actualizado.";
       if (technicalOperation(result.operation?.status)) setActionError(message);
-      else setNotice(message);
-      operationKeys.current.signature = null;
-      setPreparingResend(false);
-      setSignatureReason("");
+      else {
+        setNotice(message);
+        accepted = true;
+      }
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "No fue posible confirmar el reenvío de firma.");
+      setActionError(error instanceof Error ? error.message : "No fue posible enviar la firma.");
     } finally {
       setConfirmation(null);
-      try { await refreshDetail(target); }
-      catch { setActionError("Actualiza el crédito para comprobar si la firma se envió antes de intentar otra vez."); }
+      try {
+        const updated = await refreshDetail(target);
+        if (accepted && updated.signature.status !== "NOT_SENT") {
+          operationKeys.current.signature = null;
+          setPreparingSignature(false);
+          setSignatureReason("");
+        }
+      } catch {
+        setActionError("No fue posible verificar el envío. Busca nuevamente el crédito antes de intentar de nuevo.");
+      }
       submitting.current = false;
       setBusy(null);
     }
@@ -489,13 +579,16 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
   function togglePanel(panel: Exclude<ActivePanel, null>) {
     const next = activePanel === panel ? null : panel;
     setActionError("");
+    if (next === "signature" && selected && detail && selected.id === detail.id && selected.kind === detail.kind) {
+      void refreshDetail(selected).catch(() => setActionError("No fue posible actualizar la firma. Busca nuevamente el crédito."));
+    }
     if (next === "imei" && detail?.kind === "CREDIT" && !reasonPreset) {
       setReasonPreset("Garantía");
       setReason("Garantía");
     }
     if (next !== "signature") {
       setEditingContact(false);
-      setPreparingResend(false);
+      setPreparingSignature(false);
       setContactReason("");
       setSignatureReason("");
       setContactPhone(detail?.phone || detail?.signature.sentPhone || "");
@@ -506,6 +599,11 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
 
   const signature = detail?.signature;
   const signatureTone = signature?.status === "SIGNED" ? "positive" : signature?.status === "TECHNICAL_ERROR" ? "danger" : "warning";
+  const canSendSignature = Boolean(detail?.capabilities.canSendSignature);
+  const canResendSignature = Boolean(detail?.capabilities.canResendSignature);
+  const canManageSignature = canSendSignature || canResendSignature;
+  const signatureActionLabel = canSendSignature ? "Enviar firma" : "Reenviar firma";
+  const signatureActionNoun = canSendSignature ? "envío" : "reenvío";
   const canSubmitImei = Boolean(detail?.capabilities.canChangeImei && !busy && /^\d{15}$/.test(newImei) && newImei !== detail?.imei && reason.trim().length >= 5);
   const imeiRequestLabel = detail?.kind === "CREDIT" ? "Solicitar cambio y nueva remisión" :
     detail?.capabilities.canDispatchSignatureWithImei ? "Guardar cambio y enviar nueva firma" : "Guardar cambio de IMEI";
@@ -647,11 +745,10 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
           <span className={styles.sectionIcon}><FilePenLine size={23} aria-hidden="true" /></span>
           <div><div className={styles.signatureTitle}><h2>FirmaSeguro</h2><StatusPill tone={signatureTone}>{signatureLabel(signature!.status)}</StatusPill></div>
             <p>{signature?.status === "TECHNICAL_ERROR" ? "El envío necesita revisión técnica antes de continuar." :
-              signature?.status === "SIGNED" && detail.capabilities.preSettlementApprovalCreditId != null
-                ? "Contrato firmado. La nueva firma se gestiona desde la revisión de aprobaciones antes de liquidar al aliado." :
-              signature?.status === "SIGNED" ? "Contrato firmado. Puedes actualizar el contacto o solicitar una nueva firma cuando corresponda." :
+              signature?.status === "SIGNED" ? "Contrato firmado. Puedes actualizar el contacto o solicitar una nueva versión cuando corresponda." :
               signature?.status === "PENDING" ? "Solicitud enviada. Espera la confirmación real de FirmaSeguro." :
-              "No hay una solicitud de firma activa. Las versiones anteriores permanecen en el historial."}</p></div>
+              canSendSignature ? "Revisa el contacto y envía el contrato. El estado cambiará cuando FirmaSeguro confirme la firma." :
+              "No hay una solicitud de firma activa."}</p></div>
         </div>
         <div className={styles.signatureBottom}>
           <div className={styles.contacts}>
@@ -664,33 +761,40 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
                 value={contactEmail} onChange={event => setContactEmail(event.target.value)}
                 readOnly={!editingContact} disabled={Boolean(busy)} /></div>
           </div>
-          {detail.capabilities.canUpdateContact || detail.capabilities.canResendSignature ? <div className={styles.signatureActions}>
+          {detail.capabilities.canUpdateContact || canManageSignature ? <div className={styles.signatureActions}>
             {editingContact ? <>
               <Button variant="secondary" onClick={() => { setEditingContact(false); setContactReason(""); setContactPhone(detail.phone || signature?.sentPhone || ""); setContactEmail(detail.email || signature?.sentEmail || ""); }} disabled={Boolean(busy)}>Cancelar</Button>
               <Button variant="secondary" onClick={() => void updateContact()} disabled={Boolean(busy) || contactReason.trim().length < 5}>Guardar contacto</Button>
             </> : detail.capabilities.canUpdateContact ? <Button variant="secondary" onClick={() => { setActionError(""); setEditingContact(true); }} disabled={Boolean(busy)}>Actualizar contacto</Button> : null}
-            {detail.capabilities.canResendSignature ? <Button className={styles.resendButton} onClick={() => { setActionError(""); setPreparingResend(true); }}
+            {canManageSignature ? <Button className={styles.resendButton} onClick={() => { setActionError(""); setPreparingSignature(true); }}
               disabled={Boolean(busy) || editingContact}>
-              {busy === "signature" ? "Enviando..." : "Reenviar firma"}<ArrowRight size={18} aria-hidden="true" />
+              {busy === "signature" ? "Enviando..." : signatureActionLabel}<ArrowRight size={18} aria-hidden="true" />
             </Button> : null}
           </div> : null}
         </div>
         {editingContact ? <div className={styles.reasonField}><label htmlFor="approval-contact-reason">Motivo de actualización del contacto</label>
           <Input id="approval-contact-reason" minLength={5} maxLength={500} value={contactReason}
             onChange={event => setContactReason(event.target.value)} disabled={Boolean(busy)} placeholder="Describe el motivo del cambio" /></div> : null}
-        {preparingResend && detail.capabilities.canResendSignature ? <div className={styles.resendReason}>
-          <div className={styles.reasonField}><label htmlFor="approval-signature-reason">Motivo del reenvío</label>
-            <Input id="approval-signature-reason" ref={resendReasonInput} minLength={5} maxLength={500} value={signatureReason}
-              onChange={event => setSignatureReason(event.target.value)} disabled={Boolean(busy) || editingContact} placeholder="Describe por qué se reenvía la firma" /></div>
-          <div className={styles.resendReasonActions}><Button variant="ghost" onClick={() => { setPreparingResend(false); setSignatureReason(""); }} disabled={Boolean(busy)}>Cancelar</Button>
+        {preparingSignature && canManageSignature ? <div className={styles.resendReason}>
+          <div className={styles.reasonField}><label htmlFor="approval-signature-reason">Motivo del {signatureActionNoun}</label>
+            <Input id="approval-signature-reason" ref={signatureReasonInput} minLength={5} maxLength={500} value={signatureReason}
+              onChange={event => setSignatureReason(event.target.value)} disabled={Boolean(busy) || editingContact} placeholder={canSendSignature ? "Describe por qué se envía la firma" : "Describe por qué se reenvía la firma"} /></div>
+          <div className={styles.resendReasonActions}><Button variant="ghost" onClick={() => { setPreparingSignature(false); setSignatureReason(""); }} disabled={Boolean(busy)}>Cancelar</Button>
             <Button onClick={() => { setActionError(""); setConfirmation("signature"); }}
               disabled={Boolean(busy) || signatureReason.trim().length < 5}>Continuar</Button></div>
         </div> : null}
-        {detail.capabilities.preSettlementApprovalCreditId != null ? <div className={styles.approvalHandoff}>
-          <p>Este crédito requiere gestionar la nueva firma dentro de la revisión de aprobaciones.</p>
+        {!canManageSignature && detail.capabilities.preSettlementApprovalCreditId != null ? <div className={styles.approvalHandoff}>
+          <p>{signature?.status === "NOT_SENT"
+            ? detail.capabilities.signatureReason || "No hay una firma verificable para este crédito. Solicita revisión del expediente antes de enviar."
+            : detail.capabilities.signatureReason || "Revisa el expediente de aprobaciones para continuar con la firma de este crédito."}</p>
           <Button variant="secondary" onClick={() => onOpenApproval?.(detail.capabilities.preSettlementApprovalCreditId!)}
-            disabled={!onOpenApproval || Boolean(busy)}>Gestionar firma en aprobaciones<ArrowRight size={18} aria-hidden="true" /></Button>
-        </div> : detail.capabilities.reason && !detail.capabilities.canResendSignature ? <p className={styles.muted}>{detail.capabilities.reason}</p> : null}
+            disabled={!onOpenApproval || Boolean(busy)}>{signature?.status === "NOT_SENT" ? "Abrir revisión" : "Gestionar firma en aprobaciones"}<ArrowRight size={18} aria-hidden="true" /></Button>
+        </div> : null}
+        {!canManageSignature && detail.capabilities.preSettlementApprovalCreditId == null &&
+          (signature?.status === "NOT_SENT" || detail.capabilities.signatureReason) ?
+          <p className={styles.muted}>{detail.kind === "CREDIT" && signature?.status === "NOT_SENT"
+            ? detail.capabilities.signatureReason || "No hay una firma verificable para este crédito. Solicita revisión del expediente antes de enviar."
+            : detail.capabilities.signatureReason || "El envío de firma no está disponible para este caso."}</p> : null}
         {signature?.sentAt ? <p className={styles.sentAt}><CalendarClock size={15} aria-hidden="true" />Último envío: {dateLabel(signature.sentAt)}</p> : null}
       </Card> : null}
         </section>
@@ -710,10 +814,13 @@ export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?
         ", se regenerará una nueva versión del contrato y se enviará al cliente para firma. El contrato firmado anterior y la auditoría permanecerán disponibles."}
       confirmLabel="Guardar cambio y enviar nueva firma" busy={busy === "imei"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void submitImeiChange("CONFIRM")} />
-    <ConfirmDialog open={confirmation === "signature"} title="Reenviar firma"
-      description={"Se enviará una nueva solicitud de firma para el crédito " + visible(detail?.number) + " al contacto registrado. Verifica que el celular y correo de envío sean correctos."}
-      confirmLabel="Reenviar firma" busy={busy === "signature"}
-      onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void resendSignature()} />
+    <ConfirmDialog open={confirmation === "signature"} title={signatureActionLabel}
+      description={"Se confirmará el " + signatureActionNoun + " para el crédito " + visible(detail?.number) +
+        " al celular " + visible(detail?.phone || detail?.signature.sentPhone) +
+        " y correo " + visible(detail?.email || detail?.signature.sentEmail) +
+        ". El estado solo cambiará a firmado tras la confirmación real de FirmaSeguro."}
+      confirmLabel={signatureActionLabel} busy={busy === "signature"}
+      onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void sendSignature()} />
     <ConfirmDialog open={confirmation === "remission-verify"} title="Verificar nueva remisión"
       description="Confirma que la foto muestra la nueva remisión firmada y corresponde al equipo de este crédito. Después de verificarla aún se requerirá aprobar el enrolamiento antes de aplicar el IMEI."
       confirmLabel="Verificar remisión" busy={busy === "remission"}

@@ -2,6 +2,7 @@ import "server-only";
 import prisma from "@/lib/prisma";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getReplacementRemission } from "@/lib/credit-device-replacement-remission";
+import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import { isVerifiedTerminalSignatureFailure } from "@/lib/approval-operations-core";
 import {
   isFirmaSeguroFailedStatus,
@@ -120,6 +121,14 @@ type ContractVersionRow = {
   sentEmail: string | null;
   requestedAt: Date | string;
   lastCheckedAt: Date | string | null;
+  completedAt: Date | string | null;
+};
+type InitialSignatureRow = {
+  id: string;
+  status: string;
+  reason: string;
+  actorName: string;
+  requestedAt: Date | string;
   completedAt: Date | string | null;
 };
 
@@ -310,7 +319,8 @@ async function relationExists(db: Database, name: string) {
 function creditCapabilities(row: CreditRow, signature: OperationalSignature, replacement: ReplacementRow | null,
   pendingVersion: ContractVersionRow | null, latestVersion: ContractVersionRow | null,
   signatures: SignatureRow[], versions: ContractVersionRow[], originalSourceSigned: boolean,
-  remission: { status: string } | null) {
+  remission: { status: string } | null, approvalReissuePending: boolean,
+  initialSignaturePending: boolean, historicalSignedSource: boolean) {
   const platform = resolveAllyPaymentPlatform(row.contratoSnapshot, row.equipoMarca);
   const state = String(row.estado).trim().toUpperCase();
   const cancelled = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(state);
@@ -321,7 +331,7 @@ function creditCapabilities(row: CreditRow, signature: OperationalSignature, rep
   const settledToAlly = row.hasAllySettlement === true;
   const eligibleBeforeSettlement = !settledToAlly && row.hasFinishedDraft === true && row.hasApprovalReview === true;
   const preSettlementApprovalCreditId = !settledToAlly && !cancelled &&
-    row.hasApprovalReview === true && signature.status === "SIGNED" ? row.id : null;
+    row.hasApprovalReview === true && ["SIGNED", "NOT_SENT"].includes(signature.status) ? row.id : null;
   const eligibleImei = eligible && (settledToAlly || eligibleBeforeSettlement);
   const remissionVerified = remission === null || remission.status === "VERIFIED";
   const pendingReplacement = replacement && ["PENDING_ENROLLMENT", "ENROLLMENT_APPROVED"].includes(replacement.status);
@@ -344,10 +354,37 @@ function creditCapabilities(row: CreditRow, signature: OperationalSignature, rep
   const canFinalizeImei = Boolean(eligibleImei && platform === "IPHONE" && signature.status === "SIGNED" &&
     ((replacement?.status === "ENROLLMENT_APPROVED" && remissionVerified && !versionPending) || canResumePreparation));
   const canChangeImei = Boolean(eligibleImei && platform === "IPHONE" && !versionPending && signature.status === "SIGNED" && !pendingReplacement);
-  const canUpdateContact = Boolean(eligible && settledToAlly && platform === "IPHONE" && !versionPending &&
+  const signedApproval = Boolean(!settledToAlly && row.hasApprovalReview === true &&
+    platform === "IPHONE" && !cancelled && !versionPending && !pendingReplacement &&
+    !approvalReissuePending && !initialSignaturePending);
+  const settledSignature = Boolean(eligible && settledToAlly && platform === "IPHONE" && !versionPending &&
     !pendingReplacement && (signature.status === "SIGNED" || terminalRetry));
-  const canResendSignature = Boolean(eligible && settledToAlly && platform === "IPHONE" && !versionPending &&
-    !pendingReplacement && (signature.status === "SIGNED" || terminalRetry));
+  const canUpdateContact = Boolean(settledSignature || (signedApproval &&
+    (signature.status === "SIGNED" || signature.status === "NOT_SENT")));
+  const canResendSignature = Boolean(settledSignature || (signedApproval && signature.status === "SIGNED"));
+  const verifiedFinancialSeal = Boolean(readFinancingTermsSeal(
+    record(record(row.contratoSnapshot).financiero).selloFinanciero));
+  const canSendSignature = Boolean(signedApproval && signature.status === "NOT_SENT" &&
+    signatures.length === 0 && !historicalSignedSource && verifiedFinancialSeal);
+  const signatureReason = initialSignaturePending
+    ? "El primer envío de FirmaSeguro está en curso. Consulta su estado antes de enviar otra."
+    : approvalReissuePending
+    ? "Hay una solicitud de FirmaSeguro en curso. Consulta su estado antes de enviar otra."
+    : versionPending ? "Hay una nueva versión del contrato en curso. Consulta su estado antes de continuar."
+    : pendingReplacement ? "Espera la aprobación del reemplazo y la nueva remisión firmada."
+    : platform !== "IPHONE" ? "Esta gestión de FirmaSeguro está disponible por ahora para iPhone."
+    : !settledToAlly && !row.hasApprovalReview ? "Este crédito todavía no tiene una revisión de Aprobaciones vigente."
+    : signature.status === "PENDING" ? "La firma sigue en curso. Consulta su estado antes de enviar otra."
+    : signature.status === "TECHNICAL_ERROR" ? "Error técnico: requiere revisión. La firma vigente no pudo verificarse."
+    : historicalSignedSource && signature.status === "NOT_SENT"
+      ? "Existe un contrato firmado anterior. Requiere revisión antes de enviar otra firma."
+    : signatures.length > 0 && signature.status === "NOT_SENT"
+      ? "Existe una firma anterior sin estado vigente. Requiere revisión técnica."
+    : signature.status === "NOT_SENT" && !verifiedFinancialSeal
+      ? "Error técnico: requiere revisión. No se pudo verificar el origen contractual."
+    : !canSendSignature && signature.status === "NOT_SENT"
+      ? "Todavía no se puede enviar una firma para este crédito."
+      : null;
   const reason = !eligible ? "El cambio por garantía requiere un crédito finalizado y vigente."
     : platform !== "IPHONE" ? "El cambio de IMEI por garantía está disponible solo para iPhone."
     : !settledToAlly && !eligibleBeforeSettlement
@@ -365,7 +402,7 @@ function creditCapabilities(row: CreditRow, signature: OperationalSignature, rep
     : null;
   return { preSettlementApprovalCreditId, canChangeImei, canFinalizeImei, canConfirmReplacement: canFinalizeImei,
     canDispatchSignatureWithImei: false,
-    canUpdateContact, canResendSignature, reason };
+    canUpdateContact, canSendSignature, canResendSignature, reason, signatureReason };
 }
 function draftCapabilities(row: DraftRow, signature: OperationalSignature,
   signatures: SignatureRow[], unresolvedDispatch: boolean) {
@@ -382,7 +419,8 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     record(archivedSource.draftPayload).financialTermsSeal);
   const canChangeImei = open && supported && /^\d{15}$/.test(clean(row.imei) || "") &&
     signature.status === "SIGNED" && !unresolvedDispatch;
-  const canUpdateContact = open && supported && signature.status === "SIGNED" && !unresolvedDispatch;
+  const canUpdateContact = open && supported && !unresolvedDispatch &&
+    (signature.status === "SIGNED" || (correctionPending && signature.status === "NOT_SENT" && signedArchivedSource));
   const canResendSignature = Boolean(open && supported && correctionPending &&
     signature.status === "NOT_SENT" && signedArchivedSource && !unresolvedDispatch);
   const reason = !open ? "La solicitud ya no está abierta en Identidad y firma."
@@ -398,7 +436,15 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     // Draft correction first moves the saved application back through its
     // signing gates. Correction alone is not evidence of provider dispatch.
     canDispatchSignatureWithImei: false,
-    canUpdateContact, canResendSignature, reason };
+    canUpdateContact, canSendSignature: false, canResendSignature, reason,
+    signatureReason: !open ? "La solicitud ya no está abierta en Identidad y firma."
+      : !supported ? "Esta gestión de FirmaSeguro está disponible por ahora para iPhone."
+      : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
+      : correctionPending && !signedArchivedSource
+        ? "Error técnico: requiere revisión. No hay un contrato firmado verificable para regenerar."
+      : signature.status === "TECHNICAL_ERROR" ? "Error técnico: requiere revisión. La firma vigente no pudo verificarse."
+      : signature.status === "PENDING" ? "La firma sigue en curso. Consulta su estado antes de enviar otra."
+      : null };
 }
 
 const CREDIT_DETAIL = `SELECT credit."id",credit."folio",
@@ -449,8 +495,49 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
   let enrollmentReviewId: string | null = null;
   let versions: ContractVersionRow[] = [];
   let originalSourceSigned = false;
+  let approvalReissuePending = false;
+  let initialSignaturePending = false;
+  let historicalSignedSource = false;
   let unresolvedDraftDispatch = false;
   if (kind === "CREDIT") {
+    const credit = rows[0] as CreditRow;
+    if (credit.hasApprovalReview === true && credit.hasAllySettlement !== true) {
+      // Missing approval infrastructure fails closed: a second provider request
+      // must never race an unobserved pre-settlement reissue.
+      approvalReissuePending = !(await relationExists(db, "CreditApprovalReissue"));
+      if (!approvalReissuePending) {
+        const activeReissue = await optionalQuery<{ blocked: boolean }>(db,
+          `SELECT TRUE AS "blocked" FROM "CreditApprovalReissue" WHERE "creditoId"=$1
+           AND "status" IN ('PREPARING','DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN') LIMIT 1`, id);
+        approvalReissuePending = activeReissue.length > 0;
+      }
+      if (await relationExists(db, "CreditApprovalInitialSignature")) {
+        const initial = await optionalQuery<InitialSignatureRow>(db,
+          `SELECT "id"::text,"status","reason","actorName","requestedAt","completedAt"
+           FROM "CreditApprovalInitialSignature" WHERE "creditoId"=$1
+           ORDER BY "requestedAt" DESC,"id" DESC LIMIT 10`, id);
+        initialSignaturePending = initial.some((item) =>
+          ["PREPARING","DISPATCHING","AWAITING_SIGNATURE","UNCERTAIN"].includes(item.status));
+        for (const item of initial) {
+          const at = iso(item.completedAt || item.requestedAt);
+          if (!at) continue;
+          timeline.push({ id: `firma-inicial:${item.id}`, at,
+            label: item.status === "COMPLETED" ? "Primera firma confirmada"
+              : ["FAILED_SAFE","UNCERTAIN","TECHNICAL_ERROR"].includes(item.status) ? "Error técnico: requiere revisión"
+              : item.status === "AWAITING_SIGNATURE" ? "Primera firma enviada"
+              : "Preparando primera firma",
+            detail: clean(item.reason), actor: clean(item.actorName), status: item.status });
+        }
+      }
+      if (signature.status === "NOT_SENT") {
+        const historical = await optionalQuery<{ signed: boolean }>(db,
+          `SELECT EXISTS (SELECT 1 FROM "FirmaSeguroProcess" process
+            WHERE (process."creditoId"=$1 OR process."draftId" IN
+              (SELECT draft."id" FROM "CreditoBorrador" draft WHERE draft."creditoId"=$1))
+              AND LEFT(COALESCE(process."signedDocumentBase64",''),7)='JVBERi0') AS "signed"`, id);
+        historicalSignedSource = historical[0]?.signed === true;
+      }
+    }
     if (await relationExists(db, "ApprovalOperationalContractVersion")) {
       versions = await optionalQuery<ContractVersionRow>(db,
         `SELECT "id"::text,"version","status","replacementId"::text,"previousProcessUuid",
@@ -612,7 +699,8 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
     timeline: timeline.slice(0, 30),
     capabilities: kind === "CREDIT"
       ? creditCapabilities(rows[0] as CreditRow, signature, replacement, pendingVersion,
-          versions[0] || null, signatures, versions, originalSourceSigned, remission)
+          versions[0] || null, signatures, versions, originalSourceSigned, remission,
+          approvalReissuePending, initialSignaturePending, historicalSignedSource)
       : draftCapabilities(rows[0] as DraftRow, signature, signatures, unresolvedDraftDispatch),
   };
 }
