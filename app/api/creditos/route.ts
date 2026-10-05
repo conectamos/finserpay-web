@@ -43,6 +43,7 @@ import {
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import { validateCreditContactPhones } from "@/lib/credit-contact-phones";
+import { composeCreditClientName } from "@/lib/credit-client-name";
 import { extractCreditFactorySnapshotDetails } from "@/lib/credit-factory-snapshot";
 import {
   ARES_COMMERCIAL_AMORTIZATION_VERSION,
@@ -352,6 +353,7 @@ type CreditCreateBody = {
   clienteNombre?: string;
   clientePrimerApellido?: string;
   clientePrimerNombre?: string;
+  clienteSegundoApellido?: string;
   clienteTelefono?: string;
   clienteTipoDocumento?: string;
   referenciaFamiliar1Nombre?: string;
@@ -1184,6 +1186,7 @@ export async function POST(req: Request) {
 
     const clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
     const clientePrimerApellido = sanitizeText(body.clientePrimerApellido);
+    const clienteSegundoApellido = sanitizeText(body.clienteSegundoApellido);
     const clienteTipoDocumento = sanitizeText(body.clienteTipoDocumento);
     const clienteDireccion = sanitizeText(body.clienteDireccion);
     const clienteNombre = sanitizeText(body.clienteNombre);
@@ -1384,9 +1387,11 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const clienteNombreDesdePartes = sanitizeText(
-      [clientePrimerNombre, clientePrimerApellido].filter(Boolean).join(" ")
-    );
+    const clienteNombreDesdePartes = composeCreditClientName({
+      firstNames: clientePrimerNombre,
+      firstSurname: clientePrimerApellido,
+      secondSurname: clienteSegundoApellido,
+    });
     const clienteNombreFinal = authoritativeSignedTerms
       ? clienteNombre || clienteNombreDesdePartes
       : clienteNombreDesdePartes || clienteNombre;

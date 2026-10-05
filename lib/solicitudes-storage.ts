@@ -641,6 +641,7 @@ const FIRMASEGURO_SIGNED_DRAFT_FIELDS = [
   "clienteNombre",
   "clientePrimerNombre",
   "clientePrimerApellido",
+  "clienteSegundoApellido",
   "clienteDocumento",
   "clienteTelefono",
   "clienteCorreo",
@@ -1179,6 +1180,10 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const storedCorrectionId = String(
       targetRow?.payload?.firmaSeguroCorrectionId || ""
     ).trim();
+    // El estado de corrección pertenece exclusivamente al servidor. Una pestaña
+    // anterior no puede reactivar un marcador ya cerrado por la nueva firma.
+    delete canonicalPayload.firmaSeguroCorrectionPending;
+    delete canonicalPayload.firmaSeguroCorrectionId;
     if (
       targetRow?.payload?.firmaSeguroCorrectionPending === true &&
       isUuid(storedCorrectionId)
@@ -1187,6 +1192,64 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       // puede eliminarlos ni inventarlos durante el autosave previo a reemitir.
       canonicalPayload.firmaSeguroCorrectionPending = true;
       canonicalPayload.firmaSeguroCorrectionId = storedCorrectionId;
+    }
+    const storedIdentityCorrectionId = String(
+      targetRow?.payload?.firmaSeguroIdentityCorrectionId || ""
+    ).trim();
+    const identityCorrectionPending = Boolean(
+      targetRow?.payload?.firmaSeguroIdentityCorrectionPending === true &&
+        isUuid(storedIdentityCorrectionId)
+    );
+    const identityCorrectionReissued = Boolean(
+      targetRow?.payload?.firmaSeguroIdentityReissueProcessUuid
+    );
+    // Estos marcadores solo pueden provenir de la corrección central auditada.
+    delete canonicalPayload.firmaSeguroIdentityCorrectionPending;
+    delete canonicalPayload.firmaSeguroIdentityCorrectionId;
+    delete canonicalPayload.firmaSeguroIdentityReissuedAt;
+    delete canonicalPayload.firmaSeguroIdentityReissueProcessUuid;
+    if ((identityCorrectionPending || identityCorrectionReissued) && targetRow?.payload) {
+      if (identityCorrectionPending) {
+        canonicalPayload.firmaSeguroIdentityCorrectionPending = true;
+        canonicalPayload.firmaSeguroIdentityCorrectionId = storedIdentityCorrectionId;
+        canonicalPayload.firmaSeguroCorrectionPending = true;
+      }
+      if (identityCorrectionReissued) {
+        canonicalPayload.firmaSeguroIdentityReissuedAt = targetRow.payload.firmaSeguroIdentityReissuedAt;
+        canonicalPayload.firmaSeguroIdentityReissueProcessUuid = targetRow.payload.firmaSeguroIdentityReissueProcessUuid;
+      }
+      const protectedFields = identityCorrectionPending
+        ? FIRMASEGURO_SIGNED_DRAFT_FIELDS
+        : ["clienteNombre", "clientePrimerNombre", "clientePrimerApellido", "clienteSegundoApellido",
+          "clienteDocumento", "clienteTipoDocumento"] as const;
+      for (const field of protectedFields) {
+        const storedValue = targetRow.payload[field];
+        if (
+          Object.prototype.hasOwnProperty.call(canonicalPayload, field) &&
+          !isOmittedSignedDraftAutosaveValue(canonicalPayload[field]) &&
+          comparableSignedDraftValue(canonicalPayload[field]) !==
+            comparableSignedDraftValue(storedValue)
+        ) {
+          throw new SolicitudCanonicalMutationError(
+            "SOLICITUD_CORRECCION_IDENTIDAD_PENDIENTE"
+          );
+        }
+        if (Object.prototype.hasOwnProperty.call(targetRow.payload, field)) {
+          canonicalPayload[field] = storedValue;
+        }
+      }
+      if (identityCorrectionPending) {
+        if (targetRow.payload.firmaSeguroDraftFolio) {
+          canonicalPayload.firmaSeguroDraftFolio = targetRow.payload.firmaSeguroDraftFolio;
+        } else {
+          delete canonicalPayload.firmaSeguroDraftFolio;
+        }
+        delete canonicalPayload.financialTermsSeal;
+        for (const field of [
+          "fotoRemisionDataUrl", "fotoRemisionCapturedAt", "fotoRemisionSource",
+          "fotoEntregaDataUrl", "fotoEntregaCapturedAt", "fotoEntregaSource",
+        ] as const) delete canonicalPayload[field];
+      }
     }
     const storedFinancialCorrectionId = String(
       targetRow?.payload?.firmaSeguroFinancialCorrectionId || ""
@@ -1253,6 +1316,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const firmaSeguroTermsLocked = firmaSeguroTermsAreLocked(firmaSeguroTerms);
     const deliveryEvidenceScope = Boolean(
       targetRow &&
+        !identityCorrectionPending &&
         firmaSeguroTermsLocked &&
         (input.payloadScope === "DELIVERY_EVIDENCE" ||
           normalizeDraftStep(input.currentStep) >= 5)
@@ -1295,7 +1359,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       storedStep
     );
     const incomingStep = normalizeDraftStep(input.currentStep);
-    const persistedStep = financialCorrectionPending
+    const persistedStep = financialCorrectionPending || identityCorrectionPending
       ? 4
       : Math.max(storedStep, storedPayloadStep, incomingStep);
     const storedImei = normalizeDigits(targetRow?.imei);

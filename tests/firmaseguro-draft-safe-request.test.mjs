@@ -55,6 +55,42 @@ test("cambiar IMEI y contacto vuelve a sellar identidad sin cambiar cifras, plaz
     totalPagar: "1.000000" } }), null);
 });
 
+test("corregir el nombre legal conserva los términos financieros del contrato firmado", () => {
+  const amortizacion = calculateFrenchAmortization({
+    calculoVersion: ARES_COMMERCIAL_AMORTIZATION_VERSION,
+    valorVenta: 2_600_000, cuotaInicial: 780_000, numeroCuotas: 40,
+    tasaInteresEa: 29.24, fianzaCuotaPorcentaje: 75 / 40,
+    seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-10-17",
+  });
+  const original = createFinancingTermsSeal({
+    folio: "FP-NOMBRE", documento: "1234567890",
+    contrato: { tipoDocumento: "CC", clienteNombre: "NOMBRE ANTIGUO",
+      clienteTelefono: "3000000000", clienteCorreo: "cliente@example.com",
+      clienteDireccion: "Calle 1", equipoMarca: "IPHONE", equipoModelo: "17 PRO",
+      referenciaEquipo: "IPHONE 17 PRO", imei: "123456789012345" },
+    amortizacion,
+    parametros: { fianzaTotalPorcentaje: 75, fianzaModalidad: "TOTAL_CREDITO",
+      fianzaFuente: "POLITICA", tasaPeriodoDecimales: 6,
+      redondeoComercial: { modo: "PISO", multiplo: 50 },
+      policyVersion: 1, policyRevisionId: "policy-original" },
+  });
+  const corrected = resealFinancingTermsIdentity(original, {
+    folio: original.snapshot.folio,
+    clienteNombre: "NOMBRE CORRECTO APELLIDO SEGUNDO",
+    clienteTelefono: original.snapshot.clienteTelefono,
+    clienteCorreo: original.snapshot.clienteCorreo,
+    imei: original.snapshot.imei,
+  });
+  assert.equal(readFinancingTermsSeal(corrected)?.checksum, corrected.checksum);
+  assert.equal(corrected.snapshot.clienteNombre, "NOMBRE CORRECTO APELLIDO SEGUNDO");
+  assert.equal(original.snapshot.clienteNombre, "NOMBRE ANTIGUO");
+  const { clienteNombre: _before, ...originalOtherTerms } = original.snapshot;
+  const { clienteNombre: _after, ...correctedOtherTerms } = corrected.snapshot;
+  assert.notEqual(_before, _after);
+  assert.deepEqual(correctedOtherTerms, originalOtherTerms);
+});
+
 test("redirigir una firma pendiente cambia solo el contacto y conserva el cierre financiero sellado", () => {
   const amortizacion = calculateFrenchAmortization({
     calculoVersion: ARES_COMMERCIAL_AMORTIZATION_VERSION,

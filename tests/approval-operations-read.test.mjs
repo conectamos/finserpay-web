@@ -377,6 +377,41 @@ test("solicitud del paso 3 expone revisión de enrolamiento sin afirmar envío a
   assert.throws(() => read.operationalCaseIdentity("CREDIT", "8;DROP"), { code: "INVALID_CASE" });
 });
 
+test("una solicitud firmada en entrega se puede buscar para corregir identidad sin habilitar otras mutaciones", async () => {
+  const db = { $queryRawUnsafe: async (sql, ...params) => {
+    if (sql.includes('FROM "Credito" credit')) return [];
+    if (sql.includes('FROM "CreditoBorrador" draft')) {
+      assert.match(sql, /"currentStep" IN \(3,4,5\)/);
+      return [{
+        id: 23, estado: "ABIERTO", currentStep: 5, clienteNombre: "Nombre anterior",
+        clienteDocumento: "1234567890", clienteTelefono: "3000000000", clienteCorreo: null,
+        imei: "490154203237518", plataforma: "IPHONE", payload: { referenciaEquipo: "iPhone" },
+        createdAt: stamp, updatedAt: stamp, expiresAt: "2030-01-01T00:00:00.000Z",
+      }];
+    }
+    if (sql.includes('FROM "FirmaSeguroProcess"')) return [{
+      id: 7, processUuid: "process-7", status: "SIGNED", draftPayload: {}, requestPayload: {},
+      lastError: null, hasSignedDocument: true, createdAt: stamp, completedAt: stamp, supersededAt: null,
+    }];
+    if (sql.includes('FROM "SolicitudNombreCorrectionAudit"')) return [{
+      id: "name-audit", eventType: "CORRECTED", previousName: "Nombre anterior",
+      newName: "Nombre corregido", reason: "Nombre verificado", actorName: "Analista",
+      createdAt: stamp,
+    }];
+    if (sql.includes('to_regclass(')) return [{
+      present: String(params[0]).includes('SolicitudNombreCorrectionAudit'),
+    }];
+    return [];
+  } };
+  const search = await read.searchOperationalCases("1234567890", db);
+  assert.equal(search[0]?.id, 23);
+  const detail = await read.getOperationalCase("DRAFT", "23", db);
+  assert.equal(detail.signature.status, "SIGNED");
+  assert.equal(detail.capabilities.canChangeImei, false);
+  assert.equal(detail.capabilities.canResendSignature, false);
+  assert.equal(detail.timeline.some(event => event.label === "Identidad corregida; nueva firma requerida"), true);
+});
+
 test("una única firma pendiente de borrador habilita redirección solo mientras el envío sigue seguro", async () => {
   let unresolved = false;
   let status = "CREATED";
@@ -487,6 +522,40 @@ test("tras corregir el IMEI solo permite nueva firma desde fuente firmada y sin 
   const unsafe = await read.getOperationalCase("DRAFT", "22", db);
   assert.equal(unsafe.capabilities.canResendSignature, false);
   assert.match(unsafe.capabilities.reason, /Error técnico: requiere revisión/);
+});
+
+test("permite reintentar una firma de identidad fallida solo con contrato anterior verificable", async () => {
+  let archivedPdf = true;
+  const db = { $queryRawUnsafe: async (sql, ...params) => {
+    if (sql.includes('FROM "CreditoBorrador" draft')) return [{
+      id: 24, estado: "ABIERTO", currentStep: 4, clienteNombre: "Nombre corregido",
+      clienteDocumento: "1234567890", clienteTelefono: "3000000000", clienteCorreo: null,
+      imei: "490154203237518", plataforma: "IPHONE",
+      payload: { plataformaDispositivo: "IPHONE", firmaSeguroCorrectionPending: true,
+        firmaSeguroIdentityCorrectionPending: true },
+      createdAt: stamp, updatedAt: stamp, expiresAt: "2030-01-01T00:00:00.000Z",
+    }];
+    if (sql.includes('FROM "FirmaSeguroProcess"')) return [{
+      id: 3, processUuid: "failed-new", status: "FAILED", draftPayload: {}, requestPayload: {},
+      lastError: "provider rejected", hasSignedDocument: false, createdAt: stamp,
+      completedAt: null, supersededAt: null,
+    }, {
+      id: 2, processUuid: "signed-old", status: "SIGNED",
+      draftPayload: { financialTermsSeal: { snapshot: {} } }, requestPayload: {},
+      lastError: null, hasSignedDocument: archivedPdf, createdAt: stamp,
+      completedAt: stamp, supersededAt: stamp,
+    }];
+    if (sql.includes('to_regclass(')) return [{ present: false }];
+    if (sql.includes('FROM "IphoneEnrollmentReview"')) return [];
+    if (sql.includes('FROM "SolicitudImeiCorrectionAudit"')) return [];
+    throw new Error(`Unexpected SQL: ${sql} ${params.length}`);
+  } };
+  const ready = await read.getOperationalCase("DRAFT", "24", db);
+  assert.equal(ready.signature.status, "TECHNICAL_ERROR");
+  assert.equal(ready.capabilities.canResendSignature, true);
+  archivedPdf = false;
+  const blocked = await read.getOperationalCase("DRAFT", "24", db);
+  assert.equal(blocked.capabilities.canResendSignature, false);
 });
 
 test("encuentra crédito finalizado por IMEI completo sin exponerlo en resultados", async () => {

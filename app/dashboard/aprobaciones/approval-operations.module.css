@@ -210,6 +210,22 @@
 .operationAction svg { flex: none; color: var(--fp-lime-strong); }
 .operationActionActive { border-color: var(--fp-lime-strong) !important; background: var(--fp-lime-soft) !important; }
 .operationAction:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: 2px; }
+.identityAction { grid-column: 1 / -1; }
+.identity { padding: 24px 25px; box-shadow: none; }
+.identityCurrent { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 20px 0; padding: 16px 0; border-top: 1px solid var(--fp-border); border-bottom: 1px solid var(--fp-border); }
+.identityCurrent dt { color: var(--fp-muted); font-size: 13px; }
+.identityCurrent dd { margin: 4px 0 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.identityForm { display: grid; gap: 18px; }
+.identityForm label:not(.identityAttestation) { display: block; margin-bottom: 7px; font-size: 14px; font-weight: 700; }
+.identityForm input:not([type="checkbox"]), .identityForm select { width: 100%; min-height: 46px; }
+.identityForm input[readonly] { background: var(--fp-bg); color: var(--fp-muted); }
+.identityNames { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.identityNames > div:first-child { grid-column: 1 / -1; }
+.identityPreview { padding: 12px 14px; border-left: 3px solid var(--fp-lime-strong); background: var(--fp-lime-soft); font-size: 14px; line-height: 1.5; }
+.identityPreview strong { display: block; margin-top: 3px; overflow-wrap: anywhere; }
+.identityAttestation { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.5; cursor: pointer; }
+.identityAttestation input { flex: none; width: 20px; height: 20px; margin-top: 1px; accent-color: var(--fp-lime-strong); }
+.identityAttestation input:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: 2px; }
 .summary, .change { min-height: 0; }
 .operationWorkspace .signature { margin-top: 0; }
 .operationWorkspace .signatureBottom { flex-direction: column; align-items: stretch; margin: 18px 0 0; }
@@ -237,6 +253,9 @@
   .emptyWorkspace { padding: 24px 20px; }
   .operationActions { grid-template-columns: 1fr; gap: 8px; }
   .operationAction { min-height: 48px; }
+  .identity { padding: 20px 18px; }
+  .identityCurrent, .identityNames { grid-template-columns: 1fr; }
+  .identityNames > div:first-child { grid-column: auto; }
   .approvalHandoff button { width: 100%; }
   .remissionActions button { flex: 1; }
 }

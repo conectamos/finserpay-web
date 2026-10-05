@@ -1,19 +1,32 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, CalendarClock, CheckCircle2, FileClock, FilePenLine, Mail, Paperclip, Phone, Search, Smartphone, UserRound } from "lucide-react";
+import { ArrowRight, CalendarClock, CheckCircle2, FileClock, FilePenLine, Mail, Paperclip, Phone, Search, ShieldCheck, Smartphone, UserRound } from "lucide-react";
 import { Badge, Button, Card, Input, LoadingState, Select, StatusPill } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import type { OperationalCaseDetail, OperationalCaseSummary } from "@/lib/approval-operations-types";
 import styles from "./approval-operations.module.css";
 
-type Operation = "imei" | "contact" | "signature" | "remission";
-type ActivePanel = "imei" | "signature" | null;
+type Operation = "imei" | "contact" | "signature" | "remission" | "identity";
+type ActivePanel = "imei" | "signature" | "identity" | null;
 type ApiResult = { ok: boolean; code?: string; error?: string; message?: string; operation?: { id: string; status: string; message: string } };
+type IdentityCorrectionInfo = ApiResult & {
+  draftId: number;
+  clienteNombre: string;
+  clienteDocumento: string;
+  clientePrimerNombre: string;
+  clientePrimerApellido: string;
+  clienteSegundoApellido: string;
+  expectedProcessUuid: string;
+  canCorrect: boolean;
+  reason: string | null;
+  availableEvidenceTypes: Array<"VERIFF" | "CEDULA">;
+};
+type IdentityCorrectionResult = ApiResult & { correctionId: string; clienteNombre: string; requiresNewSignature: boolean };
 type SearchResult = ApiResult & { items: OperationalCaseSummary[] };
 type DetailResult = ApiResult & { item: OperationalCaseDetail };
 type ApprovalReviewResult = ApiResult & { item: { review: { revision: number; reviewHash: string | null } } };
-type Confirmation = "imei-request" | "imei-confirm" | "signature" | "signature-redirection" | "remission-verify" | "remission-reject" | null;
+type Confirmation = "imei-request" | "imei-confirm" | "signature" | "signature-redirection" | "remission-verify" | "remission-reject" | "identity" | null;
 
 const casePath = (item: Pick<OperationalCaseSummary, "kind" | "id">) =>
   "/api/aprobaciones/operativo/" + item.kind.toLowerCase() + "/" + item.id;
@@ -223,6 +236,12 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
   const [redirectReason, setRedirectReason] = useState("");
   const [rejectingRemission, setRejectingRemission] = useState(false);
   const [remissionRejectNote, setRemissionRejectNote] = useState("");
+  const [identityInfo, setIdentityInfo] = useState<IdentityCorrectionInfo | null>(null);
+  const [identityFirstNames, setIdentityFirstNames] = useState("");
+  const [identitySecondSurname, setIdentitySecondSurname] = useState("");
+  const [identityReason, setIdentityReason] = useState("");
+  const [identityEvidenceType, setIdentityEvidenceType] = useState<"VERIFF" | "CEDULA" | "">("");
+  const [identityAttested, setIdentityAttested] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const evidenceInput = useRef<HTMLInputElement | null>(null);
@@ -233,6 +252,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
   const operationKeys = useRef<{ contact: string | null; signature: string | null }>({ contact: null, signature: null });
   const redirectionRequest = useRef<{ intent: string; key: string } | null>(null);
   const imeiKeys = useRef<{ request: string | null; confirm: string | null }>({ request: null, confirm: null });
+  const identityRequest = useRef<{ key: string; fingerprint: string } | null>(null);
 
   useEffect(() => () => {
     searchController.current?.abort();
@@ -272,6 +292,25 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     setRedirectReason("");
     redirectionRequest.current = null;
   }, [detail?.id, detail?.kind, detail?.signature.sentPhone, detail?.signature.sentEmail, detail?.phone, detail?.email]);
+
+  useEffect(() => {
+    setIdentityInfo(null);
+    setIdentityReason("");
+    setIdentityAttested(false);
+    if (!active || detail?.kind !== "DRAFT" || detail.signature.status !== "SIGNED") return;
+    const controller = new AbortController();
+    void jsonRequest<IdentityCorrectionInfo>(`/api/creditos/borradores/${detail.id}/corregir-identidad`,
+      { signal: controller.signal }, "No fue posible comprobar la corrección de identidad.")
+      .then(result => {
+        if (controller.signal.aborted || !result.canCorrect) return;
+        setIdentityInfo(result);
+        setIdentityFirstNames(result.clientePrimerNombre || "");
+        setIdentitySecondSurname(result.clienteSegundoApellido || "");
+        setIdentityEvidenceType(result.availableEvidenceTypes[0] || "");
+      })
+      .catch(() => { /* La ruta solo expone la operación a un administrador autorizado. */ });
+    return () => controller.abort();
+  }, [active, detail?.id, detail?.kind, detail?.signature.status, detail?.signature.processUuid]);
 
   useEffect(() => {
     if (!active || activePanel !== "signature" || detail?.signature.status !== "PENDING" || !selected ||
@@ -331,6 +370,12 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     setRedirectReason("");
     setRejectingRemission(false);
     setRemissionRejectNote("");
+    setIdentityInfo(null);
+    setIdentityFirstNames("");
+    setIdentitySecondSurname("");
+    setIdentityReason("");
+    setIdentityAttested(false);
+    identityRequest.current = null;
     operationKeys.current = { contact: null, signature: null };
     redirectionRequest.current = null;
     imeiKeys.current = { request: null, confirm: null };
@@ -364,6 +409,8 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     setDetailError("");
     setActionError("");
     setNotice("");
+    setIdentityInfo(null);
+    identityRequest.current = null;
     searchController.current?.abort();
     detailController.current?.abort();
     if (!q) {
@@ -692,6 +739,64 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     }
   }
 
+  async function correctIdentity() {
+    if (!detail || detail.kind !== "DRAFT" || detail.signature.status !== "SIGNED" ||
+        !identityInfo?.canCorrect || identityInfo.draftId !== detail.id ||
+        identityInfo.expectedProcessUuid !== detail.signature.processUuid || busy || submitting.current) return;
+    const firstNames = identityFirstNames.trim().replace(/\s+/g, " ");
+    const secondSurname = identitySecondSurname.trim().replace(/\s+/g, " ");
+    const reason = identityReason.trim();
+    if (firstNames.length < 2 || (secondSurname.length > 0 && secondSurname.length < 2) || reason.length < 5 ||
+        !identityInfo.availableEvidenceTypes.includes(identityEvidenceType as "VERIFF" | "CEDULA") || !identityAttested) {
+      setActionError("Completa los nombres, motivo y verificación del documento antes de continuar.");
+      return;
+    }
+    submitting.current = true;
+    setBusy("identity");
+    setActionError("");
+    setNotice("");
+    const target = detail;
+    let saved = false;
+    try {
+      const requestFields = {
+        expectedProcessUuid: identityInfo.expectedProcessUuid,
+        expectedCurrentName: identityInfo.clienteNombre,
+        firstNames, secondSurname, reason,
+        evidenceType: identityEvidenceType, attestation: true,
+      };
+      const fingerprint = JSON.stringify(requestFields);
+      if (identityRequest.current?.fingerprint !== fingerprint) {
+        identityRequest.current = { key: crypto.randomUUID(), fingerprint };
+      }
+      const result = await jsonRequest<IdentityCorrectionResult>(`/api/creditos/borradores/${target.id}/corregir-identidad`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestFields,
+          idempotencyKey: identityRequest.current.key,
+        }),
+      }, "No fue posible corregir la identidad.");
+      if (!result.requiresNewSignature) throw new Error("No se pudo confirmar que el contrato corregido requiera una nueva firma.");
+      saved = true;
+      setNotice(`Identidad corregida a ${result.clienteNombre}. Revisa el contacto y solicita una nueva firma. La remisión se habilitará cuando el proveedor confirme el contrato nuevo.`);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "No fue posible corregir la identidad.");
+    } finally {
+      setConfirmation(null);
+      try {
+        await refreshDetail(target);
+        if (saved) {
+          identityRequest.current = null;
+          setIdentityInfo(null);
+          setActivePanel("signature");
+        }
+      } catch {
+        setActionError("No fue posible verificar la corrección. Busca nuevamente el crédito antes de continuar.");
+      }
+      submitting.current = false;
+      setBusy(null);
+    }
+  }
+
   function togglePanel(panel: Exclude<ActivePanel, null>) {
     const next = activePanel === panel ? null : panel;
     setActionError("");
@@ -733,6 +838,16 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     normalizedRedirectPhone !== colombianPhone(signature?.sentPhone || detail?.phone) && redirectReason.trim().length >= 5);
   const imeiRequestLabel = detail?.kind === "CREDIT" ? "Solicitar cambio y nueva remisión" :
     detail?.capabilities.canDispatchSignatureWithImei ? "Guardar cambio y enviar nueva firma" : "Guardar cambio de IMEI";
+  const canCorrectIdentity = Boolean(detail?.kind === "DRAFT" && detail.signature.status === "SIGNED" &&
+    identityInfo?.canCorrect && identityInfo.draftId === detail.id &&
+    identityInfo.expectedProcessUuid === detail.signature.processUuid);
+  const correctedName = identityInfo ? [identityFirstNames.trim(), identityInfo.clientePrimerApellido.trim(),
+    identitySecondSurname.trim()].filter(Boolean).join(" ").replace(/\s+/g, " ") : "";
+  const identityChanged = Boolean(identityInfo && correctedName.toLocaleUpperCase("es-CO") !==
+    identityInfo.clienteNombre.trim().replace(/\s+/g, " ").toLocaleUpperCase("es-CO"));
+  const canSubmitIdentity = canCorrectIdentity && identityChanged && identityFirstNames.trim().length >= 2 &&
+    (identitySecondSurname.trim().length === 0 || identitySecondSurname.trim().length >= 2) && identityReason.trim().length >= 5 &&
+    identityInfo!.availableEvidenceTypes.includes(identityEvidenceType as "VERIFF" | "CEDULA") && identityAttested && !busy;
 
   return <main className={styles.root}>
     <form className={styles.search} onSubmit={searchCases} role="search">
@@ -774,7 +889,58 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
               onClick={() => togglePanel("signature")} aria-expanded={activePanel === "signature"} aria-controls={activePanel === "signature" ? "approval-signature-panel" : undefined} disabled={Boolean(busy)}>
               <FilePenLine size={20} aria-hidden="true" />FirmaSeguro
             </Button>
+            {canCorrectIdentity ? <Button variant="secondary"
+              className={`${styles.operationAction} ${styles.identityAction} ${activePanel === "identity" ? styles.operationActionActive : ""}`}
+              onClick={() => togglePanel("identity")} aria-expanded={activePanel === "identity"}
+              aria-controls={activePanel === "identity" ? "approval-identity-panel" : undefined} disabled={Boolean(busy)}>
+              <ShieldCheck size={20} aria-hidden="true" />Corregir identidad
+            </Button> : null}
           </div>
+        {activePanel === "identity" && canCorrectIdentity && identityInfo ? <Card id="approval-identity-panel" className={styles.identity}>
+          <header className={styles.sectionHeading}>
+            <span className={styles.sectionIcon}><ShieldCheck size={22} aria-hidden="true" /></span>
+            <div><h2>Corrección de identidad</h2><p>Comprueba la cédula antes de corregir la solicitud firmada. El primer apellido verificado permanece fijo.</p></div>
+          </header>
+          <dl className={styles.identityCurrent}>
+            <div><dt>Nombre en el contrato firmado</dt><dd>{identityInfo.clienteNombre}</dd></div>
+            <div><dt>Documento</dt><dd>{identityInfo.clienteDocumento}</dd></div>
+          </dl>
+          <form className={styles.identityForm} onSubmit={event => {
+            event.preventDefault();
+            if (canSubmitIdentity) { setActionError(""); setConfirmation("identity"); }
+          }}>
+            <div className={styles.identityNames}>
+              <div><label htmlFor="approval-identity-first-names">Nombres correctos</label><Input id="approval-identity-first-names"
+                autoComplete="off" minLength={2} maxLength={120} required value={identityFirstNames}
+                onChange={event => setIdentityFirstNames(event.target.value)} disabled={Boolean(busy)} /></div>
+              <div><label htmlFor="approval-identity-first-surname">Primer apellido verificado</label><Input id="approval-identity-first-surname"
+                value={identityInfo.clientePrimerApellido} readOnly /></div>
+              <div><label htmlFor="approval-identity-second-surname">Segundo apellido correcto <span className={styles.muted}>(si aplica)</span></label><Input id="approval-identity-second-surname"
+                autoComplete="off" minLength={2} maxLength={80} value={identitySecondSurname}
+                onChange={event => setIdentitySecondSurname(event.target.value)} disabled={Boolean(busy)} /></div>
+            </div>
+            <div><label htmlFor="approval-identity-source">Fuente de verificación</label><Select id="approval-identity-source"
+              required value={identityEvidenceType} onChange={event => setIdentityEvidenceType(event.target.value as "VERIFF" | "CEDULA")}
+              disabled={Boolean(busy)}>
+              <option value="">Selecciona una fuente</option>
+              {identityInfo.availableEvidenceTypes.includes("VERIFF") ? <option value="VERIFF">Identidad aprobada en Veriff</option> : null}
+              {identityInfo.availableEvidenceTypes.includes("CEDULA") ? <option value="CEDULA">Cédula capturada en el expediente</option> : null}
+            </Select></div>
+            <div><label htmlFor="approval-identity-reason">Motivo de la corrección</label><Input id="approval-identity-reason"
+              minLength={5} maxLength={500} required value={identityReason} onChange={event => setIdentityReason(event.target.value)}
+              disabled={Boolean(busy)} placeholder="Explica la diferencia entre el documento y el contrato" /></div>
+            <p className={styles.identityPreview}>Nombre que figurará en la nueva solicitud y remisión: <strong>{correctedName}</strong></p>
+            <label className={styles.identityAttestation} htmlFor="approval-identity-attestation">
+              <input id="approval-identity-attestation" type="checkbox" checked={identityAttested}
+                onChange={event => setIdentityAttested(event.target.checked)} disabled={Boolean(busy)} required />
+              <span>Verifiqué que la cédula y el nombre corresponden al mismo cliente.</span>
+            </label>
+            <p className={styles.muted}>El contrato firmado actual quedará en el historial. Tendrás que enviar una nueva versión a FirmaSeguro y esperar su aprobación antes de continuar con la remisión.</p>
+            <Button type="submit" className={styles.primary} disabled={!canSubmitIdentity}>
+              {busy === "identity" ? "Guardando corrección..." : "Guardar corrección y preparar nueva firma"}<ArrowRight size={20} aria-hidden="true" />
+            </Button>
+          </form>
+        </Card> : null}
         {activePanel === "imei" ? <Card id="approval-imei-panel" className={styles.change}>
           <header className={styles.sectionHeading}>
             <span className={styles.sectionIcon}><Smartphone size={22} aria-hidden="true" /></span>
@@ -992,5 +1158,11 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
       description="Se conservará la foto actual en el historial y se pedirá al aliado una nueva foto firmada con la corrección indicada."
       confirmLabel="Solicitar nueva foto" busy={busy === "remission"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void reviewRemission("REJECT")} />
+    <ConfirmDialog open={confirmation === "identity"} title="Confirmar corrección de identidad"
+      description={"Se cambiará el nombre de " + visible(identityInfo?.clienteNombre) + " a " + correctedName +
+        " en el borrador " + visible(detail?.number) + ". La firma actual se conservará en el historial y no servirá para continuar. " +
+        "Deberás enviar el contrato corregido para nueva firma y esperar la confirmación real de FirmaSeguro antes de generar la remisión."}
+      confirmLabel="Corregir identidad" busy={busy === "identity"}
+      onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void correctIdentity()} />
   </main>;
 }

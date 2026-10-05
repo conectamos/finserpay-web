@@ -229,7 +229,7 @@ const DRAFT_SEARCH = `SELECT draft."id",draft."estado",draft."currentStep",draft
   draft."clienteDocumento",draft."clienteTelefono",draft."payload"->>'clienteCorreo' AS "clienteCorreo",
   draft."imei",draft."plataforma",draft."payload",draft."createdAt",draft."updatedAt",draft."expiresAt"
   FROM "CreditoBorrador" draft
-  WHERE draft."estado"='ABIERTO' AND draft."creditoId" IS NULL AND draft."currentStep" IN (3,4)
+  WHERE draft."estado"='ABIERTO' AND draft."creditoId" IS NULL AND draft."currentStep" IN (3,4,5)
     AND COALESCE(draft."expiresAt",draft."createdAt"+INTERVAL '15 days')>CURRENT_TIMESTAMP
     AND (strpos(lower(COALESCE(draft."clienteDocumento",'')),lower($1::text))>0
       OR strpos(lower(('SOL-'||LPAD(draft."id"::text,6,'0'))),lower($1::text))>0
@@ -416,16 +416,23 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
   const supported = isIphone(platform);
   const correctionPending = payload.firmaSeguroCorrectionPending === true ||
     payload.firmaSeguroContactCorrectionPending === true;
+  const identityCorrectionPending = payload.firmaSeguroIdentityCorrectionPending === true;
   const archivedSource = signatures.find((item) => item.supersededAt &&
     (item.completedAt || item.hasSignedDocument));
   const signedArchivedSource = Boolean(archivedSource?.hasSignedDocument &&
     record(archivedSource.draftPayload).financialTermsSeal);
+  const activeProcess = signatures.find((item) => !item.supersededAt);
+  const failedIdentityRetry = Boolean(identityCorrectionPending && activeProcess &&
+    signature.status === "TECHNICAL_ERROR" && !activeProcess.completedAt &&
+    !activeProcess.hasSignedDocument &&
+    (clean(activeProcess.lastError) || isFirmaSeguroFailedStatus(activeProcess.status)));
   const canChangeImei = open && supported && /^\d{15}$/.test(clean(row.imei) || "") &&
     signature.status === "SIGNED" && !unresolvedDispatch;
   const canUpdateContact = open && supported && !unresolvedDispatch &&
     (signature.status === "SIGNED" || (correctionPending && signature.status === "NOT_SENT" && signedArchivedSource));
   const canResendSignature = Boolean(open && supported && correctionPending &&
-    signature.status === "NOT_SENT" && signedArchivedSource && !unresolvedDispatch);
+    (signature.status === "NOT_SENT" || failedIdentityRetry) &&
+    signedArchivedSource && !unresolvedDispatch);
   const activeSignatures = signatures.filter((item) => !item.supersededAt);
   const activeSignature = activeSignatures.length === 1 ? activeSignatures[0] : null;
   const frozenPendingSource = Boolean(activeSignature &&
@@ -454,8 +461,8 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     : !supported ? "El cambio de IMEI con nueva firma está disponible solo para iPhone."
     : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
     : correctionPending && !signedArchivedSource ? "Error técnico: requiere revisión. No hay un contrato firmado verificable para regenerar."
-    : signature.status === "TECHNICAL_ERROR" ? "Error técnico: requiere revisión. No hay un contrato firmado verificable para regenerar."
     : canResendSignature ? null
+    : signature.status === "TECHNICAL_ERROR" ? "Error técnico: requiere revisión. No hay un contrato firmado verificable para regenerar."
     : !signature.processUuid ? "La solicitud aún no tiene una firma para reemplazar."
     : signature.status === "PENDING" ? "La firma sigue en curso. Consulta su estado antes de cambiar el IMEI."
     : null;
@@ -470,6 +477,7 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
       : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
       : correctionPending && !signedArchivedSource
         ? "Error técnico: requiere revisión. No hay un contrato firmado verificable para regenerar."
+      : canResendSignature ? null
       : signature.status === "TECHNICAL_ERROR" ? "Error técnico: requiere revisión. La firma vigente no pudo verificarse."
       : signature.status === "PENDING" ? "La firma sigue en curso. Consulta su estado antes de enviar otra."
       : null };
@@ -499,7 +507,7 @@ const DRAFT_DETAIL = `SELECT draft."id",draft."estado",draft."currentStep",draft
   draft."clienteDocumento",draft."clienteTelefono",draft."payload"->>'clienteCorreo' AS "clienteCorreo",
   draft."imei",draft."plataforma",draft."payload",draft."createdAt",draft."updatedAt",draft."expiresAt"
   FROM "CreditoBorrador" draft WHERE draft."id"=$1 AND draft."estado"='ABIERTO'
-    AND draft."creditoId" IS NULL AND draft."currentStep" IN (3,4)
+    AND draft."creditoId" IS NULL AND draft."currentStep" IN (3,4,5)
     AND COALESCE(draft."expiresAt",draft."createdAt"+INTERVAL '15 days')>CURRENT_TIMESTAMP LIMIT 1`;
 const SIGNATURES = `SELECT "id","processUuid","status","draftPayload","requestPayload","lastError",
   (LEFT(COALESCE("signedDocumentBase64",''),7)='JVBERi0') AS "hasSignedDocument",
@@ -676,6 +684,26 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
       if (at) timeline.push({ id: `imei:${event.id}`, at,
         label: event.eventType === "REISSUED" ? "Nueva firma enviada" : "IMEI corregido",
         detail: clean(event.reason), actor: clean(event.actorName) });
+    }
+    if (await relationExists(db, "SolicitudNombreCorrectionAudit")) {
+      const nameEvents = await optionalQuery<Array<{
+        id: string; eventType: string; previousName: string; newName: string;
+        reason: string; actorName: string; createdAt: Date | string;
+      }>[number]>(db,
+        `SELECT "id"::text,"eventType","previousName","newName","reason","actorName","createdAt"
+         FROM "SolicitudNombreCorrectionAudit" WHERE "draftId"=$1
+         ORDER BY "createdAt" DESC LIMIT 25`, id);
+      for (const event of nameEvents) {
+        const at = iso(event.createdAt);
+        if (!at) continue;
+        timeline.push({ id: `identidad:${event.id}`, at,
+          label: event.eventType === "REISSUED"
+            ? "Contrato corregido enviado para nueva firma"
+            : "Identidad corregida; nueva firma requerida",
+          detail: event.eventType === "CORRECTED"
+            ? `${event.previousName} → ${event.newName} · ${event.reason}` : null,
+          actor: clean(event.actorName) });
+      }
     }
     const createdAt = iso((rows[0] as DraftRow).createdAt);
     if (createdAt) timeline.push({ id: `draft:${id}`, at: createdAt,

@@ -25,6 +25,7 @@ test("el cierre firmado usa contrato y finanzas sellados y solo recibe evidencia
     clienteNombre: "NOMBRE FIRMADO COMPLETO",
     clientePrimerNombre: "NOMBRE",
     clientePrimerApellido: "FIRMADO",
+    clienteSegundoApellido: "COMPLETO",
     equipoCatalogoId: 45,
     equipoMarca: "XIAOMI",
     equipoModelo: "REDMI 15C 256GB",
@@ -43,6 +44,7 @@ test("el cierre firmado usa contrato y finanzas sellados y solo recibe evidencia
     firmaSeguroPasoContratos: true,
     firmaSeguroProcessUuid: "proceso-firmado",
     clienteNombre: "NOMBRE CAMBIADO",
+    clienteSegundoApellido: "ALTERADO",
     equipoCatalogoId: null,
     equipoModelo: "OTRO EQUIPO",
     imei: "000000000000000",
@@ -92,6 +94,7 @@ test("el cierre firmado usa contrato y finanzas sellados y solo recibe evidencia
   for (const field of [
     "clienteDocumento",
     "clienteNombre",
+    "clienteSegundoApellido",
     "equipoCatalogoId",
     "equipoMarca",
     "equipoModelo",

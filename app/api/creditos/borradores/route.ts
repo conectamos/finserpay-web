@@ -4,6 +4,7 @@ import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-respons
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
+import { composeCreditClientName } from "@/lib/credit-client-name";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -131,10 +132,15 @@ function normalizePayload(value: unknown): DraftPayload {
 function extractDraftFields(payload: DraftPayload) {
   const firstName = toLimitedText(payload.clientePrimerNombre, 90);
   const lastName = toLimitedText(payload.clientePrimerApellido, 90);
+  const secondSurname = toLimitedText(payload.clienteSegundoApellido, 90);
   return {
     clienteNombre:
       toLimitedText(payload.clienteNombre, 180) ||
-      [firstName, lastName].filter(Boolean).join(" ").trim() ||
+      composeCreditClientName({
+        firstNames: firstName,
+        firstSurname: lastName,
+        secondSurname,
+      }) ||
       null,
     clienteDocumento: toLimitedText(payload.clienteDocumento, 60),
     clienteTelefono: toLimitedText(payload.clienteTelefono, 60),

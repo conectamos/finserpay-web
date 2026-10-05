@@ -116,6 +116,11 @@ import {
   type CreditClientField,
 } from "@/lib/credit-client-validation";
 import {
+  composeCreditClientName,
+  hasAuditedCreditIdentityCorrection,
+  splitStoredCreditClientName,
+} from "@/lib/credit-client-name";
+import {
   calculateFrenchAmortization,
   DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
   DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
@@ -3064,6 +3069,13 @@ export default function CreditFactoryConsole({
   const [clienteNombre, setClienteNombre] = useState("");
   const [clientePrimerNombre, setClientePrimerNombre] = useState("");
   const [clientePrimerApellido, setClientePrimerApellido] = useState("");
+  const [clienteSegundoApellido, setClienteSegundoApellido] = useState("");
+  const preservedCanonicalClientNameRef = useRef<{
+    firstNames: string;
+    firstSurname: string;
+    secondSurname: string;
+    fullName: string;
+  } | null>(null);
   const [clienteTipoDocumento, setClienteTipoDocumento] = useState(
     DOCUMENT_TYPE_OPTIONS[0].value
   );
@@ -3242,6 +3254,9 @@ export default function CreditFactoryConsole({
     useState("");
   const [firmaSeguroFinancialCorrectionPending, setFirmaSeguroFinancialCorrectionPending] =
     useState(false);
+  const [firmaSeguroIdentityCorrectionPending, setFirmaSeguroIdentityCorrectionPending] =
+    useState(false);
+  const auditedIdentityCorrectionRef = useRef(false);
   const [firmaSeguroDraftProcess, setFirmaSeguroDraftProcess] =
     useState<FirmaSeguroProcess | null>(null);
   // A null process is not evidence of an unsigned draft until its GET succeeds.
@@ -4176,6 +4191,7 @@ export default function CreditFactoryConsole({
       clienteNombre,
       clientePrimerNombre,
       clientePrimerApellido,
+      clienteSegundoApellido,
       clienteTipoDocumento,
       clienteDireccion,
       clienteDocumento,
@@ -4261,6 +4277,7 @@ export default function CreditFactoryConsole({
       clienteNombre,
       clientePrimerApellido,
       clientePrimerNombre,
+      clienteSegundoApellido,
       clienteTelefono,
       clienteTipoDocumento,
       contratoAceptado,
@@ -5467,10 +5484,12 @@ export default function CreditFactoryConsole({
     !canSeeInternalPricing &&
     (firmaSeguroProcessUiState === "signed" ||
       firmaSeguroFinancialCorrectionPending ||
+      firmaSeguroIdentityCorrectionPending ||
       firmaSeguroFinancialCorrectionReissue);
   const advisorSignedContractStep =
     firmaSeguroProcessUiState === "signed" &&
-    !firmaSeguroRequiresFirstPaymentDateReissue
+    !firmaSeguroRequiresFirstPaymentDateReissue &&
+    !firmaSeguroIdentityCorrectionPending
       ? 5
       : 4;
   const stepTwoPlanLocked =
@@ -5543,10 +5562,12 @@ export default function CreditFactoryConsole({
   );
   const firmaSeguroProcessSigned =
     firmaSeguroProcessUiState === "signed" &&
+    !firmaSeguroIdentityCorrectionPending &&
     !firmaSeguroRequiresFirstPaymentDateReissue;
-  const financialCorrectionAwaitingSignature =
+  const signedCorrectionAwaitingSignature =
     (firmaSeguroFinancialCorrectionPending ||
-      firmaSeguroFinancialCorrectionReissue) &&
+      firmaSeguroFinancialCorrectionReissue ||
+      firmaSeguroIdentityCorrectionPending) &&
     !firmaSeguroProcessSigned;
   const signedCreditRemission = firmaSeguroProcessSigned
     ? firmaSeguroDraftProcess?.remission || null
@@ -5565,7 +5586,7 @@ export default function CreditFactoryConsole({
     };
   const creditRemissionReady =
     !firmaSeguroProcessResolutionPending &&
-    !financialCorrectionAwaitingSignature &&
+    !signedCorrectionAwaitingSignature &&
     firmaSeguroProcessSigned &&
     Boolean(signedCreditRemission);
   const creditRemissionVersionKey = firmaSeguroProcessSigned
@@ -5577,6 +5598,48 @@ export default function CreditFactoryConsole({
         .filter(Boolean)
         .join(":")
     : "";
+  const verifyCurrentRemissionVersion = async () => {
+    if (!draftId || !firmaSeguroDraftProcess?.processUuid) {
+      throw new Error("No hay una firma vigente para esta remisión. Actualiza la solicitud.");
+    }
+    const draftResult = await requestJson<CreditDraftSingleResponse>(
+      `/api/creditos/borradores?id=${draftId}`,
+      { timeoutMs: 20_000 },
+    );
+    if (!draftResult.ok || !draftResult.data?.item) {
+      throw new Error("No se pudo verificar la solicitud vigente. Actualiza e intenta de nuevo.");
+    }
+    const currentPayload = draftResult.data.item.payload || {};
+    const identityCorrectionPending =
+      currentPayload.firmaSeguroIdentityCorrectionPending === true;
+    setFirmaSeguroIdentityCorrectionPending(identityCorrectionPending);
+    auditedIdentityCorrectionRef.current = hasAuditedCreditIdentityCorrection(currentPayload);
+    if (
+      identityCorrectionPending ||
+      currentPayload.firmaSeguroCorrectionPending === true ||
+      currentPayload.firmaSeguroFinancialCorrectionPending === true
+    ) {
+      setWizardStep(4);
+      throw new Error("La remisión anterior fue reemplazada. Espera la nueva firma antes de imprimir.");
+    }
+    const signatureResult = await requestJson<FirmaSeguroResponse>(
+      `/api/creditos/borradores/${draftId}/firma-seguro`,
+      { timeoutMs: 20_000 },
+    );
+    if (!signatureResult.ok || !signatureResult.data?.ok) {
+      throw new Error("No se pudo verificar la firma vigente. Actualiza e intenta de nuevo.");
+    }
+    const latestProcess = signatureResult.data.process || null;
+    if (
+      latestProcess?.processUuid !== firmaSeguroDraftProcess.processUuid ||
+      resolveFirmaSeguroProcessUiState(latestProcess) !== "signed" ||
+      latestProcess.requiresFirstPaymentDateReissue ||
+      !latestProcess.remission
+    ) {
+      setFirmaSeguroDraftProcess(latestProcess);
+      throw new Error("La versión de esta remisión cambió. Actualiza la solicitud antes de imprimir.");
+    }
+  };
   useEffect(() => {
     if (!canSeeInternalPricing || !signedCreditRemission) return;
     setSignedTermsCorrectionSale(String(signedCreditRemission.valorVenta));
@@ -5779,7 +5842,7 @@ export default function CreditFactoryConsole({
       ? "Veriff debe aprobar la identidad antes de finalizar el crédito."
       : firmaSeguroProcessResolutionPending
         ? "Espera mientras se validan la firma y los datos de cierre de la remisión."
-      : financialCorrectionAwaitingSignature
+      : signedCorrectionAwaitingSignature
         ? "Firma la nueva versión del contrato antes de generar la remisión corregida."
       : firmaSeguroProcessSigned && !signedCreditRemission
         ? "No fue posible validar los datos firmados de la remisión. Actualiza el expediente antes de finalizar."
@@ -7100,12 +7163,25 @@ export default function CreditFactoryConsole({
   }, [clientLookupMode, selectedCredit?.id]);
 
   useEffect(() => {
-    const nextFullName = [clientePrimerNombre.trim(), clientePrimerApellido.trim()]
-      .filter(Boolean)
-      .join(" ");
+    const preserved = preservedCanonicalClientNameRef.current;
+    if (
+      preserved &&
+      preserved.firstNames === clientePrimerNombre &&
+      preserved.firstSurname === clientePrimerApellido &&
+      preserved.secondSurname === clienteSegundoApellido
+    ) {
+      setClienteNombre(preserved.fullName);
+      return;
+    }
+    preservedCanonicalClientNameRef.current = null;
+    const nextFullName = composeCreditClientName({
+      firstNames: clientePrimerNombre,
+      firstSurname: clientePrimerApellido,
+      secondSurname: clienteSegundoApellido,
+    });
 
     setClienteNombre(nextFullName);
-  }, [clientePrimerNombre, clientePrimerApellido]);
+  }, [clientePrimerNombre, clientePrimerApellido, clienteSegundoApellido]);
 
   useEffect(() => {
     setCuotaInicial((currentValue) => {
@@ -7839,11 +7915,11 @@ export default function CreditFactoryConsole({
 
     let copiedFields = 0;
 
-    if (firstName) {
+    if (firstName && !auditedIdentityCorrectionRef.current) {
       copiedFields += 1;
       setClientePrimerNombre(firstName);
     }
-    if (lastName && !dataCreditoIdentityLocked) {
+    if (lastName && !dataCreditoIdentityLocked && !auditedIdentityCorrectionRef.current) {
       copiedFields += 1;
       setClientePrimerApellido(lastName);
     }
@@ -9271,6 +9347,8 @@ export default function CreditFactoryConsole({
     setClienteNombre("");
     setClientePrimerNombre("");
     setClientePrimerApellido("");
+    setClienteSegundoApellido("");
+    preservedCanonicalClientNameRef.current = null;
     setClienteTipoDocumento(DOCUMENT_TYPE_OPTIONS[0].value);
     setClienteDireccion("");
     setClienteDocumento("");
@@ -9300,6 +9378,8 @@ export default function CreditFactoryConsole({
     setFirmaSeguroImeiCorrectionValue("");
     setFirmaSeguroImeiCorrectionReason("");
     setFirmaSeguroFinancialCorrectionPending(false);
+    setFirmaSeguroIdentityCorrectionPending(false);
+    auditedIdentityCorrectionRef.current = false;
     setValorEquipoTotal("");
     setCuotaInicial("");
     setPlazoMeses(
@@ -9507,10 +9587,31 @@ export default function CreditFactoryConsole({
 
       const process = result.data.process || null;
       const processUiState = resolveFirmaSeguroProcessUiState(process);
+      const draftResult = await requestJson<CreditDraftSingleResponse>(
+        `/api/creditos/borradores?id=${draftId}`,
+        { timeoutMs: 20_000 },
+      );
+      if (firmaSeguroRefreshGenerationRef.current !== refreshGeneration) {
+        return null;
+      }
+      if (!draftResult.ok || !draftResult.data?.item) {
+        throw new Error("No se pudo verificar la solicitud vigente después de consultar FirmaSeguro.");
+      }
+      const currentPayload = draftResult.data.item.payload || {};
+      const identityCorrectionPending =
+        currentPayload.firmaSeguroIdentityCorrectionPending === true;
+      setFirmaSeguroIdentityCorrectionPending(identityCorrectionPending);
+      auditedIdentityCorrectionRef.current = hasAuditedCreditIdentityCorrection(currentPayload);
       setFirmaSeguroDraftProcess(process);
       setFirmaSeguroPendingDraftId((pending) => pending === draftId ? null : pending);
 
-      if (processUiState === "signed") {
+      if (identityCorrectionPending) {
+        setWizardStep(4);
+        setNotice({
+          text: "La identidad fue corregida. Espera la nueva firma antes de generar la remisión.",
+          tone: "amber",
+        });
+      } else if (processUiState === "signed") {
         setWizardStep(5);
         setNotice({
           text: iphoneFactory
@@ -10045,6 +10146,7 @@ export default function CreditFactoryConsole({
         body: JSON.stringify({
           clientePrimerNombre,
           clientePrimerApellido,
+          clienteSegundoApellido,
           clienteTipoDocumento,
           clienteDireccion,
           clienteNombre,
@@ -10973,8 +11075,22 @@ export default function CreditFactoryConsole({
   };
 
   const applyClientDataFromCredit = (credit: CreditItem) => {
-    setClientePrimerNombre(credit.clientePrimerNombre || "");
-    setClientePrimerApellido(credit.clientePrimerApellido || "");
+    const parsedName = splitStoredCreditClientName({
+      fullName: credit.clienteNombre,
+      firstSurname: credit.clientePrimerApellido,
+    });
+    const firstNames = parsedName?.firstNames || credit.clientePrimerNombre || "";
+    const firstSurname = credit.clientePrimerApellido || "";
+    const secondSurname = parsedName?.secondSurname || "";
+    const canonicalName = credit.clienteNombre || "";
+    preservedCanonicalClientNameRef.current =
+      canonicalName &&
+      composeCreditClientName({ firstNames, firstSurname, secondSurname }) !== canonicalName
+        ? { firstNames, firstSurname, secondSurname, fullName: canonicalName }
+        : null;
+    setClientePrimerNombre(firstNames);
+    setClientePrimerApellido(firstSurname);
+    setClienteSegundoApellido(secondSurname);
     setClienteTipoDocumento(credit.clienteTipoDocumento || DOCUMENT_TYPE_OPTIONS[0].value);
     setClienteDireccion(credit.clienteDireccion || "");
     setClienteNombre(credit.clienteNombre || "");
@@ -11015,9 +11131,31 @@ export default function CreditFactoryConsole({
       return typeof current === "string" ? current : "";
     };
     const checked = (key: string) => payload[key] === true;
+    const storedFirstNames = value("clientePrimerNombre");
+    const storedFirstSurname = value("clientePrimerApellido");
+    const storedSecondSurname = value("clienteSegundoApellido");
+    const storedFullName = value("clienteNombre");
+    preservedCanonicalClientNameRef.current =
+      storedFullName &&
+      composeCreditClientName({
+        firstNames: storedFirstNames,
+        firstSurname: storedFirstSurname,
+        secondSurname: storedSecondSurname,
+      }) !== storedFullName
+        ? {
+            firstNames: storedFirstNames,
+            firstSurname: storedFirstSurname,
+            secondSurname: storedSecondSurname,
+            fullName: storedFullName,
+          }
+        : null;
     setFirmaSeguroFinancialCorrectionPending(
       checked("firmaSeguroFinancialCorrectionPending")
     );
+    setFirmaSeguroIdentityCorrectionPending(
+      checked("firmaSeguroIdentityCorrectionPending")
+    );
+    auditedIdentityCorrectionRef.current = hasAuditedCreditIdentityCorrection(payload);
     const restoredAssessmentId = value("dataCreditoAssessmentId") || null;
     const restoredDataCreditoErrorCode =
       value("dataCreditoErrorCode").trim().toUpperCase() || null;
@@ -11063,11 +11201,12 @@ export default function CreditFactoryConsole({
     setDraftId(draft.id);
     setDraftStatus("saved");
     setDraftErrorMessage("");
-    setClientePrimerNombre(value("clientePrimerNombre"));
-    setClientePrimerApellido(value("clientePrimerApellido"));
+    setClientePrimerNombre(storedFirstNames);
+    setClientePrimerApellido(storedFirstSurname);
+    setClienteSegundoApellido(storedSecondSurname);
     setClienteTipoDocumento(value("clienteTipoDocumento") || DOCUMENT_TYPE_OPTIONS[0].value);
     setClienteDireccion(value("clienteDireccion"));
-    setClienteNombre(value("clienteNombre"));
+    setClienteNombre(storedFullName);
     setClienteDocumento(value("clienteDocumento"));
     setClienteFechaNacimiento(value("clienteFechaNacimiento"));
     setClienteFechaExpedicion(value("clienteFechaExpedicion"));
@@ -11383,11 +11522,36 @@ export default function CreditFactoryConsole({
             );
           } else if (!cancelled) {
             const process = firmaSeguroResult.data.process || null;
+            // El GET de FirmaSeguro puede confirmar la nueva versión y limpiar
+            // el marcador de corrección. Relee el borrador antes de publicar
+            // su estado en pantalla para no dejar bloqueada la remisión.
+            const reconciledDraft = await requestJson<CreditDraftSingleResponse>(
+              `/api/creditos/borradores?id=${restoredDraftId}`,
+              { timeoutMs: 20_000 },
+            );
+            if (!reconciledDraft.ok || !reconciledDraft.data?.item) {
+              throw new Error("No se pudo sincronizar la solicitud después de consultar FirmaSeguro.");
+            }
+            if (cancelled) return;
+            const reconciledPayload = reconciledDraft.data.item.payload || {};
+            const identityCorrectionPending =
+              reconciledPayload.firmaSeguroIdentityCorrectionPending === true;
+            setFirmaSeguroIdentityCorrectionPending(identityCorrectionPending);
+            auditedIdentityCorrectionRef.current =
+              hasAuditedCreditIdentityCorrection(reconciledPayload);
             setFirmaSeguroDraftProcess(process);
             setFirmaSeguroPendingDraftId((pending) =>
               pending === restoredDraftId ? null : pending
             );
 
+            if (identityCorrectionPending) {
+              setWizardStep(4);
+            } else if (
+              resolveFirmaSeguroProcessUiState(process) === "signed" &&
+              !process?.requiresFirstPaymentDateReissue
+            ) {
+              setWizardStep(5);
+            }
             if (resolveFirmaSeguroProcessUiState(process) === "error") {
               firmaSeguroLoadIssue = formatFirmaSeguroProcessIssue(process);
             }
@@ -14143,7 +14307,7 @@ export default function CreditFactoryConsole({
                       <div className="grid gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Primer nombre
+                          Nombre(s)
                         </label>
                         <input
                           {...clientFieldInputProps("clientePrimerNombre")}
@@ -14167,6 +14331,21 @@ export default function CreditFactoryConsole({
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         />
                         {renderClientFieldError("clientePrimerApellido")}
+                      </div>
+
+                      <div>
+                        <label htmlFor="clienteSegundoApellido" className="mb-2 block text-sm font-semibold text-slate-700">
+                          Segundo apellido (si aplica)
+                        </label>
+                        <input
+                          id="clienteSegundoApellido"
+                          value={clienteSegundoApellido}
+                          onChange={(event) => setClienteSegundoApellido(event.target.value)}
+                          placeholder="Segundo apellido"
+                          maxLength={90}
+                          autoComplete="family-name"
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-950 focus:ring-2 focus:ring-lime-200"
+                        />
                       </div>
 
                       <div>
@@ -17005,6 +17184,7 @@ export default function CreditFactoryConsole({
                           versionKey={creditRemissionVersionKey}
                           autoOpen={wizardStep === 5 && creditRemissionReady}
                           ready={creditRemissionReady}
+                          verifyCurrentVersion={verifyCurrentRemissionVersion}
                         />
                       </div>
 
