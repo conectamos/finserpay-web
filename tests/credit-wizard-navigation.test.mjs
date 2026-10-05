@@ -31,11 +31,11 @@ test("solo el administrador central FINSERPAY puede inspeccionar libremente la f
 test("después de la firma el asesor no puede volver a pasos editables", () => {
   assert.match(
     source,
-    /const signedContractEditLocked =\s*!canSeeInternalPricing &&[\s\S]*firmaSeguroFinancialCorrectionPending[\s\S]*firmaSeguroFinancialCorrectionReissue/,
+    /const signedContractEditLocked =\s*!canSeeInternalPricing &&\s*\(firmaSeguroProcessUiState === "signed" \|\|\s*firmaSeguroFinancialCorrectionPending \|\|\s*firmaSeguroIdentityCorrectionPending \|\|\s*firmaSeguroFinancialCorrectionReissue\)/,
   );
   assert.match(
     source,
-    /const advisorSignedContractStep =\s*firmaSeguroProcessUiState === "signed" &&\s*!firmaSeguroRequiresFirstPaymentDateReissue\s*\? 5\s*: 4;/,
+    /const advisorSignedContractStep =\s*firmaSeguroProcessUiState === "signed" &&\s*!firmaSeguroRequiresFirstPaymentDateReissue &&\s*!firmaSeguroIdentityCorrectionPending\s*\? 5\s*: 4;/,
   );
   for (const start of ["const goToStep", "const advanceToStep"]) {
     const block = sourceBlock(start, start === "const goToStep" ? "const advanceToStep" : "const createWhatsAppOtp");

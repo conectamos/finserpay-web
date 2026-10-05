@@ -1,6 +1,7 @@
 import { generatePaymentReference, resolveActivationFirstPaymentDate, sanitizeImageDataUrl, sanitizeText } from "@/lib/credit-factory";
 import { readFinancingTermsSeal, resealFinancingTermsIdentity } from "@/lib/credit-amortization-contract";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
+import type { SignedDraftIdentityCorrection } from "@/lib/firmaseguro-draft-identity-correction";
 import type { FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 
 type DraftIdentity = {
@@ -16,7 +17,7 @@ function record(value: unknown): Record<string, unknown> {
 
 const UNCHANGED_FIELDS = [
   "clienteDocumento", "clienteTipoDocumento", "clienteNombre", "clientePrimerNombre",
-  "clientePrimerApellido", "clienteDireccion", "equipoMarca", "equipoModelo",
+  "clientePrimerApellido", "clienteSegundoApellido", "clienteDireccion", "equipoMarca", "equipoModelo",
   "referenciaEquipo", "equipoCatalogoId", "valorEquipoTotal", "cuotaInicial",
   "plazoMeses", "dataCreditoAssessmentId", "plataformaDispositivo",
 ] as const;
@@ -26,10 +27,15 @@ function money(value: string) {
   if (!Number.isFinite(number) || number < 0) throw new Error("FIRMASEGURO_SOURCE_SEAL_INVALID");
   return number;
 }
+function comparableName(value: unknown) {
+  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .trim().replace(/\s+/g, " ").toUpperCase();
+}
 
 /** Reissue a corrected draft using the signed figures, never today's policy settings. */
 export function buildFrozenDraftCorrection(input: {
   draft: DraftIdentity; source: FirmaSeguroProcessRow; folio: string; imei: string;
+  nameCorrection?: SignedDraftIdentityCorrection | null;
 }) {
   const current = record(input.draft.payload);
   const previous = record(input.source.draftPayload);
@@ -39,9 +45,25 @@ export function buildFrozenDraftCorrection(input: {
   if (!sourceSeal || !signedBytes || signedBytes.subarray(0, 5).toString() !== "%PDF-") {
     throw new Error("FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE");
   }
+  const correctedNameFields = new Set(["clienteNombre", "clientePrimerNombre", "clienteSegundoApellido"]);
   for (const field of UNCHANGED_FIELDS) {
+    if (input.nameCorrection && correctedNameFields.has(field)) continue;
     if (JSON.stringify(current[field] ?? null) !== JSON.stringify(previous[field] ?? null)) {
       throw new Error("FIRMASEGURO_SIGNED_TERMS_CHANGED");
+    }
+  }
+  if (input.nameCorrection) {
+    const correction = input.nameCorrection;
+    if (correction.draftId !== input.draft.id ||
+        correction.previousProcessUuid !== input.source.processUuid ||
+        correction.sourceSealChecksum !== sourceSeal.checksum ||
+        comparableName(previous.clienteNombre) !== comparableName(correction.previousName) ||
+        comparableName(sourceSeal.snapshot.clienteNombre) !== comparableName(correction.previousName) ||
+        comparableName(current.clienteNombre) !== comparableName(correction.newName) ||
+        comparableName(current.clientePrimerNombre) !== comparableName(correction.firstNames) ||
+        comparableName(current.clientePrimerApellido) !== comparableName(correction.firstSurname) ||
+        comparableName(current.clienteSegundoApellido) !== comparableName(correction.secondSurname)) {
+      throw new Error("FIRMASEGURO_SIGNED_NAME_CORRECTION_INVALID");
     }
   }
   if (!/^\d{15}$/.test(input.imei) || !input.folio.trim()) {
@@ -61,6 +83,7 @@ export function buildFrozenDraftCorrection(input: {
     clienteTelefono: phone,
     clienteCorreo: email,
     imei: input.imei,
+    ...(input.nameCorrection ? { clienteNombre: input.nameCorrection.newName } : {}),
   });
   const terms = seal.snapshot;
   const commercial = terms.calculoVersion === "ARES_FRANCES_V2";

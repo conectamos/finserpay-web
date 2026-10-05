@@ -113,6 +113,15 @@ test("la remisión usa exclusivamente los valores del sello financiero firmado",
   assert.equal(
     creditRemissionFromSignedSnapshot({
       ...base,
+      clienteNombre: "ANA MARÍA GÓMEZ RUIZ",
+      calculoVersion: "ARES_FRANCES_V2",
+      cuotaPactada: "154300.000000",
+    })?.clienteNombre,
+    "ANA MARÍA GÓMEZ RUIZ",
+  );
+  assert.equal(
+    creditRemissionFromSignedSnapshot({
+      ...base,
       calculoVersion: "ARES_FRANCES_V1",
       cuotaComercial: "154500.000000",
       cuotaTotalExacta: "154321.120000",
@@ -192,7 +201,7 @@ test("el paso 4 visible usa la remisión con la cuota pactada y los datos del cr
   assert.ok(internalControls > remediation, "La remisión debe aparecer antes de los controles de entrega");
   assert.match(
     source,
-    /const creditRemissionReady =\s*!firmaSeguroProcessResolutionPending &&\s*!financialCorrectionAwaitingSignature &&\s*firmaSeguroProcessSigned &&\s*Boolean\(signedCreditRemission\)/,
+    /const creditRemissionReady =\s*!firmaSeguroProcessResolutionPending &&\s*!signedCorrectionAwaitingSignature &&\s*firmaSeguroProcessSigned &&\s*Boolean\(signedCreditRemission\)/,
   );
   assert.doesNotMatch(
     source,
@@ -205,10 +214,42 @@ test("el paso 4 visible usa la remisión con la cuota pactada y los datos del cr
   assert.match(source.slice(remediation, internalControls), /fechaPrimerPago=\{creditRemissionData\.fechaPrimerPago\}/);
   assert.match(source.slice(remediation, internalControls), /versionKey=\{creditRemissionVersionKey\}/);
   assert.match(source.slice(remediation, internalControls), /ready=\{creditRemissionReady\}/);
+  assert.match(source.slice(remediation, internalControls), /verifyCurrentVersion=\{verifyCurrentRemissionVersion\}/);
   assert.match(
     source.slice(remediation, internalControls),
     /autoOpen=\{wizardStep === 5 && creditRemissionReady\}/,
   );
+});
+
+test("la remisión no imprime una firma anterior tras corregir la identidad", async () => {
+  const factorySource = await readProjectFile(
+    "app/dashboard/creditos/credit-factory-console.tsx",
+  );
+  const remissionSource = await readProjectFile(
+    "app/dashboard/creditos/credit-remission-note.tsx",
+  );
+  assert.match(factorySource, /currentPayload\.firmaSeguroIdentityCorrectionPending === true/);
+  assert.match(factorySource, /latestProcess\?\.processUuid !== firmaSeguroDraftProcess\.processUuid/);
+  assert.match(remissionSource, /await verifyCurrentVersion\?\.\(\)/);
+  assert.ok(
+    remissionSource.indexOf("await verifyCurrentVersion?.()") <
+      remissionSource.indexOf("window.print()"),
+  );
+});
+
+test("al retomar, sincroniza el marcador que FirmaSeguro pudo limpiar al confirmar la firma", async () => {
+  const source = await readProjectFile(
+    "app/dashboard/creditos/credit-factory-console.tsx",
+  );
+  const start = source.indexOf("const loadDraft = async () =>");
+  const end = source.indexOf("void loadDraft();", start);
+  assert.ok(start >= 0 && end > start);
+  const resume = source.slice(start, end);
+  const signatureRead = resume.indexOf("firma-seguro`");
+  const reconciledRead = resume.indexOf("const reconciledDraft = await requestJson", signatureRead);
+  const markerSync = resume.indexOf("setFirmaSeguroIdentityCorrectionPending(identityCorrectionPending)", reconciledRead);
+  assert.ok(signatureRead >= 0 && reconciledRead > signatureRead && markerSync > reconciledRead);
+  assert.match(resume, /else if \(\s*resolveFirmaSeguroProcessUiState\(process\) === "signed" &&\s*!process\?\.requiresFirstPaymentDateReissue\s*\) \{\s*setWizardStep\(5\)/);
 });
 
 test("la hoja contiene el logo, todos los campos, firma, huella y notas legales", async () => {

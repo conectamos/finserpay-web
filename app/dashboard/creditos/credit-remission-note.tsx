@@ -28,6 +28,7 @@ type CreditRemissionNoteProps = CreditRemissionData & {
   ready: boolean;
   autoOpen: boolean;
   versionKey?: string;
+  verifyCurrentVersion?: () => Promise<void>;
 };
 
 const BRAND_LOGO_PATH = "/branding/finserpay-logo.jpg";
@@ -48,6 +49,7 @@ export default function CreditRemissionNote({
   ready,
   autoOpen,
   versionKey = "",
+  verifyCurrentVersion,
 }: CreditRemissionNoteProps) {
   const [portalReady, setPortalReady] = useState(false);
   const [logoReady, setLogoReady] = useState(false);
@@ -261,14 +263,25 @@ export default function CreditRemissionNote({
     setDownloadDialogOpen(false);
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!canPrint || generating || (downloadDialogOpen && printInvoked)) return;
 
     flushSync(() => {
-      setPrintedAt(new Date());
       setGenerating(true);
       setDialogError("");
     });
+    try {
+      await verifyCurrentVersion?.();
+    } catch (error) {
+      setDialogError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo verificar la versión vigente de la remisión. Actualiza la solicitud e intenta de nuevo.",
+      );
+      setGenerating(false);
+      return;
+    }
+    flushSync(() => setPrintedAt(new Date()));
     document.body.classList.add(PRINTING_CLASS);
 
     window.requestAnimationFrame(() => {

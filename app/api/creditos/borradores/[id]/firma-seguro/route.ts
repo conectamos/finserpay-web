@@ -40,6 +40,10 @@ import {
 } from "@/lib/firmaseguro-credit";
 import { buildFirmaSeguroCreditPdf } from "@/lib/firmaseguro-folio-pdf";
 import { buildFrozenDraftCorrection } from "@/lib/firmaseguro-draft-frozen";
+import {
+  getPendingSignedDraftIdentityCorrection,
+  recordSignedDraftIdentityCorrectionReissue,
+} from "@/lib/firmaseguro-draft-identity-correction";
 import { DraftDispatchError, dispatchReservedDraft, finalizeDraftDispatch, getDraftDispatch,
   getDraftDispatchReceipt,
   getUnresolvedDraftDispatch, reserveDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
@@ -268,6 +272,7 @@ async function recordDraftCorrectionReissue(
 ) {
   await recordFirmaSeguroImeiCorrectionReissue(draftId, process);
   await recordFirmaSeguroFinancialCorrectionReissue(draftId, process);
+  await recordSignedDraftIdentityCorrectionReissue(draftId, process);
 }
 
 function firmaSeguroErrorResponse(error: unknown) {
@@ -604,6 +609,7 @@ async function requestDraftSignatureCore(
     const currentPayload = payloadObject(authorized.row.payload);
     if (body.requireCorrection === true &&
       currentPayload.firmaSeguroCorrectionPending !== true &&
+      currentPayload.firmaSeguroIdentityCorrectionPending !== true &&
       currentPayload.firmaSeguroContactCorrectionPending !== true &&
       currentPayload.firmaSeguroFinancialCorrectionPending !== true) {
       throw new DraftDispatchError("DRAFT_DISPATCH_CORRECTION_REQUIRED",
@@ -696,6 +702,7 @@ async function requestDraftSignatureCore(
       const sourcePayload = payloadObject(lockedAuthorized.row.payload);
       const frozenCorrectionPending =
         sourcePayload.firmaSeguroCorrectionPending === true ||
+        sourcePayload.firmaSeguroIdentityCorrectionPending === true ||
         sourcePayload.firmaSeguroContactCorrectionPending === true;
       const financialCorrectionPending =
         sourcePayload.firmaSeguroFinancialCorrectionPending === true;
@@ -719,10 +726,16 @@ async function requestDraftSignatureCore(
           .firmaSeguroFinancialCorrectionId ===
           sourcePayload.firmaSeguroFinancialCorrectionId
       );
+      const identityRetryProcess = Boolean(
+        sourcePayload.firmaSeguroIdentityCorrectionPending === true &&
+        lockedCurrent && !lockedCurrentReusable &&
+        payloadObject(lockedCurrent.draftPayload).firmaSeguroIdentityCorrectionId ===
+          sourcePayload.firmaSeguroIdentityCorrectionId
+      );
       if ((lockedCurrent || correctionPending || priorProcess.length > 0) &&
         (!source ||
           (source.id !== priorProcess[0]?.id &&
-            !(financialRetryProcess && lockedCurrent?.id === priorProcess[0]?.id)))) {
+            !((financialRetryProcess || identityRetryProcess) && lockedCurrent?.id === priorProcess[0]?.id)))) {
         throw new CreditValidationError(
           "No se puede conservar de forma verificable el contrato anterior. Requiere revisión técnica antes de reenviar.",
           409, "FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE");
@@ -735,8 +748,16 @@ async function requestDraftSignatureCore(
       let seal: ReturnType<typeof createFinancingTermsSeal>;
       if (source && frozenCorrectionPending) {
         try {
+          const nameCorrection = sourcePayload.firmaSeguroIdentityCorrectionPending === true
+            ? await getPendingSignedDraftIdentityCorrection(
+                draftId, sourcePayload.firmaSeguroIdentityCorrectionId, source.processUuid)
+            : null;
+          if (sourcePayload.firmaSeguroIdentityCorrectionPending === true && !nameCorrection) {
+            throw new Error("FIRMASEGURO_SIGNED_NAME_CORRECTION_INVALID");
+          }
           const frozen = buildFrozenDraftCorrection({ draft: lockedAuthorized.row, source,
-            folio: dispatchFolio, imei: sanitizeDeviceValue(sourcePayload.imei || sourcePayload.deviceUid).replace(/\D/g, "") });
+            folio: dispatchFolio, imei: sanitizeDeviceValue(sourcePayload.imei || sourcePayload.deviceUid).replace(/\D/g, ""),
+            nameCorrection });
           credit = frozen.credit;
           firstPaymentDateKey = frozen.firstPaymentDateKey;
           seal = frozen.seal;
@@ -792,7 +813,7 @@ async function requestDraftSignatureCore(
         draftPayload: firmaSeguroDraftPayload, draftFolio: dispatchFolio,
         frozenCredit: credit, document,
         supersedeActive:
-          requiresFirstPaymentDateReissue || financialRetryProcess });
+          requiresFirstPaymentDateReissue || financialRetryProcess || identityRetryProcess });
       const dispatched = await dispatchReservedDraft(reserved.id);
       if (dispatched.status !== "AWAITING_SIGNATURE" || !dispatched.processUuid) {
         throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",
