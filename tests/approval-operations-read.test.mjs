@@ -3,13 +3,20 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import {
+  isVerifiedPendingSignatureStatus,
+  isVerifiedTerminalSignatureFailure,
+} from "../lib/approval-operations-core.ts";
+import {
+  isFirmaSeguroFailedStatus,
+  isFirmaSeguroSuccessfulStatus,
+} from "../lib/firmaseguro-status.ts";
 
 const source = readFileSync(new URL("../lib/approval-operations-read.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const status = { isFirmaSeguroFailedStatus: value => /FAILED|ERROR|REJECTED/i.test(value || ""),
-  isFirmaSeguroSuccessfulStatus: value => /SIGNED|COMPLETED/i.test(value || "") };
+const status = { isFirmaSeguroFailedStatus, isFirmaSeguroSuccessfulStatus };
 let remissionStatus = null;
 const loaded = { exports: {} };
 runInNewContext(compiled, {
@@ -27,7 +34,8 @@ runInNewContext(compiled, {
       /iphone|apple/i.test(brand || "") ? "IPHONE" : "ANDROID" };
     if (name === "@/lib/firmaseguro-status") return status;
     if (name === "@/lib/approval-operations-core") return {
-      isVerifiedTerminalSignatureFailure: value => /^(REJECTED|DECLINED|CANCELLED|EXPIRED|REVOKED)$/.test(value || ""),
+      isVerifiedPendingSignatureStatus,
+      isVerifiedTerminalSignatureFailure,
     };
     throw new Error(`Unexpected import: ${name}`);
   },
@@ -367,6 +375,81 @@ test("solicitud del paso 3 expone revisión de enrolamiento sin afirmar envío a
   assert.equal(detail.signature.status, "SIGNED");
   assert.equal(detail.number, "SOL-000021");
   assert.throws(() => read.operationalCaseIdentity("CREDIT", "8;DROP"), { code: "INVALID_CASE" });
+});
+
+test("una única firma pendiente de borrador habilita redirección solo mientras el envío sigue seguro", async () => {
+  let unresolved = false;
+  let status = "CREATED";
+  let hasSignedDocument = false;
+  let completedAt = null;
+  let duplicateActive = false;
+  const process = () => ({
+    id: 30, processUuid: "20000000-0000-4000-8000-000000000002", status,
+    draftPayload: { financialTermsSeal: { snapshot: {} } },
+    requestPayload: { signers: [{ number: "3218928117", email: "cliente@example.com" }] },
+    lastError: null, hasSignedDocument, createdAt: stamp, completedAt, supersededAt: null,
+  });
+  const db = { $queryRawUnsafe: async (sql, ...params) => {
+    if (sql.includes('FROM "CreditoBorrador" draft')) return [{
+      id: 30, estado: "ABIERTO", currentStep: 4, clienteNombre: "Cliente",
+      clienteDocumento: "1052962070", clienteTelefono: "3218928117", clienteCorreo: "cliente@example.com",
+      imei: "358015864286170", plataforma: "IPHONE",
+      payload: { referenciaEquipo: "iPhone" },
+      createdAt: stamp, updatedAt: stamp, expiresAt: "2030-01-01T00:00:00.000Z",
+    }];
+    if (sql.includes('FROM "FirmaSeguroProcess"')) return duplicateActive
+      ? [process(), { ...process(), id: 31, processUuid: "30000000-0000-4000-8000-000000000003" }]
+      : [process()];
+    if (sql.includes('to_regclass(')) return [{ present: params[0].includes('FirmaSeguroDraftDispatch') }];
+    if (sql.includes('FROM "FirmaSeguroDraftDispatch"')) return unresolved ? [{ id: "pending" }] : [];
+    if (sql.includes('FROM "IphoneEnrollmentReview"')) return [];
+    if (sql.includes('FROM "SolicitudImeiCorrectionAudit"')) return [];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  } };
+
+  const ready = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(ready.signature.status, "PENDING");
+  assert.equal(ready.capabilities.canRedirectPendingSignature, true);
+  assert.equal(ready.capabilities.pendingSignatureRedirectReason, null);
+
+  unresolved = true;
+  const dispatching = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(dispatching.capabilities.canRedirectPendingSignature, false);
+  assert.match(dispatching.capabilities.pendingSignatureRedirectReason, /envío|preparación|conciliación/i);
+  unresolved = false;
+
+  hasSignedDocument = true;
+  completedAt = stamp;
+  status = "SIGNED";
+  const signed = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(signed.signature.status, "SIGNED");
+  assert.equal(signed.capabilities.canRedirectPendingSignature, false);
+
+  hasSignedDocument = false;
+  completedAt = null;
+  for (const terminal of ["REJECTED", "DECLINED", "CANCELLED", "EXPIRED", "REVOKED"]) {
+    status = terminal;
+    const retryable = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(retryable.signature.status, "TECHNICAL_ERROR", terminal);
+    assert.equal(retryable.capabilities.canRedirectPendingSignature, true,
+      `${terminal} confirmado y sin PDF permite un reintento explícito`);
+    assert.equal(retryable.capabilities.pendingSignatureRedirectReason, null, terminal);
+  }
+
+  for (const ambiguousFailure of ["ERROR", "FAILED", "FAILURE"]) {
+    status = ambiguousFailure;
+    const blocked = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(blocked.signature.status, "TECHNICAL_ERROR", ambiguousFailure);
+    assert.equal(blocked.capabilities.canRedirectPendingSignature, false,
+      `${ambiguousFailure} no demuestra una terminación recuperable`);
+    assert.match(blocked.capabilities.pendingSignatureRedirectReason, /no está pendiente|actualiza/i);
+  }
+
+  status = "CREATED";
+  duplicateActive = true;
+  const ambiguous = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(ambiguous.capabilities.canRedirectPendingSignature, false,
+    "dos procesos activos nunca deben ofrecer un tercer envío");
 });
 
 test("tras corregir el IMEI solo permite nueva firma desde fuente firmada y sin despacho incierto", async () => {

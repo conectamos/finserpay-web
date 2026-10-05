@@ -42,6 +42,7 @@ const operationId = "10000000-0000-4000-8000-000000000001";
 const routePaths = {
   contact: "app/api/aprobaciones/operativo/[kind]/[id]/contacto/route.ts",
   signature: "app/api/aprobaciones/operativo/[kind]/[id]/firma/route.ts",
+  redirect: "app/api/aprobaciones/operativo/[kind]/[id]/firma/redireccion/route.ts",
   imei: "app/api/aprobaciones/operativo/[kind]/[id]/imei/route.ts",
 };
 const context = (kind = "CREDIT", id = "31") => ({ params: Promise.resolve({ kind, id }) });
@@ -72,9 +73,21 @@ const signatureBody = {
   expectedRevision: 3, expectedReviewHash: "a".repeat(64),
   reason: "Reenviar contrato corregido",
 };
+const redirectBody = {
+  phone: "+57 311 987 6543", reason: "Número anterior sin WhatsApp",
+  idempotencyKey: operationId, expectedProcessUuid: "20000000-0000-4000-8000-000000000002",
+  confirmed: true,
+};
+
+function redirectRequest(body = redirectBody, headers = {}) {
+  return new Request(origin + "/api/aprobaciones/operativo/DRAFT/31/firma/redireccion", {
+    method: "POST", headers: { "content-type": "application/json", origin, ...headers },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+}
 
 function harness({ user = { id: 7, nombre: "Analista" }, shared = undefined, realWriter = false } = {}) {
-  const calls = { session: 0, contact: [], signature: [], imei: [], evidence: [] };
+  const calls = { session: 0, contact: [], signature: [], redirect: [], imei: [], evidence: [] };
   const auth = { getCreditApprovalSessionUser: async () => { calls.session++; return user; } };
   const sharedSession = { getApprovalSharedRequestActor: async () => shared };
   const approvalHttp = load("lib/credit-approval-http.ts", {
@@ -100,6 +113,10 @@ function harness({ user = { id: 7, nombre: "Analista" }, shared = undefined, rea
   const write = realWriter ? writer : {
     updateOperationalContact: async (...args) => { calls.contact.push(args); return { id: "contact" }; },
     requestOperationalSignature: async (...args) => { calls.signature.push(args); return { id: "signature" }; },
+    redirectPendingDraftSignature: async (...args) => { calls.redirect.push(args); return {
+      id: operationId, status: "AWAITING_SIGNATURE", message: "Firma reenviada",
+      processUuid: "30000000-0000-4000-8000-000000000003",
+    }; },
     mutateOperationalImei: async (...args) => { calls.imei.push(args); return { id: "imei" }; },
     parseOperationalEvidence: async (value) => { calls.evidence.push(value); return null; },
   };
@@ -118,7 +135,7 @@ function assertPrivate(response) {
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 }
 
-test("la sesión personal ejecuta las tres rutas con actor, expediente y respuesta privados", async () => {
+test("la sesión personal ejecuta las rutas operativas con actor, expediente y respuesta privados", async () => {
   const { routes, calls } = harness();
   const contact = await routes.contact.PATCH(jsonRequest("contacto", "PATCH", {
     phone: "3180000000", reason: "Actualización de contacto",
@@ -126,14 +143,16 @@ test("la sesión personal ejecuta las tres rutas con actor, expediente y respues
     expectedRevision: signatureBody.expectedRevision, expectedReviewHash: signatureBody.expectedReviewHash,
   }), context());
   const signature = await routes.signature.POST(jsonRequest("firma", "POST", signatureBody), context());
+  const redirect = await routes.redirect.POST(redirectRequest(), context("DRAFT"));
   const imei = await routes.imei.POST(formRequest(imeiFields), context());
-  for (const response of [contact, signature, imei]) {
+  for (const response of [contact, signature, redirect, imei]) {
     assert.equal(response.status, 200);
     assert.equal((await response.json()).ok, true);
     assertPrivate(response);
   }
-  assert.equal(calls.session, 3);
-  for (const [kind, received] of [["CREDIT", calls.contact], ["CREDIT", calls.signature], ["CREDIT", calls.imei]]) {
+  assert.equal(calls.session, 4);
+  for (const [kind, received] of [["CREDIT", calls.contact], ["CREDIT", calls.signature],
+    ["DRAFT", calls.redirect], ["CREDIT", calls.imei]]) {
     assert.equal(received.length, 1);
     assert.equal(received[0][0], kind);
     assert.equal(received[0][1], 31);
@@ -143,6 +162,9 @@ test("la sesión personal ejecuta las tres rutas con actor, expediente y respues
   assert.equal(calls.signature[0][2].confirmed, true);
   assert.equal(calls.signature[0][2].expectedRevision, 3);
   assert.equal(calls.contact[0][2].expectedReviewHash, "a".repeat(64));
+  assert.equal(calls.redirect[0][2].phone, "+57 311 987 6543");
+  assert.equal(calls.redirect[0][2].expectedProcessUuid, redirectBody.expectedProcessUuid);
+  assert.equal(calls.redirect[0][2].confirmed, true);
   assert.equal(calls.imei[0][2].confirmed, "true");
   assert.equal(calls.evidence.length, 1);
 });
@@ -157,13 +179,14 @@ test("sin sesión o con cookie compartida nunca llega al escritor", async () => 
     for (const [route, method, request] of [
       [routes.contact, "PATCH", jsonRequest("contacto", "PATCH", {})],
       [routes.signature, "POST", jsonRequest("firma", "POST", signatureBody)],
+      [routes.redirect, "POST", redirectRequest()],
       [routes.imei, "POST", formRequest(imeiFields)],
     ]) {
       const response = await route[method](request, context());
       assert.equal(response.status, status);
       assertPrivate(response);
     }
-    assert.equal(calls.contact.length + calls.signature.length + calls.imei.length, 0);
+    assert.equal(calls.contact.length + calls.signature.length + calls.redirect.length + calls.imei.length, 0);
     assert.equal(calls.evidence.length, 0);
     if (settings.shared !== undefined) assert.equal(calls.session, 0);
   }
@@ -175,6 +198,7 @@ test("origen ajeno, Fetch Metadata y expediente inválido detienen las escritura
     [routes.contact, "PATCH", jsonRequest("contacto", "PATCH", {}, { origin: "https://other.test" }), context(), 403],
     [routes.signature, "POST", jsonRequest("firma", "POST", signatureBody,
       { "sec-fetch-site": "cross-site" }), context(), 403],
+    [routes.redirect, "POST", redirectRequest(redirectBody, { origin: "https://other.test" }), context("DRAFT"), 403],
     [routes.imei, "POST", formRequest(imeiFields, { origin: "https://other.test" }), context(), 403],
     [routes.contact, "PATCH", jsonRequest("contacto", "PATCH", {}), context("ANDROID"), 400],
     [routes.signature, "POST", jsonRequest("firma", "POST", signatureBody), context("CREDIT", "0"), 400],
@@ -184,7 +208,7 @@ test("origen ajeno, Fetch Metadata y expediente inválido detienen las escritura
     assert.equal(response.status, status);
     assertPrivate(response);
   }
-  assert.equal(calls.contact.length + calls.signature.length + calls.imei.length, 0);
+  assert.equal(calls.contact.length + calls.signature.length + calls.redirect.length + calls.imei.length, 0);
 });
 
 test("JSON malformado, no objeto, excesivo o con campos extra no invoca al escritor", async () => {
@@ -202,7 +226,9 @@ test("JSON malformado, no objeto, excesivo o con campos extra no invoca al escri
   const signature = await routes.signature.POST(jsonRequest("firma", "POST",
     { ...signatureBody, creditId: 999 }), context());
   assert.equal(signature.status, 400);
-  assert.equal(calls.contact.length + calls.signature.length, 0);
+  const redirect = await routes.redirect.POST(redirectRequest({ ...redirectBody, creditId: 999 }), context("DRAFT"));
+  assert.equal(redirect.status, 400);
+  assert.equal(calls.contact.length + calls.signature.length + calls.redirect.length, 0);
 });
 
 test("multipart malformado, excesivo, duplicado o con campos extra no invoca al escritor", async () => {
@@ -238,13 +264,14 @@ test("multipart malformado, excesivo, duplicado o con campos extra no invoca al 
   assert.equal(calls.evidence.length, 0);
 });
 
-test("IMEI y firma exigen confirmación explícita antes de consultar esquemas o datos", async () => {
+test("IMEI, firma y redirección exigen confirmación explícita antes de consultar esquemas o datos", async () => {
   const { routes } = harness({ realWriter: true });
   const signature = await routes.signature.POST(jsonRequest("firma", "POST",
     { ...signatureBody, confirmed: false }), context());
   const imei = await routes.imei.POST(formRequest(
     imeiFields.map(([key, value]) => [key, key === "confirmed" ? "false" : value])), context());
-  for (const response of [signature, imei]) {
+  const redirect = await routes.redirect.POST(redirectRequest({ ...redirectBody, confirmed: false }), context("DRAFT"));
+  for (const response of [signature, redirect, imei]) {
     assert.equal(response.status, 400);
     assert.equal((await response.json()).code, "CONFIRMATION_REQUIRED");
     assertPrivate(response);

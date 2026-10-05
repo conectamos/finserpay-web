@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
@@ -7,10 +8,12 @@ import { fileURLToPath } from "node:url";
 import {
   canDispatchReservedVersion, exactImei, hasVerifiedDraftSignature, isVerifiedTerminalOperationalRetry,
   isVerifiedTerminalSignatureFailure, operationalCreditEligibility, operationalDraftCorrectionStatus,
+  isVerifiedPendingSignatureStatus,
   operationalImeiEligibility,
   operationalProcessToSupersede, operationalSignatureLineage,
   operationalFrozenCredit, signedPdfBytes,
 } from "../lib/approval-operations-core.ts";
+import { isFirmaSeguroFailedStatus } from "../lib/firmaseguro-status.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const replacementSource = await readFile(path.join(root, "lib/credit-device-replacement-storage.ts"), "utf8");
@@ -97,10 +100,201 @@ test("la corrección del borrador comunica la etapa real de aprobación", () => 
   assert.equal(operationalDraftCorrectionStatus(false), "PENDING_REISSUE");
 });
 
+test("el replay de redirección conserva el envío y rechaza reutilizar la llave con otro destino", async () => {
+  const validatorsStart = writerSource.indexOf("function object(");
+  const validatorsEnd = writerSource.indexOf("function checkPdf(", validatorsStart);
+  const start = writerSource.indexOf("function draftRedirectPublic(");
+  const end = writerSource.indexOf("\nexport async function requestOperationalSignature(", start);
+  assert.ok(validatorsStart >= 0 && validatorsEnd > validatorsStart && start >= 0 && end > start);
+  const validators = stripTypeScriptTypes(writerSource.slice(validatorsStart, validatorsEnd));
+  const statement = stripTypeScriptTypes(writerSource.slice(start, end)
+    .replace("export async function redirectPendingDraftSignature", "async function redirectPendingDraftSignature"));
+  class OperationalError extends Error {
+    constructor(code, message, status = 409) { super(message); this.code = code; this.status = status; }
+  }
+  const operationId = "10000000-0000-4000-8000-000000000001";
+  const sourceProcessUuid = "20000000-0000-4000-8000-000000000002";
+  const nextProcessUuid = "30000000-0000-4000-8000-000000000003";
+  const actor = { id: 7, nombre: "Analista QA" };
+  const reason = "Número anterior sin WhatsApp";
+  const initialIntentSha256 = createHash("sha256").update(JSON.stringify({
+    version: 1,
+    phone: { present: true, value: "3119876543" },
+    email: { present: false, value: null },
+  })).digest("hex");
+  const replay = {
+    id: operationId, draftId: 22, actorUserId: actor.id, actorName: actor.nombre, reason,
+    expectedProcessUuid: sourceProcessUuid, processUuid: nextProcessUuid, status: "AWAITING_SIGNATURE",
+    updatedPayload: {
+      clienteTelefono: "3119876543", clienteCorreo: "cliente@example.com",
+      firmaSeguroPendingContactRedirectId: operationId,
+      firmaSeguroPendingContactRedirectSourceProcessUuid: sourceProcessUuid,
+      firmaSeguroPendingContactRedirectSourceChecksum: "a".repeat(64),
+      firmaSeguroPendingContactRedirectIntentSha256: initialIntentSha256,
+    },
+  };
+  let reads = 0;
+  const replayById = new Map([[operationId, replay]]);
+  let draftResult = { currentStep: 4, plataforma: "IPHONE", clienteTelefono: "3218928117",
+    payload: { clienteTelefono: "3218928117", clienteCorreo: "cliente@example.com" } };
+  let currentResult = null;
+  let refreshedResult = null;
+  let reservedInput = null;
+  let frozenContact = null;
+  const sourceSeal = { checksum: "a".repeat(64), snapshot: {
+    clienteTelefono: "3218928117", clienteCorreo: "",
+  } };
+  const redirect = new Function(
+    "ApprovalOperationalError", "UUID", "createHash",
+    "ensureFirmaSeguroSchema", "ensureApprovalOperationalSchema", "ensureDraftDispatchSchema",
+    "getDraftDispatch", "getUnresolvedDraftDispatch", "readDraft", "prisma", "currentProcess",
+    "refreshFirmaSeguroProcess", "isFirmaSeguroCompletedStatus", "isFirmaSeguroFailedStatus",
+    "isVerifiedTerminalSignatureFailure", "isVerifiedPendingSignatureStatus", "readFinancingTermsSeal",
+    "buildFrozenPendingContactRedirect", "buildFirmaSeguroCreditPdf",
+    "reserveDraftDispatch", "dispatchReservedDraft", "getDraftDispatchReceipt", "finalizeDraftDispatch",
+    `${validators}\n${statement}\nreturn redirectPendingDraftSignature;`,
+  )(
+    OperationalError, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    createHash,
+    async () => {}, async () => {}, async () => {},
+    async id => { reads++; return replayById.get(id) ?? null; }, async () => null,
+    async () => draftResult,
+    {}, async () => currentResult,
+    async () => refreshedResult ?? currentResult,
+    () => false, isFirmaSeguroFailedStatus, isVerifiedTerminalSignatureFailure,
+    isVerifiedPendingSignatureStatus,
+    value => value ? sourceSeal : null,
+    input => {
+      frozenContact = { phone: input.phone, email: input.email };
+      return { credit: { folio: "SOL-22", clienteTelefono: input.phone, clienteCorreo: input.email },
+        seal: sourceSeal };
+    },
+    async () => Buffer.from("%PDF-1.7\nredirect\n%%EOF"),
+    async input => {
+      reservedInput = input;
+      const row = { ...input, draftId: input.draftId, actorUserId: input.actor.id,
+        actorName: input.actor.nombre, expectedProcessUuid: input.expectedProcessUuid,
+        status: "PREPARING", processUuid: null };
+      replayById.set(input.id, row);
+      return row;
+    },
+    async id => ({ ...reservedInput, id, draftId: reservedInput.draftId,
+      actorUserId: reservedInput.actor.id, actorName: reservedInput.actor.nombre,
+      expectedProcessUuid: reservedInput.expectedProcessUuid,
+      status: "AWAITING_SIGNATURE", processUuid: nextProcessUuid }),
+    async () => null,
+    async row => row,
+  );
+  const base = { phone: "+57 311 987 6543", reason, idempotencyKey: operationId,
+    expectedProcessUuid: sourceProcessUuid, confirmed: true };
+
+  const first = await redirect("DRAFT", 22, base, actor);
+  assert.deepEqual(first, { id: operationId, status: "AWAITING_SIGNATURE",
+    message: "Firma reenviada al nuevo contacto. Esperando la firma del cliente.", processUuid: nextProcessUuid });
+  assert.equal(reads, 1);
+
+  for (const [changed, code] of [
+    [{ ...base, confirmed: false }, "CONFIRMATION_REQUIRED"],
+    [{ ...base, idempotencyKey: "retry-1" }, "INVALID_OPERATION_ID"],
+    [{ ...base, reason: "mal" }, "INVALID_REASON"],
+    [{ ...base, phone: undefined }, "CONTACT_REQUIRED"],
+    [{ ...base, phone: "2218928117" }, "INVALID_PHONE"],
+    [{ ...base, phone: undefined, email: "correo-sin-dominio" }, "INVALID_EMAIL"],
+    [{ ...base, expectedProcessUuid: " " }, "PROCESS_CHANGED"],
+  ]) {
+    await assert.rejects(redirect("DRAFT", 22, changed, actor), error => error.code === code);
+  }
+  await assert.rejects(redirect("CREDIT", 22, base, actor), error => error.code === "DRAFT_REQUIRED");
+
+  for (const changed of [
+    { ...base, phone: "3100000000" },
+    { ...base, email: "otro@example.com" },
+    { ...base, reason: "Otro motivo válido" },
+    { ...base, expectedProcessUuid: "40000000-0000-4000-8000-000000000004" },
+  ]) {
+    await assert.rejects(redirect("DRAFT", 22, changed, actor), error => error.code === "IDEMPOTENCY_CONFLICT");
+  }
+  await assert.rejects(redirect("DRAFT", 22, base, { ...actor, id: 8 }),
+    error => error.code === "IDEMPOTENCY_CONFLICT");
+
+  replayById.delete(operationId);
+  await assert.rejects(redirect("DRAFT", 22, base, actor), error => error.code === "PROCESS_CHANGED",
+    "la plataforma IPHONE de columna debe superar elegibilidad aunque el payload histórico no la tenga");
+
+  draftResult = { id: 22, currentStep: 4, plataforma: "IPHONE", clienteTelefono: "3218928117",
+    payload: { clienteTelefono: "3218928117", financialTermsSeal: sourceSeal } };
+  currentResult = { processUuid: sourceProcessUuid, status: "CREATED", lastError: null,
+    signedDocumentBase64: null, completedAt: null, supersededAt: null,
+    draftFolio: "SOL-22", draftPayload: { financialTermsSeal: sourceSeal } };
+  refreshedResult = currentResult;
+  const phoneOnly = await redirect("DRAFT", 22, base, actor);
+  assert.equal(phoneOnly.status, "AWAITING_SIGNATURE");
+  assert.deepEqual(frozenContact, { phone: "3119876543", email: "" },
+    "un expediente histórico sin correo conserva el canal WhatsApp sin inventar un email");
+  assert.equal(reservedInput.updatedPayload.clienteCorreo, "");
+  assert.equal(reservedInput.options.allowTerminalFailedActive, false);
+
+  draftResult = { id: 22, currentStep: 4, plataforma: "IPHONE", clienteTelefono: "3218928117",
+    payload: { clienteTelefono: "3218928117", clienteCorreo: "cliente@example.com",
+      financialTermsSeal: sourceSeal } };
+  currentResult = { ...currentResult, status: "CREATED", lastError: null,
+    draftPayload: { financialTermsSeal: sourceSeal } };
+  refreshedResult = currentResult;
+  const phoneOnlyIntent = { ...base,
+    idempotencyKey: "10000000-0000-4000-8000-000000000010" };
+  assert.equal((await redirect("DRAFT", 22, phoneOnlyIntent, actor)).status, "AWAITING_SIGNATURE");
+  assert.equal((await redirect("DRAFT", 22, phoneOnlyIntent, actor)).status, "AWAITING_SIGNATURE");
+  await assert.rejects(redirect("DRAFT", 22, {
+    ...phoneOnlyIntent, phone: undefined, email: "cliente@example.com",
+  }, actor), error => error.code === "IDEMPOTENCY_CONFLICT",
+  "la misma llave no puede omitir el teléfono aunque el correo efectivo coincida");
+  await assert.rejects(redirect("DRAFT", 22, {
+    ...phoneOnlyIntent, email: "cliente@example.com",
+  }, actor), error => error.code === "IDEMPOTENCY_CONFLICT",
+  "la misma llave no puede agregar un correo omitido aunque coincida con el valor conservado");
+
+  const bothChannelsIntent = {
+    ...base, phone: "3100000000", email: "nuevo@example.com",
+    idempotencyKey: "10000000-0000-4000-8000-000000000011",
+  };
+  assert.equal((await redirect("DRAFT", 22, bothChannelsIntent, actor)).status, "AWAITING_SIGNATURE");
+  assert.equal((await redirect("DRAFT", 22, bothChannelsIntent, actor)).status, "AWAITING_SIGNATURE");
+  await assert.rejects(redirect("DRAFT", 22, {
+    ...bothChannelsIntent, email: undefined,
+  }, actor), error => error.code === "IDEMPOTENCY_CONFLICT",
+  "la misma llave no puede omitir el correo del intento original");
+  await assert.rejects(redirect("DRAFT", 22, {
+    ...bothChannelsIntent, phone: undefined,
+  }, actor), error => error.code === "IDEMPOTENCY_CONFLICT",
+  "la misma llave no puede omitir el teléfono del intento original");
+
+  for (const ambiguousFailure of ["ERROR", "FAILED", "FAILURE"]) {
+    currentResult = { ...currentResult, status: ambiguousFailure,
+      lastError: `FirmaSeguro ${ambiguousFailure}` };
+    refreshedResult = currentResult;
+    reservedInput = null;
+    await assert.rejects(redirect("DRAFT", 22, {
+      ...base, idempotencyKey: `10000000-0000-4000-8000-00000000000${ambiguousFailure.length}`,
+    }, actor), error => error.code === "SIGNATURE_NOT_PENDING", ambiguousFailure);
+    assert.equal(reservedInput, null, `${ambiguousFailure} no llega al ledger como retry permitido`);
+  }
+
+  let suffix = 5;
+  for (const terminal of ["REJECTED", "DECLINED", "CANCELLED", "EXPIRED", "REVOKED"]) {
+    currentResult = { ...currentResult, status: terminal, lastError: `FirmaSeguro ${terminal}` };
+    refreshedResult = currentResult;
+    reservedInput = null;
+    await redirect("DRAFT", 22, {
+      ...base, idempotencyKey: `10000000-0000-4000-8000-00000000000${suffix++}`,
+    }, actor);
+    assert.equal(reservedInput.options.allowTerminalFailedActive, true, terminal);
+  }
+});
+
 test("solo una terminación definitiva verificada permite recuperar firma; error incierto no", () => {
   for (const status of ["REJECTED", "DECLINED", "CANCELLED", "EXPIRED", "REVOKED"])
     assert.equal(isVerifiedTerminalSignatureFailure(status), true, status);
-  for (const status of ["ERROR", "FAILED", "PENDING", "CREATED", "SIGNED", "NOT_REJECTED"])
+  for (const status of ["ERROR", "FAILED", "FAILURE", "PENDING", "CREATED", "SIGNED", "NOT_REJECTED"])
     assert.equal(isVerifiedTerminalSignatureFailure(status), false, status);
   const version = { status: "TECHNICAL_ERROR", newProcessUuid: "process-2", lastCheckedAt: new Date() };
   const process = { processUuid: "process-2", status: "REJECTED", completedAt: null,

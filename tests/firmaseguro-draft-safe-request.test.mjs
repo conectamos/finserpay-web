@@ -12,6 +12,8 @@ const { calculateFrenchAmortization, ARES_COMMERCIAL_AMORTIZATION_VERSION } =
   await jiti.import("../lib/credit-amortization.ts");
 const { createFinancingTermsSeal, readFinancingTermsSeal, resealFinancingTermsIdentity } =
   await jiti.import("../lib/credit-amortization-contract.ts");
+const { buildFrozenPendingContactRedirect } =
+  await jiti.import("../lib/firmaseguro-draft-frozen.ts");
 
 test("cambiar IMEI y contacto vuelve a sellar identidad sin cambiar cifras, plazo ni fecha", () => {
   const amortizacion = calculateFrenchAmortization({
@@ -51,6 +53,79 @@ test("cambiar IMEI y contacto vuelve a sellar identidad sin cambiar cifras, plaz
   assert.equal(changed.snapshot.clienteTelefono, "3111111111");
   assert.equal(readFinancingTermsSeal({ ...changed, snapshot: { ...changed.snapshot,
     totalPagar: "1.000000" } }), null);
+});
+
+test("redirigir una firma pendiente cambia solo el contacto y conserva el cierre financiero sellado", () => {
+  const amortizacion = calculateFrenchAmortization({
+    calculoVersion: ARES_COMMERCIAL_AMORTIZATION_VERSION,
+    valorVenta: 3_100_000, cuotaInicial: 930_000, numeroCuotas: 40,
+    tasaInteresEa: 29.24, fianzaCuotaPorcentaje: 75 / 40,
+    seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: "2026-10-17",
+  });
+  const seal = createFinancingTermsSeal({
+    folio: "SOL-REDIRECT-1", documento: "1052962070",
+    contrato: { tipoDocumento: "CC", clienteNombre: "ISABEL CESPEDES",
+      clienteTelefono: "3218928117", clienteCorreo: "isabel@example.com",
+      clienteDireccion: "Calle 1", equipoMarca: "IPHONE", equipoModelo: "17 PRO MAX 256GB",
+      referenciaEquipo: "IPHONE 17 PRO MAX 256GB", imei: "358015864286170" },
+    amortizacion,
+    parametros: { fianzaTotalPorcentaje: 75, fianzaModalidad: "TOTAL_CREDITO",
+      fianzaFuente: "POLITICA", tasaPeriodoDecimales: 6,
+      redondeoComercial: { modo: "PISO", multiplo: 50 },
+      policyVersion: 1, policyRevisionId: "policy-redirect" },
+  });
+  const payload = {
+    clienteDocumento: "1052962070", clienteTipoDocumento: "CC", clienteNombre: "ISABEL CESPEDES",
+    clientePrimerNombre: "ISABEL", clientePrimerApellido: "CESPEDES", clienteDireccion: "Calle 1",
+    clienteTelefono: "3218928117", clienteCorreo: "isabel@example.com",
+    equipoMarca: "IPHONE", equipoModelo: "17 PRO MAX 256GB",
+    referenciaEquipo: "IPHONE 17 PRO MAX 256GB", equipoCatalogoId: 17,
+    valorEquipoTotal: 3_100_000, cuotaInicial: 930_000, plazoMeses: 40,
+    dataCreditoAssessmentId: 81, plataformaDispositivo: "IPHONE",
+    imei: "358015864286170", deviceUid: "358015864286170", financialTermsSeal: seal,
+  };
+  const draft = { id: 31, payload: { ...payload }, usuarioNombre: "Asesor", usuarioLogin: "asesor",
+    vendedorId: 4, vendedorNombre: "Asesor", vendedorDocumento: "1000", vendedorTelefono: "3000000000",
+    vendedorEmail: "asesor@example.com", sedeNombre: "Sede", sedeCodigo: "S1", sedeAliadoId: 9 };
+  const source = { processUuid: "20000000-0000-4000-8000-000000000002", draftFolio: "SOL-REDIRECT-1",
+    draftPayload: { ...payload }, signedDocumentBase64: null, completedAt: null,
+    createdAt: new Date("2026-10-05T20:27:00Z") };
+
+  const redirected = buildFrozenPendingContactRedirect({
+    draft, source, phone: "3119876543", email: "isabel@example.com",
+  });
+  assert.equal(redirected.credit.clienteTelefono, "3119876543");
+  assert.equal(redirected.credit.clienteCorreo, "isabel@example.com");
+  assert.equal(redirected.credit.imei, seal.snapshot.imei);
+  assert.equal(redirected.credit.folio, seal.snapshot.folio);
+  assert.equal(redirected.credit.valorEquipoTotal, Number(seal.snapshot.valorVenta));
+  assert.equal(redirected.credit.cuotaInicial, Number(seal.snapshot.cuotaInicial));
+  assert.equal(redirected.credit.valorCuota, Number(seal.snapshot.cuotaPactada));
+  const expectedInsurance = Number(seal.snapshot.cuotaSeguroExacta) * seal.snapshot.numeroCuotas;
+  assert.ok(expectedInsurance > 0, "la prueba debe usar un seguro contractual no nulo");
+  assert.equal(redirected.credit.valorSeguro, expectedInsurance,
+    "el objeto exacto entregado al renderer conserva el total de seguro del sello");
+  assert.equal(redirected.credit.seguroCuotaPorcentaje,
+    Number(seal.snapshot.seguroCuotaPorcentaje),
+    "el PDF recibe también el porcentaje de seguro original, no cero");
+  assert.equal(redirected.credit.plazoMeses, seal.snapshot.numeroCuotas);
+  assert.equal(redirected.credit.fechaPrimerPago, seal.snapshot.fechaPrimerPago);
+  assert.equal(redirected.seal.snapshot.clienteTelefono, "3119876543");
+  for (const field of ["valorVenta", "cuotaInicial", "valorFinanciado", "numeroCuotas",
+    "frecuenciaPago", "fechaPrimerPago", "tasaInteresEa", "tasaPeriodo", "cuotaPactada",
+    "cuotaSeguroExacta", "cuotaTotalExacta", "cuotaComercial", "totalPagar",
+    "policyVersion", "policyRevisionId"]) {
+    assert.equal(redirected.seal.snapshot[field], seal.snapshot[field], field);
+  }
+  assert.throws(() => buildFrozenPendingContactRedirect({
+    draft: { ...draft, payload: { ...payload, cuotaInicial: 1 } }, source,
+    phone: "3119876543", email: "isabel@example.com",
+  }), /FIRMASEGURO_SIGNED_TERMS_CHANGED/);
+  assert.throws(() => buildFrozenPendingContactRedirect({
+    draft, source: { ...source, signedDocumentBase64: Buffer.from("%PDF-1.7").toString("base64") },
+    phone: "3119876543", email: "isabel@example.com",
+  }), /FIRMASEGURO_SOURCE_ALREADY_SIGNED/);
 });
 
 test("la reserva durable impide doble envío y no afirma firma antes de evidencia", async () => {

@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getReplacementRemission } from "@/lib/credit-device-replacement-remission";
 import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
-import { isVerifiedTerminalSignatureFailure } from "@/lib/approval-operations-core";
+import { isVerifiedPendingSignatureStatus, isVerifiedTerminalSignatureFailure } from "@/lib/approval-operations-core";
 import {
   isFirmaSeguroFailedStatus,
   isFirmaSeguroSuccessfulStatus,
@@ -272,7 +272,7 @@ export function operationalSignatureState(row: SignatureRow | null): Operational
   if (row.hasSignedDocument) return "SIGNED";
   if (row.completedAt || isFirmaSeguroSuccessfulStatus(row.status) ||
     row.lastError || isFirmaSeguroFailedStatus(row.status)) return "TECHNICAL_ERROR";
-  return "PENDING";
+  return isVerifiedPendingSignatureStatus(row.status) ? "PENDING" : "TECHNICAL_ERROR";
 }
 function signatureDetail(rows: SignatureRow[], fallback: { phone: string | null; email: string | null }): OperationalSignature {
   const active = rows.find((row) => !row.supersededAt) || null;
@@ -402,7 +402,10 @@ function creditCapabilities(row: CreditRow, signature: OperationalSignature, rep
     : null;
   return { preSettlementApprovalCreditId, canChangeImei, canFinalizeImei, canConfirmReplacement: canFinalizeImei,
     canDispatchSignatureWithImei: false,
-    canUpdateContact, canSendSignature, canResendSignature, reason, signatureReason };
+    canUpdateContact, canSendSignature, canResendSignature,
+    canRedirectPendingSignature: false,
+    pendingSignatureRedirectReason: "La redirección de una firma pendiente está disponible en solicitudes antes de crear el crédito.",
+    reason, signatureReason };
 }
 function draftCapabilities(row: DraftRow, signature: OperationalSignature,
   signatures: SignatureRow[], unresolvedDispatch: boolean) {
@@ -423,6 +426,30 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     (signature.status === "SIGNED" || (correctionPending && signature.status === "NOT_SENT" && signedArchivedSource));
   const canResendSignature = Boolean(open && supported && correctionPending &&
     signature.status === "NOT_SENT" && signedArchivedSource && !unresolvedDispatch);
+  const activeSignatures = signatures.filter((item) => !item.supersededAt);
+  const activeSignature = activeSignatures.length === 1 ? activeSignatures[0] : null;
+  const frozenPendingSource = Boolean(activeSignature &&
+    readFinancingTermsSeal(record(activeSignature.draftPayload).financialTermsSeal));
+  const terminalFailedSource = Boolean(activeSignature && !activeSignature.hasSignedDocument
+    && !activeSignature.completedAt && isVerifiedTerminalSignatureFailure(activeSignature.status));
+  const redirectableSignature = signature.status === "PENDING"
+    || (signature.status === "TECHNICAL_ERROR" && terminalFailedSource);
+  const canRedirectPendingSignature = Boolean(open && supported && !unresolvedDispatch &&
+    redirectableSignature && signature.processUuid && activeSignatures.length === 1
+    && activeSignature && frozenPendingSource);
+  const pendingSignatureRedirectReason = canRedirectPendingSignature ? null
+    : !open ? "La solicitud ya no está abierta en Identidad y firma."
+    : !supported ? "La redirección de FirmaSeguro está disponible por ahora para iPhone."
+    : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
+    : signature.status === "SIGNED" ? "El cliente ya firmó esta solicitud."
+    : signature.status === "TECHNICAL_ERROR" && !terminalFailedSource
+      ? "La firma ya no está pendiente; actualiza el expediente."
+    : !redirectableSignature || !signature.processUuid
+      ? "La solicitud no tiene una firma pendiente para redirigir."
+    : activeSignatures.length !== 1
+      ? "El expediente no tiene una única firma vigente. Requiere revisión técnica."
+    : !frozenPendingSource ? "No se pudo verificar el origen contractual congelado. Requiere revisión técnica."
+    : "La firma pendiente no se puede redirigir en este momento.";
   const reason = !open ? "La solicitud ya no está abierta en Identidad y firma."
     : !supported ? "El cambio de IMEI con nueva firma está disponible solo para iPhone."
     : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
@@ -436,7 +463,8 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     // Draft correction first moves the saved application back through its
     // signing gates. Correction alone is not evidence of provider dispatch.
     canDispatchSignatureWithImei: false,
-    canUpdateContact, canSendSignature: false, canResendSignature, reason,
+    canUpdateContact, canSendSignature: false, canResendSignature,
+    canRedirectPendingSignature, pendingSignatureRedirectReason, reason,
     signatureReason: !open ? "La solicitud ya no está abierta en Identidad y firma."
       : !supported ? "Esta gestión de FirmaSeguro está disponible por ahora para iPhone."
       : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
