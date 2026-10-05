@@ -43,6 +43,7 @@ COPY --from=builder /app/scripts/credit-principal-payment-schema.mjs ./scripts/c
 COPY --from=builder /app/scripts/ensure-solicitudes-schema.mjs ./scripts/ensure-solicitudes-schema.mjs
 COPY --from=builder /app/scripts/ensure-iphone-enrollment-schema.mjs ./scripts/ensure-iphone-enrollment-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-device-replacement-schema.mjs ./scripts/ensure-credit-device-replacement-schema.mjs
+COPY --from=builder /app/scripts/ensure-credit-device-replacement-remission-schema.mjs ./scripts/ensure-credit-device-replacement-remission-schema.mjs
 COPY --from=builder /app/scripts/repair-credit-device-replacement-20260918.mjs ./scripts/repair-credit-device-replacement-20260918.mjs
 COPY --from=builder /app/scripts/mass-first-payment-correction-core.mjs ./scripts/mass-first-payment-correction-core.mjs
 COPY --from=builder /app/scripts/correct-historic-mass-credit-first-payments-20260925.mjs ./scripts/correct-historic-mass-credit-first-payments-20260925.mjs

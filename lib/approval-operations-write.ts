@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { canDispatchReservedVersion, exactImei, hasVerifiedDraftSignature, isVerifiedTerminalOperationalRetry,
-  operationalCreditEligibility, operationalDraftCorrectionStatus, operationalProcessToSupersede,
+  operationalCreditEligibility, operationalImeiEligibility, operationalDraftCorrectionStatus, operationalProcessToSupersede,
   operationalSignatureLineage,
   operationalFrozenCredit, signedPdfBytes } from "@/lib/approval-operations-core";
 import type { Prisma } from "@/app/generated/prisma/client";
@@ -41,7 +41,7 @@ type Credit = Record<string, unknown> & {
   id: number; folio: string; imei: string | null; deviceUid: string | null;
   clienteTelefono: string | null; clienteCorreo: string | null; clienteNombre: string;
   clienteDocumento: string | null; estado: string; contratoSnapshot: unknown;
-  platform: string; paidToAlly: boolean; finishedDraft: boolean;
+  platform: string; paidToAlly: boolean; finishedDraft: boolean; hasApprovalReview: boolean;
 };
 type Draft = { id: number; estado: string; creditoId: number | null; currentStep: number;
   imei: string | null; payload: unknown; expiresAt: Date | null; createdAt: Date };
@@ -50,7 +50,8 @@ type Version = { id: string; creditoId: number; previousProcessUuid: string; sup
   newProcessUuid: string | null;
   status: string; version: number; frozenCredit: CreditForFirmaSeguroPdf; reason: string; replacementId: string | null;
   actorUserId: number; previousImei: string; newImei: string; sentPhone: string | null; sentEmail: string | null;
-  documentBase64: string | null; documentHash: string | null; requestedAt: Date; updatedAt: Date;
+  documentBase64: string | null; documentHash: string | null; requestPayload: unknown | null;
+  requestedAt: Date; updatedAt: Date;
   lastCheckedAt: Date | null };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -131,7 +132,16 @@ async function readCredit(db: Db, id: number, lock = false) {
       COALESCE(credit."contratoSnapshot" #>> '{equipo,plataforma}', '') AS platform,
       EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId"=credit."id") AS "paidToAlly",
       EXISTS (SELECT 1 FROM "CreditoBorrador" draft WHERE draft."creditoId"=credit."id"
-        AND draft."estado"='CERRADO' AND draft."closedReason"='FINALIZADA') AS "finishedDraft"
+        AND draft."estado"='CERRADO' AND draft."closedReason"='FINALIZADA') AS "finishedDraft",
+      EXISTS (SELECT 1 FROM "CreditApprovalReview" review
+        JOIN "CreditApprovalPolicy" policy ON policy."id"=1
+        JOIN "Sede" site ON site."id"=credit."sedeId"
+        JOIN "Aliado" ally ON ally."id"=site."aliadoId"
+        WHERE review."creditoId"=credit."id" AND review."status" IN ('PENDING','APPROVED')
+          AND credit."createdAt">=policy."activatedAt"
+          AND UPPER(BTRIM(COALESCE(ally."codigo",'')))<>'FINSERPAY'
+          AND NOT (COALESCE(credit."equalityService",'')='IMPORTACION_MASIVA'
+            AND COALESCE(credit."contratoSnapshot" #>> '{origen,tipo}','')='IMPORTACION_MASIVA')) AS "hasApprovalReview"
     FROM "Credito" credit WHERE credit."id"=$1 ${lock ? "FOR UPDATE OF credit" : ""}`, id);
   if (!rows[0]) throw new ApprovalOperationalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
   return rows[0];
@@ -267,7 +277,8 @@ async function requestOperationalVersion(input: {
     throw new ApprovalOperationalError("PROCESS_CHANGED", "Actualiza el estado de la firma antes de continuar.", 409);
   const original = await prisma.$transaction(async (db) => {
     const credit = await readCredit(db, input.creditId, true);
-    assertSettledOperationalCredit(credit);
+    if (input.replacementId) assertOperationalImeiCredit(credit);
+    else assertSettledOperationalCredit(credit);
     const previous = await readVersion(db, id);
     if (previous) {
       if (previous.creditoId !== input.creditId || previous.actorUserId !== input.actor.id || previous.reason !== input.reason
@@ -280,6 +291,25 @@ async function requestOperationalVersion(input: {
            AND "eventType"='SIGNATURE_REQUESTED' AND "actorUserId"=$2 LIMIT 1`, id, input.actor.id);
         if (!signatureAction[0]) throw new ApprovalOperationalError("IDEMPOTENCY_CONFLICT",
           "Esta confirmación pertenece a un cambio de IMEI.");
+      }
+      // FAILED_SAFE is only retriable when preparation failed before claiming
+      // the provider POST. An uncertain dispatch must never be repeated.
+      if (input.replacementId && previous.status === "FAILED_SAFE" &&
+          previous.newProcessUuid === null && previous.supersededProcessUuid === null &&
+          previous.requestPayload === null) {
+        if ((await latestVersion(db, input.creditId))?.id !== previous.id)
+          throw new ApprovalOperationalError("SIGNATURE_STATE_CHANGED",
+            "Existe una versión posterior del contrato. Actualiza el caso antes de continuar.");
+        const process = await currentProcess(db, "CREDIT", input.creditId);
+        if (!process || process.processUuid !== wantedProcess || !checkPdf(process.signedDocumentBase64)
+          || !(process.completedAt || isFirmaSeguroCompletedStatus(process.status)))
+          throw new ApprovalOperationalError("SIGNED_DOCUMENT_REQUIRED",
+            "La firma de origen cambió. Requiere revisión técnica antes de reintentar.");
+        const resumed = await db.$executeRawUnsafe(`UPDATE "ApprovalOperationalContractVersion"
+          SET "status"='PREPARING',"updatedAt"=CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+          WHERE "id"=$1::uuid AND "status"='FAILED_SAFE' AND "requestPayload" IS NULL
+            AND "newProcessUuid" IS NULL AND "supersededProcessUuid" IS NULL`, id);
+        return { version: (await readVersion(db, id))!, dispatch: resumed === 1, process, terminalRetry: false };
       }
       const retryProcess = canDispatchReservedVersion(previous.status)
         ? await currentProcess(db, "CREDIT", input.creditId) : null;
@@ -381,7 +411,8 @@ async function requestOperationalVersion(input: {
     const prepared = await prepareFirmaSeguroReissue(original.version.frozenCredit, document, id);
     const claimed = await prisma.$transaction(async (db) => {
       const credit = await readCredit(db, input.creditId, true);
-      assertSettledOperationalCredit(credit);
+      if (input.replacementId) assertOperationalImeiCredit(credit);
+      else assertSettledOperationalCredit(credit);
       if (digits(credit.imei) !== original.version.newImei || digits(credit.deviceUid) !== original.version.newImei
         || credit.clienteTelefono !== original.version.sentPhone || credit.clienteCorreo !== original.version.sentEmail)
         throw new Error("OPERATIONAL_CREDIT_CHANGED");
@@ -452,7 +483,7 @@ async function reserveReplacementVersion(db: Prisma.TransactionClient, input: {
   replacement: { id: string; previousImei: string; newImei: string }; motive: string;
 }) {
   const credit = await readCredit(db, input.creditId, true);
-  assertSettledOperationalCredit(credit);
+  assertOperationalImeiCredit(credit);
   if (digits(credit.imei) !== input.replacement.newImei || digits(credit.deviceUid) !== input.replacement.newImei)
     throw new ApprovalOperationalError("REPLACEMENT_NOT_APPLIED", "El IMEI aprobado no coincide con el equipo vigente.");
   const existing = await latestVersion(db, input.creditId);
@@ -495,6 +526,27 @@ function assertSettledOperationalCredit(credit: Credit) {
     "El crédito no tiene una solicitud de origen finalizada para este proceso.");
   if (gate === "IPHONE_REQUIRED") throw new ApprovalOperationalError("IPHONE_REQUIRED",
     "Esta operación está disponible por ahora únicamente para créditos iPhone.");
+}
+
+function assertOperationalImeiCredit(credit: Credit) {
+  const gate = operationalImeiEligibility(credit);
+  if (gate === "CANCELLED") throw new ApprovalOperationalError("CREDIT_NOT_ELIGIBLE",
+    "Este crédito no admite modificaciones operativas.");
+  if (gate === "NOT_FINALIZED" || gate === "PRE_SETTLEMENT_REVIEW_REQUIRED")
+    throw new ApprovalOperationalError("PRE_SETTLEMENT_REVIEW_REQUIRED",
+      "El cambio requiere una solicitud finalizada y una revisión de Aprobaciones vigente.");
+  if (gate === "IPHONE_REQUIRED") throw new ApprovalOperationalError("IPHONE_REQUIRED",
+    "Esta operación está disponible por ahora únicamente para créditos iPhone.");
+}
+
+async function invalidatePreSettlementImeiApproval(db: Db, credit: Credit) {
+  if (credit.paidToAlly) return;
+  await db.$queryRawUnsafe(`SELECT public.credit_approval_invalidate($1, 'IMEI_REPLACEMENT_REQUESTED')`, credit.id);
+  const review = await db.$queryRawUnsafe<Array<{ status: string; approvedRevision: number | null }>>(
+    `SELECT "status","approvedRevision" FROM "CreditApprovalReview" WHERE "creditoId"=$1 FOR UPDATE`, credit.id);
+  if (review[0]?.status !== "PENDING" || review[0].approvedRevision !== null)
+    throw new ApprovalOperationalError("APPROVAL_INVALIDATION_FAILED",
+      "No se pudo reabrir la revisión del crédito. No se registró el cambio de equipo.", 503);
 }
 
 export async function mutateOperationalImei(kind: OperationalKind, targetId: number, input: {
@@ -560,7 +612,7 @@ export async function mutateOperationalImei(kind: OperationalKind, targetId: num
 
   await ensureCreditDeviceReplacementSchema();
   const credit = await readCredit(prisma, targetId);
-  assertSettledOperationalCredit(credit);
+  assertOperationalImeiCredit(credit);
   if (action === "REQUEST") {
     const existing = await prisma.$queryRawUnsafe<Array<{ targetKind: string; targetId: number; actorUserId: number;
       newImei: string; reason: string; evidenceSha256: string | null; status: string }>>(
@@ -590,7 +642,7 @@ export async function mutateOperationalImei(kind: OperationalKind, targetId: num
       onCreated: async (db, created) => {
         sameImei(input.expectedImei, created.previousImei);
         const lockedCredit = await readCredit(db, targetId);
-        assertSettledOperationalCredit(lockedCredit);
+        assertOperationalImeiCredit(lockedCredit);
         const active = await currentProcess(db, "CREDIT", targetId);
         if (!active || active.processUuid !== input.expectedProcessUuid || !checkPdf(active.signedDocumentBase64))
           throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma cambió. Actualiza el caso.");
@@ -601,11 +653,14 @@ export async function mutateOperationalImei(kind: OperationalKind, targetId: num
         await insertAction(db, { id, kind, targetId, creditId: targetId,
           eventType: "IMEI_REQUESTED", actor, previousImei: created.previousImei, newImei: created.newImei,
           reason: motive, evidence: input.evidence, status: "PENDING_ENROLLMENT" });
+        // The same transaction must reopen an approved case before a pending
+        // replacement can be visible to ally settlement.
+        await invalidatePreSettlementImeiApproval(db, lockedCredit);
       },
     });
     // The request and evidence are committed by the same replacement transaction.
     return { id, replacementId: replacement.id, status: replacement.status,
-      message: "Cambio registrado. Esperando aprobación del enrolamiento; aún no se envió una nueva firma." };
+      message: "Cambio registrado. Se solicitó al aliado una nueva foto de la remisión firmada. Tras verificarla y aprobar el enrolamiento, podrás enviar el contrato con el nuevo IMEI." };
   }
 
   const replacementId = operationId(input.replacementId);
@@ -614,7 +669,9 @@ export async function mutateOperationalImei(kind: OperationalKind, targetId: num
     if (replay.creditoId !== targetId || replay.actorUserId !== actor.id
       || replay.replacementId !== replacementId || replay.previousProcessUuid !== input.expectedProcessUuid)
       throw new ApprovalOperationalError("IDEMPOTENCY_CONFLICT", "Esta confirmación pertenece a otro caso.");
-    if (replay.status !== "PREPARING") return versionPublic(replay);
+    if (replay.status !== "PREPARING" && !(replay.status === "FAILED_SAFE" &&
+      replay.requestPayload === null && replay.newProcessUuid === null && replay.supersededProcessUuid === null))
+      return versionPublic(replay);
     return requestOperationalVersion({ creditId: targetId, actor, idempotencyKey: id,
       expectedProcessUuid: replay.previousProcessUuid, reason: replay.reason, replacementId });
   }

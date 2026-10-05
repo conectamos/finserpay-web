@@ -44,7 +44,7 @@ test("predeploy matches both runtime schemas and packages their installers", () 
     statementsInRuntime("lib/approval-operations-schema.ts", "ensureApprovalOperationalSchema"));
   assert.deepEqual(draft,
     statementsInRuntime("lib/firmaseguro-draft-dispatch-ledger.ts", "ensureDraftDispatchSchema"));
-  assert.equal(operational.length, 18);
+  assert.equal(operational.length, 21);
   assert.equal(draft.length, 13);
   for (const statement of [...operational, ...draft]) {
     assert.doesNotMatch(statement, /\b(?:DROP TABLE|TRUNCATE)\b/i);
@@ -73,6 +73,9 @@ test("operational and draft schemas install twice and preserve immutable history
       CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY);
       CREATE TABLE "CreditoBorrador" ("id" INTEGER PRIMARY KEY);
       CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
+      CREATE TABLE "CreditApprovalReview" ("creditoId" INTEGER, "status" TEXT);
+      CREATE TABLE "LiquidacionAliadoCredito" ("creditoId" INTEGER);
+      CREATE TABLE "CreditDeviceReplacement" ("creditId" INTEGER, "source" TEXT, "status" TEXT);
       CREATE TABLE "FirmaSeguroProcess" (
         "processUuid" TEXT PRIMARY KEY, "creditoId" INTEGER,
         "signedDocumentBase64" TEXT, "signedDocumentFileName" TEXT,

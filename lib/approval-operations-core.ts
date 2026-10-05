@@ -17,6 +17,18 @@ export function operationalCreditEligibility(credit: {
   return null;
 }
 
+/** The IMEI workflow also serves signed iPhone credits awaiting ally settlement. */
+export function operationalImeiEligibility(credit: {
+  estado: unknown; paidToAlly: boolean; finishedDraft: boolean; hasApprovalReview?: boolean;
+  platform: unknown; referenciaEquipo?: unknown; equipoMarca?: unknown; equipoModelo?: unknown;
+}) {
+  const gate = operationalCreditEligibility({ ...credit, paidToAlly: true });
+  if (gate) return gate;
+  if (!credit.paidToAlly && (!credit.finishedDraft || !credit.hasApprovalReview))
+    return "PRE_SETTLEMENT_REVIEW_REQUIRED" as const;
+  return null;
+}
+
 export function exactImei(value: unknown): value is string {
   return typeof value === "string" && /^\d{15}$/.test(value);
 }

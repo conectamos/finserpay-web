@@ -8,7 +8,7 @@ import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
 const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select", "Tabs"].map((name) => [name, placeholder(name)]));
-const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "ApprovalCallRecording", "SharedApprovalWorkspace", "SharedEvidenceGallery", "SharedDataCorrection", "SharedNoveltyHistory"].map((name) => [name, placeholder(name)]));
+const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "PendingRemissions", "ApprovalCallRecording", "SharedApprovalWorkspace", "SharedEvidenceGallery", "SharedDataCorrection", "SharedNoveltyHistory"].map((name) => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 
 function load(path, dependencies, globals = {}) {
@@ -235,6 +235,7 @@ test("guardar desde PENDIENTES refresca automáticamente y bloquea solo la foto 
     "./pending-client": { ...pendingClient, listPendingCredits: async () => { lists++; return page([fresh]); },
       readPendingCredit: async () => { reads++; return fresh; } },
     "./pending-item-editor": { default: parts.PendingItemEditor },
+    "./pending-remissions": { default: parts.PendingRemissions },
   });
   await h.flush(); h.find((node) => node.props?.["aria-label"] === "Ver novedades del crédito QA-81").props.onClick(); await h.flush();
   const editor = h.find((node) => node.type === parts.PendingItemEditor && node.props.issue.id === "photo-1");

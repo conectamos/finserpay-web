@@ -189,3 +189,42 @@
   .resendReason { align-items: stretch; flex-direction: column; }
   .resendReasonActions { justify-content: flex-end; }
 }
+
+/* Las gestiones se abren desde acciones compactas al seleccionar un crédito. */
+.emptyWorkspace { display: flex; align-items: center; min-height: 200px; padding: 32px; }
+.emptyWorkspace .emptySummary { min-height: 0; max-width: 580px; }
+.operationWorkspace { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-self: start; }
+.operationActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.operationAction { display: flex; align-items: center; justify-content: flex-start; gap: 12px; min-height: 52px; padding: 10px 16px; font-weight: 750; text-align: left; }
+.operationAction svg { flex: none; color: var(--fp-lime-strong); }
+.operationActionActive { border-color: var(--fp-lime-strong) !important; background: var(--fp-lime-soft) !important; }
+.operationAction:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: 2px; }
+.summary, .change { min-height: 0; }
+.operationWorkspace .signature { margin-top: 0; }
+.operationWorkspace .signatureBottom { flex-direction: column; align-items: stretch; margin: 18px 0 0; }
+.operationWorkspace .signatureActions { justify-content: flex-end; }
+.operationWorkspace .signature > .reasonField,
+.operationWorkspace .signature > .muted,
+.operationWorkspace .sentAt,
+.operationWorkspace .resendReason { margin-left: 0; }
+.approvalHandoff { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--fp-border); }
+.approvalHandoff p { flex: 1; min-width: 220px; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
+.approvalHandoff button { min-height: 44px; }
+.remission { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--fp-border); }
+.remissionHead { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.remissionHead h3 { font-size: 16px; font-weight: 750; }
+.remission > p { margin-top: 8px; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
+.remissionPhoto { display: inline-flex; align-items: center; min-height: 44px; margin-top: 8px; color: var(--fp-graphite); font-size: 14px; font-weight: 700; text-decoration: underline; text-decoration-color: var(--fp-lime-strong); text-underline-offset: 3px; }
+.remissionPhoto:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: 2px; }
+.remissionActions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.remissionActions button { min-height: 44px; }
+.remissionReject { margin-top: 16px; }
+.remissionReject label { display: block; margin-bottom: 7px; font-size: 14px; font-weight: 700; }
+.remissionReject input { width: 100%; min-height: 46px; }
+@media (max-width: 680px) {
+  .emptyWorkspace { padding: 24px 20px; }
+  .operationActions { grid-template-columns: 1fr; gap: 8px; }
+  .operationAction { min-height: 48px; }
+  .approvalHandoff button { width: 100%; }
+  .remissionActions button { flex: 1; }
+}

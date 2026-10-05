@@ -157,6 +157,30 @@ export function ensureApprovalOperationalSchema() {
           BEFORE UPDATE OR DELETE ON "FirmaSeguroProcess"
           FOR EACH ROW EXECUTE FUNCTION public.approval_operational_preserve_original()';
         END IF; END $$`);
+      await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.approval_operational_guard_pre_settlement()
+        RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          IF TG_TABLE_NAME='CreditApprovalReview' THEN
+            IF NEW."status"<>'APPROVED' THEN RETURN NEW; END IF;
+          END IF;
+          IF EXISTS (SELECT 1 FROM "CreditDeviceReplacement" replacement
+            WHERE replacement."creditId"=NEW."creditoId"
+              AND replacement."source"='APPROVAL_OPERATIONS'
+              AND replacement."status" IN ('PENDING_ENROLLMENT','ENROLLMENT_APPROVED'))
+            OR EXISTS (SELECT 1 FROM "ApprovalOperationalContractVersion" version
+              WHERE version."creditoId"=NEW."creditoId"
+                AND version."version"=(SELECT MAX(latest."version") FROM "ApprovalOperationalContractVersion" latest
+                  WHERE latest."creditoId"=NEW."creditoId")
+                AND version."status"<>'COMPLETED') THEN
+            RAISE EXCEPTION 'OPERATIONAL_IMEI_SIGNATURE_PENDING' USING ERRCODE='23514';
+          END IF;
+          RETURN NEW;
+        END $$`);
+      await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "CreditApprovalReview_require_operational_completion"
+        BEFORE INSERT OR UPDATE ON "CreditApprovalReview"
+        FOR EACH ROW EXECUTE FUNCTION public.approval_operational_guard_pre_settlement()`);
+      await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "LiquidacionAliadoCredito_require_operational_completion"
+        BEFORE INSERT ON "LiquidacionAliadoCredito"
+        FOR EACH ROW EXECUTE FUNCTION public.approval_operational_guard_pre_settlement()`);
     })().catch((error) => { setup = null; throw error; });
   }
   return setup;

@@ -7,11 +7,12 @@ import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import type { OperationalCaseDetail, OperationalCaseSummary } from "@/lib/approval-operations-types";
 import styles from "./approval-operations.module.css";
 
-type Operation = "imei" | "contact" | "signature";
+type Operation = "imei" | "contact" | "signature" | "remission";
+type ActivePanel = "imei" | "signature" | null;
 type ApiResult = { ok: boolean; error?: string; message?: string; operation?: { id: string; status: string; message: string } };
 type SearchResult = ApiResult & { items: OperationalCaseSummary[] };
 type DetailResult = ApiResult & { item: OperationalCaseDetail };
-type Confirmation = "imei-request" | "imei-confirm" | "signature" | null;
+type Confirmation = "imei-request" | "imei-confirm" | "signature" | "remission-verify" | "remission-reject" | null;
 
 const casePath = (item: Pick<OperationalCaseSummary, "kind" | "id">) =>
   "/api/aprobaciones/operativo/" + item.kind.toLowerCase() + "/" + item.id;
@@ -65,6 +66,16 @@ function replacementLabel(status: string) {
     CANCELLED: "Solicitud cancelada",
   };
   return labels[status] || status.replace(/_/g, " ").toLowerCase();
+}
+
+function remissionLabel(status: string) {
+  switch (status) {
+    case "PENDING_UPLOAD": return "Foto solicitada";
+    case "PENDING_REVIEW": return "Por verificar";
+    case "VERIFIED": return "Verificada";
+    case "REJECTED": return "Corrección solicitada";
+    default: return "En revisión";
+  }
 }
 
 function eventStatusLabel(status: string, label: string) {
@@ -143,46 +154,17 @@ function CaseSummary({ detail }: { detail: OperationalCaseDetail }) {
 }
 
 function EmptyCreditWorkspace({ notFound = false }: { notFound?: boolean }) {
-  return <div aria-label="Detalle del crédito sin seleccionar">
-    <div className={styles.columns}>
-      <Card className={styles.summary}>
-        <div className={styles.emptySummary}>
-          <Search size={22} aria-hidden="true" />
-          <h2>{notFound ? "No se encontraron créditos" : "Selecciona un crédito"}</h2>
-          <p>{notFound ? "Comprueba la cédula, el número del crédito o los 15 dígitos del IMEI." :
-            "Busca por cédula, crédito o IMEI para ver los datos reales del cliente y su historial."}</p>
-        </div>
-        <div className={styles.emptyEquipment} aria-hidden="true"><Smartphone size={48} strokeWidth={1.35} /></div>
-        <p className={styles.emptySectionLabel}>Historial del crédito</p>
-        <p className={styles.muted}>Las acciones del crédito aparecerán aquí.</p>
-      </Card>
-      <Card className={styles.change}>
-        <header className={styles.sectionHeading}>
-          <span className={styles.sectionIcon}><Smartphone size={22} aria-hidden="true" /></span>
-          <div><h2>Cambio de IMEI</h2><p>Registra el nuevo IMEI del dispositivo y solicita una nueva firma del contrato.</p></div>
-        </header>
-        <div className={styles.changeForm} aria-disabled="true">
-          <div className={styles.imeiFields}><div><label htmlFor="empty-old-imei">IMEI anterior</label><Input id="empty-old-imei" disabled /></div>
-            <div><label htmlFor="empty-new-imei">Nuevo IMEI</label><Input id="empty-new-imei" disabled /></div></div>
-          <div><label htmlFor="empty-imei-reason">Motivo del cambio</label><Select id="empty-imei-reason" disabled><option>Selecciona un crédito</option></Select></div>
-          <div><span className={styles.emptySectionLabel}>Evidencia</span><div className={styles.emptyUpload}><Paperclip size={20} aria-hidden="true" />Adjuntar evidencia del cambio de IMEI</div></div>
-          <Button className={styles.primary} disabled>Guardar cambio y enviar nueva firma<ArrowRight size={20} aria-hidden="true" /></Button>
-        </div>
-      </Card>
+  return <Card className={styles.emptyWorkspace} aria-label="Detalle del crédito sin seleccionar">
+    <div className={styles.emptySummary}>
+      <Search size={22} aria-hidden="true" />
+      <h2>{notFound ? "No se encontraron créditos" : "Selecciona un crédito"}</h2>
+      <p>{notFound ? "Comprueba la cédula, el número del crédito o los 15 dígitos del IMEI." :
+        "Busca por cédula, crédito o IMEI para ver los datos reales del cliente y gestionar el caso."}</p>
     </div>
-    <Card className={styles.signature}>
-      <div className={styles.signatureHead}><span className={styles.sectionIcon}><FilePenLine size={23} aria-hidden="true" /></span>
-        <div><div className={styles.signatureTitle}><h2>FirmaSeguro</h2><StatusPill>Sin consulta</StatusPill></div>
-          <p>Selecciona un crédito para consultar el estado de firma y los contactos de envío.</p></div></div>
-      <div className={styles.signatureBottom}><div className={styles.contacts}>
-        <div><label htmlFor="empty-contact-phone">Celular de envío</label><Input id="empty-contact-phone" disabled /></div>
-        <div><label htmlFor="empty-contact-email">Correo de envío</label><Input id="empty-contact-email" disabled /></div>
-      </div><div className={styles.signatureActions}><Button variant="secondary" disabled>Actualizar contacto</Button><Button disabled>Reenviar firma<ArrowRight size={18} aria-hidden="true" /></Button></div></div>
-    </Card>
-  </div>;
+  </Card>;
 }
 
-export default function ApprovalOperations() {
+export default function ApprovalOperations({ onOpenApproval }: { onOpenApproval?: (creditId: number) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<OperationalCaseSummary[]>([]);
   const [selected, setSelected] = useState<OperationalCaseSummary | null>(null);
@@ -196,6 +178,7 @@ export default function ApprovalOperations() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<Operation | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation>(null);
+  const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [newImei, setNewImei] = useState("");
   const [reasonPreset, setReasonPreset] = useState("");
   const [reason, setReason] = useState("");
@@ -206,6 +189,8 @@ export default function ApprovalOperations() {
   const [contactReason, setContactReason] = useState("");
   const [signatureReason, setSignatureReason] = useState("");
   const [preparingResend, setPreparingResend] = useState(false);
+  const [rejectingRemission, setRejectingRemission] = useState(false);
+  const [remissionRejectNote, setRemissionRejectNote] = useState("");
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const evidenceInput = useRef<HTMLInputElement | null>(null);
@@ -236,6 +221,7 @@ export default function ApprovalOperations() {
     detailController.current = controller;
     setSelected(item);
     setDetail(null);
+    setActivePanel(null);
     setDetailError("");
     setActionError("");
     setNotice("");
@@ -245,6 +231,8 @@ export default function ApprovalOperations() {
     setEvidence(null);
     setSignatureReason("");
     setPreparingResend(false);
+    setRejectingRemission(false);
+    setRemissionRejectNote("");
     operationKeys.current = { contact: null, signature: null };
     imeiKeys.current = { request: null, confirm: null };
     setLoadingDetail(true);
@@ -271,6 +259,7 @@ export default function ApprovalOperations() {
     setSearched(true);
     setSelected(null);
     setDetail(null);
+    setActivePanel(null);
     setResults([]);
     setSearchError("");
     setDetailError("");
@@ -339,7 +328,7 @@ export default function ApprovalOperations() {
       body.set("action", action);
       body.set("idempotencyKey", action === "REQUEST"
         ? (imeiKeys.current.request ||= crypto.randomUUID())
-        : target.pendingVersion?.status === "PREPARING"
+        : target.pendingVersion?.status === "PREPARING" || target.pendingVersion?.status === "FAILED_SAFE"
           ? target.pendingVersion.id : (imeiKeys.current.confirm ||= crypto.randomUUID()));
       body.set("confirmed", "true");
       if (action === "CONFIRM") {
@@ -463,10 +452,62 @@ export default function ApprovalOperations() {
     }
   }
 
+  async function reviewRemission(action: "VERIFY" | "REJECT") {
+    const replacementId = detail?.replacement?.id;
+    if (!detail || detail.kind !== "CREDIT" || !replacementId ||
+        detail.remission?.status !== "PENDING_REVIEW" || busy || submitting.current) return;
+    const note = remissionRejectNote.trim();
+    if (action === "REJECT" && (note.length < 5 || note.length > 500)) {
+      setActionError("Explica por qué se necesita otra foto de remisión en 5 a 500 caracteres.");
+      return;
+    }
+    submitting.current = true;
+    setBusy("remission");
+    setActionError("");
+    setNotice("");
+    const target = detail;
+    try {
+      await jsonRequest<ApiResult>(casePath(target) + "/remision", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ replacementId, action, ...(action === "REJECT" ? { note } : {}) }),
+      }, "No fue posible revisar la remisión.");
+      setNotice(action === "VERIFY" ? "Remisión verificada. Continúa cuando el enrolamiento del nuevo equipo esté aprobado." :
+        "Se solicitó al aliado una nueva foto firmada de la remisión.");
+      setRejectingRemission(false);
+      setRemissionRejectNote("");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "No fue posible revisar la remisión.");
+    } finally {
+      setConfirmation(null);
+      try { await refreshDetail(target); }
+      catch { setActionError("Actualiza el crédito para comprobar el estado de la remisión antes de intentarlo otra vez."); }
+      submitting.current = false;
+      setBusy(null);
+    }
+  }
+
+  function togglePanel(panel: Exclude<ActivePanel, null>) {
+    const next = activePanel === panel ? null : panel;
+    setActionError("");
+    if (next === "imei" && detail?.kind === "CREDIT" && !reasonPreset) {
+      setReasonPreset("Garantía");
+      setReason("Garantía");
+    }
+    if (next !== "signature") {
+      setEditingContact(false);
+      setPreparingResend(false);
+      setContactReason("");
+      setSignatureReason("");
+      setContactPhone(detail?.phone || detail?.signature.sentPhone || "");
+      setContactEmail(detail?.email || detail?.signature.sentEmail || "");
+    }
+    setActivePanel(next);
+  }
+
   const signature = detail?.signature;
   const signatureTone = signature?.status === "SIGNED" ? "positive" : signature?.status === "TECHNICAL_ERROR" ? "danger" : "warning";
   const canSubmitImei = Boolean(detail?.capabilities.canChangeImei && !busy && /^\d{15}$/.test(newImei) && newImei !== detail?.imei && reason.trim().length >= 5);
-  const imeiRequestLabel = detail?.kind === "CREDIT" ? "Solicitar cambio por garantía" :
+  const imeiRequestLabel = detail?.kind === "CREDIT" ? "Solicitar cambio y nueva remisión" :
     detail?.capabilities.canDispatchSignatureWithImei ? "Guardar cambio y enviar nueva firma" : "Guardar cambio de IMEI";
 
   return <main className={styles.root}>
@@ -499,29 +540,78 @@ export default function ApprovalOperations() {
       {actionError ? <p className={styles.error} role="alert">{actionError}</p> : null}
       <div className={styles.columns}>
         <CaseSummary detail={detail} />
-        <Card className={styles.change}>
+        <section className={styles.operationWorkspace} aria-label="Gestiones del crédito">
+          <div className={styles.operationActions} role="group" aria-label="Gestiones disponibles">
+            <Button variant="secondary" className={`${styles.operationAction} ${activePanel === "imei" ? styles.operationActionActive : ""}`}
+              onClick={() => togglePanel("imei")} aria-expanded={activePanel === "imei"} aria-controls={activePanel === "imei" ? "approval-imei-panel" : undefined} disabled={Boolean(busy)}>
+              <Smartphone size={20} aria-hidden="true" />Cambio de IMEI
+            </Button>
+            <Button variant="secondary" className={`${styles.operationAction} ${activePanel === "signature" ? styles.operationActionActive : ""}`}
+              onClick={() => togglePanel("signature")} aria-expanded={activePanel === "signature"} aria-controls={activePanel === "signature" ? "approval-signature-panel" : undefined} disabled={Boolean(busy)}>
+              <FilePenLine size={20} aria-hidden="true" />FirmaSeguro
+            </Button>
+          </div>
+        {activePanel === "imei" ? <Card id="approval-imei-panel" className={styles.change}>
           <header className={styles.sectionHeading}>
             <span className={styles.sectionIcon}><Smartphone size={22} aria-hidden="true" /></span>
-            <div><h2>Cambio de IMEI</h2><p>Registra el nuevo IMEI del dispositivo y solicita una nueva firma del contrato.</p></div>
+            <div><h2>Cambio de IMEI</h2><p>{detail.kind === "CREDIT"
+              ? "Por garantía, se pedirá al aliado una nueva foto firmada de la remisión. El IMEI se aplicará después de verificarla y aprobar el nuevo equipo."
+              : "Registra el nuevo IMEI del dispositivo y solicita una nueva firma del contrato."}</p></div>
           </header>
           {detail.replacement ? <div className={`${styles.replacement} ${detail.replacement.status === "PENDING_ENROLLMENT" ? styles.replacementPending : ""}`} role="status">
             <FileClock size={18} aria-hidden="true" />
             <div><strong>Último cambio: {replacementLabel(detail.replacement.status)}</strong>
               <p>{visible(detail.replacement.reason)} · {dateLabel(detail.replacement.createdAt)}</p>
-              {detail.replacement.status === "PENDING_ENROLLMENT" ? <p>Espera la aprobación del enrolamiento del nuevo equipo antes de enviar el contrato.</p> : null}
+              <p>Nuevo IMEI: {visible(detail.replacement.newImei)}</p>
+              {detail.replacement.status === "PENDING_ENROLLMENT" ? <p>Espera la remisión verificada y la aprobación del enrolamiento antes de enviar el contrato.</p> : null}
             </div>
           </div> : null}
+          {detail.kind === "CREDIT" && detail.remission ? <section className={styles.remission} aria-labelledby="approval-remission-title">
+            <div className={styles.remissionHead}>
+              <h3 id="approval-remission-title">Nueva remisión firmada</h3>
+              <StatusPill tone={detail.remission.status === "VERIFIED" ? "positive" : detail.remission.status === "REJECTED" ? "danger" : "warning"}>
+                {remissionLabel(detail.remission.status)}
+              </StatusPill>
+            </div>
+            <p>{detail.remission.status === "PENDING_UPLOAD" ? "Se solicitó al aliado una nueva foto firmada de la remisión. Espera su carga." :
+              detail.remission.status === "PENDING_REVIEW" ? "El aliado cargó una foto de la remisión. Revísala antes de aplicar el nuevo IMEI." :
+              detail.remission.status === "VERIFIED" ? "La foto firmada fue verificada. El cambio continuará después de aprobar el enrolamiento del equipo." :
+              "Se solicitó al aliado corregir la foto de la remisión."}</p>
+            {detail.remission.photoSha256 ? <a className={styles.remissionPhoto}
+              href={casePath(detail) + "/remision/foto?replacementId=" + encodeURIComponent(detail.remission.replacementId)}
+              target="_blank" rel="noopener noreferrer">Ver foto de remisión firmada</a> : null}
+            {detail.remission.status === "PENDING_REVIEW" ? <div className={styles.remissionActions}>
+              <Button variant="secondary" onClick={() => { setActionError(""); setConfirmation("remission-verify"); }} disabled={Boolean(busy)}>
+                Verificar remisión
+              </Button>
+              <Button variant="ghost" onClick={() => { setActionError(""); setRejectingRemission(true); }} disabled={Boolean(busy)}>
+                Solicitar nueva foto
+              </Button>
+            </div> : null}
+            {rejectingRemission && detail.remission.status === "PENDING_REVIEW" ? <div className={styles.remissionReject}>
+              <label htmlFor="approval-remission-note">Motivo para solicitar otra foto</label>
+              <Input id="approval-remission-note" maxLength={500} minLength={5} value={remissionRejectNote}
+                onChange={event => setRemissionRejectNote(event.target.value)} disabled={Boolean(busy)}
+                placeholder="Explica qué debe corregir el aliado" />
+              <div className={styles.remissionActions}>
+                <Button variant="ghost" onClick={() => { setRejectingRemission(false); setRemissionRejectNote(""); }} disabled={Boolean(busy)}>Cancelar</Button>
+                <Button variant="secondary" onClick={() => { setActionError(""); setConfirmation("remission-reject"); }}
+                  disabled={Boolean(busy) || remissionRejectNote.trim().length < 5}>Continuar</Button>
+              </div>
+            </div> : null}
+          </section> : null}
           <form onSubmit={requestImeiChange} className={styles.changeForm}>
+            {detail.capabilities.canChangeImei ? <>
             <div className={styles.imeiFields}>
               <div><label htmlFor="approval-old-imei">IMEI anterior</label><Input id="approval-old-imei" value={detail.imei || ""} readOnly /></div>
               <div><label htmlFor="approval-new-imei">Nuevo IMEI</label><Input id="approval-new-imei" inputMode="numeric" pattern="[0-9]{15}" maxLength={15}
-                placeholder="15 dígitos" value={detail.capabilities.canConfirmReplacement && detail.replacement ? detail.replacement.newImei : newImei} onChange={event => setNewImei(event.target.value.replace(/\D/g, ""))}
-                disabled={!detail.capabilities.canChangeImei || Boolean(busy)} required /></div>
+                placeholder="15 dígitos" value={newImei} onChange={event => setNewImei(event.target.value.replace(/\D/g, ""))}
+                disabled={Boolean(busy)} required /></div>
             </div>
             <div><label htmlFor="approval-imei-reason">Motivo del cambio</label>
               <Select id="approval-imei-reason" value={reasonPreset}
                 onChange={event => { const next = event.target.value; setReasonPreset(next); setReason(next === "Otro" ? "" : next); }}
-                disabled={!detail.capabilities.canChangeImei || Boolean(busy)} required>
+                disabled={Boolean(busy)} required>
                 <option value="">Selecciona un motivo</option>
                 <option value="Garantía">Garantía</option>
                 <option value="Corrección de IMEI">Corrección de IMEI</option>
@@ -529,15 +619,16 @@ export default function ApprovalOperations() {
               </Select>
               {reasonPreset === "Otro" ? <Input className={styles.otherReason} aria-label="Describe el motivo del cambio"
                 placeholder="Describe el motivo del cambio" minLength={5} maxLength={500} value={reason}
-                onChange={event => setReason(event.target.value)} disabled={!detail.capabilities.canChangeImei || Boolean(busy)} required /> : null}
+                onChange={event => setReason(event.target.value)} disabled={Boolean(busy)} required /> : null}
             </div>
             <div><label htmlFor="approval-imei-evidence">Evidencia <span className={styles.muted}>(opcional)</span></label>
               <label className={styles.upload} htmlFor="approval-imei-evidence"><span className={styles.uploadIcon}><Paperclip size={20} aria-hidden="true" /></span>
                 <span>{evidence ? evidence.name : "Adjuntar evidencia del cambio de IMEI"}<small>Puedes subir fotos, documentos o comprobantes. JPG, PNG o PDF · máximo 10 MB.</small></span></label>
               <input id="approval-imei-evidence" ref={evidenceInput} type="file" accept="image/jpeg,image/png,application/pdf"
                 onChange={event => setEvidence(event.target.files?.[0] || null)}
-                disabled={!detail.capabilities.canChangeImei || Boolean(busy)} className={styles.fileInput} />
+                disabled={Boolean(busy)} className={styles.fileInput} />
             </div>
+            </> : null}
             {detail.capabilities.canChangeImei ? <Button type="submit" className={styles.primary} disabled={!canSubmitImei}>
               {busy === "imei" ? "Guardando cambio..." : imeiRequestLabel}<ArrowRight size={20} aria-hidden="true" />
             </Button> : null}
@@ -550,13 +641,14 @@ export default function ApprovalOperations() {
               detail.replacement?.status === "PENDING_ENROLLMENT" || detail.requiresEnrollmentReapproval) ?
               <p className={styles.explanation}><CheckCircle2 size={20} aria-hidden="true" /><span>El contrato anterior se conserva. La nueva versión se enviará cuando terminen las aprobaciones y controles necesarios.</span></p> : null}
           </form>
-        </Card>
-      </div>
-      <Card className={styles.signature}>
+        </Card> : null}
+      {activePanel === "signature" ? <Card id="approval-signature-panel" className={styles.signature}>
         <div className={styles.signatureHead}>
           <span className={styles.sectionIcon}><FilePenLine size={23} aria-hidden="true" /></span>
           <div><div className={styles.signatureTitle}><h2>FirmaSeguro</h2><StatusPill tone={signatureTone}>{signatureLabel(signature!.status)}</StatusPill></div>
             <p>{signature?.status === "TECHNICAL_ERROR" ? "El envío necesita revisión técnica antes de continuar." :
+              signature?.status === "SIGNED" && detail.capabilities.preSettlementApprovalCreditId != null
+                ? "Contrato firmado. La nueva firma se gestiona desde la revisión de aprobaciones antes de liquidar al aliado." :
               signature?.status === "SIGNED" ? "Contrato firmado. Puedes actualizar el contacto o solicitar una nueva firma cuando corresponda." :
               signature?.status === "PENDING" ? "Solicitud enviada. Espera la confirmación real de FirmaSeguro." :
               "No hay una solicitud de firma activa. Las versiones anteriores permanecen en el historial."}</p></div>
@@ -572,16 +664,16 @@ export default function ApprovalOperations() {
                 value={contactEmail} onChange={event => setContactEmail(event.target.value)}
                 readOnly={!editingContact} disabled={Boolean(busy)} /></div>
           </div>
-          <div className={styles.signatureActions}>
+          {detail.capabilities.canUpdateContact || detail.capabilities.canResendSignature ? <div className={styles.signatureActions}>
             {editingContact ? <>
               <Button variant="secondary" onClick={() => { setEditingContact(false); setContactReason(""); setContactPhone(detail.phone || signature?.sentPhone || ""); setContactEmail(detail.email || signature?.sentEmail || ""); }} disabled={Boolean(busy)}>Cancelar</Button>
               <Button variant="secondary" onClick={() => void updateContact()} disabled={Boolean(busy) || contactReason.trim().length < 5}>Guardar contacto</Button>
-            </> : <Button variant="secondary" onClick={() => { setActionError(""); setEditingContact(true); }} disabled={Boolean(busy) || !detail.capabilities.canUpdateContact}>Actualizar contacto</Button>}
-            <Button className={styles.resendButton} onClick={() => { setActionError(""); setPreparingResend(true); }}
-              disabled={Boolean(busy) || editingContact || !detail.capabilities.canResendSignature}>
+            </> : detail.capabilities.canUpdateContact ? <Button variant="secondary" onClick={() => { setActionError(""); setEditingContact(true); }} disabled={Boolean(busy)}>Actualizar contacto</Button> : null}
+            {detail.capabilities.canResendSignature ? <Button className={styles.resendButton} onClick={() => { setActionError(""); setPreparingResend(true); }}
+              disabled={Boolean(busy) || editingContact}>
               {busy === "signature" ? "Enviando..." : "Reenviar firma"}<ArrowRight size={18} aria-hidden="true" />
-            </Button>
-          </div>
+            </Button> : null}
+          </div> : null}
         </div>
         {editingContact ? <div className={styles.reasonField}><label htmlFor="approval-contact-reason">Motivo de actualización del contacto</label>
           <Input id="approval-contact-reason" minLength={5} maxLength={500} value={contactReason}
@@ -594,13 +686,19 @@ export default function ApprovalOperations() {
             <Button onClick={() => { setActionError(""); setConfirmation("signature"); }}
               disabled={Boolean(busy) || signatureReason.trim().length < 5}>Continuar</Button></div>
         </div> : null}
-        {detail.capabilities.reason && !detail.capabilities.canResendSignature ? <p className={styles.muted}>{detail.capabilities.reason}</p> : null}
+        {detail.capabilities.preSettlementApprovalCreditId != null ? <div className={styles.approvalHandoff}>
+          <p>Este crédito requiere gestionar la nueva firma dentro de la revisión de aprobaciones.</p>
+          <Button variant="secondary" onClick={() => onOpenApproval?.(detail.capabilities.preSettlementApprovalCreditId!)}
+            disabled={!onOpenApproval || Boolean(busy)}>Gestionar firma en aprobaciones<ArrowRight size={18} aria-hidden="true" /></Button>
+        </div> : detail.capabilities.reason && !detail.capabilities.canResendSignature ? <p className={styles.muted}>{detail.capabilities.reason}</p> : null}
         {signature?.sentAt ? <p className={styles.sentAt}><CalendarClock size={15} aria-hidden="true" />Último envío: {dateLabel(signature.sentAt)}</p> : null}
-      </Card>
+      </Card> : null}
+        </section>
+      </div>
     </> : null}
     <ConfirmDialog open={confirmation === "imei-request"} title="Confirmar solicitud de cambio de IMEI"
       description={"Se registrará el nuevo IMEI del crédito " + visible(detail?.number) + ". " +
-        (detail?.kind === "CREDIT" ? "El cambio quedará pendiente de aprobación del enrolamiento. Solo después se regenerará el contrato y se enviará para firma." :
+        (detail?.kind === "CREDIT" ? "Se solicitará al aliado una nueva foto firmada de la remisión. El cambio quedará pendiente de verificarla y aprobar el enrolamiento. Solo después se regenerará el contrato y se enviará para firma." :
           detail?.capabilities.canDispatchSignatureWithImei
             ? "Se regenerará el contrato con el nuevo IMEI antes de enviar la nueva versión al cliente. El contrato anterior se conservará."
             : "El contrato anterior se conservará. Tras las revisiones técnicas que correspondan se regenerará el contrato con el nuevo equipo antes de enviarlo a firma.") +
@@ -616,5 +714,13 @@ export default function ApprovalOperations() {
       description={"Se enviará una nueva solicitud de firma para el crédito " + visible(detail?.number) + " al contacto registrado. Verifica que el celular y correo de envío sean correctos."}
       confirmLabel="Reenviar firma" busy={busy === "signature"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void resendSignature()} />
+    <ConfirmDialog open={confirmation === "remission-verify"} title="Verificar nueva remisión"
+      description="Confirma que la foto muestra la nueva remisión firmada y corresponde al equipo de este crédito. Después de verificarla aún se requerirá aprobar el enrolamiento antes de aplicar el IMEI."
+      confirmLabel="Verificar remisión" busy={busy === "remission"}
+      onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void reviewRemission("VERIFY")} />
+    <ConfirmDialog open={confirmation === "remission-reject"} title="Solicitar otra foto de remisión"
+      description="Se conservará la foto actual en el historial y se pedirá al aliado una nueva foto firmada con la corrección indicada."
+      confirmLabel="Solicitar nueva foto" busy={busy === "remission"}
+      onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void reviewRemission("REJECT")} />
   </main>;
 }

@@ -7,12 +7,14 @@ import { fileURLToPath } from "node:url";
 import {
   canDispatchReservedVersion, exactImei, hasVerifiedDraftSignature, isVerifiedTerminalOperationalRetry,
   isVerifiedTerminalSignatureFailure, operationalCreditEligibility, operationalDraftCorrectionStatus,
+  operationalImeiEligibility,
   operationalProcessToSupersede, operationalSignatureLineage,
   operationalFrozenCredit, signedPdfBytes,
 } from "../lib/approval-operations-core.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const replacementSource = await readFile(path.join(root, "lib/credit-device-replacement-storage.ts"), "utf8");
+const writerSource = await readFile(path.join(root, "lib/approval-operations-write.ts"), "utf8");
 const completionSource = await readFile(path.join(root, "lib/approval-operational-signature-complete.ts"), "utf8");
 const firmaSeguroSource = await readFile(path.join(root, "lib/firmaseguro-credit.ts"), "utf8");
 
@@ -27,6 +29,49 @@ test("el crédito operativo exige iPhone finalizado y ya liquidado al aliado", (
     paidToAlly: false }), "NOT_SETTLED");
   assert.equal(operationalCreditEligibility({ ...eligible, platform: "ANDROID", referenciaEquipo: "Samsung" }), "IPHONE_REQUIRED");
   assert.equal(operationalCreditEligibility({ ...eligible, estado: "ANULADO" }), "CANCELLED");
+});
+
+test("el cambio de IMEI acepta un iPhone firmado en aprobación sin abrir otros créditos", () => {
+  const credit = { estado: "ACTIVO", paidToAlly: false, finishedDraft: true,
+    hasApprovalReview: true, platform: "IPHONE", referenciaEquipo: "iPhone 15" };
+  assert.equal(operationalImeiEligibility(credit), null);
+  assert.equal(operationalImeiEligibility({ ...credit, hasApprovalReview: false }), "PRE_SETTLEMENT_REVIEW_REQUIRED");
+  assert.equal(operationalImeiEligibility({ ...credit, finishedDraft: false }), "NOT_FINALIZED");
+  assert.equal(operationalImeiEligibility({ ...credit, platform: "ANDROID", referenciaEquipo: "Samsung" }), "IPHONE_REQUIRED");
+  assert.equal(operationalImeiEligibility({ ...credit, estado: "ANULADO" }), "CANCELLED");
+});
+
+test("solicitar reemplazo reabre el OK previo dentro de la transacción o aborta", async () => {
+  const start = writerSource.indexOf("async function invalidatePreSettlementImeiApproval(");
+  const end = writerSource.indexOf("\nexport async function mutateOperationalImei(", start);
+  assert.ok(start >= 0 && end > start);
+  const statement = stripTypeScriptTypes(writerSource.slice(start, end));
+  const ErrorType = class extends Error {
+    constructor(code, message, status) { super(message); this.code = code; this.status = status; }
+  };
+  const invalidate = new Function("ApprovalOperationalError",
+    `${statement}\nreturn invalidatePreSettlementImeiApproval;`)(ErrorType);
+  const queries = [];
+  let review = { status: "APPROVED", approvedRevision: 4 };
+  const db = { $queryRawUnsafe: async (sql, creditId) => {
+    queries.push({ sql, creditId });
+    if (sql.includes("credit_approval_invalidate")) {
+      review = { status: "PENDING", approvedRevision: null };
+      return [{ credit_approval_invalidate: null }];
+    }
+    return [review];
+  } };
+  await invalidate(db, { id: 17, paidToAlly: false });
+  assert.equal(review.status, "PENDING");
+  assert.equal(review.approvedRevision, null);
+  assert.equal(queries.length, 2);
+  assert.deepEqual(queries.map((query) => query.creditId), [17, 17]);
+  queries.length = 0;
+  await invalidate(db, { id: 17, paidToAlly: true });
+  assert.equal(queries.length, 0);
+  await assert.rejects(() => invalidate({ $queryRawUnsafe: async sql =>
+    sql.includes("credit_approval_invalidate") ? [{}] : [{ status: "APPROVED", approvedRevision: 4 }]
+  }, { id: 17, paidToAlly: false }), { code: "APPROVAL_INVALIDATION_FAILED" });
 });
 
 test("IMEI exacto y PDF firmado verificable son prerrequisitos", () => {

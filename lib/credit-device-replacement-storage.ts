@@ -16,6 +16,11 @@ import { isValidCreditDeviceReplacementImei } from "@/lib/credit-device-replacem
 import prisma from "@/lib/prisma";
 import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { lockSolicitudIdentityMutation } from "@/lib/solicitudes-storage";
+import {
+  ensureReplacementRemissionSchema,
+  isReplacementRemissionVerified,
+  requestReplacementRemission,
+} from "@/lib/credit-device-replacement-remission";
 
 export { isValidCreditDeviceReplacementImei } from "@/lib/credit-device-replacement";
 
@@ -191,6 +196,7 @@ export class CreditDeviceReplacementError extends Error {
     | "REPLACEMENT_NOT_PENDING"
     | "ENROLLMENT_REQUIRED"
     | "OPERATIONAL_SIGNATURE_REQUIRED"
+    | "REMISSION_REQUIRED"
     | "REPLACEMENT_CONCURRENT_CHANGE"
     | "REVIEW_INCONSISTENT"
     | "CASE_IDENTITY_CHANGED";
@@ -928,6 +934,7 @@ export async function createCreditDeviceReplacement(input: {
   onCreated?: (transaction: Prisma.TransactionClient, replacement: { id: string; previousImei: string; newImei: string }) => Promise<void>;
 }) {
   await ensureCreditDeviceReplacementSchema();
+  if (input.source === "APPROVAL_OPERATIONS") await ensureReplacementRemissionSchema();
   const newImei = normalizeImei(input.newImei);
   const reason = normalizeReason(input.reason);
   const actorName = cleanText(input.actor.name, 160);
@@ -1038,6 +1045,11 @@ export async function createCreditDeviceReplacement(input: {
         newImeiHash: hashIphoneEnrollmentImei(newImei),
       },
     });
+    if (input.source === "APPROVAL_OPERATIONS") {
+      await requestReplacementRemission(transaction, replacementId, {
+        id: input.actor.userId, nombre: actorName,
+      });
+    }
     await input.onCreated?.(transaction, { id: replacementId, previousImei, newImei });
     return { id: replacementId, status: "PENDING_ENROLLMENT" as const };
   });
@@ -1101,6 +1113,10 @@ export async function completeCreditDeviceReplacement(input: {
         "ENROLLMENT_REQUIRED",
         "El analista debe aprobar el enrolamiento del nuevo IMEI antes de aplicar el cambio."
       );
+    }
+    if (row.source === "APPROVAL_OPERATIONS" && !await isReplacementRemissionVerified(transaction, row.id)) {
+      throw new CreditDeviceReplacementError("REMISSION_REQUIRED",
+        "El aliado debe cargar la nueva remisión firmada y el analista debe verificarla antes de aplicar el IMEI.");
     }
     const document = normalizedDigits(row.clienteDocumento);
     const review = replacementReviewFromContext(row);

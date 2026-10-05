@@ -31,6 +31,7 @@ const read = load("lib/approval-operations-read.ts", {
   "@/lib/prisma": { default: {} },
   "@/lib/ally-payments-core": {},
   "@/lib/firmaseguro-status": {},
+  "@/lib/credit-device-replacement-remission": { getReplacementRemission: async () => null },
   "@/lib/approval-operations-core": { isVerifiedTerminalSignatureFailure: () => false },
 });
 class OtherOperationalError extends Error {}

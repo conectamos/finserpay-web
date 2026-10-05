@@ -76,7 +76,9 @@ function confirmationDescription(confirmation: Confirmation, shared: boolean) {
   return `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, crédito ${creditDisplayNumber(confirmation)}, y verificaste las correcciones.${recordingConfirmation} El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.`;
 }
 
-export default function ApprovalConsole({ shared = false, redesigned = false, onOpenSadmin }: { shared?: boolean; redesigned?: boolean; onOpenSadmin?: () => void } = {}) {
+export default function ApprovalConsole({ shared = false, redesigned = false, focusCreditId = null, onOpenSadmin }: {
+  shared?: boolean; redesigned?: boolean; focusCreditId?: number | null; onOpenSadmin?: () => void;
+} = {}) {
   const modern = shared || redesigned;
   const [query, setQuery] = useState("");
   const [counts, setCounts] = useState<{ pending: number; approved: number } | null>(null);
@@ -91,6 +93,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
   const [searching, setSearching] = useState(true);
   const [searchError, setSearchError] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const focusedDetail = useRef<number | null>(null);
   const [detail, setDetail] = useState<ApprovalDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState("");
@@ -111,6 +114,43 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
     searchController.current?.abort();
     detailController.current?.abort();
   }, []);
+
+  useEffect(() => {
+    if (!focusCreditId || shared) return;
+    detailController.current?.abort();
+    const controller = new AbortController();
+    detailController.current = controller;
+    setLoadingDetail(true);
+    setDetailError("");
+    void readApprovalCredit(focusCreditId, controller.signal).then((credit) => {
+      if (controller.signal.aborted) return;
+      const targetView = credit.review.status === "APPROVED" ? "approved" : "pending";
+      setView(targetView);
+      setQuery(credit.folio);
+      setSelectedId(credit.id);
+      setSelectedItem({
+        id: credit.id, folio: credit.folio, numeroCreditoVisible: credit.numeroCreditoVisible,
+        clienteDocumento: credit.clienteDocumento, clienteNombre: credit.clienteNombre,
+        aliadoNombre: credit.aliadoNombre, fechaCredito: credit.fechaCredito,
+        status: credit.review.status, required: credit.review.required,
+      });
+      setDetail(credit);
+    }).catch((error) => {
+      if (!controller.signal.aborted) setDetailError(error instanceof Error ? error.message : "No fue posible abrir la revisión del crédito.");
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoadingDetail(false);
+    });
+    return () => controller.abort();
+  }, [focusCreditId, shared]);
+
+  useEffect(() => {
+    if (!focusCreditId || detail?.id !== focusCreditId || focusedDetail.current === focusCreditId) return;
+    const target = document.getElementById("approval-focused-detail");
+    if (!target) return;
+    focusedDetail.current = focusCreditId;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+  }, [detail, focusCreditId]);
 
   useEffect(() => {
     if (!modern || !busy) return;
@@ -396,7 +436,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, on
       {notice ? <div role={notice.warning ? "alert" : "status"} className={`rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-4 text-sm ${notice.warning ? "bg-[var(--fp-amber-soft)]" : "bg-[var(--fp-lime-soft)]"}`}>{notice.text}</div> : null}
 
       {detail ? (
-        <section aria-label={`Expediente del crédito ${creditDisplayNumber(detail)}`} aria-busy={loadingDetail} className="space-y-6">
+        <section id="approval-focused-detail" tabIndex={-1} aria-label={`Expediente del crédito ${creditDisplayNumber(detail)}`} aria-busy={loadingDetail} className="space-y-6 scroll-mt-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime-strong)]">
           <Card className="p-4 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 flex-1">

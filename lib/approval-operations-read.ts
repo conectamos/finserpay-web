@@ -1,6 +1,7 @@
 import "server-only";
 import prisma from "@/lib/prisma";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
+import { getReplacementRemission } from "@/lib/credit-device-replacement-remission";
 import { isVerifiedTerminalSignatureFailure } from "@/lib/approval-operations-core";
 import {
   isFirmaSeguroFailedStatus,
@@ -31,6 +32,7 @@ type CreditRow = {
   contratoSnapshot?: unknown;
   hasAllySettlement?: boolean;
   hasFinishedDraft?: boolean;
+  hasApprovalReview?: boolean;
   createdAt: Date | string;
   updatedAt: Date | string;
 };
@@ -75,6 +77,13 @@ type ReplacementEventRow = {
   actorName: string | null;
   createdAt: Date | string;
 };
+type ReplacementRemissionEventRow = {
+  id: string;
+  eventType: string;
+  actorName: string | null;
+  note: string | null;
+  createdAt: Date | string;
+};
 type DraftImeiEventRow = {
   id: string;
   eventType: string;
@@ -106,6 +115,7 @@ type ContractVersionRow = {
   previousImei: string;
   newImei: string;
   newProcessUuid: string | null;
+  hasRequestPayload?: boolean;
   sentPhone: string | null;
   sentEmail: string | null;
   requestedAt: Date | string;
@@ -299,7 +309,8 @@ async function relationExists(db: Database, name: string) {
 
 function creditCapabilities(row: CreditRow, signature: OperationalSignature, replacement: ReplacementRow | null,
   pendingVersion: ContractVersionRow | null, latestVersion: ContractVersionRow | null,
-  signatures: SignatureRow[], versions: ContractVersionRow[], originalSourceSigned: boolean) {
+  signatures: SignatureRow[], versions: ContractVersionRow[], originalSourceSigned: boolean,
+  remission: { status: string } | null) {
   const platform = resolveAllyPaymentPlatform(row.contratoSnapshot, row.equipoMarca);
   const state = String(row.estado).trim().toUpperCase();
   const cancelled = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(state);
@@ -308,6 +319,11 @@ function creditCapabilities(row: CreditRow, signature: OperationalSignature, rep
   const eligible = !cancelled && (row.hasFinishedDraft === true ||
     ["FINALIZADO", "PAGADO", "PAZ_Y_SALVO"].includes(state));
   const settledToAlly = row.hasAllySettlement === true;
+  const eligibleBeforeSettlement = !settledToAlly && row.hasFinishedDraft === true && row.hasApprovalReview === true;
+  const preSettlementApprovalCreditId = !settledToAlly && !cancelled &&
+    row.hasApprovalReview === true && signature.status === "SIGNED" ? row.id : null;
+  const eligibleImei = eligible && (settledToAlly || eligibleBeforeSettlement);
+  const remissionVerified = remission === null || remission.status === "VERIFIED";
   const pendingReplacement = replacement && ["PENDING_ENROLLMENT", "ENROLLMENT_APPROVED"].includes(replacement.status);
   const versionPending = Boolean(pendingVersion);
   const terminalAnchor = versions.find((version) => version.status === "TECHNICAL_ERROR" &&
@@ -323,28 +339,31 @@ function creditCapabilities(row: CreditRow, signature: OperationalSignature, rep
     !failedProcess.hasSignedDocument && isVerifiedTerminalSignatureFailure(failedProcess.status) &&
     signature.status === "TECHNICAL_ERROR" &&
     originalSourceSigned && !versionPending);
-  const canResumePreparation = pendingVersion?.status === "PREPARING" &&
-    replacement?.status === "COMPLETED" && pendingVersion.replacementId === replacement.id;
-  const canFinalizeImei = Boolean(eligible && settledToAlly && platform === "IPHONE" && signature.status === "SIGNED" &&
-    ((replacement?.status === "ENROLLMENT_APPROVED" && !versionPending) || canResumePreparation));
-  const canChangeImei = Boolean(eligible && settledToAlly && platform === "IPHONE" && !versionPending && signature.status === "SIGNED" && !pendingReplacement);
+  const canResumePreparation = Boolean(pendingVersion && ["PREPARING", "FAILED_SAFE"].includes(pendingVersion.status) &&
+    replacement?.status === "COMPLETED" && pendingVersion.replacementId === replacement.id);
+  const canFinalizeImei = Boolean(eligibleImei && platform === "IPHONE" && signature.status === "SIGNED" &&
+    ((replacement?.status === "ENROLLMENT_APPROVED" && remissionVerified && !versionPending) || canResumePreparation));
+  const canChangeImei = Boolean(eligibleImei && platform === "IPHONE" && !versionPending && signature.status === "SIGNED" && !pendingReplacement);
   const canUpdateContact = Boolean(eligible && settledToAlly && platform === "IPHONE" && !versionPending &&
     !pendingReplacement && (signature.status === "SIGNED" || terminalRetry));
   const canResendSignature = Boolean(eligible && settledToAlly && platform === "IPHONE" && !versionPending &&
     !pendingReplacement && (signature.status === "SIGNED" || terminalRetry));
   const reason = !eligible ? "El cambio por garantía requiere un crédito finalizado y vigente."
     : platform !== "IPHONE" ? "El cambio de IMEI por garantía está disponible solo para iPhone."
-    : !settledToAlly ? "El crédito aún está en revisión o pendiente de liquidación al aliado. Gestiona este caso en el flujo de aprobaciones."
+    : !settledToAlly && !eligibleBeforeSettlement
+      ? "El cambio antes de liquidar requiere una solicitud finalizada y una revisión vigente de Aprobaciones."
     : versionPending && !canResumePreparation ? pendingVersion?.status === "UNCERTAIN"
       ? "Error técnico: requiere revisión. No se pudo confirmar el envío de la nueva firma."
       : "Hay una nueva versión de contrato o firma en curso. Consulta su estado antes de continuar."
-    : replacement?.status === "PENDING_ENROLLMENT" ? "Espera la aprobación del enrolamiento del equipo nuevo."
+    : replacement?.status === "PENDING_ENROLLMENT" ? "Espera la nueva remisión firmada y la aprobación del enrolamiento del equipo."
+    : replacement?.status === "ENROLLMENT_APPROVED" && !remissionVerified
+      ? "Espera la nueva foto de remisión firmada y su verificación antes de aplicar el IMEI."
     : terminalRetry ? null
     : !signature.processUuid ? "No hay una firma vigente para regenerar el contrato. Requiere revisión."
     : signature.status === "TECHNICAL_ERROR" ? "Error técnico: requiere revisión. No hay un contrato firmado vigente verificable."
     : signature.status === "PENDING" ? "La firma vigente sigue en curso. Consulta su estado antes de continuar."
     : null;
-  return { canChangeImei, canFinalizeImei, canConfirmReplacement: canFinalizeImei,
+  return { preSettlementApprovalCreditId, canChangeImei, canFinalizeImei, canConfirmReplacement: canFinalizeImei,
     canDispatchSignatureWithImei: false,
     canUpdateContact, canResendSignature, reason };
 }
@@ -375,7 +394,7 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     : !signature.processUuid ? "La solicitud aún no tiene una firma para reemplazar."
     : signature.status === "PENDING" ? "La firma sigue en curso. Consulta su estado antes de cambiar el IMEI."
     : null;
-  return { canChangeImei, canFinalizeImei: false, canConfirmReplacement: false,
+  return { preSettlementApprovalCreditId: null, canChangeImei, canFinalizeImei: false, canConfirmReplacement: false,
     // Draft correction first moves the saved application back through its
     // signing gates. Correction alone is not evidence of provider dispatch.
     canDispatchSignatureWithImei: false,
@@ -389,7 +408,16 @@ const CREDIT_DETAIL = `SELECT credit."id",credit."folio",
   credit."contratoSnapshot",credit."createdAt",credit."updatedAt",
   EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId"=credit."id") AS "hasAllySettlement",
    EXISTS (SELECT 1 FROM "CreditoBorrador" draft WHERE draft."creditoId"=credit."id"
-     AND draft."estado"='CERRADO' AND draft."closedReason"='FINALIZADA') AS "hasFinishedDraft"
+     AND draft."estado"='CERRADO' AND draft."closedReason"='FINALIZADA') AS "hasFinishedDraft",
+  EXISTS (SELECT 1 FROM "CreditApprovalReview" review
+    JOIN "CreditApprovalPolicy" policy ON policy."id"=1
+    JOIN "Sede" site ON site."id"=credit."sedeId"
+    JOIN "Aliado" ally ON ally."id"=site."aliadoId"
+    WHERE review."creditoId"=credit."id" AND review."status" IN ('PENDING','APPROVED')
+      AND credit."createdAt">=policy."activatedAt"
+      AND UPPER(BTRIM(COALESCE(ally."codigo",'')))<>'FINSERPAY'
+      AND NOT (COALESCE(credit."equalityService",'')='IMPORTACION_MASIVA'
+        AND COALESCE(credit."contratoSnapshot" #>> '{origen,tipo}','')='IMPORTACION_MASIVA')) AS "hasApprovalReview"
   FROM "Credito" credit
   LEFT JOIN "CreditSadminRegistration" sadmin ON sadmin."creditoId"=credit."id" AND sadmin."numeroCreditoConfirmado"
   WHERE credit."id"=$1 LIMIT 1`;
@@ -428,7 +456,8 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
         `SELECT "id"::text,"version","status","replacementId"::text,"previousProcessUuid",
           NULLIF(to_jsonb(versionRow)->>'supersededProcessUuid','') AS "supersededProcessUuid",
           "actorName","reason","previousImei","newImei",
-          "newProcessUuid","sentPhone","sentEmail","requestedAt","lastCheckedAt","completedAt"
+          "newProcessUuid",("requestPayload" IS NOT NULL) AS "hasRequestPayload",
+          "sentPhone","sentEmail","requestedAt","lastCheckedAt","completedAt"
          FROM "ApprovalOperationalContractVersion" versionRow WHERE "creditoId"=$1
          ORDER BY "version" DESC LIMIT 15`, id);
       if (versions.length && signature.status === "TECHNICAL_ERROR") {
@@ -490,6 +519,24 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
       if (at) timeline.push({ id: `imei:${event.id}`, at,
         label: labels[event.eventType] || "Cambio de IMEI actualizado", detail: null, actor: clean(event.actorName) });
     }
+    if (await relationExists(db, "CreditDeviceReplacementRemissionEvent")) {
+      const remissionEvents = await optionalQuery<ReplacementRemissionEventRow>(db,
+        `SELECT event."id"::text,event."eventType",event."actorName",event."note",event."createdAt"
+         FROM "CreditDeviceReplacementRemissionEvent" event
+         JOIN "CreditDeviceReplacementRemission" remission ON remission."id"=event."remissionId"
+         JOIN "CreditDeviceReplacement" replacement ON replacement."id"=remission."replacementId"
+         WHERE replacement."creditId"=$1 ORDER BY event."createdAt" DESC LIMIT 25`, id);
+      const remissionLabels: Record<string, string> = {
+        REQUESTED: "Nueva remisión firmada solicitada", UPLOADED: "Remisión firmada recibida",
+        VERIFIED: "Remisión firmada verificada", REJECTED: "Remisión firmada devuelta",
+      };
+      for (const event of remissionEvents) {
+        const at = iso(event.createdAt);
+        if (at) timeline.push({ id: `remision:${event.id}`, at,
+          label: remissionLabels[event.eventType] || "Remisión firmada actualizada",
+          detail: clean(event.note), actor: clean(event.actorName) });
+      }
+    }
     const createdAt = iso((rows[0] as CreditRow).createdAt);
     if (createdAt) timeline.push({ id: `credit:${id}`, at: createdAt,
       label: "Crédito registrado", detail: null, actor: null });
@@ -543,9 +590,14 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
       evidenceHref: event.evidenceSha256 ? `/api/aprobaciones/operativo/evidencia/${event.id}` : null });
   }
   timeline.sort((a, b) => b.at.localeCompare(a.at));
-  const pendingVersion = kind === "CREDIT"
-    ? versions.find((version) => ["PREPARING", "DISPATCHING", "AWAITING_SIGNATURE", "UNCERTAIN"].includes(version.status)) || null
-    : null;
+  const latestOperationalVersion = kind === "CREDIT" ? versions[0] : null;
+  const pendingVersion = latestOperationalVersion && (
+    ["PREPARING", "DISPATCHING", "AWAITING_SIGNATURE", "UNCERTAIN"].includes(latestOperationalVersion.status)
+    || (latestOperationalVersion.status === "FAILED_SAFE" && latestOperationalVersion.replacementId
+      && !latestOperationalVersion.newProcessUuid && !latestOperationalVersion.supersededProcessUuid
+      && !latestOperationalVersion.hasRequestPayload)
+  ) ? latestOperationalVersion : null;
+  const remission = replacement ? await getReplacementRemission(replacement.id, db) : null;
   return {
     ...summary, signature, enrollmentReviewId,
     requiresEnrollmentReapproval: Boolean(enrollmentReviewId),
@@ -556,10 +608,11 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
       newProcessUuid: pendingVersion.newProcessUuid,
     } : null,
     replacement: replacement ? { ...replacement, createdAt: iso(replacement.createdAt) || "" } : null,
+    remission,
     timeline: timeline.slice(0, 30),
     capabilities: kind === "CREDIT"
       ? creditCapabilities(rows[0] as CreditRow, signature, replacement, pendingVersion,
-          versions[0] || null, signatures, versions, originalSourceSigned)
+          versions[0] || null, signatures, versions, originalSourceSigned, remission)
       : draftCapabilities(rows[0] as DraftRow, signature, signatures, unresolvedDraftDispatch),
   };
 }

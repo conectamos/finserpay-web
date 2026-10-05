@@ -10,12 +10,16 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const status = { isFirmaSeguroFailedStatus: value => /FAILED|ERROR|REJECTED/i.test(value || ""),
   isFirmaSeguroSuccessfulStatus: value => /SIGNED|COMPLETED/i.test(value || "") };
+let remissionStatus = null;
 const loaded = { exports: {} };
 runInNewContext(compiled, {
   module: loaded, exports: loaded.exports, Date,
   require(name) {
     if (name === "server-only") return {};
     if (name === "@/lib/prisma") return { default: {} };
+    if (name === "@/lib/credit-device-replacement-remission") return {
+      getReplacementRemission: async () => remissionStatus ? { status: remissionStatus } : null,
+    };
     if (name === "@/lib/ally-payments-core") return { resolveAllyPaymentPlatform: (_snapshot, brand) =>
       /iphone|apple/i.test(brand || "") ? "IPHONE" : "ANDROID" };
     if (name === "@/lib/firmaseguro-status") return status;
@@ -65,6 +69,9 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
   let signedDocument = false;
   let providerCompletedWithoutPdf = false;
   let historicalFinalized = false;
+  let allySettlement = true;
+  let hasApprovalReview = true;
+  let replacementStatus = "ENROLLMENT_APPROVED";
   const db = { $queryRawUnsafe: async (sql, ...params) => {
     calls.push({ sql, params });
     if (sql.includes('FROM "Credito" credit')) return [{
@@ -72,7 +79,7 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
       clienteDocumento: "123456", clienteTelefono: "3000000000", clienteCorreo: "a@example.com",
       estado: historicalFinalized ? "FINALIZADO" : "GENERADO", imei: "123456789012345", referenciaEquipo: "iPhone",
       equipoMarca: "APPLE", equipoModelo: "Modelo", contratoSnapshot: {},
-      hasFinishedDraft: !historicalFinalized, hasAllySettlement: true,
+      hasFinishedDraft: !historicalFinalized, hasAllySettlement: allySettlement, hasApprovalReview,
       createdAt: stamp, updatedAt: stamp,
     }];
     if (sql.includes('FROM "FirmaSeguroProcess"')) return [{
@@ -85,12 +92,16 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
     }];
     if (sql.includes('to_regclass(')) return [{ present: true }];
     if (sql.includes('FROM "ApprovalOperationalContractVersion"')) return [];
-    if (sql.includes('FROM "CreditDeviceReplacement" WHERE')) return [{
-      id: "replacement-1", status: "ENROLLMENT_APPROVED", previousImei: "123456789012345",
+    if (sql.includes('FROM "CreditDeviceReplacement" WHERE')) return replacementStatus ? [{
+      id: "replacement-1", status: replacementStatus, previousImei: "123456789012345",
       newImei: "490154203237518", reason: "Garantía", createdAt: stamp,
-    }];
+    }] : [];
     if (sql.includes('FROM "CreditDeviceReplacementEvent"')) return [{
       id: "event-1", eventType: "ENROLLMENT_APPROVED", actorName: "Analista", createdAt: stamp,
+    }];
+    if (sql.includes('FROM "CreditDeviceReplacementRemissionEvent"')) return [{
+      id: "remission-event-1", eventType: "UPLOADED", actorName: "Aliado", note: null,
+      createdAt: stamp,
     }];
     if (sql.includes('FROM "ApprovalOperationalAction"')) return [{
       id: "action-1", eventType: "IMEI_CHANGED", actorName: "Analista", reason: "Garantía",
@@ -107,6 +118,7 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
   assert.equal(detail.replacement.newImei, "490154203237518");
   assert.ok(detail.timeline.some(event => event.label === "Error técnico: requiere revisión"));
   assert.ok(detail.timeline.some(event => event.evidenceHref?.endsWith("/action-1")));
+  assert.ok(detail.timeline.some(event => event.label === "Remisión firmada recibida" && event.actor === "Aliado"));
   assert.deepEqual(plain(calls[0].params), [8]);
   assert.ok(calls.every(item => !/evidenceData|SELECT\s+"signedDocumentBase64"/.test(item.sql)));
   assert.ok(calls.some(item => item.sql.includes("LEFT(COALESCE(\"signedDocumentBase64\",''),7)='JVBERi0'")));
@@ -124,6 +136,34 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
   historicalFinalized = true;
   const historical = await read.getOperationalCase("CREDIT", "8", db);
   assert.equal(historical.capabilities.canFinalizeImei, true);
+  assert.equal(historical.capabilities.preSettlementApprovalCreditId, null);
+  historicalFinalized = false;
+  allySettlement = false;
+  remissionStatus = "PENDING_UPLOAD";
+  const preSettlement = await read.getOperationalCase("CREDIT", "8", db);
+  assert.equal(preSettlement.capabilities.preSettlementApprovalCreditId, 8);
+  assert.equal(preSettlement.capabilities.canChangeImei, false);
+  assert.equal(preSettlement.capabilities.canFinalizeImei, false);
+  assert.match(preSettlement.capabilities.reason, /remisión firmada/);
+  remissionStatus = "VERIFIED";
+  const verified = await read.getOperationalCase("CREDIT", "8", db);
+  assert.equal(verified.capabilities.canFinalizeImei, true);
+  assert.equal(preSettlement.capabilities.canUpdateContact, false);
+  assert.equal(preSettlement.capabilities.canResendSignature, false);
+  replacementStatus = null;
+  const initial = await read.getOperationalCase("CREDIT", "8", db);
+  assert.equal(initial.capabilities.canChangeImei, true);
+  remissionStatus = null;
+  hasApprovalReview = false;
+  const withoutReview = await read.getOperationalCase("CREDIT", "8", db);
+  assert.equal(withoutReview.capabilities.preSettlementApprovalCreditId, null);
+  assert.equal(withoutReview.capabilities.canChangeImei, false);
+  assert.match(withoutReview.capabilities.reason, /revisión vigente/);
+  hasApprovalReview = true;
+  signedDocument = false;
+  const withoutSignedDocument = await read.getOperationalCase("CREDIT", "8", db);
+  assert.equal(withoutSignedDocument.capabilities.preSettlementApprovalCreditId, null);
+  assert.ok(calls.some(item => item.sql.includes('FROM "CreditApprovalReview" review')));
 });
 
 test("una versión PREPARING del reemplazo aplicado se expone para reanudar con el mismo id", async () => {
@@ -161,6 +201,10 @@ test("una versión PREPARING del reemplazo aplicado se expone para reanudar con 
   assert.equal(preparing.pendingVersion.replacementId, "replacement-19");
   assert.equal(preparing.capabilities.canFinalizeImei, true);
   assert.ok(preparing.timeline.some(event => event.label === "Preparando nueva versión del contrato"));
+  versionStatus = "FAILED_SAFE";
+  const retryable = await read.getOperationalCase("CREDIT", "18", db);
+  assert.equal(retryable.pendingVersion.id, "version-19");
+  assert.equal(retryable.capabilities.canConfirmReplacement, true);
   versionStatus = "UNCERTAIN";
   const uncertain = await read.getOperationalCase("CREDIT", "18", db);
   assert.equal(uncertain.pendingVersion.status, "UNCERTAIN");

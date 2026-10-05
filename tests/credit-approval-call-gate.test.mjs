@@ -43,6 +43,17 @@ test("detalle pendiente exige llamada y grabación sin cambiar huella base ni co
   assert.deepEqual(plain(fixture), before);
 });
 
+test("un reemplazo de IMEI pendiente mantiene bloqueados el OK y la liquidación", async () => {
+  const { db, state } = approvalDatabase();
+  state.credit.operationalImeiPending = true;
+  const detail = await service.getCreditApprovalDetail(db, 81);
+  assert.equal(detail.canApprove, false);
+  assert.match(detail.blockingReasons.join(" "), /remisión.*enrolamiento.*firma/);
+  await assert.rejects(service.approveCredit(db, 81, inputFor(detail), actor),
+    { code: "REVIEW_NOT_READY", status: 409 });
+  assert.equal(state.writes.length, 0);
+});
+
 test("falta o fallo de almacenamiento de audio bloquea pending antes de escribir", async () => {
   for (const [overrides, code, status] of [[{ callRecording: null }, "CALL_RECORDING_REQUIRED", 409], [{ callRecordingError: true }, "CALL_RECORDING_UNAVAILABLE", 503]]) {
     const { db, state } = approvalDatabase(overrides);
