@@ -42,10 +42,13 @@ export default function ApprovalWorkspace({ shared = false, redesigned = false, 
         <span className="grid h-10 w-10 place-items-center rounded-full border border-[var(--fp-border)] bg-[var(--fp-bg)] text-sm font-semibold text-[var(--fp-graphite)]" aria-label={userName ? `Cuenta de ${userName}` : "Cuenta de FINSER PAY"}>{initials(userName)}</span>
       </div>
     </header> : null}
+    {allowOperations && !shared ? <div hidden={!showingDetail}>
+      <ApprovalOperations active={showingDetail}
+        onOpenApproval={(creditId) => { setFocusApprovalCreditId(creditId); setView("approvals"); }} />
+    </div> : null}
     {view === "sadmin"
       ? <SadminCreditTable onBack={() => setView("approvals")} />
-      : showingDetail
-        ? <ApprovalOperations onOpenApproval={(creditId) => { setFocusApprovalCreditId(creditId); setView("approvals"); }} />
+      : showingDetail ? null
         : <>{manageSharedAccess && !shared ? <SharedAccessControl /> : null}
           <ApprovalConsole shared={shared} redesigned={redesigned} focusCreditId={focusApprovalCreditId}
             onOpenSadmin={() => setView("sadmin")} /></>}

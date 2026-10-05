@@ -73,7 +73,9 @@ export type OperationalCaseDetail = OperationalCaseSummary & {
     canFinalizeImei: boolean;
     canConfirmReplacement: boolean;
     canUpdateContact: boolean;
+    canSendSignature: boolean;
     canResendSignature: boolean;
     reason: string | null;
+    signatureReason: string | null;
   };
 };

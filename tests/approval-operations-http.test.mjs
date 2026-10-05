@@ -30,6 +30,7 @@ const writer = load("lib/approval-operations-write.ts", {}, true);
 const read = load("lib/approval-operations-read.ts", {
   "@/lib/prisma": { default: {} },
   "@/lib/ally-payments-core": {},
+  "@/lib/credit-amortization-contract": { readFinancingTermsSeal: () => null },
   "@/lib/firmaseguro-status": {},
   "@/lib/credit-device-replacement-remission": { getReplacementRemission: async () => null },
   "@/lib/approval-operations-core": { isVerifiedTerminalSignatureFailure: () => false },
@@ -68,6 +69,7 @@ const imeiFields = [
 const signatureBody = {
   idempotencyKey: operationId, confirmed: true,
   expectedProcessUuid: "20000000-0000-4000-8000-000000000002",
+  expectedRevision: 3, expectedReviewHash: "a".repeat(64),
   reason: "Reenviar contrato corregido",
 };
 
@@ -121,6 +123,7 @@ test("la sesión personal ejecuta las tres rutas con actor, expediente y respues
   const contact = await routes.contact.PATCH(jsonRequest("contacto", "PATCH", {
     phone: "3180000000", reason: "Actualización de contacto",
     idempotencyKey: operationId, expectedProcessUuid: signatureBody.expectedProcessUuid,
+    expectedRevision: signatureBody.expectedRevision, expectedReviewHash: signatureBody.expectedReviewHash,
   }), context());
   const signature = await routes.signature.POST(jsonRequest("firma", "POST", signatureBody), context());
   const imei = await routes.imei.POST(formRequest(imeiFields), context());
@@ -138,6 +141,8 @@ test("la sesión personal ejecuta las tres rutas con actor, expediente y respues
     assert.equal(received[0][3].nombre, "Analista");
   }
   assert.equal(calls.signature[0][2].confirmed, true);
+  assert.equal(calls.signature[0][2].expectedRevision, 3);
+  assert.equal(calls.contact[0][2].expectedReviewHash, "a".repeat(64));
   assert.equal(calls.imei[0][2].confirmed, "true");
   assert.equal(calls.evidence.length, 1);
 });

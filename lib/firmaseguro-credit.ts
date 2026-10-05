@@ -48,6 +48,7 @@ import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { completeOperationalSignatureVersion, isSupersededTerminalOperationalProcess,
   markOperationalSignatureTerminalFailure, recordLateSupersededOperationalSignature } from "@/lib/approval-operational-signature-complete";
+import { completeInitialApprovalSignature, markInitialApprovalSignatureTerminalFailure } from "@/lib/approval-initial-signature";
 
 type StoredFirmaSeguroCredit = Prisma.CreditoGetPayload<{
   omit: {
@@ -957,6 +958,18 @@ export async function markCreditoFirmaSeguroCompleted(
   if (await completeOperationalSignatureVersion(
     database, creditoId, options.processUuid, current[0]?.signedDocumentBase64 || null
   )) return null;
+  await completeInitialApprovalSignature(database, creditoId, options.processUuid,
+    current[0]?.signedDocumentBase64 || null);
+  const initialSchema = await database.$queryRawUnsafe<Array<{ present: boolean }>>(
+    `SELECT to_regclass('public."CreditApprovalInitialSignature"') IS NOT NULL AS present`);
+  if (initialSchema[0]?.present) {
+    const initial = await database.$queryRawUnsafe<Array<{ status: string }>>(
+      `SELECT "status" FROM "CreditApprovalInitialSignature"
+        WHERE "creditoId"=$1 AND "processUuid"=$2 LIMIT 1`, creditoId, options.processUuid);
+    // A provider status without the signed PDF is not sufficient evidence for
+    // the first contract. The next callback can complete it once the PDF arrives.
+    if (initial.length && initial[0].status !== "COMPLETED") return null;
+  }
   const credito = await database.credito.findUnique({
     where: { id: creditoId },
     select: {
@@ -1568,6 +1581,8 @@ export async function refreshFirmaSeguroProcess(
     // A callback alone is insufficient: only the status returned by this fresh
     // provider GET may make an operational revision eligible for a new attempt.
     await markOperationalSignatureTerminalFailure(prisma, updated.creditoId,
+      updated.processUuid, extractFirmaSeguroStatus(statusPayload));
+    await markInitialApprovalSignatureTerminalFailure(prisma, updated.creditoId,
       updated.processUuid, extractFirmaSeguroStatus(statusPayload));
   }
 

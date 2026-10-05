@@ -17,6 +17,9 @@ runInNewContext(compiled, {
   require(name) {
     if (name === "server-only") return {};
     if (name === "@/lib/prisma") return { default: {} };
+    if (name === "@/lib/credit-amortization-contract") return {
+      readFinancingTermsSeal: value => value ? { checksum: "a".repeat(64) } : null,
+    };
     if (name === "@/lib/credit-device-replacement-remission") return {
       getReplacementRemission: async () => remissionStatus ? { status: remissionStatus } : null,
     };
@@ -91,6 +94,8 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
       supersededAt: null,
     }];
     if (sql.includes('to_regclass(')) return [{ present: true }];
+    if (sql.includes('FROM "CreditApprovalReissue"')) return [];
+    if (sql.includes('FROM "CreditApprovalInitialSignature"')) return [];
     if (sql.includes('FROM "ApprovalOperationalContractVersion"')) return [];
     if (sql.includes('FROM "CreditDeviceReplacement" WHERE')) return replacementStatus ? [{
       id: "replacement-1", status: replacementStatus, previousImei: "123456789012345",
@@ -153,6 +158,9 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
   replacementStatus = null;
   const initial = await read.getOperationalCase("CREDIT", "8", db);
   assert.equal(initial.capabilities.canChangeImei, true);
+  assert.equal(initial.capabilities.canUpdateContact, true);
+  assert.equal(initial.capabilities.canResendSignature, true);
+  assert.equal(initial.capabilities.canSendSignature, false);
   remissionStatus = null;
   hasApprovalReview = false;
   const withoutReview = await read.getOperationalCase("CREDIT", "8", db);
@@ -164,6 +172,60 @@ test("crédito con reemplazo aprobado habilita finalizar, conserva historia y mu
   const withoutSignedDocument = await read.getOperationalCase("CREDIT", "8", db);
   assert.equal(withoutSignedDocument.capabilities.preSettlementApprovalCreditId, null);
   assert.ok(calls.some(item => item.sql.includes('FROM "CreditApprovalReview" review')));
+});
+
+test("crédito iPhone sin firma permite primer envío solo con origen verificado y sin operación pendiente", async () => {
+  let hasReview = true;
+  let hasSeal = true;
+  let initialPending = false;
+  let historicalSigned = false;
+  const db = { $queryRawUnsafe: async sql => {
+    if (sql.includes('FROM "Credito" credit')) return [{
+      id: 81, folio: "FC-81", visibleNumber: null, clienteNombre: "Cliente",
+      clienteDocumento: "123456", clienteTelefono: "3000000000", clienteCorreo: "a@example.com",
+      estado: "GENERADO", imei: "123456789012345", referenciaEquipo: "iPhone",
+      equipoMarca: "APPLE", equipoModelo: "Modelo",
+      contratoSnapshot: { financiero: { selloFinanciero: hasSeal ? { checksum: "a".repeat(64) } : null } },
+      hasFinishedDraft: false, hasAllySettlement: false, hasApprovalReview: hasReview,
+      createdAt: stamp, updatedAt: stamp,
+    }];
+    if (sql.includes('SELECT EXISTS (SELECT 1 FROM "FirmaSeguroProcess" process'))
+      return [{ signed: historicalSigned }];
+    if (sql.includes('FROM "FirmaSeguroProcess" WHERE')) return [];
+    if (sql.includes('to_regclass(')) return [{ present: true }];
+    if (sql.includes('FROM "CreditApprovalReissue"')) return [];
+    if (sql.includes('FROM "CreditApprovalInitialSignature"')) return initialPending ? [{
+      id: "initial-1", status: "AWAITING_SIGNATURE", reason: "Firma inicial",
+      actorName: "Analista", requestedAt: stamp, completedAt: null,
+    }] : [];
+    return [];
+  } };
+  const ready = await read.getOperationalCase("CREDIT", "81", db);
+  assert.equal(ready.signature.status, "NOT_SENT");
+  assert.equal(ready.capabilities.preSettlementApprovalCreditId, 81);
+  assert.equal(ready.capabilities.canUpdateContact, true);
+  assert.equal(ready.capabilities.canSendSignature, true);
+  assert.equal(ready.capabilities.canResendSignature, false);
+  initialPending = true;
+  const pending = await read.getOperationalCase("CREDIT", "81", db);
+  assert.equal(pending.capabilities.canSendSignature, false);
+  assert.match(pending.capabilities.signatureReason, /en curso/);
+  assert.ok(pending.timeline.some(event => event.label === "Primera firma enviada"));
+  initialPending = false;
+  historicalSigned = true;
+  const historical = await read.getOperationalCase("CREDIT", "81", db);
+  assert.equal(historical.capabilities.canSendSignature, false);
+  assert.match(historical.capabilities.signatureReason, /contrato firmado anterior/);
+  historicalSigned = false;
+  hasSeal = false;
+  const missingSeal = await read.getOperationalCase("CREDIT", "81", db);
+  assert.equal(missingSeal.capabilities.canSendSignature, false);
+  assert.match(missingSeal.capabilities.signatureReason, /origen contractual/);
+  hasSeal = true;
+  hasReview = false;
+  const withoutReview = await read.getOperationalCase("CREDIT", "81", db);
+  assert.equal(withoutReview.capabilities.canUpdateContact, false);
+  assert.equal(withoutReview.capabilities.canSendSignature, false);
 });
 
 test("una versión PREPARING del reemplazo aplicado se expone para reanudar con el mismo id", async () => {

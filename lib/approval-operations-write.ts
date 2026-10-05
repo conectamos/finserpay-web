@@ -20,6 +20,11 @@ import { isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
 import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
 import { ensureFirmaSeguroSchema, lockSolicitudOperationMutation, markFirmaSeguroDraftProcessesSuperseded, type FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 import { frozenReissueCredit, reissueHash } from "@/lib/credit-approval-reissue-source";
+import { parseApprovalDataCorrection } from "@/lib/credit-approval-data-core";
+import { correctCreditApprovalData } from "@/lib/credit-approval-data";
+import { CreditApprovalError, getCreditApprovalDetail } from "@/lib/credit-approval";
+import { parseCreditApprovalReissue, requestCreditApprovalReissue } from "@/lib/credit-approval-reissue";
+import { requestInitialApprovalSignature } from "@/lib/approval-initial-signature";
 import { ensureDraftDispatchSchema, getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import { requestSafeDraftSignature } from "@/lib/firmaseguro-draft-safe-request";
 import type { ApprovalDataCorrectionChainEntry } from "@/lib/credit-approval-data-core";
@@ -698,6 +703,7 @@ export async function mutateOperationalImei(kind: OperationalKind, targetId: num
 
 export async function updateOperationalContact(kind: OperationalKind, targetId: number, input: {
   phone?: unknown; email?: unknown; reason: unknown; idempotencyKey: unknown; expectedProcessUuid: unknown;
+  expectedRevision?: unknown; expectedReviewHash?: unknown;
 }, actor: OperationalActor) {
   assertActor(actor);
   const id = operationId(input.idempotencyKey);
@@ -710,6 +716,55 @@ export async function updateOperationalContact(kind: OperationalKind, targetId: 
   await ensureFirmaSeguroSchema();
   await ensureApprovalOperationalSchema();
   if (kind === "DRAFT") await ensureDraftDispatchSchema();
+  if (kind === "CREDIT" && !(await readCredit(prisma, targetId)).paidToAlly) {
+    const changes = { ...(hasPhone ? { clienteTelefono: nextPhone! } : {}),
+      ...(hasEmail ? { clienteCorreo: nextEmail! } : {}) };
+    const parsed = parseApprovalDataCorrection({ changes, reason: motive, idempotencyKey: id,
+      revision: input.expectedRevision, reviewHash: input.expectedReviewHash });
+    return prisma.$transaction(async (db) => {
+      const credit = await readCredit(db, targetId, true);
+      if (credit.paidToAlly || !credit.hasApprovalReview ||
+        String(credit.platform).toUpperCase() !== "IPHONE")
+        throw new ApprovalOperationalError("APPROVAL_FLOW_REQUIRED",
+          "El crédito no tiene una revisión de Aprobaciones vigente para corregir el contacto.");
+      // A retry is validated by the correction's own request hash before the
+      // stale process check, so an already committed operation remains idempotent.
+      const prior = await db.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT "id"::text FROM "CreditApprovalDataCorrection" WHERE "idempotencyKey"=$1::uuid LIMIT 1`, id);
+      if (!prior.length) {
+        const initialTable = await db.$queryRawUnsafe<Array<{ present: boolean }>>(
+          `SELECT to_regclass('public."CreditApprovalInitialSignature"') IS NOT NULL AS "present"`);
+        if (initialTable[0]?.present) {
+          const initial = await db.$queryRawUnsafe<Array<{ id: string }>>(
+            `SELECT "id"::text FROM "CreditApprovalInitialSignature" WHERE "creditoId"=$1
+             AND "status" IN ('PREPARING','DISPATCHING','AWAITING_SIGNATURE','UNCERTAIN') LIMIT 1`, targetId);
+          if (initial.length) throw new ApprovalOperationalError("SIGNATURE_PENDING",
+            "El primer envío de firma sigue en curso. Espera su resultado antes de cambiar el contacto.");
+        }
+        const process = await currentProcess(db, kind, targetId);
+        if (process && !(process.completedAt || isFirmaSeguroCompletedStatus(process.status)))
+          throw new ApprovalOperationalError("SIGNATURE_PENDING",
+            "La firma vigente sigue en curso. Espera su resultado antes de cambiar el contacto.");
+        if ((process?.processUuid || null) !== (input.expectedProcessUuid || null))
+          throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma cambió. Actualiza el caso.");
+        const version = await latestVersion(db, targetId);
+        if (version && (PENDING as readonly string[]).includes(version.status))
+          throw new ApprovalOperationalError("SIGNATURE_PENDING", "Hay una nueva firma en curso. Espera su resultado.");
+        const replacements = await db.$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT "id"::text FROM "CreditDeviceReplacement" WHERE "creditId"=$1
+           AND "status" IN ('PENDING_ENROLLMENT','ENROLLMENT_APPROVED') LIMIT 1`, targetId);
+        if (replacements.length) throw new ApprovalOperationalError("REPLACEMENT_PENDING",
+          "Hay un cambio de equipo en revisión. Espera su aprobación antes de actualizar el contacto.");
+      }
+      // The approval correction writes its own immutable audit, increments the
+      // review revision and invalidates any previous OK. Do not also write an
+      // operational correction: frozenReissueCredit consumes both histories.
+      const result = await correctCreditApprovalData(db, targetId, parsed, actor);
+      return { id, status: "UPDATED", message: result.replayed
+        ? "El contacto ya quedó actualizado. Consulta el estado actual antes de reenviar."
+        : "Contacto actualizado. El expediente requiere nueva revisión; ya puedes solicitar otra firma." };
+    }, { isolationLevel: "ReadCommitted", timeout: 20_000 });
+  }
   return prisma.$transaction(async (db) => {
     const replay = await db.$queryRawUnsafe<Array<{ targetKind: string; targetId: number; eventType: string;
       actorUserId: number; beforeContact: unknown; afterContact: unknown; reason: string }>>(
@@ -801,6 +856,7 @@ export async function updateOperationalContact(kind: OperationalKind, targetId: 
 
 export async function requestOperationalSignature(kind: OperationalKind, targetId: number, input: {
   reason: unknown; idempotencyKey: unknown; expectedProcessUuid: unknown; confirmed: unknown;
+  expectedRevision?: unknown; expectedReviewHash?: unknown;
 }, actor: OperationalActor) {
   assertActor(actor);
   assertConfirmed(input.confirmed);
@@ -820,6 +876,41 @@ export async function requestOperationalSignature(kind: OperationalKind, targetI
   }
   await ensureApprovalOperationalSchema();
   const credit = await readCredit(prisma, targetId);
+  if (!credit.paidToAlly) {
+    if (!credit.hasApprovalReview || String(credit.platform).toUpperCase() !== "IPHONE")
+      throw new ApprovalOperationalError("APPROVAL_FLOW_REQUIRED",
+        "El crédito no tiene una revisión de Aprobaciones vigente para reenviar la firma.");
+    const process = await currentProcess(prisma, kind, targetId);
+    if (!process) return requestInitialApprovalSignature(targetId, {
+      idempotencyKey: id, expectedProcessUuid: input.expectedProcessUuid,
+      expectedRevision: input.expectedRevision, expectedReviewHash: input.expectedReviewHash,
+      reason: motive,
+    }, actor);
+    const parsed = parseCreditApprovalReissue({ action: "REQUEST", reason: motive,
+      idempotencyKey: id, expectedProcessUuid: input.expectedProcessUuid,
+      expectedRevision: input.expectedRevision });
+    if (parsed.action !== "REQUEST" || typeof input.expectedReviewHash !== "string" ||
+      !/^[a-f0-9]{64}$/.test(input.expectedReviewHash))
+      throw new ApprovalOperationalError("REVIEW_CHANGED", "Actualiza la revisión antes de reenviar la firma.", 409);
+    const detail = await getCreditApprovalDetail(prisma, targetId, actor);
+    if (detail.review.revision !== parsed.expectedRevision ||
+      detail.review.reviewHash !== input.expectedReviewHash)
+      throw new ApprovalOperationalError("REVIEW_CHANGED", "El expediente cambió. Actualiza los datos antes de reenviar.");
+    if (!detail.capabilities.canReissueSignature)
+      throw new CreditApprovalError("REISSUE_NOT_ALLOWED",
+        detail.capabilities.correctionBlockedReason || "La firma vigente no está verificada para reenviar.", 409);
+    const version = await latestVersion(prisma, targetId);
+    if (version && (PENDING as readonly string[]).includes(version.status))
+      throw new ApprovalOperationalError("SIGNATURE_PENDING", "Hay una nueva firma en curso. Espera su resultado.");
+    const replacements = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT "id"::text FROM "CreditDeviceReplacement" WHERE "creditId"=$1
+       AND "status" IN ('PENDING_ENROLLMENT','ENROLLMENT_APPROVED') LIMIT 1`, targetId);
+    if (replacements.length) throw new ApprovalOperationalError("REPLACEMENT_PENDING",
+      "Hay un cambio de equipo en revisión. Espera su aprobación antes de reenviar la firma.");
+    const reissue = await requestCreditApprovalReissue(targetId, parsed, actor);
+    return { id, status: reissue.operation?.status || "UNCERTAIN",
+      message: reissue.operation?.message || "La solicitud de firma quedó registrada. Consulta su estado." };
+  }
   assertSettledOperationalCredit(credit);
   return requestOperationalVersion({ creditId: targetId, actor, idempotencyKey: id,
     expectedProcessUuid: String(input.expectedProcessUuid || ""), reason: motive });

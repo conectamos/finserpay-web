@@ -16,9 +16,11 @@ export async function POST(request: Request, context: Context) {
     const { kind, id } = await context.params;
     const target = operationalTarget(kind, id);
     const body = await operationalJson(request);
-    rejectUnexpectedJsonFields(body, ["reason", "idempotencyKey", "expectedProcessUuid", "confirmed"]);
+    rejectUnexpectedJsonFields(body, ["reason", "idempotencyKey", "expectedProcessUuid", "confirmed",
+      "expectedRevision", "expectedReviewHash"]);
     const operation = await requestOperationalSignature(target.kind, target.id, body as {
       reason: unknown; idempotencyKey: unknown; expectedProcessUuid: unknown; confirmed: unknown;
+      expectedRevision?: unknown; expectedReviewHash?: unknown;
     }, actor);
     return NextResponse.json({ ok: true, operation }, { headers: operationalPrivateHeaders });
   } catch (error) {

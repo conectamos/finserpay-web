@@ -16,9 +16,11 @@ export async function PATCH(request: Request, context: Context) {
     const { kind, id } = await context.params;
     const target = operationalTarget(kind, id);
     const body = await operationalJson(request);
-    rejectUnexpectedJsonFields(body, ["phone", "email", "reason", "idempotencyKey", "expectedProcessUuid"]);
+    rejectUnexpectedJsonFields(body, ["phone", "email", "reason", "idempotencyKey", "expectedProcessUuid",
+      "expectedRevision", "expectedReviewHash"]);
     const operation = await updateOperationalContact(target.kind, target.id, body as {
       phone?: unknown; email?: unknown; reason: unknown; idempotencyKey: unknown; expectedProcessUuid: unknown;
+      expectedRevision?: unknown; expectedReviewHash?: unknown;
     }, actor);
     return NextResponse.json({ ok: true, operation }, { headers: operationalPrivateHeaders });
   } catch (error) {
