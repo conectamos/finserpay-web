@@ -75,6 +75,8 @@ export type OperationalCaseDetail = OperationalCaseSummary & {
     canUpdateContact: boolean;
     canSendSignature: boolean;
     canResendSignature: boolean;
+    canRedirectPendingSignature: boolean;
+    pendingSignatureRedirectReason: string | null;
     reason: string | null;
     signatureReason: string | null;
   };

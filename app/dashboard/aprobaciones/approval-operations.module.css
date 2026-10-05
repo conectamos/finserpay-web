@@ -172,6 +172,15 @@
 .resendReason { display: flex; align-items: end; gap: 12px; margin: 16px 0 0 74px; }
 .resendReason .reasonField { flex: 1; }
 .resendReasonActions { display: flex; gap: 8px; }
+.signatureRedirection { margin: 18px 0 0 74px; padding-top: 18px; border-top: 1px solid var(--fp-border); }
+.redirectionWarning { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: var(--fp-radius-md); background: var(--fp-amber-soft); color: var(--fp-graphite); font-size: 13px; line-height: 1.5; }
+.redirectionWarning svg { flex: none; margin-top: 1px; color: var(--fp-amber); }
+.redirectionFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.redirectionFields label { display: block; margin-bottom: 7px; font-size: 14px; font-weight: 700; }
+.redirectionFields input { width: 100%; min-height: 46px; }
+.redirectionFields small { display: block; margin-top: 6px; color: var(--fp-muted); font-size: 12px; line-height: 1.4; }
+.redirectionActions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.redirectionActions button { min-height: 44px; }
 @media (max-width: 1180px) {
   .columns { grid-template-columns: 1fr; }
   .summary, .change { min-height: 0; }
@@ -185,9 +194,11 @@
   .equipmentIcon { width: 90px; height: 108px; }
   .equipmentIcon svg { width: 40px; }
   .imeiFields, .contacts { grid-template-columns: 1fr; gap: 16px; }
-  .signatureBottom, .signature > .reasonField, .signature > .muted, .sentAt, .resendReason { margin-left: 0; }
+  .signatureBottom, .signature > .reasonField, .signature > .muted, .sentAt, .resendReason, .signatureRedirection { margin-left: 0; }
   .resendReason { align-items: stretch; flex-direction: column; }
   .resendReasonActions { justify-content: flex-end; }
+  .redirectionFields { grid-template-columns: 1fr; }
+  .redirectionActions button { flex: 1; }
 }
 
 /* Las gestiones se abren desde acciones compactas al seleccionar un crédito. */
@@ -222,7 +233,8 @@
 .operationWorkspace .signature > .reasonField,
 .operationWorkspace .signature > .muted,
 .operationWorkspace .sentAt,
-.operationWorkspace .resendReason { margin-left: 0; }
+.operationWorkspace .resendReason,
+.operationWorkspace .signatureRedirection { margin-left: 0; }
 .approvalHandoff { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--fp-border); }
 .approvalHandoff p { flex: 1; min-width: 220px; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
 .approvalHandoff button { min-height: 44px; }

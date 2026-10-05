@@ -9,7 +9,7 @@ import styles from "./approval-operations.module.css";
 
 type Operation = "imei" | "contact" | "signature" | "remission" | "identity";
 type ActivePanel = "imei" | "signature" | "identity" | null;
-type ApiResult = { ok: boolean; error?: string; message?: string; operation?: { id: string; status: string; message: string } };
+type ApiResult = { ok: boolean; code?: string; error?: string; message?: string; operation?: { id: string; status: string; message: string } };
 type IdentityCorrectionInfo = ApiResult & {
   draftId: number;
   clienteNombre: string;
@@ -26,7 +26,7 @@ type IdentityCorrectionResult = ApiResult & { correctionId: string; clienteNombr
 type SearchResult = ApiResult & { items: OperationalCaseSummary[] };
 type DetailResult = ApiResult & { item: OperationalCaseDetail };
 type ApprovalReviewResult = ApiResult & { item: { review: { revision: number; reviewHash: string | null } } };
-type Confirmation = "imei-request" | "imei-confirm" | "signature" | "remission-verify" | "remission-reject" | "identity" | null;
+type Confirmation = "imei-request" | "imei-confirm" | "signature" | "signature-redirection" | "remission-verify" | "remission-reject" | "identity" | null;
 
 const casePath = (item: Pick<OperationalCaseSummary, "kind" | "id">) =>
   "/api/aprobaciones/operativo/" + item.kind.toLowerCase() + "/" + item.id;
@@ -45,6 +45,11 @@ function dateLabel(value: string | null) {
 
 function visible(value: string | null | undefined) {
   return value?.trim() || "No disponible";
+}
+
+function colombianPhone(value: string | null | undefined) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length === 12 && digits.startsWith("57") ? digits.slice(2) : digits;
 }
 
 function creditTone(status: string | null): "positive" | "warning" | "danger" | "neutral" {
@@ -112,10 +117,17 @@ function technicalOperation(status: string | undefined) {
   return status === "FAILED_SAFE" || status === "UNCERTAIN" || status === "TECHNICAL_ERROR";
 }
 
+class ApiRequestError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 async function jsonRequest<T extends ApiResult>(url: string, init: RequestInit, fallback: string): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
   const payload = await response.json().catch(() => null) as T | null;
-  if (!response.ok || !payload?.ok) throw new Error(payload?.error || fallback);
+  if (!response.ok || !payload?.ok) throw new ApiRequestError(payload?.error || fallback, payload?.code);
   return payload;
 }
 
@@ -219,6 +231,9 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
   const [contactReason, setContactReason] = useState("");
   const [signatureReason, setSignatureReason] = useState("");
   const [preparingSignature, setPreparingSignature] = useState(false);
+  const [redirectingSignature, setRedirectingSignature] = useState(false);
+  const [redirectPhone, setRedirectPhone] = useState("");
+  const [redirectReason, setRedirectReason] = useState("");
   const [rejectingRemission, setRejectingRemission] = useState(false);
   const [remissionRejectNote, setRemissionRejectNote] = useState("");
   const [identityInfo, setIdentityInfo] = useState<IdentityCorrectionInfo | null>(null);
@@ -231,9 +246,11 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
   const detailController = useRef<AbortController | null>(null);
   const evidenceInput = useRef<HTMLInputElement | null>(null);
   const signatureReasonInput = useRef<HTMLInputElement | null>(null);
+  const redirectPhoneInput = useRef<HTMLInputElement | null>(null);
   const submitting = useRef(false);
   const wasActive = useRef(active);
   const operationKeys = useRef<{ contact: string | null; signature: string | null }>({ contact: null, signature: null });
+  const redirectionRequest = useRef<{ intent: string; key: string } | null>(null);
   const imeiKeys = useRef<{ request: string | null; confirm: string | null }>({ request: null, confirm: null });
   const identityRequest = useRef<{ key: string; fingerprint: string } | null>(null);
 
@@ -262,10 +279,18 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
   }, [preparingSignature]);
 
   useEffect(() => {
+    if (redirectingSignature) redirectPhoneInput.current?.focus();
+  }, [redirectingSignature]);
+
+  useEffect(() => {
     setContactPhone(detail?.phone || detail?.signature.sentPhone || "");
     setContactEmail(detail?.email || detail?.signature.sentEmail || "");
     setEditingContact(false);
     setContactReason("");
+    setRedirectingSignature(false);
+    setRedirectPhone("");
+    setRedirectReason("");
+    redirectionRequest.current = null;
   }, [detail?.id, detail?.kind, detail?.signature.sentPhone, detail?.signature.sentEmail, detail?.phone, detail?.email]);
 
   useEffect(() => {
@@ -340,6 +365,9 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     setEvidence(null);
     setSignatureReason("");
     setPreparingSignature(false);
+    setRedirectingSignature(false);
+    setRedirectPhone("");
+    setRedirectReason("");
     setRejectingRemission(false);
     setRemissionRejectNote("");
     setIdentityInfo(null);
@@ -349,6 +377,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     setIdentityAttested(false);
     identityRequest.current = null;
     operationKeys.current = { contact: null, signature: null };
+    redirectionRequest.current = null;
     imeiKeys.current = { request: null, confirm: null };
     setLoadingDetail(true);
     try {
@@ -589,6 +618,93 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     }
   }
 
+  async function redirectPendingSignature() {
+    if (!detail || busy || submitting.current) return;
+    if (!detail.capabilities.canRedirectPendingSignature) {
+      setConfirmation(null);
+      setRedirectingSignature(false);
+      setActionError("La firma cambió de estado. Actualiza el caso antes de intentar otro reenvío.");
+      return;
+    }
+    const nextPhone = colombianPhone(redirectPhone);
+    const previousPhone = colombianPhone(detail.signature.sentPhone || detail.phone);
+    const motive = redirectReason.trim();
+    if (!/^3\d{9}$/.test(nextPhone)) {
+      setActionError("Ingresa un celular colombiano válido de 10 dígitos.");
+      return;
+    }
+    if (nextPhone === previousPhone) {
+      setActionError("El nuevo celular debe ser diferente al usado en el envío anterior.");
+      return;
+    }
+    if (motive.length < 5) {
+      setActionError("Describe el motivo del reenvío en al menos 5 caracteres.");
+      return;
+    }
+    const processUuid = detail.signature.processUuid;
+    if (!processUuid) {
+      setActionError("La firma pendiente cambió. Actualiza el caso antes de continuar.");
+      return;
+    }
+    const intent = [detail.kind, detail.id, processUuid, nextPhone, motive].join(":");
+    const request = redirectionRequest.current?.intent === intent
+      ? redirectionRequest.current
+      : { intent, key: crypto.randomUUID() };
+    redirectionRequest.current = request;
+    submitting.current = true;
+    setBusy("signature");
+    setActionError("");
+    setNotice("");
+    const target = detail;
+    let accepted = false;
+    let failedSafely = false;
+    try {
+      const result = await jsonRequest<ApiResult>(casePath(target) + "/firma/redireccion", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: nextPhone, reason: motive, idempotencyKey: request.key,
+          expectedProcessUuid: processUuid, confirmed: true }),
+      }, "No fue posible cambiar el número y reenviar la firma.");
+      const message = result.operation?.message || result.message ||
+        "Firma reenviada al nuevo celular. Espera la confirmación real de FirmaSeguro.";
+      failedSafely = result.operation?.status === "FAILED_SAFE";
+      if (technicalOperation(result.operation?.status)) setActionError(message);
+      else {
+        setNotice(message);
+        accepted = true;
+      }
+    } catch (error) {
+      failedSafely = error instanceof ApiRequestError && [
+        "DRAFT_DISPATCH_DOCUMENT_INVALID",
+        "DRAFT_DISPATCH_PREPARATION_FAILED",
+        "DRAFT_DISPATCH_TERMS_CHANGED",
+        "DRAFT_DISPATCH_CHANGED",
+      ].includes(error.code || "");
+      setActionError(error instanceof Error ? error.message : "No fue posible cambiar el número y reenviar la firma.");
+    } finally {
+      setConfirmation(null);
+      try {
+        const updated = await refreshDetail(target);
+        if (accepted && updated.signature.processUuid !== processUuid) {
+          redirectionRequest.current = null;
+          setRedirectingSignature(false);
+          setRedirectPhone("");
+          setRedirectReason("");
+        } else if (accepted) {
+          setNotice("");
+          setActionError("No fue posible comprobar el nuevo envío. Actualiza el crédito antes de intentarlo otra vez.");
+        } else if (failedSafely && updated.signature.processUuid === processUuid &&
+            updated.capabilities.canRedirectPendingSignature) {
+          redirectionRequest.current = null;
+        }
+      } catch {
+        if (accepted) setNotice("");
+        setActionError("No fue posible verificar el nuevo envío. Busca nuevamente el crédito antes de intentarlo otra vez.");
+      }
+      submitting.current = false;
+      setBusy(null);
+    }
+  }
+
   async function reviewRemission(action: "VERIFY" | "REJECT") {
     const replacementId = detail?.replacement?.id;
     if (!detail || detail.kind !== "CREDIT" || !replacementId ||
@@ -694,8 +810,11 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     if (next !== "signature") {
       setEditingContact(false);
       setPreparingSignature(false);
+      setRedirectingSignature(false);
       setContactReason("");
       setSignatureReason("");
+      setRedirectPhone("");
+      setRedirectReason("");
       setContactPhone(detail?.phone || detail?.signature.sentPhone || "");
       setContactEmail(detail?.email || detail?.signature.sentEmail || "");
     }
@@ -707,9 +826,16 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
   const canSendSignature = Boolean(detail?.capabilities.canSendSignature);
   const canResendSignature = Boolean(detail?.capabilities.canResendSignature);
   const canManageSignature = canSendSignature || canResendSignature;
+  const canRedirectPendingSignature = Boolean(detail?.capabilities.canRedirectPendingSignature);
+  const pendingRedirectBlockReason = detail?.kind === "DRAFT" &&
+    (signature?.status === "PENDING" || signature?.status === "TECHNICAL_ERROR") &&
+    !canRedirectPendingSignature ? detail.capabilities.pendingSignatureRedirectReason : null;
   const signatureActionLabel = canSendSignature ? "Enviar firma" : "Reenviar firma";
   const signatureActionNoun = canSendSignature ? "envío" : "reenvío";
   const canSubmitImei = Boolean(detail?.capabilities.canChangeImei && !busy && /^\d{15}$/.test(newImei) && newImei !== detail?.imei && reason.trim().length >= 5);
+  const normalizedRedirectPhone = colombianPhone(redirectPhone);
+  const canSubmitRedirection = Boolean(canRedirectPendingSignature && !busy && /^3\d{9}$/.test(normalizedRedirectPhone) &&
+    normalizedRedirectPhone !== colombianPhone(signature?.sentPhone || detail?.phone) && redirectReason.trim().length >= 5);
   const imeiRequestLabel = detail?.kind === "CREDIT" ? "Solicitar cambio y nueva remisión" :
     detail?.capabilities.canDispatchSignatureWithImei ? "Guardar cambio y enviar nueva firma" : "Guardar cambio de IMEI";
   const canCorrectIdentity = Boolean(detail?.kind === "DRAFT" && detail.signature.status === "SIGNED" &&
@@ -910,9 +1036,13 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
         <div className={styles.signatureHead}>
           <span className={styles.sectionIcon}><FilePenLine size={23} aria-hidden="true" /></span>
           <div><div className={styles.signatureTitle}><h2>FirmaSeguro</h2><StatusPill tone={signatureTone}>{signatureLabel(signature!.status)}</StatusPill></div>
-            <p>{signature?.status === "TECHNICAL_ERROR" ? "El envío necesita revisión técnica antes de continuar." :
+            <p>{signature?.status === "TECHNICAL_ERROR" && canRedirectPendingSignature
+              ? "El envío anterior no se completó. Puedes cambiar el número y generar una nueva solicitud con el mismo contrato." :
+              signature?.status === "TECHNICAL_ERROR" ? "El envío necesita revisión técnica antes de continuar." :
               signature?.status === "SIGNED" ? "Contrato firmado. Puedes actualizar el contacto o solicitar una nueva versión cuando corresponda." :
-              signature?.status === "PENDING" ? "Solicitud enviada. Espera la confirmación real de FirmaSeguro." :
+              signature?.status === "PENDING" && canRedirectPendingSignature
+                ? "Solicitud enviada y aún sin firma. Si el celular no recibe WhatsApp, puedes cambiar el número y generar un enlace nuevo."
+                : signature?.status === "PENDING" ? "Solicitud enviada. Espera la confirmación real de FirmaSeguro." :
               canSendSignature ? "Revisa el contacto y envía el contrato. El estado cambiará cuando FirmaSeguro confirme la firma." :
               "No hay una solicitud de firma activa."}</p></div>
         </div>
@@ -927,14 +1057,19 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
                 value={contactEmail} onChange={event => setContactEmail(event.target.value)}
                 readOnly={!editingContact} disabled={Boolean(busy)} /></div>
           </div>
-          {detail.capabilities.canUpdateContact || canManageSignature ? <div className={styles.signatureActions}>
+          {detail.capabilities.canUpdateContact || canManageSignature || canRedirectPendingSignature ? <div className={styles.signatureActions}>
             {editingContact ? <>
               <Button variant="secondary" onClick={() => { setEditingContact(false); setContactReason(""); setContactPhone(detail.phone || signature?.sentPhone || ""); setContactEmail(detail.email || signature?.sentEmail || ""); }} disabled={Boolean(busy)}>Cancelar</Button>
               <Button variant="secondary" onClick={() => void updateContact()} disabled={Boolean(busy) || contactReason.trim().length < 5}>Guardar contacto</Button>
             </> : detail.capabilities.canUpdateContact ? <Button variant="secondary" onClick={() => { setActionError(""); setEditingContact(true); }} disabled={Boolean(busy)}>Actualizar contacto</Button> : null}
             {canManageSignature ? <Button className={styles.resendButton} onClick={() => { setActionError(""); setPreparingSignature(true); }}
-              disabled={Boolean(busy) || editingContact}>
+              disabled={Boolean(busy) || editingContact || redirectingSignature}>
               {busy === "signature" ? "Enviando..." : signatureActionLabel}<ArrowRight size={18} aria-hidden="true" />
+            </Button> : null}
+            {canRedirectPendingSignature && !redirectingSignature ? <Button className={styles.resendButton}
+              onClick={() => { setActionError(""); setPreparingSignature(false); setEditingContact(false);
+                setRedirectPhone(""); setRedirectReason(""); setRedirectingSignature(true); }} disabled={Boolean(busy)}>
+              Cambiar número y reenviar firma<ArrowRight size={18} aria-hidden="true" />
             </Button> : null}
           </div> : null}
         </div>
@@ -949,18 +1084,40 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
             <Button onClick={() => { setActionError(""); setConfirmation("signature"); }}
               disabled={Boolean(busy) || signatureReason.trim().length < 5}>Continuar</Button></div>
         </div> : null}
-        {!canManageSignature && detail.capabilities.preSettlementApprovalCreditId != null ? <div className={styles.approvalHandoff}>
+        {redirectingSignature && canRedirectPendingSignature ? <div className={styles.signatureRedirection}>
+          <p className={styles.redirectionWarning}><FileClock size={18} aria-hidden="true" /><span>
+            El enlace anterior quedará archivado y ya no podrá cerrar este expediente en FINSER PAY. Se generará una nueva solicitud de FirmaSeguro para el nuevo celular; el contrato y sus valores no cambiarán.
+          </span></p>
+          <div className={styles.redirectionFields}>
+            <div><label htmlFor="approval-signature-redirect-phone">Nuevo celular para la firma</label>
+              <Input id="approval-signature-redirect-phone" ref={redirectPhoneInput} type="tel" inputMode="numeric" autoComplete="tel" maxLength={20}
+                value={redirectPhone} onChange={event => setRedirectPhone(event.target.value)} disabled={Boolean(busy)}
+                placeholder="Ej. 3101234567" aria-describedby="approval-signature-redirect-phone-help" />
+              <small id="approval-signature-redirect-phone-help">Debe ser un celular colombiano de 10 dígitos y diferente al envío anterior.</small></div>
+            <div><label htmlFor="approval-signature-redirect-reason">Motivo del reenvío</label>
+              <Input id="approval-signature-redirect-reason" minLength={5} maxLength={500} value={redirectReason}
+                onChange={event => setRedirectReason(event.target.value)} disabled={Boolean(busy)}
+                placeholder="Ej. El número anterior no tiene WhatsApp" /></div>
+          </div>
+          <div className={styles.redirectionActions}>
+            <Button variant="ghost" onClick={() => { setRedirectingSignature(false); setRedirectPhone(""); setRedirectReason(""); }} disabled={Boolean(busy)}>Cancelar</Button>
+            <Button onClick={() => { setActionError(""); setConfirmation("signature-redirection"); }} disabled={!canSubmitRedirection}>
+              Cambiar número y reenviar firma<ArrowRight size={18} aria-hidden="true" />
+            </Button>
+          </div>
+        </div> : null}
+        {!canManageSignature && !canRedirectPendingSignature && detail.capabilities.preSettlementApprovalCreditId != null ? <div className={styles.approvalHandoff}>
           <p>{signature?.status === "NOT_SENT"
             ? detail.capabilities.signatureReason || "No hay una firma verificable para este crédito. Solicita revisión del expediente antes de enviar."
             : detail.capabilities.signatureReason || "Revisa el expediente de aprobaciones para continuar con la firma de este crédito."}</p>
           <Button variant="secondary" onClick={() => onOpenApproval?.(detail.capabilities.preSettlementApprovalCreditId!)}
             disabled={!onOpenApproval || Boolean(busy)}>{signature?.status === "NOT_SENT" ? "Abrir revisión" : "Gestionar firma en aprobaciones"}<ArrowRight size={18} aria-hidden="true" /></Button>
         </div> : null}
-        {!canManageSignature && detail.capabilities.preSettlementApprovalCreditId == null &&
-          (signature?.status === "NOT_SENT" || detail.capabilities.signatureReason) ?
-          <p className={styles.muted}>{detail.kind === "CREDIT" && signature?.status === "NOT_SENT"
+        {!canManageSignature && !canRedirectPendingSignature && detail.capabilities.preSettlementApprovalCreditId == null &&
+          (signature?.status === "NOT_SENT" || detail.capabilities.signatureReason || pendingRedirectBlockReason) ?
+          <p className={styles.muted}>{pendingRedirectBlockReason || (detail.kind === "CREDIT" && signature?.status === "NOT_SENT"
             ? detail.capabilities.signatureReason || "No hay una firma verificable para este crédito. Solicita revisión del expediente antes de enviar."
-            : detail.capabilities.signatureReason || "El envío de firma no está disponible para este caso."}</p> : null}
+            : detail.capabilities.signatureReason || "El envío de firma no está disponible para este caso.")}</p> : null}
         {signature?.sentAt ? <p className={styles.sentAt}><CalendarClock size={15} aria-hidden="true" />Último envío: {dateLabel(signature.sentAt)}</p> : null}
       </Card> : null}
         </section>
@@ -987,6 +1144,12 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
         ". El estado solo cambiará a firmado tras la confirmación real de FirmaSeguro."}
       confirmLabel={signatureActionLabel} busy={busy === "signature"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void sendSignature()} />
+    <ConfirmDialog open={confirmation === "signature-redirection"} title="Cambiar número y reenviar firma"
+      description={"La solicitud enviada al celular " + visible(detail?.signature.sentPhone || detail?.phone) +
+        " será reemplazada por una nueva solicitud al celular " + visible(normalizedRedirectPhone) +
+        ". El enlace anterior quedará archivado y ya no podrá cerrar este expediente en FINSER PAY; el contrato conservará las mismas condiciones y valores."}
+      confirmLabel="Cambiar número y reenviar firma" busy={busy === "signature"}
+      onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void redirectPendingSignature()} />
     <ConfirmDialog open={confirmation === "remission-verify"} title="Verificar nueva remisión"
       description="Confirma que la foto muestra la nueva remisión firmada y corresponde al equipo de este crédito. Después de verificarla aún se requerirá aprobar el enrolamiento antes de aplicar el IMEI."
       confirmLabel="Verificar remisión" busy={busy === "remission"}
