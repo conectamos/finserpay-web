@@ -16,13 +16,23 @@ type ApprovalAccessUser = {
   activo?: boolean;
   rolNombre?: string | null;
   aliadoAccesoCodigo?: string | null;
+  sedeAccesoActiva?: boolean;
+  aliadoAccesoActivo?: boolean;
 };
 
 export function canReviewCreditApprovals(user: ApprovalAccessUser | null | undefined) {
+  if (
+    !user ||
+    user.activo === false ||
+    String(user.aliadoAccesoCodigo || "").trim().toUpperCase() !== "FINSERPAY"
+  ) return false;
+
+  if (isAdminRole(user.rolNombre)) return true;
+
   return Boolean(
-    user && user.activo !== false &&
-    String(user.aliadoAccesoCodigo || "").trim().toUpperCase() === "FINSERPAY" &&
-    (isAdminRole(user.rolNombre) || isApprovalAnalystRole(user.rolNombre))
+    isApprovalAnalystRole(user.rolNombre) &&
+    user.sedeAccesoActiva === true &&
+    user.aliadoAccesoActivo === true
   );
 }
 

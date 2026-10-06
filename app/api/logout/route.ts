@@ -6,6 +6,7 @@ import { clearFinancialAccessCookie } from "@/lib/financial-access";
 import {
   SELLER_SESSION_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  APPROVAL_ANALYST_SESSION_COOKIE_NAME,
   APPROVAL_ACCESS_COOKIE_NAME,
   APPROVAL_SHARED_COOKIE_NAME,
   verifyApprovalSharedSessionToken,
@@ -26,6 +27,11 @@ export async function POST() {
   const response = NextResponse.json({ ok: true });
 
   response.cookies.set(SESSION_COOKIE_NAME, "", {
+    ...getSessionCookieOptions(),
+    expires: new Date(0),
+    maxAge: 0,
+  });
+  response.cookies.set(APPROVAL_ANALYST_SESSION_COOKIE_NAME, "", {
     ...getSessionCookieOptions(),
     expires: new Date(0),
     maxAge: 0,

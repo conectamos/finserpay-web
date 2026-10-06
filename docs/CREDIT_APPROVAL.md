@@ -12,25 +12,25 @@ El administrador central de FINSER PAY y los usuarios activos con el rol
 panel; el rol no concede acceso a la fábrica de créditos, recaudos, administración
 de usuarios, políticas de riesgo ni al expediente completo de DataCrédito.
 La creación y administración de analistas corresponde al administrador central.
+Crear, activar, desactivar o restablecer la clave genera un evento append-only
+con el administrador responsable; la auditoría no almacena claves ni hashes.
 Los vendedores no pueden consultar expedientes desde aprobaciones. Los
 administradores de aliados acceden a sus novedades mediante PENDIENTES; allí
 solo pueden responder lo solicitado sobre créditos de su propio aliado.
 
-### Enlace común y muro
+### Cuentas nominales y muro
 
-En **Aprobaciones**, el administrador central genera y copia un enlace común
-sin elegir ni crear una cuenta de analista. La dirección tiene la forma
-`/acceso-revision#acceso=<secreto>` y abre **Muro de aprobaciones** en
-`/revision-creditos`. El navegador retira el fragmento antes del canje y no
-lo guarda en almacenamiento local. El enlace vigente permite nuevas aperturas;
-la sesión propia dura **8 horas**. Regenerar o revocar invalida el enlace
-anterior y todas sus sesiones, sin desactivar usuarios ni cambiar otras sesiones.
+El modelo normal de acceso es una cuenta personal creada en **Usuarios >
+Analistas de aprobación** por el administrador central. El analista inicia sesión
+en `/aliados` con su usuario y clave y recibe una sesión de aprobación de **8
+horas**. Esa sesión solo admite el muro, sus expedientes y las acciones de
+revisión autorizadas. Desactivar la cuenta o restablecer su clave invalida las
+sesiones anteriores.
 
-Cada petición comprueba enlace, sesión y acceso al crédito. Sus acciones quedan
-registradas como **Acceso compartido**, con grant y sesión; no se atribuyen a un
-usuario inventado. El portal no concede acceso a administración, fábrica ni
-pagos. Cuando el mismo navegador conserva una cuenta individual, el panel avisa
-si las revisiones se atribuirán al acceso compartido y permite cerrarlo.
+Cada petición vuelve a comprobar que el usuario, el rol, la sede y el aliado
+central estén activos. Las decisiones, novedades, correcciones y aprobaciones se
+atribuyen al usuario individual. El analista no puede abrir el control SADMIN,
+los módulos financieros ni la administración mediante una URL directa.
 
 El muro ofrece dos vistas sin búsqueda por cédula:
 
@@ -49,15 +49,15 @@ paginan sin fotos, documentos ni audio en la respuesta de la lista. El refresco
 periódico respeta formularios abiertos y exige revisar otra vez cuando cambia el
 expediente; cambiar de pestaña cancela las consultas de la vista anterior.
 
-### Enlaces personales
+### Accesos por enlace anteriores
 
-En **Usuarios > Analistas de aprobación**, el administrador central puede
-**Generar enlace**, **Copiar enlace**, **Abrir**, **Regenerar enlace** y
-**Revocar**. El enlace corresponde a la misma cuenta individual del analista y
-se puede reutilizar mientras esté vigente. Regenerarlo o revocarlo requiere
-confirmación. La tabla muestra el secreto enmascarado; copiar conserva el enlace
-completo. Una cuenta inactiva no permite generar, copiar ni abrir su acceso, y
-la tabla vuelve a consultar el enlace cuando cambia la cuenta.
+Los enlaces personales y el enlace común se conservan temporalmente para no
+interrumpir sesiones emitidas antes de la migración. La interfaz administrativa
+ya no los ofrece como forma normal de alta ni de ingreso. El administrador
+central puede consultar y revocar el enlace común anterior durante la transición,
+pero no copiarlo ni regenerarlo desde ese control. Las cuentas nuevas y los
+accesos renovados deben usar usuario y clave; los registros históricos de los
+enlaces se conservan para auditoría.
 
 La dirección tiene la forma `/acceso-aprobaciones#acceso=<secreto>`. El navegador
 retira inmediatamente el fragmento del historial y de la barra de direcciones,
@@ -85,12 +85,12 @@ cookie; volver a abrir un enlace que sigue vigente permite iniciar otra sesión.
 
 El flujo consiste en:
 
-1. Abrir el enlace común y elegir un crédito del muro.
+1. Iniciar sesión con la cuenta personal y elegir un crédito del muro.
 2. Revisar los valores, las cinco fotografías y la última página del PDF firmado.
 3. Registrar novedades cuando algo requiera corrección y revisar las respuestas
    del aliado. Una novedad abierta impide aprobar; responder nunca aprueba solo.
 4. Realizar la llamada al cliente y guardar su grabación para la revisión vigente.
-   Este paso es obligatorio para analistas y para el enlace compartido. El
+   Este paso es obligatorio para analistas y para accesos compartidos anteriores. El
    administrador central puede adjuntar la grabación de forma opcional.
 5. Confirmar **OK para liquidación** cuando todo esté en orden. El crédito sale de
    Pendientes y queda en Aprobadas. El administrador central conserva la facultad
@@ -105,7 +105,7 @@ no una fecha de llamada inferida. No se integra un proveedor de telefonía ni se
 graba automáticamente.
 
 La grabación es obligatoria antes del OK para las cuentas con rol
-`ANALISTA_APROBACION` y para las sesiones del enlace compartido. Un ADMIN activo
+`ANALISTA_APROBACION` y para las sesiones anteriores del enlace compartido. Un ADMIN activo
 del aliado central FINSER PAY puede adjuntarla de forma opcional y también puede
 confirmar el OK sin audio. Esta excepción se resuelve con la identidad vigente en
 base de datos; no se concede por el nombre mostrado ni por datos enviados por el
@@ -322,6 +322,9 @@ El mismo predespliegue instala el esquema de enlaces personales mediante
 `scripts/ensure-approval-access-schema.mjs` y
 `scripts/approval-access-schema.mjs`. Esta instalación aditiva conserva el corte
 existente de `CreditApprovalPolicy` y las reglas de revisión del historial.
+También instala `ensure-approval-analyst-account-audit-schema.mjs`, que protege
+contra actualización, borrado y truncado el historial de administración de las
+cuentas de analista.
 
 Se exige revisión a los créditos creados desde ese corte, según
 `Credito.createdAt`, y que no tengan simultáneamente los marcadores de
@@ -368,8 +371,8 @@ las demás reglas de elegibilidad de pagos a aliados.
 ## Contrato HTTP
 
 Las rutas del expediente autentican y autorizan antes de consultar datos.
-La administración de enlaces requiere una sesión de administrador central; el
-canje público valida el token personal y su vigencia. Las respuestas, incluidas
+La administración de analistas requiere una sesión de administrador central. La
+compatibilidad temporal de enlaces valida el token y su vigencia. Las respuestas, incluidas
 las fotografías y el PDF, usan `Cache-Control: private, no-store` y
 `X-Content-Type-Options: nosniff`.
 
@@ -379,18 +382,16 @@ las fotografías y el PDF, usan `Cache-Control: private, no-store` y
 | `GET/POST/PATCH /api/aprobaciones/[id]/novedades` | Consulta estado/historial, registra una novedad o marca un elemento abierto como solucionado, siempre con revisión e idempotencia. |
 | `GET /api/pendientes` y `GET /api/pendientes/[id]` | Lista y detalle de novedades del propio aliado. |
 | `POST /api/pendientes/[id]/evidencias` o `/respuesta` | Responde el elemento solicitado, con versión e idempotencia. |
-| `GET/POST/DELETE /api/aprobaciones/enlace-comun` | Administración central del enlace común. |
-| `POST /api/public/approval-shared-access` | Canje del enlace común por una sesión independiente. |
+| `GET/POST/DELETE /api/aprobaciones/enlace-comun` | Compatibilidad temporal del enlace común anterior; no se ofrece en la interfaz normal. |
+| `POST /api/public/approval-shared-access` | Canje temporal de un enlace común ya emitido. |
 | `GET /api/aprobaciones/[id]` | Devuelve `item` con información financiera, `review`, disponibilidad de documentos, `canApprove` y `blockingReasons`. |
 | `PATCH /api/aprobaciones/[id]/evidencias` | Reemplaza una fotografía con key, dataUrl, revision y reviewHash. |
 | `POST /api/aprobaciones/[id]/firma-seguro` | Solicita otra firma (REQUEST) o consulta su estado (REFRESH). |
 | `POST /api/aprobaciones/[id]` | Recibe `{revision, reviewHash, recordingId?}` y confirma el OK con el actor de la sesión. `recordingId` es obligatorio para analistas y enlace compartido; el ADMIN central puede omitirlo cuando no adjuntó audio. |
 | `GET /api/aprobaciones/[id]/evidencias?tipo=...` | Entrega una de las cinco fotografías permitidas. |
 | `GET /api/aprobaciones/[id]/documento` | Entrega el PDF firmado vigente completo para renderizar localmente su última página. |
-| `GET /api/usuarios/analistas/[id]/enlace` | Consulta el estado del enlace personal y su URL cuando está vigente. |
-| `POST /api/usuarios/analistas/[id]/enlace` | Genera o regenera el enlace; recibe `{expectedGrantId}`, con `null` para la primera generación. |
-| `DELETE /api/usuarios/analistas/[id]/enlace` | Revoca el enlace indicado por `{expectedGrantId}`. |
-| `POST /api/public/approval-access` | Recibe `{token}`, valida el origen de la petición y establece la cookie de acceso personal. |
+| `GET/POST/DELETE /api/usuarios/analistas/[id]/enlace` | Compatibilidad temporal de enlaces personales anteriores; no se ofrece en la interfaz normal. |
+| `POST /api/public/approval-access` | Canje temporal de un enlace personal ya emitido. |
 
 La consulta y las mutaciones de enlaces devuelven
 `{ok, active, hasLink, grantId, accessUrl, createdAt}`. `active` indica que el

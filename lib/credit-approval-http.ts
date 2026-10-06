@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getCreditApprovalSessionUser } from "@/lib/auth";
-import { canReviewCreditApprovals } from "@/lib/roles";
+import { getCreditApprovalSessionUser, getSessionUser } from "@/lib/auth";
+import { canManageApprovalAnalysts, canReviewCreditApprovals } from "@/lib/roles";
 import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import { ApprovalActorAccessError, ApprovalActorCreditAccessError, type ApprovalActor } from "@/lib/credit-approval-actor";
 import { CreditApprovalError } from "@/lib/credit-approval";
@@ -14,6 +14,21 @@ export async function getApprovalActor(): Promise<ApprovalActor> {
   const user = await getCreditApprovalSessionUser();
   if (!user) throw new CreditApprovalError("UNAUTHENTICATED", "Inicia sesión para revisar créditos.", 401);
   if (!canReviewCreditApprovals(user)) throw new CreditApprovalError("FORBIDDEN", "No tienes permiso para revisar estos créditos.", 403);
+  return { id: user.id, nombre: user.nombre };
+}
+
+export async function getCentralApprovalAdminActor(): Promise<ApprovalActor> {
+  // Prefer the regular signed-in account. A shared or personal approval-link
+  // session must never grant access to central administrative operations.
+  const user = await getSessionUser();
+  if (!user) throw new CreditApprovalError("UNAUTHENTICATED", "Inicia sesión para gestionar SADMIN.", 401);
+  if (!canManageApprovalAnalysts(user)) {
+    throw new CreditApprovalError(
+      "FORBIDDEN",
+      "Solo el administrador central de FINSER PAY puede gestionar SADMIN.",
+      403,
+    );
+  }
   return { id: user.id, nombre: user.nombre };
 }
 

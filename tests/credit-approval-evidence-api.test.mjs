@@ -10,7 +10,14 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
 } });
 const { submitEvidenceCorrection } = await import("../lib/credit-approval-evidence-client.ts");
 hooks.deregister();
-const analyst = { ...actor, rolNombre: "ANALISTA_APROBACION", aliadoAccesoCodigo: "FINSERPAY", activo: true };
+const analyst = {
+  ...actor,
+  rolNombre: "ANALISTA_APROBACION",
+  aliadoAccesoCodigo: "FINSERPAY",
+  sedeAccesoActiva: true,
+  aliadoAccesoActivo: true,
+  activo: true,
+};
 const context = { params: Promise.resolve({ id: "81" }) };
 const request = (body, headers = {}) => new Request("https://finser.test/api/aprobaciones/81/evidencias", {
   method: "PATCH", headers: { "content-type": "application/json", origin: "https://finser.test", ...headers }, body: JSON.stringify(body),

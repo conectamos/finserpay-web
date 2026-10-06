@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { exportSadminCredits } from "@/lib/credit-sadmin";
 import { buildSadminWorkbook } from "@/lib/credit-sadmin-excel";
-import { getApprovalActor, approvalErrorResponse, approvalPrivateHeaders } from "@/lib/credit-approval-http";
+import { getCentralApprovalAdminActor, approvalErrorResponse, approvalPrivateHeaders } from "@/lib/credit-approval-http";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import type { SadminStatusFilter } from "@/lib/credit-sadmin-types";
 
@@ -32,7 +32,7 @@ function colombiaDate(now = new Date()) {
 
 export async function GET(request: Request) {
   try {
-    const actor = await getApprovalActor();
+    const actor = await getCentralApprovalAdminActor();
     if (exportInProgress) {
       throw new CreditApprovalError(
         "SADMIN_EXPORT_BUSY",

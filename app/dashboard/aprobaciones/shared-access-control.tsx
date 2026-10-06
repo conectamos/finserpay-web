@@ -69,7 +69,7 @@ async function copyLink(value: string) {
   }
 }
 
-export default function SharedAccessControl() {
+export default function SharedAccessControl({ retirementMode = false }: { retirementMode?: boolean }) {
   const [link, setLink] = useState<LinkState | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -159,14 +159,19 @@ export default function SharedAccessControl() {
   const canUse = link?.active && Boolean(link.accessUrl);
   return (
     <Card className="mx-4 mt-4 space-y-4 p-4 sm:mx-6 sm:p-6 lg:mx-8">
-      <div><h2 className="text-lg font-bold">Enlace común de revisión</h2>
-      <p className="mt-1 text-sm text-[var(--fp-muted)]">Permite revisar pendientes, registrar novedades, corregir fotos y solicitar otra firma. Las acciones se registran como acceso compartido por enlace y sesión; no identifican a una persona.</p></div>
+      <div><h2 className="text-lg font-bold">{retirementMode ? "Acceso compartido anterior" : "Enlace común de revisión"}</h2>
+      <p className="mt-1 text-sm text-[var(--fp-muted)]">{retirementMode
+        ? "Los analistas deben ingresar con su cuenta personal. Si todavía existe un enlace común, puedes revocarlo aquí sin borrar su historial."
+        : "Permite revisar pendientes, registrar novedades, corregir fotos y solicitar otra firma. Las acciones se registran como acceso compartido por enlace y sesión; no identifican a una persona."}</p></div>
       <p className="text-xs text-[var(--fp-muted)]">
         {loading ? "Consultando enlace..." : link?.active ? "Enlace compartido reutilizable · acceso=••••••••"
             : link?.hasLink ? "El enlace anterior ya no permite el acceso." : "Sin enlace compartido activo."}
       </p>
       <div className="flex flex-wrap gap-2">
-        {link ? <>
+        {link && retirementMode ? <>
+          {link.active && link.grantId ? <Button variant="danger" disabled={unavailable}
+            onClick={() => setPending("revoke")}>Revocar acceso anterior</Button> : null}
+        </> : link ? <>
           <Button variant="secondary" disabled={unavailable}
             onClick={() => link.hasLink ? setPending("rotate") : void change("POST")}>
             {link.hasLink ? "Regenerar enlace" : "Generar enlace"}

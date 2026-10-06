@@ -1,9 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE_NAME = "session";
+export const APPROVAL_ANALYST_SESSION_COOKIE_NAME = "approval_analyst_session";
 export const APPROVAL_ACCESS_COOKIE_NAME = "approval_access_session";
 export const SELLER_SESSION_COOKIE_NAME = "seller_session";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+export const APPROVAL_ANALYST_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 export const APPROVAL_ACCESS_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const approvalGrantIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -12,6 +14,13 @@ type SessionPayload = {
   userId: number;
   credentialVersion?: string;
   approvalAccessGrantId?: string;
+};
+
+type ApprovalAnalystSessionPayload = {
+  purpose: "approval-analyst-session";
+  exp: number;
+  userId: number;
+  credentialVersion: string;
 };
 
 type SellerSessionPayload = {
@@ -63,6 +72,51 @@ export function createSessionToken(userId: number, credentialVersion?: string) {
   const encodedPayload = base64UrlEncode(serializedPayload);
 
   return `${encodedPayload}.${sign(encodedPayload)}`;
+}
+
+/** Password login for an analyst is isolated from the general application session. */
+export function createApprovalAnalystSessionToken(userId: number, credentialVersion: string) {
+  if (!Number.isSafeInteger(userId) || userId < 1 || !credentialVersion) {
+    throw new Error("Invalid approval analyst session");
+  }
+
+  const payload: ApprovalAnalystSessionPayload = {
+    purpose: "approval-analyst-session",
+    userId,
+    credentialVersion,
+    exp: Math.floor(Date.now() / 1000) + APPROVAL_ANALYST_SESSION_MAX_AGE_SECONDS,
+  };
+  const encoded = base64UrlEncode(JSON.stringify(payload));
+  return `${encoded}.${sign(`approval-analyst-session:${encoded}`)}`;
+}
+
+export function verifyApprovalAnalystSessionToken(token?: string | null) {
+  if (!token) return null;
+  const [encoded, signature, extra] = token.split(".");
+  if (!encoded || !signature || extra !== undefined) return null;
+
+  const expectedBuffer = Buffer.from(sign(`approval-analyst-session:${encoded}`), "utf8");
+  const signatureBuffer = Buffer.from(signature, "utf8");
+  if (expectedBuffer.length !== signatureBuffer.length || !timingSafeEqual(expectedBuffer, signatureBuffer)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(base64UrlDecode(encoded)) as ApprovalAnalystSessionPayload;
+    if (
+      payload?.purpose !== "approval-analyst-session" ||
+      !Number.isSafeInteger(payload.userId) ||
+      payload.userId < 1 ||
+      typeof payload.credentialVersion !== "string" ||
+      !payload.credentialVersion ||
+      !Number.isSafeInteger(payload.exp) ||
+      payload.exp <= Math.floor(Date.now() / 1000)
+    ) return null;
+
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 /** A link session remains limited to the analyst role and its live grant. */

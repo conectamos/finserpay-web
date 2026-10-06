@@ -13,14 +13,15 @@ function initials(name: string) {
 }
 
 export default function ApprovalWorkspace({ shared = false, redesigned = false, allowOperations = false,
-  manageSharedAccess = false, userName = "" }: {
+  canManageSadmin = false, manageLegacySharedAccess = false, userName = "" }: {
   shared?: boolean;
   redesigned?: boolean;
   allowOperations?: boolean;
-  manageSharedAccess?: boolean;
+  canManageSadmin?: boolean;
+  manageLegacySharedAccess?: boolean;
   userName?: string;
 }) {
-  const [view, setView] = useState<"approvals" | "sadmin" | "operations">(allowOperations ? "operations" : "approvals");
+  const [view, setView] = useState<"approvals" | "sadmin" | "operations">("approvals");
   const [focusApprovalCreditId, setFocusApprovalCreditId] = useState<number | null>(null);
   const showingDetail = view === "operations" && allowOperations;
   const sectionTitle = showingDetail ? "Detalle del crédito" : view === "sadmin" ? "Listado de créditos" : "Bandeja de aprobaciones";
@@ -46,11 +47,11 @@ export default function ApprovalWorkspace({ shared = false, redesigned = false, 
       <ApprovalOperations active={showingDetail}
         onOpenApproval={(creditId) => { setFocusApprovalCreditId(creditId); setView("approvals"); }} />
     </div> : null}
-    {view === "sadmin"
+    {view === "sadmin" && canManageSadmin
       ? <SadminCreditTable onBack={() => setView("approvals")} />
       : showingDetail ? null
-        : <>{manageSharedAccess && !shared ? <SharedAccessControl /> : null}
+        : <>{manageLegacySharedAccess && !shared ? <SharedAccessControl retirementMode /> : null}
           <ApprovalConsole shared={shared} redesigned={redesigned} focusCreditId={focusApprovalCreditId}
-            onOpenSadmin={() => setView("sadmin")} /></>}
+            onOpenSadmin={canManageSadmin ? () => setView("sadmin") : undefined} /></>}
   </>;
 }
