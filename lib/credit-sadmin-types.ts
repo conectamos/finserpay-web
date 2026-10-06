@@ -6,7 +6,7 @@ export type SadminCreationStatus =
   | "ERROR_CREACION"
   | "REQUIERE_REVISION";
 
-export type SadminAccessScope = "HISTORICAL" | "APPROVED_READY" | "HISTORICAL_OR_APPROVED_READY";
+export type SadminAccessScope = "HISTORICAL";
 export type SadminActor = ApprovalActor & {
   sadminScope: SadminAccessScope;
   sadminWriteScope?: SadminAccessScope;

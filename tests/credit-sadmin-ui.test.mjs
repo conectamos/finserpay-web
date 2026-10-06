@@ -148,7 +148,7 @@ test("la pantalla SADMIN conserva el histórico completo y la exportación", asy
   h.unmount();
 });
 
-test("el listado completo conserva contadores y consulta sin habilitar solicitudes pendientes de aprobación", async () => {
+test("el listado completo conserva contadores e historial y respeta un permiso de solo lectura", async () => {
   const requests = [];
   const historical = { ...row(81), canEditSadmin: false };
   const h = mount(async (url, options = {}) => {
@@ -166,7 +166,7 @@ test("el listado completo conserva contadores y consulta sin habilitar solicitud
   await toggleCredit(h, 81);
   assert.equal(fieldset(h, 81).props.disabled, true);
   assert.equal(resultSelect(h, 81).props.disabled, true);
-  assert.match(content(h.find(node => node.props?.id === "sadmin-detail-81")), /pendiente de aprobación/);
+  assert.match(content(h.find(node => node.props?.id === "sadmin-detail-81")), /solo lectura/);
   // Retained callbacks must also respect a server-declared read-only record.
   check(h, 81, "CODEUDOR CREADO").props.onChange({ target: { checked: true } });
   editNumber(h, 81, "NO-GUARDAR");
@@ -185,12 +185,15 @@ test("el listado completo conserva contadores y consulta sin habilitar solicitud
   h.unmount();
 });
 
-test("el crédito histórico habilitado permite escribir el número y marcar las verificaciones SADMIN", async () => {
+for (const scenario of [
+  { label: "histórico", date: "2026-07-02", createdAt: "2026-07-02T15:36:00Z", paid: 3, pending: 12 },
+  { label: "nuevo pendiente de aprobación", date: "2026-10-06", createdAt: "2026-10-06T16:09:00Z", paid: 0, pending: 21 },
+]) test(`el crédito ${scenario.label} permite escribir el número y marcar las verificaciones SADMIN`, async () => {
   const patches = [];
   let stored = registration();
-  const legacy = () => ({ ...row(81, stored), fechaCredito: "2026-07-02", createdAt: "2026-07-02T15:36:00Z", cuotasPagadas: 3, cuotasPendientes: 12 });
+  const credit = () => ({ ...row(81, stored), fechaCredito: scenario.date, createdAt: scenario.createdAt, cuotasPagadas: scenario.paid, cuotasPendientes: scenario.pending });
   const h = mount(async (_url, options = {}) => {
-    if (options.method !== "PATCH") return json(page([legacy()]));
+    if (options.method !== "PATCH") return json(page([credit()]));
     const patch = JSON.parse(options.body); patches.push(patch);
     stored = registration({ ...stored, version: stored.version + 1, [patch.field]: patch.value });
     return json({ ok: true, sadmin: stored });
