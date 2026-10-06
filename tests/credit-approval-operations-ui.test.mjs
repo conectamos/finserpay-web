@@ -7,11 +7,10 @@ import ts from "typescript";
 
 const read = path => readFileSync(new URL("../" + path, import.meta.url), "utf8");
 
-test("Aprobaciones abre el detalle con cuenta personal y conserva el muro para acceso compartido", () => {
+test("Aprobaciones abre el detalle con cuenta nominal y no ofrece SADMIN al analista", () => {
   const operations = () => null;
   const consoleView = () => null;
   const sadmin = () => null;
-  const sharedAccess = () => null;
   const states = [];
   let cursor = 0;
   const node = (type, props) => ({ type, props });
@@ -33,7 +32,7 @@ test("Aprobaciones abre el detalle con cuenta personal y conserva el muro para a
       if (name === "./approval-console") return { default: consoleView };
       if (name === "./approval-operations") return { default: operations };
       if (name === "./sadmin-credit-table") return { default: sadmin };
-      if (name === "./shared-access-control") return { default: sharedAccess };
+      if (name === "./shared-access-control") return { default: () => null };
       throw new Error("Unexpected import: " + name);
     },
   });
@@ -51,11 +50,19 @@ test("Aprobaciones abre el detalle con cuenta personal y conserva el muro para a
     return matches;
   }
   const has = (tree, type) => findAll(tree, item => item.type === type).length > 0;
-  const personalProps = { allowOperations: true, manageSharedAccess: true, userName: "Analista Finser" };
+  const personalProps = { allowOperations: true, canManageSadmin: false, userName: "Analista Finser" };
   let tree = render(personalProps);
   assert.ok(has(tree, operations));
-  assert.ok(!has(tree, sharedAccess), "la gestión del enlace no debe empujar el detalle");
-  assert.equal(findAll(tree, item => item.type === "h1")[0].props.children, "Detalle del crédito");
+  assert.ok(has(tree, consoleView));
+  assert.equal(findAll(tree, item => item.type === "h1")[0].props.children, "Bandeja de aprobaciones");
+  assert.equal(findAll(tree, item => item.type === consoleView)[0].props.onOpenSadmin, undefined,
+    "el analista no recibe el comando de control SADMIN");
+
+  findAll(tree, item => item.type === "button" && item.props?.children === "Detalle del crédito")[0].props.onClick();
+  tree = render(personalProps);
+  assert.ok(has(tree, operations));
+  assert.equal(findAll(tree, item => item.type === operations)[0].props.active, true,
+    "el detalle operativo se abre bajo demanda");
 
   findAll(tree, item => item.type === operations)[0].props.onOpenApproval(42);
   tree = render(personalProps);
@@ -64,28 +71,23 @@ test("Aprobaciones abre el detalle con cuenta personal y conserva el muro para a
   assert.equal(findAll(tree, item => item.type === operations)[0].props.active, false);
   assert.equal(findAll(tree, item => item.type === consoleView)[0].props.focusCreditId, 42,
     "el botón de FirmaSeguro debe abrir el expediente exacto");
-  assert.ok(has(tree, sharedAccess), "el enlace compartido permanece en la bandeja");
-  findAll(tree, item => item.type === "button" && item.props?.children === "Detalle del crédito")[0].props.onClick();
-  tree = render(personalProps);
-  assert.ok(has(tree, operations));
-  assert.equal(findAll(tree, item => item.type === operations)[0].props.active, true,
-    "al regresar se vuelve a consultar el estado real del expediente");
 
   states.length = 0;
   tree = render({ shared: true });
   assert.ok(has(tree, consoleView));
   assert.ok(!has(tree, operations));
-  assert.ok(!has(tree, sharedAccess));
 });
 
-test("detalle operativo se ofrece solo en la sesión nominal de aprobaciones", () => {
+test("detalle operativo se ofrece en la sesión nominal y SADMIN depende del administrador central", () => {
   const page = read("app/dashboard/aprobaciones/page.tsx");
   const workspace = read("app/dashboard/aprobaciones/approval-workspace.tsx");
   const sharedPage = read("app/revision-creditos/page.tsx");
   assert.match(page, /allowOperations=\{sharedContext === undefined\}/);
+  assert.match(page, /canManageSadmin=\{centralAdmin && sharedContext === undefined\}/);
   assert.match(workspace, /view === "operations" && allowOperations/);
   assert.doesNotMatch(page, /AdminWorkspaceTopbar/);
-  assert.match(page, /manageSharedAccess=\{canManageApprovalAnalysts\(user\)\}/);
+  assert.match(workspace, /onOpenSadmin=\{canManageSadmin \? \(\) => setView\("sadmin"\) : undefined\}/);
+  assert.doesNotMatch(workspace, /manageSharedAccess/);
   assert.match(sharedPage, /<ApprovalWorkspace shared\s*\/>/);
   assert.doesNotMatch(sharedPage, /allowOperations/);
 });

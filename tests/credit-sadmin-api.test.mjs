@@ -24,6 +24,10 @@ function load(path, dependencies = {}) {
 const errors = load("lib/credit-approval-errors.ts");
 const actors = load("lib/credit-approval-actor.ts");
 const roles = load("lib/roles.ts");
+const centralAdmin = {
+  id: 7, nombre: "Administrador central", activo: true,
+  rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY",
+};
 const centralAnalyst = {
   id: 17, nombre: "Analista de prueba", activo: true,
   rolNombre: "ANALISTA_APROBACION", aliadoAccesoCodigo: "FINSERPAY",
@@ -35,12 +39,15 @@ const sharedActor = {
 };
 const clone = value => JSON.parse(JSON.stringify(value));
 
-function setup({ user = centralAnalyst, shared, serviceError } = {}) {
+function setup({ user = centralAdmin, shared, serviceError } = {}) {
   const calls = [];
   const prisma = {};
   const http = load("lib/credit-approval-http.ts", {
     "next/server": { NextResponse: Response },
-    "@/lib/auth": { getCreditApprovalSessionUser: async () => { calls.push({ name: "user" }); return user; } },
+    "@/lib/auth": {
+      getSessionUser: async () => { calls.push({ name: "user" }); return user; },
+      getCreditApprovalSessionUser: async () => { calls.push({ name: "approval-user" }); return user; },
+    },
     "@/lib/roles": roles,
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => { calls.push({ name: "shared" }); return shared; } },
     "@/lib/credit-approval-actor": actors,
@@ -94,9 +101,10 @@ test("SADMIN niega usuarios sin acceso antes de leer o actualizar datos", async 
   const cases = [
     ["sin sesión", null, 401],
     ["vendedor central", { ...centralAnalyst, rolNombre: "VENDEDOR" }, 403],
-    ["administrador de aliado", { ...centralAnalyst, rolNombre: "ADMIN", aliadoAccesoCodigo: "ALIADO" }, 403],
+    ["administrador de aliado", { ...centralAdmin, aliadoAccesoCodigo: "ALIADO" }, 403],
+    ["analista central", centralAnalyst, 403],
     ["analista de aliado", { ...centralAnalyst, aliadoAccesoCodigo: "ALIADO" }, 403],
-    ["analista inactivo", { ...centralAnalyst, activo: false }, 403],
+    ["administrador inactivo", { ...centralAdmin, activo: false }, 403],
   ];
   for (const [name, user, status] of cases) await t.test(name, async () => {
     const api = setup({ user });
@@ -111,35 +119,33 @@ test("SADMIN niega usuarios sin acceso antes de leer o actualizar datos", async 
   });
 });
 
-test("un enlace revocado no usa como respaldo una cuenta administrativa abierta", async () => {
-  const api = setup({ user: { ...centralAnalyst, rolNombre: "ADMIN" }, shared: null });
+test("un enlace compartido sin cuenta nominal no concede acceso a SADMIN", async () => {
+  const api = setup({ user: null, shared: sharedActor });
   const incoming = request();
   for (const response of [await api.list.GET(listRequest()), await api.update.PATCH(incoming, context)]) {
     assert.equal(response.status, 401);
-    assert.equal((await response.json()).code, "SHARED_ACCESS_REVOKED");
+    assert.equal((await response.json()).code, "UNAUTHENTICATED");
     privateResponse(response);
   }
-  assert.deepEqual(api.calls.map(call => call.name), ["shared", "shared"]);
+  assert.deepEqual(api.calls.map(call => call.name), ["user", "user"]);
   assert.equal(incoming.bodyUsed, false);
 });
 
-test("la lista pasa página, búsqueda y estado al servicio con actor personal o compartido", async () => {
-  for (const shared of [undefined, sharedActor]) {
-    const api = setup({ shared });
-    const response = await api.list.GET(listRequest());
-    assert.equal(response.status, 200);
-    privateResponse(response);
-    const body = await response.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.items[0].id, 712);
-    assert.equal(body.pageSize, 20);
-    assert.deepEqual(clone(body.counts), { all: 41, pending: 20, created: 21 });
-    const call = api.calls.find(item => item.name === "list");
-    assert.equal(call.args[0], api.prisma);
-    assert.deepEqual(clone(call.args[1]), shared || { id: centralAnalyst.id, nombre: centralAnalyst.nombre });
-    assert.deepEqual(clone(call.args[2]), { page: "3", q: "Cliente histórico", status: "created" });
-    if (shared) assert.equal(api.calls.some(item => item.name === "user"), false);
-  }
+test("la lista pasa página, búsqueda y estado al servicio con el administrador central", async () => {
+  const api = setup({ shared: sharedActor });
+  const response = await api.list.GET(listRequest());
+  assert.equal(response.status, 200);
+  privateResponse(response);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.items[0].id, 712);
+  assert.equal(body.pageSize, 20);
+  assert.deepEqual(clone(body.counts), { all: 41, pending: 20, created: 21 });
+  const call = api.calls.find(item => item.name === "list");
+  assert.equal(call.args[0], api.prisma);
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre });
+  assert.deepEqual(clone(call.args[2]), { page: "3", q: "Cliente histórico", status: "created" });
+  assert.equal(api.calls.some(item => item.name === "shared"), false);
 });
 
 test("la lista conserva el error de estado SADMIN inválido y no lo convierte en un fallo interno", async () => {
@@ -156,10 +162,10 @@ test("la lista conserva el error de estado SADMIN inválido y no lo convierte en
 });
 
 test("PATCH conserva cada marca y el número SADMIN textual con ceros y letras", async () => {
-  for (const shared of [undefined, sharedActor]) for (const [field, value] of [
+  for (const [field, value] of [
     ["codeudorCreado", true], ["creditoCreado", false], ["numeroCreditoConfirmado", true], ["numeroCredito", "000123-A"],
   ]) {
-    const api = setup({ shared });
+    const api = setup();
     const input = { version: 1, field, value };
     const response = await api.update.PATCH(request(input), context);
     assert.equal(response.status, 200);
@@ -167,7 +173,7 @@ test("PATCH conserva cada marca y el número SADMIN textual con ceros y letras",
     assert.equal((await response.json()).ok, true);
     const call = api.calls.find(item => item.name === "update");
     assert.equal(call.args[0], api.prisma);
-    assert.deepEqual(clone(call.args[1]), shared || { id: centralAnalyst.id, nombre: centralAnalyst.nombre });
+    assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre });
     assert.equal(call.args[2], "712");
     assert.deepEqual(clone(call.args[3]), input);
   }
@@ -179,7 +185,7 @@ test("PATCH bloquea otros orígenes y Fetch Metadata cruzado antes de consumir e
     { "sec-fetch-site": "cross-site" },
     { origin: "null" },
   ]) {
-    const api = setup({ shared: sharedActor });
+    const api = setup();
     const incoming = request(undefined, headers);
     const response = await api.update.PATCH(incoming, context);
     assert.equal(response.status, 403);
@@ -205,9 +211,9 @@ test("PATCH rechaza JSON inválido y cuerpos extensos antes de llamar al servici
   }
 });
 
-test("errores de revocación durante la operación y versiones obsoletas conservan su estado HTTP", async () => {
+test("errores de acceso durante la operación y versiones obsoletas conservan su estado HTTP", async () => {
   for (const error of [new actors.ApprovalActorAccessError(), new errors.CreditApprovalError("SADMIN_CHANGED", "Actualiza el registro.", 409)]) {
-    const api = setup({ shared: sharedActor, serviceError: error });
+    const api = setup({ serviceError: error });
     for (const response of [await api.list.GET(listRequest()), await api.update.PATCH(request(), context)]) {
       assert.equal(response.status, error.status);
       assert.equal((await response.json()).code, error.code);

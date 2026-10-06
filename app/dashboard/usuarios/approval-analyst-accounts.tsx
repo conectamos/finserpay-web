@@ -3,7 +3,6 @@
 import { useState, type FormEvent } from "react";
 import { Badge, Button, Card, DataTable, Input, Select } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
-import ApprovalAnalystLink from "./approval-analyst-link";
 
 export type ApprovalAnalystAccount = {
   id: number;
@@ -79,8 +78,8 @@ export default function ApprovalAnalystAccounts({ accounts, sedes, onUpdated }: 
     <Card className="mt-4 p-5">
       <h2 className="text-xl font-bold">Analistas de aprobación</h2>
       <p className="mt-2 text-sm text-[var(--fp-muted)]">
-        Cuentas personales para revisar créditos y autorizar su liquidación a aliados.
-        Cada analista accede únicamente a Aprobaciones.
+        Cuentas personales administradas por FINSER PAY para revisar créditos y autorizar su liquidación.
+        Cada analista inicia sesión en el portal y accede únicamente a Aprobaciones; sus acciones quedan registradas con su nombre.
       </p>
       {message && <p className="mt-4 text-sm" role="status">{message}</p>}
       <form onSubmit={(event) => void create(event)} className="mt-5 grid gap-4 md:grid-cols-2">
@@ -123,7 +122,7 @@ export default function ApprovalAnalystAccounts({ accounts, sedes, onUpdated }: 
               <thead><tr>
                 <th className="p-3" scope="col">Analista</th>
                 <th className="p-3" scope="col">Estado</th>
-                <th className="p-3" scope="col">Enlace personal</th>
+                <th className="p-3" scope="col">Ingreso</th>
                 <th className="p-3" scope="col">Restablecer clave</th>
                 <th className="p-3" scope="col">Acceso</th>
               </tr></thead>
@@ -132,9 +131,8 @@ export default function ApprovalAnalystAccounts({ accounts, sedes, onUpdated }: 
                   <td className="p-3"><p className="font-semibold">{account.nombre}</p><p className="text-[var(--fp-muted)]">{account.usuario} · {account.sede.nombre}</p></td>
                   <td className="p-3"><Badge>{account.activo ? "Activo" : "Inactivo"}</Badge></td>
                   <td className="p-3">
-                    <ApprovalAnalystLink key={account.id + ":" + account.updatedAt + ":" + account.activo}
-                      analystId={account.id} analystName={account.nombre}
-                      accountActive={account.activo} disabled={busy} />
+                    <p className="font-semibold">Usuario y clave</p>
+                    <p className="mt-1 text-xs text-[var(--fp-muted)]">Portal /aliados · Rol Analista de aprobación</p>
                   </td>
                   <td className="p-3">
                     <div className="flex min-w-64 flex-wrap gap-2">

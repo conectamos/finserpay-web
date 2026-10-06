@@ -4,13 +4,33 @@ import test from "node:test";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("la ruta administrativa activa el muro rediseñado sin convertir su sesión en acceso compartido", () => {
+test("la ruta administrativa usa cuentas nominales y reserva SADMIN para el administrador central", () => {
   const page = read("app/dashboard/aprobaciones/page.tsx");
-  assert.match(page, /<ApprovalWorkspace redesigned allowOperations=\{sharedContext === undefined\}/);
-  assert.match(page, /manageSharedAccess=\{canManageApprovalAnalysts\(user\)\}/);
+  assert.match(page, /const centralAdmin = canManageApprovalAnalysts\(user\)/);
+  assert.match(page, /allowOperations=\{sharedContext === undefined\}/);
+  assert.match(page, /canManageSadmin=\{centralAdmin && sharedContext === undefined\}/);
+  assert.match(page, /manageLegacySharedAccess=\{centralAdmin && sharedContext === undefined\}/);
+  assert.match(page, /Cierra el acceso compartido para continuar con tu cuenta personal/);
+  assert.doesNotMatch(page, /manageSharedAccess/);
   assert.doesNotMatch(page, /<ApprovalWorkspace shared\s*\/>/);
   const wrapper = read("app/dashboard/aprobaciones/approval-workspace.tsx");
   assert.match(wrapper, /<ApprovalConsole shared=\{shared\} redesigned=\{redesigned\}/);
+  assert.match(wrapper, /onOpenSadmin=\{canManageSadmin \? \(\) => setView\("sadmin"\) : undefined\}/);
+  assert.match(wrapper, /<SharedAccessControl retirementMode \/>/);
+});
+
+test("la administración de analistas ofrece ingreso por usuario y clave sin enlaces transferibles", () => {
+  const accounts = read("app/dashboard/usuarios/approval-analyst-accounts.tsx");
+  assert.match(accounts, /Portal \/aliados · Rol Analista de aprobación/);
+  assert.match(accounts, /Usuario y clave/);
+  assert.doesNotMatch(accounts, /ApprovalAnalystLink|Enlace personal/);
+});
+
+test("el acceso compartido anterior solo se ofrece para revocación durante la migración", () => {
+  const control = read("app/dashboard/aprobaciones/shared-access-control.tsx");
+  assert.match(control, /Los analistas deben ingresar con su cuenta personal/);
+  assert.match(control, /Revocar acceso anterior/);
+  assert.match(control, /link && retirementMode/);
 });
 
 test("el muro administrativo y el enlace usan el scroll normal de la página", () => {

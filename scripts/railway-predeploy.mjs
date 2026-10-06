@@ -11,6 +11,7 @@ await import("./ensure-credit-device-replacement-schema.mjs");
 await import("./ensure-credit-device-replacement-remission-schema.mjs");
 await import("./ensure-credit-approval-schema.mjs");
 await import("./ensure-approval-access-schema.mjs");
+await import("./ensure-approval-analyst-account-audit-schema.mjs");
 await import("./ensure-approval-evidence-schema.mjs");
 await import("./ensure-credit-approval-reissue-schema.mjs");
 

@@ -1,11 +1,13 @@
 import FinancialAccessGate from "./_components/financial-access-gate";
 import { getFinancialAccessState } from "@/lib/financial-access";
+import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
 
 export default async function FinancieroLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  await requireAdminDashboardAccess();
   const access = await getFinancialAccessState();
 
   if (!access.user) {

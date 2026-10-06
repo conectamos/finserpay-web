@@ -3,8 +3,10 @@ import prisma from "@/lib/prisma";
 import {
   SELLER_SESSION_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  APPROVAL_ANALYST_SESSION_COOKIE_NAME,
   APPROVAL_ACCESS_COOKIE_NAME,
   getSessionCredentialVersion,
+  verifyApprovalAnalystSessionToken,
   verifySellerSessionToken,
   verifySessionToken,
 } from "@/lib/session";
@@ -17,13 +19,24 @@ import {
 export async function getSessionUser(options: { allowApprovalAnalyst?: boolean; preferApprovalAccess?: boolean } = {}) {
   const cookieStore = await cookies();
   const regularToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  const analystToken = options.allowApprovalAnalyst
+    ? cookieStore.get(APPROVAL_ANALYST_SESSION_COOKIE_NAME)?.value
+    : undefined;
   const accessToken = options.allowApprovalAnalyst ? cookieStore.get(APPROVAL_ACCESS_COOKIE_NAME)?.value : undefined;
-  const usingAccessCookie = Boolean(accessToken && (options.preferApprovalAccess || !regularToken));
-  const sessionToken = usingAccessCookie ? accessToken : regularToken;
+  const usingAnalystCookie = Boolean(analystToken);
+  const usingAccessCookie = !usingAnalystCookie && Boolean(accessToken && (options.preferApprovalAccess || !regularToken));
+  const sessionToken = usingAnalystCookie ? analystToken : usingAccessCookie ? accessToken : regularToken;
 
-  const session = verifySessionToken(sessionToken);
+  const analystSession = usingAnalystCookie
+    ? verifyApprovalAnalystSessionToken(sessionToken)
+    : null;
+  const regularSession = usingAnalystCookie
+    ? null
+    : verifySessionToken(sessionToken);
+  const session = analystSession ?? regularSession;
+  const approvalAccessGrantId = regularSession?.approvalAccessGrantId;
 
-  if (!session || (usingAccessCookie && !session.approvalAccessGrantId)) return null;
+  if (!session || (usingAccessCookie && !approvalAccessGrantId)) return null;
 
   await ensureAliadoSchema(prisma);
   await ensureFinserPayCentralAdmin(prisma);
@@ -50,12 +63,14 @@ export async function getSessionUser(options: { allowApprovalAnalyst?: boolean; 
         select: {
           id: true,
           nombre: true,
+          activa: true,
           aliadoId: true,
           aliado: {
             select: {
               id: true,
               nombre: true,
               codigo: true,
+              activo: true,
             },
           },
         },
@@ -68,23 +83,29 @@ export async function getSessionUser(options: { allowApprovalAnalyst?: boolean; 
   // Operational callers deny the specialist by default, including API routes
   // that historically required only a session. Approval routes opt in explicitly.
   const approvalAnalyst = isApprovalAnalystRole(user.rol?.nombre);
+  // The dedicated cookie is permanently bound to the analyst role. A later
+  // promotion cannot turn the remaining 8-hour token into an admin session.
+  if (usingAnalystCookie && !approvalAnalyst) return null;
   if (approvalAnalyst && (
     !options.allowApprovalAnalyst ||
+    (!usingAnalystCookie && !usingAccessCookie) ||
     !canReviewCreditApprovals({
       rolNombre: user.rol.nombre,
       aliadoAccesoCodigo: user.sede?.aliado?.codigo,
+      sedeAccesoActiva: user.sede?.activa,
+      aliadoAccesoActivo: user.sede?.aliado?.activo,
     }) ||
     session.credentialVersion !== getSessionCredentialVersion(user.claveHash, user.updatedAt)
   )) return null;
 
-  if (session.approvalAccessGrantId) {
+  if (approvalAccessGrantId) {
     // A link can never become an administrative/seller login after a role change.
     if (!approvalAnalyst) return null;
     const grants = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
       `SELECT "id"::text FROM "CreditApprovalAccessLink" WHERE "userId" = $1 AND "id" = $2::uuid AND "credentialVersion" = $3 AND "revokedAt" IS NULL
         AND EXISTS (SELECT 1 FROM "Sede" site JOIN "Aliado" ally ON ally."id" = site."aliadoId"
           WHERE site."id" = $4 AND site."activa" = TRUE AND ally."activo" = TRUE AND UPPER(BTRIM(ally."codigo")) = 'FINSERPAY')`,
-      user.id, session.approvalAccessGrantId, session.credentialVersion, user.sedeId
+      user.id, approvalAccessGrantId, session.credentialVersion, user.sedeId
     );
     if (!grants.length) return null;
   }
@@ -143,6 +164,8 @@ export async function getSessionUser(options: { allowApprovalAnalyst?: boolean; 
     aliadoAccesoId: user.sede?.aliadoId ?? null,
     aliadoAccesoNombre: user.sede?.aliado?.nombre ?? null,
     aliadoAccesoCodigo: user.sede?.aliado?.codigo ?? null,
+    sedeAccesoActiva: user.sede?.activa ?? false,
+    aliadoAccesoActivo: user.sede?.aliado?.activo ?? false,
     rolId: user.rolId,
     rolNombre: user.rol?.nombre ?? "",
   };

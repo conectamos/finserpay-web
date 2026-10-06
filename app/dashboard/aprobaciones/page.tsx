@@ -1,12 +1,11 @@
 import { redirect } from "next/navigation";
 import { AppShell, Card } from "@/app/_components/finser-ui";
 import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
-import { isFinserPayCentralAlly } from "@/lib/aliados";
-import { getCreditApprovalSessionUser } from "@/lib/auth";
-import { canReviewCreditApprovals } from "@/lib/roles";
-import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import SharedLogout from "@/app/revision-creditos/shared-logout";
-import { canManageApprovalAnalysts } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
+import { getCreditApprovalSessionUser } from "@/lib/auth";
+import { canManageApprovalAnalysts, canReviewCreditApprovals } from "@/lib/roles";
 import ApprovalWorkspace from "./approval-workspace";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +19,7 @@ export default async function AprobacionesPage() {
   if (!user) redirect("/aliados");
   if (!canReviewCreditApprovals(user)) redirect("/dashboard");
   const sharedContext = await getApprovalSharedRequestActor();
+  const centralAdmin = canManageApprovalAnalysts(user);
 
   return (
     <AppShell sidebar={
@@ -31,14 +31,15 @@ export default async function AprobacionesPage() {
       />
     }>
       {sharedContext !== undefined && <Card className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-4 border-[var(--fp-amber)] p-4 sm:mx-6 lg:mx-8">
-        <div role="status"><p className="font-semibold">{sharedContext ? "Acceso compartido activo en este navegador" : "El acceso compartido venció o fue revocado"}</p>
-          <p className="mt-1 text-sm text-[var(--fp-muted)]">{sharedContext
-            ? "Las revisiones se registrarán con el acceso compartido. Cierra este acceso para abrir Detalle del crédito con tu cuenta personal."
-            : "Cierra este acceso para abrir Detalle del crédito con tu cuenta personal."}</p></div>
+        <div role="status">
+          <p className="font-semibold">{sharedContext ? "Acceso compartido activo en este navegador" : "El acceso compartido venció o fue revocado"}</p>
+          <p className="mt-1 text-sm text-[var(--fp-muted)]">Cierra el acceso compartido para continuar con tu cuenta personal y registrar las acciones con tu nombre.</p>
+        </div>
         <SharedLogout returnTo="/dashboard/aprobaciones" />
       </Card>}
       <ApprovalWorkspace redesigned allowOperations={sharedContext === undefined}
-        manageSharedAccess={canManageApprovalAnalysts(user)} userName={user.nombre} />
+        canManageSadmin={centralAdmin && sharedContext === undefined}
+        manageLegacySharedAccess={centralAdmin && sharedContext === undefined} userName={user.nombre} />
     </AppShell>
   );
 }

@@ -11,6 +11,7 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { ensureVendorProfileVisualColumns } from "@/lib/vendor-profile-schema";
 import { ensureUserProfileVisualColumns } from "@/lib/user-profile-schema";
 import { APPROVAL_ANALYST_ROLE, canManageApprovalAnalysts, isApprovalAnalystRole } from "@/lib/roles";
+import { appendApprovalAnalystAccountEvent } from "@/lib/approval-analyst-account-audit";
 
 function isAdminRole(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -394,8 +395,15 @@ export async function POST(req: Request) {
             where: { nombre: APPROVAL_ANALYST_ROLE }, update: {},
             create: { nombre: APPROVAL_ANALYST_ROLE, descripcion: "Revision de creditos para liquidacion a aliados" },
           });
-          await tx.usuario.create({
+          const analyst = await tx.usuario.create({
             data: { nombre, usuario, claveHash: hashPassword(clave), activo, sedeId: sede.id, rolId: rol.id },
+            select: { id: true },
+          });
+          await appendApprovalAnalystAccountEvent(tx, {
+            analystUserId: analyst.id,
+            actorUserId: session.user.id,
+            eventType: "CREATED",
+            accountActive: activo,
           });
         });
       } catch (error) {
@@ -598,15 +606,25 @@ export async function PATCH(req: Request) {
         (action === "RESET_PASSWORD" && (clave.length < 8 || clave.length > 128))) {
         return NextResponse.json({ error: "Operacion de analista invalida; la clave debe tener de 8 a 128 caracteres" }, { status: 400 });
       }
-      const result = await prisma.usuario.updateMany({
-        where: {
-          id: analistaId, updatedAt: expectedUpdatedAt,
-          rol: { nombre: APPROVAL_ANALYST_ROLE },
-          sede: { aliado: { codigo: "FINSERPAY" } },
-        },
-        data: action === "RESET_PASSWORD"
-          ? { claveHash: hashPassword(clave) }
-          : { activo: body.activo as boolean },
+      const result = await prisma.$transaction(async (tx) => {
+        const updated = await tx.usuario.updateMany({
+          where: {
+            id: analistaId, updatedAt: expectedUpdatedAt,
+            rol: { nombre: APPROVAL_ANALYST_ROLE },
+            sede: { aliado: { codigo: "FINSERPAY" } },
+          },
+          data: action === "RESET_PASSWORD"
+            ? { claveHash: hashPassword(clave) }
+            : { activo: body.activo as boolean },
+        });
+        if (updated.count !== 1) return updated;
+        await appendApprovalAnalystAccountEvent(tx, {
+          analystUserId: analistaId,
+          actorUserId: session.user.id,
+          eventType: action === "RESET_PASSWORD" ? "PASSWORD_RESET" : body.activo ? "ACTIVATED" : "DEACTIVATED",
+          accountActive: action === "RESET_PASSWORD" ? null : body.activo as boolean,
+        });
+        return updated;
       });
       if (result.count !== 1) {
         return NextResponse.json({ error: "El analista cambio o ya no esta disponible. Actualiza la lista antes de continuar." }, { status: 409 });

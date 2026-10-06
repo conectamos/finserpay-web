@@ -6,7 +6,15 @@ const queueValidation = loadApprovalModule("lib/credit-approval-queue.ts", {
   "@/lib/credit-approval-policy": {}, "@/lib/credit-approval-actor": approvalActors,
   "@/lib/credit-approval-errors": { CreditApprovalError: service.CreditApprovalError },
 });
-const centralAnalyst = { id: 7, nombre: "Analista de prueba", rolNombre: "ANALISTA_APROBACION", aliadoAccesoCodigo: "FINSERPAY", activo: true };
+const centralAnalyst = {
+  id: 7,
+  nombre: "Analista de prueba",
+  rolNombre: "ANALISTA_APROBACION",
+  aliadoAccesoCodigo: "FINSERPAY",
+  sedeAccesoActiva: true,
+  aliadoAccesoActivo: true,
+  activo: true,
+};
 const context = (id = "81") => ({ params: Promise.resolve({ id }) });
 const paths = {
   search: "app/api/aprobaciones/route.ts",

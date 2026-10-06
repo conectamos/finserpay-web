@@ -25,21 +25,32 @@ function load(file, dependencies = {}) {
 
 const roles = load("lib/roles.ts");
 const session = load("lib/session.ts");
-const central = { rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY", activo: true };
-const analyst = { ...central, rolNombre: "ANALISTA_APROBACION" };
+const central = { id: 1, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY", activo: true };
+const analyst = {
+  ...central,
+  rolNombre: "ANALISTA_APROBACION",
+  sedeAccesoActiva: true,
+  aliadoAccesoActivo: true,
+};
 
 function authFixture() {
   let user = {
     id: 7, nombre: "Analista de prueba", usuario: "analista.prueba", activo: true,
     claveHash: "isolated-password-hash", updatedAt: new Date("2026-09-09T10:00:00.000Z"),
     sedeId: 1, rolId: 4, rol: { nombre: "ANALISTA_APROBACION" },
-    sede: { nombre: "Central", aliadoId: 1, aliado: { id: 1, codigo: "FINSERPAY", nombre: "Finser" } },
+    sede: {
+      nombre: "Central", aliadoId: 1, activa: true,
+      aliado: { id: 1, codigo: "FINSERPAY", nombre: "Finser", activo: true },
+    },
   };
   const values = new Map();
   let operatingSedeReads = 0;
   let liveGrant = true;
-  const token = () => session.createSessionToken(user.id, session.getSessionCredentialVersion(user.claveHash, user.updatedAt));
-  values.set("session", token());
+  const token = () => session.createApprovalAnalystSessionToken(
+    user.id,
+    session.getSessionCredentialVersion(user.claveHash, user.updatedAt)
+  );
+  values.set(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME, token());
   const auth = load("lib/auth.ts", {
     "next/headers": { cookies: async () => ({ get: (name) => ({ value: values.get(name) }) }) },
     "@/lib/prisma": { default: {
@@ -57,6 +68,7 @@ test("la capacidad de revisar exige perfil autorizado, cuenta activa y aliado ce
   assert.equal(roles.canReviewCreditApprovals(analyst), true);
   assert.equal(roles.canReviewCreditApprovals(central), true);
   for (const user of [null, { ...analyst, activo: false }, { ...analyst, aliadoAccesoCodigo: "OTRO" },
+    { ...analyst, sedeAccesoActiva: false }, { ...analyst, aliadoAccesoActivo: false },
     { ...central, aliadoAccesoCodigo: null }, { ...central, rolNombre: "SUPERVISOR" }]) {
     assert.equal(roles.canReviewCreditApprovals(user), false);
   }
@@ -95,7 +107,7 @@ test("desactivar, restablecer clave o reactivar invalida sesiones analistas ante
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
   f.setUser({ activo: true, updatedAt: new Date("2026-09-09T11:00:00.000Z") });
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
-  f.values.set("session", f.token());
+  f.values.set(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME, f.token());
   assert.ok(await f.auth.getCreditApprovalSessionUser());
   f.setUser({ claveHash: "replacement-test-password-hash" });
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
@@ -103,12 +115,35 @@ test("desactivar, restablecer clave o reactivar invalida sesiones analistas ante
 
 test("sesiones sin firma, sin version o de analista no central son rechazadas", async () => {
   const f = authFixture();
-  f.values.set("session", "forged.cookie");
+  f.values.set(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME, "forged.cookie");
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
-  f.values.set("session", session.createSessionToken(7));
+  f.values.set(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME, session.createSessionToken(7));
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
-  f.values.set("session", f.token());
-  f.setUser({ sede: { nombre: "Aliado", aliadoId: 2, aliado: { codigo: "OTRO" } } });
+  f.values.set(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME, f.token());
+  f.setUser({ sede: { nombre: "Aliado", aliadoId: 2, activa: true, aliado: { codigo: "OTRO", activo: true } } });
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+});
+
+test("la sede y el aliado deben seguir activos durante toda la sesion del analista", async () => {
+  const f = authFixture();
+  f.setUser({
+    sede: { nombre: "Central", aliadoId: 1, activa: false, aliado: { codigo: "FINSERPAY", activo: true } },
+  });
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+  f.setUser({
+    sede: { nombre: "Central", aliadoId: 1, activa: true, aliado: { codigo: "FINSERPAY", activo: false } },
+  });
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+});
+
+test("una sesion general nunca autentica una cuenta analista", async () => {
+  const f = authFixture();
+  f.values.delete(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
+  f.values.set("session", session.createSessionToken(
+    7,
+    session.getSessionCredentialVersion("isolated-password-hash", new Date("2026-09-09T10:00:00.000Z"))
+  ));
+  assert.equal(await f.auth.getSessionUser({ allowApprovalAnalyst: true }), null);
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
 });
 
@@ -121,6 +156,7 @@ test("las sesiones administrativas existentes conservan acceso sin version de cr
 
 function accountApi(actor = central, overrides = {}) {
   const mutations = [];
+  let transactions = 0;
   const prisma = {
     sede: { findFirst: async () => ({ id: 1 }), findMany: async () => [] },
     vendedor: { findMany: async () => [] },
@@ -130,9 +166,11 @@ function accountApi(actor = central, overrides = {}) {
       create: async (input) => { mutations.push(input); return { id: 7 }; },
       updateMany: async (input) => { mutations.push(input); return { count: 1 }; },
     },
+    $executeRawUnsafe: async (sql, ...params) => { mutations.push({ sql, params }); return 1; },
     ...overrides,
   };
-  prisma.$transaction = async (work) => work(prisma);
+  prisma.$transaction = async (work) => { transactions++; return work(prisma); };
+  const accountAudit = load("lib/approval-analyst-account-audit.ts");
   const api = load("app/api/usuarios/admin/route.ts", {
     "next/server": { NextResponse: { json: (body, options) => Response.json(body, options) } },
     "@/lib/prisma": { default: prisma },
@@ -144,8 +182,9 @@ function accountApi(actor = central, overrides = {}) {
     "@/lib/vendor-profile-schema": { ensureVendorProfileVisualColumns: async () => {} },
     "@/lib/user-profile-schema": { ensureUserProfileVisualColumns: async () => {} },
     "@/lib/roles": roles,
+    "@/lib/approval-analyst-account-audit": accountAudit,
   });
-  return { api, mutations };
+  return { api, mutations, transactions: () => transactions };
 }
 const request = (body) => new Request("https://finser.test/api/usuarios/admin", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -164,6 +203,9 @@ test("solo administrador central crea analistas; el API fija el rol y guarda has
   assert.equal(f.mutations[0].create.nombre, "ANALISTA_APROBACION");
   assert.equal(f.mutations[1].data.claveHash, "HASH:test-passphrase");
   assert.equal(f.mutations[1].data.rolId, 4);
+  assert.equal(f.transactions(), 1);
+  assert.match(f.mutations[2].sql, /INSERT INTO "ApprovalAnalystAccountEvent"/);
+  assert.deepEqual(f.mutations[2].params, [7, 1, "CREATED", true]);
 });
 
 test("no crea analistas en sedes externas ni acepta claves incompletas", async () => {
@@ -185,15 +227,25 @@ test("desactivar y reset exigen central, rol analista, sede central y version es
   assert.equal(f.mutations[0].where.sede.aliado.codigo, "FINSERPAY");
   assert.equal(f.mutations[0].where.updatedAt.toISOString(), actionBody.expectedUpdatedAt);
   assert.equal(f.mutations[0].data.activo, false);
+  assert.equal(f.transactions(), 1);
+  assert.deepEqual(f.mutations[1].params, [7, 1, "DEACTIVATED", false]);
+  const activate = accountApi();
+  assert.equal((await activate.api.PATCH(request({ ...actionBody, activo: true }))).status, 200);
+  assert.equal(activate.transactions(), 1);
+  assert.deepEqual(activate.mutations[1].params, [7, 1, "ACTIVATED", true]);
   const reset = accountApi();
   assert.equal((await reset.api.PATCH(request({ ...actionBody, action: "RESET_PASSWORD", clave: "next-test-passphrase" }))).status, 200);
   assert.equal(reset.mutations[0].data.claveHash, "HASH:next-test-passphrase");
   assert.equal("activo" in reset.mutations[0].data, false);
+  assert.equal(reset.transactions(), 1);
+  assert.deepEqual(reset.mutations[1].params, [7, 1, "PASSWORD_RESET", null]);
 });
 
 test("una cuenta modificada o fuera del alcance devuelve conflicto y no éxito", async () => {
   const f = accountApi(central, { usuario: { updateMany: async () => ({ count: 0 }) } });
   assert.equal((await f.api.PATCH(request(actionBody))).status, 409);
+  assert.equal(f.transactions(), 1);
+  assert.equal(f.mutations.length, 0);
 });
 
 
@@ -215,13 +267,16 @@ function loginApi(overrides = {}) {
   const user = {
     id: 7, nombre: "Analista", usuario: "analista.prueba", claveHash: "test-hashed-password",
     updatedAt: new Date("2026-09-09T10:00:00.000Z"), rol: { nombre: "ANALISTA_APROBACION" },
-    sedeId: 1, sede: { aliado: { codigo: "FINSERPAY" } }, activo: true, ...overrides,
+    sedeId: 1, sede: { activa: true, aliado: { codigo: "FINSERPAY", activo: true } }, activo: true, ...overrides,
   };
   const cookies = new Map();
   const api = load("app/api/login/route.ts", {
     "next/server": { NextResponse: { json(body, options) {
       const response = Response.json(body, options);
-      response.cookies = { set: (name, value) => cookies.set(name, value), delete: (name) => cookies.delete(name) };
+      response.cookies = {
+        set: (name, value, options) => cookies.set(name, { value, options }),
+        delete: (name) => cookies.delete(name),
+      };
       return response;
     } } },
     "@/lib/prisma": { default: { usuario: { findUnique: async () => user } } },
@@ -238,13 +293,16 @@ test("el login del analista devuelve destino acotado, cookie revocable y borra p
   const payload = await response.json();
   assert.equal(payload.destination, "/dashboard/aprobaciones");
   assert.equal("claveHash" in payload.usuario, false);
-  const signed = session.verifySessionToken(f.cookies.get("session"));
+  assert.equal(f.cookies.get("session").value, "");
+  const analystCookie = f.cookies.get(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
+  const signed = session.verifyApprovalAnalystSessionToken(analystCookie.value);
   assert.equal(signed.credentialVersion, session.getSessionCredentialVersion(f.user.claveHash, f.user.updatedAt));
-  assert.equal(f.cookies.get("seller_session"), "");
+  assert.equal(analystCookie.options.maxAge, 8 * 60 * 60);
+  assert.equal(f.cookies.get("seller_session").value, "");
 });
 
 test("el login rechaza analista externo, inactivo o con clave equivocada y conserva destino admin", async () => {
-  const external = loginApi({ sede: { aliado: { codigo: "OTRO" } } });
+  const external = loginApi({ sede: { activa: true, aliado: { codigo: "OTRO", activo: true } } });
   assert.equal((await external.api.POST(request({ usuario: "analista", clave: "test-login-passphrase" }))).status, 403);
   assert.equal(external.cookies.size, 0);
   const inactive = loginApi({ activo: false });
@@ -254,17 +312,28 @@ test("el login rechaza analista externo, inactivo o con clave equivocada y conse
   const admin = loginApi({ rol: { nombre: "ADMIN" } });
   const response = await admin.api.POST(request({ usuario: "admin", clave: "test-login-passphrase" }));
   assert.equal((await response.json()).destination, "/dashboard");
+  assert.ok(session.verifySessionToken(admin.cookies.get("session").value));
+  assert.equal(admin.cookies.get(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME).value, "");
+});
+
+test("el login rechaza analistas con sede o aliado inactivo", async () => {
+  const inactiveSite = loginApi({ sede: { activa: false, aliado: { codigo: "FINSERPAY", activo: true } } });
+  assert.equal((await inactiveSite.api.POST(request({ usuario: "analista", clave: "test-login-passphrase" }))).status, 403);
+  const inactiveAlly = loginApi({ sede: { activa: true, aliado: { codigo: "FINSERPAY", activo: false } } });
+  assert.equal((await inactiveAlly.api.POST(request({ usuario: "analista", clave: "test-login-passphrase" }))).status, 403);
 });
 
 test("las sesiones de enlace quedan revocadas y no se convierten en sesiones de administrador", async () => {
   const f = authFixture();
-  f.values.set("session", f.linkToken());
+  f.values.delete(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
+  f.values.set(session.APPROVAL_ACCESS_COOKIE_NAME, f.linkToken());
   assert.equal(await f.auth.getSessionUser(), null);
   assert.equal((await f.auth.getCreditApprovalSessionUser()).id, 7);
   f.revokeLink();
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
   const promoted = authFixture();
-  promoted.values.set("session", promoted.linkToken());
+  promoted.values.delete(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
+  promoted.values.set(session.APPROVAL_ACCESS_COOKIE_NAME, promoted.linkToken());
   promoted.setUser({ rol: { nombre: "ADMIN" } });
   assert.equal(await promoted.auth.getSessionUser(), null);
   assert.equal(await promoted.auth.getCreditApprovalSessionUser(), null);
@@ -272,6 +341,7 @@ test("las sesiones de enlace quedan revocadas y no se convierten en sesiones de 
 
 test("el enlace dedicado válido abre el layout aunque quede una sesión normal obsoleta", async () => {
   const f = authFixture();
+  f.values.delete(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
   f.values.set("session", "obsolete-cookie");
   f.values.set(session.APPROVAL_ACCESS_COOKIE_NAME, f.linkToken());
   assert.equal(await f.auth.getSessionUser(), null);
@@ -288,9 +358,148 @@ test("el enlace dedicado válido abre el layout aunque quede una sesión normal 
 
 test("una cookie dedicada inválida nunca cambia silenciosamente al administrador normal", async () => {
   const f = authFixture();
+  f.values.delete(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
   f.setUser({ rol: { nombre: "ADMIN" } });
   f.values.set("session", session.createSessionToken(7));
   f.values.set(session.APPROVAL_ACCESS_COOKIE_NAME, "revoked-or-invalid-link-session");
   assert.equal((await f.auth.getSessionUser()).rolNombre, "ADMIN");
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+});
+
+test("la cookie nominal dura ocho horas y no puede reutilizarse como sesión general", () => {
+  const token = session.createApprovalAnalystSessionToken(7, "credential-version");
+  const payload = session.verifyApprovalAnalystSessionToken(token);
+  assert.equal(payload.userId, 7);
+  assert.equal(payload.credentialVersion, "credential-version");
+  assert.ok(payload.exp - Math.floor(Date.now() / 1000) <= 8 * 60 * 60);
+  assert.ok(payload.exp - Math.floor(Date.now() / 1000) > 8 * 60 * 60 - 5);
+  assert.equal(session.verifySessionToken(token), null);
+  assert.equal(session.verifyApprovalAnalystSessionToken(session.createSessionToken(7)), null);
+});
+
+test("la cookie nominal deja de servir si la cuenta deja de ser analista", async () => {
+  const f = authFixture();
+  f.setUser({ rol: { nombre: "ADMIN" } });
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+  assert.equal(await f.auth.getSessionUser(), null);
+});
+
+function proxyRequest(pathname, cookieValues = {}, method = "GET") {
+  const nextUrl = {
+    pathname,
+    search: "?unsafe=1",
+    clone() {
+      return { pathname: this.pathname, search: this.search };
+    },
+  };
+  return {
+    method,
+    nextUrl,
+    cookies: { get: (name) => cookieValues[name] ? { value: cookieValues[name] } : undefined },
+    headers: { get: () => null },
+  };
+}
+
+const proxyModule = load("proxy.ts", {
+  "next/server": { NextResponse: {
+    next: () => ({ kind: "next" }),
+    json: (body, options) => ({ kind: "json", body, status: options?.status ?? 200 }),
+    redirect: (url) => ({ kind: "redirect", pathname: url.pathname, search: url.search }),
+  } },
+});
+
+test("el proxy limita la cookie nominal al muro, sus APIs, sesión y logout", () => {
+  const accountCookie = { [session.APPROVAL_ANALYST_SESSION_COOKIE_NAME]: "signed-analyst-cookie" };
+  for (const path of ["/dashboard/aprobaciones", "/api/aprobaciones", "/api/aprobaciones/7", "/api/session", "/api/login", "/api/logout"]) {
+    assert.equal(proxyModule.proxy(proxyRequest(path, accountCookie)).kind, "next", path);
+  }
+  assert.equal(proxyModule.proxy(proxyRequest("/aliados", accountCookie)).kind, "next");
+  for (const path of ["/api/inventario-principal/buscar", "/api/clientes", "/api/usuarios/admin"]) {
+    const response = proxyModule.proxy(proxyRequest(path, accountCookie, "POST"));
+    assert.equal(response.status, 403, path);
+  }
+  for (const path of ["/dashboard", "/dashboard/financiero", "/dashboard/deuda-sedes"]) {
+    const response = proxyModule.proxy(proxyRequest(path, accountCookie));
+    assert.equal(response.kind, "redirect", path);
+    assert.equal(response.pathname, "/dashboard/aprobaciones", path);
+    assert.equal(response.search, "", path);
+  }
+});
+
+test("una cuenta revocada puede volver al login sin quedar en un ciclo de redirecciones", async () => {
+  const f = authFixture();
+  f.setUser({ activo: false });
+  assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
+  const accountCookie = { [session.APPROVAL_ANALYST_SESSION_COOKIE_NAME]: "stale-cookie" };
+  assert.equal(proxyModule.proxy(proxyRequest("/api/login", accountCookie, "POST")).kind, "next");
+  assert.equal(proxyModule.proxy(proxyRequest("/aliados", accountCookie)).kind, "next");
+});
+
+test("el proxy conserva la sesión general del administrador y la contingencia por enlace", () => {
+  assert.equal(proxyModule.proxy(proxyRequest("/api/inventario-principal/buscar", { session: "admin" }, "POST")).kind, "next");
+  assert.equal(proxyModule.proxy(proxyRequest("/dashboard/financiero", { session: "admin" })).kind, "next");
+  assert.equal(proxyModule.proxy(proxyRequest("/api/aprobaciones", { approval_access_session: "legacy" })).kind, "next");
+  assert.equal(proxyModule.proxy(proxyRequest("/dashboard/aprobaciones", { approval_access_session: "legacy" })).kind, "next");
+});
+
+function guardedLookupRoute(file, actor, result) {
+  let queries = 0;
+  const prisma = {
+    inventarioPrincipal: { findUnique: async () => { queries++; return result; } },
+    inventarioSede: { findFirst: async () => { queries++; return result; } },
+  };
+  const api = load(file, {
+    "next/server": { NextResponse: { json: (body, options) => Response.json(body, options) } },
+    "@/lib/prisma": { default: prisma },
+    "@/lib/auth": { getSessionUser: async () => actor },
+    "@/lib/roles": roles,
+  });
+  return { api, queries: () => queries };
+}
+
+test("las búsquedas de IMEI niegan al analista antes de consultar inventario", async () => {
+  for (const file of ["app/api/inventario-principal/buscar/route.ts", "app/api/prestamos/buscar-imei/route.ts"]) {
+    const unauthenticated = guardedLookupRoute(file, null, null);
+    assert.equal((await unauthenticated.api.POST(request({ imei: "123" }))).status, 401, file);
+    assert.equal(unauthenticated.queries(), 0, file);
+
+    const denied = guardedLookupRoute(file, analyst, null);
+    assert.equal((await denied.api.POST(request({ imei: "123" }))).status, 403, file);
+    assert.equal(denied.queries(), 0, file);
+
+    const allowed = guardedLookupRoute(file, central, { referencia: "IPHONE", color: "NEGRO", costo: 1 });
+    assert.equal((await allowed.api.POST(request({ imei: "123" }))).status, 200, file);
+    assert.equal(allowed.queries(), 1, file);
+  }
+});
+
+test("los layouts financiero y deuda de sedes exigen el guard administrativo del servidor", () => {
+  const financial = readFileSync(new URL("../app/dashboard/financiero/layout.tsx", import.meta.url), "utf8");
+  const siteDebt = readFileSync(new URL("../app/dashboard/deuda-sedes/layout.tsx", import.meta.url), "utf8");
+  assert.match(financial, /await requireAdminDashboardAccess\(\)/);
+  assert.ok(financial.indexOf("await requireAdminDashboardAccess()") < financial.indexOf("await getFinancialAccessState()"));
+  assert.match(siteDebt, /await requireAdminDashboardAccess\(\)/);
+});
+
+test("logout elimina también la cookie nominal del analista", async () => {
+  const deleted = new Map();
+  const logout = load("app/api/logout/route.ts", {
+    "next/headers": { cookies: async () => ({ get: () => undefined }) },
+    "@/lib/prisma": { default: {} },
+    "@/lib/approval-shared-access": { revokeSharedApprovalSession: async () => {} },
+    "next/server": { NextResponse: { json(body, options) {
+      const response = Response.json(body, options);
+      response.cookies = {
+        set: (name, value, cookieOptions) => deleted.set(name, { value, cookieOptions }),
+        delete: () => {},
+      };
+      return response;
+    } } },
+    "@/lib/financial-access": { clearFinancialAccessCookie: () => {} },
+    "@/lib/session": session,
+  });
+  assert.equal((await logout.POST()).status, 200);
+  const cleared = deleted.get(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
+  assert.equal(cleared.value, "");
+  assert.equal(cleared.cookieOptions.maxAge, 0);
 });

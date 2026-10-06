@@ -5,6 +5,9 @@ import { hashPassword, isPasswordHash, verifyPassword } from "@/lib/password";
 import { canReviewCreditApprovals, isApprovalAnalystRole } from "@/lib/roles";
 import {
   SELLER_SESSION_COOKIE_NAME,
+  APPROVAL_ANALYST_SESSION_COOKIE_NAME,
+  APPROVAL_ANALYST_SESSION_MAX_AGE_SECONDS,
+  createApprovalAnalystSessionToken,
   createSessionToken,
   getSessionCredentialVersion,
   getSessionCookieOptions,
@@ -36,7 +39,12 @@ export async function POST(req: Request) {
         rol: true,
         sedeId: true,
         activo: true,
-        sede: { select: { aliado: { select: { codigo: true } } } },
+        sede: {
+          select: {
+            activa: true,
+            aliado: { select: { codigo: true, activo: true } },
+          },
+        },
       },
     });
 
@@ -65,6 +73,8 @@ export async function POST(req: Request) {
     if (approvalAnalyst && !canReviewCreditApprovals({
       rolNombre: user.rol.nombre,
       aliadoAccesoCodigo: user.sede?.aliado?.codigo,
+      sedeAccesoActiva: user.sede?.activa,
+      aliadoAccesoActivo: user.sede?.aliado?.activo,
     })) {
       return NextResponse.json({ error: "Acceso no autorizado" }, { status: 403 });
     }
@@ -95,18 +105,37 @@ export async function POST(req: Request) {
       },
     });
 
-    response.cookies.set(
-      SESSION_COOKIE_NAME,
-      createSessionToken(user.id, approvalAnalyst ? getSessionCredentialVersion(passwordHash, credentialUpdatedAt) : undefined),
-      getSessionCookieOptions()
-    );
-    response.cookies.set(SELLER_SESSION_COOKIE_NAME, "", {
+    const expiredCookie = {
       ...getSessionCookieOptions(),
       expires: new Date(0),
       maxAge: 0,
+    };
+    if (approvalAnalyst) {
+      response.cookies.set(SESSION_COOKIE_NAME, "", expiredCookie);
+      response.cookies.set(
+        APPROVAL_ANALYST_SESSION_COOKIE_NAME,
+        createApprovalAnalystSessionToken(
+          user.id,
+          getSessionCredentialVersion(passwordHash, credentialUpdatedAt)
+        ),
+        {
+          ...getSessionCookieOptions(),
+          maxAge: APPROVAL_ANALYST_SESSION_MAX_AGE_SECONDS,
+        }
+      );
+    } else {
+      response.cookies.set(
+        SESSION_COOKIE_NAME,
+        createSessionToken(user.id),
+        getSessionCookieOptions()
+      );
+      response.cookies.set(APPROVAL_ANALYST_SESSION_COOKIE_NAME, "", expiredCookie);
+    }
+    response.cookies.set(SELLER_SESSION_COOKIE_NAME, "", {
+      ...expiredCookie,
     });
-    response.cookies.set(APPROVAL_ACCESS_COOKIE_NAME, "", { ...getSessionCookieOptions(), expires: new Date(0), maxAge: 0 });
-    response.cookies.set(APPROVAL_SHARED_COOKIE_NAME, "", { ...getSessionCookieOptions(), expires: new Date(0), maxAge: 0 });
+    response.cookies.set(APPROVAL_ACCESS_COOKIE_NAME, "", expiredCookie);
+    response.cookies.set(APPROVAL_SHARED_COOKIE_NAME, "", expiredCookie);
     response.cookies.delete("userId");
 
     return response;

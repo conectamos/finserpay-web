@@ -226,6 +226,8 @@ model Usuario {
   eventosSadmin CreditSadminEvent[]
   approvalAccessLink CreditApprovalAccessLink? @relation("ApprovalAccessLinkOwner")
   issuedApprovalAccessLinks CreditApprovalAccessLink[] @relation("ApprovalAccessLinkIssuer")
+  approvalAnalystAccountEvents ApprovalAnalystAccountEvent[] @relation("ApprovalAnalystAccountTarget")
+  managedApprovalAnalystAccountEvents ApprovalAnalystAccountEvent[] @relation("ApprovalAnalystAccountActor")
   bloqueosDocumentoCreados ListaNegraDocumento[] @relation("BlacklistCreatedBy")
   bloqueosDocumentoActualizados ListaNegraDocumento[] @relation("BlacklistUpdatedBy")
   eventosListaNegra ListaNegraDocumentoEvento[]
@@ -233,6 +235,20 @@ model Usuario {
   limpiezasListaNegra ListaNegraLimpieza[]
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
+}
+
+model ApprovalAnalystAccountEvent {
+  id            BigInt   @id @default(autoincrement())
+  analystUserId Int
+  actorUserId   Int
+  eventType     String   @db.VarChar(32)
+  accountActive Boolean?
+  createdAt     DateTime @default(now()) @db.Timestamp(3)
+  analyst       Usuario  @relation("ApprovalAnalystAccountTarget", fields: [analystUserId], references: [id], onDelete: Restrict)
+  actor         Usuario  @relation("ApprovalAnalystAccountActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([analystUserId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model Vendedor {

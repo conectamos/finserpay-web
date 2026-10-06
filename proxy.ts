@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 const SESSION_COOKIE_NAME = "session";
+const APPROVAL_ANALYST_SESSION_COOKIE_NAME = "approval_analyst_session";
 const APPROVAL_ACCESS_COOKIE_NAME = "approval_access_session";
 const APPROVAL_SHARED_COOKIE_NAME = "approval_shared_session";
 const SELLER_SESSION_COOKIE_NAME = "seller_session";
@@ -100,6 +101,14 @@ function redirectToDashboard(request: NextRequest) {
   return NextResponse.redirect(url);
 }
 
+function redirectToApprovals(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  url.pathname = "/dashboard/aprobaciones";
+  url.search = "";
+
+  return NextResponse.redirect(url);
+}
+
 function redirectToLogin(request: NextRequest) {
   const url = request.nextUrl.clone();
   url.pathname = "/aliados";
@@ -123,15 +132,27 @@ function usesDedicatedBearerAuth(request: NextRequest, pathname: string) {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+  const hasApprovalAnalystSession = Boolean(
+    request.cookies.get(APPROVAL_ANALYST_SESSION_COOKIE_NAME)?.value
+  );
   const hasApprovalAccess = Boolean(request.cookies.get(APPROVAL_ACCESS_COOKIE_NAME)?.value);
   const hasSharedApprovalAccess = Boolean(request.cookies.get(APPROVAL_SHARED_COOKIE_NAME)?.value);
   const approvalApi = pathMatches(pathname, ["/api/aprobaciones"]);
   const approvalPage = pathMatches(pathname, ["/dashboard/aprobaciones"]);
+  const approvalAnalystApi =
+    approvalApi ||
+    pathname === "/api/session" ||
+    pathname === "/api/login" ||
+    pathname === "/api/logout";
   const hasSellerProfile = Boolean(
     request.cookies.get(SELLER_SESSION_COOKIE_NAME)?.value
   );
 
   if (pathname.startsWith("/api/")) {
+    if (hasApprovalAnalystSession && !approvalAnalystApi) {
+      return NextResponse.json({ error: "Acceso no autorizado" }, { status: 403 });
+    }
+
     if (usesDedicatedBearerAuth(request, pathname)) {
       return NextResponse.next();
     }
@@ -140,7 +161,12 @@ export function proxy(request: NextRequest) {
       return NextResponse.next();
     }
 
-    if (pathMatches(pathname, PROTECTED_API_PREFIXES) && !hasSession && !(approvalApi && (hasApprovalAccess || hasSharedApprovalAccess))) {
+    if (
+      pathMatches(pathname, PROTECTED_API_PREFIXES) &&
+      !hasSession &&
+      !(approvalAnalystApi && hasApprovalAnalystSession) &&
+      !(approvalApi && (hasApprovalAccess || hasSharedApprovalAccess))
+    ) {
       return unauthorizedApi();
     }
 
@@ -151,12 +177,20 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  if (hasApprovalAnalystSession && pathname !== "/aliados" && !approvalPage) {
+    return redirectToApprovals(request);
+  }
+
   if (pathMatches(pathname, LEGACY_PAGE_PREFIXES)) {
     return hasSession ? redirectToDashboard(request) : redirectToLogin(request);
   }
 
   if (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) {
-    if (!hasSession && !(approvalPage && hasApprovalAccess)) {
+    if (
+      !hasSession &&
+      !(approvalPage && hasApprovalAnalystSession) &&
+      !(approvalPage && hasApprovalAccess)
+    ) {
       return redirectToLogin(request);
     }
 

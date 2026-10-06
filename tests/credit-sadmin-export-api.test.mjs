@@ -31,12 +31,18 @@ function load(path, dependencies = {}) {
 const errors = load("lib/credit-approval-errors.ts");
 const actors = load("lib/credit-approval-actor.ts");
 const roles = load("lib/roles.ts");
+const centralAdmin = {
+  id: 7,
+  nombre: "Administrador central",
+  activo: true,
+  rolNombre: "ADMIN",
+  aliadoAccesoCodigo: "FINSERPAY",
+};
 const centralAnalyst = {
+  ...centralAdmin,
   id: 17,
   nombre: "Analista de prueba",
-  activo: true,
   rolNombre: "ANALISTA_APROBACION",
-  aliadoAccesoCodigo: "FINSERPAY",
 };
 const sharedActor = {
   kind: "SHARED_LINK",
@@ -59,14 +65,18 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function setup({ user = centralAnalyst, shared, serviceError, workbookError, exportImpl, writeBufferImpl } = {}) {
+function setup({ user = centralAdmin, shared, serviceError, workbookError, exportImpl, writeBufferImpl } = {}) {
   const calls = [];
   const prisma = {};
   const http = load("lib/credit-approval-http.ts", {
     "next/server": { NextResponse: Response },
     "@/lib/auth": {
-      getCreditApprovalSessionUser: async () => {
+      getSessionUser: async () => {
         calls.push({ name: "user" });
+        return user;
+      },
+      getCreditApprovalSessionUser: async () => {
+        calls.push({ name: "approval-user" });
         return user;
       },
     },
@@ -120,30 +130,28 @@ function privateResponse(response) {
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 }
 
-test("exporta un XLSX con búsqueda, estado, actor y encabezados privados", async () => {
-  for (const shared of [undefined, sharedActor]) {
-    const api = setup({ shared });
-    const response = await api.route.GET(request());
-    assert.equal(response.status, 200);
-    privateResponse(response);
-    assert.equal(
-      response.headers.get("content-type"),
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
-    assert.match(
-      response.headers.get("content-disposition"),
-      /^attachment; filename="creacion-sadmin-creados-\d{4}-\d{2}-\d{2}\.xlsx"$/,
-    );
-    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), xlsxBytes);
+test("exporta un XLSX con búsqueda, estado, actor central y encabezados privados", async () => {
+  const api = setup({ shared: sharedActor });
+  const response = await api.route.GET(request());
+  assert.equal(response.status, 200);
+  privateResponse(response);
+  assert.equal(
+    response.headers.get("content-type"),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  assert.match(
+    response.headers.get("content-disposition"),
+    /^attachment; filename="creacion-sadmin-creados-\d{4}-\d{2}-\d{2}\.xlsx"$/,
+  );
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), xlsxBytes);
 
-    const call = api.calls.find(item => item.name === "export");
-    assert.equal(call.args[0], api.prisma);
-    assert.deepEqual(clone(call.args[1]), shared || { id: centralAnalyst.id, nombre: centralAnalyst.nombre });
-    assert.deepEqual(clone(call.args[2]), { q: "Cliente histórico", status: "created" });
-    assert.deepEqual(api.calls.find(item => item.name === "workbook").items, [{ id: 712, folio: "FC-HISTORICO" }]);
-    assert.equal(api.calls.filter(item => item.name === "write").length, 1);
-    if (shared) assert.equal(api.calls.some(item => item.name === "user"), false);
-  }
+  const call = api.calls.find(item => item.name === "export");
+  assert.equal(call.args[0], api.prisma);
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre });
+  assert.deepEqual(clone(call.args[2]), { q: "Cliente histórico", status: "created" });
+  assert.deepEqual(api.calls.find(item => item.name === "workbook").items, [{ id: 712, folio: "FC-HISTORICO" }]);
+  assert.equal(api.calls.filter(item => item.name === "write").length, 1);
+  assert.equal(api.calls.some(item => item.name === "shared"), false);
 });
 
 test("solo genera un XLSX por proceso, responde 429 al segundo y libera el turno al terminar", async () => {
@@ -213,8 +221,9 @@ test("el endpoint niega identidades sin acceso antes de consultar o construir el
   const cases = [
     ["sin sesión", null, 401],
     ["vendedor central", { ...centralAnalyst, rolNombre: "VENDEDOR" }, 403],
-    ["administrador de aliado", { ...centralAnalyst, rolNombre: "ADMIN", aliadoAccesoCodigo: "ALIADO" }, 403],
-    ["analista inactivo", { ...centralAnalyst, activo: false }, 403],
+    ["administrador de aliado", { ...centralAdmin, aliadoAccesoCodigo: "ALIADO" }, 403],
+    ["analista central", centralAnalyst, 403],
+    ["administrador inactivo", { ...centralAdmin, activo: false }, 403],
   ];
   for (const [name, user, status] of cases) await t.test(name, async () => {
     const api = setup({ user });
@@ -226,13 +235,13 @@ test("el endpoint niega identidades sin acceso antes de consultar o construir el
   });
 });
 
-test("un enlace revocado no usa una sesión administrativa como respaldo", async () => {
-  const api = setup({ user: { ...centralAnalyst, rolNombre: "ADMIN" }, shared: null });
+test("un enlace compartido sin cuenta nominal no puede exportar SADMIN", async () => {
+  const api = setup({ user: null, shared: sharedActor });
   const response = await api.route.GET(request());
   assert.equal(response.status, 401);
   privateResponse(response);
-  assert.equal((await response.json()).code, "SHARED_ACCESS_REVOKED");
-  assert.deepEqual(api.calls.map(call => call.name), ["shared"]);
+  assert.equal((await response.json()).code, "UNAUTHENTICATED");
+  assert.deepEqual(api.calls.map(call => call.name), ["user"]);
 });
 
 test("conserva los errores 400 y 413 del servicio sin generar un archivo parcial", async () => {
