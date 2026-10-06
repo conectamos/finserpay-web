@@ -152,13 +152,13 @@ test("el analista nominal central gestiona SADMIN con autoría individual", asyn
   const listed = await api.list.GET(listRequest("pending"));
   assert.equal(listed.status, 200);
   const listCall = api.calls.find(call => call.name === "list");
-  assert.deepEqual(clone(listCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "APPROVED_READY" });
+  assert.deepEqual(clone(listCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "APPROVED_READY" });
 
   const incoming = request({ version: 1, field: "creditoCreado", value: true });
   const updated = await api.update.PATCH(incoming, context);
   assert.equal(updated.status, 200);
   const updateCall = api.calls.find(call => call.name === "update");
-  assert.deepEqual(clone(updateCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "APPROVED_READY" });
+  assert.deepEqual(clone(updateCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "APPROVED_READY" });
 });
 
 test("la lista pasa página, búsqueda y estado al servicio con el administrador central", async () => {
@@ -173,7 +173,7 @@ test("la lista pasa página, búsqueda y estado al servicio con el administrador
   assert.deepEqual(clone(body.counts), { all: 41, pending: 20, created: 21 });
   const call = api.calls.find(item => item.name === "list");
   assert.equal(call.args[0], api.prisma);
-  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" });
   assert.deepEqual(clone(call.args[2]), { page: "3", q: "Cliente histórico", status: "created" });
   assert.equal(api.calls.some(item => item.name === "shared"), false);
 });
@@ -203,7 +203,7 @@ test("GET devuelve el resumen reutilizable, historial y enlace local", async () 
   assert.equal(body.summary.registroLocalHref, "/dashboard/aprobaciones?credito=712");
   const call = api.calls.find(item => item.name === "summary");
   assert.equal(call.args[0], api.prisma);
-  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" });
   assert.equal(call.args[2], "712");
 });
 
@@ -219,7 +219,7 @@ test("PATCH conserva cada marca y el número SADMIN textual con ceros y letras",
     assert.equal((await response.json()).ok, true);
     const call = api.calls.find(item => item.name === "update");
     assert.equal(call.args[0], api.prisma);
-    assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
+    assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" });
     assert.equal(call.args[2], "712");
     assert.deepEqual(clone(call.args[3]), input);
   }

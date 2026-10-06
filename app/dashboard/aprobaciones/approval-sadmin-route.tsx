@@ -8,7 +8,6 @@ export default function ApprovalSadminRoute() {
 
   return (
     <SadminCreditTable
-      analystMode
       onBack={() => router.push("/dashboard/aprobaciones")}
     />
   );

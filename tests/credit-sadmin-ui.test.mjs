@@ -120,7 +120,7 @@ function mount(fetch, componentProps = {}) {
 
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const registration = (overrides = {}) => ({ version: 0, codeudorCreado: false, creditoCreado: false, numeroCreditoConfirmado: false, numeroCredito: null, estado: "PENDIENTE", estadoCreacion: "PENDIENTE_CREAR", motivoEstado: null, updatedAt: null, completedAt: null, ...overrides });
-const row = (id, sadmin = registration()) => ({ id, folio: `QA-${id}`, numeroCreditoVisible: `QA-${id}`, registroLocalHref: `/dashboard/aprobaciones?credito=${id}`, createdAt: "2026-09-17T13:30:00Z", fechaCredito: "2026-09-17", clienteNombre: `Cliente ${id}`, clienteDocumento: `QA${id}`, clienteTelefono: "3000000000", clienteDireccion: "Dirección de prueba", clienteFechaNacimiento: "1990-01-02", clienteCorreo: "qa@example.test", clienteGenero: "No informado", imei: "000000000000000", referenciaEquipo: "Equipo de prueba", numeroCuotas: 24, frecuenciaPago: "QUINCENAL", valorVenta: 1000000, cuotaInicial: 200000, creditoAutorizado: 800000, valorCuota: 45000, interesMensual: 0.02, fianza: 0.6, seguro: 0.0003, aliadoNombre: "Aliado QA", sedeNombre: "Sede QA", fechaProximoPago: "2026-10-02", cuotasPagadas: 0, cuotasPendientes: 24, saldoObligacion: 1080000, saldoCapital: 800000, saldoFianza: 180000, saldoIntereses: 100000, diasVencidos: 0, ultimoPago: null, sadmin });
+const row = (id, sadmin = registration()) => ({ id, canEditSadmin: true, folio: `QA-${id}`, numeroCreditoVisible: `QA-${id}`, registroLocalHref: `/dashboard/aprobaciones?credito=${id}`, createdAt: "2026-09-17T13:30:00Z", fechaCredito: "2026-09-17", clienteNombre: `Cliente ${id}`, clienteDocumento: `QA${id}`, clienteTelefono: "3000000000", clienteDireccion: "Dirección de prueba", clienteFechaNacimiento: "1990-01-02", clienteCorreo: "qa@example.test", clienteGenero: "No informado", imei: "000000000000000", referenciaEquipo: "Equipo de prueba", numeroCuotas: 24, frecuenciaPago: "QUINCENAL", valorVenta: 1000000, cuotaInicial: 200000, creditoAutorizado: 800000, valorCuota: 45000, interesMensual: 0.02, fianza: 0.6, seguro: 0.0003, aliadoNombre: "Aliado QA", sedeNombre: "Sede QA", fechaProximoPago: "2026-10-02", cuotasPagadas: 0, cuotasPendientes: 24, saldoObligacion: 1080000, saldoCapital: 800000, saldoFianza: 180000, saldoIntereses: 100000, diasVencidos: 0, ultimoPago: null, sadmin });
 const page = (items, current = 1, total = items.length, counts = { all: total, pending: total, created: 0 }) => ({ ok: true, items, page: current, pageSize: 20, total, totalPages: Math.max(1, Math.ceil(total / 20)), counts });
 const json = (value, status = 200) => Response.json(value, { status });
 const fieldset = (h, id) => h.find(node => node.type === "fieldset" && node.props.id === `sadmin-checklist-${id}`);
@@ -139,19 +139,50 @@ const renderedIds = h => h.all(node => node.type === "button" && /^sadmin-credit
 const editNumber = (h, id, value) => number(h, id).props.onChange({ target: { value } });
 const errors = h => h.all(node => node.props?.role === "alert").map(content).join(" ");
 
-test("el modo analista explica el alcance aprobado listo y el administrador conserva el histórico y la exportación", async () => {
+test("la pantalla SADMIN conserva el histórico completo y la exportación", async () => {
   const fetch = async () => json(page([]));
-  const admin = mount(fetch);
-  await admin.flush();
-  assert.match(admin.find(node => node.type === ui.PageHeader).props.description, /Todos los créditos de cartera|históricos y pagados/);
-  assert.ok(button(admin, "Exportar Excel"));
-  admin.unmount();
+  const h = mount(fetch);
+  await h.flush();
+  assert.match(h.find(node => node.type === ui.PageHeader).props.description, /Todos los créditos de cartera|históricos y pagados/);
+  assert.ok(button(h, "Exportar Excel"));
+  h.unmount();
+});
 
-  const analyst = mount(fetch, { analystMode: true });
-  await analyst.flush();
-  assert.match(analyst.find(node => node.type === ui.PageHeader).props.description, /aprobación vigente|listos para el proceso operativo/);
-  assert.ok(button(analyst, "Exportar Excel"));
-  analyst.unmount();
+test("el histórico completo muestra contadores y permite consulta y exportación sin habilitar registros no aprobados", async () => {
+  const requests = [];
+  const historical = { ...row(81), canEditSadmin: false, cuotasPagadas: 24, cuotasPendientes: 0 };
+  const h = mount(async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url === "/api/aprobaciones/sadmin/81") return json({ ok: true, summary: {
+      creditoId: 81, canEditSadmin: false, folio: "QA-81", sadmin: historical.sadmin,
+      historial: [{ version: 1, actor: "Administrador QA", fechaHora: "2026-09-01T14:00:00Z", numeroCredito: null, resultado: "PENDIENTE_CREAR", motivo: "Registro histórico" }],
+    } });
+    return json(page([historical, row(82)], 1, 350, { all: 350, pending: 156, created: 194 }));
+  });
+  await h.flush();
+  assert.equal(requests[0].url, "/api/aprobaciones/sadmin?page=1&q=&status=all");
+  assert.deepEqual(["all", "pending", "created"].map(status => content(statusTab(h, status))), ["Todos350", "Pendientes156", "Creados194"]);
+  assert.equal(button(h, "Exportar Excel").props.disabled, false);
+  await toggleCredit(h, 81);
+  assert.equal(fieldset(h, 81).props.disabled, true);
+  assert.equal(resultSelect(h, 81).props.disabled, true);
+  assert.match(content(h.find(node => node.props?.id === "sadmin-detail-81")), /Consulta del registro histórico/);
+  // Retained callbacks must also respect a server-declared read-only record.
+  check(h, 81, "CODEUDOR CREADO").props.onChange({ target: { checked: true } });
+  editNumber(h, 81, "NO-GUARDAR");
+  resultSelect(h, 81).props.onChange({ target: { value: "REQUIERE_REVISION" } });
+  await h.flush();
+  assert.equal(requests.filter(request => request.options.method === "PATCH").length, 0);
+  assert.equal(number(h, 81).props.value, "");
+  assert.equal(resultSelect(h, 81).props.value, "PENDIENTE_CREAR");
+  button(h, "Ver historial").props.onClick(); await h.flush();
+  assert.ok(requests.some(request => request.url === "/api/aprobaciones/sadmin/81"));
+  const history = h.find(node => typeof node.type === "function" && node.type.name === "Facts" && node.props.items.some(([label]) => label === "Versión 1"));
+  assert.match(content(history.type(history.props)), /Administrador QA.*Registro histórico/);
+  await toggleCredit(h, 82);
+  assert.equal(fieldset(h, 82).props.disabled, false);
+  assert.equal(resultSelect(h, 82).props.disabled, false);
+  h.unmount();
 });
 
 test("carga 20 resúmenes de número, fecha y estado; cada página reemplaza los anteriores", async () => {
@@ -388,7 +419,7 @@ test("registra error o revisión con razón y consulta historial, número y enla
     }
     if (url === "/api/aprobaciones/sadmin/81") return json({ ok: true, summary: summary() });
     return json(page([{ ...row(81, stored), numeroCreditoVisible: "00081-R" }]));
-  }, { analystMode: true });
+  });
   await h.flush();
   assert.equal(h.all(node => node.type === ui.Badge && content(node) === "Error de creación").length, 1);
   await toggleCredit(h, 81);

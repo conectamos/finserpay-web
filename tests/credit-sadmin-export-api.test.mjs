@@ -151,7 +151,7 @@ test("exporta un XLSX con búsqueda, estado, actor central y encabezados privado
 
   const call = api.calls.find(item => item.name === "export");
   assert.equal(call.args[0], api.prisma);
-  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" });
   assert.deepEqual(clone(call.args[2]), { q: "Cliente histórico", status: "created" });
   assert.deepEqual(api.calls.find(item => item.name === "workbook").items, [{ id: 712, folio: "FC-HISTORICO" }]);
   assert.equal(api.calls.filter(item => item.name === "write").length, 1);
@@ -253,7 +253,7 @@ test("el analista nominal exporta SADMIN con su identidad como actor", async () 
   const response = await api.route.GET(request("pending"));
   assert.equal(response.status, 200);
   const call = api.calls.find(item => item.name === "export");
-  assert.deepEqual(clone(call.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "APPROVED_READY" });
+  assert.deepEqual(clone(call.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "APPROVED_READY" });
 });
 
 test("conserva los errores 400 y 413 del servicio sin generar un archivo parcial", async () => {

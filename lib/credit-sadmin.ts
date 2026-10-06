@@ -20,6 +20,7 @@ type Transaction = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeR
 type Payment = { fechaAbono: string; metodoPago: string | null; valor: number };
 type CreditRow = {
   id: number; folio: string; createdAt: Date; fechaCredito: Date;
+  canEditSadmin: boolean;
   clienteNombre: string; clienteDocumento: string | null; clienteTelefono: string | null;
   clienteDireccion: string | null; clienteFechaNacimiento: Date | null; clienteCorreo: string | null; clienteGenero: string | null;
   imei: string; referenciaEquipo: string | null; equipoMarca: string | null; equipoModelo: string | null;
@@ -35,8 +36,8 @@ type SadminEventRow = {
   version: number; actorName: string; payload: unknown; createdAt: Date | string;
 };
 
-// Central administrators retain the historical cartera. Approval analysts are
-// restricted below to credits whose current approval is ready for operations.
+// Both nominal roles can consult the historical cartera. Analyst mutations
+// remain restricted to credits whose current approval is ready for operations.
 // The separate SADMIN registration never changes credit or financial state.
 const visibleCreditSql = `UPPER(BTRIM(COALESCE(credit."estado",''))) NOT IN ('ANULADO','ANULADA','CANCELADO','CANCELADA')`;
 const searchSql = `($1::text IS NULL OR
@@ -54,9 +55,10 @@ const approvedReadySql = `(${buildCreditApprovalQueueScopeSql("credit")}
     WHERE review."creditoId"=credit."id" AND ${buildCurrentCreditApprovalSql("credit", "review")})
   AND EXISTS (SELECT 1 FROM "Sede" approval_site JOIN "Aliado" approval_ally ON approval_ally."id"=approval_site."aliadoId"
     WHERE approval_site."id"=credit."sedeId" AND UPPER(BTRIM(COALESCE(approval_ally."codigo",'')))<>'FINSERPAY'))`;
-function actorCreditScopeSql(actor: SadminActor) {
-  if (actor.sadminScope === "HISTORICAL") return "TRUE";
-  if (actor.sadminScope === "APPROVED_READY") return approvedReadySql;
+function actorCreditScopeSql(actor: SadminActor, operation: "read" | "write" = "read") {
+  const scope = operation === "write" ? actor.sadminWriteScope ?? actor.sadminScope : actor.sadminScope;
+  if (scope === "HISTORICAL") return "TRUE";
+  if (scope === "APPROVED_READY") return approvedReadySql;
   throw new CreditApprovalError("FORBIDDEN", "No tienes permiso para consultar la creación SADMIN.", 403);
 }
 function baseSql(actor: SadminActor) { return `FROM "Credito" credit
@@ -65,7 +67,7 @@ function baseSql(actor: SadminActor) { return `FROM "Credito" credit
   LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
   WHERE ${visibleCreditSql} AND ${actorCreditScopeSql(actor)} AND ${searchSql}`; }
 
-const creditDetailsSql = `SELECT credit."id",credit."folio",credit."createdAt",credit."fechaCredito",
+const creditDetailsSql = `SELECT credit."id",credit."folio",credit."createdAt",credit."fechaCredito",selected."canEditSadmin",
   credit."clienteNombre",credit."clienteDocumento",credit."clienteTelefono",credit."clienteDireccion",
   credit."clienteFechaNacimiento",credit."clienteCorreo",credit."clienteGenero",credit."imei",
   credit."referenciaEquipo",credit."equipoMarca",credit."equipoModelo",credit."plazoMeses",credit."frecuenciaPago",
@@ -125,7 +127,7 @@ function loadSadminCreditRows(
   offset: number,
 ) {
   return tx.$queryRawUnsafe<CreditRow[]>(`WITH selected AS (
-    SELECT credit."id" ${baseSql(actor)} AND ${statusSql}
+    SELECT credit."id",${actorCreditScopeSql(actor, "write")} AS "canEditSadmin" ${baseSql(actor)} AND ${statusSql}
     ORDER BY credit."fechaCredito" DESC,credit."id" DESC LIMIT $3::integer OFFSET $4::integer
   ) ${creditDetailsSql}`, query, status, limit, offset);
 }
@@ -192,7 +194,7 @@ export function buildSadminCreditRow(credit: CreditRow, today = new Date()): Sad
   const days = pending.map(item => Math.floor((Date.parse(todayKey) - Date.parse(item.fechaVencimiento)) / 86_400_000));
   const lastPayment = credit.abonos.at(-1);
   return {
-    id: credit.id, folio: credit.folio,
+    id: credit.id, folio: credit.folio, canEditSadmin: credit.canEditSadmin === true,
     numeroCreditoVisible: credit.registration?.numeroCreditoConfirmado && credit.registration.numeroCredito?.trim() || credit.folio,
     createdAt: credit.createdAt.toISOString(), fechaCredito: calendar(credit.fechaCredito),
     clienteNombre: credit.clienteNombre, clienteDocumento: credit.clienteDocumento || "", clienteTelefono: credit.clienteTelefono || "",
@@ -265,8 +267,8 @@ export async function getSadminCreditSummary(
   return db.$transaction(async tx => {
     await assertApprovalActorActive(tx, actor);
     const rows = await tx.$queryRawUnsafe<Array<{
-      id: number; folio: string; registration: StoredSadminRegistration | null;
-    }>>(`SELECT credit."id",credit."folio",
+      id: number; folio: string; canEditSadmin: boolean; registration: StoredSadminRegistration | null;
+    }>>(`SELECT credit."id",credit."folio",${actorCreditScopeSql(actor, "write")} AS "canEditSadmin",
       CASE WHEN registration."creditoId" IS NULL THEN NULL ELSE to_jsonb(registration) END AS registration
       FROM "Credito" credit
       LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
@@ -276,6 +278,7 @@ export async function getSadminCreditSummary(
     const sadmin = sadminRegistration(credit.registration);
     return {
       creditoId: credit.id,
+      canEditSadmin: credit.canEditSadmin === true,
       folio: credit.folio,
       numeroCreditoVisible: sadmin.numeroCreditoConfirmado && sadmin.numeroCredito || credit.folio,
       registroLocalHref: `/dashboard/aprobaciones?credito=${credit.id}`,
@@ -301,7 +304,7 @@ export async function updateSadminRegistration(db: Database, actor: SadminActor,
     return await db.$transaction(async tx => {
       await assertApprovalActorActive(tx, actor);
       const credits = await tx.$queryRawUnsafe<Array<{ estado: string }>>(`SELECT credit."estado" FROM "Credito" credit
-        WHERE credit."id"=$1 AND ${actorCreditScopeSql(actor)} FOR UPDATE`, id);
+        WHERE credit."id"=$1 AND ${actorCreditScopeSql(actor, "write")} FOR UPDATE`, id);
       if (!credits.length || isExcludedCarteraCreditState(credits[0].estado)) {
         throw new CreditApprovalError("CREDIT_NOT_FOUND", "Este crédito ya no está disponible en Cartera.", 404);
       }

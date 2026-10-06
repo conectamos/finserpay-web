@@ -94,7 +94,7 @@ function emptyCopy(status: SadminStatusFilter, hasQuery: boolean) {
   return { title: "No hay créditos disponibles", description: "Los créditos aparecerán aquí cuando estén disponibles en cartera." };
 }
 
-export default function SadminCreditTable({ onBack, analystMode = false }: { onBack: () => void; analystMode?: boolean }) {
+export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
   const [filters, setFilters] = useState<{ page: number; query: string; status: SadminStatusFilter }>({ page: 1, query: "", status: "all" });
   const [searchText, setSearchText] = useState("");
   const [data, setData] = useState<SadminPage | null>(null);
@@ -156,11 +156,13 @@ export default function SadminCreditTable({ onBack, analystMode = false }: { onB
   }
 
   function editNumber(row: SadminCreditRow, value: string) {
+    if (!row.canEditSadmin) return;
     if (value === (row.sadmin.numeroCredito || "")) discardDraft(row.id);
     else setDraftNumbers(current => ({ ...current, [row.id]: value }));
   }
 
   function editOutcome(row: SadminCreditRow, status: SadminCreationStatus, reason: string) {
+    if (!row.canEditSadmin) return;
     const normalizedCurrentReason = row.sadmin.motivoEstado || "";
     if (status === row.sadmin.estadoCreacion && reason === normalizedCurrentReason) discardOutcomeDraft(row.id);
     else setOutcomeDrafts(current => ({ ...current, [row.id]: { status, reason } }));
@@ -244,7 +246,7 @@ export default function SadminCreditTable({ onBack, analystMode = false }: { onB
     value: boolean | string,
     reason: string | null = null,
   ) {
-    if (loading || error || pendingRequests.current.size > 0) return;
+    if (!row.canEditSadmin || loading || error || pendingRequests.current.size > 0) return;
     pendingRequests.current.add(row.id);
     setSavingIds(new Set(pendingRequests.current));
     setRowErrors(current => ({ ...current, [row.id]: "" }));
@@ -292,14 +294,12 @@ export default function SadminCreditTable({ onBack, analystMode = false }: { onB
   const page = data?.page || filters.page;
   const totalPages = Math.max(1, data?.totalPages || 1);
   const empty = emptyCopy(filters.status, Boolean(filters.query));
-  const loadingLabel = filters.status === "pending" ? "Cargando créditos pendientes..." : filters.status === "created" ? "Cargando créditos creados..." : analystMode ? "Cargando créditos aprobados listos..." : "Cargando créditos de cartera...";
+  const loadingLabel = filters.status === "pending" ? "Cargando créditos pendientes..." : filters.status === "created" ? "Cargando créditos creados..." : "Cargando créditos de cartera...";
   const totalLabel = filters.status === "pending" ? "créditos pendientes" : filters.status === "created" ? "créditos creados" : "créditos";
   const tabsBlocked = navigationBlocked || loading;
 
   return <main className={styles.main}>
-    <PageHeader eyebrow="Control de creación" title="Creación en SADMIN" description={analystMode
-      ? "Créditos con aprobación vigente y listos para el proceso operativo. Los creados correctamente salen de la lista de pendientes."
-      : "Todos los créditos de cartera desde el inicio de la operación, incluidos históricos y pagados. Los más recientes aparecen primero."} actions={<Button variant="secondary" disabled={navigationBlocked} onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />Volver a aprobaciones</Button>} />
+    <PageHeader eyebrow="Control de creación" title="Creación en SADMIN" description="Todos los créditos de cartera desde el inicio de la operación, incluidos históricos y pagados. Los más recientes aparecen primero." actions={<Button variant="secondary" disabled={navigationBlocked} onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />Volver a aprobaciones</Button>} />
     <Tabs aria-label="Filtrar créditos por estado SADMIN" className={styles.statusTabs}>
       {statusTabs.map(tab => <button key={tab.id} id={`sadmin-status-${tab.id}`} type="button" role="tab" aria-selected={filters.status === tab.id} aria-controls="sadmin-credit-results" tabIndex={filters.status === tab.id ? 0 : -1} disabled={tabsBlocked} onClick={() => selectStatus(tab.id)} onKeyDown={event => {
         if (tabsBlocked || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -342,7 +342,7 @@ export default function SadminCreditTable({ onBack, analystMode = false }: { onB
             const outcome = outcomeDrafts[row.id] ?? { status: row.sadmin.estadoCreacion, reason: row.sadmin.motivoEstado || "" };
             const outcomeNeedsReason = statusNeedsReason(outcome.status);
             const number = draftNumbers[row.id] ?? row.sadmin.numeroCredito ?? "";
-            const disabled = savingIds.size > 0 || loading || Boolean(error);
+            const disabled = !row.canEditSadmin || savingIds.size > 0 || loading || Boolean(error);
             const completed = checklist.filter(([field]) => row.sadmin[field]).length;
             const expanded = expandedId === row.id;
             const visibleNumber = creditDisplayNumber(row);
@@ -370,6 +370,7 @@ export default function SadminCreditTable({ onBack, analystMode = false }: { onB
               </div>
               <section className={styles.registration}><h3>Creación SADMIN</h3>
                 <div className={styles.progress}><Badge tone={creationTone(row.sadmin.estadoCreacion)}>{creationStatusLabels[row.sadmin.estadoCreacion]}</Badge><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "warning"}>{completed} de 3 verificaciones</Badge>{saving ? <span role="status">Guardando...</span> : null}</div>
+                {!row.canEditSadmin ? <p className={styles.updated}>Consulta del registro histórico. Para completar o modificar su creación en SADMIN, el crédito debe tener aprobación vigente y estar listo para el proceso operativo.</p> : null}
                 <fieldset id={`sadmin-checklist-${row.id}`} disabled={disabled} aria-label={`Verificaciones SADMIN de ${visibleNumber}`}>
                   {checklist.slice(0, 2).map(([field, label]) => <label key={field} className={styles.check}><input type="checkbox" checked={row.sadmin[field]} onChange={event => void save(row, field, event.target.checked)} /><span>{label}</span></label>)}
                   <div className={styles.number}>
@@ -396,7 +397,7 @@ export default function SadminCreditTable({ onBack, analystMode = false }: { onB
                     <Button variant="secondary" disabled={outcomeNeedsReason && !outcome.reason.trim()} onClick={() => void save(row, "estadoCreacion", outcome.status, outcomeNeedsReason ? outcome.reason.trim() : null)}><Save size={14} aria-hidden="true" />Guardar resultado</Button>
                     <Button variant="ghost" onClick={() => discardOutcomeDraft(row.id)}>Cancelar</Button>
                   </div> : null}
-                  {row.sadmin.estado === "CREADO_SADMIN" ? <p>El resultado correcto se deriva del flujo manual completo. Desmarca una verificación para reabrirlo.</p>
+                  {row.sadmin.estado === "CREADO_SADMIN" && row.canEditSadmin ? <p>El resultado correcto se deriva del flujo manual completo. Desmarca una verificación para reabrirlo.</p>
                     : row.sadmin.motivoEstado ? <p>Razón actual: {row.sadmin.motivoEstado}</p> : null}
                 </div>
                 {rowErrors[row.id] ? <p role="alert" className={styles.rowError}>{rowErrors[row.id]}</p> : null}
