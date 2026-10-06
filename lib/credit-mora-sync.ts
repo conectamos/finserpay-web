@@ -23,6 +23,10 @@ import {
   isMoraBlockExempt,
   normalizeMoraExemptionDocument,
 } from "@/lib/mora-block-exemptions";
+import {
+  getActiveMoraExceptionByCreditId,
+  getActiveMoraExceptionsByCreditIds,
+} from "@/lib/mora-exception-requests";
 import prisma from "@/lib/prisma";
 
 const DEFAULT_SYNC_LIMIT = 500;
@@ -171,6 +175,7 @@ export type MoraSyncReport = {
 
 export type MoraSyncOptions = {
   dryRun?: boolean;
+  exemptCreditIds?: ReadonlySet<number>;
   exemptDocuments?: ReadonlySet<string>;
   forceRemoteAudit?: boolean;
   limit?: unknown;
@@ -340,11 +345,15 @@ export async function syncCreditMora(
   const normalizedDocument = normalizeMoraExemptionDocument(
     credit.clienteDocumento
   );
-  const exemptFromMoraBlock = normalizedDocument
+  const creditExempt = options.exemptCreditIds
+    ? options.exemptCreditIds.has(credit.id)
+    : Boolean(await getActiveMoraExceptionByCreditId(credit.id, effectiveAt));
+  const documentExempt = normalizedDocument
     ? options.exemptDocuments
       ? options.exemptDocuments.has(normalizedDocument)
       : await isMoraBlockExempt(normalizedDocument, effectiveAt)
     : false;
+  const exemptFromMoraBlock = creditExempt || documentExempt;
 
   if (credit.estado === "ANULADO") {
     return buildResult(credit, "SKIPPED", "Credito anulado.", plan);
@@ -536,76 +545,109 @@ export async function syncCreditMora(
     );
   }
 
-  try {
-    const remotePayload = isInMora
-      ? await lockEqualityDevice(credit.deviceUid, {
-          lockMsgTitle: "Pago vencido",
-          lockMsgContent: buildMoraLockMessage(credit.clienteDocumento),
-        })
-      : credit.bloqueoRobo
-        ? null
-        : await unlockEqualityDevice(credit.deviceUid);
-    const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(() => null);
-    const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
-    const deviceMeta = getEqualityDeviceMeta(payloadSource);
-    const updated = await prisma.credito.update({
-      where: { id: credit.id },
-      data: {
-        estado: resolveCreditState({
-          bloqueoRobo: credit.bloqueoRobo,
+  const applyState = async (database: Pick<Prisma.TransactionClient, "credito">) => {
+    try {
+      const remotePayload = isInMora
+        ? await lockEqualityDevice(credit.deviceUid, {
+            lockMsgTitle: "Pago vencido",
+            lockMsgContent: buildMoraLockMessage(credit.clienteDocumento),
+          })
+        : credit.bloqueoRobo
+          ? null
+          : await unlockEqualityDevice(credit.deviceUid);
+      const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(() => null);
+      const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
+      const deviceMeta = getEqualityDeviceMeta(payloadSource);
+      const updated = await database.credito.update({
+        where: { id: credit.id },
+        data: {
+          estado: resolveCreditState({
+            bloqueoRobo: credit.bloqueoRobo,
+            bloqueoMora: isInMora,
+            deliverable: deviceMeta.deliveryStatus || null,
+            pazYSalvoEmitidoAt: credit.pazYSalvoEmitidoAt,
+          }),
+          deliverableLabel:
+            deviceMeta.deliveryStatus?.label || credit.deliverableLabel,
+          deliverableReady:
+            typeof deviceMeta.deliveryStatus?.ready === "boolean"
+              ? deviceMeta.deliveryStatus.ready
+              : credit.deliverableReady,
+          equalityState: deviceMeta.deviceState || credit.equalityState,
+          equalityService: deviceMeta.serviceDetails || credit.equalityService,
+          equalityPayload: asJsonValue(payloadSource),
+          equalityLastCheckAt: payloadSource ? new Date() : credit.equalityLastCheckAt,
           bloqueoMora: isInMora,
-          deliverable: deviceMeta.deliveryStatus || null,
-          pazYSalvoEmitidoAt: credit.pazYSalvoEmitidoAt,
-        }),
-        deliverableLabel:
-          deviceMeta.deliveryStatus?.label || credit.deliverableLabel,
-        deliverableReady:
-          typeof deviceMeta.deliveryStatus?.ready === "boolean"
-            ? deviceMeta.deliveryStatus.ready
-            : credit.deliverableReady,
-        equalityState: deviceMeta.deviceState || credit.equalityState,
-        equalityService: deviceMeta.serviceDetails || credit.equalityService,
-        equalityPayload: asJsonValue(payloadSource),
-        equalityLastCheckAt: payloadSource ? new Date() : credit.equalityLastCheckAt,
-        bloqueoMora: isInMora,
-        bloqueoMoraAt: isInMora ? new Date() : null,
-        observacionAdmin: appendObservation(
-          credit.observacionAdmin,
-          isInMora
-            ? "MORA AUTO: bloqueo enviado por cuota vencida."
-            : "MORA AUTO: desbloqueo enviado por credito al dia."
-        ),
-      },
-      select: {
-        estado: true,
-        equalityState: true,
-        equalityService: true,
-        bloqueoMora: true,
-        bloqueoMoraAt: true,
-      },
-    });
+          bloqueoMoraAt: isInMora ? new Date() : null,
+          observacionAdmin: appendObservation(
+            credit.observacionAdmin,
+            isInMora
+              ? "MORA AUTO: bloqueo enviado por cuota vencida."
+              : "MORA AUTO: desbloqueo enviado por credito al dia."
+          ),
+        },
+        select: {
+          estado: true,
+          equalityState: true,
+          equalityService: true,
+          bloqueoMora: true,
+          bloqueoMoraAt: true,
+        },
+      });
 
-    return buildUpdatedResult(
-      credit,
-      updated,
-      isInMora ? "LOCKED" : "UNLOCKED",
-      isInMora
-        ? "Bloqueo automatico por mora aplicado."
-        : "Desbloqueo automatico por pago aplicado.",
-      plan,
-      payloadSource
-    );
-  } catch (error) {
-    return buildResult(
-      credit,
-      "FAILED",
-      isEqualityApiError(error)
-        ? `Equality no confirmo la operacion: ${error.message}`
-        : "No se pudo sincronizar mora con Equality.",
-      plan,
-      isEqualityApiError(error) ? error.payload : null
-    );
+      return buildUpdatedResult(
+        credit,
+        updated,
+        isInMora ? "LOCKED" : "UNLOCKED",
+        isInMora
+          ? "Bloqueo automatico por mora aplicado."
+          : "Desbloqueo automatico por pago aplicado.",
+        plan,
+        payloadSource
+      );
+    } catch (error) {
+      return buildResult(
+        credit,
+        "FAILED",
+        isEqualityApiError(error)
+          ? `Equality no confirmo la operacion: ${error.message}`
+          : "No se pudo sincronizar mora con Equality.",
+        plan,
+        isEqualityApiError(error) ? error.payload : null
+      )
+    }
+  };
+
+  if (!isInMora) {
+    try {
+      return await prisma.$transaction(db => applyState(db), { maxWait: 10_000, timeout: 30_000 });
+    } catch (error) {
+      return buildResult(credit, "FAILED", "No se pudo completar la sincronización de mora.", plan,
+        isEqualityApiError(error) ? error.payload : null);
+    }
   }
+
+  try {
+    const serialized = await prisma.$transaction(async db => {
+      await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
+      const currentException = await getActiveMoraExceptionsByCreditIds([credit.id], effectiveAt, db);
+      if (currentException.has(credit.id)) return null;
+      return applyState(db);
+    }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+    if (serialized) return serialized;
+    return syncCreditMora(credit, { ...options, exemptCreditIds: new Set([credit.id]), forceRemoteAudit: true });
+  } catch (error) {
+    return buildResult(credit, "FAILED", "No se pudo serializar la sincronización de mora.", plan,
+      isEqualityApiError(error) ? error.payload : null);
+  }
+}
+
+export async function syncCreditMoraById(creditoId: number, options: MoraSyncOptions = {}) {
+  if (!Number.isSafeInteger(creditoId) || creditoId < 1) throw new Error("Crédito inválido para sincronizar mora.");
+  await ensureCreditAbonoAuditColumns();
+  const credit = await prisma.credito.findUnique({ where: { id: creditoId }, select: moraSyncCreditSelect });
+  if (!credit) throw new Error("Crédito no encontrado para sincronizar mora.");
+  return syncCreditMora(credit, options);
 }
 
 export async function syncAllCreditMora(
@@ -636,12 +678,14 @@ export async function syncAllCreditMora(
     ],
     take: limit,
   });
+  const exemptCreditIds = new Set((await getActiveMoraExceptionsByCreditIds(credits.map(credit => credit.id), today)).keys());
   const items: MoraSyncResult[] = [];
 
   for (const credit of credits) {
     items.push(
       await syncCreditMora(credit, {
         ...options,
+        exemptCreditIds,
         exemptDocuments,
         today,
       })
@@ -710,12 +754,14 @@ export async function syncCreditMoraByDocument(
       id: "desc",
     },
   });
+  const exemptCreditIds = new Set((await getActiveMoraExceptionsByCreditIds(credits.map(credit => credit.id), today)).keys());
   const items: MoraSyncResult[] = [];
 
   for (const credit of credits) {
     items.push(
       await syncCreditMora(credit as MoraSyncCredit, {
         ...options,
+        exemptCreditIds,
         exemptDocuments,
         forceRemoteAudit: options.forceRemoteAudit ?? true,
         today,

@@ -59,7 +59,7 @@ test('cola compartida no usa compatibilidad histórica por cédula',async()=>{
     let legacy=0,queue=0,approved=0;const route=load('app/api/aprobaciones/route.ts',{'next/server':next,'@/lib/prisma':{default:{}},
       '@/lib/credit-approval':{CreditApprovalError,approvalDocumentNumber:v=>v,listCreditApprovals:async()=>{legacy++;return[];}},
       '@/lib/credit-approval-actor':{assertApprovalActorActive:async()=>{}},
-      '@/lib/credit-approval-queue':{approvalQueueSearch:value=>value?.trim()||null,listCreditApprovalQueue:async()=>{queue++;return{items:[],nextCursor:null,hasMore:false};},listApprovedCreditQueue:async()=>{approved++;return{items:[],nextCursor:null,hasMore:false};},approvalQueueLimit:()=>50},
+      '@/lib/credit-approval-queue':{approvalQueueSearch:value=>value?.trim()||null,approvalQueueFilters:()=>({}),listCreditApprovalQueue:async()=>{queue++;return{items:[],nextCursor:null,hasMore:false};},listApprovedCreditQueue:async()=>{approved++;return{items:[],nextCursor:null,hasMore:false};},approvalQueueLimit:()=>50},
       '@/lib/credit-approval-http':{...http,getApprovalActor:async()=>({kind,id:kind==='USER'?1:null})}});
     assert.equal((await route.GET(new Request('https://finser.test/api/aprobaciones?documento=100000'))).status,200);assert.equal(legacy,kind==='USER'?1:0);assert.equal(queue,kind==='SHARED_LINK'?1:0);
     await route.GET(new Request('https://finser.test/api/aprobaciones'));assert.equal(queue,kind==='SHARED_LINK'?2:1);
@@ -105,7 +105,7 @@ test('contadores revalidan el enlace compartido dentro del snapshot antes de lee
         assert.equal(received,db);assert.equal(receivedActor,actor);order.push('active');
         if(!active)throw new CreditApprovalError('SHARED_ACCESS_REVOKED','Enlace revocado',401);
       }},
-      '@/lib/credit-approval-queue':{approvalQueueLimit:()=>50,approvalQueueSearch:()=>null,
+      '@/lib/credit-approval-queue':{approvalQueueLimit:()=>50,approvalQueueSearch:()=>null,approvalQueueFilters:()=>({}),
         listCreditApprovalQueue:async(received)=>{assert.equal(received,db);order.push('page');return{items:[],hasMore:false,nextCursor:null};},
         countCreditApprovalQueues:async(received)=>{assert.equal(received,db);order.push('counts');return{pending:101,approved:4};}},
       '@/lib/credit-approval-http':{...http,getApprovalActor:async()=>actor},

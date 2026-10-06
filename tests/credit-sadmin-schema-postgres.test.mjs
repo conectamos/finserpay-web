@@ -33,6 +33,9 @@ test("PostgreSQL aislado: SADMIN conserva checklist, números únicos e historia
   // Emulate Prisma creating the new tables before predeploy adds checks and indexes.
   for (const statement of creditSadminSchemaStatements.filter(statement => statement.startsWith("CREATE TABLE"))) await db.query(statement);
   await db.query('INSERT INTO "CreditSadminRegistration" ("creditoId") VALUES (1)');
+  await db.query(`INSERT INTO "CreditSadminRegistration"
+    ("creditoId","codeudorCreado","creditoCreado","numeroCreditoConfirmado","numeroCredito","completedAt")
+    VALUES (100,TRUE,TRUE,TRUE,'LEGACY-SA-100','2026-09-17T10:00:00.000Z')`);
   await installCreditSadminSchema(db);
 
   const read = async id => (await db.query('SELECT to_jsonb(r) AS row FROM "CreditSadminRegistration" r WHERE "creditoId"=$1', [id])).rows[0]?.row;
@@ -55,7 +58,10 @@ test("PostgreSQL aislado: SADMIN conserva checklist, números únicos e historia
     assert.equal(row.creditoCreado, false);
     assert.equal(row.numeroCreditoConfirmado, false);
     assert.equal(row.numeroCredito, null);
+    assert.equal(row.estadoCreacion, "PENDIENTE_CREAR");
+    assert.equal(row.motivoEstado, null);
     assert.equal(row.completedAt, null);
+    assert.equal((await read(100)).estadoCreacion, "CREADO_CORRECTAMENTE", "predeploy migra filas completas previas al nuevo estado");
     const time = await db.query(`SELECT ABS(EXTRACT(EPOCH FROM ((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-"createdAt"))) AS seconds
       FROM "CreditSadminRegistration" WHERE "creditoId"=1`);
     assert.ok(Number(time.rows[0].seconds) < 10);
@@ -66,7 +72,8 @@ test("PostgreSQL aislado: SADMIN conserva checklist, números únicos e historia
   });
 
   await t.test("completion requires all three checks and a persisted number, in both directions", async () => {
-    const complete = { codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "SA-100", completedAt: "2026-09-17T10:00:00.000Z" };
+    const complete = { codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "SA-100",
+      estadoCreacion: "CREADO_CORRECTAMENTE", completedAt: "2026-09-17T10:00:00.000Z" };
     for (const missing of ["codeudorCreado", "creditoCreado", "numeroCreditoConfirmado"]) {
       await assert.rejects(registration(2, { ...complete, [missing]: false }), failsCheck);
     }
@@ -77,6 +84,25 @@ test("PostgreSQL aislado: SADMIN conserva checklist, números únicos e historia
     assert.equal((await read(2)).numeroCredito, "SA-100");
     await registration(3, { numeroCredito: "SA-101", codeudorCreado: true });
     assert.equal((await read(3)).completedAt, null);
+  });
+
+  await t.test("los cuatro resultados son válidos y creado exige el flujo manual completo", async () => {
+    for (const estadoCreacion of ["PENDIENTE_CREAR", "ERROR_CREACION", "REQUIERE_REVISION"]) {
+      const id = { PENDIENTE_CREAR: 8, ERROR_CREACION: 9, REQUIERE_REVISION: 10 }[estadoCreacion];
+      const motivoEstado = estadoCreacion === "PENDIENTE_CREAR" ? null : `Motivo para ${estadoCreacion}`;
+      await registration(id, { estadoCreacion, motivoEstado });
+      assert.equal((await read(id)).estadoCreacion, estadoCreacion);
+      assert.equal((await read(id)).motivoEstado, motivoEstado);
+    }
+    await assert.rejects(registration(11, { estadoCreacion: "DESCONOCIDO" }), failsCheck);
+    await assert.rejects(registration(11, { estadoCreacion: "CREADO_CORRECTAMENTE" }), failsCheck);
+    await assert.rejects(registration(11, {
+      codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true,
+      numeroCredito: "SA-111", completedAt: "2026-09-17T10:00:00.000Z",
+    }), failsCheck);
+    await assert.rejects(registration(11, { estadoCreacion: "ERROR_CREACION" }), failsCheck);
+    await assert.rejects(registration(11, { estadoCreacion: "PENDIENTE_CREAR", motivoEstado: "No permitido" }), failsCheck);
+    await assert.rejects(registration(11, { estadoCreacion: "REQUIERE_REVISION", motivoEstado: " razón sin recortar " }), failsCheck);
   });
 
   await t.test("numbers are nonblank, trimmed, length-limited and case-insensitively unique", async () => {

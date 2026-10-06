@@ -195,7 +195,12 @@ function DetailValue({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-export default function Tx06ReleaseConsole() {
+export default function Tx06ReleaseConsole({
+  mode = "admin",
+}: {
+  mode?: "admin" | "analyst";
+} = {}) {
+  const analystMode = mode === "analyst";
   const [documentNumber, setDocumentNumber] = useState("");
   const [searchedDocument, setSearchedDocument] = useState("");
   const [firstSurname, setFirstSurname] = useState("");
@@ -426,11 +431,11 @@ export default function Tx06ReleaseConsole() {
     <main className="px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
       <div className="mx-auto max-w-[1180px] space-y-5">
         <PageHeader
-          eyebrow="Administración central"
+          eyebrow={analystMode ? "Aprobaciones" : "Administración central"}
           title="Liberar consulta DataCrédito"
           description="Autoriza un nuevo intento únicamente cuando MiDecisor aceptó una consulta TX06 sin puntaje."
           actions={
-            <Link
+            analystMode ? undefined : <Link
               href="/dashboard/datacredito"
               className="fp-ui-button is-secondary"
             >
@@ -464,8 +469,9 @@ export default function Tx06ReleaseConsole() {
                   Buscar consulta elegible
                 </h2>
                 <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                  La búsqueda es exacta y está disponible solo para la
-                  administración central.
+                  {analystMode
+                    ? "La búsqueda es exacta y cada liberación queda asociada a tu usuario."
+                    : "La búsqueda es exacta y está disponible solo para la administración central."}
                 </p>
               </div>
               <Badge tone="warning">Operación auditada</Badge>

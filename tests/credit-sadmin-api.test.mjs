@@ -39,7 +39,7 @@ const sharedActor = {
 };
 const clone = value => JSON.parse(JSON.stringify(value));
 
-function setup({ user = centralAdmin, shared, serviceError } = {}) {
+function setup({ user = centralAdmin, analyst = null, shared, serviceError } = {}) {
   const calls = [];
   const prisma = {};
   const http = load("lib/credit-approval-http.ts", {
@@ -47,6 +47,10 @@ function setup({ user = centralAdmin, shared, serviceError } = {}) {
     "@/lib/auth": {
       getSessionUser: async () => { calls.push({ name: "user" }); return user; },
       getCreditApprovalSessionUser: async () => { calls.push({ name: "approval-user" }); return user; },
+      getNominalApprovalAnalystSessionUser: async () => {
+        calls.push({ name: "nominal-analyst" });
+        return analyst;
+      },
     },
     "@/lib/roles": roles,
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => { calls.push({ name: "shared" }); return shared; } },
@@ -70,6 +74,18 @@ function setup({ user = centralAdmin, shared, serviceError } = {}) {
       calls.push({ name: "update", args });
       if (serviceError) throw serviceError;
       return { version: 2, numeroCredito: "000123-A", status: "CREADO_SADMIN" };
+    },
+    getSadminCreditSummary: async (...args) => {
+      calls.push({ name: "summary", args });
+      if (serviceError) throw serviceError;
+      return {
+        creditoId: 712,
+        folio: "FC-HISTORICO",
+        numeroCreditoVisible: "000123-A",
+        registroLocalHref: "/dashboard/aprobaciones?credito=712",
+        sadmin: { estadoCreacion: "CREADO_CORRECTAMENTE", motivoEstado: null, numeroCredito: "000123-A" },
+        historial: [{ version: 2, actor: "Analista", fechaHora: "2026-10-06T12:00:00.000Z", numeroCredito: "000123-A", resultado: "CREADO_CORRECTAMENTE", motivo: null }],
+      };
     },
   };
   const dependencies = {
@@ -102,33 +118,47 @@ test("SADMIN niega usuarios sin acceso antes de leer o actualizar datos", async 
     ["sin sesión", null, 401],
     ["vendedor central", { ...centralAnalyst, rolNombre: "VENDEDOR" }, 403],
     ["administrador de aliado", { ...centralAdmin, aliadoAccesoCodigo: "ALIADO" }, 403],
-    ["analista central", centralAnalyst, 403],
+    ["analista sin cookie nominal", centralAnalyst, 403],
     ["analista de aliado", { ...centralAnalyst, aliadoAccesoCodigo: "ALIADO" }, 403],
     ["administrador inactivo", { ...centralAdmin, activo: false }, 403],
   ];
   for (const [name, user, status] of cases) await t.test(name, async () => {
     const api = setup({ user });
     const incoming = request();
-    for (const response of [await api.list.GET(listRequest()), await api.update.PATCH(incoming, context)]) {
+    for (const response of [await api.list.GET(listRequest()), await api.update.GET(request(), context), await api.update.PATCH(incoming, context)]) {
       assert.equal(response.status, status);
       privateResponse(response);
       assert.equal((await response.json()).ok, false);
     }
     assert.equal(incoming.bodyUsed, false);
-    assert.equal(api.calls.some(call => ["list", "update"].includes(call.name)), false);
+    assert.equal(api.calls.some(call => ["list", "summary", "update"].includes(call.name)), false);
   });
 });
 
 test("un enlace compartido sin cuenta nominal no concede acceso a SADMIN", async () => {
   const api = setup({ user: null, shared: sharedActor });
   const incoming = request();
-  for (const response of [await api.list.GET(listRequest()), await api.update.PATCH(incoming, context)]) {
+  for (const response of [await api.list.GET(listRequest()), await api.update.GET(request(), context), await api.update.PATCH(incoming, context)]) {
     assert.equal(response.status, 401);
     assert.equal((await response.json()).code, "UNAUTHENTICATED");
     privateResponse(response);
   }
-  assert.deepEqual(api.calls.map(call => call.name), ["user", "user"]);
+  assert.deepEqual(api.calls.map(call => call.name), ["user", "nominal-analyst", "user", "nominal-analyst", "user", "nominal-analyst"]);
   assert.equal(incoming.bodyUsed, false);
+});
+
+test("el analista nominal central gestiona SADMIN con autoría individual", async () => {
+  const api = setup({ user: null, analyst: centralAnalyst });
+  const listed = await api.list.GET(listRequest("pending"));
+  assert.equal(listed.status, 200);
+  const listCall = api.calls.find(call => call.name === "list");
+  assert.deepEqual(clone(listCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "APPROVED_READY" });
+
+  const incoming = request({ version: 1, field: "creditoCreado", value: true });
+  const updated = await api.update.PATCH(incoming, context);
+  assert.equal(updated.status, 200);
+  const updateCall = api.calls.find(call => call.name === "update");
+  assert.deepEqual(clone(updateCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "APPROVED_READY" });
 });
 
 test("la lista pasa página, búsqueda y estado al servicio con el administrador central", async () => {
@@ -143,7 +173,7 @@ test("la lista pasa página, búsqueda y estado al servicio con el administrador
   assert.deepEqual(clone(body.counts), { all: 41, pending: 20, created: 21 });
   const call = api.calls.find(item => item.name === "list");
   assert.equal(call.args[0], api.prisma);
-  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre });
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
   assert.deepEqual(clone(call.args[2]), { page: "3", q: "Cliente histórico", status: "created" });
   assert.equal(api.calls.some(item => item.name === "shared"), false);
 });
@@ -161,6 +191,22 @@ test("la lista conserva el error de estado SADMIN inválido y no lo convierte en
   assert.equal(call.args[2].status, "desconocido");
 });
 
+test("GET devuelve el resumen reutilizable, historial y enlace local", async () => {
+  const api = setup();
+  const response = await api.update.GET(request(), context);
+  assert.equal(response.status, 200);
+  privateResponse(response);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.summary.sadmin.estadoCreacion, "CREADO_CORRECTAMENTE");
+  assert.equal(body.summary.historial[0].actor, "Analista");
+  assert.equal(body.summary.registroLocalHref, "/dashboard/aprobaciones?credito=712");
+  const call = api.calls.find(item => item.name === "summary");
+  assert.equal(call.args[0], api.prisma);
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
+  assert.equal(call.args[2], "712");
+});
+
 test("PATCH conserva cada marca y el número SADMIN textual con ceros y letras", async () => {
   for (const [field, value] of [
     ["codeudorCreado", true], ["creditoCreado", false], ["numeroCreditoConfirmado", true], ["numeroCredito", "000123-A"],
@@ -173,7 +219,7 @@ test("PATCH conserva cada marca y el número SADMIN textual con ceros y letras",
     assert.equal((await response.json()).ok, true);
     const call = api.calls.find(item => item.name === "update");
     assert.equal(call.args[0], api.prisma);
-    assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre });
+    assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
     assert.equal(call.args[2], "712");
     assert.deepEqual(clone(call.args[3]), input);
   }
@@ -214,7 +260,7 @@ test("PATCH rechaza JSON inválido y cuerpos extensos antes de llamar al servici
 test("errores de acceso durante la operación y versiones obsoletas conservan su estado HTTP", async () => {
   for (const error of [new actors.ApprovalActorAccessError(), new errors.CreditApprovalError("SADMIN_CHANGED", "Actualiza el registro.", 409)]) {
     const api = setup({ serviceError: error });
-    for (const response of [await api.list.GET(listRequest()), await api.update.PATCH(request(), context)]) {
+    for (const response of [await api.list.GET(listRequest()), await api.update.GET(request(), context), await api.update.PATCH(request(), context)]) {
       assert.equal(response.status, error.status);
       assert.equal((await response.json()).code, error.code);
       privateResponse(response);
@@ -224,7 +270,7 @@ test("errores de acceso durante la operación y versiones obsoletas conservan su
 
 test("un fallo inesperado no expone detalles internos y tampoco se almacena en caché", async () => {
   const api = setup({ serviceError: new Error("password=synthetic-private-detail") });
-  for (const response of [await api.list.GET(listRequest()), await api.update.PATCH(request(), context)]) {
+  for (const response of [await api.list.GET(listRequest()), await api.update.GET(request(), context), await api.update.PATCH(request(), context)]) {
     assert.equal(response.status, 503);
     privateResponse(response);
     assert.doesNotMatch(await response.text(), /synthetic-private-detail|password=/);

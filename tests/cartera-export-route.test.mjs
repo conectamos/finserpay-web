@@ -153,6 +153,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   `, [new Date(Date.now() + 86400000), new Date(Date.now() - 86400000)]);
   let overdue = false;
   const exemptionCalls = [];
+  let creditExceptions = new Map();
   let findManyQuery = null;
   const displayNumberCalls = [];
   let sessionUser = {
@@ -249,6 +250,9 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
         return exemptions.getActiveMoraBlockExemptionDocuments(effectiveAt);
       },
     },
+    "@/lib/mora-exception-requests": {
+      getActiveMoraExceptionsByCreditIds: async () => creditExceptions,
+    },
     "@/lib/roles": { isAdminRole: () => true },
     "@/lib/prisma": { default: prisma },
   });
@@ -344,6 +348,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       aliadoAccesoId: 1,
     };
     overdue = true;
+    creditExceptions = new Map([[5, { fechaFin: new Date("2026-10-21T23:59:59.999-05:00"), type: "PRORROGA" }]]);
     credits[0].clienteDocumento = "100.000.001";
     credits.push(
       creditFixture(5, "MORA"),
@@ -367,7 +372,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
 
     for (const [name, expected] of [
       ["CLIENTE_ACTIVO_EXPORTADO", "SI"],
-      ["CLIENTE_MORA_5", "NO"],
+      ["CLIENTE_MORA_5", "SI"],
       ["CLIENTE_MORA_6", "NO"],
       ["CLIENTE_MORA_7", "NO"],
       ["CLIENTE_MORA_8", "SI"],

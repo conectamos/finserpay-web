@@ -39,8 +39,8 @@ function credit(id) {
   };
 }
 
-function clientApi({ statuses, exemption }) {
-  const calls = { agreements: [], creditQueries: [] };
+function clientApi({ statuses, exemption, creditExceptions = new Map() }) {
+  const calls = { agreements: [], creditExceptions: [], creditQueries: [] };
   const NextResponse = {
     json: (body, options = {}) => ({ body, status: options.status ?? 200 }),
   };
@@ -76,6 +76,10 @@ function clientApi({ statuses, exemption }) {
       calls.agreements.push(documento);
       return exemption;
     },
+    getActiveMoraExceptionsByCreditIds: async (ids) => {
+      calls.creditExceptions.push([...ids]);
+      return creditExceptions;
+    },
   });
   return { GET, calls };
 }
@@ -99,6 +103,22 @@ test("el cliente conserva la mora y muestra la fecha real solo en créditos venc
   assert.deepEqual(items.map((item) => item.prorrogaMora), [{ hasta }, null, null]);
   assert.equal("motivo" in items[0], false);
   assert.equal("documento" in items[0].prorrogaMora, false);
+});
+
+test("la excepción nueva se limita al crédito aprobado aunque comparta cédula", async () => {
+  const hasta = new Date("2026-10-21T23:59:59.999-05:00");
+  const { GET, calls } = clientApi({
+    statuses: ["MORA", "MORA"],
+    exemption: null,
+    creditExceptions: new Map([[2, { fechaFin: hasta, type: "PRORROGA" }]]),
+  });
+  const response = await GET(request());
+
+  assert.deepEqual(plain(response.body.items.map((item) => item.prorrogaMora)), [
+    null,
+    { hasta: hasta.toISOString() },
+  ]);
+  assert.deepEqual(calls.creditExceptions, [[1, 2]]);
 });
 
 test("un acuerdo vigente sin fecha final conserva hasta nulo", async () => {

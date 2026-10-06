@@ -13,21 +13,23 @@ function initials(name: string) {
 }
 
 export default function ApprovalWorkspace({ shared = false, redesigned = false, allowOperations = false,
-  canManageSadmin = false, manageLegacySharedAccess = false, userName = "" }: {
+  analystDesk = false, canManageSadmin = false, manageLegacySharedAccess = false, userName = "", initialFocusApprovalCreditId = null }: {
   shared?: boolean;
   redesigned?: boolean;
   allowOperations?: boolean;
+  analystDesk?: boolean;
   canManageSadmin?: boolean;
   manageLegacySharedAccess?: boolean;
   userName?: string;
+  initialFocusApprovalCreditId?: number | null;
 }) {
   const [view, setView] = useState<"approvals" | "sadmin" | "operations">("approvals");
-  const [focusApprovalCreditId, setFocusApprovalCreditId] = useState<number | null>(null);
+  const [focusApprovalCreditId, setFocusApprovalCreditId] = useState<number | null>(initialFocusApprovalCreditId);
   const showingDetail = view === "operations" && allowOperations;
   const sectionTitle = showingDetail ? "Detalle del crédito" : view === "sadmin" ? "Listado de créditos" : "Bandeja de aprobaciones";
 
   return <>
-    {!shared ? <header className="flex min-h-[72px] flex-wrap items-center justify-between gap-3 bg-[var(--fp-surface)] px-4 py-3 sm:px-6 lg:px-8">
+    {!shared && !analystDesk ? <header className="flex min-h-[72px] flex-wrap items-center justify-between gap-3 bg-[var(--fp-surface)] px-4 py-3 sm:px-6 lg:px-8">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
         {allowOperations && showingDetail ? <button type="button" onClick={() => { setFocusApprovalCreditId(null); setView("approvals"); }}
           className="min-h-10 rounded-md text-left text-[clamp(1.25rem,1.8vw,1.65rem)] font-extrabold text-[var(--fp-graphite)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime-strong)]"
@@ -51,7 +53,7 @@ export default function ApprovalWorkspace({ shared = false, redesigned = false, 
       ? <SadminCreditTable onBack={() => setView("approvals")} />
       : showingDetail ? null
         : <>{manageLegacySharedAccess && !shared ? <SharedAccessControl retirementMode /> : null}
-          <ApprovalConsole shared={shared} redesigned={redesigned} focusCreditId={focusApprovalCreditId}
+          <ApprovalConsole shared={shared} redesigned={redesigned} analystDesk={analystDesk} focusCreditId={focusApprovalCreditId}
             onOpenSadmin={canManageSadmin ? () => setView("sadmin") : undefined} /></>}
   </>;
 }

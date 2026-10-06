@@ -175,3 +175,18 @@ export async function getCreditApprovalSessionUser() {
   const user = await getSessionUser({ allowApprovalAnalyst: true, preferApprovalAccess: true });
   return canReviewCreditApprovals(user) ? user : null;
 }
+
+/**
+ * Returns an approval analyst only when the request carries the dedicated
+ * password-login cookie. Personal or shared approval links must never gain
+ * access to nominal support tools such as SADMIN or DataCrédito releases.
+ */
+export async function getNominalApprovalAnalystSessionUser() {
+  const cookieStore = await cookies();
+  if (!cookieStore.get(APPROVAL_ANALYST_SESSION_COOKIE_NAME)?.value) return null;
+
+  const user = await getSessionUser({ allowApprovalAnalyst: true });
+  return user && isApprovalAnalystRole(user.rolNombre) && canReviewCreditApprovals(user)
+    ? user
+    : null;
+}

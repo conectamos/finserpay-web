@@ -42,7 +42,7 @@ import {
   type SolicitudState,
 } from "@/lib/solicitudes";
 
-type ViewerRole = "ADMIN" | "SUPERVISOR" | "SELLER";
+type ViewerRole = "ADMIN" | "ANALYST" | "SUPERVISOR" | "SELLER";
 type NamedEntity = { id: number; nombre: string };
 
 type SolicitudItem = {
@@ -269,14 +269,16 @@ function DetailLine({
 }
 
 export default function SolicitudesWallClient({
+  baseHref = "/dashboard/solicitudes",
   viewerRole = "ADMIN",
 }: {
+  baseHref?: string;
   viewerRole?: ViewerRole;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramsKey = searchParams.toString();
-  const wallReturnHref = `/dashboard/solicitudes${
+  const wallReturnHref = `${baseHref}${
     paramsKey ? `?${paramsKey}` : ""
   }`;
   const selectedId = searchParams.get("id") || "";
@@ -419,9 +421,9 @@ export default function SolicitudesWallClient({
     (mutate: (params: URLSearchParams) => void) => {
       const params = new URLSearchParams(paramsKey);
       mutate(params);
-      router.push(`/dashboard/solicitudes${params.size ? `?${params.toString()}` : ""}`);
+      router.push(`${baseHref}${params.size ? `?${params.toString()}` : ""}`);
     },
-    [paramsKey, router]
+    [baseHref, paramsKey, router]
   );
 
   function closeDetail() {
@@ -447,7 +449,7 @@ export default function SolicitudesWallClient({
 
   function clearFilters() {
     setFormFilters(readFilters(new URLSearchParams()));
-    router.push("/dashboard/solicitudes");
+    router.push(baseHref);
   }
 
   function goToPage(page: number) {

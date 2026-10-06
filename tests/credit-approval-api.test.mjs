@@ -55,7 +55,7 @@ function apiHarness(user = centralAnalyst, methods = {}, transactionError = null
     "@/lib/prisma": { default: prisma },
     "@/lib/credit-approval": routedService,
     "@/lib/credit-approval-actor": approvalActors,
-    "@/lib/credit-approval-queue": { approvalQueueSearch: queueValidation.approvalQueueSearch, countCreditApprovalQueues: async (...args) => { calls.push({ name: "countCreditApprovalQueues", args }); return methods.countCreditApprovalQueues(...args); }, approvalQueueLimit: () => 50, listCreditApprovalQueue: async (...args) => { calls.push({ name: "listCreditApprovalQueue", args }); return methods.listCreditApprovalQueue(...args); }, listApprovedCreditQueue: async (...args) => { calls.push({ name: "listApprovedCreditQueue", args }); return methods.listApprovedCreditQueue(...args); } },
+    "@/lib/credit-approval-queue": { approvalQueueSearch: queueValidation.approvalQueueSearch, approvalQueueFilters: queueValidation.approvalQueueFilters, countCreditApprovalQueues: async (...args) => { calls.push({ name: "countCreditApprovalQueues", args }); return methods.countCreditApprovalQueues(...args); }, approvalQueueLimit: () => 50, listCreditApprovalQueue: async (...args) => { calls.push({ name: "listCreditApprovalQueue", args }); return methods.listCreditApprovalQueue(...args); }, listApprovedCreditQueue: async (...args) => { calls.push({ name: "listApprovedCreditQueue", args }); return methods.listApprovedCreditQueue(...args); } },
     "@/lib/credit-approval-evidence": {},
     "@/lib/credit-approval-http": http,
   })]));
@@ -375,6 +375,28 @@ test("búsqueda y contadores opcionales usan un snapshot sin limitar el total po
     assert.deepEqual((await response.json()).counts, { pending: 125, approved: 7 });
     assert.deepEqual(plain(api.transactions), [{ isolationLevel: "RepeatableRead", timeout: 20000 }]);
     assert.deepEqual(api.calls.map(call => call.name), [listName, "countCreditApprovalQueues"]);
+  }
+});
+test("filtros de aliado y rango se validan y llegan iguales al listado y los contadores", async () => {
+  const expected = { aliado: "Aliado Norte", desde: "2026-09-01", hasta: "2026-09-30" };
+  const api = apiHarness(centralAnalyst, {
+    listApprovedCreditQueue: async (_db, input) => {
+      assert.deepEqual(plain(input), { documento: null, cursor: null, limit: 50, ...expected });
+      return { items: [], hasMore: false, nextCursor: null };
+    },
+    countCreditApprovalQueues: async (_db, input) => {
+      assert.deepEqual(plain(input), { documento: null, q: null, ...expected });
+      return { pending: 0, approved: 0 };
+    },
+  });
+  const response = await api.routes.search.GET(makeRequest("/api/aprobaciones?view=approved&counts=1&aliado=%20Aliado%20Norte%20&desde=2026-09-01&hasta=2026-09-30"));
+  assert.equal(response.status, 200);
+  assert.deepEqual(api.calls.map(call => call.name), ["listApprovedCreditQueue", "countCreditApprovalQueues"]);
+  for (const query of ["aliado=" + encodeURIComponent("x\n"), "desde=2026-02-30", "desde=2026-13-01", "desde=2026-10-01&hasta=2026-09-30"]) {
+    const invalid = apiHarness();
+    const rejected = await invalid.routes.search.GET(makeRequest("/api/aprobaciones?view=pending&" + query));
+    assert.equal(rejected.status, 400);
+    assert.equal(invalid.calls.length, 0);
   }
 });
 test("búsqueda sin counts preserva forma y ruta administrativa, y rechaza texto excesivo", async () => {

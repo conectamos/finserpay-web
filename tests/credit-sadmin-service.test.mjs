@@ -3,7 +3,10 @@ import test from "node:test";
 import { registerHooks } from "node:module";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { service, state, actor, sharedActor, databaseAdapter, prepareServiceFixture } from "./credit-sadmin-service-fixture.mjs";
+import {
+  service, state, actor, analystActor, sharedActor, approveCreditForSadmin,
+  databaseAdapter, prepareServiceFixture,
+} from "./credit-sadmin-service-fixture.mjs";
 
 const connectionString = process.env.CREDIT_SADMIN_SERVICE_TEST_DATABASE_URL;
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -33,7 +36,9 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     const fields = Object.keys(values);
     return (await pool.query('INSERT INTO "Credito" (' + fields.map(field => '"' + field + '"').join(",") + ') VALUES (' + fields.map((_, index) => "$" + (index + 1)).join(",") + ') RETURNING "id"', Object.values(values))).rows[0].id;
   };
-  const change = (id, version, field, value, acting = actor) => service.updateSadminRegistration(db, acting, String(id), { version, field, value });
+  const change = (id, version, field, value, acting = actor, reason = null) => service.updateSadminRegistration(
+    db, acting, String(id), { version, field, value, ...(field === "estadoCreacion" ? { reason } : {}) },
+  );
   const getRegistration = async id => (await pool.query('SELECT * FROM "CreditSadminRegistration" WHERE "creditoId"=$1', [id])).rows[0];
   const eventCount = async id => Number((await pool.query('SELECT count(*) FROM "CreditSadminEvent" WHERE "creditoId"=$1', [id])).rows[0].count);
 
@@ -152,6 +157,66 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
       const item = page.items.find(credit => credit.id === id);
       assert.equal(item.saldoObligacion, 0); assert.equal(item.cuotasPendientes, 0); assert.equal(item.fechaProximoPago, null);
     }
+  });
+
+  await t.test("el analista solo consulta aprobados listos; resumen, historial y cierre no alteran finanzas", async () => {
+    const unapproved = await create({ folio: "ANALYST-SCOPE-UNAPPROVED" });
+    const ready = await create({ folio: "ANALYST-SCOPE-READY", contratoSnapshot: { financiero: { sello: "inmutable" } } });
+    const withNovelty = await create({ folio: "ANALYST-SCOPE-NOVELTY" });
+    const withReissue = await create({ folio: "ANALYST-SCOPE-REISSUE" });
+    const historical = await create({ folio: "ANALYST-SCOPE-HISTORICAL", createdAt: "2026-08-31T23:59:59Z" });
+    const imported = await create({ folio: "ANALYST-SCOPE-IMPORTED", equalityService: "IMPORTACION_MASIVA", contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } } });
+    const central = await create({ folio: "ANALYST-SCOPE-CENTRAL", sedeId: 1 });
+    for (const id of [ready, withNovelty, withReissue, historical, imported, central]) await approveCreditForSadmin(pool, id);
+    await pool.query(`INSERT INTO "CreditApprovalNovelty" ("id","creditoId","status")
+      VALUES ('30000000-0000-4000-8000-000000000001',$1,'WAITING_ALLY')`, [withNovelty]);
+    await pool.query(`INSERT INTO "CreditApprovalReissue" ("id","creditoId","status")
+      VALUES ('40000000-0000-4000-8000-000000000001',$1,'DISPATCHED')`, [withReissue]);
+
+    const analystPage = await service.listSadminCredits(db, analystActor, { q: "ANALYST-SCOPE-" });
+    assert.deepEqual(analystPage.items.map(item => item.id), [ready]);
+    const adminPage = await service.listSadminCredits(db, actor, { q: "ANALYST-SCOPE-" });
+    assert.deepEqual(new Set(adminPage.items.map(item => item.id)), new Set([unapproved, ready, withNovelty, withReissue, historical, imported, central]));
+
+    for (const id of [unapproved, withNovelty, withReissue, historical, imported, central]) {
+      await assert.rejects(service.getSadminCreditSummary(db, analystActor, id), error => error.code === "CREDIT_NOT_FOUND" && error.status === 404);
+      await assert.rejects(change(id, 0, "estadoCreacion", "ERROR_CREACION", analystActor, "No debe persistirse"), error => error.code === "CREDIT_NOT_FOUND" && error.status === 404);
+      assert.equal(await eventCount(id), 0);
+      assert.equal(await getRegistration(id), undefined);
+    }
+    assert.equal((await service.getSadminCreditSummary(db, actor, unapproved)).creditoId, unapproved);
+
+    const financialBefore = (await pool.query(`SELECT "valorEquipoTotal","cuotaInicial","saldoBaseFinanciado","valorCuota",
+      "montoCredito","valorFianza","valorInteres","tasaInteresEa","fianzaPorcentaje","contratoSnapshot"
+      FROM "Credito" WHERE "id"=$1`, [ready])).rows[0];
+    let saved = await change(ready, 0, "estadoCreacion", "ERROR_CREACION", analystActor, "SADMIN rechazó el alta");
+    assert.equal(saved.estadoCreacion, "ERROR_CREACION");
+    assert.equal(saved.motivoEstado, "SADMIN rechazó el alta");
+    saved = await change(ready, saved.version, "estadoCreacion", "REQUIERE_REVISION", analystActor, "Validar documento del cliente");
+    assert.equal(saved.estadoCreacion, "REQUIERE_REVISION");
+    assert.deepEqual((await service.listSadminCredits(db, analystActor, { q: "ANALYST-SCOPE-READY", status: "pending" })).items.map(item => item.id), [ready]);
+    for (const [field, value] of [["numeroCredito", "SADMIN-READY-1"], ["codeudorCreado", true], ["creditoCreado", true], ["numeroCreditoConfirmado", true]]) {
+      saved = await change(ready, saved.version, field, value, analystActor);
+    }
+    assert.equal(saved.estadoCreacion, "CREADO_CORRECTAMENTE");
+    assert.equal((await service.listSadminCredits(db, analystActor, { q: "ANALYST-SCOPE-READY", status: "pending" })).total, 0);
+    assert.deepEqual((await service.listSadminCredits(db, analystActor, { q: "ANALYST-SCOPE-READY", status: "created" })).items.map(item => item.id), [ready]);
+
+    const summary = await service.getSadminCreditSummary(db, analystActor, ready);
+    assert.equal(summary.numeroCreditoVisible, "SADMIN-READY-1");
+    assert.equal(summary.registroLocalHref, `/dashboard/aprobaciones?credito=${ready}`);
+    assert.equal(summary.sadmin.estadoCreacion, "CREADO_CORRECTAMENTE");
+    assert.deepEqual(summary.historial.map(item => item.version), [6, 5, 4, 3, 2, 1]);
+    assert.ok(summary.historial.every(item => item.actor === analystActor.nombre && item.fechaHora.endsWith("Z")));
+    assert.deepEqual(summary.historial.slice(0, 4).map(item => item.numeroCredito), Array(4).fill("SADMIN-READY-1"));
+    assert.equal(summary.historial[0].resultado, "CREADO_CORRECTAMENTE");
+    assert.equal(summary.historial.at(-1).resultado, "ERROR_CREACION");
+    assert.equal(summary.historial.at(-1).motivo, "SADMIN rechazó el alta");
+    assert.equal(summary.historial.at(-2).motivo, "Validar documento del cliente");
+    const financialAfter = (await pool.query(`SELECT "valorEquipoTotal","cuotaInicial","saldoBaseFinanciado","valorCuota",
+      "montoCredito","valorFianza","valorInteres","tasaInteresEa","fianzaPorcentaje","contratoSnapshot"
+      FROM "Credito" WHERE "id"=$1`, [ready])).rows[0];
+    assert.deepEqual(financialAfter, financialBefore);
   });
 
   await t.test("tasas de amortización prevalecen; histórico usa snapshot y seguro ausente queda null", async () => {

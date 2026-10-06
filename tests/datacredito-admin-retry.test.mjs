@@ -25,12 +25,12 @@ function exportedFunction(contents, name) {
   return contents.slice(start, next === -1 ? contents.length : next);
 }
 
-function assertCentralAccessBeforeInput(contents, label) {
+function assertReleaseAccessBeforeInput(contents, label) {
   const post = exportedFunction(contents, "POST");
-  const access = post.indexOf("getDataCreditoCentralAdmin(");
+  const access = post.indexOf("getDataCreditoRetryReleaseActor(");
   const params = post.indexOf("context.params");
   const body = post.indexOf("request.json(");
-  assert.ok(access >= 0, `${label}: falta autenticación central`);
+  assert.ok(access >= 0, `${label}: falta autenticación acotada de liberación`);
   if (params >= 0) {
     assert.ok(access < params, `${label}: no debe leer params antes de autenticar`);
   }
@@ -56,7 +56,7 @@ test("las rutas son POST privadas, no cacheables y autentican antes de leer entr
       route,
       /Cache-Control["']?:\s*["']private, no-store, max-age=0["']/
     );
-    assertCentralAccessBeforeInput(route, label);
+    assertReleaseAccessBeforeInput(route, label);
   }
 });
 

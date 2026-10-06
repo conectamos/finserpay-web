@@ -6,6 +6,8 @@ const APPROVAL_ANALYST_SESSION_COOKIE_NAME = "approval_analyst_session";
 const APPROVAL_ACCESS_COOKIE_NAME = "approval_access_session";
 const APPROVAL_SHARED_COOKIE_NAME = "approval_shared_session";
 const SELLER_SESSION_COOKIE_NAME = "seller_session";
+const APPROVAL_ANALYST_RETRY_RELEASE_ROUTE =
+  /^\/api\/creditos\/datacredito\/admin\/evaluaciones\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/autorizar-reintento$/i;
 
 const LEGACY_PAGE_PREFIXES = [
   "/inventario",
@@ -139,8 +141,17 @@ export function proxy(request: NextRequest) {
   const hasSharedApprovalAccess = Boolean(request.cookies.get(APPROVAL_SHARED_COOKIE_NAME)?.value);
   const approvalApi = pathMatches(pathname, ["/api/aprobaciones"]);
   const approvalPage = pathMatches(pathname, ["/dashboard/aprobaciones"]);
+  const approvalAnalystRetryReleaseApi =
+    request.method === "POST" && (
+      pathname === "/api/creditos/datacredito/admin/liberaciones/buscar" ||
+      APPROVAL_ANALYST_RETRY_RELEASE_ROUTE.test(pathname)
+    );
+  const approvalAnalystSolicitudesApi =
+    request.method === "GET" && pathname === "/api/solicitudes";
   const approvalAnalystApi =
     approvalApi ||
+    approvalAnalystRetryReleaseApi ||
+    approvalAnalystSolicitudesApi ||
     pathname === "/api/session" ||
     pathname === "/api/login" ||
     pathname === "/api/logout";

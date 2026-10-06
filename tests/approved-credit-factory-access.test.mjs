@@ -11,10 +11,11 @@ const projectRoot = path.resolve(
 const readProjectFile = (file) =>
   readFile(path.join(projectRoot, file), "utf8");
 
-const [page, factory, wall, dashboard, creditRoute, gallery, commandRoute] = await Promise.all([
+const [page, factory, wall, analystWall, dashboard, creditRoute, gallery, commandRoute] = await Promise.all([
   readProjectFile("app/dashboard/creditos/page.tsx"),
   readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
   readProjectFile("app/dashboard/solicitudes/solicitudes-wall-client.tsx"),
+  readProjectFile("app/dashboard/aprobaciones/solicitudes/page.tsx"),
   readProjectFile("app/dashboard/_components/seller-commercial-dashboard.tsx"),
   readProjectFile("app/api/creditos/route.ts"),
   readProjectFile("app/dashboard/creditos/credit-evidence-gallery.tsx"),
@@ -39,7 +40,9 @@ test("solo central puede abrir un credito finalizado dentro de la fabrica", () =
 });
 
 test("el enlace de fabrica conserva filtros y solo acepta retorno al muro", () => {
-  assert.match(wall, /const wallReturnHref = `\/dashboard\/solicitudes/);
+  assert.match(wall, /baseHref = "\/dashboard\/solicitudes"/);
+  assert.match(wall, /const wallReturnHref = `\$\{baseHref\}/);
+  assert.match(analystWall, /baseHref="\/dashboard\/aprobaciones\/solicitudes"/);
   assert.match(wall, /params\.set\("returnTo", returnTo\)/);
   assert.match(
     wall,

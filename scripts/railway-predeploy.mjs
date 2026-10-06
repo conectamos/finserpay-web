@@ -29,3 +29,5 @@ await import("./ensure-merchant-applications-schema.mjs");
 await import("./ensure-commissions-schema.mjs");
 await import("./ensure-approval-operations-schema.mjs");
 await import("./ensure-firmaseguro-draft-dispatch-schema.mjs");
+await import("./ensure-analyst-mora-schema.mjs");
+await import("./ensure-mora-exception-requests-schema.mjs");

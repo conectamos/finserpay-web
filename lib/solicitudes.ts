@@ -50,7 +50,7 @@ export function isSolicitudVisibleOnWall(
 }
 
 export type SolicitudViewer = {
-  kind: "CENTRAL_ADMIN" | "ALLY_ADMIN" | "SUPERVISOR" | "SELLER";
+  kind: "CENTRAL_ADMIN" | "APPROVAL_ANALYST" | "ALLY_ADMIN" | "SUPERVISOR" | "SELLER";
   userId: number;
   aliadoId: number | null;
   sedeId: number | null;
@@ -396,7 +396,7 @@ export function canViewSolicitud(
   viewer: SolicitudViewer,
   ownership: SolicitudOwnership
 ) {
-  if (viewer.kind === "CENTRAL_ADMIN") return true;
+  if (viewer.kind === "CENTRAL_ADMIN" || viewer.kind === "APPROVAL_ANALYST") return true;
   if (!viewer.aliadoId || viewer.aliadoId !== ownership.aliadoId) return false;
   if (viewer.kind === "ALLY_ADMIN") return true;
   if (viewer.kind === "SELLER") {
@@ -409,7 +409,7 @@ export function canViewSolicitud(
 }
 
 export function canSeeSensitiveSolicitudData(viewer: SolicitudViewer) {
-  return viewer.kind === "CENTRAL_ADMIN" || viewer.kind === "ALLY_ADMIN";
+  return ["CENTRAL_ADMIN", "APPROVAL_ANALYST", "ALLY_ADMIN"].includes(viewer.kind);
 }
 
 export function isSolicitudExpired(

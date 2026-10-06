@@ -1,10 +1,11 @@
 # Creación en SADMIN
 
-El botón **Creación SADMIN**, disponible en el muro de aprobaciones administrativo
-y en su enlace compartido, abre la cartera completa desde el inicio de la operación.
-Incluye históricos, importaciones, créditos centrales y pagados; excluye estados
-ANULADO, ANULADA, CANCELADO y CANCELADA. Este alcance fue solicitado expresamente
-para este módulo y no cambia las colas de revisión documental.
+El administrador central conserva la consulta histórica completa desde el inicio
+de la operación: incluye históricos, importaciones, créditos centrales y pagados;
+excluye estados ANULADO, ANULADA, CANCELADO y CANCELADA. El analista nominal solo
+puede listar, exportar, consultar o actualizar créditos con una aprobación vigente
+y listos para el proceso operativo: sin novedades abiertas ni reenvíos de firma en
+curso. Un enlace compartido no concede acceso a SADMIN.
 
 La tabla consulta 20 registros por página y los ordena por fecha del crédito e ID
 descendentes. La búsqueda acepta cliente, cédula, folio, aliado o número de SADMIN.
@@ -21,10 +22,14 @@ y responde `INVALID_SADMIN_STATUS` con estado HTTP 400 ante cualquier otro valor
 
 Cada crédito conserva las verificaciones **CODEUDOR CREADO**, **CRÉDITO CREADO** y
 **NÚMERO DE CRÉDITO**, además del número real asignado en SADMIN. Este último es
-texto de hasta 80 caracteres, conserva ceros iniciales y debe ser único. El estado
-**CREADO SADMIN** requiere las tres verificaciones y un número guardado. Cambiar
-el número desmarca su verificación; desmarcar cualquier casilla deja el seguimiento
-pendiente de nuevo. No se crean operaciones en un servicio externo.
+texto de hasta 80 caracteres, conserva ceros iniciales y debe ser único. El resultado
+operativo es `PENDIENTE_CREAR`, `ERROR_CREACION`, `REQUIERE_REVISION` o
+`CREADO_CORRECTAMENTE`. El último requiere las tres verificaciones y un número
+guardado y confirmado; al alcanzarlo el crédito deja la lista de pendientes.
+`ERROR_CREACION` y `REQUIERE_REVISION` exigen una razón de hasta 500 caracteres,
+que se conserva en el registro y en el evento correspondiente. Cambiar el número
+desmarca su verificación y vuelve a `PENDIENTE_CREAR`. No se crean operaciones en
+un servicio externo.
 
 Cuando una verificación mueve un registro fuera del filtro activo, la tabla vuelve
 a consultar esa vista para actualizar filas, conteos y paginación. Los filtros se
@@ -47,9 +52,12 @@ a abrir conserva cualquier número pendiente de guardar.
 
 El seguimiento se almacena en CreditSadminRegistration con versión de concurrencia
 y eventos inmutables en CreditSadminEvent. No modifica el estado financiero del
-crédito ni su aprobación documental. Las API reutilizan los permisos de aprobación,
-validación de sesión compartida y protección de origen; cada mutación bloquea la
-fila del crédito y valida la versión antes de registrar el cambio y su autor.
+crédito ni su aprobación documental. Cada mutación bloquea la fila del crédito,
+valida la versión y guarda resultado, número, actor y fecha. La ruta
+`GET /api/aprobaciones/sadmin/:id` devuelve el resumen reutilizable con
+`sadmin.estadoCreacion`, `numeroCreditoVisible`, `registroLocalHref` e `historial`.
+El historial incluye `version`, `actor`, `fechaHora`, `numeroCredito`, `resultado`
+y `motivo` cuando aplica.
 
 El predeploy de Railway instala el esquema idempotente después de los esquemas
 de aprobaciones. Pruebas PostgreSQL aisladas se ejecutan con
@@ -73,8 +81,8 @@ y número SADMIN se escriben como texto para conservar ceros iniciales y evitar
 que contenido que empiece por `=`, `+`, `-` o `@` se interprete como fórmula.
 Los importes, cantidades, porcentajes y fechas mantienen tipos nativos de Excel.
 
-La ruta admite los mismos actores personales y accesos compartidos vigentes del
-módulo. Responde con caché privada deshabilitada, `nosniff`, MIME de XLSX y una
+La ruta admite al administrador central y al analista nominal, aplicando a cada uno
+el mismo alcance de datos de la lista. Responde con caché privada deshabilitada, `nosniff`, MIME de XLSX y una
 descarga con nombre `creacion-sadmin-{todos|pendientes|creados}-AAAA-MM-DD.xlsx`.
 Si el resultado supera **2.000 registros**, responde HTTP 413 con el código
 `SADMIN_EXPORT_TOO_LARGE`; nunca entrega un archivo truncado. Un resultado vacío

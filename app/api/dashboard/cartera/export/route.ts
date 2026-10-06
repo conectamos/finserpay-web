@@ -23,6 +23,7 @@ import {
   getActiveMoraBlockExemptionDocuments,
   normalizeMoraExemptionDocument,
 } from "@/lib/mora-block-exemptions";
+import { getActiveMoraExceptionsByCreditIds } from "@/lib/mora-exception-requests";
 import prisma from "@/lib/prisma";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
@@ -239,6 +240,9 @@ export async function GET(req: Request) {
         fechaCredito: "desc",
       },
     });
+    const activeExceptionCreditIds = includeProrroga
+      ? new Set((await getActiveMoraExceptionsByCreditIds(creditos.map(credit => credit.id), today)).keys())
+      : new Set<number>();
 
     const platformCredits = selectedPlatform
       ? creditos.filter(
@@ -340,7 +344,8 @@ export async function GET(req: Request) {
         );
 
         const documento = normalizeMoraExemptionDocument(credito.clienteDocumento);
-        const prorrogaActiva = Boolean(documento) && activeExemptionDocuments.has(documento);
+        const prorrogaActiva = activeExceptionCreditIds.has(credito.id) ||
+          (Boolean(documento) && activeExemptionDocuments.has(documento));
 
         return `<tr>
           ${textCell(formatDate(credito.fechaCredito))}
