@@ -22,6 +22,7 @@ const LEGACY_PAGE_PREFIXES = [
 const ADMIN_ONLY_DASHBOARD_PREFIXES = [
   "/dashboard/comisiones",
   "/dashboard/cartera",
+  "/dashboard/riesgo-referencia",
   "/dashboard/catalogo-equipos",
   "/dashboard/equality",
   "/dashboard/integraciones",

@@ -174,6 +174,7 @@ export default function AdminSidebar({
           : []),
         ...(adminCentral
           ? [
+              { href: "/dashboard/riesgo-referencia", icon: BarChart3, label: "Riesgo por referencia" },
               {
                 href: "/dashboard/excepciones-mora",
                 icon: TriangleAlert,
