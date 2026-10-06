@@ -47,7 +47,7 @@ export async function getSadminApprovalActor(): Promise<SadminActor> {
   }
 
   const analyst = await getNominalApprovalAnalystSessionUser();
-  if (analyst) return { id: analyst.id, nombre: analyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL_OR_APPROVED_READY" };
+  if (analyst) return { id: analyst.id, nombre: analyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" };
 
   if (!admin) {
     throw new CreditApprovalError("UNAUTHENTICATED", "Inicia sesión para gestionar SADMIN.", 401);

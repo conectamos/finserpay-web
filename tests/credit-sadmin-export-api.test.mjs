@@ -253,7 +253,7 @@ test("el analista nominal exporta SADMIN con su identidad como actor", async () 
   const response = await api.route.GET(request("pending"));
   assert.equal(response.status, 200);
   const call = api.calls.find(item => item.name === "export");
-  assert.deepEqual(clone(call.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL_OR_APPROVED_READY" });
+  assert.deepEqual(clone(call.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" });
 });
 
 test("conserva los errores 400 y 413 del servicio sin generar un archivo parcial", async () => {

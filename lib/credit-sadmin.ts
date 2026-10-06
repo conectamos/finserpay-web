@@ -1,8 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@/app/generated/prisma/client";
-import { assertApprovalActorActive, approvalActorAudit, buildCurrentCreditApprovalSql } from "@/lib/credit-approval-actor";
-import { buildCreditApprovalQueueScopeSql } from "@/lib/credit-approval-queue";
+import { assertApprovalActorActive, approvalActorAudit } from "@/lib/credit-approval-actor";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
@@ -36,8 +35,8 @@ type SadminEventRow = {
   version: number; actorName: string; payload: unknown; createdAt: Date | string;
 };
 
-// Both nominal roles can consult the historical cartera. Analysts can complete
-// historical/operating registrations; new requests still need current approval.
+// Both nominal roles can consult and complete the full historical cartera.
+// SADMIN tracking is independent from the approval required for settlement.
 // The separate SADMIN registration never changes credit or financial state.
 const visibleCreditSql = `UPPER(BTRIM(COALESCE(credit."estado",''))) NOT IN ('ANULADO','ANULADA','CANCELADO','CANCELADA')`;
 const searchSql = `($1::text IS NULL OR
@@ -50,25 +49,9 @@ const createdSadminSql = `(COALESCE(registration."estadoCreacion",'PENDIENTE_CRE
 const statusSql = `($2::text='all'
   OR ($2::text='pending' AND NOT ${createdSadminSql})
   OR ($2::text='created' AND ${createdSadminSql}))`;
-const approvedReadySql = `(${buildCreditApprovalQueueScopeSql("credit")}
-  AND EXISTS (SELECT 1 FROM "CreditApprovalReview" review
-    WHERE review."creditoId"=credit."id" AND ${buildCurrentCreditApprovalSql("credit", "review")})
-  AND EXISTS (SELECT 1 FROM "Sede" approval_site JOIN "Aliado" approval_ally ON approval_ally."id"=approval_site."aliadoId"
-    WHERE approval_site."id"=credit."sedeId" AND UPPER(BTRIM(COALESCE(approval_ally."codigo",'')))<>'FINSERPAY'))`;
-// Use server-owned origin/operation evidence, never the editable credit date or
-// a free-form state. Missing policy fails closed for the analyst write scope.
-const historicalOrApprovedReadySql = `(EXISTS (SELECT 1 FROM "CreditApprovalPolicy" policy WHERE policy."id"=1)
-  AND (credit."createdAt"<(SELECT "activatedAt" FROM "CreditApprovalPolicy" WHERE "id"=1)
-    OR (COALESCE(credit."equalityService",'')='IMPORTACION_MASIVA'
-      AND COALESCE(credit."contratoSnapshot" #>> '{origen,tipo}','')='IMPORTACION_MASIVA')
-    OR credit."pazYSalvoEmitidoAt" IS NOT NULL
-    OR EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" settled WHERE settled."creditoId"=credit."id")
-    OR ${approvedReadySql}))`;
 function actorCreditScopeSql(actor: SadminActor, operation: "read" | "write" = "read") {
   const scope = operation === "write" ? actor.sadminWriteScope ?? actor.sadminScope : actor.sadminScope;
   if (scope === "HISTORICAL") return "TRUE";
-  if (scope === "APPROVED_READY") return approvedReadySql;
-  if (scope === "HISTORICAL_OR_APPROVED_READY") return historicalOrApprovedReadySql;
   throw new CreditApprovalError("FORBIDDEN", "No tienes permiso para consultar la creación SADMIN.", 403);
 }
 function baseSql(actor: SadminActor) { return `FROM "Credito" credit

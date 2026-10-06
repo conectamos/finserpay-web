@@ -32,7 +32,7 @@ export function loadSadminModule(path) {
 export const service = loadSadminModule("lib/credit-sadmin.ts");
 export const state = loadSadminModule("lib/credit-sadmin-state.ts");
 export const actor = { id: 1, nombre: "Administrador sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" };
-export const analystActor = { id: 1, nombre: "Analista sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL_OR_APPROVED_READY" };
+export const analystActor = { id: 1, nombre: "Analista sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" };
 export const sharedActor = { kind: "SHARED_LINK", id: null, nombre: "No confiar en este nombre",
   grantId: "10000000-0000-4000-8000-000000000001", sessionId: "20000000-0000-4000-8000-000000000001",
   sadminScope: "HISTORICAL" };
