@@ -144,14 +144,8 @@ export default function AdminSidebar({
         ...(!adminCentral && isAdminRole(rolUsuario) ? [{ href: "/dashboard/pendientes", icon: ClipboardList, label: "PENDIENTES" }] : []),
         { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
         { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
-        ...(adminCentral
-          ? [
-              {
-                href: "/dashboard/creditos?mode=simulator",
-                icon: Calculator,
-                label: "Simulador",
-              },
-            ]
+        ...(isAdminRole(rolUsuario)
+          ? [{ href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" }]
           : []),
         ...(adminCentral
           ? [

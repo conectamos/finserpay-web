@@ -596,13 +596,11 @@ export default function AdminCentralDashboard({
             <h2 className="text-lg font-black text-[#101828]">Acciones rapidas</h2>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
               <ActionLink href="/dashboard/creditos" icon={Plus} label="Nuevo credito" />
-              {adminCentral ? (
-                <ActionLink
-                  href="/dashboard/creditos?mode=simulator"
-                  icon={Calculator}
-                  label="Simular credito"
-                />
-              ) : null}
+              <ActionLink
+                href="/dashboard/creditos?mode=simulator"
+                icon={Calculator}
+                label="Simular credito"
+              />
               <ActionLink href="/dashboard/abonos" icon={ArrowDownToLine} label="Recibir abono" />
               <ActionLink href="/dashboard/clientes" icon={Search} label="Buscar usuario" />
               {adminCentral ? (

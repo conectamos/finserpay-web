@@ -61,14 +61,14 @@ test("el simulador exige escoger Android o iPhone antes de calcular", () => {
   assert.match(selector, /actionLabel=\{simulatorMode \? "Simular iPhone"/);
 });
 
-test("el administrador central ve el simulador en menu y acciones rapidas", () => {
+test("el simulador aparece para administradores centrales y aliados", () => {
   assert.match(
     sidebar,
-    /adminCentral[\s\S]{0,320}href: "\/dashboard\/creditos\?mode=simulator"/
+    /isAdminRole\(rolUsuario\)[\s\S]{0,120}href: "\/dashboard\/creditos\?mode=simulator"/
   );
   assert.match(
     dashboard,
-    /adminCentral \? \([\s\S]{0,260}href="\/dashboard\/creditos\?mode=simulator"/
+    /<ActionLink\s+href="\/dashboard\/creditos\?mode=simulator"[\s\S]{0,100}label="Simular credito"/
   );
 });
 
