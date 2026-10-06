@@ -152,13 +152,13 @@ test("el analista nominal central gestiona SADMIN con autoría individual", asyn
   const listed = await api.list.GET(listRequest("pending"));
   assert.equal(listed.status, 200);
   const listCall = api.calls.find(call => call.name === "list");
-  assert.deepEqual(clone(listCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "APPROVED_READY" });
+  assert.deepEqual(clone(listCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL_OR_APPROVED_READY" });
 
   const incoming = request({ version: 1, field: "creditoCreado", value: true });
   const updated = await api.update.PATCH(incoming, context);
   assert.equal(updated.status, 200);
   const updateCall = api.calls.find(call => call.name === "update");
-  assert.deepEqual(clone(updateCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "APPROVED_READY" });
+  assert.deepEqual(clone(updateCall.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL_OR_APPROVED_READY" });
 });
 
 test("la lista pasa página, búsqueda y estado al servicio con el administrador central", async () => {

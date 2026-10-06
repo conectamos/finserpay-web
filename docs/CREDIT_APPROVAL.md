@@ -43,8 +43,10 @@ idempotencia y auditoría del detalle operativo existente.
 
 En SADMIN el analista puede buscar, filtrar y exportar todo el histórico de
 cartera, incluidos créditos importados y pagados. Puede marcar las tres
-verificaciones y registrar el número asignado cuando el crédito tiene aprobación
-vigente y está listo para el proceso operativo. Cada cambio conserva su
+verificaciones y registrar el número asignado en créditos históricos anteriores
+al control de aprobación, importados o ya liquidados. Las solicitudes nuevas
+sujetas a revisión requieren aprobación vigente y estar listas para el proceso
+operativo. Cada cambio conserva su
 usuario nominal como actor. Liberar consulta está limitado al flujo seguro de
 reintento TX06 sin información evaluable: exige cédula, primer apellido correcto,
 consentimiento nuevo e idempotencia. No concede acceso al historial ni a otras
