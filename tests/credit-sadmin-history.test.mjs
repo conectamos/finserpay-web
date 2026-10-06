@@ -50,7 +50,7 @@ test("SADMIN del analista restaura todo el histórico y conserva el control de e
     equalityService: "IMPORTACION_MASIVA", contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } },
   });
   const paid = await create("RESTORED-PAID", { estado: "PAZ_Y_SALVO", pazYSalvoEmitidoAt: "2026-10-01T12:00:00Z" });
-  const central = await create("RESTORED-CENTRAL", { sedeId: 1 });
+  const central = await create("RESTORED-CENTRAL", { sedeId: 1, createdAt: "2026-08-01T12:00:00Z" });
   const unapproved = await create("RESTORED-UNAPPROVED");
   const ready = await create("RESTORED-READY");
   const withNovelty = await create("RESTORED-NOVELTY");
@@ -62,7 +62,7 @@ test("SADMIN del analista restaura todo el histórico y conserva el control de e
     VALUES ('40000000-0000-4000-8000-000000000001',$1,'DISPATCHED')`, [withReissue]);
   const cancelled = [];
   for (const [index, estado] of ["ANULADO", " anulada ", "CANCELADO", " cancelada "].entries()) {
-    cancelled.push(await create(`RESTORED-CANCELLED-${index}`, { estado }));
+    cancelled.push(await create(`RESTORED-CANCELLED-${index}`, { estado, createdAt: "2026-08-01T12:00:00Z" }));
   }
   for (const id of [historical[0], imported, paid, central]) await complete(id, `LEGACY-${id}`);
   const beforeRead = await snapshot();
@@ -74,7 +74,8 @@ test("SADMIN del analista restaura todo el histórico y conserva el control de e
     assert.ok(pages.every(page => page.total === 30 && page.totalPages === 2));
     for (const page of pages) assert.deepEqual(plain(page.counts), { all: 30, pending: 26, created: 4 });
     assert.deepEqual(new Set(pages.flatMap(page => page.items.map(item => item.id))), expectedIds);
-    assert.deepEqual(pages.flatMap(page => page.items).filter(item => item.canEditSadmin).map(item => item.id), [ready]);
+    assert.deepEqual(new Set(pages.flatMap(page => page.items).filter(item => item.canEditSadmin).map(item => item.id)),
+      new Set([...historical, imported, paid, central, ready]));
     assert.equal(pages.flatMap(page => page.items).find(item => item.id === paid).saldoObligacion, 0);
   });
 
@@ -90,7 +91,7 @@ test("SADMIN del analista restaura todo el histórico y conserva el control de e
     assert.deepEqual(plain(document.counts), { all: 1, pending: 1, created: 0 });
     const assigned = await service.listSadminCredits(db, analystActor, { q: `LEGACY-${imported}` });
     assert.deepEqual(assigned.items.map(item => item.id), [imported]);
-    assert.equal(assigned.items[0].canEditSadmin, false);
+    assert.equal(assigned.items[0].canEditSadmin, true);
   });
 
   await t.test("Excel devuelve todas las páginas históricas y el resumen conserva su auditoría", async () => {
@@ -104,15 +105,15 @@ test("SADMIN del analista restaura todo el histórico y conserva el control de e
     for (const id of [historical[0], imported, paid, central, unapproved]) {
       const summary = await service.getSadminCreditSummary(db, analystActor, id);
       assert.equal(summary.creditoId, id);
-      assert.equal(summary.canEditSadmin, false);
+      assert.equal(summary.canEditSadmin, id !== unapproved);
       assert.equal(summary.historial.length, id === unapproved ? 0 : 4);
       assert.ok(summary.historial.every(event => event.actor === actor.nombre));
     }
     assert.deepEqual(await snapshot(), beforeRead, "lista, filtros, resumen y exportación no reescriben datos");
   });
 
-  await t.test("el permiso de consulta no habilita escrituras históricas o con novedades ni créditos anulados", async () => {
-    for (const id of [...historical, imported, paid, central, unapproved, withNovelty, withReissue, ...cancelled]) {
+  await t.test("las solicitudes nuevas sin aprobar, con novedades o reenvíos y los anulados siguen bloqueados", async () => {
+    for (const id of [unapproved, withNovelty, withReissue, ...cancelled]) {
       await assert.rejects(change(id, 0, "codeudorCreado", true, analystActor), error => error.code === "CREDIT_NOT_FOUND" && error.status === 404);
     }
     for (const id of cancelled) await assert.rejects(service.getSadminCreditSummary(db, analystActor, id), error => error.status === 404);
@@ -146,6 +147,87 @@ test("SADMIN del analista restaura todo el histórico y conserva el control de e
     const before = await snapshot();
     await assert.rejects(change(ready, 4, "numeroCredito", "DENIED", analystActor), error => error.status === 404);
     assert.equal((await service.getSadminCreditSummary(db, analystActor, ready)).canEditSadmin, false);
+    assert.deepEqual(await snapshot(), before);
+  });
+
+  await t.test("el crédito histórico de julio permite guardar número y tres verificaciones con historial y finanzas intactas", async () => {
+    const id = await create("FC-HISTORICO-JULIO", {
+      clienteNombre: "Cliente histórico de julio", clienteDocumento: "900000099",
+      createdAt: "2026-07-02T15:36:04Z", fechaCredito: "2026-07-02T12:00:00Z",
+      valorEquipoTotal: 1700000, cuotaInicial: 0, saldoBaseFinanciado: 1700000,
+      plazoMeses: 15, frecuenciaPago: "MENSUAL", valorCuota: 180045,
+      montoCredito: 2700675, valorFianza: 0, valorInteres: 1000675,
+      fechaPrimerPago: "2026-08-02T12:00:00Z", contratoSnapshot: { financiero: { sello: "historico-inmutable" } },
+    });
+    await sql.query(`INSERT INTO "CreditoAbono" ("creditoId","fechaAbono","valor","metodoPago")
+      VALUES ($1,'2026-08-02',180045,'EFECTIVO'),($1,'2026-09-02',180045,'EFECTIVO'),($1,'2026-10-03',180045,'EFECTIVO')`, [id]);
+    const before = await snapshot();
+    const page = await service.listSadminCredits(db, analystActor, { q: "900000099" });
+    assert.equal(page.items.length, 1);
+    assert.equal(page.items[0].canEditSadmin, true);
+    assert.equal(page.items[0].numeroCuotas, 15);
+    assert.equal(page.items[0].cuotasPagadas, 3);
+    assert.equal(page.items[0].sadmin.version, 0);
+    const result = await complete(id, "0000702-HISTORICO", analystActor);
+    assert.equal(result.estadoCreacion, "CREADO_CORRECTAMENTE");
+    const summary = await service.getSadminCreditSummary(db, analystActor, id);
+    assert.equal(summary.numeroCreditoVisible, "0000702-HISTORICO");
+    assert.deepEqual(summary.historial.map(event => event.version), [4, 3, 2, 1]);
+    assert.ok(summary.historial.every(event => event.actor === analystActor.nombre && event.fechaHora.endsWith("Z")));
+    assert.equal(summary.historial[0].resultado, "CREADO_CORRECTAMENTE");
+    assert.equal((await service.listSadminCredits(db, analystActor, { q: "900000099", status: "pending" })).total, 0);
+    assert.equal((await service.listSadminCredits(db, analystActor, { q: "900000099", status: "created" })).total, 1);
+    assert.deepEqual((await snapshot()).credits, before.credits);
+    for (const field of ["clienteDocumento", "valorEquipoTotal", "cuotaInicial", "saldoBaseFinanciado", "plazoMeses", "valorCuota", "fechaPrimerPago"]) {
+      await assert.rejects(service.updateSadminRegistration(db, analystActor, id, {
+        version: result.version, field, value: 1,
+      }), error => error.status === 400);
+    }
+  });
+
+  await t.test("liquidación y paz y salvo habilitan solo el registro operativo; fecha antedatada o marcador parcial no", async () => {
+    const settled = await create("OPERATING-SETTLED");
+    await sql.query('INSERT INTO "LiquidacionAliadoCredito" ("creditoId") VALUES ($1)', [settled]);
+    const paid = await create("OPERATING-PAID", { pazYSalvoEmitidoAt: "2026-10-01T12:00:00Z" });
+    const imported = await create("OPERATING-IMPORTED", {
+      equalityService: "IMPORTACION_MASIVA", contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } },
+    });
+    const historicalCentral = await create("OPERATING-CENTRAL", { sedeId: 1, createdAt: "2026-07-01T12:00:00Z" });
+    const beforeActivation = await create("OPERATING-BEFORE-ACTIVATION", { createdAt: "2026-08-31T23:59:59.999Z" });
+    const atActivation = await create("OPERATING-AT-ACTIVATION", { createdAt: "2026-09-01T00:00:00Z" });
+    const backdated = await create("OPERATING-BACKDATED", { fechaCredito: "2020-01-01" });
+    const markerOnly = await create("OPERATING-PARTIAL-MARKER", { equalityService: "IMPORTACION_MASIVA" });
+    const snapshotOnly = await create("OPERATING-PARTIAL-SNAPSHOT", { contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } } });
+    const freeState = await create("OPERATING-FREE-STATE", { estado: "PAZ_Y_SALVO" });
+    const before = await snapshot();
+    const eligible = [settled, paid, imported, historicalCentral, beforeActivation];
+    const blocked = [atActivation, backdated, markerOnly, snapshotOnly, freeState];
+    const listed = await service.listSadminCredits(db, analystActor, { q: "OPERATING-" });
+    const exported = await service.exportSadminCredits(db, analystActor, { q: "OPERATING-" });
+    for (const view of [listed, exported]) {
+      assert.deepEqual(new Set(view.items.filter(item => item.canEditSadmin).map(item => item.id)), new Set(eligible));
+      assert.deepEqual(new Set(view.items.filter(item => !item.canEditSadmin).map(item => item.id)), new Set(blocked));
+    }
+    for (const id of eligible) {
+      assert.equal((await service.getSadminCreditSummary(db, analystActor, id)).canEditSadmin, true);
+      const result = await complete(id, `OPERATING-${id}`, analystActor);
+      assert.equal(result.estadoCreacion, "CREADO_CORRECTAMENTE");
+      assert.ok((await service.getSadminCreditSummary(db, analystActor, id)).historial.every(event => event.actor === analystActor.nombre));
+    }
+    for (const id of blocked) {
+      assert.equal((await service.getSadminCreditSummary(db, analystActor, id)).canEditSadmin, false);
+      await assert.rejects(change(id, 0, "numeroCredito", `DENIED-${id}`, analystActor), error => error.status === 404);
+    }
+    assert.deepEqual((await snapshot()).credits, before.credits);
+  });
+
+  await t.test("sin política de aprobación el analista no puede escribir aunque sea histórico o importado", async () => {
+    await sql.query('DELETE FROM "CreditApprovalPolicy" WHERE "id"=1');
+    const before = await snapshot();
+    for (const id of [historical[1], imported, paid, ready]) {
+      assert.equal((await service.getSadminCreditSummary(db, analystActor, id)).canEditSadmin, false);
+      await assert.rejects(change(id, 0, "numeroCredito", "DENIED-NO-POLICY", analystActor), error => error.status === 404);
+    }
     assert.deepEqual(await snapshot(), before);
   });
 });

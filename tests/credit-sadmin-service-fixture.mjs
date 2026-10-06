@@ -32,7 +32,7 @@ export function loadSadminModule(path) {
 export const service = loadSadminModule("lib/credit-sadmin.ts");
 export const state = loadSadminModule("lib/credit-sadmin-state.ts");
 export const actor = { id: 1, nombre: "Administrador sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" };
-export const analystActor = { id: 1, nombre: "Analista sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "APPROVED_READY" };
+export const analystActor = { id: 1, nombre: "Analista sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL_OR_APPROVED_READY" };
 export const sharedActor = { kind: "SHARED_LINK", id: null, nombre: "No confiar en este nombre",
   grantId: "10000000-0000-4000-8000-000000000001", sessionId: "20000000-0000-4000-8000-000000000001",
   sadminScope: "HISTORICAL" };
@@ -75,7 +75,7 @@ export async function prepareServiceFixture(pool, connectionString, expectedData
   try {
     assert.equal((await client.query("SELECT current_database() AS name")).rows[0].name, expectedDatabase);
     const tables = ["SecondCreditAuthorizationEvent", "SecondCreditAuthorization", "CreditSadminEvent", "CreditSadminRegistration",
-      "CreditApprovalReissue", "CreditApprovalNovelty", "CreditApprovalReview", "CreditApprovalPolicy", "CreditoAbono", "CreditoAmortizacion", "Credito", "Sede", "Aliado", "Usuario",
+      "CreditApprovalReissue", "CreditApprovalNovelty", "CreditApprovalReview", "CreditApprovalPolicy", "LiquidacionAliadoCredito", "CreditoAbono", "CreditoAmortizacion", "Credito", "Sede", "Aliado", "Usuario",
       "CreditApprovalSharedSession", "CreditApprovalSharedGrant"];
     const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
     assert.ok(existing.rows.every(row => tables.includes(row.tablename)), "El fixture no borra tablas ajenas");
@@ -114,6 +114,7 @@ export async function prepareServiceSchema(client) {
         "fianzaCuotaPorcentaje" DOUBLE PRECISION,"seguroCuotaPorcentaje" DOUBLE PRECISION,"numeroCuotas" INTEGER);
       CREATE TABLE "CreditoAbono" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER REFERENCES "Credito", "fechaAbono" TIMESTAMP(3),
         "valor" DOUBLE PRECISION NOT NULL,"metodoPago" TEXT,"estado" TEXT DEFAULT 'APLICADO');
+      CREATE TABLE "LiquidacionAliadoCredito" ("creditoId" INTEGER PRIMARY KEY REFERENCES "Credito");
       CREATE TABLE "CreditApprovalSharedGrant" ("id" UUID PRIMARY KEY,"scope" TEXT NOT NULL,"revokedAt" TIMESTAMP(3));
       CREATE TABLE "CreditApprovalSharedSession" ("id" UUID PRIMARY KEY,"grantId" UUID NOT NULL REFERENCES "CreditApprovalSharedGrant",
         "revokedAt" TIMESTAMP(3),"expiresAt" TIMESTAMP(3) NOT NULL, UNIQUE("id","grantId"));

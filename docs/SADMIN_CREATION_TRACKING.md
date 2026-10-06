@@ -4,9 +4,14 @@ El administrador central y el analista nominal consultan la cartera completa des
 el inicio de la operación: incluye históricos, importaciones, créditos centrales
 y pagados; excluye estados ANULADO, ANULADA, CANCELADO y CANCELADA. La lista abre
 en **Todos** y sus conteos, búsqueda, exportación y resúmenes usan el mismo alcance
-histórico. El analista solo puede actualizar registros con una aprobación vigente
-y listos para el proceso operativo: sin novedades abiertas ni reenvíos de firma en
-curso. El servidor calcula `canEditSadmin` para cada fila y resumen, y vuelve a
+histórico. El analista puede completar las verificaciones y el número SADMIN de
+créditos anteriores a la activación de aprobaciones, importados con ambos
+marcadores de origen, ya liquidados al aliado o con paz y salvo emitido. Una
+solicitud nueva todavía requiere aprobación vigente, sin novedades abiertas ni
+reenvíos de firma en curso. La fecha de crédito, los comentarios y un estado
+escrito libremente no habilitan este permiso; el alcance se calcula con los
+registros operativos del servidor y falla cerrado si falta la política de
+aprobaciones. El servidor calcula `canEditSadmin` para cada fila y resumen, y vuelve a
 validar el alcance de escritura al guardar. Un enlace compartido no concede
 acceso a SADMIN.
 

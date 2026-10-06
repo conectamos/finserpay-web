@@ -370,7 +370,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
               </div>
               <section className={styles.registration}><h3>Creación SADMIN</h3>
                 <div className={styles.progress}><Badge tone={creationTone(row.sadmin.estadoCreacion)}>{creationStatusLabels[row.sadmin.estadoCreacion]}</Badge><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "warning"}>{completed} de 3 verificaciones</Badge>{saving ? <span role="status">Guardando...</span> : null}</div>
-                {!row.canEditSadmin ? <p className={styles.updated}>Consulta del registro histórico. Para completar o modificar su creación en SADMIN, el crédito debe tener aprobación vigente y estar listo para el proceso operativo.</p> : null}
+                {!row.canEditSadmin ? <p className={styles.updated}>Este crédito está pendiente de aprobación. Completa la revisión antes de registrar su creación en SADMIN.</p> : null}
                 <fieldset id={`sadmin-checklist-${row.id}`} disabled={disabled} aria-label={`Verificaciones SADMIN de ${visibleNumber}`}>
                   {checklist.slice(0, 2).map(([field, label]) => <label key={field} className={styles.check}><input type="checkbox" checked={row.sadmin[field]} onChange={event => void save(row, field, event.target.checked)} /><span>{label}</span></label>)}
                   <div className={styles.number}>

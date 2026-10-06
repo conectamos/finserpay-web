@@ -159,7 +159,7 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     }
   });
 
-  await t.test("el analista consulta el histórico completo y solo actualiza aprobados listos sin alterar finanzas", async () => {
+  await t.test("el analista actualiza históricos e importados y mantiene bloqueada una solicitud nueva sin aprobación", async () => {
     const unapproved = await create({ folio: "ANALYST-SCOPE-UNAPPROVED" });
     const ready = await create({ folio: "ANALYST-SCOPE-READY", contratoSnapshot: { financiero: { sello: "inmutable" } } });
     const withNovelty = await create({ folio: "ANALYST-SCOPE-NOVELTY" });
@@ -175,17 +175,23 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
 
     const analystPage = await service.listSadminCredits(db, analystActor, { q: "ANALYST-SCOPE-" });
     assert.deepEqual(new Set(analystPage.items.map(item => item.id)), new Set([unapproved, ready, withNovelty, withReissue, historical, imported, central]));
-    assert.deepEqual(analystPage.items.filter(item => item.canEditSadmin).map(item => item.id), [ready]);
+    assert.deepEqual(new Set(analystPage.items.filter(item => item.canEditSadmin).map(item => item.id)), new Set([ready, historical, imported]));
     const adminPage = await service.listSadminCredits(db, actor, { q: "ANALYST-SCOPE-" });
     assert.deepEqual(new Set(adminPage.items.map(item => item.id)), new Set([unapproved, ready, withNovelty, withReissue, historical, imported, central]));
 
-    for (const id of [unapproved, withNovelty, withReissue, historical, imported, central]) {
+    for (const id of [unapproved, withNovelty, withReissue, central]) {
       const summary = await service.getSadminCreditSummary(db, analystActor, id);
       assert.equal(summary.creditoId, id);
       assert.equal(summary.canEditSadmin, false);
       await assert.rejects(change(id, 0, "estadoCreacion", "ERROR_CREACION", analystActor, "No debe persistirse"), error => error.code === "CREDIT_NOT_FOUND" && error.status === 404);
       assert.equal(await eventCount(id), 0);
       assert.equal(await getRegistration(id), undefined);
+    }
+    for (const id of [historical, imported]) {
+      assert.equal((await service.getSadminCreditSummary(db, analystActor, id)).canEditSadmin, true);
+      const saved = await change(id, 0, "codeudorCreado", true, analystActor);
+      assert.equal(saved.codeudorCreado, true);
+      assert.equal(await eventCount(id), 1);
     }
     assert.equal((await service.getSadminCreditSummary(db, actor, unapproved)).creditoId, unapproved);
 

@@ -148,9 +148,9 @@ test("la pantalla SADMIN conserva el histórico completo y la exportación", asy
   h.unmount();
 });
 
-test("el histórico completo muestra contadores y permite consulta y exportación sin habilitar registros no aprobados", async () => {
+test("el listado completo conserva contadores y consulta sin habilitar solicitudes pendientes de aprobación", async () => {
   const requests = [];
-  const historical = { ...row(81), canEditSadmin: false, cuotasPagadas: 24, cuotasPendientes: 0 };
+  const historical = { ...row(81), canEditSadmin: false };
   const h = mount(async (url, options = {}) => {
     requests.push({ url, options });
     if (url === "/api/aprobaciones/sadmin/81") return json({ ok: true, summary: {
@@ -166,7 +166,7 @@ test("el histórico completo muestra contadores y permite consulta y exportació
   await toggleCredit(h, 81);
   assert.equal(fieldset(h, 81).props.disabled, true);
   assert.equal(resultSelect(h, 81).props.disabled, true);
-  assert.match(content(h.find(node => node.props?.id === "sadmin-detail-81")), /Consulta del registro histórico/);
+  assert.match(content(h.find(node => node.props?.id === "sadmin-detail-81")), /pendiente de aprobación/);
   // Retained callbacks must also respect a server-declared read-only record.
   check(h, 81, "CODEUDOR CREADO").props.onChange({ target: { checked: true } });
   editNumber(h, 81, "NO-GUARDAR");
@@ -182,6 +182,35 @@ test("el histórico completo muestra contadores y permite consulta y exportació
   await toggleCredit(h, 82);
   assert.equal(fieldset(h, 82).props.disabled, false);
   assert.equal(resultSelect(h, 82).props.disabled, false);
+  h.unmount();
+});
+
+test("el crédito histórico habilitado permite escribir el número y marcar las verificaciones SADMIN", async () => {
+  const patches = [];
+  let stored = registration();
+  const legacy = () => ({ ...row(81, stored), fechaCredito: "2026-07-02", createdAt: "2026-07-02T15:36:00Z", cuotasPagadas: 3, cuotasPendientes: 12 });
+  const h = mount(async (_url, options = {}) => {
+    if (options.method !== "PATCH") return json(page([legacy()]));
+    const patch = JSON.parse(options.body); patches.push(patch);
+    stored = registration({ ...stored, version: stored.version + 1, [patch.field]: patch.value });
+    return json({ ok: true, sadmin: stored });
+  });
+  await h.flush(); await toggleCredit(h, 81);
+  assert.equal(fieldset(h, 81).props.disabled, false);
+  assert.equal(resultSelect(h, 81).props.disabled, false);
+  assert.doesNotMatch(content(h.find(node => node.props?.id === "sadmin-detail-81")), /pendiente de aprobación|Consulta del registro histórico/);
+  editNumber(h, 81, "010081"); await h.flush();
+  button(h, "Guardar número", fieldset(h, 81)).props.onClick(); await h.flush();
+  for (const label of ["CODEUDOR CREADO", "CRÉDITO CREADO", "NÚMERO DE CRÉDITO"]) {
+    check(h, 81, label).props.onChange({ target: { checked: true } }); await h.flush();
+    assert.equal(check(h, 81, label).props.checked, true);
+  }
+  assert.deepEqual(patches.map(patch => [patch.version, patch.field, patch.value]), [
+    [0, "numeroCredito", "010081"], [1, "codeudorCreado", true],
+    [2, "creditoCreado", true], [3, "numeroCreditoConfirmado", true],
+  ]);
+  assert.equal(number(h, 81).props.value, "010081");
+  assert.equal(errors(h), "");
   h.unmount();
 });
 
