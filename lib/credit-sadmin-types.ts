@@ -7,7 +7,10 @@ export type SadminCreationStatus =
   | "REQUIERE_REVISION";
 
 export type SadminAccessScope = "HISTORICAL" | "APPROVED_READY";
-export type SadminActor = ApprovalActor & { sadminScope: SadminAccessScope };
+export type SadminActor = ApprovalActor & {
+  sadminScope: SadminAccessScope;
+  sadminWriteScope?: SadminAccessScope;
+};
 
 export type SadminRegistration = {
   version: number;
@@ -33,6 +36,7 @@ export type SadminHistoryEntry = {
 
 export type SadminSummary = {
   creditoId: number;
+  canEditSadmin: boolean;
   folio: string;
   numeroCreditoVisible: string;
   registroLocalHref: string;
@@ -44,6 +48,7 @@ export type SadminStatusFilter = "all" | "pending" | "created";
 
 export type SadminCreditRow = {
   id: number;
+  canEditSadmin: boolean;
   folio: string;
   numeroCreditoVisible: string;
   createdAt: string;

@@ -159,7 +159,7 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
     }
   });
 
-  await t.test("el analista solo consulta aprobados listos; resumen, historial y cierre no alteran finanzas", async () => {
+  await t.test("el analista consulta el histórico completo y solo actualiza aprobados listos sin alterar finanzas", async () => {
     const unapproved = await create({ folio: "ANALYST-SCOPE-UNAPPROVED" });
     const ready = await create({ folio: "ANALYST-SCOPE-READY", contratoSnapshot: { financiero: { sello: "inmutable" } } });
     const withNovelty = await create({ folio: "ANALYST-SCOPE-NOVELTY" });
@@ -174,12 +174,15 @@ test("PostgreSQL aislado: servicio SADMIN histórico, checklist, autoría y conc
       VALUES ('40000000-0000-4000-8000-000000000001',$1,'DISPATCHED')`, [withReissue]);
 
     const analystPage = await service.listSadminCredits(db, analystActor, { q: "ANALYST-SCOPE-" });
-    assert.deepEqual(analystPage.items.map(item => item.id), [ready]);
+    assert.deepEqual(new Set(analystPage.items.map(item => item.id)), new Set([unapproved, ready, withNovelty, withReissue, historical, imported, central]));
+    assert.deepEqual(analystPage.items.filter(item => item.canEditSadmin).map(item => item.id), [ready]);
     const adminPage = await service.listSadminCredits(db, actor, { q: "ANALYST-SCOPE-" });
     assert.deepEqual(new Set(adminPage.items.map(item => item.id)), new Set([unapproved, ready, withNovelty, withReissue, historical, imported, central]));
 
     for (const id of [unapproved, withNovelty, withReissue, historical, imported, central]) {
-      await assert.rejects(service.getSadminCreditSummary(db, analystActor, id), error => error.code === "CREDIT_NOT_FOUND" && error.status === 404);
+      const summary = await service.getSadminCreditSummary(db, analystActor, id);
+      assert.equal(summary.creditoId, id);
+      assert.equal(summary.canEditSadmin, false);
       await assert.rejects(change(id, 0, "estadoCreacion", "ERROR_CREACION", analystActor, "No debe persistirse"), error => error.code === "CREDIT_NOT_FOUND" && error.status === 404);
       assert.equal(await eventCount(id), 0);
       assert.equal(await getRegistration(id), undefined);

@@ -31,8 +31,8 @@ export function loadSadminModule(path) {
 
 export const service = loadSadminModule("lib/credit-sadmin.ts");
 export const state = loadSadminModule("lib/credit-sadmin-state.ts");
-export const actor = { id: 1, nombre: "Administrador sintético SADMIN", sadminScope: "HISTORICAL" };
-export const analystActor = { id: 1, nombre: "Analista sintético SADMIN", sadminScope: "APPROVED_READY" };
+export const actor = { id: 1, nombre: "Administrador sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "HISTORICAL" };
+export const analystActor = { id: 1, nombre: "Analista sintético SADMIN", sadminScope: "HISTORICAL", sadminWriteScope: "APPROVED_READY" };
 export const sharedActor = { kind: "SHARED_LINK", id: null, nombre: "No confiar en este nombre",
   grantId: "10000000-0000-4000-8000-000000000001", sessionId: "20000000-0000-4000-8000-000000000001",
   sadminScope: "HISTORICAL" };
@@ -80,7 +80,14 @@ export async function prepareServiceFixture(pool, connectionString, expectedData
     const existing = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
     assert.ok(existing.rows.every(row => tables.includes(row.tablename)), "El fixture no borra tablas ajenas");
     for (const table of tables) await client.query('DROP TABLE IF EXISTS public."' + table + '" CASCADE');
-    await client.query(`
+    await prepareServiceSchema(client);
+  } finally { client.release(); }
+}
+
+// Shared synthetic schema; the external-PostgreSQL caller above checks the
+// exclusive local database before dropping tables. PGlite callers use memory.
+export async function prepareServiceSchema(client) {
+  await client.query(`
       CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
       INSERT INTO "Usuario" VALUES (1);
       CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY,"nombre" TEXT NOT NULL,"codigo" TEXT NOT NULL);
@@ -99,7 +106,7 @@ export async function prepareServiceFixture(pool, connectionString, expectedData
         "saldoBaseFinanciado" DOUBLE PRECISION NOT NULL DEFAULT 1000000,"valorCuota" DOUBLE PRECISION NOT NULL DEFAULT 50000,
         "montoCredito" DOUBLE PRECISION NOT NULL DEFAULT 1200000,"valorFianza" DOUBLE PRECISION NOT NULL DEFAULT 100000,
         "valorInteres" DOUBLE PRECISION NOT NULL DEFAULT 100000,"tasaInteresEa" DOUBLE PRECISION NOT NULL DEFAULT 10,
-        "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT 10,"contratoSnapshot" JSONB,"equalityService" TEXT,
+        "fianzaPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT 10,"contratoSnapshot" JSONB,"planCapitalVigente" JSONB,"equalityService" TEXT,
         "fechaPrimerPago" TIMESTAMP(3) DEFAULT '2020-02-02',"fechaProximoPago" TIMESTAMP(3),"pazYSalvoEmitidoAt" TIMESTAMP(3),
         "estado" TEXT NOT NULL DEFAULT 'INSCRITO');
       CREATE TABLE "CreditoAmortizacion" (
@@ -125,5 +132,4 @@ export async function prepareServiceFixture(pool, connectionString, expectedData
     for (const statement of secondCreditAuthorizationSchemaStatements) await client.query(statement);
     await client.query('INSERT INTO "CreditApprovalSharedGrant" ("id","scope") VALUES ($1,\'CREDIT_APPROVAL\')', [sharedActor.grantId]);
     await client.query('INSERT INTO "CreditApprovalSharedSession" ("id","grantId","expiresAt") VALUES ($1,$2,\'2199-01-01\')', [sharedActor.sessionId, sharedActor.grantId]);
-  } finally { client.release(); }
 }

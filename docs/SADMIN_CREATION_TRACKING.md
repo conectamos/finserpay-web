@@ -1,11 +1,14 @@
 # Creación en SADMIN
 
-El administrador central conserva la consulta histórica completa desde el inicio
-de la operación: incluye históricos, importaciones, créditos centrales y pagados;
-excluye estados ANULADO, ANULADA, CANCELADO y CANCELADA. El analista nominal solo
-puede listar, exportar, consultar o actualizar créditos con una aprobación vigente
+El administrador central y el analista nominal consultan la cartera completa desde
+el inicio de la operación: incluye históricos, importaciones, créditos centrales
+y pagados; excluye estados ANULADO, ANULADA, CANCELADO y CANCELADA. La lista abre
+en **Todos** y sus conteos, búsqueda, exportación y resúmenes usan el mismo alcance
+histórico. El analista solo puede actualizar registros con una aprobación vigente
 y listos para el proceso operativo: sin novedades abiertas ni reenvíos de firma en
-curso. Un enlace compartido no concede acceso a SADMIN.
+curso. El servidor calcula `canEditSadmin` para cada fila y resumen, y vuelve a
+validar el alcance de escritura al guardar. Un enlace compartido no concede
+acceso a SADMIN.
 
 La tabla consulta 20 registros por página y los ordena por fecha del crédito e ID
 descendentes. La búsqueda acepta cliente, cédula, folio, aliado o número de SADMIN.
