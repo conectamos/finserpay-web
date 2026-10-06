@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/auth";
+import { getNominalApprovalAnalystSessionUser, getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -22,9 +22,7 @@ function response(body: unknown, init?: ResponseInit) {
 
 async function getViewer() {
   const user = await getSessionUser();
-  if (!user) return null;
-
-  if (isAdminRole(user.rolNombre)) {
+  if (user && isAdminRole(user.rolNombre)) {
     const central = isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     return {
       user,
@@ -38,6 +36,23 @@ async function getViewer() {
       } satisfies SolicitudViewer,
     };
   }
+
+  const analyst = await getNominalApprovalAnalystSessionUser();
+  if (analyst) {
+    return {
+      user: analyst,
+      seller: null,
+      viewer: {
+        kind: "APPROVAL_ANALYST",
+        userId: analyst.id,
+        aliadoId: null,
+        sedeId: null,
+        vendedorId: null,
+      } satisfies SolicitudViewer,
+    };
+  }
+
+  if (!user) return null;
 
   const seller = await getSellerSessionUser(user);
   if (!seller) return { user, seller: null, viewer: null };
@@ -86,6 +101,9 @@ export async function PATCH(req: Request) {
     if (!access) return response({ error: "No autenticado" }, { status: 401 });
     if (!access.viewer) {
       return response({ error: "Acción no autorizada" }, { status: 403 });
+    }
+    if (access.viewer.kind === "APPROVAL_ANALYST") {
+      return response({ error: "El analista solo puede consultar solicitudes" }, { status: 403 });
     }
 
     const body = (await req.json().catch(() => ({}))) as {

@@ -9,8 +9,9 @@ crédito, su contrato firmado o una liquidación ya pagada.
 
 El administrador central de FINSER PAY y los usuarios activos con el rol
 `ANALISTA_APROBACION` de la central pueden acceder. El analista dispone de este
-panel; el rol no concede acceso a la fábrica de créditos, recaudos, administración
-de usuarios, políticas de riesgo ni al expediente completo de DataCrédito.
+panel y de las herramientas nominales de soporte descritas abajo; el rol no
+concede acceso a la fábrica de créditos, recaudos, administración de usuarios,
+políticas de riesgo ni al expediente completo de DataCrédito.
 La creación y administración de analistas corresponde al administrador central.
 Crear, activar, desactivar o restablecer la clave genera un evento append-only
 con el administrador responsable; la auditoría no almacena claves ni hashes.
@@ -23,16 +24,32 @@ solo pueden responder lo solicitado sobre créditos de su propio aliado.
 El modelo normal de acceso es una cuenta personal creada en **Usuarios >
 Analistas de aprobación** por el administrador central. El analista inicia sesión
 en `/aliados` con su usuario y clave y recibe una sesión de aprobación de **8
-horas**. Esa sesión solo admite el muro, sus expedientes y las acciones de
-revisión autorizadas. Desactivar la cuenta o restablecer su clave invalida las
-sesiones anteriores.
+horas**. Esa sesión admite el muro, sus expedientes y las herramientas de soporte
+expresamente autorizadas. Desactivar la cuenta o restablecer su clave invalida
+las sesiones anteriores.
 
 Cada petición vuelve a comprobar que el usuario, el rol, la sede y el aliado
 central estén activos. Las decisiones, novedades, correcciones y aprobaciones se
-atribuyen al usuario individual. El analista no puede abrir el control SADMIN,
-los módulos financieros ni la administración mediante una URL directa.
+atribuyen al usuario individual. El analista no puede abrir los módulos
+financieros ni la administración general mediante una URL directa.
 
-El muro ofrece dos vistas sin búsqueda por cédula:
+La pantalla principal del analista es **Aprobaciones**; no existe un módulo
+separado de bienvenida. La mesa incluye la acción **Solicitudes** y accesos a
+**Cambio de IMEI**, **Gestionar firma**, **Creación SADMIN** y **Liberar
+consulta**. Solicitudes es una vista global de soporte en solo lectura: permite
+buscar y consultar trazabilidad, pero nunca desistir, abrir fábrica ni iniciar un
+cambio por garantía. IMEI y FirmaSeguro reutilizan los servicios, validaciones,
+idempotencia y auditoría del detalle operativo existente.
+
+En SADMIN el analista puede buscar, filtrar, marcar las tres verificaciones,
+registrar el número asignado y exportar el resultado. Cada cambio conserva su
+usuario nominal como actor. Liberar consulta está limitado al flujo seguro de
+reintento TX06 sin información evaluable: exige cédula, primer apellido correcto,
+consentimiento nuevo e idempotencia. No concede acceso al historial ni a otras
+operaciones administrativas de DataCrédito. Los enlaces personales o compartidos
+no pueden usar SADMIN, Solicitudes de soporte ni la liberación de consultas.
+
+La mesa permite buscar por cédula, número de crédito o IMEI y ofrece dos vistas:
 
 - **Pendientes por aprobar**: créditos sujetos al control, de todos los aliados
   externos, pendientes y sin liquidación pagada. Ordena por antigüedad e incluye

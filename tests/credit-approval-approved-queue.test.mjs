@@ -47,38 +47,44 @@ test("el listado aprobado exige política y no usa auditoría, blobs ni escritur
     calls.push({ sql, params }); return calls.length === 1 ? [{ id: 1 }] : [];
   } }, { documento: "123456", limit: 25, cursor: cursor({ view: "approved", approvedAt: stamp, id: 12 }) });
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[1].params, ["123456", stamp, 12, 26]);
+  assert.deepEqual(calls[1].params, ["123456", stamp, 12, 26, null, null, null, null]);
   assert.doesNotMatch(calls[1].sql, /CreditApprovalEvent|signedDocumentBase64|fotoEntregaDataUrl|audioBytes|INSERT|UPDATE|DELETE/);
   assert.match(calls[1].sql, /ORDER BY review\."approvedAt" DESC,credit\."id" DESC/);
   assert.throws(() => actors.buildCurrentCreditApprovalSql("credit; DROP TABLE", "review"), /Invalid approval SQL alias/);
 });
 
-test("búsqueda limitada y parametrizada incluye folio y número SADMIN confirmado", async () => {
+test("búsqueda limitada y parametrizada incluye IMEI vigente, folio y número SADMIN confirmado", async () => {
   assert.equal(queue.approvalQueueSearch("  Cliente  "), "Cliente");
   for (const empty of [null, undefined, "", "   "]) assert.equal(queue.approvalQueueSearch(empty), null);
   for (const invalid of [1, {}, "x".repeat(101), "x\u0000", "x\n"]) assert.throws(() => queue.approvalQueueSearch(invalid), { code: "INVALID_SEARCH" });
   assert.equal(queue.approvalQueueSearch("x".repeat(100)).length, 100);
-  for (const [method, searchParameter, expectedParams] of [
-    ["listCreditApprovalQueue", 5, [null, null, null, 51]],
-    ["listApprovedCreditQueue", 5, [null, null, null, 51]],
-    ["countCreditApprovalQueues", 2, [null]],
+  for (const [method, searchParameter, expectedParams, trailingParams] of [
+    ["listCreditApprovalQueue", 5, [null, null, null, 51], [null, null, null]],
+    ["listApprovedCreditQueue", 5, [null, null, null, 51], [null, null, null]],
+    ["countCreditApprovalQueues", 2, [null], [null, null, null]],
   ]) {
     const calls = [], value = "_%' OR 1=1 --";
     await queue[method]({ $queryRawUnsafe: async (sql, ...params) => {
       calls.push({ sql, params }); return calls.length === 1 ? [{ id: 1 }] : [];
     } }, { q: value });
-    assert.deepEqual(plain(calls[1].params), [...expectedParams, value]);
+    assert.deepEqual(plain(calls[1].params), [...expectedParams, value, ...trailingParams]);
     assert.ok(!calls[1].sql.includes(value));
     for (const field of [
       'credit\\."clienteNombre"',
       'credit\\."clienteDocumento"',
+      'credit\\."imei"',
       'credit\\."folio"',
       'sadmin\\."numeroCredito"',
       'ally\\."nombre"',
     ]) {
       assert.match(calls[1].sql, new RegExp("strpos\\(lower\\(COALESCE\\(" + field + ",''\\)\\),lower\\(\\$" + searchParameter + "::text\\)\\)>0"));
     }
-    assert.equal((calls[1].sql.match(new RegExp("lower\\(\\$" + searchParameter + "::text\\)", "g")) || []).length, 5);
+    assert.equal((calls[1].sql.match(new RegExp("lower\\(\\$" + searchParameter + "::text\\)", "g")) || []).length, 6);
+    if (method !== "countCreditApprovalQueues") {
+      assert.match(calls[1].sql, /credit\."referenciaEquipo",credit\."imei"/);
+      assert.match(calls[1].sql, /AS "creditoAutorizado"/);
+      assert.match(calls[1].sql, /AS "updatedAt"/);
+    }
     assert.match(calls[1].sql, /sadmin\."creditoId"=credit\."id"\s+AND sadmin\."numeroCreditoConfirmado"/);
     assert.match(calls[1].sql, /credit\."createdAt">=\(SELECT "activatedAt"/);
     assert.match(calls[1].sql, /credit\."equalityService"[\s\S]*IMPORTACION_MASIVA/);
@@ -86,6 +92,40 @@ test("búsqueda limitada y parametrizada incluye folio y número SADMIN confirma
     assert.match(calls[1].sql, /credit\."estado"[\s\S]*ANULADO[\s\S]*CANCELADA/);
   }
   await assert.rejects(queue.countCreditApprovalQueues({ $queryRawUnsafe: async () => [] }), { code: "APPROVAL_UNAVAILABLE" });
+});
+
+test("filtros de aliado y fechas son estrictos y parametrizados sin alterar el cursor", async () => {
+  assert.deepEqual(plain(queue.approvalQueueFilters({ aliado: "  Aliado Norte ", desde: "2026-09-01", hasta: "2026-09-30" })),
+    { aliado: "Aliado Norte", desde: "2026-09-01", hasta: "2026-09-30" });
+  assert.deepEqual(plain(queue.approvalQueueFilters({ aliado: " ", desde: "", hasta: null })), {});
+  for (const input of [{ aliado: "x".repeat(161) }, { aliado: "Aliado\nNorte" }]) {
+    assert.throws(() => queue.approvalQueueFilters(input), { code: "INVALID_ALLY" });
+  }
+  for (const input of [{ desde: "2026-02-30" }, { hasta: "30-09-2026" }, { desde: "2026-10-01", hasta: "2026-09-30" }]) {
+    assert.throws(() => queue.approvalQueueFilters(input), { code: "INVALID_DATE_RANGE" });
+  }
+  const calls = [];
+  await queue.listCreditApprovalQueue({ $queryRawUnsafe: async (sql, ...params) => {
+    calls.push({ sql, params }); return calls.length === 1 ? [{ id: 1 }] : [];
+  } }, { aliado: "Aliado Norte", desde: "2026-09-01", hasta: "2026-09-30", cursor: cursor({ createdAt: stamp, id: 12 }) });
+  assert.deepEqual(plain(calls[1].params), [null, stamp, 12, 51, null, "Aliado Norte", "2026-09-01", "2026-09-30"]);
+  assert.match(calls[1].sql, /\$6::text IS NULL[\s\S]*ally\."nombre"/);
+  assert.match(calls[1].sql, /\$7::date[\s\S]*\$8::date[\s\S]*credit\."createdAt",credit\."id"/);
+  assert.match(calls[1].sql, /GREATEST\([\s\S]*AT TIME ZONE 'UTC' AT TIME ZONE 'America\/Bogota'\)::date/);
+
+  const approvedCalls = [];
+  await queue.listApprovedCreditQueue({ $queryRawUnsafe: async (sql, ...params) => {
+    approvedCalls.push({ sql, params }); return approvedCalls.length === 1 ? [{ id: 1 }] : [];
+  } }, { desde: "2026-09-01", hasta: "2026-09-30" });
+  assert.match(approvedCalls[1].sql, /review\."approvedAt"\) AT TIME ZONE 'UTC' AT TIME ZONE 'America\/Bogota'\)::date/);
+
+  const countCalls = [];
+  await queue.countCreditApprovalQueues({ $queryRawUnsafe: async (sql, ...params) => {
+    countCalls.push({ sql, params }); return countCalls.length === 1 ? [{ id: 1 }] : [{ pending: 0, approved: 0 }];
+  } }, { desde: "2026-09-01", hasta: "2026-09-30" });
+  assert.equal((countCalls[1].sql.match(/AT TIME ZONE 'UTC' AT TIME ZONE 'America\/Bogota'/g) || []).length, 4);
+  assert.match(countCalls[1].sql, /COUNT\(\*\) FILTER \(WHERE[\s\S]*GREATEST[\s\S]*AS pending/);
+  assert.match(countCalls[1].sql, /COUNT\(\*\) FILTER \(WHERE[\s\S]*review\."approvedAt"[\s\S]*AS approved/);
 });
 
 test("los GET de ficha, PDF y fotos usan el permiso de lectura, antes de leer cada archivo", async () => {
@@ -134,7 +174,9 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
   assert.ok(existing.every(row => tables.includes(row.tablename)), "No eliminar tablas ajenas al fixture");
   for (const table of tables) await db.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
   await db.query(`
-    CREATE TABLE "CreditSadminRegistration" ("creditoId" INTEGER PRIMARY KEY,"numeroCredito" TEXT,"numeroCreditoConfirmado" BOOLEAN NOT NULL DEFAULT false);
+    CREATE TABLE "CreditSadminRegistration" ("creditoId" INTEGER PRIMARY KEY,"codeudorCreado" BOOLEAN NOT NULL DEFAULT false,
+      "creditoCreado" BOOLEAN NOT NULL DEFAULT false,"numeroCredito" TEXT,"numeroCreditoConfirmado" BOOLEAN NOT NULL DEFAULT false,
+      "estadoCreacion" TEXT NOT NULL DEFAULT 'PENDIENTE_CREAR');
     CREATE TABLE "CreditApprovalPolicy" ("id" INT PRIMARY KEY,"activatedAt" TIMESTAMP(3));
     INSERT INTO "CreditApprovalPolicy" VALUES (1,'2026-09-09');
     CREATE TABLE "Aliado" ("id" INT PRIMARY KEY,"nombre" TEXT,"codigo" TEXT);
@@ -143,11 +185,14 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     INSERT INTO "Sede" ("id","aliadoId") VALUES (10,10),(20,20);
     CREATE TABLE "Credito" ("id" SERIAL PRIMARY KEY,"folio" TEXT DEFAULT 'FNS-SYNTHETIC',"clienteNombre" TEXT DEFAULT 'Cliente sintético',
       "clienteDocumento" TEXT,"sedeId" INT DEFAULT 10,"createdAt" TIMESTAMP(3) DEFAULT '2026-09-10',
-      "fechaCredito" TIMESTAMP(3) DEFAULT '2026-09-10',"estado" TEXT DEFAULT 'INSCRITO',"equalityService" TEXT,"contratoSnapshot" JSONB DEFAULT '{}');
+      "updatedAt" TIMESTAMP(3) DEFAULT '2026-09-10',"fechaCredito" TIMESTAMP(3) DEFAULT '2026-09-10',
+      "imei" TEXT DEFAULT 'IMEI-SYNTHETIC',"referenciaEquipo" TEXT,"saldoBaseFinanciado" DOUBLE PRECISION DEFAULT 0,
+      "valorEquipoTotal" DOUBLE PRECISION DEFAULT 0,"cuotaInicial" DOUBLE PRECISION DEFAULT 0,
+      "estado" TEXT DEFAULT 'INSCRITO',"equalityService" TEXT,"contratoSnapshot" JSONB DEFAULT '{}');
     CREATE TABLE "CreditApprovalReview" ("creditoId" INT PRIMARY KEY,"status" TEXT DEFAULT 'PENDING',"revision" INT DEFAULT 1,
       "approvedRevision" INT,"approvedAt" TIMESTAMP(3),"approvedByName" TEXT,"approvedByUserId" INT,"approvedByKind" TEXT,
       "approvedByGrantId" UUID,"approvedBySessionId" UUID,"reviewHash" TEXT,
-      "reviewHashVersion" SMALLINT DEFAULT 2,"approvedHashVersion" SMALLINT);
+      "reviewHashVersion" SMALLINT DEFAULT 2,"approvedHashVersion" SMALLINT,"updatedAt" TIMESTAMP(3) DEFAULT '2026-09-10');
     CREATE TABLE "LiquidacionAliadoCredito" ("creditoId" INT PRIMARY KEY);
     CREATE TABLE "CreditApprovalNovelty" ("id" UUID PRIMARY KEY,"creditoId" INT,"status" TEXT,"version" INT DEFAULT 1);
     CREATE TABLE "CreditApprovalNoveltyItem" ("id" UUID PRIMARY KEY,"noveltyId" UUID,"status" TEXT);
@@ -250,7 +295,35 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     do { const page = await queue.listApprovedCreditQueue(api, { documento: "pages", limit: 2, cursor: next }); rows.push(...page.items); next = page.nextCursor; } while (next);
     assert.deepEqual(rows.map(row => row.id), ids.reverse());
     assert.ok(rows.every(row => row.status === "APPROVED" && row.required === true && row.paid === false));
-    assert.ok(rows.every(row => Object.keys(row).sort().join(",") === "aliadoNombre,approvedAt,approvedByName,clienteDocumento,clienteNombre,createdAt,fechaCredito,folio,id,numeroCreditoVisible,paid,required,revision,sedeNombre,status"));
+    assert.ok(rows.every(row => Object.keys(row).sort().join(",") === "aliadoNombre,approvedAt,approvedByName,clienteDocumento,clienteNombre,createdAt,creditoAutorizado,fechaCredito,folio,id,imei,numeroCreditoVisible,paid,referenciaEquipo,required,revision,sadmin,sedeNombre,status,updatedAt"));
+  });
+  await t.test("DTO devuelve equipo, IMEI vigente, crédito autorizado, último cambio y resumen SADMIN", async () => {
+    const id = await create("queue-dto", { referenciaEquipo: "Galaxy A55", imei: "356000000000123",
+      saldoBaseFinanciado: 1450000, valorEquipoTotal: 1700000, cuotaInicial: 300000, updatedAt: "2026-09-18T12:00:00Z" });
+    const pending = (await queue.listCreditApprovalQueue(api, { documento: "queue-dto" })).items[0];
+    assert.equal(pending.referenciaEquipo, "Galaxy A55");
+    assert.equal(pending.imei, "356000000000123");
+    assert.equal(pending.creditoAutorizado, 1450000);
+    assert.equal(new Date(pending.updatedAt).toISOString(), "2026-09-18T12:00:00.000Z");
+    await approve(id);
+    await db.query(`INSERT INTO "CreditSadminRegistration"
+      ("creditoId","codeudorCreado","creditoCreado","numeroCreditoConfirmado","numeroCredito","estadoCreacion")
+      VALUES ($1,true,true,true,'000123-S','CREADO_CORRECTAMENTE')`, [id]);
+    const approved = (await queue.listApprovedCreditQueue(api, { documento: "queue-dto" })).items[0];
+    assert.deepEqual(plain(approved.sadmin), { estado: "CREADO_SADMIN", estadoCreacion: "CREADO_CORRECTAMENTE", numeroCredito: "000123-S" });
+    assert.equal(approved.numeroCreditoVisible, "000123-S");
+  });
+  await t.test("filtros de aliado y fechas conservan la paginación y los contadores", async () => {
+    const included = [];
+    for (let i = 0; i < 3; i++) included.push(await create("backend-filters", { updatedAt: "2026-09-20T12:00:00Z" }));
+    await create("backend-filters", { updatedAt: "2026-08-31T12:00:00Z" });
+    const filter = { documento: "backend-filters", aliado: "aliado sintético", desde: "2026-09-15", hasta: "2026-09-30" };
+    const first = await queue.listCreditApprovalQueue(api, { ...filter, limit: 2 });
+    const second = await queue.listCreditApprovalQueue(api, { ...filter, limit: 2, cursor: first.nextCursor });
+    assert.deepEqual([...first.items, ...second.items].map(row => row.id), included);
+    assert.equal(first.hasMore, true); assert.equal(second.hasMore, false);
+    assert.deepEqual(plain(await queue.countCreditApprovalQueues(api, filter)), { pending: 3, approved: 0 });
+    assert.deepEqual((await queue.listCreditApprovalQueue(api, { ...filter, aliado: "Otro aliado" })).items, []);
   });
   await t.test("El liquidado con OK vigente sigue visible y legible; el permiso de escritura no cambia", async () => {
     const id = await create("paid"); await approve(id);
@@ -265,10 +338,12 @@ test("PostgreSQL aislado: bandejas actuales, paginación y lectura de aprobados 
     assert.deepEqual(await approvedIds("paid"), []);
     await assert.rejects(actors.assertApprovalActorCreditReadAccess(api, id, shared), { status: 404 });
   });
-  await t.test("búsqueda real por nombre, cédula, folio y aliado mantiene filtros y caracteres literales", async () => {
-    const a = await create("searchDoc", { clienteNombre: "Persona Muro Qax", folio: "MRO-A%_1" });
+  await t.test("búsqueda real usa IMEI operativo, nombre, cédula, folio y aliado sin leer el IMEI del snapshot", async () => {
+    const a = await create("searchDoc", { clienteNombre: "Persona Muro Qax", folio: "MRO-A%_1", imei: "356000000000111",
+      contratoSnapshot: { equipo: { imei: "356000000000999" } } });
     const b = await create("searchDoc", { clienteNombre: "Persona Distinta", folio: "MRO-B" }); await approve(b);
     for (const [q, pending, approved] of [["persona muro", [a], []], ["mro-b", [], [b]], ["aliado sintético", [a], [b]],
+      ["356000000000111", [a], []], ["356000000000999", [], []],
       ["%_", [a], []], ["' OR 1=1 --", [], []], ["searchDoc", [a], [b]]]) {
       assert.deepEqual((await queue.listCreditApprovalQueue(api, { documento: "searchDoc", q })).items.map(row => row.id), pending);
       assert.deepEqual((await queue.listApprovedCreditQueue(api, { documento: "searchDoc", q })).items.map(row => row.id), approved);

@@ -7,7 +7,7 @@ import * as jsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
-const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader", "Tabs"].map(name => [name, placeholder(name)]));
+const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader", "Select", "Tabs"].map(name => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 const styles = new Proxy({}, { get: (_, key) => String(key) });
 const source = readFileSync(new URL("../app/dashboard/aprobaciones/sadmin-credit-table.tsx", import.meta.url), "utf8");
@@ -33,7 +33,7 @@ function content(node) {
 // Execute the real component's effects and callbacks. Only its leaf visual
 // components are opaque; no hook indexes or implementation source assertions
 // determine the expectations below.
-function mount(fetch) {
+function mount(fetch, componentProps = {}) {
   const slots = [], listeners = new Map();
   const downloads = { objects: [], revoked: [], links: [] };
   const urlApi = {
@@ -101,7 +101,7 @@ function mount(fetch) {
     async flush() {
       for (let cycle = 0; cycle < 30; cycle++) {
         if (dirty) {
-          dirty = false; hookIndex = 0; effects = []; tree = Component({ onBack() {} });
+          dirty = false; hookIndex = 0; effects = []; tree = Component({ onBack() {}, ...componentProps });
           for (const effect of effects) effect();
         }
         await setImmediate();
@@ -119,8 +119,8 @@ function mount(fetch) {
 }
 
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-const registration = (overrides = {}) => ({ version: 0, codeudorCreado: false, creditoCreado: false, numeroCreditoConfirmado: false, numeroCredito: null, estado: "PENDIENTE", updatedAt: null, completedAt: null, ...overrides });
-const row = (id, sadmin = registration()) => ({ id, folio: `QA-${id}`, createdAt: "2026-09-17T13:30:00Z", fechaCredito: "2026-09-17", clienteNombre: `Cliente ${id}`, clienteDocumento: `QA${id}`, clienteTelefono: "3000000000", clienteDireccion: "Dirección de prueba", clienteFechaNacimiento: "1990-01-02", clienteCorreo: "qa@example.test", clienteGenero: "No informado", imei: "000000000000000", referenciaEquipo: "Equipo de prueba", numeroCuotas: 24, frecuenciaPago: "QUINCENAL", valorVenta: 1000000, cuotaInicial: 200000, creditoAutorizado: 800000, valorCuota: 45000, interesMensual: 0.02, fianza: 0.6, seguro: 0.0003, aliadoNombre: "Aliado QA", sedeNombre: "Sede QA", fechaProximoPago: "2026-10-02", cuotasPagadas: 0, cuotasPendientes: 24, saldoObligacion: 1080000, saldoCapital: 800000, saldoFianza: 180000, saldoIntereses: 100000, diasVencidos: 0, ultimoPago: null, sadmin });
+const registration = (overrides = {}) => ({ version: 0, codeudorCreado: false, creditoCreado: false, numeroCreditoConfirmado: false, numeroCredito: null, estado: "PENDIENTE", estadoCreacion: "PENDIENTE_CREAR", motivoEstado: null, updatedAt: null, completedAt: null, ...overrides });
+const row = (id, sadmin = registration()) => ({ id, folio: `QA-${id}`, numeroCreditoVisible: `QA-${id}`, registroLocalHref: `/dashboard/aprobaciones?credito=${id}`, createdAt: "2026-09-17T13:30:00Z", fechaCredito: "2026-09-17", clienteNombre: `Cliente ${id}`, clienteDocumento: `QA${id}`, clienteTelefono: "3000000000", clienteDireccion: "Dirección de prueba", clienteFechaNacimiento: "1990-01-02", clienteCorreo: "qa@example.test", clienteGenero: "No informado", imei: "000000000000000", referenciaEquipo: "Equipo de prueba", numeroCuotas: 24, frecuenciaPago: "QUINCENAL", valorVenta: 1000000, cuotaInicial: 200000, creditoAutorizado: 800000, valorCuota: 45000, interesMensual: 0.02, fianza: 0.6, seguro: 0.0003, aliadoNombre: "Aliado QA", sedeNombre: "Sede QA", fechaProximoPago: "2026-10-02", cuotasPagadas: 0, cuotasPendientes: 24, saldoObligacion: 1080000, saldoCapital: 800000, saldoFianza: 180000, saldoIntereses: 100000, diasVencidos: 0, ultimoPago: null, sadmin });
 const page = (items, current = 1, total = items.length, counts = { all: total, pending: total, created: 0 }) => ({ ok: true, items, page: current, pageSize: 20, total, totalPages: Math.max(1, Math.ceil(total / 20)), counts });
 const json = (value, status = 200) => Response.json(value, { status });
 const fieldset = (h, id) => h.find(node => node.type === "fieldset" && node.props.id === `sadmin-checklist-${id}`);
@@ -130,12 +130,29 @@ const check = (h, id, label) => {
   return h.find(node => node.type === "input" && node.props.type === "checkbox", wrapper);
 };
 const number = (h, id) => h.find(node => node.type === ui.Input && node.props.id === `sadmin-number-${id}`);
+const resultSelect = (h, id) => h.find(node => node.type === ui.Select && node.props.id === `sadmin-result-${id}`);
+const reason = (h, id) => h.find(node => node.type === ui.Input && node.props.id === `sadmin-reason-${id}`);
 const creditButton = (h, id) => h.find(node => node.type === "button" && node.props.id === `sadmin-credit-${id}`);
 const statusTab = (h, status) => h.find(node => node.type === "button" && node.props.id === `sadmin-status-${status}`);
 const toggleCredit = async (h, id) => { creditButton(h, id).props.onClick(); await h.flush(); };
 const renderedIds = h => h.all(node => node.type === "button" && /^sadmin-credit-\d+$/.test(node.props.id)).map(node => Number(node.props.id.replace("sadmin-credit-", "")));
 const editNumber = (h, id, value) => number(h, id).props.onChange({ target: { value } });
 const errors = h => h.all(node => node.props?.role === "alert").map(content).join(" ");
+
+test("el modo analista explica el alcance aprobado listo y el administrador conserva el histórico y la exportación", async () => {
+  const fetch = async () => json(page([]));
+  const admin = mount(fetch);
+  await admin.flush();
+  assert.match(admin.find(node => node.type === ui.PageHeader).props.description, /Todos los créditos de cartera|históricos y pagados/);
+  assert.ok(button(admin, "Exportar Excel"));
+  admin.unmount();
+
+  const analyst = mount(fetch, { analystMode: true });
+  await analyst.flush();
+  assert.match(analyst.find(node => node.type === ui.PageHeader).props.description, /aprobación vigente|listos para el proceso operativo/);
+  assert.ok(button(analyst, "Exportar Excel"));
+  analyst.unmount();
+});
 
 test("carga 20 resúmenes de número, fecha y estado; cada página reemplaza los anteriores", async () => {
   const requests = [];
@@ -158,7 +175,7 @@ test("carga 20 resúmenes de número, fecha y estado; cada página reemplaza los
       assert.equal(summary.props["aria-expanded"], false);
       assert.equal(summary.props["aria-controls"], `sadmin-detail-${id}`);
       assert.ok(content(summary).includes(`QA-${id}`));
-      assert.ok(content(summary).includes("PENDIENTE SADMIN"));
+      assert.ok(content(summary).includes("Pendiente de crear"));
       assert.ok(content(summary).includes(new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", dateStyle: "short" }).format(new Date("2026-09-17"))));
     }
   };
@@ -183,7 +200,7 @@ test("filtra por Todos, Pendientes y Creados en el servidor, conserva la búsque
     const status = params.get("status");
     const current = Number(params.get("page"));
     const fixture = status === "created"
-      ? [row(91, registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "SADMIN-91", estado: "CREADO_SADMIN", completedAt: "2026-09-17T14:00:00Z" }))]
+      ? [row(91, registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "SADMIN-91", estado: "CREADO_SADMIN", estadoCreacion: "CREADO_CORRECTAMENTE", completedAt: "2026-09-17T14:00:00Z" }))]
       : [row(status === "pending" ? 81 : current === 2 ? 72 : 71)];
     const total = status === "created" ? 1 : 40;
     return json(page(fixture, current, total, { all: 41, pending: 40, created: 1 }));
@@ -226,7 +243,7 @@ test("exporta todos los resultados de la búsqueda y pestaña activas con estado
     if (url.startsWith("/api/aprobaciones/sadmin/export?")) return pendingExport.promise;
     const status = new URL(url, "https://example.test").searchParams.get("status");
     const item = status === "created"
-      ? row(91, registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "000091", estado: "CREADO_SADMIN" }))
+      ? row(91, registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "000091", estado: "CREADO_SADMIN", estadoCreacion: "CREADO_CORRECTAMENTE" }))
       : row(71);
     return json(page([item], 1, 1, { all: 2, pending: 1, created: 1 }));
   });
@@ -344,6 +361,63 @@ test("conserva ceros y letras del número y solo permite verificarlo después de
   h.unmount();
 });
 
+test("registra error o revisión con razón y consulta historial, número y enlace local", async () => {
+  const patches = [];
+  let stored = registration({
+    version: 2,
+    estadoCreacion: "ERROR_CREACION",
+    motivoEstado: "SADMIN rechazó el alta",
+    numeroCredito: "00081-R",
+  });
+  const summary = () => ({
+    creditoId: 81,
+    folio: "QA-81",
+    numeroCreditoVisible: "00081-R",
+    registroLocalHref: "/dashboard/aprobaciones?credito=81",
+    sadmin: stored,
+    historial: [
+      { version: 3, actor: "Analista QA", fechaHora: "2026-10-06T15:00:00.000Z", numeroCredito: "00081-R", resultado: "REQUIERE_REVISION", motivo: "Validar identidad del cliente" },
+      { version: 2, actor: "Analista QA", fechaHora: "2026-10-06T14:00:00.000Z", numeroCredito: "00081-R", resultado: "ERROR_CREACION", motivo: "SADMIN rechazó el alta" },
+    ],
+  });
+  const h = mount(async (url, options = {}) => {
+    if (options.method === "PATCH") {
+      const body = JSON.parse(options.body); patches.push(body);
+      stored = registration({ ...stored, version: stored.version + 1, estadoCreacion: body.value, motivoEstado: body.reason });
+      return json({ ok: true, sadmin: stored });
+    }
+    if (url === "/api/aprobaciones/sadmin/81") return json({ ok: true, summary: summary() });
+    return json(page([{ ...row(81, stored), numeroCreditoVisible: "00081-R" }]));
+  }, { analystMode: true });
+  await h.flush();
+  assert.equal(h.all(node => node.type === ui.Badge && content(node) === "Error de creación").length, 1);
+  await toggleCredit(h, 81);
+  assert.equal(resultSelect(h, 81).props.value, "ERROR_CREACION");
+  assert.equal(reason(h, 81).props.value, "SADMIN rechazó el alta");
+  resultSelect(h, 81).props.onChange({ target: { value: "REQUIERE_REVISION" } }); await h.flush();
+  reason(h, 81).props.onChange({ target: { value: "Validar identidad del cliente" } }); await h.flush();
+  assert.equal(button(h, "Volver a aprobaciones").props.disabled, true);
+  button(h, "Guardar resultado").props.onClick(); await h.flush();
+  assert.deepEqual(patches, [{ version: 2, field: "estadoCreacion", value: "REQUIERE_REVISION", reason: "Validar identidad del cliente" }]);
+  assert.equal(h.all(node => node.type === ui.Badge && content(node) === "Requiere revisión").length, 2);
+  assert.equal(button(h, "Volver a aprobaciones").props.disabled, false);
+
+  const originFacts = h.find(node => typeof node.type === "function" && node.type.name === "Facts" && node.props.items.some(([label]) => label === "Registro local"));
+  const link = nodes(originFacts.type(originFacts.props)).find(node => node.type === "a" && content(node) === "Abrir registro local");
+  assert.ok(link);
+  assert.equal(link.props.href, "/dashboard/aprobaciones?credito=81");
+  button(h, "Ver historial").props.onClick(); await h.flush();
+  const history = h.find(node => node.type === "h3" && content(node) === "Historial SADMIN").props;
+  assert.ok(history);
+  const historyFacts = h.find(node => typeof node.type === "function" && node.type.name === "Facts" && node.props.items.some(([label]) => label === "Versión 3"));
+  const historyText = content(historyFacts.type(historyFacts.props));
+  assert.match(historyText, /Analista QA/);
+  assert.match(historyText, /00081-R/);
+  assert.match(historyText, /Validar identidad del cliente/);
+  assert.match(historyText, /SADMIN rechazó el alta/);
+  h.unmount();
+});
+
 test("recarga el filtro pendiente cuando una verificación mueve el crédito a Creados", async () => {
   let stored = registration({ version: 1, numeroCredito: "00081" });
   let pendingReads = 0;
@@ -354,7 +428,7 @@ test("recarga el filtro pendiente cuando una verificación mueve el crédito a C
       const body = JSON.parse(options.body);
       stored = { ...stored, [body.field]: body.value, version: stored.version + 1 };
       if (stored.codeudorCreado && stored.creditoCreado && stored.numeroCreditoConfirmado) {
-        stored = { ...stored, estado: "CREADO_SADMIN", completedAt: "2026-09-17T14:00:00Z" };
+        stored = { ...stored, estado: "CREADO_SADMIN", estadoCreacion: "CREADO_CORRECTAMENTE", completedAt: "2026-09-17T14:00:00Z" };
       }
       return json({ ok: true, sadmin: stored });
     }
@@ -378,14 +452,14 @@ test("recarga el filtro pendiente cuando una verificación mueve el crédito a C
   h.unmount();
 });
 
-test("muestra CREADO SADMIN cuando el servidor confirma las tres verificaciones", async () => {
+test("muestra Creado correctamente cuando el servidor confirma las tres verificaciones", async () => {
   let stored = registration({ version: 1, numeroCredito: "00081" });
   const patches = [];
   const h = mount(async (_url, options) => {
     if (options.method !== "PATCH") return json(page([row(81, stored)]));
     const body = JSON.parse(options.body); patches.push(body);
     stored = { ...stored, [body.field]: body.value, version: stored.version + 1 };
-    if (stored.codeudorCreado && stored.creditoCreado && stored.numeroCreditoConfirmado) stored = { ...stored, estado: "CREADO_SADMIN", completedAt: "2026-09-17T14:00:00Z" };
+    if (stored.codeudorCreado && stored.creditoCreado && stored.numeroCreditoConfirmado) stored = { ...stored, estado: "CREADO_SADMIN", estadoCreacion: "CREADO_CORRECTAMENTE", completedAt: "2026-09-17T14:00:00Z" };
     return json({ ok: true, sadmin: stored });
   });
   await h.flush();
@@ -394,7 +468,7 @@ test("muestra CREADO SADMIN cuando el servidor confirma las tres verificaciones"
     check(h, 81, label).props.onChange({ target: { checked: true } }); await h.flush();
   }
   assert.deepEqual(patches.map(patch => patch.version), [1, 2, 3]);
-  assert.equal(h.all(node => node.type === ui.Badge && content(node) === "CREADO SADMIN").length, 1);
+  assert.equal(h.all(node => node.type === ui.Badge && content(node) === "Creado correctamente").length, 2);
   assert.equal(h.all(node => node.type === ui.Badge && content(node) === "3 de 3 verificaciones").length, 1);
   assert.equal(h.all(node => node.type === "strong" && content(node) === "00081").length, 1);
   assert.ok(content(creditButton(h, 81)).includes("00081"));
@@ -515,7 +589,7 @@ test("desmontar la tabla aborta una carga pendiente", async () => {
 });
 
 test("clic en crédito abre toda la información y verificaciones, y cerrar oculta todo salvo número, fecha y estado", async () => {
-  const stored = registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "00081-A", estado: "CREADO_SADMIN" });
+  const stored = registration({ version: 4, codeudorCreado: true, creditoCreado: true, numeroCreditoConfirmado: true, numeroCredito: "00081-A", estado: "CREADO_SADMIN", estadoCreacion: "CREADO_CORRECTAMENTE" });
   const fixture = { ...row(81, stored), numeroCreditoVisible: "00081-A", ultimoPago: "2026-09-16 · $ 45.000 · EFECTIVO" };
   let patches = 0;
   const h = mount(async (_url, options) => { if (options.method === "PATCH") patches++; return json(page([fixture])); });
@@ -534,11 +608,11 @@ test("clic en crédito abre toda la información y verificaciones, y cerrar ocul
   const detail = h.find(node => node.props?.id === "sadmin-detail-81");
   assert.equal(detail.props.role, "region"); assert.equal(detail.props["aria-labelledby"], "sadmin-credit-81");
   const sectionNames = nodes(detail).filter(node => node.type === "h3").map(content);
-  assert.deepEqual(sectionNames.slice().sort(), ["Datos del cliente", "Crédito, equipo y origen", "Valores y plan", "Tasas", "Pagos", "Saldos", "Creación SADMIN"].sort());
+  assert.deepEqual(sectionNames.slice().sort(), ["Datos del cliente", "Crédito, equipo y origen", "Valores y plan", "Tasas", "Pagos", "Saldos", "Creación SADMIN", "Historial SADMIN"].sort());
   assert.ok(nodes(detail).includes(fieldset(h, 81)), "Las verificaciones están dentro del detalle desplegado");
   const facts = nodes(detail).filter(node => typeof node.type === "function" && node.type.name === "Facts");
   const fields = facts.flatMap(node => node.props.items);
-  for (const label of ["Nombre", "Cédula", "Teléfono", "Correo", "Dirección", "Nacimiento", "Género", "Número de crédito", "Folio original", "Fecha crédito", "Creado", "Referencia", "IMEI", "Aliado", "Sede", "Valor venta", "Inicial", "Crédito autorizado", "N.º cuotas", "Valor cuota", "Frecuencia", "Interés mensual efectivo", "Fianza total del crédito", "Seguro por cuota", "Próximo pago", "Cuotas pagadas", "Cuotas pendientes", "Días vencidos", "Último pago", "Obligación", "Capital", "Fianza", "Intereses"]) {
+  for (const label of ["Nombre", "Cédula", "Teléfono", "Correo", "Dirección", "Nacimiento", "Género", "Número de crédito", "Folio original", "Fecha crédito", "Creado", "Referencia", "IMEI", "Aliado", "Sede", "Registro local", "Valor venta", "Inicial", "Crédito autorizado", "N.º cuotas", "Valor cuota", "Frecuencia", "Interés mensual efectivo", "Fianza total del crédito", "Seguro por cuota", "Próximo pago", "Cuotas pagadas", "Cuotas pendientes", "Días vencidos", "Último pago", "Obligación", "Capital", "Fianza", "Intereses"]) {
     assert.ok(fields.some(([name]) => name === label), `Campo de detalle presente: ${label}`);
   }
   // Render the actual Facts leaf to confirm values are not only present in props.

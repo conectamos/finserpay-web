@@ -124,6 +124,16 @@ test("sesiones sin firma, sin version o de analista no central son rechazadas", 
   assert.equal(await f.auth.getCreditApprovalSessionUser(), null);
 });
 
+test("las herramientas nominales aceptan la cookie del analista y rechazan enlaces personales", async () => {
+  const f = authFixture();
+  assert.equal((await f.auth.getNominalApprovalAnalystSessionUser()).id, 7);
+
+  f.values.delete(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
+  f.values.set(session.APPROVAL_ACCESS_COOKIE_NAME, f.linkToken());
+  assert.equal(await f.auth.getNominalApprovalAnalystSessionUser(), null);
+  assert.equal((await f.auth.getCreditApprovalSessionUser()).id, 7);
+});
+
 test("la sede y el aliado deben seguir activos durante toda la sesion del analista", async () => {
   const f = authFixture();
   f.setUser({
@@ -408,14 +418,33 @@ const proxyModule = load("proxy.ts", {
   } },
 });
 
-test("el proxy limita la cookie nominal al muro, sus APIs, sesión y logout", () => {
+test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout", () => {
   const accountCookie = { [session.APPROVAL_ANALYST_SESSION_COOKIE_NAME]: "signed-analyst-cookie" };
-  for (const path of ["/dashboard/aprobaciones", "/api/aprobaciones", "/api/aprobaciones/7", "/api/session", "/api/login", "/api/logout"]) {
-    assert.equal(proxyModule.proxy(proxyRequest(path, accountCookie)).kind, "next", path);
+  for (const [path, method] of [
+    ["/dashboard/aprobaciones", "GET"],
+    ["/dashboard/aprobaciones/cambio-imei", "GET"],
+    ["/api/aprobaciones", "GET"],
+    ["/api/aprobaciones/sadmin/7", "PATCH"],
+    ["/api/solicitudes", "GET"],
+    ["/api/creditos/datacredito/admin/liberaciones/buscar", "POST"],
+    ["/api/creditos/datacredito/admin/evaluaciones/10000000-0000-4000-8000-000000000001/autorizar-reintento", "POST"],
+    ["/api/session", "GET"],
+    ["/api/login", "POST"],
+    ["/api/logout", "POST"],
+  ]) {
+    assert.equal(proxyModule.proxy(proxyRequest(path, accountCookie, method)).kind, "next", path);
   }
   assert.equal(proxyModule.proxy(proxyRequest("/aliados", accountCookie)).kind, "next");
-  for (const path of ["/api/inventario-principal/buscar", "/api/clientes", "/api/usuarios/admin"]) {
-    const response = proxyModule.proxy(proxyRequest(path, accountCookie, "POST"));
+  for (const [path, method] of [
+    ["/api/inventario-principal/buscar", "POST"],
+    ["/api/clientes", "POST"],
+    ["/api/usuarios/admin", "POST"],
+    ["/api/solicitudes", "PATCH"],
+    ["/api/creditos/datacredito/admin/liberaciones/buscar", "GET"],
+    ["/api/creditos/datacredito/admin/evaluaciones/no-es-uuid/autorizar-reintento", "POST"],
+    ["/api/creditos/datacredito/admin/evaluaciones/10000000-0000-4000-8000-000000000001", "GET"],
+  ]) {
+    const response = proxyModule.proxy(proxyRequest(path, accountCookie, method));
     assert.equal(response.status, 403, path);
   }
   for (const path of ["/dashboard", "/dashboard/financiero", "/dashboard/deuda-sedes"]) {

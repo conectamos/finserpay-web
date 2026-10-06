@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
-import { getCreditApprovalSessionUser, getSessionUser } from "@/lib/auth";
+import {
+  getCreditApprovalSessionUser,
+  getNominalApprovalAnalystSessionUser,
+  getSessionUser,
+} from "@/lib/auth";
 import { canManageApprovalAnalysts, canReviewCreditApprovals } from "@/lib/roles";
 import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import { ApprovalActorAccessError, ApprovalActorCreditAccessError, type ApprovalActor } from "@/lib/credit-approval-actor";
 import { CreditApprovalError } from "@/lib/credit-approval";
+import type { SadminActor } from "@/lib/credit-sadmin-types";
 
 export const approvalPrivateHeaders = { "Cache-Control": "private, no-store, max-age=0", "X-Content-Type-Options": "nosniff" };
 
@@ -30,6 +35,28 @@ export async function getCentralApprovalAdminActor(): Promise<ApprovalActor> {
     );
   }
   return { id: user.id, nombre: user.nombre };
+}
+
+export async function getSadminApprovalActor(): Promise<SadminActor> {
+  // A regular central-admin session keeps its existing access. Analysts must
+  // authenticate with their dedicated nominal cookie; approval links are not
+  // accepted for this operational control.
+  const admin = await getSessionUser();
+  if (admin && canManageApprovalAnalysts(admin)) {
+    return { id: admin.id, nombre: admin.nombre, sadminScope: "HISTORICAL" };
+  }
+
+  const analyst = await getNominalApprovalAnalystSessionUser();
+  if (analyst) return { id: analyst.id, nombre: analyst.nombre, sadminScope: "APPROVED_READY" };
+
+  if (!admin) {
+    throw new CreditApprovalError("UNAUTHENTICATED", "Inicia sesión para gestionar SADMIN.", 401);
+  }
+  throw new CreditApprovalError(
+    "FORBIDDEN",
+    "No tienes permiso para gestionar SADMIN.",
+    403,
+  );
 }
 
 export function isSameApprovalOrigin(request: Request) {

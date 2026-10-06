@@ -1,7 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@/app/generated/prisma/client";
-import { assertApprovalActorActive, approvalActorAudit, type ApprovalActor } from "@/lib/credit-approval-actor";
+import { assertApprovalActorActive, approvalActorAudit, buildCurrentCreditApprovalSql } from "@/lib/credit-approval-actor";
+import { buildCreditApprovalQueueScopeSql } from "@/lib/credit-approval-queue";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
@@ -9,10 +10,13 @@ import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { calendarDateKey, getColombiaDateParts } from "@/lib/colombia-date";
 import { isExcludedCarteraCreditState, resolveCarteraExportRates } from "@/lib/cartera-export";
 import { applySadminChange, parseSadminChange, sadminRegistration, type StoredSadminRegistration } from "@/lib/credit-sadmin-state";
-import type { SadminCreditRow, SadminPage, SadminStatusFilter } from "@/lib/credit-sadmin-types";
+import type {
+  SadminActor, SadminCreationStatus, SadminCreditRow, SadminHistoryEntry,
+  SadminPage, SadminStatusFilter, SadminSummary,
+} from "@/lib/credit-sadmin-types";
 
 type Database = Pick<PrismaClient, "$transaction">;
-type Transaction = Pick<Prisma.TransactionClient, "$queryRawUnsafe">;
+type Transaction = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 type Payment = { fechaAbono: string; metodoPago: string | null; valor: number };
 type CreditRow = {
   id: number; folio: string; createdAt: Date; fechaCredito: Date;
@@ -27,9 +31,13 @@ type CreditRow = {
   aliadoNombre: string; sedeNombre: string; fechaPrimerPago: Date | null; fechaProximoPago: Date | null;
   pazYSalvoEmitidoAt: Date | null; abonos: Payment[]; registration: StoredSadminRegistration | null;
 };
+type SadminEventRow = {
+  version: number; actorName: string; payload: unknown; createdAt: Date | string;
+};
 
-// SADMIN intentionally covers the complete historical cartera, as requested.
-// Its separate registration never changes credit or approval state.
+// Central administrators retain the historical cartera. Approval analysts are
+// restricted below to credits whose current approval is ready for operations.
+// The separate SADMIN registration never changes credit or financial state.
 const visibleCreditSql = `UPPER(BTRIM(COALESCE(credit."estado",''))) NOT IN ('ANULADO','ANULADA','CANCELADO','CANCELADA')`;
 const searchSql = `($1::text IS NULL OR
   strpos(lower(COALESCE(credit."clienteNombre",'')),lower($1))>0 OR
@@ -37,18 +45,25 @@ const searchSql = `($1::text IS NULL OR
   strpos(lower(COALESCE(credit."folio",'')),lower($1))>0 OR
   strpos(lower(COALESCE(ally."nombre",'')),lower($1))>0 OR
   strpos(lower(COALESCE(registration."numeroCredito",'')),lower($1))>0)`;
-const createdSadminSql = `(registration."codeudorCreado" IS TRUE
-  AND registration."creditoCreado" IS TRUE
-  AND registration."numeroCreditoConfirmado" IS TRUE
-  AND NULLIF(BTRIM(COALESCE(registration."numeroCredito",'')),'') IS NOT NULL)`;
+const createdSadminSql = `(COALESCE(registration."estadoCreacion",'PENDIENTE_CREAR')='CREADO_CORRECTAMENTE')`;
 const statusSql = `($2::text='all'
   OR ($2::text='pending' AND NOT ${createdSadminSql})
   OR ($2::text='created' AND ${createdSadminSql}))`;
-const baseSql = `FROM "Credito" credit
+const approvedReadySql = `(${buildCreditApprovalQueueScopeSql("credit")}
+  AND EXISTS (SELECT 1 FROM "CreditApprovalReview" review
+    WHERE review."creditoId"=credit."id" AND ${buildCurrentCreditApprovalSql("credit", "review")})
+  AND EXISTS (SELECT 1 FROM "Sede" approval_site JOIN "Aliado" approval_ally ON approval_ally."id"=approval_site."aliadoId"
+    WHERE approval_site."id"=credit."sedeId" AND UPPER(BTRIM(COALESCE(approval_ally."codigo",'')))<>'FINSERPAY'))`;
+function actorCreditScopeSql(actor: SadminActor) {
+  if (actor.sadminScope === "HISTORICAL") return "TRUE";
+  if (actor.sadminScope === "APPROVED_READY") return approvedReadySql;
+  throw new CreditApprovalError("FORBIDDEN", "No tienes permiso para consultar la creación SADMIN.", 403);
+}
+function baseSql(actor: SadminActor) { return `FROM "Credito" credit
   JOIN "Sede" site ON site."id"=credit."sedeId"
   JOIN "Aliado" ally ON ally."id"=site."aliadoId"
   LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
-  WHERE ${visibleCreditSql} AND ${searchSql}`;
+  WHERE ${visibleCreditSql} AND ${actorCreditScopeSql(actor)} AND ${searchSql}`; }
 
 const creditDetailsSql = `SELECT credit."id",credit."folio",credit."createdAt",credit."fechaCredito",
   credit."clienteNombre",credit."clienteDocumento",credit."clienteTelefono",credit."clienteDireccion",
@@ -92,24 +107,25 @@ function parseSadminFilters(input: { q?: unknown; status?: unknown }) {
   };
 }
 
-async function countSadminCredits(tx: Transaction, query: string | null) {
+async function countSadminCredits(tx: Transaction, actor: SadminActor, query: string | null) {
   const rows = await tx.$queryRawUnsafe<Array<SadminPage["counts"]>>(`SELECT
     COUNT(*)::integer AS "all",
     (COUNT(*) FILTER (WHERE NOT ${createdSadminSql}))::integer AS "pending",
     (COUNT(*) FILTER (WHERE ${createdSadminSql}))::integer AS "created"
-    ${baseSql}`, query);
+    ${baseSql(actor)}`, query);
   return rows[0] ?? { all: 0, pending: 0, created: 0 };
 }
 
 function loadSadminCreditRows(
   tx: Transaction,
+  actor: SadminActor,
   query: string | null,
   status: SadminStatusFilter,
   limit: number,
   offset: number,
 ) {
   return tx.$queryRawUnsafe<CreditRow[]>(`WITH selected AS (
-    SELECT credit."id" ${baseSql} AND ${statusSql}
+    SELECT credit."id" ${baseSql(actor)} AND ${statusSql}
     ORDER BY credit."fechaCredito" DESC,credit."id" DESC LIMIT $3::integer OFFSET $4::integer
   ) ${creditDetailsSql}`, query, status, limit, offset);
 }
@@ -118,6 +134,45 @@ function iso(value: Date | string | null) {
 }
 function calendar(value: Date | string | null) { return iso(value)?.slice(0, 10) ?? null; }
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+function eventCreationStatus(payload: unknown): SadminCreationStatus {
+  const value = record(payload);
+  const after = record(value.after);
+  const status = String(after.estadoCreacion || value.estadoCreacion || "");
+  if (["PENDIENTE_CREAR", "CREADO_CORRECTAMENTE", "ERROR_CREACION", "REQUIERE_REVISION"].includes(status)) {
+    return status as SadminCreationStatus;
+  }
+  if (after.estado === "CREADO_SADMIN" || value.confirmation === "ADMIN_EXISTING_SADMIN") {
+    return "CREADO_CORRECTAMENTE";
+  }
+  return "PENDIENTE_CREAR";
+}
+function eventNumber(payload: unknown) {
+  const value = record(payload);
+  const after = record(value.after);
+  const number = after.numeroCredito ?? value.numeroCredito;
+  return typeof number === "string" && number.trim() ? number.trim() : null;
+}
+function eventReason(payload: unknown) {
+  const value = record(payload);
+  const after = record(value.after);
+  const reason = after.motivoEstado ?? value.motivoEstado;
+  return typeof reason === "string" && reason.trim() ? reason.trim() : null;
+}
+async function loadSadminHistory(tx: Transaction, creditId: number): Promise<SadminHistoryEntry[]> {
+  const events = await tx.$queryRawUnsafe<SadminEventRow[]>(`SELECT "version","actorName","payload","createdAt"
+    FROM "CreditSadminEvent" WHERE "creditoId"=$1 ORDER BY "version" DESC`, creditId);
+  return events.map(event => ({
+    version: event.version,
+    actor: event.actorName,
+    fechaHora: iso(event.createdAt)!,
+    numeroCredito: eventNumber(event.payload),
+    resultado: eventCreationStatus(event.payload),
+    motivo: eventReason(event.payload),
+  }));
+}
 
 export function buildSadminCreditRow(credit: CreditRow, today = new Date()): SadminCreditRow {
   const plan = buildCreditPaymentPlan({
@@ -152,11 +207,12 @@ export function buildSadminCreditRow(credit: CreditRow, today = new Date()): Sad
     cuotasPagadas: plan.paidCount, cuotasPendientes: plan.pendingCount, saldoObligacion: plan.saldoPendiente, ...balances,
     diasVencidos: Math.max(0, ...days),
     ultimoPago: lastPayment ? [calendar(lastPayment.fechaAbono), money.format(Number(lastPayment.valor)), lastPayment.metodoPago].filter(Boolean).join(" · ") : null,
+    registroLocalHref: `/dashboard/aprobaciones?credito=${credit.id}`,
     sadmin: sadminRegistration(credit.registration),
   };
 }
 
-export async function listSadminCredits(db: Database, actor: ApprovalActor, input: { page?: unknown; q?: unknown; status?: unknown } = {}): Promise<SadminPage> {
+export async function listSadminCredits(db: Database, actor: SadminActor, input: { page?: unknown; q?: unknown; status?: unknown } = {}): Promise<SadminPage> {
   const requestedPage = input.page === null || input.page === undefined || input.page === "" ? 1 : Number(input.page);
   if (!Number.isSafeInteger(requestedPage) || requestedPage < 1 || requestedPage > 100_000_000) {
     throw new CreditApprovalError("INVALID_PAGE", "Selecciona una página válida.");
@@ -164,11 +220,11 @@ export async function listSadminCredits(db: Database, actor: ApprovalActor, inpu
   const { query, status } = parseSadminFilters(input);
   return db.$transaction(async tx => {
     await assertApprovalActorActive(tx, actor);
-    const counts = await countSadminCredits(tx, query);
+    const counts = await countSadminCredits(tx, actor, query);
     const total = counts[status];
     const totalPages = Math.max(1, Math.ceil(total / 20));
     const page = Math.min(requestedPage, totalPages);
-    const credits = await loadSadminCreditRows(tx, query, status, 20, (page - 1) * 20);
+    const credits = await loadSadminCreditRows(tx, actor, query, status, 20, (page - 1) * 20);
     const today = new Date();
     return { items: credits.map(credit => buildSadminCreditRow(credit, today)), page, pageSize: 20, total, totalPages, counts };
   }, { isolationLevel: "RepeatableRead", timeout: 20_000 });
@@ -176,13 +232,13 @@ export async function listSadminCredits(db: Database, actor: ApprovalActor, inpu
 
 export async function exportSadminCredits(
   db: Database,
-  actor: ApprovalActor,
+  actor: SadminActor,
   input: { q?: unknown; status?: unknown } = {},
 ): Promise<{ items: SadminCreditRow[]; status: SadminStatusFilter }> {
   const { query, status } = parseSadminFilters(input);
   return db.$transaction(async tx => {
     await assertApprovalActorActive(tx, actor);
-    const counts = await countSadminCredits(tx, query);
+    const counts = await countSadminCredits(tx, actor, query);
     const total = counts[status];
     if (total > SADMIN_EXPORT_MAX_ROWS) {
       throw new CreditApprovalError(
@@ -191,10 +247,42 @@ export async function exportSadminCredits(
         413,
       );
     }
-    const credits = total ? await loadSadminCreditRows(tx, query, status, total, 0) : [];
+    const credits = total ? await loadSadminCreditRows(tx, actor, query, status, total, 0) : [];
     const today = new Date();
     return { items: credits.map(credit => buildSadminCreditRow(credit, today)), status };
   }, { isolationLevel: "RepeatableRead", timeout: 60_000 });
+}
+
+export async function getSadminCreditSummary(
+  db: Database,
+  actor: SadminActor,
+  rawId: unknown,
+): Promise<SadminSummary> {
+  if (!/^[1-9]\d*$/.test(String(rawId ?? "")) || !Number.isSafeInteger(Number(rawId)) || Number(rawId) > 2147483647) {
+    throw new CreditApprovalError("INVALID_CREDIT", "Selecciona un crédito válido.");
+  }
+  const id = Number(rawId);
+  return db.$transaction(async tx => {
+    await assertApprovalActorActive(tx, actor);
+    const rows = await tx.$queryRawUnsafe<Array<{
+      id: number; folio: string; registration: StoredSadminRegistration | null;
+    }>>(`SELECT credit."id",credit."folio",
+      CASE WHEN registration."creditoId" IS NULL THEN NULL ELSE to_jsonb(registration) END AS registration
+      FROM "Credito" credit
+      LEFT JOIN "CreditSadminRegistration" registration ON registration."creditoId"=credit."id"
+      WHERE credit."id"=$1 AND ${visibleCreditSql} AND ${actorCreditScopeSql(actor)} FOR SHARE OF credit`, id);
+    const credit = rows[0];
+    if (!credit) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+    const sadmin = sadminRegistration(credit.registration);
+    return {
+      creditoId: credit.id,
+      folio: credit.folio,
+      numeroCreditoVisible: sadmin.numeroCreditoConfirmado && sadmin.numeroCredito || credit.folio,
+      registroLocalHref: `/dashboard/aprobaciones?credito=${credit.id}`,
+      sadmin,
+      historial: await loadSadminHistory(tx, credit.id),
+    };
+  }, { isolationLevel: "RepeatableRead", timeout: 15_000 });
 }
 
 function duplicateNumber(error: unknown) {
@@ -203,7 +291,7 @@ function duplicateNumber(error: unknown) {
   return value.code === "23505" || value.code === "P2002" || value.meta?.code === "23505";
 }
 
-export async function updateSadminRegistration(db: Database, actor: ApprovalActor, rawId: unknown, body: unknown) {
+export async function updateSadminRegistration(db: Database, actor: SadminActor, rawId: unknown, body: unknown) {
   if (!/^[1-9]\d*$/.test(String(rawId ?? "")) || !Number.isSafeInteger(Number(rawId)) || Number(rawId) > 2147483647) {
     throw new CreditApprovalError("INVALID_CREDIT", "Selecciona un crédito válido.");
   }
@@ -212,7 +300,8 @@ export async function updateSadminRegistration(db: Database, actor: ApprovalActo
   try {
     return await db.$transaction(async tx => {
       await assertApprovalActorActive(tx, actor);
-      const credits = await tx.$queryRawUnsafe<Array<{ estado: string }>>('SELECT "estado" FROM "Credito" WHERE "id"=$1 FOR UPDATE', id);
+      const credits = await tx.$queryRawUnsafe<Array<{ estado: string }>>(`SELECT credit."estado" FROM "Credito" credit
+        WHERE credit."id"=$1 AND ${actorCreditScopeSql(actor)} FOR UPDATE`, id);
       if (!credits.length || isExcludedCarteraCreditState(credits[0].estado)) {
         throw new CreditApprovalError("CREDIT_NOT_FOUND", "Este crédito ya no está disponible en Cartera.", 404);
       }
@@ -220,23 +309,27 @@ export async function updateSadminRegistration(db: Database, actor: ApprovalActo
       const current = sadminRegistration(rows[0]);
       const next = applySadminChange(current, change);
       if (current.codeudorCreado === next.codeudorCreado && current.creditoCreado === next.creditoCreado &&
-          current.numeroCreditoConfirmado === next.numeroCreditoConfirmado && current.numeroCredito === next.numeroCredito) return current;
+          current.numeroCreditoConfirmado === next.numeroCreditoConfirmado && current.numeroCredito === next.numeroCredito &&
+          current.estadoCreacion === next.estadoCreacion && current.motivoEstado === next.motivoEstado) return current;
       const now = new Date();
       const completedAt = next.estado === "CREADO_SADMIN" ? current.completedAt ? new Date(current.completedAt) : now : null;
       const saved = await tx.$queryRawUnsafe<StoredSadminRegistration[]>(`INSERT INTO "CreditSadminRegistration"
-        ("creditoId","version","codeudorCreado","creditoCreado","numeroCreditoConfirmado","numeroCredito","completedAt","updatedAt")
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        ("creditoId","version","codeudorCreado","creditoCreado","numeroCreditoConfirmado","numeroCredito","estadoCreacion","motivoEstado","completedAt","updatedAt")
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT ("creditoId") DO UPDATE SET "version"=EXCLUDED."version","codeudorCreado"=EXCLUDED."codeudorCreado",
           "creditoCreado"=EXCLUDED."creditoCreado","numeroCreditoConfirmado"=EXCLUDED."numeroCreditoConfirmado",
-          "numeroCredito"=EXCLUDED."numeroCredito","completedAt"=EXCLUDED."completedAt","updatedAt"=EXCLUDED."updatedAt"
-        RETURNING *`, id, current.version + 1, next.codeudorCreado, next.creditoCreado, next.numeroCreditoConfirmado, next.numeroCredito, completedAt, now);
+          "numeroCredito"=EXCLUDED."numeroCredito","estadoCreacion"=EXCLUDED."estadoCreacion","motivoEstado"=EXCLUDED."motivoEstado",
+          "completedAt"=EXCLUDED."completedAt","updatedAt"=EXCLUDED."updatedAt"
+        RETURNING *`, id, current.version + 1, next.codeudorCreado, next.creditoCreado, next.numeroCreditoConfirmado,
+        next.numeroCredito, next.estadoCreacion, next.motivoEstado, completedAt, now);
       const result = sadminRegistration(saved[0]);
       const audit = approvalActorAudit(actor);
       await tx.$executeRawUnsafe(`INSERT INTO "CreditSadminEvent"
         ("id","creditoId","version","actorKind","actorUserId","actorName","actorGrantId","actorSessionId","payload")
         VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::uuid,$8::uuid,$9::jsonb)`,
         randomUUID(), id, result.version, audit.actorKind, audit.actorUserId, audit.actorName, audit.actorGrantId, audit.actorSessionId,
-        JSON.stringify({ field: change.field, before: current, after: result }));
+        JSON.stringify({ field: change.field, numeroCredito: result.numeroCredito,
+          estadoCreacion: result.estadoCreacion, motivoEstado: result.motivoEstado, before: current, after: result }));
       return result;
     }, { timeout: 15_000 });
   } catch (error) {

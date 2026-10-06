@@ -8,6 +8,7 @@ import {
   Coins,
   ClipboardList,
   Equal,
+  FilePenLine,
   FileSearch,
   FileText,
   Files,
@@ -110,8 +111,21 @@ export default function AdminSidebar({
   nombreUsuario,
   rolUsuario,
 }: AdminSidebarProps) {
-  const navGroups: NavGroup[] = isApprovalAnalystRole(rolUsuario) ? [
-    { label: "Operacion", items: [{ href: "/dashboard/aprobaciones", icon: ShieldCheck, label: "Aprobaciones" }] },
+  const analystNavigation = isApprovalAnalystRole(rolUsuario);
+  const navGroups: NavGroup[] = analystNavigation ? [
+    {
+      label: "Aprobaciones",
+      items: [
+        { href: "/dashboard/aprobaciones", icon: LayoutDashboard, label: "Aprobaciones" },
+        { href: "/dashboard/aprobaciones/solicitudes", icon: ClipboardList, label: "Solicitudes" },
+        { href: "/dashboard/aprobaciones/cambio-imei", icon: Smartphone, label: "Cambio de IMEI" },
+        { href: "/dashboard/aprobaciones/firma-seguro", icon: FilePenLine, label: "Gestionar firma" },
+        { href: "/dashboard/aprobaciones/liberar-consulta", icon: RefreshCcw, label: "Liberar consulta" },
+        { href: "/dashboard/aprobaciones/sadmin", icon: Files, label: "Creación Sadmin" },
+        { href: "/dashboard/aprobaciones/excepciones-mora", icon: TriangleAlert, label: "Excepciones de mora" },
+        { href: "/dashboard/aprobaciones/cartera-mora", icon: PieChart, label: "Cartera en mora" },
+      ],
+    },
   ] : [
     {
       label: "Principal",
@@ -237,9 +251,9 @@ export default function AdminSidebar({
   ];
 
   return (
-    <aside className="bg-[#071827] text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
+    <aside className={`${analystNavigation ? "bg-[var(--fp-graphite)]" : "bg-[#071827]"} text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col`}>
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 lg:block lg:border-0 lg:px-5 lg:py-6">
-        <FinserBrand compact dark showTagline={false} />
+        <FinserBrand compact dark accentPay={analystNavigation} wordmarkOnly={analystNavigation} showTagline={false} />
         <LogoutButton className="!rounded-lg !border-white/15 !px-3 lg:hidden" />
       </div>
 

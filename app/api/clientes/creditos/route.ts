@@ -5,6 +5,7 @@ import { calculateCreditEarlyPayoff } from "@/lib/credit-early-payoff";
 import { sanitizeSearch } from "@/lib/credit-factory";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { getActiveMoraBlockExemptionByDocument } from "@/lib/mora-block-exemptions";
+import { getActiveMoraExceptionsByCreditIds } from "@/lib/mora-exception-requests";
 import prisma from "@/lib/prisma";
 import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 
@@ -160,12 +161,13 @@ export async function GET(req: Request) {
       };
     });
 
-    const activeMoraExemption = items.some((credit) => credit.estadoPago === "MORA")
-      ? await getActiveMoraBlockExemptionByDocument(documento)
-      : null;
-    const prorrogaMora = activeMoraExemption
-      ? { hasta: activeMoraExemption.fechaFin?.toISOString() ?? null }
-      : null;
+    const hasMora = items.some((credit) => credit.estadoPago === "MORA");
+    const [activeMoraExemption, activeCreditExceptions] = hasMora
+      ? await Promise.all([
+          getActiveMoraBlockExemptionByDocument(documento),
+          getActiveMoraExceptionsByCreditIds(items.map(credit => credit.id)),
+        ])
+      : [null, new Map()];
 
     return NextResponse.json({
       ok: true,
@@ -173,7 +175,13 @@ export async function GET(req: Request) {
         withCreditDisplayNumber(
           {
             ...credit,
-            prorrogaMora: credit.estadoPago === "MORA" ? prorrogaMora : null,
+            prorrogaMora: credit.estadoPago === "MORA"
+              ? activeCreditExceptions.has(credit.id)
+                ? { hasta: activeCreditExceptions.get(credit.id)!.fechaFin.toISOString() }
+                : activeMoraExemption
+                  ? { hasta: activeMoraExemption.fechaFin?.toISOString() ?? null }
+                  : null
+              : null,
           },
           displayNumbers
         )

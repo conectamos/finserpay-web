@@ -5,6 +5,7 @@ import { creditDisplayNumber } from "@/lib/credit-display-number";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Expand, FileText, ImageOff, ListChecks, RefreshCw, ShieldCheck } from "lucide-react";
 import SharedApprovalWorkspace from "@/app/revision-creditos/shared-approval-workspace";
+import AnalystApprovalWorkspace from "./analyst-approval-workspace";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
 import LastPdfPagePreview from "./last-pdf-page-preview";
@@ -13,7 +14,7 @@ import ApprovalSignatureReissue from "./approval-signature-reissue";
 import ApprovalCallRecording from "./approval-call-recording";
 import ApprovalNoveltyPanel from "./approval-novelty-panel";
 import { Badge, Button, Card, DataTable, EmptyState, LoadingState, MetricCard, PageHeader, StatusPill, Tabs } from "@/app/_components/finser-ui";
-import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalStatus, type ApprovalView } from "./approval-client";
+import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalQueueOptions, type ApprovalStatus, type ApprovalView } from "./approval-client";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const calendarDates = new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" });
@@ -76,11 +77,12 @@ function confirmationDescription(confirmation: Confirmation, shared: boolean) {
   return `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, crédito ${creditDisplayNumber(confirmation)}, y verificaste las correcciones.${recordingConfirmation} El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.`;
 }
 
-export default function ApprovalConsole({ shared = false, redesigned = false, focusCreditId = null, onOpenSadmin }: {
-  shared?: boolean; redesigned?: boolean; focusCreditId?: number | null; onOpenSadmin?: () => void;
+export default function ApprovalConsole({ shared = false, redesigned = false, analystDesk = false, focusCreditId = null, onOpenSadmin }: {
+  shared?: boolean; redesigned?: boolean; analystDesk?: boolean; focusCreditId?: number | null; onOpenSadmin?: () => void;
 } = {}) {
   const modern = shared || redesigned;
   const [query, setQuery] = useState("");
+  const [queueFilters, setQueueFilters] = useState<Pick<ApprovalQueueOptions, "aliado" | "desde" | "hasta">>({});
   const [counts, setCounts] = useState<{ pending: number; approved: number } | null>(null);
   const [selectedItem, setSelectedItem] = useState<ApprovalQueueItem | null>(null);
   const loadedPages = useRef(1);
@@ -230,7 +232,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, fo
     const controller = new AbortController(); searchController.current = controller;
     setSearching(true); setSearchError("");
     try {
-      const options = modern ? { query, counts: true } : undefined;
+      const options = modern ? { query, counts: true, ...(analystDesk ? queueFilters : {}) } : undefined;
       const firstPage = await readApprovalQueue(cursor, controller.signal, view, options);
       let page = firstPage, rows = page.items, pages = 1;
       const targetPages = modern && preservePages && !cursor ? loadedPages.current : 1;
@@ -249,7 +251,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, fo
     } catch (error) {
       if (!controller.signal.aborted) setSearchError(error instanceof Error ? error.message : "No fue posible cargar el muro.");
     } finally { if (!controller.signal.aborted) setSearching(false); }
-  }, [view, query, modern]);
+  }, [view, query, modern, analystDesk, queueFilters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -267,7 +269,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, fo
       if (fetching || document.visibilityState === "hidden") return;
       fetching = true;
       try {
-        const page = await readApprovalQueue(null, controller.signal, view, modern ? { query, counts: true } : undefined);
+        const page = await readApprovalQueue(null, controller.signal, view, modern ? { query, counts: true, ...(analystDesk ? queueFilters : {}) } : undefined);
         const updated = selectedId ? await readApprovalCredit(selectedId, controller.signal) : null;
         if (controller.signal.aborted) return;
         setItems(page.items); setNextCursor(page.nextCursor); setSearchError("");
@@ -296,7 +298,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, fo
     const focused = () => { void refresh(); };
     window.addEventListener("focus", focused);
     return () => { controller.abort(); window.clearInterval(interval); window.removeEventListener("focus", focused); };
-  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail, view, query, modern]);
+  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail, view, query, modern, analystDesk, queueFilters]);
 
   function searchShared(value: string) {
     if (busy || submitting.current) return;
@@ -308,6 +310,24 @@ export default function ApprovalConsole({ shared = false, redesigned = false, fo
     setNextCursor(null); setHasExtraPages(false); setQueueLoaded(false); setLoadingDetail(false);
     setSearchError(""); setDetailError(""); setNotice(null); setConfirmation(null);
     setReviewChanged(false); setRereviewed(false); setQuery(next);
+  }
+  function filterShared(nextFilters: Pick<ApprovalQueueOptions, "aliado" | "desde" | "hasta">) {
+    if (busy || submitting.current) return;
+    const next = {
+      ...(nextFilters.aliado?.trim() ? { aliado: nextFilters.aliado.trim() } : {}),
+      ...(nextFilters.desde?.trim() ? { desde: nextFilters.desde.trim() } : {}),
+      ...(nextFilters.hasta?.trim() ? { hasta: nextFilters.hasta.trim() } : {}),
+    };
+    if (next.aliado === queueFilters.aliado && next.desde === queueFilters.desde && next.hasta === queueFilters.hasta) {
+      void loadQueue(null, true);
+      return;
+    }
+    searchController.current?.abort(); detailController.current?.abort();
+    loadedPages.current = 1;
+    setSelectedId(null); setSelectedItem(null); setDetail(null); setItems([]); setCounts(null);
+    setNextCursor(null); setHasExtraPages(false); setQueueLoaded(false); setLoadingDetail(false);
+    setSearchError(""); setDetailError(""); setNotice(null); setConfirmation(null);
+    setReviewChanged(false); setRereviewed(false); setQueueFilters(next);
   }
   function refreshShared() {
     if (busy || submitting.current) return;
@@ -364,20 +384,28 @@ export default function ApprovalConsole({ shared = false, redesigned = false, fo
   if (modern) {
     const actionError = loadingDetail ? "Espera a que termine de cargar el expediente." : detailError || searchError || (searching ? "Actualizando la información del muro." : busy ? "Termina o cancela la acción en curso." : reviewChanged && !rereviewed ? "Confirma que revisaste nuevamente los documentos actualizados." : "");
     const correctionDisabled = saving || Boolean(confirmation) || signatureBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError);
-    return <SharedApprovalWorkspace view={view} counts={counts} query={query} items={items} selectedId={selectedId} selectedItem={selectedItem} detail={detail}
-      queueLoaded={queueLoaded} searching={searching} searchError={searchError} nextCursor={nextCursor} loadingDetail={loadingDetail} detailError={detailError} busy={busy} correctionDisabled={correctionDisabled} notice={notice}
-      onSelect={selectCredit} onView={changeView} onSearch={searchShared} onRefresh={refreshShared} onMore={() => { if (!busy && nextCursor) void loadQueue(nextCursor); }} onBack={backToList} onRetryDetail={() => { if (selectedId && !busy) void loadDetail(selectedId); }} onUpdated={reloadAfterCorrection} onCorrectionBusy={setCorrectionBusy} onOpenSadmin={onOpenSadmin}
-      callPanel={detail ? <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} /> : null}
-      noveltyPanel={detail ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
-      signaturePanel={detail ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
-      approvalPanel={detail && detail.review.required && detail.review.status === "PENDING" ? <Card data-approval-decision="true">
+    const workspaceProps = {
+      view, counts, query, items, selectedId, selectedItem, detail, queueLoaded, searching, searchError, nextCursor,
+      loadingDetail, detailError, busy, correctionDisabled, notice, onSelect: selectCredit, onView: changeView,
+      onSearch: searchShared, onFilters: filterShared, onRefresh: refreshShared,
+      onMore: () => { if (!busy && nextCursor) void loadQueue(nextCursor); },
+      onBack: backToList,
+      onRetryDetail: () => { if (selectedId && !busy) void loadDetail(selectedId); },
+      onUpdated: reloadAfterCorrection, onCorrectionBusy: setCorrectionBusy, onOpenSadmin,
+      callPanel: detail ? <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} /> : null,
+      noveltyPanel: detail ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null,
+      signaturePanel: detail ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null,
+      approvalPanel: detail && detail.review.required && detail.review.status === "PENDING" ? <Card data-approval-decision="true">
         <h2 className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} aria-hidden="true" />Dar OK para liquidación</h2>
         {detail.blockingReasons.length ? <><p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.blockingReasons[0]}</p><details className="mt-3 text-sm"><summary className="min-h-10 cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]">Ver requisitos pendientes ({detail.blockingReasons.length})</summary><ul className="list-disc space-y-2 pb-2 pl-5 text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.canApprove ? recordingRequired ? "Confirma el OK después de revisar los datos, las evidencias, la firma y la llamada." : "Confirma el OK después de revisar los datos, las evidencias y la firma." : "Actualiza el expediente para verificar los requisitos de aprobación."}</p>}
         {reviewChanged ? <label className="mt-3 flex min-h-10 items-start gap-2 text-sm"><input type="checkbox" checked={rereviewed} disabled={busy || loadingDetail || Boolean(detailError)} onChange={event => setRereviewed(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--fp-graphite)]" />Revisé de nuevo las fotografías y el documento actualizado.</label> : null}
         {actionError ? <p className="mt-2 text-sm text-[var(--fp-muted)]">{actionError}</p> : null}
         <div className="mt-4"><Button className="w-full" onClick={requestApproval} disabled={!canConfirm}><CheckCircle2 size={17} aria-hidden="true" />{saving ? "Confirmando..." : "OK para liquidación"}</Button></div>
-      </Card> : null}
-      confirmationDialog={<ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? confirmationDescription(confirmation, shared) : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />} />;
+      </Card> : null,
+      confirmationDialog: <ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? confirmationDescription(confirmation, shared) : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />,
+    };
+    if (analystDesk) return <AnalystApprovalWorkspace {...workspaceProps} />;
+    return <SharedApprovalWorkspace {...workspaceProps} />;
   }
 
   return (

@@ -13,21 +13,40 @@ test("SADMIN solo acepta cambios explícitos con versión y tipos correctos", ()
     assert.throws(() => parseSadminChange(input), error => error.status === 400);
   }
   assert.deepEqual(parseSadminChange({version:0,field:"numeroCredito",value:"  000123-A  "}), {version:0,field:"numeroCredito",value:"000123-A"});
+  for (const [estadoCreacion, reason] of [["PENDIENTE_CREAR",null],["CREADO_CORRECTAMENTE",null],["ERROR_CREACION","Falló el alta"],["REQUIERE_REVISION","Validar número"]]) {
+    assert.deepEqual(parseSadminChange({version:0,field:"estadoCreacion",value:estadoCreacion,reason}), {version:0,field:"estadoCreacion",value:estadoCreacion,reason});
+  }
+  assert.throws(() => parseSadminChange({version:0,field:"estadoCreacion",value:"DESCONOCIDO",reason:null}), error => error.code === "INVALID_SADMIN_RESULT");
+  for (const reason of [null,""," ","x".repeat(501),"línea\u0000oculta"]) {
+    assert.throws(() => parseSadminChange({version:0,field:"estadoCreacion",value:"ERROR_CREACION",reason}), error => error.code === "INVALID_SADMIN_REASON");
+  }
 });
 
 test("la tercera casilla requiere un número guardado y las tres completan SADMIN", () => {
   let current = sadminRegistration();
+  assert.equal(current.estadoCreacion, "PENDIENTE_CREAR");
   assert.throws(() => applySadminChange(current, {version:0,field:"numeroCreditoConfirmado",value:true}), error => error.code === "SADMIN_NUMBER_REQUIRED");
+  assert.throws(() => applySadminChange(current, {version:0,field:"estadoCreacion",value:"CREADO_CORRECTAMENTE",reason:null}), error => error.code === "SADMIN_CREATION_INCOMPLETE");
+  current = applySadminChange(current, parseSadminChange({version:0,field:"estadoCreacion",value:"ERROR_CREACION",reason:" Falló el alta "}));
+  assert.equal(current.estadoCreacion, "ERROR_CREACION");
+  assert.equal(current.motivoEstado, "Falló el alta");
+  current = applySadminChange(current, {version:0,field:"estadoCreacion",value:"REQUIERE_REVISION",reason:"Validar identidad"});
+  assert.equal(current.estadoCreacion, "REQUIERE_REVISION");
+  current = applySadminChange(current, {version:0,field:"estadoCreacion",value:"PENDIENTE_CREAR",reason:null});
+  assert.equal(current.motivoEstado, null);
   for (const [field, value] of [["codeudorCreado",true],["creditoCreado",true],["numeroCredito","000123-A"]]) {
     current = applySadminChange(current, parseSadminChange({version:0,field,value}));
     assert.equal(current.estado, "PENDIENTE");
   }
   current = applySadminChange(current, {version:0,field:"numeroCreditoConfirmado",value:true});
   assert.equal(current.estado, "CREADO_SADMIN");
+  assert.equal(current.estadoCreacion, "CREADO_CORRECTAMENTE");
+  assert.equal(current.motivoEstado, null);
   assert.equal(applySadminChange(current,{version:0,field:"creditoCreado",value:false}).estado,"PENDIENTE");
   const edited = applySadminChange(current, {version:0,field:"numeroCredito",value:"000124-A"});
   assert.equal(edited.numeroCreditoConfirmado, false);
   assert.equal(edited.estado,"PENDIENTE");
+  assert.equal(edited.estadoCreacion,"PENDIENTE_CREAR");
 });
 
 test("versión obsoleta rechazada y fechas JSON de PostgreSQL se interpretan como UTC", () => {

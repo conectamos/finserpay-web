@@ -120,6 +120,7 @@ function wall(api = {}, props = {}) {
     "./approval-call-recording": { default: parts.ApprovalCallRecording },
     "./approval-novelty-panel": { default: parts.ApprovalNoveltyPanel },
     "@/app/revision-creditos/shared-approval-workspace": { default: parts.SharedApprovalWorkspace },
+    "./analyst-approval-workspace": { default: placeholder("AnalystApprovalWorkspace") },
   }, props);
 }
 const select = (h, id) => h.find((node) => node.props?.["aria-label"] === `Revisar crédito QA-${id}`).props.onClick();

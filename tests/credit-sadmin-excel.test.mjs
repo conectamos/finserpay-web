@@ -22,6 +22,7 @@ const example = {
   id: 81,
   folio: "FC-20260908123000-00081",
   numeroCreditoVisible: "0000123-A",
+  registroLocalHref: "/dashboard/aprobaciones?credito=81",
   createdAt: "2026-09-08T17:30:00.000Z",
   fechaCredito: "2026-09-08",
   clienteNombre: "María Pérez & Hijos",
@@ -60,6 +61,8 @@ const example = {
     numeroCreditoConfirmado: true,
     numeroCredito: "0000123-A",
     estado: "CREADO_SADMIN",
+    estadoCreacion: "CREADO_CORRECTAMENTE",
+    motivoEstado: null,
     updatedAt: "2026-09-18T14:30:00.000Z",
     completedAt: "2026-09-18T14:35:00.000Z",
   },
@@ -81,7 +84,7 @@ test("exporta las 41 columnas SADMIN en el orden documentado y con tipos nativos
   assert.deepEqual(sheet.getRow(1).values.slice(1), headers);
 
   for (const [address, expected] of [
-    ["C2", example.numeroCreditoVisible], ["D2", example.folio], ["E2", "CREADO SADMIN"],
+    ["C2", example.numeroCreditoVisible], ["D2", example.folio], ["E2", "CREADO CORRECTAMENTE"],
     ["F2", example.sadmin.numeroCredito], ["L2", example.clienteNombre], ["M2", example.clienteDocumento],
     ["N2", example.clienteTelefono], ["S2", example.referenciaEquipo], ["T2", example.imei],
   ]) {
@@ -173,12 +176,14 @@ test("preserva ceros y representa ausencias sin inventar datos", async () => {
       numeroCreditoConfirmado: false,
       numeroCredito: null,
       estado: "PENDIENTE",
+      estadoCreacion: "PENDIENTE_CREAR",
+      motivoEstado: null,
       updatedAt: null,
       completedAt: null,
     },
   };
   const sheet = await roundTrip([pending]);
-  assert.equal(sheet.getCell("E2").value, "PENDIENTE SADMIN");
+  assert.equal(sheet.getCell("E2").value, "PENDIENTE DE CREAR");
   assert.equal(sheet.getCell("F2").text, "");
   assert.deepEqual(["G2", "H2", "I2"].map(address => sheet.getCell(address).value), ["No", "No", "No"]);
   for (const address of ["J2", "K2", "Q2", "AF2"]) assert.equal(sheet.getCell(address).value, null);
@@ -187,6 +192,24 @@ test("preserva ceros y representa ausencias sin inventar datos", async () => {
   }
   assert.equal(sheet.getCell("AE2").value, null);
   assert.equal(sheet.getCell("AJ2").text, "");
+});
+
+test("conserva los cuatro resultados operativos SADMIN", async () => {
+  const states = [
+    ["PENDIENTE_CREAR", "PENDIENTE DE CREAR"],
+    ["CREADO_CORRECTAMENTE", "CREADO CORRECTAMENTE"],
+    ["ERROR_CREACION", "ERROR DE CREACIÓN"],
+    ["REQUIERE_REVISION", "REQUIERE REVISIÓN"],
+  ];
+  const sheet = await roundTrip(states.map(([estadoCreacion], index) => ({
+    ...example,
+    id: 100 + index,
+    sadmin: { ...example.sadmin, estadoCreacion },
+  })));
+  assert.deepEqual(
+    states.map((_, index) => sheet.getCell(`E${index + 2}`).value),
+    states.map(([, label]) => label),
+  );
 });
 
 test("un resultado vacío sigue siendo un Excel utilizable con encabezado, filtro y fila congelada", async () => {

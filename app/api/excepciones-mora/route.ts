@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
-import { syncCreditMoraByDocument } from "@/lib/credit-mora-sync";
 import {
   deactivateMoraBlockExemption,
   listActiveMoraBlockExemptions,
-  normalizeMoraExemptionDocument,
-  upsertMoraBlockExemption,
 } from "@/lib/mora-block-exemptions";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
@@ -35,24 +32,6 @@ async function requireCentralAdmin() {
   }
 
   return { ok: true as const, user };
-}
-
-function parseEndDate(value: unknown) {
-  const raw = String(value ?? "").trim();
-
-  if (!raw) {
-    return null;
-  }
-
-  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(raw)
-    ? new Date(`${raw}T23:59:59.999-05:00`)
-    : new Date(raw);
-
-  if (Number.isNaN(parsed.getTime())) {
-    throw new Error("La fecha de finalizacion no es valida");
-  }
-
-  return parsed;
 }
 
 async function loadExemptions() {
@@ -127,59 +106,19 @@ export async function GET() {
   return NextResponse.json({ excepciones: await loadExemptions() });
 }
 
-export async function POST(request: Request) {
+export async function POST() {
   const access = await requireCentralAdmin();
 
   if (!access.ok) {
     return access.response;
   }
 
-  try {
-    const body = (await request.json()) as {
-      documento?: unknown;
-      fechaFin?: unknown;
-      motivo?: unknown;
-    };
-    const documento = normalizeMoraExemptionDocument(body.documento);
-    const exemption = await upsertMoraBlockExemption({
-      documento,
-      motivo: body.motivo,
-      fechaFin: parseEndDate(body.fechaFin),
-      creadoPorUsuarioId: access.user.id,
-    });
-    const syncItems = await syncCreditMoraByDocument(documento);
-    const failed = syncItems.filter((item) => item.action === "FAILED");
-    const unlocked = syncItems.filter((item) => item.action === "UNLOCKED");
-
-    return NextResponse.json(
-      {
-        ok: true,
-        excepcion: exemption,
-        sync: {
-          checked: syncItems.length,
-          unlocked: unlocked.length,
-          failed: failed.length,
-          items: syncItems,
-        },
-        message: failed.length
-          ? "La excepcion quedo activa, pero algunos equipos no pudieron desbloquearse"
-          : unlocked.length
-            ? "Excepcion activa y bloqueo de mora retirado"
-            : "Excepcion de bloqueo activada",
-      },
-      { status: 201 }
-    );
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudo crear la excepcion",
-      },
-      { status: 400 }
-    );
-  }
+  return NextResponse.json({
+    ok: false,
+    code: "LEGACY_MORA_EXCEPTION_DISABLED",
+    error: "Crea la excepción desde Aprobaciones por crédito para aplicar fechas, enfriamiento y auditoría.",
+    href: "/dashboard/aprobaciones/excepciones-mora",
+  }, { status: 409 });
 }
 
 export async function DELETE(request: Request) {

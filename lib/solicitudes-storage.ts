@@ -2044,7 +2044,7 @@ function buildCommonWhere(input: {
   const conditions: string[] = [];
   const values: unknown[] = [];
 
-  if (viewer.kind !== "CENTRAL_ADMIN") {
+  if (viewer.kind !== "CENTRAL_ADMIN" && viewer.kind !== "APPROVAL_ANALYST") {
     if (!viewer.aliadoId) conditions.push("FALSE");
     else addWhere(conditions, values, `s."aliadoId" =`, viewer.aliadoId);
   }
@@ -2450,14 +2450,14 @@ function scopeOnlyFilters(filters: SolicitudFilters): SolicitudFilters {
 
 async function getFilterOptions(viewer: SolicitudViewer) {
   const aliadoWhere =
-    viewer.kind === "CENTRAL_ADMIN"
+    viewer.kind === "CENTRAL_ADMIN" || viewer.kind === "APPROVAL_ANALYST"
       ? { activo: true }
       : viewer.aliadoId
         ? { id: viewer.aliadoId, activo: true }
         : { id: -1 };
   const sedeWhere = {
     activa: true,
-    ...(viewer.kind === "CENTRAL_ADMIN"
+    ...(viewer.kind === "CENTRAL_ADMIN" || viewer.kind === "APPROVAL_ANALYST"
       ? {}
       : { aliadoId: viewer.aliadoId || -1 }),
     ...(viewer.kind === "SUPERVISOR" || viewer.kind === "SELLER"

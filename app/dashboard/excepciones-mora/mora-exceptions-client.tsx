@@ -1,12 +1,12 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   CalendarClock,
   CheckCircle2,
   CircleAlert,
   FileText,
-  Plus,
   ShieldCheck,
   Trash2,
   UserRound,
@@ -52,11 +52,7 @@ function formatDate(value: string | null) {
 
 export default function MoraExceptionsClient() {
   const [items, setItems] = useState<ExceptionItem[]>([]);
-  const [documento, setDocumento] = useState("");
-  const [motivo, setMotivo] = useState("");
-  const [fechaFin, setFechaFin] = useState("");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -91,46 +87,6 @@ export default function MoraExceptionsClient() {
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
-
-  async function submitException(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaving(true);
-    setMessage("");
-    setError("");
-
-    try {
-      const response = await fetch("/api/excepciones-mora", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documento, motivo, fechaFin }),
-      });
-      const data = (await response.json()) as ApiMessage;
-
-      if (!response.ok) {
-        throw new Error(data.error || "No se pudo activar la excepcion");
-      }
-
-      const syncDetail = data.sync
-        ? ` Revisados: ${data.sync.checked}. Desbloqueados: ${data.sync.unlocked}.`
-        : "";
-      const failureDetail = data.sync?.failed
-        ? ` ${data.sync.failed} equipo(s) requieren revision manual.`
-        : "";
-      setMessage(`${data.message || "Excepcion activada"}.${syncDetail}${failureDetail}`);
-      setDocumento("");
-      setMotivo("");
-      setFechaFin("");
-      await loadItems();
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "No se pudo activar la excepcion"
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function removeException(item: ExceptionItem) {
     const confirmed = window.confirm(
@@ -212,66 +168,11 @@ export default function MoraExceptionsClient() {
           </div>
         ) : null}
 
-        <section className="rounded-lg border border-[#d8dee5] bg-white p-5 shadow-[0_5px_18px_rgba(16,24,40,0.04)] sm:p-6">
-          <div className="mb-5 flex items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#151a21] text-[#dafa70]">
-              <Plus className="h-5 w-5" strokeWidth={2} />
-            </span>
-            <div>
-              <h2 className="text-xl font-black text-[#151a21]">Crear excepcion</h2>
-              <p className="mt-1 text-sm text-[#667085]">
-                Registra el documento, el motivo autorizado y la fecha limite del acuerdo.
-              </p>
-            </div>
-          </div>
-
-          <form
-            onSubmit={submitException}
-            className="grid gap-4 xl:grid-cols-[minmax(190px,0.8fr)_minmax(320px,1.5fr)_minmax(190px,0.8fr)_auto] xl:items-end"
-          >
-            <label className="grid gap-2 text-xs font-black text-[#344054]">
-              Cedula
-              <input
-                required
-                inputMode="numeric"
-                value={documento}
-                onChange={(event) =>
-                  setDocumento(event.target.value.replace(/\D/g, "").slice(0, 20))
-                }
-                placeholder="Numero de documento"
-                className="h-12 rounded-lg border border-[#cfd6dd] bg-white px-4 text-sm font-semibold text-[#151a21] outline-none transition focus:border-[#7ca613] focus:ring-4 focus:ring-[#b7e63d]/20"
-              />
-            </label>
-            <label className="grid gap-2 text-xs font-black text-[#344054]">
-              Motivo del acuerdo
-              <input
-                required
-                value={motivo}
-                onChange={(event) => setMotivo(event.target.value.slice(0, 500))}
-                placeholder="Ej: acuerdo de pago autorizado"
-                className="h-12 rounded-lg border border-[#cfd6dd] bg-white px-4 text-sm font-semibold text-[#151a21] outline-none transition focus:border-[#7ca613] focus:ring-4 focus:ring-[#b7e63d]/20"
-              />
-            </label>
-            <label className="grid gap-2 text-xs font-black text-[#344054]">
-              Vigente hasta (opcional)
-              <input
-                type="date"
-                value={fechaFin}
-                onChange={(event) => setFechaFin(event.target.value)}
-                className="h-12 rounded-lg border border-[#cfd6dd] bg-white px-4 text-sm font-semibold text-[#151a21] outline-none transition focus:border-[#7ca613] focus:ring-4 focus:ring-[#b7e63d]/20"
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#151a21] px-6 text-sm font-black text-white transition hover:bg-[#272e38] disabled:cursor-wait disabled:opacity-60"
-            >
-              <ShieldCheck className="h-4 w-4 text-[#dafa70]" strokeWidth={2} />
-              {saving ? "Activando..." : "Activar excepcion"}
-            </button>
-          </form>
+        <section className="rounded-lg border border-[var(--fp-border)] bg-white p-5">
+          <h2 className="text-xl font-bold">Solicitudes y revisión por crédito</h2>
+          <p className="mt-2 text-sm text-[var(--fp-muted)]">Las nuevas excepciones y prórrogas se gestionan por crédito, con soportes, historial y las fechas permitidas.</p>
+          <Link href="/dashboard/aprobaciones/excepciones-mora" className="fp-ui-button is-primary mt-4">Gestionar solicitudes de excepción</Link>
         </section>
-
         <section className="overflow-hidden rounded-lg border border-[#d8dee5] bg-white shadow-[0_5px_18px_rgba(16,24,40,0.04)]">
           <div className="flex flex-col gap-3 border-b border-[#e4e7ec] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>

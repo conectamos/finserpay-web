@@ -43,6 +43,13 @@ const centralAdmin = {
   sedeId: null,
   vendedorId: null,
 };
+const approvalAnalyst = {
+  kind: "APPROVAL_ANALYST",
+  userId: 17,
+  aliadoId: null,
+  sedeId: null,
+  vendedorId: null,
+};
 const allyAdmin = {
   kind: "ALLY_ADMIN",
   userId: 2,
@@ -138,6 +145,7 @@ test("aplica alcance central, de aliado, de sede y de asesor propietario", () =>
   const anotherSeller = { ...ownSolicitud, vendedorId: 402 };
 
   assert.equal(canViewSolicitud(centralAdmin, anotherAlly), true);
+  assert.equal(canViewSolicitud(approvalAnalyst, anotherAlly), true);
   assert.equal(canViewSolicitud(allyAdmin, ownSolicitud), true);
   assert.equal(canViewSolicitud(allyAdmin, anotherSite), true);
   assert.equal(canViewSolicitud(allyAdmin, anotherAlly), false);
@@ -151,8 +159,9 @@ test("aplica alcance central, de aliado, de sede y de asesor propietario", () =>
   assert.equal(canViewSolicitud(seller, anotherAlly), false);
 });
 
-test("datos sensibles quedan restringidos a administradores", () => {
+test("datos sensibles quedan restringidos a administradores y soporte nominal", () => {
   assert.equal(canSeeSensitiveSolicitudData(centralAdmin), true);
+  assert.equal(canSeeSensitiveSolicitudData(approvalAnalyst), true);
   assert.equal(canSeeSensitiveSolicitudData(allyAdmin), true);
   assert.equal(canSeeSensitiveSolicitudData(supervisor), false);
   assert.equal(canSeeSensitiveSolicitudData(seller), false);
@@ -576,7 +585,7 @@ test("solo central abre en fabrica un credito aprobado", () => {
     }),
     ["VER_DETALLE", "ABRIR_FABRICA", "CAMBIO_GARANTIA"]
   );
-  for (const viewer of [allyAdmin, supervisor, seller]) {
+  for (const viewer of [approvalAnalyst, allyAdmin, supervisor, seller]) {
     assert.deepEqual(
       getSolicitudActions({
         viewer,
@@ -600,12 +609,27 @@ test("solo central abre en fabrica un credito aprobado", () => {
   );
 });
 
+test("el analista de aprobaciones consulta solicitudes sin mutaciones operativas", () => {
+  assert.deepEqual(
+    getSolicitudActions({
+      viewer: approvalAnalyst,
+      ownership: { aliadoId: 99, sedeId: 999, vendedorId: 9999 },
+      source: "DRAFT",
+      state: "PROCESO",
+      draftState: "ABIERTO",
+    }),
+    ["VER_DETALLE"],
+  );
+});
+
 test("el endpoint aplica sesion, alcance y no permite eliminaciones", async () => {
   const [route, storage] = await Promise.all([
     readProjectFile("app/api/solicitudes/route.ts"),
     readProjectFile("lib/solicitudes-storage.ts"),
   ]);
   assert.match(route, /getSessionUser|getDashboardSession|requireDashboardSession/);
+  assert.match(route, /getNominalApprovalAnalystSessionUser/);
+  assert.match(route, /APPROVAL_ANALYST[\s\S]*solo puede consultar solicitudes/);
   assert.match(route, /normalizeSolicitudFilters/);
   assert.match(route, /viewer|SolicitudViewer/);
   assert.match(route, /Cache-Control[\s\S]{0,100}no-store|no-store[\s\S]{0,100}Cache-Control/i);
@@ -616,6 +640,7 @@ test("el endpoint aplica sesion, alcance y no permite eliminaciones", async () =
     storage,
     /desistSolicitudAsCentralAdmin[\s\S]*"closedReason" = 'DESISTIDA'[\s\S]*"desistedBySellerId" = NULL/
   );
+  assert.match(storage, /APPROVAL_ANALYST/);
   assert.doesNotMatch(route, /export\s+async\s+function\s+DELETE/);
   assert.doesNotMatch(storage, /DELETE\s+FROM\s+"CreditoBorrador"/i);
 });

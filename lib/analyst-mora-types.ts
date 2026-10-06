@@ -1,0 +1,5 @@
+export const MORA_ACTIONS = ["LLAMADA","WHATSAPP","SIN_RESPUESTA","PROMESA_PAGO","ACUERDO_PAGO","SOPORTE_RECIBIDO","ESCALADO","VISITA_PENDIENTE"] as const;
+export const MORA_MANAGEMENT_STATES = ["PENDIENTE","CONTACTADO","SIN_RESPUESTA","PROMESA_PAGO","ACUERDO_PAGO","SOPORTE_RECIBIDO","ESCALADO","CERRADO"] as const;
+export type MoraManagementInput = { action: typeof MORA_ACTIONS[number]; actedAt: string; responsibleUserId: number; result: string; comment: string; nextFollowUpAt: string; managementStatus: typeof MORA_MANAGEMENT_STATES[number]; idempotencyKey: string };
+export type MoraManagementEvent = MoraManagementInput & { id: string; creditoId: number; responsibleName: string; actorUserId: number; actorName: string; createdAt: string };
+export type MoraPortfolioItem = { id: number; folio: string; numeroCreditoVisible: string; clienteNombre: string; clienteDocumento: string | null; aliadoId: number; aliadoNombre: string; equipo: string; imei: string | null; valorVencido: number; diasMora: number; ultimoPago: string | null; fechaCredito: string; ultimaGestion: MoraManagementEvent | null };

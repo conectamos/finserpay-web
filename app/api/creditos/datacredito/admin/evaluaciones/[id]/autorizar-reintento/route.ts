@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
-import { getDataCreditoCentralAdmin } from "@/lib/datacredito/admin-access";
+import { getDataCreditoRetryReleaseActor } from "@/lib/datacredito/admin-access";
 import {
   authorizeDataCreditoAdminRetry,
   DataCreditoAdminRetryError,
@@ -40,7 +40,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const access = await getDataCreditoCentralAdmin();
+  const access = await getDataCreditoRetryReleaseActor();
   if (!access.ok) {
     return json(
       {
@@ -49,7 +49,7 @@ export async function POST(
         error:
           access.status === 401
             ? "No autenticado"
-            : "Solo el administrador central de FINSER PAY puede liberar consultas DataCrédito.",
+            : "No tienes permiso para liberar consultas DataCrédito.",
       },
       access.status
     );

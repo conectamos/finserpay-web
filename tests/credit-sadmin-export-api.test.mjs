@@ -65,7 +65,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function setup({ user = centralAdmin, shared, serviceError, workbookError, exportImpl, writeBufferImpl } = {}) {
+function setup({ user = centralAdmin, analyst = null, shared, serviceError, workbookError, exportImpl, writeBufferImpl } = {}) {
   const calls = [];
   const prisma = {};
   const http = load("lib/credit-approval-http.ts", {
@@ -78,6 +78,10 @@ function setup({ user = centralAdmin, shared, serviceError, workbookError, expor
       getCreditApprovalSessionUser: async () => {
         calls.push({ name: "approval-user" });
         return user;
+      },
+      getNominalApprovalAnalystSessionUser: async () => {
+        calls.push({ name: "nominal-analyst" });
+        return analyst;
       },
     },
     "@/lib/roles": roles,
@@ -147,7 +151,7 @@ test("exporta un XLSX con búsqueda, estado, actor central y encabezados privado
 
   const call = api.calls.find(item => item.name === "export");
   assert.equal(call.args[0], api.prisma);
-  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre });
+  assert.deepEqual(clone(call.args[1]), { id: centralAdmin.id, nombre: centralAdmin.nombre, sadminScope: "HISTORICAL" });
   assert.deepEqual(clone(call.args[2]), { q: "Cliente histórico", status: "created" });
   assert.deepEqual(api.calls.find(item => item.name === "workbook").items, [{ id: 712, folio: "FC-HISTORICO" }]);
   assert.equal(api.calls.filter(item => item.name === "write").length, 1);
@@ -222,7 +226,7 @@ test("el endpoint niega identidades sin acceso antes de consultar o construir el
     ["sin sesión", null, 401],
     ["vendedor central", { ...centralAnalyst, rolNombre: "VENDEDOR" }, 403],
     ["administrador de aliado", { ...centralAdmin, aliadoAccesoCodigo: "ALIADO" }, 403],
-    ["analista central", centralAnalyst, 403],
+    ["analista sin cookie nominal", centralAnalyst, 403],
     ["administrador inactivo", { ...centralAdmin, activo: false }, 403],
   ];
   for (const [name, user, status] of cases) await t.test(name, async () => {
@@ -241,7 +245,15 @@ test("un enlace compartido sin cuenta nominal no puede exportar SADMIN", async (
   assert.equal(response.status, 401);
   privateResponse(response);
   assert.equal((await response.json()).code, "UNAUTHENTICATED");
-  assert.deepEqual(api.calls.map(call => call.name), ["user"]);
+  assert.deepEqual(api.calls.map(call => call.name), ["user", "nominal-analyst"]);
+});
+
+test("el analista nominal exporta SADMIN con su identidad como actor", async () => {
+  const api = setup({ user: null, analyst: centralAnalyst });
+  const response = await api.route.GET(request("pending"));
+  assert.equal(response.status, 200);
+  const call = api.calls.find(item => item.name === "export");
+  assert.deepEqual(clone(call.args[1]), { id: centralAnalyst.id, nombre: centralAnalyst.nombre, sadminScope: "APPROVED_READY" });
 });
 
 test("conserva los errores 400 y 413 del servicio sin generar un archivo parcial", async () => {

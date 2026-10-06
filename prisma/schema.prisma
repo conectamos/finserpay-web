@@ -487,6 +487,8 @@ model CreditSadminRegistration {
   creditoCreado Boolean @default(false)
   numeroCreditoConfirmado Boolean @default(false)
   numeroCredito String? @db.VarChar(80)
+  estadoCreacion String @default("PENDIENTE_CREAR") @db.VarChar(32)
+  motivoEstado String? @db.VarChar(500)
   completedAt DateTime? @db.Timestamp(3)
   createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
   updatedAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)

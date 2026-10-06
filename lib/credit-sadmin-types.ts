@@ -1,3 +1,14 @@
+import type { ApprovalActor } from "@/lib/credit-approval-actor";
+
+export type SadminCreationStatus =
+  | "PENDIENTE_CREAR"
+  | "CREADO_CORRECTAMENTE"
+  | "ERROR_CREACION"
+  | "REQUIERE_REVISION";
+
+export type SadminAccessScope = "HISTORICAL" | "APPROVED_READY";
+export type SadminActor = ApprovalActor & { sadminScope: SadminAccessScope };
+
 export type SadminRegistration = {
   version: number;
   codeudorCreado: boolean;
@@ -5,8 +16,28 @@ export type SadminRegistration = {
   numeroCreditoConfirmado: boolean;
   numeroCredito: string | null;
   estado: "PENDIENTE" | "CREADO_SADMIN";
+  estadoCreacion: SadminCreationStatus;
+  motivoEstado: string | null;
   updatedAt: string | null;
   completedAt: string | null;
+};
+
+export type SadminHistoryEntry = {
+  version: number;
+  actor: string;
+  fechaHora: string;
+  numeroCredito: string | null;
+  resultado: SadminCreationStatus;
+  motivo: string | null;
+};
+
+export type SadminSummary = {
+  creditoId: number;
+  folio: string;
+  numeroCreditoVisible: string;
+  registroLocalHref: string;
+  sadmin: SadminRegistration;
+  historial: SadminHistoryEntry[];
 };
 
 export type SadminStatusFilter = "all" | "pending" | "created";
@@ -47,6 +78,7 @@ export type SadminCreditRow = {
   saldoSeguro?: number;
   diasVencidos: number;
   ultimoPago: string | null;
+  registroLocalHref: string;
   sadmin: SadminRegistration;
 };
 

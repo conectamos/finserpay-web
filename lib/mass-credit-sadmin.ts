@@ -110,8 +110,8 @@ export async function registerImportedSadminCredit(db: Database, input: Imported
   const recordedAt = pending ? input.createdAt : input.confirmedAt;
   const rows = await db.$queryRawUnsafe<Array<{ creditoId: number }>>(
     `INSERT INTO "CreditSadminRegistration"
-      ("creditoId","version","codeudorCreado","creditoCreado","numeroCreditoConfirmado","numeroCredito","completedAt","updatedAt")
-     VALUES ($1,1,${pending ? "false,false,false,$2,NULL" : "true,true,true,$2,$3"},$3) RETURNING "creditoId"`,
+      ("creditoId","version","codeudorCreado","creditoCreado","numeroCreditoConfirmado","numeroCredito","estadoCreacion","completedAt","updatedAt")
+     VALUES ($1,1,${pending ? "false,false,false,$2,'PENDIENTE_CREAR',NULL" : "true,true,true,$2,'CREADO_CORRECTAMENTE',$3"},$3) RETURNING "creditoId"`,
     input.creditoId, numeroCredito, recordedAt,
   );
   if (rows[0]?.creditoId !== input.creditoId) throw new Error("No se confirmó el registro SADMIN");
@@ -124,6 +124,7 @@ export async function registerImportedSadminCredit(db: Database, input: Imported
       requestId: input.requestId, rowNumber: input.rowNumber, clienteDocumento: input.cedula,
       numeroCredito, codeudorCreado: !pending, creditoCreado: !pending,
       numeroCreditoConfirmado: !pending,
+      estadoCreacion: pending ? "PENDIENTE_CREAR" : "CREADO_CORRECTAMENTE",
       ...(pending ? { recordedAt: recordedAt.toISOString() } : { confirmedAt: recordedAt.toISOString() }) }),
   );
   if (insertedEvents !== 1) throw new Error("No se confirmó la auditoría del registro SADMIN");

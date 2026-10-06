@@ -2,8 +2,11 @@
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, Save, Search } from "lucide-react";
-import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader, Tabs } from "@/app/_components/finser-ui";
-import type { SadminCreditRow, SadminPage, SadminRegistration, SadminStatusFilter } from "@/lib/credit-sadmin-types";
+import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, PageHeader, Select, Tabs } from "@/app/_components/finser-ui";
+import type {
+  SadminCreationStatus, SadminCreditRow, SadminPage, SadminRegistration,
+  SadminStatusFilter, SadminSummary,
+} from "@/lib/credit-sadmin-types";
 import { confirmedSadminNumber, creditDisplayNumber } from "@/lib/credit-display-number";
 import styles from "./sadmin-credit-table.module.css";
 
@@ -60,10 +63,25 @@ const statusTabs: Array<{ id: SadminStatusFilter; label: string }> = [
   { id: "pending", label: "Pendientes" },
   { id: "created", label: "Creados" },
 ];
+const creationStatuses: Array<{ id: SadminCreationStatus; label: string }> = [
+  { id: "PENDIENTE_CREAR", label: "Pendiente de crear" },
+  { id: "CREADO_CORRECTAMENTE", label: "Creado correctamente" },
+  { id: "ERROR_CREACION", label: "Error de creación" },
+  { id: "REQUIERE_REVISION", label: "Requiere revisión" },
+];
+const creationStatusLabels = Object.fromEntries(creationStatuses.map(item => [item.id, item.label])) as Record<SadminCreationStatus, string>;
+function creationTone(status: SadminCreationStatus): "neutral" | "positive" | "warning" | "danger" {
+  if (status === "CREADO_CORRECTAMENTE") return "positive";
+  if (status === "ERROR_CREACION") return "danger";
+  if (status === "REQUIERE_REVISION") return "warning";
+  return "neutral";
+}
+const statusNeedsReason = (status: SadminCreationStatus) => status === "ERROR_CREACION" || status === "REQUIERE_REVISION";
+type OutcomeDraft = { status: SadminCreationStatus; reason: string };
 
 function matchesStatus(status: SadminStatusFilter, registration: SadminRegistration) {
   if (status === "all") return true;
-  return status === "created" ? registration.estado === "CREADO_SADMIN" : registration.estado === "PENDIENTE";
+  return status === "created" ? registration.estadoCreacion === "CREADO_CORRECTAMENTE" : registration.estadoCreacion !== "CREADO_CORRECTAMENTE";
 }
 
 function emptyCopy(status: SadminStatusFilter, hasQuery: boolean) {
@@ -76,7 +94,7 @@ function emptyCopy(status: SadminStatusFilter, hasQuery: boolean) {
   return { title: "No hay créditos disponibles", description: "Los créditos aparecerán aquí cuando estén disponibles en cartera." };
 }
 
-export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
+export default function SadminCreditTable({ onBack, analystMode = false }: { onBack: () => void; analystMode?: boolean }) {
   const [filters, setFilters] = useState<{ page: number; query: string; status: SadminStatusFilter }>({ page: 1, query: "", status: "all" });
   const [searchText, setSearchText] = useState("");
   const [data, setData] = useState<SadminPage | null>(null);
@@ -86,12 +104,18 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
   const [exportError, setExportError] = useState("");
   const [reload, setReload] = useState(0);
   const [draftNumbers, setDraftNumbers] = useState<Record<number, string>>({});
+  const [outcomeDrafts, setOutcomeDrafts] = useState<Record<number, OutcomeDraft>>({});
   const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
+  const [summaries, setSummaries] = useState<Record<number, SadminSummary>>({});
+  const [summaryErrors, setSummaryErrors] = useState<Record<number, string>>({});
+  const [summaryLoadingIds, setSummaryLoadingIds] = useState<Set<number>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const pendingRequests = useRef(new Set<number>());
+  const summaryRequests = useRef(new Set<number>());
   const hasDrafts = Object.keys(draftNumbers).length > 0;
-  const navigationBlocked = savingIds.size > 0 || hasDrafts;
+  const hasOutcomeDrafts = Object.keys(outcomeDrafts).length > 0;
+  const navigationBlocked = savingIds.size > 0 || hasDrafts || hasOutcomeDrafts;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -127,9 +151,42 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
     setDraftNumbers(current => { const next = { ...current }; delete next[id]; return next; });
   }
 
+  function discardOutcomeDraft(id: number) {
+    setOutcomeDrafts(current => { const next = { ...current }; delete next[id]; return next; });
+  }
+
   function editNumber(row: SadminCreditRow, value: string) {
     if (value === (row.sadmin.numeroCredito || "")) discardDraft(row.id);
     else setDraftNumbers(current => ({ ...current, [row.id]: value }));
+  }
+
+  function editOutcome(row: SadminCreditRow, status: SadminCreationStatus, reason: string) {
+    const normalizedCurrentReason = row.sadmin.motivoEstado || "";
+    if (status === row.sadmin.estadoCreacion && reason === normalizedCurrentReason) discardOutcomeDraft(row.id);
+    else setOutcomeDrafts(current => ({ ...current, [row.id]: { status, reason } }));
+  }
+
+  async function loadSummary(id: number) {
+    if (summaryRequests.current.has(id)) return;
+    summaryRequests.current.add(id);
+    setSummaryLoadingIds(new Set(summaryRequests.current));
+    setSummaryErrors(current => ({ ...current, [id]: "" }));
+    try {
+      const response = await fetch(`/api/aprobaciones/sadmin/${id}`, { cache: "no-store" });
+      const payload = await response.json() as { ok?: boolean; summary?: SadminSummary; error?: unknown; message?: unknown };
+      if (!response.ok || !payload.ok || !payload.summary) {
+        throw new SadminRequestError(responseError(payload, "No pudimos cargar el historial SADMIN."));
+      }
+      setSummaries(current => ({ ...current, [id]: payload.summary! }));
+    } catch (cause) {
+      setSummaryErrors(current => ({
+        ...current,
+        [id]: cause instanceof SadminRequestError ? cause.message : "No pudimos cargar el historial SADMIN. Revisa tu conexión e intenta de nuevo.",
+      }));
+    } finally {
+      summaryRequests.current.delete(id);
+      setSummaryLoadingIds(new Set(summaryRequests.current));
+    }
   }
 
   function hideDataForLoad() {
@@ -181,7 +238,12 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
     }
   }
 
-  async function save(row: SadminCreditRow, field: ChecklistField | "numeroCredito", value: boolean | string) {
+  async function save(
+    row: SadminCreditRow,
+    field: ChecklistField | "numeroCredito" | "estadoCreacion",
+    value: boolean | string,
+    reason: string | null = null,
+  ) {
     if (loading || error || pendingRequests.current.size > 0) return;
     pendingRequests.current.add(row.id);
     setSavingIds(new Set(pendingRequests.current));
@@ -189,7 +251,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
     try {
       const response = await fetch(`/api/aprobaciones/sadmin/${row.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: row.sadmin.version, field, value }),
+        body: JSON.stringify({ version: row.sadmin.version, field, value, ...(field === "estadoCreacion" ? { reason } : {}) }),
       });
       const payload = await response.json() as { ok?: boolean; sadmin?: SadminRegistration; code?: string; error?: unknown; message?: unknown };
       if (response.status === 409 && (payload.code === "SADMIN_CHANGED" || payload.code === "REVIEW_CHANGED")) {
@@ -201,6 +263,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
       if (!response.ok || !payload.ok || !payload.sadmin) throw new SadminRequestError(responseError(payload, "No pudimos guardar el cambio. Intenta de nuevo."));
       const saved = payload.sadmin;
       if (field === "numeroCredito") discardDraft(row.id);
+      if (field === "estadoCreacion") discardOutcomeDraft(row.id);
       if (!matchesStatus(filters.status, saved)) {
         setExpandedId(null);
         setLoading(true);
@@ -217,6 +280,7 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
         };
         return { ...current, counts, items: current.items.map(item => item.id === row.id ? { ...item, sadmin: saved, numeroCreditoVisible: confirmedSadminNumber(saved) || item.folio } : item) };
       });
+      if (summaries[row.id]) void loadSummary(row.id);
     } catch (cause) {
       setRowErrors(current => ({ ...current, [row.id]: cause instanceof SadminRequestError ? cause.message : "No pudimos guardar el cambio. Revisa tu conexión e intenta de nuevo." }));
     } finally {
@@ -228,12 +292,14 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
   const page = data?.page || filters.page;
   const totalPages = Math.max(1, data?.totalPages || 1);
   const empty = emptyCopy(filters.status, Boolean(filters.query));
-  const loadingLabel = filters.status === "pending" ? "Cargando créditos pendientes..." : filters.status === "created" ? "Cargando créditos creados..." : "Cargando créditos de cartera...";
+  const loadingLabel = filters.status === "pending" ? "Cargando créditos pendientes..." : filters.status === "created" ? "Cargando créditos creados..." : analystMode ? "Cargando créditos aprobados listos..." : "Cargando créditos de cartera...";
   const totalLabel = filters.status === "pending" ? "créditos pendientes" : filters.status === "created" ? "créditos creados" : "créditos";
   const tabsBlocked = navigationBlocked || loading;
 
   return <main className={styles.main}>
-    <PageHeader eyebrow="Control de creación" title="Creación en SADMIN" description="Todos los créditos de cartera desde el inicio de la operación, incluidos históricos y pagados. Los más recientes aparecen primero." actions={<Button variant="secondary" disabled={navigationBlocked} onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />Volver a aprobaciones</Button>} />
+    <PageHeader eyebrow="Control de creación" title="Creación en SADMIN" description={analystMode
+      ? "Créditos con aprobación vigente y listos para el proceso operativo. Los creados correctamente salen de la lista de pendientes."
+      : "Todos los créditos de cartera desde el inicio de la operación, incluidos históricos y pagados. Los más recientes aparecen primero."} actions={<Button variant="secondary" disabled={navigationBlocked} onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />Volver a aprobaciones</Button>} />
     <Tabs aria-label="Filtrar créditos por estado SADMIN" className={styles.statusTabs}>
       {statusTabs.map(tab => <button key={tab.id} id={`sadmin-status-${tab.id}`} type="button" role="tab" aria-selected={filters.status === tab.id} aria-controls="sadmin-credit-results" tabIndex={filters.status === tab.id ? 0 : -1} disabled={tabsBlocked} onClick={() => selectStatus(tab.id)} onKeyDown={event => {
         if (tabsBlocked || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -259,8 +325,8 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
       </div>
     </Card>
     {exportError ? <p className={styles.exportError} role="alert">{exportError}</p> : null}
-    <p className={styles.help}>Completa las tres verificaciones y guarda el número asignado para pasar a <strong>CREADO SADMIN</strong>. Cada verificación se guarda al marcarla.</p>
-    {hasDrafts ? <p className={styles.notice} role="status">Tienes números sin guardar. Guárdalos o cancela su edición antes de cambiar de página o volver a aprobaciones.</p> : null}
+    <p className={styles.help}>Registra el resultado operativo. <strong>Creado correctamente</strong> requiere las tres verificaciones y el número asignado; error y revisión requieren una razón que queda en el historial.</p>
+    {hasDrafts || hasOutcomeDrafts ? <p className={styles.notice} role="status">Tienes cambios sin guardar. Guárdalos o cancélalos antes de cambiar de página o volver a aprobaciones.</p> : null}
     {error ? <Card className={styles.error} role="alert"><p>{error}</p><Button variant="secondary" disabled={loading || savingIds.size > 0} onClick={() => { hideDataForLoad(); setReload(current => current + 1); }}>Reintentar</Button></Card> : null}
     {loading ? <LoadingState label={loadingLabel} /> : null}
     {!loading && !error && data?.items.length === 0 ? <EmptyState title={empty.title} description={empty.description} /> : null}
@@ -272,18 +338,23 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
           <tbody>{data.items.map(row => {
             const saving = savingIds.has(row.id);
             const dirty = Object.hasOwn(draftNumbers, row.id);
+            const outcomeDirty = Object.hasOwn(outcomeDrafts, row.id);
+            const outcome = outcomeDrafts[row.id] ?? { status: row.sadmin.estadoCreacion, reason: row.sadmin.motivoEstado || "" };
+            const outcomeNeedsReason = statusNeedsReason(outcome.status);
             const number = draftNumbers[row.id] ?? row.sadmin.numeroCredito ?? "";
             const disabled = savingIds.size > 0 || loading || Boolean(error);
             const completed = checklist.filter(([field]) => row.sadmin[field]).length;
             const expanded = expandedId === row.id;
             const visibleNumber = creditDisplayNumber(row);
+            const summary = summaries[row.id];
+            const summaryLoading = summaryLoadingIds.has(row.id);
             return <Fragment key={row.id}><tr>
               <th scope="row" className={styles.credit}>
                 <button id={`sadmin-credit-${row.id}`} type="button" className={styles.creditButton} aria-expanded={expanded} aria-controls={`sadmin-detail-${row.id}`} onClick={() => setExpandedId(expanded ? null : row.id)}>
                   <span className={styles.creditSummary}>
                     <strong>{visibleNumber}</strong>
                     <span className={styles.creditDate}><span>Fecha crédito</span><span>{date(row.fechaCredito)}</span></span>
-                    <Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "neutral"}>{row.sadmin.estado === "CREADO_SADMIN" ? "CREADO SADMIN" : "PENDIENTE SADMIN"}</Badge>
+                    <Badge tone={creationTone(row.sadmin.estadoCreacion)}>{creationStatusLabels[row.sadmin.estadoCreacion]}</Badge>
                   </span>
                   <ChevronDown size={18} aria-hidden="true" className={expanded ? styles.expandedIcon : ""} />
                 </button>
@@ -291,14 +362,14 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
             </tr>{expanded ? <tr className={styles.detailRow}><td><div id={`sadmin-detail-${row.id}`} role="region" aria-labelledby={`sadmin-credit-${row.id}`} className={styles.expandedContent}>
               <div className={styles.details}>
               <section><h3>Datos del cliente</h3><Facts items={[["Nombre", text(row.clienteNombre)], ["Cédula", text(row.clienteDocumento)], ["Teléfono", text(row.clienteTelefono)], ["Correo", text(row.clienteCorreo)], ["Dirección", text(row.clienteDireccion)], ["Nacimiento", date(row.clienteFechaNacimiento)], ["Género", text(row.clienteGenero)]]} /></section>
-              <section><h3>Crédito, equipo y origen</h3><Facts items={[["Número de crédito", visibleNumber], ["Folio original", row.folio], ["Fecha crédito", date(row.fechaCredito)], ["Creado", date(row.createdAt, true)], ["Referencia", text(row.referenciaEquipo)], ["IMEI", text(row.imei)], ["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)]]} /></section>
+              <section><h3>Crédito, equipo y origen</h3><Facts items={[["Número de crédito", visibleNumber], ["Folio original", row.folio], ["Fecha crédito", date(row.fechaCredito)], ["Creado", date(row.createdAt, true)], ["Referencia", text(row.referenciaEquipo)], ["IMEI", text(row.imei)], ["Aliado", text(row.aliadoNombre)], ["Sede", text(row.sedeNombre)], ["Registro local", <a key="local" href={row.registroLocalHref} aria-disabled={navigationBlocked} onClick={event => { if (navigationBlocked) event.preventDefault(); }}>Abrir registro local</a>]]} /></section>
               <section><h3>Valores y plan</h3><Facts numeric items={[["Valor venta", amount(row.valorVenta)], ["Inicial", amount(row.cuotaInicial)], ["Crédito autorizado", amount(row.creditoAutorizado)], ["N.º cuotas", row.numeroCuotas], ["Valor cuota", amount(row.valorCuota)], ["Frecuencia", frequency(row.frecuenciaPago)]]} /></section>
               <section><h3>Tasas</h3><Facts numeric items={[["Interés mensual efectivo", rate(row.interesMensual)], ["Fianza total del crédito", rate(row.fianza)], ["Seguro por cuota", rate(row.seguro)]]} /></section>
               <section><h3>Pagos</h3><Facts numeric items={[["Próximo pago", date(row.fechaProximoPago)], ["Cuotas pagadas", row.cuotasPagadas], ["Cuotas pendientes", row.cuotasPendientes], ["Días vencidos", row.diasVencidos], ["Último pago", text(row.ultimoPago)]]} /></section>
               <section><h3>Saldos</h3><Facts numeric items={[["Obligación", amount(row.saldoObligacion)], ["Capital", amount(row.saldoCapital)], ["Fianza", amount(row.saldoFianza)], ["Intereses", amount(row.saldoIntereses)], ...(row.saldoSeguro ? [["Seguro", amount(row.saldoSeguro)] as [string, string]] : [])]} /></section>
               </div>
               <section className={styles.registration}><h3>Creación SADMIN</h3>
-                <div className={styles.progress}><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "warning"}>{completed} de 3 verificaciones</Badge>{saving ? <span role="status">Guardando...</span> : null}</div>
+                <div className={styles.progress}><Badge tone={creationTone(row.sadmin.estadoCreacion)}>{creationStatusLabels[row.sadmin.estadoCreacion]}</Badge><Badge tone={row.sadmin.estado === "CREADO_SADMIN" ? "positive" : "warning"}>{completed} de 3 verificaciones</Badge>{saving ? <span role="status">Guardando...</span> : null}</div>
                 <fieldset id={`sadmin-checklist-${row.id}`} disabled={disabled} aria-label={`Verificaciones SADMIN de ${visibleNumber}`}>
                   {checklist.slice(0, 2).map(([field, label]) => <label key={field} className={styles.check}><input type="checkbox" checked={row.sadmin[field]} onChange={event => void save(row, field, event.target.checked)} /><span>{label}</span></label>)}
                   <div className={styles.number}>
@@ -309,8 +380,37 @@ export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
                   </div>
                   <label className={styles.check}><input type="checkbox" checked={!dirty && row.sadmin.numeroCreditoConfirmado} disabled={dirty || !row.sadmin.numeroCredito?.trim()} onChange={event => void save(row, "numeroCreditoConfirmado", event.target.checked)} /><span>NÚMERO DE CRÉDITO</span></label>
                 </fieldset>
+                <div className={styles.number}>
+                  <label htmlFor={`sadmin-result-${row.id}`}>Resultado operativo</label>
+                  <Select id={`sadmin-result-${row.id}`} value={outcome.status} disabled={disabled || row.sadmin.estado === "CREADO_SADMIN"} onChange={event => {
+                    const status = event.target.value as SadminCreationStatus;
+                    editOutcome(row, status, statusNeedsReason(status) ? outcome.reason : "");
+                  }}>
+                    {creationStatuses.map(status => <option key={status.id} value={status.id} disabled={status.id === "CREADO_CORRECTAMENTE"}>{status.label}</option>)}
+                  </Select>
+                  {outcomeNeedsReason ? <>
+                    <label htmlFor={`sadmin-reason-${row.id}`}>Razón</label>
+                    <Input id={`sadmin-reason-${row.id}`} type="text" autoComplete="off" maxLength={500} value={outcome.reason} disabled={disabled} onChange={event => editOutcome(row, outcome.status, event.target.value)} placeholder="Describe qué falló o qué debe revisarse" />
+                  </> : null}
+                  {outcomeDirty ? <div className={styles.numberActions}>
+                    <Button variant="secondary" disabled={outcomeNeedsReason && !outcome.reason.trim()} onClick={() => void save(row, "estadoCreacion", outcome.status, outcomeNeedsReason ? outcome.reason.trim() : null)}><Save size={14} aria-hidden="true" />Guardar resultado</Button>
+                    <Button variant="ghost" onClick={() => discardOutcomeDraft(row.id)}>Cancelar</Button>
+                  </div> : null}
+                  {row.sadmin.estado === "CREADO_SADMIN" ? <p>El resultado correcto se deriva del flujo manual completo. Desmarca una verificación para reabrirlo.</p>
+                    : row.sadmin.motivoEstado ? <p>Razón actual: {row.sadmin.motivoEstado}</p> : null}
+                </div>
                 {rowErrors[row.id] ? <p role="alert" className={styles.rowError}>{rowErrors[row.id]}</p> : null}
                 {row.sadmin.completedAt ? <p className={styles.updated}>Completado: {date(row.sadmin.completedAt, true)}</p> : row.sadmin.updatedAt ? <p className={styles.updated}>Actualizado: {date(row.sadmin.updatedAt, true)}</p> : null}
+                <div className={styles.number}>
+                  <h3>Historial SADMIN</h3>
+                  <Button variant="ghost" disabled={summaryLoading} aria-busy={summaryLoading} onClick={() => void loadSummary(row.id)}>{summaryLoading ? "Cargando historial..." : summary ? "Actualizar historial" : "Ver historial"}</Button>
+                  {summaryErrors[row.id] ? <p role="alert" className={styles.rowError}>{summaryErrors[row.id]}</p> : null}
+                  {summary && summary.historial.length === 0 ? <p className={styles.updated}>Aún no hay cambios registrados.</p> : null}
+                  {summary?.historial.length ? <Facts items={summary.historial.map(entry => [
+                    `Versión ${entry.version}`,
+                    <span key={entry.version}>{creationStatusLabels[entry.resultado]} · {entry.actor} · {date(entry.fechaHora, true)} · Número: {text(entry.numeroCredito)}{entry.motivo ? ` · Razón: ${entry.motivo}` : ""}</span>,
+                  ] as [string, ReactNode])} /> : null}
+                </div>
               </section>
             </div></td></tr> : null}</Fragment>;
           })}</tbody>

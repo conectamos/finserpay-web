@@ -47,8 +47,12 @@ function excelColombiaTimestamp(value: string | null | undefined) {
 }
 
 const yesNo = (value: boolean) => value ? "Sí" : "No";
-const sadminStatus = (item: SadminCreditRow) =>
-  item.sadmin.estado === "CREADO_SADMIN" ? "CREADO SADMIN" : "PENDIENTE SADMIN";
+const sadminStatus = (item: SadminCreditRow) => ({
+  PENDIENTE_CREAR: "PENDIENTE DE CREAR",
+  CREADO_CORRECTAMENTE: "CREADO CORRECTAMENTE",
+  ERROR_CREACION: "ERROR DE CREACIÓN",
+  REQUIERE_REVISION: "REQUIERE REVISIÓN",
+})[item.sadmin.estadoCreacion];
 
 const columns: SadminColumn[] = [
   { header: "Fecha crédito", width: 15, kind: "date", value: item => excelCalendarDate(item.fechaCredito) },

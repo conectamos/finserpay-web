@@ -15,8 +15,10 @@ export type ApprovalListItem = {
 };
 
 export type ApprovalQueueItem = ApprovalListItem & {
-  createdAt?: string; sedeNombre?: string; revision?: number;
+  createdAt?: string; updatedAt?: string; sedeNombre?: string; revision?: number;
+  referenciaEquipo?: string | null; imei?: string | null; creditoAutorizado?: number | null;
   approvedAt?: string; approvedByName?: string | null; paid?: boolean;
+  sadmin?: { estado: string; estadoCreacion: string; numeroCredito: string | null } | null;
   novelty?: { id: string; status: "WAITING_ALLY" | "RESPONDED"; version: number; pendingCount: number; answeredCount: number } | null;
   reissue?: { blocked: boolean; status: string | null };
 };
@@ -30,6 +32,7 @@ export type ApprovalNoveltyState = {
 };
 export type ApprovalQueueCounts = { pending: number; approved: number };
 export type ApprovalQueuePage = { items: ApprovalQueueItem[]; nextCursor: string | null; hasMore: boolean; counts?: ApprovalQueueCounts };
+export type ApprovalQueueOptions = { query?: string; counts?: boolean; aliado?: string; desde?: string; hasta?: string };
 
 export type ApprovalReissueState = {
   available: boolean; blocked: boolean;
@@ -201,9 +204,12 @@ export function refreshApprovalSignature(id: number, operationId: string) {
   return sendSignatureAction(id, { action: "REFRESH", operationId });
 }
 
-export async function readApprovalQueue(cursor?: string | null, signal?: AbortSignal, view: ApprovalView = "pending", options: { query?: string; counts?: boolean } = {}) {
+export async function readApprovalQueue(cursor?: string | null, signal?: AbortSignal, view: ApprovalView = "pending", options: ApprovalQueueOptions = {}) {
   const query = new URLSearchParams({ view });
   if (options.query?.trim()) query.set("q", options.query.trim());
+  if (options.aliado?.trim()) query.set("aliado", options.aliado.trim());
+  if (options.desde?.trim()) query.set("desde", options.desde.trim());
+  if (options.hasta?.trim()) query.set("hasta", options.hasta.trim());
   if (options.counts) query.set("counts", "1");
   if (cursor) query.set("cursor", cursor);
   const response = await fetch(`/api/aprobaciones?${query}`, { cache: "no-store", signal });

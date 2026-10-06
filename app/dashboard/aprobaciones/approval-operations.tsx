@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, CalendarClock, CheckCircle2, FileClock, FilePenLine, Mail, Paperclip, Phone, Search, ShieldCheck, Smartphone, UserRound } from "lucide-react";
-import { Badge, Button, Card, Input, LoadingState, Select, StatusPill } from "@/app/_components/finser-ui";
+import { Badge, Button, Card, Input, LoadingState, PageHeader, Select, StatusPill } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import type { OperationalCaseDetail, OperationalCaseSummary } from "@/lib/approval-operations-types";
 import styles from "./approval-operations.module.css";
 
 type Operation = "imei" | "contact" | "signature" | "remission" | "identity";
 type ActivePanel = "imei" | "signature" | "identity" | null;
+type OperationMode = "all" | "imei" | "signature";
 type ApiResult = { ok: boolean; code?: string; error?: string; message?: string; operation?: { id: string; status: string; message: string } };
 type IdentityCorrectionInfo = ApiResult & {
   draftId: number;
@@ -203,11 +204,15 @@ function EmptyCreditWorkspace({ notFound = false }: { notFound?: boolean }) {
   </Card>;
 }
 
-export default function ApprovalOperations({ onOpenApproval, active = true }: {
+export default function ApprovalOperations({ onOpenApproval, active = true, mode = "all", preferredPanel = null, initialQuery = "" }: {
   onOpenApproval?: (creditId: number) => void;
   active?: boolean;
+  mode?: OperationMode;
+  preferredPanel?: Exclude<ActivePanel, "identity" | null> | null;
+  initialQuery?: string;
 }) {
-  const [query, setQuery] = useState("");
+  const focusedPanel = preferredPanel ?? (mode === "all" ? null : mode);
+  const [query, setQuery] = useState(initialQuery.trim());
   const [results, setResults] = useState<OperationalCaseSummary[]>([]);
   const [selected, setSelected] = useState<OperationalCaseSummary | null>(null);
   const [detail, setDetail] = useState<OperationalCaseDetail | null>(null);
@@ -260,6 +265,11 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
   }, []);
 
   useEffect(() => {
+    if (selected || !initialQuery.trim()) return;
+    setQuery(initialQuery.trim());
+  }, [initialQuery, selected]);
+
+  useEffect(() => {
     const returnedToDetail = active && !wasActive.current;
     wasActive.current = active;
     if (!returnedToDetail || !selected || !detail) return;
@@ -292,6 +302,17 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     setRedirectReason("");
     redirectionRequest.current = null;
   }, [detail?.id, detail?.kind, detail?.signature.sentPhone, detail?.signature.sentEmail, detail?.phone, detail?.email]);
+
+  const detailIdentity = detail ? `${detail.kind}:${detail.id}` : "";
+
+  useEffect(() => {
+    if (!detailIdentity || !focusedPanel) return;
+    setActivePanel(focusedPanel);
+    if (focusedPanel === "imei") {
+      setReasonPreset("Garantía");
+      setReason("Garantía");
+    }
+  }, [detailIdentity, focusedPanel]);
 
   useEffect(() => {
     setIdentityInfo(null);
@@ -849,7 +870,20 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
     (identitySecondSurname.trim().length === 0 || identitySecondSurname.trim().length >= 2) && identityReason.trim().length >= 5 &&
     identityInfo!.availableEvidenceTypes.includes(identityEvidenceType as "VERIFF" | "CEDULA") && identityAttested && !busy;
 
+  const focusedHeading = mode === "imei"
+    ? {
+        title: "Cambio de IMEI",
+        description: "Busca el crédito por cédula, número o IMEI para revisar el equipo y gestionar el cambio autorizado.",
+      }
+    : mode === "signature"
+      ? {
+          title: "Gestionar firma",
+          description: "Busca el crédito para revisar el contacto y gestionar el envío o reenvío disponible.",
+        }
+      : null;
+
   return <main className={styles.root}>
+    {focusedHeading ? <PageHeader eyebrow="Gestión operativa" title={focusedHeading.title} description={focusedHeading.description} /> : null}
     <form className={styles.search} onSubmit={searchCases} role="search">
       <label htmlFor="approval-operations-search" className="sr-only">Buscar por cédula, número de crédito o IMEI</label>
       <Search size={20} aria-hidden="true" />
@@ -881,15 +915,15 @@ export default function ApprovalOperations({ onOpenApproval, active = true }: {
         <CaseSummary detail={detail} />
         <section className={styles.operationWorkspace} aria-label="Gestiones del crédito">
           <div className={styles.operationActions} role="group" aria-label="Gestiones disponibles">
-            <Button variant="secondary" className={`${styles.operationAction} ${activePanel === "imei" ? styles.operationActionActive : ""}`}
+            {mode !== "signature" ? <Button variant="secondary" className={`${styles.operationAction} ${activePanel === "imei" ? styles.operationActionActive : ""}`}
               onClick={() => togglePanel("imei")} aria-expanded={activePanel === "imei"} aria-controls={activePanel === "imei" ? "approval-imei-panel" : undefined} disabled={Boolean(busy)}>
               <Smartphone size={20} aria-hidden="true" />Cambio de IMEI
-            </Button>
-            <Button variant="secondary" className={`${styles.operationAction} ${activePanel === "signature" ? styles.operationActionActive : ""}`}
+            </Button> : null}
+            {mode !== "imei" ? <Button variant="secondary" className={`${styles.operationAction} ${activePanel === "signature" ? styles.operationActionActive : ""}`}
               onClick={() => togglePanel("signature")} aria-expanded={activePanel === "signature"} aria-controls={activePanel === "signature" ? "approval-signature-panel" : undefined} disabled={Boolean(busy)}>
               <FilePenLine size={20} aria-hidden="true" />FirmaSeguro
-            </Button>
-            {canCorrectIdentity ? <Button variant="secondary"
+            </Button> : null}
+            {mode === "all" && canCorrectIdentity ? <Button variant="secondary"
               className={`${styles.operationAction} ${styles.identityAction} ${activePanel === "identity" ? styles.operationActionActive : ""}`}
               onClick={() => togglePanel("identity")} aria-expanded={activePanel === "identity"}
               aria-controls={activePanel === "identity" ? "approval-identity-panel" : undefined} disabled={Boolean(busy)}>
