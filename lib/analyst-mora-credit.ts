@@ -13,9 +13,9 @@ export const moraCreditSelect = {
   fechaPrimerPago: true, fechaProximoPago: true, planCapitalVigente: true, pazYSalvoEmitidoAt: true,
   createdAt: true, fechaCredito: true,
   sede: { select: { aliado: { select: { id: true, nombre: true } } } },
-  sadminRegistration: { select: { numeroCredito: true, numeroCreditoConfirmado: true } },
+  registroSadmin: { select: { numeroCredito: true, numeroCreditoConfirmado: true } },
   abonos: { where: { estado: { not: "ANULADO" } }, select: { valor: true, fechaAbono: true }, orderBy: { fechaAbono: "asc" as const } },
-} as const;
+} as const satisfies Prisma.CreditoSelect;
 
 export type MoraCredit = Awaited<ReturnType<typeof readMoraCredit>>;
 
@@ -33,7 +33,7 @@ export function moraCreditSummary(credit: Prisma.CreditoGetPayload<{ select: typ
   const first = overdue.map(row => row.fechaVencimiento).sort()[0];
   const today = colombiaDateKey(now);
   return {
-    id: credit.id, folio: credit.folio, numeroCreditoVisible: confirmedSadminNumber(credit.sadminRegistration) || credit.folio,
+    id: credit.id, folio: credit.folio, numeroCreditoVisible: confirmedSadminNumber(credit.registroSadmin) || credit.folio,
     clienteNombre: credit.clienteNombre, clienteDocumento: credit.clienteDocumento,
     clienteTelefono: credit.clienteTelefono, aliadoId: credit.sede.aliado?.id || 0, aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
     equipo: credit.referenciaEquipo?.trim() || [credit.equipoMarca, credit.equipoModelo].filter(Boolean).join(" "),

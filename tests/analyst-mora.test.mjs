@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 import { loadApprovalModule, approvalErrors, roles } from "./credit-approval-test-loader.mjs";
 import { analystMoraSchemaStatements, installAnalystMoraSchema } from "../scripts/analyst-mora-schema.mjs";
 
@@ -108,7 +110,7 @@ const summary = loadApprovalModule("lib/analyst-mora-credit.ts", {
 const credit = () => ({ id: 81, folio: "FC-81", clienteNombre: "Cliente", clienteDocumento: "123", clienteTelefono: "3001234567", estado: "ACTIVO",
   montoCredito: 1000000, valorCuota: 100000, plazoMeses: 10, frecuenciaPago: "QUINCENAL", fechaPrimerPago: new Date("2026-09-17T00:00:00Z"),
   fechaProximoPago: null, planCapitalVigente: null, pazYSalvoEmitidoAt: null, createdAt: now, fechaCredito: now, sede: { aliado: { id: 2, nombre: "Aliado" } },
-  sadminRegistration: { numeroCredito: "010081", numeroCreditoConfirmado: true }, abonos: [{ valor: 125000, fechaAbono: new Date("2026-10-03T15:00:00Z") }],
+  registroSadmin: { numeroCredito: "010081", numeroCreditoConfirmado: true }, abonos: [{ valor: 125000, fechaAbono: new Date("2026-10-03T15:00:00Z") }],
   imei: "123456789012345", deviceUid: null, referenciaEquipo: "IPHONE 13", equipoMarca: "IPHONE", equipoModelo: "13" });
 test("cartera muestra deuda real después de abonos y excluye créditos liquidados", () => {
   const source = credit(); const before = JSON.stringify(source);
@@ -117,6 +119,57 @@ test("cartera muestra deuda real después de abonos y excluye créditos liquidad
   assert.equal(row.ultimoPago, "2026-10-03T15:00:00.000Z"); assert.equal(JSON.stringify(source), before);
   assert.equal(summary.moraCreditSummary({ ...source, pazYSalvoEmitidoAt: now }, now).enMora, false);
   assert.equal(summary.moraCreditSummary({ ...source, abonos: [] }, new Date("2026-09-17T14:00:00Z")).enMora, false, "la cuota no vence antes de finalizar su día");
+});
+
+test("Prisma real consulta cartera y detalle con la relación SADMIN del esquema de producción", async t => {
+  const database = new PGlite();
+  const pool = new pg.Pool();
+  // The production PrismaPg adapter executes its generated SQL against embedded
+  // PostgreSQL. This pool never opens a connection to an external database.
+  pool.query = async ({ text, values }) => {
+    const result = await database.query(text, values, { rowMode: "array" });
+    return { ...result, rowCount: result.affectedRows };
+  };
+  const { PrismaClient } = await jiti.import("../app/generated/prisma/client.ts");
+  const client = new PrismaClient({ adapter: new PrismaPg(pool) });
+  t.after(async () => { await client.$disconnect(); await pool.end(); await database.close(); });
+  await database.exec(`
+    CREATE TABLE "Aliado" ("id" INT PRIMARY KEY, "nombre" TEXT, "codigo" TEXT, "activo" BOOLEAN);
+    CREATE TABLE "Sede" ("id" INT PRIMARY KEY, "aliadoId" INT, "activa" BOOLEAN);
+    CREATE TABLE "Rol" ("id" INT PRIMARY KEY, "nombre" TEXT);
+    CREATE TABLE "Usuario" ("id" INT PRIMARY KEY, "nombre" TEXT, "activo" BOOLEAN, "rolId" INT, "sedeId" INT);
+    CREATE TABLE "Credito" ("id" INT PRIMARY KEY, "folio" TEXT, "clienteNombre" TEXT, "clienteDocumento" TEXT,
+      "clienteTelefono" TEXT, "imei" TEXT, "deviceUid" TEXT, "referenciaEquipo" TEXT, "equipoMarca" TEXT, "equipoModelo" TEXT,
+      "estado" TEXT, "montoCredito" DOUBLE PRECISION, "valorCuota" DOUBLE PRECISION, "plazoMeses" INT, "frecuenciaPago" TEXT,
+      "fechaPrimerPago" TIMESTAMP, "fechaProximoPago" TIMESTAMP, "planCapitalVigente" JSONB, "pazYSalvoEmitidoAt" TIMESTAMP,
+      "createdAt" TIMESTAMP, "fechaCredito" TIMESTAMP, "sedeId" INT);
+    CREATE TABLE "CreditSadminRegistration" ("creditoId" INT PRIMARY KEY, "numeroCredito" TEXT, "numeroCreditoConfirmado" BOOLEAN);
+    CREATE TABLE "CreditoAbono" ("id" INT PRIMARY KEY, "creditoId" INT, "estado" TEXT, "valor" DOUBLE PRECISION, "fechaAbono" TIMESTAMP);
+    INSERT INTO "Aliado" VALUES (2,'Aliado','FINSERPAY',TRUE);
+    INSERT INTO "Sede" VALUES (1,2,TRUE);
+    INSERT INTO "Rol" VALUES (1,'ANALISTA_APROBACION');
+    INSERT INTO "Usuario" VALUES (7,'Analista',TRUE,1,1);
+    INSERT INTO "Credito" VALUES (81,'FC-81','Cliente','123','3001234567','123456789012345','device-81','IPHONE 13','IPHONE','13',
+      'ACTIVO',1000000,100000,10,'QUINCENAL','2026-09-17',NULL,NULL,NULL,'2026-09-10','2026-09-10',1);
+    INSERT INTO "CreditSadminRegistration" VALUES (81,'010081',TRUE);
+    INSERT INTO "CreditoAbono" VALUES (1,81,'ACTIVO',125000,'2026-10-03T15:00:00Z');
+  `);
+  await installAnalystMoraSchema({ query: (sql, values) => database.query(sql, values) });
+  const creditService = loadApprovalModule("lib/analyst-mora-credit.ts", {
+    "@/lib/prisma": { default: client }, "@/lib/credit-payment-plan": paymentPlan,
+    "@/lib/colombia-date": dates, "@/lib/credit-display-number": numbers, "@/lib/credit-approval-errors": approvalErrors,
+  });
+  const realSummary = value => creditService.moraCreditSummary(value, now);
+  const service = management(client, { ...creditService, moraCreditSummary: realSummary });
+  const portfolio = await service.listMoraPortfolio(new URLSearchParams());
+  assert.equal(portfolio.total, 1);
+  assert.equal(portfolio.items[0].numeroCreditoVisible, "010081");
+  assert.equal(portfolio.items[0].valorVencido, 75000);
+  assert.equal(portfolio.responsibles[0].id, 7);
+  const detail = await service.getMoraManagement(81);
+  assert.equal(detail.credit.numeroCreditoVisible, "010081");
+  assert.equal(detail.credit.diasMora, 4);
+  assert.equal(detail.history.length, 0);
 });
 
 function supports(prisma = {}) {
