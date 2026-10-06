@@ -473,11 +473,12 @@ test("las búsquedas de IMEI niegan al analista antes de consultar inventario", 
   }
 });
 
-test("los layouts financiero y deuda de sedes exigen el guard administrativo del servidor", () => {
+test("financiero conserva su acceso por clave y deuda de sedes exige el guard administrativo", () => {
   const financial = readFileSync(new URL("../app/dashboard/financiero/layout.tsx", import.meta.url), "utf8");
   const siteDebt = readFileSync(new URL("../app/dashboard/deuda-sedes/layout.tsx", import.meta.url), "utf8");
-  assert.match(financial, /await requireAdminDashboardAccess\(\)/);
-  assert.ok(financial.indexOf("await requireAdminDashboardAccess()") < financial.indexOf("await getFinancialAccessState()"));
+  assert.doesNotMatch(financial, /requireAdminDashboardAccess/);
+  assert.match(financial, /await getFinancialAccessState\(\)/);
+  assert.match(financial, /<FinancialAccessGate/);
   assert.match(siteDebt, /await requireAdminDashboardAccess\(\)/);
 });
 
