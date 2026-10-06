@@ -25,6 +25,7 @@ import FinserBrand from "@/app/_components/finser-brand";
 import LogoutButton from "./logout-button";
 import SellerClientAppDialog from "./seller-client-app-dialog";
 import SellerCommissions from "./seller-commissions";
+import SellerDashboardRefresh from "./seller-dashboard-refresh";
 
 type RecentCredit = {
   clienteNombre: string;
@@ -464,6 +465,7 @@ export default function SellerCommercialDashboard({
 
   return (
     <div className="min-h-screen bg-[var(--fp-bg)] text-[var(--fp-graphite)] lg:grid lg:grid-cols-[236px_minmax(0,1fr)]">
+      <SellerDashboardRefresh />
       <CommercialSidebar avatarSrc={avatarSrc} isSupervisor={isSupervisor} nombre={nombre} />
 
       <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-8 lg:py-8 xl:px-10">
