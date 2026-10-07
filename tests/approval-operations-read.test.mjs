@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import {
   isVerifiedPendingSignatureStatus,
+  isVerifiedTerminalDraftImeiRetry,
   isVerifiedTerminalSignatureFailure,
 } from "../lib/approval-operations-core.ts";
 import {
@@ -35,6 +36,7 @@ runInNewContext(compiled, {
     if (name === "@/lib/firmaseguro-status") return status;
     if (name === "@/lib/approval-operations-core") return {
       isVerifiedPendingSignatureStatus,
+      isVerifiedTerminalDraftImeiRetry,
       isVerifiedTerminalSignatureFailure,
     };
     throw new Error(`Unexpected import: ${name}`);
@@ -522,6 +524,57 @@ test("tras corregir el IMEI solo permite nueva firma desde fuente firmada y sin 
   const unsafe = await read.getOperationalCase("DRAFT", "22", db);
   assert.equal(unsafe.capabilities.canResendSignature, false);
   assert.match(unsafe.capabilities.reason, /Error técnico: requiere revisión/);
+});
+
+test("un IMEI corregido permite reintentar solo una firma terminada sin PDF y con fuente firmada", async () => {
+  const correctionId = "10000000-0000-4000-8000-000000000001";
+  let status = "REJECTED";
+  let pointer = "failed-imei";
+  let unresolved = false;
+  let sourceSigned = true;
+  const db = { $queryRawUnsafe: async (sql, ...params) => {
+    if (sql.includes('FROM "CreditoBorrador" draft')) return [{
+      id: 23, estado: "ABIERTO", currentStep: 4, clienteNombre: "Cliente",
+      clienteDocumento: "123456", clienteTelefono: "3000000000", clienteCorreo: null,
+      imei: "490154203237518", plataforma: "IPHONE",
+      payload: { imei: "490154203237518", referenciaEquipo: "iPhone",
+        firmaSeguroReissueProcessUuid: pointer },
+      createdAt: stamp, updatedAt: stamp, expiresAt: "2030-01-01T00:00:00.000Z",
+    }];
+    if (sql.includes('FROM "FirmaSeguroProcess"')) return [{
+      id: 3, processUuid: "failed-imei", status,
+      draftPayload: { imei: "490154203237518", firmaSeguroCorrectionId: correctionId,
+        financialTermsSeal: { snapshot: {} } }, requestPayload: {},
+      lastError: null, hasSignedDocument: false, createdAt: stamp,
+      completedAt: null, supersededAt: null,
+    }, {
+      id: 2, processUuid: "signed-original", status: "SIGNED",
+      draftPayload: { financialTermsSeal: { snapshot: {} } }, requestPayload: {},
+      lastError: null, hasSignedDocument: sourceSigned, createdAt: stamp,
+      completedAt: stamp, supersededAt: stamp,
+    }];
+    if (sql.includes('to_regclass(')) return [{ present: params[0].includes('FirmaSeguroDraftDispatch') }];
+    if (sql.includes('FROM "FirmaSeguroDraftDispatch"')) return unresolved ? [{ id: "uncertain" }] : [];
+    if (sql.includes('FROM "IphoneEnrollmentReview"')) return [];
+    if (sql.includes('FROM "SolicitudImeiCorrectionAudit"')) return [];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  } };
+  const ready = await read.getOperationalCase("DRAFT", "23", db);
+  assert.equal(ready.signature.status, "TECHNICAL_ERROR");
+  assert.equal(ready.capabilities.canResendSignature, true);
+  status = "ERROR";
+  assert.equal((await read.getOperationalCase("DRAFT", "23", db)).capabilities.canResendSignature, false);
+  status = "PENDING";
+  assert.equal((await read.getOperationalCase("DRAFT", "23", db)).capabilities.canResendSignature, false);
+  status = "REJECTED";
+  unresolved = true;
+  assert.equal((await read.getOperationalCase("DRAFT", "23", db)).capabilities.canResendSignature, false);
+  unresolved = false;
+  pointer = "other-process";
+  assert.equal((await read.getOperationalCase("DRAFT", "23", db)).capabilities.canResendSignature, false);
+  pointer = "failed-imei";
+  sourceSigned = false;
+  assert.equal((await read.getOperationalCase("DRAFT", "23", db)).capabilities.canResendSignature, false);
 });
 
 test("permite reintentar una firma de identidad fallida solo con contrato anterior verificable", async () => {

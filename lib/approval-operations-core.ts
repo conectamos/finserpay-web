@@ -65,6 +65,28 @@ export function isVerifiedTerminalSignatureFailure(status: unknown) {
   ]).has(normalized);
 }
 
+/** A corrected IMEI may be resent only after the provider definitively ended the
+ * latest unsigned request. The persisted process pointer ties the retry to the
+ * acknowledged correction, rather than to an unrelated failed signature. */
+export function isVerifiedTerminalDraftImeiRetry(draftPayload: unknown, process: {
+  processUuid: string | null; status: unknown; draftPayload: unknown;
+  completedAt: unknown; signedDocumentBase64?: unknown; hasSignedDocument?: boolean;
+} | null) {
+  if (!process || process.completedAt || process.hasSignedDocument || process.signedDocumentBase64 ||
+      !isVerifiedTerminalSignatureFailure(process.status)) return false;
+  const draft = draftPayload && typeof draftPayload === "object" && !Array.isArray(draftPayload)
+    ? draftPayload as Record<string, unknown> : {};
+  const signedRequest = process.draftPayload && typeof process.draftPayload === "object" &&
+    !Array.isArray(process.draftPayload)
+    ? process.draftPayload as Record<string, unknown> : {};
+  const correctionId = String(signedRequest.firmaSeguroCorrectionId || "").trim();
+  const draftImei = String(draft.imei || draft.deviceUid || "").replace(/\D/g, "");
+  const processImei = String(signedRequest.imei || signedRequest.deviceUid || "").replace(/\D/g, "");
+  return Boolean(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(correctionId)
+    && draftImei && draftImei === processImei
+    && process.processUuid && draft.firmaSeguroReissueProcessUuid === process.processUuid);
+}
+
 /** Only explicit provider states that mean an unsigned request is still in progress. */
 export function isVerifiedPendingSignatureStatus(status: unknown) {
   const normalized = String(status ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")

@@ -46,8 +46,8 @@ test("los soportes validan archivo y motivo y conservan la idempotencia al reint
   assert.match(source, /href=\{item\.href\} download=\{item\.fileName\}/);
 });
 
-test("el sidebar analyst usa wordmark sin escudo sobre graphite", () => {
+test("el sidebar de analista y cartera usa wordmark sin escudo sobre graphite", () => {
   const source = read("app/dashboard/_components/admin-sidebar.tsx");
-  assert.match(source, /analystNavigation \? "bg-\[var\(--fp-graphite\)\]"/);
-  assert.match(source, /accentPay=\{analystNavigation\} wordmarkOnly=\{analystNavigation\}/);
+  assert.match(source, /analystNavigation \|\| portfolioNavigation \? "bg-\[var\(--fp-graphite\)\]"/);
+  assert.match(source, /accentPay=\{analystNavigation \|\| portfolioNavigation\} wordmarkOnly=\{analystNavigation \|\| portfolioNavigation\}/);
 });

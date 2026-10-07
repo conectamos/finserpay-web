@@ -611,12 +611,6 @@ export async function recordFirmaSeguroImeiCorrectionReissue(
           AND corrected."eventType" = 'CORRECTED'
           AND corrected."newImei" = $2
           AND corrected."correlationId" = $3::uuid
-          AND NOT EXISTS (
-            SELECT 1
-            FROM "SolicitudImeiCorrectionAudit" reissued
-            WHERE reissued."correlationId" = corrected."correlationId"
-              AND reissued."eventType" = 'REISSUED'
-          )
         LIMIT 1
       `,
       draftId,
@@ -667,12 +661,15 @@ export async function recordFirmaSeguroImeiCorrectionReissue(
           AND "estado" = 'ABIERTO'
           AND "creditoId" IS NULL
           AND regexp_replace(COALESCE("imei", ''), '[^0-9]', '', 'g') = $3
-          AND COALESCE("payload"->>'firmaSeguroCorrectionId', '') = $4
+          AND (COALESCE("payload"->>'firmaSeguroCorrectionId', '') = $4
+            OR (COALESCE("payload"->>'firmaSeguroReissueProcessUuid', '') = $5
+              AND $5 <> ''))
       `,
       draftId,
       process.processUuid,
       processImei,
-      correctionId
+      correctionId,
+      String(processPayload.firmaSeguroReissueProcessUuid || "").trim()
     );
 
     return true;
