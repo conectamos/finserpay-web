@@ -415,6 +415,7 @@ model Credito {
   registroSadmin                 CreditSadminRegistration?
   eventosSadmin                  CreditSadminEvent[]
   recordatoriosCuota             CreditDueReminder[]
+  intentosCampanaDatos           CreditOverdueDataAttempt[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -456,6 +457,32 @@ model CreditDueReminder {
 
   @@unique([creditoId, numeroCuota, templateKey], map: "CreditDueReminder_unique_installment_template")
   @@index([status, claimExpiresAt], map: "CreditDueReminder_status_claimExpiresAt_idx")
+}
+
+model CreditOverdueDataRecipient {
+  recipientKey String @id @db.VarChar(64)
+  nextEligibleDate DateTime? @db.Date
+  updatedAt DateTime @default(now()) @db.Timestamptz(3)
+  attempts CreditOverdueDataAttempt[]
+}
+
+model CreditOverdueDataAttempt {
+  id String @id @db.Uuid
+  recipientKey String @db.VarChar(64)
+  creditoId Int
+  campaignDate DateTime @db.Date
+  daysPastDue Int
+  status String
+  claimedAt DateTime @db.Timestamptz(3)
+  claimExpiresAt DateTime @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+  resultCode String? @db.VarChar(40)
+  httpStatus Int?
+  recipient CreditOverdueDataRecipient @relation(fields: [recipientKey], references: [recipientKey], onDelete: Restrict, onUpdate: NoAction)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([recipientKey, campaignDate], map: "CreditOverdueDataAttempt_recipient_date_key")
+  @@index([status, claimExpiresAt], map: "CreditOverdueDataAttempt_status_expires_idx")
 }
 
 model CreditApprovalAccessLink {

@@ -6,10 +6,14 @@ const MORA_WINDOW_START_MINUTE = 23 * 60 + 30;
 const MORA_WINDOW_END_MINUTE = 1 * 60 + 50;
 const WOMPI_INTERVAL_MINUTES = 5;
 
-export type InternalCronTask = "efecty" | "mora" | "unlock" | "wompi" | "credit-due-reminders" | "credit-due-today-reminders";
+export type InternalCronTask = "efecty" | "mora" | "unlock" | "wompi" | "credit-due-reminders" | "credit-due-today-reminders" | "credit-overdue-data";
 
 export function isCreditReminderTask(task: string): task is "credit-due-reminders" | "credit-due-today-reminders" {
   return task === "credit-due-reminders" || task === "credit-due-today-reminders";
+}
+
+export function isCreditCampaignTask(task: string): task is "credit-due-reminders" | "credit-due-today-reminders" | "credit-overdue-data" {
+  return isCreditReminderTask(task) || task === "credit-overdue-data";
 }
 
 export function getDueInternalCronTasks(timeKey: string) {
@@ -24,9 +28,9 @@ export function getDueInternalCronTasks(timeKey: string) {
   }
 
   // Run once each Colombian day, with recovery during the following hour.
-  // Durable credit/installment reservations also protect restarts and replicas.
+  // Each campaign's durable reservations also protect restarts and replicas.
   if (hour === 10 && minute >= 0 && minute < 60) {
-    tasks.push("credit-due-reminders", "credit-due-today-reminders");
+    tasks.push("credit-due-reminders", "credit-due-today-reminders", "credit-overdue-data");
   }
 
   const isEfectyWindow =
@@ -58,8 +62,8 @@ export function getStartupRecoveryTasks(timeKey: string) {
   return [
     "wompi" as const,
     ...getDueInternalCronTasks(timeKey).filter(
-      (taskName): taskName is "efecty" | "mora" | "credit-due-reminders" | "credit-due-today-reminders" =>
-        taskName === "efecty" || taskName === "mora" || isCreditReminderTask(taskName),
+      (taskName): taskName is "efecty" | "mora" | "credit-due-reminders" | "credit-due-today-reminders" | "credit-overdue-data" =>
+        taskName === "efecty" || taskName === "mora" || isCreditCampaignTask(taskName),
     ),
   ];
 }
