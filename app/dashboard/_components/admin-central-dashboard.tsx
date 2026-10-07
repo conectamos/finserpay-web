@@ -25,6 +25,7 @@ import {
 import type { AdminDashboardOverview } from "../_lib/admin-dashboard-data";
 import AdminSidebar from "./admin-sidebar";
 import HealthPanel from "./portfolio-health-panel";
+import DelinquencyDetailPanel from "./delinquency-detail-panel";
 import DashboardMonthSelector from "./dashboard-month-selector";
 import DashboardAllySelector from "./dashboard-ally-selector";
 
@@ -485,6 +486,11 @@ export default function AdminCentralDashboard({
           </section>
           <HealthPanel data={data} />
         </section>
+
+        <DelinquencyDetailPanel
+          detail={data.delinquencyDetail}
+          scopeLabel={viewingCentral ? "Todos los aliados" : selectedAlly?.nombre || aliadoNombre || sedeLabel}
+        />
 
         <section className="mt-4 grid gap-4 xl:grid-cols-[0.95fr_1.1fr_1fr]">
           <section className="rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">

@@ -175,6 +175,7 @@ test("el selector mensual conserva el aliado elegido y los otros parámetros", (
 
 const Sidebar = () => null;
 const HealthPanel = () => null;
+const DelinquencyPanel = () => null;
 const AllySelector = () => null;
 const MonthSelector = () => null;
 const Link = () => null;
@@ -184,10 +185,16 @@ const Dashboard = compileComponent("admin-central-dashboard", {
   "lucide-react": iconStubs,
   "./admin-sidebar": { default: Sidebar },
   "./portfolio-health-panel": { default: HealthPanel },
+  "./delinquency-detail-panel": { default: DelinquencyPanel },
   "./dashboard-ally-selector": { default: AllySelector },
   "./dashboard-month-selector": { default: MonthSelector },
 });
 const overview = {
+  delinquencyDetail: {
+    activeCredits: 2, overdueCredits: 1, overduePercent: 50,
+    totalBalance: 1000, overdueBalance: 60, overduePortfolioPercent: 6,
+    sites: [], sellers: [],
+  },
   investedCapital: 2400, activePlacedCapital: 1600, activeCredits: 2, closedCredits: 1,
   totalCredits: 3, accumulatedCollection: 1000, monthlyCollection: 400,
   monthlyCreditCount: 2, monthlyPlacedCapital: 1600, monthlyPaymentCount: 1,
@@ -213,6 +220,8 @@ test("el administrador central puede ver el panel aliado sin perder sus permisos
   assert.equal(nodes(tree, (node) => node.type === Sidebar)[0].props.adminCentral, true);
   assert.equal(nodes(tree, (node) => node.type === AllySelector)[0].props.selectedAllyId, 7);
   assert.equal(nodes(tree, (node) => node.type === HealthPanel)[0].props.data, overview);
+  assert.equal(nodes(tree, (node) => node.type === DelinquencyPanel)[0].props.detail, overview.delinquencyDetail);
+  assert.equal(nodes(tree, (node) => node.type === DelinquencyPanel)[0].props.scopeLabel, "Móviles Bogotá");
   const portfolioLinks = nodes(tree, (node) => node.type === Link && node.props.href.startsWith("/dashboard/cartera"));
   assert.equal(portfolioLinks.length, 4);
   assert.ok(portfolioLinks.every((node) => node.props.href === "/dashboard/cartera?aliadoId=7"));
@@ -224,6 +233,8 @@ test("el panel central conserva sus seis indicadores al volver a Todas las sedes
   assert.match(textContent(tree), /Panel central/);
   assert.match(textContent(tree), /Rendimiento por aliado/);
   assert.equal(nodes(tree, (node) => node.type === AllySelector)[0].props.selectedAllyId, null);
+  assert.equal(nodes(tree, (node) => node.type === DelinquencyPanel)[0].props.detail, overview.delinquencyDetail);
+  assert.equal(nodes(tree, (node) => node.type === DelinquencyPanel)[0].props.scopeLabel, "Todos los aliados");
 });
 
 test("el administrador del aliado conserva su panel y no recibe el selector central", () => {
@@ -231,5 +242,7 @@ test("el administrador del aliado conserva su panel y no recibe el selector cent
   assert.deepEqual(metricLabels(tree), ["Inversión", "Total créditos", "Créditos activos", "Créditos Finalizados"]);
   assert.equal(nodes(tree, (node) => node.type === AllySelector).length, 0);
   assert.equal(nodes(tree, (node) => node.type === Sidebar)[0].props.adminCentral, false);
+  assert.equal(nodes(tree, (node) => node.type === DelinquencyPanel)[0].props.detail, overview.delinquencyDetail);
+  assert.equal(nodes(tree, (node) => node.type === DelinquencyPanel)[0].props.scopeLabel, "Móviles Bogotá");
   assert.match(textContent(tree), /Rendimiento por sede/);
 });

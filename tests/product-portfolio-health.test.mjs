@@ -11,6 +11,7 @@ const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 const health = await jiti.import("../lib/product-portfolio-health.ts");
 const dependencies = Object.fromEntries(await Promise.all([
   "credit-capital", "credit-factory", "credit-payment-plan", "dashboard-month", "ally-payments-core", "product-portfolio-health",
+  "credit-assigned-seller", "dashboard-delinquency",
 ].map(async (name) => [`@/lib/${name}`, await jiti.import(`../lib/${name}.ts`)])));
 const now = new Date("2026-09-26T17:00:00Z");
 class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } }
