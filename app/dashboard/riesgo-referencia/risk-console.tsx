@@ -35,8 +35,8 @@ export default function RiskConsole({ credits, cutoff, adminCentral: central = f
   const visible = sorted.slice((current - 1) * 7, current * 7);
   const total = summarizeProductRisk(filtered);
   const detail = groups.find(r => r.key === selected);
-  const update = (key: keyof ProductRiskFilters, val: string) => { setFilters(f => ({ ...f, [key]: val, ...(key === "marca" ? { referencia: "" } : {}) })); setPage(1); setSelected(null); };
-  const options = (key: "marca" | "referencia" | "aliado" | "sede") => [...new Set(credits.filter(c => key !== "referencia" || !filters.marca || c.marca === filters.marca).map(c => c[key]))].sort((a, b) => a.localeCompare(b, "es"));
+  const update = (key: keyof ProductRiskFilters, val: string) => { setFilters(f => ({ ...f, [key]: val, ...(key === "marca" ? { referencia: "" } : {}), ...(key === "aliado" ? { sede: "" } : {}) })); setPage(1); setSelected(null); };
+  const options = (key: "marca" | "referencia" | "aliado" | "sede") => [...new Set(credits.filter(c => (key !== "referencia" || !filters.marca || c.marca === filters.marca) && (key !== "sede" || !filters.aliado || c.aliado === filters.aliado)).map(c => c[key]))].sort((a, b) => a.localeCompare(b, "es"));
   const openDetail = (key: string) => { setSelected(key); requestAnimationFrame(() => document.getElementById("reference-detail")?.scrollIntoView({ behavior: "smooth", block: "start" })); };
   const columns: [SortKey, string][] = [["referencia", "Referencia"], ["financiadas", "Financiados"], ["mora", "En mora"], ["porcentaje", "% mora"], ...(central ? [["vencido", "Saldo vencido"] as [SortKey, string]] : [])];
   const reset = () => { setFilters({ ...emptyProductRiskFilters }); setSearch(""); setTab(""); setPage(1); setSelected(null); };
@@ -47,7 +47,8 @@ export default function RiskConsole({ credits, cutoff, adminCentral: central = f
     <div><strong>{percent(summary.porcentaje)}</strong><span>mora por unidades</span></div>
   </>;
   return <main className={styles.main}>
-    <PageHeader className={styles.heading} title="Riesgo por referencia" description={central ? `Información de ${scopeLabel || "todos los aliados"}` : `Información de tu comercio · ${scopeLabel || "Mi aliado"}`} />
+    <PageHeader className={styles.heading} title="Riesgo por referencia" description={central ? `Información de ${filters.aliado || scopeLabel || "todos los aliados"}` : `Información de tu comercio · ${scopeLabel || "Mi aliado"}`} />
+    {central && <label className={styles.allyFilter}>Aliado<Select aria-label="Filtrar por aliado" value={filters.aliado} onChange={e => update("aliado", e.target.value)}><option value="">Todos los aliados</option>{options("aliado").map(ally => <option key={ally} value={ally}>{ally}</option>)}</Select></label>}
     <Card className={styles.summary} aria-label="Resumen de unidades">{metric(total)}</Card>
     <section className={styles.platforms} aria-label="Resumen por plataforma">
       {tabs.slice(1).map(([type, label]) => <Card key={type} className={styles.platform}><div className={styles.platformName}><Smartphone size={44} strokeWidth={1.4} aria-hidden="true" /><h2>{label}</h2></div>{metric(summarizeProductRisk(filtered.filter(c => c.tipo === type)))}</Card>)}
@@ -62,7 +63,7 @@ export default function RiskConsole({ credits, cutoff, adminCentral: central = f
         <div className={styles.filterGrid}>
           <label>Venta desde<Input type="date" value={filters.desde} onChange={e => update("desde", e.target.value)} /></label>
           <label>Venta hasta<Input type="date" value={filters.hasta} onChange={e => update("hasta", e.target.value)} /></label>
-          {([["marca", "Marca"], ["referencia", "Referencia / modelo"], ["aliado", "Aliado"], ["sede", "Sede"]] as const).map(([key, label]) => <label key={key}>{label}<Select value={filters[key]} onChange={e => update(key, e.target.value)}><option value="">Todos</option>{options(key).map(v => <option key={v}>{v}</option>)}</Select></label>)}
+          {([["marca", "Marca"], ["referencia", "Referencia / modelo"], ["sede", "Sede"]] as const).map(([key, label]) => <label key={key}>{label}<Select value={filters[key]} onChange={e => update(key, e.target.value)}><option value="">Todos</option>{options(key).map(v => <option key={v}>{v}</option>)}</Select></label>)}
           <label>Tipo de producto<Select value={filters.tipo} onChange={e => update("tipo", e.target.value)}><option value="">Todos</option><option value="IPHONE">iPhone</option><option value="ANDROID">Android</option></Select></label>
           <label>Estado de cartera<Select value={filters.estado} onChange={e => update("estado", e.target.value)}><option value="">Todos</option><option value="activo">Activos</option><option value="alDia">Al día</option><option value="mora">En mora</option><option value="pagado">Pagados</option></Select></label>
           <label>Días de mora desde<Input type="number" min="0" step="1" value={filters.minDias} onChange={e => update("minDias", e.target.value)} /></label>

@@ -18,3 +18,17 @@ test('paginación, ordenamiento y filtros inválidos no alteran totales de unida
  const f=flow({credits:Array.from({length:10},(_,i)=>credit(i+1,{referencia:`Modelo ${i}`,dias:0}))});f.render();assert.equal(nodes(f.tree(),n=>n.type==='tr').length,8);const next=nodes(f.tree(),n=>n.type===ui.Button&&n.props['aria-label']==='Página siguiente')[0];next.props.onClick();assert.match(f.render(),/8–10 de 10/);assert.equal(nodes(f.tree(),n=>n.type==='tr').length,4);f.click('Referencia');f.click('Filtros');f.filter('Venta desde','2026-10-05');assert.match(f.filter('Venta hasta','2026-10-01'),/role="alert"/);
 });
 test('cartera vacía no inventa tasas ni referencias',()=>{const html=flow({credits:[]}).render();assert.match(html,/0,00%/);assert.match(html,/Sin créditos/);assert.doesNotMatch(html,/NaN|Infinity/);});
+
+test('central tiene filtro aliado visible y actualiza totales, tabla y detalle; aliado no tiene selector', () => {
+ const credits = risk.projectProductRiskCredits([credit(1, {aliado:'Comercio A'}),credit(2, {aliado:'Comercio A',dias:0}),credit(3,{aliado:'Comercio B',marca:'Samsung',referencia:'A15',tipo:'ANDROID',dias:0})],{viewingCentral:true});
+ const f=flow({adminCentral:true,credits});
+ assert.match(f.render(),/Todos los aliados/);
+ assert.equal(nodes(f.tree(),n=>n.type===ui.Select&&n.props['aria-label']==='Filtrar por aliado').length,1);
+ f.filter('Aliado','Comercio A');
+ assert.match(f.render(),/Información de Comercio A/);
+ assert.match(f.render(),/50,00%/);
+ assert.doesNotMatch(f.render(),/<td>A15<\/td>/);
+ const open=nodes(f.tree(),n=>n.type==='button'&&n.props['aria-label']==='Ver créditos de IPHONE 13')[0];open.props.onClick();
+ assert.match(f.render(),/010001/);assert.match(f.render(),/010002/);assert.doesNotMatch(f.render(),/010003/);
+ const ally=flow();assert.doesNotMatch(ally.render(),/Filtrar por aliado|Todos los aliados/);
+});

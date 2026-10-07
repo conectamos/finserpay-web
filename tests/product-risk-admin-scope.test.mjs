@@ -94,7 +94,7 @@ function harness(session = ally, allCredits = [credit(1), credit(2, { estado: "E
     "@/lib/credit-factory": creditFactory,
     "@/lib/credit-capital": capital,
     "@/lib/credit-display-number-server": { getCreditDisplayNumbers: async ids => {
-      calls.numbers.push([...ids]); return new Map(ids.map(id => [id, `010000${id}`]));
+      calls.numbers.push([...ids]); return new Map(ids.map(id => [id, id === 217 ? "0100000217" : `010000${id}`]));
     } },
     "@/lib/analyst-mora-schema": { ensureAnalystMoraSchema: async () => { calls.schema++; } },
     "@/lib/product-risk": risk,
@@ -226,7 +226,7 @@ test("clasifica todas las unidades por descripción sin usar la plataforma hist�
 });
 
 test("no limita a 703 unidades: incluye Android sin documentación y excluye anulados", async () => {
-  const portfolio = Array.from({ length: 750 }, (_, i) => credit(i + 1, {
+  const portfolio = Array.from({ length: 750 }, (_, i) => credit(i + 1000, {
     equipoMarca: null, equipoModelo: `ANDROID MODELO ${i % 5}`, referenciaEquipo: null,
     contratoAceptadoAt: null, pagareAceptadoAt: null, fotoEntregaDataUrl: null,
     contratoSnapshot: null, estado: "GENERADO",
@@ -239,4 +239,13 @@ test("no limita a 703 unidades: incluye Android sin documentación y excluye anu
   assert.equal(rows.filter(row => row.tipo === "IPHONE").length, 1);
   assert.equal(f.calls.evidence.length, 0);
   assert.doesNotMatch(JSON.stringify(rows), /"saldo"|"capital"|"vencido"/);
+});
+
+test("corrección DIRECTO aplica solo al crédito visible 0100000217 y lo suma a IPHONE 13", async () => {
+ const f = harness(ally,[credit(217,{equipoMarca:null,equipoModelo:"DIRECTO",referenciaEquipo:null}),credit(218,{equipoMarca:null,equipoModelo:"DIRECTO",referenciaEquipo:null})]);
+ const rows=nodes(await f.render()).find(node=>node.props?.credits)?.props.credits;
+ assert.equal(rows[0].numeroCreditoVisible,"0100000217");
+ assert.equal(rows[0].referencia,"IPHONE 13");assert.equal(rows[0].tipo,"IPHONE");
+ assert.equal(rows[1].referencia,"DIRECTO");assert.equal(rows[1].tipo,"ANDROID");
+ assert.equal(risk.summarizeProductRisk(rows).financiadas,2);
 });
