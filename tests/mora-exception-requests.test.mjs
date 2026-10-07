@@ -45,6 +45,7 @@ function loadService({ prisma = {}, plan, assertActor = async (_db, actor) => ac
       readMoraCredit: async () => null,
     },
     "@/lib/analyst-mora-schema": { ensureAnalystMoraSchema: async () => {} },
+    "@/lib/analyst-mora-management": { listMoraPortfolio: async () => ({ items: [], hasMore: false }) },
     "@/lib/analyst-mora-support": { listMoraSupports: async () => [] },
     "@/lib/colombia-date": { colombiaDateKey },
     "@/lib/credit-approval-errors": { CreditApprovalError },
@@ -368,10 +369,14 @@ function decisionHarness({ centralAdmin = true, type = "EXCEPCION", expiresOn = 
     credito: {
       async findUnique() {
         queries.push("credit-read");
-        return { montoCredito: 900, valorCuota: 300, plazoMeses: 3, frecuenciaPago: "MENSUAL", fechaPrimerPago: null, fechaProximoPago: null, planCapitalVigente: null, pazYSalvoEmitidoAt: null, abonos: [] };
+        return { estado: "INSCRITO", montoCredito: 900, valorCuota: 300, plazoMeses: 3, frecuenciaPago: "MENSUAL", fechaPrimerPago: null, fechaProximoPago: null, planCapitalVigente: null, pazYSalvoEmitidoAt: null, abonos: [] };
       },
     },
     async $queryRawUnsafe(sql, ...params) {
+      if (sql.includes('SELECT "creditoId" FROM "CreditMoraExceptionRequest"')) {
+        queries.push("request-credit-read");
+        return [{ creditoId: current.creditoId }];
+      }
       if (sql.includes('WHERE "status"=\'APPROVED\' AND "expiresOn"<$1::date')) { queries.push("expire-approved"); return []; }
       if (sql.includes('SELECT * FROM "CreditMoraExceptionEvent" WHERE "idempotencyKey"')) {
         queries.push("idempotency-read");
@@ -466,12 +471,12 @@ test("analista solo observa; aprobación exige central y registra nueva versión
   assert.deepEqual(harness.checks.map((item) => item.centralOnly), [true, false]);
 });
 
-test("aprobación bloquea solicitud y crédito antes de recalcular, y replay es idempotente", async () => {
+test("aprobación bloquea crédito antes de solicitud y replay es idempotente", async () => {
   const harness = decisionHarness();
   const input = decisionInput("APPROVE", "60000000-0000-4000-8000-000000000004");
   const approved = await harness.service.actOnMoraExceptionRequest(harness.requestId, input, harness.actor, new Date("2026-10-03T17:00:00.000Z"));
   assert.equal(approved.item.status, "APPROVED");
-  assert.ok(harness.queries.indexOf("request-lock") < harness.queries.indexOf("credit-lock"));
+  assert.ok(harness.queries.indexOf("credit-lock") < harness.queries.indexOf("request-lock"));
   assert.ok(harness.queries.indexOf("credit-lock") < harness.queries.indexOf("credit-read"));
   const replay = await harness.service.actOnMoraExceptionRequest(harness.requestId, input, harness.actor, new Date("2026-10-03T17:00:00.000Z"));
   assert.equal(replay.unchanged, true);
@@ -484,14 +489,28 @@ test("versión obsoleta y ventana vencida rechazan sin decisión parcial", async
     changed.service.actOnMoraExceptionRequest(changed.requestId, decisionInput("APPROVE", "60000000-0000-4000-8000-000000000005", 2), changed.actor, new Date("2026-10-03T17:00:00.000Z")),
     { code: "MORA_REQUEST_CHANGED" }
   );
-  assert.equal(changed.queries.includes("credit-lock"), false);
+  assert.equal(changed.queries.includes("credit-lock"), true);
   assert.equal(changed.events.length, 0);
 
   const expired = decisionHarness({ type: "PRORROGA" });
   await assert.rejects(
     expired.service.actOnMoraExceptionRequest(expired.requestId, decisionInput("APPROVE", "60000000-0000-4000-8000-000000000006"), expired.actor, new Date("2026-10-07T17:00:00.000Z")),
-    { code: "REQUEST_WINDOW_CLOSED" }
+    { code: "INVALID_MORA_EXCEPTION" }
   );
   assert.equal(expired.events.length, 0);
   assert.ok(expired.queries.includes("credit-lock"));
+});
+
+test("central aprueba una prórroga sin límite de cuatro días ni permiso adicional", async () => {
+  const harness = decisionHarness({ type: "PRORROGA", expiresOn: "2026-10-30" });
+  const approved = await harness.service.actOnMoraExceptionRequest(
+    harness.requestId,
+    decisionInput("APPROVE", "60000000-0000-4000-8000-000000000007"),
+    harness.actor,
+    new Date("2026-10-07T17:00:00.000Z")
+  );
+  assert.equal(approved.item.status, "APPROVED");
+  assert.equal(approved.item.expiresOn, "2026-10-30");
+  assert.equal(harness.events[0].actorName, "Central");
+  assert.equal(harness.queries.includes("cooldown-read"), false);
 });

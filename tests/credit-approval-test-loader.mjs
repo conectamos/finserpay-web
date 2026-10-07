@@ -29,7 +29,11 @@ const policy = loadApprovalModule("lib/credit-approval-policy.ts", { "./credit-i
 const documentCore = loadApprovalModule("lib/document-blacklist-core.ts");
 const paymentsCore = loadApprovalModule("lib/ally-payments-core.ts");
 const colombiaDate = loadApprovalModule("lib/colombia-date.ts");
-const creditFactory = loadApprovalModule("lib/credit-factory.ts", { "@/lib/colombia-date": colombiaDate });
+const paymentMethods = loadApprovalModule("lib/payment-methods.ts");
+const creditFactory = loadApprovalModule("lib/credit-factory.ts", {
+  "@/lib/colombia-date": colombiaDate,
+  "@/lib/payment-methods": paymentMethods,
+});
 const colombiaLocations = loadApprovalModule("lib/colombia-locations.ts");
 const contractImei = loadApprovalModule("lib/credit-contract-imei.ts");
 export const callState = loadApprovalModule("lib/credit-approval-call-state.ts");

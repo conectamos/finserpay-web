@@ -116,8 +116,8 @@ export async function POST() {
   return NextResponse.json({
     ok: false,
     code: "LEGACY_MORA_EXCEPTION_DISABLED",
-    error: "Crea la excepción desde Aprobaciones por crédito para aplicar fechas, enfriamiento y auditoría.",
-    href: "/dashboard/aprobaciones/excepciones-mora",
+    error: "Registra la excepción directamente por crédito. La autorización del administrador central queda aplicada y registrada en el historial.",
+    href: "/dashboard/aprobaciones/excepciones-mora?nueva=1",
   }, { status: 409 });
 }
 
