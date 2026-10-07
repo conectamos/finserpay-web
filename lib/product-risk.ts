@@ -85,5 +85,9 @@ export function classifyRiskProduct(equipment: { equipoMarca?: string | null; eq
 /** A reference identifies the model, regardless of a missing or different brand label. */
 export function normalizeRiskReference(reference: string): string {
   const normalized = reference.trim().toLocaleUpperCase("es").replace(/\s+/g, " ").replace(/(\d)\s+GB\b/g, "$1GB");
-  return normalized === "IPHONE 13" ? "IPHONE 13 128GB" : normalized;
+  // Keep the generation and variant; storage and color do not split iPhone models.
+  const iphone = normalized.match(/\b(?:IPHONE|IPOHN)\s*(\d+[A-Z]?|SE(?:\s*\d+)?|XS|XR|X)\b(?:\s*(PRO\s*MAX|PRO|PLUS|MINI|MAX))?/);
+  if (!iphone) return normalized;
+  const variant = iphone[2]?.replace(/PRO\s*MAX/, "PRO MAX");
+  return `IPHONE ${iphone[1]}${variant ? ` ${variant}` : ""}`;
 }
