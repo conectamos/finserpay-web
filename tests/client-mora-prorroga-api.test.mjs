@@ -127,6 +127,18 @@ test("un acuerdo vigente sin fecha final conserva hasta nulo", async () => {
   assert.deepEqual(plain(response.body.items[0].prorrogaMora), { hasta: null });
 });
 
+test("la excepción directa del administrador sin vencimiento conserva la mora y hasta nulo", async () => {
+  const { GET } = clientApi({
+    statuses: ["MORA", "MORA"],
+    exemption: null,
+    creditExceptions: new Map([[2, { fechaFin: null, type: "EXCEPCION" }]]),
+  });
+  const response = await GET(request());
+  assert.equal(response.status, 200);
+  assert.deepEqual(plain(response.body.items.map(item => item.prorrogaMora)), [null, { hasta: null }]);
+  assert.deepEqual(plain(response.body.items.map(item => item.estadoPago)), ["MORA", "MORA"]);
+});
+
 test("sin acuerdo activo o sin mora no se anuncia prórroga", async () => {
   const overdue = clientApi({ statuses: ["MORA"], exemption: null });
   const current = clientApi({ statuses: ["AL_DIA"], exemption: { fechaFin: new Date("2026-10-10T23:59:59.999Z") } });

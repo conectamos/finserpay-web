@@ -169,9 +169,9 @@ export default function MoraExceptionsClient() {
         ) : null}
 
         <section className="rounded-lg border border-[var(--fp-border)] bg-white p-5">
-          <h2 className="text-xl font-bold">Solicitudes y revisión por crédito</h2>
-          <p className="mt-2 text-sm text-[var(--fp-muted)]">Las nuevas excepciones y prórrogas se gestionan por crédito, con soportes, historial y las fechas permitidas.</p>
-          <Link href="/dashboard/aprobaciones/excepciones-mora" className="fp-ui-button is-primary mt-4">Gestionar solicitudes de excepción</Link>
+          <h2 className="text-xl font-bold">Registrar una excepción</h2>
+          <p className="mt-2 text-sm text-[var(--fp-muted)]">Selecciona el crédito y guarda la excepción o prórroga directamente. Puedes definir un vencimiento o dejarla sin vencimiento; la nota es opcional.</p>
+          <Link href="/dashboard/aprobaciones/excepciones-mora?nueva=1" className="fp-ui-button is-primary mt-4">Nueva excepción</Link>
         </section>
         <section className="overflow-hidden rounded-lg border border-[#d8dee5] bg-white shadow-[0_5px_18px_rgba(16,24,40,0.04)]">
           <div className="flex flex-col gap-3 border-b border-[#e4e7ec] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">

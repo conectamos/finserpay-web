@@ -4,6 +4,7 @@ import {
   actOnMoraExceptionRequest,
   getMoraExceptionRequest,
   parseMoraExceptionDecision,
+  parseCentralMoraExceptionDecision,
 } from "@/lib/mora-exception-requests";
 import { approvalErrorResponse, approvalPrivateHeaders, readApprovalRequest } from "@/lib/credit-approval-http";
 import { syncCreditMoraById } from "@/lib/credit-mora-sync";
@@ -27,7 +28,8 @@ export async function PATCH(request: Request, context: Context) {
   try {
     const actor = await getMoraActor();
     const { id } = await context.params;
-    const input = parseMoraExceptionDecision(await readApprovalRequest(request, { maxBytes: 5_000 }));
+    const body = await readApprovalRequest(request, { maxBytes: 5_000 });
+    const input = actor.centralAdmin ? parseCentralMoraExceptionDecision(body) : parseMoraExceptionDecision(body);
     const result = await actOnMoraExceptionRequest(id, input, actor);
     let moraSync: { ok: boolean; action: string; message: string } | null = null;
     if (input.action === "APPROVE" && result.item.status === "APPROVED") {

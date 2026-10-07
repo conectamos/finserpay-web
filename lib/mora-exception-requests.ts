@@ -5,6 +5,7 @@ import { assertMoraActor, type MoraActor } from "@/lib/analyst-mora-access";
 import { moraCreditSelect, moraCreditSummary, readMoraCredit } from "@/lib/analyst-mora-credit";
 import { ensureAnalystMoraSchema } from "@/lib/analyst-mora-schema";
 import { listMoraSupports } from "@/lib/analyst-mora-support";
+import { listMoraPortfolio } from "@/lib/analyst-mora-management";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
@@ -12,7 +13,7 @@ import { ensureMoraExceptionRequestSchema } from "@/lib/mora-exception-schema";
 import type { MoraExceptionStatus as ExceptionStatus, MoraExceptionType as ExceptionType } from "@/lib/mora-exception-types";
 
 export const MORA_EXCEPTION_TYPES = ["EXCEPCION", "PRORROGA"] as const;
-export const MORA_EXCEPTION_STATUSES = ["PENDING", "APPROVED", "REJECTED", "EXPIRED"] as const;
+export const MORA_EXCEPTION_STATUSES = ["PENDING", "APPROVED", "REJECTED", "EXPIRED", "REPLACED"] as const;
 export const MORA_COOLDOWN_BYPASS_PERMISSION = "MORA_COOLDOWN_BYPASS";
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const dateKey = /^\d{4}-\d{2}-\d{2}$/;
@@ -28,6 +29,15 @@ type CreateInput = {
   bypassCooldown: boolean;
   bypassReason: string | null;
   idempotencyKey: string;
+};
+type CentralCreateInput = {
+  creditoId: number;
+  type: ExceptionType;
+  expiresOn: string | null;
+  reason: string;
+  observation: string;
+  idempotencyKey: string;
+  source: "CENTRAL_DIRECT";
 };
 type DecisionInput = {
   action: "APPROVE" | "REJECT" | "OBSERVE";
@@ -50,8 +60,9 @@ type RuleCredit = {
 };
 type StoredRequest = {
   id: string; creditoId: number; type: ExceptionType; status: ExceptionStatus; version: number;
-  installmentNumber: number; installmentDueDate: Date | string; expiresOn: Date | string;
-  promiseAmount: number | string; promiseDate: Date | string; reason: string; observation: string;
+  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT";
+  installmentNumber: number | null; installmentDueDate: Date | string | null; expiresOn: Date | string | null;
+  promiseAmount: number | string | null; promiseDate: Date | string | null; reason: string; observation: string;
   createdByUserId: number; createdByName: string; submittedAt: Date | string;
   decidedByUserId: number | null; decidedByName: string | null; decidedAt: Date | string | null;
   decisionReason: string | null; cooldownBypassed: boolean; cooldownBypassReason: string | null;
@@ -83,6 +94,9 @@ function exactDate(value: unknown, message = "Selecciona una fecha válida.") {
 }
 function toDateKey(value: Date | string) {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+}
+function nullableDateKey(value: Date | string | null) {
+  return value === null ? null : toDateKey(value);
 }
 function toIso(value: Date | string | null) {
   if (!value) return null;
@@ -129,6 +143,29 @@ export function parseMoraExceptionCreate(value: unknown): CreateInput {
   };
 }
 
+/** This payload never grants permission; the database role is checked again before writing. */
+export function parseCentralMoraExceptionCreate(value: unknown): CentralCreateInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const body = value as Record<string, unknown>;
+  const allowed = ["creditoId", "type", "expiresOn", "reason", "observation", "idempotencyKey"];
+  if (Object.keys(body).some(key => !allowed.includes(key))) throw invalid("La excepción contiene campos no permitidos.");
+  const creditoId = Number(body.creditoId);
+  const type = body.type === undefined ? "EXCEPCION" : body.type;
+  if (!Number.isSafeInteger(creditoId) || creditoId < 1 || !MORA_EXCEPTION_TYPES.includes(type as ExceptionType) ||
+    !uuid.test(String(body.idempotencyKey || ""))) throw invalid();
+  const expiresOn = body.expiresOn === null || body.expiresOn === undefined || body.expiresOn === ""
+    ? null : exactDate(body.expiresOn);
+  return {
+    creditoId, type: type as ExceptionType, expiresOn,
+    reason: body.reason === null || body.reason === undefined || body.reason === ""
+      ? "Excepción autorizada por administrador central"
+      : normalizedText(body.reason, 0, 500, "El motivo admite hasta 500 caracteres.") || "Excepción autorizada por administrador central",
+    observation: body.observation === null || body.observation === undefined || body.observation === ""
+      ? "" : normalizedText(body.observation, 0, 2000, "La observación admite hasta 2000 caracteres."),
+    idempotencyKey: String(body.idempotencyKey), source: "CENTRAL_DIRECT",
+  };
+}
+
 export function parseMoraExceptionDecision(value: unknown): DecisionInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
   const body = value as Record<string, unknown>;
@@ -149,6 +186,16 @@ export function parseMoraExceptionDecision(value: unknown): DecisionInput {
     bypassReason,
     idempotencyKey: String(body.idempotencyKey),
   };
+}
+
+export function parseCentralMoraExceptionDecision(value: unknown): DecisionInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const body = value as Record<string, unknown>;
+  const defaultReason = body.action === "APPROVE" ? "Excepción aprobada por administrador central" :
+      body.action === "REJECT" ? "Excepción rechazada por administrador central" : "Observación del administrador central";
+  const reason = body.reason === undefined || body.reason === null
+    ? defaultReason : normalizedText(body.reason, 0, 1000, "La observación admite hasta 1000 caracteres.") || defaultReason;
+  return { ...parseMoraExceptionDecision({ ...body, reason: defaultReason }), reason };
 }
 
 export function evaluateMoraExceptionRule(credit: RuleCredit, input: Pick<CreateInput, "type" | "expiresOn" | "promiseAmount" | "promiseDate">, now = new Date()) {
@@ -186,7 +233,7 @@ export function moraCooldownMessage(enabledOn: string) {
   return `Este crédito tuvo una excepción vencida. Podrá solicitar una nueva excepción a partir del ${label}.`;
 }
 
-const requestColumns = `r."id"::text,r."creditoId",r."type",r."status",r."version",r."installmentNumber",
+const requestColumns = `r."id"::text,r."creditoId",r."type",r."status",r."version",r."source",r."installmentNumber",
   r."installmentDueDate",r."expiresOn",r."promiseAmount",r."promiseDate",r."reason",r."observation",
   r."createdByUserId",r."createdByName",r."submittedAt",r."decidedByUserId",r."decidedByName",r."decidedAt",
   r."decisionReason",r."cooldownBypassed",r."cooldownBypassReason",r."createdAt",r."updatedAt",
@@ -198,14 +245,16 @@ const requestColumns = `r."id"::text,r."creditoId",r."type",r."status",r."versio
 const requestFrom = ` FROM "CreditMoraExceptionRequest" r JOIN "Credito" credit ON credit."id"=r."creditoId"`;
 function requestDto(row: StoredRequest, now = new Date()) {
   const paid = Number(row.paidTowardPromise || 0);
-  const promise = Number(row.promiseAmount);
+  const promise = row.promiseAmount === null ? null : Number(row.promiseAmount);
   const today = colombiaDateKey(now);
-  const conditionStatus = !["APPROVED","EXPIRED"].includes(row.status) ? "NOT_APPLICABLE"
+  const conditionStatus = row.source === "CENTRAL_DIRECT" || promise === null || row.promiseDate === null ||
+    !["APPROVED","EXPIRED"].includes(row.status) ? "NOT_APPLICABLE"
     : paid >= promise ? "FULFILLED" : today > toDateKey(row.promiseDate) ? "BREACHED" : "PENDING";
   return {
     id: row.id, creditoId: row.creditoId, type: row.type, status: row.status, version: row.version,
-    installmentNumber: row.installmentNumber, installmentDueDate: toDateKey(row.installmentDueDate),
-    expiresOn: toDateKey(row.expiresOn), promiseAmount: promise, promiseDate: toDateKey(row.promiseDate),
+    source: row.source || "ANALYST_REQUEST", centralDirect: row.source === "CENTRAL_DIRECT",
+    installmentNumber: row.installmentNumber, installmentDueDate: nullableDateKey(row.installmentDueDate),
+    expiresOn: nullableDateKey(row.expiresOn), promiseAmount: promise, promiseDate: nullableDateKey(row.promiseDate),
     reason: row.reason, observation: row.observation, createdByUserId: row.createdByUserId,
     createdByName: row.createdByName, submittedAt: toIso(row.submittedAt),
     decidedByUserId: row.decidedByUserId, decidedByName: row.decidedByName, decidedAt: toIso(row.decidedAt),
@@ -225,11 +274,12 @@ async function ensureSchemas() {
   await ensureMoraExceptionRequestSchema();
   await ensureAnalystMoraSchema();
 }
-async function expireApproved(db: Pick<typeof prisma, "$queryRawUnsafe">, now = new Date()) {
+async function expireApproved(db: Pick<typeof prisma, "$queryRawUnsafe">, now = new Date(), creditoId?: number) {
   const today = colombiaDateKey(now);
   const rows = await db.$queryRawUnsafe<Array<{ id: string; creditoId: number; version: number }>>(`UPDATE "CreditMoraExceptionRequest"
     SET "status"='EXPIRED',"version"="version"+1,"updatedAt"=CURRENT_TIMESTAMP
-    WHERE "status"='APPROVED' AND "expiresOn"<$1::date RETURNING "id"::text,"creditoId","version"`, today);
+    WHERE "status"='APPROVED' AND "expiresOn"<$1::date AND ($2::integer IS NULL OR "creditoId"=$2)
+    RETURNING "id"::text,"creditoId","version"`, today, creditoId || null);
   for (const row of rows) {
     const payload = { expiredOnReadAt: now.toISOString(), expiresBefore: today };
     const hash = createHash("sha256").update(JSON.stringify({ requestId: row.id, version: row.version, payload })).digest("hex");
@@ -249,6 +299,7 @@ async function hasBypassPermission(db: Pick<typeof prisma, "$queryRawUnsafe">, a
 export async function latestExceptionExpiry(db: Pick<typeof prisma, "$queryRawUnsafe">, creditoId: number, excludeId?: string) {
   const rows = await db.$queryRawUnsafe<Array<{ expiresOn: Date | string }>>(`SELECT request."expiresOn" FROM "CreditMoraExceptionRequest" request
     WHERE request."creditoId"=$1 AND request."type"='EXCEPCION' AND request."status" IN ('APPROVED','EXPIRED')
+      AND request."source"='ANALYST_REQUEST'
       AND ($2::uuid IS NULL OR request."id"<>$2::uuid)
       AND COALESCE((SELECT SUM(payment."valor") FROM "CreditoAbono" payment
         WHERE payment."creditoId"=request."creditoId" AND UPPER(BTRIM(payment."estado"))<>'ANULADO'
@@ -261,11 +312,12 @@ export async function latestExceptionExpiry(db: Pick<typeof prisma, "$queryRawUn
 export async function getMoraExceptionPreflight(creditoId: number, actor: MoraActor, now = new Date()) {
   await ensureSchemas();
   const credit = await readMoraCredit(creditoId);
-  const [openRequest, lastExpiry, canBypassCooldown] = await prisma.$transaction(async db => {
+  const [openRequest, lastExpiry, canBypassCooldown, centralAdmin] = await prisma.$transaction(async db => {
+    const verified = await assertMoraActor(db,actor);
     await expireApproved(db,now);
     const rows = await db.$queryRawUnsafe<Array<{ exists: boolean }>>(`SELECT EXISTS(
       SELECT 1 FROM "CreditMoraExceptionRequest" WHERE "creditoId"=$1 AND "status" IN ('PENDING','APPROVED')) AS "exists"`,creditoId);
-    return [Boolean(rows[0]?.exists),await latestExceptionExpiry(db,creditoId),await hasBypassPermission(db,actor)] as const;
+    return [Boolean(rows[0]?.exists),await latestExceptionExpiry(db,creditoId),await hasBypassPermission(db,verified),verified.centralAdmin] as const;
   });
   const today = colombiaDateKey(now);
   const plan = buildCreditPaymentPlan({ ...credit, fechaProximoPago: null, today, settled:Boolean(credit.pazYSalvoEmitidoAt) });
@@ -284,13 +336,39 @@ export async function getMoraExceptionPreflight(creditoId: number, actor: MoraAc
     credit:moraCreditSummary(credit,now),
     eligibility:{
       regularInstallment:installment?{number:installment.numero,dueDate,balance:installment.saldoPendiente}:null,
-      maxExpiresOn,
-      prorroga:{canRequest:!extensionBlocked,blockedReason:extensionBlocked},
-      excepcion:{canRequest:!(commonBlocked||cooldownBlocked),blockedReason:commonBlocked||cooldownBlocked,cooldownEnabledOn},
+      maxExpiresOn:centralAdmin?null:maxExpiresOn,
+      prorroga:{canRequest:centralAdmin||!extensionBlocked,blockedReason:centralAdmin?null:extensionBlocked},
+      excepcion:{canRequest:centralAdmin||!(commonBlocked||cooldownBlocked),blockedReason:centralAdmin?null:commonBlocked||cooldownBlocked,cooldownEnabledOn:centralAdmin?null:cooldownEnabledOn},
       canBypassCooldown,
       promise:{amount:installment?Math.min(installment.saldoPendiente,Number(credit.valorCuota||installment.saldoPendiente)):0,date:today},
     },
   };
+}
+
+export async function searchMoraExceptionCredits(params: URLSearchParams, actor: MoraActor, now = new Date()) {
+  const q = (params.get("q") || "").trim();
+  if (q.length > 100) throw new CreditApprovalError("INVALID_FILTER", "Búsqueda demasiado extensa.");
+  const verified = await prisma.$transaction(db => assertMoraActor(db,actor));
+  if (!verified.centralAdmin) {
+    const portfolio = await listMoraPortfolio(new URLSearchParams({ q }));
+    return { items: portfolio.items, hasMore: portfolio.hasMore };
+  }
+  if (!q) return { items: [], hasMore: false };
+  const credits = await prisma.credito.findMany({
+    where: {
+      estado: { notIn: ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"] },
+      OR: [
+        { folio: { contains: q, mode: "insensitive" } },
+        { clienteNombre: { contains: q, mode: "insensitive" } },
+        { clienteDocumento: { contains: q } },
+        { imei: { contains: q } },
+        { deviceUid: { contains: q } },
+        { registroSadmin: { is: { numeroCredito: { contains: q } } } },
+      ],
+    },
+    select: moraCreditSelect, orderBy: { createdAt: "desc" }, take: 26,
+  });
+  return { items: credits.slice(0,25).map(credit => moraCreditSummary(credit,now)), hasMore: credits.length > 25 };
 }
 
 function parseCursor(value: string | null) {
@@ -349,13 +427,15 @@ export async function getMoraExceptionRequest(id: string, actor: MoraActor, now 
   return {item,history:history.map(eventDto),supports,...preflight};
 }
 
-export async function createMoraExceptionRequest(input: CreateInput, actor: MoraActor, now = new Date()) {
+export async function createMoraExceptionRequest(input: CreateInput | CentralCreateInput, actor: MoraActor, now = new Date()) {
   await ensureSchemas();
   const requestHash=createHash("sha256").update(JSON.stringify({input,actorId:actor.id})).digest("hex");
   return prisma.$transaction(async db=>{
     const verified=await assertMoraActor(db,actor);
-    await expireApproved(db,now);
+    if ("source" in input && !verified.centralAdmin)
+      throw new CreditApprovalError("FORBIDDEN","Solo el administrador central puede registrar una excepción directa.",403);
     await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`,input.creditoId);
+    await expireApproved(db,now,input.creditoId);
     const prior=await db.$queryRawUnsafe<StoredRequest[]>(`SELECT ${requestColumns}${requestFrom}
       WHERE r."createIdempotencyKey"=$1::uuid`,input.idempotencyKey);
     if(prior[0]){
@@ -364,7 +444,42 @@ export async function createMoraExceptionRequest(input: CreateInput, actor: Mora
       return {item:requestDto(prior[0],now),unchanged:true};
     }
     const credit=await db.credito.findUnique({where:{id:input.creditoId},select:moraCreditSelect});
-    if(!credit)throw new CreditApprovalError("CREDIT_NOT_FOUND","Crédito no encontrado.",404);
+    if(!credit || ["ANULADO","ANULADA","CANCELADO","CANCELADA"].includes(credit.estado.trim().toUpperCase()))
+      throw new CreditApprovalError("CREDIT_NOT_FOUND","Crédito no encontrado.",404);
+    if(verified.centralAdmin){
+      if(input.expiresOn!==null && input.expiresOn<colombiaDateKey(now))
+        throw invalid("La fecha de vencimiento ya pasó. Puedes dejarla vacía para registrar la excepción sin vencimiento.");
+      const id=randomUUID();
+      const previous=await db.$queryRawUnsafe<StoredRequest[]>(`SELECT * FROM "CreditMoraExceptionRequest"
+        WHERE "creditoId"=$1 AND "status" IN ('PENDING','APPROVED') ORDER BY "id" FOR UPDATE`,input.creditoId);
+      for(const priorRequest of previous){
+        const version=priorRequest.version+1;
+        await db.$queryRawUnsafe(`UPDATE "CreditMoraExceptionRequest" SET "status"='REPLACED',"version"=$2,
+          "decidedByUserId"=COALESCE("decidedByUserId",$3),"decidedByName"=COALESCE("decidedByName",$4),
+          "decidedAt"=COALESCE("decidedAt",CURRENT_TIMESTAMP),"decisionReason"=COALESCE("decisionReason",$5),
+          "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid`,priorRequest.id,version,verified.id,verified.nombre,input.reason);
+        const payload={replacedByRequestId:id,reason:input.reason,source:"CENTRAL_DIRECT"};
+        await db.$queryRawUnsafe(`INSERT INTO "CreditMoraExceptionEvent"
+          ("id","requestId","creditoId","version","action","fromStatus","toStatus","payload","actorUserId","actorName","requestHash")
+          VALUES ($1::uuid,$2::uuid,$3,$4,'REPLACED',$5,'REPLACED',$6::jsonb,$7,$8,$9)`,
+        randomUUID(),priorRequest.id,input.creditoId,version,priorRequest.status,JSON.stringify(payload),verified.id,verified.nombre,requestHash);
+      }
+      await db.$queryRawUnsafe(`INSERT INTO "CreditMoraExceptionRequest"
+        ("id","creditoId","type","status","version","source","expiresOn","reason","observation",
+         "createdByUserId","createdByName","decidedByUserId","decidedByName","decidedAt","decisionReason",
+         "createIdempotencyKey","createRequestHash")
+        VALUES ($1::uuid,$2,$3,'APPROVED',1,'CENTRAL_DIRECT',$4::date,$5,$6,$7,$8,$7,$8,CURRENT_TIMESTAMP,$5,$9::uuid,$10)`,
+      id,input.creditoId,input.type,input.expiresOn,input.reason,input.observation,verified.id,verified.nombre,input.idempotencyKey,requestHash);
+      const payload={source:"CENTRAL_DIRECT",type:input.type,expiresOn:input.expiresOn,reason:input.reason,
+        observation:input.observation,replacedRequestIds:previous.map(row=>row.id)};
+      await db.$queryRawUnsafe(`INSERT INTO "CreditMoraExceptionEvent"
+        ("id","requestId","creditoId","version","action","fromStatus","toStatus","payload","actorUserId","actorName","idempotencyKey","requestHash")
+        VALUES ($1::uuid,$2::uuid,$3,1,'APPROVED',NULL,'APPROVED',$4::jsonb,$5,$6,$7::uuid,$8)`,
+      randomUUID(),id,input.creditoId,JSON.stringify(payload),verified.id,verified.nombre,input.idempotencyKey,requestHash);
+      const rows=await db.$queryRawUnsafe<StoredRequest[]>(`SELECT ${requestColumns}${requestFrom} WHERE r."id"=$1::uuid`,id);
+      return {item:requestDto(rows[0],now),unchanged:false};
+    }
+    if("source" in input) throw new CreditApprovalError("FORBIDDEN","No tienes permiso para esta excepción.",403);
     const rule=evaluateMoraExceptionRule(credit,input,now);
     const open=await db.$queryRawUnsafe<Array<{id:string}>>(`SELECT "id"::text FROM "CreditMoraExceptionRequest"
       WHERE "creditoId"=$1 AND "status" IN ('PENDING','APPROVED')`,input.creditoId);
@@ -402,7 +517,10 @@ export async function actOnMoraExceptionRequest(id: string, input: DecisionInput
   const requestHash=createHash("sha256").update(JSON.stringify({id,input,actorId:actor.id})).digest("hex");
   return prisma.$transaction(async db=>{
     const verified=await assertMoraActor(db,actor,input.action!=="OBSERVE");
-    await expireApproved(db,now);
+    const identity=await db.$queryRawUnsafe<Array<{creditoId:number}>>(`SELECT "creditoId" FROM "CreditMoraExceptionRequest" WHERE "id"=$1::uuid`,id);
+    if(!identity[0])throw new CreditApprovalError("MORA_EXCEPTION_NOT_FOUND","Solicitud no encontrada.",404);
+    await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`,identity[0].creditoId);
+    await expireApproved(db,now,identity[0].creditoId);
     const prior=await db.$queryRawUnsafe<StoredEvent[]>(`SELECT * FROM "CreditMoraExceptionEvent" WHERE "idempotencyKey"=$1::uuid`,input.idempotencyKey);
     if(prior[0]){
       if(prior[0].requestHash!==requestHash)throw new CreditApprovalError("IDEMPOTENCY_CONFLICT","La acción ya corresponde a otra solicitud.",409);
@@ -424,20 +542,11 @@ export async function actOnMoraExceptionRequest(id: string, input: DecisionInput
     }else{
       nextStatus=input.action==="APPROVE"?"APPROVED":"REJECTED";
       if(input.action==="APPROVE"){
-        await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`,current.creditoId);
         const credit=await db.credito.findUnique({where:{id:current.creditoId},select:moraCreditSelect});
-        if(!credit)throw new CreditApprovalError("CREDIT_NOT_FOUND","Crédito no encontrado.",404);
-        evaluateMoraExceptionRule(credit,{type:current.type,expiresOn:toDateKey(current.expiresOn),
-          promiseAmount:Number(current.promiseAmount),promiseDate:toDateKey(current.promiseDate)},now);
-        if(current.type==="EXCEPCION"){
-          const last=await latestExceptionExpiry(db,current.creditoId,id);
-          const enabled=last?moraCooldownEnabledOn(last):null;
-          if(enabled&&colombiaDateKey(now)<enabled){
-            const bypass=input.bypassCooldown||current.cooldownBypassed;
-            if(!bypass)throw new CreditApprovalError("MORA_COOLDOWN",moraCooldownMessage(enabled),409);
-            if(!await hasBypassPermission(db,verified))throw new CreditApprovalError("MORA_BYPASS_FORBIDDEN","No tienes el permiso especial para omitir el enfriamiento.",403);
-          }else if(input.bypassCooldown&&!current.cooldownBypassed)throw invalid("No existe un enfriamiento vigente para omitir.");
-        }else if(input.bypassCooldown)throw invalid("La prórroga no admite omitir el enfriamiento.");
+        if(!credit || ["ANULADO","ANULADA","CANCELADO","CANCELADA"].includes(credit.estado.trim().toUpperCase()))
+          throw new CreditApprovalError("CREDIT_NOT_FOUND","Crédito no encontrado.",404);
+        if(current.expiresOn!==null && toDateKey(current.expiresOn)<colombiaDateKey(now))
+          throw invalid("La fecha de vencimiento ya pasó. Registra una nueva excepción con la fecha que necesites.");
       }
       const cooldownBypassed=input.bypassCooldown||current.cooldownBypassed;
       const cooldownBypassReason=input.bypassReason||current.cooldownBypassReason;
@@ -459,13 +568,13 @@ export async function actOnMoraExceptionRequest(id: string, input: DecisionInput
 
 export async function getActiveMoraExceptionsByCreditIds(ids: number[], effectiveAt = new Date(), db: Pick<typeof prisma, "$queryRawUnsafe"> = prisma) {
   const selected=[...new Set(ids.filter(id=>Number.isSafeInteger(id)&&id>0))];
-  if(!selected.length)return new Map<number,{fechaFin:Date;type:ExceptionType}>();
+  if(!selected.length)return new Map<number,{fechaFin:Date|null;type:ExceptionType}>();
   await ensureMoraExceptionRequestSchema();
-  const rows=await db.$queryRawUnsafe<Array<{creditoId:number;type:ExceptionType;expiresOn:Date|string}>>(`SELECT DISTINCT ON ("creditoId")
+  const rows=await db.$queryRawUnsafe<Array<{creditoId:number;type:ExceptionType;expiresOn:Date|string|null}>>(`SELECT DISTINCT ON ("creditoId")
     "creditoId","type","expiresOn" FROM "CreditMoraExceptionRequest"
-    WHERE "creditoId"=ANY($1::integer[]) AND "status"='APPROVED' AND "expiresOn">=$2::date
+    WHERE "creditoId"=ANY($1::integer[]) AND "status"='APPROVED' AND ("expiresOn" IS NULL OR "expiresOn">=$2::date)
     ORDER BY "creditoId","expiresOn" DESC,"id" DESC`,selected,colombiaDateKey(effectiveAt));
-  return new Map(rows.map(row=>[row.creditoId,{fechaFin:endOfColombiaDay(toDateKey(row.expiresOn)),type:row.type}]));
+  return new Map(rows.map(row=>[row.creditoId,{fechaFin:row.expiresOn===null?null:endOfColombiaDay(toDateKey(row.expiresOn)),type:row.type}]));
 }
 
 export async function getActiveMoraExceptionByCreditId(id: number, effectiveAt = new Date()) {

@@ -177,7 +177,7 @@ export async function GET(req: Request) {
             ...credit,
             prorrogaMora: credit.estadoPago === "MORA"
               ? activeCreditExceptions.has(credit.id)
-                ? { hasta: activeCreditExceptions.get(credit.id)!.fechaFin.toISOString() }
+                ? { hasta: activeCreditExceptions.get(credit.id)!.fechaFin?.toISOString() ?? null }
                 : activeMoraExemption
                   ? { hasta: activeMoraExemption.fechaFin?.toISOString() ?? null }
                   : null
