@@ -15,6 +15,9 @@ import { isVeriffRequired } from "@/lib/veriff";
 import { ensureVeriffSchema, isVeriffApproved, type VeriffValidationRow } from "@/lib/veriff-storage";
 import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import { resolveActivationFirstPaymentDate } from "@/lib/credit-factory";
+import { readFrozenCorrectionDateSource,
+  verifiesFrozenCorrectionDateSource } from "@/lib/firmaseguro-draft-frozen";
+import { getTodayBogotaDateKey } from "@/lib/ventas-utils";
 import { ensureApprovalOperationalSchema } from "@/lib/approval-operations-schema";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -664,7 +667,8 @@ export async function dispatchReservedDraft(id: string) {
         "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid AND "status"='PREPARING'`, id);
     throw new DraftDispatchError("DRAFT_DISPATCH_DOCUMENT_INVALID", "El contrato reservado no supera la validación de integridad.");
   }
-  const sealed = readFinancingTermsSeal((row.draftPayload as Record<string, unknown>).financialTermsSeal);
+  const processPayload = record(row.draftPayload);
+  const sealed = readFinancingTermsSeal(processPayload.financialTermsSeal);
   const updatedPayload = row.updatedPayload as Record<string, unknown>;
   const claimsFrozenContactRedirect = updatedPayload.firmaSeguroPendingContactRedirectId === row.id
     && updatedPayload.firmaSeguroPendingContactRedirectSourceProcessUuid === row.expectedProcessUuid
@@ -686,15 +690,41 @@ export async function dispatchReservedDraft(id: string) {
       && (terminalFailedSource || pendingSource) && (!source.lastError || terminalFailedSource)
       && !isFirmaSeguroCompletedStatus(source.status));
   }
+  const claimsFrozenCorrection = Object.prototype.hasOwnProperty.call(
+    processPayload, "firmaSeguroFrozenCorrectionDateSource");
+  let frozenCorrectionReissue = false;
+  if (claimsFrozenCorrection && sealed) {
+    const marker = readFrozenCorrectionDateSource(
+      processPayload.firmaSeguroFrozenCorrectionDateSource, sealed);
+    if (marker) {
+      const sources = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+        `SELECT * FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
+          AND "processUuid"=$2 AND "supersededAt" IS NOT NULL LIMIT 1`,
+        row.draftId, marker.processUuid);
+      frozenCorrectionReissue = verifiesFrozenCorrectionDateSource({
+        marker, target: sealed, source: sources[0] || null,
+      });
+    }
+  }
+  const signedFirstPaymentDatePast = Boolean(frozenCorrectionReissue && sealed &&
+    sealed.snapshot.fechaPrimerPago < getTodayBogotaDateKey());
   if (!sealed || sealed.snapshot.folio !== row.draftFolio
     || (claimsFrozenContactRedirect && !frozenContactRedirect)
-    || (!frozenContactRedirect && resolveActivationFirstPaymentDate({ frequency: sealed.snapshot.frecuenciaPago,
-      activatedAt: new Date() }).dateKey !== sealed.snapshot.fechaPrimerPago)) {
+    || (claimsFrozenCorrection && !frozenCorrectionReissue)
+    || signedFirstPaymentDatePast
+    || (!frozenContactRedirect && !frozenCorrectionReissue &&
+      resolveActivationFirstPaymentDate({ frequency: sealed.snapshot.frecuenciaPago,
+        activatedAt: new Date() }).dateKey !== sealed.snapshot.fechaPrimerPago)) {
+    const termsMessage = signedFirstPaymentDatePast
+      ? "La primera cuota del contrato firmado ya venció. Revisa las condiciones antes de reenviar la firma."
+      : "La fecha o el sello financiero cambió antes del envío. Revisa el contrato.";
     await prisma.$executeRawUnsafe(`UPDATE "FirmaSeguroDraftDispatch"
-      SET "status"='FAILED_SAFE',"lastError"='La fecha o el sello financiero cambió antes del envío',
-        "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid AND "status"='PREPARING'`, id);
-    throw new DraftDispatchError("DRAFT_DISPATCH_TERMS_CHANGED",
-      "La fecha o el sello financiero cambió antes del envío. Revisa el contrato.");
+      SET "status"='FAILED_SAFE',"lastError"=$2,
+        "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid AND "status"='PREPARING'`,
+      id, termsMessage);
+    throw new DraftDispatchError(signedFirstPaymentDatePast
+      ? "DRAFT_DISPATCH_SIGNED_FIRST_PAYMENT_DATE_PAST" : "DRAFT_DISPATCH_TERMS_CHANGED",
+      termsMessage);
   }
   const veriffRequired = getDataCreditoPublicConfig().enabled || isVeriffRequired();
   if (veriffRequired) await ensureVeriffSchema();

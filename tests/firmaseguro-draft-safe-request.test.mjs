@@ -12,8 +12,107 @@ const { calculateFrenchAmortization, ARES_COMMERCIAL_AMORTIZATION_VERSION } =
   await jiti.import("../lib/credit-amortization.ts");
 const { createFinancingTermsSeal, readFinancingTermsSeal, resealFinancingTermsIdentity } =
   await jiti.import("../lib/credit-amortization-contract.ts");
-const { buildFrozenPendingContactRedirect } =
+const { buildFrozenDraftCorrection, buildFrozenPendingContactRedirect,
+  readFrozenCorrectionDateSource, verifiesFrozenCorrectionDateSource } =
   await jiti.import("../lib/firmaseguro-draft-frozen.ts");
+
+function signedImeiCorrectionCase(firstPaymentDate, sealedDate = firstPaymentDate) {
+  const amortizacion = calculateFrenchAmortization({
+    calculoVersion: ARES_COMMERCIAL_AMORTIZATION_VERSION,
+    valorVenta: 2_600_000, cuotaInicial: 780_000, numeroCuotas: 40,
+    tasaInteresEa: 29.24, fianzaCuotaPorcentaje: 75 / 40,
+    seguroCuotaPorcentaje: 0.03, frecuenciaPago: "MENSUAL",
+    fechaPrimerPago: firstPaymentDate,
+  });
+  const sealedPlan = {
+    ...amortizacion,
+    cuotas: amortizacion.cuotas.map((cuota, index) =>
+      index === 0 ? { ...cuota, fechaVencimiento: sealedDate } : cuota),
+  };
+  const seal = createFinancingTermsSeal({
+    folio: "FP-ORIGINAL", documento: "1234567890",
+    contrato: { tipoDocumento: "CC", clienteNombre: "CLIENTE PRUEBA",
+      clienteTelefono: "3000000000", clienteCorreo: "original@example.com",
+      clienteDireccion: "Calle 1", equipoMarca: "IPHONE", equipoModelo: "13 PRO",
+      referenciaEquipo: "IPHONE 13 PRO", imei: "123456789012345" },
+    amortizacion: sealedPlan,
+    parametros: { fianzaTotalPorcentaje: 75, fianzaModalidad: "TOTAL_CREDITO",
+      fianzaFuente: "POLITICA", tasaPeriodoDecimales: 6,
+      redondeoComercial: { modo: "PISO", multiplo: 50 },
+      policyVersion: 1, policyRevisionId: "policy-original" },
+  });
+  const originalPayload = {
+    clienteDocumento: "1234567890", clienteTipoDocumento: "CC",
+    clienteNombre: "CLIENTE PRUEBA", clientePrimerNombre: "CLIENTE",
+    clientePrimerApellido: "PRUEBA", clienteDireccion: "Calle 1",
+    clienteTelefono: "3000000000", clienteCorreo: "original@example.com",
+    equipoMarca: "IPHONE", equipoModelo: "13 PRO",
+    referenciaEquipo: "IPHONE 13 PRO", equipoCatalogoId: 13,
+    valorEquipoTotal: 2_600_000, cuotaInicial: 780_000, plazoMeses: 40,
+    dataCreditoAssessmentId: "d1000000-0000-4000-8000-000000000001",
+    plataformaDispositivo: "IPHONE", imei: "123456789012345",
+    deviceUid: "123456789012345", financialTermsSeal: seal,
+  };
+  const correctedPayload = {
+    ...originalPayload, imei: "543210987654321", deviceUid: "543210987654321",
+  };
+  delete correctedPayload.financialTermsSeal;
+  return {
+    seal,
+    draft: { id: 31, payload: correctedPayload, usuarioNombre: "Asesor",
+      usuarioLogin: "asesor", vendedorId: null, vendedorNombre: null,
+      vendedorDocumento: null, vendedorTelefono: null, vendedorEmail: null,
+      sedeNombre: "Sede", sedeCodigo: "S1", sedeAliadoId: 9 },
+    source: { processUuid: "20000000-0000-4000-8000-000000000002",
+      draftPayload: originalPayload,
+      signedDocumentBase64: Buffer.from("%PDF-1.7\ncontrato firmado").toString("base64") },
+  };
+}
+
+test("la reemisión por IMEI conserva la fecha firmada aunque se envíe otro día", () => {
+  const { draft, source, seal } = signedImeiCorrectionCase("2024-10-17");
+  const corrected = buildFrozenDraftCorrection({
+    draft, source, folio: "FP-REEMITIDO", imei: "543210987654321",
+  });
+  assert.equal(corrected.firstPaymentDateKey, "2024-10-17");
+  assert.equal(corrected.credit.fechaPrimerPago.toISOString(), "2024-10-17T12:00:00.000Z");
+  assert.equal(corrected.seal.snapshot.fechaPrimerPago, seal.snapshot.fechaPrimerPago);
+  assert.equal(readFinancingTermsSeal(corrected.seal)?.checksum, corrected.seal.checksum);
+  for (const field of ["valorVenta", "cuotaInicial", "numeroCuotas",
+    "frecuenciaPago", "fechaPrimerPago", "cuotaPactada", "totalPagar",
+    "policyVersion", "policyRevisionId"]) {
+    assert.equal(corrected.seal.snapshot[field], seal.snapshot[field], field);
+  }
+  assert.equal(corrected.credit.imei, "543210987654321");
+  assert.deepEqual(readFrozenCorrectionDateSource(
+    corrected.frozenCorrectionDateSource, corrected.seal), corrected.frozenCorrectionDateSource);
+  assert.equal(verifiesFrozenCorrectionDateSource({
+    marker: corrected.frozenCorrectionDateSource, target: corrected.seal, source,
+  }), true);
+  assert.equal(verifiesFrozenCorrectionDateSource({
+    marker: corrected.frozenCorrectionDateSource, target: corrected.seal,
+    source: { ...source, signedDocumentBase64: null },
+  }), false);
+  assert.equal(verifiesFrozenCorrectionDateSource({
+    marker: { ...corrected.frozenCorrectionDateSource, sourceChecksum: "0".repeat(64) },
+    target: corrected.seal, source,
+  }), false);
+  assert.equal(verifiesFrozenCorrectionDateSource({
+    marker: corrected.frozenCorrectionDateSource,
+    target: { ...corrected.seal, snapshot: { ...corrected.seal.snapshot,
+      fechaPrimerPago: "2024-11-17" } }, source,
+  }), false);
+});
+
+test("rechaza una fecha imposible o mal formada incluso dentro de un sello íntegro", () => {
+  for (const invalidDate of ["2024-02-30", "2024-2-29", "2024-13-01"]) {
+    const { draft, source, seal } = signedImeiCorrectionCase("2024-02-29", invalidDate);
+    assert.equal(readFinancingTermsSeal(seal)?.checksum, seal.checksum);
+    assert.throws(() => buildFrozenDraftCorrection({
+      draft, source, folio: "FP-REEMITIDO", imei: "543210987654321",
+    }), /FIRMASEGURO_FIRST_PAYMENT_DATE_INVALID/);
+  }
+});
 
 test("cambiar IMEI y contacto vuelve a sellar identidad sin cambiar cifras, plazo ni fecha", () => {
   const amortizacion = calculateFrenchAmortization({

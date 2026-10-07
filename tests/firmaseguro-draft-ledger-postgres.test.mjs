@@ -125,6 +125,11 @@ async function fixture(t, options = {}) {
     "@/lib/credit-factory": {
       resolveActivationFirstPaymentDate: () => ({ dateKey: source.seal.snapshot.fechaPrimerPago }),
     },
+    "@/lib/firmaseguro-draft-frozen": {
+      readFrozenCorrectionDateSource: () => null,
+      verifiesFrozenCorrectionDateSource: () => false,
+    },
+    "@/lib/ventas-utils": { getTodayBogotaDateKey: () => "2026-10-07" },
     "@/lib/approval-operations-schema": { ensureApprovalOperationalSchema: async () => {} },
   }, { Error });
   const sourcePayload = { clienteDocumento: "100000001", fixture: "source",

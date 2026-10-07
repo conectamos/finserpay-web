@@ -40,7 +40,9 @@ import {
   serializeFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
 import { buildFirmaSeguroCreditPdf } from "@/lib/firmaseguro-folio-pdf";
-import { buildFrozenDraftCorrection } from "@/lib/firmaseguro-draft-frozen";
+import { buildFrozenDraftCorrection, readFrozenCorrectionDateSource,
+  type FrozenCorrectionDateSource } from "@/lib/firmaseguro-draft-frozen";
+import { getTodayBogotaDateKey } from "@/lib/ventas-utils";
 import {
   getPendingSignedDraftIdentityCorrection,
   recordSignedDraftIdentityCorrectionReissue,
@@ -234,12 +236,15 @@ function getDraftFirstPaymentDateState(
     signedFirstPaymentDate:
       signedSeal?.snapshot.fechaPrimerPago || processPayload.fechaPrimerPago,
   });
+  const frozenCorrectionReissue = Boolean(readFrozenCorrectionDateSource(
+    processPayload.firmaSeguroFrozenCorrectionDateSource, signedSeal));
 
   return {
     firstPaymentDate: resolution.signedDateKey,
     canonicalFirstPaymentDate: resolution.dateKey,
+    frozenCorrectionReissue,
     requiresFirstPaymentDateReissue:
-      !signedSeal || !resolution.signedDateMatches,
+      !signedSeal || (!frozenCorrectionReissue && !resolution.signedDateMatches),
   };
 }
 
@@ -752,6 +757,7 @@ async function requestDraftSignatureCore(
       let credit: CreditForFirmaSeguroPdf;
       let firstPaymentDateKey: string;
       let seal: ReturnType<typeof createFinancingTermsSeal>;
+      let frozenCorrectionDateSource: FrozenCorrectionDateSource | null = null;
       if (source && frozenCorrectionPending) {
         try {
           const nameCorrection = sourcePayload.firmaSeguroIdentityCorrectionPending === true
@@ -767,6 +773,7 @@ async function requestDraftSignatureCore(
           credit = frozen.credit;
           firstPaymentDateKey = frozen.firstPaymentDateKey;
           seal = frozen.seal;
+          frozenCorrectionDateSource = frozen.frozenCorrectionDateSource;
         } catch (error) {
           throw new CreditValidationError(
             error instanceof Error && error.message === "FIRMASEGURO_FIRST_PAYMENT_DATE_CHANGED"
@@ -793,6 +800,11 @@ async function requestDraftSignatureCore(
           parametros: built.financingParameters,
         });
       }
+      if (frozenCorrectionDateSource && firstPaymentDateKey < getTodayBogotaDateKey()) {
+        throw new CreditValidationError(
+          "La primera cuota del contrato firmado ya venció. Revisa las condiciones antes de reenviar la firma.",
+          409, "FIRMASEGURO_SIGNED_FIRST_PAYMENT_DATE_PAST");
+      }
       // Persist the exact values used to build the contract. Policy rules may
       // raise the minimum initial payment, so keeping the browser inputs here
       // would make the draft disagree with the signed seal and the remision.
@@ -806,8 +818,14 @@ async function requestDraftSignatureCore(
         fechaPrimerPago: firstPaymentDateKey,
       };
       delete payload.financialTermsSeal;
+      // This proof belongs only to the provider process; a browser autosave
+      // cannot claim that an ordinary draft may retain an old due date.
+      delete payload.firmaSeguroFrozenCorrectionDateSource;
       const firmaSeguroDraftPayload: Record<string, unknown> = { ...payload,
         financialTermsSeal: seal };
+      if (frozenCorrectionDateSource) {
+        firmaSeguroDraftPayload.firmaSeguroFrozenCorrectionDateSource = frozenCorrectionDateSource;
+      }
       if (imeiRetryProcess) {
         // Keep the audited correction lineage on the provider process only.
         // The draft itself keeps the pointer to the preceding failed process
