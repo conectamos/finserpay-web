@@ -14,7 +14,7 @@ function NavigationMenu({ label, items, active = false }: { label: string; items
   </div>;
 }
 
-export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale"}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests";}) {
+export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation"}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests";activeSection?:"operation"|"administration";}) {
   const operation: Item[] = [
     ...(admin ? [[adminCentral ? "Aprobaciones" : "Pendientes", adminCentral ? "/dashboard/aprobaciones" : "/dashboard/pendientes"]] as Item[] : []),
     ["Nueva venta", "/dashboard/creditos"], ["Solicitudes", "/dashboard/solicitudes"], ["Simulador", "/dashboard/creditos?mode=simulator"],
@@ -31,9 +31,9 @@ return (<header className={`${styles.topbar} ${variant === "requests" ? styles.r
       <Link href="/dashboard" aria-label="FINSER PAY, inicio" className={styles.brand}><FinserBrand dark accentPay wordmarkOnly={variant === "sale"} mini={variant === "requests"} showTagline={false} /></Link>
       <nav className={styles.navigation} aria-label="Navegación principal">
         <Link href="/dashboard">Inicio</Link>
-        <NavigationMenu label="Operación" items={operation} active />
+        <NavigationMenu label="Operación" items={operation} active={activeSection==="operation"} />
         {admin && <NavigationMenu label="Cartera" items={[["Resumen", "/dashboard/cartera"], ["Detalle de mora", "/dashboard/cartera/detalle-mora"], ["Riesgo por referencia", "/dashboard/riesgo-referencia"]]} />}
-        {admin && <NavigationMenu label="Administración" items={administration} />}
+        {admin && <NavigationMenu label="Administración" items={administration} active={activeSection==="administration"} />}
         {variant === "requests" && adminCentral && <NavigationMenu label="Integraciones" items={[["Integraciones", "/dashboard/integraciones"], ["Enrolamiento iPhone", "/dashboard/integraciones/enrolamiento-iphone"], ["Historial DataCrédito", "/dashboard/datacredito"], ["Liberar consultas", "/dashboard/datacredito/liberaciones"], ["Equality Zero Touch", "/dashboard/equality"]]} />}
       </nav>
       <div className={styles.account}>
