@@ -1,3 +1,4 @@
+import NewSalePlatformSelector from "./new-sale-platform-selector";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -17,6 +18,7 @@ import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
 type CreditPlatformSelectorProps = {
   admin: boolean;
   adminCentral: boolean;
+  isSupervisor?: boolean;
   androidHref: string;
   iphoneHref: string;
   mode?: "sale" | "simulator";
@@ -141,11 +143,13 @@ export default function CreditPlatformSelector({
   adminCentral,
   androidHref,
   iphoneHref,
+  isSupervisor,
   mode = "sale",
   nombreUsuario,
   rolUsuario,
 }: CreditPlatformSelectorProps) {
   const simulatorMode = mode === "simulator";
+  if (!simulatorMode) return <NewSalePlatformSelector admin={admin} adminCentral={adminCentral} isSupervisor={isSupervisor} androidHref={androidHref} iphoneHref={iphoneHref} nombreUsuario={nombreUsuario} rolUsuario={rolUsuario} />;
   const content = (
     <main className="min-w-0 bg-[#f4f5f3] text-[#15191d]">
       <header className="border-b border-[#dfe2e4] bg-white">

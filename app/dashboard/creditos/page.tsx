@@ -230,6 +230,7 @@ export default async function CreditosPage(props: {
     return (
       <CreditPlatformSelector
         admin={admin}
+        isSupervisor={sellerSession?.tipoPerfil === "SUPERVISOR"}
         adminCentral={adminCentral}
         androidHref={buildPlatformHref("android")}
         iphoneHref={buildPlatformHref("iphone")}

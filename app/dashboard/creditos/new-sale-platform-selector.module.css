@@ -1,0 +1,54 @@
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-500.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+.screen { min-height: 100vh; background: var(--fp-surface); color: var(--fp-graphite); font-family: "Finser Sale", Arial, sans-serif; }
+.topbar { height: 69px; padding: 0 max(24px, calc((100vw - 1380px) / 2)); display: grid; grid-template-columns: 250px 1fr 250px; align-items: center; background: linear-gradient(110deg, #252626, #1e2020); color: white; position: relative; z-index: 20; }
+.brand { width: fit-content; }
+.brand p { font-size: 28px; font-weight: 700; letter-spacing: .01em; color: white; }
+.brand p span { color: var(--fp-lime); }
+.navigation { display: flex; align-items: center; justify-content: center; gap: 54px; font-size: 17px; }
+.navigation > a, .navigation > div { display: flex; height: 69px; align-items: center; position: relative; }
+.active::after { content: ""; position: absolute; bottom: 0; left: -7px; right: -7px; height: 4px; background: var(--fp-lime); }
+.navLabel { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.navLabel svg { width: 12px; height: 12px; opacity: 0; }
+.navigation summary:hover .navLabel svg, .navigation summary:focus-visible .navLabel svg { opacity: 1; }
+.screen summary { list-style: none; }
+.screen summary::-webkit-details-marker { display: none; }
+.screen summary:focus-visible, .screen a:focus-visible { outline: 2px solid var(--fp-lime); outline-offset: 5px; }
+.navigation :global(.unused) { display: block; }
+.account { justify-self: end; }
+.account > div, .account > details { position: relative; }
+.account details > div { right: 0; left: auto; min-width: 240px; }
+.profile { display: grid !important; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.08); color: white; cursor: pointer; }
+.profile > svg { width: 25px !important; height: 25px !important; stroke-width: 1.5; }
+.identity { display: grid; gap: 4px; padding: 12px; border-bottom: 1px solid var(--fp-border); }
+.identity strong { font-size: 15px; }
+.identity span { font-size: 12px; color: var(--fp-muted); }
+.logout { color: var(--fp-graphite) !important; width: 100%; border-radius: var(--fp-radius-sm) !important; background: transparent !important; justify-content: flex-start !important; }
+.main { max-width: 1428px; padding: 0 24px 60px; margin: auto; }
+.routeRow { display: flex; align-items: center; justify-content: space-between; padding-top: 30px; font-size: 16px; }
+.breadcrumb { display: flex; align-items: center; gap: 18px; }
+.breadcrumb a { color: var(--fp-muted); }
+.breadcrumb > span:first-of-type { color: var(--fp-muted); }
+.back { min-height: 44px; display: inline-flex; align-items: center; gap: 12px; color: var(--fp-muted); }
+.back svg { width: 24px; height: 24px; stroke-width: 1.5; }
+.choice { padding-top: 61px; text-align: center; }
+.eyebrow { margin: 0; font-size: 14px; font-weight: 500; letter-spacing: .3em; text-transform: uppercase; color: var(--fp-lime); }
+.choice h1 { margin: 27px 0 6px; font-size: 50px; font-weight: 700; line-height: 1.18; letter-spacing: -.02em; color: #080a09; }
+.question { margin: 0; font-size: 28px; line-height: 1.4; color: #707174; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; max-width: 752px; margin: 51px auto 0; }
+.card { display: flex; flex-direction: column; align-items: center; height: 403px; padding: 24px 20px 35px; border: 1px solid var(--fp-border); border-radius: 27px; background: var(--fp-surface); box-shadow: 0 8px 28px rgba(20,25,20,.025); transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.card:hover, .card:focus-visible { border-color: var(--fp-lime); transform: translateY(-3px); box-shadow: 0 12px 32px rgba(41,65,20,.07); }
+.symbol { width: 248px; height: 248px; margin-top: 12px; object-fit: contain; }
+.card h2 { margin: 12px 0 12px; font-size: 28px; line-height: 1.2; font-weight: 700; color: #080a09; }
+.continue { display: flex; align-items: center; gap: 18px; font-size: 17px; color: #747578; }
+.continue svg { width: 25px; height: 25px; stroke-width: 1.4; }
+.secure { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 80px 0 0; font-size: 15px; color: #7a7c7e; }
+.secure svg { width: 20px; height: 20px; stroke-width: 1.7; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 1100px) { .topbar { grid-template-columns: 210px 1fr 60px; padding: 0 24px; } .navigation { gap: 24px; } .brand p { font-size: 24px; } }
+@media (max-width: 900px) { .navigation details { position: static; } .navigation details > div { left: 20px; right: 20px; top: 100%; min-width: 0; } .topbar { height: auto; min-height: 69px; grid-template-columns: 1fr 44px; padding: 12px 20px 0; gap: 4px 12px; } .navigation { grid-row: 2; grid-column: 1 / -1; justify-content: flex-start; gap: 24px; flex-wrap: wrap; font-size: 14px; } .navigation > a, .navigation > div { height: 48px; } .account { grid-column: 2; grid-row: 1; } .main { padding: 0 20px 40px; } .routeRow { padding-top: 20px; font-size: 14px; } .breadcrumb { gap: 12px; } .choice { padding-top: 40px; } .choice h1 { font-size: 34px; margin-top: 22px; } .question { font-size: 21px; } .cards { gap: 18px; margin-top: 36px; } .card { height: 320px; padding: 20px 10px; border-radius: 22px; } .symbol { width: 100%; max-width: 220px; height: 210px; } .card h2 { font-size: 24px; margin-top: 10px; } .continue { font-size: 15px; gap: 12px; } .secure { margin-top: 40px; } }
+@media (max-width: 500px) { .cards { grid-template-columns: 1fr; max-width: 330px; } .choice h1 { font-size: 30px; } .eyebrow { font-size: 12px; } .navLabel svg { display: none; } .navigation { gap: 18px; } }
+@media (prefers-reduced-motion: reduce) { .card { transition: none; } .card:hover, .card:focus-visible { transform: none; } }
+
+@media (min-width: 901px) { .card:first-child .symbol { width: 268px; object-fit: fill; } }
