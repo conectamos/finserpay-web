@@ -83,3 +83,12 @@ export function normalizeRiskReference(reference: string): string {
   const variant = iphone[2]?.replace(/PRO\s*MAX/, "PRO MAX");
   return `IPHONE ${iphone[1]}${variant ? ` ${variant}` : ""}`;
 }
+
+/** Explicit report correction requested for the legacy DIRECTO credit. */
+export function resolveRiskEquipment(equipment: { equipoMarca?: string | null; equipoModelo?: string | null; referenciaEquipo?: string | null }, displayNumber: string) {
+  if (displayNumber.trim() === "0100000217") return { referencia: "IPHONE 13", tipo: "IPHONE" as const };
+  return {
+    referencia: normalizeRiskReference(equipment.equipoModelo?.trim() || equipment.referenciaEquipo?.trim() || "Sin referencia"),
+    tipo: classifyRiskProduct(equipment),
+  };
+}
