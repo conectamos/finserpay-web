@@ -1,0 +1,80 @@
+.fp-client-dossier-page{min-height:100vh;background:var(--fp-bg);color:var(--fp-graphite)}
+.fp-client-dossier-page .fp-client-page-content{max-width:1600px;margin:auto;padding:32px 54px 48px;min-width:0}
+.fp-client-dossier-page .fp-client-lookup-search{display:grid;grid-template-columns:minmax(280px,1fr) minmax(450px,.9fr);gap:24px;align-items:center;padding:0;border:0;background:transparent;box-shadow:none;margin:0 0 24px}
+.fp-client-dossier-page .fp-client-page-title{font-size:38px;font-weight:800;letter-spacing:-.025em;line-height:1.2;margin:0}
+.fp-client-dossier-page .fp-client-lookup-command{display:flex;gap:12px;margin:0!important}
+.fp-client-dossier-page .fp-client-lookup-command input{height:56px;font-size:15px;background:white;border:1px solid var(--fp-border);border-radius:8px}
+.fp-client-dossier-page .fp-client-lookup-command button{min-height:56px;border-radius:8px}
+.fp-client-dossier-page .fp-client-lookup-command button:first-of-type{background:var(--fp-graphite);color:white;min-width:120px}
+.fp-client-dossier-page .fp-client-lookup-command button:last-child{min-width:44px}
+.fp-client-dossier-page .fp-client-lookup-result{margin:0;border:0;padding:0;background:transparent;overflow:visible}
+.fp-client-dossier-page .fp-client-lookup-result>div{margin-top:0}
+.fp-client-dossier-page .fp-client-dossier-hero{padding:24px 26px;border:1px solid var(--fp-border);border-radius:10px;box-shadow:var(--fp-shadow-sm);background:white}
+.fp-client-dossier-page .fp-client-dossier-hero::after{display:none}
+.fp-client-dossier-page .fp-client-dossier-top{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:24px}
+.fp-client-dossier-page .fp-client-dossier-person{display:grid;grid-template-columns:84px minmax(0,1fr);align-items:center;gap:20px}
+.fp-client-dossier-page .fp-client-dossier-photo{width:84px;height:84px;background:var(--fp-lime-soft);color:#275c16;border:0;font-size:30px}
+.fp-client-dossier-page .fp-client-dossier-hero h3{font-size:32px;margin:0;font-weight:800}
+.fp-client-dossier-page .fp-client-contact-grid{font-size:15px;font-weight:400;overflow-wrap:anywhere}
+.fp-client-dossier-page .fp-client-dossier-status{background:var(--fp-lime-soft);color:var(--fp-graphite);font-size:14px;border:0;padding:8px 16px;border-radius:24px;letter-spacing:0;text-transform:none}
+.fp-client-dossier-page .fp-client-action-primary{background:var(--fp-graphite);color:white;display:inline-flex;align-items:center;gap:10px;min-height:56px;border:1px solid var(--fp-graphite);border-radius:8px}
+.fp-client-dossier-page .fp-client-options summary{display:flex!important;align-items:center;justify-content:center;gap:12px;width:auto;height:56px;padding:0 20px;font-size:15px;font-weight:600;white-space:nowrap}
+.fp-client-dossier-page .fp-client-options>div{z-index:45}
+.fp-client-dossier-page .fp-client-options button{width:100%;text-align:left;padding:12px;white-space:normal;background:white}
+.fp-client-dossier-page .fp-client-dossier-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:0;border:1px solid var(--fp-border);border-radius:8px;margin-top:22px;overflow:visible}
+.fp-client-dossier-page .fp-client-dossier-summary>div{border:0!important;border-right:1px solid var(--fp-border)!important;border-radius:0;margin:16px 0;padding:0 26px!important;min-height:80px;min-width:0;background:transparent}
+.fp-client-dossier-page .fp-client-dossier-summary>div:last-child{border-right:0!important}
+.fp-client-dossier-page .fp-client-dossier-summary>div p:first-child{font-size:14px;text-transform:none;font-weight:400}
+.fp-client-dossier-page .fp-client-dossier-summary>div p:nth-child(2){font-size:25px;font-weight:800;margin-top:6px;line-height:1.25}
+.fp-client-dossier-page .fp-client-dossier-summary>div p:nth-child(3){font-size:14px}
+.fp-client-dossier-page .fp-client-dossier-workspace{margin-top:12px}
+.fp-client-dossier-page .fp-ui-tabs{background:transparent;border:0;border-bottom:1px solid var(--fp-border);border-radius:0;padding:0;gap:16px;overflow:auto;display:flex}
+.fp-client-dossier-page .fp-ui-tabs button{border:0;background:transparent;border-radius:0;min-height:56px;padding:12px 16px;font-weight:600;color:var(--fp-muted)}
+.fp-client-dossier-page .fp-ui-tabs button[aria-selected=true]{color:var(--fp-graphite);border-bottom:5px solid #65b83a}
+.fp-client-dossier-page .fp-client-credit-summary{padding:24px 26px;box-shadow:var(--fp-shadow-sm);border-color:var(--fp-border)}
+.fp-client-dossier-page .fp-client-credit-summary h4{font-size:26px;overflow-wrap:anywhere}
+.fp-client-dossier-page .fp-client-sadmin-pending{display:inline-flex;border:1px solid #ffe0a2;background:var(--fp-amber-soft);color:#88510b;font-size:12px;font-weight:700;border-radius:24px;padding:7px 16px;white-space:nowrap}
+.fp-client-dossier-page .fp-client-single-progress{margin-top:24px}
+.fp-client-dossier-page .fp-client-single-progress>div:first-child{display:none}
+.fp-client-dossier-page .fp-client-single-progress .fp-ui-progress-track{height:14px;background:#e9edef}
+.fp-client-dossier-page .fp-client-single-progress .fp-ui-progress-fill{background:#60b335}
+.fp-client-dossier-page .fp-client-progress-counts{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:14px;color:var(--fp-muted)}
+.fp-client-dossier-page .fp-client-credit-summary>.flex>span{display:none}
+.fp-client-dossier-page .fp-client-credit-summary .fp-ui-button.is-primary{background:white;color:var(--fp-graphite);border:1px solid var(--fp-border)}
+.fp-client-dossier-page .fp-client-credit-summary+aside{padding:24px 26px;border-color:var(--fp-border);box-shadow:var(--fp-shadow-sm)}
+.fp-client-dossier-page .fp-client-credit-summary+aside h4{font-size:23px;font-weight:800}
+.fp-client-dossier-page .fp-client-quick-actions{border:1px solid var(--fp-border);border-radius:8px;overflow:hidden;margin-top:20px}
+.fp-client-dossier-page .fp-client-quick-actions button{display:flex;align-items:center;gap:18px;width:100%;padding:20px;border:0;border-bottom:1px solid var(--fp-border);border-radius:0;margin:0;min-height:68px;font-size:15px;font-weight:400;background:white}
+.fp-client-dossier-page .fp-client-quick-actions button:last-child{border-bottom:0}
+.fp-client-dossier-page .fp-client-quick-actions svg{height:24px;width:24px;color:var(--fp-graphite)}
+.fp-client-dossier-page .fp-client-credit-summary+aside>div:last-child:not(.fp-client-quick-actions){display:none}
+.fp-client-management-dialog{width:min(560px,calc(100vw - 32px));max-height:90vh;overflow:auto;border:1px solid var(--fp-border);border-radius:12px;padding:24px;background:white;color:var(--fp-graphite);box-shadow:var(--fp-shadow-md)}
+.fp-client-management-dialog::backdrop{background:#10161788}
+.fp-client-management-dialog header{display:flex;justify-content:space-between;gap:16px;align-items:start;margin-bottom:18px}
+.fp-client-management-dialog h2{font-size:24px;font-weight:800}
+.fp-client-management-dialog header p{font-size:13px;color:var(--fp-muted);margin-top:8px}
+.fp-client-management-dialog header button{padding:8px 12px;border:1px solid var(--fp-border);border-radius:6px}
+.fp-client-management-controls>button{padding:12px;width:100%;border:1px solid #ffc9c9;border-radius:6px;color:var(--fp-danger);display:flex;align-items:center;gap:10px}
+.fp-client-management-controls input,.fp-client-management-controls select{width:100%}
+.fp-client-management-error{padding:12px;background:var(--fp-danger-soft);color:var(--fp-danger);margin-bottom:16px}
+.fp-client-management-notice{padding:12px;background:var(--fp-lime-soft);margin-bottom:16px}
+@media(max-width:1200px){.fp-client-dossier-page .fp-client-dossier-top{grid-template-columns:1fr}.fp-client-dossier-page .fp-client-page-content{padding:28px}.fp-client-dossier-page .fp-client-page-title{font-size:30px}}
+@media(max-width:850px){.fp-client-dossier-page .fp-client-lookup-search{grid-template-columns:1fr;gap:16px}.fp-client-dossier-page .fp-client-dossier-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}.fp-client-dossier-page .fp-client-dossier-summary>div:nth-child(2){border-right:0!important}.fp-client-dossier-page .fp-client-dossier-hero{padding:20px}.fp-client-dossier-page .fp-client-dossier-hero h3{font-size:26px}}
+@media(max-width:500px){.fp-client-dossier-page .fp-client-page-content{padding:20px 14px}.fp-client-dossier-page .fp-client-page-title{font-size:28px}.fp-client-dossier-page .fp-client-lookup-command{flex-wrap:wrap}.fp-client-dossier-page .fp-client-lookup-command>div{flex-basis:100%}.fp-client-dossier-page .fp-client-dossier-person{grid-template-columns:56px minmax(0,1fr);gap:12px}.fp-client-dossier-page .fp-client-dossier-photo{height:56px;width:56px;margin:0;font-size:23px}.fp-client-dossier-page .fp-client-dossier-top>div:last-child{flex-wrap:wrap}.fp-client-dossier-page .fp-client-dossier-summary>div{padding:0 12px!important}.fp-client-dossier-page .fp-client-dossier-summary>div p:nth-child(2){font-size:20px}.fp-client-dossier-page .fp-client-dossier-hero h3{font-size:23px}.fp-client-dossier-page .fp-client-options summary{padding:0 14px}.fp-client-dossier-page .fp-client-credit-summary,.fp-client-dossier-page .fp-client-credit-summary+aside{padding:20px}.fp-client-dossier-page .fp-ui-tabs{gap:0}}
+.fp-client-dossier-page .fp-client-single-progress{height:14px;background:#e9edef}
+.fp-client-dossier-page .fp-client-single-progress>span{background:#60b335}
+.fp-client-dossier-page{font-family:"Finser Sale",Arial,sans-serif}
+.fp-client-dossier-page .fp-client-lookup-command{border:0;padding:0;background:transparent;box-shadow:none}
+.fp-client-dossier-page .fp-client-dossier-status.is-danger{background:var(--fp-danger-soft);color:var(--fp-danger)}
+.fp-client-dossier-page .fp-client-consolidated-detail>summary{display:none}
+.fp-client-dossier-page .fp-client-consolidated-detail:not([open]){margin:0}
+.fp-client-dossier-page .fp-client-quick-actions{display:flex;flex-direction:column}
+.fp-client-dossier-page .fp-client-quick-actions button{border-radius:0!important}
+.fp-client-dossier-page .fp-client-credit-summary>.mt-5.grid>div{border-right:1px solid var(--fp-border)}
+.fp-client-dossier-page .fp-client-credit-summary>.mt-5.grid>div:last-child{border-right:0}
+@media(max-width:600px){.fp-client-dossier-page .fp-client-credit-summary>.mt-5.grid>div{border-right:0}}
+.fp-client-dossier-page .fp-client-dossier-hero{overflow:visible}
+.fp-client-dossier-page .fp-client-dossier-photo{box-shadow:none}
+.fp-client-dossier-page .fp-client-credit-summary{position:relative}
+.fp-client-dossier-page .fp-client-credit-summary>.flex>div .fp-ui-status{position:absolute;right:26px;top:24px}
+@media(max-width:600px){.fp-client-dossier-page .fp-client-credit-summary>.flex>div .fp-ui-status{position:static}}

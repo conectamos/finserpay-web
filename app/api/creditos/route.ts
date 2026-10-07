@@ -964,7 +964,7 @@ export async function GET(req: Request) {
           : "vendedor",
       search,
       items: items.map((item) => {
-        const serialized = withCreditDisplayNumber(serializeCredit(item, paymentMap), displayNumbers);
+        const serialized = { ...withCreditDisplayNumber(serializeCredit(item, paymentMap), displayNumbers), numeroSadmin: displayNumbers.get(item.id) || null };
         return admin ? serialized : redactCreditForNonAdmin(serialized);
       }),
     });

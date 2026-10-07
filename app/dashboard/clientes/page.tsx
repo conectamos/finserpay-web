@@ -1,17 +1,15 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
-import { CircleDollarSign, Plus } from "lucide-react";
+
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import CreditFactoryConsole from "@/app/dashboard/creditos/credit-factory-console";
-import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
-import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
-import { PageHeader } from "@/app/_components/finser-ui";
+import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
+import "./client-dossier.css";
 
 export const metadata = {
-  title: "Clientes y expedientes | FINSER PAY",
+  title: "Expediente del cliente | FINSER PAY",
   description:
     "Busca clientes, abre expedientes y consulta documentos firmados sin mezclar la fabrica de creditos",
 };
@@ -50,7 +48,7 @@ export default async function ClientesPage(props: {
       initialSession={session}
       initialSeller={sellerSession}
       view="lookup"
-      embeddedLookup={admin}
+      embeddedLookup
       initialSearch={initialSearch}
       initialSelectedId={
         Number.isInteger(initialSelectedId) && initialSelectedId > 0
@@ -60,56 +58,9 @@ export default async function ClientesPage(props: {
     />
   );
 
-  if (!admin) {
-    return lookupConsole;
-  }
-
-  const adminCentral = isFinserPayCentralAlly(session.aliadoAccesoCodigo);
-
-  return (
-    <div className="fp-client-page min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[228px_minmax(0,1fr)]">
-      <AdminSidebar
-        activeHref="/dashboard/clientes"
-        adminCentral={adminCentral}
-        nombreUsuario={session.nombre}
-        rolUsuario={session.rolNombre}
-      />
-
-      <div className="min-w-0">
-        <AdminWorkspaceTopbar
-          parent="Clientes"
-          current="Expediente"
-          userName={session.nombre}
-          userRole={session.rolNombre}
-        />
-
-      <main className="fp-client-page-content min-w-0 px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
-        <PageHeader
-          className="fp-client-page-header mb-5"
-          title="Clientes y expedientes"
-          actions={
-          <>
-            <Link
-              href="/dashboard/abonos"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#cbd5df] bg-white px-4 text-sm font-bold text-[#344054] transition hover:border-[#98a2b3] hover:bg-[#f9fafb]"
-            >
-              <CircleDollarSign className="h-4 w-4" strokeWidth={2} />
-              Recaudos
-            </Link>
-            <Link
-              href="/dashboard/creditos"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#347b30] px-4 text-sm font-bold text-white transition hover:bg-[#286326]"
-            >
-              <Plus className="h-4 w-4" strokeWidth={2.2} />
-              Nuevo credito
-            </Link>
-          </>
-          }
-        />
-
-        {lookupConsole}
-      </main>
-      </div>
-    </div>
-  );
+  const adminCentral = admin && isFinserPayCentralAlly(session.aliadoAccesoCodigo);
+  return <div className="fp-client-page fp-client-dossier-page">
+    <FinserNavigation variant="requests" admin={admin} adminCentral={adminCentral} isSupervisor={!admin} nombreUsuario={session.nombre} rolUsuario={session.rolNombre} />
+    <main className="fp-client-page-content">{lookupConsole}</main>
+  </div>;
 }

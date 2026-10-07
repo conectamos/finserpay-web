@@ -15,6 +15,8 @@ const factory = await jiti.import("../lib/credit-factory.ts");
 const paymentPlan = await jiti.import("../lib/credit-payment-plan.ts");
 const snapshots = await jiti.import("../lib/credit-factory-snapshot.ts");
 const imports = await jiti.import("../lib/credit-import-flags.ts");
+const massComponents = await jiti.import("../lib/mass-credit-financial-components.ts");
+const assignedSeller = await jiti.import("../lib/credit-assigned-seller.ts");
 const source = readFileSync(path.join(root, "app/api/creditos/[id]/command/route.ts"), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
@@ -81,6 +83,9 @@ async function executePlan(current, body, { abonos = [], amortized = false, role
     "@/lib/credit-payment-plan": paymentPlan,
     "@/lib/credit-factory-snapshot": snapshots,
     "@/lib/credit-import-flags": imports,
+    "@/lib/mass-credit-financial-components": massComponents,
+    "@/lib/credit-assigned-seller": assignedSeller,
+    "@/app/generated/prisma/client": { Prisma: { JsonNull: null } },
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
     "@/lib/credit-amortization-storage": { hasCreditAmortization: async () => amortized },
     "@/lib/roles": { isAdminRole: (value) => value === "ADMIN" },

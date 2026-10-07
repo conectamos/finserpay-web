@@ -1,5 +1,6 @@
 "use client";
 import {resolveSelectedPaymentAmount} from "@/lib/manual-payment-amount";
+import { creditReportSadmin, creditReportDocument } from "@/lib/credit-report-identifiers";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
@@ -19,7 +20,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleHelp,
-  CircleDollarSign,
+  CreditCard,
   Clock3,
   Download,
   FileText,
@@ -572,6 +573,7 @@ type WhatsAppOtpResponse = {
 type CreditItem = {
   id: number;
   folio: string;
+  numeroSadmin?: string | null;
   numeroCreditoVisible?: string;
   clienteNombre: string;
   clientePrimerNombre?: string | null;
@@ -1079,7 +1081,7 @@ function currency(value: number) {
 
 const paymentDisplayFormatter=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",minimumFractionDigits:0,maximumFractionDigits:20});
 function paymentDisplayCurrency(value:number){return paymentDisplayFormatter.format(Number(value||0));}
-function paymentDueDate(value:string){const date=parseColombiaDate(value)||new Date(value);return Number.isNaN(date.getTime())?"—":new Intl.DateTimeFormat("es-CO",{day:"2-digit",month:"2-digit",year:"numeric",timeZone:"America/Bogota"}).format(date);}
+function paymentDueDate(value:string | null | undefined){if(!value)return "—";const date=parseColombiaDate(value)||new Date(value);return Number.isNaN(date.getTime())?"—":new Intl.DateTimeFormat("es-CO",{day:"2-digit",month:"2-digit",year:"numeric",timeZone:"America/Bogota"}).format(date);}
 
 function exactCurrency(value: number) {
   return copExactCurrencyFormatter.format(Number(value || 0));
@@ -3050,6 +3052,12 @@ export default function CreditFactoryConsole({
   >("summary");
   const [showSearchResults, setShowSearchResults] = useState(true);
   const [showLookupDetail, setShowLookupDetail] = useState(false);
+  const [showCreditManagement, setShowCreditManagement] = useState(false);
+  const creditManagementRef = useRef<HTMLDialogElement | null>(null);
+  useEffect(() => {
+    if (showCreditManagement) creditManagementRef.current?.showModal();
+    else creditManagementRef.current?.close();
+  }, [showCreditManagement]);
   const [documentRenderDate, setDocumentRenderDate] = useState("");
   const [documentRenderDateTime, setDocumentRenderDateTime] = useState("");
   const selectedCreditPanelRef = useRef<HTMLDivElement | null>(null);
@@ -3421,6 +3429,19 @@ export default function CreditFactoryConsole({
   const selectedCreditCommercialInstallment = Number(
     selectedCredit?.valorCuotaComercial ?? selectedCredit?.valorCuota ?? 0
   );
+  useEffect(() => {
+    const document = String(selectedCredit?.clienteDocumento || "").trim();
+    if (!clientLookupMode || !document) return;
+    let cancelled = false;
+    const params = new URLSearchParams({ search: document, take: "50" });
+    void requestJson<CreditListResponse>("/api/creditos?" + params.toString()).then(result => {
+      if (cancelled) return;
+      if (!result.ok) { setNotice({ tone: "red", text: result.data?.error || "No se pudieron consultar los otros créditos del cliente." }); return; }
+      const items = result.data.items.filter(item => creditReportDocument(item.clienteDocumento) === creditReportDocument(document));
+      setCredits(previous => [...new Map([...items, ...previous].map(item => [item.id, item])).values()]);
+    }).catch(error => { if (!cancelled) setNotice({ tone: "red", text: error instanceof Error ? error.message : "No se pudieron cargar los créditos del cliente." }); });
+    return () => { cancelled = true; };
+  }, [clientLookupMode, selectedCredit?.clienteDocumento, activeSearch]);
   const sameClientCredits = useMemo(() => {
     if (!selectedCredit) {
       return [];
@@ -3472,12 +3493,7 @@ export default function CreditFactoryConsole({
     (total, item) => total + item.totalAbonado,
     0
   );
-  const clientPrimaryStatus =
-    selectedCredit?.saldoPendiente && selectedCredit.saldoPendiente > 0
-      ? "Con saldo"
-      : selectedCredit?.pazYSalvoEmitidoAt
-        ? "Paz y salvo"
-        : selectedCredit?.estado || "Activo";
+  const clientPrimaryStatus = selectedCredit?.estado === "ANULADO" ? "Anulado" : selectedCredit?.estadoPago === "MORA" ? "En mora" : selectedCredit?.estadoPago === "PAGADO" ? "Pagado" : "Al día";
   const accessProfileLabel = canSeeInternalPricing
     ? "Admin central"
     : canAdmin
@@ -3504,7 +3520,7 @@ export default function CreditFactoryConsole({
     : "-";
   const selectedCreditDocumentLabel = selectedCredit
     ? `${humanizeConstant(selectedCredit.clienteTipoDocumento || "CC")} ${
-        selectedCredit.clienteDocumento || "Sin documento"
+        creditReportDocument(selectedCredit.clienteDocumento) || "Sin documento"
       }`
     : "-";
   const selectedCreditGenderLabel = selectedCredit
@@ -7169,6 +7185,7 @@ export default function CreditFactoryConsole({
 
     if (clientLookupMode) {
       setClientDossierTab("summary");
+      setShowCreditManagement(false);
     }
 
     setNextDueDate(dateOnly(selectedCredit.fechaProximoPago));
@@ -12872,6 +12889,7 @@ export default function CreditFactoryConsole({
                 : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
+          {clientLookupMode ? <h1 className="fp-client-page-title">Expediente del cliente</h1> : null}
           {!clientLookupMode ? (
             <div
               className={[
@@ -12955,7 +12973,7 @@ export default function CreditFactoryConsole({
                     ? "Cedula o IMEI"
                     : paymentsView
                       ? "Cédula, teléfono, número de crédito o IMEI"
-                      : "Cédula, teléfono, nombre, número de crédito o IMEI"
+                      : "Cédula, nombre, crédito Sadmin o IMEI"
                 }
                 className={[
                   "w-full border bg-white py-3 pl-11 pr-4 text-base text-slate-900 outline-none transition focus:border-[#7ca613] focus:ring-4 focus:ring-[#b7e63d]/20",
@@ -12985,7 +13003,7 @@ export default function CreditFactoryConsole({
                   ? "Consultar"
                   : adminFactoryAssistMode
                     ? "Buscar caso"
-                    : paymentsView
+                    : paymentsView || clientLookupMode
                       ? "Buscar"
                       : "Buscar cliente"}
             </button>
@@ -19182,26 +19200,17 @@ export default function CreditFactoryConsole({
                                 className="h-full w-full object-cover"
                               />
                             ) : (
-                              String(
-                                selectedCredit.clientePrimerNombre ||
-                                  selectedCredit.clienteNombre ||
-                                  "C"
-                              )
-                                .trim()
-                                .charAt(0)
-                                .toUpperCase()
+                              selectedCredit.clienteNombre.trim().split(/\s+/).slice(0, 2).map(part => part.charAt(0)).join("").toUpperCase()
                             )}
                           </div>
 
                           <div className="min-w-0">
-                            <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#8a6a24]">
-                              Expediente activo
-                            </p>
+
                             <div className="flex flex-wrap items-center gap-3">
                               <h3 className="mt-2 max-w-3xl break-words text-2xl font-black leading-tight tracking-normal text-slate-950 sm:text-3xl">
                                 {selectedCredit.clienteNombre}
                               </h3>
-                              <span className="fp-client-dossier-status">
+                              <span className={`fp-client-dossier-status ${selectedCredit.estadoPago === "MORA" || selectedCredit.estado === "ANULADO" ? "is-danger" : ""}`}>
                                 {clientPrimaryStatus}
                               </span>
                             </div>
@@ -19220,17 +19229,18 @@ export default function CreditFactoryConsole({
                             href={buildCreditPaymentHref(selectedCredit)}
                             className="fp-client-action-primary rounded-lg px-6 py-3 text-sm font-black"
                           >
-                            <CircleDollarSign className="h-4 w-4" strokeWidth={2} />
+                            <CreditCard className="h-4 w-4" strokeWidth={2} />
                             Registrar abono
                           </Link>
                           <details className="fp-client-options relative">
                             <summary
                               className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-lg border border-[#d8dee5] bg-white text-[#344054] [&::-webkit-details-marker]:hidden"
-                              aria-label="Mas acciones del expediente"
+                              aria-label="Gestionar crédito"
                             >
-                              <MoreHorizontal className="h-5 w-5" strokeWidth={2} />
+                              Gestionar crédito <ChevronDown className="h-5 w-5" strokeWidth={2} />
                             </summary>
                             <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-[#d8dee5] bg-white p-2 shadow-[0_16px_40px_rgba(16,24,40,0.14)]">
+                              {(canAdmin || canSupervisor) ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowCreditManagement(true); }}>Fechas, plan y bloqueo</button> : null}
                               <button type="button" onClick={() => createNewSaleFromClient()} disabled={!selectedCreditCanCreateNewCredit} title={selectedCreditNewCreditTitle}>
                                 Crear nuevo credito
                               </button>
@@ -19260,19 +19270,20 @@ export default function CreditFactoryConsole({
 
                       <div className="fp-client-dossier-summary mt-6 grid lg:grid-cols-[1fr_1fr_1fr_1.35fr]">
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
-                          <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo del credito</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{currency(selectedCredit.saldoPendiente)}</p>
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Saldo del crédito</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{paymentDisplayCurrency(selectedCredit.saldoPendiente)}</p>
                           <p className="mt-1 text-xs text-slate-500">{selectedCreditPaymentStatusLabel}</p>
                         </div>
+
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
-                          <p className="text-[11px] font-semibold uppercase text-slate-500">Cuotas pagas</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCredit.cuotasPagadas || 0}</p>
-                          <p className="mt-1 text-xs text-slate-500">{formatPercent(selectedCreditPaidPercent)} pagado</p>
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Próxima cuota</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{paymentDisplayCurrency(selectedCreditCommercialInstallment)}</p>
+                          <p className="mt-1 text-xs text-slate-500">{paymentDueDate(selectedCredit.fechaProximoPago)}</p>
                         </div>
                         <div className="border-b border-slate-200 px-4 py-3 sm:border-b-0 sm:border-r">
-                          <p className="text-[11px] font-semibold uppercase text-slate-500">Proxima cuota</p>
-                          <p className="mt-1 break-words text-base font-black text-slate-950">{currency(selectedCreditCommercialInstallment)}</p>
-                          <p className="mt-1 text-xs text-slate-500">{dateOnly(selectedCredit.fechaProximoPago)}</p>
+                          <p className="text-[11px] font-semibold uppercase text-slate-500">Cuotas pagadas</p>
+                          <p className="mt-1 break-words text-base font-black text-slate-950">{selectedCredit.cuotasPagadas || 0} de {selectedCreditInstallmentTotal}</p>
+                          <p className="mt-1 text-xs text-slate-500">{selectedCredit.cuotasPendientes || 0} pendientes</p>
                         </div>
                         <div className="px-4 py-3">
                           <p className="text-[11px] font-semibold uppercase text-slate-500">Equipo / ref / IMEI</p>
@@ -19292,7 +19303,7 @@ export default function CreditFactoryConsole({
                     <Tabs aria-label="Secciones del expediente">
                       {[
                         ["summary", "Resumen"],
-                        ["credits", "Creditos"],
+                        ["credits", "Créditos"],
                         ["documents", "Documentos"],
                         ["history", "Historial"],
                       ].map(([value, label]) => (
@@ -19319,14 +19330,15 @@ export default function CreditFactoryConsole({
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <h4 className="text-xl font-black text-[#151a21]">
-                                  Credito {creditDisplayNumber(selectedCredit)}
+                                  {creditReportSadmin(selectedCredit) ? "Sadmin: " + creditReportSadmin(selectedCredit) : "Crédito"}
                                 </h4>
+                                {!creditReportSadmin(selectedCredit) ? <span className="fp-client-sadmin-pending">PENDIENTE SADMIN</span> : null}
                                 <span className="fp-ui-status is-positive">
-                                  {selectedCredit.deliverableReady ? "Entregable" : selectedCredit.estado}
+                                  {selectedCredit.estado}
                                 </span>
                               </div>
                               <p className="mt-1 text-sm font-semibold text-[#667085]">
-                                {selectedCreditEquipmentLabel} · {selectedCredit.sede.nombre}
+                                Folio interno: {selectedCredit.folio}
                               </p>
                             </div>
                             <span className="text-sm font-bold text-[#667085]">
@@ -19334,51 +19346,28 @@ export default function CreditFactoryConsole({
                             </span>
                           </div>
 
-                          <div className="fp-client-installment-track mt-6" aria-label="Progreso de cuotas">
-                            {Array.from(
-                              { length: selectedCreditInstallmentTotal },
-                              (_, index) => index + 1
-                            ).map((number) => {
-                              const paid = number <= Number(selectedCredit.cuotasPagadas || 0);
-                              const next = number === Number(selectedCredit.cuotasPagadas || 0) + 1;
-
-                              return (
-                                <span
-                                  key={`client-installment-${number}`}
-                                  className={paid ? "is-paid" : next ? "is-next" : "is-pending"}
-                                  title={paid ? `Cuota ${number} pagada` : next ? `Cuota ${number}, siguiente` : `Cuota ${number} pendiente`}
-                                >
-                                  {paid ? <Check className="h-3 w-3" strokeWidth={3} /> : number}
-                                </span>
-                              );
-                            })}
-                          </div>
-
-                          <ProgressBar
-                            value={selectedCreditPaidPercent}
-                            label={`Credito pagado al ${formatPercent(selectedCreditPaidPercent)}`}
-                            className="mt-5"
-                          />
+                          <ProgressBar value={100 * Number(selectedCredit.cuotasPagadas || 0) / selectedCreditInstallmentTotal} label="Cuotas pagadas" className="fp-client-single-progress mt-6" />
+                          <div className="fp-client-progress-counts"><span>{selectedCredit.cuotasPagadas || 0} cuotas pagadas</span><span>{selectedCredit.cuotasPendientes || 0} pendientes</span></div>
 
                           <div className="mt-5 grid gap-3 border-t border-[#e5e9ee] pt-5 sm:grid-cols-3">
                             <div className="flex items-start gap-3">
                               <CalendarDays className="mt-0.5 h-5 w-5 text-[#667085]" strokeWidth={1.8} />
                               <div>
-                                <p className="text-xs font-semibold text-[#667085]">Fecha de apertura</p>
-                                <p className="mt-1 text-sm font-black text-[#151a21]">{dateOnly(selectedCredit.fechaCredito)}</p>
+                                <p className="text-xs font-semibold text-[#667085]">Apertura</p>
+                                <p className="mt-1 text-sm font-black text-[#151a21]">{paymentDueDate(selectedCredit.fechaCredito)}</p>
                               </div>
                             </div>
                             <div className="flex items-start gap-3">
                               <Clock3 className="mt-0.5 h-5 w-5 text-[#667085]" strokeWidth={1.8} />
                               <div>
-                                <p className="text-xs font-semibold text-[#667085]">Proximo pago</p>
-                                <p className="mt-1 text-sm font-black text-[#151a21]">{dateOnly(selectedCredit.fechaProximoPago)}</p>
+                                <p className="text-xs font-semibold text-[#667085]">Próximo pago</p>
+                                <p className="mt-1 text-sm font-black text-[#151a21]">{paymentDueDate(selectedCredit.fechaProximoPago)}</p>
                               </div>
                             </div>
                             <div className="flex items-start gap-3">
                               <ShieldCheck className="mt-0.5 h-5 w-5 text-[#5c7a13]" strokeWidth={1.8} />
                               <div>
-                                <p className="text-xs font-semibold text-[#667085]">Documentos</p>
+                                <p className="text-xs font-semibold text-[#667085]">Documentación</p>
                                 <p className="mt-1 text-sm font-black text-[#4f6f0c]">{selectedCreditDocumentsStatus}</p>
                               </div>
                             </div>
@@ -19387,21 +19376,20 @@ export default function CreditFactoryConsole({
                           <div className="mt-5 flex flex-wrap gap-2">
                             <button type="button" onClick={() => openLookupDetail(selectedCredit.id)} className="fp-ui-button is-primary">
                               <FileText className="h-4 w-4" strokeWidth={1.8} />
-                              Ver credito
+                              Ver crédito
                             </button>
                             <button type="button" onClick={() => downloadPlanPagos()} className="fp-ui-button is-secondary">
                               <CalendarDays className="h-4 w-4" strokeWidth={1.8} />
                               Plan de pagos
                             </button>
-                            <button type="button" onClick={() => setClientDossierTab("documents")} className="fp-ui-button is-secondary">
-                              <FileText className="h-4 w-4" strokeWidth={1.8} />
-                              Documentos
-                            </button>
+
                           </div>
 
                           <details
                             key={`client-factory-summary-${selectedCredit.id}`}
-                            className="group/factory-summary mt-5"
+                            open={showLookupDetail}
+                            onToggle={(event) => { if (event.currentTarget.open !== showLookupDetail) setShowLookupDetail(event.currentTarget.open); }}
+                            className="fp-client-consolidated-detail group/factory-summary mt-5"
                           >
                             <summary className="fp-ui-button is-secondary w-fit cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                               <FileText className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
@@ -19553,7 +19541,7 @@ export default function CreditFactoryConsole({
                         </section>
 
                         <aside className="rounded-lg border border-[#d8dee5] bg-white p-5 shadow-[0_4px_14px_rgba(16,24,40,0.05)]">
-                          <h4 className="text-base font-black text-[#151a21]">Acciones rapidas</h4>
+                          <h4 className="text-base font-black text-[#151a21]">Documentos y consultas</h4>
                           <div className="fp-client-quick-actions mt-4 space-y-2">
                             <button type="button" onClick={() => downloadPlanPagos()}>
                               <CalendarDays className="h-4 w-4" strokeWidth={1.8} />
@@ -19570,7 +19558,94 @@ export default function CreditFactoryConsole({
                               {firmaSeguroRefreshing ? "Consultando FirmaSeguro" : "Ver FirmaSeguro"}
                               <ChevronRight className="ml-auto h-4 w-4" strokeWidth={1.8} />
                             </button>
-                            {(canAdmin || canSupervisor) ? (
+                          </div>
+                          <div className="mt-5 border-t border-[#e5e9ee] pt-5">
+                            <div className="flex items-start gap-3 rounded-lg border border-[#c9df91] bg-[#f7fbe9] p-4">
+                              <ShieldCheck className="h-6 w-6 shrink-0 text-[#5c7a13]" strokeWidth={1.8} />
+                              <div>
+                                <p className="text-sm font-black text-[#4f6f0c]">Firma digital</p>
+                                <p className="mt-1 text-xs leading-5 text-[#667085]">{selectedCreditDocumentsStatus}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </aside>
+                      </div>
+                    ) : null}
+
+                    {clientDossierTab === "credits" ? (
+                      <section className="mt-4 space-y-3">
+                        {sameClientCredits.map((credit) => (
+                          <article key={`client-credit-${credit.id}`} className="flex flex-col gap-4 rounded-lg border border-[#d8dee5] bg-white p-5 shadow-[0_4px_14px_rgba(16,24,40,0.04)] sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <h4 className="font-black text-[#151a21]">{creditReportSadmin(credit) ? `Sadmin: ${creditReportSadmin(credit)}` : "PENDIENTE SADMIN"}</h4><p className="text-sm text-[#667085]">Folio interno: {credit.folio}</p>
+                              <p className="mt-1 text-sm text-[#667085]">{credit.referenciaEquipo || "Equipo sin referencia"} · Saldo {paymentDisplayCurrency(credit.saldoPendiente)}</p>
+                            </div>
+                            <button type="button" onClick={() => { setSelectedId(credit.id); setShowLookupDetail(false); setClientDossierTab("summary"); }} className="fp-ui-button is-secondary">
+                              Ver expediente
+                            </button>
+                          </article>
+                        ))}
+                      </section>
+                    ) : null}
+
+                    {clientDossierTab === "documents" ? (
+                      <section className="mt-4 space-y-5">
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        {[
+                          ["Expediente PDF", () => downloadExpedientePdf()],
+                          ["Plan de pagos", () => downloadPlanPagos()],
+                          ["Documento FirmaSeguro", () => void openFirmaSeguroSignedDocument()],
+                          ["Paz y salvo", () => downloadPazYSalvo()],
+                        ].map(([label, action], index) => (
+                          <button
+                            key={String(label)}
+                            type="button"
+                            onClick={action as () => void}
+                            disabled={(index === 2 && firmaSeguroRefreshing) || (index === 3 && selectedCredit.saldoPendiente > 0)}
+                            className="flex min-h-28 flex-col items-start justify-between rounded-lg border border-[#d8dee5] bg-white p-4 text-left font-black text-[#151a21] shadow-[0_4px_14px_rgba(16,24,40,0.04)] transition hover:border-[#aab4bf] disabled:opacity-50"
+                          >
+                            <FileText className="h-5 w-5 text-[#5c7a13]" strokeWidth={1.8} />
+                            {String(label)}
+                          </button>
+                        ))}
+                        </div>
+                        <CreditEvidenceGallery
+                          creditId={selectedCredit.id}
+                          clientName={selectedCredit.clienteNombre}
+                        />
+                      </section>
+                    ) : null}
+
+                    {clientDossierTab === "history" ? (
+                      <details className="group mt-4 rounded-lg border border-[#d8dee5] bg-white shadow-[0_4px_14px_rgba(16,24,40,0.04)]">
+                        <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-5 font-black text-[#151a21] [&::-webkit-details-marker]:hidden">
+                          <History className="h-5 w-5" strokeWidth={1.8} />
+                          Historial de creditos ({sameClientCredits.length})
+                          <ChevronRight className="ml-auto h-5 w-5 transition group-open:rotate-90" strokeWidth={1.8} />
+                        </summary>
+                        <div className="divide-y divide-[#e5e9ee] border-t border-[#e5e9ee]">
+                          {sameClientCredits.map((credit) => (
+                            <div key={`client-history-${credit.id}`} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="font-bold text-[#151a21]">{creditDisplayNumber(credit)} · {credit.estado}</p>
+                                <p className="mt-1 text-sm text-[#667085]">Abierto {paymentDueDate(credit.fechaCredito)} · {paymentDisplayCurrency(credit.saldoPendiente)} pendiente</p>
+                              </div>
+                              <button type="button" onClick={() => openLookupDetail(credit.id)} className="fp-ui-button is-ghost">
+                                Abrir
+                                <ChevronRight className="h-4 w-4" strokeWidth={1.8} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {clientLookupMode && showCreditManagement && (canAdmin || canSupervisor) ? <dialog ref={creditManagementRef} className="fp-client-management-dialog" aria-labelledby="credit-management-title" onCancel={() => setShowCreditManagement(false)} onClose={() => setShowCreditManagement(false)}>
+                  <header><div><h2 id="credit-management-title">Gestionar crédito</h2><p>{creditReportSadmin(selectedCredit) ? "Sadmin: " + creditReportSadmin(selectedCredit) : "PENDIENTE SADMIN"} · {selectedCredit.clienteNombre}</p></div><button type="button" autoFocus onClick={() => setShowCreditManagement(false)} aria-label="Cerrar gestión">Cerrar</button></header>
+                  {notice ? <p role="status" className={notice.tone === "red" ? "fp-client-management-error" : "fp-client-management-notice"}>{notice.text}</p> : null}
+                  <div className="fp-client-management-controls">                            {(canAdmin || canSupervisor) ? (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -19596,7 +19671,6 @@ export default function CreditFactoryConsole({
                                 <ChevronRight className="ml-auto h-4 w-4" strokeWidth={1.8} />
                               </button>
                             ) : null}
-                          </div>
                           {canAdmin ? (
                             <div className="mt-4 space-y-4 rounded-lg border border-[#d8dee5] bg-[#f8fafb] p-4">
                               <div>
@@ -19614,7 +19688,7 @@ export default function CreditFactoryConsole({
                                 </label>
                                 <button
                                   type="button"
-                                  onClick={() => void runCommand("update-due-date")}
+                                  onClick={() => { if (window.confirm("¿Confirmas actualizar la fecha de pago de este crédito?")) void runCommand("update-due-date"); }}
                                   disabled={!nextDueDate || runningCommand !== null}
                                   className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#111820] bg-[#111820] px-4 text-sm font-black text-white transition hover:bg-[#05070a] disabled:cursor-not-allowed disabled:border-[#d0d5dd] disabled:bg-[#e5e9ee] disabled:text-[#8a95a3]"
                                 >
@@ -19683,88 +19757,8 @@ export default function CreditFactoryConsole({
                               </div>
                             </div>
                           ) : null}
-                          <div className="mt-5 border-t border-[#e5e9ee] pt-5">
-                            <div className="flex items-start gap-3 rounded-lg border border-[#c9df91] bg-[#f7fbe9] p-4">
-                              <ShieldCheck className="h-6 w-6 shrink-0 text-[#5c7a13]" strokeWidth={1.8} />
-                              <div>
-                                <p className="text-sm font-black text-[#4f6f0c]">Firma digital</p>
-                                <p className="mt-1 text-xs leading-5 text-[#667085]">{selectedCreditDocumentsStatus}</p>
-                              </div>
-                            </div>
-                          </div>
-                        </aside>
-                      </div>
-                    ) : null}
-
-                    {clientDossierTab === "credits" ? (
-                      <section className="mt-4 space-y-3">
-                        {sameClientCredits.map((credit) => (
-                          <article key={`client-credit-${credit.id}`} className="flex flex-col gap-4 rounded-lg border border-[#d8dee5] bg-white p-5 shadow-[0_4px_14px_rgba(16,24,40,0.04)] sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <h4 className="font-black text-[#151a21]">Credito {creditDisplayNumber(credit)}</h4>
-                              <p className="mt-1 text-sm text-[#667085]">{credit.referenciaEquipo || "Equipo sin referencia"} · Saldo {currency(credit.saldoPendiente)}</p>
-                            </div>
-                            <button type="button" onClick={() => openLookupDetail(credit.id)} className="fp-ui-button is-secondary">
-                              Ver expediente
-                            </button>
-                          </article>
-                        ))}
-                      </section>
-                    ) : null}
-
-                    {clientDossierTab === "documents" ? (
-                      <section className="mt-4 space-y-5">
-                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        {[
-                          ["Expediente PDF", () => downloadExpedientePdf()],
-                          ["Plan de pagos", () => downloadPlanPagos()],
-                          ["Documento FirmaSeguro", () => void openFirmaSeguroSignedDocument()],
-                          ["Paz y salvo", () => downloadPazYSalvo()],
-                        ].map(([label, action], index) => (
-                          <button
-                            key={String(label)}
-                            type="button"
-                            onClick={action as () => void}
-                            disabled={(index === 2 && firmaSeguroRefreshing) || (index === 3 && selectedCredit.saldoPendiente > 0)}
-                            className="flex min-h-28 flex-col items-start justify-between rounded-lg border border-[#d8dee5] bg-white p-4 text-left font-black text-[#151a21] shadow-[0_4px_14px_rgba(16,24,40,0.04)] transition hover:border-[#aab4bf] disabled:opacity-50"
-                          >
-                            <FileText className="h-5 w-5 text-[#5c7a13]" strokeWidth={1.8} />
-                            {String(label)}
-                          </button>
-                        ))}
-                        </div>
-                        <CreditEvidenceGallery
-                          creditId={selectedCredit.id}
-                          clientName={selectedCredit.clienteNombre}
-                        />
-                      </section>
-                    ) : null}
-
-                    {clientDossierTab === "history" ? (
-                      <details className="group mt-4 rounded-lg border border-[#d8dee5] bg-white shadow-[0_4px_14px_rgba(16,24,40,0.04)]">
-                        <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-5 font-black text-[#151a21] [&::-webkit-details-marker]:hidden">
-                          <History className="h-5 w-5" strokeWidth={1.8} />
-                          Historial de creditos ({sameClientCredits.length})
-                          <ChevronRight className="ml-auto h-5 w-5 transition group-open:rotate-90" strokeWidth={1.8} />
-                        </summary>
-                        <div className="divide-y divide-[#e5e9ee] border-t border-[#e5e9ee]">
-                          {sameClientCredits.map((credit) => (
-                            <div key={`client-history-${credit.id}`} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                              <div>
-                                <p className="font-bold text-[#151a21]">{creditDisplayNumber(credit)} · {credit.estado}</p>
-                                <p className="mt-1 text-sm text-[#667085]">Abierto {dateOnly(credit.fechaCredito)} · {currency(credit.saldoPendiente)} pendiente</p>
-                              </div>
-                              <button type="button" onClick={() => openLookupDetail(credit.id)} className="fp-ui-button is-ghost">
-                                Abrir
-                                <ChevronRight className="h-4 w-4" strokeWidth={1.8} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    ) : null}
-                  </div>
-                ) : null}
+</div>
+                </dialog> : null}
 
                 {lookupMode && (!showLookupDetail || clientLookupMode) ? (
                   clientLookupMode ? null : (
