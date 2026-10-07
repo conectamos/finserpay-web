@@ -49,7 +49,7 @@ export default function PaymentReportView(props:Props){
           return <tr key={item.id} className={annulled?styles.annulled:undefined}>
             <td data-label="Fecha"><strong>{date}</strong><small>{time}</small></td>
             <td data-label="Cliente"><strong>{item.credito.clienteNombre}</strong><small>CC {creditReportDocument(item.credito.clienteDocumento)||"Sin documento"}</small></td>
-            <td data-label="Crédito Sadmin">{sadmin?<strong>{sadmin}</strong>:<span className={styles.pending}>PENDIENTE SADMIN</span>}<small>Folio: {item.credito.folio}</small></td>
+            <td data-label="Crédito Sadmin">{sadmin?<strong>{sadmin}</strong>:<span className={styles.pending}>PENDIENTE</span>}</td>
             <td data-label="Origen"><strong>{item.sede.aliado?.nombre||"Sin aliado"}</strong><small>{item.sede.nombre}</small><small>Responsable: {paymentReportCollector(item)}</small></td>
             <td data-label="Método"><Method value={item.metodoPago}/></td>
             <td data-label="Valor" className={styles.money}><strong>{money(item.valor)}</strong></td>
