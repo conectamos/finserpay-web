@@ -13,6 +13,7 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
+import { sendDaptaWelcome } from "@/lib/dapta-welcome";
 import { creditNumberSearchWhere, getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 import {
   calculateFinancedBalance,
@@ -3819,6 +3820,20 @@ export async function POST(req: Request) {
     veriffValidation = creationResult.veriffValidation;
     createdCreditId = created.id;
     const serializedCreated = serializeCredit(created);
+
+    // Only newly committed credits reach this point. A welcome failure must
+    // never roll back or change the outcome of the customer's credit.
+    const welcomeResult = await sendDaptaWelcome({
+      creditId: created.id,
+      phone: created.clienteTelefono,
+      name: created.clienteNombre,
+    });
+    if (welcomeResult === "failed" || welcomeResult === "invalid_contact") {
+      console.error("[dapta-welcome] Credit welcome could not be sent.", {
+        creditId: created.id,
+        reason: welcomeResult,
+      });
+    }
 
     return NextResponse.json({
       ok: true,
