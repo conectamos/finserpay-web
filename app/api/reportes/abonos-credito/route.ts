@@ -308,7 +308,6 @@ export async function GET(req: Request) {
       orderBy: {
         fechaAbono: "desc",
       },
-      take: 500,
     });
 
     const displayNumbers = await getCreditDisplayNumbers(abonos.map(item => item.credito.id));
@@ -324,7 +323,10 @@ export async function GET(req: Request) {
         anuladoAt: item.anuladoAt?.toISOString() || null,
         anulacionMotivo: item.anulacionMotivo || null,
         fechaAbono: item.fechaAbono.toISOString(),
-        credito: withCreditDisplayNumber(item.credito, displayNumbers),
+        credito: {
+          ...withCreditDisplayNumber(item.credito, displayNumbers),
+          numeroSadmin: displayNumbers.get(item.credito.id) || null,
+        },
         usuario: item.usuario,
         vendedor: digitalCollection
           ? {
