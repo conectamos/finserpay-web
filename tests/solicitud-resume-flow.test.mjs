@@ -480,7 +480,7 @@ test("el autoguardado persiste y bloquea identidades solo con IMEI completo", as
   );
   assert.match(
     storage,
-    /storedStep >= 3 &&[\s\S]{0,100}storedIdentityImei[\s\S]{0,180}isCompleteImei\(candidate\) && candidate !== storedIdentityImei/
+    /isSolicitudImeiChangeBlocked\(\{[\s\S]{0,150}storedImei: storedIdentityImei,[\s\S]{0,150}signatureStarted/
   );
   const canonicalImei = storage.slice(
     storage.indexOf("const canonicalImei ="),
@@ -488,7 +488,7 @@ test("el autoguardado persiste y bloquea identidades solo con IMEI completo", as
   );
   assert.match(
     canonicalImei,
-    /\(storedStep >= 3 \? storedIdentityImei : ""\)[\s\S]*incomingCompleteImei[\s\S]*storedIdentityImei/
+    /\(signatureStarted \? storedIdentityImei : ""\)[\s\S]*incomingCompleteImei[\s\S]*storedIdentityImei/
   );
   assert.doesNotMatch(canonicalImei, /\bstoredImei\b/);
   assert.doesNotMatch(canonicalImei, /\bimei\b/);

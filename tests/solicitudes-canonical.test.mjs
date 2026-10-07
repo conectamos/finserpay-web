@@ -5,11 +5,50 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   SolicitudCanonicalMutationError,
+  isSolicitudImeiChangeBlocked,
   resolveSolicitudDraftCanonicalIdentity,
 } from "../lib/solicitudes.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
+
+test("un IMEI puede corregirse antes del primer envío, pero queda fijo desde cualquier intento de firma", () => {
+  const storedImei = "355122335594126";
+  const replacementImei = "351111111111111";
+  assert.equal(isSolicitudImeiChangeBlocked({
+    storedImei,
+    incomingImeis: [replacementImei],
+    signatureStarted: false,
+  }), false);
+  assert.equal(isSolicitudImeiChangeBlocked({
+    storedImei,
+    incomingImeis: [replacementImei],
+    signatureStarted: true,
+  }), true);
+  assert.equal(isSolicitudImeiChangeBlocked({
+    storedImei,
+    incomingImeis: [storedImei],
+    signatureStarted: true,
+  }), false);
+  assert.equal(isSolicitudImeiChangeBlocked({
+    storedImei,
+    incomingImeis: ["35111111111111"],
+    signatureStarted: true,
+  }), false);
+});
+
+test("el autoguardado considera cualquier proceso o despacho previo antes de cambiar el IMEI", async () => {
+  const source = await readProjectFile("lib/solicitudes-storage.ts");
+  const autosave = sourceBetween(
+    source,
+    "export async function saveSolicitudDraft",
+    "export class SolicitudDataCreditoLinkError"
+  );
+  assert.match(autosave, /EXISTS \(SELECT 1 FROM "FirmaSeguroProcess" WHERE "draftId" = \$1\)/);
+  assert.match(autosave, /SELECT 1 FROM "FirmaSeguroDraftDispatch" WHERE "draftId" = \$1/);
+  assert.match(autosave, /isSolicitudImeiChangeBlocked\(\{[\s\S]*signatureStarted/);
+  assert.match(autosave, /signatureStarted \? storedIdentityImei : ""/);
+});
 
 function sourceBetween(source, start, end) {
   const startIndex = source.indexOf(start);

@@ -5485,6 +5485,10 @@ export default function CreditFactoryConsole({
   ];
   const stepTwoEquipmentValidCount = stepTwoEquipmentFieldChecks.filter(Boolean).length;
   const stepTwoEquipmentReady = stepTwoEquipmentValidCount === 4;
+  const stepTwoPlanEquipmentReady =
+    Boolean(equipoMarca.trim()) &&
+    Boolean(equipoModelo.trim()) &&
+    valorTotalEquipoNumero > 0;
   const stepTwoPolicyAvailable = simulatorMode
     ? simulationPolicyReady
     : !dataCreditoCreditCreationMode ||
@@ -5506,7 +5510,7 @@ export default function CreditFactoryConsole({
       ? 5
       : 4;
   const stepTwoPlanLocked =
-    !stepTwoEquipmentReady ||
+    !stepTwoPlanEquipmentReady ||
     !stepTwoPolicyAvailable ||
     signedContractEditLocked;
   const stepTwoInitialMinimum = Math.max(
@@ -5543,7 +5547,7 @@ export default function CreditFactoryConsole({
   const stepTwoContinueDisabled =
     !stepTwoComplete || stepTwoOperationPending;
   const stepTwoProposalReady =
-    stepTwoEquipmentReady && stepTwoPolicyAvailable && financialPreviewReady;
+    stepTwoPlanEquipmentReady && stepTwoPolicyAvailable && financialPreviewReady;
   const contratoListo = stepClienteReady && stepContratoReady && stepEquipoReady;
   const firmaSeguroDocumentItems = [
     {
@@ -7065,7 +7069,7 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (
-      !stepTwoEquipmentReady ||
+      !stepTwoPlanEquipmentReady ||
       !iphoneFactory ||
       iphoneFactoryTermsLocked ||
       creditInstallmentOptions.length === 0 ||
@@ -7082,7 +7086,7 @@ export default function CreditFactoryConsole({
     iphoneFactory,
     iphoneFactoryTermsLocked,
     plazoMeses,
-    stepTwoEquipmentReady,
+    stepTwoPlanEquipmentReady,
   ]);
 
   useEffect(() => {
@@ -15603,7 +15607,7 @@ export default function CreditFactoryConsole({
                                 ? "El IMEI está protegido porque el contrato ya fue enviado a firma."
                                 : imeiDigits.length > 0
                                   ? imeiDigits.length + "/15 dígitos"
-                                  : "El IMEI debe tener 15 números."}
+                                  : "Puedes calcular el plan sin IMEI; ingresa sus 15 números antes de continuar."}
                             </small>
                           </label>
 
@@ -15695,8 +15699,8 @@ export default function CreditFactoryConsole({
                           {!stepTwoPolicyAvailable
                             ? "Política no disponible"
                            : stepTwoPlanLocked
-                              ? "Disponible al completar el equipo."
-                              : "Equipo completo. Configura el plan."}
+                              ? "Completa la marca, el modelo y el precio para configurar el plan."
+                              : "Configura el plan; ingresa el IMEI antes de continuar."}
                         </span>
                       </div>
 
@@ -15958,7 +15962,7 @@ export default function CreditFactoryConsole({
                       <div>
                         <dt>Plazo</dt>
                         <dd>
-                          {stepTwoEquipmentReady && stepTwoPlanSelectionValid
+                          {stepTwoPlanEquipmentReady && stepTwoPlanSelectionValid
                             ? plazoMesesNumero + " cuotas"
                             : "—"}
                         </dd>
