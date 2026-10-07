@@ -3,7 +3,8 @@ import prisma from "@/lib/prisma";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getReplacementRemission } from "@/lib/credit-device-replacement-remission";
 import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
-import { isVerifiedPendingSignatureStatus, isVerifiedTerminalSignatureFailure } from "@/lib/approval-operations-core";
+import { isVerifiedPendingSignatureStatus, isVerifiedTerminalDraftImeiRetry,
+  isVerifiedTerminalSignatureFailure } from "@/lib/approval-operations-core";
 import {
   isFirmaSeguroFailedStatus,
   isFirmaSeguroSuccessfulStatus,
@@ -422,6 +423,8 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
   const signedArchivedSource = Boolean(archivedSource?.hasSignedDocument &&
     record(archivedSource.draftPayload).financialTermsSeal);
   const activeProcess = signatures.find((item) => !item.supersededAt);
+  const failedImeiRetry = Boolean(activeProcess &&
+    isVerifiedTerminalDraftImeiRetry(payload, activeProcess));
   const failedIdentityRetry = Boolean(identityCorrectionPending && activeProcess &&
     signature.status === "TECHNICAL_ERROR" && !activeProcess.completedAt &&
     !activeProcess.hasSignedDocument &&
@@ -430,8 +433,8 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     signature.status === "SIGNED" && !unresolvedDispatch;
   const canUpdateContact = open && supported && !unresolvedDispatch &&
     (signature.status === "SIGNED" || (correctionPending && signature.status === "NOT_SENT" && signedArchivedSource));
-  const canResendSignature = Boolean(open && supported && correctionPending &&
-    (signature.status === "NOT_SENT" || failedIdentityRetry) &&
+  const canResendSignature = Boolean(open && supported &&
+    ((correctionPending && (signature.status === "NOT_SENT" || failedIdentityRetry)) || failedImeiRetry) &&
     signedArchivedSource && !unresolvedDispatch);
   const activeSignatures = signatures.filter((item) => !item.supersededAt);
   const activeSignature = activeSignatures.length === 1 ? activeSignatures[0] : null;

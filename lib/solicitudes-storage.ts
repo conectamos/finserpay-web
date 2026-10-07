@@ -629,6 +629,7 @@ async function supersedeLowerPrioritySameOwnerDrafts(
 }
 
 type FirmaSeguroDraftTermsRow = {
+  processUuid: string;
   completedAt: Date | string | null;
   draftPayload: Record<string, unknown> | null;
   hasSignedDocument: boolean;
@@ -643,6 +644,7 @@ const FIRMASEGURO_SIGNED_DRAFT_FIELDS = [
   "clientePrimerApellido",
   "clienteSegundoApellido",
   "clienteDocumento",
+  "dataCreditoAssessmentId",
   "clienteTelefono",
   "clienteCorreo",
   "clienteDireccion",
@@ -665,6 +667,108 @@ function comparableSignedDraftValue(value: unknown) {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function imeiReissueSignedAt(
+  processUuid: string,
+  process: FirmaSeguroDraftTermsRow | null
+) {
+  if (
+    !processUuid ||
+    !process ||
+    process.processUuid !== processUuid ||
+    !process.hasSignedDocument ||
+    !process.completedAt ||
+    !isFirmaSeguroSuccessfulStatus(process.status)
+  ) return null;
+  const signedAt = new Date(process.completedAt).getTime();
+  return Number.isFinite(signedAt) ? signedAt : null;
+}
+
+function assertFreshImeiReissueEvidence(
+  incomingPayload: Record<string, unknown>,
+  signedAt: number,
+  now = Date.now()
+) {
+  for (const [imageField, capturedAtField] of [
+    ["fotoEntregaDataUrl", "fotoEntregaCapturedAt"],
+    ["fotoRemisionDataUrl", "fotoRemisionCapturedAt"],
+  ] as const) {
+    if (!String(incomingPayload[imageField] || "").trim()) continue;
+    const capturedAt = incomingPayload[capturedAtField];
+    if (
+      typeof capturedAt !== "string" ||
+      !/T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(capturedAt)
+    ) {
+      throw new SolicitudCanonicalMutationError("SOLICITUD_EVIDENCIA_IMEI_ANTERIOR");
+    }
+    const capturedAtMs = Date.parse(capturedAt);
+    if (
+      !Number.isFinite(capturedAtMs) ||
+      capturedAtMs < signedAt ||
+      capturedAtMs > now + 5 * 60_000
+    ) {
+      throw new SolicitudCanonicalMutationError("SOLICITUD_EVIDENCIA_IMEI_ANTERIOR");
+    }
+  }
+}
+
+async function assertNotArchivedImeiReissueEvidence(
+  database: Prisma.TransactionClient,
+  draftId: number,
+  incomingPayload: Record<string, unknown>
+) {
+  const deliveryPhoto = String(incomingPayload.fotoEntregaDataUrl || "").trim();
+  const remissionPhoto = String(incomingPayload.fotoRemisionDataUrl || "").trim();
+  if (!deliveryPhoto && !remissionPhoto) return;
+  const rows = await database.$queryRawUnsafe<Array<{ matchesArchived: boolean }>>(
+    `
+      SELECT EXISTS (
+        SELECT 1 FROM "SolicitudImeiCorrectionAudit"
+        WHERE "draftId" = $1 AND "eventType" = 'CORRECTED'
+          AND (
+            ($2::text <> '' AND "archivedEvidence"->'fields'->>'fotoEntregaDataUrl' = $2)
+            OR ($3::text <> '' AND "archivedEvidence"->'fields'->>'fotoRemisionDataUrl' = $3)
+          )
+      ) AS "matchesArchived"
+    `,
+    draftId,
+    deliveryPhoto,
+    remissionPhoto
+  );
+  if (rows[0]?.matchesArchived) {
+    throw new SolicitudCanonicalMutationError("SOLICITUD_EVIDENCIA_IMEI_ANTERIOR");
+  }
+}
+
+function preservePendingImeiCorrectionAutosave(
+  storedPayload: Record<string, unknown>,
+  incomingPayload: Record<string, unknown>,
+  correctionId: string
+) {
+  for (const field of FIRMASEGURO_SIGNED_DRAFT_FIELDS) {
+    if (
+      Object.prototype.hasOwnProperty.call(incomingPayload, field) &&
+      !isOmittedSignedDraftAutosaveValue(incomingPayload[field]) &&
+      comparableSignedDraftValue(incomingPayload[field]) !==
+        comparableSignedDraftValue(storedPayload[field])
+    ) {
+      throw new SolicitudCanonicalMutationError("SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE");
+    }
+  }
+
+  // The signed source was archived by the audited IMEI correction. An autosave
+  // from an older tab cannot restore its financial seal, folio or delivery
+  // photos while the corrected contract is still waiting to be sent.
+  const payload: Record<string, unknown> = {
+    ...storedPayload,
+    firmaSeguroCorrectionPending: true,
+    firmaSeguroCorrectionId: correctionId,
+    wizardStep: 4,
+  };
+  delete payload.financialTermsSeal;
+  delete payload.firmaSeguroDraftFolio;
+  return payload;
 }
 
 export async function lockSolicitudIdentityMutation(
@@ -1180,18 +1284,31 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const storedCorrectionId = String(
       targetRow?.payload?.firmaSeguroCorrectionId || ""
     ).trim();
+    const storedReissueProcessUuid = String(
+      targetRow?.payload?.firmaSeguroReissueProcessUuid || ""
+    ).trim();
+    const imeiCorrectionPending = Boolean(
+      targetRow?.payload?.firmaSeguroCorrectionPending === true &&
+      isUuid(storedCorrectionId)
+    );
     // El estado de corrección pertenece exclusivamente al servidor. Una pestaña
     // anterior no puede reactivar un marcador ya cerrado por la nueva firma.
     delete canonicalPayload.firmaSeguroCorrectionPending;
     delete canonicalPayload.firmaSeguroCorrectionId;
-    if (
-      targetRow?.payload?.firmaSeguroCorrectionPending === true &&
-      isUuid(storedCorrectionId)
-    ) {
-      // Son marcadores internos creados por el PATCH central. El navegador no
-      // puede eliminarlos ni inventarlos durante el autosave previo a reemitir.
-      canonicalPayload.firmaSeguroCorrectionPending = true;
-      canonicalPayload.firmaSeguroCorrectionId = storedCorrectionId;
+    delete canonicalPayload.firmaSeguroReissueProcessUuid;
+    delete canonicalPayload.firmaSeguroReissuedAt;
+    if (storedReissueProcessUuid && targetRow?.payload) {
+      // La versión de firma reemitida es autoritativa del servidor; ninguna
+      // pestaña del navegador puede reemplazar su puntero ni su fecha.
+      canonicalPayload.firmaSeguroReissueProcessUuid = storedReissueProcessUuid;
+      canonicalPayload.firmaSeguroReissuedAt = targetRow.payload.firmaSeguroReissuedAt;
+    }
+    if (imeiCorrectionPending && targetRow?.payload) {
+      // El IMEI nuevo y los términos del contrato corregido pertenecen a la
+      // mutación central. El autosave únicamente puede repetirlos sin cambios.
+      canonicalPayload = preservePendingImeiCorrectionAutosave(
+        targetRow.payload, canonicalPayload, storedCorrectionId
+      );
     }
     const storedIdentityCorrectionId = String(
       targetRow?.payload?.firmaSeguroIdentityCorrectionId || ""
@@ -1300,7 +1417,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const firmaSeguroRows = targetId
       ? await transaction.$queryRawUnsafe<FirmaSeguroDraftTermsRow[]>(
           `
-            SELECT "status", "completedAt",
+            SELECT "processUuid", "status", "completedAt",
               ("signedDocumentBase64" IS NOT NULL) AS "hasSignedDocument",
               "lastError", "draftPayload"
             FROM "FirmaSeguroProcess"
@@ -1314,9 +1431,31 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       : [];
     const firmaSeguroTerms = firmaSeguroRows[0] || null;
     const firmaSeguroTermsLocked = firmaSeguroTermsAreLocked(firmaSeguroTerms);
+    const reissuedSignatureAt = imeiReissueSignedAt(
+      storedReissueProcessUuid,
+      firmaSeguroTerms
+    );
+    const imeiReissueAwaitingSignature = Boolean(
+      storedReissueProcessUuid && reissuedSignatureAt === null
+    );
+    if (imeiReissueAwaitingSignature && (
+      input.payloadScope === "DELIVERY_EVIDENCE" ||
+      normalizeDraftStep(input.currentStep) >= 5 ||
+      String(input.payload.fotoEntregaDataUrl || "").trim() ||
+      String(input.payload.fotoRemisionDataUrl || "").trim()
+    )) {
+      throw new SolicitudCanonicalMutationError("SOLICITUD_FIRMA_IMEI_PENDIENTE");
+    }
+    if (storedReissueProcessUuid && reissuedSignatureAt !== null && targetId) {
+      // Una pestaña que seguía abierta con la remisión del IMEI anterior no
+      // puede volver a guardar esas fotos tras firmarse el nuevo contrato.
+      assertFreshImeiReissueEvidence(input.payload, reissuedSignatureAt);
+      await assertNotArchivedImeiReissueEvidence(transaction, targetId, input.payload);
+    }
     const deliveryEvidenceScope = Boolean(
       targetRow &&
         !identityCorrectionPending &&
+        !imeiReissueAwaitingSignature &&
         firmaSeguroTermsLocked &&
         (input.payloadScope === "DELIVERY_EVIDENCE" ||
           normalizeDraftStep(input.currentStep) >= 5)
@@ -1359,7 +1498,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       storedStep
     );
     const incomingStep = normalizeDraftStep(input.currentStep);
-    const persistedStep = financialCorrectionPending || identityCorrectionPending
+    const persistedStep = financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature
       ? 4
       : Math.max(storedStep, storedPayloadStep, incomingStep);
     const storedImei = normalizeDigits(targetRow?.imei);
@@ -1467,7 +1606,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         normalizePlatform(input.plataforma),
         canonical.dataCreditoAssessmentId,
         payloadJson,
-        financialCorrectionPending
+        financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature
       );
       if (!updated[0]) throw new Error("SOLICITUD_NO_DISPONIBLE");
       return { id: updated[0].id, created: false };

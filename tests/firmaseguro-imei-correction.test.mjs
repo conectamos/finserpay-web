@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
@@ -171,6 +172,77 @@ test("actualiza el IMEI canonico, rebobina al paso interno 4 y regenera desde se
   assert.match(correctionSource, /currentStep: 4 as const/);
 });
 
+test("reintento terminal conserva el origen firmado y archiva el proceso fallido", () => {
+  assert.match(routeSource, /const imeiTerminalRetry = isVerifiedTerminalDraftImeiRetry\(currentPayload, current\)/);
+  assert.match(routeSource, /const imeiRetryProcess = isVerifiedTerminalDraftImeiRetry\(sourcePayload, lockedCurrent\)/);
+  assert.match(routeSource, /const sourceRows = correctionPending \? await prisma\.\$queryRawUnsafe/);
+  assert.match(routeSource, /financialRetryProcess \|\| identityRetryProcess \|\| imeiRetryProcess/);
+  assert.match(routeSource, /supersedeActive:[\s\S]*imeiRetryProcess/);
+  assert.match(routeSource, /firmaSeguroDraftPayload\.firmaSeguroCorrectionId =[\s\S]*lockedCurrent\?\.draftPayload/);
+  assert.match(correctionSource, /firmaSeguroReissueProcessUuid/);
+  assert.match(correctionSource, /processPayload\.firmaSeguroReissueProcessUuid/);
+});
+
+test("dos reintentos de IMEI avanzan el proceso vigente sin duplicar la auditoría", async () => {
+  const start = correctionSource.indexOf("export async function recordFirmaSeguroImeiCorrectionReissue(");
+  assert.ok(start >= 0);
+  const source = correctionSource.slice(start).replace(/^export /, "");
+  const executable = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const correctionId = "10000000-0000-4000-8000-000000000001";
+  const imei = "490154203237518";
+  let currentPayload = { imei, firmaSeguroCorrectionPending: true,
+    firmaSeguroCorrectionId: correctionId };
+  const audit = { correlationId: correctionId, draftId: 22, previousImei: "111111111111111",
+    newImei: imei, reason: "Garantía", actorUserId: 7, actorName: "Analista",
+    previousProcessUuid: "original-signed" };
+  let auditInsertions = 0;
+  const db = {
+    $queryRawUnsafe: async sql => {
+      if (sql.includes('FROM "SolicitudImeiCorrectionAudit" corrected')) return [audit];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+    $executeRawUnsafe: async (sql, ...params) => {
+      if (sql.includes('INSERT INTO "SolicitudImeiCorrectionAudit"')) {
+        if (auditInsertions === 0) auditInsertions++;
+        return 1;
+      }
+      if (sql.includes('UPDATE "CreditoBorrador"')) {
+        const [, newProcessUuid, nextImei, id, previousProcessUuid] = params;
+        const matches = nextImei === imei && id === correctionId &&
+          (currentPayload.firmaSeguroCorrectionId === id ||
+            Boolean(previousProcessUuid && currentPayload.firmaSeguroReissueProcessUuid === previousProcessUuid));
+        if (!matches) return 0;
+        currentPayload = { ...currentPayload, firmaSeguroReissueProcessUuid: newProcessUuid };
+        delete currentPayload.firmaSeguroCorrectionPending;
+        delete currentPayload.firmaSeguroCorrectionId;
+        return 1;
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  const record = new Function("prisma", "ensureFirmaSeguroSchema", "normalizeImei",
+    "normalizeCorrectionId", "payloadObject", "randomUUID",
+    `${executable}\nreturn recordFirmaSeguroImeiCorrectionReissue;`)(
+    { $transaction: async callback => callback(db) }, async () => {},
+    value => String(value || "").replace(/\D/g, ""),
+    value => String(value || "").trim(),
+    value => value && typeof value === "object" ? value : {},
+    () => "20000000-0000-4000-8000-000000000002"
+  );
+  let previousProcessUuid = null;
+  for (const processUuid of ["process-2", "process-3", "process-4"]) {
+    const process = { draftId: 22, processUuid, supersededAt: null,
+      draftPayload: { imei, firmaSeguroCorrectionId: correctionId,
+        ...(previousProcessUuid ? { firmaSeguroReissueProcessUuid: previousProcessUuid } : {}) } };
+    assert.equal(await record(22, process), true);
+    assert.equal(currentPayload.firmaSeguroReissueProcessUuid, processUuid);
+    previousProcessUuid = processUuid;
+  }
+  assert.equal(auditInsertions, 1, "la corrección conserva un solo evento REISSUED");
+});
+
 test("archiva las evidencias del equipo anterior antes de limpiar el payload activo", () => {
   for (const field of [
     "fotoEntregaDataUrl",
@@ -308,7 +380,7 @@ test("getters, cierre, muro y enrolamiento ignoran procesos reemplazados", () =>
 test("la reemision usa el correlationId exacto y no limpia una correccion posterior", () => {
   assert.match(
     solicitudesSource,
-    /storedCorrectionId[\s\S]*firmaSeguroCorrectionPending === true[\s\S]*isUuid\(storedCorrectionId\)[\s\S]*canonicalPayload\.firmaSeguroCorrectionId = storedCorrectionId/
+    /storedCorrectionId[\s\S]*firmaSeguroCorrectionPending === true[\s\S]*isUuid\(storedCorrectionId\)[\s\S]*preservePendingImeiCorrectionAutosave\([\s\S]*storedCorrectionId/
   );
   assert.match(
     correctionSource,
@@ -326,6 +398,65 @@ test("la reemision usa el correlationId exacto y no limpia una correccion poster
     correctionSource,
     /ORDER BY corrected\."createdAt" DESC/
   );
+});
+
+test("el autosave no cambia el contrato ni restaura la remisión antigua durante la corrección de IMEI", () => {
+  const fieldsSource = sourceBetween(
+    solicitudesSource,
+    "const FIRMASEGURO_SIGNED_DRAFT_FIELDS = [",
+    "] as const;"
+  );
+  const fields = [...fieldsSource.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(fields.includes("dataCreditoAssessmentId"));
+  const helper = sourceBetween(
+    solicitudesSource,
+    "function preservePendingImeiCorrectionAutosave(",
+    "export async function lockSolicitudIdentityMutation"
+  );
+  const protect = new Function(
+    "FIRMASEGURO_SIGNED_DRAFT_FIELDS", "isOmittedSignedDraftAutosaveValue",
+    "comparableSignedDraftValue", "SolicitudCanonicalMutationError",
+    `${ts.transpileModule(helper, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText}\nreturn preservePendingImeiCorrectionAutosave;`
+  )(
+    fields,
+    (value) => value == null || (typeof value === "string" && value.trim() === ""),
+    (value) => value == null ? "" : typeof value === "string" ? value.trim() : String(value),
+    class extends Error { constructor(code) { super(code); this.code = code; } }
+  );
+  const correctionId = "75b29e9e-2e63-4e11-9841-1fad4c3b07f3";
+  const stored = {
+    clienteNombre: "CLIENTE FIRMADO", clienteCorreo: "cliente@example.com",
+    dataCreditoAssessmentId: "97e38d16-8360-47f2-8256-301e333735fb",
+    equipoCatalogoId: 31, valorEquipoTotal: 2_000_000, cuotaInicial: 600_000,
+    imei: "358000000000021", deviceUid: "358000000000021",
+    firmaSeguroCorrectionPending: true, firmaSeguroCorrectionId: correctionId,
+  };
+  const result = protect(stored, {
+    ...stored, valorEquipoTotal: "2000000", clienteCorreo: "",
+    wizardStep: 5, fotoRemisionDataUrl: "data:image/png;base64,FOTO_ANTIGUA",
+    firmaSeguroDraftFolio: "FOLIO_ANTERIOR", financialTermsSeal: { old: true },
+  }, correctionId);
+  assert.equal(result.valorEquipoTotal, 2_000_000);
+  assert.equal(result.clienteCorreo, "cliente@example.com");
+  assert.equal(result.wizardStep, 4);
+  assert.equal(result.firmaSeguroCorrectionId, correctionId);
+  assert.equal(result.fotoRemisionDataUrl, undefined);
+  assert.equal(result.firmaSeguroDraftFolio, undefined);
+  assert.equal(result.financialTermsSeal, undefined);
+  for (const change of [
+    { valorEquipoTotal: 2_100_000 },
+    { dataCreditoAssessmentId: "e291e6df-69cf-45c8-9cf4-30d8ae42b338" },
+    { imei: "358000000000099" },
+    { clienteNombre: "OTRO CLIENTE" },
+    { clienteCorreo: "otro@example.com" },
+  ]) {
+    assert.throws(() => protect(stored, { ...stored, ...change }, correctionId),
+      { code: "SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE" });
+  }
+  assert.match(solicitudesSource,
+    /const persistedStep = financialCorrectionPending \|\| identityCorrectionPending \|\| imeiCorrectionPending \|\| imeiReissueAwaitingSignature\s*\? 4/);
+  assert.match(solicitudesSource,
+    /payloadJson,\s*financialCorrectionPending \|\| identityCorrectionPending \|\| imeiCorrectionPending \|\| imeiReissueAwaitingSignature/);
 });
 
 test("el callback puede seguir archivando el estado remoto del proceso historico", () => {

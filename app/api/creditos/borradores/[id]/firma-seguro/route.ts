@@ -21,6 +21,7 @@ import {
   createFinancingTermsSeal,
   readFinancingTermsSeal,
 } from "@/lib/credit-amortization-contract";
+import { isVerifiedTerminalDraftImeiRetry } from "@/lib/approval-operations-core";
 import { creditRemissionFromSignedSnapshot } from "@/lib/credit-remission";
 import {
   FirmaSeguroApiError,
@@ -607,11 +608,13 @@ async function requestDraftSignatureCore(
         "La firma vigente cambió. Actualiza el caso.");
     }
     const currentPayload = payloadObject(authorized.row.payload);
+    const imeiTerminalRetry = isVerifiedTerminalDraftImeiRetry(currentPayload, current);
     if (body.requireCorrection === true &&
       currentPayload.firmaSeguroCorrectionPending !== true &&
       currentPayload.firmaSeguroIdentityCorrectionPending !== true &&
       currentPayload.firmaSeguroContactCorrectionPending !== true &&
-      currentPayload.firmaSeguroFinancialCorrectionPending !== true) {
+      currentPayload.firmaSeguroFinancialCorrectionPending !== true &&
+      !imeiTerminalRetry) {
       throw new DraftDispatchError("DRAFT_DISPATCH_CORRECTION_REQUIRED",
         "Corrige primero el IMEI o el contacto y actualiza el expediente.");
     }
@@ -700,10 +703,12 @@ async function requestDraftSignatureCore(
 
       await requireApprovedVeriffBeforeFirmaSeguro(lockedAuthorized.row);
       const sourcePayload = payloadObject(lockedAuthorized.row.payload);
+      const imeiRetryProcess = isVerifiedTerminalDraftImeiRetry(sourcePayload, lockedCurrent);
       const frozenCorrectionPending =
         sourcePayload.firmaSeguroCorrectionPending === true ||
         sourcePayload.firmaSeguroIdentityCorrectionPending === true ||
-        sourcePayload.firmaSeguroContactCorrectionPending === true;
+        sourcePayload.firmaSeguroContactCorrectionPending === true ||
+        imeiRetryProcess;
       const financialCorrectionPending =
         sourcePayload.firmaSeguroFinancialCorrectionPending === true;
       const correctionPending =
@@ -735,7 +740,8 @@ async function requestDraftSignatureCore(
       if ((lockedCurrent || correctionPending || priorProcess.length > 0) &&
         (!source ||
           (source.id !== priorProcess[0]?.id &&
-            !((financialRetryProcess || identityRetryProcess) && lockedCurrent?.id === priorProcess[0]?.id)))) {
+            !((financialRetryProcess || identityRetryProcess || imeiRetryProcess) &&
+              lockedCurrent?.id === priorProcess[0]?.id)))) {
         throw new CreditValidationError(
           "No se puede conservar de forma verificable el contrato anterior. Requiere revisión técnica antes de reenviar.",
           409, "FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE");
@@ -802,6 +808,13 @@ async function requestDraftSignatureCore(
       delete payload.financialTermsSeal;
       const firmaSeguroDraftPayload: Record<string, unknown> = { ...payload,
         financialTermsSeal: seal };
+      if (imeiRetryProcess) {
+        // Keep the audited correction lineage on the provider process only.
+        // The draft itself keeps the pointer to the preceding failed process
+        // until this retry is acknowledged and the pointer advances.
+        firmaSeguroDraftPayload.firmaSeguroCorrectionId =
+          sanitizeText(payloadObject(lockedCurrent?.draftPayload).firmaSeguroCorrectionId);
+      }
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaDataUrl;
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaCapturedAt;
       delete firmaSeguroDraftPayload.iphoneSelfieCedulaSource;
@@ -813,7 +826,7 @@ async function requestDraftSignatureCore(
         draftPayload: firmaSeguroDraftPayload, draftFolio: dispatchFolio,
         frozenCredit: credit, document,
         supersedeActive:
-          requiresFirstPaymentDateReissue || financialRetryProcess || identityRetryProcess });
+          requiresFirstPaymentDateReissue || financialRetryProcess || identityRetryProcess || imeiRetryProcess });
       const dispatched = await dispatchReservedDraft(reserved.id);
       if (dispatched.status !== "AWAITING_SIGNATURE" || !dispatched.processUuid) {
         throw new DraftDispatchError("DRAFT_DISPATCH_UNRESOLVED",

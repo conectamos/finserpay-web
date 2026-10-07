@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import {
   DELIVERY_EVIDENCE_DRAFT_FIELDS,
   isOmittedSignedDraftAutosaveValue,
@@ -156,4 +157,60 @@ test("route y fabrica usan el alcance DELIVERY_EVIDENCE solo tras firma y en ent
     factory,
     /payloadScope:\s*firmaSeguroProcessSigned\s*&&\s*persistedWizardStep\s*>=\s*5\s*\?\s*"DELIVERY_EVIDENCE"\s*:\s*"FULL"/
   );
+});
+
+test("reenvio por IMEI mantiene paso 4 hasta PDF firmado y solo admite fotos capturadas despues", async () => {
+  const storage = await readProjectFile("lib/solicitudes-storage.ts");
+  const start = storage.indexOf("function imeiReissueSignedAt(");
+  const end = storage.indexOf("function preservePendingImeiCorrectionAutosave(", start);
+  assert.ok(start >= 0 && end > start);
+  const helpers = ts.transpileModule(storage.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const { signedAt, assertFresh, assertNotArchived } = new Function(
+    "isFirmaSeguroSuccessfulStatus", "SolicitudCanonicalMutationError",
+    `${helpers}\nreturn { signedAt: imeiReissueSignedAt, assertFresh: assertFreshImeiReissueEvidence, assertNotArchived: assertNotArchivedImeiReissueEvidence };`
+  )(
+    (status) => status === "SIGNED",
+    class extends Error { constructor(code) { super(code); this.code = code; } }
+  );
+  const completedAt = "2026-10-06T18:00:00.000Z";
+  const process = { processUuid: "new-process", completedAt, hasSignedDocument: true, status: "SIGNED" };
+  const signedMs = Date.parse(completedAt);
+  assert.equal(signedAt("new-process", process), signedMs);
+  assert.equal(signedAt("old-process", process), null);
+  assert.equal(signedAt("new-process", { ...process, hasSignedDocument: false }), null);
+  assert.equal(signedAt("new-process", { ...process, status: "AWAITING_SIGNATURE" }), null);
+  assert.equal(signedAt("new-process", { ...process, completedAt: null }), null);
+
+  const now = Date.parse("2026-10-06T19:00:00.000Z");
+  const fresh = { fotoEntregaDataUrl: "data:image/jpeg;base64,ENTREGA_NUEVA",
+    fotoEntregaCapturedAt: "2026-10-06T18:05:00.000Z",
+    fotoRemisionDataUrl: "data:image/jpeg;base64,REMISION_NUEVA",
+    fotoRemisionCapturedAt: "2026-10-06T13:06:00-05:00" };
+  assert.doesNotThrow(() => assertFresh(fresh, signedMs, now));
+  for (const invalid of [
+    { ...fresh, fotoEntregaCapturedAt: "2026-10-06T17:59:59.000Z" },
+    { ...fresh, fotoRemisionCapturedAt: "2026-10-06T17:59:59.000Z" },
+    { ...fresh, fotoRemisionCapturedAt: null },
+    { ...fresh, fotoRemisionCapturedAt: "2026-10-06T18:06:00" },
+    { ...fresh, fotoRemisionCapturedAt: "2026-10-06T19:06:00.000Z" },
+  ]) assert.throws(() => assertFresh(invalid, signedMs, now),
+    { code: "SOLICITUD_EVIDENCIA_IMEI_ANTERIOR" });
+
+  const archivedPhoto = "data:image/jpeg;base64,FOTO_DEL_IMEI_ANTERIOR";
+  const database = { $queryRawUnsafe: async (_sql, _draftId, deliveryPhoto, remissionPhoto) =>
+    [{ matchesArchived: deliveryPhoto === archivedPhoto || remissionPhoto === archivedPhoto }] };
+  await assert.rejects(() => assertNotArchived(database, 42, {
+    fotoRemisionDataUrl: archivedPhoto,
+    fotoRemisionCapturedAt: fresh.fotoRemisionCapturedAt,
+  }), { code: "SOLICITUD_EVIDENCIA_IMEI_ANTERIOR" });
+  await assert.doesNotReject(() => assertNotArchived(database, 42, fresh));
+
+  assert.match(storage, /delete canonicalPayload\.firmaSeguroReissueProcessUuid;[\s\S]*canonicalPayload\.firmaSeguroReissueProcessUuid = storedReissueProcessUuid/);
+  assert.match(storage, /const imeiReissueAwaitingSignature = Boolean\([\s\S]*storedReissueProcessUuid && reissuedSignatureAt === null/);
+  assert.match(storage, /input\.payloadScope === "DELIVERY_EVIDENCE"[\s\S]*normalizeDraftStep\(input\.currentStep\) >= 5[\s\S]*SOLICITUD_FIRMA_IMEI_PENDIENTE/);
+  assert.match(storage, /!imeiReissueAwaitingSignature &&[\s\S]*firmaSeguroTermsLocked/);
+  assert.match(storage, /assertFreshImeiReissueEvidence\(input\.payload, reissuedSignatureAt\);[\s\S]*assertNotArchivedImeiReissueEvidence\(transaction, targetId, input\.payload\)/);
+  assert.match(storage, /const persistedStep = [^;]*imeiReissueAwaitingSignature\s*\? 4/);
 });

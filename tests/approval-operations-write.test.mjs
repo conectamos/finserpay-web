@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   canDispatchReservedVersion, exactImei, hasVerifiedDraftSignature, isVerifiedTerminalOperationalRetry,
   isVerifiedTerminalSignatureFailure, operationalCreditEligibility, operationalDraftCorrectionStatus,
-  isVerifiedPendingSignatureStatus,
+  isVerifiedPendingSignatureStatus, isVerifiedTerminalDraftImeiRetry,
   operationalImeiEligibility,
   operationalProcessToSupersede, operationalSignatureLineage,
   operationalFrozenCredit, signedPdfBytes,
@@ -306,6 +306,25 @@ test("solo una terminación definitiva verificada permite recuperar firma; error
   assert.equal(isVerifiedTerminalOperationalRetry(version, { ...process, status: "SIGNED",
     signedDocumentBase64: Buffer.from("%PDF-1.7").toString("base64") }), false);
   assert.equal(isVerifiedTerminalOperationalRetry(version, { ...process, processUuid: "process-3" }), false);
+});
+
+test("el retry de IMEI exige proceso terminal ligado al último envío y sin PDF", () => {
+  const correlationId = "10000000-0000-4000-8000-000000000001";
+  const draft = { imei: "490154203237518", firmaSeguroReissueProcessUuid: "process-2" };
+  const process = { processUuid: "process-2", status: "REJECTED", completedAt: null,
+    signedDocumentBase64: null, draftPayload: { imei: "490154203237518",
+      firmaSeguroCorrectionId: correlationId } };
+  for (const terminal of ["REJECTED", "DECLINED", "CANCELLED", "EXPIRED", "REVOKED"])
+    assert.equal(isVerifiedTerminalDraftImeiRetry(draft, { ...process, status: terminal }), true, terminal);
+  for (const uncertain of ["ERROR", "FAILED", "FAILURE", "PENDING", "CREATED", "SIGNED"])
+    assert.equal(isVerifiedTerminalDraftImeiRetry(draft, { ...process, status: uncertain }), false, uncertain);
+  assert.equal(isVerifiedTerminalDraftImeiRetry(draft, { ...process, completedAt: new Date() }), false);
+  assert.equal(isVerifiedTerminalDraftImeiRetry(draft, { ...process, signedDocumentBase64: "PDF" }), false);
+  assert.equal(isVerifiedTerminalDraftImeiRetry(draft, { ...process, hasSignedDocument: true }), false);
+  assert.equal(isVerifiedTerminalDraftImeiRetry({ ...draft, firmaSeguroReissueProcessUuid: "other" }, process), false);
+  assert.equal(isVerifiedTerminalDraftImeiRetry({ ...draft, imei: "111111111111111" }, process), false);
+  assert.equal(isVerifiedTerminalDraftImeiRetry(draft, { ...process,
+    draftPayload: { ...process.draftPayload, firmaSeguroCorrectionId: "forged" } }), false);
 });
 
 test("el callback solo cierra la versión de una firma fallida verificada sin PDF ni cierre", async () => {
