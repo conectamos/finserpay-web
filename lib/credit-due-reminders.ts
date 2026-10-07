@@ -5,10 +5,24 @@ import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import {
   getCreditDueReminder,
   isCreditDueReminderWindow,
+  type CreditDueReminderCampaign,
 } from "@/lib/credit-due-reminder-policy";
 
 // The ledger identifies an installment/template, never a recipient or webhook credential.
 export const CREDIT_DUE_REMINDER_TEMPLATE_KEY = "recordatorio_1_dia_falta_antescuota";
+export const CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY = "recordatorio_hoyvence_cuota";
+const campaignConfig = {
+  before_due: {
+    templateKey: CREDIT_DUE_REMINDER_TEMPLATE_KEY,
+    enabledEnv: "DAPTA_RECORDATORIO_1_DIA_ENABLED",
+    webhookEnv: "DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL",
+  },
+  due_today: {
+    templateKey: CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY,
+    enabledEnv: "DAPTA_HOYVENCE_ENABLED",
+    webhookEnv: "DAPTA_HOYVENCE_WEBHOOK_URL",
+  },
+} as const;
 const PAGE_SIZE = 250;
 const CLAIM_LIFETIME_MS = 90_000;
 const SEND_TIMEOUT_MS = 8_000;
@@ -32,11 +46,13 @@ const creditSelect = {
 } as const;
 
 export type CreditDueReminderOptions = {
+  campaign?: CreditDueReminderCampaign;
   dryRun?: boolean;
   // A preview may inspect another date. Real dispatch always uses the live clock.
   previewDate?: Date | string;
 };
 export type CreditDueReminderReport = {
+  campaign: CreditDueReminderCampaign;
   ok: boolean;
   dryRun: boolean;
   enabled: boolean;
@@ -126,20 +142,23 @@ export function createCreditDueReminderRunner(deps: {
   database?: typeof prisma;
   now?: () => Date;
   fetcher?: typeof fetch;
-  enabled?: () => boolean;
-  webhookUrl?: () => string | undefined;
+  enabled?: (campaign: CreditDueReminderCampaign) => boolean;
+  webhookUrl?: (campaign: CreditDueReminderCampaign) => string | undefined;
 } = {}) {
   const database = deps.database ?? prisma;
   const now = deps.now ?? (() => new Date());
   return async function run(options: CreditDueReminderOptions = {}): Promise<CreditDueReminderReport> {
+    const campaign = options.campaign ?? "before_due";
+    if (campaign !== "before_due" && campaign !== "due_today") throw new Error("Invalid reminder campaign");
+    const config = campaignConfig[campaign];
     const liveNow = now();
     const dryRun = options.dryRun !== false;
     const today = dryRun && options.previewDate ? options.previewDate : liveNow;
-    const enabled = (deps.enabled ?? (() => process.env.DAPTA_RECORDATORIO_1_DIA_ENABLED === "true"))();
-    const webhook = configuredWebhook((deps.webhookUrl ?? (() => process.env.DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL))());
+    const enabled = deps.enabled ? deps.enabled(campaign) : process.env[config.enabledEnv] === "true";
+    const webhook = configuredWebhook(deps.webhookUrl ? deps.webhookUrl(campaign) : process.env[config.webhookEnv]);
     const report: CreditDueReminderReport = {
-      ok: true, dryRun, enabled, configured: Boolean(webhook), inWindow: isCreditDueReminderWindow(liveNow),
-      generatedAt: liveNow.toISOString(), today: colombiaDateKey(today), templateKey: CREDIT_DUE_REMINDER_TEMPLATE_KEY,
+      campaign, ok: true, dryRun, enabled, configured: Boolean(webhook), inWindow: isCreditDueReminderWindow(liveNow),
+      generatedAt: liveNow.toISOString(), today: colombiaDateKey(today), templateKey: config.templateKey,
       summary: { scanned: 0, eligible: 0, invalidPhone: 0, excluded: 0, claimed: 0,
         accepted: 0, failed: 0, unknown: 0, duplicates: 0, staleClaims: 0, revalidatedOut: 0 },
     };
@@ -150,7 +169,7 @@ export function createCreditDueReminderRunner(deps: {
       report.summary.staleClaims = await database.$executeRawUnsafe(
         `UPDATE "CreditDueReminder" SET "status"='UNKNOWN', "resultCode"='CLAIM_EXPIRED',
           "finishedAt"=$1, "updatedAt"=$1
-          WHERE "status"='CLAIMED' AND "claimExpiresAt" <= $1`, liveNow,
+          WHERE "status"='CLAIMED' AND "claimExpiresAt" <= $1 AND "templateKey"=$2`, liveNow, config.templateKey,
       );
     }
     let cursor = 0;
@@ -164,11 +183,11 @@ export function createCreditDueReminderRunner(deps: {
         if (!Number.isSafeInteger(credit.id) || credit.id <= cursor) throw new Error("Invalid reminder scan cursor");
         cursor = credit.id;
         report.summary.scanned += 1;
-        const candidate = getCreditDueReminder(credit, today);
+        const candidate = getCreditDueReminder(credit, today, campaign);
         if (!candidate) {
           // Count invalid contacts separately only when all financial conditions qualify.
           const financialCandidate = !normalizeColombianMobile(credit.clienteTelefono)
-            ? getCreditDueReminder({ ...credit, clienteTelefono: "3000000000" }, today) : null;
+            ? getCreditDueReminder({ ...credit, clienteTelefono: "3000000000" }, today, campaign) : null;
           if (financialCandidate) report.summary.invalidPhone += 1;
           else report.summary.excluded += 1;
           continue;
@@ -181,14 +200,14 @@ export function createCreditDueReminderRunner(deps: {
           await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
           const current = await tx.credito.findUnique({ where: { id: credit.id }, select: creditSelect });
           const claimedAt = now();
-          const reminder = current && isCreditDueReminderWindow(claimedAt) ? getCreditDueReminder(current, claimedAt) : null;
+          const reminder = current && isCreditDueReminderWindow(claimedAt) ? getCreditDueReminder(current, claimedAt, campaign) : null;
           if (!reminder || reminder.installmentNumber !== candidate.installmentNumber || reminder.dueDate !== candidate.dueDate) return "ineligible";
           const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
             `INSERT INTO "CreditDueReminder" ("id","creditoId","numeroCuota","templateKey",
               "fechaVencimiento","status","claimedAt","claimExpiresAt")
              VALUES ($1::uuid,$2,$3,$4,$5::date,'CLAIMED',$6,$7)
              ON CONFLICT ("creditoId","numeroCuota","templateKey") DO NOTHING RETURNING "id"`,
-            claimId, reminder.creditId, reminder.installmentNumber, CREDIT_DUE_REMINDER_TEMPLATE_KEY,
+            claimId, reminder.creditId, reminder.installmentNumber, config.templateKey,
             reminder.dueDate, claimedAt, new Date(claimedAt.getTime() + CLAIM_LIFETIME_MS),
           );
           return rows.length ? "claimed" : "duplicate";
@@ -207,7 +226,7 @@ export function createCreditDueReminderRunner(deps: {
           // Re-read after all claim queries, as close to the network request as possible.
           const current = await database.credito.findUnique({ where: { id: credit.id }, select: creditSelect });
           const validatedAt = now();
-          const reminder = current ? getCreditDueReminder(current, validatedAt) : null;
+          const reminder = current ? getCreditDueReminder(current, validatedAt, campaign) : null;
           const dispatchAt = now();
           if (!reminder || reminder.installmentNumber !== candidate.installmentNumber || reminder.dueDate !== candidate.dueDate
             || !isCreditDueReminderWindow(dispatchAt) || new Date(active[0].claimExpiresAt).getTime() <= dispatchAt.getTime()) {

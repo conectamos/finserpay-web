@@ -30,6 +30,7 @@ export async function reminderFixture(t, options = {}) {
   let afterClaimRead = false;
   let clock = new Date(options.now || "2026-10-07T15:00:00Z");
   const payloads = [];
+  const webhooks = [];
   function adapter(connection, inTransaction = false) {
     return {
       $queryRawUnsafe: async (sql, ...values) => {
@@ -81,13 +82,16 @@ export async function reminderFixture(t, options = {}) {
     "@/lib/colombia-date": dates,
     "@/lib/dapta-welcome": welcome,
     "@/lib/credit-due-reminder-policy": policy,
-  }, { AbortSignal, fetch: () => assert.fail("Unexpected real network"), Error });
+  }, { AbortSignal, fetch: () => assert.fail("Unexpected real network"), Error, process: { env: options.env || {} } });
   const run = core.createCreditDueReminderRunner({
     database: client, now: () => new Date(clock),
-    enabled: () => options.enabled !== false,
-    webhookUrl: () => options.url || "https://api.dapta.ai/api/test-only-webhook",
-    fetcher: async (_url, request) => {
+    ...(!options.useEnvironmentConfig ? {
+      enabled: campaign => options.enabledByCampaign?.[campaign] ?? options.enabled !== false,
+      webhookUrl: campaign => options.urls?.[campaign] ?? options.url ?? "https://api.dapta.ai/api/test-only-" + campaign,
+    } : {}),
+    fetcher: async (url, request) => {
       counts.sends += 1;
+      webhooks.push(String(url));
       payloads.push(JSON.parse(request.body));
       assert.equal(request.redirect, "error");
       assert.equal(request.cache, "no-store");
@@ -98,7 +102,7 @@ export async function reminderFixture(t, options = {}) {
     },
   });
   const rows = async () => (await database.query('SELECT * FROM "CreditDueReminder" ORDER BY "creditoId"')).rows;
-  return { run, database, client, counts, rows, core, payloads,
+  return { run, database, client, counts, rows, core, payloads, webhooks,
     setClock: value => { clock = new Date(value); },
     updateCredit: async (id, overrides) => database.query('UPDATE "Credito" SET "data"="data" || $2::jsonb WHERE "id"=$1', [id, JSON.stringify(overrides)]),
   };

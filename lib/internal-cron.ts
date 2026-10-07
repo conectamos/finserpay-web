@@ -11,6 +11,7 @@ import { retryMerchantApplications } from "@/lib/merchant-applications-storage";
 import {
   getDueInternalCronTasks,
   getStartupRecoveryTasks,
+  isCreditReminderTask,
   type InternalCronTask as ScheduledInternalCronTask,
 } from "@/lib/internal-cron-schedule";
 
@@ -99,6 +100,8 @@ function summarizeReport(payload: unknown) {
   for (const key of [
     "ok",
     "generatedAt",
+    "campaign",
+    "templateKey",
     "payoffRepairs",
     "selection",
     "summary",
@@ -127,8 +130,11 @@ async function runScheduledTask(
   let completed = false;
 
   try {
-    if (taskName === "credit-due-reminders") {
-      const result = await runCreditDueReminders({ dryRun: false });
+    if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
+      const result = await runCreditDueReminders({
+        dryRun: false,
+        campaign: taskName === "credit-due-today-reminders" ? "due_today" : "before_due",
+      });
       completed = result.enabled && result.configured && result.inWindow;
       if (completed) {
         logCron("Recordatorios de cuotas procesados.", summarizeReport(result));
@@ -188,7 +194,7 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    if (taskName === "credit-due-reminders") {
+    if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
       console.error("[finserpay-cron] No se pudo procesar la cola de recordatorios de cuotas.");
     } else if (taskName === "merchant-applications") {
       // Never expose provider/database errors containing merchant data or secrets.
@@ -228,10 +234,14 @@ async function tick() {
     `unlock:${dateKey}:${timeKey}:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`,
   );
 
-  for (const taskName of dueTasks) {
+  // Start both campaigns together so a large preceding-day batch cannot delay
+  // today's reminders beyond the shared sending window.
+  const reminders = dueTasks.filter(isCreditReminderTask);
+  await Promise.all(reminders.map(task => runScheduledTask(task, `${task}:${dateKey}`)));
+  for (const taskName of dueTasks.filter(task => !isCreditReminderTask(task))) {
     await runScheduledTask(
       taskName,
-      taskName === "credit-due-reminders" ? `${taskName}:${dateKey}` : `${taskName}:${dateKey}:${timeKey}`,
+      `${taskName}:${dateKey}:${timeKey}`,
       taskName === "mora" ? moraEffectiveDate : undefined,
     );
   }
@@ -258,10 +268,12 @@ async function runStartupRecovery() {
     `unlock:startup-recovery:${dateKey}:${timeKey}`,
   );
 
-  for (const taskName of getStartupRecoveryTasks(timeKey)) {
+  const dueTasks = getStartupRecoveryTasks(timeKey);
+  await Promise.all(dueTasks.filter(isCreditReminderTask).map(task => runScheduledTask(task, `${task}:${dateKey}`)));
+  for (const taskName of dueTasks.filter(task => !isCreditReminderTask(task))) {
     await runScheduledTask(
       taskName,
-      taskName === "credit-due-reminders" ? `${taskName}:${dateKey}` : `${taskName}:startup-recovery:${dateKey}`,
+      `${taskName}:startup-recovery:${dateKey}`,
       taskName === "mora" ? moraEffectiveDate : undefined,
     );
   }

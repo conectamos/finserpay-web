@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { CreditDueReminderOptions, CreditDueReminderReport } from "@/lib/credit-due-reminders";
+import type { CreditDueReminderCampaign } from "@/lib/credit-due-reminder-policy";
 
 function equalSecret(received: string, expected: string | undefined) {
   const secret = expected?.trim();
@@ -17,6 +18,9 @@ function validPreviewDate(value: string) {
   const parsed = new Date(value + "T12:00:00.000Z");
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
+function validCampaign(value: unknown): value is CreditDueReminderCampaign {
+  return value === "before_due" || value === "due_today";
+}
 
 export function createCreditDueReminderHandlers(deps: {
   getAdmin: () => Promise<boolean>;
@@ -33,9 +37,12 @@ export function createCreditDueReminderHandlers(deps: {
   return {
     GET: async (req: Request) => {
       if (!await authorize(req, true)) return json({ ok: false, error: "No autorizado" }, 401);
-      const today = new URL(req.url).searchParams.get("today");
+      const params = new URL(req.url).searchParams;
+      const campaign = params.get("campaign") ?? "before_due";
+      if (!validCampaign(campaign)) return json({ ok: false, error: "Campaña de recordatorio invalida" }, 400);
+      const today = params.get("today");
       if (today && !validPreviewDate(today)) return json({ ok: false, error: "Fecha de preview invalida" }, 400);
-      try { return json(await deps.run({ dryRun: true, ...(today ? { previewDate: today } : {}) })); }
+      try { return json(await deps.run({ campaign, dryRun: true, ...(today ? { previewDate: today } : {}) })); }
       catch { return json({ ok: false, error: "No se pudo consultar el resumen de recordatorios" }, 500); }
     },
     POST: async (req: Request) => {
@@ -46,10 +53,12 @@ export function createCreditDueReminderHandlers(deps: {
       catch { return json({ ok: false, error: "JSON invalido" }, 400); }
       if (!body || typeof body !== "object" || Array.isArray(body)
         || ("dryRun" in body && typeof body.dryRun !== "boolean")) return json({ ok: false, error: "dryRun debe ser booleano" }, 400);
+      const campaign = "campaign" in body ? body.campaign : "before_due";
+      if (!validCampaign(campaign)) return json({ ok: false, error: "Campaña de recordatorio invalida" }, 400);
       const dryRun = !("dryRun" in body && body.dryRun === false);
       try {
         // Discard date, limit and query-string controls. A real run uses its live clock and scans all credits.
-        const report = await deps.run({ dryRun });
+        const report = await deps.run({ campaign, dryRun });
         return json(report, report.ok ? 200 : 207);
       } catch { return json({ ok: false, error: "No se pudo procesar los recordatorios" }, 500); }
     },

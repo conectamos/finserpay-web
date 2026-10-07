@@ -1,7 +1,7 @@
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { isExcludedCarteraCreditState } from "@/lib/cartera-export";
 import { resolveCarteraDaysPastDue } from "@/lib/cartera-due-days";
-import { COLOMBIA_TIME_ZONE, type DateValue } from "@/lib/colombia-date";
+import { COLOMBIA_TIME_ZONE, colombiaDateKey, type DateValue } from "@/lib/colombia-date";
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 
 export type CreditDueReminderCredit = {
@@ -28,6 +28,8 @@ export type CreditDueReminder = {
   name: string;
 };
 
+export type CreditDueReminderCampaign = "before_due" | "due_today";
+
 const reminderHourFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: COLOMBIA_TIME_ZONE,
   hour: "2-digit",
@@ -49,8 +51,13 @@ export function isCreditDueReminderWindow(now: Date): boolean {
   return Number.isFinite(now.getTime()) && reminderHourFormatter.format(now) === "10";
 }
 
-/** Select the same AD = -1 rows as Excel, with contact and settled-credit guards. */
-export function getCreditDueReminder(credit: CreditDueReminderCredit, today: DateValue): CreditDueReminder | null {
+/** Select the campaign's signed Excel days, with contact and settled-credit guards. */
+export function getCreditDueReminder(
+  credit: CreditDueReminderCredit,
+  today: DateValue,
+  campaign: CreditDueReminderCampaign = "before_due"
+): CreditDueReminder | null {
+  if (campaign !== "before_due" && campaign !== "due_today") return null;
   const state = String(credit.estado || "").trim().toUpperCase();
   if (isExcludedCarteraCreditState(state) || state === "PAGADO" || state === "PAZ_Y_SALVO" ||
       credit.pazYSalvoEmitidoAt || !Number.isSafeInteger(credit.id) || credit.id < 1) return null;
@@ -81,7 +88,11 @@ export function getCreditDueReminder(credit: CreditDueReminderCredit, today: Dat
     });
     const next = plan.nextInstallment;
     if (plan.estadoPago === "PAGADO" || !(plan.saldoPendiente > 0) ||
-        !next || !(next.saldoPendiente > 0) || resolveCarteraDaysPastDue(plan, today) !== -1) return null;
+        !next || !(next.saldoPendiente > 0)) return null;
+    const daysPastDue = resolveCarteraDaysPastDue(plan, today);
+    if (campaign === "due_today") {
+      if (daysPastDue !== 0 || !(plan.pendingCount > 0) || next.fechaVencimiento !== colombiaDateKey(today)) return null;
+    } else if (daysPastDue !== -1) return null;
     return { creditId: credit.id, installmentNumber: next.numero,
       dueDate: next.fechaVencimiento, phone, name };
   } catch {

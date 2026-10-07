@@ -193,3 +193,107 @@ test("a clock that closes during the active-claim query never dispatches HTTP", 
   assert.equal(f.counts.sends, 0);
   assert.equal((await f.rows()).length, 0);
 });
+
+test("before-due and due-today independently dispatch once for the same installment", async t => {
+  const f = await reminderFixture(t);
+  const before = await f.run({ dryRun: false });
+  assert.equal(before.campaign, "before_due");
+  assert.equal(before.templateKey, f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY);
+  assert.equal(before.summary.accepted, 1);
+  assert.equal((await f.run({ campaign: "before_due", dryRun: false })).summary.duplicates, 1);
+  f.setClock("2026-10-08T15:00:00Z");
+  const due = await f.run({ campaign: "due_today", dryRun: false });
+  assert.equal(due.campaign, "due_today");
+  assert.equal(due.templateKey, "recordatorio_hoyvence_cuota");
+  assert.equal(due.summary.accepted, 1);
+  assert.equal((await f.run({ campaign: "due_today", dryRun: false })).summary.duplicates, 1);
+  assert.equal(f.counts.sends, 2);
+  const rows = await f.rows();
+  assert.deepEqual(rows.map(row => row.numeroCuota), [1, 1]);
+  assert.deepEqual(new Set(rows.map(row => row.templateKey)), new Set([
+    f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY, f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY,
+  ]));
+  assert.deepEqual(f.webhooks, ["https://api.dapta.ai/api/test-only-before_due", "https://api.dapta.ai/api/test-only-due_today"]);
+});
+
+test("overlapping campaigns select different mixed-date credits and never route to each other's webhook", async t => {
+  const f = await reminderFixture(t, { now: "2026-10-08T15:00:00Z", credits: [
+    sampleCredit(1), sampleCredit(2, { fechaPrimerPago: "2026-10-09", fechaProximoPago: "2026-10-09" }),
+  ], urls: { before_due: "https://api.dapta.ai/api/before-test-only", due_today: "https://api.dapta.ai/api/today-test-only" } });
+  const reports = await Promise.all([
+    f.run({ campaign: "before_due", dryRun: false }), f.run({ campaign: "due_today", dryRun: false }),
+  ]);
+  assert.deepEqual(reports.map(report => report.summary.eligible), [1, 1]);
+  assert.deepEqual(reports.map(report => report.summary.accepted), [1, 1]);
+  const routed = Object.fromEntries(f.payloads.map((payload, index) => [payload.credito_id, f.webhooks[index]]));
+  assert.deepEqual(routed, { 1: "https://api.dapta.ai/api/today-test-only", 2: "https://api.dapta.ai/api/before-test-only" });
+  const rows = await f.rows();
+  assert.equal(rows[0].templateKey, f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY);
+  assert.equal(rows[1].templateKey, f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY);
+});
+
+test("campaign environment flags and URLs never fall back to the other campaign", async t => {
+  for (const [campaign, now, env, accepted] of [
+    ["due_today", "2026-10-08T15:00:00Z", {
+      DAPTA_RECORDATORIO_1_DIA_ENABLED: "true", DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL: "https://api.dapta.ai/api/before-only",
+    }, false],
+    ["due_today", "2026-10-08T15:00:00Z", {
+      DAPTA_RECORDATORIO_1_DIA_ENABLED: "true", DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL: "https://api.dapta.ai/api/before-only",
+      DAPTA_HOYVENCE_ENABLED: "true", DAPTA_HOYVENCE_WEBHOOK_URL: "http://api.dapta.ai/api/today-invalid",
+    }, false],
+    ["before_due", "2026-10-07T15:00:00Z", {
+      DAPTA_HOYVENCE_ENABLED: "true", DAPTA_HOYVENCE_WEBHOOK_URL: "https://api.dapta.ai/api/today-only",
+    }, false],
+    ["due_today", "2026-10-08T15:00:00Z", {
+      DAPTA_HOYVENCE_ENABLED: "true", DAPTA_HOYVENCE_WEBHOOK_URL: "https://api.dapta.ai/api/today-only",
+    }, true],
+  ]) {
+    const f = await reminderFixture(t, { useEnvironmentConfig: true, campaign, now, env });
+    const report = await f.run({ campaign, dryRun: false });
+    assert.equal(report.summary.accepted, accepted ? 1 : 0);
+    assert.equal(f.counts.sends, accepted ? 1 : 0);
+    if (accepted) assert.deepEqual(f.webhooks, [env.DAPTA_HOYVENCE_WEBHOOK_URL]);
+    else assert.equal(f.counts.writes, 0);
+  }
+});
+
+test("claim expiration touches only the selected campaign's template key", async t => {
+  const f = await reminderFixture(t);
+  for (const [id, key] of [
+    ["00000000-0000-4000-8000-000000000001", f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY],
+    ["00000000-0000-4000-8000-000000000002", f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY],
+  ]) {
+    await f.database.query(`INSERT INTO "CreditDueReminder"
+      ("id","creditoId","numeroCuota","templateKey","fechaVencimiento","status","claimedAt","claimExpiresAt")
+      VALUES ($1::uuid,1,1,$2,'2026-10-08','CLAIMED','2026-10-07T14:00:00Z','2026-10-07T14:01:30Z')`, [id, key]);
+  }
+  const before = await f.run({ dryRun: false });
+  assert.equal(before.summary.staleClaims, 1);
+  let statuses = Object.fromEntries((await f.rows()).map(row => [row.templateKey, row.status]));
+  assert.equal(statuses[f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY], "UNKNOWN");
+  assert.equal(statuses[f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY], "CLAIMED");
+  f.setClock("2026-10-08T15:00:00Z");
+  const today = await f.run({ campaign: "due_today", dryRun: false });
+  assert.equal(today.summary.staleClaims, 1);
+  assert.equal(today.summary.duplicates, 1);
+  statuses = Object.fromEntries((await f.rows()).map(row => [row.templateKey, row.status]));
+  assert.equal(statuses[f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY], "UNKNOWN");
+  assert.equal(f.counts.sends, 0);
+});
+
+test("due-today preview reports its own invalid contacts without writing or sending", async t => {
+  const f = await reminderFixture(t, { now: "2026-10-08T15:00:00Z", credits: [sampleCredit(1, { clienteTelefono: "1111" })] });
+  const report = await f.run({ campaign: "due_today", dryRun: true });
+  assert.equal(report.summary.invalidPhone, 1);
+  assert.equal(report.summary.eligible, 0);
+  assert.equal(f.counts.writes, 0);
+  assert.equal(f.counts.sends, 0);
+});
+
+test("an invalid internal campaign fails before database writes or dispatch", async t => {
+  const f = await reminderFixture(t);
+  await assert.rejects(f.run({ campaign: "unknown", dryRun: false }), /Invalid reminder campaign/);
+  assert.equal(f.counts.pages, 0);
+  assert.equal(f.counts.writes, 0);
+  assert.equal(f.counts.sends, 0);
+});

@@ -34,9 +34,13 @@ test("recordatorios solo arrancan y se recuperan de 10:00 a 10:59 Colombia", () 
   for (const time of ["09:59", "11:00", "16:20", "23:40"]) {
     assert.equal(getDueInternalCronTasks(time).includes("credit-due-reminders"), false);
     assert.equal(getStartupRecoveryTasks(time).includes("credit-due-reminders"), false);
+    assert.equal(getDueInternalCronTasks(time).includes("credit-due-today-reminders"), false);
+    assert.equal(getStartupRecoveryTasks(time).includes("credit-due-today-reminders"), false);
   }
   for (const time of ["10:00", "10:01", "10:59"]) {
     assert.equal(getDueInternalCronTasks(time).includes("credit-due-reminders"), true);
     assert.equal(getStartupRecoveryTasks(time).includes("credit-due-reminders"), true);
+    assert.equal(getDueInternalCronTasks(time).includes("credit-due-today-reminders"), true);
+    assert.equal(getStartupRecoveryTasks(time).includes("credit-due-today-reminders"), true);
   }
 });

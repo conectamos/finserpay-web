@@ -5,6 +5,8 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": path.resolve(import.meta.dirname, "..") } });
 const { getCreditDueReminder, isCreditDueReminderWindow } = await jiti.import("../lib/credit-due-reminder-policy.ts");
+const { buildCreditPaymentPlan } = await jiti.import("../lib/credit-payment-plan.ts");
+const { resolveCarteraDaysPastDue } = await jiti.import("../lib/cartera-due-days.ts");
 const today = new Date("2026-10-07T15:00:00.000Z");
 const credit = changes => ({ id: 42, clienteNombre: " Ana Prueba ", clienteTelefono: "300 000 0042", estado: "GENERADO",
   pazYSalvoEmitidoAt: null, montoCredito: 300, valorCuota: 100, plazoMeses: 3, frecuenciaPago: "CATORCENAL",
@@ -25,6 +27,59 @@ test("only tomorrow is selected, using Bogotá's calendar date at its midnight b
   assert.equal(getCreditDueReminder(credit(), "2026-10-06"), null);
   assert.equal(getCreditDueReminder(credit(), "2026-10-08"), null);
   assert.equal(getCreditDueReminder(credit(), "2026-10-09"), null);
+});
+
+test("before-due and due-today campaigns select different days for the same unpaid installment", () => {
+  const record = credit();
+  assert.ok(getCreditDueReminder(record, "2026-10-07", "before_due"));
+  assert.equal(getCreditDueReminder(record, "2026-10-07", "due_today"), null);
+  assert.equal(getCreditDueReminder(record, "2026-10-08", "before_due"), null);
+  assert.deepEqual(getCreditDueReminder(record, "2026-10-08", "due_today"), {
+    creditId: 42, installmentNumber: 1, dueDate: "2026-10-08", phone: "573000000042", name: "Ana Prueba",
+  });
+  assert.equal(getCreditDueReminder(record, "2026-10-09", "due_today"), null);
+  assert.equal(getCreditDueReminder(record, "2026-10-07", "unknown"), null);
+});
+
+test("due-today selects partial balances with AD zero and positive pending installment count", () => {
+  const record = credit({ fechaPrimerPago: "2026-10-07", fechaProximoPago: "2026-10-07", abonos: [payment(50)] });
+  const plan = buildCreditPaymentPlan({ ...record, today });
+  assert.equal(resolveCarteraDaysPastDue(plan, today), 0);
+  assert.equal(plan.pendingCount, 3);
+  assert.equal(getCreditDueReminder(record, today, "due_today")?.installmentNumber, 1);
+  assert.equal(getCreditDueReminder(record, today, "before_due"), null);
+  assert.equal(getCreditDueReminder({ ...record, abonos: [payment(100)], fechaProximoPago: "2026-10-21" }, today, "due_today"), null);
+});
+
+test("AD zero with W zero or stale paid state does not send a due-today reminder", () => {
+  const paid = credit({ fechaPrimerPago: "2026-09-09", fechaProximoPago: "2026-10-07", abonos: [payment(300)] });
+  const plan = buildCreditPaymentPlan({ ...paid, today });
+  assert.equal(resolveCarteraDaysPastDue(plan, today), 0);
+  assert.equal(plan.pendingCount, 0);
+  assert.equal(getCreditDueReminder(paid, today, "due_today"), null);
+  const dueToday = credit({ fechaPrimerPago: "2026-10-07", fechaProximoPago: "2026-10-07" });
+  for (const estado of ["PAGADO", "PAZ_Y_SALVO", "ANULADO", "CANCELADO"]) {
+    assert.equal(getCreditDueReminder({ ...dueToday, estado }, today, "due_today"), null, estado);
+  }
+  assert.equal(getCreditDueReminder({ ...dueToday, pazYSalvoEmitidoAt: today }, today, "due_today"), null);
+  assert.equal(getCreditDueReminder({ ...dueToday, montoCredito: 0 }, today, "due_today"), null);
+});
+
+test("due-today excludes other arrears and missing or invalid contacts and contractual dates", () => {
+  assert.equal(getCreditDueReminder(credit({ fechaPrimerPago: "2026-09-01", fechaProximoPago: "2026-10-07" }), today, "due_today"), null);
+  for (const changes of [
+    { fechaPrimerPago: null, fechaProximoPago: null },
+    { fechaPrimerPago: "invalid", fechaProximoPago: new Date("invalid") },
+    { clienteTelefono: "123" },
+    { clienteNombre: " " },
+  ]) assert.equal(getCreditDueReminder(credit({ fechaPrimerPago: "2026-10-07", fechaProximoPago: "2026-10-07", ...changes }), today, "due_today"), null);
+});
+
+test("due-today changes at Bogotá midnight regardless of UTC date", () => {
+  assert.equal(getCreditDueReminder(credit(), new Date("2026-10-08T04:59:59.999Z"), "due_today"), null);
+  assert.ok(getCreditDueReminder(credit(), new Date("2026-10-08T05:00:00.000Z"), "due_today"));
+  assert.ok(getCreditDueReminder(credit(), new Date("2026-10-09T04:59:59.999Z"), "due_today"));
+  assert.equal(getCreditDueReminder(credit(), new Date("2026-10-09T05:00:00.000Z"), "due_today"), null);
 });
 
 test("missing or invalid registered dates cannot invent a biweekly reminder", () => {
