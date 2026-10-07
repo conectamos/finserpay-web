@@ -29,6 +29,7 @@ import {
   canSeeSensitiveSolicitudData,
   getSolicitudActions,
   isSolicitudVisibleOnWall,
+  isSolicitudImeiChangeBlocked,
   maskDocument,
   maskImei,
   resolveSolicitudDraftCanonicalIdentity,
@@ -1509,14 +1510,42 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     const incomingImeis = [imei, payloadImei, payloadDeviceUid].filter(Boolean);
     const incomingCompleteImei =
       incomingImeis.find((candidate) => isCompleteImei(candidate)) || "";
+    const imeiChanged = Boolean(
+      storedIdentityImei && incomingCompleteImei &&
+      incomingCompleteImei !== storedIdentityImei
+    );
+    let signatureStarted = false;
+    if (imeiChanged && targetId) {
+      // The operation lock above serializes this decision with dispatch
+      // reservation. Check all historical processes, including superseded
+      // attempts, so a failed or reissued signature cannot unlock the IMEI.
+      const processRows = await transaction.$queryRawUnsafe<Array<{
+        started: boolean;
+        dispatchTablePresent: boolean;
+      }>>(
+        `SELECT
+          EXISTS (SELECT 1 FROM "FirmaSeguroProcess" WHERE "draftId" = $1) AS "started",
+          to_regclass('public."FirmaSeguroDraftDispatch"') IS NOT NULL AS "dispatchTablePresent"`,
+        targetId,
+      );
+      signatureStarted = processRows[0]?.started === true;
+      if (!signatureStarted && processRows[0]?.dispatchTablePresent) {
+        const dispatchRows = await transaction.$queryRawUnsafe<Array<{ started: boolean }>>(
+          `SELECT EXISTS (
+            SELECT 1 FROM "FirmaSeguroDraftDispatch" WHERE "draftId" = $1
+          ) AS "started"`,
+          targetId,
+        );
+        signatureStarted = dispatchRows[0]?.started === true;
+      }
+    }
     if (
       new Set(incomingImeis).size > 1 ||
-      (storedStep >= 3 &&
-        storedIdentityImei &&
-        incomingImeis.some(
-          (candidate) =>
-            isCompleteImei(candidate) && candidate !== storedIdentityImei
-        ))
+      isSolicitudImeiChangeBlocked({
+        storedImei: storedIdentityImei,
+        incomingImeis,
+        signatureStarted,
+      })
     ) {
       throw new SolicitudCanonicalMutationError("SOLICITUD_IMEI_INMUTABLE");
     }
@@ -1542,7 +1571,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       normalizePlatform(targetRow?.plataforma) ||
       normalizePlatform(input.plataforma);
     const canonicalImei =
-      (storedStep >= 3 ? storedIdentityImei : "") ||
+      (signatureStarted ? storedIdentityImei : "") ||
       incomingCompleteImei ||
       storedIdentityImei;
     if (canonicalImei) {

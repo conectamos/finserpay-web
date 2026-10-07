@@ -153,6 +153,20 @@ export class SolicitudCanonicalMutationError extends Error {
   }
 }
 
+/** The draft IMEI becomes immutable only after a contract dispatch was started. */
+export function isSolicitudImeiChangeBlocked(input: {
+  storedImei: string;
+  incomingImeis: string[];
+  signatureStarted: boolean;
+}) {
+  if (!input.signatureStarted || !/^\d{15}$/.test(input.storedImei)) {
+    return false;
+  }
+  return input.incomingImeis.some(
+    (candidate) => /^\d{15}$/.test(candidate) && candidate !== input.storedImei,
+  );
+}
+
 const SOLICITUD_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

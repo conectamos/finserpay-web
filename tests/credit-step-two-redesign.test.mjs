@@ -83,8 +83,18 @@ test("el equipo cuenta cuatro campos y exige un IMEI de exactamente 15 dígitos"
   assert.match(step, /imeiDigits\.length \+ "\/15 dígitos"/);
 });
 
-test("el plan permanece en un fieldset bloqueado hasta tener equipo y política", async () => {
-  const { derived, step } = await stepTwoSources();
+test("el IMEI no bloquea el cálculo del plan, pero sí el avance a identidad", async () => {
+  const { factory, derived, step } = await stepTwoSources();
+  const planEquipment = sourceBetween(
+    derived,
+    "const stepTwoPlanEquipmentReady =",
+    "const stepTwoPolicyAvailable ="
+  );
+
+  assert.match(planEquipment, /Boolean\(equipoMarca\.trim\(\)\)/);
+  assert.match(planEquipment, /Boolean\(equipoModelo\.trim\(\)\)/);
+  assert.match(planEquipment, /valorTotalEquipoNumero > 0/);
+  assert.doesNotMatch(planEquipment, /imeiValido|imeiDigits/);
 
   assert.match(
     derived,
@@ -92,12 +102,23 @@ test("el plan permanece en un fieldset bloqueado hasta tener equipo y política"
   );
   assert.match(
     derived,
-    /const stepTwoPlanLocked =\s*!stepTwoEquipmentReady \|\|\s*!stepTwoPolicyAvailable \|\|\s*signedContractEditLocked;/
+    /const stepTwoPlanLocked =\s*!stepTwoPlanEquipmentReady \|\|\s*!stepTwoPolicyAvailable \|\|\s*signedContractEditLocked;/
   );
+  assert.match(derived, /const stepTwoProposalReady =\s*stepTwoPlanEquipmentReady && stepTwoPolicyAvailable && financialPreviewReady;/);
+  assert.match(derived, /const stepTwoComplete =\s*stepEquipoReady &&/);
+  const optionSyncMarker = "setPlazoMeses(creditInstallmentOptions[0]);";
+  const optionSyncPosition = factory.indexOf(optionSyncMarker);
+  assert.ok(optionSyncPosition >= 0);
+  const optionSyncStart = factory.lastIndexOf("  useEffect(() => {", optionSyncPosition);
+  const optionSync = factory.slice(optionSyncStart, optionSyncPosition + optionSyncMarker.length);
+  assert.match(optionSync, /!stepTwoPlanEquipmentReady \|\|/);
+  assert.doesNotMatch(optionSync, /stepTwoEquipmentReady|imeiValido/);
   assert.match(step, /stepTwoPlanLocked \? "is-locked" : ""/);
   assert.match(step, /id="step-two-plan-availability"/);
   assert.match(step, /"Política no disponible"/);
-  assert.match(step, /"Disponible al completar el equipo\."/);
+  assert.match(step, /"Completa la marca, el modelo y el precio para configurar el plan\."/);
+  assert.match(step, /"Puedes calcular el plan sin IMEI; ingresa sus 15 números antes de continuar\."/);
+  assert.match(step, /\{stepTwoPlanEquipmentReady && stepTwoPlanSelectionValid/);
   assert.match(
     step,
     /<fieldset[\s\S]*?disabled=\{stepTwoPlanLocked\}[\s\S]*?aria-describedby="step-two-plan-availability"[\s\S]*?className="fp-step2-plan-fields"/
