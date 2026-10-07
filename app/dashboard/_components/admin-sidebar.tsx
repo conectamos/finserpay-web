@@ -56,6 +56,12 @@ type AdminSidebarProps = {
   rolUsuario: string;
 };
 
+function isNavItemActive(item: NavItem, activeHref: string): boolean {
+  return activeHref === item.href
+    || activeHref.startsWith(`${item.href}/`)
+    || Boolean(item.children?.some((child) => isNavItemActive(child, activeHref)));
+}
+
 function SidebarLink({
   activeHref,
   href,
@@ -97,8 +103,8 @@ function SidebarNavigation({
           </p>
           <div className="space-y-1">
             {group.items.map((item) => item.children ? (
-              <details key={item.href} open={activeHref === item.href || activeHref.startsWith(`${item.href}/`)} className="group/cartera">
-                <summary className={`flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold [&::-webkit-details-marker]:hidden ${activeHref === item.href || activeHref.startsWith(`${item.href}/`) ? "bg-white/10 text-[var(--fp-lime)]" : "text-slate-300 hover:bg-white/8 hover:text-white"}`}>
+              <details key={item.href} open={isNavItemActive(item, activeHref)} className="group/cartera">
+                <summary className={`flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold [&::-webkit-details-marker]:hidden ${isNavItemActive(item, activeHref) ? "bg-white/10 text-[var(--fp-lime)]" : "text-slate-300 hover:bg-white/8 hover:text-white"}`}>
                   <item.icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
                   {item.label}
                   <ChevronDown className="ml-auto h-4 w-4 transition group-open/cartera:rotate-180" />
@@ -124,7 +130,9 @@ export default function AdminSidebar({
   rolUsuario,
 }: AdminSidebarProps) {
   const analystNavigation = isApprovalAnalystRole(rolUsuario);
-  const portfolioNavigation = activeHref === "/dashboard/cartera" || activeHref.startsWith("/dashboard/cartera/");
+  const portfolioNavigation = activeHref === "/dashboard/cartera"
+    || activeHref.startsWith("/dashboard/cartera/")
+    || activeHref === "/dashboard/riesgo-referencia";
   const navGroups: NavGroup[] = analystNavigation ? [
     {
       label: "Aprobaciones",
@@ -180,11 +188,11 @@ export default function AdminSidebar({
           ? [{ href: "/dashboard/cartera", icon: PieChart, label: "Cartera", children: [
               { href: "/dashboard/cartera", icon: PieChart, label: "Resumen" },
               { href: "/dashboard/cartera/detalle-mora", icon: BarChart3, label: "Detalle de mora" },
+              { href: "/dashboard/riesgo-referencia", icon: BarChart3, label: "Riesgo por referencia" },
             ] }]
           : []),
         ...(adminCentral
           ? [
-              { href: "/dashboard/riesgo-referencia", icon: BarChart3, label: "Riesgo por referencia" },
               {
                 href: "/dashboard/excepciones-mora",
                 icon: TriangleAlert,

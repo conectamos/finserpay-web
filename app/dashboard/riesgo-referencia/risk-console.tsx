@@ -13,6 +13,7 @@ const columns = [
   ["dias", "Días promedio de mora"], ["ultima", "Última venta"], ["riesgo", "Indicador de riesgo"],
 ] as const;
 type SortKey = typeof columns[number][0];
+const financialColumns = new Set<SortKey>(["capital", "saldo", "vencido"]);
 const money = (n: number) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
 const percent = (n: number) => `${n.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 const riskLabel = (n: number) => n >= 8 ? "Alto" : n >= 5 ? "Medio" : "Bajo";
@@ -21,7 +22,17 @@ function value(row: Row, key: SortKey) {
   return row[key];
 }
 
-export default function RiskConsole({ credits, cutoff }: { credits: ProductRiskCredit[]; cutoff: string }) {
+export default function RiskConsole({
+  credits,
+  cutoff,
+  adminCentral = false,
+  scopeLabel,
+}: {
+  credits: ProductRiskCredit[];
+  cutoff: string;
+  adminCentral?: boolean;
+  scopeLabel?: string;
+}) {
   const [filters, setFilters] = useState<ProductRiskFilters>({ ...emptyProductRiskFilters });
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "porcentaje", desc: true });
   const [selected, setSelected] = useState<string | null>(null);
@@ -39,11 +50,12 @@ export default function RiskConsole({ credits, cutoff }: { credits: ProductRiskC
   const financed = groups.reduce((sum, r) => sum + r.financiadas, 0);
   const overdue = groups.reduce((sum, r) => sum + r.mora, 0);
   const detail = groups.find(r => r.key === selected);
+  const visibleColumns = columns.filter(([key]) => adminCentral || !financialColumns.has(key));
   const update = (key: keyof ProductRiskFilters, val: string) => { setFilters(f => ({ ...f, [key]: val })); setSelected(null); };
   const options = (key: "marca" | "referencia" | "aliado" | "sede") => [...new Set(credits.filter(c => key !== "referencia" || !filters.marca || c.marca === filters.marca).map(c => c[key]))].sort((a, b) => a.localeCompare(b, "es"));
   const openDetail = (key: string) => { setSelected(key); requestAnimationFrame(() => document.getElementById("reference-detail")?.scrollIntoView({ behavior: "smooth", block: "start" })); };
-  return <main className={styles.main}>
-    <PageHeader eyebrow="Admin Central FINSER · Cartera" title="Riesgo por referencia" description={`Mora por producto · Cartera al ${cutoff}`} />
+  return <main className={`${styles.main}${adminCentral ? "" : ` ${styles.operational}`}`}>
+    <PageHeader eyebrow="Cartera" title="Riesgo por referencia" description={`Mora por producto · ${scopeLabel || (adminCentral ? "Todos los aliados" : "Mi aliado")} · Cartera al ${cutoff}`} />
     <details className={styles.method}><summary>Cómo se calcula la mora</summary><p className={styles.note}>Fechas por venta. Mora actual = unidades en mora ÷ unidades financiadas × 100. Incluye créditos pagados en el denominador. Excluye anulados y créditos sin evidencia de financiación. El promedio de días considera solo unidades en mora.</p></details>
     <section className={styles.metrics} aria-label="Resumen de riesgo">
       <MetricCard label="Mayor porcentaje de mora" value={ranking[0]?.mora ? ranking[0].referencia : "Sin mora"} detail={ranking[0]?.mora ? `${ranking[0].marca} · ${percent(ranking[0].porcentaje)}` : "En la selección actual"} />
@@ -85,9 +97,9 @@ export default function RiskConsole({ credits, cutoff }: { credits: ProductRiskC
         </Card>
       </section>
       <Card className={styles.panel}><div className={styles.panelHeader}><h2>Referencias · {groups.length}</h2><p className={styles.note}>Riesgo bajo &lt; 5% · Medio ≥ 5% y &lt; 8% · Alto ≥ 8%. Selecciona una referencia para ver sus créditos.</p></div>
-        <DataTable className={styles.tableWrap}><table><thead><tr>{columns.map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.desc ? "descending" : "ascending" : "none"}><button className={styles.sort} onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : true })}><span>{label}</span><span aria-hidden="true">{sort.key === key ? sort.desc ? "↓" : "↑" : "↕"}</span></button></th>)}</tr></thead><tbody>{sorted.map(r => <tr key={r.key}>{columns.map(([key]) => <td key={key}>{key === "referencia" ? <button className={styles.reference} onClick={() => openDetail(r.key)}>{r.referencia}</button> : key === "riesgo" ? <Badge tone={riskTone(r.porcentaje)}>{riskLabel(r.porcentaje)}</Badge> : key === "porcentaje" ? percent(r.porcentaje) : ["capital", "saldo", "vencido"].includes(key) ? money(Number(value(r, key))) : key === "dias" ? r.dias.toLocaleString("es-CO", { maximumFractionDigits: 1 }) : String(value(r, key))}</td>)}</tr>)}</tbody></table></DataTable>
+        <DataTable className={styles.tableWrap}><table><thead><tr>{visibleColumns.map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.desc ? "descending" : "ascending" : "none"}><button className={styles.sort} onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : true })}><span>{label}</span><span aria-hidden="true">{sort.key === key ? sort.desc ? "↓" : "↑" : "↕"}</span></button></th>)}</tr></thead><tbody>{sorted.map(r => <tr key={r.key}>{visibleColumns.map(([key]) => <td key={key}>{key === "referencia" ? <button className={styles.reference} onClick={() => openDetail(r.key)}>{r.referencia}</button> : key === "riesgo" ? <Badge tone={riskTone(r.porcentaje)}>{riskLabel(r.porcentaje)}</Badge> : key === "porcentaje" ? percent(r.porcentaje) : financialColumns.has(key) ? money(Number(value(r, key))) : key === "dias" ? r.dias.toLocaleString("es-CO", { maximumFractionDigits: 1 }) : String(value(r, key))}</td>)}</tr>)}</tbody></table></DataTable>
       </Card>
     </> : <EmptyState title="Sin créditos para esta selección" description="Modifica los filtros o verifica que las ventas tengan evidencia de financiación." />}
-    {detail && <Card id="reference-detail" className={`${styles.panel} ${styles.detail}`}><div className={styles.detailHeader}><h2>{detail.marca} · {detail.referencia}</h2><Button variant="secondary" onClick={() => setSelected(null)}>Cerrar detalle</Button></div><p className={`${styles.note} mt-3 mb-6`}>Todos los créditos de la referencia que cumplen los filtros actuales. Se muestra la última gestión registrada en cartera.</p><DataTable><table><thead><tr>{["Número de crédito", "Cliente", "Aliado", "Sede", "Fecha de venta", "Valor financiado", "Saldo", "Días de mora", "Última gestión de cartera"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{detail.credits.map(c => <tr key={c.id}><td>{c.numeroCreditoVisible || c.folio}</td><td>{c.cliente}</td><td>{c.aliado}</td><td>{c.sede}</td><td>{c.fecha}</td><td>{money(c.capital)}</td><td>{money(c.saldo)}</td><td>{c.dias}</td><td className={styles.observation}>{c.gestion || "Sin gestión registrada"}{c.gestionFecha && <p className={styles.note}>{new Date(c.gestionFecha).toLocaleString("es-CO", { timeZone: "America/Bogota" })}</p>}</td></tr>)}</tbody></table></DataTable></Card>}
+    {detail && <Card id="reference-detail" className={`${styles.panel} ${styles.detail}`}><div className={styles.detailHeader}><h2>{detail.marca} · {detail.referencia}</h2><Button variant="secondary" onClick={() => setSelected(null)}>Cerrar detalle</Button></div><p className={`${styles.note} mt-3 mb-6`}>Todos los créditos de la referencia que cumplen los filtros actuales. Se muestra la última gestión registrada en cartera.</p><DataTable><table><thead><tr>{["Número de crédito", "Cliente", "Aliado", "Sede", "Fecha de venta", ...(adminCentral ? ["Valor financiado", "Saldo"] : []), "Días de mora", "Última gestión de cartera"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{detail.credits.map(c => <tr key={c.id}><td>{c.numeroCreditoVisible || c.folio}</td><td>{c.cliente}</td><td>{c.aliado}</td><td>{c.sede}</td><td>{c.fecha}</td>{adminCentral ? <><td>{money(c.capital ?? 0)}</td><td>{money(c.saldo ?? 0)}</td></> : null}<td>{c.dias}</td><td className={styles.observation}>{c.gestion || "Sin gestión registrada"}{c.gestionFecha && <p className={styles.note}>{new Date(c.gestionFecha).toLocaleString("es-CO", { timeZone: "America/Bogota" })}</p>}</td></tr>)}</tbody></table></DataTable></Card>}
   </main>;
 }
