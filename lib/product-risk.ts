@@ -74,3 +74,9 @@ export function summarizeProductRisk(credits: ProductRiskCredit[]) {
  const mora = credits.filter(c => c.dias > 0 && riskCreditActive(c)).length;
  return { financiadas, mora, porcentaje: financiadas ? mora / financiadas * 100 : 0 };
 }
+
+/** Report classification follows the product description, including historical typos. */
+export function classifyRiskProduct(equipment: { equipoMarca?: string | null; equipoModelo?: string | null; referenciaEquipo?: string | null }): "IPHONE" | "ANDROID" {
+  const description = [equipment.equipoMarca, equipment.equipoModelo, equipment.referenciaEquipo].join(" ").toUpperCase();
+  return /IPHONE|IPOHN/.test(description) ? "IPHONE" : "ANDROID";
+}
