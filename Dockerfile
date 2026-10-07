@@ -101,6 +101,8 @@ COPY --from=builder /app/scripts/setup-commissions.sql ./scripts/setup-commissio
 COPY --from=builder /app/scripts/ensure-commissions-schema.mjs ./scripts/ensure-commissions-schema.mjs
 COPY --from=builder /app/scripts/credit-due-reminders-schema.mjs ./scripts/credit-due-reminders-schema.mjs
 COPY --from=builder /app/scripts/ensure-credit-due-reminders-schema.mjs ./scripts/ensure-credit-due-reminders-schema.mjs
+COPY --from=builder /app/scripts/credit-overdue-data-schema.mjs ./scripts/credit-overdue-data-schema.mjs
+COPY --from=builder /app/scripts/ensure-credit-overdue-data-schema.mjs ./scripts/ensure-credit-overdue-data-schema.mjs
 
 EXPOSE 3000
 

@@ -1,5 +1,6 @@
 import { syncAllCreditMora } from "@/lib/credit-mora-sync";
 import { runCreditDueReminders } from "@/lib/credit-due-reminders";
+import { runCreditOverdueDataCampaign } from "@/lib/credit-overdue-data-campaign";
 import {
   processPendingDeviceUnlockCommands,
   recoverRecentApprovedWompiUnlockCommands,
@@ -11,7 +12,7 @@ import { retryMerchantApplications } from "@/lib/merchant-applications-storage";
 import {
   getDueInternalCronTasks,
   getStartupRecoveryTasks,
-  isCreditReminderTask,
+  isCreditCampaignTask,
   type InternalCronTask as ScheduledInternalCronTask,
 } from "@/lib/internal-cron-schedule";
 
@@ -130,6 +131,15 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "credit-overdue-data") {
+      const result = await runCreditOverdueDataCampaign({ dryRun: false });
+      completed = result.enabled && result.configured && result.inWindow;
+      if (completed) {
+        logCron("Campana Datos de clientes en mora procesada.", summarizeReport(result));
+      }
+      return;
+    }
+
     if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
       const result = await runCreditDueReminders({
         dryRun: false,
@@ -194,7 +204,9 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
+    if (taskName === "credit-overdue-data") {
+      console.error("[finserpay-cron] No se pudo procesar la campana Datos de clientes en mora.");
+    } else if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
       console.error("[finserpay-cron] No se pudo procesar la cola de recordatorios de cuotas.");
     } else if (taskName === "merchant-applications") {
       // Never expose provider/database errors containing merchant data or secrets.
@@ -234,11 +246,11 @@ async function tick() {
     `unlock:${dateKey}:${timeKey}:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`,
   );
 
-  // Start both campaigns together so a large preceding-day batch cannot delay
-  // today's reminders beyond the shared sending window.
-  const reminders = dueTasks.filter(isCreditReminderTask);
-  await Promise.all(reminders.map(task => runScheduledTask(task, `${task}:${dateKey}`)));
-  for (const taskName of dueTasks.filter(task => !isCreditReminderTask(task))) {
+  // Start all campaigns together so a large batch cannot delay another
+  // campaign beyond the shared sending window.
+  const campaigns = dueTasks.filter(isCreditCampaignTask);
+  await Promise.all(campaigns.map(task => runScheduledTask(task, `${task}:${dateKey}`)));
+  for (const taskName of dueTasks.filter(task => !isCreditCampaignTask(task))) {
     await runScheduledTask(
       taskName,
       `${taskName}:${dateKey}:${timeKey}`,
@@ -269,8 +281,8 @@ async function runStartupRecovery() {
   );
 
   const dueTasks = getStartupRecoveryTasks(timeKey);
-  await Promise.all(dueTasks.filter(isCreditReminderTask).map(task => runScheduledTask(task, `${task}:${dateKey}`)));
-  for (const taskName of dueTasks.filter(task => !isCreditReminderTask(task))) {
+  await Promise.all(dueTasks.filter(isCreditCampaignTask).map(task => runScheduledTask(task, `${task}:${dateKey}`)));
+  for (const taskName of dueTasks.filter(task => !isCreditCampaignTask(task))) {
     await runScheduledTask(
       taskName,
       `${taskName}:startup-recovery:${dateKey}`,
@@ -303,7 +315,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, recordatorios de cuotas a las 10:00 con recuperacion hasta las 11:00; el inicio respeta esas ventanas, hora Colombia.",
+    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, recordatorios de cuotas a las 10:00 y campana Datos de clientes en mora cada 3 dias tras el ultimo envio, con revision diaria a las 10:00 y recuperacion hasta las 11:00; el inicio respeta esas ventanas, hora Colombia.",
   );
 
   void runStartupRecovery();
