@@ -294,7 +294,29 @@ async function restoreImmutableTrigger(client, table, trigger, toggled) {
 }
 
 function summarize(checked, target, execute) {
+  const credit = checked.credit;
+  const identityDiagnostics = [];
+  if (credit && checked.verdict.blockers.includes("CREDIT_IDENTITY_MISMATCH")) {
+    if (credit.clienteNombre !== target.customerName) {
+      const name = String(credit.clienteNombre || "");
+      identityDiagnostics.push({ field: "clienteNombre",
+        actual: /^PRUEBA\b/i.test(name) ? name : "NON_SYNTHETIC_NAME" });
+    }
+    for (const [field, expected] of [
+      ["valorEquipoTotal", target.equipmentValue],
+      ["montoCredito", target.financedValue],
+      ["cuotaInicial", target.initialPayment],
+    ]) {
+      if (Number(credit[field]) !== expected) {
+        identityDiagnostics.push({ field, actual: Number(credit[field]) });
+      }
+    }
+    if (!target.allowedStates.includes(credit.estado)) {
+      identityDiagnostics.push({ field: "estado", actual: credit.estado });
+    }
+  }
   return { mode: execute ? "EXECUTE" : "DRY_RUN", folio: target.folio, ...checked.verdict,
+    ...(identityDiagnostics.length ? { identityDiagnostics } : {}),
     references: checked.references.filter(item => item.count > 0).map(item => ({ table: item.table, count: item.count })),
     extraReferences: checked.extraReferences.filter(item => item.count > 0).map(item => ({ table: item.table, count: item.count })),
     commissionAuditCount: checked.ancillary.commissionAuditActions?.reduce((n, row) => n + count(row.count), 0) || 0 };
