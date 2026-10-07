@@ -204,12 +204,13 @@ function EmptyCreditWorkspace({ notFound = false }: { notFound?: boolean }) {
   </Card>;
 }
 
-export default function ApprovalOperations({ onOpenApproval, active = true, mode = "all", preferredPanel = null, initialQuery = "" }: {
+export default function ApprovalOperations({ onOpenApproval, active = true, mode = "all", preferredPanel = null, initialQuery = "", initialCase }: {
   onOpenApproval?: (creditId: number) => void;
   active?: boolean;
   mode?: OperationMode;
   preferredPanel?: Exclude<ActivePanel, "identity" | null> | null;
   initialQuery?: string;
+  initialCase?: Pick<OperationalCaseSummary, "kind" | "id">;
 }) {
   const focusedPanel = preferredPanel ?? (mode === "all" ? null : mode);
   const [query, setQuery] = useState(initialQuery.trim());
@@ -268,6 +269,28 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
     if (selected || !initialQuery.trim()) return;
     setQuery(initialQuery.trim());
   }, [initialQuery, selected]);
+
+  // Contextual links select the exact request, even when the client has several credits.
+  useEffect(() => {
+    if (!initialCase || !active) return;
+    const controller = new AbortController();
+    detailController.current?.abort();
+    detailController.current = controller;
+    setLoadingDetail(true);
+    setSearchError("");
+    void jsonRequest<DetailResult>(casePath(initialCase), { signal: controller.signal },
+      "No fue posible abrir la solicitud seleccionada.")
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setSelected(result.item);
+        setDetail(result.item);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setSearchError(error instanceof Error ? error.message : "No fue posible abrir la solicitud.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoadingDetail(false); });
+    return () => controller.abort();
+  }, [initialCase, active]);
 
   useEffect(() => {
     const returnedToDetail = active && !wasActive.current;
@@ -420,6 +443,8 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   async function searchCases(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting.current) return;
+    detailController.current?.abort();
+    setLoadingDetail(false);
     const q = query.trim();
     setSearched(true);
     setSelected(null);

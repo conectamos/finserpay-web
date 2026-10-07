@@ -423,7 +423,10 @@ test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout"
   for (const [path, method] of [
     ["/dashboard/aprobaciones", "GET"],
     ["/dashboard/aprobaciones/cambio-imei", "GET"],
+    ["/dashboard/aprobaciones/solicitudes/D-7", "GET"],
+    ["/dashboard/aprobaciones/solicitudes/C-81", "GET"],
     ["/api/aprobaciones", "GET"],
+    ["/api/aprobaciones/solicitudes/D-7/archivo/remision", "GET"],
     ["/api/aprobaciones/sadmin/7", "PATCH"],
     ["/api/solicitudes", "GET"],
     ["/api/creditos/datacredito/admin/liberaciones/buscar", "POST"],
@@ -440,6 +443,11 @@ test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout"
     ["/api/clientes", "POST"],
     ["/api/usuarios/admin", "POST"],
     ["/api/solicitudes", "PATCH"],
+    ["/api/creditos", "POST"],
+    ["/api/creditos/borradores", "POST"],
+    ["/api/creditos/81/command", "POST"],
+    ["/api/creditos/borradores/7/corregir-identidad", "PATCH"],
+    ["/api/creditos/borradores/7/corregir-financiero", "PATCH"],
     ["/api/creditos/datacredito/admin/liberaciones/buscar", "GET"],
     ["/api/creditos/datacredito/admin/evaluaciones/no-es-uuid/autorizar-reintento", "POST"],
     ["/api/creditos/datacredito/admin/evaluaciones/10000000-0000-4000-8000-000000000001", "GET"],
@@ -447,7 +455,7 @@ test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout"
     const response = proxyModule.proxy(proxyRequest(path, accountCookie, method));
     assert.equal(response.status, 403, path);
   }
-  for (const path of ["/dashboard", "/dashboard/financiero", "/dashboard/deuda-sedes"]) {
+  for (const path of ["/dashboard", "/dashboard/financiero", "/dashboard/deuda-sedes", "/dashboard/creditos"]) {
     const response = proxyModule.proxy(proxyRequest(path, accountCookie));
     assert.equal(response.kind, "redirect", path);
     assert.equal(response.pathname, "/dashboard/aprobaciones", path);

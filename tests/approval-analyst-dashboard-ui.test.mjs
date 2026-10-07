@@ -82,7 +82,7 @@ test("IMEI, firma, solicitudes y TX06 reutilizan los componentes existentes en m
   assert.match(requests, /baseHref="\/dashboard\/aprobaciones\/solicitudes"/);
 
   const release = read("app/dashboard/aprobaciones/liberar-consulta/page.tsx");
-  assert.match(release, /<Tx06ReleaseConsole mode="analyst" \/>/);
+  assert.match(release, /<Tx06ReleaseConsole mode="analyst" initialDocument=\{initialDocument\} \/>/);
 });
 
 test("la cola aplica aliado y fechas en servidor antes del cursor", () => {
