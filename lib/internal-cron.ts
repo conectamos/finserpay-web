@@ -281,6 +281,12 @@ async function runStartupRecovery() {
   );
 
   const dueTasks = getStartupRecoveryTasks(timeKey);
+  // The explicitly configured first batch may recover on its one calendar day
+  // even when deployment finishes after the regular Colombian sending window.
+  if (String(process.env.DAPTA_DATOS_INITIAL_BATCH_DATE || "").trim() === dateKey
+    && !dueTasks.includes("credit-overdue-data")) {
+    dueTasks.push("credit-overdue-data");
+  }
   await Promise.all(dueTasks.filter(isCreditCampaignTask).map(task => runScheduledTask(task, `${task}:${dateKey}`)));
   for (const taskName of dueTasks.filter(task => !isCreditCampaignTask(task))) {
     await runScheduledTask(

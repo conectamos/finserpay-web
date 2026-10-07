@@ -7,7 +7,7 @@ const campaigns = ["credit-due-reminders", "credit-due-today-reminders", "credit
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false } = {}) {
+function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, initialBatchDate } = {}) {
   let clock = new Date(now);
   let timerCallback;
   let paused = hold;
@@ -46,7 +46,7 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     "@/lib/internal-cron-schedule": schedule,
   }, {
     Date: Clock, Intl, globalThis: scope,
-    process: { env: { FINSERPAY_INTERNAL_CRON: "true" } },
+    process: { env: { FINSERPAY_INTERNAL_CRON: "true", ...(initialBatchDate ? { DAPTA_DATOS_INITIAL_BATCH_DATE: initialBatchDate } : {}) } },
     setInterval: callback => { timerCallback = callback; return { unref() {} }; },
     console: { log: (...args) => logs.push(args), error: (...args) => errors.push(args) },
   });
@@ -132,4 +132,34 @@ test("a Datos failure stays sanitized and cannot prevent the other campaigns fro
   await nextTurn();
   assert.equal(f.calls.filter(call => call.name === "credit-overdue-data").length, 2);
   assert.equal(f.calls.filter(call => call.name !== "credit-overdue-data").length, 2);
+});
+
+test("the explicit first-batch date recovers only Datos after the regular window", async () => {
+  const f = cronFixture({ now: "2026-10-07T16:30:00Z", initialBatchDate: "2026-10-07" });
+  f.start();
+  await nextTurn();
+  assert.deepEqual(f.calls, [{ name: "credit-overdue-data", options: { dryRun: false } }]);
+  assert.ok(f.state().completed.has("credit-overdue-data:2026-10-07"));
+  f.start();
+  f.tick();
+  await nextTurn();
+  assert.equal(f.calls.length, 1);
+  f.setClock("2026-10-08T16:30:00Z");
+  f.tick();
+  await nextTurn();
+  assert.equal(f.calls.length, 1);
+});
+
+test("a past first-batch date cannot recover Datos or other campaigns outside their window", async () => {
+  const f = cronFixture({ now: "2026-10-07T16:30:00Z", initialBatchDate: "2026-10-06" });
+  f.start();
+  await nextTurn();
+  assert.deepEqual(f.calls, []);
+});
+
+test("first-batch recovery inside the usual window does not add Datos twice", async () => {
+  const f = cronFixture({ now: "2026-10-07T15:30:00Z", initialBatchDate: "2026-10-07" });
+  f.start();
+  await nextTurn();
+  assert.deepEqual(f.calls.map(call => call.name), campaigns);
 });

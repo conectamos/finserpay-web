@@ -13,6 +13,8 @@
 
 El primer envío se hace en la primera ventana habilitada. Los clientes que después entren en el filtro comienzan su propio intervalo de tres días. No hace falta exportar ni subir Excel.
 
+Si el usuario autoriza expresamente el primer lote hoy después de las 10:00, `DAPTA_DATOS_INITIAL_BATCH_DATE` habilita ese único día: el arranque ejecuta Datos y permite terminar el lote aunque cruce las 11:00. La excepción expira a medianoche de Colombia. No ejecuta los otros recordatorios fuera de su horario y no elude el intervalo de tres días por receptor.
+
 ## Plantilla existente y flujo
 
 Workspace: FINSERPAY (`7496b9a3-2fe6-4e28-8411-7d54ee788b2c`).
@@ -28,6 +30,7 @@ Variables del servicio `finserpay-web` en Railway:
 - `DAPTA_DATOS_ENABLED=true` para activar; ausente o cualquier otro valor no envía.
 - `DAPTA_DATOS_WEBHOOK_URL`: URL privada del nuevo flujo, con credencial integrada.
 - `DAPTA_DATOS_START_DATE=YYYY-MM-DD` opcional: impide envíos antes de la primera fecha acordada; una fecha imposible bloquea el envío. Para activar después de las 10:00, fijar mañana y conservar así el primer envío a las 10:00.
+- `DAPTA_DATOS_INITIAL_BATCH_DATE=YYYY-MM-DD` opcional: excepción de horario de una única fecha, solo para un primer lote autorizado. Para el primer lote del 7 de octubre de 2026, fijar tanto la fecha inicial como esta excepción a `2026-10-07`; los siguientes intentos quedan programados para el 10 de octubre a las 10:00 si la mora aún cumple.
 
 No guardar la URL privada ni la credencial en Git, documentación o logs. Solo se aceptan URL HTTPS de `api.dapta.ai`, sin userinfo/puerto, y no se siguen redirecciones. Las otras campañas conservan sus variables y registros.
 

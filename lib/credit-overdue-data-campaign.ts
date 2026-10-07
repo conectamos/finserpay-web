@@ -23,7 +23,8 @@ const creditSelect = {
 export type CreditOverdueDataOptions = { dryRun?: boolean; previewDate?: Date | string };
 export type CreditOverdueDataReport = {
   campaign: "datos"; templateKey: string; ok: boolean; dryRun: boolean;
-  enabled: boolean; configured: boolean; inWindow: boolean; startsOn: string | null; generatedAt: string; today: string;
+  enabled: boolean; configured: boolean; inWindow: boolean; startsOn: string | null;
+  initialBatchDate: string | null; generatedAt: string; today: string;
   summary: { scanned: number; eligibleCredits: number; eligibleClients: number; excluded: number;
     waiting: number; ready: number; claimed: number; accepted: number; failed: number;
     unknown: number; duplicates: number; staleClaims: number; revalidatedOut: number };
@@ -98,12 +99,19 @@ export function createCreditOverdueDataRunner(deps: {
     const enabled = deps.enabled ? deps.enabled() : process.env.DAPTA_DATOS_ENABLED === "true";
     const webhook = configuredWebhook(deps.webhookUrl ? deps.webhookUrl() : process.env.DAPTA_DATOS_WEBHOOK_URL);
     const startDate = String(process.env.DAPTA_DATOS_START_DATE || "").trim();
-    const validStart = !startDate || validStartDate(startDate);
+    const initialDate = String(process.env.DAPTA_DATOS_INITIAL_BATCH_DATE || "").trim();
+    const validStart = (!startDate || validStartDate(startDate)) && (!initialDate || validStartDate(initialDate));
+    // A server-side date, set only for the explicitly authorized first batch,
+    // lets that batch finish today even if deployment crosses the daily window.
+    // The exception expires at Bogotá midnight and never bypasses recipient cadence.
+    const isSendingAllowed = (date: Date) => validStart && (!startDate || colombiaDateKey(date) >= startDate)
+      && (isCreditOverdueDataWindow(date) || (Boolean(initialDate) && colombiaDateKey(date) === initialDate));
     const report: CreditOverdueDataReport = {
       campaign: "datos", templateKey: CREDIT_OVERDUE_DATA_TEMPLATE_KEY, ok: true, dryRun,
       enabled, configured: Boolean(webhook) && validStart,
-      inWindow: validStart && isCreditOverdueDataWindow(liveNow) && (!startDate || colombiaDateKey(liveNow) >= startDate),
+      inWindow: isSendingAllowed(liveNow),
       startsOn: startDate && validStart ? startDate : null,
+      initialBatchDate: initialDate && validStart ? initialDate : null,
       generatedAt: liveNow.toISOString(), today: todayKey,
       summary: { scanned: 0, eligibleCredits: 0, eligibleClients: 0, excluded: 0,
         waiting: 0, ready: 0, claimed: 0, accepted: 0, failed: 0, unknown: 0,
@@ -158,7 +166,7 @@ export function createCreditOverdueDataRunner(deps: {
         );
         const claimedAt = now();
         const claimDate = colombiaDateKey(claimedAt);
-        if (!isCreditOverdueDataWindow(claimedAt) || claimDate !== todayKey) return { status: "ineligible" as const };
+        if (!isSendingAllowed(claimedAt) || claimDate !== todayKey) return { status: "ineligible" as const };
         if (currentRecipient?.nextEligibleDate && dateKey(currentRecipient.nextEligibleDate) > claimDate) return { status: "duplicate" as const };
         const currentCandidates: CreditOverdueDataCandidate[] = [];
         for (const id of ids) {
@@ -221,7 +229,7 @@ export function createCreditOverdueDataRunner(deps: {
         }
         const candidate = groupCreditOverdueDataCandidates(currentCandidates)[0];
         const dispatchAt = now();
-        if (!candidate || !isCreditOverdueDataWindow(dispatchAt) || colombiaDateKey(dispatchAt) !== todayKey
+        if (!candidate || !isSendingAllowed(dispatchAt) || colombiaDateKey(dispatchAt) !== todayKey
           || new Date(active.claimExpiresAt).getTime() <= dispatchAt.getTime()) {
           report.summary.revalidatedOut += 1;
           // Only this owner can prove no HTTP started. Release its claim and cooldown together.
@@ -235,7 +243,7 @@ export function createCreditOverdueDataRunner(deps: {
            WHERE "id"=$1::uuid AND "status"='CLAIMED' AND "claimExpiresAt">$4`,
           claimId, candidate.creditId, candidate.daysPastDue, dispatchAt,
         );
-        if (!updated || !isCreditOverdueDataWindow(now()) || new Date(active.claimExpiresAt).getTime() <= now().getTime()) {
+        if (!updated || !isSendingAllowed(now()) || new Date(active.claimExpiresAt).getTime() <= now().getTime()) {
           report.summary.revalidatedOut += 1;
           if (!await releaseKnownUnsent()) report.summary.unknown += 1;
           continue;

@@ -118,6 +118,51 @@ test("three-day cooldown is a Bogotá calendar date: October 7 at 10:30 permits 
   assert.equal(day((await f.recipients())[0].nextEligibleDate), "2026-10-13");
 });
 
+test("the explicit initial batch date allows one late first batch, then normal window and cooldown apply", async t => {
+  const env = {
+    DAPTA_DATOS_ENABLED: "true", DAPTA_DATOS_WEBHOOK_URL: "https://api.dapta.ai/api/test-only-datos",
+    DAPTA_DATOS_START_DATE: "2026-10-07", DAPTA_DATOS_INITIAL_BATCH_DATE: "2026-02-30",
+  };
+  const f = await overdueDataFixture(t, { useEnvironmentConfig: true, env, now: "2026-10-07T17:30:00Z" });
+  const invalid = await f.run(live);
+  assert.equal(invalid.configured, false);
+  assert.equal(f.counts.pages, 0);
+  assert.equal(f.counts.writes, 0);
+  assert.equal(f.counts.sends, 0);
+
+  env.DAPTA_DATOS_INITIAL_BATCH_DATE = "2026-10-06";
+  const oldException = await f.run(live);
+  assert.equal(oldException.inWindow, false);
+  assert.equal(f.counts.pages, 0);
+  assert.equal(f.counts.writes, 0);
+
+  env.DAPTA_DATOS_INITIAL_BATCH_DATE = "2026-10-07";
+  const first = await f.run(live);
+  assert.equal(first.initialBatchDate, "2026-10-07");
+  assert.equal(first.inWindow, true);
+  assert.equal(first.summary.accepted, 1);
+  assert.equal(f.counts.sends, 1);
+  assert.equal(day((await f.recipients())[0].nextEligibleDate), "2026-10-10");
+  const replay = await f.run(live);
+  assert.equal(replay.summary.waiting, 1);
+  assert.equal(f.counts.sends, 1);
+
+  f.setClock("2026-10-08T17:30:00Z");
+  const before = { ...f.counts };
+  const nextDayLate = await f.run(live);
+  assert.equal(nextDayLate.inWindow, false);
+  assert.equal(nextDayLate.summary.scanned, 0);
+  assert.deepEqual(f.counts, before);
+  assert.equal(f.counts.sends, 1);
+
+  f.setClock("2026-10-10T15:00:00Z");
+  const regular = await f.run(live);
+  assert.equal(regular.inWindow, true);
+  assert.equal(regular.summary.accepted, 1);
+  assert.equal(f.counts.sends, 2);
+  assert.deepEqual((await f.rows()).map(row => day(row.campaignDate)), ["2026-10-07", "2026-10-10"]);
+});
+
 test("an overlapping HTTP dispatch and same-day replay cannot reserve or send twice", async t => {
   let started;
   let release;
