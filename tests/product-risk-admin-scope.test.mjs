@@ -109,15 +109,14 @@ function harness(session = ally, allCredits = [credit(1), credit(2, { estado: "E
   return { render: loaded.exports.default, calls };
 }
 
-test("riesgo aliado consulta sólo créditos de sesión y limita evidencia, números y gestiones a sus IDs", async () => {
+test("riesgo aliado cuenta toda su cartera y limita números y gestiones a sus IDs", async () => {
   const f = harness();
   const tree = await f.render({ searchParams: Promise.resolve({ aliadoId: "8", adminCentral: "true" }) });
   assert.equal(f.calls.access, 1);
   assert.equal(f.calls.credits[0].where.sede.aliadoId, 7);
-  assert.deepEqual(f.calls.evidence[0].ids, [1, 2, 3]);
-  assert.match(f.calls.evidence[0].sql, /WHERE "id" = ANY\(\?::int\[\]\)/);
-  assert.deepEqual(f.calls.numbers, [[1, 3]]);
-  assert.deepEqual(f.calls.management[0].ids, [1, 3]);
+  assert.equal(f.calls.evidence.length, 0);
+  assert.deepEqual(f.calls.numbers, [[1, 2, 3]]);
+  assert.deepEqual(f.calls.management[0].ids, [1, 2, 3]);
   assert.match(f.calls.management[0].sql, /WHERE event\."creditoId" = ANY\(\?::int\[\]\)/);
   for (const field of ["fotoEntregaDataUrl", "fotoRemisionDataUrl", "contratoSnapshot"]) {
     assert.equal(Object.hasOwn(f.calls.credits[0].select, field), false, `No debe cargar ${field}`);
@@ -125,9 +124,9 @@ test("riesgo aliado consulta sólo créditos de sesión y limita evidencia, núm
   const consoleNode = nodes(tree).find(node => node.props?.credits && node.props?.cutoff);
   assert.equal(consoleNode.props.adminCentral, false);
   assert.equal(consoleNode.props.scopeLabel, "JG COMPANY");
-  assert.deepEqual(consoleNode.props.credits.map(row => row.id), [1, 3]);
+  assert.deepEqual(consoleNode.props.credits.map(row => row.id), [1, 2, 3]);
   assert.equal(consoleNode.props.credits[0].activo, true);
-  assert.equal(consoleNode.props.credits[1].activo, false);
+  assert.equal(consoleNode.props.credits[2].activo, false);
   assert.doesNotMatch(JSON.stringify(consoleNode.props), /"capital"|"saldo"|"vencido"|1110000|900000|private photo payload/);
   assert.equal(consoleNode.props.credits[0].numeroCreditoVisible, "0100001");
   assert.equal(consoleNode.props.credits[0].gestion, null);
@@ -136,11 +135,11 @@ test("riesgo aliado consulta sólo créditos de sesión y limita evidencia, núm
 test("central conserva alcance global e importes; solamente la sesión otorga esa vista", async () => {
   const f = harness(central); const tree = await f.render();
   assert.equal(Object.hasOwn(f.calls.credits[0].where, "sede"), false);
-  assert.deepEqual(f.calls.evidence[0].ids, [1, 2, 3, 4]);
-  assert.deepEqual(f.calls.management[0].ids, [1, 3, 4]);
+  assert.equal(f.calls.evidence.length, 0);
+  assert.deepEqual(f.calls.management[0].ids, [1, 2, 3, 4]);
   const consoleNode = nodes(tree).find(node => node.props?.credits && node.props?.cutoff);
   assert.equal(consoleNode.props.adminCentral, true);
-  assert.equal(consoleNode.props.credits.length, 3);
+  assert.equal(consoleNode.props.credits.length, 4);
   assert.equal(consoleNode.props.credits[0].capital, 900000);
   assert.equal(consoleNode.props.credits[0].saldo, 1110000);
   assert.equal(consoleNode.props.credits[0].vencido, 1110000);
@@ -171,8 +170,8 @@ test("portafolio vacío no consulta evidencia ni gestiones globales; importació
     contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA" } } });
   const f = harness(ally, [historical, credit(6, { ...historical, id: 6, equalityService: null })]);
   const importedTree = await f.render();
-  assert.deepEqual(f.calls.numbers, [[5]]);
-  assert.equal(nodes(importedTree).find(node => node.props?.credits)?.props.credits.length, 1);
+  assert.deepEqual(f.calls.numbers, [[5, 6]]);
+  assert.equal(nodes(importedTree).find(node => node.props?.credits)?.props.credits.length, 2);
 });
 
 test("payload sin dinero conserva filtros, unidades, porcentajes y días de referencia exactamente", () => {
@@ -224,4 +223,20 @@ test("clasifica todas las unidades por descripción sin usar la plataforma hist�
   assert.equal(iphone.financiadas, 2);
   assert.equal(total.financiadas, android.financiadas + iphone.financiadas);
   assert.equal(total.mora, android.mora + iphone.mora);
+});
+
+test("no limita a 703 unidades: incluye Android sin documentación y excluye anulados", async () => {
+  const portfolio = Array.from({ length: 750 }, (_, i) => credit(i + 1, {
+    equipoMarca: null, equipoModelo: `ANDROID MODELO ${i % 5}`, referenciaEquipo: null,
+    contratoAceptadoAt: null, pagareAceptadoAt: null, fotoEntregaDataUrl: null,
+    contratoSnapshot: null, estado: "GENERADO",
+  }));
+  portfolio.push(credit(751), credit(752, { estado: "ANULADO" }), credit(753, { estado: "CANCELADO" }));
+  const f = harness(ally, portfolio);
+  const rows = nodes(await f.render()).find(node => node.props?.credits)?.props.credits;
+  assert.equal(rows.length, 751);
+  assert.equal(rows.filter(row => row.tipo === "ANDROID").length, 750);
+  assert.equal(rows.filter(row => row.tipo === "IPHONE").length, 1);
+  assert.equal(f.calls.evidence.length, 0);
+  assert.doesNotMatch(JSON.stringify(rows), /"saldo"|"capital"|"vencido"/);
 });

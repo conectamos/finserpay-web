@@ -35,18 +35,10 @@ export function projectProductRiskCredits(credits: ProductRiskCredit[], { viewin
 export function riskTone(percent: number) {
   return percent >= 8 ? "danger" : percent >= 5 ? "warning" : "positive";
 }
-export function riskCreditEligible(credit: { estado: string; montoCredito: number; contratoAceptadoAt: unknown; pagareAceptadoAt: unknown; fotoEntregaDataUrl: unknown; fotoRemisionDataUrl: unknown; pazYSalvoEmitidoAt: unknown; equalityService?: string | null; importOriginType?: string | null }) {
+/** Match the registered portfolio population: documentation does not remove a loan. */
+export function riskCreditEligible(credit: { estado: string; montoCredito: number }) {
   const state = credit.estado.trim().toUpperCase();
-  if (/ANUL|CANCEL|RECHAZ|NO_DESEMBOLS|PENDIENTE/.test(state) || credit.montoCredito <= 0) return false;
-  // Historical portfolio imports intentionally have no digital signatures or
-  // delivery photos. Require both persisted source markers, never free text.
-  const importedPortfolio = credit.equalityService === "IMPORTACION_MASIVA" && credit.importOriginType === "IMPORTACION_MASIVA";
-  // ENTREGABLE only means that the device is ready. Require recorded delivery,
-  // a completed state, or settlement rather than treating readiness as disbursement.
-  return importedPortfolio || Boolean(credit.pazYSalvoEmitidoAt) || Boolean(
-    credit.contratoAceptadoAt && credit.pagareAceptadoAt &&
-    (credit.fotoEntregaDataUrl || credit.fotoRemisionDataUrl || ["ENTREGADO", "FINALIZADO", "DESEMBOLSADO", "PAGADO"].includes(state))
-  );
+  return credit.montoCredito > 0 && !["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(state);
 }
 export function filterRiskCredits(credits: ProductRiskCredit[], f: ProductRiskFilters) {
   return credits.filter(c => (!f.desde || c.fecha >= f.desde) && (!f.hasta || c.fecha <= f.hasta)

@@ -40,22 +40,8 @@ export default async function ProductRiskPage() {
     } satisfies Prisma.CreditoSelect,
     orderBy: { id: "asc" },
   });
-  // Only IDs from the session-scoped credit query may enter supporting queries.
-  // Project evidence as booleans, never delivery photographs or full snapshots.
-  const scopedCreditIds = credits.map(credit => credit.id);
-  const evidence = scopedCreditIds.length ? await prisma.$queryRaw<Array<{ id: number; fotoEntrega: boolean; fotoRemision: boolean; plataforma: string | null; importOriginType: string | null }>>`
-    SELECT id, COALESCE(length("fotoEntregaDataUrl"), 0) > 0 AS "fotoEntrega",
-      COALESCE(length("fotoRemisionDataUrl"), 0) > 0 AS "fotoRemision",
-      "contratoSnapshot" #>> '{equipo,plataforma}' AS plataforma,
-      "contratoSnapshot" #>> '{origen,tipo}' AS "importOriginType"
-    FROM "Credito" WHERE "id" = ANY(${scopedCreditIds}::int[])
-  ` : [];
-  const evidenceById = new Map(evidence.map(e => [e.id, e]));
-  const eligibleCredits = credits.filter(c => riskCreditEligible({ ...c,
-    fotoEntregaDataUrl: evidenceById.get(c.id)?.fotoEntrega,
-    fotoRemisionDataUrl: evidenceById.get(c.id)?.fotoRemision,
-    importOriginType: evidenceById.get(c.id)?.importOriginType,
-  }));
+  // Use the registered portfolio population, regardless of delivery documentation.
+  const eligibleCredits = credits.filter(riskCreditEligible);
   const eligibleCreditIds = eligibleCredits.map(credit => credit.id);
   const displayNumbers = await getCreditDisplayNumbers(eligibleCreditIds);
   // Use the same immutable event source and latest-event order as Mora Central.
