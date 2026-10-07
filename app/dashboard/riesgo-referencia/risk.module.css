@@ -53,6 +53,8 @@
 .detail { scroll-margin-top: 24px; }
 .detail table { min-width: 1500px; }
 .detail td:nth-child(n) { text-align: left; }
+.operational table { min-width: 1250px; }
+.operational .detail table { min-width: 1200px; }
 .detailHeader { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; }
 .detailHeader h2 { flex: 1 1 240px; }
 @media (max-width: 1400px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .charts { grid-template-columns: 1fr; } }

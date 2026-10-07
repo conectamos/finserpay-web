@@ -1,11 +1,36 @@
 export type ProductRiskCredit = {
   id: number; folio: string; cliente: string; marca: string; referencia: string;
-  tipo: string; aliado: string; sede: string; fecha: string; capital: number;
-  saldo: number; vencido: number; dias: number; gestion: string | null;
+  tipo: string; aliado: string; sede: string; fecha: string; capital?: number;
+  saldo?: number; vencido?: number; activo?: boolean; dias: number; gestion: string | null;
   numeroCreditoVisible?: string; gestionFecha?: string | null;
 };
 export type ProductRiskFilters = { desde: string; hasta: string; marca: string; referencia: string; tipo: string; aliado: string; sede: string; estado: string; minDias: string; maxDias: string };
 export const emptyProductRiskFilters: ProductRiskFilters = { desde: "", hasta: "", marca: "", referencia: "", tipo: "", aliado: "", sede: "", estado: "", minDias: "", maxDias: "" };
+export function riskCreditActive(credit: ProductRiskCredit) {
+  return credit.activo ?? ((credit.saldo ?? 0) > 0);
+}
+
+/** Whitelist the client report: allied accounts retain unit-based risk and
+ * filters without receiving any monetary value in the serialized payload. */
+export function projectProductRiskCredits(credits: ProductRiskCredit[], { viewingCentral = false }: { viewingCentral?: boolean } = {}): ProductRiskCredit[] {
+  return credits.map(credit => ({
+    id: credit.id,
+    folio: credit.folio,
+    numeroCreditoVisible: credit.numeroCreditoVisible,
+    cliente: credit.cliente,
+    marca: credit.marca,
+    referencia: credit.referencia,
+    tipo: credit.tipo,
+    aliado: credit.aliado,
+    sede: credit.sede,
+    fecha: credit.fecha,
+    activo: riskCreditActive(credit),
+    dias: credit.dias,
+    gestion: credit.gestion,
+    gestionFecha: credit.gestionFecha,
+    ...(viewingCentral ? { capital: credit.capital, saldo: credit.saldo, vencido: credit.vencido } : {}),
+  }));
+}
 export function riskTone(percent: number) {
   return percent >= 8 ? "danger" : percent >= 5 ? "warning" : "positive";
 }
@@ -26,7 +51,7 @@ export function filterRiskCredits(credits: ProductRiskCredit[], f: ProductRiskFi
   return credits.filter(c => (!f.desde || c.fecha >= f.desde) && (!f.hasta || c.fecha <= f.hasta)
     && (!f.marca || c.marca === f.marca) && (!f.referencia || c.referencia === f.referencia)
     && (!f.tipo || c.tipo === f.tipo) && (!f.aliado || c.aliado === f.aliado) && (!f.sede || c.sede === f.sede)
-    && (!f.estado || (f.estado === "pagado" ? c.saldo <= 0 : f.estado === "activo" ? c.saldo > 0 : f.estado === "mora" ? c.dias > 0 : c.saldo > 0 && c.dias === 0))
+    && (!f.estado || (f.estado === "pagado" ? !riskCreditActive(c) : f.estado === "activo" ? riskCreditActive(c) : f.estado === "mora" ? c.dias > 0 : riskCreditActive(c) && c.dias === 0))
     && (!f.minDias || c.dias >= Number(f.minDias)) && (!f.maxDias || c.dias <= Number(f.maxDias)));
 }
 export function aggregateProductRisk(credits: ProductRiskCredit[]) {
@@ -34,9 +59,9 @@ export function aggregateProductRisk(credits: ProductRiskCredit[]) {
   for (const c of credits) {
     const key = JSON.stringify([c.marca.trim().toLocaleUpperCase("es"), c.referencia.trim().toLocaleUpperCase("es"), c.tipo]);
     const row = groups.get(key) || { key, marca: c.marca, referencia: c.referencia, financiadas: 0, activas: 0, mora: 0, porcentaje: 0, capital: 0, saldo: 0, vencido: 0, dias: 0, ultima: "", credits: [] };
-    row.financiadas++; row.activas += Number(c.saldo > 0); row.mora += Number(c.dias > 0 && c.saldo > 0);
-    row.capital += c.capital; row.saldo += c.saldo; row.vencido += c.vencido;
-    if (c.dias > 0 && c.saldo > 0) row.dias += c.dias;
+    row.financiadas++; row.activas += Number(riskCreditActive(c)); row.mora += Number(c.dias > 0 && riskCreditActive(c));
+    row.capital += c.capital ?? 0; row.saldo += c.saldo ?? 0; row.vencido += c.vencido ?? 0;
+    if (c.dias > 0 && riskCreditActive(c)) row.dias += c.dias;
     if (c.fecha > row.ultima) row.ultima = c.fecha;
     row.credits.push(c); groups.set(key, row);
   }

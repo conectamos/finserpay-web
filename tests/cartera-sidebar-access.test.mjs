@@ -93,6 +93,15 @@ test("Cartera aparece en el menu de administradores centrales y aliados", () => 
   assert.match(aliado, /href="\/dashboard\/cartera"/);
   assert.match(central, /href="\/dashboard\/cartera\/detalle-mora"/);
   assert.match(aliado, /href="\/dashboard\/cartera\/detalle-mora"/);
+  for (const html of [central, aliado]) {
+    const submenus = html.match(/<details[^>]* class="group\/cartera">[\s\S]*?<\/details>/g) || [];
+    assert.equal(submenus.length, 2);
+    for (const submenu of submenus) {
+      assert.match(submenu, /href="\/dashboard\/riesgo-referencia"/);
+      assert.match(submenu, />Riesgo por referencia<\/span>/);
+    }
+    assert.equal((html.match(/href="\/dashboard\/riesgo-referencia"/g) || []).length, 2);
+  }
 });
 
 test("Cartera no aparece en el menu de perfiles que no son administradores", () => {
@@ -109,6 +118,16 @@ test("Cartera no aparece en el menu de perfiles que no son administradores", () 
       `El rol ${rolUsuario} no debe ver Cartera`
     );
     assert.doesNotMatch(html, /href="\/dashboard\/cartera\/detalle-mora"/);
+    assert.doesNotMatch(html, /href="\/dashboard\/riesgo-referencia"/);
+  }
+});
+
+test("Riesgo por referencia mantiene abierto Cartera para ambos administradores", () => {
+  for (const adminCentral of [true, false]) {
+    const html = renderSidebar({ adminCentral, rolUsuario: "ADMIN", activeHref: "/dashboard/riesgo-referencia" });
+    assert.equal((html.match(/href="\/dashboard\/riesgo-referencia" aria-current="page"/g) || []).length, 2);
+    assert.equal((html.match(/<details open="" class="group\/cartera"/g) || []).length, 2);
+    assert.match(html, /^<aside class="bg-\[var\(--fp-graphite\)\]/);
   }
 });
 
