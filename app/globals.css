@@ -1012,9 +1012,12 @@ body {
 
 .fp-client-page .fp-client-dossier-hero {
   padding: 20px;
+  overflow: visible;
 }
 
 .fp-client-page .fp-client-dossier-top {
+  /* Keep the actions menu above the summary's sibling stacking context. */
+  z-index: 2;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
