@@ -642,7 +642,7 @@ test("la reserva generica bloquea y el autosave usa la identidad canonica", asyn
   assert.match(autosave, /canonical\.dataCreditoAssessmentId/);
 });
 
-test("cualquier credito o borrador no liberado bloquea globalmente la cedula", async () => {
+test("un credito vigente o borrador no liberado bloquea globalmente la cedula, pero uno anulado no", async () => {
   const source = await readProjectFile("lib/solicitudes-storage.ts");
   const blocker = sourceBetween(
     source,
@@ -665,10 +665,10 @@ test("cualquier credito o borrador no liberado bloquea globalmente la cedula", a
     blocker,
     /ORDER BY[\s\S]*candidate\."source" = 'CREDIT'[\s\S]*candidate\."createdAt" DESC/
   );
-  assert.doesNotMatch(
-    blocker,
-    /FROM "Credito" credit[\s\S]*credit\."estado"\s*(?:=|IN)/
-  );
+  const creditBranch = blocker.split('FROM "Credito" credit')[1]?.split(') candidate')[0];
+  assert.ok(creditBranch);
+  assert.match(creditBranch, /AND credit\."estado" <> 'ANULADO'/);
+  assert.doesNotMatch(creditBranch, /credit\."estado"\s*(?:=|IN)\b/);
   assert.match(reservation, /const blocker = await findBlockingSolicitudByDocument/);
   assert.match(reservation, /if \(blocker\)[\s\S]*solicitudConflictFromBlocker/);
   assert.match(blocker, /new ActiveSolicitudConflictError/);

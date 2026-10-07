@@ -175,6 +175,13 @@ const SOLICITUD_RELEASE_REASONS = new Set([
   "DUPLICADA",
 ]);
 
+const CANCELLED_CREDIT_STATES = new Set([
+  "ANULADO",
+  "ANULADA",
+  "CANCELADO",
+  "CANCELADA",
+]);
+
 export function isSolicitudIdentityReleased(input: {
   source: "DRAFT" | "CREDIT";
   draftState?: string | null;
@@ -217,30 +224,25 @@ export function compareActiveSolicitudDraftPriority(
   return left.entityId - right.entityId;
 }
 
+function canonicalCandidateRank(item: SolicitudCanonicalCandidate) {
+  if (item.source === "CREDIT") {
+    return CANCELLED_CREDIT_STATES.has(normalized(item.rawState)) ? 1 : 3;
+  }
+  return isSolicitudIdentityReleased({
+    source: item.source,
+    draftState: item.rawState,
+    closedReason: item.closedReason,
+  })
+    ? 1
+    : 2;
+}
+
 function isNewerCanonicalCandidate(
   candidate: SolicitudCanonicalCandidate,
   current: SolicitudCanonicalCandidate
 ) {
-  const candidateRank =
-    candidate.source === "CREDIT"
-      ? 3
-      : isSolicitudIdentityReleased({
-            source: candidate.source,
-            draftState: candidate.rawState,
-            closedReason: candidate.closedReason,
-          })
-        ? 1
-        : 2;
-  const currentRank =
-    current.source === "CREDIT"
-      ? 3
-      : isSolicitudIdentityReleased({
-            source: current.source,
-            draftState: current.rawState,
-            closedReason: current.closedReason,
-          })
-        ? 1
-        : 2;
+  const candidateRank = canonicalCandidateRank(candidate);
+  const currentRank = canonicalCandidateRank(current);
   if (candidateRank !== currentRank) return candidateRank > currentRank;
   if (
     candidate.source === "DRAFT" &&
@@ -442,7 +444,7 @@ export function resolveSolicitudStage(signals: SolicitudSignals): SolicitudState
   const veriffStatus = normalized(signals.veriffStatus);
 
   if (signals.source === "CREDIT") {
-    return ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(creditState)
+    return CANCELLED_CREDIT_STATES.has(creditState)
       ? "CANCELADA"
       : "APROBADA";
   }
