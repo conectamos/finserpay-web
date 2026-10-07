@@ -2,6 +2,8 @@
 
 Al crearse un crédito nuevo mediante `POST /api/creditos`, FINSERPAY ya dispone de `clienteNombre` y `clienteTelefono`. Tras confirmar la transacción, el servidor puede enviar esos datos al flujo de Dapta **Bienvenida al finalizar crédito** (`ERPX5`). El reporte de créditos muestra los mismos datos, pero consultarlo o exportarlo no dispara mensajes.
 
+El formulario **Crédito individual** dentro de Créditos masivos usa `POST /api/creditos/masivos` y confirma con `welcomeOnCreate: true`. Esa ruta solicita una bienvenida solo después de insertar y confirmar un crédito nuevo. Su replay por `requestId` devuelve el recibo guardado sin repetir el envío. La validación previa y los archivos CSV históricos (incluso de una fila) no solicitan bienvenidas. La confirmación del formulario informa que se enviará WhatsApp al celular registrado.
+
 La integración empieza apagada. Para activarla se requieren estas variables privadas del servidor:
 
 ```text

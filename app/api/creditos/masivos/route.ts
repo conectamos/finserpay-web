@@ -1,4 +1,5 @@
 import { readImportCustomer } from "@/lib/mass-credit-customer";
+import { sendDaptaWelcome } from "@/lib/dapta-welcome";
 import {
   ensureSecondCreditAuthorizationSchema,
   getSecondCreditEligibility,
@@ -74,6 +75,7 @@ type MassCreditInputRow = {
 
 type MassCreditBody = {
   commit?: boolean;
+  welcomeOnCreate?: unknown;
   sadminMode?: unknown;
   sadminConfirmed?: unknown;
   temporaryImeiConfirmed?: unknown;
@@ -856,6 +858,7 @@ export async function POST(req: Request) {
     const sadminMode = readImportSadminMode(body.sadminMode);
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const commit = body.commit === true;
+    const welcomeOnCreate = body.welcomeOnCreate === true && rows.length === 1;
     const temporaryImeiConfirmed = body.temporaryImeiConfirmed === true;
     if (rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) {
       return NextResponse.json({ error: "Cada fila debe contener los campos de un crédito" }, { status: 400 });
@@ -871,6 +874,12 @@ export async function POST(req: Request) {
     if (rows.length > MAX_IMPORT_ROWS) {
       return NextResponse.json(
         { error: `Solo puedes cargar hasta ${MAX_IMPORT_ROWS} creditos por lote` },
+        { status: 400 }
+      );
+    }
+    if (body.welcomeOnCreate === true && rows.length !== 1) {
+      return NextResponse.json(
+        { error: "La bienvenida automática aplica al formulario de crédito individual.", code: "WELCOME_INDIVIDUAL_ONLY" },
         { status: 400 }
       );
     }
@@ -892,9 +901,10 @@ export async function POST(req: Request) {
       rows, userId: access.user.id,
       ...(temporaryImeiConfirmed ? { temporaryImeiConfirmed: true } : {}),
       ...(sadminMode === "PENDING" ? { sadminMode: "PENDING" } : {}),
+      ...(welcomeOnCreate ? { welcomeOnCreate: true } : {}),
     })).digest("hex");
     await ensureCreditDeviceReplacementSchema();
-    const result = await prisma.$transaction(async (tx) => {
+    const outcome = await prisma.$transaction(async (tx) => {
       // Replaying a confirmed request returns its original receipt, even after a
       // lost HTTP response. The lock also serializes concurrent double clicks.
       await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `MASS_CREDIT_IMPORT:${requestId}`);
@@ -907,7 +917,7 @@ export async function POST(req: Request) {
         if (previous.length !== rows.length || previous.some(item => item.requestHash !== requestHash)) {
           throw new CreditApprovalError("IMPORT_REQUEST_CONFLICT", "Esta operación ya se usó con otros datos. Valida una nueva carga.", 409);
         }
-        return committedResponse(previous);
+        return { response: committedResponse(previous), welcome: null };
       }
       // Same document lock used by ordinary credit creation and the blacklist.
       const documents = [...new Set(rows.map(row => importDocument(row.cedula)).filter(Boolean))].sort();
@@ -916,7 +926,7 @@ export async function POST(req: Request) {
       }
       const validation = await validateRows(rows, tx, temporaryImeiConfirmed, sadminMode);
       if (validation.summary.invalid > 0) {
-        return { ok: false, commit: false, rows: validation.rows, summary: validation.summary };
+        return { response: { ok: false, commit: false, rows: validation.rows, summary: validation.summary }, welcome: null };
       }
       const secondCreditEligibility = await getSecondCreditEligibility(tx, documents);
       const createdAt = new Date();
@@ -1031,9 +1041,26 @@ export async function POST(req: Request) {
         });
       }
 
-      return committedResponse(created);
+      const first = created[0];
+      return {
+        response: committedResponse(created),
+        welcome: welcomeOnCreate ? {
+          creditId: first.id,
+          phone: first.row.normalized.telefono,
+          name: first.row.normalized.cliente,
+        } : null,
+      };
     }, { timeout: 60_000 });
-    return NextResponse.json(result);
+    // Replayed confirmations return a receipt without a welcome payload.
+    // Only a newly committed individual credit requests a welcome.
+    if (outcome.welcome) {
+      const welcomeResult = await sendDaptaWelcome(outcome.welcome);
+      console.info("[dapta-welcome] Individual import welcome result.", {
+        creditId: outcome.welcome.creditId,
+        result: welcomeResult,
+      });
+    }
+    return NextResponse.json(outcome.response);
   } catch (error) {
     if (error instanceof SecondCreditAuthorizationError) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });

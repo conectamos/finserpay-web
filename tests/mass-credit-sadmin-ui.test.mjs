@@ -112,6 +112,8 @@ test("individual exposes field and posts it through preview and creation; server
   button(h, "Crear credito").props.onClick(); await h.flush();
   h.find(node => node.type === "ConfirmDialog").props.onConfirm(); await h.flush();
   assert.equal(requests[0].rows.length, 1); assert.equal(requests[0].rows[0].numeroCreditoSadmin, "000INDIVIDUAL");
+  assert.equal(requests[0].welcomeOnCreate, undefined);
+  assert.equal(requests[1].welcomeOnCreate, true);
   for (const [key, value] of Object.entries({ direccion: "Carrera 10 #20-30", correo: "INDIVIDUAL@Example.Test",
     fechaNacimiento: "1990-01-15", sexo: "PREFIERO_NO_DECIR" })) {
     assert.equal(requests[0].rows[0][key], value); assert.equal(requests[1].rows[0][key], value);
@@ -176,6 +178,7 @@ test("Excel template helps prepare CSV with exact IMEI and leading zeros through
   h.find(n => n.type === "ConfirmDialog").props.onConfirm(); await h.flush();
   assert.equal(requests[1].rows[0].imei, "001234567890128");
   assert.equal(requests[1].sadminConfirmed, true);
+  assert.equal(requests[1].welcomeOnCreate, undefined, "A one-row CSV remains a historical import without welcome");
   assert.deepEqual(requests[1].rows, requests[0].rows);
 });
 

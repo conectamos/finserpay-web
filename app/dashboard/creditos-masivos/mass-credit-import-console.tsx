@@ -404,11 +404,11 @@ function csvCell(value: unknown) {
   return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?: string, temporaryImeiConfirmed = false, sadminMode: SadminMode = "EXISTING") {
+async function postRows(rows: MassCreditInputRow[], commit: boolean, requestId?: string, temporaryImeiConfirmed = false, sadminMode: SadminMode = "EXISTING", welcomeOnCreate = false) {
   const response = await fetch("/api/creditos/masivos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commit, rows, requestId, sadminMode, sadminConfirmed: commit && sadminMode === "EXISTING", temporaryImeiConfirmed }),
+    body: JSON.stringify({ commit, rows, requestId, sadminMode, sadminConfirmed: commit && sadminMode === "EXISTING", temporaryImeiConfirmed, ...(commit && welcomeOnCreate ? { welcomeOnCreate: true } : {}) }),
   });
   const data = (await response.json().catch(() => null)) as ValidationResponse | null;
 
@@ -718,11 +718,12 @@ export default function MassCreditImportConsole() {
     try {
       setLoading("create");
       setNotice("");
-      const payload = JSON.stringify({ rows: activeRows, temporaryImeiConfirmed: temporaryImeiForRequest, sadminMode });
+      const welcomeOnCreate = mode === "single";
+      const payload = JSON.stringify({ rows: activeRows, temporaryImeiConfirmed: temporaryImeiForRequest, sadminMode, ...(welcomeOnCreate ? { welcomeOnCreate: true } : {}) });
       if (pendingRequests.current[mode]?.payload !== payload) {
         pendingRequests.current[mode] = { payload, id: crypto.randomUUID() };
       }
-      const data = await postRows(activeRows, true, pendingRequests.current[mode]!.id, temporaryImeiForRequest, sadminMode);
+      const data = await postRows(activeRows, true, pendingRequests.current[mode]!.id, temporaryImeiForRequest, sadminMode, welcomeOnCreate);
       setModeValidation(mode, data);
       setPreviewFilter(data.summary.invalid ? "errors" : "all");
       setNotice(data.commit
@@ -1232,7 +1233,7 @@ export default function MassCreditImportConsole() {
       <ConfirmDialog
         open={confirmOpen}
         title="Confirmar creacion de creditos"
-        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). ${sadminMode === "PENDING" ? "Se crearán en FINSER PAY y aparecerán en Aprobaciones de SADMIN como pendientes de creación. El administrador deberá registrar el número real y confirmar su creación en SADMIN." : "Al confirmar, declaras que los créditos y sus codeudores ya existen en SADMIN y que verificaste cada número contra ese sistema. Se guardará tu confirmación con el crédito y su solicitud en FINSER PAY."}${temporaryImeiForRequest ? " Los IMEI de todo el lote son temporales y quedarán pendientes de corrección administrativa posterior." : ""}`}
+        description={`Se crearan ${validation?.summary.valid || activeRows.length} credito(s) por ${money(totalAmount)}, distribuidos en ${involvedAllies} aliado(s) y ${involvedStores} sede(s). ${sadminMode === "PENDING" ? "Se crearán en FINSER PAY y aparecerán en Aprobaciones de SADMIN como pendientes de creación. El administrador deberá registrar el número real y confirmar su creación en SADMIN." : "Al confirmar, declaras que los créditos y sus codeudores ya existen en SADMIN y que verificaste cada número contra ese sistema. Se guardará tu confirmación con el crédito y su solicitud en FINSER PAY."}${temporaryImeiForRequest ? " Los IMEI de todo el lote son temporales y quedarán pendientes de corrección administrativa posterior." : ""}${mode === "single" ? " Al guardar el crédito individual se enviará la bienvenida por WhatsApp al celular registrado del cliente." : ""}`}
         confirmLabel={sadminMode === "PENDING" ? "Crear y dejar pendiente en SADMIN" : "Confirmar SADMIN y crear"}
         busy={loading === "create"}
         onCancel={() => setConfirmOpen(false)}

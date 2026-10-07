@@ -56,6 +56,7 @@ export function routeFixture(db, options = {}) {
     "next/server": { NextResponse: Response }, "@/lib/prisma": { __esModule: true, default: db },
     "@/lib/mass-credit-sadmin": helper, "@/lib/credit-approval-errors": approvalErrors,
     "@/lib/second-credit-authorization": secondCreditHelper,
+    "@/lib/dapta-welcome": { sendDaptaWelcome: options.sendDaptaWelcome ?? (async () => "disabled") },
     "@/lib/document-blacklist-core": blacklistErrors,
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async document => {
       if (options.blocked === document) throw new blacklistErrors.DocumentBlacklistError("DOCUMENT_BLACKLISTED", "Cédula bloqueada", 403);
