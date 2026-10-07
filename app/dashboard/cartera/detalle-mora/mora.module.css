@@ -60,3 +60,7 @@
 
 .context { display:block; font-size:12px; color:var(--fp-muted); margin-top:4px; }
 :global(.fp-delinquency-shell) { background:var(--fp-surface); }
+
+.allyFilter form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.allyFilter label { display: grid; gap: 8px; width: min(100%, 360px); color: var(--fp-muted); font-size: 14px; }
+.allyFilter select { margin-top: 0; min-width: 0; width: 100%; }
