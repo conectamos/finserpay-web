@@ -1,5 +1,6 @@
-import { generatePaymentReference, resolveActivationFirstPaymentDate, sanitizeImageDataUrl, sanitizeText } from "@/lib/credit-factory";
-import { readFinancingTermsSeal, resealFinancingTermsIdentity } from "@/lib/credit-amortization-contract";
+import { generatePaymentReference, sanitizeImageDataUrl, sanitizeText } from "@/lib/credit-factory";
+import { readFinancingTermsSeal, resealFinancingTermsIdentity,
+  type FinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 import type { SignedDraftIdentityCorrection } from "@/lib/firmaseguro-draft-identity-correction";
 import type { FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
@@ -30,6 +31,66 @@ function money(value: string) {
 function comparableName(value: unknown) {
   return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+function signedFirstPaymentDate(dateKey: unknown) {
+  if (typeof dateKey !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    throw new Error("FIRMASEGURO_FIRST_PAYMENT_DATE_INVALID");
+  }
+  const date = new Date(`${dateKey}T12:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dateKey) {
+    throw new Error("FIRMASEGURO_FIRST_PAYMENT_DATE_INVALID");
+  }
+  return date;
+}
+
+export type FrozenCorrectionDateSource = {
+  processUuid: string;
+  sourceChecksum: string;
+  targetChecksum: string;
+};
+
+/** Only the dispatch route may put this lineage in a provider process payload. */
+export function readFrozenCorrectionDateSource(value: unknown, targetValue: unknown):
+  FrozenCorrectionDateSource | null {
+  const target = readFinancingTermsSeal(targetValue);
+  const marker = record(value);
+  if (!target || typeof marker.processUuid !== "string" || !marker.processUuid.trim() ||
+      typeof marker.sourceChecksum !== "string" || !/^[a-f0-9]{64}$/i.test(marker.sourceChecksum) ||
+      marker.targetChecksum !== target.checksum) return null;
+  try {
+    signedFirstPaymentDate(target.snapshot.fechaPrimerPago);
+  } catch {
+    return null;
+  }
+  return marker as FrozenCorrectionDateSource;
+}
+
+/** Recheck the marker against the archived signed PDF before provider dispatch. */
+export function verifiesFrozenCorrectionDateSource(input: {
+  marker: unknown; target: FinancingTermsSeal; source: FirmaSeguroProcessRow | null;
+}) {
+  const marker = readFrozenCorrectionDateSource(input.marker, input.target);
+  if (!marker || !input.source || input.source.processUuid !== marker.processUuid) return false;
+  const sourceSeal = readFinancingTermsSeal(record(input.source.draftPayload).financialTermsSeal);
+  const signedBytes = input.source.signedDocumentBase64
+    ? Buffer.from(input.source.signedDocumentBase64, "base64") : null;
+  if (!sourceSeal || sourceSeal.checksum !== marker.sourceChecksum ||
+      !signedBytes || signedBytes.subarray(0, 5).toString() !== "%PDF-") return false;
+  try {
+    signedFirstPaymentDate(sourceSeal.snapshot.fechaPrimerPago);
+    const target = input.target.snapshot;
+    const identityOnly = resealFinancingTermsIdentity(sourceSeal, {
+      folio: target.folio,
+      clienteNombre: target.clienteNombre,
+      clienteTelefono: target.clienteTelefono,
+      clienteCorreo: target.clienteCorreo,
+      imei: target.imei,
+    });
+    return identityOnly.checksum === input.target.checksum;
+  } catch {
+    return false;
+  }
 }
 
 /** Reissue a corrected draft using the signed figures, never today's policy settings. */
@@ -70,12 +131,10 @@ export function buildFrozenDraftCorrection(input: {
     throw new Error("FIRMASEGURO_CORRECTED_IDENTITY_INVALID");
   }
   const sourceTerms = sourceSeal.snapshot;
-  const firstPayment = resolveActivationFirstPaymentDate({
-    frequency: sourceTerms.frecuenciaPago, activatedAt: new Date(),
-  });
-  if (firstPayment.dateKey !== sourceTerms.fechaPrimerPago) {
-    throw new Error("FIRMASEGURO_FIRST_PAYMENT_DATE_CHANGED");
-  }
+  // Reissuing an already signed contract changes only its identity fields.
+  // The first due date is sealed in the signed version, not derived from today.
+  const firstPaymentDateKey = sourceTerms.fechaPrimerPago;
+  const firstPaymentDate = signedFirstPaymentDate(firstPaymentDateKey);
   const phone = sanitizeText(current.clienteTelefono);
   const email = sanitizeText(current.clienteCorreo).toLowerCase();
   const seal = resealFinancingTermsIdentity(sourceSeal, {
@@ -128,7 +187,7 @@ export function buildFrozenDraftCorrection(input: {
     valorFianza: money(terms.cuotaFianzaExacta) * terms.numeroCuotas,
     plazoMeses: terms.numeroCuotas,
     frecuenciaPago: terms.frecuenciaPago,
-    fechaPrimerPago: firstPayment.date,
+    fechaPrimerPago: firstPaymentDate,
     fechaCredito: new Date(),
     referenciaPago: generatePaymentReference(input.folio, terms.documento),
     contratoIp: sanitizeText(current.contratoIp) || null,
@@ -143,7 +202,12 @@ export function buildFrozenDraftCorrection(input: {
     sede: { nombre: input.draft.sedeNombre || "Sede", codigo: input.draft.sedeCodigo,
       aliadoId: input.draft.sedeAliadoId },
   };
-  return { credit, seal, firstPaymentDateKey: firstPayment.dateKey };
+  return { credit, seal, firstPaymentDateKey,
+    frozenCorrectionDateSource: {
+      processUuid: input.source.processUuid,
+      sourceChecksum: sourceSeal.checksum,
+      targetChecksum: seal.checksum,
+    } satisfies FrozenCorrectionDateSource };
 }
 
 /**

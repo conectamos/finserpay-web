@@ -422,7 +422,9 @@ test("FirmaSeguro conserva el histórico al reservar un reemplazo", async () => 
     /currentFirstPaymentState[\s\S]{0,300}!currentFirstPaymentState\.requiresFirstPaymentDateReissue/
   );
   assert.match(core, /fechaPrimerPago:\s*firstPaymentDateKey/);
-  assert.match(frozen, /FIRMASEGURO_FIRST_PAYMENT_DATE_CHANGED/);
+  assert.match(frozen, /const firstPaymentDateKey = sourceTerms.fechaPrimerPago/);
+  assert.match(frozen, /signedFirstPaymentDate\(firstPaymentDateKey\)/);
+  assert.match(frozen, /FIRMASEGURO_FIRST_PAYMENT_DATE_INVALID/);
   assert.match(ledger, /markFirmaSeguroDraftProcessesSuperseded\(db/);
   assert.ok(ledger.indexOf("markFirmaSeguroDraftProcessesSuperseded(db") <
     ledger.indexOf('INSERT INTO "FirmaSeguroDraftDispatch"'));
@@ -432,6 +434,47 @@ test("FirmaSeguro conserva el histórico al reservar un reemplazo", async () => 
   assert.match(supersedeHistory, /"supersededReason" = \$3/);
   assert.doesNotMatch(supersedeHistory, /DELETE FROM/);
   assert.doesNotMatch(supersedeHistory, /"signedDocumentBase64"\s*=/);
+});
+
+test("GET y POST conservan una fecha firmada solo en la reemisión congelada verificada", async () => {
+  const [route, ledger] = await Promise.all([
+    readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
+    readProjectFile("lib/firmaseguro-draft-dispatch-ledger.ts"),
+  ]);
+  const dateStateSource = sourceBetween(route,
+    "function getDraftFirstPaymentDateState(",
+    "function serializeDraftFirmaSeguroProcess(");
+  const getState = runInNewContext(`${stripTypeScriptTypes(dateStateSource)}\ngetDraftFirstPaymentDateState`, {
+    payloadObject: (value) => value && typeof value === "object" ? value : {},
+    readFinancingTermsSeal: (value) => value?.checksum ? value : null,
+    resolveActivationFirstPaymentDate: ({ signedFirstPaymentDate }) => ({
+      signedDateKey: signedFirstPaymentDate, dateKey: "2026-10-18",
+      signedDateMatches: signedFirstPaymentDate === "2026-10-18",
+    }),
+    readFrozenCorrectionDateSource: (value, seal) =>
+      value?.targetChecksum === seal?.checksum ? value : null,
+  });
+  const seal = { checksum: "a".repeat(64), snapshot: {
+    frecuenciaPago: "MENSUAL", fechaPrimerPago: "2026-10-17",
+  } };
+  const ordinary = getState({ draftPayload: { financialTermsSeal: seal } });
+  assert.equal(ordinary.requiresFirstPaymentDateReissue, true);
+  assert.equal(ordinary.frozenCorrectionReissue, false);
+  const corrected = getState({ draftPayload: { financialTermsSeal: seal,
+    firmaSeguroFrozenCorrectionDateSource: {
+      processUuid: "signed-source", sourceChecksum: "b".repeat(64),
+      targetChecksum: seal.checksum,
+    } } });
+  assert.equal(corrected.firstPaymentDate, "2026-10-17");
+  assert.equal(corrected.frozenCorrectionReissue, true);
+  assert.equal(corrected.requiresFirstPaymentDateReissue, false);
+  assert.match(route, /delete payload\.firmaSeguroFrozenCorrectionDateSource/);
+  assert.match(route, /firmaSeguroDraftPayload\.firmaSeguroFrozenCorrectionDateSource = frozenCorrectionDateSource/);
+  assert.match(route, /firstPaymentDateKey < getTodayBogotaDateKey\(\)/);
+  assert.match(ledger, /verifiesFrozenCorrectionDateSource\(/);
+  assert.match(ledger, /"supersededAt" IS NOT NULL LIMIT 1/);
+  assert.match(ledger, /claimsFrozenCorrection && !frozenCorrectionReissue/);
+  assert.match(ledger, /signedFirstPaymentDatePast/);
 });
 
 

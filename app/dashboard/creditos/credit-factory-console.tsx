@@ -139,6 +139,10 @@ import {
 } from "@/lib/colombia-date";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
+import {
+  hasFirmaSeguroCorrectionViewChanges,
+  resolveFirmaSeguroDraftForSubmission,
+} from "@/lib/firmaseguro-draft-submit";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import CreditRemissionNote from "@/app/dashboard/creditos/credit-remission-note";
@@ -884,6 +888,7 @@ type FirmaSeguroResponse = {
     requiresFirstPaymentDateReissue?: boolean;
     financialTermsChecksum?: string | null;
     financialCorrectionReissue?: boolean;
+    frozenCorrectionReissue?: boolean;
     remission?: CreditRemissionClosureData | null;
   } | null;
 };
@@ -3227,6 +3232,8 @@ export default function CreditFactoryConsole({
     useState("");
   const [firmaSeguroImeiCorrectionReason, setFirmaSeguroImeiCorrectionReason] =
     useState("");
+  const [firmaSeguroDraftCorrectionPending, setFirmaSeguroDraftCorrectionPending] =
+    useState(false);
   const [signedTermsCorrectionBusy, setSignedTermsCorrectionBusy] =
     useState(false);
   const [signedTermsCorrectionSale, setSignedTermsCorrectionSale] =
@@ -4029,6 +4036,12 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     const syncFirstPaymentDate = () => {
+      if (
+        firmaSeguroDraftCorrectionPending ||
+        firmaSeguroDraftProcess?.frozenCorrectionReissue
+      ) {
+        return;
+      }
       const canonicalFirstPaymentDate = getDefaultFirstPaymentDate(
         new Date(),
         frecuenciaPagoCredito
@@ -4075,7 +4088,11 @@ export default function CreditFactoryConsole({
       window.removeEventListener("focus", syncFirstPaymentDate);
       document.removeEventListener("visibilitychange", syncWhenVisible);
     };
-  }, [frecuenciaPagoCredito]);
+  }, [
+    firmaSeguroDraftCorrectionPending,
+    firmaSeguroDraftProcess?.frozenCorrectionReissue,
+    frecuenciaPagoCredito,
+  ]);
 
   const saldoBaseFinanciado = calculateFinancedBalance(
     valorTotalEquipoNumero,
@@ -9366,6 +9383,7 @@ export default function CreditFactoryConsole({
     setImei("");
     setFirmaSeguroImeiCorrectionValue("");
     setFirmaSeguroImeiCorrectionReason("");
+    setFirmaSeguroDraftCorrectionPending(false);
     setFirmaSeguroFinancialCorrectionPending(false);
     setFirmaSeguroIdentityCorrectionPending(false);
     auditedIdentityCorrectionRef.current = false;
@@ -9748,6 +9766,7 @@ export default function CreditFactoryConsole({
       setImei(correctedImei);
       setFirmaSeguroImeiCorrectionValue(correctedImei);
       setFirmaSeguroImeiCorrectionReason("");
+      setFirmaSeguroDraftCorrectionPending(true);
       setFirmaSeguroFinancialCorrectionPending(false);
       setFirmaSeguroDraftProcess(null);
       setDeliveryValidation(null);
@@ -10335,39 +10354,69 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (iphoneInstallmentLimitExceeded) {
-      setNotice({
-        text: visibleIphoneInstallmentLimitMessage,
-        tone: "red",
-      });
-      return;
-    }
-
-    if (veriffRequired && !veriffApproved) {
-      setNotice({
-        text:
-          "Aprueba primero la identidad con Veriff antes de enviar el contrato a FirmaSeguro.",
-        tone: "amber",
-      });
-      return;
-    }
-
-    if (!contratoListo) {
-      setNotice({
-        text:
-          "Completa cliente, equipo e identidad antes de enviar el expediente a FirmaSeguro.",
-        tone: "amber",
-      });
-      return;
-    }
-
+    const preflightNotice = iphoneInstallmentLimitExceeded
+      ? { text: visibleIphoneInstallmentLimitMessage, tone: "red" as const }
+      : veriffRequired && !veriffApproved
+        ? {
+            text: "Aprueba primero la identidad con Veriff antes de enviar el contrato a FirmaSeguro.",
+            tone: "amber" as const,
+          }
+        : !contratoListo || !firmaSeguroDocumentsReady
+          ? {
+              text: "Completa cliente, equipo e identidad antes de enviar el expediente a FirmaSeguro.",
+              tone: "amber" as const,
+            }
+          : null;
     try {
       firmaSeguroRequestInFlightRef.current = true;
       setFirmaSeguroSubmitting(true);
       setNotice(null);
+      cancelPendingDraftAutosave();
 
-      const currentDraftId = await saveCurrentDraft(4);
+      const { draftId: currentDraftId, correctionDraft } =
+        await resolveFirmaSeguroDraftForSubmission<CreditDraftItem>({
+          draftId,
+          loadDraft: async (id) => {
+            const params = new URLSearchParams({ id: String(id) });
+            const result = await requestJson<CreditDraftSingleResponse>(
+              `/api/creditos/borradores?${params.toString()}`,
+              { timeoutMs: 20_000 }
+            );
+            return {
+              ok: result.ok && result.data?.ok === true,
+              item: result.data?.item,
+              error: result.data?.error,
+            };
+          },
+          saveDraft: () => {
+            if (preflightNotice) {
+              throw new Error(preflightNotice.text);
+            }
+            return saveCurrentDraft(4);
+          },
+        });
+
+      if (correctionDraft) {
+        setFirmaSeguroDraftCorrectionPending(true);
+        if (hasFirmaSeguroCorrectionViewChanges(
+          factoryDraftPayload,
+          correctionDraft.payload
+        )) {
+          applyDraftPayload(correctionDraft);
+          setNotice({
+            text: "Se cargaron los datos vigentes del contrato. Revisa cliente, equipo y plan antes de volver a enviar la firma.",
+            tone: "amber",
+          });
+          return;
+        }
+      }
+
       const signature = await submitFirmaSeguroDraft(currentDraftId);
+      if (correctionDraft) {
+        setFirmaSeguroDraftCorrectionPending(false);
+        setFirmaSeguroIdentityCorrectionPending(false);
+        setFirmaSeguroFinancialCorrectionPending(false);
+      }
       const process = signature.process || null;
       const uuid = process?.processUuid;
       const processUiState = resolveFirmaSeguroProcessUiState(process);
@@ -10376,11 +10425,13 @@ export default function CreditFactoryConsole({
 
       if (signed) {
         cancelPendingDraftAutosave();
-        await saveDraftPayloadForVeriff(
-          factoryDraftPayload,
-          5,
-          currentDraftId
-        );
+        if (!correctionDraft) {
+          await saveDraftPayloadForVeriff(
+            factoryDraftPayload,
+            5,
+            currentDraftId
+          );
+        }
         setWizardStep(5);
       }
 
@@ -10405,9 +10456,16 @@ export default function CreditFactoryConsole({
     } catch (error) {
       setNotice({
         text:
-          "No se pudo enviar a FirmaSeguro: " +
-          (error instanceof Error ? error.message : "error desconocido"),
-        tone: "red",
+          preflightNotice && error instanceof Error &&
+          error.message === preflightNotice.text
+            ? preflightNotice.text
+            : "No se pudo enviar a FirmaSeguro: " +
+              (error instanceof Error ? error.message : "error desconocido"),
+        tone:
+          preflightNotice && error instanceof Error &&
+          error.message === preflightNotice.text
+            ? preflightNotice.tone
+            : "red",
       });
     } finally {
       firmaSeguroRequestInFlightRef.current = false;
@@ -11145,6 +11203,7 @@ export default function CreditFactoryConsole({
     setFirmaSeguroIdentityCorrectionPending(
       checked("firmaSeguroIdentityCorrectionPending")
     );
+    setFirmaSeguroDraftCorrectionPending(checked("firmaSeguroCorrectionPending"));
     auditedIdentityCorrectionRef.current = hasAuditedCreditIdentityCorrection(payload);
     const restoredAssessmentId = value("dataCreditoAssessmentId") || null;
     const restoredDataCreditoErrorCode =
@@ -11654,6 +11713,8 @@ export default function CreditFactoryConsole({
       dataCreditoFinancialTermsRecovery ||
       draftResumeHydrating ||
       draftResumeLoadFailed ||
+      firmaSeguroDraftCorrectionPending ||
+      (firmaSeguroProcessSent && !firmaSeguroProcessSigned) ||
       !draftId ||
       !draftHasMeaningfulData
     ) {
@@ -11794,6 +11855,8 @@ export default function CreditFactoryConsole({
     draftResumeLoadFailed,
     draftResumeHydrating,
     factoryDraftPayload,
+    firmaSeguroDraftCorrectionPending,
+    firmaSeguroProcessSent,
     firmaSeguroProcessSigned,
     currentIphoneClosureFingerprint,
     nextFactoryStep.id,
@@ -16715,8 +16778,8 @@ export default function CreditFactoryConsole({
                           className="fp-step3-firma-primary"
                           onClick={() => void handleFirmaSeguroStepReady()}
                           disabled={
-                            !contratoListo ||
-                            !firmaSeguroDocumentsReady ||
+                            (!draftId &&
+                              (!contratoListo || !firmaSeguroDocumentsReady)) ||
                             creating ||
                             firmaSeguroSubmitting ||
                             firmaSeguroProcessSent ||
