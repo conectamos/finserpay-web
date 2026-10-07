@@ -19,7 +19,7 @@ export function projectProductRiskCredits(credits: ProductRiskCredit[], { viewin
     numeroCreditoVisible: credit.numeroCreditoVisible,
     cliente: credit.cliente,
     marca: credit.marca,
-    referencia: credit.referencia,
+    referencia: normalizeRiskReference(credit.referencia),
     tipo: credit.tipo,
     aliado: credit.aliado,
     sede: credit.sede,
@@ -50,7 +50,7 @@ export function riskCreditEligible(credit: { estado: string; montoCredito: numbe
 }
 export function filterRiskCredits(credits: ProductRiskCredit[], f: ProductRiskFilters) {
   return credits.filter(c => (!f.desde || c.fecha >= f.desde) && (!f.hasta || c.fecha <= f.hasta)
-    && (!f.marca || c.marca === f.marca) && (!f.referencia || c.referencia === f.referencia)
+    && (!f.marca || c.marca === f.marca) && (!f.referencia || normalizeRiskReference(c.referencia) === normalizeRiskReference(f.referencia))
     && (!f.tipo || c.tipo === f.tipo) && (!f.aliado || c.aliado === f.aliado) && (!f.sede || c.sede === f.sede)
     && (!f.estado || (f.estado === "pagado" ? !riskCreditActive(c) : f.estado === "activo" ? riskCreditActive(c) : f.estado === "mora" ? c.dias > 0 : riskCreditActive(c) && c.dias === 0))
     && (!f.minDias || c.dias >= Number(f.minDias)) && (!f.maxDias || c.dias <= Number(f.maxDias)));
@@ -58,8 +58,9 @@ export function filterRiskCredits(credits: ProductRiskCredit[], f: ProductRiskFi
 export function aggregateProductRisk(credits: ProductRiskCredit[]) {
   const groups = new Map<string, { key: string; marca: string; referencia: string; financiadas: number; activas: number; mora: number; porcentaje: number; capital: number; saldo: number; vencido: number; dias: number; ultima: string; credits: ProductRiskCredit[] }>();
   for (const c of credits) {
-    const key = JSON.stringify([c.marca.trim().toLocaleUpperCase("es"), c.referencia.trim().toLocaleUpperCase("es"), c.tipo]);
-    const row = groups.get(key) || { key, marca: c.marca, referencia: c.referencia, financiadas: 0, activas: 0, mora: 0, porcentaje: 0, capital: 0, saldo: 0, vencido: 0, dias: 0, ultima: "", credits: [] };
+    const referencia = normalizeRiskReference(c.referencia);
+    const key = JSON.stringify([referencia, c.tipo]);
+    const row = groups.get(key) || { key, marca: c.marca, referencia, financiadas: 0, activas: 0, mora: 0, porcentaje: 0, capital: 0, saldo: 0, vencido: 0, dias: 0, ultima: "", credits: [] };
     row.financiadas++; row.activas += Number(riskCreditActive(c)); row.mora += Number(c.dias > 0 && riskCreditActive(c));
     row.capital += c.capital ?? 0; row.saldo += c.saldo ?? 0; row.vencido += c.vencido ?? 0;
     if (c.dias > 0 && riskCreditActive(c)) row.dias += c.dias;
@@ -79,4 +80,10 @@ export function summarizeProductRisk(credits: ProductRiskCredit[]) {
 export function classifyRiskProduct(equipment: { equipoMarca?: string | null; equipoModelo?: string | null; referenciaEquipo?: string | null }): "IPHONE" | "ANDROID" {
   const description = [equipment.equipoMarca, equipment.equipoModelo, equipment.referenciaEquipo].join(" ").toUpperCase();
   return /IPHONE|IPOHN/.test(description) ? "IPHONE" : "ANDROID";
+}
+
+/** A reference identifies the model, regardless of a missing or different brand label. */
+export function normalizeRiskReference(reference: string): string {
+  const normalized = reference.trim().toLocaleUpperCase("es").replace(/\s+/g, " ").replace(/(\d)\s+GB\b/g, "$1GB");
+  return normalized === "IPHONE 13" ? "IPHONE 13 128GB" : normalized;
 }
