@@ -79,6 +79,7 @@ export type SolicitudSignals = {
 
 export type SolicitudAction =
   | "VER_DETALLE"
+  | "ABRIR_SOLICITUD"
   | "ABRIR_FABRICA"
   | "CAMBIO_GARANTIA"
   | "DESISTIR";
@@ -535,6 +536,10 @@ export function getSolicitudActions(input: {
   if (!canViewSolicitud(input.viewer, input.ownership)) return [];
 
   const actions: SolicitudAction[] = ["VER_DETALLE"];
+  if (input.viewer.kind === "APPROVAL_ANALYST") {
+    actions.push("ABRIR_SOLICITUD");
+    return actions;
+  }
   if (input.source === "CREDIT") {
     if (input.viewer.kind === "CENTRAL_ADMIN" && input.state === "APROBADA") {
       actions.push("ABRIR_FABRICA");

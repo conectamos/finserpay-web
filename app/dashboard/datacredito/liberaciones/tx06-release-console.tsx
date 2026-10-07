@@ -197,11 +197,13 @@ function DetailValue({ label, children }: { label: string; children: ReactNode }
 
 export default function Tx06ReleaseConsole({
   mode = "admin",
+  initialDocument = "",
 }: {
   mode?: "admin" | "analyst";
+  initialDocument?: string;
 } = {}) {
   const analystMode = mode === "analyst";
-  const [documentNumber, setDocumentNumber] = useState("");
+  const [documentNumber, setDocumentNumber] = useState(initialDocument);
   const [searchedDocument, setSearchedDocument] = useState("");
   const [firstSurname, setFirstSurname] = useState("");
   const [surnameError, setSurnameError] = useState("");

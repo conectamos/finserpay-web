@@ -2716,16 +2716,19 @@ export async function listSolicitudes(input: {
 export async function getSolicitudDetail(input: {
   viewer: SolicitudViewer;
   filters: SolicitudFilters;
+  readOnly?: boolean;
 }) {
   const compositeId = parseCompositeId(input.filters.id);
   if (!compositeId) return null;
-  await Promise.all([
-    ensureSolicitudSchema(),
-    ensureDataCreditoSchema(),
-    ensureVeriffSchema(),
-    ensureFirmaSeguroSchema(),
-  ]);
-  await expireStaleSolicitudes();
+  if (!input.readOnly) {
+    await Promise.all([
+      ensureSolicitudSchema(),
+      ensureDataCreditoSchema(),
+      ensureVeriffSchema(),
+      ensureFirmaSeguroSchema(),
+    ]);
+    await expireStaleSolicitudes();
+  }
   const detailFilters: SolicitudFilters = {
     ...scopeOnlyFilters(input.filters),
     id: input.filters.id,

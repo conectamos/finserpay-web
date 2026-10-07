@@ -205,6 +205,10 @@ function rawId(id: string) {
   return id.replace(/^[A-Z]-/i, "");
 }
 
+function analystRequestHref(item: SolicitudItem, returnTo: string) {
+  return `/dashboard/aprobaciones/solicitudes/${encodeURIComponent(item.id)}?${new URLSearchParams({ returnTo }).toString()}`;
+}
+
 function resumeHref(item: SolicitudItem) {
   if (item.retomarHref) return item.retomarHref;
   const params = new URLSearchParams({
@@ -813,7 +817,13 @@ export default function SolicitudesWallClient({
                                 Cambio garantía
                               </Link>
                             ) : null}
-                            {item.actions.includes("ABRIR_FABRICA") ? (
+                            {viewerRole === "ANALYST" && item.actions.includes("ABRIR_SOLICITUD") ? (
+                              <Link href={analystRequestHref(item, wallReturnHref)} prefetch={false}
+                                className="fp-ui-button is-secondary col-start-2 w-full justify-center whitespace-nowrap">
+                                <Eye className="h-4 w-4" aria-hidden="true" />
+                                Ingresar
+                              </Link>
+                            ) : item.actions.includes("ABRIR_FABRICA") ? (
                               <Link
                                 href={factoryHref(item, viewerRole, wallReturnHref)}
                                 className="fp-ui-button is-secondary col-start-2 w-full justify-center whitespace-nowrap"
@@ -889,7 +899,13 @@ export default function SolicitudesWallClient({
                         Cambio garantía
                       </Link>
                     ) : null}
-                    {item.actions.includes("ABRIR_FABRICA") ? (
+                    {viewerRole === "ANALYST" && item.actions.includes("ABRIR_SOLICITUD") ? (
+                      <Link href={analystRequestHref(item, wallReturnHref)} prefetch={false}
+                        className="fp-ui-button is-secondary">
+                        <Eye className="h-4 w-4" aria-hidden="true" />
+                        Abrir solicitud
+                      </Link>
+                    ) : item.actions.includes("ABRIR_FABRICA") ? (
                       <Link
                         href={factoryHref(item, viewerRole, wallReturnHref)}
                         className="fp-ui-button is-secondary"
@@ -1060,7 +1076,12 @@ export default function SolicitudesWallClient({
                       Cambio por garantía
                     </Link>
                   ) : null}
-                  {detail.actions.includes("ABRIR_FABRICA") ? (
+                  {viewerRole === "ANALYST" && detail.actions.includes("ABRIR_SOLICITUD") ? (
+                    <Link href={analystRequestHref(detail, wallReturnHref)} prefetch={false}
+                      className="fp-ui-button is-primary">
+                      <Eye className="h-4 w-4" aria-hidden="true" />Abrir solicitud completa
+                    </Link>
+                  ) : detail.actions.includes("ABRIR_FABRICA") ? (
                     <Link
                       href={factoryHref(detail, viewerRole, wallReturnHref)}
                       className="fp-ui-button is-primary"

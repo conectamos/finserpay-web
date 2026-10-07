@@ -585,7 +585,7 @@ test("solo central abre en fabrica un credito aprobado", () => {
     }),
     ["VER_DETALLE", "ABRIR_FABRICA", "CAMBIO_GARANTIA"]
   );
-  for (const viewer of [approvalAnalyst, allyAdmin, supervisor, seller]) {
+  for (const viewer of [allyAdmin, supervisor, seller]) {
     assert.deepEqual(
       getSolicitudActions({
         viewer,
@@ -609,17 +609,25 @@ test("solo central abre en fabrica un credito aprobado", () => {
   );
 });
 
-test("el analista de aprobaciones consulta solicitudes sin mutaciones operativas", () => {
-  assert.deepEqual(
-    getSolicitudActions({
-      viewer: approvalAnalyst,
-      ownership: { aliadoId: 99, sedeId: 999, vendedorId: 9999 },
-      source: "DRAFT",
-      state: "PROCESO",
-      draftState: "ABIERTO",
-    }),
-    ["VER_DETALLE"],
-  );
+test("el analista ingresa a solicitudes y créditos de todos los estados sin operar la fábrica", () => {
+  for (const source of ["DRAFT", "CREDIT"]) {
+    for (const state of ["PROCESO", "APROBADA", "RECHAZADA", "CANCELADA", "ERROR_TECNICO"]) {
+      for (const draftState of ["ABIERTO", "CERRADO"]) {
+        assert.deepEqual(
+          getSolicitudActions({
+            viewer: approvalAnalyst,
+            ownership: { aliadoId: 99, sedeId: 999, vendedorId: 9999 },
+            source,
+            state,
+            draftState,
+            platform: "IPHONE",
+          }),
+          ["VER_DETALLE", "ABRIR_SOLICITUD"],
+          `${source}/${state}/${draftState}`,
+        );
+      }
+    }
+  }
 });
 
 test("el endpoint aplica sesion, alcance y no permite eliminaciones", async () => {
@@ -720,7 +728,7 @@ test("alinea las acciones de escritorio en dos carriles y conserva el flujo movi
   );
   assert.equal(
     (desktop.match(/w-full justify-center whitespace-nowrap/g) || []).length,
-    4,
+    5,
     "cada variante de accion debe ocupar por completo su carril"
   );
   assert.equal(
@@ -729,8 +737,8 @@ test("alinea las acciones de escritorio en dos carriles y conserva el flujo movi
         /col-start-2 w-full justify-center whitespace-nowrap/g
       ) || []
     ).length,
-    2,
-    "Continuar y Ver deben permanecer en el segundo carril"
+    3,
+    "Continuar, Ver e Ingresar deben permanecer en el segundo carril"
   );
   assert.doesNotMatch(desktop, /flex justify-end gap-2/);
   assert.match(mobile, /flex flex-wrap justify-end gap-2/);

@@ -10,8 +10,13 @@ export const metadata = {
   description: "Liberación auditada de consultas TX06 sin puntaje.",
 };
 
-export default async function ApprovalReleasePage() {
+export default async function ApprovalReleasePage({ searchParams }: {
+  searchParams: Promise<{ buscar?: string | string[] }>;
+}) {
   const user = await requireNominalApprovalDashboardAccess();
+  const params = await searchParams;
+  const initialDocument = typeof params.buscar === "string" && /^\d{5,15}$/.test(params.buscar.trim())
+    ? params.buscar.trim() : "";
 
   return (
     <ApprovalDashboardShell
@@ -24,7 +29,7 @@ export default async function ApprovalReleasePage() {
         userName={user.nombre}
         userRole={user.rolNombre}
       />
-      <Tx06ReleaseConsole mode="analyst" />
+      <Tx06ReleaseConsole mode="analyst" initialDocument={initialDocument} />
     </ApprovalDashboardShell>
   );
 }
