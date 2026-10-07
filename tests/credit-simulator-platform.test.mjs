@@ -57,8 +57,8 @@ test("el simulador exige escoger Android o iPhone antes de calcular", () => {
   assert.match(page, /mode=\{entryMode === "simulator" \? "simulator" : "sale"\}/);
   assert.match(page, /devicePlatform \|\| "sin-plataforma"/);
   assert.match(selector, /mode\?: "sale" \| "simulator"/);
-  assert.match(selector, /actionLabel=\{simulatorMode \? "Simular Android"/);
-  assert.match(selector, /actionLabel=\{simulatorMode \? "Simular iPhone"/);
+  assert.match(selector, /<NewSalePlatformSelector \{\.\.\.props\}/);
+
 });
 
 test("el simulador aparece para administradores centrales y aliados", () => {
@@ -68,7 +68,7 @@ test("el simulador aparece para administradores centrales y aliados", () => {
   );
   assert.match(
     dashboard,
-    /<ActionLink\s+href="\/dashboard\/creditos\?mode=simulator"[\s\S]{0,100}label="Simular credito"/
+    /<Action\s+href="\/dashboard\/creditos\?mode=simulator"[\s\S]{0,100}label="Simular"/
   );
 });
 
