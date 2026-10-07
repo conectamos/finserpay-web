@@ -32,11 +32,16 @@ await import("./ensure-firmaseguro-draft-dispatch-schema.mjs");
 await import("./ensure-analyst-mora-schema.mjs");
 await import("./ensure-mora-exception-requests-schema.mjs");
 
-// One-off, read-only inspection of the two explicitly identified test credits.
-// The IDs prevent this check from running against previews or staging.
+// One-off removal of the two explicitly identified synthetic test credits.
+// The IDs prevent this operation from running against previews or staging.
 if (process.env.RAILWAY_ENVIRONMENT_ID === "80287179-736d-4d4e-85c1-69630c0ee732" &&
     process.env.RAILWAY_SERVICE_ID === "1c3af6e8-656e-4746-b097-9f046de1303e") {
-  const { runPurge } = await import("./purge-synthetic-test-credit-20261007.mjs");
-  const result = await runPurge(process.env.DATABASE_URL, { allTests: true });
-  console.log(`SYNTHETIC_TEST_CREDIT_PREFLIGHT ${JSON.stringify(result)}`);
+  const { runPurge, PURGE_BOTH_CONFIRMATION } = await import("./purge-synthetic-test-credit-20261007.mjs");
+  const result = await runPurge(process.env.DATABASE_URL, {
+    allTests: true, execute: true, confirmation: PURGE_BOTH_CONFIRMATION,
+  });
+  console.log(`SYNTHETIC_TEST_CREDIT_PURGE ${JSON.stringify(result)}`);
+  if (!result.eligible || result.targets.some(target => !target.deleted && !target.alreadyAbsent)) {
+    throw new Error("SYNTHETIC_TEST_CREDIT_PURGE_BLOCKED");
+  }
 }

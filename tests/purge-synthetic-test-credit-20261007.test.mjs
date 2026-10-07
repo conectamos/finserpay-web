@@ -43,7 +43,7 @@ async function fixture(state = 'GENERADO') {
       UNIQUE ("id", "grantId")
     );
   `);
-  await db.query('INSERT INTO "Credito" ("id","folio","clienteNombre","valorEquipoTotal","montoCredito","cuotaInicial","estado","clienteDocumento","imei") VALUES (1,$1,$2,5000,5000,0,$3,\'1000000001\',\'123456789012345\')',
+  await db.query('INSERT INTO "Credito" ("id","folio","clienteNombre","valorEquipoTotal","montoCredito","cuotaInicial","estado","clienteDocumento","imei") VALUES (1,$1,$2,5000,16,0,$3,\'1000000001\',\'123456789012345\')',
     ['FC-20261007042755-TQLK', 'PRUEBA DAPTA', state]);
   await db.query('INSERT INTO "Credito" ("id","folio","clienteNombre","valorEquipoTotal","montoCredito","cuotaInicial","estado","clienteDocumento","imei") VALUES (2,$1,$2,5000,5000,0,$3,\'1000000002\',\'123456789012346\')',
     ['FC-OTHER-CREDIT', 'PRUEBA DAPTA', state]);
@@ -100,7 +100,7 @@ async function addSecondTarget(db) {
   await db.query(`INSERT INTO "Credito"
     ("id","folio","clienteNombre","valorEquipoTotal","montoCredito","cuotaInicial",
       "estado","clienteDocumento","imei")
-    VALUES (3,'FC-20261007051500-NMIK','PRUEBA DOS DAPTA',150000,150000,0,
+    VALUES (3,'FC-20261007051500-NMIK','PRUEBA DOS DAPTA',150000,2400000,0,
       'GENERADO','1000000003','123456789012347')`);
   await db.query(`INSERT INTO "CreditSadminRegistration" ("creditoId","numeroCredito")
     VALUES (3,'1111111238')`);
@@ -318,14 +318,14 @@ test('la purga de ambos es atómica y repetirla no afecta ningún otro crédito'
   const db = await fixture('ANULADO');
   t.after(() => db.close());
   await addSecondTarget(db);
-  await db.query('UPDATE "Credito" SET "montoCredito"=149999 WHERE id=3');
+  await db.query('UPDATE "Credito" SET "montoCredito"=2399999 WHERE id=3');
   const blocked = await purgeBothWithClient(db, { execute: true,
     confirmation: PURGE_BOTH_CONFIRMATION });
   assert.equal(blocked.deleted, false);
   assert.equal(blocked.eligible, false);
   assert.equal(await count(db, 'Credito', 1), 1, 'no borra el primer objetivo antes de revisar el segundo');
   assert.equal(await count(db, 'Credito', 3), 1);
-  await db.query('UPDATE "Credito" SET "montoCredito"=150000 WHERE id=3');
+  await db.query('UPDATE "Credito" SET "montoCredito"=2400000 WHERE id=3');
   const removed = await purgeBothWithClient(db, { execute: true,
     confirmation: PURGE_BOTH_CONFIRMATION });
   assert.equal(removed.deleted, true);
