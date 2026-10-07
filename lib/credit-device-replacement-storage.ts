@@ -656,6 +656,8 @@ async function assertImeiAvailable(
         (
           SELECT credit."folio" FROM "Credito" credit
           WHERE credit."id" <> $2
+            AND UPPER(BTRIM(COALESCE(credit."estado", ''))) NOT IN
+              ('ANULADO', 'ANULADA', 'CANCELADO', 'CANCELADA')
             AND (
               regexp_replace(COALESCE(credit."imei", ''), '[^0-9]', '', 'g') = $1
               OR regexp_replace(COALESCE(credit."deviceUid", ''), '[^0-9]', '', 'g') = $1

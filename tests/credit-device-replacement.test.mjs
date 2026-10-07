@@ -4,6 +4,7 @@ import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { PGlite } from "@electric-sql/pglite";
 import { isValidCreditDeviceReplacementImei } from "../lib/credit-device-replacement.ts";
 
 const projectRoot = path.resolve(
@@ -71,6 +72,36 @@ test("la creación bloquea crédito e IMEI y revisa todos los conflictos operati
   );
   assert.match(storage, /assertEligibleCredit\(credit\)/);
   assert.match(storage, /normalizedPlatform\(row\) !== "IPHONE"/);
+});
+
+test("PostgreSQL permite reutilizar el IMEI de un crédito anulado, pero bloquea uno vigente", async (t) => {
+  const start = storage.indexOf("async function assertImeiAvailable(");
+  const end = storage.indexOf("export async function lockCreditDeviceReplacementImeiForCreditCreation", start);
+  assert.ok(start >= 0 && end > start);
+  class ImeiConflict extends Error {
+    constructor(code, message) { super(message); this.code = code; }
+  }
+  const assertAvailable = new Function("CreditDeviceReplacementError",
+    `${stripTypeScriptTypes(storage.slice(start, end))}\nreturn assertImeiAvailable;`)(ImeiConflict);
+  const db = new PGlite();
+  t.after(() => db.close());
+  await db.exec(`
+    CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "folio" TEXT, "estado" TEXT, "imei" TEXT, "deviceUid" TEXT);
+    CREATE TABLE "CreditoBorrador" ("id" INTEGER PRIMARY KEY, "estado" TEXT, "creditoId" INTEGER,
+      "expiresAt" TIMESTAMP, "createdAt" TIMESTAMP, "imei" TEXT);
+    CREATE TABLE "CreditDeviceReplacement" ("id" UUID PRIMARY KEY, "newImei" TEXT, "status" TEXT);
+    INSERT INTO "Credito" VALUES (101, 'FC-ANULADO', 'ANULADO', '355063664500617', '355063664500617');
+    INSERT INTO "Credito" VALUES (102, 'FC-VIGENTE', 'INSCRITO', '490154203237518', '490154203237518');
+  `);
+  const database = {
+    $queryRawUnsafe: async (sql, ...parameters) => (await db.query(sql, parameters)).rows,
+  };
+  const input = { imei: "355063664500617", creditId: 0, solicitudId: 201 };
+  await assert.doesNotReject(assertAvailable(database, input));
+
+  await db.query('UPDATE "Credito" SET "deviceUid" = $1 WHERE "id" = 102', [input.imei]);
+  await assert.rejects(assertAvailable(database, input),
+    (error) => error.code === "IMEI_CONFLICT" && /FC-VIGENTE/.test(error.message));
 });
 
 const eligibilitySource = storage
