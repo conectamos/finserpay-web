@@ -130,7 +130,7 @@ test("riesgo aliado consulta sólo créditos de sesión y limita evidencia, núm
   assert.equal(consoleNode.props.credits[1].activo, false);
   assert.doesNotMatch(JSON.stringify(consoleNode.props), /"capital"|"saldo"|"vencido"|1110000|900000|private photo payload/);
   assert.equal(consoleNode.props.credits[0].numeroCreditoVisible, "0100001");
-  assert.equal(consoleNode.props.credits[0].gestion, "LLAMADA · SIN_RESPUESTA · Comentario 1");
+  assert.equal(consoleNode.props.credits[0].gestion, null);
 });
 
 test("central conserva alcance global e importes; solamente la sesión otorga esa vista", async () => {

@@ -26,8 +26,9 @@ export function projectProductRiskCredits(credits: ProductRiskCredit[], { viewin
     fecha: credit.fecha,
     activo: riskCreditActive(credit),
     dias: credit.dias,
-    gestion: credit.gestion,
-    gestionFecha: credit.gestionFecha,
+    // Free text can contain overdue amounts; keep it in the central view.
+    gestion: viewingCentral ? credit.gestion : null,
+    gestionFecha: viewingCentral ? credit.gestionFecha : null,
     ...(viewingCentral ? { capital: credit.capital, saldo: credit.saldo, vencido: credit.vencido } : {}),
   }));
 }
@@ -66,4 +67,10 @@ export function aggregateProductRisk(credits: ProductRiskCredit[]) {
     row.credits.push(c); groups.set(key, row);
   }
   return [...groups.values()].map(r => ({ ...r, porcentaje: r.mora / r.financiadas * 100, dias: r.mora ? r.dias / r.mora : 0 }));
+}
+
+export function summarizeProductRisk(credits: ProductRiskCredit[]) {
+ const financiadas = credits.length;
+ const mora = credits.filter(c => c.dias > 0 && riskCreditActive(c)).length;
+ return { financiadas, mora, porcentaje: financiadas ? mora / financiadas * 100 : 0 };
 }

@@ -49,11 +49,11 @@ export default async function DelinquencyDetailPage({ searchParams }: { searchPa
   ]);
   const exportParams = scope.aliadoId ? `?aliadoId=${scope.aliadoId}` : "";
 
-  return <AppShell sidebar={<AdminSidebar activeHref="/dashboard/cartera/detalle-mora" adminCentral={scope.adminCentral} nombreUsuario={session.nombre} rolUsuario={session.rolNombre} />}>
+  return <AppShell className="fp-delinquency-shell" sidebar={<AdminSidebar activeHref="/dashboard/cartera/detalle-mora" adminCentral={scope.adminCentral} nombreUsuario={session.nombre} rolUsuario={session.rolNombre} />}>
     <AdminWorkspaceTopbar parent="Cartera" current="Detalle de mora" userName={session.nombre} userRole={session.rolNombre} accentAvatar />
-    <main className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-w-0">
     <DelinquencyWorkspace detail={detail} canViewBalances={scope.adminCentral} scopeLabel={scope.scopeLabel} updatedAt={updatedAt}
-      exportHref={`/api/dashboard/cartera/detalle-mora/export${exportParams}`} creditLinks={creditLinks}
+      exportHref={`/api/dashboard/cartera/detalle-mora/export${exportParams}`} creditLinks={creditLinks} initialMode={requestedType === "vendedor" ? "vendedores" : "sedes"}
       filters={scope.adminCentral ? <form action="/dashboard/cartera/detalle-mora" method="get" className="flex flex-wrap items-end gap-2">
         <label className="text-sm font-semibold">Aliado
           <Select name="aliadoId" defaultValue={scope.aliadoId || ""} className="mt-1 min-w-52">
