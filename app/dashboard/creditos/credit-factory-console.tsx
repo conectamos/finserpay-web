@@ -140,6 +140,7 @@ import {
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
 import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import {
+  firmaSeguroCorrectionReviewKey,
   hasFirmaSeguroCorrectionViewChanges,
   resolveFirmaSeguroDraftForSubmission,
 } from "@/lib/firmaseguro-draft-submit";
@@ -3234,6 +3235,8 @@ export default function CreditFactoryConsole({
     useState("");
   const [firmaSeguroDraftCorrectionPending, setFirmaSeguroDraftCorrectionPending] =
     useState(false);
+  const [firmaSeguroSignedCorrectionFrequency, setFirmaSeguroSignedCorrectionFrequency] =
+    useState<string | null>(null);
   const [signedTermsCorrectionBusy, setSignedTermsCorrectionBusy] =
     useState(false);
   const [signedTermsCorrectionSale, setSignedTermsCorrectionSale] =
@@ -3318,6 +3321,7 @@ export default function CreditFactoryConsole({
   const veriffAutoSessionRef = useRef(false);
   const veriffRequestInFlightRef = useRef(false);
   const firmaSeguroRequestInFlightRef = useRef(false);
+  const firmaSeguroCorrectionReviewKeyRef = useRef<string | null>(null);
   const veriffRefreshGenerationRef = useRef(0);
   const firmaSeguroRefreshGenerationRef = useRef(0);
   const signedTermsCorrectionRequestRef = useRef<{
@@ -3920,11 +3924,13 @@ export default function CreditFactoryConsole({
       : firmaSeguroDraftProcess?.firstPaymentDate) || null;
 
   useEffect(() => {
-    if (!serverFirstPaymentDate) return;
+    if (!serverFirstPaymentDate || firmaSeguroDraftCorrectionPending ||
+        firmaSeguroDraftProcess?.frozenCorrectionReissue) return;
     setFechaPrimerPago((current) =>
       current === serverFirstPaymentDate ? current : serverFirstPaymentDate
     );
-  }, [serverFirstPaymentDate]);
+  }, [serverFirstPaymentDate, firmaSeguroDraftCorrectionPending,
+    firmaSeguroDraftProcess?.frozenCorrectionReissue]);
 
   const iphoneFactorySignaturePending = dataCreditoCreditCreationMode && iphoneFactory && (
     firmaSeguroProcessResolutionPending
@@ -4032,7 +4038,9 @@ export default function CreditFactoryConsole({
       ? calculateAndroidSimulatorInstallmentSuretyPercentage(plazoMesesNumero)
       : resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
   const frecuenciaPagoCredito =
-    resolvedPolicyFinancialSettings.frecuenciaPago;
+    firmaSeguroDraftCorrectionPending && firmaSeguroSignedCorrectionFrequency
+      ? normalizePaymentFrequency(firmaSeguroSignedCorrectionFrequency)
+      : resolvedPolicyFinancialSettings.frecuenciaPago;
 
   useEffect(() => {
     const syncFirstPaymentDate = () => {
@@ -10398,10 +10406,17 @@ export default function CreditFactoryConsole({
 
       if (correctionDraft) {
         setFirmaSeguroDraftCorrectionPending(true);
+        setFirmaSeguroSignedCorrectionFrequency(
+          typeof correctionDraft.payload.frecuenciaPago === "string"
+            ? correctionDraft.payload.frecuenciaPago
+            : null
+        );
+        const reviewKey = firmaSeguroCorrectionReviewKey(correctionDraft);
         if (hasFirmaSeguroCorrectionViewChanges(
           factoryDraftPayload,
           correctionDraft.payload
-        )) {
+        ) && firmaSeguroCorrectionReviewKeyRef.current !== reviewKey) {
+          firmaSeguroCorrectionReviewKeyRef.current = reviewKey;
           applyDraftPayload(correctionDraft);
           setNotice({
             text: "Se cargaron los datos vigentes del contrato. Revisa cliente, equipo y plan antes de volver a enviar la firma.",
@@ -10412,8 +10427,10 @@ export default function CreditFactoryConsole({
       }
 
       const signature = await submitFirmaSeguroDraft(currentDraftId);
+      firmaSeguroCorrectionReviewKeyRef.current = null;
       if (correctionDraft) {
         setFirmaSeguroDraftCorrectionPending(false);
+        setFirmaSeguroSignedCorrectionFrequency(null);
         setFirmaSeguroIdentityCorrectionPending(false);
         setFirmaSeguroFinancialCorrectionPending(false);
       }
@@ -11224,6 +11241,9 @@ export default function CreditFactoryConsole({
     const restoredFirstPaymentDate =
       value("fechaPrimerPago") || fechaPrimerPago;
     const restoredPaymentFrequency = value("frecuenciaPago");
+    setFirmaSeguroSignedCorrectionFrequency(
+      checked("firmaSeguroCorrectionPending") ? restoredPaymentFrequency : null
+    );
     const restoredSuretyPercentage =
       value("fianzaPorcentaje") || String(creditSettings.fianzaPorcentaje);
 

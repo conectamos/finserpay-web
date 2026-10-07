@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  firmaSeguroCorrectionReviewKey,
   hasFirmaSeguroCorrectionViewChanges,
   resolveFirmaSeguroDraftForSubmission,
 } from "../lib/firmaseguro-draft-submit.ts";
@@ -121,6 +122,31 @@ test("nombre, valor o fecha visibles distintos exigen cargar el contrato autorit
   }, authoritative), false);
 });
 
+test("la revisión reconoce una sola versión del contrato; otra corrección exige revisar de nuevo", () => {
+  const draft = {
+    ...correctedDraft,
+    payload: {
+      ...correctedDraft.payload,
+      fechaPrimerPago: "2026-10-17",
+      frecuenciaPago: "QUINCENAL",
+    },
+  };
+  const reviewed = firmaSeguroCorrectionReviewKey(draft);
+  assert.equal(firmaSeguroCorrectionReviewKey({ ...draft, updatedAt: "later" }), reviewed);
+  assert.notEqual(firmaSeguroCorrectionReviewKey({
+    ...draft,
+    payload: { ...draft.payload, fechaPrimerPago: "2026-11-02" },
+  }), reviewed);
+  assert.notEqual(firmaSeguroCorrectionReviewKey({
+    ...draft,
+    payload: { ...draft.payload, frecuenciaPago: "MENSUAL" },
+  }), reviewed);
+  assert.notEqual(firmaSeguroCorrectionReviewKey({
+    ...draft,
+    payload: { ...draft.payload, firmaSeguroCorrectionId: "otra-version" },
+  }), reviewed);
+});
+
 test("la fábrica elige el borrador antes del POST y la inmutabilidad del servidor sigue activa", () => {
   const start = factory.indexOf("const handleFirmaSeguroStepReady = async () => {");
   const end = factory.indexOf("const finalizeFirmaSeguroDelivery = async () => {", start);
@@ -132,9 +158,15 @@ test("la fábrica elige el borrador antes del POST y la inmutabilidad del servid
   assert.ok(handler.indexOf(selector[0]) <
     handler.indexOf("await submitFirmaSeguroDraft(currentDraftId)"));
   assert.match(handler,
-    /if \(hasFirmaSeguroCorrectionViewChanges\([\s\S]*?\)\) \{[\s\S]*?applyDraftPayload\(correctionDraft\);[\s\S]*?return;[\s\S]*?\}\s*\}\s*const signature = await submitFirmaSeguroDraft\(currentDraftId\)/);
+    /const reviewKey = firmaSeguroCorrectionReviewKey\(correctionDraft\);[\s\S]*?hasFirmaSeguroCorrectionViewChanges\([\s\S]*?firmaSeguroCorrectionReviewKeyRef\.current !== reviewKey\) \{[\s\S]*?firmaSeguroCorrectionReviewKeyRef\.current = reviewKey;[\s\S]*?applyDraftPayload\(correctionDraft\);[\s\S]*?return;[\s\S]*?\}\s*\}\s*const signature = await submitFirmaSeguroDraft\(currentDraftId\)/);
   assert.doesNotMatch(handler, /const currentDraftId = await saveCurrentDraft\(4\)/);
   assert.match(handler, /if \(!correctionDraft\) \{\s*await saveDraftPayloadForVeriff\(/);
   assert.match(storage, /function preservePendingImeiCorrectionAutosave\(/);
   assert.match(storage, /throw new SolicitudCanonicalMutationError\("SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE"\)/);
+});
+
+test("la pantalla conserva fecha y frecuencia firmadas tras hidratar una corrección IMEI", () => {
+  assert.match(factory, /if \(!serverFirstPaymentDate \|\| firmaSeguroDraftCorrectionPending \|\|[\s\S]*?firmaSeguroDraftProcess\?\.frozenCorrectionReissue\) return;/);
+  assert.match(factory, /firmaSeguroDraftCorrectionPending && firmaSeguroSignedCorrectionFrequency[\s\S]*?normalizePaymentFrequency\(firmaSeguroSignedCorrectionFrequency\)/);
+  assert.match(factory, /setFirmaSeguroSignedCorrectionFrequency\([\s\S]*?checked\("firmaSeguroCorrectionPending"\) \? restoredPaymentFrequency : null/);
 });
