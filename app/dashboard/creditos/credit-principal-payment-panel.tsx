@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {PAYMENT_METHOD_OPTIONS} from "@/lib/payment-methods";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { Badge, Button, Card, DataTable, Input, Select } from "@/app/_components/finser-ui";
 
@@ -195,15 +196,16 @@ export function buildPrincipalPaymentPayload(
 }
 
 export default function CreditPrincipalPaymentPanel({
-  credit, disabled = false, onApplied, onBusyChange,
+  credit, disabled = false, onApplied, onBusyChange, initiallyExpanded = false,
 }: {
   credit: PrincipalPaymentCredit;
   disabled?: boolean;
+  initiallyExpanded?: boolean;
   onApplied: () => void | Promise<void>;
   onBusyChange: (busy: boolean) => void;
 }) {
   const [recovery] = useState(() => recoverPendingConfirmation(credit.id));
-  const [expanded, setExpanded] = useState(Boolean(recovery.request || recovery.error));
+  const [expanded, setExpanded] = useState(Boolean(initiallyExpanded || recovery.request || recovery.error));
   const [form, setForm] = useState<CapitalForm>(() => recovery.request ? {
     ...EMPTY_FORM, valor: String(recovery.request.valor), metodoPago: recovery.request.metodoPago,
     observacion: recovery.request.observacion,
@@ -394,7 +396,7 @@ export default function CreditPrincipalPaymentPanel({
         {amountField("valor", "Valor adicional a capital (COP)")}
         <label className="grid gap-2 text-sm font-semibold">Método de pago
           <Select value={form.metodoPago} disabled={locked} onChange={(event) => update("metodoPago", event.target.value)}>
-            <option value="EFECTIVO">Efectivo</option>
+            {PAYMENT_METHOD_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </Select>
         </label>
         <label className="grid gap-2 text-sm font-semibold">Próxima cuota pendiente

@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import {paymentMethodLabel} from "@/lib/payment-methods";
 import {useRef,useState,useEffect} from "react";
 import {ArrowLeft,Banknote,ChevronLeft,ChevronRight,CreditCard,FileSpreadsheet,Home,Landmark,MoreHorizontal,Search,Smartphone} from "lucide-react";
 import {creditReportDocument,creditReportSadmin} from "@/lib/credit-report-identifiers";
@@ -19,8 +20,8 @@ function PaymentActions({item,props}:{item:PaymentReportItem;props:Props}){
   </div></details>;
 }
 function Method({value}:{value:string}){
-  const normalized=value.toUpperCase();const digital=/NEQUI|DAVIPLATA|DIGITAL/.test(normalized);const Icon=digital?Smartphone:/TRANSFER|BANCO|PSE/.test(normalized)?Landmark:/TARJETA/.test(normalized)?CreditCard:Banknote;
-  return <span className={`${styles.method} ${/NEQUI/.test(normalized)?styles.nequi:""}`}><Icon aria-hidden="true"/>{value.charAt(0).toUpperCase()+value.slice(1).toLowerCase()}</span>;
+  const normalized=value.toUpperCase();const digital=/NEQUI|DAVIPLATA|DIGITAL/.test(normalized);const Icon=digital?Smartphone:/TRANSFER|BANCO|PSE|BRE-B/.test(normalized)?Landmark:/TARJETA/.test(normalized)?CreditCard:Banknote;
+  return <span className={`${styles.method} ${/NEQUI/.test(normalized)?styles.nequi:""}`}><Icon aria-hidden="true"/>{paymentMethodLabel(value)}</span>;
 }
 function dateTime(value:string){const date=new Date(value);return [paymentReportDate(value),Number.isNaN(date.getTime())?"":new Intl.DateTimeFormat("es-CO",{hour:"2-digit",minute:"2-digit",timeZone:"America/Bogota"}).format(date)];}
 export default function PaymentReportView(props:Props){

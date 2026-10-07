@@ -88,7 +88,7 @@ function dateTimeLabel(value: Date | string | null) {
 }
 function paymentMethodLabel(value: string | null) {
   const labels: Record<string, string> = {
-    BANCOLOMBIA: "Bancolombia", EFECTIVO: "Efectivo", NEQUI: "Nequi / Wompi", WOMPI: "Wompi",
+    "BRE-B": "BRE-B", BANCOLOMBIA: "Bancolombia", EFECTIVO: "Efectivo", NEQUI: "Nequi / Wompi", WOMPI: "Wompi",
   };
   return labels[String(value || "").trim().toUpperCase()] || textValue(value);
 }

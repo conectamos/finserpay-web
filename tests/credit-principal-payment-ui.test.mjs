@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import {createJiti} from "jiti";
+const paymentMethods=await createJiti(import.meta.url).import("../lib/payment-methods.ts");
 
 const source = readFileSync(new URL("../app/dashboard/creditos/credit-principal-payment-panel.tsx", import.meta.url), "utf8");
 const factory = readFileSync(new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url), "utf8");
@@ -62,6 +64,7 @@ function harness(fetchImpl = async () => { throw new Error("Unexpected request")
       if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (name.endsWith("finser-confirm-dialog")) return { default: "ConfirmDialog" };
       if (name.endsWith("finser-ui")) return Object.fromEntries(["Badge", "Button", "Card", "DataTable", "Input", "Select"].map((name) => [name, name]));
+      if(name === "@/lib/payment-methods") return paymentMethods;
       throw new Error(`Unexpected import ${name}`);
     },
   });

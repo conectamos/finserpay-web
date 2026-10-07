@@ -12,6 +12,7 @@ import { makeNativeCapitalFixture } from "./fixtures/credit-principal-payment-na
 const routeFile = new URL("../app/api/creditos/[id]/abono-capital/route.ts", import.meta.url);
 const source = readFileSync(routeFile, "utf8");
 const jiti = createJiti(import.meta.url, { alias: { "@": path.resolve(import.meta.dirname, "..") } });
+const realFactory=await jiti.import("../lib/credit-factory.ts");
 const realCore = await jiti.import("../lib/credit-principal-payment.ts");
 const realPlan = await jiti.import("../lib/credit-payment-plan.ts");
 const realContext = await jiti.import("../lib/credit-principal-payment-context.ts");
@@ -64,7 +65,7 @@ function fixture(options = {}) {
     "@/lib/prisma": { default: prisma },
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
     "@/lib/credit-factory": {
-      normalizePaymentMethod: x => x || "EFECTIVO", sanitizeText: x => typeof x === "string" ? x.trim() : "",
+      normalizePaymentMethod: realFactory.normalizePaymentMethod, sanitizeText: x => typeof x === "string" ? x.trim() : "",
       creditCajaConcept: () => "ABONO CREDITO EFECTIVO", creditCajaDescription: x => `Abono ${x.id}`,
     },
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: input => ({
@@ -407,3 +408,5 @@ test("native concurrent confirmation stays idempotent and failed audit rolls bac
   assert.equal(f.state.caja.length, 1);
   assert.equal(f.state.revisions.length, 1);
 });
+
+for(const method of ["BANCOLOMBIA","BRE-B"])test(method+" se conserva al confirmar un abono a capital",async()=>{const f=fixture();f.base.metodoPago=method;const preview=await f.preview();assert.equal(preview.status,200);const result=await f.confirm(preview.body.quoteHash);assert.equal(result.status,200);assert.equal(f.state.abonos.at(-1).metodoPago,method);});

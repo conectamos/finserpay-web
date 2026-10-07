@@ -1,4 +1,5 @@
 "use client";
+import {resolveSelectedPaymentAmount} from "@/lib/manual-payment-amount";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
@@ -29,6 +30,7 @@ import {
   LockKeyhole,
   Menu,
   MoreHorizontal,
+  PieChart,
   QrCode,
   ReceiptText,
   RefreshCw,
@@ -67,8 +69,9 @@ import {
   StatusPill,
   Tabs,
 } from "@/app/_components/finser-ui";
-import RecaudoSidebar from "@/app/dashboard/abonos/recaudo-sidebar";
-import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
+import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
+import {PAYMENT_METHOD_OPTIONS, paymentMethodLabel} from "@/lib/payment-methods";
+import "./register-payment.css";
 import FinserSupportLink from "@/app/_components/finser-support-link";
 import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
@@ -1068,6 +1071,10 @@ function currency(value: number) {
   return copCurrencyFormatter.format(Math.round(Number(value || 0)));
 }
 
+const paymentDisplayFormatter=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",minimumFractionDigits:0,maximumFractionDigits:20});
+function paymentDisplayCurrency(value:number){return paymentDisplayFormatter.format(Number(value||0));}
+function paymentDueDate(value:string){const date=parseColombiaDate(value)||new Date(value);return Number.isNaN(date.getTime())?"—":new Intl.DateTimeFormat("es-CO",{day:"2-digit",month:"2-digit",year:"numeric",timeZone:"America/Bogota"}).format(date);}
+
 function exactCurrency(value: number) {
   return copExactCurrencyFormatter.format(Number(value || 0));
 }
@@ -1271,28 +1278,6 @@ function DossierInfoField({
       </dd>
     </div>
   );
-}
-
-function paymentMethodLabel(value: string) {
-  const normalized = String(value || "").trim().toUpperCase();
-
-  if (normalized === "NEQUI") {
-    return "Nequi";
-  }
-
-  if (normalized === "DAVIPLATA") {
-    return "Daviplata";
-  }
-
-  if (normalized === "TRANSFERENCIA") {
-    return "Transferencia";
-  }
-
-  if (normalized === "OTRO") {
-    return "Otro";
-  }
-
-  return "Efectivo";
 }
 
 function noticeClasses(tone: NoticeTone) {
@@ -3265,6 +3250,9 @@ export default function CreditFactoryConsole({
   const [paymentValue, setPaymentValue] = useState("");
   const [receivedPaymentValue, setReceivedPaymentValue] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("EFECTIVO");
+  const [paymentOperation,setPaymentOperation]=useState<"installments"|"principal"|"payoff">("installments");
+  const [showAllPaymentInstallments,setShowAllPaymentInstallments]=useState(false);
+  useEffect(()=>{setPaymentOperation("installments");setShowAllPaymentInstallments(false);},[selectedId]);
   const [paymentObservation, setPaymentObservation] = useState("");
   const [paymentRegisterMode, setPaymentRegisterMode] =
     useState<PaymentRegisterMode>("INSTALLMENTS");
@@ -5912,6 +5900,7 @@ export default function CreditFactoryConsole({
     ? earlyPayoffRoundedTotal
     : creditPendingRoundedTotal;
   const paymentAmountToApply = Number(String(paymentValue || "").replace(/\D/g, "") || 0);
+  const displayAppliedPaymentAmount=isEarlyPayoffMode?Number(earlyPayoffSummary?.capitalPendiente||0):selectedInstallmentNumbers.length?resolveSelectedPaymentAmount(paymentAmountToApply,selectedInstallmentTotal):paymentAmountToApply;
   const receivedPaymentAmount = Number(
     String(receivedPaymentValue || "").replace(/\D/g, "") || 0
   );
@@ -10587,6 +10576,7 @@ export default function CreditFactoryConsole({
       setReceivedPaymentValue("");
       setPaymentObservation("");
       setPaymentRegisterMode("INSTALLMENTS");
+      setPaymentOperation("installments");
       setSelectedInstallmentNumbers([]);
       await loadPayments(selectedCredit.id);
       await loadCredits(true, activeSearch);
@@ -12363,7 +12353,7 @@ export default function CreditFactoryConsole({
     <div
       className={
         paymentsView
-          ? "fp-payments-workspace min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[228px_minmax(0,1fr)]"
+          ? "fp-payments-workspace fp-register-payment min-h-screen"
           : [
               "fp-shell text-slate-950",
               simulatorMode ? "fp-simulator-app" : "",
@@ -12468,14 +12458,7 @@ export default function CreditFactoryConsole({
           </section>
         </div>
       ) : null}
-      {paymentsView ? (
-        <RecaudoSidebar
-          adminCentral={canSeeInternalPricing}
-          canAdmin={canAdmin}
-          nombre={initialSeller?.nombre || initialSession.nombre}
-          rol={canAdmin ? "Administrador" : "Supervisor"}
-        />
-      ) : null}
+      {paymentsView ? <FinserNavigation variant="requests" admin={canAdmin} adminCentral={canSeeInternalPricing} isSupervisor={!canAdmin} nombreUsuario={initialSession.nombre} rolUsuario={initialSession.rolNombre}/> : null}
       <div
         className={
           paymentsView
@@ -12489,16 +12472,6 @@ export default function CreditFactoryConsole({
                 : "mx-auto max-w-7xl"
         }
       >
-        {paymentsView ? (
-          <AdminWorkspaceTopbar
-            parent="Recaudos"
-            current="Registrar pago"
-            userName={initialSeller?.nombre || initialSession.nombre}
-            userRole={canAdmin ? "Administrador" : "Supervisor"}
-            accentAvatar
-          />
-        ) : null}
-
         {paymentsView ? (
           <header className="fp-payment-page-heading">
             <h1>Registrar pago</h1>
@@ -17289,7 +17262,7 @@ export default function CreditFactoryConsole({
                               <details className={stepFourStyles.androidDetail}>
                                 <summary>{deliveryStatusLabel}</summary>
                                 <p>{deliveryStatusDetail}</p>
-                              </details>
+                                                        </details>
                             </div>
                           )}
                         </article>
@@ -20922,9 +20895,9 @@ export default function CreditFactoryConsole({
                       {selectedCredit.clienteNombre}
                     </h2>
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-semibold text-[#667085]">
-                      <span>CC {selectedCredit.clienteDocumento || selectedCredit.clienteTelefono || "Sin identificacion"}</span>
+                      <span>CC {String(selectedCredit.clienteDocumento || "").replace(/[.\s]/g, "") || "Sin identificación"}</span>
                       <span className="hidden h-5 w-px bg-[#d8dee5] sm:block" aria-hidden="true" />
-                      <span
+                      <span data-payment-state={paymentOverview?.estadoPago}
                         className={
                           paymentOverview?.estadoPago === "MORA"
                             ? "text-[#b42318]"
@@ -20940,7 +20913,7 @@ export default function CreditFactoryConsole({
                             : "Al dia"}
                       </span>
                       <span className="hidden h-5 w-px bg-[#d8dee5] sm:block" aria-hidden="true" />
-                      <span>{paymentOverview?.paidCount || 0} pagadas</span>
+                      <span>{paymentOverview?.paidCount || 0} pagadas</span><span aria-hidden="true">·</span>
                       <span>{paymentOverview?.pendingCount || 0} pendientes</span>
                     </div>
                   </div>
@@ -20950,7 +20923,7 @@ export default function CreditFactoryConsole({
                   <button
                     type="button"
                     onClick={() => setShowPaymentResults(true)}
-                    disabled={principalPaymentBusy}
+                    disabled={principalPaymentBusy || registeringPayment}
                     className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#d0d5dd] bg-white px-4 text-sm font-bold text-[#344054] transition hover:bg-[#f9fafb]"
                   >
                     <UserSearch className="h-4 w-4" strokeWidth={1.8} />
@@ -20958,12 +20931,12 @@ export default function CreditFactoryConsole({
                   </button>
                   <button
                     type="button"
-                    onClick={() => focusHistory()}
-                    disabled={principalPaymentBusy}
+                    onClick={() => paymentsTab === "history" ? setPaymentsTab("pay") : focusHistory()}
+                    disabled={principalPaymentBusy || registeringPayment}
                     className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#98a2b3] bg-white px-4 text-sm font-bold text-[#344054] transition hover:bg-[#f9fafb]"
                   >
                     <History className="h-4 w-4" strokeWidth={1.8} />
-                    Historial
+                    {paymentsTab === "history" ? "Volver al pago" : "Historial"}
                   </button>
                 </div>
               </section>
@@ -20999,7 +20972,7 @@ export default function CreditFactoryConsole({
                       Inicial
                     </p>
                     <p className="mt-2 text-lg font-black text-emerald-900">
-                      {currency(paymentOverview?.cuotaInicial || 0)}
+                      {paymentDisplayCurrency(paymentOverview?.cuotaInicial || 0)}
                     </p>
                   </div>
 
@@ -21008,7 +20981,7 @@ export default function CreditFactoryConsole({
                       Saldo pendiente
                     </p>
                     <p className="mt-2 text-lg font-black text-amber-900">
-                      {currency(paymentOverview?.saldoPendiente || 0)}
+                      {paymentDisplayCurrency(paymentOverview?.saldoPendiente || 0)}
                     </p>
                   </div>
 
@@ -21017,7 +20990,7 @@ export default function CreditFactoryConsole({
                       Abonos recibidos
                     </p>
                     <p className="mt-2 text-lg font-black text-sky-900">
-                      {currency(paymentOverview?.totalAbonado || 0)}
+                      {paymentDisplayCurrency(paymentOverview?.totalAbonado || 0)}
                     </p>
                   </div>
 
@@ -21094,39 +21067,15 @@ export default function CreditFactoryConsole({
                     </p>
                   </div>
                 ) : null}
-                <section className="fp-payment-early-payoff">
-                  <div className="flex items-center gap-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#e6f7a9] text-[#4f6f0c]">
-                      <BadgeCheck className="h-5 w-5" strokeWidth={1.8} />
-                    </span>
-                    <div>
-                      <h3 className="text-base font-black text-[#26330c]">
-                        {earlyPayoffAvailable ? "Liquidacion anticipada disponible" : "Liquidacion anticipada"}
-                      </h3>
-                      <p className="mt-1 text-sm font-semibold text-[#52603a]">
-                        {earlyPayoffAvailable
-                          ? `Capital a recoger ${currency(earlyPayoffRoundedTotal)} · Ahorro ${currency(Number(earlyPayoffSummary?.condonacion || 0))}`
-                          : earlyPayoffSummary?.motivo || "Disponible solo cuando el credito esta al dia."}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={selectEarlyPayoffPayment}
-                    disabled={
-                      registeringPayment ||
-                      loadingPayments ||
-                      paymentBlockedByAnnulment ||
-                      !earlyPayoffAvailable
-                    }
-                    className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[#5d7420] bg-white px-5 text-sm font-black text-[#34420f] transition hover:bg-[#f7fbe9] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isEarlyPayoffMode ? "Liquidacion seleccionada" : "Ver liquidacion"}
-                  </button>
-                </section>
-                {canSeeInternalPricing && paymentSummary?.id === selectedCredit.id && (
-                  <CreditPrincipalPaymentPanel
+                <div className="fp-payment-operation-tabs" role="tablist" aria-label="Operación del pago">
+                  <button type="button" role="tab" id="payment-installments-tab" aria-controls="payment-checkout-panel" aria-selected={paymentOperation==="installments"} disabled={registeringPayment||principalPaymentBusy} onClick={()=>{setPaymentOperation("installments");setPaymentRegisterMode("INSTALLMENTS");}}><FileText aria-hidden="true"/>Pago de cuotas</button>
+                  <button type="button" role="tab" id="payment-principal-tab" aria-controls="payment-principal-panel" aria-selected={paymentOperation==="principal"} disabled={!canSeeInternalPricing||registeringPayment||principalPaymentBusy||loadingPayments||paymentBlockedByAnnulment} title={!canSeeInternalPricing?"Operación no habilitada para este perfil":undefined} onClick={()=>{setPaymentOperation("principal");setPaymentRegisterMode("INSTALLMENTS");}}><PieChart aria-hidden="true"/>Abono a capital</button>
+                  <button type="button" role="tab" id="payment-payoff-tab" aria-controls="payment-checkout-panel" aria-selected={paymentOperation==="payoff"} disabled={registeringPayment||principalPaymentBusy||loadingPayments||paymentBlockedByAnnulment||!earlyPayoffAvailable} onClick={()=>{setPaymentOperation("payoff");selectEarlyPayoffPayment();}}><LockKeyhole aria-hidden="true"/><span>Liquidación anticipada{!earlyPayoffAvailable&&<small>Disponible con el crédito al día</small>}</span></button>
+                </div>
+                {paymentOperation === "principal" && canSeeInternalPricing && paymentSummary?.id === selectedCredit.id && (
+                  <div id="payment-principal-panel" role="tabpanel" aria-labelledby="payment-principal-tab"><CreditPrincipalPaymentPanel
                     key={selectedCredit.id}
+                    initiallyExpanded
                     credit={{
                       id: selectedCredit.id,
                       cuotaHabitual: Number(selectedCredit.valorCuota || 0),
@@ -21146,8 +21095,9 @@ export default function CreditFactoryConsole({
                       await loadCredits(true, activeSearch);
                     }}
                   />
+                  </div>
                 )}
-                <div className="fp-payment-checkout">
+                <div className="fp-payment-checkout" id="payment-checkout-panel" role="tabpanel" aria-labelledby={paymentOperation==="payoff"?"payment-payoff-tab":"payment-installments-tab"} hidden={paymentOperation==="principal"}>
                 <section className="fp-payment-plan fp-payment-summary rounded-lg border border-[#d9e1e7] bg-white p-5 shadow-[0_5px_18px_rgba(16,24,40,0.04)]">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-xl font-black text-slate-950">Resumen del pago</h3>
@@ -21160,19 +21110,14 @@ export default function CreditFactoryConsole({
 
                   <div className="fp-payment-summary-fields mt-5 grid gap-4">
                     <div className="fp-payment-selected-summary text-[#151a21]">
-                      <p className="text-sm font-semibold text-[#667085]">Total a pagar</p>
+                      <p className="text-sm font-semibold text-[#667085]">Total a aplicar</p>
                       <p className="mt-1 text-4xl font-black text-[#151a21]">
-                        {currency(isEarlyPayoffMode ? earlyPayoffRoundedTotal : paymentAmountToApply)}
+                        {paymentDisplayCurrency(displayAppliedPaymentAmount)}
                       </p>
                       {isEarlyPayoffMode && earlyPayoffSummary ? (
                         <p className="mt-3 text-xs font-semibold text-[#667085]">
-                          Saldo anterior {currency(earlyPayoffSummary.saldoObligacion)}.
-                          Condonacion: {currency(earlyPayoffSummary.condonacion)}.
-                        </p>
-                      ) : null}
-                      {selectedOverdueTotal > 0 ? (
-                        <p className="mt-3 text-xs font-semibold text-[#b86b10]">
-                          Mora dentro de la seleccion: {currency(selectedOverdueTotal)}
+                          Saldo anterior {paymentDisplayCurrency(earlyPayoffSummary.saldoObligacion)}.
+                          Condonacion: {paymentDisplayCurrency(earlyPayoffSummary.condonacion)}.
                         </p>
                       ) : null}
                       {!isEarlyPayoffMode && selectedInstallmentNumbers.length ? (
@@ -21184,21 +21129,20 @@ export default function CreditFactoryConsole({
 
                     <div className="fp-payment-cash-fields">
                       <div className="grid gap-4">
-                        <div>
-                          <label className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                            Total a aplicar
-                          </label>
+                        <details className="fp-payment-adjust-amount"><summary>Ajustar total a aplicar</summary>
                           <input
                             value={currencyInputValue(paymentValue)}
                             onChange={(event) =>
                               setPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
                             }
+                            aria-label="Total a aplicar"
                             inputMode="numeric"
                             placeholder="$ 50.000"
                             disabled={paymentBlockedByAnnulment || isEarlyPayoffMode}
                             className="h-12 w-full rounded-lg border border-[#d0d5dd] bg-white px-4 text-lg font-black text-slate-950 outline-none transition focus:border-[#7ca613] focus:ring-4 focus:ring-[#b7e63d]/20"
                           />
-                        </div>
+                          {selectedOverdueTotal>0&&<p className="mt-2 text-sm text-slate-600">Mora en la selección: {paymentDisplayCurrency(selectedOverdueTotal)}</p>}
+                        </details>
 
                         <div>
                           <label className="mb-2 block text-sm font-black text-[#151a21]">
@@ -21209,6 +21153,7 @@ export default function CreditFactoryConsole({
                             onChange={(event) =>
                               setReceivedPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
                             }
+                            aria-label="Valor recibido"
                             inputMode="numeric"
                             placeholder="$ 0"
                             disabled={paymentBlockedByAnnulment}
@@ -21244,26 +21189,26 @@ export default function CreditFactoryConsole({
                                   ? "Cambio para entregar"
                                   : paymentAdvanceAmount > 0
                                     ? "Abono a proximas cuotas"
-                                    : "Sin cambio"}
+                                    : "Cambio"}
                           </p>
                           <p className="mt-1 text-2xl font-black">
                             {isEarlyPayoffMode && paymentChangeAmount <= 0 && paymentOverCreditAmount <= 0
-                              ? currency(earlyPayoffRoundedTotal)
+                              ? paymentDisplayCurrency(earlyPayoffRoundedTotal)
                               : paymentOverCreditAmount > 0
-                              ? currency(paymentOverCreditAmount)
+                              ? paymentDisplayCurrency(paymentOverCreditAmount)
                               : selectedInstallmentCoverageShortfall > 0
-                                ? currency(selectedInstallmentCoverageShortfall)
+                                ? paymentDisplayCurrency(selectedInstallmentCoverageShortfall)
                                 : paymentShortfallAmount > 0
-                                  ? currency(paymentShortfallAmount)
+                                  ? paymentDisplayCurrency(paymentShortfallAmount)
                                   : paymentChangeAmount > 0
-                                    ? currency(paymentChangeAmount)
+                                    ? paymentDisplayCurrency(paymentChangeAmount)
                                     : paymentAdvanceAmount > 0
-                                      ? currency(paymentAdvanceAmount)
+                                      ? paymentDisplayCurrency(paymentAdvanceAmount)
                                       : "$ 0"}
                           </p>
                           {paymentChangeAmount > 0 ? (
                             <p className="mt-1 text-xs font-semibold">
-                              El cliente entrega {currency(receivedPaymentAmount)} y el abono aplicado es {currency(paymentAmountToApply)}.
+                              El cliente entrega {paymentDisplayCurrency(receivedPaymentAmount)} y el abono aplicado es {paymentDisplayCurrency(paymentAmountToApply)}.
                             </p>
                           ) : null}
                           {isEarlyPayoffMode && paymentChangeAmount <= 0 ? (
@@ -21273,7 +21218,7 @@ export default function CreditFactoryConsole({
                           ) : null}
                           {paymentAdvanceAmount > 0 ? (
                             <p className="mt-1 text-xs font-semibold">
-                              Despues de cubrir la seleccion, {currency(paymentAdvanceAmount)} se aplica a proximas cuotas.
+                              Despues de cubrir la seleccion, {paymentDisplayCurrency(paymentAdvanceAmount)} se aplica a proximas cuotas.
                             </p>
                           ) : null}
                         </div>
@@ -21284,18 +21229,7 @@ export default function CreditFactoryConsole({
                       <label className="mb-2 block text-sm font-semibold text-slate-700">
                         Metodo de pago
                       </label>
-                      <div className="fp-payment-methods grid grid-cols-1 gap-2 sm:max-w-[220px]">
-                        <button
-                          type="button"
-                          onClick={() => setPaymentMethod("EFECTIVO")}
-                          disabled={paymentBlockedByAnnulment}
-                          aria-pressed={paymentMethod === "EFECTIVO"}
-                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition disabled:opacity-50"
-                        >
-                          <Banknote className="h-4 w-4" strokeWidth={1.8} />
-                          Efectivo
-                        </button>
-                      </div>
+                      <div className="fp-payment-method-select"><Banknote aria-hidden="true"/><select aria-label="Método de pago" value={paymentMethod} onChange={event=>setPaymentMethod(event.target.value)} disabled={paymentBlockedByAnnulment||registeringPayment}>{PAYMENT_METHOD_OPTIONS.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
                     </div>
                   </div>
 
@@ -21331,28 +21265,14 @@ export default function CreditFactoryConsole({
                           : registeringPayment
                             ? "Registrando..."
                           : isEarlyPayoffMode
-                            ? `Liquidar ${currency(earlyPayoffRoundedTotal)}`
+                            ? `Liquidar ${paymentDisplayCurrency(earlyPayoffRoundedTotal)}`
                           : paymentAmountToApply > 0
-                            ? `Registrar pago · ${currency(paymentAmountToApply)}`
+                            ? `Registrar pago · ${paymentDisplayCurrency(displayAppliedPaymentAmount)}`
                             : "Registrar pago"}
                       <ArrowRight className="h-5 w-5 text-[#b7e63d]" strokeWidth={2} />
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPaymentValue("");
-                        setReceivedPaymentValue("");
-                        setPaymentObservation("");
-                        setPaymentMethod("EFECTIVO");
-                        setPaymentRegisterMode("INSTALLMENTS");
-                        setSelectedInstallmentNumbers([]);
-                      }}
-                      disabled={registeringPayment}
-                      className="mx-auto mt-3 block px-3 py-1 text-sm font-semibold text-[#344054] underline decoration-[#98a2b3] underline-offset-4 disabled:opacity-70"
-                    >
-                      Limpiar seleccion
-                    </button>
+
                     <p className="mt-5 flex items-center justify-center gap-2 text-xs font-semibold text-[#667085]">
                       <LockKeyhole className="h-4 w-4" strokeWidth={1.8} />
                       Se generara un comprobante automaticamente
@@ -21367,20 +21287,11 @@ export default function CreditFactoryConsole({
                         Plan de pagos
                       </p>
                       <h3 className="mt-2 text-xl font-black text-slate-950">
-                        Cuotas pendientes
+                        Plan de pagos
                       </h3>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
-                      <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 text-sm font-bold text-[#344054]">
-                        <input
-                          type="checkbox"
-                          checked={allPayableInstallmentsSelected}
-                          onChange={(event) => toggleAllPayableInstallments(event.target.checked)}
-                          disabled={!payableInstallments.length || registeringPayment || isEarlyPayoffMode}
-                          className="h-4 w-4 rounded border-slate-300 accent-[#7ca613]"
-                        />
-                        Seleccionar todas
-                      </label>
+
                       <button
                         type="button"
                         onClick={() => downloadPlanPagos()}
@@ -21392,6 +21303,16 @@ export default function CreditFactoryConsole({
                     </div>
                   </div>
 
+                      <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 text-sm font-bold text-[#344054]">
+                        <input
+                          type="checkbox"
+                          checked={allPayableInstallmentsSelected}
+                          onChange={(event) => toggleAllPayableInstallments(event.target.checked)}
+                          disabled={!payableInstallments.length || registeringPayment || isEarlyPayoffMode}
+                          className="h-4 w-4 rounded border-slate-300 accent-[#7ca613]"
+                        />
+                        Seleccionar todas
+                      </label>
                   <div className="fp-payment-plan-table mt-4 overflow-x-auto rounded-lg border border-[#d9e1e7] bg-white">
                     <table className="w-full min-w-[620px] table-fixed text-left text-sm">
                       <thead className="bg-white text-xs font-bold text-[#475467]">
@@ -21403,7 +21324,7 @@ export default function CreditFactoryConsole({
                         </tr>
                       </thead>
                       <tbody className="space-y-2">
-                        {payableInstallments.map((item, index) => (
+                        {(showAllPaymentInstallments?(paymentOverview?.plan||[]):payableInstallments.slice(0,7)).map((item) => (
                           <tr
                             key={item.numero}
                             className={[
@@ -21434,24 +21355,26 @@ export default function CreditFactoryConsole({
                               </label>
                             </td>
                             <td className="px-4 py-3 text-slate-600">
-                              {dateOnly(item.fechaVencimiento)}
+                              {paymentDueDate(item.fechaVencimiento)}
                             </td>
                             <td className="px-4 py-3">
                               <span
                                 className={[
                                   "inline-flex rounded-lg border px-2.5 py-1 text-[11px] font-bold uppercase",
-                                  item.estaEnMora
+                                  item.saldoPendiente <= 0
+                                    ? "border-[#d3e8b5] bg-[#f1f8e5] text-[#427908]"
+                                    : item.estaEnMora
                                     ? "border-red-200 bg-red-50 text-red-700"
-                                    : index === 0
+                                    : item.numero === payableInstallments[0]?.numero
                                       ? "border-[#d6e4fb] bg-[#eef4ff] text-[#2e5d9f]"
                                       : "border-amber-200 bg-amber-50 text-amber-700",
                                 ].join(" ")}
                               >
-                                {item.estaEnMora ? "Mora" : index === 0 ? "Proxima" : "Pendiente"}
+                                {item.saldoPendiente <= 0 ? "Pagada" : item.estaEnMora ? "Vencida" : item.numero === payableInstallments[0]?.numero ? "Próxima" : "Pendiente"}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-right font-black text-slate-950">
-                              {currency(item.saldoPendiente)}
+                              {paymentDisplayCurrency(item.saldoPendiente<=0?item.valorProgramado:item.saldoPendiente)}
                             </td>
                           </tr>
                         ))}
@@ -21467,6 +21390,7 @@ export default function CreditFactoryConsole({
                       </div>
                     ) : null}
                   </div>
+                  <footer className="fp-payment-plan-footer"><button type="button" onClick={()=>setShowAllPaymentInstallments(value=>!value)}><ChevronDown aria-hidden="true"/>{showAllPaymentInstallments?"Ver menos cuotas":"Ver todas las cuotas"}</button><button type="button" disabled={registeringPayment} onClick={()=>{setSelectedInstallmentNumbers([]);setPaymentValue("");setReceivedPaymentValue("");setPaymentObservation("");setPaymentMethod("EFECTIVO");setPaymentRegisterMode("INSTALLMENTS");setPaymentOperation("installments");}}><RotateCcw aria-hidden="true"/>Limpiar selección</button></footer>
                 </section>
                 </div>
 
@@ -21478,7 +21402,7 @@ export default function CreditFactoryConsole({
                     <div>
                       <p className="text-xs font-bold text-[#667085]">Ultimo pago</p>
                       <p className="mt-1 text-sm font-black text-[#151a21]">
-                        {dateTime(latestActivePayment.fechaAbono)} · {paymentMethodLabel(latestActivePayment.metodoPago)} · {currency(latestActivePayment.valor)}
+                        {dateTime(latestActivePayment.fechaAbono)} · {paymentMethodLabel(latestActivePayment.metodoPago)} · {paymentDisplayCurrency(latestActivePayment.valor)}
                       </p>
                     </div>
                     <button
@@ -21495,9 +21419,7 @@ export default function CreditFactoryConsole({
                 <ConfirmDialog
                   open={showPaymentConfirmation}
                   title="Confirmar registro del pago"
-                  description={`Se aplicaran ${currency(
-                    isEarlyPayoffMode ? earlyPayoffRoundedTotal : paymentAmountToApply
-                  )} al credito de ${selectedCredit.clienteNombre}. El comprobante se generara automaticamente.`}
+                  description={`Se aplicaran ${paymentDisplayCurrency(displayAppliedPaymentAmount)} al credito de ${selectedCredit.clienteNombre} por ${paymentMethodLabel(paymentMethod)}. El comprobante se generara automaticamente.`}
                   confirmLabel="Confirmar pago"
                   busy={registeringPayment}
                   onCancel={() => setShowPaymentConfirmation(false)}
@@ -21631,7 +21553,7 @@ export default function CreditFactoryConsole({
                                     ) : null}
                                   </div>
                                   <p className="mt-2 text-lg font-black text-slate-950">
-                                    {currency(payment.valor)}
+                                    {paymentDisplayCurrency(payment.valor)}
                                   </p>
                                   <p className="mt-1 text-sm text-slate-500">
                                     Metodo: {paymentMethodLabel(payment.metodoPago)}

@@ -1,3 +1,4 @@
+import {PAYMENT_METHOD_OPTIONS} from "@/lib/payment-methods";
 import type { EqualityDeliveryStatus } from "@/lib/equality-device-meta";
 import { getColombiaDateParts } from "@/lib/colombia-date";
 
@@ -259,7 +260,7 @@ export function extendDays(days: number, current: Date | null) {
 export function normalizePaymentMethod(value: unknown) {
   const method = String(value ?? "").trim().toUpperCase();
 
-  if (["EFECTIVO", "TRANSFERENCIA", "NEQUI", "DAVIPLATA", "OTRO"].includes(method)) {
+  if (PAYMENT_METHOD_OPTIONS.some(option => option.value === method)) {
     return method;
   }
 
