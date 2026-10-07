@@ -99,6 +99,8 @@ COPY --from=builder /app/scripts/check-merchant-application-delivery.mjs ./scrip
 
 COPY --from=builder /app/scripts/setup-commissions.sql ./scripts/setup-commissions.sql
 COPY --from=builder /app/scripts/ensure-commissions-schema.mjs ./scripts/ensure-commissions-schema.mjs
+COPY --from=builder /app/scripts/credit-due-reminders-schema.mjs ./scripts/credit-due-reminders-schema.mjs
+COPY --from=builder /app/scripts/ensure-credit-due-reminders-schema.mjs ./scripts/ensure-credit-due-reminders-schema.mjs
 
 EXPOSE 3000
 

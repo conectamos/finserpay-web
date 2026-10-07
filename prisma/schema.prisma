@@ -414,6 +414,7 @@ model Credito {
   correccionesDatosAprobacion   CreditApprovalDataCorrection[]
   registroSadmin                 CreditSadminRegistration?
   eventosSadmin                  CreditSadminEvent[]
+  recordatoriosCuota             CreditDueReminder[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -434,6 +435,27 @@ model CreditAllyPaymentExclusion {
   createdBy String
   createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @db.Timestamp(3)
   credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+}
+
+model CreditDueReminder {
+  id String @id @db.Uuid
+  creditoId Int
+  numeroCuota Int
+  templateKey String @db.VarChar(100)
+  fechaVencimiento DateTime @db.Date
+  status String
+  attempts Int @default(1)
+  claimedAt DateTime @db.Timestamptz(3)
+  claimExpiresAt DateTime @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+  resultCode String? @db.VarChar(40)
+  httpStatus Int?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @db.Timestamptz(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([creditoId, numeroCuota, templateKey], map: "CreditDueReminder_unique_installment_template")
+  @@index([status, claimExpiresAt], map: "CreditDueReminder_status_claimExpiresAt_idx")
 }
 
 model CreditApprovalAccessLink {
