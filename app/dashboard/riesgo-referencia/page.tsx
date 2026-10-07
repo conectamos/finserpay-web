@@ -4,11 +4,10 @@ import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
 import { resolveDelinquencyDetailScope } from "@/lib/delinquency-detail-access";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { calendarDateKey, getColombiaDateParts } from "@/lib/colombia-date";
-import { isIphoneEquipmentCatalogBrand } from "@/lib/credit-factory";
 import { resolveCapitalOriginal } from "@/lib/credit-capital";
 import { getCreditDisplayNumbers } from "@/lib/credit-display-number-server";
 import { ensureAnalystMoraSchema } from "@/lib/analyst-mora-schema";
-import { projectProductRiskCredits, riskCreditEligible, type ProductRiskCredit } from "@/lib/product-risk";
+import { classifyRiskProduct, projectProductRiskCredits, riskCreditEligible, type ProductRiskCredit } from "@/lib/product-risk";
 import { AppShell } from "@/app/_components/finser-ui";
 import AdminSidebar from "../_components/admin-sidebar";
 import AdminWorkspaceTopbar from "../_components/admin-workspace-topbar";
@@ -72,12 +71,11 @@ export default async function ProductRiskPage() {
     const plan = buildCreditPaymentPlan({ ...c, today, settled: Boolean(c.pazYSalvoEmitidoAt) });
     const overdue = plan.installments.filter(i => i.estaEnMora && i.saldoPendiente > 0);
     const dias = overdue.reduce((max, i) => Math.max(max, Math.round((Date.parse(cutoff) - Date.parse(i.fechaVencimiento)) / 86400000)), 0);
-    const platform = evidenceById.get(c.id)?.plataforma?.toUpperCase();
     const management = managementById.get(c.id);
     return {
       id: c.id, folio: c.folio, numeroCreditoVisible: displayNumbers.get(c.id) || c.folio, cliente: c.clienteNombre,
       marca: c.equipoMarca?.trim() || "Sin marca", referencia: c.equipoModelo?.trim() || c.referenciaEquipo?.trim() || "Sin referencia",
-      tipo: platform === "IPHONE" || platform === "ANDROID" ? platform : isIphoneEquipmentCatalogBrand(c.equipoMarca || "") ? "IPHONE" : c.equipoMarca ? "ANDROID" : "SIN_CLASIFICAR",
+      tipo: classifyRiskProduct(c),
       aliado: c.sede.aliado?.nombre || "Sin aliado", sede: c.sede.nombre,
       fecha: calendarDateKey(getColombiaDateParts(c.fechaCredito)),
       capital: resolveCapitalOriginal(c),

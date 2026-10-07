@@ -206,3 +206,22 @@ test("payload sin dinero conserva filtros, unidades, porcentajes y días de refe
   assert.equal(risk.riskCreditActive({ ...rows[0], activo: false }), false);
   assert.equal(risk.riskCreditActive({ ...rows[1], activo: true }), true);
 });
+
+test("clasifica todas las unidades por descripción sin usar la plataforma histórica ni excluir referencias sin marca", async () => {
+  const f = harness(ally, [
+    credit(57, { equipoMarca: null, equipoModelo: null, referenciaEquipo: "0100000057", contratoSnapshot: { equipo: { plataforma: "IPHONE" } } }),
+    credit(58, { equipoMarca: null, equipoModelo: "ipohn 13", referenciaEquipo: null, contratoSnapshot: { equipo: { plataforma: "ANDROID" } } }),
+    credit(59, { equipoMarca: null, equipoModelo: "iPhone 15", referenciaEquipo: null }),
+    credit(60, { equipoMarca: "Apple", equipoModelo: "Samsung A15", referenciaEquipo: null }),
+    credit(61, { equipoMarca: null, equipoModelo: null, referenciaEquipo: null }),
+  ]);
+  const rows = nodes(await f.render()).find(node => node.props?.credits)?.props.credits;
+  assert.deepEqual(rows.map(row => row.tipo), ["ANDROID", "IPHONE", "IPHONE", "ANDROID", "ANDROID"]);
+  const total = risk.summarizeProductRisk(rows);
+  const android = risk.summarizeProductRisk(risk.filterRiskCredits(rows, { ...risk.emptyProductRiskFilters, tipo: "ANDROID" }));
+  const iphone = risk.summarizeProductRisk(risk.filterRiskCredits(rows, { ...risk.emptyProductRiskFilters, tipo: "IPHONE" }));
+  assert.equal(android.financiadas, 3);
+  assert.equal(iphone.financiadas, 2);
+  assert.equal(total.financiadas, android.financiadas + iphone.financiadas);
+  assert.equal(total.mora, android.mora + iphone.mora);
+});
