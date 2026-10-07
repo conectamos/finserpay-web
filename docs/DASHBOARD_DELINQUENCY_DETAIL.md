@@ -1,6 +1,8 @@
 # Detalle de mora en los paneles administrativos
 
-El panel del administrador aliado muestra el detalle de su propia cartera. El
+La sección **Cartera → Detalle de mora**, en
+`/dashboard/cartera/detalle-mora`, muestra el detalle de su propia cartera al
+administrador aliado. Es independiente de Salud de cartera y del panel de inicio. El
 administrador central puede consultar el consolidado o seleccionar un aliado.
 El alcance se decide en el servidor usando la sesión; un parámetro de URL no
 permite al aliado consultar créditos de otra empresa.
@@ -16,7 +18,7 @@ para los indicadores de ventas y recaudo.
 Para cada sede y vendedor se presentan:
 
 - Cantidad de créditos en mora.
-- Saldo pendiente de esos créditos.
+- Saldo pendiente de esos créditos, únicamente al administrador central.
 - Participación en la mora: saldo del grupo dividido por el saldo total de los
   créditos en mora dentro del alcance seleccionado.
 - Aporte a la cartera: saldo del grupo dividido por todo el saldo pendiente de
@@ -34,6 +36,19 @@ identificadores separados. Una importación sin asignación válida aparece como
 **Sin vendedor asignado**, conservando su saldo y cantidad en la distribución.
 No se atribuye automáticamente la venta al administrador que cargó el lote.
 Los porcentajes mostrados se redondean para lectura.
+
+Los saldos en mora no se incluyen en el objeto de datos que recibe la pantalla
+del administrador aliado ni en su exportación Excel. Se conservan internamente
+para calcular participación, aporte y ranking. El permiso proviene de la sesión;
+los parámetros de URL no pueden habilitar importes ni ampliar el aliado consultado.
+El administrador central conserva los importes incluso al filtrar por un aliado.
+
+La exportación `.xlsx` contiene Resumen, Sedes y Vendedores. “Ver créditos” abre
+el listado en mora del grupo seleccionado dentro de esta misma sección, con
+número visible de crédito, cliente, cédula, sede, vendedor y días de mora.
+No incluye datos monetarios y rechaza grupos fuera del alcance autorizado.
+La fecha de actualización usa Bogotá; no se ofrece un mes histórico para un
+cálculo que representa la cartera actual.
 
 Este panel es de consulta. No cambia cuotas, fechas, saldos, responsables ni
 decisiones de aprobación.

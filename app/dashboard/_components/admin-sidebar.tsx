@@ -41,6 +41,7 @@ type NavItem = {
   href: string;
   icon: IconType;
   label: string;
+  children?: NavItem[];
 };
 
 type NavGroup = {
@@ -95,7 +96,18 @@ function SidebarNavigation({
             {group.label}
           </p>
           <div className="space-y-1">
-            {group.items.map((item) => (
+            {group.items.map((item) => item.children ? (
+              <details key={item.href} open={activeHref === item.href || activeHref.startsWith(`${item.href}/`)} className="group/cartera">
+                <summary className={`flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold [&::-webkit-details-marker]:hidden ${activeHref === item.href || activeHref.startsWith(`${item.href}/`) ? "bg-white/10 text-[var(--fp-lime)]" : "text-slate-300 hover:bg-white/8 hover:text-white"}`}>
+                  <item.icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
+                  {item.label}
+                  <ChevronDown className="ml-auto h-4 w-4 transition group-open/cartera:rotate-180" />
+                </summary>
+                <div className="mt-1 space-y-1 pl-5">
+                  {item.children.map((child) => <SidebarLink key={child.href} activeHref={activeHref} {...child} />)}
+                </div>
+              </details>
+            ) : (
               <SidebarLink key={item.href} activeHref={activeHref} {...item} />
             ))}
           </div>
@@ -112,6 +124,7 @@ export default function AdminSidebar({
   rolUsuario,
 }: AdminSidebarProps) {
   const analystNavigation = isApprovalAnalystRole(rolUsuario);
+  const portfolioNavigation = activeHref === "/dashboard/cartera" || activeHref.startsWith("/dashboard/cartera/");
   const navGroups: NavGroup[] = analystNavigation ? [
     {
       label: "Aprobaciones",
@@ -164,7 +177,10 @@ export default function AdminSidebar({
         },
         { href: "/dashboard/clientes", icon: Users, label: "Clientes" },
         ...(isAdminRole(rolUsuario)
-          ? [{ href: "/dashboard/cartera", icon: PieChart, label: "Cartera" }]
+          ? [{ href: "/dashboard/cartera", icon: PieChart, label: "Cartera", children: [
+              { href: "/dashboard/cartera", icon: PieChart, label: "Resumen" },
+              { href: "/dashboard/cartera/detalle-mora", icon: BarChart3, label: "Detalle de mora" },
+            ] }]
           : []),
         ...(adminCentral
           ? [
@@ -246,9 +262,9 @@ export default function AdminSidebar({
   ];
 
   return (
-    <aside className={`${analystNavigation ? "bg-[var(--fp-graphite)]" : "bg-[#071827]"} text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col`}>
+    <aside className={`${analystNavigation || portfolioNavigation ? "bg-[var(--fp-graphite)]" : "bg-[#071827]"} text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col`}>
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 lg:block lg:border-0 lg:px-5 lg:py-6">
-        <FinserBrand compact dark accentPay={analystNavigation} wordmarkOnly={analystNavigation} showTagline={false} />
+        <FinserBrand compact dark accentPay={analystNavigation || portfolioNavigation} wordmarkOnly={analystNavigation || portfolioNavigation} showTagline={false} />
         <LogoutButton className="!rounded-lg !border-white/15 !px-3 lg:hidden" />
       </div>
 

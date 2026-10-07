@@ -49,7 +49,6 @@ function loadDashboard() {
           "lucide-react": icons,
           "./admin-sidebar": { __esModule: true, default: EmptyComponent },
           "./portfolio-health-panel": { __esModule: true, default: EmptyComponent },
-          "./delinquency-detail-panel": { __esModule: true, default: EmptyComponent },
           "./dashboard-ally-selector": { __esModule: true, default: EmptyComponent },
           "./dashboard-month-selector": {
             __esModule: true,

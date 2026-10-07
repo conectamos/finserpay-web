@@ -74,10 +74,10 @@ function loadSidebar() {
 
 const AdminSidebar = loadSidebar();
 
-function renderSidebar({ adminCentral, rolUsuario }) {
+function renderSidebar({ adminCentral, rolUsuario, activeHref = "/dashboard" }) {
   return renderToStaticMarkup(
     jsxRuntime.jsx(AdminSidebar, {
-      activeHref: "/dashboard",
+      activeHref,
       adminCentral,
       nombreUsuario: "Usuario de prueba",
       rolUsuario,
@@ -91,6 +91,8 @@ test("Cartera aparece en el menu de administradores centrales y aliados", () => 
 
   assert.match(central, /href="\/dashboard\/cartera"/);
   assert.match(aliado, /href="\/dashboard\/cartera"/);
+  assert.match(central, /href="\/dashboard\/cartera\/detalle-mora"/);
+  assert.match(aliado, /href="\/dashboard\/cartera\/detalle-mora"/);
 });
 
 test("Cartera no aparece en el menu de perfiles que no son administradores", () => {
@@ -106,5 +108,12 @@ test("Cartera no aparece en el menu de perfiles que no son administradores", () 
       /href="\/dashboard\/cartera"/,
       `El rol ${rolUsuario} no debe ver Cartera`
     );
+    assert.doesNotMatch(html, /href="\/dashboard\/cartera\/detalle-mora"/);
   }
+});
+
+test("Detalle de mora permanece activo dentro del submenú Cartera en escritorio y móvil", () => {
+  const html = renderSidebar({ adminCentral: false, rolUsuario: "ADMIN", activeHref: "/dashboard/cartera/detalle-mora" });
+  assert.equal((html.match(/href="\/dashboard\/cartera\/detalle-mora" aria-current="page"/g) || []).length, 2);
+  assert.equal((html.match(/<details open="" class="group\/cartera"/g) || []).length, 2);
 });
