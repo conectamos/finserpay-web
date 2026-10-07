@@ -10,20 +10,18 @@ import { createJiti } from "jiti";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const [{ resolveCapitalOriginal }, { buildCreditPaymentPlan }, { resolveDashboardMonth },
-  { resolveAllyPaymentPlatform }, { summarizeProductPortfolioHealth }, { resolveCreditPaymentSummary }] = await Promise.all([
+  { resolveAllyPaymentPlatform }, { summarizeProductPortfolioHealth }, { resolveCreditPaymentSummary },
+  { summarizeDashboardDelinquency }, { resolveCreditAssignedAdministrator }] = await Promise.all([
   jiti.import("../lib/credit-capital.ts"), jiti.import("../lib/credit-payment-plan.ts"),
   jiti.import("../lib/dashboard-month.ts"), jiti.import("../lib/ally-payments-core.ts"),
   jiti.import("../lib/product-portfolio-health.ts"), jiti.import("../lib/credit-factory.ts"),
+  jiti.import("../lib/dashboard-delinquency.ts"), jiti.import("../lib/credit-assigned-seller.ts"),
 ]);
 const dashboardSource = await readFile(path.join(projectRoot, "app/dashboard/_lib/admin-dashboard-data.ts"), "utf8");
 const executableSource = stripTypeScriptTypes(dashboardSource)
   .replace(/^import[\s\S]*?;\r?\n/gm, "")
   .replace(/^export /gm, "");
 const fixedNow = Date.parse("2026-09-26T17:00:00Z");
-class FixedDate extends Date {
-  constructor(...args) { super(...(args.length ? args : [fixedNow])); }
-  static now() { return fixedNow; }
-}
 
 function credit(id, options = {}) {
   const { allyId = 7, siteId = 70, ...fields } = options;
@@ -35,6 +33,8 @@ function credit(id, options = {}) {
     fechaProximoPago: null, pazYSalvoEmitidoAt: null,
     clienteDocumento: String(10000000 + id), clienteNombre: "Cliente " + id,
     contratoSnapshot: { equipo: { plataforma: "IPHONE" } }, equipoMarca: "IPHONE",
+    sedeId: siteId, vendedorId: null, vendedor: null, usuario: { id: 700, nombre: "Asesor legado", usuario: "asesor" },
+    contratoAceptadoAt: null, pagareAceptadoAt: null, contratoFirmaDataUrl: null,
     sede: { id: siteId, nombre: "Sede " + siteId, aliadoId: allyId,
       aliado: { id: allyId, nombre: "Aliado " + allyId } },
     ...fields,
@@ -49,6 +49,9 @@ function payment(id, creditoId, valor, options = {}) {
 function mockDatabase(credits, payments) {
   const creditById = new Map(credits.map(item => [item.id, item]));
   const calls = [];
+  const project = (item, select) => Object.fromEntries(Object.entries(select).map(([key, selection]) => [
+    key, selection === true ? item[key] : item[key] ? project(item[key], selection.select) : null,
+  ]));
   const creditMatches = (item, where = {}) => {
     if (where.sede?.aliadoId != null && item.sede.aliadoId !== where.sede.aliadoId) return false;
     if (where.estado?.not != null && item.estado === where.estado.not) return false;
@@ -68,9 +71,14 @@ function mockDatabase(credits, payments) {
     return true;
   };
   return { calls, prisma: {
+    $queryRaw: async (strings, ...values) => {
+      const ids = values[0];
+      calls.push({ operation: "signaturePresence", ids, query: strings.join("?") });
+      return credits.filter(item => ids.includes(item.id) && item.contratoFirmaDataUrl).map(({ id }) => ({ id }));
+    },
     credito: { findMany: async args => {
       calls.push({ operation: "credits", ...args });
-      return credits.filter(item => creditMatches(item, args.where));
+      return credits.filter(item => creditMatches(item, args.where)).map(item => project(item, args.select));
     } },
     creditoAbono: {
       groupBy: async args => {
@@ -89,11 +97,16 @@ function mockDatabase(credits, payments) {
   } };
 }
 
-async function overview(credits, payments = [], options = { aliadoId: 7, month: "2026-09" }) {
+async function overview(credits, payments = [], options = { aliadoId: 7, month: "2026-09" }, now = fixedNow) {
   const { prisma, calls } = mockDatabase(credits, payments);
+  class FixedDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  }
   const getOverview = runInNewContext(executableSource + "\ngetAdminDashboardOverview", {
     prisma, Date: FixedDate, resolveCapitalOriginal, buildCreditPaymentPlan,
     resolveDashboardMonth, resolveAllyPaymentPlatform, summarizeProductPortfolioHealth, resolveCreditPaymentSummary,
+    summarizeDashboardDelinquency, resolveCreditAssignedAdministrator,
   });
   const result = await getOverview(options);
   return { result, calls };
@@ -252,4 +265,107 @@ test("recaudo acumulado conserva históricos y pagados, sin abonos anulados ni o
   }
   const { result: empty } = await overview([], []);
   assert.equal(empty.accumulatedCollection, 0);
+});
+
+test("detalle mora cuenta créditos y usa el saldo vigente total sin confundir cuotas o clientes", async () => {
+  const credits = [
+    credit(1, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z"), clienteDocumento: "MISMO" }),
+    credit(2, { fechaPrimerPago: new Date("2026-09-17T00:00:00Z"), clienteDocumento: "MISMO" }),
+    credit(3, { fechaPrimerPago: new Date("2026-09-26T00:00:00Z") }),
+    credit(4, { fechaPrimerPago: new Date("2026-09-02T00:00:00Z") }),
+    credit(5, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z"), pazYSalvoEmitidoAt: new Date("2026-09-10") }),
+    credit(6, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z"), estado: "CANCELADO" }),
+    credit(7, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z"), estado: "ANULADO" }),
+  ];
+  const payments = [payment(1, 1, 500), payment(2, 2, 200), payment(3, 4, 1000),
+    payment(4, 2, 800, { estado: "ANULADO" })];
+  const { result } = await overview(credits, payments);
+  const detail = result.delinquencyDetail;
+  assert.equal(detail.activeCredits, 3);
+  assert.equal(detail.overdueCredits, 2);
+  assert.equal(detail.totalBalance, 2300);
+  assert.equal(detail.overdueBalance, 1300);
+  assert.equal(detail.overduePercent, 2 / 3 * 100);
+  assert.equal(detail.overdueBalance, result.earlyBalance + result.criticalBalance);
+  assert.ok(Math.abs(detail.overduePortfolioPercent - result.delinquencyPercent) < 1e-10);
+  assert.equal(detail.sites[0].overdueCredits, 2);
+  assert.equal(result.dueToday, 1);
+});
+
+test("detalle conserva histórico mensual y aislación aliado; central desglosa homónimos sin mezclar", async () => {
+  const credits = [
+    credit(1, { fechaCredito: new Date("2026-08-09T15:00:00Z"),
+      fechaPrimerPago: new Date("2026-09-17T00:00:00Z"), vendedorId: 2,
+      vendedor: { id: 2, nombre: "Ana", documento: "222" },
+      sede: { id: 70, nombre: "Centro", aliadoId: 7, aliado: { id: 7, nombre: "Aliado 7" } } }),
+    credit(2, { allyId: 8, siteId: 80, fechaPrimerPago: new Date("2026-08-02T00:00:00Z"),
+      vendedorId: null, vendedor: null, usuario: { id: 2, nombre: "Ana", usuario: "ana" },
+      sede: { id: 80, nombre: "Centro", aliadoId: 8, aliado: { id: 8, nombre: "Aliado 8" } } }),
+  ];
+  const payments = [payment(1, 1, 200), payment(2, 2, 100)];
+  const september = await overview(credits, payments, { aliadoId: 7, month: "2026-09" });
+  const august = await overview(credits, payments, { aliadoId: 7, month: "2026-08" });
+  assert.deepEqual(september.result.delinquencyDetail, august.result.delinquencyDetail);
+  assert.equal(september.result.delinquencyDetail.overdueCredits, 1);
+  assert.equal(september.result.delinquencyDetail.overdueBalance, 800);
+  assert.equal(september.result.delinquencyDetail.sites[0].context, "Aliado 7");
+  assert.equal(september.calls.find(call => call.operation === "credits").where.sede.aliadoId, 7);
+  assert.equal(september.calls.find(call => call.operation === "paymentTotals").where.credito.sede.aliadoId, 7);
+  const { result: central } = await overview(credits, payments, { month: "2026-09" });
+  assert.equal(central.delinquencyDetail.overdueCredits, 2);
+  assert.equal(central.delinquencyDetail.overdueBalance, 1700);
+  assert.equal(central.delinquencyDetail.sites.length, 2);
+  assert.equal(central.delinquencyDetail.sites[0].key, "sede:80");
+  assert.equal(central.delinquencyDetail.sellers.length, 2);
+  assert.equal(central.delinquencyDetail.sellers[0].key, "usuario:2");
+  assert.equal(central.delinquencyDetail.sellers[1].key, "vendedor:2");
+});
+
+test("valida presencia de firma en imports sin traer imágenes ni salir del aliado consultado", async () => {
+  const imported = (id, fields = {}) => credit(id, {
+    fechaPrimerPago: new Date("2026-08-02T00:00:00Z"),
+    contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA", sinFirmaDigital: true },
+      asignacion: { tipoResponsable: "ADMINISTRADOR", vendedorId: null, sedeId: 70,
+        responsableUsuarioId: 15, vendedor: "Responsable importado" } },
+    ...fields,
+  });
+  const { result, calls } = await overview([
+    imported(1), imported(2, { contratoFirmaDataUrl: "data:image/png;base64,signature" }),
+    imported(3, { allyId: 8 }),
+  ]);
+  const creditQuery = calls.find(call => call.operation === "credits");
+  assert.equal(Object.hasOwn(creditQuery.select, "contratoFirmaDataUrl"), false);
+  const presence = calls.find(call => call.operation === "signaturePresence");
+  assert.deepEqual(JSON.parse(JSON.stringify(presence.ids)), [1, 2]);
+  assert.match(presence.query, /"id" = ANY\(\?::int\[\]\)/);
+  assert.equal(result.delinquencyDetail.sellers.find(group => group.key === "usuario:15").overdueCredits, 1);
+  assert.equal(result.delinquencyDetail.sellers.find(group => group.unassigned).overdueCredits, 1);
+  assert.equal(result.delinquencyDetail.sellers.some(group => group.key === "usuario:700"), false);
+});
+
+test("salud y detalle calculan cambio de día y frontera15/16 por Bogotá independientemente del servidor", async () => {
+  const previousTimezone = process.env.TZ;
+  try {
+    for (const timezone of ["UTC", "America/Bogota"]) {
+      process.env.TZ = timezone;
+      const credits = [credit(1, { fechaPrimerPago: new Date("2026-09-10T00:00:00Z") }),
+        credit(2, { fechaPrimerPago: new Date("2026-09-26T00:00:00Z") })];
+      const options = { aliadoId: 7, month: "2026-09" };
+      const { result: beforeMidnight } = await overview(credits, [], options, Date.parse("2026-09-26T00:30:00Z"));
+      assert.equal(beforeMidnight.earlyBalance, 1000, timezone);
+      assert.equal(beforeMidnight.criticalBalance, 0, timezone);
+      assert.equal(beforeMidnight.delinquencyDetail.overdueCredits, 1, timezone);
+      assert.equal(beforeMidnight.dueToday, 0, timezone);
+      const { result: midnight } = await overview(credits, [], options, Date.parse("2026-09-26T05:00:00Z"));
+      assert.equal(midnight.earlyBalance, 0, timezone);
+      assert.equal(midnight.criticalBalance, 1000, timezone);
+      assert.equal(midnight.delinquencyDetail.overdueCredits, 1, timezone);
+      assert.equal(midnight.dueToday, 1, timezone);
+      const { result: following } = await overview(credits, [], options, Date.parse("2026-09-27T05:00:00Z"));
+      assert.equal(following.delinquencyDetail.overdueCredits, 2, timezone);
+    }
+  } finally {
+    if (previousTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimezone;
+  }
 });

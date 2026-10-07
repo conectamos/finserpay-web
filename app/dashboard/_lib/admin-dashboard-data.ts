@@ -3,10 +3,50 @@ import { resolveCapitalOriginal } from "@/lib/credit-capital";
 import { resolveCreditPaymentSummary } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveDashboardMonth } from "@/lib/dashboard-month";
+import { summarizeDashboardDelinquency, type AdminDashboardDelinquencyDetail } from "@/lib/dashboard-delinquency";
+import { resolveCreditAssignedAdministrator } from "@/lib/credit-assigned-seller";
 import prisma from "@/lib/prisma";
 
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { summarizeProductPortfolioHealth, type PortfolioRiskBucket } from "@/lib/product-portfolio-health";
+
+export type { AdminDashboardDelinquencyDetail, AdminDashboardDelinquencyGroup } from "@/lib/dashboard-delinquency";
+
+export const adminDashboardCreditSelect = {
+  contratoSnapshot: true,
+  contratoAceptadoAt: true,
+  pagareAceptadoAt: true,
+  equipoMarca: true,
+  clienteDocumento: true,
+  clienteNombre: true,
+  cuotaInicial: true,
+  estado: true,
+  fechaCredito: true,
+  fechaPrimerPago: true,
+  fechaProximoPago: true,
+  frecuenciaPago: true,
+  id: true,
+  planCapitalVigente: true,
+  montoCredito: true,
+  pazYSalvoEmitidoAt: true,
+  plazoMeses: true,
+  saldoBaseFinanciado: true,
+  sedeId: true,
+  vendedorId: true,
+  sede: {
+    select: {
+      id: true,
+      aliado: { select: { id: true, nombre: true } },
+      nombre: true,
+    },
+  },
+  vendedor: { select: { id: true, nombre: true, documento: true } },
+  usuario: { select: { id: true, nombre: true, usuario: true } },
+  valorCuota: true,
+  valorEquipoTotal: true,
+  valorFianza: true,
+  valorInteres: true,
+} as const satisfies Prisma.CreditoSelect;
 
 export type AdminDashboardDailyPoint = {
   day: number;
@@ -22,6 +62,7 @@ export type AdminDashboardCreditPerformancePoint = {
 };
 
 export type AdminDashboardOverview = {
+  delinquencyDetail: AdminDashboardDelinquencyDetail;
   productHealth: ReturnType<typeof summarizeProductPortfolioHealth>;
   unclassifiedPortfolioBalance: number;
   activeCredits: number;
@@ -57,19 +98,13 @@ type AdminDashboardDataOptions = {
   month?: string | null;
 };
 
-function dateFromIso(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, (month || 1) - 1, day || 1, 12, 0, 0, 0);
-
-  return Number.isNaN(date.getTime()) ? new Date() : date;
-}
-
 function daysLate(dueDateIso: string, today: Date) {
-  const due = dateFromIso(dueDateIso);
-  const base = new Date(today);
-  base.setHours(12, 0, 0, 0);
+  const [year, month, day] = dueDateIso.split("-").map(Number);
+  const current = colombiaDateParts(today);
+  const due = Date.UTC(year, month - 1, day);
+  const base = Date.UTC(current.year, current.month - 1, current.day);
 
-  return Math.max(0, Math.floor((base.getTime() - due.getTime()) / 86_400_000));
+  return Math.max(0, Math.floor((base - due) / 86_400_000));
 }
 
 function riskBucket(days: number): PortfolioRiskBucket {
@@ -156,37 +191,7 @@ export async function getAdminDashboardOverview({
   const [credits, paymentTotals, monthPayments] = await Promise.all([
     prisma.credito.findMany({
       where: creditWhere,
-      select: {
-        contratoSnapshot: true,
-        equipoMarca: true,
-        clienteDocumento: true,
-        clienteNombre: true,
-        cuotaInicial: true,
-        fechaCredito: true,
-        fechaPrimerPago: true,
-        fechaProximoPago: true,
-        frecuenciaPago: true,
-        id: true,
-        planCapitalVigente: true,
-        montoCredito: true,
-        pazYSalvoEmitidoAt: true,
-        plazoMeses: true,
-        saldoBaseFinanciado: true,
-        sede: {
-          select: {
-            aliado: {
-              select: {
-                nombre: true,
-              },
-            },
-            nombre: true,
-          },
-        },
-        valorCuota: true,
-        valorEquipoTotal: true,
-        valorFianza: true,
-        valorInteres: true,
-      },
+      select: adminDashboardCreditSelect,
     }),
     prisma.creditoAbono.groupBy({
       by: ["creditoId"],
@@ -214,6 +219,21 @@ export async function getAdminDashboardOverview({
     }),
   ]);
 
+  // Imported administrative assignments are only valid before a signature.
+  // Read presence for eligible IDs, keeping large signature images out of the
+  // dashboard query and never widening the authenticated ally's credit scope.
+  const assignmentCandidateIds = credits
+    .filter((credit) => resolveCreditAssignedAdministrator(credit))
+    .map((credit) => credit.id);
+  const signedAssignments = assignmentCandidateIds.length > 0
+    ? await prisma.$queryRaw<Array<{ id: number }>>`
+      SELECT "id" FROM "Credito"
+      WHERE "id" = ANY(${assignmentCandidateIds}::int[])
+        AND COALESCE("contratoFirmaDataUrl", '') <> ''
+    `
+    : [];
+  const signedAssignmentIds = new Set(signedAssignments.map((credit) => credit.id));
+
   const paidByCreditId = new Map(
     paymentTotals.map((payment) => [
       payment.creditoId,
@@ -226,6 +246,10 @@ export async function getAdminDashboardOverview({
       totalAbonado: paidByCreditId.get(credit.id) || 0,
     });
     const common = {
+      delinquencySource: {
+        ...credit,
+        contratoFirmaDataUrl: signedAssignmentIds.has(credit.id) ? "PRESENTE" : null,
+      },
       fullyPaid: paymentSummary.montoCredito > 0 && Math.round(paymentSummary.saldoPendiente * 100) === 0,
       platform: resolveAllyPaymentPlatform(credit.contratoSnapshot, credit.equipoMarca),
       aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
@@ -285,6 +309,11 @@ export async function getAdminDashboardOverview({
   const investedCapital = portfolio.reduce((sum, credit) => sum + credit.capitalColocado, 0);
   const closedCredits = portfolio.filter((credit) => credit.fullyPaid).length;
   const activePortfolio = portfolio.filter((credit) => credit.saldoPendiente > 0);
+  const delinquencyDetail = summarizeDashboardDelinquency(activePortfolio.map((credit) => ({
+    ...credit.delinquencySource,
+    saldoPendiente: credit.saldoPendiente,
+    overdue: credit.bucket !== "alDia",
+  })));
   const totalPortfolio = activePortfolio.reduce(
     (sum, credit) => sum + credit.saldoPendiente,
     0
@@ -375,6 +404,7 @@ export async function getAdminDashboardOverview({
   const criticalCredits = criticalPortfolio.length;
 
   return {
+    delinquencyDetail,
     productHealth: summarizeProductPortfolioHealth(activePortfolio),
     unclassifiedPortfolioBalance: activePortfolio.filter((credit) => !credit.platform).reduce((sum, credit) => sum + credit.saldoPendiente, 0),
     activeCredits: activePortfolio.length,
