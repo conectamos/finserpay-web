@@ -61,10 +61,10 @@ test("la interfaz identifica las cifras como capital colocado", async () => {
     "utf8"
   );
 
-  assert.match(source, /label: "Capital colocado"/);
-  assert.match(source, /money\(overview\.monthlyPlacedCapital\)/);
-  assert.match(source, /label: "Capital colocado", value: money\(data\.investedCapital\)/);
-  assert.match(source, /label: "Cartera activa", value: money\(data\.activePlacedCapital\)/);
+  assert.match(source, /\["Capital colocado", data\.investedCapital\]/);
+  assert.match(source, /money\(data\.monthlyPlacedCapital\)/);
+  assert.match(source, /\["Capital colocado", data\.investedCapital\]/);
+  assert.match(source, /\["Cartera activa", data\.activePlacedCapital\]/);
 });
 
 test("el rendimiento agrupa por perfil y muestra monto y unidades de credito", async () => {
@@ -87,10 +87,9 @@ test("el rendimiento agrupa por perfil y muestra monto y unidades de credito", a
   assert.doesNotMatch(dataSource, /collectionBySede/);
   assert.doesNotMatch(dataSource, /creditPerformance[\s\S]{0,240}\.slice\(0, 5\)/);
 
-  assert.match(uiSource, /viewingCentral \? "aliado" : "sede"/);
-  assert.match(uiSource, /data\.creditPerformance\.map/);
-  assert.match(uiSource, /performance\.units === 1 \? "credito" : "creditos"/);
-  assert.match(uiSource, /compactMoney\(performance\.value\)/);
+  assert.match(uiSource, /data\.creditPerformance\.slice\(0, 4\)\.map/);
+  assert.match(uiSource, /a\.units/);
+  assert.match(uiSource, /compact\(a\.value\)/);
 });
 
 test("resuelve meses anteriores en Bogota y rechaza fechas futuras o invalidas", () => {
@@ -120,7 +119,7 @@ test("el dashboard conecta el selector mensual con las consultas del servidor", 
     "utf8"
   );
   const selectorSource = await readFile(
-    path.join(projectRoot, "app/dashboard/_components/dashboard-month-selector.tsx"),
+    path.join(projectRoot, "app/dashboard/_components/central-dashboard-filters.tsx"),
     "utf8"
   );
 
@@ -128,12 +127,8 @@ test("el dashboard conecta el selector mensual con las consultas del servidor", 
   assert.match(dataSource, /resolveDashboardMonth\(month, today\)/);
   assert.match(dataSource, /fechaAbono:\s*\{[\s\S]*gte: monthStart,[\s\S]*lt: nextMonthStart/);
   assert.match(dataSource, /credit\.fechaCredito >= monthStart/);
-  assert.match(uiSource, /<DashboardMonthSelector/);
-  assert.doesNotMatch(selectorSource, /type="month"/);
-  assert.match(selectorSource, /aria-expanded=\{open\}/);
-  assert.match(selectorSource, /role="dialog"/);
-  assert.match(selectorSource, /MONTH_LABELS\.map/);
-  assert.match(selectorSource, /disabled=\{isFutureMonth\}/);
-  assert.match(selectorSource, /event\.key === "Escape"/);
-  assert.match(selectorSource, /params\.set\("month", nextMonth\)/);
+  assert.match(uiSource, /<DashboardFilters/);
+  assert.match(selectorSource, /name="month"/);
+  assert.match(selectorSource, /requestSubmit\(\)/);
+  assert.match(selectorSource, /Array.from\(\{ length: 24 \}/);
 });

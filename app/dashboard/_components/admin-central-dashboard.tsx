@@ -1,657 +1,105 @@
-import type { ComponentType } from "react";
 import Link from "next/link";
-import {
-  ArrowDownToLine,
-  Banknote,
-  BarChart3,
-  Bell,
-  CalendarClock,
-  Calculator,
-  ChevronRight,
-  CircleCheck,
-  CreditCard,
-  Equal,
-  Files,
-  Flag,
-  MapPin,
-  Plus,
-  RadioTower,
-  Search,
-  ShieldCheck,
-  TriangleAlert,
-  UserRound,
-  WalletCards,
-} from "lucide-react";
+import { isAdminRole } from "@/lib/roles";
+import { ArrowRight, Bell, CalendarDays, Calculator, ChevronDown, ChevronRight, CircleAlert, CreditCard, FilePlus2, FileText, Layers, TriangleAlert, UserRound } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { Card } from "@/app/_components/finser-ui";
+import FinserBrand from "@/app/_components/finser-brand";
 import type { AdminDashboardOverview } from "../_lib/admin-dashboard-data";
-import AdminSidebar from "./admin-sidebar";
-import HealthPanel from "./portfolio-health-panel";
-import DashboardMonthSelector from "./dashboard-month-selector";
-import DashboardAllySelector from "./dashboard-ally-selector";
-
-type IconType = ComponentType<{
-  className?: string;
-  strokeWidth?: number;
-}>;
-
-type AdminCentralDashboardProps = {
-  adminCentral: boolean;
-  aliadoNombre: string;
-  allies?: Array<{ id: number; nombre: string; codigo: string | null }>;
-  selectedAlly?: { id: number; nombre: string; codigo: string | null } | null;
-  data: AdminDashboardOverview;
-  nombreUsuario: string;
-  rolUsuario: string;
-  sedeLabel: string;
+import LogoutButton from "./logout-button";
+import DashboardFilters from "./central-dashboard-filters";
+import styles from "./admin-central-dashboard.module.css";
+type Props = {
+    adminCentral: boolean;
+    aliadoNombre: string;
+    data: AdminDashboardOverview;
+    nombreUsuario: string;
+    rolUsuario: string;
+    sedeLabel: string;
+    availableSedes: {
+        id: number;
+        nombre: string;
+    }[];
+    selectedSede: number | null;
+    allies: { id: number; nombre: string; codigo: string | null }[];
+    selectedAlly: { id: number; nombre: string; codigo: string | null } | null;
 };
-
-type MetricCardProps = {
-  detail?: string;
-  icon: IconType;
-  label: string;
-  tone: "teal" | "green" | "red" | "neutral";
-  value: string;
-};
-
-const moneyFormatter = new Intl.NumberFormat("es-CO", {
-  currency: "COP",
-  maximumFractionDigits: 0,
-  style: "currency",
-});
-
-const percentFormatter = new Intl.NumberFormat("es-CO", {
-  maximumFractionDigits: 1,
-  minimumFractionDigits: 1,
-});
-
-function money(value: number) {
-  return moneyFormatter.format(Math.round(Number(value || 0)));
-}
-
-function compactMoney(value: number) {
-  const amount = Math.abs(Number(value || 0));
-
-  if (amount >= 1_000_000_000) {
-    return `$ ${percentFormatter.format(amount / 1_000_000_000)} mil M`;
-  }
-
-  if (amount >= 1_000_000) {
-    return `$ ${percentFormatter.format(amount / 1_000_000)} M`;
-  }
-
-  if (amount >= 1_000) {
-    return `$ ${percentFormatter.format(amount / 1_000)} mil`;
-  }
-
-  return money(amount);
-}
-
-function titleCase(value: string) {
-  return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value;
-}
-
-function chartMaximum(value: number) {
-  const amount = Math.max(1, Number(value || 0) * 1.08);
-  const magnitude = 10 ** Math.floor(Math.log10(amount));
-  const normalized = amount / magnitude;
-  const ceiling =
-    normalized <= 1
-      ? 1
-      : normalized <= 2
-        ? 2
-        : normalized <= 2.5
-          ? 2.5
-          : normalized <= 5
-            ? 5
-            : normalized <= 7.5
-              ? 7.5
-              : 10;
-
-  return ceiling * magnitude;
-}
-
-function MetricCard({ detail, icon: Icon, label, tone, value }: MetricCardProps) {
-  const tones = {
-    neutral: { icon: "bg-[var(--fp-lime-soft)] text-[var(--fp-graphite)]", value: "text-[var(--fp-graphite)]" },
-    green: {
-      icon: "bg-emerald-50 text-emerald-700",
-      value: "text-emerald-700",
-    },
-    red: {
-      icon: "bg-red-50 text-red-600",
-      value: "text-red-600",
-    },
-    teal: {
-      icon: "bg-teal-50 text-teal-700",
-      value: "text-[#111827]",
-    },
-  }[tone];
-
-  return (
-    <article className="@container/metric min-w-0 rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-      <div className="flex items-center gap-3">
-        <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full", tones.icon].join(" ")}>
-          <Icon className="h-5 w-5" strokeWidth={1.8} />
-        </span>
-        <p className="min-w-0 text-sm font-medium text-[#344054]">{label}</p>
-      </div>
-      <p className={["mt-4 break-words text-xl font-black leading-tight tabular-nums @min-[230px]/metric:text-2xl @min-[280px]/metric:text-[26px]", tones.value].join(" ")}>
-        {value}
-      </p>
-      {detail ? (
-        <p className="mt-3 text-xs font-medium leading-5 text-[#667085]">{detail}</p>
-      ) : null}
-    </article>
-  );
-}
-
-function CollectionChart({
-  overview,
-}: {
-  overview: AdminDashboardOverview;
+const money = (n: number) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n).replace(/\s/g, "");
+const number = (n: number) => new Intl.NumberFormat("es-CO", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
+const percent = (n: number) => `${number(n)}%`;
+const compact = (n: number) => n >= 1e6 ? `$${number(n / 1e6)} M` : money(n);
+function Menu({ label, items }: {
+    label: string;
+    items: [
+        string,
+        string
+    ][];
 }) {
-  const data = overview.daily;
-  const width = 780;
-  const height = 270;
-  const top = 18;
-  const bottom = 226;
-  const left = 76;
-  const right = 766;
-  const plotHeight = bottom - top;
-  const plotWidth = right - left;
-  const maxValue = chartMaximum(
-    Math.max(1, ...data.flatMap((point) => [point.placedCapital, point.recaudo]))
-  );
-  const step = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
-  const barWidth = Math.max(6, Math.min(13, step * 0.54));
-  const linePoints = data
-    .map((point, index) => {
-      const x = left + index * step;
-      const y = bottom - (point.recaudo / maxValue) * plotHeight;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-  const ticks = data.filter(
-    (point) => point.day === 1 || point.day % 5 === 0 || point.day === data.length
-  );
-  const monthShort = titleCase(overview.monthLabel.slice(0, 3));
-  const yAxisTicks = [0, 0.25, 0.5, 0.75, 1];
-
-  return (
-    <div>
-      <div className="grid grid-cols-2 border-y border-[#e4e9ef] sm:grid-cols-4">
-        {[
-          {
-            label: "Ventas del mes",
-            value: String(overview.monthlyCreditCount),
-          },
-          {
-            label: "Capital colocado",
-            value: money(overview.monthlyPlacedCapital),
-          },
-          {
-            label: "Recaudo del mes",
-            value: money(overview.monthlyCollection),
-          },
-          {
-            label: "Abonos registrados",
-            value: String(overview.monthlyPaymentCount),
-          },
-        ].map((metric, index) => (
-          <div
-            key={metric.label}
-            className={[
-              "min-w-0 px-3 py-3",
-              index % 2 === 1 ? "border-l border-[#e4e9ef]" : "",
-              index >= 2 ? "border-t border-[#e4e9ef] sm:border-t-0" : "",
-              index >= 1 ? "sm:border-l sm:border-[#e4e9ef]" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            <span className="block text-[11px] font-bold uppercase text-[#667085]">
-              {metric.label}
-            </span>
-            <strong className="mt-1 block whitespace-nowrap text-base font-black tabular-nums text-[#101828] 2xl:text-lg">
-              {metric.value}
-            </strong>
-          </div>
-        ))}
-      </div>
-
-      <div className="mb-2 mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-semibold text-[#475467]">
-        <span className="inline-flex items-center gap-2">
-          <span className="h-3 w-5 rounded-sm bg-[#0b213f]" />
-          Capital colocado
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-0.5 w-6 bg-[#78a016]" />
-          Recaudo diario
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="grid h-5 w-5 place-items-center border border-[#cbd5df] bg-white text-[10px] font-black text-[#0b213f]">
-            #
-          </span>
-          Ventas del dia
-        </span>
-      </div>
-
-      <div className="min-h-[270px] w-full overflow-hidden">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          className="block h-auto min-h-[250px] w-full"
-          role="img"
-          aria-label={`${overview.monthlyCreditCount} ventas, ${money(
-            overview.monthlyPlacedCapital
-          )} de capital colocado y ${money(overview.monthlyCollection)} recaudados en ${
-            overview.monthLabel
-          }`}
-        >
-          {yAxisTicks.map((ratioValue) => {
-            const y = bottom - ratioValue * plotHeight;
-            return (
-              <g key={ratioValue}>
-                <line
-                  x1={left}
-                  x2={right}
-                  y1={y}
-                  y2={y}
-                  stroke="#e4e9ef"
-                  strokeWidth="1"
-                />
-                <text
-                  x={left - 10}
-                  y={y + 4}
-                  fill="#667085"
-                  fontSize="10"
-                  fontWeight="600"
-                  textAnchor="end"
-                >
-                  {compactMoney(maxValue * ratioValue)}
-                </text>
-              </g>
-            );
-          })}
-
-          {data.map((point, index) => {
-            const barHeight = (point.placedCapital / maxValue) * plotHeight;
-            const x = left + index * step - barWidth / 2;
-
-            return (
-              <g key={`bar-${point.day}`}>
-                <rect
-                  x={x}
-                  y={bottom - barHeight}
-                  width={barWidth}
-                  height={barHeight}
-                  rx="2"
-                  fill="#0b213f"
-                >
-                  <title>
-                    {`${point.day} ${monthShort}: ${point.creditCount} ${
-                      point.creditCount === 1 ? "venta" : "ventas"
-                    }, ${money(point.placedCapital)} de capital colocado`}
-                  </title>
-                </rect>
-                {point.creditCount > 0 ? (
-                  <text
-                    x={x + barWidth / 2}
-                    y={Math.max(11, bottom - barHeight - 6)}
-                    fill="#0b213f"
-                    fontSize="10"
-                    fontWeight="800"
-                    textAnchor="middle"
-                  >
-                    {point.creditCount}
-                  </text>
-                ) : null}
-              </g>
-            );
-          })}
-
-          <polyline
-            points={linePoints}
-            fill="none"
-            stroke="#78a016"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-
-          {data.map((point, index) => {
-            const x = left + index * step;
-            const y = bottom - (point.recaudo / maxValue) * plotHeight;
-
-            return (
-              <circle
-                key={`point-${point.day}`}
-                cx={x}
-                cy={y}
-                r={point.recaudo > 0 ? "4" : "2.5"}
-                fill="#78a016"
-                stroke="white"
-                strokeWidth="1.5"
-              >
-                <title>{`${point.day} ${monthShort}: ${money(point.recaudo)} recaudados`}</title>
-              </circle>
-            );
-          })}
-
-          {ticks.map((point) => {
-            const index = data.indexOf(point);
-            const x = left + index * step;
-
-            return (
-              <text
-                key={`tick-${point.day}`}
-                x={x}
-                y={252}
-                fill="#667085"
-                fontSize="10"
-                fontWeight="600"
-                textAnchor="middle"
-              >
-                {point.day} {monthShort}
-              </text>
-            );
-          })}
-        </svg>
-      </div>
-    </div>
-  );
+    return <details className={styles.menu}><summary>{label}<ChevronDown aria-hidden="true"/></summary><div className={styles.dropdown}>{items.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}</div></details>;
 }
-
-function ActionLink({ href, icon: Icon, label }: { href: string; icon: IconType; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="flex min-h-16 items-center gap-3 rounded-lg border border-[#dfe4ea] bg-white px-3 py-3 text-sm font-bold text-[#101828] transition hover:border-[#0d9488] hover:bg-[#f5fbfa]"
-    >
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#087a73] text-white">
-        <Icon className="h-5 w-5" strokeWidth={2} />
-      </span>
-      <span>{label}</span>
-    </Link>
-  );
+function MovementChart({ data }: {
+    data: AdminDashboardOverview;
+}) {
+    const peak = Math.max(1, ...data.daily.flatMap(p => [p.placedCapital, p.recaudo]));
+    const magnitude = 10 ** Math.floor(Math.log10(peak));
+    const max = Math.ceil(peak / magnitude / .5) * magnitude * .5;
+    const x = (i: number) => 54 + i * 716 / Math.max(1, data.daily.length - 1);
+    const y = (n: number) => 168 - n / max * 142;
+    return <svg className={styles.chart} viewBox="0 0 790 205" role="img" aria-label={`Capital y recaudo diario de ${data.monthLabel}`}>
+    <defs><linearGradient id="central-capital" x2="0" y2="1"><stop stopColor="#252b2b"/><stop offset="1" stopColor="#424747"/></linearGradient></defs>
+    {[0, .2, .4, .6, .8, 1].map(t => <g key={t}><line x1="38" x2="786" y1={y(max * t)} y2={y(max * t)} stroke="#d9dde1" strokeDasharray="3 3"/><text x="29" y={y(max * t) + 4} textAnchor="end">{t === 0 ? "0" : max * t >= 1e6 ? `${Math.round(max * t / 1e6)} M` : compact(max * t)}</text></g>)}
+    <line x1="38" x2="38" y1="26" y2="168" stroke="#bec5cc"/>
+    {data.daily.map((p, i) => <rect key={p.day} x={x(i) - 7} y={y(p.placedCapital)} width="14" height={168 - y(p.placedCapital)} rx="1" fill="url(#central-capital)"><title>{`${p.day}: ${money(p.placedCapital)} colocados · ${p.creditCount} ventas`}</title></rect>)}
+    <polyline points={data.daily.map((p, i) => `${x(i)},${y(p.recaudo)}`).join(" ")} fill="none" stroke="var(--fp-central-lime)" strokeWidth="2.5" strokeLinejoin="round"/>
+    {data.daily.map((p, i) => <g key={p.day}><circle cx={x(i)} cy={y(p.recaudo)} r="4.5" fill="var(--fp-central-lime)"><title>{`${p.day}: ${money(p.recaudo)} recaudados`}</title></circle>{(p.day % 2 === 1 || p.day === data.daily.length) && <text x={x(i)} y="190" textAnchor="middle">{p.day}</text>}</g>)}
+  </svg>;
 }
-
-export default function AdminCentralDashboard({
-  adminCentral,
-  aliadoNombre,
-  allies = [],
-  selectedAlly = null,
-  data,
-  nombreUsuario,
-  rolUsuario,
-  sedeLabel,
-}: AdminCentralDashboardProps) {
-  const viewingCentral = adminCentral && !selectedAlly;
-  const carteraHref = selectedAlly ? `/dashboard/cartera?aliadoId=${selectedAlly.id}` : "/dashboard/cartera";
-  const performanceScopeLabel = viewingCentral ? "aliado" : "sede";
-  const maxPerformanceValue = Math.max(
-    1,
-    ...data.creditPerformance.map((item) => item.value)
-  );
-  const metricCards: MetricCardProps[] = viewingCentral ? [
-    { label: "Capital colocado", value: money(data.investedCapital), icon: WalletCards, tone: "neutral" },
-    { label: "Cartera activa", value: money(data.activePlacedCapital), icon: Banknote, tone: "neutral" },
-    { label: "Total créditos", value: String(data.totalCredits), icon: Files, tone: "neutral" },
-    { label: "Créditos activos", value: String(data.activeCredits), icon: CreditCard, tone: "neutral" },
-    { label: "Créditos finalizados", value: String(data.closedCredits), icon: CircleCheck, tone: "green" },
-    { label: "Recaudo acumulado", value: money(data.accumulatedCollection), icon: Banknote, tone: "neutral" },
-  ] : [
-    { label: "Inversión", value: money(data.investedCapital), icon: WalletCards, tone: "teal" },
-    { label: "Total créditos", value: String(data.totalCredits), icon: Files, tone: "neutral" },
-    { label: "Créditos activos", value: String(data.activeCredits), icon: CreditCard, tone: "teal" },
-    { label: "Créditos Finalizados", value: String(data.closedCredits), icon: CircleCheck, tone: "green" },
-  ];
-
-  return (
-    <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
-      <AdminSidebar
-        activeHref="/dashboard"
-        adminCentral={adminCentral}
-        nombreUsuario={nombreUsuario}
-        rolUsuario={rolUsuario}
-      />
-
-      <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
-        <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <h1 className="text-3xl font-black text-[#101828]">
-              {viewingCentral ? "Panel central" : "Panel aliado"}
-            </h1>
-            <p className="mt-1 text-sm text-[#667085]">
-              Resumen financiero y operativo{selectedAlly ? ` · ${selectedAlly.nombre}` : ""}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            {adminCentral ? (
-              <DashboardAllySelector
-                key={selectedAlly?.id ?? "all"}
-                allies={allies}
-                selectedAllyId={selectedAlly?.id ?? null}
-              />
-            ) : (
-              <div className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--fp-border)] bg-[var(--fp-surface)] px-3 text-sm font-semibold text-[var(--fp-graphite)]">
-                <MapPin className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
-                <span className="max-w-40 truncate">{aliadoNombre || sedeLabel}</span>
-              </div>
-            )}
-            <DashboardMonthSelector
-              key={data.monthKey}
-              currentMonth={data.currentMonthKey}
-              label={titleCase(data.monthLabel)}
-              selectedMonth={data.monthKey}
-            />
-            <Link
-              href={carteraHref}
-              aria-label={`${data.alertsCount} alertas de cartera`}
-              className="relative flex h-11 w-11 items-center justify-center rounded-lg border border-[#d0d7e0] bg-white text-[#344054] transition hover:border-[#0d9488] hover:text-[#0d766f]"
-            >
-              <Bell className="h-5 w-5" strokeWidth={1.8} />
-              {data.alertsCount > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#087a73] px-1 text-[10px] font-black text-white">
-                  {data.alertsCount > 99 ? "99+" : data.alertsCount}
-                </span>
-              )}
-            </Link>
-            <div className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#d0d7e0] bg-white px-2.5 pr-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#087a73] text-white">
-                <UserRound className="h-5 w-5" strokeWidth={1.8} />
-              </span>
-              <span className="max-w-32 truncate text-sm font-semibold text-[#344054]">
-                {nombreUsuario}
-              </span>
-            </div>
-          </div>
-        </header>
-
-        <section className={viewingCentral ? "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1800px]:grid-cols-6" : "mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"}>
-          {metricCards.map((metric) => (
-            <MetricCard key={metric.label} {...metric} />
-          ))}
-        </section>
-
-        <section className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">
-          <section className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-            <h2 className="text-xl font-black text-[#101828]">Recaudo y capital colocado</h2>
-            <p className="mt-1 text-sm text-[#667085]">
-              Capital financiado y recaudo diario de {titleCase(data.monthLabel)}.
-            </p>
-            <div className="mt-5">
-              <CollectionChart overview={data} />
-            </div>
-          </section>
-          <HealthPanel data={data} />
-        </section>
-
-
-        <section className="mt-4 grid gap-4 xl:grid-cols-[0.95fr_1.1fr_1fr]">
-          <section className="rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-            <h2 className="text-lg font-black text-[#101828]">Alertas de cartera</h2>
-            <div className="mt-3 space-y-2">
-              {[
-                {
-                  color: "bg-red-50 text-red-600",
-                  count: data.dueToday,
-                  icon: CalendarClock,
-                  label: "cuotas vencen hoy",
-                },
-                {
-                  color: "bg-amber-50 text-amber-600",
-                  count: data.earlyClients,
-                  icon: UserRound,
-                  label: "clientes con mora temprana",
-                },
-                {
-                  color: "bg-red-50 text-red-600",
-                  count: data.criticalCredits,
-                  icon: Flag,
-                  label: "creditos requieren prioridad",
-                },
-              ].map((alert) => {
-                const AlertIcon = alert.icon;
-                return (
-                  <div
-                    key={alert.label}
-                    className="grid grid-cols-[38px_1fr_auto] items-center gap-3 rounded-lg border border-[#e4e9ef] px-2.5 py-2"
-                  >
-                    <span className={["flex h-9 w-9 items-center justify-center rounded-full", alert.color].join(" ")}>
-                      <AlertIcon className="h-4.5 w-4.5" strokeWidth={2} />
-                    </span>
-                    <p className="text-sm text-[#344054]">
-                      <strong className="font-black text-[#101828]">{alert.count}</strong> {alert.label}
-                    </p>
-                    <Link
-                      href={carteraHref}
-                      className="rounded-md border border-[#d8dee6] px-2.5 py-1.5 text-xs font-bold text-[#344054] transition hover:border-[#0d9488] hover:text-[#0d766f]"
-                    >
-                      Gestionar
-                    </Link>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-            <h2 className="text-lg font-black text-[#101828]">
-              Rendimiento por {performanceScopeLabel}
-            </h2>
-            <p className="mt-1 text-xs text-[#667085]">
-              Capital colocado y unidades de credito en {titleCase(data.monthLabel)}
-            </p>
-            <div className="mt-4 max-h-48 space-y-3 overflow-y-auto pr-1">
-              {data.creditPerformance.length ? (
-                data.creditPerformance.map((performance) => (
-                  <div
-                    key={performance.name}
-                    className="space-y-1.5"
-                    aria-label={`${performance.name}: ${performance.units} ${
-                      performance.units === 1 ? "credito" : "creditos"
-                    }, ${money(performance.value)} de capital colocado`}
-                  >
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-                      <span
-                        className="truncate text-xs font-semibold text-[#475467]"
-                        title={performance.name}
-                      >
-                        {performance.name}
-                      </span>
-                      <span className="text-right">
-                        <strong className="block text-xs font-black tabular-nums text-[#101828]">
-                          {compactMoney(performance.value)}
-                        </strong>
-                        <span className="block text-[11px] font-semibold text-[#667085]">
-                          {performance.units}{" "}
-                          {performance.units === 1 ? "credito" : "creditos"}
-                        </span>
-                      </span>
-                    </div>
-                    <span className="block h-2 overflow-hidden rounded-sm bg-[#edf1f4]">
-                      <span
-                        className="block h-full rounded-sm bg-[#101828]"
-                        style={{
-                          width:
-                            performance.value > 0
-                              ? `${Math.max(
-                                  3,
-                                  (performance.value / maxPerformanceValue) * 100
-                                )}%`
-                              : "0%",
-                        }}
-                      />
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p className="rounded-lg bg-[#f7f9fb] px-3 py-7 text-center text-sm font-medium text-[#667085]">
-                  Aun no hay creditos colocados este mes.
-                </p>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-            <h2 className="text-lg font-black text-[#101828]">Acciones rapidas</h2>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-2">
-              <ActionLink href="/dashboard/creditos" icon={Plus} label="Nuevo credito" />
-              <ActionLink
-                href="/dashboard/creditos?mode=simulator"
-                icon={Calculator}
-                label="Simular credito"
-              />
-              <ActionLink href="/dashboard/abonos" icon={ArrowDownToLine} label="Recibir abono" />
-              <ActionLink href="/dashboard/clientes" icon={Search} label="Buscar usuario" />
-              {adminCentral ? (
-                <>
-                  <ActionLink href="/dashboard/creditos-masivos" icon={Files} label="Creditos masivos" />
-                  <ActionLink
-                    href="/dashboard/excepciones-mora"
-                    icon={TriangleAlert}
-                    label="Excepciones por mora"
-                  />
-                </>
-              ) : (
-                <ActionLink href="/dashboard/reportes" icon={BarChart3} label="Ver reportes" />
-              )}
-            </div>
-          </section>
-        </section>
-
-        {adminCentral && (
-          <section className="mt-4 rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-            <div className="grid gap-3 lg:grid-cols-[240px_repeat(3,minmax(0,1fr))] lg:items-center">
-              <div>
-                <h2 className="text-lg font-black text-[#101828]">Integraciones</h2>
-                <p className="mt-1 text-xs text-[#667085]">Acceso a servicios conectados</p>
-              </div>
-              {[
-                { icon: ShieldCheck, label: "Trustonic", status: "Abrir", href: "/dashboard/integraciones" },
-                { icon: Equal, label: "Equality", status: "Abrir", href: "/dashboard/equality" },
-                { icon: RadioTower, label: "Estado remoto", status: "Consultar", href: "/dashboard/integraciones" },
-              ].map((integration) => {
-                const IntegrationIcon = integration.icon;
-                return (
-                  <Link
-                    key={integration.label}
-                    href={integration.href}
-                    className="flex min-h-14 items-center gap-3 rounded-lg border border-[#cce4e1] bg-[#f7fbfa] px-4 transition hover:border-[#0d9488]"
-                  >
-                    <IntegrationIcon className="h-5 w-5 text-[#0b213f]" strokeWidth={1.8} />
-                    <span className="text-sm font-bold text-[#344054]">{integration.label}</span>
-                    <span className="ml-auto inline-flex items-center gap-2 text-xs font-bold text-[#16865f]">
-                      {integration.status}
-                      <ChevronRight className="h-4 w-4" />
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-        )}
-      </main>
-    </div>
-  );
+function Action({ href, icon: Icon, label }: {
+    href: string;
+    icon: LucideIcon;
+    label: string;
+}) {
+    return <Link href={href} className={styles.action}><Icon aria-hidden="true" strokeWidth={1.7}/>{label}</Link>;
+}
+export default function AdminCentralDashboard({ adminCentral, aliadoNombre, data, nombreUsuario, rolUsuario, availableSedes, selectedSede, allies, selectedAlly }: Props) {
+    const carteraHref = adminCentral ? selectedAlly ? `/dashboard/cartera?aliadoId=${selectedAlly.id}` : "/dashboard/cartera" : "/dashboard/abonos";
+    const platforms = (["IPHONE", "ANDROID"] as const).map(key => ({ name: key === "IPHONE" ? "iPhone" : "Android", total: data.productHealth[key].totalBalance, healthy: data.productHealth[key].healthyPercent, early: data.productHealth[key].earlyPercent, critical: data.productHealth[key].criticalPercent }));
+    const operation: [
+        string,
+        string
+    ][] = [...(adminCentral ? [["Aprobaciones", "/dashboard/aprobaciones"]] as [string,string][] : isAdminRole(rolUsuario) ? [["Pendientes", "/dashboard/pendientes"]] as [string,string][] : []), ["Solicitudes", "/dashboard/solicitudes"], ["Créditos", "/dashboard/creditos"], ...(adminCentral ? [["Simulador", "/dashboard/creditos?mode=simulator"], ["Créditos masivos", "/dashboard/creditos-masivos"]] as [
+            string,
+            string
+        ][] : []), ["Recaudos", "/dashboard/abonos"], ["Pagos aliado", "/dashboard/pagos-aliados"], ["Clientes", "/dashboard/clientes"], ...(adminCentral ? [["Excepciones por mora", "/dashboard/excepciones-mora"]] as [
+            string,
+            string
+        ][] : []), ["Reportes", "/dashboard/reportes"]];
+    const administration: [
+        string,
+        string
+    ][] = [...(adminCentral && isAdminRole(rolUsuario) ? [["Comisiones", "/dashboard/comisiones"], ["Aliados", "/dashboard/aliados"], ["Lista negra", "/dashboard/lista-negra"]] as [
+            string,
+            string
+        ][] : []), ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"], ...(adminCentral ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"], ["Parámetros de crédito", "/dashboard/parametros-credito"]] as [
+            string,
+            string
+        ][] : [])];
+    return <div className={styles.dashboard}>
+  <header className={styles.topbar}><Link href="/dashboard" aria-label="FINSER PAY, inicio" className={styles.brand}><FinserBrand dark accentPay wordmarkOnly showTagline={false}/></Link>
+   <nav aria-label="Navegación principal" className={styles.navigation}><Link className={styles.active} aria-current="page" href="/dashboard">Inicio</Link><Menu label="Operación" items={operation}/><Menu label="Cartera" items={[...(adminCentral ? [["Salud de cartera", carteraHref]] as [
+            string,
+            string
+        ][] : []), ["Detalle de mora", "/dashboard/cartera/detalle-mora"], ["Riesgo por referencia", "/dashboard/riesgo-referencia"]]}/><Menu label="Administración" items={administration}/>{adminCentral && <Menu label="Integraciones" items={[["Integraciones", "/dashboard/integraciones"], ["Enrolamiento iPhone", "/dashboard/integraciones/enrolamiento-iphone"], ["Liberar consultas", "/dashboard/datacredito/liberaciones"], ["Historial DataCrédito", "/dashboard/datacredito"], ["Equality Zero Touch", "/dashboard/equality"]]}/>}</nav>
+   <div className={styles.account}><Link href={carteraHref} className={styles.notification} aria-label={`${data.alertsCount} alertas de cartera`}><Bell aria-hidden="true"/>{data.alertsCount > 0 && <i />}</Link><details className={styles.menu}><summary className={styles.profile}><span className={styles.avatar}><UserRound aria-hidden="true" fill="currentColor"/></span><span>{nombreUsuario}<small>{rolUsuario.toUpperCase().includes("ADMIN") ? "Administrador" : rolUsuario}<ChevronDown aria-hidden="true"/></small></span></summary><div className={styles.dropdown}><LogoutButton /></div></details></div>
+  </header>
+  <main className={styles.main}><div className={styles.heading}><h1>{adminCentral ? "Panel central" : "Panel aliado"}</h1><DashboardFilters sedes={availableSedes} sede={selectedSede} month={data.monthKey} scopeLabel={adminCentral ? "Todas las sedes" : aliadoNombre} allies={allies} selectedAlly={selectedAlly}/></div>
+   <section className={styles.financial} aria-label="Indicadores financieros"><div className={styles.amounts}>{[["Capital colocado", data.investedCapital], ["Cartera activa", data.activePlacedCapital], ["Recaudo acumulado", data.accumulatedCollection]].map(([label, value]) => <div key={label}><p>{label}</p><strong>{money(Number(value))}</strong></div>)}</div><div className={styles.counts}><span><b>{data.totalCredits}</b> créditos</span><span><b>{data.activeCredits}</b> activos</span><span><b>{data.closedCredits}</b> finalizados</span></div></section>
+   <div className={styles.middle}><Card className={styles.movement}><div className={styles.sectionHeading}><h2>Movimiento del mes</h2><div className={styles.legend}><span><i />Capital</span><span><i />Recaudo</span></div></div><div className={styles.monthCounts}><span><b>{data.monthlyCreditCount}</b> ventas</span><span><b>{data.monthlyPaymentCount}</b> abonos</span></div><div className={styles.chartViewport}><MovementChart data={data}/></div><div className={styles.totals}><div><strong>{money(data.monthlyPlacedCapital)}</strong><span>Colocado</span></div><div><strong>{money(data.monthlyCollection)}</strong><span>Recaudado</span></div></div></Card>
+   <Card className={styles.health}><div className={styles.sectionHeading}><h2>Salud de cartera</h2><Link href={carteraHref}>Ver detalle <ArrowRight aria-hidden="true"/></Link></div><strong className={styles.healthPercent}>{percent(data.healthyPercent)}</strong><p className={styles.healthCaption}>Al día</p><div className={styles.healthBar} role="img" aria-label={`${percent(data.healthyPercent)} al día, ${percent(data.earlyPercent)} mora temprana y ${percent(data.criticalPercent)} mora crítica`}><span style={{ width: `${data.healthyPercent}%` }}/><span style={{ width: `${data.earlyPercent}%` }}/><span style={{ width: `${data.criticalPercent}%` }}/></div><div className={styles.riskLegend}>{[[data.healthyPercent, "Al día"], [data.earlyPercent, "Mora temprana"], [data.criticalPercent, "Mora crítica"]].map(([value, label]) => <span key={label}><i /><b>{percent(Number(value))}</b> {label}</span>)}</div>
+    <div className={styles.platforms}>{platforms.map(p => <div className={styles.platform} key={p.name}><span className={`${styles.platformIcon} ${p.name === "Android" ? styles.android : ""}`}><span style={{ maskImage: `url(/assets/dashboard/${p.name === "iPhone" ? "apple" : "android"}.svg)` }} role="img" aria-label={p.name === "iPhone" ? "Apple" : "Android"}/></span><b>{p.name}</b><div><strong>{p.total > 0 ? `${percent(p.early + p.critical)} en mora` : "Sin cartera activa"}</strong><small>Al día {percent(p.healthy)} · Temprana {percent(p.early)} · Crítica {percent(p.critical)}</small></div></div>)}</div>
+   </Card></div>
+   <div className={styles.bottom}><section className={styles.attention}><h2>Por atender</h2>{[{ label: "Vencen hoy", count: data.dueToday, icon: CalendarDays, tone: "positive" }, { label: "Mora temprana", count: data.earlyClients, icon: TriangleAlert, tone: "warning" }, { label: "Prioridad", count: data.criticalCredits, icon: CircleAlert, tone: "danger" }].map(({ label, count, icon: Icon, tone }) => <Link key={label} href={carteraHref} className={styles.alert}><span className={`${styles.alertIcon} ${styles[tone]}`}><Icon aria-hidden="true"/></span><b>{count}</b><span>{label}</span><ChevronRight aria-hidden="true"/></Link>)}</section>
+   <section className={styles.allies}><div className={styles.sectionHeading}><h2>{selectedAlly || !adminCentral ? "Sedes" : "Aliados"}</h2><span>Colocado · Créditos</span></div>{data.creditPerformance.length ? data.creditPerformance.slice(0, 4).map(a => <div className={styles.ally} key={a.name}><span>{a.name}</span><span>{compact(a.value)}<i>·</i>{a.units}</span></div>) : <p className={styles.empty}>Sin colocaciones en este periodo.</p>}</section>
+   <section className={styles.actions}><h2>Acciones</h2><div><Action href="/dashboard/creditos" icon={FilePlus2} label="Nuevo crédito"/>{adminCentral && <Action href="/dashboard/creditos?mode=simulator" icon={Calculator} label="Simular"/>}<Action href="/dashboard/abonos" icon={CreditCard} label="Recibir abono"/><Action href="/dashboard/clientes" icon={UserRound} label="Buscar usuario"/>{adminCentral ? <><Action href="/dashboard/creditos-masivos" icon={Layers} label="Créditos masivos"/><Action href="/dashboard/excepciones-mora" icon={FileText} label="Excepciones"/></> : <Action href="/dashboard/reportes" icon={FileText} label="Ver reportes"/>}</div></section></div>
+  </main>
+ </div>;
 }

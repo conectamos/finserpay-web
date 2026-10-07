@@ -98,6 +98,7 @@ export type AdminDashboardOverview = {
 
 type AdminDashboardDataOptions = {
   aliadoId?: number | null;
+  sedeId?: number | null;
   month?: string | null;
   includeDelinquencyCredits?: boolean;
 };
@@ -154,6 +155,7 @@ function colombiaDay(date: Date) {
 
 export async function getAdminDashboardOverview({
   aliadoId = null,
+  sedeId = null,
   month = null,
   includeDelinquencyCredits = false,
 }: AdminDashboardDataOptions = {}): Promise<AdminDashboardOverview> {
@@ -178,12 +180,14 @@ export async function getAdminDashboardOverview({
     : {};
   const creditWhere: Prisma.CreditoWhereInput = {
     ...scope,
+    ...(sedeId ? { sedeId } : {}),
     estado: {
       notIn: ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"],
     },
   };
   const paymentWhere: Prisma.CreditoAbonoWhereInput = {
     ...scope,
+    ...(sedeId ? { sedeId } : {}),
     estado: {
       not: "ANULADO",
     },

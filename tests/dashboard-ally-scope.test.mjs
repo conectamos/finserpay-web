@@ -43,6 +43,7 @@ function harness({ session = central, availableAllies = allies, sellerSession = 
         userCalls.push(snapshot(args));
         return { nombre: "Administrador de prueba", rol: { nombre: session?.rolNombre }, sede: { nombre: "Sede sesión" } };
       } },
+      sede: { findMany: async () => [{ id: 70, nombre: "Sede 70" }] },
       aliado: { findMany: async (args) => { allyCalls.push(snapshot(args)); return availableAllies; } },
       sedeVendedor: { findMany: async (args) => { sellerCalls.push(snapshot(args)); return []; } },
       credito: {
@@ -204,4 +205,25 @@ test("la sesión comercial activa conserva vendedor/sede y no adopta el aliado d
       else assert.equal(query.where.vendedorId, sellerSession.id);
     }
   }
+});
+
+test("el nuevo desplegable filtra una sede sin ampliar el alcance del aliado", async () => {
+  const f = harness({ session: { ...central, aliadoAccesoCodigo: "JGCOMPANY", aliadoAccesoId: 25 } });
+  const result = await f.render({ scope: "sede:70", month: "2026-07" });
+  assert.equal(result.props.selectedSede, 70);
+  assert.equal(f.overviewCalls[0].aliadoId, 25);
+  assert.equal(f.overviewCalls[0].sedeId, 70);
+});
+
+test("una sede no accesible se rechaza antes de consultar cartera", async () => {
+  const f = harness();
+  await assert.rejects(f.render({ scope: "sede:999" }), /NEXT_NOT_FOUND/);
+  assert.equal(f.overviewCalls.length, 0);
+});
+
+test("el selector combinado conserva la selección real de aliados", async () => {
+  const f = harness();
+  const result = await f.render({ scope: "aliado:25", month: "2026-07" });
+  assert.equal(result.props.selectedAlly.id, 25);
+  assert.equal(f.overviewCalls[0].aliadoId, 25);
 });

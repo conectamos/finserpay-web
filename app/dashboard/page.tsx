@@ -20,6 +20,7 @@ import { getAdminDashboardOverview } from "./_lib/admin-dashboard-data";
 type DashboardSearchParams = Promise<{
   month?: string | string[];
   aliadoId?: string | string[];
+  scope?: string | string[];
 }>;
 
 export default async function DashboardPage({
@@ -221,7 +222,8 @@ export default async function DashboardPage({
         orderBy: { nombre: "asc" },
       })
     : [];
-  const requestedAllyId = Array.isArray(params.aliadoId) ? params.aliadoId[0] : params.aliadoId;
+  const selectedScope = Array.isArray(params.scope) ? params.scope[0] : params.scope;
+  const requestedAllyId = selectedScope?.startsWith("aliado:") ? selectedScope.slice(7) : selectedScope !== undefined ? undefined : Array.isArray(params.aliadoId) ? params.aliadoId[0] : params.aliadoId;
   let selectedAlly: (typeof allies)[number] | null = null;
 
   // A query parameter may change the central dashboard's view, never the session's access.
@@ -232,15 +234,25 @@ export default async function DashboardPage({
     if (!selectedAlly) notFound();
   }
 
+  const availableSedes = await prisma.sede.findMany({
+    where: adminAliado ? { aliadoId: aliadoStatsScopeId } : selectedAlly ? { aliadoId: selectedAlly.id } : {},
+    select: { id: true, nombre: true }, orderBy: { nombre: "asc" },
+  });
+  const requestedSedeId = selectedScope?.startsWith("sede:") ? Number(selectedScope.slice(5)) : null;
+  const selectedSede = requestedSedeId !== null && availableSedes.some(s => s.id === requestedSedeId) ? requestedSedeId : null;
+  if (requestedSedeId !== null && selectedSede === null) notFound();
   const dashboardOverview = await getAdminDashboardOverview({
     aliadoId: adminAliado ? aliadoStatsScopeId : selectedAlly?.id ?? null,
     month: requestedMonth,
+    ...(selectedSede ? { sedeId: selectedSede } : {}),
   });
 
   return (
     <AdminCentralDashboard
       adminCentral={adminCentral}
       aliadoNombre={aliadoPanelNombre}
+      availableSedes={availableSedes}
+      selectedSede={selectedSede}
       allies={allies}
       selectedAlly={selectedAlly}
       data={dashboardOverview}
