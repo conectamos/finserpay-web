@@ -482,6 +482,24 @@ BEGIN
         OR (
           assessment."status" IN ('APROBADO', 'RECHAZADO')
           AND assessment."expiresAt" > CURRENT_TIMESTAMP
+          AND (
+            -- A historical offer is never reusable. A new paid inquiry is
+            -- allowed only after the credit that spent it was annulled.
+            (assessment."consumedAt" IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM "Credito" prior_credit
+              WHERE prior_credit."id" = assessment."creditId"
+                AND prior_credit."estado" = 'ANULADO'
+            ))
+            OR (assessment."consumedAt" IS NULL AND NOT EXISTS (
+              SELECT 1 FROM "DataCreditoAssessment" spent
+              INNER JOIN "Credito" prior_credit
+                ON prior_credit."id" = spent."creditId"
+                AND prior_credit."estado" = 'ANULADO'
+              WHERE COALESCE(spent."reusedFromAssessmentId", spent."id") =
+                COALESCE(assessment."reusedFromAssessmentId", assessment."id")
+                AND spent."consumedAt" IS NOT NULL
+            ))
+          )
         )
         OR (
           assessment."status" = 'NO_EVALUADO'
@@ -586,6 +604,15 @@ BEGIN
         AND other."status" IN ('APROBADO', 'RECHAZADO')
         AND other."expiresAt" > CURRENT_TIMESTAMP
         AND other."consumedAt" IS NOT NULL
+        AND (
+          COALESCE(other."reusedFromAssessmentId", other."id") =
+            COALESCE(OLD."reusedFromAssessmentId", OLD."id")
+          OR NOT EXISTS (
+            SELECT 1 FROM "Credito" prior_credit
+            WHERE prior_credit."id" = other."creditId"
+              AND prior_credit."estado" = 'ANULADO'
+          )
+        )
     ) OR EXISTS (
       SELECT 1
       FROM "DataCreditoAssessment" other
@@ -629,6 +656,15 @@ BEGIN
           AND other."status" IN ('APROBADO', 'RECHAZADO')
           AND other."expiresAt" > CURRENT_TIMESTAMP
           AND other."consumedAt" IS NOT NULL
+          AND (
+            COALESCE(other."reusedFromAssessmentId", other."id") =
+              COALESCE(NEW."reusedFromAssessmentId", NEW."id")
+            OR NOT EXISTS (
+              SELECT 1 FROM "Credito" prior_credit
+              WHERE prior_credit."id" = other."creditId"
+                AND prior_credit."estado" = 'ANULADO'
+            )
+          )
       )
       OR EXISTS (
         SELECT 1

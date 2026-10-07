@@ -877,6 +877,7 @@ async function findBlockingSolicitudByDocument(
           credit."clienteDocumento", credit."createdAt"
         FROM "Credito" credit
         WHERE regexp_replace(COALESCE(credit."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
+          AND credit."estado" <> 'ANULADO'
       ) candidate
       ORDER BY CASE WHEN candidate."source" = 'CREDIT' THEN 0 ELSE 1 END,
         candidate."createdAt" DESC,

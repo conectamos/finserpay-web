@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -614,7 +615,7 @@ test("vigencia exacta de 15 dias no es deslizable ni heredable del env historico
   assert.equal(created + 15 * 86_400_000, expiry);
 });
 
-test("una oferta consumida vigente bloquea antes del proveedor sin renovar los 15 dias", () => {
+test("una oferta consumida por crédito vigente bloquea antes del proveedor sin renovar los 15 días", () => {
   const consumedLookup = section(
     storage,
     "async function findRecentConsumedDataCreditoAssessment",
@@ -625,6 +626,8 @@ test("una oferta consumida vigente bloquea antes del proveedor sin renovar los 1
   assert.doesNotMatch(consumedLookup, /aliadoId|sedeId|surnameHash|platform/);
   assert.match(consumedLookup, /assessment\."expiresAt" > CURRENT_TIMESTAMP/);
   assert.match(consumedLookup, /assessment\."consumedAt" IS NOT NULL/);
+  assert.match(consumedLookup, /prior_credit\."id" = assessment\."creditId"/);
+  assert.match(consumedLookup, /prior_credit\."estado" = 'ANULADO'/);
   assert.doesNotMatch(consumedLookup, /CURRENT_TIMESTAMP \+|INTERVAL '15 days'/);
 
   const earlyReuse = section(
@@ -661,6 +664,50 @@ test("una oferta consumida vigente bloquea antes del proveedor sin renovar los 1
   const providerCall = evaluationRoute.indexOf("queryDataCreditoNaturalPerson({");
   assert.ok(reuseCall >= 0 && reuseCall < consumedResponse && consumedResponse < providerCall);
   assert.equal(evaluationRoute.match(/code: "ASSESSMENT_ALREADY_CONSUMED"/g)?.length, 2);
+});
+
+test("una oferta de crédito anulado no se reutiliza y la nueva conserva guardas globales", () => {
+  const reusable = section(
+    storage,
+    "async function findReusableDataCreditoAssessment",
+    "async function findRecentConsumedDataCreditoAssessment"
+  );
+  assert.match(reusable, /COALESCE\(consumed\."reusedFromAssessmentId", consumed\."id"\) = root\."id"/);
+  assert.match(reusable, /prior_credit\."estado" = 'ANULADO'/);
+
+  const classify = section(
+    storage,
+    "export async function classifyDataCreditoAssessmentForCredit",
+    "export async function getApprovedDataCreditoAssessmentForCredit"
+  );
+  const claim = section(
+    storage,
+    "export async function claimDataCreditoAssessment",
+    "async function consumeDataCreditoAssessmentInTransaction"
+  );
+  const consume = section(
+    storage,
+    "async function consumeDataCreditoAssessmentInTransaction",
+    "export async function consumeDataCreditoAssessment"
+  );
+  for (const guard of [classify, claim, consume]) {
+    assert.match(guard, /COALESCE\(consumed\."reusedFromAssessmentId", consumed\."id"\)/);
+    assert.match(guard, /prior_credit\."estado" = 'ANULADO'/);
+  }
+  const pendingTrigger = section(
+    setupSql,
+    'CREATE OR REPLACE FUNCTION "finser_guard_datacredito_pending_global"()',
+    'CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()'
+  );
+  const usageTrigger = section(
+    setupSql,
+    'CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()',
+    'CREATE TABLE IF NOT EXISTS "DataCreditoAssessmentSecurePayload"'
+  );
+  for (const trigger of [pendingTrigger, usageTrigger]) {
+    assert.match(trigger, /prior_credit\."estado" = 'ANULADO'/);
+    assert.match(trigger, /"consumedAt" IS NOT NULL/);
+  }
 });
 
 test("un resultado pagado ambiguo queda bloqueado sin una segunda consulta", () => {
@@ -749,4 +796,118 @@ test("el detalle admin abre el expediente del inquiry raiz sin duplicar cifrado"
   assert.match(adminStorage, /COALESCE\(origin\."id", assessment\."id"\)/);
   assert.match(adminStorage, /secureAssessmentId/);
   assert.match(adminStorage, /secureCorrelationId/);
+});
+
+test("PostgreSQL aislado permite otra consulta tras anulación sin reutilizar la anterior", async () => {
+  const { PGlite } = await import("@electric-sql/pglite");
+  const database = new PGlite();
+  const triggerSql = (start, end) => {
+    const first = setupSql.indexOf(start);
+    assert.ok(first >= 0, `Falta ${start}`);
+    const last = setupSql.indexOf(end, first);
+    assert.ok(last >= 0, `Falta ${end}`);
+    return setupSql.slice(first, last + end.length);
+  };
+  const insertAssessment = async ({
+    documentHash, status = "APROBADO", consumedAt = null,
+    creditId = null, reusedFromAssessmentId = null,
+  }) => {
+    const id = randomUUID();
+    await database.query(`
+      INSERT INTO "DataCreditoAssessment" (
+        "id", "documentHash", "providerEnvironment", "status", "expiresAt",
+        "consumedAt", "creditId", "reusedFromAssessmentId"
+      ) VALUES ($1, $2, 'production', $3, CURRENT_TIMESTAMP + INTERVAL '2 days',
+        $4::timestamp, $5::integer, $6::uuid)
+    `, [id, documentHash, status, consumedAt, creditId, reusedFromAssessmentId]);
+    return id;
+  };
+  const claim = async (id) => database.query(`
+    UPDATE "DataCreditoAssessment"
+    SET "claimTokenHash" = 'test-claim',
+      "claimExpiresAt" = CURRENT_TIMESTAMP + INTERVAL '5 minutes'
+    WHERE "id" = $1
+    RETURNING "id"
+  `, [id]);
+  const consume = async (id, creditId) => database.query(`
+    UPDATE "DataCreditoAssessment"
+    SET "consumedAt" = CURRENT_TIMESTAMP, "creditId" = $2,
+      "claimTokenHash" = NULL, "claimExpiresAt" = NULL
+    WHERE "id" = $1
+    RETURNING "id"
+  `, [id, creditId]);
+
+  try {
+    await database.exec(`
+      CREATE TEMP TABLE "Credito" ("id" integer PRIMARY KEY, "estado" text NOT NULL);
+      CREATE TEMP TABLE "DataCreditoAssessment" (
+        "id" uuid PRIMARY KEY,
+        "documentHash" text NOT NULL,
+        "providerEnvironment" text NOT NULL,
+        "status" text NOT NULL,
+        "expiresAt" timestamp NOT NULL,
+        "durationMs" integer,
+        "errorCode" text,
+        "consumedAt" timestamp,
+        "creditId" integer,
+        "reusedFromAssessmentId" uuid,
+        "claimTokenHash" text,
+        "claimExpiresAt" timestamp
+      );
+    `);
+    await database.exec(triggerSql(
+      'CREATE OR REPLACE FUNCTION "finser_guard_datacredito_pending_global"()',
+      'EXECUTE FUNCTION "finser_guard_datacredito_pending_global"();'
+    ));
+    await database.exec(triggerSql(
+      'CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()',
+      'EXECUTE FUNCTION "finser_guard_datacredito_global_usage_v1"();'
+    ));
+    await database.exec(`
+      INSERT INTO "Credito" ("id", "estado") VALUES
+        (1, 'ANULADO'), (2, 'ACTIVO'), (3, 'GENERADO');
+    `);
+
+    const priorAnnulled = await insertAssessment({
+      documentHash: "annulled-document", consumedAt: new Date(), creditId: 1,
+    });
+    const replacement = await insertAssessment({
+      documentHash: "annulled-document", status: "PENDING",
+    });
+    await database.query('UPDATE "DataCreditoAssessment" SET "status" = \'APROBADO\' WHERE "id" = $1', [replacement]);
+    assert.equal((await claim(replacement)).rows.length, 1);
+    assert.equal((await consume(replacement, 3)).rows.length, 1);
+    const preserved = await database.query(`
+      SELECT "creditId", "consumedAt" IS NOT NULL AS "consumed"
+      FROM "DataCreditoAssessment" WHERE "id" = $1
+    `, [priorAnnulled]);
+    assert.deepEqual(preserved.rows, [{ creditId: 1, consumed: true }]);
+
+    await insertAssessment({
+      documentHash: "active-document", consumedAt: new Date(), creditId: 2,
+    });
+    await assert.rejects(
+      insertAssessment({ documentHash: "active-document", status: "PENDING" }),
+      /consulta DataCredito activa|document_guard_key/
+    );
+
+    await insertAssessment({
+      documentHash: "missing-credit-document", consumedAt: new Date(), creditId: 999,
+    });
+    await assert.rejects(
+      insertAssessment({ documentHash: "missing-credit-document", status: "PENDING" }),
+      /consulta DataCredito activa|document_guard_key/
+    );
+
+    const oldRoot = await insertAssessment({ documentHash: "old-lineage" });
+    await insertAssessment({
+      documentHash: "old-lineage", consumedAt: new Date(), creditId: 1,
+      reusedFromAssessmentId: oldRoot,
+    });
+    assert.equal((await claim(oldRoot)).rows.length, 0,
+      "La raíz de una oferta consumida no puede reclamarse otra vez");
+    await insertAssessment({ documentHash: "old-lineage", status: "PENDING" });
+  } finally {
+    await database.close();
+  }
 });

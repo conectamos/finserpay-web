@@ -463,6 +463,35 @@ test("un credito finalizado es siempre el canonico aunque exista un borrador mas
   );
 });
 
+test("un credito anulado conserva su historial sin ocultar una nueva solicitud activa", () => {
+  const annulledCredit = {
+    source: "CREDIT",
+    entityId: 811,
+    clienteDocumento: "1.234.567.890",
+    createdAt: "2026-10-07T12:00:00.000Z",
+    rawState: "ANULADO",
+  };
+  const newDraft = {
+    source: "DRAFT",
+    entityId: 812,
+    clienteDocumento: "1234567890",
+    createdAt: "2026-10-07T13:00:00.000Z",
+    rawState: "ABIERTO",
+  };
+
+  assert.deepEqual(selectCanonicalSolicitudesByDocument([annulledCredit]), [
+    annulledCredit,
+  ]);
+  assert.deepEqual(
+    selectCanonicalSolicitudesByDocument([annulledCredit, newDraft]),
+    [newDraft]
+  );
+  assert.deepEqual(
+    selectCanonicalSolicitudesByDocument([newDraft, annulledCredit]),
+    [newDraft]
+  );
+});
+
 test("una solicitud no liberada prevalece sobre una desistida mas reciente", () => {
   const selected = selectCanonicalSolicitudesByDocument([
     {

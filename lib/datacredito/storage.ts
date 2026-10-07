@@ -1661,6 +1661,14 @@ async function findReusableDataCreditoAssessment(
               AND consumed."status" IN ('APROBADO', 'RECHAZADO')
               AND consumed."expiresAt" > CURRENT_TIMESTAMP
               AND consumed."consumedAt" IS NOT NULL
+              AND (
+                COALESCE(consumed."reusedFromAssessmentId", consumed."id") = root."id"
+                OR NOT EXISTS (
+                  SELECT 1 FROM "Credito" prior_credit
+                  WHERE prior_credit."id" = consumed."creditId"
+                    AND prior_credit."estado" = 'ANULADO'
+                )
+              )
           )
         ORDER BY root."expiresAt" DESC, root."createdAt" DESC, root."id" DESC
         LIMIT 1
@@ -1684,6 +1692,15 @@ async function findReusableDataCreditoAssessment(
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
             AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
+            AND (
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                canonical_root."id"
+              OR NOT EXISTS (
+                SELECT 1 FROM "Credito" prior_credit
+                WHERE prior_credit."id" = consumed."creditId"
+                  AND prior_credit."estado" = 'ANULADO'
+              )
+            )
         )
       ORDER BY (
         assessment."surnameHash" = $3
@@ -1726,6 +1743,13 @@ async function findRecentConsumedDataCreditoAssessment(
         AND assessment."status" IN ('APROBADO', 'RECHAZADO')
         AND assessment."expiresAt" > CURRENT_TIMESTAMP
         AND assessment."consumedAt" IS NOT NULL
+        -- A spent offer stays immutable. Only an annulled linked credit permits
+        -- a separate paid inquiry with a new consent and a new assessment id.
+        AND NOT EXISTS (
+          SELECT 1 FROM "Credito" prior_credit
+          WHERE prior_credit."id" = assessment."creditId"
+            AND prior_credit."estado" = 'ANULADO'
+        )
       ORDER BY assessment."consumedAt" DESC,
         assessment."expiresAt" DESC, assessment."createdAt" DESC,
         assessment."id" DESC
@@ -2047,6 +2071,15 @@ async function cloneReusableDataCreditoAssessment(
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
             AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
+            AND (
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                COALESCE(source."reusedFromAssessmentId", source."id")
+              OR NOT EXISTS (
+                SELECT 1 FROM "Credito" prior_credit
+                WHERE prior_credit."id" = consumed."creditId"
+                  AND prior_credit."estado" = 'ANULADO'
+              )
+            )
         )
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" claimed
@@ -2764,6 +2797,19 @@ export async function getDataCreditoAssessmentDocumentState(
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
             AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
+            AND (
+              EXISTS (
+                SELECT 1 FROM "DataCreditoAssessment" current_assessment
+                WHERE current_assessment."id" = $1
+                  AND COALESCE(current_assessment."reusedFromAssessmentId", current_assessment."id") =
+                    COALESCE(consumed."reusedFromAssessmentId", consumed."id")
+              )
+              OR NOT EXISTS (
+                SELECT 1 FROM "Credito" prior_credit
+                WHERE prior_credit."id" = consumed."creditId"
+                  AND prior_credit."estado" = 'ANULADO'
+              )
+            )
         ) AS "consumedElsewhere",
         EXISTS (
           SELECT 1
@@ -2887,6 +2933,15 @@ export async function classifyDataCreditoAssessmentForCredit(
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
             AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
+            AND (
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                COALESCE(assessment."reusedFromAssessmentId", assessment."id")
+              OR NOT EXISTS (
+                SELECT 1 FROM "Credito" prior_credit
+                WHERE prior_credit."id" = consumed."creditId"
+                  AND prior_credit."estado" = 'ANULADO'
+              )
+            )
         ) AS "globalConsumedElsewhere",
         EXISTS (
           SELECT 1
@@ -2981,6 +3036,15 @@ export async function getApprovedDataCreditoAssessmentForCredit(
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
             AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
+            AND (
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                COALESCE(assessment."reusedFromAssessmentId", assessment."id")
+              OR NOT EXISTS (
+                SELECT 1 FROM "Credito" prior_credit
+                WHERE prior_credit."id" = consumed."creditId"
+                  AND prior_credit."estado" = 'ANULADO'
+              )
+            )
         )
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" claimed
@@ -3070,6 +3134,15 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
               AND consumed."status" IN ('APROBADO', 'RECHAZADO')
               AND consumed."expiresAt" > CURRENT_TIMESTAMP
               AND consumed."consumedAt" IS NOT NULL
+              AND (
+                COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                  COALESCE(target."reusedFromAssessmentId", target."id")
+                OR NOT EXISTS (
+                  SELECT 1 FROM "Credito" prior_credit
+                  WHERE prior_credit."id" = consumed."creditId"
+                    AND prior_credit."estado" = 'ANULADO'
+                )
+              )
           )
           AND NOT EXISTS (
             SELECT 1 FROM "DataCreditoAssessment" claimed
@@ -3139,6 +3212,15 @@ async function consumeDataCreditoAssessmentInTransaction(
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
             AND consumed."expiresAt" > CURRENT_TIMESTAMP
             AND consumed."consumedAt" IS NOT NULL
+            AND (
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                COALESCE(target."reusedFromAssessmentId", target."id")
+              OR NOT EXISTS (
+                SELECT 1 FROM "Credito" prior_credit
+                WHERE prior_credit."id" = consumed."creditId"
+                  AND prior_credit."estado" = 'ANULADO'
+              )
+            )
         )
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" claimed
