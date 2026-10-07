@@ -4,7 +4,20 @@ type CreditWelcome = {
   name: string;
 };
 
-type WelcomeResult = "disabled" | "invalid_contact" | "sent" | "failed";
+type WelcomeResult = "disabled" | "invalid_contact" | "accepted" | "failed";
+
+function hasDaptaExecutionError(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(hasDaptaExecutionError);
+  const record = value as Record<string, unknown>;
+  const error = record.error;
+  if (
+    (typeof error === "string" && error.trim() !== "") ||
+    error === true ||
+    (error && typeof error === "object" && Object.keys(error).length > 0)
+  ) return true;
+  return Object.values(record).some(hasDaptaExecutionError);
+}
 
 export function normalizeColombianMobile(value: string | null | undefined) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -51,7 +64,11 @@ export async function sendDaptaWelcome(
       signal: AbortSignal.timeout(8000),
       cache: "no-store",
     });
-    return response.ok ? "sent" : "failed";
+    if (!response.ok) return "failed";
+    // Dapta can return HTTP 200 even when a flow node failed. Keep response
+    // contents private; acceptance by the webhook is not delivery by WhatsApp.
+    const payload: unknown = await response.json().catch(() => null);
+    return hasDaptaExecutionError(payload) ? "failed" : "accepted";
   } catch {
     return "failed";
   }
