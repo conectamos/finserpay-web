@@ -1,31 +1,9 @@
 "use client";
-
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
-import {
-  ArrowLeft,
-  Ban,
-  Building2,
-  CalendarDays,
-  CheckCircle2,
-  CreditCard,
-  Download,
-  Filter,
-  MoreHorizontal,
-  Search,
-  WalletCards,
-} from "lucide-react";
-import {
-  Button,
-  Card,
-  DataTable,
-  Input,
-  MetricCard,
-  PageHeader,
-  Select,
-  StatusPill,
-} from "@/app/_components/finser-ui";
+import { MoreHorizontal } from "lucide-react";
+import CreditReportView from "./credit-report-view";
 
 type SessionUser = {
   id: number;
@@ -38,7 +16,7 @@ type SessionUser = {
   rolNombre: string;
 };
 
-type SedeItem = {
+export type SedeItem = {
   id: number;
   nombre: string;
   aliadoId?: number | null;
@@ -49,16 +27,17 @@ type SedeItem = {
   } | null;
 };
 
-type AliadoItem = {
+export type AliadoItem = {
   id: number;
   nombre: string;
   codigo: string | null;
 };
 
-type CreditReportItem = {
+export type CreditReportItem = {
   id: number;
   folio: string;
   numeroCreditoVisible?: string | null;
+  numeroSadmin?: string | null;
   clienteNombre: string;
   clienteDocumento: string | null;
   clienteTelefono: string | null;
@@ -100,7 +79,7 @@ type CreditReportItem = {
   };
 };
 
-type CreditReportResponse = {
+export type CreditReportResponse = {
   ok: boolean;
   summary: {
     totalCreditos: number;
@@ -124,41 +103,6 @@ type CreditCommandResponse = {
   error?: string;
 };
 
-function formatMoney(value: number) {
-  return `$ ${Number(value || 0).toLocaleString("es-CO")}`;
-}
-
-function CreditValues({ item }: { item: CreditReportItem }) {
-  return (
-    <dl className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 text-xs leading-5">
-      <dt className="text-[var(--fp-muted)]">Valor venta</dt>
-      <dd className="whitespace-nowrap text-right text-[13px] font-semibold tabular-nums text-[var(--fp-graphite)]">
-        {formatMoney(item.valorEquipoTotal)}
-      </dd>
-      <dt className="text-[var(--fp-muted)]">Inicial</dt>
-      <dd className="whitespace-nowrap text-right text-[13px] font-semibold tabular-nums text-[var(--fp-graphite)]">
-        {formatMoney(item.cuotaInicial)}
-      </dd>
-      <dt className="font-semibold text-[var(--fp-graphite)]">Valor crédito autorizado</dt>
-      <dd className="whitespace-nowrap text-right text-[13px] font-extrabold tabular-nums text-[var(--fp-graphite)]">
-        {formatMoney(item.creditoAutorizado)}
-      </dd>
-    </dl>
-  );
-}
-
-function formatDate(value: string | null) {
-  if (!value) {
-    return "-";
-  }
-
-  try {
-    return new Date(value).toLocaleDateString("es-CO");
-  } catch {
-    return value;
-  }
-}
-
 function isFinserPayCentral(codigo: string | null | undefined) {
   return String(codigo || "").trim().toUpperCase() === "FINSERPAY";
 }
@@ -181,14 +125,6 @@ async function exportCreditsToExcel(items: CreditReportItem[]) {
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-}
-
-function creditStatusTone(status: string) {
-  const normalized = String(status || "").toUpperCase();
-  if (normalized.includes("ANUL")) return "danger" as const;
-  if (normalized === "APROBADO" || normalized.includes("PAG") || normalized.includes("ENTREG")) return "positive" as const;
-  if (normalized.includes("PEND") || normalized.includes("PROCES")) return "warning" as const;
-  return "neutral" as const;
 }
 
 export default function ReporteCreditosPage({
@@ -414,12 +350,10 @@ export default function ReporteCreditosPage({
     const canAnnul = isAdmin && item.estado !== "ANULADO";
     const canDelete = isCentralAdmin;
 
-    if (!canAnnul && !canDelete) {
-      return <span className="text-xs font-medium text-[#98a2b3]">Solo lectura</span>;
-    }
+
 
     return (
-      <details className="relative ml-auto w-fit">
+      <details name="credit-report-actions" className="relative ml-auto w-fit">
         <summary
           className="grid h-10 w-10 cursor-pointer list-none place-items-center rounded-md border border-[#d0d5dd] bg-white text-[#344054] transition hover:border-[#98a2b3] hover:bg-[#f8fafb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a8f34a] [&::-webkit-details-marker]:hidden"
           aria-label={`Gestionar credito ${creditDisplayNumber(item)}`}
@@ -428,6 +362,7 @@ export default function ReporteCreditosPage({
           <MoreHorizontal className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
         </summary>
         <div className="absolute right-0 z-30 mt-1 w-48 rounded-md border border-[#d0d5dd] bg-white p-1.5 shadow-[0_12px_30px_rgba(16,24,40,0.16)]">
+          <Link href={`/dashboard/clientes?selected=${item.id}`}>Ver detalle</Link>
           {canAnnul ? (
             <button
               type="button"
@@ -453,324 +388,13 @@ export default function ReporteCreditosPage({
     );
   };
 
-  return (
-    <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
-      <PageHeader
-        eyebrow={isAdmin ? "Operacion financiera" : "Operacion de sede"}
-        title="Reporte de creditos"
-        description="Consulta cada venta, su financiacion autorizada y el estado operativo del credito."
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Link href="/dashboard/reportes" className="fp-ui-button is-secondary">
-              <ArrowLeft className="h-4 w-4" strokeWidth={1.8} />
-              Centro de reportes
-            </Link>
-            <Button
-              variant="primary"
-              onClick={() => void exportReport()}
-              disabled={!items.length || loading || exporting}
-              aria-busy={exporting}
-            >
-              <Download className="h-4 w-4" strokeWidth={1.8} />
-              {exporting ? "Generando Excel..." : "Exportar Excel"}
-            </Button>
-          </div>
-        }
-      />
-
-      <section className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <MetricCard
-          className="!rounded-lg !p-4"
-          label={<span className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-[#5c7a13]" /> Creditos</span>}
-          value={<span className="!text-2xl">{loading ? "..." : summary?.totalCreditos || 0}</span>}
-          detail="Registros del periodo"
-        />
-        <MetricCard
-          className="!rounded-lg !p-4"
-          label={<span className="flex items-center gap-2"><WalletCards className="h-4 w-4 text-[#5c7a13]" /> Autorizado</span>}
-          value={<span className="!text-2xl">{loading ? "..." : formatMoney(totalAuthorized)}</span>}
-          detail="Capital financiado"
-        />
-        <MetricCard
-          className="!rounded-lg !p-4"
-          label={<span className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-[#4d7c0f]" /> Pagados</span>}
-          value={<span className="!text-2xl">{loading ? "..." : summary?.creditosPagados || 0}</span>}
-          detail="Creditos cerrados"
-        />
-        <MetricCard
-          className="!rounded-lg !border-[#fecdca] !bg-[#fff8f7] !p-4"
-          label={<span className="flex items-center gap-2"><Ban className="h-4 w-4 text-[#b42318]" /> Anulados</span>}
-          value={<span className="!text-2xl text-[#b42318]">{loading ? "..." : summary?.creditosAnulados || 0}</span>}
-          detail="Fuera de la operacion"
-        />
-        <MetricCard
-          className="!rounded-lg !p-4"
-          label="Inicial recibida"
-          value={<span className="!text-2xl">{loading ? "..." : formatMoney(summary?.totalInicial || 0)}</span>}
-          detail="Total del periodo"
-        />
-      </section>
-
-      <Card className="mt-4 !rounded-lg !p-3">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1.4fr)_160px_160px_minmax(180px,.8fr)_minmax(180px,.8fr)_auto]">
-          <label className="relative md:col-span-2 xl:col-span-1">
-            <span className="sr-only">Buscar credito</span>
-            <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[#667085]" strokeWidth={1.8} />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Cliente, documento, número crédito, folio, IMEI o vendedor"
-              className="!pl-10"
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void loadReport();
-              }}
-            />
-          </label>
-          <label className="relative">
-            <span className="sr-only">Desde</span>
-            <CalendarDays className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[#667085]" strokeWidth={1.8} />
-            <Input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="!pl-10" />
-          </label>
-          <label className="relative">
-            <span className="sr-only">Hasta</span>
-            <CalendarDays className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[#667085]" strokeWidth={1.8} />
-            <Input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="!pl-10" />
-          </label>
-          {isAdmin ? (
-            <>
-              <Select
-                value={aliadoId}
-                onChange={(event) => {
-                  setAliadoId(event.target.value);
-                  setSedeId("");
-                }}
-                aria-label="Filtrar por aliado"
-              >
-                <option value="">Todos los aliados</option>
-                {aliados.map((aliado) => <option key={aliado.id} value={aliado.id}>{aliado.nombre}</option>)}
-              </Select>
-              <Select value={sedeId} onChange={(event) => setSedeId(event.target.value)} aria-label="Filtrar por sede">
-                <option value="">Todas las sedes</option>
-                {sedesFiltradas.map((sede) => <option key={sede.id} value={sede.id}>{sede.nombre}</option>)}
-              </Select>
-            </>
-          ) : (
-            <div className="flex min-h-11 items-center gap-2 rounded-md border border-[#d0d5dd] bg-[#f8fafb] px-3 text-sm font-semibold text-[#475467] md:col-span-2">
-              <Building2 className="h-4 w-4" strokeWidth={1.8} />
-              {user?.sedeNombre || sedes[0]?.nombre || "Sede asignada"}
-            </div>
-          )}
-          <Button variant="primary" onClick={() => void loadReport()} disabled={loading}>
-            <Filter className="h-4 w-4" strokeWidth={1.8} />
-            {loading ? "Consultando" : "Aplicar"}
-          </Button>
-        </div>
-      </Card>
-
-      {message ? (
-        <div className="mt-3 rounded-lg border border-[#d0d5dd] bg-white px-4 py-3 text-sm font-medium text-[#344054]" role="status">
-          {message}
-        </div>
-      ) : null}
-
-      <Card className="mt-4 overflow-hidden !rounded-lg !p-0">
-        <div className="flex flex-col gap-2 border-b border-[var(--fp-border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <div>
-            <h2 className="text-lg font-black text-[var(--fp-graphite)]">Detalle de creditos</h2>
-            <p className="mt-1 text-sm text-[var(--fp-muted)]">
-              {loading
-                ? "Actualizando informacion..."
-                : "Identidad, equipo, operacion y valores de cada credito."}
-            </p>
-          </div>
-          <StatusPill tone={loading ? "neutral" : "positive"}>
-            {loading ? "Consultando" : `${items.length} creditos`}
-          </StatusPill>
-        </div>
-
-        {/* Both responsive views expose the same report fields and credit actions. */}
-        <div className="divide-y divide-[var(--fp-border)] lg:hidden" aria-busy={loading}>
-          {loading ? (
-            <div className="px-4 py-12 text-center text-sm text-[var(--fp-muted)]">
-              Consultando creditos...
-            </div>
-          ) : items.length ? (
-            items.map((item) => (
-              <article key={item.id} className="px-4 py-3 sm:px-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="break-all text-sm font-black text-[var(--fp-graphite)]">
-                      {creditDisplayNumber(item)}
-                    </p>
-                    {creditDisplayNumber(item) !== item.folio ? <p className="mt-1 break-all text-xs text-[var(--fp-muted)]">Folio original: {item.folio}</p> : null}
-                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-[var(--fp-muted)]">
-                      <CalendarDays className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
-                      {formatDate(item.fechaCredito)}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <StatusPill tone={creditStatusTone(item.estadoReporte ?? item.estado)}>{item.estadoReporte ?? item.estado}</StatusPill>
-                    {renderCreditActions(item)}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <p className="text-xs font-semibold text-[var(--fp-muted)]">
-                    Cliente
-                  </p>
-                  <p className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
-                    {item.clienteNombre}
-                  </p>
-                  <p className="mt-0.5 text-sm text-[var(--fp-muted)]">
-                    {item.clienteDocumento || "Sin documento"}
-                  </p>
-                  <p className="mt-1 break-words text-xs text-[var(--fp-muted)]">
-                    Tel. {item.clienteTelefono || "Sin registrar"}
-                  </p>
-                </div>
-
-                <div className="mt-3 grid gap-3 border-t border-[var(--fp-border)] pt-3 sm:grid-cols-2">
-                  <div>
-                    <p className="text-xs font-semibold text-[var(--fp-muted)]">
-                      Equipo
-                    </p>
-                    <p className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
-                      {item.referenciaEquipo ||
-                        [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" ") ||
-                        "Sin referencia"}
-                    </p>
-                    <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
-                      IMEI {item.imei || "Sin IMEI"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-[var(--fp-muted)]">
-                      Operacion
-                    </p>
-                    <p className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
-                      {item.sede.aliado?.nombre || "Sin aliado"}
-                    </p>
-                    <p className="mt-1 text-xs text-[var(--fp-muted)]">
-                      {item.sede.nombre} / {item.usuario.nombre}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 border-t border-[var(--fp-border)] pt-3">
-                  <CreditValues item={item} />
-                </div>
-              </article>
-            ))
-          ) : (
-            <div className="px-4 py-12 text-center text-sm text-[var(--fp-muted)]">
-              No hay creditos para los filtros seleccionados.
-            </div>
-          )}
-        </div>
-
-        <DataTable className="hidden !rounded-none !border-0 lg:block">
-          <table
-            className="w-full min-w-[1280px] table-fixed text-[13px]"
-            aria-busy={loading}
-          >
-            <caption className="sr-only">
-              Detalle de creditos encontrados con los filtros seleccionados
-            </caption>
-            <colgroup>
-              <col className="w-[205px]" />
-              <col className="w-[175px]" />
-              <col className="w-[205px]" />
-              <col className="w-[190px]" />
-              <col className="w-[310px]" />
-              <col className="w-[135px]" />
-              <col className="w-[60px]" />
-            </colgroup>
-            <thead className="bg-[var(--fp-graphite)] text-white">
-              <tr>
-                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Credito</th>
-                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Cliente</th>
-                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Equipo / IMEI</th>
-                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Operacion</th>
-                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Valores</th>
-                <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Estado</th>
-                <th scope="col" className="px-3 py-2 text-right"><span className="sr-only">Acciones</span></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--fp-border)]">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-14 text-center text-sm text-[var(--fp-muted)]">
-                    Consultando creditos...
-                  </td>
-                </tr>
-              ) : items.length ? (
-                items.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="bg-[var(--fp-surface)] transition-colors even:bg-[var(--fp-bg)] hover:bg-[var(--fp-lime-soft)]"
-                  >
-                    <td className="px-3 py-2 align-top">
-                      <p className="break-all font-black leading-5 text-[var(--fp-graphite)]">
-                        {creditDisplayNumber(item)}
-                      </p>
-                      {creditDisplayNumber(item) !== item.folio ? <p className="mt-1 break-all text-xs text-[var(--fp-muted)]">Folio original: {item.folio}</p> : null}
-                      <p className="mt-1 inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-[var(--fp-muted)]">
-                        <CalendarDays className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
-                        {formatDate(item.fechaCredito)}
-                      </p>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <p className="font-bold leading-5 text-[var(--fp-graphite)]">{item.clienteNombre}</p>
-                      <p className="mt-1 text-xs text-[var(--fp-muted)]">
-                        {item.clienteDocumento || "Sin documento"}
-                      </p>
-                      <p className="mt-1 break-words text-xs text-[var(--fp-muted)]">
-                        Tel. {item.clienteTelefono || "Sin registrar"}
-                      </p>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <p className="font-semibold leading-5 text-[var(--fp-graphite)]">
-                        {item.referenciaEquipo ||
-                          [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" ") ||
-                          "Sin referencia"}
-                      </p>
-                      <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
-                        IMEI {item.imei || "Sin IMEI"}
-                      </p>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <p className="font-bold leading-5 text-[var(--fp-graphite)]">
-                        {item.sede.aliado?.nombre || "Sin aliado"}
-                      </p>
-                      <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
-                        <dt className="text-[var(--fp-muted)]">Sede</dt>
-                        <dd className="font-medium text-[var(--fp-graphite)]">{item.sede.nombre}</dd>
-                        <dt className="text-[var(--fp-muted)]">Vendedor</dt>
-                        <dd className="font-medium text-[var(--fp-graphite)]">{item.usuario.nombre}</dd>
-                      </dl>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <CreditValues item={item} />
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <StatusPill tone={creditStatusTone(item.estadoReporte ?? item.estado)}>{item.estadoReporte ?? item.estado}</StatusPill>
-                    </td>
-                    <td className="px-3 py-2 text-right align-top">
-                      {renderCreditActions(item)}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="py-14 text-center text-sm text-[var(--fp-muted)]">
-                    No hay creditos para los filtros seleccionados.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </DataTable>
-      </Card>
-    </main>
-  );
+  return <CreditReportView
+    items={items} summary={summary} totalAuthorized={totalAuthorized}
+    loading={loading} exporting={exporting} message={message} isAdmin={isAdmin} sedeNombre={user?.sedeNombre || sedes[0]?.nombre || ""}
+    search={search} from={from} to={to} aliadoId={aliadoId} sedeId={sedeId}
+    aliados={aliados} sedes={sedesFiltradas}
+    setSearch={setSearch} setFrom={setFrom} setTo={setTo}
+    setAliado={value => {setAliadoId(value);setSedeId("");}} setSede={setSedeId}
+    apply={() => void loadReport()} exportExcel={() => void exportReport()} actions={renderCreditActions}
+  />;
 }

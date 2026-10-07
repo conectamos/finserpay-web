@@ -34,12 +34,12 @@ async function roundTrip(items) {
   return workbook.getWorksheet("Créditos");
 }
 
-test("exporta las 15 columnas con identificadores completos y valores numéricos", async () => {
+test("exporta las 16 columnas con identificadores completos y valores numéricos", async () => {
   const sheet = await roundTrip([example]);
   assert.equal(sheet.rowCount, 2);
   assert.deepEqual(sheet.getRow(1).values.slice(1), [
     "Fecha", "Número crédito", "Cliente", "Documento", "Teléfono", "Referencia", "IMEI",
-    "Aliado", "Sede", "Vendedor", "Valor venta", "Inicial", "Valor crédito autorizado", "Estado", "Folio original",
+    "Aliado", "Sede", "Vendedor", "Valor venta", "Inicial", "Valor crédito autorizado", "Estado", "Folio original", "Número Sadmin",
   ]);
   for (const [address, expected] of [
     ["B2", example.folio], ["C2", example.clienteNombre],
@@ -71,7 +71,7 @@ test("conserva literalmente textos que empiezan por fórmulas, signos o ceros", 
   texts.forEach((text, index) => {
     for (let column = 2; column <= 7; column += 1) {
       const cell = sheet.getRow(index + 2).getCell(column);
-      assert.equal(cell.value, text);
+      assert.equal(cell.value, column === 4 ? text.replace(/[\s.,-]/g, "") : text);
       assert.equal(cell.type, ExcelJS.ValueType.String);
       assert.equal(cell.formula, undefined);
     }
@@ -97,7 +97,7 @@ test("respeta filas y orden recibidos, vacíos, ceros y referencia alternativa",
   assert.equal(sheet.getCell("F3").value, "APPLE IPHONE 16");
   assert.equal(sheet.getCell("H3").text, "");
   for (const column of ["K", "L", "M"]) assert.equal(sheet.getCell(`${column}3`).value, 0);
-  assert.equal(sheet.autoFilter, "A1:O3");
+  assert.equal(sheet.autoFilter, "A1:P3");
   assert.equal(sheet.views[0].state, "frozen");
   assert.equal(sheet.views[0].ySplit, 1);
   assert.equal(sheet.getCell("A1").alignment.wrapText, true);
@@ -137,7 +137,7 @@ test("la columna Estado coincide con el reporte aprobado y conserva el fallback 
     assert.equal(sheet.getCell("L" + row).value, example.cuotaInicial);
     assert.equal(sheet.getCell("M" + row).value, example.creditoAutorizado);
   }
-  assert.equal(sheet.columnCount, 15);
+  assert.equal(sheet.columnCount, 16);
   assert.deepEqual(items, snapshot);
 });
 
@@ -159,3 +159,14 @@ test("el número visible SADMIN conserva texto literal y el folio contractual en
   }
   assert.deepEqual(items, before);
 });
+
+ test("Sadmin confirmado y pendiente conservan identificadores de texto", async () => {
+ const numero="00012345678901234567890";
+ const sheet=await roundTrip([{...example,numeroSadmin:numero,clienteDocumento:"00.123.456"},{...example,numeroSadmin:null,numeroCreditoVisible:example.folio}]);
+ assert.equal(sheet.getCell("P2").value,numero);
+ assert.equal(sheet.getCell("P2").type,ExcelJS.ValueType.String);
+ assert.equal(sheet.getCell("P2").numFmt,"@");
+ assert.equal(sheet.getCell("D2").value,"00123456");
+ assert.equal(sheet.getCell("P3").value,"PENDIENTE SADMIN");
+ assert.equal(sheet.getCell("N3").value,example.estado);
+ });

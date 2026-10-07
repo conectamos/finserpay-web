@@ -1,0 +1,50 @@
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-500.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+
+@font-face{font-family:"Finser Sale";src:url("/assets/dashboard/roboto-800.ttf") format("truetype");font-weight:800;font-display:swap;}
+.topbar { height: 69px; padding: 0 max(24px, calc((100vw - 1380px) / 2)); display: grid; grid-template-columns: 250px 1fr 250px; align-items: center; background: linear-gradient(110deg, #252626, #1e2020); color: white; position: relative; z-index: 20; }
+.brand { width: fit-content; }
+.brand p { font-size: 28px; font-weight: 700; letter-spacing: .01em; color: white; }
+.brand p span { color: var(--fp-lime); }
+.navigation { display: flex; align-items: center; justify-content: center; gap: 54px; font-size: 17px; }
+.navigation > a, .navigation > div { display: flex; height: 69px; align-items: center; position: relative; }
+.active::after { content: ""; position: absolute; bottom: 0; left: -7px; right: -7px; height: 4px; background: var(--fp-lime); }
+.navLabel { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.navLabel svg { width: 12px; height: 12px; opacity: 0; }
+.navigation summary:hover .navLabel svg, .navigation summary:focus-visible .navLabel svg { opacity: 1; }
+.topbar summary { list-style: none; }
+.topbar summary::-webkit-details-marker { display: none; }
+.topbar summary:focus-visible, .topbar a:focus-visible { outline: 2px solid var(--fp-lime); outline-offset: 5px; }
+.navigation :global(.unused) { display: block; }
+.account { justify-self: end; }
+.account > div, .account > details { position: relative; }
+.account details > div { right: 0; left: auto; min-width: 240px; }
+.profile { display: grid !important; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.08); color: white; cursor: pointer; }
+.profile > svg { width: 25px !important; height: 25px !important; stroke-width: 1.5; }
+.identity { display: grid; gap: 4px; padding: 12px; border-bottom: 1px solid var(--fp-border); }
+.identity strong { font-size: 15px; }
+.identity span { font-size: 12px; color: var(--fp-muted); }
+.logout { color: var(--fp-graphite) !important; width: 100%; border-radius: var(--fp-radius-sm) !important; background: transparent !important; justify-content: flex-start !important; }
+.srOnly{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+.topbar{font-family:"Finser Sale",Arial,sans-serif;}
+.requests{height:72px;grid-template-columns:250px minmax(0,1fr) auto;padding:0 44px;gap:20px;}
+.requests .brand p{font-size:26px;}
+.requests .navigation{justify-content:flex-start;gap:28px;font-size:16px;}
+.requests .navigation>a,.requests .navigation>div{height:72px;}
+.requests .active{padding:0 14px;}
+.requests .active::before{content:"";position:absolute;inset:12px 0;background:rgba(255,255,255,.07);border-radius:var(--fp-radius-md);pointer-events:none;}
+.requests .active::after{left:12px;right:12px;bottom:11px;height:3px;}
+.requests .navLabel svg{opacity:1;width:14px;height:14px;}
+.requests .account{display:flex;align-items:center;gap:20px;}
+.notification{display:grid;place-items:center;border-right:1px solid rgba(255,255,255,.12);padding-right:20px;min-height:36px;}
+.notification svg{width:24px;height:24px;stroke-width:1.7;}
+.requestProfile{display:flex!important;align-items:center;gap:10px;color:white;cursor:pointer;}
+.requestProfile>svg{width:14px!important;height:14px!important;}
+.avatar{display:grid;place-items:center;width:43px;height:43px;flex-shrink:0;border-radius:50%;background:white;color:var(--fp-graphite);font-weight:700;}
+.profileName{max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;font-weight:700;}
+@media(max-width:1200px){.topbar{grid-template-columns:210px minmax(0,1fr) 60px;padding:0 24px;}.navigation{gap:24px;}.brand p{font-size:24px;}.requests{grid-template-columns:210px minmax(0,1fr) auto;}.requests .navigation{gap:16px;font-size:14px;}.profileName{display:none;}.requests .account{gap:12px;}}
+@media(max-width:1000px){.requests{height:auto;min-height:72px;grid-template-columns:1fr auto;padding:12px 20px 0;}.requests .navigation{grid-row:2;grid-column:1/-1;flex-wrap:wrap;gap:20px;}.requests .navigation>a,.requests .navigation>div{height:48px;}.requests .active::after{bottom:0;}.requests .active::before{inset:4px 0;}.requests .account{grid-column:2;grid-row:1;}.requests .navigation details{position:static;}.requests .navigation details>div{left:20px;right:20px;top:100%;min-width:0;}}
+@media(max-width:900px){.topbar:not(.requests){height:auto;min-height:69px;grid-template-columns:1fr 44px;padding:12px 20px 0;gap:4px 12px;}.navigation{grid-row:2;grid-column:1/-1;justify-content:flex-start;gap:24px;flex-wrap:wrap;font-size:14px;}.navigation>a,.navigation>div{height:48px;}.account{grid-column:2;grid-row:1;}.navigation details{position:static;}.navigation details>div{left:20px;right:20px;top:100%;min-width:0;}}
+@media(max-width:500px){.navigation{gap:18px;}.topbar:not(.requests) .navLabel svg{display:none;}.requests{gap:4px 10px;}.requests .brand p{font-size:21px;}.requests .navigation{gap:14px;font-size:13px;}.requests .active{padding:0 8px;}.notification{padding-right:12px;}}
+@media(max-width:360px){.requests{padding-left:12px;padding-right:12px;grid-template-columns:minmax(0,1fr) auto;}.requests .brand p{font-size:18px;}.requests .brand svg{width:30px;height:34px;}.requests .account{gap:8px;}.requests .avatar{width:34px;height:34px;}.requests .requestProfile{gap:5px;}.requests .notification{padding-right:8px;}.requests .notification svg{width:20px;}.requests .navigation{min-width:0;}}

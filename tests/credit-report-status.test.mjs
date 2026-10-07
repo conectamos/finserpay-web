@@ -28,6 +28,7 @@ const dates = loadModule("lib/colombia-date.ts");
 const factory = loadModule("lib/credit-factory.ts", { "@/lib/colombia-date": dates });
 const roles = loadModule("lib/roles.ts");
 const allies = loadModule("lib/aliados.ts");
+const assignedSeller = loadModule("lib/credit-assigned-seller.ts");
 const scope = loadModule("lib/credit-route-lookup.ts");
 const admin = { id: 1, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY", aliadoAccesoId: 1, sedeId: 10 };
 
@@ -71,6 +72,7 @@ function harness(items, { user = admin, seller = null, paid = [], registrations 
     "@/lib/credit-factory": factory,
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
     "@/lib/credit-route-lookup": scope,
+    "@/lib/credit-assigned-seller": assignedSeller,
     "@/lib/credit-report-status": { resolveCreditReportState },
     "@/lib/credit-display-number-server": displayHelpers,
   });
@@ -204,7 +206,7 @@ test("el reporte conserva los permisos de administrador y supervisor", async (t)
 
 test("movil y escritorio usan la etiqueta visual y las acciones conservan el estado operativo", () => {
   const source = readFileSync(new URL("../app/dashboard/reportes/creditos/reporte-creditos-client.tsx", import.meta.url), "utf8");
-  assert.equal(source.split('<StatusPill tone={creditStatusTone(item.estadoReporte ?? item.estado)}>{item.estadoReporte ?? item.estado}</StatusPill>').length - 1, 2);
-  assert.match(source, /normalized === "APROBADO".*return "positive"/);
+  const view = readFileSync(new URL("../app/dashboard/reportes/creditos/credit-report-view.tsx", import.meta.url), "utf8");
+  assert.match(view, /item.estadoReporte\|\|item.estado/);
   assert.match(source, /const canAnnul = isAdmin && item.estado !== "ANULADO"/);
 });

@@ -2,6 +2,7 @@
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
+import SolicitudesListView from "./solicitudes-list-view";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeft,
@@ -45,7 +46,7 @@ import {
 type ViewerRole = "ADMIN" | "ANALYST" | "SUPERVISOR" | "SELLER";
 type NamedEntity = { id: number; nombre: string };
 
-type SolicitudItem = {
+export type SolicitudItem = {
   id: string;
   source: "DRAFT" | "CREDIT";
   numero: string;
@@ -78,7 +79,7 @@ type SolicitudItem = {
   actions: SolicitudAction[];
 };
 
-type FilterOption =
+export type FilterOption =
   | string
   | number
   | {
@@ -101,7 +102,7 @@ type SolicitudOptions = {
   plataformas?: FilterOption[];
 };
 
-type ListResponse = {
+export type ListResponse = {
   items: SolicitudItem[];
   total: number;
   page: number;
@@ -109,7 +110,7 @@ type ListResponse = {
   options?: SolicitudOptions;
 };
 
-type FormFilters = {
+export type FormFilters = {
   q: string;
   desde: string;
   hasta: string;
@@ -271,9 +272,11 @@ function DetailLine({
 export default function SolicitudesWallClient({
   baseHref = "/dashboard/solicitudes",
   viewerRole = "ADMIN",
+  redesign = false,
 }: {
   baseHref?: string;
   viewerRole?: ViewerRole;
+  redesign?: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -426,6 +429,10 @@ export default function SolicitudesWallClient({
     [baseHref, paramsKey, router]
   );
 
+  const quickFilter = useCallback((key: "q" | "plataforma" | "estado", value: string) => {
+    updateUrl(params => { if(value) params.set(key,value); else params.delete(key); params.delete("page"); params.delete("id"); });
+  }, [updateUrl]);
+
   function closeDetail() {
     updateUrl((params) => params.delete("id"));
   }
@@ -502,6 +509,18 @@ export default function SolicitudesWallClient({
 
   return (
     <>
+      {redesign ? <SolicitudesListView
+        list={list} loading={loading} error={error} notice={notice}
+        filters={formFilters} appliedFilters={readFilters(new URLSearchParams(paramsKey))}
+        setFilters={setFormFilters} quickFilter={quickFilter}
+        applyFilters={applyFilters} clearFilters={clearFilters}
+        refresh={() => setReloadToken(value => value + 1)} dismissNotice={() => setNotice("")}
+        goToPage={goToPage} setPageSize={size => updateUrl(params => {params.set("pageSize",String(size));params.delete("page");params.delete("id");})}
+        openDetail={openDetail} desist={setDesistTarget}
+        factoryHref={item => factoryHref(item, viewerRole, wallReturnHref)}
+        replacementHref={item => replacementHref(item, wallReturnHref)}
+        displayNumber={solicitudDisplayNumber}
+      /> : <>
       <PageHeader
         eyebrow="Operación"
         title="Muro de solicitudes"
@@ -919,6 +938,8 @@ export default function SolicitudesWallClient({
           </>
         )}
       </section>
+
+      </>}
 
       {selectedId ? (
         <div

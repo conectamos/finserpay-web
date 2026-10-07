@@ -1,10 +1,12 @@
 import ExcelJS from "exceljs";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
+import { creditReportDocument, creditReportSadmin } from "@/lib/credit-report-identifiers";
 
 export type CreditReportExportItem = {
   fechaCredito: string;
   folio: string;
   numeroCreditoVisible?: string | null;
+  numeroSadmin?: string | null;
   clienteNombre: string;
   clienteDocumento: string | null;
   clienteTelefono: string | null;
@@ -55,6 +57,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     { header: "Valor crédito autorizado", width: 25 },
     { header: "Estado", width: 20 },
     { header: "Folio original", width: 30 },
+    { header: "Número Sadmin", width: 30 },
   ];
 
   sheet.columns.forEach((column, index) => {
@@ -74,7 +77,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
       excelDate(item.fechaCredito),
       creditDisplayNumber(item),
       item.clienteNombre,
-      item.clienteDocumento ?? "",
+      creditReportDocument(item.clienteDocumento),
       item.clienteTelefono ?? "",
       item.referenciaEquipo || [item.equipoMarca, item.equipoModelo].filter(Boolean).join(" "),
       item.imei,
@@ -86,6 +89,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
       item.creditoAutorizado,
       item.estadoReporte ?? item.estado,
       item.folio,
+      creditReportSadmin(item) || "PENDIENTE SADMIN",
     ]);
     row.height = 32;
     row.eachCell({ includeEmpty: true }, (cell) => {
@@ -105,7 +109,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   });
-  sheet.autoFilter = `A1:O${sheet.rowCount}`;
+  sheet.autoFilter = `A1:P${sheet.rowCount}`;
 
   return workbook;
 }

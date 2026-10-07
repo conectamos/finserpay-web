@@ -285,6 +285,7 @@ export async function GET(req: Request) {
 
       return {
         ...withCreditDisplayNumber({ id: item.id, folio: item.folio }, displayNumbers),
+        numeroSadmin: displayNumbers.get(item.id) || null,
         clienteNombre: item.clienteNombre,
         clienteDocumento: item.clienteDocumento,
         clienteTelefono: item.clienteTelefono,
