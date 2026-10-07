@@ -31,6 +31,28 @@ const CONTRACT_VIEW_FIELDS = [
   "fechaPrimerPago",
 ] as const;
 
+const CONTRACT_REVIEW_FIELDS = [
+  ...CONTRACT_VIEW_FIELDS,
+  "referenciaEquipo",
+  "dataCreditoAssessmentId",
+  "firmaSeguroCorrectionId",
+  "firmaSeguroIdentityCorrectionId",
+  "firmaSeguroContactCorrectionId",
+  "firmaSeguroFinancialCorrectionId",
+] as const;
+
+/** Acknowledgement is valid only for the exact server contract being reviewed. */
+export function firmaSeguroCorrectionReviewKey(
+  draft: Pick<DraftForFirmaSeguroSubmission, "id" | "payload">,
+): string {
+  return JSON.stringify([
+    draft.id,
+    ...CONTRACT_REVIEW_FIELDS.map((field) =>
+      String(draft.payload?.[field] ?? "").trim()
+    ),
+  ]);
+}
+
 export function hasFirmaSeguroCorrectionViewChanges(
   visible: Record<string, unknown>,
   authoritative: Record<string, unknown>
