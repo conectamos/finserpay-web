@@ -15,6 +15,6 @@ export default async function ReporteCreditosRoute({searchParams}:{searchParams:
   const params=await searchParams;
   return <div className={styles.shell}>
     <FinserNavigation variant="requests" admin={admin} adminCentral={adminCentral} isSupervisor={!admin} nombreUsuario={session.nombre} rolUsuario={session.rolNombre}/>
-    <ReporteCreditosPage initialFrom={dateValue(params.from)} initialTo={dateValue(params.to)} initialSedeId={idValue(params.sedeId)}/>
+    <main className={styles.main}><ReporteCreditosPage initialFrom={dateValue(params.from)} initialTo={dateValue(params.to)} initialSedeId={idValue(params.sedeId)}/></main>
   </div>;
 }
