@@ -7,7 +7,7 @@ const jiti = createJiti(import.meta.url, {
   moduleCache: false,
 });
 
-const { getStartupRecoveryTasks } = await jiti.import(
+const { getStartupRecoveryTasks, getDueInternalCronTasks } = await jiti.import(
   "../lib/internal-cron-schedule.ts"
 );
 
@@ -28,4 +28,15 @@ test("el arranque nocturno conserva Efecty y mora dentro de sus ventanas", () =>
     "mora",
   ]);
   assert.deepEqual(getStartupRecoveryTasks("02:00"), ["wompi"]);
+});
+
+test("recordatorios solo arrancan y se recuperan de 10:00 a 10:59 Colombia", () => {
+  for (const time of ["09:59", "11:00", "16:20", "23:40"]) {
+    assert.equal(getDueInternalCronTasks(time).includes("credit-due-reminders"), false);
+    assert.equal(getStartupRecoveryTasks(time).includes("credit-due-reminders"), false);
+  }
+  for (const time of ["10:00", "10:01", "10:59"]) {
+    assert.equal(getDueInternalCronTasks(time).includes("credit-due-reminders"), true);
+    assert.equal(getStartupRecoveryTasks(time).includes("credit-due-reminders"), true);
+  }
 });

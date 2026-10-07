@@ -1,4 +1,5 @@
 import { syncAllCreditMora } from "@/lib/credit-mora-sync";
+import { runCreditDueReminders } from "@/lib/credit-due-reminders";
 import {
   processPendingDeviceUnlockCommands,
   recoverRecentApprovedWompiUnlockCommands,
@@ -126,6 +127,15 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "credit-due-reminders") {
+      const result = await runCreditDueReminders({ dryRun: false });
+      completed = result.enabled && result.configured && result.inWindow;
+      if (completed) {
+        logCron("Recordatorios de cuotas procesados.", summarizeReport(result));
+      }
+      return;
+    }
+
     if (taskName === "merchant-applications") {
       // Query the queue only when server credentials and a FINSER PAY sender exist.
       if (getMerchantMailConfig()) {
@@ -178,7 +188,9 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    if (taskName === "merchant-applications") {
+    if (taskName === "credit-due-reminders") {
+      console.error("[finserpay-cron] No se pudo procesar la cola de recordatorios de cuotas.");
+    } else if (taskName === "merchant-applications") {
       // Never expose provider/database errors containing merchant data or secrets.
       console.error("[finserpay-cron] No se pudo procesar la cola de postulaciones.");
     } else {
@@ -219,7 +231,7 @@ async function tick() {
   for (const taskName of dueTasks) {
     await runScheduledTask(
       taskName,
-      `${taskName}:${dateKey}:${timeKey}`,
+      taskName === "credit-due-reminders" ? `${taskName}:${dateKey}` : `${taskName}:${dateKey}:${timeKey}`,
       taskName === "mora" ? moraEffectiveDate : undefined,
     );
   }
@@ -249,7 +261,7 @@ async function runStartupRecovery() {
   for (const taskName of getStartupRecoveryTasks(timeKey)) {
     await runScheduledTask(
       taskName,
-      `${taskName}:startup-recovery:${dateKey}`,
+      taskName === "credit-due-reminders" ? `${taskName}:${dateKey}` : `${taskName}:startup-recovery:${dateKey}`,
       taskName === "mora" ? moraEffectiveDate : undefined,
     );
   }
@@ -279,7 +291,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50; el inicio respeta esas ventanas, hora Colombia.",
+    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, recordatorios de cuotas a las 10:00 con recuperacion hasta las 11:00; el inicio respeta esas ventanas, hora Colombia.",
   );
 
   void runStartupRecovery();

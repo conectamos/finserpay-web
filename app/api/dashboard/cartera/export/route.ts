@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
+import { resolveCarteraDaysPastDue } from "@/lib/cartera-due-days";
 import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { resolveCarteraAliadoId } from "@/lib/cartera-access";
@@ -52,21 +53,6 @@ function formatDate(value: Date | string | null | undefined) {
   }
 
   return date.toISOString().slice(0, 10);
-}
-
-function dateFromIso(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, (month || 1) - 1, day || 1, 12, 0, 0, 0);
-
-  return Number.isNaN(date.getTime()) ? new Date() : date;
-}
-
-function signedDaysFromDueDate(dueDateIso: string, today: Date) {
-  const due = dateFromIso(dueDateIso);
-  const base = new Date(today);
-  base.setHours(12, 0, 0, 0);
-
-  return Math.floor((base.getTime() - due.getTime()) / 86_400_000);
 }
 
 function escapeHtml(value: unknown) {
@@ -292,18 +278,7 @@ export async function GET(req: Request) {
         });
       })
       .map(({ credito, plan }) => {
-        const pendingInstallments = plan.installments.filter(
-          (installment) => installment.saldoPendiente > 0
-        );
-        const signedPendingDays = pendingInstallments.map((installment) =>
-          signedDaysFromDueDate(installment.fechaVencimiento, today)
-        );
-        const positiveDays = signedPendingDays.filter((days) => days > 0);
-        const diasVencidos = positiveDays.length
-          ? Math.max(...positiveDays)
-          : plan.nextInstallment
-            ? signedDaysFromDueDate(plan.nextInstallment.fechaVencimiento, today)
-            : 0;
+        const diasVencidos = resolveCarteraDaysPastDue(plan, today);
         const lastPayment = credito.abonos[credito.abonos.length - 1] || null;
         const balances = splitOutstandingBalance({
           planCapitalVigente: credito.planCapitalVigente,

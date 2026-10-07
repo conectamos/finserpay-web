@@ -15,6 +15,7 @@ const projectRoot = path.resolve(
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const carteraAccess = await jiti.import("../lib/cartera-access.ts");
 const carteraExport = await jiti.import("../lib/cartera-export.ts");
+const carteraDueDays = await jiti.import("../lib/cartera-due-days.ts");
 const displayNumber = await jiti.import("../lib/credit-display-number.ts");
 
 function loadRoute(dependencies, routePath = "app/api/dashboard/cartera/export/route.ts") {
@@ -172,6 +173,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   };
   const route = loadRoute({
     "next/server": { NextResponse: Response },
+    "@/lib/cartera-due-days": carteraDueDays,
     "@/lib/credit-payment-plan": {
       buildCreditPaymentPlan(input) {
         const paid = Boolean(input.settled);
