@@ -88,8 +88,8 @@ export default async function ProductRiskPage() {
     };
   });
   const publicRows = projectProductRiskCredits(rows, { viewingCentral: scope.adminCentral });
-  return <AppShell sidebar={<AdminSidebar activeHref="/dashboard/riesgo-referencia" adminCentral={scope.adminCentral} nombreUsuario={session.nombre} rolUsuario={session.rolNombre} />}>
-    <AdminWorkspaceTopbar parent="Cartera" current="Riesgo por referencia" userName={session.nombre} userRole={session.rolNombre} />
+  return <AppShell className="fp-reference-risk-shell" sidebar={<AdminSidebar activeHref="/dashboard/riesgo-referencia" adminCentral={scope.adminCentral} nombreUsuario={session.nombre} rolUsuario={session.rolNombre} />}>
+    <AdminWorkspaceTopbar accentAvatar parent="Cartera" current="Riesgo por referencia" userName={session.nombre} userRole={session.rolNombre} />
     <RiskConsole credits={publicRows} cutoff={cutoff} adminCentral={scope.adminCentral} scopeLabel={scope.scopeLabel} />
   </AppShell>;
 }

@@ -1,300 +1,51 @@
+"use client";
+import { useState } from "react";
+import { ArrowRight, ChevronLeft, ChevronRight, Download, Filter, Search } from "lucide-react";
+import { Button, Card, DataTable, EmptyState, Input, PageHeader, Select, Tabs } from "@/app/_components/finser-ui";
 import type { ReactNode } from "react";
-import { ArrowDownToLine, ArrowRight } from "lucide-react";
-import {
-  Badge,
-  Card,
-  DataTable,
-  EmptyState,
-  MetricCard,
-  PageHeader,
-} from "@/app/_components/finser-ui";
-import type {
-  DashboardDelinquencyGroupView,
-  DashboardDelinquencyView,
-} from "@/lib/dashboard-delinquency-view";
-
-type DelinquencyWorkspaceProps = {
-  detail: DashboardDelinquencyView;
-  canViewBalances: boolean;
-  scopeLabel: string;
-  exportHref: string;
-  updatedAt: string;
-  filters?: ReactNode;
-  creditLinks?: Readonly<Record<string, string>>;
-};
-
-const numberFormatter = new Intl.NumberFormat("es-CO");
-const percentageFormatter = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
-const moneyFormatter = new Intl.NumberFormat("es-CO", {
-  style: "currency", currency: "COP", maximumFractionDigits: 0,
-});
-const updatedAtFormatter = new Intl.DateTimeFormat("es-CO", {
-  timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short",
-});
-
-function percent(value: number) {
-  return `${percentageFormatter.format(value)}%`;
-}
-
-function money(value: number | undefined) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? moneyFormatter.format(value)
-    : "No disponible";
-}
-
-function GroupName({ group }: { group: DashboardDelinquencyGroupView }) {
-  return (
-    <span className="block min-w-0 break-words [overflow-wrap:anywhere]">
-      <span className="block font-semibold">{group.name}</span>
-      {group.context ? (
-        <span className="mt-0.5 block text-xs font-normal leading-5 text-[var(--fp-muted)]">
-          {group.context}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-function CreditLink({ href, name }: { href: string | undefined; name: string }) {
-  return href ? (
-    <a
-      href={href}
-      aria-label={`Ver créditos en mora de ${name}`}
-      className="inline-flex min-h-10 items-center gap-1.5 whitespace-nowrap rounded-[var(--fp-radius-sm)] text-sm font-semibold text-[var(--fp-graphite)] underline decoration-[var(--fp-lime)] underline-offset-4 hover:decoration-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
-    >
-      Ver créditos <ArrowRight className="h-4 w-4" aria-hidden="true" />
-    </a>
-  ) : null;
-}
-
-function LeadingSite({
-  sites,
-  leadingSiteKeys,
-}: {
-  sites: DashboardDelinquencyGroupView[];
-  leadingSiteKeys: string[];
-}) {
-  const leaders = sites.filter((site) =>
-    !site.unassigned && site.overdueCredits > 0 && leadingSiteKeys.includes(site.key),
-  );
-  const leader = leaders[0];
-
-  return (
-    <MetricCard
-      label="Sede con mayor mora"
-      value={leader
-        ? <span className="block text-base leading-6"><GroupName group={leader} /></span>
-        : <span className="text-base">Sin sede con mora</span>}
-      detail={leader
-        ? `${numberFormatter.format(leader.overdueCredits)} créditos · ${percent(leader.overdueSharePercent)} de la mora`
-        : sites.some((site) => site.overdueCredits > 0) ? "La mora no tiene sede asignada." : "Sin créditos en mora."}
-    >
-      {leaders.length > 1 ? (
-        <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
-          Empate con {leaders.length - 1} {leaders.length === 2 ? "otra sede" : "otras sedes"}.
-        </p>
-      ) : null}
-      {leader && sites.some((site) => site.unassigned && site.overdueCredits > 0) ? (
-        <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">Entre las sedes identificadas.</p>
-      ) : null}
-    </MetricCard>
-  );
-}
-
-function SiteDistribution({
-  sites,
-  canViewBalances,
-}: {
-  sites: DashboardDelinquencyGroupView[];
-  canViewBalances: boolean;
-}) {
-  return (
-    <Card role="region" aria-labelledby="mora-distribution-title" className="min-w-0 p-4 sm:p-5">
-      <h2 id="mora-distribution-title" className="text-lg font-bold">Distribución de la mora</h2>
-      <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-        Participación por sede, de mayor a menor mora.
-      </p>
-      {sites.length ? (
-        <ul className="mt-5 max-h-[360px] space-y-4 overflow-y-auto pr-1">
-          {sites.map((site) => (
-            <li key={site.key} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(90px,0.5fr)_minmax(0,1fr)] sm:items-center sm:gap-4">
-              <div className="text-sm"><GroupName group={site} /></div>
-              <div className="min-w-0">
-                <div className="mb-1.5 flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs tabular-nums">
-                  <span className="text-[var(--fp-muted)]">
-                    {numberFormatter.format(site.overdueCredits)} {site.overdueCredits === 1 ? "crédito" : "créditos"} en mora
-                  </span>
-                  <strong className="font-bold">{percent(site.overdueSharePercent)}</strong>
-                </div>
-                <div
-                  role="img"
-                  aria-label={`${site.name}: ${percent(site.overdueSharePercent)} de la mora`}
-                  className="h-3 overflow-hidden rounded-sm bg-[var(--fp-bg)]"
-                >
-                  <div
-                    className="h-full rounded-sm bg-[var(--fp-danger)]"
-                    style={{ width: `${Math.min(100, Math.max(0, site.overdueSharePercent))}%` }}
-                  />
-                </div>
-                {canViewBalances ? (
-                  <p className="mt-1.5 text-right text-xs tabular-nums text-[var(--fp-muted)]">
-                    {money(site.overdueBalance)}
-                  </p>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <EmptyState title="Sin cartera activa" description="No hay sedes con créditos activos en este alcance." className="mt-4" />
-      )}
+import type { DashboardDelinquencyView, DashboardDelinquencyGroupView } from "@/lib/dashboard-delinquency-view";
+import styles from "./mora.module.css";
+const percent = (n: number) => n.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (n: number) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+type Group = { id: string; nombre: string; context: string | null; cantidad: number; participacion: number; aporte: number; saldoPendiente?: number; unassigned: boolean };
+type SortKey = "nombre" | "cantidad" | "saldoPendiente" | "participacion" | "aporte";
+export default function DelinquencyWorkspace({ detail, canViewBalances: central, scopeLabel: ally, updatedAt, exportHref, filters, creditLinks = {}, initialMode = "sedes" }: { detail: DashboardDelinquencyView; canViewBalances: boolean; scopeLabel: string; updatedAt: string; exportHref: string; filters?: ReactNode; creditLinks?: Readonly<Record<string,string>>; initialMode?: "sedes" | "vendedores" }) {
+  const mapGroup = (g: DashboardDelinquencyGroupView): Group => ({ id:g.key, nombre:g.name, context:g.context, cantidad:g.overdueCredits, participacion:g.overdueSharePercent, aporte:g.overduePortfolioPercent, saldoPendiente:g.overdueBalance, unassigned:g.unassigned });
+  const data = { porcentaje:detail.overduePortfolioPercent, cantidad:detail.overdueCredits, saldoPendiente:detail.overdueBalance, sedes:detail.sites.map(mapGroup), vendedores:detail.sellers.map(mapGroup) };
+  const date = new Date(updatedAt);
+  const updated = Number.isNaN(date.getTime()) ? "al consultar" : new Intl.DateTimeFormat("es-CO", {timeZone:"America/Bogota",dateStyle:"medium",timeStyle:"short"}).format(date);
+  const [mode, setMode] = useState<"sedes" | "vendedores">(initialMode);
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [group, setGroup] = useState("");
+  const [state, setState] = useState("");
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<{key:SortKey;desc:boolean}>({key:"participacion",desc:true});
+  const rows = data[mode].filter(r => r.nombre.toLocaleLowerCase("es").includes(search.trim().toLocaleLowerCase("es")) && (!group || r.id === group) && (!state || (state === "mora" ? r.cantidad > 0 : r.cantidad === 0))).sort((a,b) => {
+    const x=a[sort.key] ?? 0, y=b[sort.key] ?? 0;
+    const cmp=typeof x === "number" && typeof y === "number" ? x-y : String(x).localeCompare(String(y),"es");
+    return (sort.desc ? -cmp : cmp) || a.id.localeCompare(b.id);
+  });
+  const pages=Math.max(1, Math.ceil(rows.length/6));
+  const current=Math.min(page,pages);
+  const visible=rows.slice((current-1)*6,current*6);
+  const clearSelection=()=>{setPage(1);};
+  const columns: [SortKey,string][] = [["nombre",mode === "sedes" ? "Sede" : "Vendedor"],["cantidad","Créditos en mora"],...(central ? [["saldoPendiente","Saldo pendiente en mora"] as [SortKey,string]] : []),["participacion","Participación en la mora"],["aporte","Aporte a cartera"]];
+  const concentration=(items:Group[],label:string)=>{
+    const keys = label.includes("sede") ? detail.leadingSiteKeys : detail.leadingSellerKeys;
+    const leaders=items.filter(r=>r.cantidad>0 && keys.includes(r.id));
+    const first=leaders[0];
+    return <div><p>{label}</p><strong>{first ? `${first.nombre} · ${first.cantidad} créditos` : "Sin créditos en mora"}</strong>{first && <p><span className={styles.danger}>{percent(first.participacion)}%</span> de participación en el saldo en mora</p>}</div>;
+  };
+  return <div className={styles.main}>
+    <PageHeader className={styles.heading} title="Detalle de mora" description={`${ally} · Cartera actual`} actions={<div className={styles.actions}><span>Actualizado {updated}</span><a className={`fp-ui-button is-primary ${styles.export}`} href={exportHref}><Download size={20} aria-hidden="true"/>Exportar</a></div>} />
+    <Card className={styles.summary} aria-label="Resumen de mora de cartera"><div><strong className={styles.danger}>{percent(data.porcentaje)}%</strong><span>Mora de cartera</span></div><div><strong>{data.cantidad}</strong><span>Créditos en mora</span></div>{central && <div><strong>{money(data.saldoPendiente ?? 0)}</strong><span>Saldo pendiente de créditos en mora</span></div>}</Card>
+    <Card className={styles.tableCard}><div className={styles.toolbar}><Tabs aria-label="Agrupar mora"><button role="tab" aria-selected={mode==="sedes"} onClick={()=>{setMode("sedes");setGroup("");setSearch("");clearSelection();}}>Por sede</button><button role="tab" aria-selected={mode==="vendedores"} onClick={()=>{setMode("vendedores");setGroup("");setSearch("");clearSelection();}}>Por vendedor</button></Tabs><div className={styles.controls}><label className={styles.search}><Search size={20} aria-hidden="true"/><Input aria-label={mode === "sedes" ? "Buscar sede" : "Buscar vendedor"} placeholder={mode === "sedes" ? "Buscar sede…" : "Buscar vendedor…"} value={search} onChange={e=>{setSearch(e.target.value);clearSelection();}}/></label><Button variant="secondary" aria-expanded={expanded} aria-controls="mora-filters" onClick={()=>setExpanded(!expanded)}><Filter size={18} aria-hidden="true"/>Filtros</Button></div></div>
+      {expanded && <section id="mora-filters" className={styles.filters} aria-label="Filtros de detalle">{filters}<label>{mode==="sedes" ? "Sede" : "Vendedor"}<Select value={group} onChange={e=>{setGroup(e.target.value);clearSelection();}}><option value="">Todos</option>{data[mode].map(r=><option key={r.id} value={r.id}>{r.nombre}</option>)}</Select></label><label>Créditos en mora<Select value={state} onChange={e=>{setState(e.target.value);clearSelection();}}><option value="">Todos los grupos</option><option value="mora">Con créditos en mora</option><option value="sinMora">Sin créditos en mora</option></Select></label><Button variant="secondary" onClick={()=>{setGroup("");setState("");setSearch("");clearSelection();}}>Limpiar filtros</Button></section>}
+      {rows.length ? <DataTable className={styles.table}><table><thead><tr>{columns.map(([key,label])=><th key={key} aria-sort={sort.key===key ? sort.desc ? "descending" : "ascending" : "none"}><button onClick={()=>{setSort({key,desc:sort.key===key ? !sort.desc : false});setPage(1);}}>{label}<span aria-hidden="true">{sort.key===key ? sort.desc ? " ↓" : " ↑" : " ↕"}</span></button></th>)}<th>Detalle</th></tr></thead><tbody>{visible.map(r=><tr key={r.id}><td><strong>{r.nombre}</strong>{r.context && <small className={styles.context}>{r.context}</small>}</td><td>{r.cantidad}</td>{central && <td>{money(r.saldoPendiente ?? 0)}</td>}<td><div className={styles.rate}><span className={r.cantidad ? styles.danger : undefined}>{percent(r.participacion)}%</span><div className={styles.track} aria-hidden="true"><span style={{width:`${r.participacion}%`}}/></div></div></td><td>{percent(r.aporte)} pp</td><td><a className={styles.detailButton} aria-label={`Ver créditos en mora de ${r.nombre}`} href={creditLinks[mode === "sedes" ? r.id : `seller:${r.id}`]}>Ver créditos<ArrowRight size={18} aria-hidden="true"/></a></td></tr>)}</tbody></table></DataTable> : <EmptyState title="Sin grupos para esta selección" description="Prueba otra búsqueda o limpia los filtros."/>}
+      <footer className={styles.footer}><span aria-live="polite">{rows.length ? `${(current-1)*6+1}–${Math.min(current*6,rows.length)}` : "0"} de {rows.length} {mode}</span><nav aria-label="Paginación de mora"><Button variant="ghost" aria-label="Página anterior" disabled={current===1} onClick={()=>setPage(current-1)}><ChevronLeft size={18}/></Button><span>{current} / {pages}</span><Button variant="ghost" aria-label="Página siguiente" disabled={current===pages} onClick={()=>setPage(current+1)}><ChevronRight size={18}/></Button></nav></footer>
     </Card>
-  );
-}
-
-function SellersRanking({
-  sellers,
-  canViewBalances,
-  creditLinks,
-}: {
-  sellers: DashboardDelinquencyGroupView[];
-  canViewBalances: boolean;
-  creditLinks: Readonly<Record<string, string>>;
-}) {
-  const hasLinks = sellers.some((seller) => creditLinks[`seller:${seller.key}`]);
-
-  return (
-    <Card role="region" aria-labelledby="mora-sellers-title" className="min-w-0 p-4 sm:p-5">
-      <h2 id="mora-sellers-title" className="text-lg font-bold">Vendedores con mayor mora</h2>
-      <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">Ranking completo por participación en la mora.</p>
-      <DataTable className="mt-4 max-h-[360px] overflow-y-auto">
-        <table className={`w-full border-collapse text-sm ${canViewBalances || hasLinks ? "min-w-[580px]" : "min-w-[420px]"}`}>
-          <caption className="sr-only">Créditos y participación en la mora por vendedor</caption>
-          <thead className="sticky top-0 bg-[var(--fp-bg)] text-[var(--fp-muted)]">
-            <tr>
-              <th scope="col" className="px-3 py-3 text-left font-medium">#</th>
-              <th scope="col" className="px-3 py-3 text-left font-medium">Vendedor</th>
-              <th scope="col" className="px-3 py-3 text-right font-medium">Créditos en mora</th>
-              {canViewBalances ? <th scope="col" className="px-3 py-3 text-right font-medium">Saldo en mora</th> : null}
-              <th scope="col" className="px-3 py-3 text-right font-medium">% de la mora</th>
-              {hasLinks ? <th scope="col" className="px-3 py-3 text-left font-medium">Acciones</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {sellers.length ? sellers.map((seller, index) => (
-              <tr key={seller.key} className="border-t border-[var(--fp-border)]">
-                <td className="px-3 py-2 tabular-nums"><Badge tone="neutral">{index + 1}</Badge></td>
-                <th scope="row" className="max-w-52 px-3 py-2 text-left font-normal"><GroupName group={seller} /></th>
-                <td className="px-3 py-2 text-right tabular-nums">{numberFormatter.format(seller.overdueCredits)}</td>
-                {canViewBalances ? <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{money(seller.overdueBalance)}</td> : null}
-                <td className="px-3 py-2 text-right font-semibold tabular-nums">{percent(seller.overdueSharePercent)}</td>
-                {hasLinks ? <td className="px-3 py-2"><CreditLink href={creditLinks[`seller:${seller.key}`]} name={seller.name} /></td> : null}
-              </tr>
-            )) : (
-              <tr><td colSpan={4 + Number(canViewBalances) + Number(hasLinks)} className="px-4 py-8 text-center text-[var(--fp-muted)]">Sin vendedores con cartera activa.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </DataTable>
-    </Card>
-  );
-}
-
-function SitesTable({
-  sites,
-  canViewBalances,
-  creditLinks,
-  overduePortfolioPercent,
-}: {
-  sites: DashboardDelinquencyGroupView[];
-  canViewBalances: boolean;
-  creditLinks: Readonly<Record<string, string>>;
-  overduePortfolioPercent: number;
-}) {
-  const hasLinks = sites.some((site) => creditLinks[site.key]);
-
-  return (
-    <Card role="region" aria-labelledby="mora-sites-title" className="min-w-0 p-4 sm:p-5">
-      <h2 id="mora-sites-title" className="text-lg font-bold">Detalle por sede</h2>
-      <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-        Se usa el saldo pendiente de los créditos en mora, igual que en Salud de cartera.
-        El porcentaje muestra cuánto representa cada sede de la mora total.
-        Cada aporte compone el {percent(overduePortfolioPercent)} de mora de la cartera activa.
-      </p>
-      <DataTable className="mt-4">
-        <table className="w-full min-w-[650px] border-collapse text-sm">
-          <caption className="sr-only">Detalle completo de créditos, participación y aporte a cartera por sede</caption>
-          <thead className="bg-[var(--fp-bg)] text-[var(--fp-muted)]">
-            <tr>
-              <th scope="col" className="px-4 py-3 text-left font-medium">Sede</th>
-              <th scope="col" className="px-3 py-3 text-right font-medium">Créditos en mora</th>
-              {canViewBalances ? <th scope="col" className="px-3 py-3 text-right font-medium">Saldo en mora</th> : null}
-              <th scope="col" className="px-3 py-3 text-right font-medium">% de la mora</th>
-              <th scope="col" className="px-3 py-3 text-right font-medium">Aporte a cartera</th>
-              {hasLinks ? <th scope="col" className="px-4 py-3 text-left font-medium">Acciones</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {sites.length ? sites.map((site) => (
-              <tr key={site.key} className="border-t border-[var(--fp-border)]">
-                <th scope="row" className="max-w-64 px-4 py-3 text-left font-normal"><GroupName group={site} /></th>
-                <td className="px-3 py-3 text-right tabular-nums">{numberFormatter.format(site.overdueCredits)}</td>
-                {canViewBalances ? <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{money(site.overdueBalance)}</td> : null}
-                <td className="px-3 py-3 text-right font-semibold tabular-nums">{percent(site.overdueSharePercent)}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{percentageFormatter.format(site.overduePortfolioPercent)} puntos</td>
-                {hasLinks ? <td className="px-4 py-3"><CreditLink href={creditLinks[site.key]} name={site.name} /></td> : null}
-              </tr>
-            )) : (
-              <tr><td colSpan={4 + Number(canViewBalances) + Number(hasLinks)} className="px-4 py-8 text-center text-[var(--fp-muted)]">Sin sedes con cartera activa.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </DataTable>
-    </Card>
-  );
-}
-
-export default function DelinquencyWorkspace({
-  detail,
-  canViewBalances,
-  scopeLabel,
-  exportHref,
-  updatedAt,
-  filters,
-  creditLinks = {},
-}: DelinquencyWorkspaceProps) {
-  const updatedDate = new Date(updatedAt);
-  const validDate = !Number.isNaN(updatedDate.getTime());
-
-  return (
-    <div className="space-y-5 text-[var(--fp-graphite)]">
-      <PageHeader
-        eyebrow="Cartera / Mora actual"
-        title="Detalle de mora"
-        description={`Identifica qué sedes y vendedores concentran la mora · ${scopeLabel}`}
-        actions={
-          <a href={exportHref} className="fp-ui-button is-primary">
-            <ArrowDownToLine className="h-4 w-4" aria-hidden="true" /> Exportar Excel
-          </a>
-        }
-      />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {filters ? <div className="min-w-0">{filters}</div> : <p className="text-sm font-medium text-[var(--fp-muted)]">Cartera actual</p>}
-        <p className="text-xs leading-5 text-[var(--fp-muted)]">
-          Actualizado: {validDate ? <time dateTime={updatedAt}>{updatedAtFormatter.format(updatedDate)}</time> : "al consultar"}
-        </p>
-      </div>
-      <section aria-label="Resumen de mora" className={`grid gap-4 sm:grid-cols-2 ${canViewBalances ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
-        <MetricCard label="Mora actual" value={<span className="text-[var(--fp-danger)]">{percent(detail.overduePortfolioPercent)}</span>} detail="de la cartera activa" />
-        <MetricCard label="Créditos en mora" value={numberFormatter.format(detail.overdueCredits)} detail={`de ${numberFormatter.format(detail.activeCredits)} créditos activos`} />
-        {canViewBalances ? <MetricCard label="Saldo en mora" value={money(detail.overdueBalance)} detail="saldo pendiente de los créditos en mora" /> : null}
-        <LeadingSite sites={detail.sites} leadingSiteKeys={detail.leadingSiteKeys} />
-      </section>
-      <div className="grid gap-5 xl:grid-cols-[1.1fr_1fr]">
-        <SiteDistribution sites={detail.sites} canViewBalances={canViewBalances} />
-        <SellersRanking sellers={detail.sellers} canViewBalances={canViewBalances} creditLinks={creditLinks} />
-      </div>
-      <SitesTable sites={detail.sites} canViewBalances={canViewBalances} creditLinks={creditLinks} overduePortfolioPercent={detail.overduePortfolioPercent} />
-    </div>
-  );
+    <Card className={styles.concentration}>{concentration(data.sedes,"Mayor concentración por sede")}{concentration(data.vendedores,"Mayor concentración por vendedor")}</Card>
+    <p className={styles.note}>El saldo pendiente en mora es el saldo total de los créditos en mora. La participación es su proporción del saldo en mora del comercio, no una tasa individual. El aporte usa el saldo pendiente de créditos en mora del grupo / saldo pendiente de cartera × 100 y se expresa en puntos porcentuales; sus totales coinciden con el porcentaje de Salud de cartera. Búsqueda y filtros de grupos delimitan la tabla; el resumen conserva el total del aliado consultado.</p>
+  </div>;
 }
