@@ -3,8 +3,9 @@ import { resolveCapitalOriginal } from "@/lib/credit-capital";
 import { resolveCreditPaymentSummary } from "@/lib/credit-factory";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { resolveDashboardMonth } from "@/lib/dashboard-month";
-import { summarizeDashboardDelinquency, type AdminDashboardDelinquencyDetail } from "@/lib/dashboard-delinquency";
+import { summarizeDashboardDelinquency, resolveDashboardDelinquencySellerIdentity, type AdminDashboardDelinquencyDetail } from "@/lib/dashboard-delinquency";
 import { resolveCreditAssignedAdministrator } from "@/lib/credit-assigned-seller";
+import type { DashboardDelinquencyCreditView } from "@/lib/dashboard-delinquency-view";
 import prisma from "@/lib/prisma";
 
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
@@ -24,6 +25,7 @@ export const adminDashboardCreditSelect = {
   fechaCredito: true,
   fechaPrimerPago: true,
   fechaProximoPago: true,
+  folio: true,
   frecuenciaPago: true,
   id: true,
   planCapitalVigente: true,
@@ -63,6 +65,7 @@ export type AdminDashboardCreditPerformancePoint = {
 
 export type AdminDashboardOverview = {
   delinquencyDetail: AdminDashboardDelinquencyDetail;
+  delinquencyCredits?: DashboardDelinquencyCreditView[];
   productHealth: ReturnType<typeof summarizeProductPortfolioHealth>;
   unclassifiedPortfolioBalance: number;
   activeCredits: number;
@@ -96,6 +99,7 @@ export type AdminDashboardOverview = {
 type AdminDashboardDataOptions = {
   aliadoId?: number | null;
   month?: string | null;
+  includeDelinquencyCredits?: boolean;
 };
 
 function daysLate(dueDateIso: string, today: Date) {
@@ -151,6 +155,7 @@ function colombiaDay(date: Date) {
 export async function getAdminDashboardOverview({
   aliadoId = null,
   month = null,
+  includeDelinquencyCredits = false,
 }: AdminDashboardDataOptions = {}): Promise<AdminDashboardOverview> {
   const today = new Date();
   const current = colombiaDateParts(today);
@@ -270,6 +275,7 @@ export async function getAdminDashboardOverview({
       return {
         ...common,
         bucket: "alDia" as const,
+        diasMora: 0,
         dueToday: 0,
         saldoPendiente: 0,
       };
@@ -299,6 +305,7 @@ export async function getAdminDashboardOverview({
     return {
       ...common,
       bucket: riskBucket(lateDays),
+      diasMora: lateDays,
       dueToday: plan.installments.filter(
         (installment) =>
           installment.fechaVencimiento === todayIso && installment.saldoPendiente > 0
@@ -314,6 +321,28 @@ export async function getAdminDashboardOverview({
     saldoPendiente: credit.saldoPendiente,
     overdue: credit.bucket !== "alDia",
   })));
+  const delinquencyCredits: DashboardDelinquencyCreditView[] | undefined = includeDelinquencyCredits
+    ? activePortfolio.filter((credit) => credit.bucket !== "alDia").map((credit) => {
+      const source = credit.delinquencySource;
+      const seller = resolveDashboardDelinquencySellerIdentity({
+        ...source,
+        saldoPendiente: credit.saldoPendiente,
+        overdue: true,
+      });
+      return {
+        id: source.id,
+        folio: source.folio,
+        clienteNombre: source.clienteNombre,
+        clienteDocumento: source.clienteDocumento,
+        sedeKey: `sede:${source.sede.id}`,
+        sedeNombre: source.sede.nombre,
+        sellerKey: seller.key,
+        sellerNombre: seller.name,
+        aliadoNombre: source.sede.aliado?.nombre || null,
+        diasMora: credit.diasMora,
+      };
+    }).sort((a, b) => b.diasMora - a.diasMora || a.folio.localeCompare(b.folio, "es") || a.id - b.id)
+    : undefined;
   const totalPortfolio = activePortfolio.reduce(
     (sum, credit) => sum + credit.saldoPendiente,
     0
@@ -405,6 +434,7 @@ export async function getAdminDashboardOverview({
 
   return {
     delinquencyDetail,
+    ...(includeDelinquencyCredits ? { delinquencyCredits } : {}),
     productHealth: summarizeProductPortfolioHealth(activePortfolio),
     unclassifiedPortfolioBalance: activePortfolio.filter((credit) => !credit.platform).reduce((sum, credit) => sum + credit.saldoPendiente, 0),
     activeCredits: activePortfolio.length,

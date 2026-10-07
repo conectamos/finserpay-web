@@ -11,7 +11,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const [{ resolveCapitalOriginal }, { buildCreditPaymentPlan }, { resolveDashboardMonth },
   { resolveAllyPaymentPlatform }, { summarizeProductPortfolioHealth }, { resolveCreditPaymentSummary },
-  { summarizeDashboardDelinquency }, { resolveCreditAssignedAdministrator }] = await Promise.all([
+  { summarizeDashboardDelinquency, resolveDashboardDelinquencySellerIdentity }, { resolveCreditAssignedAdministrator }] = await Promise.all([
   jiti.import("../lib/credit-capital.ts"), jiti.import("../lib/credit-payment-plan.ts"),
   jiti.import("../lib/dashboard-month.ts"), jiti.import("../lib/ally-payments-core.ts"),
   jiti.import("../lib/product-portfolio-health.ts"), jiti.import("../lib/credit-factory.ts"),
@@ -26,7 +26,7 @@ const fixedNow = Date.parse("2026-09-26T17:00:00Z");
 function credit(id, options = {}) {
   const { allyId = 7, siteId = 70, ...fields } = options;
   return {
-    id, estado: "GENERADO", montoCredito: 1000, saldoBaseFinanciado: 800,
+    id, folio: `FC-TEST-${id}`, estado: "GENERADO", montoCredito: 1000, saldoBaseFinanciado: 800,
     valorEquipoTotal: 900, cuotaInicial: 100, valorInteres: 100, valorFianza: 100,
     valorCuota: 500, plazoMeses: 2, frecuenciaPago: "MENSUAL",
     fechaCredito: new Date("2026-09-09T15:00:00Z"), fechaPrimerPago: new Date("2026-11-02T00:00:00Z"),
@@ -106,7 +106,7 @@ async function overview(credits, payments = [], options = { aliadoId: 7, month: 
   const getOverview = runInNewContext(executableSource + "\ngetAdminDashboardOverview", {
     prisma, Date: FixedDate, resolveCapitalOriginal, buildCreditPaymentPlan,
     resolveDashboardMonth, resolveAllyPaymentPlatform, summarizeProductPortfolioHealth, resolveCreditPaymentSummary,
-    summarizeDashboardDelinquency, resolveCreditAssignedAdministrator,
+    summarizeDashboardDelinquency, resolveDashboardDelinquencySellerIdentity, resolveCreditAssignedAdministrator,
   });
   const result = await getOverview(options);
   return { result, calls };
@@ -368,4 +368,50 @@ test("salud y detalle calculan cambio de día y frontera15/16 por Bogotá indepe
     if (previousTimezone === undefined) delete process.env.TZ;
     else process.env.TZ = previousTimezone;
   }
+});
+
+test("drilldown opt-in contiene sólo créditos de la misma mora y grupos, sin datos financieros", async () => {
+  const imported = { origen: { tipo: "IMPORTACION_MASIVA", sinFirmaDigital: true },
+    asignacion: { tipoResponsable: "ADMINISTRADOR", vendedorId: null, sedeId: 70,
+      responsableUsuarioId: 15, vendedor: "Responsable importado" } };
+  const credits = [
+    credit(1, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z"), vendedorId: 3,
+      vendedor: { id: 3, nombre: "Ana", documento: "222" } }),
+    credit(2, { fechaPrimerPago: new Date("2026-09-17T00:00:00Z"),
+      usuario: { id: 3, nombre: "Ana", usuario: "ana" } }),
+    credit(3, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z"), contratoSnapshot: imported }),
+    credit(4, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z"),
+      contratoSnapshot: { origen: { tipo: "IMPORTACION_MASIVA", sinFirmaDigital: true } } }),
+    credit(5),
+    credit(6, { fechaPrimerPago: new Date("2026-08-02T00:00:00Z") }),
+    credit(7, { allyId: 8, fechaPrimerPago: new Date("2026-08-02T00:00:00Z") }),
+    credit(8, { estado: "ANULADO", fechaPrimerPago: new Date("2026-08-02T00:00:00Z") }),
+    credit(9, { pazYSalvoEmitidoAt: new Date("2026-09-15"), fechaPrimerPago: new Date("2026-08-02T00:00:00Z") }),
+  ];
+  const payments = [payment(1, 6, 1000)];
+  const { result } = await overview(credits, payments, { aliadoId: 7, includeDelinquencyCredits: true });
+  assert.equal(result.delinquencyCredits.length, result.delinquencyDetail.overdueCredits);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.delinquencyCredits.map(item => item.id))), [1, 3, 4, 2]);
+  const byId = new Map(result.delinquencyCredits.map(item => [item.id, item]));
+  assert.equal(byId.get(1).sellerKey, "vendedor:3");
+  assert.equal(byId.get(2).sellerKey, "usuario:3");
+  assert.equal(byId.get(3).sellerKey, "usuario:15");
+  assert.equal(byId.get(4).sellerKey, "unassigned");
+  assert.equal(byId.get(4).sellerNombre, "Sin vendedor asignado");
+  assert.equal(byId.get(1).diasMora, 55);
+  assert.equal(byId.get(2).diasMora, 9);
+  for (const type of ["sites", "sellers"]) {
+    const keyField = type === "sites" ? "sedeKey" : "sellerKey";
+    for (const group of result.delinquencyDetail[type]) {
+      assert.equal(result.delinquencyCredits.filter(item => item[keyField] === group.key).length, group.overdueCredits);
+    }
+  }
+  for (const item of result.delinquencyCredits) {
+    assert.deepEqual(Object.keys(item).sort(), ["id", "folio", "clienteNombre", "clienteDocumento", "sedeKey",
+      "sedeNombre", "sellerKey", "sellerNombre", "aliadoNombre", "diasMora"].sort());
+  }
+  const { result: standard } = await overview(credits, payments, { aliadoId: 7 });
+  assert.equal(Object.hasOwn(standard, "delinquencyCredits"), false);
+  const { result: empty } = await overview([], [], { aliadoId: 7, includeDelinquencyCredits: true });
+  assert.equal(empty.delinquencyCredits.length, 0);
 });

@@ -58,7 +58,7 @@ function validId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function sellerIdentity(credit: DelinquencyCredit) {
+export function resolveDashboardDelinquencySellerIdentity(credit: DelinquencyCredit) {
   const administrator = resolveCreditAssignedAdministrator(credit);
 
   if (administrator) {
@@ -141,7 +141,7 @@ export function summarizeDashboardDelinquency(credits: DelinquencyCredit[]): Adm
       name: credit.sede?.nombre?.trim() || "Sin nombre de sede",
       unassigned: false,
     } : { key: "unassigned", name: "Sin sede", unassigned: true }, credit, allyName);
-    addGroup(sellers, sellerIdentity(credit), credit, allyName);
+    addGroup(sellers, resolveDashboardDelinquencySellerIdentity(credit), credit, allyName);
   }
 
   const finalize = (groups: Map<string, GroupAccumulator>) => [...groups.values()].map((group) => {
