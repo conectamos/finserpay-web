@@ -59,3 +59,5 @@
 @media (max-width: 600px) { .main { padding: 16px; } .main h2 { font-size: 21px; } .summary { padding: 16px 8px; } .summary strong { font-size: 24px; } .summary span { text-align: center; font-size: 12px; } .platform { grid-template-columns: repeat(3, minmax(0, 1fr)); } .platformName { grid-column: 1 / -1; } .platformName svg { height: 32px; } .platform span { font-size: 12px; } .platform > div:nth-child(n+3) { padding-left: 12px; } .toolbar, .detailHeader { flex-wrap: wrap; } .controls { width: 100%; gap: 8px; } .search { flex: 1; min-width: 0; } .models, .detail { padding: 16px 12px; } .filterGrid { grid-template-columns: 1fr; } .tabs { gap: 16px; } .rate { gap: 12px; } .track { width: 80px; } }
 
 :global(.fp-reference-risk-shell) { background: var(--fp-surface); }
+
+.allyFilter { display: grid; gap: 8px; width: min(100%, 360px); color: var(--fp-muted); font-size: 14px; }
