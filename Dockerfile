@@ -51,7 +51,6 @@ COPY --from=builder /app/scripts/ensure-aliado-redescuento-schema.mjs ./scripts/
 COPY --from=builder /app/scripts/ensure-ally-payments-schema.mjs ./scripts/ensure-ally-payments-schema.mjs
 COPY --from=builder /app/scripts/credit-ally-payment-exclusion-schema.mjs ./scripts/credit-ally-payment-exclusion-schema.mjs
 COPY --from=builder /app/scripts/railway-predeploy.mjs ./scripts/railway-predeploy.mjs
-COPY --from=builder /app/scripts/purge-synthetic-test-credit-20261007.mjs ./scripts/purge-synthetic-test-credit-20261007.mjs
 COPY --from=builder /app/scripts/ensure-approval-operations-schema.mjs ./scripts/ensure-approval-operations-schema.mjs
 COPY --from=builder /app/scripts/analyst-mora-schema.mjs ./scripts/analyst-mora-schema.mjs
 COPY --from=builder /app/scripts/ensure-analyst-mora-schema.mjs ./scripts/ensure-analyst-mora-schema.mjs
