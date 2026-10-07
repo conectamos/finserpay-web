@@ -10,7 +10,7 @@ export const TEST_CREDIT_PURGE = Object.freeze({
   folio: "FC-20261007042755-TQLK",
   customerName: "PRUEBA DAPTA",
   equipmentValue: 5000,
-  financedValue: 5000,
+  recordedCreditTotal: 16,
   initialPayment: 0,
   state: "GENERADO",
   allowedStates: ["GENERADO", "ANULADO"],
@@ -21,7 +21,7 @@ export const SECOND_TEST_CREDIT_PURGE = Object.freeze({
   folio: "FC-20261007051500-NMIK",
   customerName: "PRUEBA DOS DAPTA",
   equipmentValue: 150000,
-  financedValue: 150000,
+  recordedCreditTotal: 2400000,
   initialPayment: 0,
   allowedStates: ["GENERADO", "ANULADO"],
   localSadminNumber: "1111111238",
@@ -54,7 +54,7 @@ export function evaluatePurgePreconditions({ credit, references = [], extraRefer
   if (credit.folio !== target.folio ||
       credit.clienteNombre !== target.customerName ||
       Number(credit.valorEquipoTotal) !== target.equipmentValue ||
-      Number(credit.montoCredito) !== target.financedValue ||
+      Number(credit.montoCredito) !== target.recordedCreditTotal ||
       Number(credit.cuotaInicial) !== target.initialPayment ||
       !target.allowedStates.includes(credit.estado)) {
     blockers.push("CREDIT_IDENTITY_MISMATCH");
@@ -304,7 +304,7 @@ function summarize(checked, target, execute) {
     }
     for (const [field, expected] of [
       ["valorEquipoTotal", target.equipmentValue],
-      ["montoCredito", target.financedValue],
+      ["montoCredito", target.recordedCreditTotal],
       ["cuotaInicial", target.initialPayment],
     ]) {
       if (Number(credit[field]) !== expected) {
