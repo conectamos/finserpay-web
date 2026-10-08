@@ -22,6 +22,7 @@ import {
 } from "@/lib/delivery-evidence-draft";
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
 import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
+import { preserveAnalystDataCorrectionAutosave } from "@/lib/approval-request-correction-core";
 import {
   SOLICITUD_FILTER_STATES,
   SOLICITUD_STATE_LABELS,
@@ -1275,7 +1276,9 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           dataCreditoAssessmentId: assessmentId,
           payload: input.payload,
         };
-    let canonicalPayload: Record<string, unknown> = { ...canonical.payload };
+    let canonicalPayload: Record<string, unknown> = preserveAnalystDataCorrectionAutosave(
+      targetRow?.payload || {}, canonical.payload
+    );
     // If the identity changed since the preliminary read, retry rather than
     // taking a new blacklist lock after the operation/identity/row locks.
     assertSolicitudBlacklistDocumentsLocked(
@@ -1583,7 +1586,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         canonicalImei
       );
     }
-    const persistedPayload: Record<string, unknown> = {
+    const persistedPayload: Record<string, unknown> = preserveAnalystDataCorrectionAutosave(targetRow?.payload || {}, {
       ...canonicalPayload,
       wizardStep: persistedStep,
       veriffValidationId: canonicalVeriffValidationId,
@@ -1593,7 +1596,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       ...(canonicalPlatform
         ? { plataformaDispositivo: canonicalPlatform }
         : {}),
-    };
+    });
     const payloadJson = JSON.stringify(persistedPayload);
     assertSolicitudBlacklistDocumentsLocked(
       lockedBlacklistDocuments,

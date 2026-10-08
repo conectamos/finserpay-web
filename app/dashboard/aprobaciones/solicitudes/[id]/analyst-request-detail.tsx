@@ -19,6 +19,7 @@ import {
 } from "@/app/_components/finser-ui";
 import type { AnalystRequestDetail } from "@/lib/approval-request-detail-types";
 import styles from "./analyst-request-detail.module.css";
+import AnalystRequestDataEditor from "./analyst-request-data-editor";
 
 const requestsHref = "/dashboard/aprobaciones/solicitudes";
 const steps = ["Cliente", "Equipo", "Identidad", "Identidad y firma", "Enrolamiento y entrega"];
@@ -121,11 +122,13 @@ export default function AnalystRequestDetailView({
     <PageHeader
       eyebrow="Solicitudes"
       title={detail.number}
-      description="Consulta el avance, los documentos y el historial de esta solicitud."
+      description="Revisa el avance, corrige los datos y consulta el historial de esta solicitud."
       actions={<Link href={returnHref} prefetch={false} className="fp-ui-button is-secondary">
         <ArrowLeft size={18} aria-hidden="true" />Volver al muro
       </Link>}
     />
+
+    {detail.source === "DRAFT" && <AnalystRequestDataEditor key={detail.id} requestId={detail.id} />}
 
     <Card className={styles.identity}>
       <div className={styles.identityHeading}>
