@@ -524,6 +524,7 @@ export default function SolicitudesWallClient({
         factoryHref={item => factoryHref(item, viewerRole, wallReturnHref)}
         replacementHref={item => replacementHref(item, wallReturnHref)}
         displayNumber={solicitudDisplayNumber}
+        requestHref={viewerRole === "ANALYST" ? item => analystRequestHref(item, wallReturnHref) : undefined}
       /> : <>
       <PageHeader
         eyebrow="Operación"

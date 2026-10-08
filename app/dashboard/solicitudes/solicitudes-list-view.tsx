@@ -19,6 +19,7 @@ type Props = {
   openDetail: (item: SolicitudItem) => void; desist: (item: SolicitudItem) => void;
   factoryHref: (item: SolicitudItem) => string; replacementHref: (item: SolicitudItem) => string;
   displayNumber: (item: SolicitudItem) => string;
+  requestHref?: (item: SolicitudItem) => string;
 };
 const formatNumber = (value: number) => new Intl.NumberFormat("es-CO").format(value);
 function dateParts(value?: string | null) {
@@ -72,22 +73,25 @@ export default function SolicitudesListView(props: Props) {
   const closeFilters = () => { setFiltersOpen(false); props.setFilters(() => appliedFilters); };
   const setField = (key: keyof FormFilters, value: string) => props.setFilters(current => ({ ...current, [key]: value }));
   const actions = (item: SolicitudItem) => {
-    const continuing = item.source === "DRAFT" && item.actions.includes("ABRIR_FABRICA");
+    const analyst = Boolean(props.requestHref);
+    const openingRequest = analyst && item.actions.includes("ABRIR_SOLICITUD");
+    const continuing = !analyst && item.source === "DRAFT" && item.actions.includes("ABRIR_FABRICA");
     return <div className={styles.actions}>
-      {continuing ? <Link href={props.factoryHref(item)} className={styles.primary}>Continuar<ArrowRight aria-hidden="true" /></Link> : item.actions.includes("VER_DETALLE") ? <button type="button" className={styles.secondary} onClick={() => props.openDetail(item)}>Ver detalle</button> : null}
+      {openingRequest ? <Link href={props.requestHref!(item)} prefetch={false} className={item.estado === "PROCESO" ? styles.primary : styles.secondary}>{item.estado === "PROCESO" ? "Ingresar" : "Ver detalle"}{item.estado === "PROCESO" && <ArrowRight aria-hidden="true" />}</Link> : continuing ? <Link href={props.factoryHref(item)} className={styles.primary}>Continuar<ArrowRight aria-hidden="true" /></Link> : item.actions.includes("VER_DETALLE") ? <button type="button" className={styles.secondary} onClick={() => props.openDetail(item)}>Ver detalle</button> : null}
       <RowMenu name={props.displayNumber(item)}>
+        {openingRequest && item.actions.includes("VER_DETALLE") && <button type="button" onClick={() => props.openDetail(item)}>Ver resumen</button>}
         {continuing && item.actions.includes("VER_DETALLE") && <button type="button" onClick={() => props.openDetail(item)}>Ver detalle</button>}
-        {!continuing && item.actions.includes("ABRIR_FABRICA") && <Link href={props.factoryHref(item)}>Abrir fábrica</Link>}
-        {item.actions.includes("CAMBIO_GARANTIA") && <Link href={props.replacementHref(item)}>Cambio por garantía</Link>}
-        {item.actions.includes("DESISTIR") && <button type="button" className={styles.desist} onClick={() => props.desist(item)}><Ban aria-hidden="true" />Desistir</button>}
+        {!analyst && !continuing && item.actions.includes("ABRIR_FABRICA") && <Link href={props.factoryHref(item)}>Abrir fábrica</Link>}
+        {!analyst && item.actions.includes("CAMBIO_GARANTIA") && <Link href={props.replacementHref(item)}>Cambio por garantía</Link>}
+        {!analyst && item.actions.includes("DESISTIR") && <button type="button" className={styles.desist} onClick={() => props.desist(item)}><Ban aria-hidden="true" />Desistir</button>}
         {!item.actions.length && <span>Sin acciones disponibles</span>}
         {!continuing && item.actions.includes("VER_DETALLE") && item.actions.length === 1 && <button type="button" onClick={() => props.openDetail(item)}>Ver detalle</button>}
       </RowMenu>
     </div>;
   };
   return <div className={styles.panel}>
-    <nav className={styles.breadcrumb} aria-label="Ruta actual"><Link href="/dashboard" aria-label="Inicio"><Home aria-hidden="true" /></Link><ChevronRight aria-hidden="true" /><span>Operación</span><ChevronRight aria-hidden="true" /><strong aria-current="page">Solicitudes</strong></nav>
-    <header className={styles.heading}><div><h1>Solicitudes</h1><p>Consulta y continúa tus ventas.</p></div><div className={styles.headingActions}><span className={styles.total}>{loading && !list ? "Consultando…" : `${formatNumber(list?.total || 0)} solicitudes`}</span><button type="button" className={styles.secondary} disabled={loading} onClick={props.refresh}><RefreshCw className={loading ? styles.spin : undefined} aria-hidden="true" />Actualizar</button></div></header>
+    <nav className={styles.breadcrumb} aria-label="Ruta actual"><Link href={props.requestHref ? "/dashboard/aprobaciones/centro" : "/dashboard"} aria-label="Inicio"><Home aria-hidden="true" /></Link><ChevronRight aria-hidden="true" /><span>{props.requestHref ? "Aprobaciones" : "Operación"}</span><ChevronRight aria-hidden="true" /><strong aria-current="page">Solicitudes</strong></nav>
+    <header className={styles.heading}><div><h1>Solicitudes</h1><p>{props.requestHref ? "Consulta y gestiona las solicitudes de crédito." : "Consulta y continúa tus ventas."}</p></div><div className={styles.headingActions}><span className={styles.total}>{loading && !list ? "Consultando…" : `${formatNumber(list?.total || 0)} solicitudes`}</span><button type="button" className={styles.secondary} disabled={loading} onClick={props.refresh}><RefreshCw className={loading ? styles.spin : undefined} aria-hidden="true" />Actualizar</button></div></header>
     {props.notice && <div className={styles.notice} role="status"><span>{props.notice}</span><button type="button" onClick={props.dismissNotice} aria-label="Cerrar mensaje"><X aria-hidden="true" /></button></div>}
     <nav className={styles.tabs} aria-label="Filtrar solicitudes por estado">{[["", "Todas"], ["PROCESO", "En proceso"], ["RECHAZADA", "Rechazadas"]].map(([value, label]) => <button key={label} type="button" aria-current={appliedFilters.estado === value ? "page" : undefined} className={appliedFilters.estado === value ? styles.selectedTab : undefined} onClick={() => props.quickFilter("estado", value)}>{label}</button>)}</nav>
     <form className={styles.filters} role="search" onSubmit={event => { event.preventDefault(); props.quickFilter("q", filters.q.trim()); }}>
