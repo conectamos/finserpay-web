@@ -14,7 +14,9 @@ export async function POST(req:Request,context:{params:Promise<{id:string}>}) {
  const user=await getSessionUser();
  if(!user) return NextResponse.json({error:"No autenticado"},{status:401});
  if(!isAdminRole(user.rolNombre)||!isFinserPayCentralAlly(user.aliadoAccesoCodigo)) return NextResponse.json({error:"Solo Admin Central puede conciliar el historial."},{status:403});
- if(req.headers.get("origin")!==new URL(req.url).origin) return NextResponse.json({error:"Origen inválido."},{status:403});
+ const publicHost=req.headers.get("x-forwarded-host")?.split(",")[0].trim() || req.headers.get("host") || new URL(req.url).host;
+ const origin=req.headers.get("origin");
+ if(origin!==`https://${publicHost}` && origin!==new URL(req.url).origin) return NextResponse.json({error:"Origen inválido."},{status:403});
  const id=Number((await context.params).id);
  if(!Number.isSafeInteger(id)||id<=0) return NextResponse.json({error:"Crédito inválido."},{status:400});
  try {
