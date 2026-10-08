@@ -651,7 +651,9 @@ test("el analista ingresa a solicitudes y créditos de todos los estados sin ope
             draftState,
             platform: "IPHONE",
           }),
-          ["VER_DETALLE", "ABRIR_SOLICITUD"],
+          source === "DRAFT" && state !== "CANCELADA"
+            ? ["VER_DETALLE", "ABRIR_SOLICITUD", "DESISTIR"]
+            : ["VER_DETALLE", "ABRIR_SOLICITUD"],
           `${source}/${state}/${draftState}`,
         );
       }
@@ -666,7 +668,7 @@ test("el endpoint aplica sesion, alcance y no permite eliminaciones", async () =
   ]);
   assert.match(route, /getSessionUser|getDashboardSession|requireDashboardSession/);
   assert.match(route, /getNominalApprovalAnalystSessionUser/);
-  assert.match(route, /APPROVAL_ANALYST[\s\S]*solo puede consultar solicitudes/);
+  assert.match(route, /APPROVAL_ANALYST[\s\S]*desistSolicitudAsApprovalAnalyst/);
   assert.match(route, /normalizeSolicitudFilters/);
   assert.match(route, /viewer|SolicitudViewer/);
   assert.match(route, /Cache-Control[\s\S]{0,100}no-store|no-store[\s\S]{0,100}Cache-Control/i);
@@ -1255,7 +1257,7 @@ test("la interfaz conserva filtros en URL y confirma el desistimiento", async ()
   assert.match(ui, /mode=correction/);
   assert.match(ui, /ConfirmDialog/);
   assert.match(ui, /identityReleased/);
-  assert.match(ui, /administrador central debe gestionarlos/);
+  assert.match(ui, /Es necesario gestionarlos antes de iniciar otra venta/);
   assert.match(ui, /style=\{\{ paddingLeft: "2\.5rem" \}\}/);
 });
 

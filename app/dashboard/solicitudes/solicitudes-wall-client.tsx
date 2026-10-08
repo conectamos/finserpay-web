@@ -471,7 +471,7 @@ export default function SolicitudesWallClient({
   }
 
   async function confirmDesist() {
-    if (!desistTarget) return;
+    if (!desistTarget || desisting) return;
     setDesisting(true);
     setNotice("");
     try {
@@ -490,7 +490,7 @@ export default function SolicitudesWallClient({
       setNotice(
         payload?.identityReleased
           ? "La solicitud fue desistida y dejó de bloquear una nueva venta."
-          : "La solicitud fue desistida, pero existen otros expedientes para esta cédula. El administrador central debe gestionarlos antes de iniciar otra venta."
+          : "La solicitud fue desistida, pero existen otros expedientes para esta cédula. Es necesario gestionarlos antes de iniciar otra venta."
       );
       updateUrl((params) => params.delete("id"));
       setReloadToken((value) => value + 1);
@@ -1114,7 +1114,7 @@ export default function SolicitudesWallClient({
       <ConfirmDialog
         open={Boolean(desistTarget)}
         title="Desistir esta solicitud"
-        description={`La solicitud ${desistTarget ? solicitudDisplayNumber(desistTarget) : "seleccionada"} se cerrará y conservará su historial. Si existen otros expedientes para la misma cédula, el administrador central deberá gestionarlos antes de iniciar otra venta.`}
+        description={`La solicitud ${desistTarget ? solicitudDisplayNumber(desistTarget) : "seleccionada"} se cerrará y conservará su historial. Si existen otros expedientes para la misma cédula, será necesario gestionarlos antes de iniciar otra venta.`}
         confirmLabel="Sí, desistir"
         danger
         busy={desisting}

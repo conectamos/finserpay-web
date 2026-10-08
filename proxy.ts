@@ -148,7 +148,7 @@ export function proxy(request: NextRequest) {
       APPROVAL_ANALYST_RETRY_RELEASE_ROUTE.test(pathname)
     );
   const approvalAnalystSolicitudesApi =
-    request.method === "GET" && pathname === "/api/solicitudes";
+    ["GET", "PATCH"].includes(request.method) && pathname === "/api/solicitudes";
   const approvalAnalystApi =
     approvalApi ||
     approvalAnalystRetryReleaseApi ||

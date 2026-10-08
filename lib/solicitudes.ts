@@ -554,6 +554,9 @@ export function getSolicitudActions(input: {
   const actions: SolicitudAction[] = ["VER_DETALLE"];
   if (input.viewer.kind === "APPROVAL_ANALYST") {
     actions.push("ABRIR_SOLICITUD");
+    if (input.source === "DRAFT" && input.state !== "CANCELADA") {
+      actions.push("DESISTIR");
+    }
     return actions;
   }
   if (input.source === "CREDIT") {

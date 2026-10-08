@@ -33,7 +33,15 @@ test("el diseño compartido dirige al analista al expediente y excluye operacion
   assert.match(html, /\/dashboard\/aprobaciones\/solicitudes\/draft-7\?returnTo=filtered/);
   for (const label of ["Ingresar", "Ver resumen", "Más filtros", "En proceso", "Rechazadas", "Cliente / Solicitud"]) assert.ok(html.includes(label));
   assert.ok(!html.includes("/dashboard/creditos?draft=7"));
-  assert.ok(!html.includes("Desistir"));
+  assert.ok(html.includes("Desistir solicitud"));
+  assert.ok(!html.includes("Cambio por garantía"));
+});
+
+test("el menú del analista no permite desistir si el servidor no autoriza la acción", () => {
+  const items = [{ ...props.list.items[0], source: "CREDIT", estado: "APROBADA", actions: ["ABRIR_SOLICITUD", "VER_DETALLE"] }];
+  const html = renderToStaticMarkup(React.createElement(View, { ...props, list: { ...props.list, items }, requestHref: () => "/dashboard/aprobaciones/solicitudes/C-7" }));
+  assert.ok(html.includes("Ver detalle"));
+  assert.ok(!html.includes("Desistir solicitud"));
 });
 
 test("el visor comercial conserva Continuar hacia la fábrica", () => {

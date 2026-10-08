@@ -83,7 +83,7 @@ export default function SolicitudesListView(props: Props) {
         {continuing && item.actions.includes("VER_DETALLE") && <button type="button" onClick={() => props.openDetail(item)}>Ver detalle</button>}
         {!analyst && !continuing && item.actions.includes("ABRIR_FABRICA") && <Link href={props.factoryHref(item)}>Abrir fábrica</Link>}
         {!analyst && item.actions.includes("CAMBIO_GARANTIA") && <Link href={props.replacementHref(item)}>Cambio por garantía</Link>}
-        {!analyst && item.actions.includes("DESISTIR") && <button type="button" className={styles.desist} onClick={() => props.desist(item)}><Ban aria-hidden="true" />Desistir</button>}
+        {item.actions.includes("DESISTIR") && <button type="button" className={styles.desist} onClick={() => props.desist(item)}><Ban aria-hidden="true" />Desistir solicitud</button>}
         {!item.actions.length && <span>Sin acciones disponibles</span>}
         {!continuing && item.actions.includes("VER_DETALLE") && item.actions.length === 1 && <button type="button" onClick={() => props.openDetail(item)}>Ver detalle</button>}
       </RowMenu>

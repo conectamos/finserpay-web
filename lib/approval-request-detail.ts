@@ -25,6 +25,7 @@ const DOCUMENTS = [
 type DetailRow = {
   data: unknown; media: unknown; seal: unknown; signatureStatus: string | null;
   signatureError: string | null; signedAt: Date | string | null; hasSignedDocument: boolean;
+  closedReason?: string | null; desistedAt?: Date | string | null; desistedByName?: string | null;
 };
 
 async function readRequestRow(source: "DRAFT" | "CREDIT", entityId: number) {
@@ -37,7 +38,9 @@ async function readRequestRow(source: "DRAFT" | "CREDIT", entityId: number) {
           WHERE entry.key=ANY($3::text[]) AND entry.value <> 'null'::jsonb AND entry.value <> '""'::jsonb) AS "media",
         signature."draftPayload"->'financialTermsSeal' AS "seal", signature."status" AS "signatureStatus",
         signature."lastError" AS "signatureError", signature."completedAt" AS "signedAt",
-        LEFT(COALESCE(signature."signedDocumentBase64",''),7)='JVBERi0' AS "hasSignedDocument"
+        LEFT(COALESCE(signature."signedDocumentBase64",''),7)='JVBERi0' AS "hasSignedDocument",
+        draft."closedReason", draft."closedAt" AS "desistedAt",
+        (SELECT "nombre" FROM "Usuario" WHERE "id"=draft."desistedByUserId") AS "desistedByName"
       FROM "CreditoBorrador" draft LEFT JOIN LATERAL (
         SELECT "draftPayload","status","lastError","completedAt","signedDocumentBase64"
         FROM "FirmaSeguroProcess" WHERE "draftId"=draft."id" AND "supersededAt" IS NULL
@@ -91,6 +94,11 @@ export async function getAnalystRequestDetail(idValue: string, userId: number): 
     id: event.key, label: event.label, status: event.status, at: event.at, detail: null, actor: null,
   }] : []);
   const actions: AnalystRequestDetail["actions"] = [];
+  const desistedAt = requestIso(row.desistedAt);
+  if (identity.source === "DRAFT" && ["DESISTIDA", "DESISTIDO"].includes(row.closedReason || "") && desistedAt) {
+    timeline.push({ id: "DESISTIDA", label: "Solicitud desistida", status: "DESISTIDA",
+      at: desistedAt, detail: "Solicitud cerrada; su historial se conserva.", actor: requestText(row.desistedByName) });
+  }
   if (identity.source === "DRAFT" && [data.analystDataCorrection, data.analystFinancialCorrection, data.analystEvidenceCorrection]
     .some(marker => Number(requestRecord(marker).revision) > 0)) {
     const corrections = await prisma.$queryRawUnsafe<Array<{

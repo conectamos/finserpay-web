@@ -225,7 +225,9 @@ test("las consultas PostgreSQL reales leen borrador/crédito, respetan el sello 
   const pg = new PGlite();
   t.after(() => pg.close());
   await pg.exec(`
-    CREATE TABLE "CreditoBorrador" ("id" INTEGER PRIMARY KEY, "payload" JSONB, "clienteTelefono" TEXT);
+    CREATE TABLE "CreditoBorrador" ("id" INTEGER PRIMARY KEY, "payload" JSONB, "clienteTelefono" TEXT,
+      "closedReason" TEXT, "closedAt" TIMESTAMPTZ, "desistedByUserId" INTEGER);
+    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY, "nombre" TEXT);
     CREATE TABLE "FirmaSeguroProcess" ("id" INTEGER PRIMARY KEY, "draftId" INTEGER, "creditoId" INTEGER,
       "draftPayload" JSONB, "status" TEXT, "lastError" TEXT, "completedAt" TIMESTAMPTZ,
       "signedDocumentBase64" TEXT, "supersededAt" TIMESTAMPTZ, "createdAt" TIMESTAMPTZ);
@@ -247,7 +249,7 @@ test("las consultas PostgreSQL reales leen borrador/crédito, respetan el sello 
   const draftPayload = { clienteTelefono: "3005556677", clienteCorreo: "ana@example.test", valorEquipoTotal: 99,
     cuotaInicial: 1, plazoMeses: 1, cuotaComercial: 10, frecuenciaPago: "MENSUAL", fechaPrimerPago: "2026-10-02",
     fotoRemisionDataUrl: "PRIVATE-PHOTO", providerPayload: "PRIVATE-PROVIDER", password: "PRIVATE-CREDENTIAL" };
-  await pg.query('INSERT INTO "CreditoBorrador" VALUES ($1,$2::jsonb,$3)', [7, JSON.stringify(draftPayload), "3001112233"]);
+  await pg.query('INSERT INTO "CreditoBorrador" ("id","payload","clienteTelefono") VALUES ($1,$2::jsonb,$3)', [7, JSON.stringify(draftPayload), "3001112233"]);
   await pg.query(`INSERT INTO "FirmaSeguroProcess" ("id","draftId","draftPayload","status","completedAt","signedDocumentBase64","createdAt")
     VALUES (1,7,$1::jsonb,'SIGNED','2026-10-07T12:00:00Z','JVBERi0=',CURRENT_TIMESTAMP)`, [JSON.stringify({ financialTermsSeal: seal })]);
   await pg.query(`INSERT INTO "FirmaSeguroProcess" ("id","draftId","draftPayload","status","supersededAt","createdAt")
@@ -305,6 +307,15 @@ test("las consultas PostgreSQL reales leen borrador/crédito, respetan el sello 
   await pg.exec('DELETE FROM "CreditoAmortizacion" WHERE "creditoId"=81');
   assert.equal((await detail.getAnalystRequestDetail("C-81", 17)).financial.installment, 90750,
     "el crédito histórico sin tabla de amortización conserva su cuota comercial guardada");
+  await pg.exec(`INSERT INTO "Usuario" VALUES (17,'Analista de prueba');
+    UPDATE "CreditoBorrador" SET "closedReason"='DESISTIDA',"closedAt"='2026-10-08T20:00:00Z',"desistedByUserId"=17 WHERE "id"=7`);
+  const closed = plain(await detail.getAnalystRequestDetail("D-7", 17));
+  assert.deepEqual(closed.timeline.find(event => event.id === "DESISTIDA"), {
+    id: "DESISTIDA", label: "Solicitud desistida", status: "DESISTIDA", at: "2026-10-08T20:00:00.000Z",
+    detail: "Solicitud cerrada; su historial se conserva.", actor: "Analista de prueba",
+  });
+  await pg.exec(`UPDATE "CreditoBorrador" SET "closedReason"='RECHAZADA' WHERE "id"=7`);
+  assert.ok(!(await detail.getAnalystRequestDetail("D-7", 17)).timeline.some(event => event.id === "DESISTIDA"));
 });
 
 test("las fechas calendario mantienen su día UTC aunque el almacenamiento incluya el offset de Bogotá", () => {
