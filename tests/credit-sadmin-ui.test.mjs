@@ -148,6 +148,20 @@ test("la pantalla SADMIN conserva el histórico completo y la exportación", asy
   h.unmount();
 });
 
+test("el acceso contextual SADMIN busca el número exacto con ceros y mantiene la edición cerrada", async () => {
+  const requests = [];
+  const h = mount(async (url, options = {}) => {
+    requests.push({ url, options });
+    return json(page([row(83)]));
+  }, { initialQuery: " 000030000085 " });
+  await h.flush();
+  assert.equal(requests[0].url, "/api/aprobaciones/sadmin?page=1&q=000030000085&status=all");
+  assert.equal(h.find(node => node.type === ui.Input && node.props.id === "sadmin-search").props.value, "000030000085");
+  assert.equal(h.all(node => node.type === "fieldset").length, 0);
+  assert.equal(requests.filter(request => request.options.method && request.options.method !== "GET").length, 0);
+  h.unmount();
+});
+
 test("el listado completo conserva contadores e historial y respeta un permiso de solo lectura", async () => {
   const requests = [];
   const historical = { ...row(81), canEditSadmin: false };

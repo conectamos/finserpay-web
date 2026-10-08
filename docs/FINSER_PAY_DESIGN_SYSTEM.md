@@ -59,6 +59,19 @@ Los tokens viven en `app/globals.css` bajo el prefijo `--fp-*`.
 
 ## Componentes compartidos
 
+### Centro del analista
+
+La referencia aprobada del Centro usa cabecera horizontal con `FinserBrand`,
+perfil nominal y dos grupos de accesos. Reutiliza la tipografia Roboto ya
+incluida en las pantallas aprobadas, los controles compartidos y los iconos
+Lucide. El fondo combina `--fp-client-bg` y `--fp-surface` para conservar el
+porcelana calido de la referencia; los neutros `#626660` y `#dedfdb` son los
+de la variante existente de analistas. Estos ajustes quedan limitados al
+contenedor nominal. Los accesos por enlace conservan su cabecera y alcance.
+La pantalla inicial solo presenta la consulta y los modulos; los expedientes
+y formularios se muestran tras una accion explicita. Los identificadores de
+los resultados nominales se muestran completos conforme a la referencia.
+
 Los componentes base se exportan desde `app/_components/finser-ui.tsx`:
 
 - `AppShell`, `Sidebar`, `Topbar` y `PageHeader` estructuran las pantallas.

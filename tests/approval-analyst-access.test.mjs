@@ -301,7 +301,7 @@ test("el login del analista devuelve destino acotado, cookie revocable y borra p
   const response = await f.api.POST(request({ usuario: f.user.usuario, clave: "test-login-passphrase" }));
   assert.equal(response.status, 200);
   const payload = await response.json();
-  assert.equal(payload.destination, "/dashboard/aprobaciones");
+  assert.equal(payload.destination, "/dashboard/aprobaciones/centro");
   assert.equal("claveHash" in payload.usuario, false);
   assert.equal(f.cookies.get("session").value, "");
   const analystCookie = f.cookies.get(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME);
@@ -422,10 +422,13 @@ test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout"
   const accountCookie = { [session.APPROVAL_ANALYST_SESSION_COOKIE_NAME]: "signed-analyst-cookie" };
   for (const [path, method] of [
     ["/dashboard/aprobaciones", "GET"],
+    ["/dashboard/aprobaciones/centro", "GET"],
+    ["/dashboard/aprobaciones/centro/gestiones", "GET"],
     ["/dashboard/aprobaciones/cambio-imei", "GET"],
     ["/dashboard/aprobaciones/solicitudes/D-7", "GET"],
     ["/dashboard/aprobaciones/solicitudes/C-81", "GET"],
     ["/api/aprobaciones", "GET"],
+    ["/api/aprobaciones/centro/buscar", "GET"],
     ["/api/aprobaciones/solicitudes/D-7/archivo/remision", "GET"],
     ["/api/aprobaciones/sadmin/7", "PATCH"],
     ["/api/solicitudes", "GET"],
@@ -458,7 +461,7 @@ test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout"
   for (const path of ["/dashboard", "/dashboard/financiero", "/dashboard/deuda-sedes", "/dashboard/creditos"]) {
     const response = proxyModule.proxy(proxyRequest(path, accountCookie));
     assert.equal(response.kind, "redirect", path);
-    assert.equal(response.pathname, "/dashboard/aprobaciones", path);
+    assert.equal(response.pathname, "/dashboard/aprobaciones/centro", path);
     assert.equal(response.search, "", path);
   }
 });

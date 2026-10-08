@@ -9,14 +9,12 @@ import {
   ChevronRight,
   ClipboardList,
   Clock3,
-  Database,
   FilePenLine,
   Filter,
   History,
   MoreHorizontal,
   RefreshCw,
   Search,
-  ShieldCheck,
   Smartphone,
   X,
 } from "lucide-react";
@@ -138,14 +136,6 @@ function operationHref(path: string, detail: ApprovalDetail) {
   return `${path}?buscar=${encodeURIComponent(lookup)}`;
 }
 
-const deskSections = [
-  { href: "/dashboard/aprobaciones", label: "Solicitudes", icon: ClipboardList },
-  { href: "/dashboard/aprobaciones/cambio-imei", label: "Cambio de IMEI", icon: Smartphone },
-  { href: "/dashboard/aprobaciones/firma-seguro", label: "Gestionar firma", icon: FilePenLine },
-  { href: "/dashboard/aprobaciones/liberar-consulta", label: "Liberar consulta", icon: ShieldCheck },
-  { href: "/dashboard/aprobaciones/sadmin", label: "Creación Sadmin", icon: Database },
-] as const;
-
 export default function AnalystApprovalWorkspace(props: Props) {
   const [searchText, setSearchText] = useState(props.query);
   const [allyFilter, setAllyFilter] = useState("");
@@ -222,6 +212,7 @@ export default function AnalystApprovalWorkspace(props: Props) {
           <div className="min-w-0">
             <h1 className="text-[clamp(1.75rem,2.4vw,2.35rem)] font-black tracking-[-0.035em]">Aprobaciones</h1>
             <p className="mt-1 text-sm text-[var(--fp-muted)] sm:text-base">Revisa y gestiona las solicitudes de crédito de nuestros aliados.</p>
+            <Link href="/dashboard/aprobaciones/solicitudes" className="mt-2 inline-flex min-h-10 items-center gap-2 rounded-md text-sm font-semibold text-[var(--fp-graphite)] underline decoration-[var(--fp-lime-strong)] underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime-strong)]"><ClipboardList className="h-4 w-4" aria-hidden="true" />Consultar solicitudes</Link>
           </div>
           <form
             role="search"
@@ -248,18 +239,6 @@ export default function AnalystApprovalWorkspace(props: Props) {
           </form>
         </div>
       </header>
-
-      <nav className="overflow-x-auto border-b border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 sm:px-6 lg:px-7 xl:px-8" aria-label="Gestiones de aprobaciones">
-        <div className="flex min-w-max">
-          {deskSections.map(({ href, label, icon: Icon }) => {
-            const active = href === "/dashboard/aprobaciones";
-            return <Link key={href} href={href} aria-current={active ? "page" : undefined}
-              className={`flex min-h-14 items-center gap-2 border-b-2 px-4 text-sm font-bold transition ${active ? "border-[var(--fp-lime)] bg-[var(--fp-lime-soft)] text-[var(--fp-graphite)]" : "border-transparent text-[var(--fp-muted)] hover:bg-[var(--fp-bg)] hover:text-[var(--fp-graphite)]"}`}>
-              <Icon className="h-4 w-4" aria-hidden="true" />{label}
-            </Link>;
-          })}
-        </div>
-      </nav>
 
       <div className="grid min-w-0 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <section className="min-w-0 border-b border-[var(--fp-border)] xl:border-b-0 xl:border-r" aria-label="Mesa de solicitudes">
@@ -398,6 +377,10 @@ export default function AnalystApprovalWorkspace(props: Props) {
               </div>
 
               <div hidden={detailTab !== "actions"} className="space-y-4 p-5">
+                {props.callPanel ? <details key={`welcome:${props.detail.id}`} className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)]">
+                  <summary className="min-h-11 cursor-pointer px-4 py-3 text-sm font-bold focus-visible:outline-2 focus-visible:outline-[var(--fp-lime-strong)]">Bienvenida</summary>
+                  <div className="p-3 pt-0">{props.callPanel}</div>
+                </details> : null}
                 <div className="grid gap-2">
                   <Button className="w-full" onClick={() => setFullReview(true)}><ClipboardList className="h-4 w-4" aria-hidden="true" />Ver expediente</Button>
                   <Link href={operationHref("/dashboard/aprobaciones/cambio-imei", props.detail)} className="fp-ui-button is-secondary w-full"><Smartphone className="h-4 w-4" aria-hidden="true" />Cambiar IMEI</Link>

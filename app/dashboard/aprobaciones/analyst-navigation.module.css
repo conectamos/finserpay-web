@@ -1,0 +1,32 @@
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-500.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-800.ttf") format("truetype"); font-weight: 800; font-display: swap; }
+.shell { --fp-muted: #626660; --fp-border: #dedfdb; min-height: 100vh; background: color-mix(in srgb, var(--fp-client-bg) 30%, var(--fp-surface)); color: var(--fp-graphite); font-family: "Finser Sale", Arial, sans-serif; }
+.header { height: 80px; padding: 0 52px; display: flex; justify-content: space-between; align-items: center; gap: 24px; background: linear-gradient(105deg, #242626, #191b1c); color: white; font-family: "Finser Sale", Arial, sans-serif; position: relative; z-index: 20; }
+.brand { display: block; flex-shrink: 0; }
+.brand p { font-family: inherit !important; font-weight: 800; font-size: 28px; letter-spacing: .005em; }
+.brand svg { width: 36px; height: 40px; }
+.account { display: flex; align-items: center; gap: 30px; }
+.account > div { position: relative; }
+.account details > div { left: auto; right: 0; width: 260px; }
+.notifications { display: grid; place-items: center; width: 40px; height: 40px; color: white; }
+.notifications svg { width: 25px; height: 25px; stroke-width: 1.7; }
+.profile { display: flex !important; align-items: center; gap: 14px; color: white; cursor: pointer; list-style: none; min-height: 48px; }
+.profile::-webkit-details-marker { display: none; }
+.avatar { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 50%; background: #e6e7e8; color: var(--fp-graphite); font-weight: 700; font-size: 16px; }
+.identity { display: grid; gap: 3px; font-size: 15px; }
+.identity strong { font-weight: 600; }
+.identity > span { color: #ced1d4; font-size: 13px; }
+.chevron { width: 18px; height: 18px; margin-left: 4px; }
+.menuIdentity { display: grid; gap: 4px; padding: 12px; border-bottom: 1px solid var(--fp-border); color: var(--fp-graphite); font-size: 14px; }
+.menuIdentity span { font-size: 12px; color: var(--fp-muted); }
+.logout { width: 100%; background: transparent !important; border: 0 !important; color: var(--fp-graphite) !important; justify-content: flex-start !important; border-radius: var(--fp-radius-sm) !important; }
+.help { color: var(--fp-graphite) !important; }
+.back { display: flex; align-items: center; gap: 8px; width: fit-content; min-height: 44px; margin: 20px 32px 4px; font-size: 14px; font-weight: 600; color: var(--fp-muted); }
+.back svg { width: 18px; height: 18px; }
+.back:hover { color: var(--fp-client-green); }
+.shell :global(.fp-workspace-topbar) { display: none; }
+.header a:focus-visible, .profile:focus-visible, .back:focus-visible { outline: 2px solid var(--fp-lime); outline-offset: 4px; }
+@media (max-width: 700px) { .header { height: 74px; padding: 0 16px; gap: 12px; } .brand p { font-size: 21px; } .brand svg { width: 29px; height: 34px; } .brand > div { gap: 5px; } .account { gap: 10px; } .notifications { display: none; } .avatar { width: 34px; height: 34px; font-size: 12px; } .profile { gap: 8px; } .identity { font-size: 12px; max-width: 110px; } .identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .identity > span { font-size: 11px; } .chevron { width: 14px; margin-left: 0; } .back { margin: 14px 16px 0; } }
+@media (max-width: 380px) { .identity { max-width: 72px; } .brand p { font-size: 18px; } .brand svg { width: 26px; } }

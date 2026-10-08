@@ -104,9 +104,9 @@ function redirectToDashboard(request: NextRequest) {
   return NextResponse.redirect(url);
 }
 
-function redirectToApprovals(request: NextRequest) {
+function redirectToAnalystCenter(request: NextRequest) {
   const url = request.nextUrl.clone();
-  url.pathname = "/dashboard/aprobaciones";
+  url.pathname = "/dashboard/aprobaciones/centro";
   url.search = "";
 
   return NextResponse.redirect(url);
@@ -190,7 +190,7 @@ export function proxy(request: NextRequest) {
   }
 
   if (hasApprovalAnalystSession && pathname !== "/aliados" && !approvalPage) {
-    return redirectToApprovals(request);
+    return redirectToAnalystCenter(request);
   }
 
   if (pathMatches(pathname, LEGACY_PAGE_PREFIXES)) {

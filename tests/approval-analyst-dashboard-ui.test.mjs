@@ -62,7 +62,12 @@ test("la mesa del analista conserva el expediente completo y sus accesos operati
   assert.match(source, /item\.status === "APPROVED" \? item\.approvedAt/);
   assert.match(source, /operationHref\("\/dashboard\/aprobaciones\/cambio-imei", props\.detail\)/);
   assert.match(source, /operationHref\("\/dashboard\/aprobaciones\/firma-seguro", props\.detail\)/);
-  assert.doesNotMatch(source, /\{props\.(?:callPanel|noveltyPanel|signaturePanel|approvalPanel)\}/);
+  assert.match(source, /href="\/dashboard\/aprobaciones\/solicitudes"/);
+  assert.match(source, /Consultar solicitudes/);
+  assert.doesNotMatch(source, /deskSections|Gestiones de aprobaciones/);
+  assert.match(source, />Bienvenida<\/summary>/);
+  assert.match(source, /\{props\.callPanel\}/);
+  assert.doesNotMatch(source, /\{props\.(?:noveltyPanel|signaturePanel|approvalPanel)\}/);
   assert.match(source, /type="date" value=\{dateFrom\}/);
   assert.match(source, /type="date" value=\{dateTo\}/);
   assert.match(source, /fetch\("\/api\/aprobaciones\/aliados"/);

@@ -7,6 +7,78 @@ import ts from "typescript";
 
 const read = path => readFileSync(new URL("../" + path, import.meta.url), "utf8");
 
+for (const panel of ["imei", "signature"]) test(`el enlace contextual de ${panel} consulta el crédito sin abrir su formulario ni modificarlo`, async () => {
+  const components = Object.fromEntries(["Badge", "Button", "Card", "Input", "LoadingState", "PageHeader", "Select", "StatusPill"]
+    .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
+  const slots = [], requests = [];
+  let hookIndex = 0, dirty = true, effects = [], tree;
+  const hooks = {
+    useState(initial) {
+      const index = hookIndex++;
+      slots[index] ||= { value: typeof initial === "function" ? initial() : initial };
+      return [slots[index].value, value => {
+        const next = typeof value === "function" ? value(slots[index].value) : value;
+        if (!Object.is(next, slots[index].value)) { slots[index].value = next; dirty = true; }
+      }];
+    },
+    useRef(value) { const index = hookIndex++; slots[index] ||= { current: value }; return slots[index]; },
+    useEffect(effect, deps) {
+      const index = hookIndex++;
+      if (!slots[index] || deps.some((value, part) => !Object.is(value, slots[index].deps[part]))) {
+        effects.push(() => { slots[index]?.cleanup?.(); slots[index] = { deps, cleanup: effect() }; });
+      }
+    },
+  };
+  const fixture = {
+    kind: "CREDIT", id: 18, number: "0000300085", clientName: "Cliente contextual", document: "0001234567",
+    phone: "3001234567", email: "qa@example.test", status: "FINALIZADO", equipment: "iPhone QA", imei: "000123456789012", timeline: [],
+    signature: { status: "SIGNED", processUuid: "signed-18", sentPhone: "3001234567", sentEmail: "qa@example.test" },
+    capabilities: { canChangeImei: true, canResendSignature: true }, replacement: null, remission: null,
+  };
+  const props = { mode: panel, preferredPanel: panel, initialCase: { kind: "CREDIT", id: 18 } };
+  const loaded = { exports: {} };
+  const node = (type, props) => ({ type, props });
+  runInNewContext(ts.transpileModule(read("app/dashboard/aprobaciones/approval-operations.tsx"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
+  }).outputText, {
+    module: loaded, exports: loaded.exports, AbortController, Intl, Date,
+    fetch: async (url, options = {}) => {
+      requests.push({ url, method: options.method || "GET" });
+      return { ok: true, json: async () => ({ ok: true, item: fixture }) };
+    },
+    require(name) {
+      if (name === "react") return hooks;
+      if (name === "react/jsx-runtime") return { jsx: node, jsxs: node, Fragment: "fragment" };
+      if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
+      if (name === "@/app/_components/finser-ui") return components;
+      if (name === "@/app/_components/finser-confirm-dialog") return { default: () => null };
+      if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
+      throw new Error("Unexpected import: " + name);
+    },
+  });
+  async function flush() {
+    for (let cycle = 0; cycle < 30; cycle++) {
+      if (dirty) { dirty = false; hookIndex = 0; effects = []; tree = loaded.exports.default(props); effects.forEach(effect => effect()); }
+      await setImmediate();
+      if (!dirty) return;
+    }
+    assert.fail("The contextual component did not settle");
+  }
+  const nodes = value => Array.isArray(value) ? value.flatMap(nodes) : !value || typeof value !== "object" ? [] : [value, ...nodes(value.props?.children)];
+  const text = value => Array.isArray(value) ? value.map(text).join(" ") : typeof value === "string" ? value : value && typeof value === "object" ? text(value.props?.children) : "";
+  await flush();
+  assert.ok(requests.some(request => request.url === "/api/aprobaciones/operativo/credit/18"));
+  assert.equal(nodes(tree).filter(node => node.props?.id === `approval-${panel === "imei" ? "imei" : "signature"}-panel`).length, 0);
+  const button = nodes(tree).find(node => node.type === components.Button && text(node.props.children).trim() === (panel === "imei" ? "Cambio de IMEI" : "FirmaSeguro"));
+  assert.ok(button);
+  button.props.onClick();
+  await flush();
+  assert.equal(nodes(tree).filter(node => node.props?.id === `approval-${panel === "imei" ? "imei" : "signature"}-panel`).length, 1);
+  if (panel === "imei") assert.equal(nodes(tree).find(node => node.props?.id === "approval-imei-reason").props.value, "Garantía");
+  assert.ok(requests.every(request => request.method === "GET"));
+  slots.forEach(slot => slot?.cleanup?.());
+});
+
 test("Aprobaciones abre el detalle con cuenta nominal y no ofrece SADMIN al analista", () => {
   const operations = () => null;
   const consoleView = () => null;

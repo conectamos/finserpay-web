@@ -95,7 +95,7 @@ export async function POST(req: Request) {
 
     const response = NextResponse.json({
       mensaje: "Login correcto",
-      destination: approvalAnalyst ? "/dashboard/aprobaciones" : "/dashboard",
+      destination: approvalAnalyst ? "/dashboard/aprobaciones/centro" : "/dashboard",
       usuario: {
         id: user.id,
         nombre: user.nombre,

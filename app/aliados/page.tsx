@@ -74,7 +74,7 @@ export default function AliadosLoginPage() {
       setMensaje(`Bienvenido ${data.usuario.nombre}`);
 
       window.setTimeout(() => {
-        router.push(data.destination === "/dashboard/aprobaciones" ? data.destination : "/dashboard");
+        router.push(data.destination === "/dashboard/aprobaciones/centro" || data.destination === "/dashboard/aprobaciones" ? data.destination : "/dashboard");
       }, 700);
     } catch {
       setMensajeTipo("error");

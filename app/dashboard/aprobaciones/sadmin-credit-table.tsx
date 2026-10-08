@@ -94,9 +94,10 @@ function emptyCopy(status: SadminStatusFilter, hasQuery: boolean) {
   return { title: "No hay créditos disponibles", description: "Los créditos aparecerán aquí cuando estén disponibles en cartera." };
 }
 
-export default function SadminCreditTable({ onBack }: { onBack: () => void }) {
-  const [filters, setFilters] = useState<{ page: number; query: string; status: SadminStatusFilter }>({ page: 1, query: "", status: "all" });
-  const [searchText, setSearchText] = useState("");
+export default function SadminCreditTable({ onBack, initialQuery = "" }: { onBack: () => void; initialQuery?: string }) {
+  const initialSearch = initialQuery.trim().slice(0, 100);
+  const [filters, setFilters] = useState<{ page: number; query: string; status: SadminStatusFilter }>({ page: 1, query: initialSearch, status: "all" });
+  const [searchText, setSearchText] = useState(initialSearch);
   const [data, setData] = useState<SadminPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

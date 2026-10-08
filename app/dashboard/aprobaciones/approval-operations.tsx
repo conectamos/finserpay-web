@@ -204,7 +204,7 @@ function EmptyCreditWorkspace({ notFound = false }: { notFound?: boolean }) {
   </Card>;
 }
 
-export default function ApprovalOperations({ onOpenApproval, active = true, mode = "all", preferredPanel = null, initialQuery = "", initialCase }: {
+export default function ApprovalOperations({ onOpenApproval, active = true, mode = "all", initialQuery = "", initialCase }: {
   onOpenApproval?: (creditId: number) => void;
   active?: boolean;
   mode?: OperationMode;
@@ -212,7 +212,6 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   initialQuery?: string;
   initialCase?: Pick<OperationalCaseSummary, "kind" | "id">;
 }) {
-  const focusedPanel = preferredPanel ?? (mode === "all" ? null : mode);
   const [query, setQuery] = useState(initialQuery.trim());
   const [results, setResults] = useState<OperationalCaseSummary[]>([]);
   const [selected, setSelected] = useState<OperationalCaseSummary | null>(null);
@@ -325,17 +324,6 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
     setRedirectReason("");
     redirectionRequest.current = null;
   }, [detail?.id, detail?.kind, detail?.signature.sentPhone, detail?.signature.sentEmail, detail?.phone, detail?.email]);
-
-  const detailIdentity = detail ? `${detail.kind}:${detail.id}` : "";
-
-  useEffect(() => {
-    if (!detailIdentity || !focusedPanel) return;
-    setActivePanel(focusedPanel);
-    if (focusedPanel === "imei") {
-      setReasonPreset("Garantía");
-      setReason("Garantía");
-    }
-  }, [detailIdentity, focusedPanel]);
 
   useEffect(() => {
     setIdentityInfo(null);

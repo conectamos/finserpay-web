@@ -10,8 +10,12 @@ export const metadata = {
   description: "Control de creación de créditos en SADMIN.",
 };
 
-export default async function ApprovalSadminPage() {
+export default async function ApprovalSadminPage({ searchParams }: {
+  searchParams: Promise<{ buscar?: string | string[] }>;
+}) {
   const user = await requireNominalApprovalDashboardAccess();
+  const params = await searchParams;
+  const initialQuery = (Array.isArray(params.buscar) ? params.buscar[0] : params.buscar || "").trim().slice(0, 100);
 
   return (
     <ApprovalDashboardShell
@@ -24,7 +28,7 @@ export default async function ApprovalSadminPage() {
         userName={user.nombre}
         userRole={user.rolNombre}
       />
-      <ApprovalSadminRoute />
+      <ApprovalSadminRoute initialQuery={initialQuery} />
     </ApprovalDashboardShell>
   );
 }
