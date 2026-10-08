@@ -1,6 +1,7 @@
 import { syncAllCreditMora } from "@/lib/credit-mora-sync";
 import { runCreditDueReminders } from "@/lib/credit-due-reminders";
 import { runCreditOverdueDataCampaign } from "@/lib/credit-overdue-data-campaign";
+import { dispatchCreditWelcomeVoice } from "@/lib/credit-welcome-voice-dispatch";
 import {
   processPendingDeviceUnlockCommands,
   recoverRecentApprovedWompiUnlockCommands,
@@ -19,7 +20,7 @@ import {
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
 const MERCHANT_APPLICATION_INTERVAL_MINUTES = 5;
-type InternalCronTask = ScheduledInternalCronTask | "merchant-applications";
+type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -131,6 +132,12 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "credit-welcome-voice") {
+      const summary = await dispatchCreditWelcomeVoice({ limit: 5 });
+      if (summary.selected > 0) logCron("Bienvenidas de voz procesadas.", summary);
+      completed = true;
+      return;
+    }
     if (taskName === "credit-overdue-data") {
       const result = await runCreditOverdueDataCampaign({ dryRun: false });
       completed = result.enabled && result.configured && result.inWindow;
@@ -204,7 +211,9 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    if (taskName === "credit-overdue-data") {
+    if (taskName === "credit-welcome-voice") {
+      console.error("[finserpay-cron] No se pudo procesar la cola de bienvenidas de voz.");
+    } else if (taskName === "credit-overdue-data") {
       console.error("[finserpay-cron] No se pudo procesar la campana Datos de clientes en mora.");
     } else if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
       console.error("[finserpay-cron] No se pudo procesar la cola de recordatorios de cuotas.");
@@ -241,6 +250,10 @@ async function tick() {
   }
   const moraEffectiveDate = getMoraEffectiveDate(dateKey);
 
+  // The locked outbox prevents duplicate calls across instances. Launch it
+  // independently so provider latency cannot delay payment/device tasks.
+  void runScheduledTask("credit-welcome-voice", `credit-welcome-voice:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
+
   await runScheduledTask(
     "unlock",
     `unlock:${dateKey}:${timeKey}:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`,
@@ -262,6 +275,7 @@ async function tick() {
 async function runStartupRecovery() {
   const { dateKey, timeKey } = getBogotaClock();
   const moraEffectiveDate = getMoraEffectiveDate(dateKey);
+  void runScheduledTask("credit-welcome-voice", `credit-welcome-voice:startup:${dateKey}:${timeKey}`);
 
   try {
     const recovered = await recoverRecentApprovedWompiUnlockCommands({

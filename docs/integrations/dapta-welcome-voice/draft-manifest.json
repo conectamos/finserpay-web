@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "drafts": [
+    {
+      "file": "identity-flow.draft.json",
+      "name": "Verificar identidad — Bienvenida de voz",
+      "deployableAfterFreshPreview": true
+    },
+    {
+      "file": "call-flow.draft.json",
+      "name": "Llamada de bienvenida al crear crédito",
+      "deployableAfterFreshPreview": false
+    }
+  ],
+  "workspaceId": "7496b9a3-2fe6-4e28-8411-7d54ee788b2c",
+  "nativeTemplateId": "a9bb5e23-e7f9-4f16-b382-5e062db2b10c",
+  "pendingAgentUUID": "NEW_WELCOME_VOICE_AGENT_UUID",
+  "caller": "+573124085562",
+  "rehydrateTemplateFields": [
+    "api_nodes.2.api_action.external_api_action.url",
+    "api_nodes.2.api_action.custom_action.attributes.0.dynamicLoad.external_api_action.url",
+    "api_nodes.2.api_action.custom_action.attributes.2.dynamicLoad.external_api_action.url",
+    "api_nodes.2.api_action.custom_action.attributes.3.dynamicLoad.external_api_action.url"
+  ],
+  "rehydrationInstructions": [
+    "Get the native template by UUID again through Dapta MCP. Replace the entire native api_action with template_data, then restore custom_action.values, on_error, and response mappings from the draft.",
+    "Preserve native custom_action.attributes, dynamicLoad, selector configuration, template_id, and from_template. Never save raw catalog URLs containing credentials to this repository.",
+    "Replace agent_id with the UUID of the new welcome voice agent. Never reuse the Cobranza agent. Confirm the new agent is linked to an allowed outbound caller.",
+    "Validate again, then preview with auto_layout=all. This draft does not authorize committing or executing a flow."
+  ],
+  "identityBackend": {
+    "method": "POST",
+    "url": "https://finserpay.com/api/integraciones/dapta/bienvenida-voz/identidad",
+    "input": [
+      "event_token",
+      "customer_name",
+      "customer_document"
+    ],
+    "auth": "Per-event HMAC token from FINSERPAY, maximum 24 h. No HMAC secret is stored in Dapta or these files.",
+    "success": "ok=true, verificado=true, condiciones object",
+    "mismatch": "ok=true, verificado=false, condiciones=null",
+    "failure": "ok=false, verificado=false, condiciones=null, code=IDENTITY_UNAVAILABLE"
+  },
+  "callInput": [
+    "event_id",
+    "credito_id",
+    "event_token",
+    "to_number"
+  ],
+  "callVariables": [
+    "event_id",
+    "credito_id",
+    "event_token"
+  ],
+  "nativeOutputMapping": {
+    "response": "response.result",
+    "error": "response.error"
+  },
+  "dispatcherReceipt": {
+    "location": "Dapta HTTP response.response (runtime wrapper), or direct response body if available",
+    "created": {
+      "ok": true,
+      "call_id": "<native provider call ID>",
+      "code": null
+    },
+    "knownError": {
+      "ok": false,
+      "call_id": null,
+      "code": "NATIVE_CALL_ERROR"
+    },
+    "unknown": {
+      "ok": false,
+      "call_id": null,
+      "code": "NATIVE_CALL_UNKNOWN"
+    },
+    "rule": "A native result.call_id produces boolean ok=true only after recursive rejection of error/errors/node_errors, explicit ok=false/success=false, and failed statuses in every sibling or wrapper. HTTP 200 alone is never acceptance. Unknown response must not trigger a duplicate customer call."
+  },
+  "wiring": {
+    "identity": "trgId -> nrmId -> qryId -> chkId -> rspId",
+    "call": "trgCl -> nrmCl -> natCl -> chkCl -> rspCl"
+  },
+  "limitations": [
+    "Native call receipt shape has not been live-tested; unknown native output is conservatively rejected.",
+    "No agent or flow has been created, committed, or executed.",
+    "Dapta public route URLs and preview tokens are intentionally not included.",
+    "The guide documents response_params mapping but does not guarantee interpolation types. Code exports genuine booleans; the exact dynamic HTTP response type is not live-tested, so the dispatcher requires strict boolean true."
+  ]
+}

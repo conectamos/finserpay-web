@@ -6,6 +6,7 @@ import { Badge, Button, Card, Input, LoadingState, PageHeader, Select, StatusPil
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import type { OperationalCaseDetail, OperationalCaseSummary } from "@/lib/approval-operations-types";
 import styles from "./approval-operations.module.css";
+import CreditWelcomeVoiceResult from "./credit-welcome-voice-result";
 
 type Operation = "imei" | "contact" | "signature" | "remission" | "identity";
 type ActivePanel = "imei" | "signature" | "identity" | null;
@@ -927,7 +928,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
       {notice ? <p className={styles.notice} role="status"><CheckCircle2 size={19} aria-hidden="true" />{notice}</p> : null}
       {actionError ? <p className={styles.error} role="alert">{actionError}</p> : null}
       <div className={styles.columns}>
-        <CaseSummary detail={detail} />
+        <div className="min-w-0 space-y-6"><CaseSummary detail={detail} />{detail.kind === "CREDIT" ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}</div>
         <section className={styles.operationWorkspace} aria-label="Gestiones del crédito">
           <div className={styles.operationActions} role="group" aria-label="Gestiones disponibles">
             {mode !== "signature" ? <Button variant="secondary" className={`${styles.operationAction} ${activePanel === "imei" ? styles.operationActionActive : ""}`}

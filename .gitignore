@@ -13,6 +13,7 @@
 # testing
 /coverage
 /tmp/pdfs/
+/tmp/voice-identity-preview.private.json
 
 # next.js
 /.next/

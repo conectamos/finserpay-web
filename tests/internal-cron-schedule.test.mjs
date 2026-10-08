@@ -7,12 +7,17 @@ const campaigns = ["credit-due-reminders", "credit-due-today-reminders", "credit
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, initialBatchDate } = {}) {
+function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, initialBatchDate,
+  welcomeEnabled = false, holdWelcome = false, failWelcome = false, cronEnabled = true } = {}) {
   let clock = new Date(now);
   let timerCallback;
   let paused = hold;
+  let welcomePaused = holdWelcome;
   const calls = [];
+  const welcomeCalls = [];
+  const operationalCalls = [];
   const releases = [];
+  const welcomeReleases = [];
   const logs = [];
   const errors = [];
   const scope = {};
@@ -35,18 +40,28 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     "@/lib/credit-overdue-data-campaign": {
       runCreditOverdueDataCampaign: options => runCampaign("credit-overdue-data", options),
     },
-    "@/lib/device-unlock-queue": {
-      processPendingDeviceUnlockCommands: async () => ({ processed: 0 }),
-      recoverRecentApprovedWompiUnlockCommands: async () => ({ recovered: 0 }),
+    "@/lib/credit-welcome-voice-dispatch": {
+      dispatchCreditWelcomeVoice: async options => {
+        welcomeCalls.push(plain(options));
+        // Existing campaign regressions keep the voice feature disabled by default.
+        if (!welcomeEnabled) return { configured: false, selected: 0, accepted: 0, unknown: 0, skipped: 0 };
+        if (failWelcome) throw new Error("private customer document token webhook credential");
+        if (welcomePaused) await new Promise(resolve => welcomeReleases.push(resolve));
+        return { configured: true, selected: 1, accepted: 1, unknown: 0, skipped: 0 };
+      },
     },
-    "@/lib/efecty-recaudos": { syncEfectyRecaudosFromSftp: async () => ({ ok: true }) },
-    "@/lib/wompi-reconciliation": { reconcilePendingWompiPayments: async () => ({ ok: true }) },
+    "@/lib/device-unlock-queue": {
+      processPendingDeviceUnlockCommands: async options => { operationalCalls.push({ name: "unlock", options: plain(options) }); return { processed: 0 }; },
+      recoverRecentApprovedWompiUnlockCommands: async options => { operationalCalls.push({ name: "recover-unlock", options: plain(options) }); return { recovered: 0 }; },
+    },
+    "@/lib/efecty-recaudos": { syncEfectyRecaudosFromSftp: async () => { operationalCalls.push({ name: "efecty" }); return { ok: true }; } },
+    "@/lib/wompi-reconciliation": { reconcilePendingWompiPayments: async () => { operationalCalls.push({ name: "wompi" }); return { ok: true }; } },
     "@/lib/merchant-applications": { getMerchantMailConfig: () => null },
     "@/lib/merchant-applications-storage": { retryMerchantApplications: async () => ({ selected: 0 }) },
     "@/lib/internal-cron-schedule": schedule,
   }, {
     Date: Clock, Intl, globalThis: scope,
-    process: { env: { FINSERPAY_INTERNAL_CRON: "true", ...(initialBatchDate ? { DAPTA_DATOS_INITIAL_BATCH_DATE: initialBatchDate } : {}) } },
+    process: { env: { FINSERPAY_INTERNAL_CRON: String(cronEnabled), ...(initialBatchDate ? { DAPTA_DATOS_INITIAL_BATCH_DATE: initialBatchDate } : {}) } },
     setInterval: callback => { timerCallback = callback; return { unref() {} }; },
     console: { log: (...args) => logs.push(args), error: (...args) => errors.push(args) },
   });
@@ -55,7 +70,8 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     tick: () => timerCallback(),
     setClock: value => { clock = new Date(value); },
     release: () => { paused = false; releases.splice(0).forEach(resolve => resolve()); },
-    calls, logs, errors, state: () => scope.__finserpayInternalCron,
+    releaseWelcome: () => { welcomePaused = false; welcomeReleases.splice(0).forEach(resolve => resolve()); },
+    calls, welcomeCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
   };
 }
 
@@ -162,4 +178,84 @@ test("first-batch recovery inside the usual window does not add Datos twice", as
   f.start();
   await nextTurn();
   assert.deepEqual(f.calls.map(call => call.name), campaigns);
+});
+
+test("disabled voice feature is a no-op at startup and ticks while internal-cron disable prevents all dispatch", async () => {
+  const f = cronFixture();
+  f.start(); await nextTurn();
+  assert.deepEqual(f.welcomeCalls, [{ limit: 5 }]);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.logs.some(log => String(log[0]).includes("Bienvenidas de voz procesadas")), false);
+  f.tick(); await nextTurn();
+  assert.equal(f.welcomeCalls.length, 2);
+  assert.equal(f.logs.some(log => String(log[0]).includes("Bienvenidas de voz procesadas")), false);
+  assert.equal(f.state().running.has("credit-welcome-voice"), false);
+  const disabled = cronFixture({ cronEnabled: false, welcomeEnabled: true });
+  disabled.start(); await nextTurn();
+  assert.deepEqual(disabled.welcomeCalls, []); assert.deepEqual(disabled.operationalCalls, []);
+  assert.equal(disabled.state().started, false);
+});
+
+test("startup starts voice dispatch independently and a slow call cannot block unlocks, Wompi or due campaigns", async () => {
+  const f = cronFixture({ now: "2026-10-08T15:00:00Z", welcomeEnabled: true, holdWelcome: true });
+  f.start(); await nextTurn();
+  assert.deepEqual(f.welcomeCalls, [{ limit: 5 }]);
+  assert.equal(f.state().running.has("credit-welcome-voice"), true);
+  assert.deepEqual(f.calls.map(call => call.name), campaigns);
+  assert.ok(f.operationalCalls.some(call => call.name === "recover-unlock"));
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+  assert.ok(f.operationalCalls.some(call => call.name === "wompi"));
+  for (const task of campaigns) assert.ok(f.state().completed.has(task + ":2026-10-08"));
+  assert.equal(f.state().completed.has("credit-welcome-voice:startup:2026-10-08:10:00"), false);
+  f.releaseWelcome(); await nextTurn();
+  assert.equal(f.state().running.has("credit-welcome-voice"), false);
+  assert.ok(f.state().completed.has("credit-welcome-voice:startup:2026-10-08:10:00"));
+});
+
+test("voice timer dispatch retains its running lock across ticks and dedupes a completed thirty-second slot", async () => {
+  const f = cronFixture({ welcomeEnabled: true, holdWelcome: true });
+  f.start(); await nextTurn();
+  f.tick(); f.tick(); await nextTurn();
+  assert.equal(f.welcomeCalls.length, 1);
+  f.setClock("2026-10-07T21:00:30Z"); f.tick(); await nextTurn();
+  assert.equal(f.welcomeCalls.length, 1);
+  assert.equal(f.state().running.has("credit-welcome-voice"), true);
+  f.releaseWelcome(); await nextTurn();
+  f.tick(); await nextTurn();
+  const slot = Math.floor(new Date("2026-10-07T21:00:30Z").getTime() / 30_000);
+  assert.equal(f.welcomeCalls.length, 2);
+  assert.ok(f.state().completed.has(`credit-welcome-voice:${slot}`));
+  f.tick(); await nextTurn(); assert.equal(f.welcomeCalls.length, 2);
+  f.setClock("2026-10-07T21:01:00Z"); f.tick(); await nextTurn();
+  assert.equal(f.welcomeCalls.length, 3);
+  assert.deepEqual(f.welcomeCalls, [{ limit: 5 }, { limit: 5 }, { limit: 5 }]);
+});
+
+test("a timer starts voice dispatch even when the three due campaigns remain busy", async () => {
+  const f = cronFixture({ hold: true, welcomeEnabled: true });
+  f.start(); await nextTurn();
+  f.setClock("2026-10-08T15:00:00Z"); f.tick(); await nextTurn();
+  assert.deepEqual(f.calls.map(call => call.name), campaigns);
+  for (const task of campaigns) assert.ok(f.state().running.has(task));
+  assert.equal(f.welcomeCalls.length, 2);
+  assert.equal(f.state().running.has("credit-welcome-voice"), false);
+  assert.equal(f.logs.filter(log => String(log[0]).includes("Bienvenidas de voz procesadas")).length, 2);
+  f.release(); await nextTurn();
+});
+
+test("voice dispatch errors release the lock, remain sanitized and cannot prevent other campaigns from completing", async () => {
+  const f = cronFixture({ now: "2026-10-08T15:00:00Z", welcomeEnabled: true, failWelcome: true });
+  f.start(); await nextTurn();
+  assert.deepEqual(f.calls.map(call => call.name), campaigns);
+  for (const task of campaigns) assert.ok(f.state().completed.has(task + ":2026-10-08"));
+  assert.equal(f.state().running.has("credit-welcome-voice"), false);
+  assert.equal([...f.state().completed].some(key => key.startsWith("credit-welcome-voice:")), false);
+  assert.equal(f.errors.length, 1);
+  assert.match(JSON.stringify(f.errors), /cola de bienvenidas de voz/);
+  assert.doesNotMatch(JSON.stringify(f.errors), /private|customer|document|token|webhook|credential/);
+  f.tick(); await nextTurn();
+  assert.equal(f.welcomeCalls.length, 2);
+  assert.equal(f.calls.length, 3);
+  assert.equal(f.errors.length, 2);
+  assert.equal(f.state().running.has("credit-welcome-voice"), false);
 });

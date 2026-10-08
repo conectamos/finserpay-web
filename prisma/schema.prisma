@@ -416,6 +416,7 @@ model Credito {
   eventosSadmin                  CreditSadminEvent[]
   recordatoriosCuota             CreditDueReminder[]
   intentosCampanaDatos           CreditOverdueDataAttempt[]
+  llamadasBienvenidaVoz          CreditWelcomeVoiceEvent[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -932,6 +933,34 @@ model LiquidacionAliadoCredito {
   @@index([liquidacionId, plataforma])
   @@index([plataforma, fechaCredito])
   @@index([estado, createdAt])
+}
+
+model CreditWelcomeVoiceEvent {
+  id                 String   @id @db.Uuid
+  creditoId          Int
+  type               String   @default("BIENVENIDA_VOZ") @db.VarChar(32)
+  source             String   @db.VarChar(32)
+  status             String   @db.VarChar(16)
+  snapshot           Json?
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @default(now()) @db.Timestamptz(3)
+  dispatchedAt       DateTime? @db.Timestamptz(3)
+  acceptedAt         DateTime? @db.Timestamptz(3)
+  completedAt        DateTime? @db.Timestamptz(3)
+  providerCallId     String?  @unique @db.VarChar(160)
+  identityAttempts   Int      @default(0)
+  identityVerifiedAt DateTime? @db.Timestamptz(3)
+  durationSeconds    Float?
+  summary            String?
+  doubts             String?
+  transcript         String?
+  recordingUrl       String?
+  resultCode         String?  @db.VarChar(64)
+  resultHash         String?  @db.VarChar(64)
+  credito            Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([creditoId, type], map: "CreditWelcomeVoiceEvent_credit_type_key")
+  @@index([status, createdAt, id], map: "CreditWelcomeVoiceEvent_pending_idx")
 }
 
 model CreditoAbono {

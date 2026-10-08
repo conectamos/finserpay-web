@@ -1,5 +1,6 @@
 import { readImportCustomer } from "@/lib/mass-credit-customer";
 import { sendDaptaWelcome } from "@/lib/dapta-welcome";
+import { enqueueCreditWelcomeVoice, ensureCreditWelcomeVoiceSchema } from "@/lib/credit-welcome-voice-store";
 import {
   ensureSecondCreditAuthorizationSchema,
   getSecondCreditEligibility,
@@ -904,6 +905,7 @@ export async function POST(req: Request) {
       ...(welcomeOnCreate ? { welcomeOnCreate: true } : {}),
     })).digest("hex");
     await ensureCreditDeviceReplacementSchema();
+    if (welcomeOnCreate && process.env.DAPTA_WELCOME_VOICE_ENABLED === "true") await ensureCreditWelcomeVoiceSchema();
     const outcome = await prisma.$transaction(async (tx) => {
       // Replaying a confirmed request returns its original receipt, even after a
       // lost HTTP response. The lock also serializes concurrent double clicks.
@@ -1042,6 +1044,7 @@ export async function POST(req: Request) {
       }
 
       const first = created[0];
+      if (welcomeOnCreate) await enqueueCreditWelcomeVoice(tx, { creditId: first.id, source: "INDIVIDUAL_IMPORT" });
       return {
         response: committedResponse(created),
         welcome: welcomeOnCreate ? {
