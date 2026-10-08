@@ -4411,6 +4411,7 @@ export default function CreditFactoryConsole({
         Object.prototype.hasOwnProperty.call(payload, "wizardStep") || payload.__analystEvidenceLoaded === true) : null;
     if (!update && !financialUpdate && !evidenceUpdate) return;
     cancelPendingDraftAutosave();
+    if (hasAuditedCreditIdentityCorrection(payload)) auditedIdentityCorrectionRef.current = true;
     if (update) {
       analystDataSnapshotRef.current = update.snapshot;
       setAnalystDataRevision(update.snapshot.revision);
@@ -4432,14 +4433,16 @@ export default function CreditFactoryConsole({
         birthDate: values.clienteFechaNacimiento ?? clienteFechaNacimiento,
         issueDate: clienteFechaExpedicion,
       });
-      setContratoFotoDataUrl("");
-      setContratoFotoAudit(null);
-      setIphoneSelfieCedulaDataUrl("");
-      setIphoneSelfieCedulaAudit(null);
-      setContratoCedulaFrenteDataUrl("");
-      setContratoCedulaFrenteAudit(null);
-      setContratoCedulaRespaldoDataUrl("");
-      setContratoCedulaRespaldoAudit(null);
+      if ((payload.analystDataCorrection as Record<string, unknown> | undefined)?.preserveIdentityEvidence !== true) {
+        setContratoFotoDataUrl("");
+        setContratoFotoAudit(null);
+        setIphoneSelfieCedulaDataUrl("");
+        setIphoneSelfieCedulaAudit(null);
+        setContratoCedulaFrenteDataUrl("");
+        setContratoCedulaFrenteAudit(null);
+        setContratoCedulaRespaldoDataUrl("");
+        setContratoCedulaRespaldoAudit(null);
+      }
     }
     if (values.clientePrimerNombre !== undefined) setClientePrimerNombre(values.clientePrimerNombre);
     if (values.clienteSegundoApellido !== undefined) setClienteSegundoApellido(values.clienteSegundoApellido);
@@ -4450,6 +4453,14 @@ export default function CreditFactoryConsole({
     if (values.clienteDireccion !== undefined) setClienteDireccion(values.clienteDireccion);
     if (values.clienteDepartamento !== undefined) setClienteDepartamento(values.clienteDepartamento);
     if (values.clienteCiudad !== undefined) setClienteCiudad(values.clienteCiudad);
+    if (update && payload.firmaSeguroClientCorrectionPending === true) {
+      // Never let an old browser tab continue with the replaced signed contract.
+      firmaSeguroRefreshGenerationRef.current += 1;
+      setFirmaSeguroDraftProcess((payload.__analystFirmaSeguroProcess as FirmaSeguroProcess | null | undefined) || null);
+      setWizardStep(4);
+      setDeliveryValidation(null);
+      setPersistedIphoneClosureFingerprint("");
+    }
     if (financialUpdate) {
       analystFinancialSnapshotRef.current = financialUpdate.snapshot;
       setAnalystFinancialRevision(financialUpdate.snapshot.revision);
@@ -5801,6 +5812,7 @@ export default function CreditFactoryConsole({
     if (
       identityCorrectionPending ||
       currentPayload.firmaSeguroCorrectionPending === true ||
+      currentPayload.firmaSeguroClientCorrectionPending === true ||
       currentPayload.firmaSeguroFinancialCorrectionPending === true
     ) {
       setWizardStep(4);
@@ -8119,7 +8131,7 @@ export default function CreditFactoryConsole({
       copiedFields += 1;
       setClienteTipoDocumento(normalizeVeriffDocumentType(identity.documentType));
     }
-    if (birthDate) {
+    if (birthDate && !auditedIdentityCorrectionRef.current) {
       copiedFields += 1;
       setClienteFechaNacimiento(birthDate);
     }
@@ -11938,8 +11950,18 @@ export default function CreditFactoryConsole({
           `/api/creditos/borradores?id=${currentDraftId}&datosAnalista=1`,
           { signal, cache: "no-store", timeoutMs: 10_000 },
         );
-        const draft = result.ok && result.data?.item?.id === currentDraftId ? result.data.item : null;
+        let draft = result.ok && result.data?.item?.id === currentDraftId ? result.data.item : null;
         if (!draft) return null;
+        const clientSnapshot = analystDataSnapshotRef.current;
+        if (draft.payload?.firmaSeguroClientCorrectionId && clientSnapshot &&
+          Number(draft.payload.analystDataRevision || 0) > clientSnapshot.revision) {
+          const signature = await requestJson<FirmaSeguroResponse>(
+            `/api/creditos/borradores/${currentDraftId}/firma-seguro`,
+            { signal, cache: "no-store", timeoutMs: 20_000 },
+          );
+          draft = { ...draft, payload: { ...draft.payload,
+            __analystFirmaSeguroProcess: signature.ok ? signature.data?.process || null : null } };
+        }
         const evidenceSnapshot = analystEvidenceSnapshotRef.current;
         if (evidenceSnapshot && hasPendingAnalystDraftEvidence(evidenceSnapshot, currentDraftId, draft.payload || {})) {
           // Attachment bytes are downloaded once for a new analyst revision,
@@ -11949,7 +11971,9 @@ export default function CreditFactoryConsole({
             { signal, cache: "no-store", timeoutMs: 20_000 },
           );
           return full.ok && full.data?.item?.id === currentDraftId
-            ? { ...full.data.item, payload: { ...full.data.item.payload, __analystEvidenceLoaded: true } } : draft;
+            ? { ...full.data.item, payload: { ...full.data.item.payload, __analystEvidenceLoaded: true,
+              __analystFirmaSeguroProcess: full.data.item.payload?.analystDataRevision === draft.payload?.analystDataRevision
+                ? draft.payload?.__analystFirmaSeguroProcess : undefined } } : draft;
         }
         return draft;
       },

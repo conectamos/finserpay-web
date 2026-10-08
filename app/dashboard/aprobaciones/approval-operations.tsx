@@ -628,6 +628,8 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           expectedProcessUuid: target.signature.processUuid, confirmed: true, ...approvalGuard }),
       }, firstSend ? "No fue posible enviar la firma." : "No fue posible confirmar el reenvío de firma.");
       const message = result.operation?.message || result.message || "Solicitud de firma registrada. Consulta el estado actualizado.";
+      // FAILED_SAFE is terminal and confirms no dispatch; an explicit retry needs a fresh ledger operation.
+      if (result.operation?.status === "FAILED_SAFE") operationKeys.current.signature = null;
       if (technicalOperation(result.operation?.status)) setActionError(message);
       else {
         setNotice(message);

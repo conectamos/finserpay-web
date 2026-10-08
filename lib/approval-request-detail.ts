@@ -105,7 +105,7 @@ export async function getAnalystRequestDetail(idValue: string, userId: number): 
       id: string; createdAt: Date | string; actorName: string; reason: string; status: string;
     }>>(`SELECT "id"::text,"createdAt","actorName","reason","status" FROM "ApprovalOperationalAction"
       WHERE "targetKind"='DRAFT' AND "targetId"=$1 AND "eventType"='CONTACT_UPDATED'
-        AND "status" IN ('DATA_CORRECTED','FINANCIAL_CORRECTED','EVIDENCE_CORRECTED') ORDER BY "createdAt" DESC LIMIT 50`, identity.entityId);
+        AND "status" IN ('DATA_CORRECTED','FINANCIAL_CORRECTED','EVIDENCE_CORRECTED','PENDING_REISSUE') ORDER BY "createdAt" DESC LIMIT 50`, identity.entityId);
     for (const correction of corrections) {
       const at = requestIso(correction.createdAt);
       const label = correction.status === "FINANCIAL_CORRECTED" ? "Condiciones corregidas"

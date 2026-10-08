@@ -652,6 +652,9 @@ const FIRMASEGURO_SIGNED_DRAFT_FIELDS = [
   "clienteTelefono",
   "clienteCorreo",
   "clienteDireccion",
+  "clienteFechaNacimiento",
+  "clienteDepartamento",
+  "clienteCiudad",
   "equipoCatalogoId",
   "equipoMarca",
   "equipoModelo",
@@ -1246,6 +1249,13 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
             canResumeConflict ? conflicting.id : null
           );
         }
+        // Client-corrected drafts must resume by id so the operation lock is
+        // acquired before identity locks. This legacy no-id path cannot race
+        // a signature dispatch or overwrite its exact payload snapshot.
+        if (conflicting.payload?.firmaSeguroClientCorrectionPending === true ||
+          conflicting.payload?.firmaSeguroClientCorrectionReissueProcessUuid) {
+          throw new ActiveSolicitudConflictError(undefined, conflicting.id);
+        }
         targetId = conflicting.id;
         targetRow = conflicting;
       }
@@ -1290,6 +1300,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       canonical.clienteDocumento,
       canonical.payload.clienteDocumento,
     );
+    const clientCorrectionPending = targetRow?.payload?.firmaSeguroClientCorrectionPending === true;
     const storedCorrectionId = String(
       targetRow?.payload?.firmaSeguroCorrectionId || ""
     ).trim();
@@ -1463,6 +1474,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     }
     const deliveryEvidenceScope = Boolean(
       targetRow &&
+        !clientCorrectionPending &&
         !identityCorrectionPending &&
         !imeiReissueAwaitingSignature &&
         firmaSeguroTermsLocked &&
@@ -1507,7 +1519,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       storedStep
     );
     const incomingStep = normalizeDraftStep(input.currentStep);
-    const persistedStep = financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature
+    const persistedStep = clientCorrectionPending || financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature
       ? 4
       : Math.max(storedStep, storedPayloadStep, incomingStep);
     const storedImei = normalizeDigits(targetRow?.imei);
@@ -1643,7 +1655,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         normalizePlatform(input.plataforma),
         canonical.dataCreditoAssessmentId,
         payloadJson,
-        financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature
+        clientCorrectionPending || financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature
       );
       if (!updated[0]) throw new Error("SOLICITUD_NO_DISPONIBLE");
       return { id: updated[0].id, created: false };

@@ -48,6 +48,14 @@ export function splitStoredCreditClientName(input: {
 
 /** A later Veriff refresh must not replace a name corrected through the audit flow. */
 export function hasAuditedCreditIdentityCorrection(payload: Record<string, unknown>) {
+  const correction = payload.analystDataCorrection;
+  const auditedData = correction && typeof correction === "object" && !Array.isArray(correction)
+    ? correction as Record<string, unknown> : {};
   return payload.firmaSeguroIdentityCorrectionPending === true ||
-    Boolean(String(payload.firmaSeguroIdentityReissueProcessUuid || "").trim());
+    Boolean(String(payload.firmaSeguroIdentityReissueProcessUuid || "").trim()) ||
+    payload.firmaSeguroClientCorrectionPending === true ||
+    Boolean(String(payload.firmaSeguroClientCorrectionReissueProcessUuid || "").trim()) ||
+    (auditedData.preserveIdentityEvidence === true && Array.isArray(auditedData.fields) &&
+      auditedData.fields.some((field) => ["clientePrimerNombre", "clienteSegundoApellido",
+        "clienteFechaNacimiento"].includes(String(field))));
 }

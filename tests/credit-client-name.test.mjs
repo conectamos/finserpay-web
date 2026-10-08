@@ -64,3 +64,14 @@ test("una corrección auditada impide que Veriff reemplace el nombre al retomar"
     true,
   );
 });
+
+test("una corrección nominal del analista protege la identidad antes y después de la nueva firma", () => {
+  assert.equal(hasAuditedCreditIdentityCorrection({ firmaSeguroClientCorrectionPending: true }), true);
+  assert.equal(hasAuditedCreditIdentityCorrection({ firmaSeguroClientCorrectionReissueProcessUuid: "firma-nueva" }), true);
+  assert.equal(hasAuditedCreditIdentityCorrection({ analystDataCorrection: {
+    preserveIdentityEvidence: true, fields: ["clienteFechaNacimiento"],
+  } }), true);
+  assert.equal(hasAuditedCreditIdentityCorrection({ analystDataCorrection: {
+    preserveIdentityEvidence: true, fields: ["clienteTelefono"],
+  } }), false);
+});

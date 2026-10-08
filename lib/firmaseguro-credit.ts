@@ -1568,6 +1568,12 @@ export async function refreshFirmaSeguroProcess(
     if (recorded) return recorded;
   }
 
+  if (updated && completed && updated.draftId && !updated.creditoId &&
+    (updated.draftPayload as Record<string, unknown> | null)?.firmaSeguroClientCorrectionId) {
+    const { completeDraftClientCorrection } = await import("@/lib/firmaseguro-client-correction-complete");
+    await completeDraftClientCorrection(updated);
+  }
+
   if (updated && completed && updated.creditoId) {
     await markCreditoFirmaSeguroCompleted(updated.creditoId, {
       processUuid: updated.processUuid,

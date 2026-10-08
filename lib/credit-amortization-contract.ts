@@ -209,7 +209,7 @@ export function resealFinancingTermsIdentity(
   source: FinancingTermsSeal,
   changes: Pick<FinancingTermsSnapshot,
     "folio" | "clienteTelefono" | "clienteCorreo" | "imei"> &
-    Partial<Pick<FinancingTermsSnapshot, "clienteNombre">>
+    Partial<Pick<FinancingTermsSnapshot, "clienteNombre" | "clienteDireccion">>
 ): FinancingTermsSeal {
   const trusted = readFinancingTermsSeal(source);
   if (!trusted) throw new Error("FIRMASEGURO_SOURCE_SEAL_INVALID");
@@ -221,6 +221,9 @@ export function resealFinancingTermsIdentity(
       : normalizedText(changes.clienteNombre),
     clienteTelefono: normalizedDocument(changes.clienteTelefono),
     clienteCorreo: normalizedEmail(changes.clienteCorreo),
+    clienteDireccion: changes.clienteDireccion === undefined
+      ? trusted.snapshot.clienteDireccion
+      : normalizedText(changes.clienteDireccion),
     imei: normalizedDocument(changes.imei),
   };
   return { version: FINANCING_TERMS_SEAL_VERSION, checksum: checksum(snapshot), snapshot };
