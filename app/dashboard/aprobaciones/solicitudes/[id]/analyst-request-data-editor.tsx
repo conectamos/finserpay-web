@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { PencilLine, RefreshCw, Save, X } from "lucide-react";
-import { Button, Card, Input, LoadingState, Select } from "@/app/_components/finser-ui";
+import { PencilLine, RefreshCw, Save } from "lucide-react";
+import { Button, Input, LoadingState, Select } from "@/app/_components/finser-ui";
+import FinserSidePanel from "@/app/_components/finser-side-panel";
 import { COLOMBIA_DEPARTMENT_OPTIONS, getColombiaCityOptions } from "@/lib/colombia-locations";
+import styles from "./analyst-request-editor.module.css";
 
 type CorrectionState = {
   values: Record<string, string>;
@@ -100,27 +102,22 @@ export default function AnalystRequestDataEditor({ requestId }: { requestId: str
     }
   };
 
-  return <section aria-label="Corrección de datos de la solicitud" className="grid gap-4">
-    <div className="flex flex-wrap items-center gap-3">
-      <Button variant="secondary" aria-expanded={open} aria-controls="analyst-client-data" onClick={() => {
+  return <div aria-label="Corrección de datos de la solicitud">
+      <Button variant="secondary" aria-haspopup="dialog" onClick={() => {
         if (open) { controller.current?.abort(); setOpen(false); } else { setOpen(true); setNotice(""); void load(); }
-      }} disabled={saving}><PencilLine size={18} aria-hidden="true" />Corregir datos</Button>
-      {notice && <p role="status" className="text-sm text-[var(--fp-graphite)]">{notice}</p>}
-    </div>
-    {open && <Card id="analyst-client-data" className="p-4 sm:p-6">
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div><h2 className="text-lg font-bold">Corregir datos del cliente</h2><p className="mt-1 text-sm text-[var(--fp-muted)]">Los cambios se guardan en esta solicitud y se actualizan en la pantalla del asesor.</p></div>
-        <Button variant="ghost" disabled={saving} onClick={() => { controller.current?.abort(); setOpen(false); }} aria-label="Cerrar corrección"><X size={18} /></Button>
-      </div>
+      }} disabled={saving}><PencilLine size={17} aria-hidden="true" />Editar datos</Button>
+      {notice && <p role="status" className={styles.success}>{notice}</p>}
+    <FinserSidePanel open={open} title="Corregir datos del cliente" busy={saving} onClose={() => { controller.current?.abort(); setOpen(false); }}>
+      <p className={styles.intro}>Los cambios se guardan en esta solicitud y se actualizan en la pantalla del asesor.</p>
       {loading ? <LoadingState label="Consultando datos editables…" /> : <>
-        {state?.reason && <p role="status" className="mb-4 text-sm text-[var(--fp-muted)]">{state.reason}</p>}
-        {state?.identityReason && <p className="mb-4 text-sm text-[var(--fp-muted)]">{state.identityReason}</p>}
-        {error && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-[var(--fp-danger)]"><span>{error}</span><Button variant="secondary" disabled={saving} onClick={() => void load()}><RefreshCw size={16} />Actualizar datos</Button></div>}
-        {state && <form onSubmit={submit}>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {state?.reason && <p role="status" className={styles.feedback}>{state.reason}</p>}
+        {state?.identityReason && <p className={styles.feedback}>{state.identityReason}</p>}
+        {error && <div role="alert" className={`${styles.feedback} ${styles.error}`}><p>{error}</p><Button variant="secondary" disabled={saving} onClick={() => void load()}><RefreshCw size={16} />Actualizar datos</Button></div>}
+        {state && <form onSubmit={submit} className={styles.form}>
+          <div className={styles.fields}>
             {fields.filter(([field]) => field in state.values).map(([field, label, type]) => {
               const editable = state.editableFields.includes(field);
-              return <label key={field} className="grid content-start gap-2 text-sm font-medium">{label}
+              return <label key={field} className={styles.field}>{label}
                 {field === "clienteDepartamento" ? <Select value={values[field] || ""} disabled={!editable || saving} onChange={event => setValues(current => ({ ...current, [field]: event.target.value, clienteCiudad: "" }))}>
                   <option value="">Selecciona un departamento</option>
                   {values[field] && !COLOMBIA_DEPARTMENT_OPTIONS.some(option => option.value === values[field]) && <option value={values[field]}>{values[field]}</option>}
@@ -130,16 +127,16 @@ export default function AnalystRequestDataEditor({ requestId }: { requestId: str
                   {values[field] && !getColombiaCityOptions(values.clienteDepartamento || "", values[field]).includes(values[field]) && <option value={values[field]}>{values[field]}</option>}
                   {getColombiaCityOptions(values.clienteDepartamento || "", values[field] || "").map(city => <option key={city} value={city}>{city}</option>)}
                 </Select> : <Input type={type} value={values[field] || ""} disabled={!editable || saving} maxLength={field === "clienteTelefono" ? 12 : field === "clienteDireccion" ? 240 : 180} onChange={event => setValues(current => ({ ...current, [field]: event.target.value }))} />}
-                {!editable && <span className="text-xs font-normal text-[var(--fp-muted)]">Protegido por la validación o el contrato.</span>}
+                {!editable && <small>Protegido por la validación o el contrato.</small>}
               </label>;
             })}
           </div>
           {state.editableFields.length > 0 ? <>
-            <label className="mt-5 grid gap-2 text-sm font-medium">Motivo de la corrección<Input required minLength={5} maxLength={500} value={reason} disabled={saving} onChange={event => setReason(event.target.value)} placeholder="Describe qué dato se está corrigiendo" /></label>
-            <div className="mt-5 flex flex-wrap gap-3"><Button type="submit" disabled={saving || !changed.length || reason.trim().length < 5}><Save size={18} aria-hidden="true" />{saving ? "Guardando…" : "Guardar corrección"}</Button><Button variant="ghost" disabled={saving} onClick={() => setOpen(false)}>Cancelar</Button></div>
+            <label className={styles.field}>Motivo de la corrección<textarea className={`fp-ui-input ${styles.reason}`} required minLength={5} maxLength={500} value={reason} disabled={saving} onChange={event => setReason(event.target.value)} placeholder="Describe qué dato se está corrigiendo" /></label>
+            <div className={styles.actions}><Button variant="secondary" disabled={saving} onClick={() => setOpen(false)}>Cancelar</Button><Button type="submit" disabled={saving || !changed.length || reason.trim().length < 5}><Save size={18} aria-hidden="true" />{saving ? "Guardando…" : "Guardar corrección"}</Button></div>
           </> : state.canManageContract ? <Link href={`/dashboard/aprobaciones/firma-seguro?caso=${encodeURIComponent(requestId)}`} prefetch={false} className="fp-ui-button is-secondary mt-5">Gestionar la corrección del contrato</Link> : null}
         </form>}
       </>}
-    </Card>}
-  </section>;
+    </FinserSidePanel>
+  </div>;
 }

@@ -24,6 +24,13 @@ const correction = {
   analystDataRevision: 1,
   analystDataCorrection: { revision: 1, fields: ["clienteTelefono"],
     values: { clienteTelefono: "3000000001" }, fieldRevisions: { clienteTelefono: 1 } },
+  analystFinancialRevision: 2,
+  analystFinancialCorrection: { revision: 2, fields: ["valorEquipoTotal", "cuotaInicial", "plazoMeses"],
+    values: { valorEquipoTotal: "4000000", cuotaInicial: "1200000", plazoMeses: "40" },
+    fieldRevisions: { valorEquipoTotal: 2, cuotaInicial: 2, plazoMeses: 2 } },
+  analystEvidenceRevision: 3,
+  analystEvidenceCorrection: { revision: 3, fields: ["fotoRemisionDataUrl"],
+    fieldRevisions: { fotoRemisionDataUrl: 3 }, updatedAt: "2030-01-01T10:00:00.000Z" },
   fotoRemisionDataUrl: `data:image/jpeg;base64,${"X".repeat(1_000_000)}`,
   valorEquipoTotal: "5000000",
 };
@@ -83,7 +90,7 @@ function fixture({ user = { id: 4, rolNombre: "VENDEDOR", aliadoId: 7 },
 }
 const request = (id) => new Request(`https://finser.test/api/creditos/borradores?id=${id}&datosAnalista=1`);
 
-test("el asesor titular recibe únicamente revisiones proyectadas en SQL, sin fotos ni valores financieros", async () => {
+test("el asesor titular recibe revisiones y valores financieros corregidos en SQL, sin fotos ni expediente completo", async () => {
   const f = fixture();
   const response = await f.route.GET(request(11));
   assert.equal(response.status, 200);
@@ -93,6 +100,10 @@ test("el asesor titular recibe únicamente revisiones proyectadas en SQL, sin fo
   assert.deepEqual(body, { ok: true, item: { id: 11, payload: {
     analystDataRevision: correction.analystDataRevision,
     analystDataCorrection: correction.analystDataCorrection,
+    analystFinancialRevision: correction.analystFinancialRevision,
+    analystFinancialCorrection: correction.analystFinancialCorrection,
+    analystEvidenceRevision: correction.analystEvidenceRevision,
+    analystEvidenceCorrection: correction.analystEvidenceCorrection,
   } } });
   assert.ok(JSON.stringify(body).length < 1_000);
   assert.equal(f.queries.length, 1);
