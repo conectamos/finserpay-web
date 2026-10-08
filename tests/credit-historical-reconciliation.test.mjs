@@ -26,7 +26,7 @@ import ts from 'typescript';
 const lib=await jiti.import('../lib/credit-historical-reconciliation.ts');
 const code=ts.transpileModule(readFileSync(new URL('../app/api/creditos/[id]/conciliacion-historica/route.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 function harness({role='ADMIN',central=true,user=true}={}){
- const credit={id:7,clienteDocumento:'12345678',clienteNombre:'CLIENTE PRUEBA',folio:'TEST-ONLY',equalityService:'IMPORTACION_MASIVA',contratoSnapshot:{origen:{tipo:'IMPORTACION_MASIVA'}},estado:'GENERADO',sedeId:9,planCapitalVigente:null,montoCredito:1500,valorCuota:468,plazoMeses:4,frecuenciaPago:'QUINCENAL',fechaPrimerPago:new Date('2026-07-17T12:00:00Z')};
+ const credit={id:7,clienteDocumento:'12345678',clienteNombre:'CLIENTE PRUEBA',folio:'TEST-ONLY',equalityService:'IMPORTACION_MASIVA',contratoSnapshot:{origen:{tipo:'IMPORTACION_MASIVA'}},estado:'GENERADO',sedeId:9,planCapitalVigente:null,montoCredito:1500,valorCuota:468,plazoMeses:4,frecuenciaPago:'QUINCENAL',fechaPrimerPago:new Date('2026-07-17T12:00:00Z'),fechaProximoPago:new Date('2026-07-18T12:00:00Z')};
  const payments=[{id:99,valor:400,metodoPago:'EFECTIVO',fechaAbono:new Date('2026-07-17T12:00:00Z'),estado:'ACTIVO'}],writes=[],cash=[];let revision=null;
  const tx={$queryRaw:async()=>[],credito:{findUnique:async()=>({...credit}),update:async({data})=>{writes.push('credit');Object.assign(credit,data);}},creditoAbono:{findMany:async()=>payments.filter(p=>p.estado!=='ANULADO'),update:async({where,data})=>{writes.push('annul');Object.assign(payments.find(p=>p.id===where.id),data);},create:async({data})=>{writes.push('payment');const p={id:100+payments.length,estado:'ACTIVO',...data};payments.push(p);return p;}},wompiPaymentIntent:{count:async()=>0},cajaMovimiento:{findMany:async()=>[{descripcion:'ABONO_CREDITO_ID:99 | original',valor:400,sedeId:9},{descripcion:'ABONO_CREDITO_ID:999 | distinto',valor:999,sedeId:9}],create:async({data})=>{writes.push('cash');cash.push(data);}}};
  const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
@@ -45,3 +45,12 @@ test('confirma con reversa exacta, conserva originales y auditoría; reintentar 
 });
 
 test('previsualiza detrás del proxy público sin permitir orígenes de otros sitios',async()=>{const f=harness();const r=await f.call({},true);assert.equal(r.status,200);assert.equal(f.writes.length,0);const denied=await f.call({},true,'https://otro.example');assert.equal(denied.status,403);});
+
+test('reemplaza vencimiento administrativo antiguo y repara solo cach� sin duplicar pagos',async()=>{
+ const f=harness(),preview=await (await f.call()).json();await f.call({accion:'CONFIRMAR',previewHash:preview.previewHash});
+ assert.equal(f.credit.fechaProximoPago.toISOString().slice(0,10),'2026-08-02');
+ f.credit.fechaProximoPago=new Date('2026-07-18T12:00:00Z');const count=f.writes.length;
+ const repair=await (await f.call()).json();assert.equal(repair.aplicado,false);assert.equal(f.writes.length,count);
+ const result=await f.call({accion:'CONFIRMAR',previewHash:repair.previewHash});assert.equal(result.status,200);
+ assert.equal(f.credit.fechaProximoPago.toISOString().slice(0,10),'2026-08-02');assert.equal(f.writes.length,count+1);assert.equal(f.payments.length,2);
+});
