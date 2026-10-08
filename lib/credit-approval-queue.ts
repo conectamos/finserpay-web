@@ -63,12 +63,12 @@ function queueSearchSql(parameter: number) {
       AND sadmin."numeroCreditoConfirmado" AND strpos(lower(COALESCE(sadmin."numeroCredito",'')),lower($${parameter}::text))>0)
     OR strpos(lower(COALESCE(ally."nombre",'')),lower($${parameter}::text))>0)`;
 }
-function queueVisibleScopeSql() {
+export function queueVisibleScopeSql() {
   return `${buildCreditApprovalQueueScopeSql("credit")}
       AND UPPER(BTRIM(COALESCE(ally."codigo",'')))<>'FINSERPAY'
       AND UPPER(BTRIM(COALESCE(credit."estado",''))) NOT IN ('ANULADO','ANULADA','CANCELADO','CANCELADA')`;
 }
-function queuePendingSql() {
+export function queuePendingSql() {
   return `NOT EXISTS (SELECT 1 FROM "LiquidacionAliadoCredito" paid WHERE paid."creditoId"=credit."id")
       AND (review."status" IS DISTINCT FROM 'APPROVED'
         OR review."approvedRevision" IS DISTINCT FROM review."revision"
