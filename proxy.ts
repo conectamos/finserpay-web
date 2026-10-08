@@ -161,7 +161,10 @@ export function proxy(request: NextRequest) {
   );
 
   if (pathname.startsWith("/api/")) {
-    if (hasApprovalAnalystSession && !approvalAnalystApi) {
+    // El portal del cliente es público y no hereda el alcance de una sesión
+    // de Aprobaciones que el navegador pueda conservar, incluso si venció.
+    const clientPortalApi = pathMatches(pathname, ["/api/clientes"]);
+    if (hasApprovalAnalystSession && !approvalAnalystApi && !clientPortalApi) {
       return NextResponse.json({ error: "Acceso no autorizado" }, { status: 403 });
     }
 
