@@ -6,7 +6,7 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { prepareFirmaSeguroReissue } from "@/lib/firmaseguro-credit";
 import { isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
-import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
+import { isFirmaSeguroFailedStatus, isFirmaSeguroVerifiedCompletedStatus } from "@/lib/firmaseguro-status";
 import { ensureFirmaSeguroSchema, lockSolicitudOperationMutation,
   markFirmaSeguroDraftProcessesSuperseded, type FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
@@ -19,6 +19,8 @@ import { readFrozenCorrectionDateSource,
   verifiesFrozenCorrectionDateSource } from "@/lib/firmaseguro-draft-frozen";
 import { getTodayBogotaDateKey } from "@/lib/ventas-utils";
 import { ensureApprovalOperationalSchema } from "@/lib/approval-operations-schema";
+import { requestDataValues } from "@/lib/approval-request-correction-core";
+import { verifiesFrozenClientCorrectionSource } from "@/lib/firmaseguro-draft-client-correction-frozen";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type DispatchStatus = "PREPARING" | "DISPATCHING" | "AWAITING_SIGNATURE" | "FAILED_SAFE" | "UNCERTAIN";
@@ -69,6 +71,57 @@ function isDeferredContactRedirect(input: {
     && /^[a-f0-9]{64}$/i.test(payload.firmaSeguroPendingContactRedirectSourceChecksum)
     && typeof payload.firmaSeguroPendingContactRedirectIntentSha256 === "string"
     && /^[a-f0-9]{64}$/i.test(payload.firmaSeguroPendingContactRedirectIntentSha256);
+}
+
+type ClientCorrectionDispatch = Pick<DraftDispatchRow,
+  "id" | "draftId" | "expectedProcessUuid" | "sourcePayload" | "updatedPayload" | "draftPayload" | "draftFolio">;
+
+/** This marker is reserved by the privileged correction service, never by an advisor autosave. */
+function isDeferredClientCorrection(input: Pick<ClientCorrectionDispatch,
+  "id" | "expectedProcessUuid" | "updatedPayload">) {
+  const payload = record(input.updatedPayload);
+  return payload.firmaSeguroClientCorrectionPending === true
+    && UUID.test(input.id) && Boolean(input.expectedProcessUuid)
+    && payload.firmaSeguroClientCorrectionId === input.id
+    && payload.firmaSeguroClientCorrectionSourceProcessUuid === input.expectedProcessUuid
+    && typeof payload.firmaSeguroClientCorrectionSourceChecksum === "string"
+    && /^[a-f0-9]{64}$/i.test(payload.firmaSeguroClientCorrectionSourceChecksum)
+    && typeof payload.firmaSeguroClientCorrectionIntentSha256 === "string"
+    && /^[a-f0-9]{64}$/i.test(payload.firmaSeguroClientCorrectionIntentSha256)
+    && typeof payload.firmaSeguroClientCorrectionSourceSigned === "boolean";
+}
+
+/** Verify the audited identity-only lineage and the original process on every claim/recovery. */
+function verifiesClientCorrection(input: ClientCorrectionDispatch, source: FirmaSeguroProcessRow | null) {
+  if (!isDeferredClientCorrection(input) || !source || source.draftId !== input.draftId
+    || source.creditoId !== null || source.processUuid !== input.expectedProcessUuid) return false;
+  const payload = record(input.updatedPayload);
+  const processPayload = record(input.draftPayload);
+  const target = readFinancingTermsSeal(processPayload.financialTermsSeal);
+  const sourceSeal = readFinancingTermsSeal(record(source.draftPayload).financialTermsSeal);
+  if (!target || !sourceSeal || sourceSeal.checksum !== payload.firmaSeguroClientCorrectionSourceChecksum
+    || target.snapshot.folio !== input.draftFolio) return false;
+  const signed = payload.firmaSeguroClientCorrectionSourceSigned === true;
+  if (signed) {
+    const signedPdf = source.signedDocumentBase64 ? Buffer.from(source.signedDocumentBase64, "base64") : null;
+    if (!source.completedAt || !isFirmaSeguroVerifiedCompletedStatus(source.status)
+      || signedPdf?.subarray(0, 5).toString() !== "%PDF-") return false;
+  } else {
+    const terminal = isVerifiedTerminalSignatureFailure(source.status);
+    if (source.signedDocumentBase64 || source.completedAt || isFirmaSeguroCompletedStatus(source.status)
+      || (!terminal && !isVerifiedPendingSignatureStatus(source.status))
+      || (source.lastError && !terminal)) return false;
+  }
+  return verifiesFrozenClientCorrectionSource({
+    marker: processPayload.firmaSeguroFrozenClientCorrectionSource,
+    target, source,
+    draft: { id: input.draftId, payload: input.updatedPayload },
+    correction: {
+      correlationId: input.id, draftId: input.draftId,
+      previousProcessUuid: input.expectedProcessUuid!, sourceSealChecksum: sourceSeal.checksum,
+      before: requestDataValues(record(input.sourcePayload)), after: requestDataValues(payload),
+    },
+  });
 }
 
 let setup: Promise<void> | null = null;
@@ -317,13 +370,18 @@ export async function reserveDraftDispatch(input: {
       const row = replay[0];
       const replayRedirect = isDeferredContactRedirect(row);
       const inputRedirect = isDeferredContactRedirect(input);
+      const replayClient = isDeferredClientCorrection(row);
+      const inputClient = isDeferredClientCorrection(input);
       const replayPayload = record(row.updatedPayload);
       const inputPayload = record(input.updatedPayload);
       if (row.draftId !== input.draftId || row.actorUserId !== input.actor.id
         || row.reason !== input.reason || row.expectedProcessUuid !== input.expectedProcessUuid
         || ((replayRedirect || inputRedirect) && (!replayRedirect || !inputRedirect
           || replayPayload.firmaSeguroPendingContactRedirectIntentSha256
-            !== inputPayload.firmaSeguroPendingContactRedirectIntentSha256))) {
+            !== inputPayload.firmaSeguroPendingContactRedirectIntentSha256))
+        || ((replayClient || inputClient) && (!replayClient || !inputClient
+          || replayPayload.firmaSeguroClientCorrectionIntentSha256
+            !== inputPayload.firmaSeguroClientCorrectionIntentSha256))) {
         throw new DraftDispatchError("DRAFT_DISPATCH_IDEMPOTENCY_CONFLICT",
           "Esta confirmación corresponde a otra solicitud de firma.");
       }
@@ -339,7 +397,10 @@ export async function reserveDraftDispatch(input: {
         AND "estado"='ABIERTO' AND "creditoId" IS NULL
         AND COALESCE("expiresAt","createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
         FOR UPDATE`, input.draftId, json(input.sourcePayload));
-    if (!drafts[0] || ![3, 4].includes(drafts[0].currentStep)
+    const clientCorrection = isDeferredClientCorrection(input);
+    if (Object.hasOwn(record(input.updatedPayload), "firmaSeguroClientCorrectionId") && !clientCorrection)
+      throw new DraftDispatchError("DRAFT_DISPATCH_CLIENT_LINEAGE_INVALID", "La corrección del cliente no pudo verificarse.");
+    if (!drafts[0] || !(clientCorrection ? [3, 4, 5] : [3, 4]).includes(drafts[0].currentStep)
       || !drafts[0].samePayload) {
       throw new DraftDispatchError("DRAFT_DISPATCH_CHANGED",
         "La solicitud cambió antes de enviar el contrato. Actualiza el caso.");
@@ -352,6 +413,8 @@ export async function reserveDraftDispatch(input: {
       throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_CHANGED",
         "La firma vigente cambió antes del envío. Actualiza el caso.");
     }
+    if (clientCorrection && (!input.supersedeActive || !verifiesClientCorrection(input, processes[0] || null)))
+      throw new DraftDispatchError("DRAFT_DISPATCH_CLIENT_LINEAGE_INVALID", "El contrato original o los datos corregidos no pudieron verificarse.");
     if (input.options?.requireUnsignedActive) {
       const active = processes[0];
       if (!active) throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_CHANGED",
@@ -371,14 +434,15 @@ export async function reserveDraftDispatch(input: {
     const deferredContactRedirect = input.supersedeActive
       && input.options?.requireUnsignedActive === true
       && isDeferredContactRedirect(input);
-    if (input.supersedeActive && !deferredContactRedirect) {
+    const deferredCorrection = deferredContactRedirect || clientCorrection;
+    if (input.supersedeActive && !deferredCorrection) {
       const archived = await markFirmaSeguroDraftProcessesSuperseded(db, {
         draftId: input.draftId, actorUserId: input.actor.id, reason: input.reason,
       });
       if (archived.length !== 1) throw new DraftDispatchError("DRAFT_DISPATCH_PROCESS_CHANGED",
         "La firma vigente cambió antes del envío. Actualiza el caso.");
     }
-    if (!deferredContactRedirect) {
+    if (!deferredCorrection) {
       const changed = await db.$queryRawUnsafe<Array<{ id: number }>>(
         `UPDATE "CreditoBorrador" SET "payload"=$2::jsonb,"updatedAt"=CURRENT_TIMESTAMP
           WHERE "id"=$1 AND "payload"=$3::jsonb RETURNING "id"`,
@@ -541,7 +605,9 @@ export async function finalizeDraftDispatch(id: string): Promise<DraftDispatchRo
       const sources = await db.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
         `SELECT * FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
           AND "processUuid"=$2 FOR UPDATE`, row.draftId, row.expectedProcessUuid);
-      if (sources[0]?.signedDocumentBase64 || sources[0]?.completedAt) {
+      const intentionalSignedCorrection = record(row.updatedPayload).firmaSeguroClientCorrectionSourceSigned === true
+        && verifiesClientCorrection(row, sources[0] || null);
+      if ((sources[0]?.signedDocumentBase64 || sources[0]?.completedAt) && !intentionalSignedCorrection) {
         const conflict = await db.$queryRawUnsafe<DraftDispatchRow[]>(`UPDATE "FirmaSeguroDraftDispatch"
           SET "status"='UNCERTAIN',"processUuid"=COALESCE("processUuid",$2),
             "lastError"='La solicitud anterior fue firmada durante el reenvío; requiere conciliación manual',
@@ -690,6 +756,15 @@ export async function dispatchReservedDraft(id: string) {
       && (terminalFailedSource || pendingSource) && (!source.lastError || terminalFailedSource)
       && !isFirmaSeguroCompletedStatus(source.status));
   }
+  const claimsClientCorrection = Object.hasOwn(updatedPayload, "firmaSeguroClientCorrectionId");
+  let frozenClientCorrection = false;
+  if (claimsClientCorrection && row.expectedProcessUuid) {
+    const sources = await prisma.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
+      `SELECT * FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
+        AND "processUuid"=$2 AND "supersededAt" IS NULL LIMIT 1`,
+      row.draftId, row.expectedProcessUuid);
+    frozenClientCorrection = verifiesClientCorrection(row, sources[0] || null);
+  }
   const claimsFrozenCorrection = Object.prototype.hasOwnProperty.call(
     processPayload, "firmaSeguroFrozenCorrectionDateSource");
   let frozenCorrectionReissue = false;
@@ -711,8 +786,9 @@ export async function dispatchReservedDraft(id: string) {
   if (!sealed || sealed.snapshot.folio !== row.draftFolio
     || (claimsFrozenContactRedirect && !frozenContactRedirect)
     || (claimsFrozenCorrection && !frozenCorrectionReissue)
+    || (claimsClientCorrection && !frozenClientCorrection)
     || signedFirstPaymentDatePast
-    || (!frozenContactRedirect && !frozenCorrectionReissue &&
+    || (!frozenContactRedirect && !frozenCorrectionReissue && !frozenClientCorrection &&
       resolveActivationFirstPaymentDate({ frequency: sealed.snapshot.frecuenciaPago,
         activatedAt: new Date() }).dateKey !== sealed.snapshot.fechaPrimerPago)) {
     const termsMessage = signedFirstPaymentDatePast
@@ -728,7 +804,7 @@ export async function dispatchReservedDraft(id: string) {
   }
   const veriffRequired = getDataCreditoPublicConfig().enabled || isVeriffRequired();
   if (veriffRequired) await ensureVeriffSchema();
-  if (frozenContactRedirect) await ensureApprovalOperationalSchema();
+  if (frozenContactRedirect || frozenClientCorrection) await ensureApprovalOperationalSchema();
   let prepared: Awaited<ReturnType<typeof prepareFirmaSeguroReissue>>;
   try {
     prepared = await prepareFirmaSeguroReissue(row.frozenCredit, document, id);
@@ -752,8 +828,9 @@ export async function dispatchReservedDraft(id: string) {
         WHERE "id"=$1 AND "estado"='ABIERTO' AND "creditoId" IS NULL
         AND COALESCE("expiresAt","createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP FOR UPDATE`,
       row.draftId, json(row.sourcePayload), json(row.updatedPayload));
-    let valid = Boolean(drafts[0] && [3, 4].includes(drafts[0].currentStep)
-      && (frozenContactRedirect ? drafts[0].sameSourcePayload : drafts[0].sameUpdatedPayload));
+    const deferredCorrection = frozenContactRedirect || frozenClientCorrection;
+    let valid = Boolean(drafts[0] && (frozenClientCorrection ? [3, 4, 5] : [3, 4]).includes(drafts[0].currentStep)
+      && (deferredCorrection ? drafts[0].sameSourcePayload : drafts[0].sameUpdatedPayload));
     const active = await db.$queryRawUnsafe<FirmaSeguroProcessRow[]>(
       `SELECT * FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
         AND "supersededAt" IS NULL ORDER BY "createdAt" DESC,"id" DESC FOR UPDATE`, row.draftId);
@@ -769,6 +846,8 @@ export async function dispatchReservedDraft(id: string) {
         && !source.signedDocumentBase64 && !source.completedAt
         && (terminalFailedSource || pendingSource) && (!source.lastError || terminalFailedSource)
         && !isFirmaSeguroCompletedStatus(source.status));
+    } else if (frozenClientCorrection) {
+      valid = valid && active.length === 1 && verifiesClientCorrection(row, active[0]);
     } else {
       valid = valid && active.length === 0;
     }
@@ -796,7 +875,7 @@ export async function dispatchReservedDraft(id: string) {
         WHERE "id"=$1::uuid AND "status"='PREPARING' RETURNING "id"::text`,
       id, json(prepared.requestPayload));
     if (result.length !== 1) return false;
-    if (frozenContactRedirect) {
+    if (deferredCorrection) {
       const archived = await markFirmaSeguroDraftProcessesSuperseded(db, {
         draftId: row.draftId, actorUserId: row.actorUserId, reason: row.reason,
       });
@@ -807,10 +886,11 @@ export async function dispatchReservedDraft(id: string) {
       const next = record(row.updatedPayload);
       const changed = await db.$queryRawUnsafe<Array<{ id: number }>>(
         `UPDATE "CreditoBorrador" SET "payload"=$2::jsonb,"clienteTelefono"=$3,
+          "clienteNombre"=CASE WHEN $5::boolean THEN $6 ELSE "clienteNombre" END,
           "currentStep"=4,"updatedAt"=CURRENT_TIMESTAMP
           WHERE "id"=$1 AND "payload"=$4::jsonb RETURNING "id"`,
         row.draftId, json(row.updatedPayload), String(next.clienteTelefono || "") || null,
-        json(row.sourcePayload));
+        json(row.sourcePayload), frozenClientCorrection, String(next.clienteNombre || "") || null);
       if (changed.length !== 1) throw new DraftDispatchError("DRAFT_DISPATCH_CHANGED",
         "La solicitud cambió antes del envío. Actualiza el caso.");
       const previous = record(row.sourcePayload);
@@ -831,7 +911,8 @@ export async function dispatchReservedDraft(id: string) {
          "previousImei","newImei","reason","beforeContact","afterContact","status")
         VALUES ($1::uuid,'DRAFT',$2,NULL,'CONTACT_UPDATED',$3,$4,$5,$5,$6,$7::jsonb,$8::jsonb,'PENDING_REISSUE')`,
         row.id, row.draftId, row.actorUserId, row.actorName, imei || null, row.reason,
-        json(beforeContact), json(afterContact));
+        json(frozenClientCorrection ? { ...requestDataValues(previous), analystDataRevision: previous.analystDataRevision || 0 } : beforeContact),
+        json(frozenClientCorrection ? { ...requestDataValues(next), analystDataRevision: next.analystDataRevision } : afterContact));
     }
     return true;
   }, { timeout: 15000 });

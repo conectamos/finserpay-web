@@ -120,27 +120,52 @@ test("valida celular, correo, fecha y referencias sin aceptar campos financieros
   assert.throws(() => core.parseRequestDataCorrection({ values: { clienteCorreo: "ana@example.com" }, expectedValues: {}, expectedRevision: 0, reason: "Valido" }), { code: "INVALID_FIELDS" });
 });
 
-test("identidad iniciada bloquea nombres; firma, cierre y vencimiento bloquean corrección cruda", () => {
+test("el analista puede corregir identidad validada y una firma exige nueva versión; cédula y primer apellido siempre protegidos", () => {
   const base = { open: true, expired: false, signatureStarted: false, identityStarted: false, correctionPending: false };
   const identity = core.requestDataEligibility({ ...base, identityStarted: true });
-  assert.equal(identity.editableFields.includes("clientePrimerNombre"), false);
-  assert.equal(identity.editableFields.includes("clienteTelefono"), true);
-  assert.throws(() => core.applyRequestDataCorrection(payload, input({ clientePrimerNombre: "ANA" }), identity.editableFields, "Analista"), { code: "FIELD_LOCKED" });
-  for (const state of [{ open: false }, { expired: true }, { signatureStarted: true }, { correctionPending: true }])
+  assert.deepEqual(clone(identity.editableFields), allFields);
+  assert.equal(identity.identityReason, null);
+  assert.doesNotThrow(() => core.applyRequestDataCorrection(payload, input({ clientePrimerNombre: "ANA" }), identity.editableFields, "Analista"));
+  const signed = core.requestDataEligibility({ ...base, identityStarted: true, signatureStarted: true });
+  assert.deepEqual(clone(signed.editableFields), allFields);
+  assert.equal(signed.requiresNewSignature, true);
+  assert.match(signed.signatureNotice, /nueva.*datos corregidos/);
+  for (const state of [{ open: false }, { expired: true }, { dispatchPending: true }, { correctionPending: true }])
     assert.equal(core.requestDataEligibility({ ...base, ...state }).editableFields.length, 0);
+  for (const field of ["clienteDocumento", "clientePrimerApellido"])
+    assert.equal(signed.editableFields.includes(field), false);
   assert.equal(core.requestDataEligibility({ ...base, expired: true, signatureStarted: true }).canManageContract, false);
-  assert.equal(core.requestDataEligibility({ ...base, signatureStarted: true }).canManageContract, true);
+  assert.equal(signed.canManageContract, true);
 });
 
-test("cambiar identidad invalida evidencias y un autosave viejo no restaura las fotos", () => {
-  const previous = { ...payload, contratoCedulaFrenteDataUrl: "data:image/jpeg;base64,anterior", fotoEntregaDataUrl: "entrega" };
-  const server = corrected({ clientePrimerNombre: "ANA" }, previous).payload;
-  assert.equal(server.contratoCedulaFrenteDataUrl, undefined);
-  assert.equal(server.fotoEntregaDataUrl, "entrega");
+test("la corrección privilegiada conserva identidad, entrega y audio mientras un autosave antiguo respeta los datos nuevos", () => {
+  const previous = { ...payload, contratoCedulaFrenteDataUrl: "data:image/jpeg;base64,anterior",
+    contratoSelfieDataUrl: "selfie", fotoEntregaDataUrl: "entrega", fotoRemisionDataUrl: "remision", recording: "audio" };
+  const server = core.applyRequestDataCorrection(previous, input({ clientePrimerNombre: "ANA", clienteFechaNacimiento: "1991-02-03" }, previous),
+    allFields, "Analista", new Date("2026-10-08T17:00:00Z"), { preserveIdentityEvidence: true }).payload;
+  for (const field of ["contratoCedulaFrenteDataUrl", "contratoSelfieDataUrl", "fotoEntregaDataUrl", "fotoRemisionDataUrl", "recording"])
+    assert.equal(server[field], previous[field]);
   const stale = core.preserveAnalystDataCorrectionAutosave(server, previous);
-  assert.equal(stale.contratoCedulaFrenteDataUrl, undefined);
-  const fresh = core.preserveAnalystDataCorrectionAutosave(server, { ...server, contratoCedulaFrenteDataUrl: "foto-nueva" });
-  assert.equal(fresh.contratoCedulaFrenteDataUrl, "foto-nueva");
+  assert.equal(stale.clientePrimerNombre, "ANA");
+  assert.equal(stale.clienteFechaNacimiento, "1991-02-03");
+  assert.equal(stale.contratoCedulaFrenteDataUrl, previous.contratoCedulaFrenteDataUrl);
+  assert.deepEqual(clone(server.analystDataCorrection.invalidatedFields), []);
+});
+
+test("un asesor no puede fabricar ni retirar el linaje de la nueva firma o cambiar los datos ya corregidos contractualmente", () => {
+  const forged = Object.fromEntries(core.CLIENT_CORRECTION_MARKER_FIELDS.map(field => [field, "falso"]));
+  const rejected = core.preserveAnalystDataCorrectionAutosave(payload, { ...payload, ...forged });
+  for (const field of core.CLIENT_CORRECTION_MARKER_FIELDS) assert.equal(rejected[field], undefined);
+  const server = { ...corrected({ clienteTelefono: "3101234567" }).payload,
+    firmaSeguroClientCorrectionPending: true, firmaSeguroClientCorrectionId: randomUUID() };
+  const incoming = { ...server, firmaSeguroClientCorrectionPending: false, firmaSeguroClientCorrectionId: "falso",
+    clienteTelefono: "3111234567", clienteDocumento: "99999", clientePrimerApellido: "OTRO" };
+  const saved = core.preserveAnalystDataCorrectionAutosave(server, incoming);
+  assert.equal(saved.firmaSeguroClientCorrectionPending, true);
+  assert.equal(saved.firmaSeguroClientCorrectionId, server.firmaSeguroClientCorrectionId);
+  assert.equal(saved.clienteTelefono, "3101234567");
+  assert.equal(saved.clienteDocumento, payload.clienteDocumento);
+  assert.equal(saved.clientePrimerApellido, payload.clientePrimerApellido);
 });
 
 function routeFixture({ analyst = { id: 17, nombre: "Analista" }, shared = undefined } = {}) {
@@ -152,6 +177,7 @@ function routeFixture({ analyst = { id: 17, nombre: "Analista" }, shared = undef
     "@/lib/credit-approval-http": { readApprovalRequest: async (request) => { calls.push("body"); return request.json(); },
       approvalErrorResponse: () => Response.json({ ok: false }, { status: 503 }) },
     "@/lib/approval-request-correction-core": core,
+    "@/lib/firmaseguro-draft-dispatch-ledger": { DraftDispatchError: class extends Error {} },
     "@/lib/approval-request-correction": { parseCorrectionDraftId: (id) => {
       if (id !== "D-7") throw new core.RequestDataCorrectionError("REQUEST_NOT_FOUND", "No disponible", 404);
       return 7;
@@ -181,19 +207,21 @@ test("el endpoint conserva identidad del actor y entrega revisión privada sin a
   assert.equal((await f.route.GET(new Request("https://finser.test/"), { params: Promise.resolve({ id: "C-7" }) })).status, 404);
 });
 
-async function serviceFixture() {
+async function serviceFixture(options = {}) {
   const db = new PGlite();
   const calls = [];
   await db.exec(`CREATE TABLE "CreditoBorrador" ("id" INTEGER PRIMARY KEY,"estado" TEXT NOT NULL,
-    "creditoId" INTEGER,"clienteNombre" TEXT,"clienteTelefono" TEXT,"payload" JSONB,
+    "creditoId" INTEGER,"clienteNombre" TEXT,"clienteTelefono" TEXT,"clienteDocumento" TEXT,"payload" JSONB,
     "createdAt" TIMESTAMPTZ DEFAULT NOW(),"expiresAt" TIMESTAMPTZ DEFAULT NOW()+INTERVAL '15 days',"updatedAt" TIMESTAMPTZ DEFAULT NOW());
-    CREATE TABLE "FirmaSeguroProcess" ("draftId" INTEGER);
+    CREATE TABLE "FirmaSeguroProcess" ("id" SERIAL PRIMARY KEY,"draftId" INTEGER,"creditoId" INTEGER,
+      "processUuid" TEXT,"supersededAt" TIMESTAMPTZ,"createdAt" TIMESTAMPTZ DEFAULT NOW());
     CREATE TABLE "VeriffIdentityValidation" ("draftId" INTEGER);
     CREATE TABLE "ApprovalOperationalAction" ("id" UUID PRIMARY KEY,"targetKind" TEXT,"targetId" INTEGER,
       "eventType" TEXT,"actorUserId" INTEGER,"actorName" TEXT CHECK("actorName"<>'Fail'),"reason" TEXT,
       "beforeContact" JSONB,"afterContact" JSONB,"status" TEXT);`);
-  await db.query(`INSERT INTO "CreditoBorrador"("id","estado","clienteNombre","clienteTelefono","payload") VALUES(7,'ABIERTO',$1,$2,$3::jsonb)`,
-    [payload.clienteNombre, payload.clienteTelefono, JSON.stringify(payload)]);
+  const baseline = { ...payload, ...(options.payload || {}) };
+  await db.query(`INSERT INTO "CreditoBorrador"("id","estado","clienteNombre","clienteTelefono","clienteDocumento","payload") VALUES(7,'ABIERTO',$1,$2,$3,$4::jsonb)`,
+    [baseline.clienteNombre, baseline.clienteTelefono, baseline.clienteDocumento, JSON.stringify(baseline)]);
   const connection = {
     async $queryRawUnsafe(sql, ...args) { calls.push("query"); return (await db.query(sql, args)).rows; },
     async $executeRawUnsafe(sql, ...args) { calls.push(sql.startsWith("INSERT") ? "audit" : "mutation"); return (await db.query(sql, args)).affectedRows; },
@@ -207,11 +235,15 @@ async function serviceFixture() {
     "server-only": {}, "node:crypto": { randomUUID }, "@/lib/prisma": { default: prisma },
     "@/lib/approval-operations-schema": { ensureApprovalOperationalSchema: async () => {} },
     "@/lib/firmaseguro-storage": { ensureFirmaSeguroSchema: async () => {},
-      lockSolicitudOperationMutation: async () => { calls.push("operation-lock"); } },
+      lockSolicitudOperationMutation: async () => { calls.push("operation-lock"); await options.beforeMutationLock?.(db); } },
     "@/lib/solicitudes-storage": { ensureSolicitudSchema: async () => {} },
     "@/lib/veriff-storage": { ensureVeriffSchema: async () => {},
       lockVeriffDraftAttempts: async () => { calls.push("identity-lock"); } },
     "@/lib/approval-request-correction-core": core,
+    "@/lib/approval-request-client-signature-correction": { correctAndReissueAnalystRequestData: async () => {
+      calls.push("signature-correction");
+      throw new core.RequestDataCorrectionError("CONFIRM_NEW_SIGNATURE", "Confirma la nueva firma", 400);
+    } },
   });
   return { db, calls, service };
 }
@@ -221,7 +253,11 @@ test("servicio guarda filas, payload y auditoría en una transacción después d
   try {
     const result = await f.service.correctAnalystRequestData(7, input({ clienteTelefono: "3101234567" }), { id: 17, nombre: "Analista" });
     assert.equal(result.revision, 1);
-    assert.deepEqual(f.calls.slice(0, 2), ["operation-lock", "identity-lock"]);
+    const lock = f.calls.indexOf("operation-lock");
+    assert.ok(lock >= 0);
+    assert.equal(f.calls[lock + 1], "identity-lock");
+    assert.ok(f.calls.indexOf("mutation") > lock + 1);
+    assert.ok(f.calls.indexOf("audit") > f.calls.indexOf("mutation"));
     const { rows: [saved] } = await f.db.query(`SELECT "clienteTelefono","payload" FROM "CreditoBorrador" WHERE "id"=7`);
     assert.equal(saved.clienteTelefono, "3101234567");
     assert.equal(saved.payload.clienteTelefono, "3101234567");
@@ -237,17 +273,34 @@ test("servicio guarda filas, payload y auditoría en una transacción después d
   } finally { await f.db.close(); }
 });
 
-test("una firma o identidad iniciada entre GET y PATCH vuelve a comprobarse bajo lock", async () => {
-  const f = await serviceFixture();
+test("la validación iniciada permite corregir nombres y nacimiento conservando los soportes", async () => {
+  const media = { contratoCedulaFrenteDataUrl: "cedula", contratoSelfieDataUrl: "selfie", fotoEntregaDataUrl: "entrega", recording: "audio" };
+  const f = await serviceFixture({ payload: media });
   try {
+    await f.db.query(`INSERT INTO "VeriffIdentityValidation"("draftId") VALUES(7)`);
     const observed = await f.service.getAnalystRequestCorrection(7);
     assert.ok(observed.editableFields.includes("clientePrimerNombre"));
-    await f.db.query(`INSERT INTO "VeriffIdentityValidation"("draftId") VALUES(7)`);
-    await assert.rejects(f.service.correctAnalystRequestData(7, input({ clientePrimerNombre: "ANA" }), { id: 17, nombre: "Analista" }), { code: "FIELD_LOCKED" });
-    await f.db.query(`INSERT INTO "FirmaSeguroProcess"("draftId") VALUES(7)`);
-    await assert.rejects(f.service.correctAnalystRequestData(7, input({ clienteTelefono: "3101234567" }), { id: 17, nombre: "Analista" }), { code: "REQUEST_LOCKED" });
+    const corrected = await f.service.correctAnalystRequestData(7, input({ clientePrimerNombre: "ANA", clienteFechaNacimiento: "1991-02-03" }),
+      { id: 17, nombre: "Analista" });
+    assert.equal(corrected.revision, 1);
+    const saved = (await f.db.query(`SELECT "payload" FROM "CreditoBorrador"`)).rows[0].payload;
+    assert.equal(saved.clienteNombre, "ANA PRUEBA DEMO");
+    assert.equal(saved.clienteFechaNacimiento, "1991-02-03");
+    for (const [field, value] of Object.entries(media)) assert.equal(saved[field], value);
+    assert.equal((await f.db.query(`SELECT COUNT(*)::integer AS count FROM "ApprovalOperationalAction"`)).rows[0].count, 1);
+  } finally { await f.db.close(); }
+});
+
+test("si empieza la firma entre lectura preliminar y lock, no realiza una corrección cruda", async () => {
+  const f = await serviceFixture({ beforeMutationLock: async db => {
+    await db.query(`INSERT INTO "FirmaSeguroProcess"("draftId","processUuid") VALUES(7,'firma-nueva')`);
+  } });
+  try {
+    await assert.rejects(f.service.correctAnalystRequestData(7, input({ clienteTelefono: "3101234567" }),
+      { id: 17, nombre: "Analista" }), { code: "REQUEST_CHANGED" });
     assert.equal((await f.db.query(`SELECT COUNT(*)::integer AS count FROM "ApprovalOperationalAction"`)).rows[0].count, 0);
     assert.equal((await f.db.query(`SELECT "clienteTelefono" FROM "CreditoBorrador"`)).rows[0].clienteTelefono, "3001234567");
+    assert.equal(f.calls.includes("mutation"), false);
   } finally { await f.db.close(); }
 });
 
@@ -311,4 +364,52 @@ test("Veriff usa nombres y tipo autoritativos después del lock aunque el asesor
   assert.equal(sent.lastName, "PRUEBA");
   assert.equal(sent.documentType, "CC");
   assert.equal(calls.at(-1)[0], "release");
+});
+
+
+test("un autosave normal mantiene el sello, folio y condiciones de la firma corregida incluso tras firmarla", () => {
+  const seal = { checksum: "sello-corregido", snapshot: { fechaPrimerPago: "2026-11-02" } };
+  for (const marker of [{ firmaSeguroClientCorrectionPending: true },
+    { firmaSeguroClientCorrectionReissueProcessUuid: "firma-corregida-completa" }]) {
+    const server = { ...corrected({ clientePrimerNombre: "ANA MARIA" }).payload, ...marker,
+      financialTermsSeal: seal, firmaSeguroDraftFolio: "SOL-002801", cuotaInicial: "1500000",
+      frecuenciaPago: "QUINCENAL", fechaPrimerPago: "2026-11-02", equipoCatalogoId: 19,
+      equipoMarca: "IPHONE", equipoModelo: "13", referenciaEquipo: "IPHONE 13" };
+    const stale = { ...payload, analystDataRevision: 1, financialTermsSeal: { checksum: "falso" },
+      firmaSeguroDraftFolio: "folio-de-otra-version", valorEquipoTotal: "5000000", cuotaInicial: "500000",
+      plazoMeses: "36", fechaPrimerPago: "2026-11-17", equipoCatalogoId: 99,
+      montoCreditoTotal: "4500000", valorCuota: "300000", tasaInteresEa: "99" };
+    const saved = core.preserveAnalystDataCorrectionAutosave(server, stale);
+    for (const field of ["clienteNombre", "clientePrimerNombre", "clientePrimerApellido", "clienteDocumento",
+      "financialTermsSeal", "firmaSeguroDraftFolio", "valorEquipoTotal", "cuotaInicial", "plazoMeses",
+      "frecuenciaPago", "fechaPrimerPago", "equipoCatalogoId", "equipoMarca", "equipoModelo", "referenciaEquipo"])
+      assert.deepEqual(saved[field], server[field], field);
+    for (const absent of ["montoCreditoTotal", "valorCuota", "tasaInteresEa"])
+      assert.equal(Object.hasOwn(saved, absent), false, absent);
+    const omitted = { ...stale }; delete omitted.financialTermsSeal; delete omitted.firmaSeguroDraftFolio;
+    const normal = core.preserveAnalystDataCorrectionAutosave(server, omitted);
+    assert.deepEqual(normal.financialTermsSeal, seal);
+    assert.equal(normal.firmaSeguroDraftFolio, server.firmaSeguroDraftFolio);
+  }
+});
+
+
+test("la corrección contractual conserva fotos omitidas y permite los reemplazos explícitos con sus metadatos", () => {
+  const server = { ...payload, firmaSeguroClientCorrectionPending: true,
+    contratoCedulaFrenteDataUrl: "cedula-original", contratoCedulaFrenteCapturedAt: "2026-10-08T15:00:00Z",
+    contratoCedulaFrenteSource: "CAMERA", fotoEntregaDataUrl: "entrega-original",
+    fotoRemisionDataUrl: "remision-original", fotoRemisionCapturedAt: "2026-10-08T15:00:00Z", fotoRemisionSource: "CAMERA" };
+  const saved = core.preserveAnalystDataCorrectionAutosave(server, payload);
+  for (const field of ["contratoCedulaFrenteDataUrl", "contratoCedulaFrenteCapturedAt", "contratoCedulaFrenteSource",
+    "fotoEntregaDataUrl", "fotoRemisionDataUrl", "fotoRemisionCapturedAt", "fotoRemisionSource"])
+    assert.equal(saved[field], server[field], field);
+  const replacement = { ...payload, fotoRemisionDataUrl: "remision-corregida",
+    fotoRemisionCapturedAt: "2026-10-08T17:00:00Z", fotoRemisionSource: "UPLOAD" };
+  const replaced = core.preserveAnalystDataCorrectionAutosave(server, replacement);
+  for (const field of ["fotoRemisionDataUrl", "fotoRemisionCapturedAt", "fotoRemisionSource"])
+    assert.equal(replaced[field], replacement[field], field);
+  assert.equal(replaced.fotoEntregaDataUrl, "entrega-original");
+  const ordinary = { ...server }; delete ordinary.firmaSeguroClientCorrectionPending;
+  assert.equal(Object.hasOwn(core.preserveAnalystDataCorrectionAutosave(ordinary, payload), "fotoRemisionDataUrl"), false,
+    "el alcance no cambia autosaves sin corrección contractual");
 });

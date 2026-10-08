@@ -334,6 +334,8 @@ export async function GET(req: Request) {
             jsonb_build_object(
               'analystDataRevision', COALESCE(d."payload"->'analystDataRevision', '0'::jsonb),
               'analystDataCorrection', d."payload"->'analystDataCorrection',
+              'firmaSeguroClientCorrectionPending', d."payload"->'firmaSeguroClientCorrectionPending',
+              'firmaSeguroClientCorrectionId', d."payload"->'firmaSeguroClientCorrectionId',
               'analystFinancialRevision', COALESCE(d."payload"->'analystFinancialRevision', '0'::jsonb),
               'analystFinancialCorrection', d."payload"->'analystFinancialCorrection',
               'analystEvidenceRevision', COALESCE(d."payload"->'analystEvidenceRevision', '0'::jsonb),

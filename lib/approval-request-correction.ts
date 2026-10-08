@@ -15,7 +15,7 @@ type Database = Prisma.TransactionClient;
 type Actor = { id: number; nombre: string };
 type Draft = {
   id: number; estado: string; creditoId: number | null; expired: boolean;
-  clienteNombre: string | null; clienteTelefono: string | null; payload: unknown;
+  clienteNombre: string | null; clienteTelefono: string | null; clienteDocumento: string | null; payload: unknown;
 };
 
 export function parseCorrectionDraftId(value: string) {
@@ -28,12 +28,13 @@ export function parseCorrectionDraftId(value: string) {
 
 async function readDraft(db: Database, id: number, lock = false) {
   const rows = await db.$queryRawUnsafe<Draft[]>(`SELECT "id", "estado", "creditoId",
-    "clienteNombre", "clienteTelefono", "payload",
+    "clienteNombre", "clienteTelefono", "clienteDocumento", "payload",
     COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') <= CURRENT_TIMESTAMP AS "expired"
     FROM "CreditoBorrador" WHERE "id"=$1 LIMIT 1${lock ? " FOR UPDATE" : ""}`, id);
   if (!rows[0]) throw new RequestDataCorrectionError("REQUEST_NOT_FOUND", "Solicitud no disponible.", 404);
   const row = rows[0];
   const payload = { ...correctionRecord(row.payload),
+    clienteDocumento: row.clienteDocumento ?? correctionRecord(row.payload).clienteDocumento,
     clienteTelefono: row.clienteTelefono ?? correctionRecord(row.payload).clienteTelefono,
     clienteNombre: row.clienteNombre ?? correctionRecord(row.payload).clienteNombre };
   return { row, payload };
@@ -41,22 +42,30 @@ async function readDraft(db: Database, id: number, lock = false) {
 
 async function readEligibility(db: Database, id: number, row: Draft, payload: Record<string, unknown>) {
   const rows = await db.$queryRawUnsafe<Array<{
-    signatureStarted: boolean; identityStarted: boolean; dispatchTablePresent: boolean;
+    signatureStarted: boolean; identityStarted: boolean; dispatchTablePresent: boolean; expectedProcessUuid: string | null;
   }>>(`SELECT EXISTS(SELECT 1 FROM "FirmaSeguroProcess" WHERE "draftId"=$1) AS "signatureStarted",
     EXISTS(SELECT 1 FROM "VeriffIdentityValidation" WHERE "draftId"=$1) AS "identityStarted",
-    to_regclass('public."FirmaSeguroDraftDispatch"') IS NOT NULL AS "dispatchTablePresent"`, id);
+    to_regclass('public."FirmaSeguroDraftDispatch"') IS NOT NULL AS "dispatchTablePresent",
+    (SELECT "processUuid" FROM "FirmaSeguroProcess" WHERE "draftId"=$1 AND "creditoId" IS NULL
+      AND "supersededAt" IS NULL ORDER BY "createdAt" DESC,"id" DESC LIMIT 1) AS "expectedProcessUuid"`, id);
   const state = rows[0];
-  let signatureStarted = state?.signatureStarted === true;
+  const signatureStarted = state?.signatureStarted === true;
+  let dispatchPending = false;
   if (state?.dispatchTablePresent) {
     const dispatches = await db.$queryRawUnsafe<Array<{ started: boolean }>>(`SELECT EXISTS(
-      SELECT 1 FROM "FirmaSeguroDraftDispatch" WHERE "draftId"=$1) AS "started"`, id);
-    signatureStarted ||= dispatches[0]?.started === true;
+      SELECT 1 FROM "FirmaSeguroDraftDispatch" WHERE "draftId"=$1
+        AND "status" IN ('PREPARING','DISPATCHING','UNCERTAIN')) AS "started"`, id);
+    dispatchPending = dispatches[0]?.started === true;
   }
-  return requestDataEligibility({ open: row.estado === "ABIERTO" && row.creditoId === null,
-    expired: row.expired, signatureStarted, identityStarted: state?.identityStarted === true,
+  const eligibility = requestDataEligibility({ open: row.estado === "ABIERTO" && row.creditoId === null,
+    expired: row.expired, signatureStarted, dispatchPending, identityStarted: state?.identityStarted === true,
     correctionPending: payload.firmaSeguroCorrectionPending === true ||
       payload.firmaSeguroIdentityCorrectionPending === true || payload.firmaSeguroFinancialCorrectionPending === true ||
       payload.firmaSeguroContactCorrectionPending === true });
+  if (!eligibility.reason && signatureStarted && !state?.expectedProcessUuid)
+    return { ...eligibility, editableFields: [], requiresNewSignature: false,
+      reason: "No hay una firma vigente verificable. Revisa la corrección desde Gestionar firma.", expectedProcessUuid: null };
+  return { ...eligibility, expectedProcessUuid: state?.expectedProcessUuid || null };
 }
 
 async function ensureReadSchemas() {
@@ -78,6 +87,10 @@ export async function correctAnalystRequestData(id: number, input: RequestDataCo
     throw new RequestDataCorrectionError("UNAUTHORIZED", "Inicia sesión con tu cuenta de analista.", 401);
   await ensureReadSchemas();
   await ensureApprovalOperationalSchema();
+  if (input.idempotencyKey || (await getAnalystRequestCorrection(id)).requiresNewSignature) {
+    const { correctAndReissueAnalystRequestData } = await import("@/lib/approval-request-client-signature-correction");
+    return correctAndReissueAnalystRequestData(id, input, actor);
+  }
   return prisma.$transaction(async (db) => {
     await lockSolicitudOperationMutation(db, id);
     await lockVeriffDraftAttempts(db, id);
@@ -85,7 +98,10 @@ export async function correctAnalystRequestData(id: number, input: RequestDataCo
     const eligibility = await readEligibility(db, id, row, payload);
     if (!eligibility.editableFields.length)
       throw new RequestDataCorrectionError("REQUEST_LOCKED", eligibility.reason || "La solicitud no permite esta corrección.");
-    const correction = applyRequestDataCorrection(payload, input, eligibility.editableFields, actor.nombre);
+    if (eligibility.requiresNewSignature)
+      throw new RequestDataCorrectionError("REQUEST_CHANGED", "Se inició una firma. Actualiza los datos para confirmar su nueva versión.");
+    const correction = applyRequestDataCorrection(payload, input, eligibility.editableFields, actor.nombre,
+      new Date(), { preserveIdentityEvidence: true });
     await db.$executeRawUnsafe(`UPDATE "CreditoBorrador" SET "payload"=$2::jsonb,
       "clienteNombre"=$3, "clienteTelefono"=$4, "updatedAt"=CURRENT_TIMESTAMP
       WHERE "id"=$1 AND "estado"='ABIERTO' AND "creditoId" IS NULL`, id,

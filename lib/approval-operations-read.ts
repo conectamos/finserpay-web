@@ -433,7 +433,7 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     signature.status === "SIGNED" && !unresolvedDispatch;
   const canUpdateContact = open && supported && !unresolvedDispatch &&
     (signature.status === "SIGNED" || (correctionPending && signature.status === "NOT_SENT" && signedArchivedSource));
-  const canResendSignature = Boolean(open && supported &&
+  let canResendSignature = Boolean(open && supported &&
     ((correctionPending && (signature.status === "NOT_SENT" || failedIdentityRetry)) || failedImeiRetry) &&
     signedArchivedSource && !unresolvedDispatch);
   const activeSignatures = signatures.filter((item) => !item.supersededAt);
@@ -442,12 +442,16 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     readFinancingTermsSeal(record(activeSignature.draftPayload).financialTermsSeal));
   const terminalFailedSource = Boolean(activeSignature && !activeSignature.hasSignedDocument
     && !activeSignature.completedAt && isVerifiedTerminalSignatureFailure(activeSignature.status));
+  const clientCorrectionPending = payload.firmaSeguroClientCorrectionPending === true;
+  canResendSignature ||= Boolean(open && supported && clientCorrectionPending &&
+    terminalFailedSource && frozenPendingSource && !unresolvedDispatch);
   const redirectableSignature = signature.status === "PENDING"
     || (signature.status === "TECHNICAL_ERROR" && terminalFailedSource);
   const canRedirectPendingSignature = Boolean(open && supported && !unresolvedDispatch &&
-    redirectableSignature && signature.processUuid && activeSignatures.length === 1
+    !clientCorrectionPending && redirectableSignature && signature.processUuid && activeSignatures.length === 1
     && activeSignature && frozenPendingSource);
   const pendingSignatureRedirectReason = canRedirectPendingSignature ? null
+    : clientCorrectionPending ? "Para corregir el contacto usa Editar datos en la solicitud. La nueva versión está pendiente de firma."
     : !open ? "La solicitud ya no está abierta en Identidad y firma."
     : !supported ? "La redirección de FirmaSeguro está disponible por ahora para iPhone."
     : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."

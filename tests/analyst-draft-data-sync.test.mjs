@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { hasAuditedCreditIdentityCorrection } from "../lib/credit-client-name.ts";
 import {
   readAnalystDraftDataSnapshot,
   resolveAnalystDraftDataUpdate,
@@ -188,6 +189,8 @@ function advisorSyncRuntime() {
     analystEvidenceSnapshotRef: { current: readAnalystDraftEvidenceSnapshot(12, {}) },
     identityEvidenceClientIdentityRef: { current: "old-identity" },
     preservedCanonicalClientNameRef: { current: null }, applyingDraftRef: { current: false },
+    auditedIdentityCorrectionRef: { current: false }, firmaSeguroRefreshGenerationRef: { current: 0 },
+    hasAuditedCreditIdentityCorrection,
     cancelPendingDraftAutosave() {},
     equipmentCatalogKey: (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase(),
     clienteDocumento: "100000001", clientePrimerNombre: "ANA", clientePrimerApellido: "PRUEBA",
@@ -234,6 +237,49 @@ test("el callback real aplica condiciones y después una remisión nueva del mis
   assert.equal(advisor.fotoRemisionAudit.source, "CORRECCION_ANALISTA_SOLICITUD");
   assert.equal(advisor.analystFinancialRevision, 2);
   assert.equal(advisor.analystEvidenceRevision, 3);
+});
+
+test("la corrección con nueva firma conserva las fotos y retira el contrato anterior de la pantalla del asesor", () => {
+  const advisor = advisorSyncRuntime();
+  const corrected = payload(1, { clientePrimerNombre: "ANA MARÍA", clienteFechaNacimiento: "1991-02-03" },
+    { clientePrimerNombre: 1, clienteFechaNacimiento: 1 });
+  corrected.analystDataCorrection.preserveIdentityEvidence = true;
+  const process = { processUuid: "firma-corregida", status: "CREATED" };
+  advisor.firmaSeguroDraftProcess = { processUuid: "firma-anterior", status: "SIGNED" };
+  advisor.sync({ id: 12, payload: { ...corrected, firmaSeguroClientCorrectionPending: true,
+    __analystFirmaSeguroProcess: process } });
+  advisor.effect();
+  assert.equal(advisor.clientePrimerNombre, "ANA MARÍA");
+  assert.equal(advisor.clienteFechaNacimiento, "1991-02-03");
+  assert.equal(advisor.contratoCedulaFrenteDataUrl, "cedula-anterior");
+  assert.equal(advisor.fotoRemisionDataUrl, "remision-anterior");
+  assert.equal(advisor.auditedIdentityCorrectionRef.current, true);
+  assert.equal(advisor.firmaSeguroDraftProcess, process);
+  assert.equal(advisor.wizardStep, 4);
+  assert.equal(advisor.firmaSeguroRefreshGenerationRef.current, 1);
+});
+
+test("una actualización posterior de Veriff conserva nombres y nacimiento corregidos por el analista", () => {
+  const source = readFileSync(new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url), "utf8");
+  const start = source.indexOf("  const applyVeriffIdentityData = ");
+  assert.ok(start >= 0);
+  const callback = source.slice(start, source.indexOf("  const veriffMissingIdentityMessage", start));
+  const context = { auditedIdentityCorrectionRef: { current: true }, dataCreditoApproval: { documentNumber: "100000001" },
+    dataCreditoAssessmentId: "assessment", veriffExpectedDraftId: 12, veriffApprovalCanUnlockClient: () => true,
+    applyingVeriffIdentityRef: { current: false }, clientePrimerNombre: "ANA CORREGIDA",
+    clienteFechaNacimiento: "1991-02-03", dateOnly: (value) => value,
+    normalizeVeriffGender: () => "", normalizeVeriffDocumentType: (value) => value };
+  for (const name of new Set([...callback.matchAll(/\b(set[A-Z]\w*)\(/g)].map((match) => match[1]))) {
+    const state = name.charAt(3).toLowerCase() + name.slice(4);
+    context[name] = (value) => { context[state] = value; };
+  }
+  runInNewContext(ts.transpileModule(`${callback}\nthis.apply = applyVeriffIdentityData;`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, context);
+  context.apply({ identityData: { firstName: "ANA ANTERIOR", lastName: "PRUEBA", documentNumber: "100000001",
+    dateOfBirth: "1990-01-01" } });
+  assert.equal(context.clientePrimerNombre, "ANA CORREGIDA");
+  assert.equal(context.clienteFechaNacimiento, "1991-02-03");
 });
 
 function pollingHarness(load) {

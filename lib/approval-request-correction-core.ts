@@ -9,6 +9,12 @@ export const REQUEST_IDENTITY_FIELDS = [
 ] as const;
 export const REQUEST_CORRECTION_FIELDS = [...REQUEST_CONTACT_FIELDS, ...REQUEST_IDENTITY_FIELDS] as const;
 const syncFields = new Set<string>([...REQUEST_CORRECTION_FIELDS, "clienteNombre"]);
+export const CLIENT_CORRECTION_MARKER_FIELDS = [
+  "firmaSeguroClientCorrectionPending", "firmaSeguroClientCorrectionId",
+  "firmaSeguroClientCorrectionSourceProcessUuid", "firmaSeguroClientCorrectionSourceChecksum",
+  "firmaSeguroClientCorrectionSourceSigned", "firmaSeguroClientCorrectionIntentSha256",
+  "firmaSeguroClientCorrectionReissuedAt", "firmaSeguroClientCorrectionReissueProcessUuid",
+] as const;
 const identityEvidenceFields = [
   "contratoFotoDataUrl", "contratoFotoCapturedAt", "contratoFotoSource",
   "iphoneSelfieCedulaDataUrl", "iphoneSelfieCedulaCapturedAt", "iphoneSelfieCedulaSource",
@@ -34,25 +40,27 @@ export function requestDataRevision(payload: Record<string, unknown>) {
     ? Number(payload.analystDataRevision) : 0;
 }
 export function requestDataValues(payload: Record<string, unknown>) {
-  return Object.fromEntries([...REQUEST_CORRECTION_FIELDS, "clientePrimerApellido", "clienteNombre"]
+  return Object.fromEntries([...REQUEST_CORRECTION_FIELDS, "clientePrimerApellido", "clienteNombre", "clienteDocumento"]
     .map((field) => [field, text(payload[field])]));
 }
 
 export function requestDataEligibility(input: {
   open: boolean; expired: boolean; signatureStarted: boolean; identityStarted: boolean;
-  correctionPending: boolean;
+  correctionPending: boolean; dispatchPending?: boolean;
 }) {
   const reason = !input.open ? "La solicitud está cerrada. No se pueden corregir sus datos."
     : input.expired ? "La solicitud está vencida. No se pueden corregir sus datos."
-    : input.signatureStarted || input.correctionPending
-      ? "El contrato ya tiene un envío o una corrección en curso. Gestiona una nueva versión desde FirmaSeguro."
+    : input.dispatchPending ? "Hay un envío de firma en curso o pendiente de conciliación. Consulta su estado antes de corregir los datos."
+    : input.correctionPending
+      ? "Hay una corrección contractual en curso. Termínala desde Gestionar firma antes de cambiar los datos."
       : null;
   return {
-    editableFields: reason ? [] : [...REQUEST_CONTACT_FIELDS,
-      ...(input.identityStarted ? [] : REQUEST_IDENTITY_FIELDS)],
+    editableFields: reason ? [] : [...REQUEST_CORRECTION_FIELDS],
     reason,
-    identityReason: input.identityStarted
-      ? "La identidad ya inició su validación. Los nombres y la fecha de nacimiento requieren el flujo de corrección de identidad."
+    identityReason: null,
+    requiresNewSignature: !reason && input.signatureStarted,
+    signatureNotice: !reason && input.signatureStarted
+      ? "Al guardar se archivará la firma anterior y se enviará una nueva con los datos corregidos. Las condiciones financieras se conservarán."
       : null,
     canManageContract: input.open && !input.expired && (input.signatureStarted || input.correctionPending),
   };
@@ -61,11 +69,13 @@ export function requestDataEligibility(input: {
 export type RequestDataCorrectionInput = {
   values: Record<string, unknown>; expectedValues: Record<string, unknown>;
   expectedRevision: number; reason: string;
+  expectedProcessUuid?: string | null; idempotencyKey?: string; confirmed?: boolean;
 };
 
 export function parseRequestDataCorrection(value: unknown): RequestDataCorrectionInput {
   const body = correctionRecord(value);
-  if (Object.keys(body).some((key) => !["values", "expectedValues", "expectedRevision", "reason"].includes(key)))
+  if (Object.keys(body).some((key) => !["values", "expectedValues", "expectedRevision", "reason",
+    "expectedProcessUuid", "idempotencyKey", "confirmed"].includes(key)))
     throw new RequestDataCorrectionError("INVALID_FIELDS", "La solicitud contiene campos no permitidos.", 400);
   const values = correctionRecord(body.values);
   const expectedValues = correctionRecord(body.expectedValues);
@@ -78,7 +88,18 @@ export function parseRequestDataCorrection(value: unknown): RequestDataCorrectio
   const reason = text(body.reason).normalize("NFKC").replace(/\s+/g, " ");
   if (reason.length < 5 || reason.length > 500 || /[\u0000-\u001f\u007f]/.test(reason))
     throw new RequestDataCorrectionError("INVALID_REASON", "Describe el motivo en 5 a 500 caracteres.", 400);
-  return { values, expectedValues, expectedRevision: Number(body.expectedRevision), reason };
+  if (body.expectedProcessUuid !== undefined && body.expectedProcessUuid !== null &&
+    (typeof body.expectedProcessUuid !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(body.expectedProcessUuid)))
+    throw new RequestDataCorrectionError("INVALID_PROCESS", "Actualiza el estado de la firma antes de corregir.", 400);
+  if (body.idempotencyKey !== undefined && (typeof body.idempotencyKey !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.idempotencyKey)))
+    throw new RequestDataCorrectionError("INVALID_OPERATION", "Actualiza la solicitud antes de confirmar.", 400);
+  if (body.confirmed !== undefined && typeof body.confirmed !== "boolean")
+    throw new RequestDataCorrectionError("INVALID_CONFIRMATION", "Confirma el envío de la nueva firma.", 400);
+  return { values, expectedValues, expectedRevision: Number(body.expectedRevision), reason,
+    ...(body.expectedProcessUuid !== undefined ? { expectedProcessUuid: body.expectedProcessUuid as string | null } : {}),
+    ...(typeof body.idempotencyKey === "string" ? { idempotencyKey: body.idempotencyKey.toLowerCase() } : {}),
+    ...(typeof body.confirmed === "boolean" ? { confirmed: body.confirmed } : {}) };
 }
 
 function validateField(field: string, raw: unknown, payload: Record<string, unknown>, now: Date) {
@@ -122,7 +143,8 @@ function validateField(field: string, raw: unknown, payload: Record<string, unkn
 
 /** Optimistic checks use only edited fields, so unrelated advisor work remains intact. */
 export function applyRequestDataCorrection(payload: Record<string, unknown>, input: RequestDataCorrectionInput,
-  editableFields: readonly string[], actorName: string, now = new Date()) {
+  editableFields: readonly string[], actorName: string, now = new Date(),
+  options: { preserveIdentityEvidence?: boolean } = {}) {
   const revision = requestDataRevision(payload);
   if (input.expectedRevision !== revision)
     throw new RequestDataCorrectionError("REQUEST_CHANGED", "Otro analista corrigió la solicitud. Actualiza y revisa los datos antes de guardar.");
@@ -154,15 +176,16 @@ export function applyRequestDataCorrection(payload: Record<string, unknown>, inp
   const invalidatedFields = [...new Set([
     ...(Array.isArray(previous.invalidatedFields) ? previous.invalidatedFields.filter((field) =>
       typeof field === "string" && (identityEvidenceFields as readonly string[]).includes(field)) as string[] : []),
-    ...(identityChanged ? identityEvidenceFields : []),
+    ...(identityChanged && !options.preserveIdentityEvidence ? identityEvidenceFields : []),
   ])];
-  if (identityChanged) for (const field of identityEvidenceFields) delete next[field];
+  if (identityChanged && !options.preserveIdentityEvidence) for (const field of identityEvidenceFields) delete next[field];
   const fields = [...new Set([...(Array.isArray(previous.fields) ? previous.fields.filter((field) =>
     typeof field === "string" && syncFields.has(field)) as string[] : []), ...Object.keys(after)])];
   const fieldRevisions = { ...correctionRecord(previous.fieldRevisions),
     ...Object.fromEntries(Object.keys(after).map((field) => [field, revision + 1])) };
   next.analystDataRevision = revision + 1;
   next.analystDataCorrection = { revision: revision + 1, fields, fieldRevisions, invalidatedFields,
+    preserveIdentityEvidence: options.preserveIdentityEvidence === true,
     values: Object.fromEntries(fields.map((field) => [field, text(next[field])])),
     updatedAt: now.toISOString(), actorName };
   return { payload: next, before, after, revision: revision + 1 };
@@ -173,6 +196,43 @@ export function preserveAnalystDataCorrectionAutosave(stored: Record<string, unk
   const payload = { ...incoming };
   delete payload.analystDataRevision;
   delete payload.analystDataCorrection;
+  // Only the nominal analyst dispatch and verified completion can create these markers.
+  for (const field of CLIENT_CORRECTION_MARKER_FIELDS) {
+    delete payload[field];
+    if (Object.hasOwn(stored, field)) payload[field] = stored[field];
+  }
+  const contractCorrected = stored.firmaSeguroClientCorrectionPending === true ||
+    typeof stored.firmaSeguroClientCorrectionReissueProcessUuid === "string";
+  // The advisor factory omits the seal and derives some amounts from its
+  // current policy. Keep the corrected contract authoritative even after its
+  // new signature, including intentionally absent optional snapshot fields.
+  const contractFields = [...REQUEST_CORRECTION_FIELDS,
+    "clienteTipoDocumento", "clienteNombre", "clientePrimerApellido", "clienteDocumento",
+    "dataCreditoAssessmentId", "financialTermsSeal", "firmaSeguroDraftFolio",
+    "equipoCatalogoId", "equipoMarca", "equipoModelo", "referenciaEquipo",
+    "imei", "deviceUid", "plataformaDispositivo", "valorEquipoTotal", "cuotaInicial",
+    "plazoMeses", "frecuenciaPago", "fechaPrimerPago", "montoCredito", "valorCuota",
+    "valorCuotaComercial", "calculoVersion", "cuotaTotalExacta", "descuentoRedondeo",
+    "tasaInteresEa", "tasaPeriodo", "fianzaCuotaPorcentaje", "fianzaTotalPorcentaje",
+    "fianzaModalidad", "seguroCuotaPorcentaje", "redondeoComercialModo",
+    "redondeoComercialMultiplo", "valorFianza", "valorSeguro", "fianzaPorcentaje",
+    "metodoCalculo", "cuotaExacta", "cuotaComercial", "saldoBaseFinanciado", "montoCreditoTotal",
+  ] as const;
+  if (contractCorrected) {
+    for (const field of contractFields) {
+      if (Object.hasOwn(stored, field)) payload[field] = stored[field];
+      else delete payload[field];
+    }
+    // A normal factory autosave can omit evidence while rebuilding its local
+    // state. Keep those existing files; explicit replacements still use the
+    // ordinary evidence correction and audit protections.
+    for (const field of [...identityEvidenceFields,
+      "fotoEntregaDataUrl", "fotoEntregaCapturedAt", "fotoEntregaSource",
+      "fotoRemisionDataUrl", "fotoRemisionCapturedAt", "fotoRemisionSource",
+    ] as const) {
+      if (!Object.hasOwn(incoming, field) && Object.hasOwn(stored, field)) payload[field] = stored[field];
+    }
+  }
   const revision = requestDataRevision(stored);
   if (!revision) return payload;
   const correction = correctionRecord(stored.analystDataCorrection);

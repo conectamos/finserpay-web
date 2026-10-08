@@ -26,6 +26,9 @@ function load(path, dependencies = {}, loose = false) {
 }
 
 const { CreditApprovalError } = load("lib/credit-approval-errors.ts");
+const requestCorrection = load("lib/approval-request-correction-core.ts", {
+  "./credit-client-name": {}, "./credit-contact-phones": {},
+});
 const writer = load("lib/approval-operations-write.ts", {}, true);
 const read = load("lib/approval-operations-read.ts", {
   "@/lib/prisma": { default: {} },
@@ -106,6 +109,7 @@ function harness({ user = { id: 7, nombre: "Analista" }, shared = undefined, rea
     "@/lib/credit-device-replacement-storage": { CreditDeviceReplacementError: OtherOperationalError },
     "@/lib/firmaseguro-imei-correction": { FirmaSeguroImeiCorrectionError: OtherOperationalError },
     "@/lib/firmaseguro-draft-dispatch-ledger": { DraftDispatchError: OtherOperationalError },
+    "@/lib/approval-request-correction-core": requestCorrection,
     "@/lib/credit-approval-http": approvalHttp,
     "@/lib/approval-operations-read": read,
     "@/lib/approval-operations-write": { ApprovalOperationalError: writer.ApprovalOperationalError },
@@ -134,6 +138,17 @@ function assertPrivate(response) {
   assert.equal(response.headers.get("vary"), "Cookie");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 }
+
+test("los errores de corrección del cliente en el reenvío conservan su explicación y estado privados", async () => {
+  const { http } = harness();
+  const response = http.operationalErrorResponse(new requestCorrection.RequestDataCorrectionError(
+    "PROCESS_CHANGED", "La firma vigente cambió. Actualiza la solicitud.",
+  ));
+  assert.equal(response.status, 409);
+  assertPrivate(response);
+  assert.deepEqual(await response.json(), { ok: false, code: "PROCESS_CHANGED",
+    error: "La firma vigente cambió. Actualiza la solicitud." });
+});
 
 test("la sesión personal ejecuta las rutas operativas con actor, expediente y respuesta privados", async () => {
   const { routes, calls } = harness();

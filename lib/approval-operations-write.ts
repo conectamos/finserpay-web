@@ -1072,6 +1072,11 @@ export async function requestOperationalSignature(kind: OperationalKind, targetI
     throw new ApprovalOperationalError("INVALID_CASE", "Selecciona un caso válido.", 400);
   if (kind === "DRAFT") {
     const draft = await readDraft(prisma, targetId);
+    if (object(draft.payload).firmaSeguroClientCorrectionPending === true) {
+      const { retryAnalystRequestClientSignature } = await import("@/lib/approval-request-client-signature-correction");
+      return retryAnalystRequestClientSignature(targetId, { idempotencyKey: id, reason: motive,
+        expectedProcessUuid: typeof input.expectedProcessUuid === "string" ? input.expectedProcessUuid : null }, actor);
+    }
     if (draft.currentStep < 3 || draft.currentStep > 4
       || (clean(draft.plataforma, 32)
         || clean(object(draft.payload).plataformaDispositivo, 32)).toUpperCase() !== "IPHONE")

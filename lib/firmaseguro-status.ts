@@ -63,3 +63,10 @@ export function isFirmaSeguroFailedStatus(status: unknown) {
     FIRMASEGURO_FAILURE_STATUS_TOKENS.has(token)
   );
 }
+
+/** A corrected contract must not treat “not signed” or “failed signed” as completed. */
+export function isFirmaSeguroVerifiedCompletedStatus(status: unknown) {
+  const tokens = firmaSeguroStatusTokens(status);
+  return isFirmaSeguroSuccessfulStatus(status) && !isFirmaSeguroFailedStatus(status) &&
+    !tokens.some(token => ["NOT", "NO", "SIN", "PENDING", "WAITING", "AWAITING"].includes(token));
+}

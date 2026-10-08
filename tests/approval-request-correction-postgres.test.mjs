@@ -40,6 +40,8 @@ const originalPayload = {
   valorEquipoTotal: "4500000", cuotaInicial: "1500000", plazoMeses: "40",
   frecuenciaPago: "QUINCENAL", fechaPrimerPago: "2030-01-17", wizardStep: 2,
   dataCreditoAssessmentId: "11111111-1111-4111-8111-111111111111",
+  contratoCedulaFrenteDataUrl: "cedula-frontal", contratoCedulaRespaldoDataUrl: "cedula-posterior",
+  contratoSelfieDataUrl: "selfie", fotoEntregaDataUrl: "entrega", fotoRemisionDataUrl: "remision", recording: "audio",
 };
 
 test("SQL real de corrección: actualización atómica, auditoría y restricciones del expediente", async (t) => {
@@ -48,12 +50,13 @@ test("SQL real de corrección: actualización atómica, auditoría y restriccion
   await pg.exec(`
     CREATE TABLE "CreditoBorrador" (
       "id" INTEGER PRIMARY KEY, "estado" TEXT NOT NULL, "creditoId" INTEGER,
-      "clienteNombre" TEXT, "clienteTelefono" TEXT, "payload" JSONB NOT NULL,
+      "clienteNombre" TEXT, "clienteTelefono" TEXT, "clienteDocumento" TEXT, "payload" JSONB NOT NULL,
       "currentStep" INTEGER NOT NULL, "dataCreditoAssessmentId" UUID,
       "imei" TEXT, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "expiresAt" TIMESTAMPTZ, "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
-    CREATE TABLE "FirmaSeguroProcess" ("id" INTEGER PRIMARY KEY, "draftId" INTEGER, "status" TEXT);
+    CREATE TABLE "FirmaSeguroProcess" ("id" INTEGER PRIMARY KEY, "draftId" INTEGER, "status" TEXT,
+      "creditoId" INTEGER,"processUuid" TEXT,"supersededAt" TIMESTAMPTZ,"createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE "VeriffIdentityValidation" ("id" INTEGER PRIMARY KEY, "draftId" INTEGER, "status" TEXT);
     CREATE TABLE "FirmaSeguroDraftDispatch" ("id" INTEGER PRIMARY KEY, "draftId" INTEGER, "status" TEXT);
     CREATE TABLE "ApprovalOperationalAction" (
@@ -85,15 +88,19 @@ test("SQL real de corrección: actualización atómica, auditoría y restriccion
     "@/lib/veriff-storage": { ensureVeriffSchema: async () => {},
       lockVeriffDraftAttempts: async (_db, id) => trace.push({ kind: "identity-lock", id }) },
     "@/lib/approval-request-correction-core": core,
+    "@/lib/approval-request-client-signature-correction": { correctAndReissueAnalystRequestData: async () => {
+      trace.push({ kind: "signature-correction" });
+      throw new core.RequestDataCorrectionError("CONFIRM_NEW_SIGNATURE", "Confirma la nueva firma", 400);
+    } },
   });
   let nextId = 0;
   async function seed(payload = originalPayload) {
     const id = ++nextId;
     await pg.query(`INSERT INTO "CreditoBorrador" (
-      "id","estado","clienteNombre","clienteTelefono","payload","currentStep",
+      "id","estado","clienteNombre","clienteTelefono","clienteDocumento","payload","currentStep",
       "dataCreditoAssessmentId","imei","expiresAt")
-      VALUES ($1,'ABIERTO',$2,$3,$4::jsonb,2,$5::uuid,$6,'2300-01-01')`,
-    [id, payload.clienteNombre, payload.clienteTelefono, JSON.stringify(payload), payload.dataCreditoAssessmentId, payload.imei]);
+      VALUES ($1,'ABIERTO',$2,$3,$4,$5::jsonb,2,$6::uuid,$7,'2300-01-01')`,
+    [id, payload.clienteNombre, payload.clienteTelefono, payload.clienteDocumento, JSON.stringify(payload), payload.dataCreditoAssessmentId, payload.imei]);
     return id;
   }
   async function row(id) {
@@ -134,9 +141,14 @@ test("SQL real de corrección: actualización atómica, auditoría y restriccion
       "frecuenciaPago", "fechaPrimerPago", "wizardStep", "dataCreditoAssessmentId"])
       assert.equal(saved.payload[field], originalPayload[field]);
     assert.equal(result.revision, 1);
-    assert.deepEqual(trace.slice(0, 2), [
+    const operationLock = trace.findIndex(event => event.kind === "operation-lock");
+    assert.ok(operationLock >= 0);
+    assert.deepEqual(trace.slice(operationLock, operationLock + 2), [
       { kind: "operation-lock", id }, { kind: "identity-lock", id },
     ]);
+    const firstWrite = trace.findIndex(event => event.kind === "write");
+    assert.ok(firstWrite > operationLock + 1);
+    assert.ok(trace.slice(operationLock + 2, firstWrite).some(event => event.kind === "read" && /FOR UPDATE/.test(event.sql)));
     const [audit] = await audits(id);
     assert.equal(audit.targetKind, "DRAFT");
     assert.equal(audit.actorUserId, actor.id);
@@ -175,24 +187,69 @@ test("SQL real de corrección: actualización atómica, auditoría y restriccion
     assert.equal((await audits(id)).length, 1);
   });
 
-  await t.test("firma histórica y envío reservado bloquean antes de modificar o auditar", async () => {
-    for (const table of ["FirmaSeguroProcess", "FirmaSeguroDraftDispatch"]) {
+  await t.test("una firma histórica sin fuente vigente y un despacho incierto bloquean antes de mutar", async () => {
+    const historicalId = await seed();
+    await pg.query(`INSERT INTO "FirmaSeguroProcess" ("id","draftId","status","processUuid","supersededAt")
+      VALUES ($1,$1,'FAILED','firma-archivada',CURRENT_TIMESTAMP)`, [historicalId]);
+    await unchangedAfterFailure(historicalId, correction({ clienteTelefono: "3101234567" }), { code: "REQUEST_LOCKED" });
+    for (const status of ["PREPARING", "DISPATCHING", "UNCERTAIN"]) {
       const id = await seed();
-      await pg.query(`INSERT INTO "${table}" VALUES ($1,$1,'FAILED')`, [id]);
+      await pg.query(`INSERT INTO "FirmaSeguroDraftDispatch" VALUES ($1,$1,$2)`, [id, status]);
       await unchangedAfterFailure(id, correction({ clienteTelefono: "3101234567" }), { code: "REQUEST_LOCKED" });
     }
   });
 
-  await t.test("la validación iniciada bloquea nombres pero permite corregir el contacto", async () => {
+  await t.test("un despacho fallido sin proceso no bloquea para siempre la corrección de datos", async () => {
     const id = await seed();
-    await pg.query('INSERT INTO "VeriffIdentityValidation" VALUES ($1,$1,\'PENDING\')', [id]);
-    const detail = await service.getAnalystRequestCorrection(id);
-    assert.equal(detail.editableFields.includes("clientePrimerNombre"), false);
-    assert.equal(detail.editableFields.includes("clienteTelefono"), true);
-    await unchangedAfterFailure(id, correction({ clientePrimerNombre: "ANA MARIA" }), { code: "FIELD_LOCKED" });
+    await pg.query(`INSERT INTO "FirmaSeguroDraftDispatch" VALUES ($1,$1,'FAILED_SAFE')`, [id]);
     await service.correctAnalystRequestData(id, correction({ clienteTelefono: "3101234567" }), actor);
     assert.equal((await row(id)).clienteTelefono, "3101234567");
     assert.equal((await audits(id)).length, 1);
+  });
+
+  await t.test("la firma vigente habilita edición pero dirige la corrección al envío confirmado de la nueva versión", async () => {
+    const id = await seed();
+    await pg.query(`INSERT INTO "FirmaSeguroProcess" ("id","draftId","status","processUuid")
+      VALUES ($1,$1,'PENDING','firma-vigente')`, [id]);
+    const detail = await service.getAnalystRequestCorrection(id);
+    assert.ok(detail.editableFields.includes("clientePrimerNombre"));
+    assert.ok(detail.editableFields.includes("clienteFechaNacimiento"));
+    assert.equal(detail.requiresNewSignature, true);
+    assert.equal(detail.expectedProcessUuid, "firma-vigente");
+    await unchangedAfterFailure(id, correction({ clienteTelefono: "3101234567" }), { code: "CONFIRM_NEW_SIGNATURE" });
+    assert.ok(trace.some(event => event.kind === "signature-correction"));
+  });
+
+  await t.test("identidad pendiente o aprobada permite nombres y nacimiento sin borrar evidencias o audio", async () => {
+    for (const status of ["PENDING", "APPROVED"]) {
+      const id = await seed();
+      await pg.query('INSERT INTO "VeriffIdentityValidation" VALUES ($1,$1,$2)', [id, status]);
+      const detail = await service.getAnalystRequestCorrection(id);
+      assert.ok(detail.editableFields.includes("clientePrimerNombre"));
+      assert.ok(detail.editableFields.includes("clienteFechaNacimiento"));
+      assert.ok(detail.editableFields.includes("clienteTelefono"));
+      await service.correctAnalystRequestData(id, correction({ clientePrimerNombre: "ANA MARIA",
+        clienteFechaNacimiento: "1991-02-03", clienteTelefono: "3101234567" }), actor);
+      const saved = await row(id);
+      assert.equal(saved.clienteNombre, "ANA MARIA PRUEBA DEMO");
+      assert.equal(saved.clienteTelefono, "3101234567");
+      assert.equal(saved.payload.clienteFechaNacimiento, "1991-02-03");
+      assert.equal(saved.clienteDocumento, originalPayload.clienteDocumento);
+      assert.equal(saved.payload.clientePrimerApellido, originalPayload.clientePrimerApellido);
+      for (const field of ["contratoCedulaFrenteDataUrl", "contratoCedulaRespaldoDataUrl", "contratoSelfieDataUrl",
+        "fotoEntregaDataUrl", "fotoRemisionDataUrl", "recording"])
+        assert.equal(saved.payload[field], originalPayload[field]);
+      assert.equal((await audits(id)).length, 1);
+    }
+  });
+
+  await t.test("la cédula y el primer apellido permanecen bloqueados también dentro de la mutación", async () => {
+    const id = await seed();
+    for (const field of ["clienteDocumento", "clientePrimerApellido"]) {
+      const input = { values: { [field]: "OTRO" }, expectedValues: { [field]: originalPayload[field] },
+        expectedRevision: 0, reason: "Intento de edición no permitida" };
+      await unchangedAfterFailure(id, input, { code: "FIELD_LOCKED" });
+    }
   });
 
   await t.test("solicitudes vencidas, cerradas y convertidas permanecen intactas", async () => {

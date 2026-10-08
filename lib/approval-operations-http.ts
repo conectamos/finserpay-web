@@ -7,6 +7,7 @@ import { CreditApprovalError } from "@/lib/credit-approval";
 import { CreditDeviceReplacementError } from "@/lib/credit-device-replacement-storage";
 import { FirmaSeguroImeiCorrectionError } from "@/lib/firmaseguro-imei-correction";
 import { DraftDispatchError } from "@/lib/firmaseguro-draft-dispatch-ledger";
+import { RequestDataCorrectionError } from "@/lib/approval-request-correction-core";
 import { isSameApprovalOrigin, readApprovalRequest } from "@/lib/credit-approval-http";
 import { operationalCaseIdentity, OperationalCaseReadError } from "@/lib/approval-operations-read";
 import { ApprovalOperationalError, type OperationalActor } from "@/lib/approval-operations-write";
@@ -34,7 +35,8 @@ export function operationalTarget(kind: string, id: string) {
 export function operationalErrorResponse(error: unknown) {
   if (error instanceof ApprovalOperationalError || error instanceof OperationalCaseReadError ||
       error instanceof CreditApprovalError || error instanceof CreditDeviceReplacementError ||
-      error instanceof FirmaSeguroImeiCorrectionError || error instanceof DraftDispatchError) {
+      error instanceof FirmaSeguroImeiCorrectionError || error instanceof DraftDispatchError ||
+      error instanceof RequestDataCorrectionError) {
     return NextResponse.json({ ok: false, code: error.code, error: error.message },
       { status: error.status, headers: operationalPrivateHeaders });
   }

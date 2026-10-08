@@ -5,6 +5,19 @@ import { PGlite } from "@electric-sql/pglite";
 import { createReissueFixture, loadReissueModule, seals } from "./credit-approval-reissue-fixture.mjs";
 
 const operationalCore = loadReissueModule("lib/approval-operations-core.ts");
+const dataCore = loadReissueModule("lib/approval-request-correction-core.ts", {
+  "./credit-client-name": loadReissueModule("lib/credit-client-name.ts"),
+  "./credit-contact-phones": loadReissueModule("lib/credit-contact-phones.ts"),
+});
+const clientFrozen = loadReissueModule("lib/firmaseguro-draft-client-correction-frozen.ts", {
+  "@/lib/credit-amortization-contract": seals,
+  "@/lib/credit-client-name": loadReissueModule("lib/credit-client-name.ts"),
+  "@/lib/credit-factory": {
+    sanitizeText: value => typeof value === "string" ? value.trim() : "",
+    sanitizeImageDataUrl: value => typeof value === "string" ? value : null,
+    generatePaymentReference: (folio, document) => `${folio}-${document}`,
+  },
+});
 
 // PGlite executes the production PostgreSQL statements and triggers in memory.
 // It serializes transactions: the overlap tests below cover the public claim /
@@ -17,7 +30,7 @@ async function fixture(t, options = {}) {
     CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY);
     CREATE TABLE "CreditoBorrador" (
       "id" INTEGER PRIMARY KEY, "payload" JSONB NOT NULL,
-      "clienteTelefono" TEXT,
+      "clienteTelefono" TEXT, "clienteNombre" TEXT,
       "plataforma" TEXT,
       "imei" TEXT,
       "estado" TEXT NOT NULL DEFAULT 'ABIERTO', "creditoId" INTEGER,
@@ -82,6 +95,8 @@ async function fixture(t, options = {}) {
   const createPayload = { uuid: processUuid, status: options.providerStatus || "CREATED", tags: { reissue: operationId } };
   const ledger = loadReissueModule("lib/firmaseguro-draft-dispatch-ledger.ts", {
     "@/lib/approval-operations-core": operationalCore,
+    "@/lib/approval-request-correction-core": dataCore,
+    "@/lib/firmaseguro-draft-client-correction-frozen": clientFrozen,
     "@/lib/prisma": { default: prisma },
     "@/lib/firmaseguro-storage": storage,
     "@/lib/firmaseguro-credit": {
@@ -133,6 +148,19 @@ async function fixture(t, options = {}) {
     "@/lib/approval-operations-schema": { ensureApprovalOperationalSchema: async () => {} },
   }, { Error });
   const sourcePayload = { clienteDocumento: "100000001", fixture: "source",
+    ...(options.clientCorrectionFixture ? {
+      clienteNombre: source.seal.snapshot.clienteNombre, clientePrimerNombre: "CLIENTE", clientePrimerApellido: "PRUEBA",
+      clienteSegundoApellido: "", clienteFechaNacimiento: "1990-01-01",
+      clienteTelefono: source.seal.snapshot.clienteTelefono, clienteCorreo: source.seal.snapshot.clienteCorreo,
+      clienteDireccion: source.seal.snapshot.clienteDireccion, clienteDepartamento: "TOLIMA", clienteCiudad: "Ibagué",
+      clienteTipoDocumento: source.seal.snapshot.tipoDocumento, equipoMarca: source.seal.snapshot.equipoMarca,
+      equipoModelo: source.seal.snapshot.equipoModelo, referenciaEquipo: source.seal.snapshot.referenciaEquipo,
+      imei: source.seal.snapshot.imei, deviceUid: source.seal.snapshot.imei,
+      valorEquipoTotal: "1000000", cuotaInicial: "200000", plazoMeses: "4",
+      frecuenciaPago: source.seal.snapshot.frecuenciaPago, fechaPrimerPago: source.seal.snapshot.fechaPrimerPago,
+      fotoEntregaDataUrl: "data:image/jpeg;base64,entrega-historica", fotoRemisionDataUrl: "data:image/jpeg;base64,remision-historica",
+      contratoCedulaFrenteDataUrl: "data:image/jpeg;base64,cedula-historica", recording: "audio-preserved",
+    } : {}),
     ...(options.veriffRequired ? { veriffValidationId: 91 } : {}) };
   const updatedPayload = { ...sourcePayload, fixture: "reserved", firmaSeguroContactCorrectionPending: true };
   const input = {
@@ -143,7 +171,7 @@ async function fixture(t, options = {}) {
     expectedProcessUuid: null,
     sourcePayload,
     updatedPayload,
-    draftPayload: { financialTermsSeal: source.seal },
+    draftPayload: { ...(options.clientCorrectionFixture ? sourcePayload : {}), financialTermsSeal: source.seal },
     draftFolio: source.credit.folio,
     frozenCredit: source.credit,
     document: Buffer.from("%PDF-1.4\nContract test\n%%EOF"),
@@ -163,7 +191,7 @@ async function fixture(t, options = {}) {
     'SELECT * FROM "FirmaSeguroDraftDispatchReconciliation" ORDER BY "id"')).rows;
   const events = async () => (await database.query('SELECT "status" FROM "FirmaSeguroDraftDispatchEvent" WHERE "dispatchId"=$1::uuid ORDER BY "id"', [operationId])).rows.map((event) => event.status);
   const draft = async () => (await database.query(
-    'SELECT "payload","clienteTelefono","plataforma" FROM "CreditoBorrador" WHERE "id"=$1', [input.draftId])).rows[0];
+    'SELECT "payload","clienteTelefono","clienteNombre","plataforma" FROM "CreditoBorrador" WHERE "id"=$1', [input.draftId])).rows[0];
   const actions = async () => (await database.query(
     'SELECT * FROM "ApprovalOperationalAction" WHERE "targetKind"=\'DRAFT\' AND "targetId"=$1 ORDER BY "createdAt","id"',
   [input.draftId])).rows;
@@ -763,4 +791,177 @@ test("PostgreSQL: el trigger impide recuperar UNCERTAIN sin receipt y proceso co
   assert.deepEqual(await f.events(), ["PREPARING", "DISPATCHING", "UNCERTAIN"]);
   await assert.rejects(f.database.query('DELETE FROM "FirmaSeguroDraftDispatchEvent" WHERE "dispatchId"=$1::uuid', [f.operationId]));
   assert.equal((await f.ledger.finalizeDraftDispatch(f.operationId)).status, "AWAITING_SIGNATURE");
+});
+
+
+async function clientCorrectionReservation(f, id, signed = false) {
+  const sourcePayload = (await f.draft()).payload;
+  const source = (await f.processes()).find(process => process.processUuid === f.processUuid);
+  const updatedPayload = {
+    ...sourcePayload,
+    clientePrimerNombre: "CARLOS", clienteSegundoApellido: "RIVERA", clienteNombre: "CARLOS PRUEBA RIVERA",
+    clienteFechaNacimiento: "1991-02-03", clienteTelefono: "3119876543", clienteCorreo: "corregido@example.invalid",
+    clienteDireccion: "CALLE CORREGIDA 2", clienteDepartamento: "CESAR", clienteCiudad: "Valledupar",
+    analystDataRevision: 1,
+    firmaSeguroClientCorrectionPending: true,
+    firmaSeguroClientCorrectionId: id,
+    firmaSeguroClientCorrectionSourceProcessUuid: f.processUuid,
+    firmaSeguroClientCorrectionSourceChecksum: f.input.draftPayload.financialTermsSeal.checksum,
+    firmaSeguroClientCorrectionIntentSha256: "c".repeat(64),
+    firmaSeguroClientCorrectionSourceSigned: signed,
+  };
+  updatedPayload.analystDataCorrection = { revision: 1, fields: [...dataCore.REQUEST_CORRECTION_FIELDS, "clienteNombre"],
+    fieldRevisions: Object.fromEntries([...dataCore.REQUEST_CORRECTION_FIELDS, "clienteNombre"].map(field => [field, 1])),
+    values: dataCore.requestDataValues(updatedPayload) };
+  const correction = { correlationId: id, draftId: f.input.draftId, previousProcessUuid: f.processUuid,
+    sourceSealChecksum: f.input.draftPayload.financialTermsSeal.checksum,
+    before: dataCore.requestDataValues(sourcePayload), after: dataCore.requestDataValues(updatedPayload) };
+  const frozen = clientFrozen.buildFrozenDraftClientCorrection({
+    draft: { id: f.input.draftId, payload: updatedPayload }, source, correction,
+  });
+  updatedPayload.financialTermsSeal = frozen.seal;
+  return { ...f.input, id, reason: "Corrección autorizada de los datos del cliente",
+    sourcePayload, updatedPayload, expectedProcessUuid: f.processUuid, supersedeActive: true,
+    frozenCredit: frozen.credit,
+    draftPayload: { ...updatedPayload, financialTermsSeal: frozen.seal,
+      firmaSeguroFrozenClientCorrectionSource: frozen.frozenClientCorrectionSource } };
+}
+
+async function completeOriginalClientSignature(f) {
+  await f.storage.updateFirmaSeguroProcess(f.processUuid, { status: "SIGNED", completedAt: new Date(),
+    signedDocumentBase64: Buffer.from("%PDF-1.7\nverified original signature").toString("base64"),
+    signedDocumentFileName: "signed-original.pdf" });
+}
+
+for (const signed of [false, true]) {
+  test(`PostgreSQL: corrección integral desde firma ${signed ? "firmada" : "pendiente"} conserva términos y evidencias`, async t => {
+    const redirectOperationId = randomUUID(), redirectProcessUuid = randomUUID();
+    const f = await fixture(t, { clientCorrectionFixture: true, redirectOperationId, redirectProcessUuid });
+    await f.ledger.dispatchReservedDraft(f.operationId);
+    if (signed) await completeOriginalClientSignature(f);
+    // A signed request may already be in the delivery step. Only this privileged lineage may reopen it.
+    if (signed) await f.database.query('UPDATE "CreditoBorrador" SET "currentStep"=5 WHERE "id"=$1', [f.input.draftId]);
+    const correction = await clientCorrectionReservation(f, redirectOperationId, signed);
+    await f.ledger.reserveDraftDispatch(correction);
+    assert.equal((await f.draft()).payload.clienteNombre, "CLIENTE PRUEBA");
+    assert.equal((await f.processes())[0].supersededAt, null, "una reserva no reemplaza la versión vigente");
+    assert.equal((await f.actions()).length, 0);
+    const result = await f.ledger.dispatchReservedDraft(redirectOperationId);
+    assert.equal(result.status, "AWAITING_SIGNATURE", "una firma previa intencional no se trata como una carrera");
+    assert.equal(result.processUuid, redirectProcessUuid);
+    const draft = await f.draft();
+    assert.equal(draft.clienteNombre, "CARLOS PRUEBA RIVERA");
+    assert.equal(draft.clienteTelefono, "3119876543");
+    assert.equal(draft.payload.clientePrimerApellido, "PRUEBA");
+    assert.equal(draft.payload.clienteDocumento, "100000001");
+    assert.equal(draft.payload.clienteFechaNacimiento, "1991-02-03");
+    assert.equal(draft.payload.fotoEntregaDataUrl, correction.sourcePayload.fotoEntregaDataUrl);
+    assert.equal(draft.payload.fotoRemisionDataUrl, correction.sourcePayload.fotoRemisionDataUrl);
+    assert.equal(draft.payload.contratoCedulaFrenteDataUrl, correction.sourcePayload.contratoCedulaFrenteDataUrl);
+    assert.equal(draft.payload.recording, "audio-preserved");
+    assert.equal(draft.payload.firmaSeguroClientCorrectionPending, true, "el recibo de envío no es la nueva firma");
+    const current = (await f.processes()).find(process => process.processUuid === redirectProcessUuid);
+    const old = (await f.processes()).find(process => process.processUuid === f.processUuid);
+    assert.ok(old.supersededAt);
+    assert.equal(Boolean(old.signedDocumentBase64), signed);
+    assert.equal(current.supersededAt, null);
+    for (const field of ["valorVenta", "cuotaInicial", "numeroCuotas", "cuotaTotalExacta", "totalPagar", "fechaPrimerPago", "imei", "documento"])
+      assert.equal(current.draftPayload.financialTermsSeal.snapshot[field], f.input.draftPayload.financialTermsSeal.snapshot[field]);
+    const [audit] = await f.actions();
+    assert.equal(audit.id, redirectOperationId);
+    assert.equal(audit.status, "PENDING_REISSUE");
+    assert.equal(audit.actorUserId, 7);
+    assert.equal(audit.beforeContact.clienteNombre, "CLIENTE PRUEBA");
+    assert.equal(audit.afterContact.clienteNombre, "CARLOS PRUEBA RIVERA");
+    assert.equal(audit.afterContact.analystDataRevision, 1);
+    await f.ledger.reserveDraftDispatch(correction);
+    await f.ledger.dispatchReservedDraft(redirectOperationId);
+    assert.equal(f.sends(), 2);
+    assert.equal((await f.actions()).length, 1);
+  });
+}
+
+test("PostgreSQL: fallo de preparación conserva datos y contrato anterior de la corrección integral", async t => {
+  const redirectOperationId = randomUUID(), redirectProcessUuid = randomUUID();
+  const f = await fixture(t, { clientCorrectionFixture: true, redirectOperationId, redirectProcessUuid, redirectPreparationError: true });
+  await f.ledger.dispatchReservedDraft(f.operationId);
+  await completeOriginalClientSignature(f);
+  const correction = await clientCorrectionReservation(f, redirectOperationId, true);
+  await f.ledger.reserveDraftDispatch(correction);
+  await assert.rejects(f.ledger.dispatchReservedDraft(redirectOperationId), { code: "DRAFT_DISPATCH_PREPARATION_FAILED" });
+  assert.equal((await f.ledger.getDraftDispatch(redirectOperationId)).status, "FAILED_SAFE");
+  assert.equal((await f.draft()).payload.clienteNombre, "CLIENTE PRUEBA");
+  assert.equal((await f.processes())[0].supersededAt, null);
+  assert.equal((await f.actions()).length, 0);
+  assert.equal(f.sends(), 1);
+});
+
+test("PostgreSQL: corrección integral exige identidad bloqueada y fuente de firma verificables", async t => {
+  const redirectOperationId = randomUUID(), redirectProcessUuid = randomUUID();
+  const f = await fixture(t, { clientCorrectionFixture: true, redirectOperationId, redirectProcessUuid });
+  await f.ledger.dispatchReservedDraft(f.operationId);
+  const correction = await clientCorrectionReservation(f, redirectOperationId);
+  for (const updatedPayload of [
+    { ...correction.updatedPayload, clientePrimerApellido: "OTRO" },
+    { ...correction.updatedPayload, clienteDocumento: "999999999" },
+    { ...correction.updatedPayload, cuotaInicial: "300000" },
+    { ...correction.updatedPayload, firmaSeguroClientCorrectionSourceSigned: true },
+    { ...correction.updatedPayload, firmaSeguroClientCorrectionSourceChecksum: "0".repeat(64) },
+    { ...correction.updatedPayload, firmaSeguroClientCorrectionId: randomUUID() },
+  ]) {
+    await assert.rejects(f.ledger.reserveDraftDispatch({ ...correction, updatedPayload }),
+      { code: "DRAFT_DISPATCH_CLIENT_LINEAGE_INVALID" });
+  }
+  assert.equal((await f.processes())[0].supersededAt, null);
+  assert.equal((await f.draft()).payload.clienteNombre, "CLIENTE PRUEBA");
+  assert.equal((await f.actions()).length, 0);
+});
+
+test("PostgreSQL: si firma la versión pendiente antes de claim no reemplaza contrato ni datos", async t => {
+  const redirectOperationId = randomUUID(), redirectProcessUuid = randomUUID();
+  const f = await fixture(t, { clientCorrectionFixture: true, redirectOperationId, redirectProcessUuid });
+  await f.ledger.dispatchReservedDraft(f.operationId);
+  const correction = await clientCorrectionReservation(f, redirectOperationId);
+  await f.ledger.reserveDraftDispatch(correction);
+  await completeOriginalClientSignature(f);
+  await assert.rejects(f.ledger.dispatchReservedDraft(redirectOperationId), { code: "DRAFT_DISPATCH_TERMS_CHANGED" });
+  assert.equal((await f.draft()).payload.clienteNombre, "CLIENTE PRUEBA");
+  assert.equal((await f.processes())[0].supersededAt, null);
+  assert.equal(f.sends(), 1);
+});
+
+test("PostgreSQL: firma pendiente completada durante el envío sigue en conciliación", async t => {
+  const redirectOperationId = randomUUID(), redirectProcessUuid = randomUUID();
+  const f = await fixture(t, { clientCorrectionFixture: true, redirectOperationId, redirectProcessUuid,
+    onSend: async ({ database, operationId }) => {
+      if (operationId !== redirectOperationId) return;
+      await database.query('UPDATE "FirmaSeguroProcess" SET "status"=\'SIGNED\',"completedAt"=CURRENT_TIMESTAMP,"signedDocumentBase64"=$2 WHERE "processUuid"=$1',
+        [f.processUuid, Buffer.from("%PDF-1.7\nlate signature").toString("base64")]);
+    } });
+  await f.ledger.dispatchReservedDraft(f.operationId);
+  const correction = await clientCorrectionReservation(f, redirectOperationId);
+  await f.ledger.reserveDraftDispatch(correction);
+  const result = await f.ledger.dispatchReservedDraft(redirectOperationId);
+  assert.equal(result.status, "UNCERTAIN");
+  assert.match(result.lastError, /firmada durante el reenvío/);
+  assert.equal((await f.draft()).payload.firmaSeguroClientCorrectionPending, true);
+  assert.equal(f.sends(), 2);
+});
+
+test("PostgreSQL: corrección integral recupera el recibo sin repetir envío ni auditoría", async t => {
+  const redirectOperationId = randomUUID(), redirectProcessUuid = randomUUID();
+  const f = await fixture(t, { clientCorrectionFixture: true, redirectOperationId, redirectProcessUuid });
+  await f.ledger.dispatchReservedDraft(f.operationId);
+  await completeOriginalClientSignature(f);
+  const correction = await clientCorrectionReservation(f, redirectOperationId, true);
+  await f.ledger.reserveDraftDispatch(correction);
+  f.failures.processInserts = 1;
+  await assert.rejects(f.ledger.dispatchReservedDraft(redirectOperationId), { code: "DRAFT_DISPATCH_PERSISTENCE_FAILED" });
+  assert.equal((await f.ledger.getDraftDispatch(redirectOperationId)).status, "UNCERTAIN");
+  const final = await f.ledger.finalizeDraftDispatch(redirectOperationId);
+  assert.equal(final.status, "AWAITING_SIGNATURE");
+  assert.equal(final.processUuid, redirectProcessUuid);
+  assert.equal(f.sends(), 2);
+  assert.equal((await f.actions()).length, 1);
+  assert.equal((await f.draft()).payload.firmaSeguroClientCorrectionPending, true);
 });

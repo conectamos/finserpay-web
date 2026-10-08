@@ -4,6 +4,7 @@ import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import { approvalErrorResponse, readApprovalRequest } from "@/lib/credit-approval-http";
 import { parseRequestDataCorrection, RequestDataCorrectionError } from "@/lib/approval-request-correction-core";
 import { correctAnalystRequestData, getAnalystRequestCorrection, parseCorrectionDraftId } from "@/lib/approval-request-correction";
+import { DraftDispatchError } from "@/lib/firmaseguro-draft-dispatch-ledger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ async function getActor() {
   return { id: analyst.id, nombre: analyst.nombre };
 }
 function errorResponse(error: unknown) {
-  if (error instanceof RequestDataCorrectionError)
+  if (error instanceof RequestDataCorrectionError || error instanceof DraftDispatchError)
     return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status, headers: privateHeaders });
   return approvalErrorResponse(error);
 }
