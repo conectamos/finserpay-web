@@ -443,7 +443,7 @@ test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout"
   assert.equal(proxyModule.proxy(proxyRequest("/aliados", accountCookie)).kind, "next");
   for (const [path, method] of [
     ["/api/inventario-principal/buscar", "POST"],
-    ["/api/clientes", "POST"],
+    ["/api/clientes-admin", "POST"],
     ["/api/usuarios/admin", "POST"],
     ["/api/solicitudes", "PATCH"],
     ["/api/creditos", "POST"],
@@ -463,6 +463,24 @@ test("el proxy limita la cookie nominal al soporte autorizado, sesión y logout"
     assert.equal(response.kind, "redirect", path);
     assert.equal(response.pathname, "/dashboard/aprobaciones/centro", path);
     assert.equal(response.search, "", path);
+  }
+});
+
+test("la sesión del analista no bloquea el portal público de clientes", () => {
+  for (const cookieValue of ["signed-analyst-cookie", "expired-analyst-cookie"]) {
+    const cookies = { [session.APPROVAL_ANALYST_SESSION_COOKIE_NAME]: cookieValue };
+    for (const [path, method] of [
+      ["/api/clientes/creditos", "GET"],
+      ["/api/clientes/creditos/81/paz-y-salvo", "GET"],
+      ["/api/clientes/creditos/81/abonos/7/recibo", "GET"],
+      ["/api/clientes/wompi-checkout", "POST"],
+      ["/api/clientes/wompi-status", "GET"],
+      ["/api/clientes/efecty-liquidacion", "POST"],
+      ["/api/clientes/fcm-token", "POST"],
+    ]) {
+      assert.equal(proxyModule.proxy(proxyRequest(path, cookies, method)).kind, "next", path);
+    }
+    assert.equal(proxyModule.proxy(proxyRequest("/api/creditos", cookies, "POST")).status, 403);
   }
 });
 
