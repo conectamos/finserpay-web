@@ -12,6 +12,7 @@ const CONTACT_AND_PLAN_KEYS = [
   "clienteFechaNacimiento", "clienteTipoDocumento", "equipoMarca", "equipoModelo", "referenciaEquipo",
   "valorEquipoTotal", "cuotaInicial", "saldoBaseFinanciado", "plazoMeses", "cuotaComercial",
   "valorCuota", "frecuenciaPago", "fechaPrimerPago", "financialTermsSeal", "analystDataCorrection",
+  "analystFinancialCorrection", "analystEvidenceCorrection",
 ];
 const DOCUMENTS = [
   { key: "cedula-frente", label: "Cédula frontal", fields: ["contratoCedulaFrenteDataUrl", "cedulaFrenteDataUrl"] },
@@ -90,16 +91,19 @@ export async function getAnalystRequestDetail(idValue: string, userId: number): 
     id: event.key, label: event.label, status: event.status, at: event.at, detail: null, actor: null,
   }] : []);
   const actions: AnalystRequestDetail["actions"] = [];
-  if (identity.source === "DRAFT" && Number(requestRecord(data.analystDataCorrection).revision) > 0) {
+  if (identity.source === "DRAFT" && [data.analystDataCorrection, data.analystFinancialCorrection, data.analystEvidenceCorrection]
+    .some(marker => Number(requestRecord(marker).revision) > 0)) {
     const corrections = await prisma.$queryRawUnsafe<Array<{
-      id: string; createdAt: Date | string; actorName: string; reason: string;
-    }>>(`SELECT "id"::text,"createdAt","actorName","reason" FROM "ApprovalOperationalAction"
+      id: string; createdAt: Date | string; actorName: string; reason: string; status: string;
+    }>>(`SELECT "id"::text,"createdAt","actorName","reason","status" FROM "ApprovalOperationalAction"
       WHERE "targetKind"='DRAFT' AND "targetId"=$1 AND "eventType"='CONTACT_UPDATED'
-        AND "status"='DATA_CORRECTED' ORDER BY "createdAt" DESC LIMIT 30`, identity.entityId);
+        AND "status" IN ('DATA_CORRECTED','FINANCIAL_CORRECTED','EVIDENCE_CORRECTED') ORDER BY "createdAt" DESC LIMIT 50`, identity.entityId);
     for (const correction of corrections) {
       const at = requestIso(correction.createdAt);
-      if (at) timeline.push({ id: `operativo:${correction.id}`, label: "Datos corregidos",
-        status: "DATA_CORRECTED", at, detail: requestText(correction.reason), actor: requestText(correction.actorName) });
+      const label = correction.status === "FINANCIAL_CORRECTED" ? "Condiciones corregidas"
+        : correction.status === "EVIDENCE_CORRECTED" ? "Evidencia corregida" : "Datos corregidos";
+      if (at) timeline.push({ id: `operativo:${correction.id}`, label,
+        status: correction.status, at, detail: requestText(correction.reason), actor: requestText(correction.actorName) });
     }
   }
   const active = !["RECHAZADA", "CANCELADA"].includes(item.estado) &&

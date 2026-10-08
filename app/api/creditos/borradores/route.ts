@@ -333,7 +333,11 @@ export async function GET(req: Request) {
           SELECT d."id", d."clienteDocumento",
             jsonb_build_object(
               'analystDataRevision', COALESCE(d."payload"->'analystDataRevision', '0'::jsonb),
-              'analystDataCorrection', d."payload"->'analystDataCorrection'
+              'analystDataCorrection', d."payload"->'analystDataCorrection',
+              'analystFinancialRevision', COALESCE(d."payload"->'analystFinancialRevision', '0'::jsonb),
+              'analystFinancialCorrection', d."payload"->'analystFinancialCorrection',
+              'analystEvidenceRevision', COALESCE(d."payload"->'analystEvidenceRevision', '0'::jsonb),
+              'analystEvidenceCorrection', d."payload"->'analystEvidenceCorrection'
             ) AS "payload"
           FROM "CreditoBorrador" d
           LEFT JOIN "Sede" s ON s."id" = d."sedeId"

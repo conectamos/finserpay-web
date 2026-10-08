@@ -127,8 +127,14 @@ import {
 import {
   readAnalystDraftDataSnapshot,
   resolveAnalystDraftDataUpdate,
+  readAnalystDraftFinancialSnapshot,
+  readAnalystDraftEvidenceSnapshot,
+  resolveAnalystDraftFinancialUpdate,
+  resolveAnalystDraftEvidenceUpdate,
+  hasPendingAnalystDraftEvidence,
   startVisibleDraftDataPolling,
   type AnalystDraftDataSnapshot,
+  type AnalystDraftCorrectionSnapshot,
 } from "@/lib/analyst-draft-data-sync";
 import {
   calculateFrenchAmortization,
@@ -250,9 +256,13 @@ type CreditFactoryStepTwoSummary = {
 
 type EvidenceAudit = {
   capturedAt: string;
-  source: "camera" | "upload";
+  source: "camera" | "upload" | "CORRECCION_ANALISTA_SOLICITUD";
   durationSeconds?: number;
 };
+
+function restoredEvidenceAuditSource(value: unknown): EvidenceAudit["source"] {
+  return value === "CORRECCION_ANALISTA_SOLICITUD" ? value : value === "upload" ? "upload" : "camera";
+}
 
 type DeliveryStatus = {
   detail: string;
@@ -3044,6 +3054,10 @@ export default function CreditFactoryConsole({
   const [draftId, setDraftId] = useState<number | null>(initialDraftId);
   const [analystDataRevision, setAnalystDataRevision] = useState(0);
   const analystDataSnapshotRef = useRef<AnalystDraftDataSnapshot | null>(null);
+  const [analystFinancialRevision, setAnalystFinancialRevision] = useState(0);
+  const [analystEvidenceRevision, setAnalystEvidenceRevision] = useState(0);
+  const analystFinancialSnapshotRef = useRef<AnalystDraftCorrectionSnapshot | null>(null);
+  const analystEvidenceSnapshotRef = useRef<AnalystDraftCorrectionSnapshot | null>(null);
   const [draftSearchResults, setDraftSearchResults] = useState<CreditDraftItem[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftStatus, setDraftStatus] = useState<
@@ -4235,6 +4249,8 @@ export default function CreditFactoryConsole({
     () => ({
       wizardStep,
       analystDataRevision,
+      analystFinancialRevision,
+      analystEvidenceRevision,
       clienteNombre,
       clientePrimerNombre,
       clientePrimerApellido,
@@ -4310,6 +4326,8 @@ export default function CreditFactoryConsole({
     }),
     [
       analystDataRevision,
+      analystFinancialRevision,
+      analystEvidenceRevision,
       autorizacionDatosAceptada,
       cartaAceptada,
       clienteCiudad,
@@ -4382,17 +4400,38 @@ export default function CreditFactoryConsole({
   const synchronizeAnalystDraftData = useCallback((draft: Pick<CreditDraftItem, "id" | "payload">) => {
     const previous = analystDataSnapshotRef.current;
     if (!previous || previous.draftId !== draft.id) return;
-    const update = resolveAnalystDraftDataUpdate(previous, draft.id, draft.payload || {});
-    if (!update) return;
+    const payload = draft.payload || {};
+    const update = resolveAnalystDraftDataUpdate(previous, draft.id, payload);
+    const financialPrevious = analystFinancialSnapshotRef.current;
+    const evidencePrevious = analystEvidenceSnapshotRef.current;
+    const financialUpdate = financialPrevious
+      ? resolveAnalystDraftFinancialUpdate(financialPrevious, draft.id, payload) : null;
+    const evidenceUpdate = evidencePrevious
+      ? resolveAnalystDraftEvidenceUpdate(evidencePrevious, draft.id, payload,
+        Object.prototype.hasOwnProperty.call(payload, "wizardStep") || payload.__analystEvidenceLoaded === true) : null;
+    if (!update && !financialUpdate && !evidenceUpdate) return;
     cancelPendingDraftAutosave();
-    analystDataSnapshotRef.current = update.snapshot;
-    setAnalystDataRevision(update.snapshot.revision);
-    const values = update.values;
+    if (update) {
+      analystDataSnapshotRef.current = update.snapshot;
+      setAnalystDataRevision(update.snapshot.revision);
+    }
+    const values = update?.values || {};
     if (values.clientePrimerNombre !== undefined || values.clienteSegundoApellido !== undefined) {
       preservedCanonicalClientNameRef.current = null;
     }
     if (values.clientePrimerNombre !== undefined || values.clienteSegundoApellido !== undefined ||
         values.clienteFechaNacimiento !== undefined) {
+      // A single poll can contain the corrected identity and evidence uploaded
+      // for that identity afterwards. Advance the invalidation fingerprint
+      // before applying both so the identity effect cannot erase those new files.
+      identityEvidenceClientIdentityRef.current = identityEvidenceClientIdentity({
+        document: clienteDocumento,
+        firstName: values.clientePrimerNombre ?? clientePrimerNombre,
+        lastName: clientePrimerApellido,
+        secondSurname: values.clienteSegundoApellido ?? clienteSegundoApellido,
+        birthDate: values.clienteFechaNacimiento ?? clienteFechaNacimiento,
+        issueDate: clienteFechaExpedicion,
+      });
       setContratoFotoDataUrl("");
       setContratoFotoAudit(null);
       setIphoneSelfieCedulaDataUrl("");
@@ -4411,13 +4450,67 @@ export default function CreditFactoryConsole({
     if (values.clienteDireccion !== undefined) setClienteDireccion(values.clienteDireccion);
     if (values.clienteDepartamento !== undefined) setClienteDepartamento(values.clienteDepartamento);
     if (values.clienteCiudad !== undefined) setClienteCiudad(values.clienteCiudad);
+    if (financialUpdate) {
+      analystFinancialSnapshotRef.current = financialUpdate.snapshot;
+      setAnalystFinancialRevision(financialUpdate.snapshot.revision);
+      const changed = financialUpdate.values;
+      const financialValue = (field: string) => changed[field] == null ? "" : String(changed[field]);
+      if (changed.valorEquipoTotal !== undefined) setValorEquipoTotal(financialValue("valorEquipoTotal"));
+      if (changed.cuotaInicial !== undefined) setCuotaInicial(financialValue("cuotaInicial"));
+      if (changed.plazoMeses !== undefined) setPlazoMeses(financialValue("plazoMeses"));
+      if (changed.fechaPrimerPago !== undefined) setFechaPrimerPago(financialValue("fechaPrimerPago"));
+      if (changed.tasaInteresEa !== undefined) setTasaInteresEa(financialValue("tasaInteresEa"));
+      if (changed.fianzaPorcentaje !== undefined) setFianzaPorcentaje(financialValue("fianzaPorcentaje"));
+      setFotoRemisionDataUrl("");
+      setFotoRemisionAudit(null);
+      setDeliveryValidation(null);
+      setPersistedIphoneClosureFingerprint("");
+      // The existing amortization engine recalculates these source values with
+      // the same authorized policy. No editable rate or custom installment is introduced.
+    }
+    if (evidenceUpdate) {
+      analystEvidenceSnapshotRef.current = evidenceUpdate.snapshot;
+      setAnalystEvidenceRevision(evidenceUpdate.snapshot.revision);
+      const changed = evidenceUpdate.values;
+      const evidenceValue = (field: string) => typeof changed[field] === "string" ? changed[field] : "";
+      const audit = (prefix: string): EvidenceAudit | null => {
+        const capturedAt = evidenceValue(`${prefix}CapturedAt`);
+        if (!capturedAt) return null;
+        const source = evidenceValue(`${prefix}Source`);
+        return { capturedAt, source: source === "CORRECCION_ANALISTA_SOLICITUD"
+          ? source : source === "upload" ? "upload" : "camera" };
+      };
+      if (changed.contratoCedulaFrenteDataUrl !== undefined) {
+        setContratoCedulaFrenteDataUrl(evidenceValue("contratoCedulaFrenteDataUrl"));
+        setContratoCedulaFrenteAudit(audit("contratoCedulaFrente"));
+      }
+      if (changed.contratoCedulaRespaldoDataUrl !== undefined) {
+        setContratoCedulaRespaldoDataUrl(evidenceValue("contratoCedulaRespaldoDataUrl"));
+        setContratoCedulaRespaldoAudit(audit("contratoCedulaRespaldo"));
+      }
+      if (changed.iphoneSelfieCedulaDataUrl !== undefined) {
+        setIphoneSelfieCedulaDataUrl(evidenceValue("iphoneSelfieCedulaDataUrl"));
+        setIphoneSelfieCedulaAudit(audit("iphoneSelfieCedula"));
+      }
+      if (changed.fotoEntregaDataUrl !== undefined) {
+        setFotoEntregaDataUrl(evidenceValue("fotoEntregaDataUrl"));
+        setFotoEntregaAudit(audit("fotoEntrega"));
+      }
+      if (changed.fotoRemisionDataUrl !== undefined) {
+        setFotoRemisionDataUrl(evidenceValue("fotoRemisionDataUrl"));
+        setFotoRemisionAudit(audit("fotoRemision"));
+      }
+      setDeliveryValidation(null);
+      setPersistedIphoneClosureFingerprint("");
+    }
     setDraftErrorMessage("");
     setDraftStatus("idle");
     setNotice({
       text: "El analista actualizó los datos de esta solicitud.",
       tone: "emerald",
     });
-  }, [cancelPendingDraftAutosave]);
+  }, [cancelPendingDraftAutosave, clienteDocumento, clientePrimerNombre, clientePrimerApellido,
+    clienteSegundoApellido, clienteFechaNacimiento, clienteFechaExpedicion]);
   const currentIphoneClosureFingerprint = useMemo(
     () =>
       iphoneClosureFingerprint({
@@ -8167,6 +8260,10 @@ export default function CreditFactoryConsole({
     if (!analystDataSnapshotRef.current) {
       analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.data.item.id, {});
     }
+    if (!analystFinancialSnapshotRef.current || analystFinancialSnapshotRef.current.draftId !== result.data.item.id) {
+      analystFinancialSnapshotRef.current = readAnalystDraftFinancialSnapshot(result.data.item.id, {});
+      analystEvidenceSnapshotRef.current = readAnalystDraftEvidenceSnapshot(result.data.item.id, {});
+    }
     synchronizeAnalystDraftData(result.data.item);
 
     return result.data.item;
@@ -9442,6 +9539,10 @@ export default function CreditFactoryConsole({
     setDraftId(null);
     analystDataSnapshotRef.current = null;
     setAnalystDataRevision(0);
+    analystFinancialSnapshotRef.current = null;
+    analystEvidenceSnapshotRef.current = null;
+    setAnalystFinancialRevision(0);
+    setAnalystEvidenceRevision(0);
     setFirmaSeguroPendingDraftId(null);
     setDraftStatus("idle");
     updateDraftResumeHydration(false);
@@ -9607,6 +9708,10 @@ export default function CreditFactoryConsole({
     setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
     if (!analystDataSnapshotRef.current) {
       analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.data.item.id, {});
+    }
+    if (!analystFinancialSnapshotRef.current || analystFinancialSnapshotRef.current.draftId !== result.data.item.id) {
+      analystFinancialSnapshotRef.current = readAnalystDraftFinancialSnapshot(result.data.item.id, {});
+      analystEvidenceSnapshotRef.current = readAnalystDraftEvidenceSnapshot(result.data.item.id, {});
     }
     synchronizeAnalystDraftData(result.data.item);
 
@@ -11282,6 +11387,10 @@ export default function CreditFactoryConsole({
     const analystDataSnapshot = readAnalystDraftDataSnapshot(draft.id, payload);
     analystDataSnapshotRef.current = analystDataSnapshot;
     setAnalystDataRevision(analystDataSnapshot.revision);
+    analystFinancialSnapshotRef.current = readAnalystDraftFinancialSnapshot(draft.id, payload);
+    analystEvidenceSnapshotRef.current = readAnalystDraftEvidenceSnapshot(draft.id, payload, true);
+    setAnalystFinancialRevision(analystFinancialSnapshotRef.current.revision);
+    setAnalystEvidenceRevision(analystEvidenceSnapshotRef.current.revision);
     const value = (key: string) => {
       const current = payload[key];
 
@@ -11434,8 +11543,7 @@ export default function CreditFactoryConsole({
         ? {
             capturedAt:
               value("iphoneSelfieCedulaCapturedAt") || new Date().toISOString(),
-            source:
-              value("iphoneSelfieCedulaSource") === "upload" ? "upload" : "camera",
+            source: restoredEvidenceAuditSource(value("iphoneSelfieCedulaSource")),
           }
         : null
     );
@@ -11445,8 +11553,7 @@ export default function CreditFactoryConsole({
         ? {
             capturedAt:
               value("fotoEntregaCapturedAt") || new Date().toISOString(),
-            source:
-              value("fotoEntregaSource") === "upload" ? "upload" : "camera",
+            source: restoredEvidenceAuditSource(value("fotoEntregaSource")),
           }
         : null
     );
@@ -11456,8 +11563,7 @@ export default function CreditFactoryConsole({
         ? {
             capturedAt:
               value("fotoRemisionCapturedAt") || new Date().toISOString(),
-            source:
-              value("fotoRemisionSource") === "upload" ? "upload" : "camera",
+            source: restoredEvidenceAuditSource(value("fotoRemisionSource")),
           }
         : null
     );
@@ -11492,11 +11598,7 @@ export default function CreditFactoryConsole({
               value("contratoSelfieCapturedAt") ||
               value("contratoFotoCapturedAt") ||
               new Date().toISOString(),
-            source:
-              (value("contratoSelfieSource") || value("contratoFotoSource")) ===
-              "upload"
-                ? "upload"
-                : "camera",
+            source: restoredEvidenceAuditSource(value("contratoSelfieSource") || value("contratoFotoSource")),
           }
         : null
     );
@@ -11509,10 +11611,7 @@ export default function CreditFactoryConsole({
         ? {
             capturedAt:
               value("contratoCedulaFrenteCapturedAt") || new Date().toISOString(),
-            source:
-              value("contratoCedulaFrenteSource") === "upload"
-                ? "upload"
-                : "camera",
+            source: restoredEvidenceAuditSource(value("contratoCedulaFrenteSource")),
           }
         : null
     );
@@ -11526,10 +11625,7 @@ export default function CreditFactoryConsole({
             capturedAt:
               value("contratoCedulaRespaldoCapturedAt") ||
               new Date().toISOString(),
-            source:
-              value("contratoCedulaRespaldoSource") === "upload"
-                ? "upload"
-                : "camera",
+            source: restoredEvidenceAuditSource(value("contratoCedulaRespaldoSource")),
           }
         : null
     );
@@ -11658,6 +11754,10 @@ export default function CreditFactoryConsole({
           setDraftId(null);
           analystDataSnapshotRef.current = null;
           setAnalystDataRevision(0);
+          analystFinancialSnapshotRef.current = null;
+          analystEvidenceSnapshotRef.current = null;
+          setAnalystFinancialRevision(0);
+          setAnalystEvidenceRevision(0);
           setDraftStatus("idle");
           setDraftErrorMessage("");
           replaceDraftInUrl(null);
@@ -11828,13 +11928,30 @@ export default function CreditFactoryConsole({
     if (!analystDataSnapshotRef.current) {
       analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(currentDraftId, {});
     }
+    if (!analystFinancialSnapshotRef.current || analystFinancialSnapshotRef.current.draftId !== currentDraftId) {
+      analystFinancialSnapshotRef.current = readAnalystDraftFinancialSnapshot(currentDraftId, {});
+      analystEvidenceSnapshotRef.current = readAnalystDraftEvidenceSnapshot(currentDraftId, {});
+    }
     const polling = startVisibleDraftDataPolling({
       load: async (signal) => {
         const result = await requestJson<CreditDraftAnalystDataResponse>(
           `/api/creditos/borradores?id=${currentDraftId}&datosAnalista=1`,
           { signal, cache: "no-store", timeoutMs: 10_000 },
         );
-        return result.ok && result.data?.item?.id === currentDraftId ? result.data.item : null;
+        const draft = result.ok && result.data?.item?.id === currentDraftId ? result.data.item : null;
+        if (!draft) return null;
+        const evidenceSnapshot = analystEvidenceSnapshotRef.current;
+        if (evidenceSnapshot && hasPendingAnalystDraftEvidence(evidenceSnapshot, currentDraftId, draft.payload || {})) {
+          // Attachment bytes are downloaded once for a new analyst revision,
+          // under the same authenticated scope and abort controller as the poll.
+          const full = await requestJson<CreditDraftSingleResponse>(
+            `/api/creditos/borradores?id=${currentDraftId}`,
+            { signal, cache: "no-store", timeoutMs: 20_000 },
+          );
+          return full.ok && full.data?.item?.id === currentDraftId
+            ? { ...full.data.item, payload: { ...full.data.item.payload, __analystEvidenceLoaded: true } } : draft;
+        }
+        return draft;
       },
       apply: (draft) => {
         if (draft) synchronizeAnalystDraftData(draft);
@@ -12077,6 +12194,10 @@ export default function CreditFactoryConsole({
       if (analystDataSnapshotRef.current?.draftId !== result.solicitudId) {
         analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.solicitudId, {});
         setAnalystDataRevision(0);
+        analystFinancialSnapshotRef.current = readAnalystDraftFinancialSnapshot(result.solicitudId, {});
+        analystEvidenceSnapshotRef.current = readAnalystDraftEvidenceSnapshot(result.solicitudId, {});
+        setAnalystFinancialRevision(0);
+        setAnalystEvidenceRevision(0);
       }
       setDraftId(result.solicitudId);
       setDraftStatus("saved");

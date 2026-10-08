@@ -23,6 +23,8 @@ import {
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
 import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import { preserveAnalystDataCorrectionAutosave } from "@/lib/approval-request-correction-core";
+import { preserveAnalystFinancialCorrectionAutosave } from "@/lib/approval-request-financial-correction-core";
+import { preserveAnalystEvidenceCorrectionAutosave } from "@/lib/approval-request-evidence-correction-core";
 import {
   SOLICITUD_FILTER_STATES,
   SOLICITUD_STATE_LABELS,
@@ -1276,9 +1278,11 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           dataCreditoAssessmentId: assessmentId,
           payload: input.payload,
         };
-    let canonicalPayload: Record<string, unknown> = preserveAnalystDataCorrectionAutosave(
-      targetRow?.payload || {}, canonical.payload
-    );
+    const preserveAnalystCorrections = (payload: Record<string, unknown>) =>
+      preserveAnalystDataCorrectionAutosave(targetRow?.payload || {},
+        preserveAnalystFinancialCorrectionAutosave(targetRow?.payload || {},
+          preserveAnalystEvidenceCorrectionAutosave(targetRow?.payload || {}, payload)));
+    let canonicalPayload: Record<string, unknown> = preserveAnalystCorrections(canonical.payload);
     // If the identity changed since the preliminary read, retry rather than
     // taking a new blacklist lock after the operation/identity/row locks.
     assertSolicitudBlacklistDocumentsLocked(
@@ -1586,7 +1590,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         canonicalImei
       );
     }
-    const persistedPayload: Record<string, unknown> = preserveAnalystDataCorrectionAutosave(targetRow?.payload || {}, {
+    const persistedPayload: Record<string, unknown> = preserveAnalystCorrections({
       ...canonicalPayload,
       wizardStep: persistedStep,
       veriffValidationId: canonicalVeriffValidationId,

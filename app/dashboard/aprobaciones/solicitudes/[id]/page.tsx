@@ -8,6 +8,7 @@ import type { AnalystRequestDetail } from "@/lib/approval-request-detail-types";
 import { requireNominalApprovalDashboardAccess } from "../../approval-dashboard-access";
 import ApprovalDashboardShell from "../../approval-dashboard-shell";
 import AnalystRequestDetailView, { analystRequestReturnHref } from "./analyst-request-detail";
+import styles from "./analyst-request-detail.module.css";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +48,7 @@ export default async function AnalystRequestDetailPage({
       userName={user.nombre}
       userRole={user.rolNombre}
     />
-    <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
+    <main className={styles.main}>
       {detail ? <AnalystRequestDetailView detail={detail} returnHref={returnHref} /> : <div className="grid gap-6">
         <PageHeader
           eyebrow="Solicitudes"
