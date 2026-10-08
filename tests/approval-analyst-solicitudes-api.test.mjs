@@ -32,18 +32,18 @@ const analyst = {
   aliadoAccesoCodigo: "FINSERPAY",
 };
 
-function fixture({ nominal = analyst } = {}) {
+function fixture({ nominal = analyst, user = null, changed = true } = {}) {
   const calls = [];
   const route = load("app/api/solicitudes/route.ts", {
     "next/server": {
       NextResponse: { json: (body, init) => Response.json(body, init) },
     },
     "@/lib/auth": {
-      getSessionUser: async () => null,
+      getSessionUser: async () => user,
       getNominalApprovalAnalystSessionUser: async () => nominal,
     },
-    "@/lib/aliados": { isFinserPayCentralAlly: () => false },
-    "@/lib/roles": { isAdminRole: () => false },
+    "@/lib/aliados": { isFinserPayCentralAlly: code => code === "FINSERPAY" },
+    "@/lib/roles": { isAdminRole: role => role === "ADMIN" },
     "@/lib/seller-auth": { getSellerSessionUser: async () => null },
     "@/lib/solicitudes": {
       normalizeSolicitudFilters: params => ({ id: params.get("id") }),
@@ -61,8 +61,12 @@ function fixture({ nominal = analyst } = {}) {
         calls.push({ name: "desist" });
         return { changed: true, identityReleased: true };
       },
-      desistSolicitudAsCentralAdmin: async () => {
-        calls.push({ name: "desist-admin" });
+      desistSolicitudAsApprovalAnalyst: async input => {
+        calls.push({ name: "desist-analyst", input });
+        return { changed, identityReleased: changed };
+      },
+      desistSolicitudAsCentralAdmin: async input => {
+        calls.push({ name: "desist-admin", input });
         return { changed: true, identityReleased: true };
       },
     },
@@ -70,7 +74,7 @@ function fixture({ nominal = analyst } = {}) {
   return { route, calls };
 }
 
-test("el analista nominal consulta el muro global con un visor de solo lectura", async () => {
+test("el analista nominal consulta el muro global con su identidad nominal", async () => {
   const f = fixture();
   const response = await f.route.GET(new Request("https://finser.test/api/solicitudes?q=cliente"));
   assert.equal(response.status, 200);
@@ -81,17 +85,56 @@ test("el analista nominal consulta el muro global con un visor de solo lectura",
   assert.equal(call.input.viewer.aliadoId, null);
 });
 
-test("el analista no puede desistir y el API rechaza antes de leer el cuerpo", async () => {
-  const f = fixture();
-  const request = new Request("https://finser.test/api/solicitudes", {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id: "D-7", action: "DESISTIR" }),
+function desistRequest(body = { id: "D-7", action: "DESISTIR" }) {
+  return new Request("https://finser.test/api/solicitudes", {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const response = await f.route.PATCH(request);
-  assert.equal(response.status, 403);
-  assert.equal(request.bodyUsed, false);
-  assert.equal(f.calls.length, 0);
+}
+
+test("el analista nominal desiste solo el expediente seleccionado con su usuario en la auditoría", async () => {
+  const f = fixture();
+  const response = await f.route.PATCH(desistRequest());
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("cache-control"), /private, no-store/);
+  assert.deepEqual(await response.json(), { ok: true, id: "D-7", estado: "CANCELADA", identityReleased: true });
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].name, "desist-analyst");
+  assert.equal(f.calls[0].input.solicitudId, 7);
+  assert.equal(f.calls[0].input.userId, analyst.id);
+});
+
+test("el analista no desiste créditos convertidos ni acepta ids inválidos u otras acciones", async () => {
+  for (const body of [
+    { id: "C-7", action: "DESISTIR" }, { id: "D-0", action: "DESISTIR" },
+    { id: "D-9007199254740992", action: "DESISTIR" }, { id: "D-7", action: "ELIMINAR" },
+  ]) {
+    const f = fixture();
+    assert.equal((await f.route.PATCH(desistRequest(body))).status, 400);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("un cierre concurrente o un expediente no disponible devuelve conflicto", async () => {
+  const f = fixture({ changed: false });
+  const response = await f.route.PATCH(desistRequest());
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error, "La solicitud ya no está disponible para desistir");
+});
+
+test("accesos compartidos y administradores de aliado no reciben permiso de desistimiento", async () => {
+  for (const user of [{ id: 80, rolNombre: "ANALISTA_APROBACION" }, { id: 81, rolNombre: "ADMIN", aliadoAccesoCodigo: "ALIADO" }]) {
+    const f = fixture({ nominal: null, user });
+    const request = desistRequest();
+    assert.equal((await f.route.PATCH(request)).status, 403);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("el administrador central conserva su flujo existente", async () => {
+  const f = fixture({ nominal: null, user: { id: 1, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY" } });
+  assert.equal((await f.route.PATCH(desistRequest())).status, 200);
+  assert.equal(f.calls[0].name, "desist-admin");
+  assert.equal(f.calls[0].input.userId, 1);
 });
 
 test("un acceso sin cuenta nominal no consulta solicitudes", async () => {

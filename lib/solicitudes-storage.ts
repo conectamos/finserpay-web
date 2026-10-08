@@ -2062,6 +2062,87 @@ export async function desistSolicitudAsCentralAdmin(input: {
   });
 }
 
+export async function desistSolicitudAsApprovalAnalyst(input: {
+  solicitudId: number;
+  userId: number;
+}) {
+  if (
+    !Number.isSafeInteger(input.solicitudId) || input.solicitudId <= 0 ||
+    !Number.isSafeInteger(input.userId) || input.userId <= 0
+  ) {
+    return { changed: false, identityReleased: false };
+  }
+  await ensureSolicitudSchema();
+  await expireStaleSolicitudes();
+  return prisma.$transaction(async (transaction) => {
+    // El analista actúa sobre el expediente elegido, sin cerrar otros casos
+    // de la misma cédula. Este bloqueo también serializa firma y conversión.
+    await lockSolicitudOperationsInOrder(transaction, [input.solicitudId]);
+    const target = await transaction.$queryRawUnsafe<
+      Array<{ id: number; clienteDocumento: string | null }>
+    >(
+      `
+        SELECT "id", "clienteDocumento"
+        FROM "CreditoBorrador"
+        WHERE "id" = $1
+          AND "creditoId" IS NULL
+          AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+          AND (
+            "dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            "estado" = 'CERRADO'
+            AND COALESCE("closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
+            )
+          )
+        LIMIT 1
+      `,
+      input.solicitudId
+    );
+    if (!target[0]) return { changed: false, identityReleased: false };
+
+    const document = normalizeDigits(target[0].clienteDocumento);
+    if (document) await lockIdentity(transaction, "document", document);
+    const rows = await transaction.$queryRawUnsafe<Array<{ id: number }>>(
+      `
+        UPDATE "CreditoBorrador"
+        SET "estado" = 'CERRADO', "closedReason" = 'DESISTIDA',
+            "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
+            "desistedByUserId" = $2, "desistedBySellerId" = NULL
+        WHERE "id" = $1
+          AND "creditoId" IS NULL
+          AND regexp_replace(COALESCE("clienteDocumento", ''), '[^0-9]', '', 'g') = $3
+          AND COALESCE("expiresAt", "createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+          AND (
+            "dataCreditoAssessmentId" IS NOT NULL
+            OR UPPER(COALESCE("payload"->>'solicitudOrigen', '')) = 'DATACREDITO'
+            OR NULLIF("payload"->>'dataCreditoStatus', '') IS NOT NULL
+            OR NULLIF("payload"->>'dataCreditoAssessmentId', '') IS NOT NULL
+          )
+          AND NOT (
+            "estado" = 'CERRADO'
+            AND COALESCE("closedReason", '') IN (
+              'DESISTIDA', 'DESISTIDO', 'EXPIRADA_15_DIAS', 'EXPIRADA', 'DUPLICADA', 'FINALIZADA'
+            )
+          )
+        RETURNING "id"
+      `,
+      input.solicitudId,
+      input.userId,
+      document
+    );
+    const changed = rows.length === 1;
+    const blocker = changed
+      ? await findBlockingSolicitudByDocument(transaction, document)
+      : null;
+    return { changed, identityReleased: changed && !blocker };
+  });
+}
+
 export async function completeSolicitudForCredit(
   input: {
     solicitudId?: number | null;

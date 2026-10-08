@@ -6,6 +6,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import { normalizeSolicitudFilters, type SolicitudViewer } from "@/lib/solicitudes";
 import {
   desistSolicitud,
+  desistSolicitudAsApprovalAnalyst,
   desistSolicitudAsCentralAdmin,
   getSolicitudDetail,
   listSolicitudes,
@@ -102,24 +103,26 @@ export async function PATCH(req: Request) {
     if (!access.viewer) {
       return response({ error: "Acción no autorizada" }, { status: 403 });
     }
-    if (access.viewer.kind === "APPROVAL_ANALYST") {
-      return response({ error: "El analista solo puede consultar solicitudes" }, { status: 403 });
-    }
-
     const body = (await req.json().catch(() => ({}))) as {
       id?: unknown;
       action?: unknown;
     };
     const action = String(body.action || "").trim().toUpperCase();
     const match = /^D-(\d+)$/.exec(String(body.id || "").trim().toUpperCase());
-    if (action !== "DESISTIR" || !match) {
+    const solicitudId = match ? Number(match[1]) : 0;
+    if (action !== "DESISTIR" || !Number.isSafeInteger(solicitudId) || solicitudId <= 0) {
       return response({ error: "Acción inválida" }, { status: 400 });
     }
 
     let result = { changed: false, identityReleased: false };
-    if (access.viewer.kind === "CENTRAL_ADMIN") {
+    if (access.viewer.kind === "APPROVAL_ANALYST") {
+      result = await desistSolicitudAsApprovalAnalyst({
+        solicitudId,
+        userId: access.user.id,
+      });
+    } else if (access.viewer.kind === "CENTRAL_ADMIN") {
       result = await desistSolicitudAsCentralAdmin({
-        solicitudId: Number(match[1]),
+        solicitudId,
         userId: access.user.id,
       });
     } else if (
@@ -127,14 +130,14 @@ export async function PATCH(req: Request) {
       access.seller
     ) {
       result = await desistSolicitud({
-        solicitudId: Number(match[1]),
+        solicitudId,
         userId: access.user.id,
         sellerId: access.seller.id,
         aliadoId: access.user.aliadoId || -1,
       });
     } else {
       return response(
-        { error: "Solo el perfil comercial titular o el administrador central pueden desistir esta solicitud" },
+        { error: "Solo el perfil comercial titular, el analista nominal o el administrador central pueden desistir esta solicitud" },
         { status: 403 }
       );
     }
