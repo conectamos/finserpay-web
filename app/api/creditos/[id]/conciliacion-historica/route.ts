@@ -28,7 +28,20 @@ export async function POST(req:Request,context:{params:Promise<{id:string}>}) {
   const result=await prisma.$transaction(async tx=>{
    await tx.$queryRaw`SELECT id FROM "Credito" WHERE id=${id} FOR UPDATE`;
    const prior=await findPrincipalPaymentRevision(tx,id,key);
-   if(prior) return prior.resultado;
+   if(prior) {
+    const current=await tx.credito.findUnique({where:{id}});
+    const due=source.cuotas[source.numeroUltimaCuotaPagada].fechaVencimiento;
+    if(!current || current.fechaProximoPago?.toISOString().slice(0,10)===due) return prior.resultado;
+    const ids=prior.resultado.abonoIds as number[];
+    const active=await tx.creditoAbono.findMany({where:{creditoId:id,estado:{not:"ANULADO"}},orderBy:{id:"asc"}});
+    const expected=historicalSnapshot(source,active.map(p=>({id:p.id,valor:p.valor})));
+    if(current.clienteDocumento!==source.documento || current.folio!==source.folioFinser || active.length!==ids.length || active.some(p=>!ids.includes(p.id)) || hashPrincipalPayment(current.planCapitalVigente)!==hashPrincipalPayment(expected)) throw new HistoricalReconciliationError("El crÈdito cambiÛ despuÈs de la conciliaciÛn. Requiere una revisiÛn independiente.");
+    const previewHash=hashPrincipalPayment({current,source,user:user.id,repair:"fecha"});
+    if(body.accion==="PREVISUALIZAR") return {...prior.resultado,aplicado:false,previewHash};
+    if(body.previewHash!==previewHash) throw new HistoricalReconciliationError("El crÈdito cambiÛ. Previsualiza de nuevo.");
+    await tx.credito.update({where:{id},data:{fechaProximoPago:new Date(due+"T12:00:00Z"),observacionAdmin:[current.observacionAdmin,`[${new Date().toISOString()}] Usuario ${user.id}: prÛximo vencimiento sincronizado con conciliaciÛn ${prior.id}; ${current.fechaProximoPago?.toISOString() || "sin fecha"} -> ${due}`].filter(Boolean).join(" | ")}});
+    return prior.resultado;
+   }
    const credit=await tx.credito.findUnique({where:{id}});
    if(!credit||credit.clienteDocumento!==source.documento||credit.folio!==source.folioFinser) throw new HistoricalReconciliationError("La identidad del documento no coincide con el cr√©dito.");
    const origin=(credit.contratoSnapshot as {origen?:{tipo?:string}}|null)?.origen?.tipo;
@@ -59,7 +72,7 @@ export async function POST(req:Request,context:{params:Promise<{id:string}>}) {
    }
    const snapshot=historicalSnapshot(source,saved);
    const montoCredito=snapshot.totalAbonadoAlCorte+future;
-   const plan=buildCreditPaymentPlan({...credit,montoCredito,planCapitalVigente:snapshot,abonos:saved});
+   const plan=buildCreditPaymentPlan({...credit,montoCredito,fechaProximoPago:null,planCapitalVigente:snapshot,abonos:saved});
    await tx.credito.update({where:{id},data:{planCapitalVigente:snapshot as unknown as Prisma.InputJsonValue,montoCredito,fechaProximoPago:new Date(plan.nextInstallment!.fechaVencimiento+"T12:00:00Z")}});
    const response={...preview,aplicado:true,totalAbonos:snapshot.totalAbonadoAlCorte,abonoIds:saved.map(p=>p.id)};
    await persistPrincipalPaymentRevision(tx,{creditoId:id,abonoId:saved[0].id,revision:1,idempotencyKey:key,requestHash,previewHash,snapshotBefore:{credit,abonos:old},snapshotAfter:snapshot,conciliacion:source,resultado:response,usuarioId:user.id});
