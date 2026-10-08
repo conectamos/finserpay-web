@@ -116,9 +116,32 @@ test("cartera muestra deuda real después de abonos y excluye créditos liquidad
   const source = credit(); const before = JSON.stringify(source);
   const row = summary.moraCreditSummary(source, now);
   assert.equal(row.valorVencido, 75000); assert.equal(row.diasMora, 4); assert.equal(row.numeroCreditoVisible, "010081");
+  assert.equal(row.numeroSadmin, "010081");
   assert.equal(row.ultimoPago, "2026-10-03T15:00:00.000Z"); assert.equal(JSON.stringify(source), before);
   assert.equal(summary.moraCreditSummary({ ...source, pazYSalvoEmitidoAt: now }, now).enMora, false);
   assert.equal(summary.moraCreditSummary({ ...source, abonos: [] }, new Date("2026-09-17T14:00:00Z")).enMora, false, "la cuota no vence antes de finalizar su día");
+});
+
+test("candidatos de mora separan el Sadmin confirmado del folio sin perder ceros ni alterar el estado", () => {
+  const source = { ...credit(), folio: "000-FC-81", clienteDocumento: "00123456", imei: "000123456789012",
+    registroSadmin: { numeroCredito: "000030000000000000000085", numeroCreditoConfirmado: true } };
+  const before = JSON.stringify(source);
+  const confirmed = summary.moraCreditSummary(source, now);
+  assert.equal(confirmed.numeroSadmin, "000030000000000000000085");
+  assert.equal(confirmed.folio, "000-FC-81");
+  assert.equal(confirmed.clienteDocumento, "00123456");
+  assert.equal(confirmed.imei, "000123456789012");
+  assert.equal(confirmed.enMora, true);
+  assert.equal(JSON.stringify(source), before);
+  for (const registroSadmin of [null, { numeroCredito: "000030000000000000000085", numeroCreditoConfirmado: false },
+    { numeroCredito: "   ", numeroCreditoConfirmado: true }]) {
+    const pending = summary.moraCreditSummary({ ...source, registroSadmin }, now);
+    assert.equal(pending.numeroSadmin, null);
+    assert.equal(pending.numeroCreditoVisible, "000-FC-81");
+    assert.equal(pending.folio, "000-FC-81");
+    assert.equal(pending.enMora, confirmed.enMora);
+    assert.equal(pending.valorVencido, confirmed.valorVencido);
+  }
 });
 
 test("Prisma real consulta cartera y detalle con la relación SADMIN del esquema de producción", async t => {
@@ -164,10 +187,12 @@ test("Prisma real consulta cartera y detalle con la relación SADMIN del esquema
   const portfolio = await service.listMoraPortfolio(new URLSearchParams());
   assert.equal(portfolio.total, 1);
   assert.equal(portfolio.items[0].numeroCreditoVisible, "010081");
+  assert.equal(portfolio.items[0].numeroSadmin, "010081");
   assert.equal(portfolio.items[0].valorVencido, 75000);
   assert.equal(portfolio.responsibles[0].id, 7);
   const detail = await service.getMoraManagement(81);
   assert.equal(detail.credit.numeroCreditoVisible, "010081");
+  assert.equal(detail.credit.numeroSadmin, "010081");
   assert.equal(detail.credit.diasMora, 4);
   assert.equal(detail.history.length, 0);
 });

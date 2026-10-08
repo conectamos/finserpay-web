@@ -28,7 +28,8 @@ export type MoraExceptionRequestItem = {
   cooldownBypassReason: string | null;
   createdAt: string;
   updatedAt: string;
-  credit?: { folio: string; clienteNombre?: string; clienteDocumento?: string | null };
+  credit?: { folio: string; numeroSadmin: string | null; clienteNombre?: string; clienteDocumento?: string | null;
+    clienteTelefono?: string | null; equipo?: string; imei?: string | null; aliadoId?: number; aliadoNombre?: string };
   paidTowardPromise: number;
   conditionStatus: MoraPromiseConditionStatus;
 };
@@ -37,6 +38,7 @@ export type MoraExceptionCreditSummary = {
   id: number;
   folio: string;
   numeroCreditoVisible: string;
+  numeroSadmin?: string | null;
   clienteNombre: string;
   clienteDocumento: string | null;
   clienteTelefono: string | null;

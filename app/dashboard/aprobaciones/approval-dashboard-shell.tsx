@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { AppShell } from "@/app/_components/finser-ui";
 import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
+import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isApprovalAnalystRole } from "@/lib/roles";
 import { getNominalApprovalAnalystSessionUser } from "@/lib/auth";
@@ -28,9 +29,15 @@ export default async function ApprovalDashboardShell({
   const nominalAnalyst = isApprovalAnalystRole(user.rolNombre)
     && Boolean(await getNominalApprovalAnalystSessionUser())
     && (await getApprovalSharedRequestActor()) === undefined;
+  const compact = activeHref === "/dashboard/aprobaciones/excepciones-mora";
   if (nominalAnalyst) return <div className={styles.shell}>
-    <AnalystNavigation userName={user.nombre} userRole={user.rolNombre} />
-    {activeHref !== "/dashboard/aprobaciones/centro" && <Link className={styles.back} href="/dashboard/aprobaciones/centro"><ArrowLeft aria-hidden="true" />Volver al Centro del analista</Link>}
+    <AnalystNavigation userName={user.nombre} userRole={user.rolNombre} compact={compact} />
+    {activeHref !== "/dashboard/aprobaciones/centro" && <Link className={`${styles.back}${compact ? ` ${styles.compactBack}` : ""}`} href="/dashboard/aprobaciones/centro"><ArrowLeft aria-hidden="true" />Volver al Centro del analista</Link>}
+    {children}
+  </div>;
+  if (compact && isFinserPayCentralAlly(user.aliadoAccesoCodigo) && user.rolNombre === "ADMIN") return <div className={styles.exceptionShell}>
+    <FinserNavigation admin adminCentral nombreUsuario={user.nombre} rolUsuario={user.rolNombre} variant="requests" />
+    <Link className={`${styles.back} ${styles.compactBack}`} href="/dashboard/aprobaciones"><ArrowLeft aria-hidden="true" />Volver a Aprobaciones</Link>
     {children}
   </div>;
   return (

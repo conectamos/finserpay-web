@@ -3,6 +3,8 @@
 @font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
 @font-face { font-family: "Finser Sale"; src: url("/assets/dashboard/roboto-800.ttf") format("truetype"); font-weight: 800; font-display: swap; }
 .shell { --fp-muted: #626660; --fp-border: #dedfdb; min-height: 100vh; background: color-mix(in srgb, var(--fp-client-bg) 30%, var(--fp-surface)); color: var(--fp-graphite); font-family: "Finser Sale", Arial, sans-serif; }
+.exceptionShell { min-height: 100vh; background: var(--fp-bg); color: var(--fp-graphite); font-family: "Finser Sale", Arial, sans-serif; }
+.exceptionShell :global(.fp-workspace-topbar) { display: none; }
 .header { height: 80px; padding: 0 52px; display: flex; justify-content: space-between; align-items: center; gap: 24px; background: linear-gradient(105deg, #242626, #191b1c); color: white; font-family: "Finser Sale", Arial, sans-serif; position: relative; z-index: 20; }
 .brand { display: block; flex-shrink: 0; }
 .brand p { font-family: inherit !important; font-weight: 800; font-size: 28px; letter-spacing: .005em; }
@@ -28,5 +30,12 @@
 .back:hover { color: var(--fp-client-green); }
 .shell :global(.fp-workspace-topbar) { display: none; }
 .header a:focus-visible, .profile:focus-visible, .back:focus-visible { outline: 2px solid var(--fp-lime); outline-offset: 4px; }
+.compact { height: 60px; }
+.compact .brand p { font-size: 25px; }
+.compact .brand svg { width: 32px; height: 36px; }
+.compact .avatar { width: 40px; height: 40px; }
+.compactBack { margin: 16px 54px 0; min-height: 40px; font-size: 13px; font-weight: 400; }
 @media (max-width: 700px) { .header { height: 74px; padding: 0 16px; gap: 12px; } .brand p { font-size: 21px; } .brand svg { width: 29px; height: 34px; } .brand > div { gap: 5px; } .account { gap: 10px; } .notifications { display: none; } .avatar { width: 34px; height: 34px; font-size: 12px; } .profile { gap: 8px; } .identity { font-size: 12px; max-width: 110px; } .identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .identity > span { font-size: 11px; } .chevron { width: 14px; margin-left: 0; } .back { margin: 14px 16px 0; } }
 @media (max-width: 380px) { .identity { max-width: 72px; } .brand p { font-size: 18px; } .brand svg { width: 26px; } }
+@media (max-width: 700px) { .compact { height: 64px; } .compact .brand p { font-size: 21px; } .compact .brand svg { width: 29px; height: 34px; } .compact .avatar { width: 34px; height: 34px; } .compactBack { margin: 12px 16px 0; } }
+@media (max-width: 380px) { .compact .brand p { font-size: 18px; } .compact .brand svg { width: 26px; } }

@@ -33,6 +33,7 @@ function load(path, dependencies) {
 }
 
 const dates = load("lib/colombia-date.ts", {});
+const displayNumbers = load("lib/credit-display-number.ts", {});
 const access = load("lib/analyst-mora-access.ts", {
   "@/lib/auth": {},
   "@/lib/approval-shared-session": {},
@@ -63,6 +64,7 @@ function service(prisma = {}, creditLookup = () => null, listMoraPortfolio = asy
     "@/lib/analyst-mora-schema": { ensureAnalystMoraSchema: async () => {} },
     "@/lib/analyst-mora-support": { listMoraSupports: async () => [] },
     "@/lib/colombia-date": dates,
+    "@/lib/credit-display-number": displayNumbers,
     "@/lib/credit-approval-errors": { CreditApprovalError },
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: credit => credit.plan || overduePlan },
     "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },

@@ -10,6 +10,7 @@ import { colombiaDateKey } from "@/lib/colombia-date";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureMoraExceptionRequestSchema } from "@/lib/mora-exception-schema";
+import { confirmedSadminNumber } from "@/lib/credit-display-number";
 import type { MoraExceptionStatus as ExceptionStatus, MoraExceptionType as ExceptionType } from "@/lib/mora-exception-types";
 
 export const MORA_EXCEPTION_TYPES = ["EXCEPCION", "PRORROGA"] as const;
@@ -67,7 +68,7 @@ type StoredRequest = {
   decidedByUserId: number | null; decidedByName: string | null; decidedAt: Date | string | null;
   decisionReason: string | null; cooldownBypassed: boolean; cooldownBypassReason: string | null;
   createdAt: Date | string; updatedAt: Date | string;
-  folio?: string; clienteNombre?: string; clienteDocumento?: string | null;
+  folio?: string; clienteNombre?: string; clienteDocumento?: string | null; numeroSadmin?: string | null;
   paidTowardPromise?: number | string;
   createRequestHash?: string;
 };
@@ -243,6 +244,10 @@ const requestColumns = `r."id"::text,r."creditoId",r."type",r."status",r."versio
       AND r."decidedAt" IS NOT NULL AND payment."fechaAbono">=(r."decidedAt" AT TIME ZONE 'UTC')
       AND payment."fechaAbono"<((r."promiseDate"+1)::timestamp + interval '5 hours')),0)::double precision AS "paidTowardPromise"`;
 const requestFrom = ` FROM "CreditMoraExceptionRequest" r JOIN "Credito" credit ON credit."id"=r."creditoId"`;
+// Only the read views need the display number. Mutation/idempotency queries retain their original joins.
+const requestReadColumns = `${requestColumns},NULLIF(BTRIM(sadmin."numeroCredito"),'') AS "numeroSadmin"`;
+const requestReadFrom = `${requestFrom} LEFT JOIN "CreditSadminRegistration" sadmin
+  ON sadmin."creditoId"=credit."id" AND sadmin."numeroCreditoConfirmado"=TRUE`;
 function requestDto(row: StoredRequest, now = new Date()) {
   const paid = Number(row.paidTowardPromise || 0);
   const promise = row.promiseAmount === null ? null : Number(row.promiseAmount);
@@ -260,7 +265,8 @@ function requestDto(row: StoredRequest, now = new Date()) {
     decidedByUserId: row.decidedByUserId, decidedByName: row.decidedByName, decidedAt: toIso(row.decidedAt),
     decisionReason: row.decisionReason, cooldownBypassed: row.cooldownBypassed,
     cooldownBypassReason: row.cooldownBypassReason, createdAt: toIso(row.createdAt), updatedAt: toIso(row.updatedAt),
-    credit: row.folio ? { folio: row.folio, clienteNombre: row.clienteNombre, clienteDocumento: row.clienteDocumento } : undefined,
+    credit: row.folio ? { folio: row.folio, numeroSadmin: row.numeroSadmin || null,
+      clienteNombre: row.clienteNombre, clienteDocumento: row.clienteDocumento } : undefined,
     paidTowardPromise: paid, conditionStatus,
   };
 }
@@ -333,7 +339,7 @@ export async function getMoraExceptionPreflight(creditoId: number, actor: MoraAc
   const cooldownBlocked = cooldownEnabledOn && today<cooldownEnabledOn
     ? moraCooldownMessage(cooldownEnabledOn) : null;
   return {
-    credit:moraCreditSummary(credit,now),
+    credit:{...moraCreditSummary(credit,now),numeroSadmin:confirmedSadminNumber(credit.registroSadmin)},
     eligibility:{
       regularInstallment:installment?{number:installment.numero,dueDate,balance:installment.saldoPendiente}:null,
       maxExpiresOn:centralAdmin?null:maxExpiresOn,
@@ -388,32 +394,49 @@ export async function listMoraExceptionRequests(params: URLSearchParams, actor: 
   if(type&&!MORA_EXCEPTION_TYPES.includes(type as ExceptionType))throw invalid("Tipo inválido.");
   const creditoId=creditRaw===null?null:Number(creditRaw);
   if(creditoId!==null&&(!Number.isSafeInteger(creditoId)||creditoId<1))throw invalid("Crédito inválido.");
-  const limit=Number(params.get("limit")||50);
+  const q=normalizedText(params.get("q")||"",0,100,"Busca con hasta 100 caracteres.");
+  const limit=Number(params.get("pageSize")||params.get("limit")||50);
   if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw invalid("Selecciona una página de hasta 100 solicitudes.");
   const cursor=parseCursor(params.get("cursor"));
-  const page=await prisma.$transaction(async db=>{
+  const page=Number(params.get("page")||1);
+  const offset=cursor?0:(page-1)*limit;
+  if(!Number.isSafeInteger(page)||page<1||!Number.isSafeInteger(offset))throw invalid("Selecciona una página válida.");
+  if(cursor&&params.has("page"))throw invalid("Usa página o cursor para continuar, no ambos.");
+  // Count and page share every business/search filter; the cursor never narrows the total.
+  const filters=`WHERE ($1::text IS NULL OR r."status"=$1) AND ($2::text IS NULL OR r."type"=$2)
+    AND ($3::integer IS NULL OR r."creditoId"=$3)
+    AND ($4::text='' OR strpos(lower(COALESCE(credit."clienteNombre",'')),lower($4))>0
+      OR strpos(COALESCE(credit."clienteDocumento",''),$4)>0
+      OR ($5::text<>'' AND strpos(regexp_replace(COALESCE(credit."clienteDocumento",''),'[.[:space:]]','','g'),$5)>0)
+      OR strpos(lower(COALESCE(credit."folio",'')),lower($4))>0
+      OR strpos(lower(COALESCE(sadmin."numeroCredito",'')),lower($4))>0)`;
+  const bindings=[status||null,type||null,creditoId,q,q.replace(/[.\s]/g,"")];
+  const result=await prisma.$transaction(async db=>{
+    await assertMoraActor(db,actor);
     await expireApproved(db,now);
-    return db.$queryRawUnsafe<StoredRequest[]>(`SELECT ${requestColumns}${requestFrom}
-      WHERE ($1::text IS NULL OR r."status"=$1) AND ($2::text IS NULL OR r."type"=$2)
-        AND ($3::integer IS NULL OR r."creditoId"=$3)
-        AND ($4::timestamptz IS NULL OR (r."createdAt",r."id")<($4::timestamptz,$5::uuid))
-      ORDER BY r."createdAt" DESC,r."id" DESC LIMIT $6`,
-    status||null,type||null,creditoId,cursor?.createdAt||null,cursor?.id||null,limit+1);
+    const totals=await db.$queryRawUnsafe<Array<{total:number}>>(`SELECT COUNT(*)::integer AS "total"${requestReadFrom} ${filters}`,...bindings);
+    const rows=await db.$queryRawUnsafe<StoredRequest[]>(`SELECT ${requestReadColumns}${requestReadFrom} ${filters}
+        AND ($6::timestamptz IS NULL OR (r."createdAt",r."id")<($6::timestamptz,$7::uuid))
+      ORDER BY r."createdAt" DESC,r."id" DESC LIMIT $8 OFFSET $9`,
+    ...bindings,cursor?.createdAt||null,cursor?.id||null,limit+1,offset);
+    return {rows,total:totals[0]?.total||0};
   });
-  const items=page.slice(0,limit).map(row=>requestDto(row,now));
-  const last=page.length>limit?items.at(-1):null;
+  const items=result.rows.slice(0,limit).map(row=>requestDto(row,now));
+  const last=result.rows.length>limit?items.at(-1):null;
   const nextCursor=last?Buffer.from(JSON.stringify({createdAt:last.createdAt,id:last.id})).toString("base64url"):null;
   const preflight=creditoId?await getMoraExceptionPreflight(creditoId,actor,now):null;
-  return {items,hasMore:page.length>limit,nextCursor,...(preflight||{})};
+  return {items,total:result.total,page,pageSize:limit,totalPages:Math.ceil(result.total/limit),
+    hasMore:result.rows.length>limit,nextCursor,...(preflight||{})};
 }
 
 export async function getMoraExceptionRequest(id: string, actor: MoraActor, now = new Date()) {
   if(!uuid.test(id))throw new CreditApprovalError("MORA_EXCEPTION_NOT_FOUND","Solicitud no encontrada.",404);
   await ensureSchemas();
   const [rows,history]=await prisma.$transaction(async db=>{
+    await assertMoraActor(db,actor);
     await expireApproved(db,now);
     return Promise.all([
-      db.$queryRawUnsafe<StoredRequest[]>(`SELECT ${requestColumns}${requestFrom} WHERE r."id"=$1::uuid`,id),
+      db.$queryRawUnsafe<StoredRequest[]>(`SELECT ${requestReadColumns}${requestReadFrom} WHERE r."id"=$1::uuid`,id),
       db.$queryRawUnsafe<StoredEvent[]>(`SELECT "id"::text,"requestId"::text,"creditoId","version","action","fromStatus","toStatus",
         "payload","actorUserId","actorName","createdAt" FROM "CreditMoraExceptionEvent" WHERE "requestId"=$1::uuid ORDER BY "createdAt","id"`,id),
     ]);
@@ -424,7 +447,7 @@ export async function getMoraExceptionRequest(id: string, actor: MoraActor, now 
     listMoraSupports({creditoId:item.creditoId,subjectKind:"EXCEPCION",subjectId:id}),
     getMoraExceptionPreflight(item.creditoId,actor,now),
   ]);
-  return {item,history:history.map(eventDto),supports,...preflight};
+  return {item:{...item,credit:{...preflight.credit,...item.credit}},history:history.map(eventDto),supports,...preflight};
 }
 
 export async function createMoraExceptionRequest(input: CreateInput | CentralCreateInput, actor: MoraActor, now = new Date()) {

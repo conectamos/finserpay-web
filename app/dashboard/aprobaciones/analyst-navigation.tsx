@@ -6,10 +6,10 @@ import CentralDashboardMenu from "@/app/dashboard/_components/central-dashboard-
 import LogoutButton from "@/app/dashboard/_components/logout-button";
 import styles from "./analyst-navigation.module.css";
 
-export default function AnalystNavigation({ userName, userRole }: { userName: string; userRole: string }) {
+export default function AnalystNavigation({ userName, userRole, compact = false }: { userName: string; userRole: string; compact?: boolean }) {
   const role = userRole === "ANALISTA_APROBACION" ? "Analista" : userRole;
   const initials = userName.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
-  return <header className={styles.header}>
+  return <header className={`${styles.header}${compact ? ` ${styles.compact}` : ""}`}>
     <Link className={styles.brand} href="/dashboard/aprobaciones/centro" aria-label="FINSER PAY, Centro del analista"><FinserBrand mini dark plainMark accentPay showTagline={false} /></Link>
     <div className={styles.account}>
       <Link href="/dashboard/aprobaciones/solicitudes" className={styles.notifications} aria-label="Consultar solicitudes"><Bell aria-hidden="true" /></Link>

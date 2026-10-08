@@ -48,6 +48,10 @@ function loadService({ prisma = {}, plan, assertActor = async (_db, actor) => ac
     "@/lib/analyst-mora-management": { listMoraPortfolio: async () => ({ items: [], hasMore: false }) },
     "@/lib/analyst-mora-support": { listMoraSupports: async () => [] },
     "@/lib/colombia-date": { colombiaDateKey },
+    "@/lib/credit-display-number": {
+      confirmedSadminNumber: registration => registration?.numeroCreditoConfirmado
+        ? registration.numeroCredito?.trim() || null : null,
+    },
     "@/lib/credit-approval-errors": { CreditApprovalError },
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: () => plan },
     "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
