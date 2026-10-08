@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { creditAllyPaymentExclusionSchemaStatements } from "../scripts/credit-ally-payment-exclusion-schema.mjs";
+import { resolveAllyPaymentPlatform } from "../lib/ally-payments-core.ts";
 
 const imports = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -26,6 +27,7 @@ const loadCollections = runInNewContext(stripTypeScriptTypes("(" + collectionFun
   ensureCreditAllyPaymentExclusionSchema: async () => {},
   ALIADO_FINSER_PAY: { codigo: "FINSERPAY" },
   compactText: (value, fallback) => String(value || fallback),
+  resolveAllyPaymentPlatform,
 });
 
 test("el inicio comparte el lock de predeploy, coalesce llamadas y reintenta un fallo", async () => {
@@ -95,6 +97,8 @@ test("PostgreSQL local: creditos y recaudos excluidos, insert directo, historial
       "reviewHashVersion" SMALLINT, "approvedHashVersion" SMALLINT
     );
     CREATE TABLE "CreditApprovalNovelty" ("creditoId" INTEGER, "status" TEXT);
+    CREATE TABLE "CreditDeviceReplacement" ("creditId" INTEGER, "source" TEXT, "status" TEXT);
+    CREATE TABLE "ApprovalOperationalContractVersion" ("creditoId" INTEGER, "version" INTEGER, "status" TEXT);
     CREATE TABLE "CreditoAbono" (
       "id" INTEGER PRIMARY KEY, "creditoId" INTEGER, "sedeId" INTEGER,
       "fechaAbono" TIMESTAMP, "metodoPago" TEXT, "valor" NUMERIC, "estado" TEXT, "anuladoAt" TIMESTAMP
@@ -143,7 +147,11 @@ test("PostgreSQL local: creditos y recaudos excluidos, insert directo, historial
 
     await t.test("los recaudos del credito excluido tampoco entran en pendientes ni periodo", async () => {
       const ids = (rows) => JSON.parse(JSON.stringify(rows)).map((row) => row.creditoId);
-      assert.deepEqual(ids(await loadCollections(collectionClient, { allyId: 2 })), [1, 3, 4, 5]);
+      const pendingCollections = await loadCollections(collectionClient, { allyId: 2 });
+      assert.deepEqual(ids(pendingCollections), [1, 3, 4, 5]);
+      assert.deepEqual(JSON.parse(JSON.stringify(pendingCollections[0].aliado)), { id: 2, nombre: "Aliado sintetico" });
+      assert.equal(pendingCollections[0].plataforma, "IPHONE");
+      assert.equal(pendingCollections[0].imei, "IMEI-1");
       assert.deepEqual(ids(await loadCollections(collectionClient, {
         allyId: 2, start: new Date("2026-09-26T05:00:00Z"), endExclusive: new Date("2026-09-27T05:00:00Z"), lock: true,
       })), [1, 3, 4, 5]);

@@ -64,6 +64,12 @@ type EligibleCollectionRow = {
   folio: string;
   clienteNombre: string;
   clienteDocumento: string | null;
+  imei: string | null;
+  deviceUid: string | null;
+  contratoSnapshot: unknown;
+  equipoMarca: string | null;
+  aliadoId: number;
+  aliadoNombre: string;
   sedeNombre: string;
   metodoPago: string;
   valor: number;
@@ -107,6 +113,10 @@ export type AllyPaymentCollectionLine = {
   folio: string;
   clienteNombre: string;
   clienteDocumento: string;
+  // Read-only filter metadata for pending collections; historical snapshots stay intact.
+  imei?: string;
+  plataforma?: AllyPaymentPlatform | null;
+  aliado?: { id: number; nombre: string };
   sedeNombre: string;
   metodoPago: string;
   valor: number;
@@ -396,6 +406,12 @@ async function loadEligibleCollections(
       credit."folio",
       credit."clienteNombre",
       credit."clienteDocumento",
+      credit."imei",
+      credit."deviceUid",
+      credit."contratoSnapshot",
+      credit."equipoMarca",
+      ally."id" AS "aliadoId",
+      ally."nombre" AS "aliadoNombre",
       site."nombre" AS "sedeNombre",
       payment."metodoPago",
       payment."valor"
@@ -418,6 +434,9 @@ async function loadEligibleCollections(
     folio: compactText(row.folio, "Credito " + row.creditoId, 80),
     clienteNombre: compactText(row.clienteNombre, "Cliente", 180),
     clienteDocumento: compactText(row.clienteDocumento, "Sin documento", 80),
+    imei: compactText(row.imei || row.deviceUid, "Sin IMEI", 80),
+    plataforma: resolveAllyPaymentPlatform(row.contratoSnapshot, row.equipoMarca),
+    aliado: { id: row.aliadoId, nombre: row.aliadoNombre },
     sedeNombre: compactText(row.sedeNombre, "Sede sin nombre", 180),
     metodoPago: compactText(row.metodoPago, "EFECTIVO", 40),
     valor: Math.max(0, Number(Number(row.valor).toFixed(2))),
@@ -739,10 +758,14 @@ export async function listAllyPaymentHistory(input: {
   limit?: number;
 }) {
   const allyId = input.allyId === null ? null : positiveId(input.allyId, "El aliado");
-  const requestedLimit = Number(input.limit ?? 100);
-  const limit = Number.isSafeInteger(requestedLimit)
-    ? Math.max(1, Math.min(requestedLimit, 200))
-    : 100;
+  // The overview needs every authorized period before applying client filters or
+  // pagination. Keep the legacy bounded behavior for explicit limit callers.
+  const requestedLimit = input.limit === undefined ? undefined : Number(input.limit);
+  const limit = requestedLimit === undefined
+    ? undefined
+    : Number.isSafeInteger(requestedLimit)
+      ? Math.max(1, Math.min(requestedLimit, 200))
+      : 100;
   const settlements = await prisma.liquidacionAliado.findMany({
     where: {
       periodoInicio: { gte: dateForDatabase(ALLY_PAYMENTS_AVAILABLE_FROM) },
@@ -750,7 +773,7 @@ export async function listAllyPaymentHistory(input: {
     },
     include: SETTLEMENT_INCLUDE,
     orderBy: [{ pagadoAt: "desc" }, { id: "desc" }],
-    take: limit,
+    ...(limit === undefined ? {} : { take: limit }),
   });
 
   return settlements.map(serializeSettlement);

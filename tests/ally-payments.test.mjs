@@ -293,11 +293,13 @@ test("las consultas excluyen pagados y acotan aliado y periodo en base de datos"
   );
 });
 
-test("el modulo usa el rotulo solicitado y limita las fechas desde septiembre", () => {
+test("el módulo mantiene navegación y usuario real, usa el título aprobado y limita las fechas desde septiembre", () => {
   assert.match(sidebarSource, /label:\s*"PAGOS ALIADO"/);
   assert.doesNotMatch(sidebarSource, /Pagos recibidos \/ Pagos pendientes/);
-  assert.match(pageSource, /current="PAGOS ALIADO"/);
-  assert.match(consoleSource, /title="PAGOS ALIADO"/);
+  assert.match(pageSource, /requireAdminDashboardAccess\(\)/);
+  assert.match(pageSource, /<FinserNavigation\s+admin\s+adminCentral=\{adminCentral\}/);
+  assert.match(pageSource, /nombreUsuario=\{session\.nombre\}\s+rolUsuario=\{session\.rolNombre\}/);
+  assert.match(consoleSource, /<h1>Pagos a aliados<\/h1>/);
   assert.match(consoleSource, /min={ALLY_PAYMENTS_AVAILABLE_FROM}/);
   assert.match(
     consoleSource,
@@ -334,7 +336,7 @@ test("el detalle muestra la sede real y respeta el orden solicitado con cedula e
   );
   const desktopTable = sectionBetween(
     creditItems,
-    '<DataTable className="mt-3 hidden lg:block">',
+    '<DataTable className=',
     "</DataTable>"
   );
 

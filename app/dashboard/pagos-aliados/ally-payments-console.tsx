@@ -2,17 +2,16 @@
 
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
-  Clock3,
   Download,
-  Eye,
   Filter,
   Printer,
   RefreshCw,
   RotateCcw,
+  Search,
   Smartphone,
   WalletCards,
   X,
@@ -26,7 +25,6 @@ import {
   EmptyState,
   Input,
   LoadingState,
-  PageHeader,
   Select,
   StatusPill,
   Tabs,
@@ -39,6 +37,13 @@ import {
   summarizeAllyPayments,
   type AllyPaymentIntermediationAdjustment,
 } from "@/lib/ally-payments-core";
+
+import { PendingPaymentsView, ReceivedPaymentsView } from "./ally-payment-views";
+import styles from "./ally-payments-console.module.css";
+import {
+  emptyAllyPaymentViewFilters, filterPendingAllyCollections, filterPendingAllyCredits,
+  filterReceivedAllyPayments, type AllyPaymentViewFilters,
+} from "@/lib/ally-payment-view-filters";
 
 type PaymentsTab = "liquidar" | "recibidos" | "pendientes";
 
@@ -55,6 +60,7 @@ type PaymentCreditItem = {
   creditoId?: number | string;
   fecha?: string | null;
   fechaCredito?: string | null;
+  fechaLiquidacion?: string | null;
   folio?: string | null;
   cliente?: string | null;
   clienteNombre?: string | null;
@@ -78,6 +84,9 @@ type PaymentCreditItem = {
 };
 
 type PaymentCollectionItem = {
+  aliado?: AllyOption | null;
+  plataforma?: string | null;
+  imei?: string | null;
   numeroCreditoVisible?: string | null;
   id?: number | string;
   abonoId?: number | string;
@@ -197,7 +206,8 @@ type AllyPaymentsResponse = {
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   currency: "COP",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 20,
   style: "currency",
 });
 
@@ -215,7 +225,7 @@ function numberValue(value: unknown) {
 }
 
 function formatMoney(value: unknown) {
-  return moneyFormatter.format(Math.round(numberValue(value)));
+  return moneyFormatter.format(numberValue(value));
 }
 
 function formatNumber(value: unknown) {
@@ -231,7 +241,7 @@ function formatPercent(value: unknown) {
 
 function formatDate(value: string | null | undefined) {
   const normalized = String(value || "").trim();
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})/.exec(normalized);
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized);
 
   if (dateOnly) {
     return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
@@ -626,11 +636,13 @@ function IntermediationField({
 }
 
 function CreditItems({
+  alwaysTable = false,
   emptyDescription,
   intermediationEditor = null,
   items,
 }: {
   emptyDescription: string;
+  alwaysTable?: boolean;
   intermediationEditor?: IntermediationEditor | null;
   items: PaymentCreditItem[];
 }) {
@@ -651,7 +663,7 @@ function CreditItems({
         <Badge tone="neutral">{formatNumber(items.length)} registros</Badge>
       </div>
 
-      <div className="mt-3 divide-y divide-[var(--fp-border)] overflow-hidden rounded-lg border border-[var(--fp-border)] bg-white lg:hidden">
+      <div className={alwaysTable ? "hidden" : "mt-3 divide-y divide-[var(--fp-border)] overflow-hidden rounded-lg border border-[var(--fp-border)] bg-white lg:hidden"}>
         {items.map((item, index) => (
           <article key={itemKey(item, index)} className="p-4">
             <div className="flex items-start justify-between gap-3">
@@ -693,7 +705,7 @@ function CreditItems({
                   Cédula
                 </p>
                 <p className="mt-1 font-mono text-sm font-semibold text-[#344054]">
-                  {item.clienteDocumento || "Sin documento"}
+                  {item.clienteDocumento?.replace(/[.\s]/g, "") || "Sin documento"}
                 </p>
               </div>
               <div>
@@ -704,7 +716,7 @@ function CreditItems({
                   {item.equipo || "Sin referencia"}
                 </p>
                 <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
-                  IMEI: {item.imei || "Sin IMEI"}
+                  IMEI: {item.imei?.replace(/[.\s]/g, "") || "Sin IMEI"}
                 </p>
               </div>
             </div>
@@ -745,7 +757,7 @@ function CreditItems({
         ))}
       </div>
 
-      <DataTable className="mt-3 hidden lg:block">
+      <DataTable className={alwaysTable ? "mt-3" : "mt-3 hidden lg:block"}>
         <table className="w-full min-w-[1760px] text-[13px]">
           <caption className="sr-only">Detalle de creditos incluidos en el pago a aliados</caption>
           <thead className="bg-[var(--fp-graphite)] text-white">
@@ -773,11 +785,11 @@ function CreditItems({
                 <td className="max-w-44 break-words px-3 py-3">{item.aliado?.nombre || "-"}</td>
                 <td className="max-w-44 break-words px-3 py-3 font-semibold">{itemSite(item)}</td>
                 <td className="px-3 py-3 font-semibold">{itemClient(item)}</td>
-                <td className="whitespace-nowrap px-3 py-3 font-mono">{item.clienteDocumento || "-"}</td>
+                <td className="whitespace-nowrap px-3 py-3 font-mono">{item.clienteDocumento?.replace(/[.\s]/g, "") || "-"}</td>
                 <td className="max-w-60 break-words px-3 py-3">
                   <p>{item.equipo || "-"}</p>
                   <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
-                    IMEI: {item.imei || "-"}
+                    IMEI: {item.imei?.replace(/[.\s]/g, "") || "-"}
                   </p>
                 </td>
                 <td className="px-3 py-3">
@@ -862,7 +874,7 @@ function CollectionItems({
                 <td className="whitespace-nowrap px-4 py-3">{formatDateTime(item.fechaAbono)}</td>
                 <td className="px-4 py-3 font-bold">{creditDisplayNumber(item)}{item.numeroCreditoVisible && item.numeroCreditoVisible !== item.folio ? <span className="block text-xs font-normal text-slate-500">Folio original: {item.folio}</span> : null}</td>
                 <td className="px-4 py-3 font-semibold">{item.clienteNombre || "-"}</td>
-                <td className="whitespace-nowrap px-4 py-3 font-mono">{item.clienteDocumento || "-"}</td>
+                <td className="whitespace-nowrap px-4 py-3 font-mono">{item.clienteDocumento?.replace(/[.\s]/g, "") || "-"}</td>
                 <td className="px-4 py-3 font-semibold">{item.sedeNombre || "-"}</td>
                 <td className="px-4 py-3">{item.metodoPago || "-"}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-right font-black tabular-nums">{formatMoney(item.valor)}</td>
@@ -879,11 +891,19 @@ function CollectionItems({
 function ReconciliationCard({
   totalPagarCreditos,
   totalRecaudosAliado,
+  storedSettlement,
 }: {
   totalPagarCreditos: number;
   totalRecaudosAliado: number;
+  storedSettlement?: Settlement;
 }) {
-  const balance = calculateAllySettlementBalance(totalPagarCreditos, totalRecaudosAliado);
+  const savedNet = storedSettlement?.saldoNeto ?? storedSettlement?.totalPagar;
+  const balance = savedNet != null ? {
+    totalPagarCreditos,
+    totalRecaudosAliado,
+    saldoNeto: savedNet,
+    direccionSaldo: storedSettlement?.direccionSaldo || (savedNet < 0 ? "CONSIGNACION_ALIADO" : savedNet > 0 ? "PAGO_ALIADO" : "SALDO_CERO"),
+  } : calculateAllySettlementBalance(totalPagarCreditos, totalRecaudosAliado);
   const consignacion = balance.direccionSaldo === "CONSIGNACION_ALIADO";
   const cero = balance.direccionSaldo === "SALDO_CERO";
   return (
@@ -914,16 +934,6 @@ function settlementAllyName(settlement: Settlement) {
   return settlement.aliado?.nombre || settlement.aliadoNombre || "Aliado";
 }
 
-function settlementTotal(settlement: Settlement) {
-  if (settlement.saldoNeto != null) return numberValue(settlement.saldoNeto);
-  return (
-    settlement.totalPagar ??
-    settlementSummary(settlement)?.total?.totalPagar ??
-    settlementSummary(settlement)?.total?.valorPagar ??
-    0
-  );
-}
-
 function settlementPdfUrl(settlementId: Settlement["id"], download = false) {
   const base = `/api/pagos-aliados/${encodeURIComponent(String(settlementId))}/comprobante`;
   return download ? `${base}?download=1` : base;
@@ -942,151 +952,39 @@ function downloadSettlementPdf(settlementId: Settlement["id"]) {
   anchor.remove();
 }
 
-function SettlementsList({
-  detailLoadingId,
-  onOpen,
-  settlements,
-}: {
-  detailLoadingId: string | null;
-  onOpen: (settlement: Settlement) => void;
-  settlements: Settlement[];
+function PaymentViewFilters({ filters, onChange, onApply, onClear, allies, adminCentral, pending = false }: {
+  filters: AllyPaymentViewFilters;
+  onChange: (filters: AllyPaymentViewFilters) => void;
+  onApply: () => void;
+  onClear: () => void;
+  allies: AllyOption[];
+  adminCentral: boolean;
+  pending?: boolean;
 }) {
-  if (!settlements.length) {
-    return (
-      <EmptyState
-        className="mt-4"
-        title="Aun no hay pagos registrados"
-        description="Los periodos liquidados y pagados apareceran aqui con su aprobacion bancaria."
-      />
-    );
-  }
-
-  return (
-    <section className="mt-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-black text-[var(--fp-graphite)]">Periodos pagados</h2>
-        <Badge tone="positive">{formatNumber(settlements.length)} periodos</Badge>
+  return <form className={`${styles.filters} ${pending ? styles.pendingFilters : ""}`} onSubmit={event => { event.preventDefault(); onApply(); }} aria-label={pending ? "Filtros de pagos pendientes" : "Filtros de pagos recibidos"}>
+    {pending && <h2 className={styles.filterTitle}>Movimientos pendientes de liquidar</h2>}
+    <div className={styles.filterRow}>
+      <div className={styles.search}>
+        <Search aria-hidden="true" />
+        <Input aria-label={pending ? "Buscar cliente, cédula o IMEI" : "Buscar aliado o aprobación"} placeholder={pending ? "Cliente, cédula o IMEI" : "Buscar aliado o aprobación"} value={filters.search} onChange={event => onChange({ ...filters, search: event.target.value })} />
       </div>
-
-      <div className="mt-3 grid gap-3 lg:hidden">
-        {settlements.map((settlement) => {
-          const loading = detailLoadingId === String(settlement.id);
-          return (
-            <Card key={settlement.id} className="!rounded-lg !p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-black text-[var(--fp-graphite)]">{settlementAllyName(settlement)}</p>
-                  <p className="mt-1 text-sm text-[var(--fp-muted)]">
-                    {formatDate(settlement.periodoInicio)} al {formatDate(settlement.periodoFin)}
-                  </p>
-                </div>
-                <StatusPill tone="positive">{settlement.estado || "PAGADO"}</StatusPill>
-              </div>
-              <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <dt className="text-xs text-[var(--fp-muted)]">Creditos</dt>
-                  <dd className="mt-1 font-bold">{formatNumber(settlement.numeroCreditos)}</dd>
-                </div>
-                <div>
-                   <dt className="text-xs text-[var(--fp-muted)]">Resultado neto</dt>
-                   <dd className="mt-1 font-black tabular-nums">{settlementTotal(settlement) < 0 ? "Consigna " : "Pago "}{formatMoney(Math.abs(settlementTotal(settlement)))}</dd>
-                </div>
-                <div className="col-span-2">
-                  <dt className="text-xs text-[var(--fp-muted)]">Aprobacion bancaria</dt>
-                  <dd className="mt-1 break-all font-bold">{settlement.numeroAprobacionBancaria || "-"}</dd>
-                </div>
-                <div className="col-span-2">
-                  <dt className="text-xs text-[var(--fp-muted)]">Fecha de pago</dt>
-                  <dd className="mt-1 font-bold">
-                    {formatDateTime(settlement.pagadoAt || settlement.createdAt)}
-                  </dd>
-                </div>
-              </dl>
-              <Button
-                className="mt-4 w-full"
-                variant="secondary"
-                onClick={() => onOpen(settlement)}
-                disabled={loading}
-              >
-                <Eye className="h-4 w-4" aria-hidden="true" />
-                {loading ? "Cargando detalle..." : "Abrir detalle"}
-              </Button>
-            </Card>
-          );
-        })}
+      <Select aria-label="Filtrar por aliado" value={filters.allyId} onChange={event => onChange({ ...filters, allyId: event.target.value })}>
+        <option value="">{adminCentral ? "Todos los aliados" : "Mi aliado"}</option>
+        {allies.map(ally => <option key={ally.id} value={String(ally.id)}>{ally.nombre}</option>)}
+      </Select>
+      <div className={styles.period} role="group" aria-label="Período">
+        <CalendarDays aria-hidden="true" />
+        <input aria-label="Período desde" type="date" value={filters.start} onChange={event => onChange({ ...filters, start: event.target.value })} />
+        <span aria-hidden="true">–</span>
+        <input aria-label="Período hasta" type="date" value={filters.end} onChange={event => onChange({ ...filters, end: event.target.value })} />
       </div>
-
-      <DataTable className="mt-3 hidden lg:block">
-        <table className="w-full min-w-[1180px] text-sm">
-          <caption className="sr-only">Periodos pagados a aliados</caption>
-          <thead className="bg-[var(--fp-graphite)] text-white">
-            <tr>
-              <th className="px-4 py-3 text-left">Periodo</th>
-              <th className="px-4 py-3 text-left">Aliado</th>
-              <th className="px-4 py-3 text-right">Creditos</th>
-              <th className="px-4 py-3 text-right">Credito autorizado</th>
-              <th className="px-4 py-3 text-right">Inicial</th>
-              <th className="px-4 py-3 text-right">Intermediacion</th>
-              <th className="px-4 py-3 text-right">Recaudos</th>
-              <th className="px-4 py-3 text-right">Resultado neto</th>
-              <th className="px-4 py-3 text-left">Aprobacion</th>
-              <th className="px-4 py-3 text-left">Registro</th>
-              <th className="px-4 py-3 text-right">Detalle</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--fp-border)]">
-            {settlements.map((settlement) => {
-              const loading = detailLoadingId === String(settlement.id);
-              return (
-                <tr key={settlement.id} className="bg-white even:bg-[#fbfcfa]">
-                  <td className="whitespace-nowrap px-4 py-3">
-                    {formatDate(settlement.periodoInicio)} - {formatDate(settlement.periodoFin)}
-                  </td>
-                  <td className="px-4 py-3 font-bold">{settlementAllyName(settlement)}</td>
-                  <td className="px-4 py-3 text-right">{formatNumber(settlement.numeroCreditos)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
-                    {formatMoney(settlement.totalCreditoAutorizado)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
-                    {formatMoney(settlement.totalCuotaInicial)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
-                    {formatMoney(settlement.totalIntermediacion)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-black tabular-nums">
-                    {formatMoney(settlement.totalRecaudosAliado)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-black tabular-nums">
-                    {settlementTotal(settlement) < 0 ? "Consigna " : "Pago "}{formatMoney(Math.abs(settlementTotal(settlement)))}
-                  </td>
-                  <td className="max-w-44 break-all px-4 py-3 font-semibold">
-                    {settlement.numeroAprobacionBancaria || "-"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="font-semibold">{settlement.registradoPorNombre || "-"}</p>
-                    <p className="mt-1 whitespace-nowrap text-xs text-[var(--fp-muted)]">
-                      {formatDateTime(settlement.pagadoAt || settlement.createdAt)}
-                    </p>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Button
-                      variant="ghost"
-                      onClick={() => onOpen(settlement)}
-                      disabled={loading}
-                      aria-label={`Abrir detalle del periodo ${formatDate(settlement.periodoInicio)} a ${formatDate(settlement.periodoFin)}`}
-                    >
-                      <Eye className="h-4 w-4" aria-hidden="true" />
-                      {loading ? "Cargando" : "Ver"}
-                    </Button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </DataTable>
-    </section>
-  );
+      <Button type="submit">Filtrar</Button>
+      <Button type="button" variant="ghost" className={styles.clear} onClick={onClear}>Limpiar</Button>
+    </div>
+    <p className={styles.dateHint}>{pending
+      ? "Fecha de elegibilidad del crédito para liquidación · Recaudos: fecha de abono · Hora de Colombia."
+      : "Filtra por el período de la liquidación, según las fechas de Colombia."}</p>
+  </form>;
 }
 
 function createMutationId() {
@@ -1124,6 +1022,14 @@ export default function AllyPaymentsConsole({
     items: [],
     summary: null,
   });
+  const [receivedDraft, setReceivedDraft] = useState(emptyAllyPaymentViewFilters);
+  const [receivedFilters, setReceivedFilters] = useState(emptyAllyPaymentViewFilters);
+  const [pendingDraft, setPendingDraft] = useState(emptyAllyPaymentViewFilters);
+  const [pendingFilters, setPendingFilters] = useState(emptyAllyPaymentViewFilters);
+  const [showPendingCollections, setShowPendingCollections] = useState(false);
+  const [overviewError, setOverviewError] = useState(false);
+  const detailSectionRef = useRef<HTMLElement>(null);
+  const collectionsSectionRef = useRef<HTMLElement>(null);
   const [preview, setPreview] = useState<PaymentPreview | null>(null);
   const [previewRequested, setPreviewRequested] = useState(false);
   const [selectedAllyId, setSelectedAllyId] = useState(
@@ -1202,6 +1108,7 @@ export default function AllyPaymentsConsole({
   const loadOverview = useCallback(async () => {
     try {
       setLoading(true);
+      setOverviewError(false);
       setNotice(null);
 
       const response = await fetch("/api/pagos-aliados", { cache: "no-store" });
@@ -1223,12 +1130,11 @@ export default function AllyPaymentsConsole({
       }
       setAllies(Array.isArray(payload.allies) ? payload.allies : []);
       setSettlements(Array.isArray(payload.settlements) ? payload.settlements : []);
-      setSelectedSettlement(current => current
-        ? payload.settlements?.find(item => String(item.id) === String(current.id)) || current
-        : null);
+      setSelectedSettlement(current => current && payload.settlements?.some(item => String(item.id) === String(current.id)) ? current : null);
       setPending({
         items: Array.isArray(payload.pending?.items) ? payload.pending.items : [],
         summary: payload.pending?.summary || null,
+        recaudos: Array.isArray(payload.pending?.recaudos) ? payload.pending.recaudos : [],
       });
       return true;
     } catch (error) {
@@ -1236,6 +1142,7 @@ export default function AllyPaymentsConsole({
         tone: "error",
         text: error instanceof Error ? error.message : "Error cargando pagos a aliados",
       });
+      setOverviewError(true);
       return false;
     } finally {
       setLoading(false);
@@ -1434,6 +1341,7 @@ export default function AllyPaymentsConsole({
       }
 
       setSelectedSettlement(raw.settlement);
+      requestAnimationFrame(() => detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (error) {
       setNotice({
         tone: "error",
@@ -1467,33 +1375,41 @@ export default function AllyPaymentsConsole({
     preview?.aliado?.nombre ||
     (accessAllyId ? allies.find((ally) => ally.id === accessAllyId)?.nombre : null) ||
     "tu aliado";
-  const pendingItems = Array.isArray(pending.items) ? pending.items : [];
-  const pendingCollections = collectionItems(pending);
-  const hasPendingData =
-    pendingItems.length > 0 ||
-    pendingCollections.length > 0 ||
-    numberValue(pending.summary?.total?.numeroCreditos) > 0;
+  const filteredSettlements = useMemo(() => filterReceivedAllyPayments(settlements, receivedFilters), [settlements, receivedFilters]);
+  const filteredPendingItems = useMemo(() => filterPendingAllyCredits(pending.items || [], pendingFilters), [pending.items, pendingFilters]);
+  const pendingCounts = useMemo(() => {
+    const all = filterPendingAllyCredits(pending.items || [], { ...pendingFilters, platform: "ALL" });
+    return { all: all.length, ANDROID: all.filter(item => item.plataforma?.toUpperCase() === "ANDROID").length, IPHONE: all.filter(item => item.plataforma?.toUpperCase() === "IPHONE").length };
+  }, [pending.items, pendingFilters]);
+  const filteredPendingSummary = useMemo(() => summarizePreviewItems(filteredPendingItems), [filteredPendingItems]);
+  const filteredPendingCollections = useMemo(() => filterPendingAllyCollections(collectionItems(pending), pendingFilters), [pending, pendingFilters]);
+  const applyViewFilters = (view: "recibidos" | "pendientes") => {
+    const draft = view === "recibidos" ? receivedDraft : pendingDraft;
+    if (draft.start && draft.end && draft.start > draft.end) {
+      setNotice({ tone: "error", text: "La fecha desde no puede ser posterior a la fecha hasta." });
+      return;
+    }
+    setNotice(null);
+    if (view === "recibidos") { setReceivedFilters({ ...draft }); setSelectedSettlement(null); }
+    else setPendingFilters({ ...draft });
+  };
   const refreshBusy = loading || previewLoading || submitting || Boolean(detailLoadingId);
 
   return (
-    <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
-      <PageHeader
-        eyebrow={adminCentral ? "Operacion financiera" : "Consulta del aliado"}
-        title="PAGOS ALIADO"
-        description={
-          adminCentral
-            ? "Previsualiza creditos elegibles, confirma la liquidacion y consulta el historial pagado."
-            : "Consulta los periodos pagados y los creditos que aun estan pendientes de liquidacion."
-        }
-        actions={
-          <Button variant="secondary" onClick={() => void loadOverview()} disabled={refreshBusy}>
-            <RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} aria-hidden="true" />
-            Actualizar
-          </Button>
-        }
-      />
+    <main className={styles.main}>
+      <div className={styles.header}>
+        <div>
+          <div className={styles.eyebrow}>{adminCentral ? "Operación financiera" : "Consulta del aliado"}</div>
+          <h1>Pagos a aliados</h1>
+          {activeTab !== "pendientes" && <p>{activeTab === "recibidos" ? "Consulta las liquidaciones registradas." : "Consulta y prepara las liquidaciones."}</p>}
+        </div>
+        <Button variant="secondary" onClick={() => void loadOverview()} disabled={refreshBusy}>
+          <RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} aria-hidden="true" />
+          Actualizar
+        </Button>
+      </div>
 
-      <Tabs className="mt-5" aria-label="Secciones de pagos a aliados">
+      <Tabs className={styles.tabs} aria-label="Secciones de pagos a aliados">
         {adminCentral ? (
           <button
             id="ally-payments-liquidate-tab"
@@ -1751,20 +1667,21 @@ export default function AllyPaymentsConsole({
         </div>
       ) : null}
 
-      {!loading && activeTab === "recibidos" ? (
+      {!loading && !overviewError && activeTab === "recibidos" ? (
         <div
           id="ally-payments-received-panel"
           role="tabpanel"
           aria-labelledby="ally-payments-received-tab"
         >
-          <SettlementsList
-            settlements={settlements}
+          <PaymentViewFilters filters={receivedDraft} onChange={setReceivedDraft} allies={allies} adminCentral={adminCentral} onApply={() => applyViewFilters("recibidos")} onClear={() => { const empty = emptyAllyPaymentViewFilters(); setReceivedDraft(empty); setReceivedFilters(empty); setSelectedSettlement(null); setNotice(null); }} />
+          <ReceivedPaymentsView
+            settlements={filteredSettlements}
             detailLoadingId={detailLoadingId}
             onOpen={(settlement) => void openSettlement(settlement)}
           />
 
           {selectedSettlement ? (
-            <section className="mt-5" aria-label="Detalle del periodo pagado">
+            <section ref={detailSectionRef} className="mt-5 scroll-mt-6" aria-label="Detalle del periodo pagado">
               <Card className="!rounded-lg !p-4 sm:!p-5">
                 <div className="flex items-start justify-between gap-4 border-b border-[var(--fp-border)] pb-4">
                 <div>
@@ -1831,9 +1748,11 @@ export default function AllyPaymentsConsole({
               <ReconciliationCard
                 totalPagarCreditos={numberValue(selectedSettlement.totalPagarCreditos ?? selectedSettlement.totalPagar)}
                 totalRecaudosAliado={numberValue(selectedSettlement.totalRecaudosAliado)}
+                storedSettlement={selectedSettlement}
               />
               <CreditItems
                 items={settlementItems(selectedSettlement)}
+                alwaysTable
                 emptyDescription="El servidor no entrego el detalle de creditos de este periodo."
               />
               <CollectionItems
@@ -1845,44 +1764,19 @@ export default function AllyPaymentsConsole({
         </div>
       ) : null}
 
-      {!loading && activeTab === "pendientes" ? (
-        <div
-          id="ally-payments-pending-panel"
-          role="tabpanel"
-          aria-labelledby="ally-payments-pending-tab"
-        >
-          <Card className="mt-4 flex items-start gap-3 !rounded-lg !p-4">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]">
-              <Clock3 className="h-5 w-5" aria-hidden="true" />
-            </span>
-            <div>
-              <h2 className="font-black text-[var(--fp-graphite)]">Movimientos pendientes de liquidar</h2>
-              <p className="mt-1 text-sm leading-5 text-[var(--fp-muted)]">
-                Incluye creditos elegibles y recaudos recibidos por el aliado que todavia no forman parte de una liquidacion.
-              </p>
+      {!loading && !overviewError && activeTab === "pendientes" ? (
+        <div id="ally-payments-pending-panel" role="tabpanel" aria-labelledby="ally-payments-pending-tab">
+          <PaymentViewFilters pending filters={pendingDraft} onChange={setPendingDraft} allies={allies} adminCentral={adminCentral} onApply={() => applyViewFilters("pendientes")} onClear={() => { const empty = emptyAllyPaymentViewFilters(); setPendingDraft(empty); setPendingFilters(empty); setNotice(null); }} />
+          <PendingPaymentsView items={filteredPendingItems} summary={filteredPendingSummary} platform={pendingFilters.platform} platformCounts={pendingCounts}
+            onPlatformChange={platform => { const value = platform === "ANDROID" || platform === "IPHONE" ? platform : "ALL"; setPendingFilters(current => ({ ...current, platform: value })); setPendingDraft(current => ({ ...current, platform: value })); }}
+            onReviewCollections={() => { setShowPendingCollections(true); requestAnimationFrame(() => collectionsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }} />
+          {showPendingCollections && <section className={styles.collections} ref={collectionsSectionRef} aria-label="Recaudos pendientes de liquidar">
+            <div className={styles.collectionHeader}>
+              <div><h2>Recaudos pendientes de liquidar</h2><p>Se filtran por fecha de abono. Se descontarán al conciliar la liquidación.</p></div>
+              <Button variant="ghost" onClick={() => setShowPendingCollections(false)}><X className="h-4 w-4" aria-hidden="true" /> Cerrar</Button>
             </div>
-          </Card>
-          {hasPendingData ? (
-            <>
-              {pending.summary ? (
-                <SummaryGrid summary={pending.summary} title="Resumen pendiente" />
-              ) : null}
-              <CreditItems
-                items={pendingItems}
-                emptyDescription="El servidor no entrego el detalle de los creditos pendientes."
-              />
-              <CollectionItems
-                items={pendingCollections}
-                emptyDescription="No existen recaudos del aliado pendientes de conciliar."
-              />
-            </>
-          ) : (
-            <EmptyState
-              className="mt-4"
-              title="No hay pagos pendientes"
-              description="No existen creditos elegibles sin liquidar para este aliado."
-            />
-          )}
+            <CollectionItems items={filteredPendingCollections} emptyDescription="No existen recaudos pendientes de liquidar con los filtros aplicados." />
+          </section>}
         </div>
       ) : null}
 
