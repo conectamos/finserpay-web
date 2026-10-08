@@ -4,14 +4,14 @@ import { getSolicitudDetail } from "@/lib/solicitudes-storage";
 import { normalizeSolicitudFilters } from "@/lib/solicitudes";
 import { getOperationalCase, OperationalCaseReadError } from "@/lib/approval-operations-read";
 import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
-import { parseAnalystRequestId, projectRequestContact, projectRequestFinancial, requestRecord, requestText } from "@/lib/approval-request-detail-model";
+import { parseAnalystRequestId, projectRequestContact, projectRequestFinancial, requestIso, requestRecord, requestText } from "@/lib/approval-request-detail-model";
 import type { AnalystRequestDetail } from "@/lib/approval-request-detail-types";
 
 const CONTACT_AND_PLAN_KEYS = [
   "clienteTelefono", "clienteCorreo", "clienteDireccion", "clienteDepartamento", "clienteCiudad",
   "clienteFechaNacimiento", "clienteTipoDocumento", "equipoMarca", "equipoModelo", "referenciaEquipo",
   "valorEquipoTotal", "cuotaInicial", "saldoBaseFinanciado", "plazoMeses", "cuotaComercial",
-  "valorCuota", "frecuenciaPago", "fechaPrimerPago", "financialTermsSeal",
+  "valorCuota", "frecuenciaPago", "fechaPrimerPago", "financialTermsSeal", "analystDataCorrection",
 ];
 const DOCUMENTS = [
   { key: "cedula-frente", label: "Cédula frontal", fields: ["contratoCedulaFrenteDataUrl", "cedulaFrenteDataUrl"] },
@@ -90,6 +90,18 @@ export async function getAnalystRequestDetail(idValue: string, userId: number): 
     id: event.key, label: event.label, status: event.status, at: event.at, detail: null, actor: null,
   }] : []);
   const actions: AnalystRequestDetail["actions"] = [];
+  if (identity.source === "DRAFT" && Number(requestRecord(data.analystDataCorrection).revision) > 0) {
+    const corrections = await prisma.$queryRawUnsafe<Array<{
+      id: string; createdAt: Date | string; actorName: string; reason: string;
+    }>>(`SELECT "id"::text,"createdAt","actorName","reason" FROM "ApprovalOperationalAction"
+      WHERE "targetKind"='DRAFT' AND "targetId"=$1 AND "eventType"='CONTACT_UPDATED'
+        AND "status"='DATA_CORRECTED' ORDER BY "createdAt" DESC LIMIT 30`, identity.entityId);
+    for (const correction of corrections) {
+      const at = requestIso(correction.createdAt);
+      if (at) timeline.push({ id: `operativo:${correction.id}`, label: "Datos corregidos",
+        status: "DATA_CORRECTED", at, detail: requestText(correction.reason), actor: requestText(correction.actorName) });
+    }
+  }
   const active = !["RECHAZADA", "CANCELADA"].includes(item.estado) &&
     (identity.source === "CREDIT" || (item.rawState === "ABIERTO" && [3,4,5].includes(item.currentStep ?? 0) &&
       new Date(item.expiresAt || new Date(new Date(item.createdAt || 0).getTime() + 15*86400000)).getTime() > Date.now()));

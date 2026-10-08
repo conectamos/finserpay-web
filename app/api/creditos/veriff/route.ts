@@ -340,8 +340,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
-    const clientePrimerApellido = sanitizeText(body.clientePrimerApellido);
+    // An advisor tab can still hold the name preceding an analyst correction.
+    // The shared operation lock above makes this authoritative payload read safe.
+    const draftPayload = payloadObject(draft.payload);
+    const correctedIdentity = Number(draftPayload.analystDataRevision) > 0;
+    const clientePrimerNombre = sanitizeText(correctedIdentity
+      ? draftPayload.clientePrimerNombre : body.clientePrimerNombre);
+    const clientePrimerApellido = sanitizeText(correctedIdentity
+      ? draftPayload.clientePrimerApellido : body.clientePrimerApellido);
     const clienteNombre = [clientePrimerNombre, clientePrimerApellido]
       .filter(Boolean)
       .join(" ");
@@ -567,7 +573,8 @@ export async function POST(request: Request) {
       createPayload = await veriffCreateSession({
         callbackUrl: buildVeriffCompletionUrl(request),
         documentNumber: clienteDocumento,
-        documentType: sanitizeText(body.clienteTipoDocumento),
+        documentType: sanitizeText(correctedIdentity
+          ? draftPayload.clienteTipoDocumento : body.clienteTipoDocumento),
         endUserId,
         firstName: clientePrimerNombre,
         lastName: clientePrimerApellido,

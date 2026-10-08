@@ -302,14 +302,19 @@ export async function GET(req: Request) {
         { status: 403 }
       );
     }
-    await Promise.all([
-      expireStaleSolicitudes(),
-      ensureVeriffSchema(),
-      ensureFirmaSeguroSchema(),
-    ]);
-
     const params = new URL(req.url).searchParams;
+    const analystDataOnly = params.get("datosAnalista") === "1";
+    if (!analystDataOnly) {
+      await Promise.all([
+        expireStaleSolicitudes(),
+        ensureVeriffSchema(),
+        ensureFirmaSeguroSchema(),
+      ]);
+    }
     const id = parsePositiveId(params.get("id"));
+    if (analystDataOnly && !id) {
+      return NextResponse.json({ error: "Solicitud inválida" }, { status: 400 });
+    }
     const search = sanitizeSearch(params.get("search"));
     const take = parseTake(params.get("take"));
     const where = [`d."estado" = 'ABIERTO'`];
@@ -319,6 +324,33 @@ export async function GET(req: Request) {
     if (id) {
       values.push(id);
       where.push(`d."id" = $${values.length}`);
+      if (analystDataOnly) {
+        where.push(`d."creditoId" IS NULL`);
+        where.push(`COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP`);
+        const rows = await prisma.$queryRawUnsafe<{
+          id: number; clienteDocumento: string | null; payload: DraftPayload;
+        }[]>(`
+          SELECT d."id", d."clienteDocumento",
+            jsonb_build_object(
+              'analystDataRevision', COALESCE(d."payload"->'analystDataRevision', '0'::jsonb),
+              'analystDataCorrection', d."payload"->'analystDataCorrection'
+            ) AS "payload"
+          FROM "CreditoBorrador" d
+          LEFT JOIN "Sede" s ON s."id" = d."sedeId"
+          WHERE ${where.join(" AND ")}
+          LIMIT 1
+        `, ...values);
+        if (!rows[0]) {
+          return NextResponse.json({ error: "Borrador no encontrado" }, { status: 404 });
+        }
+        if (rows[0].clienteDocumento) {
+          await assertDocumentNotBlacklisted(rows[0].clienteDocumento);
+        }
+        return NextResponse.json(
+          { ok: true, item: { id: rows[0].id, payload: rows[0].payload } },
+          { headers: { "Cache-Control": "no-store, private" } },
+        );
+      }
       const rows = await readDrafts(where.join(" AND "), values, 1, true);
       if (!rows[0]) {
         return NextResponse.json({ error: "Borrador no encontrado" }, { status: 404 });

@@ -125,6 +125,12 @@ import {
   splitStoredCreditClientName,
 } from "@/lib/credit-client-name";
 import {
+  readAnalystDraftDataSnapshot,
+  resolveAnalystDraftDataUpdate,
+  startVisibleDraftDataPolling,
+  type AnalystDraftDataSnapshot,
+} from "@/lib/analyst-draft-data-sync";
+import {
   calculateFrenchAmortization,
   DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE,
   DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
@@ -682,6 +688,12 @@ type CreditListResponse = {
 
 type CreditDraftPayload = Record<string, unknown>;
 
+type CreditDraftAnalystDataResponse = {
+  ok?: boolean;
+  item?: { id: number; payload: CreditDraftPayload };
+  error?: string;
+};
+
 type CreditDraftItem = {
   id: number;
   estado: string;
@@ -1124,6 +1136,7 @@ function identityEvidenceClientIdentity(options: {
   document: unknown;
   firstName: unknown;
   lastName: unknown;
+  secondSurname: unknown;
   birthDate: unknown;
   issueDate: unknown;
 }) {
@@ -1131,6 +1144,7 @@ function identityEvidenceClientIdentity(options: {
     equipmentCatalogKey(options.document),
     equipmentCatalogKey(options.firstName),
     equipmentCatalogKey(options.lastName),
+    equipmentCatalogKey(options.secondSurname),
     String(options.birthDate || "").trim(),
     String(options.issueDate || "").trim(),
   ].join("|");
@@ -3028,6 +3042,8 @@ export default function CreditFactoryConsole({
   const [searchTerm, setSearchTerm] = useState(normalizedInitialSearch);
   const [activeSearch, setActiveSearch] = useState(normalizedInitialSearch);
   const [draftId, setDraftId] = useState<number | null>(initialDraftId);
+  const [analystDataRevision, setAnalystDataRevision] = useState(0);
+  const analystDataSnapshotRef = useRef<AnalystDraftDataSnapshot | null>(null);
   const [draftSearchResults, setDraftSearchResults] = useState<CreditDraftItem[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftStatus, setDraftStatus] = useState<
@@ -3399,6 +3415,7 @@ export default function CreditFactoryConsole({
       document: clienteDocumento,
       firstName: clientePrimerNombre,
       lastName: clientePrimerApellido,
+      secondSurname: clienteSegundoApellido,
       birthDate: clienteFechaNacimiento,
       issueDate: clienteFechaExpedicion,
     })
@@ -4217,6 +4234,7 @@ export default function CreditFactoryConsole({
   const factoryDraftPayload = useMemo(
     () => ({
       wizardStep,
+      analystDataRevision,
       clienteNombre,
       clientePrimerNombre,
       clientePrimerApellido,
@@ -4291,6 +4309,7 @@ export default function CreditFactoryConsole({
       autorizacionDatosAceptada,
     }),
     [
+      analystDataRevision,
       autorizacionDatosAceptada,
       cartaAceptada,
       clienteCiudad,
@@ -4360,6 +4379,45 @@ export default function CreditFactoryConsole({
       wizardStep,
     ]
   );
+  const synchronizeAnalystDraftData = useCallback((draft: Pick<CreditDraftItem, "id" | "payload">) => {
+    const previous = analystDataSnapshotRef.current;
+    if (!previous || previous.draftId !== draft.id) return;
+    const update = resolveAnalystDraftDataUpdate(previous, draft.id, draft.payload || {});
+    if (!update) return;
+    cancelPendingDraftAutosave();
+    analystDataSnapshotRef.current = update.snapshot;
+    setAnalystDataRevision(update.snapshot.revision);
+    const values = update.values;
+    if (values.clientePrimerNombre !== undefined || values.clienteSegundoApellido !== undefined) {
+      preservedCanonicalClientNameRef.current = null;
+    }
+    if (values.clientePrimerNombre !== undefined || values.clienteSegundoApellido !== undefined ||
+        values.clienteFechaNacimiento !== undefined) {
+      setContratoFotoDataUrl("");
+      setContratoFotoAudit(null);
+      setIphoneSelfieCedulaDataUrl("");
+      setIphoneSelfieCedulaAudit(null);
+      setContratoCedulaFrenteDataUrl("");
+      setContratoCedulaFrenteAudit(null);
+      setContratoCedulaRespaldoDataUrl("");
+      setContratoCedulaRespaldoAudit(null);
+    }
+    if (values.clientePrimerNombre !== undefined) setClientePrimerNombre(values.clientePrimerNombre);
+    if (values.clienteSegundoApellido !== undefined) setClienteSegundoApellido(values.clienteSegundoApellido);
+    if (values.clienteNombre !== undefined) setClienteNombre(values.clienteNombre);
+    if (values.clienteFechaNacimiento !== undefined) setClienteFechaNacimiento(values.clienteFechaNacimiento);
+    if (values.clienteTelefono !== undefined) setClienteTelefono(values.clienteTelefono);
+    if (values.clienteCorreo !== undefined) setClienteCorreo(values.clienteCorreo);
+    if (values.clienteDireccion !== undefined) setClienteDireccion(values.clienteDireccion);
+    if (values.clienteDepartamento !== undefined) setClienteDepartamento(values.clienteDepartamento);
+    if (values.clienteCiudad !== undefined) setClienteCiudad(values.clienteCiudad);
+    setDraftErrorMessage("");
+    setDraftStatus("idle");
+    setNotice({
+      text: "El analista actualizó los datos de esta solicitud.",
+      tone: "emerald",
+    });
+  }, [cancelPendingDraftAutosave]);
   const currentIphoneClosureFingerprint = useMemo(
     () =>
       iphoneClosureFingerprint({
@@ -7309,6 +7367,7 @@ export default function CreditFactoryConsole({
       document: clienteDocumento,
       firstName: clientePrimerNombre,
       lastName: clientePrimerApellido,
+      secondSurname: clienteSegundoApellido,
       birthDate: clienteFechaNacimiento,
       issueDate: clienteFechaExpedicion,
     });
@@ -7339,6 +7398,7 @@ export default function CreditFactoryConsole({
     clienteFechaNacimiento,
     clientePrimerApellido,
     clientePrimerNombre,
+    clienteSegundoApellido,
   ]);
 
   const loadPayments = async (creditId: number) => {
@@ -8104,6 +8164,10 @@ export default function CreditFactoryConsole({
     setDraftId(result.data.item.id);
     setDraftStatus("saved");
     replaceDraftInUrl(result.data.item.id);
+    if (!analystDataSnapshotRef.current) {
+      analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.data.item.id, {});
+    }
+    synchronizeAnalystDraftData(result.data.item);
 
     return result.data.item;
   };
@@ -8349,6 +8413,7 @@ export default function CreditFactoryConsole({
       });
 
       let currentDraftId = draftId;
+      let identityDraftPayload: CreditDraftPayload = factoryDraftPayload;
       if (createClientMode && !simulatorMode && !deliveryMode) {
         setDraftStatus("saving");
         const savedDraft = await saveDraftPayloadForVeriff(
@@ -8357,6 +8422,7 @@ export default function CreditFactoryConsole({
           currentDraftId
         );
         currentDraftId = savedDraft.id;
+        identityDraftPayload = savedDraft.payload;
       }
 
       const result = await requestJson<VeriffResponse>("/api/creditos/veriff", {
@@ -8367,10 +8433,10 @@ export default function CreditFactoryConsole({
         body: JSON.stringify({
           captureToken: mobileCaptureSession?.token || null,
           draftId: currentDraftId,
-          clienteDocumento,
-          clientePrimerNombre,
-          clientePrimerApellido,
-          clienteTipoDocumento,
+          clienteDocumento: identityDraftPayload.clienteDocumento,
+          clientePrimerNombre: identityDraftPayload.clientePrimerNombre,
+          clientePrimerApellido: identityDraftPayload.clientePrimerApellido,
+          clienteTipoDocumento: identityDraftPayload.clienteTipoDocumento,
           regenerate: options.regenerate === true,
           currentValidationId: options.expectedValidationId || null,
         }),
@@ -8387,7 +8453,7 @@ export default function CreditFactoryConsole({
           try {
             await saveDraftPayloadForVeriff(
               {
-                ...factoryDraftPayload,
+                ...identityDraftPayload,
                 veriffValidationId: responseValidation.id,
               },
               wizardStep,
@@ -8423,7 +8489,7 @@ export default function CreditFactoryConsole({
       if (validation?.id && currentDraftId) {
         await saveDraftPayloadForVeriff(
           {
-            ...factoryDraftPayload,
+            ...identityDraftPayload,
             veriffValidationId: validation.id,
           },
           wizardStep,
@@ -9374,6 +9440,8 @@ export default function CreditFactoryConsole({
 
     setWizardStep(1);
     setDraftId(null);
+    analystDataSnapshotRef.current = null;
+    setAnalystDataRevision(0);
     setFirmaSeguroPendingDraftId(null);
     setDraftStatus("idle");
     updateDraftResumeHydration(false);
@@ -9537,6 +9605,10 @@ export default function CreditFactoryConsole({
     setDraftId(result.data.item.id);
     setDraftStatus("saved");
     setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
+    if (!analystDataSnapshotRef.current) {
+      analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.data.item.id, {});
+    }
+    synchronizeAnalystDraftData(result.data.item);
 
     return result.data.item.id;
   };
@@ -11207,6 +11279,9 @@ export default function CreditFactoryConsole({
     setDraftResumeLoadFailed(false);
     setVeriffRestoreFailure(null);
     const payload = draft.payload || {};
+    const analystDataSnapshot = readAnalystDraftDataSnapshot(draft.id, payload);
+    analystDataSnapshotRef.current = analystDataSnapshot;
+    setAnalystDataRevision(analystDataSnapshot.revision);
     const value = (key: string) => {
       const current = payload[key];
 
@@ -11581,6 +11656,8 @@ export default function CreditFactoryConsole({
         if (result.status === 404) {
           cancelPendingDraftAutosave();
           setDraftId(null);
+          analystDataSnapshotRef.current = null;
+          setAnalystDataRevision(0);
           setDraftStatus("idle");
           setDraftErrorMessage("");
           replaceDraftInUrl(null);
@@ -11742,6 +11819,39 @@ export default function CreditFactoryConsole({
     };
   }, [createClientMode, draftId, iphoneFactory]);
 
+  const canSynchronizeAnalystData = createClientMode && !simulatorMode && !deliveryMode &&
+    !draftResumeHydrating && !draftResumeLoadFailed && !creating && !completedCredit &&
+    draftStatus !== "loading";
+  useEffect(() => {
+    if (!canSynchronizeAnalystData || !draftId) return;
+    const currentDraftId = draftId;
+    if (!analystDataSnapshotRef.current) {
+      analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(currentDraftId, {});
+    }
+    const polling = startVisibleDraftDataPolling({
+      load: async (signal) => {
+        const result = await requestJson<CreditDraftAnalystDataResponse>(
+          `/api/creditos/borradores?id=${currentDraftId}&datosAnalista=1`,
+          { signal, cache: "no-store", timeoutMs: 10_000 },
+        );
+        return result.ok && result.data?.item?.id === currentDraftId ? result.data.item : null;
+      },
+      apply: (draft) => {
+        if (draft) synchronizeAnalystDraftData(draft);
+      },
+      isVisible: () => document.visibilityState === "visible",
+      schedule: (callback, delay) => window.setTimeout(callback, delay),
+      cancel: (timer) => window.clearTimeout(timer as number),
+    });
+    window.addEventListener("focus", polling.refresh);
+    document.addEventListener("visibilitychange", polling.refresh);
+    return () => {
+      polling.stop();
+      window.removeEventListener("focus", polling.refresh);
+      document.removeEventListener("visibilitychange", polling.refresh);
+    };
+  }, [canSynchronizeAnalystData, draftId, synchronizeAnalystDraftData]);
+
   useEffect(() => {
     if (draftResumeHydrationRef.current) {
       cancelPendingDraftAutosave();
@@ -11840,6 +11950,7 @@ export default function CreditFactoryConsole({
           setDraftStatus("saved");
           setDraftErrorMessage("");
           setPersistedIphoneClosureFingerprint(closureFingerprintAtSchedule);
+          synchronizeAnalystDraftData(result.data.item);
         } catch (error) {
           if (
             requestController?.signal.aborted ||
@@ -11903,6 +12014,7 @@ export default function CreditFactoryConsole({
     nextFactoryStep.id,
     resumeActiveSolicitudFromConflict,
     simulatorMode,
+    synchronizeAnalystDraftData,
     wizardStep,
   ]);
 
@@ -11962,6 +12074,10 @@ export default function CreditFactoryConsole({
       applyingDraftRef.current = true;
     } else if (result.solicitudId) {
       cancelPendingDraftAutosave();
+      if (analystDataSnapshotRef.current?.draftId !== result.solicitudId) {
+        analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.solicitudId, {});
+        setAnalystDataRevision(0);
+      }
       setDraftId(result.solicitudId);
       setDraftStatus("saved");
       setDraftErrorMessage("");
