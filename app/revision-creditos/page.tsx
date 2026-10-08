@@ -4,6 +4,7 @@ import FinserBrand from "@/app/_components/finser-brand";
 import ApprovalWorkspace from "@/app/dashboard/aprobaciones/approval-workspace";
 import SharedLogout from "./shared-logout";
 import styles from "./shared-review.module.css";
+import WelcomePendingAlerts from "@/app/dashboard/_components/welcome-pending-alerts";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Revisión de créditos | FINSER PAY", robots: { index:false,follow:false,nocache:true,noarchive:true }, referrer:"no-referrer" as const };
 export default async function SharedCreditReviewPage(){
@@ -12,6 +13,6 @@ export default async function SharedCreditReviewPage(){
   return <div className={`fp-ui-shell ${styles.root}`}>
     <header className={styles.header}>
       <FinserBrand mini dark plainMark showTagline={false}/><div className={styles.access}><span>Acceso por enlace</span><SharedLogout/></div>
-    </header><ApprovalWorkspace shared/>
+    </header><ApprovalWorkspace shared/><WelcomePendingAlerts actorKey="shared-approvals" href="/revision-creditos"/>
   </div>;
 }
