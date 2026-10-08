@@ -28,7 +28,7 @@ function load(path, dependencies, globals = {}) {
   return loadedModule.exports;
 }
 const client = load("app/dashboard/aprobaciones/approval-client.ts", {});
-const creditFactory = load("lib/credit-factory.ts", { "@/lib/colombia-date": load("lib/colombia-date.ts", {}) });
+const creditFactory = load("lib/credit-factory.ts", { "@/lib/colombia-date": load("lib/colombia-date.ts", {}), "@/lib/payment-methods": load("lib/payment-methods.ts", {}) });
 const pendingClient = load("app/dashboard/pendientes/pending-client.ts", {});
 
 // Run the actual parent component's handlers and effects with controlled promises.
@@ -504,8 +504,9 @@ test("la composición real retira la corrección y conserva las identidades de l
   try {
     await parent.flush(); sharedProps(parent).onSelect(81); await parent.flush();
     workspace = sharedWorkspace(sharedProps(parent)); await workspace.flush();
-    const expectedTypes = ["SharedDataCorrection", "ApprovalCallRecording", "ApprovalNoveltyPanel", "ApprovalSignatureReissue"];
-    const expectedKeys = ["approval-data:81", "approval-call:81", "approval-novelty:81", "approval-signature:81"];
+    const expectedTypes = ["ApprovalCallRecording", "ApprovalNoveltyPanel", "ApprovalSignatureReissue"];
+    assert.equal(workspace.all(node => node.type === parts.SharedDataCorrection).length, 1);
+    const expectedKeys = ["approval-call:81", "approval-novelty:81", "approval-signature:81"];
     const initialPanels = actionPanels(workspace);
     assert.deepEqual(initialPanels.map(panel => panel.type.name), expectedTypes);
     assert.deepEqual(initialPanels.map(panel => panel.key), expectedKeys);
@@ -520,10 +521,11 @@ test("la composición real retira la corrección y conserva las identidades de l
     // inspecciona sus elementos React, pero no emula la reconciliación del DOM.
     workspace.update(sharedProps(parent)); await workspace.flush();
     const reissuePanels = actionPanels(workspace);
+    assert.equal(workspace.all(node => node.type === parts.SharedDataCorrection).length, 0);
     assert.equal(sharedProps(parent).signaturePanel.props.detail.reissue.operation.id, "refirma-81");
-    assert.deepEqual(reissuePanels.map(panel => panel.type.name), expectedTypes.slice(1));
-    assert.deepEqual(reissuePanels.map(panel => panel.key), expectedKeys.slice(1));
-    assert.deepEqual(reissuePanels.map(panel => panel.key), initialPanels.slice(1).map(panel => panel.key));
+    assert.deepEqual(reissuePanels.map(panel => panel.type.name), expectedTypes);
+    assert.deepEqual(reissuePanels.map(panel => panel.key), expectedKeys);
+    assert.deepEqual(reissuePanels.map(panel => panel.key), initialPanels.map(panel => panel.key));
     assert.equal(new Set(reissuePanels.map(panel => panel.key)).size, reissuePanels.length);
   } finally { workspace?.unmount(); parent.unmount(); }
 });

@@ -30,8 +30,9 @@ export default async function ApprovalDashboardShell({
     && Boolean(await getNominalApprovalAnalystSessionUser())
     && (await getApprovalSharedRequestActor()) === undefined;
   const compact = activeHref === "/dashboard/aprobaciones/excepciones-mora";
+  if (activeHref === "/dashboard/aprobaciones" && !nominalAnalyst) return <div className={styles.exceptionShell}><FinserNavigation admin adminCentral={isFinserPayCentralAlly(user.aliadoAccesoCodigo)} nombreUsuario={user.nombre} rolUsuario={user.rolNombre} variant="requests" />{children}</div>;
   if (nominalAnalyst) return <div className={styles.shell}>
-    <AnalystNavigation userName={user.nombre} userRole={user.rolNombre} compact={compact} />
+    <AnalystNavigation userName={user.nombre} userRole={user.rolNombre} compact={compact || activeHref === "/dashboard/aprobaciones"} />
     {activeHref !== "/dashboard/aprobaciones/centro" && <Link className={`${styles.back}${compact ? ` ${styles.compactBack}` : ""}`} href="/dashboard/aprobaciones/centro"><ArrowLeft aria-hidden="true" />Volver al Centro del analista</Link>}
     {children}
   </div>;

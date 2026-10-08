@@ -52,6 +52,7 @@ type MoraCreditDetail = Omit<MoraPortfolioItem, "ultimaGestion"> & {
 type DetailResponse = {
   ok: true;
   credit: MoraCreditDetail;
+  currentResponsible: NamedOption;
   history: MoraManagementEvent[];
   responsibles: NamedOption[];
 };
@@ -268,7 +269,7 @@ export default function MoraPortfolioClient() {
       const result = await requestJson<DetailResponse>(`/api/aprobaciones/cartera-mora/${item.id}`, { signal: controller.signal });
       if (controller.signal.aborted) return;
       setDetail(result);
-      const preferredResponsible = item.ultimaGestion?.responsibleUserId || result.responsibles[0]?.id;
+      const preferredResponsible = result.currentResponsible.id;
       setManagement(freshManagement(preferredResponsible ? String(preferredResponsible) : ""));
     } catch (error) {
       if (!controller.signal.aborted) setDetailError(error instanceof Error ? error.message : "No fue posible abrir el crédito.");
@@ -292,7 +293,7 @@ export default function MoraPortfolioClient() {
     if (!selectedId || !detail || saving || managementFingerprint === lastSavedFingerprint) return;
     const actedAt = bogotaIso(management.actedAt);
     const nextFollowUpAt = bogotaIso(management.nextFollowUpAt);
-    const responsibleUserId = Number(management.responsibleUserId);
+    const responsibleUserId = detail.currentResponsible.id;
     if (!actedAt || !nextFollowUpAt || !Number.isSafeInteger(responsibleUserId) || responsibleUserId < 1
       || management.result.trim().length < 3 || management.comment.trim().length < 5) {
       setSaveError("Completa la fecha y hora, el responsable, el resultado, el comentario y la próxima gestión.");
@@ -396,7 +397,7 @@ export default function MoraPortfolioClient() {
               <form onSubmit={saveManagement} className="space-y-4 border-b border-[var(--fp-border)] p-5" aria-labelledby="mora-management-form"><div><h3 id="mora-management-form" className="flex items-center gap-2 font-black"><CircleDollarSign className="h-5 w-5" aria-hidden="true" />Nueva gestión</h3><p className="mt-1 text-sm text-[var(--fp-muted)]">Todos los campos son obligatorios. Cada registro se agrega al historial.</p></div>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Acción realizada</span><Select required value={management.action} disabled={saving} onChange={(event) => updateManagement("action", event.target.value as ManagementForm["action"])}>{MORA_ACTIONS.map((action) => <option key={action} value={action}>{actionLabels[action]}</option>)}</Select></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Fecha y hora de gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.actedAt} disabled={saving} onChange={(event) => updateManagement("actedAt", event.target.value)} /></label>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Responsable</span><Select required value={management.responsibleUserId} disabled={saving} onChange={(event) => updateManagement("responsibleUserId", event.target.value)}><option value="">Selecciona un responsable</option>{detail.responsibles.map((responsible) => <option key={responsible.id} value={responsible.id}>{responsible.nombre}</option>)}</Select></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Responsable</span><Input value={detail.currentResponsible.nombre} readOnly aria-readonly="true" /></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Resultado</span><Input required minLength={3} maxLength={500} value={management.result} disabled={saving} onChange={(event) => updateManagement("result", event.target.value)} placeholder="Describe el resultado obtenido" /></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Comentario</span><textarea required minLength={5} maxLength={2000} rows={4} value={management.comment} disabled={saving} onChange={(event) => updateManagement("comment", event.target.value)} placeholder="Registra el contexto y los compromisos acordados" className="fp-ui-input min-h-28 w-full resize-y" /></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Próxima gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.nextFollowUpAt} disabled={saving} onChange={(event) => updateManagement("nextFollowUpAt", event.target.value)} /></label>

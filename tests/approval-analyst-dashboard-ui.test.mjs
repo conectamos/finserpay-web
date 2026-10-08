@@ -42,36 +42,23 @@ test("las subrutas operativas exigen la cuenta nominal del analista", () => {
 
 test("la mesa del analista conserva el expediente completo y sus accesos operativos", () => {
   const source = read("app/dashboard/aprobaciones/analyst-approval-workspace.tsx");
-  assert.match(source, />Aprobaciones</);
-  assert.match(source, /Revisa y gestiona las solicitudes de crédito de nuestros aliados\./);
-  assert.match(source, /Buscar cédula, crédito o IMEI/);
-  for (const column of ["Número", "Cliente", "Cédula", "Aliado", "Equipo", "Monto autorizado", "Estado", "Tiempo", "Acciones"]) {
-    assert.match(source, new RegExp(`>${column}<`));
-  }
-  assert.match(source, /Requiere atención/);
-  assert.match(source, /\["IMEI", selectedQueueItem\?\.imei/);
-  assert.match(source, /\["Última actualización", displayDate/);
-  assert.match(source, /\["Estado Sadmin", selectedQueueItem\?\.sadmin\?\.estadoCreacion/);
-  assert.match(source, /\["Número Sadmin", selectedQueueItem\?\.sadmin\?\.numeroCredito/);
-  assert.match(source, /<SharedApprovalWorkspace \{\.\.\.props\} onBack=\{\(\) => \{ setFullReview\(false\); props\.onBack\(\); \}\} \/>/);
-  assert.match(source, /className="min-h-12 !w-auto min-w-0 flex-1/);
+  assert.match(source, /<SharedApprovalWorkspace/);
+  const review = read("app/revision-creditos/shared-approval-workspace.tsx");
+  for (const panel of ["callPanel", "noveltyPanel", "signaturePanel", "approvalPanel"]) assert.ok(review.includes(`{props.${panel}}`) || review.includes(`props.${panel}`));
+  assert.ok(review.includes("Ver expediente completo"));
+  assert.ok(review.includes("PENDIENTE SADMIN"));
+  assert.ok(review.includes('detail.imei || queueItem?.imei'));
   assert.match(source, /id="analyst-date-filter"/);
   for (const option of ["Todas las fechas", "Hoy", "Últimos 7 días", "Últimos 30 días"]) {
     assert.match(source, new RegExp(`>${option}<`));
   }
-  assert.match(source, /item\.status === "APPROVED" \? item\.approvedAt/);
   assert.match(source, /operationHref\("\/dashboard\/aprobaciones\/cambio-imei", props\.detail\)/);
   assert.match(source, /operationHref\("\/dashboard\/aprobaciones\/firma-seguro", props\.detail\)/);
   assert.match(source, /href="\/dashboard\/aprobaciones\/solicitudes"/);
   assert.match(source, /Consultar solicitudes/);
-  assert.doesNotMatch(source, /deskSections|Gestiones de aprobaciones/);
-  assert.match(source, />Bienvenida<\/summary>/);
-  assert.match(source, /\{props\.callPanel\}/);
-  assert.doesNotMatch(source, /\{props\.(?:noveltyPanel|signaturePanel|approvalPanel)\}/);
   assert.match(source, /type="date" value=\{dateFrom\}/);
   assert.match(source, /type="date" value=\{dateTo\}/);
   assert.match(source, /fetch\("\/api\/aprobaciones\/aliados"/);
-  assert.match(source, /min-w-\[60rem\]/);
   assert.doesNotMatch(source, /min-w-\[72rem\]/);
 });
 

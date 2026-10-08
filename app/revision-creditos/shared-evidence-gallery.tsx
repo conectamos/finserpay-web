@@ -10,6 +10,7 @@ type Props = {
   detail: ApprovalDetail;
   readOnly: boolean;
   disabled?: boolean;
+  compact?: boolean;
   onUpdated: () => Promise<void>;
   onBusyChange: (busy: boolean) => void;
 };
@@ -65,7 +66,7 @@ function EvidenceImage({ item, clientName, thumbnail = false }: {
   </figure>;
 }
 
-function EvidenceGallery({ detail, readOnly, disabled = false, onUpdated, onBusyChange }: Props) {
+function EvidenceGallery({ detail, readOnly, disabled = false, compact = false, onUpdated, onBusyChange }: Props) {
   const [selectedKey, setSelectedKey] = useState(detail.evidence.find((item) => item.available)?.key || detail.evidence[0]?.key || "");
   const [correctionOpen, setCorrectionOpen] = useState(false);
   const [correctionBusy, setCorrectionBusy] = useState(false);
@@ -78,10 +79,10 @@ function EvidenceGallery({ detail, readOnly, disabled = false, onUpdated, onBusy
   }, [onBusyChange]);
 
   return <div className="min-w-0 space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    {!compact ? <div className="flex flex-wrap items-center justify-between gap-2">
       <h3 className="text-base font-semibold">Fotografías del expediente</h3>
       <Badge>{availableCount} de {detail.evidence.length} disponibles</Badge>
-    </div>
+    </div> : null}
     {selected ? <>
       <EvidenceImage key={`${selected.key}:${selected.href}`} item={selected} clientName={detail.clienteNombre} />
       <div className="grid min-w-0 grid-cols-3 gap-2 sm:grid-cols-5" role="group" aria-label="Seleccionar fotografía del expediente">
@@ -93,13 +94,15 @@ function EvidenceGallery({ detail, readOnly, disabled = false, onUpdated, onBusy
         </button>)}
       </div>
     </> : <EmptyState title="Sin fotografías registradas" description="No hay evidencias disponibles para este expediente." />}
-    <p className="text-sm text-[var(--fp-muted)]">La disponibilidad de un archivo no significa que esté aprobado.</p>
-    {!readOnly ? <div className="border-t border-[var(--fp-border)] pt-3">
-      <Button variant="secondary" disabled={disabled || correctionBusy || !detail.capabilities.canCorrectEvidence}
+    {!compact ? <p className="text-sm text-[var(--fp-muted)]">La disponibilidad de un archivo no significa que esté aprobado.</p> : null}
+    {compact ? <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-[var(--fp-muted)]">{availableCount} archivos disponibles</p>{!readOnly ? <Button variant="secondary" disabled={disabled || correctionBusy || !detail.capabilities.canCorrectEvidence} aria-expanded={correctionOpen} aria-controls={correctionId} onClick={() => setCorrectionOpen((open) => !open)}><Upload className="h-4 w-4" aria-hidden="true" />Reemplazar fotografía</Button> : null}</div> : null}
+    {compact ? <p className="text-xs text-[var(--fp-muted)]">La disponibilidad de un archivo no significa que esté aprobado.</p> : null}
+    {!readOnly ? <div className={compact ? "" : "border-t border-[var(--fp-border)] pt-3"}>
+      {!compact ? <Button variant="secondary" disabled={disabled || correctionBusy || !detail.capabilities.canCorrectEvidence}
         aria-expanded={correctionOpen} aria-controls={correctionId} onClick={() => setCorrectionOpen((open) => !open)}>
         <Upload className="h-4 w-4" aria-hidden="true" />Reemplazar fotografía
         <ChevronDown className={`h-4 w-4 ${correctionOpen ? "rotate-180" : ""}`} aria-hidden="true" />
-      </Button>
+      </Button> : null}
       {!detail.capabilities.canCorrectEvidence ? <p className="mt-2 text-sm text-[var(--fp-muted)]">{detail.capabilities.correctionBlockedReason || "Este expediente no admite correcciones."}</p> : null}
       {correctionOpen ? <div id={correctionId}>
         <ApprovalEvidenceCorrection detail={detail} disabled={disabled} onUpdated={onUpdated} onBusyChange={handleBusyChange} />

@@ -29,7 +29,7 @@ export const APPROVAL_EVIDENCE = [
 type EvidenceField = (typeof APPROVAL_EVIDENCE)[number]["field"];
 
 export type ApprovalCredit = Record<EvidenceField, string | null> & {
-  id: number; folio: string; numeroCreditoVisible?: string | null; clienteNombre: string; clienteDocumento: string | null;
+  id: number; folio: string; numeroCreditoVisible?: string | null; numeroCreditoSadmin?: string | null; sedeNombre?: string | null; clienteNombre: string; clienteDocumento: string | null;
   clienteCorreo: string | null; clienteTelefono: string | null; clienteDepartamento: string | null;
   clienteCiudad: string | null; clienteDireccion: string | null;
   plazoMeses: number | null; frecuenciaPago: string | null; valorCuota: number | null;
@@ -156,6 +156,7 @@ export async function listCreditApprovals(db: ApprovalDatabase, documento: strin
 
 async function readCredit(db: ApprovalDatabase, id: number, lock = false) {
   const rows = await db.$queryRawUnsafe<ApprovalCredit[]>(`SELECT credit."id", credit."folio", ${displayNumberSql} AS "numeroCreditoVisible",
+      (SELECT NULLIF(BTRIM(registration."numeroCredito"),'') FROM "CreditSadminRegistration" registration WHERE registration."creditoId"=credit."id") AS "numeroCreditoSadmin", site."nombre" AS "sedeNombre",
       credit."clienteNombre", credit."clienteDocumento", credit."fechaCredito", credit."createdAt",
       credit."clienteCorreo", credit."clienteTelefono", credit."clienteDepartamento", credit."clienteCiudad",
       credit."clienteDireccion", credit."plazoMeses", credit."frecuenciaPago",
@@ -289,6 +290,7 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
   if (recordingBlockedReason) blockingReasons.push(recordingBlockedReason);
   return {
     id: credit.id, folio: credit.folio, numeroCreditoVisible: credit.numeroCreditoVisible || credit.folio, clienteDocumento: credit.clienteDocumento,
+    numeroCreditoSadmin: contact(credit.numeroCreditoSadmin), imei: contact(credit.imei), sedeNombre: contact(credit.sedeNombre),
     clienteNombre: credit.clienteNombre, aliadoNombre: credit.aliadoNombre, fechaCredito: iso(credit.fechaCredito),
     clienteCorreo: contact(credit.clienteCorreo), clienteTelefono: contact(credit.clienteTelefono),
     clienteDepartamento: contact(getColombiaDepartmentLabel(credit.clienteDepartamento)),

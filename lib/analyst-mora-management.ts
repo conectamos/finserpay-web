@@ -89,7 +89,8 @@ export async function createMoraManagement(id: number, input: MoraManagementInpu
     if(prior[0]) { if(prior[0].requestHash!==hash) throw new CreditApprovalError("IDEMPOTENCY_CONFLICT","Este envío ya se utilizó para otra gestión.",409); return {item:eventDto(prior[0]),unchanged:true}; }
     const credit=await db.credito.findUnique({where:{id},select:moraCreditSelect});
     if(!credit||!moraCreditSummary(credit).enMora) throw new CreditApprovalError("NOT_OVERDUE","El crédito ya no tiene cuotas en mora.",409);
-    const responsible=await assertMoraActor(db,{id:input.responsibleUserId,nombre:"",centralAdmin:false});
+    if (input.responsibleUserId !== verified.id) throw new CreditApprovalError("RESPONSIBLE_MISMATCH", "El responsable debe ser el usuario que inició sesión.", 403);
+    const responsible=verified;
     const rows=await db.$queryRawUnsafe<StoredEvent[]>(`INSERT INTO "CreditMoraManagementEvent"
       ("id","creditoId","action","actedAt","responsibleUserId","responsibleName","result","comment","nextFollowUpAt","managementStatus","actorUserId","actorName","idempotencyKey","requestHash")
       VALUES ($1::uuid,$2,$3,$4::timestamptz,$5,$6,$7,$8,$9::timestamptz,$10,$11,$12,$13::uuid,$14) RETURNING *`,

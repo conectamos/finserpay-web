@@ -33,41 +33,17 @@ test("el acceso compartido anterior solo se ofrece para revocación durante la m
   assert.match(control, /link && retirementMode/);
 });
 
-test("el muro administrativo y el enlace usan el scroll normal de la página", () => {
+test("el muro comparte tres columnas y conserva identidad, documentos y contacto", () => {
+  const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
   const styles = read("app/revision-creditos/shared-review.module.css");
-  assert.match(styles, /\.root \{ min-height: 100dvh; overflow: visible; \}/);
-  assert.match(styles, /\.listScroll \{ max-height: none; \}/);
-  assert.match(styles, /overscroll-behavior: auto/);
-});
-
-test("cada fila muestra la cédula disponible y conserva un estado explícito cuando falta", () => {
-  const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
-  assert.match(workspace, /Cédula:\s*\{item\.clienteDocumento\?\.trim\(\)\s*\|\|\s*"No disponible"\}/);
-  assert.match(workspace, /item\.folio/);
-  assert.match(workspace, /item\.aliadoNombre/);
-});
-
-test("el buscador compartido anuncia la cédula en su etiqueta, ayuda y estado vacío", () => {
-  const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
-  assert.match(workspace, /Buscar por cliente, cédula, crédito, folio o aliado/);
-  assert.match(workspace, /placeholder="Cliente, cédula, crédito o aliado"/);
-  assert.match(workspace, /Prueba con otro cliente, cédula, crédito, folio o aliado\./);
-});
-
-test("la ficha muestra la referencia del equipo y contempla el dato ausente", () => {
-  const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
-  assert.match(workspace, /Referencia del equipo/);
-  assert.match(workspace, /detail\.referenciaEquipo\?\.trim\(\) \|\| "No disponible"/);
-});
-
-test("datos del cliente muestra departamento, ciudad y dirección en el render compartido por administrador y enlace", () => {
-  const workspace = read("app/revision-creditos/shared-approval-workspace.tsx");
-  const console = read("app/dashboard/aprobaciones/approval-console.tsx");
-  const sharedPage = read("app/revision-creditos/page.tsx");
-  assert.match(workspace, /\["Departamento", detail\.clienteDepartamento\], \["Ciudad", detail\.clienteCiudad\], \["Dirección", detail\.clienteDireccion\]/);
-  assert.match(workspace, /styles\.customerAddress/);
-  assert.match(console, /return <SharedApprovalWorkspace/);
-  assert.match(sharedPage, /<ApprovalWorkspace shared\s*\/>/);
+  assert.match(styles, /grid-template-columns: minmax\(240px,23fr\) minmax\(0,49fr\) minmax\(310px,27fr\)/);
+  assert.ok(workspace.includes('props.detail?.id === selectedId'));
+  assert.ok(workspace.includes('detail.numeroCreditoSadmin || "PENDIENTE SADMIN"'));
+  assert.ok(workspace.includes('detail.clienteDocumento?.replace(/\\D/g, "")'));
+  for (const field of ['detail.imei', 'detail.clienteTelefono', 'detail.referenciaEquipo', 'detail.sedeNombre', 'detail.folio', 'detail.scoreLabel', 'detail.fechaCredito']) assert.ok(workspace.includes(field));
+  for (const label of ['Evidencias', 'Contrato', 'Historial', 'Ver expediente completo']) assert.ok(workspace.includes(label));
+  assert.match(workspace, /Buscar por cliente, cédula, crédito, folio, IMEI o aliado/);
+  assert.ok(workspace.includes('detail.clienteDepartamento') && workspace.includes('detail.clienteCiudad') && workspace.includes('detail.clienteDireccion'));
 });
 
 test("el flujo compacto explica que guardar envía la novedad al aliado", () => {

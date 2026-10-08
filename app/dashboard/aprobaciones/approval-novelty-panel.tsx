@@ -133,7 +133,7 @@ export default function ApprovalNoveltyPanel({ detail, disabled = false, compact
   return <Card role="region" aria-label="Novedades del expediente" className="min-w-0 space-y-4 p-4 sm:p-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><MessageSquareWarning className="h-5 w-5 shrink-0" aria-hidden="true" />{compact ? "Novedades" : "Novedades del expediente"}</h2>
-      {!editing && !verificationItemId && canCreate ? <Button variant="secondary" disabled={disabled || saving || verifying} onClick={open}><Plus className="h-4 w-4" aria-hidden="true" />Colocar novedad</Button> : null}
+      {!editing && !verificationItemId && canCreate ? <Button variant="secondary" disabled={disabled || saving || verifying} onClick={open}><Plus className="h-4 w-4" aria-hidden="true" />{compact ? "Agregar" : "Colocar novedad"}</Button> : null}
     </div>
     {!compact && !readOnly ? <p className="text-sm text-[var(--fp-muted)]">Indica al administrador del aliado qué debe corregir. Si ya verificaste que una novedad quedó resuelta, puedes marcarla como solucionada sin borrar su historial.</p> : null}
     {novelty ? <div className="space-y-3">

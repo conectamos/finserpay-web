@@ -96,6 +96,7 @@ export default function ApprovalSignatureReissue({ detail, disabled = false, com
           <Button onClick={() => setConfirming(true)} disabled={disabled || saving || confirming || reason.trim().length < 10}>Continuar</Button>
         </div>
       </div> : <div className="mt-4 flex flex-wrap gap-3">
+        {compact && detail.document.available ? <a className="fp-ui-button is-secondary" href={detail.document.href} target="_blank" rel="noopener noreferrer">Ver contrato</a> : null}
         {detail.capabilities.canReissueSignature ? <Button variant="secondary" onClick={open} disabled={disabled || saving}><Send className="h-4 w-4" aria-hidden="true" />{compact ? "Solicitar nueva firma" : "Reenviar folio a firma"}</Button> : null}
         {operation?.canRefresh ? <Button variant="secondary" onClick={() => void refresh()} disabled={disabled || saving}><RefreshCw className="h-4 w-4" aria-hidden="true" />{saving ? "Consultando..." : "Consultar nueva firma"}</Button> : null}
         {!detail.capabilities.canReissueSignature && detail.capabilities.correctionBlockedReason ? <p className="text-sm text-[var(--fp-muted)]">{detail.capabilities.correctionBlockedReason}</p> : null}

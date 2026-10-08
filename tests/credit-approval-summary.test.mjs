@@ -177,3 +177,18 @@ test("la consulta del resumen es de lectura y conserva el bloqueo por crédito",
   assert.match(query.sql, /credit\."clienteDireccion"/);
   assert.equal(query.params[0], state.credit.id);
 });
+
+test("Sadmin, IMEI y sede conservan su identidad sin usar el folio como número externo", () => {
+  const fixture=approvalFixture();
+  fixture.credit.folio="FC-INTERNO";
+  fixture.credit.numeroCreditoSadmin=" 0001234567890123456789 ";
+  fixture.credit.imei="001234567890123";
+  fixture.credit.sedeNombre="Sede real";
+  const item=detail(fixture);
+  assert.equal(item.numeroCreditoSadmin,"0001234567890123456789");
+  assert.equal(item.imei,"001234567890123");
+  assert.equal(item.sedeNombre,"Sede real");
+  fixture.credit.numeroCreditoSadmin=null;
+  assert.equal(detail(fixture).numeroCreditoSadmin,null);
+  assert.equal(detail(fixture).folio,"FC-INTERNO");
+});

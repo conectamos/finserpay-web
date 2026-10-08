@@ -72,6 +72,22 @@ test("reenviar una gestión no la duplica y no permite reutilizar el envío con 
   assert.equal(replay.unchanged, true); assert.equal(inserts, 1); assert.equal("requestHash" in replay.item, false);
   await assert.rejects(service.createMoraManagement(81, { ...input, comment: "Otra observación" }, actor), error => error.code === "IDEMPOTENCY_CONFLICT");
 });
+test("el responsable se toma del usuario validado y no se permite atribuir la gestión a otro perfil", async () => {
+  const inserts=[];
+  const db={credito:{findUnique:async()=>({enMora:true})},$queryRawUnsafe:async(sql,...params)=>{
+    if (sql.startsWith("INSERT")) { inserts.push(params); return [{id:params[0],creditoId:81,...valid(),actedAt:now,nextFollowUpAt:now,createdAt:now,responsibleUserId:params[4],responsibleName:params[5],actorUserId:params[10],actorName:params[11]}]; }
+    return [];
+  }};
+  const service=management({$transaction:callback=>callback(db)});
+  await assert.rejects(service.createMoraManagement(81,{...valid(),responsibleUserId:8},actor),error=>error.code==="RESPONSIBLE_MISMATCH" && error.status===403);
+  assert.equal(inserts.length,0);
+  const result=await service.createMoraManagement(81,valid(),{...actor,nombre:"Nombre enviado por el cliente"});
+  assert.equal(result.item.responsibleUserId,7);
+  assert.equal(result.item.actorUserId,7);
+  assert.equal(result.item.responsibleName,"Usuario 7");
+  assert.equal(result.item.actorName,"Usuario 7");
+});
+
 test("un crédito sin mora conserva historial pero no admite nueva gestión de cobro", async () => {
   const db = { credito: { findUnique: async () => ({ enMora: false }) }, $queryRawUnsafe: async () => [] };
   await assert.rejects(management({ $transaction: callback => callback(db) }).createMoraManagement(81, valid(), actor), error => error.code === "NOT_OVERDUE");

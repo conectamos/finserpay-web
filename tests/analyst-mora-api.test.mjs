@@ -41,3 +41,11 @@ test("la cartera autenticada mantiene respuestas privadas", async () => {
   assert.equal(response.status, 200); assert.equal((await response.json()).ok, true); assert.equal(f.calls(), 1);
   assert.match(response.headers.get("cache-control"), /no-store/);
 });
+
+test("el detalle identifica al responsable usando la sesión, nunca el último gestor", async () => {
+  const actor={id:7,nombre:"Analista autenticado",centralAdmin:false};
+  const f=load("app/api/aprobaciones/cartera-mora/[id]/route.ts",async()=>actor);
+  const response=await f.service.GET(new Request("https://finserpay.com/api/aprobaciones/cartera-mora/81"),{params:Promise.resolve({id:"81"})});
+  assert.equal(response.status,200);
+  assert.deepEqual((await response.json()).currentResponsible,{id:7,nombre:"Analista autenticado"});
+});

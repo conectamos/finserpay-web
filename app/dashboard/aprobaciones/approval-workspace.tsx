@@ -29,7 +29,7 @@ export default function ApprovalWorkspace({ shared = false, redesigned = false, 
   const sectionTitle = showingDetail ? "Detalle del crédito" : view === "sadmin" ? "Listado de créditos" : "Bandeja de aprobaciones";
 
   return <>
-    {!shared && !analystDesk ? <header className="flex min-h-[72px] flex-wrap items-center justify-between gap-3 bg-[var(--fp-surface)] px-4 py-3 sm:px-6 lg:px-8">
+    {!shared && !analystDesk && (!redesigned || showingDetail) ? <header className="flex min-h-[72px] flex-wrap items-center justify-between gap-3 bg-[var(--fp-surface)] px-4 py-3 sm:px-6 lg:px-8">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
         {allowOperations && showingDetail ? <button type="button" onClick={() => { setFocusApprovalCreditId(null); setView("approvals"); }}
           className="min-h-10 rounded-md text-left text-[clamp(1.25rem,1.8vw,1.65rem)] font-extrabold text-[var(--fp-graphite)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime-strong)]"

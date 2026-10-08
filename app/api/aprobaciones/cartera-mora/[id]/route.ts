@@ -4,7 +4,7 @@ import { getMoraManagement, createMoraManagement, parseMoraManagement } from "@/
 import { approvalErrorResponse, approvalPrivateHeaders, readApprovalRequest } from "@/lib/credit-approval-http";
 type Context = { params: Promise<{id:string}> };
 export async function GET(_request:Request,context:Context) {
-  try { await getMoraActor(); const {id}=await context.params; return NextResponse.json({ok:true,...await getMoraManagement(Number(id))},{headers:approvalPrivateHeaders}); }
+  try { const actor=await getMoraActor(); const {id}=await context.params; return NextResponse.json({ok:true,...await getMoraManagement(Number(id)), currentResponsible: {id:actor.id,nombre:actor.nombre}},{headers:approvalPrivateHeaders}); }
   catch(error){return approvalErrorResponse(error);}
 }
 export async function POST(request:Request,context:Context) {

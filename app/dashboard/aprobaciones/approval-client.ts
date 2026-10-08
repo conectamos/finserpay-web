@@ -46,6 +46,9 @@ export type ApprovalCallRecordingState = {
 };
 
 export type ApprovalDetail = Omit<ApprovalListItem, "status" | "required"> & {
+  numeroCreditoSadmin?: string | null;
+  imei?: string | null;
+  sedeNombre?: string | null;
   clienteCorreo: string | null;
   clienteTelefono: string | null;
   clienteDepartamento: string | null;
