@@ -78,7 +78,8 @@ async function saveManagement(a:Attempt,result:"ACUERDO_PAGO"|"PAGO_REALIZADO"|"
   return recorded;
 }
 export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boolean;limit?:number;test?:boolean}={}) {
-  const now=new Date(), slot=collectionSlot(now,options.immediate);
+  const now=new Date(), window=collectionSlot(now,options.immediate);
+  const slot=window&&options.test?window+":"+Math.floor(+now/60000):window;
   const url=webhook("DAPTA_COBRANZA_CALL_WEBHOOK_URL");
   const report={enabled:process.env.DAPTA_COBRANZA_ENABLED==="true",ready:process.env.DAPTA_COBRANZA_LIVE_READY==="true",inWindow:!!slot,eligible:0,accepted:0,unknown:0,skipped:0};
   if(!slot||secret().length<32||!agent()||!actor()) return report;
@@ -99,9 +100,9 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
       const claimed=await prisma.$transaction(async db=>{
         await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))::text`,"collections:"+debtorKey);
         const prior=await db.$queryRawUnsafe<Array<{blocked:boolean;today:number;total:number}>>(`SELECT
-          COALESCE(bool_or("optOut" OR "status" IN ('DISPATCHING','DIALING','ACCEPTED','UNKNOWN') OR "outcome"->>'pago_informado'='true' OR ("managementId" IS NULL AND "outcome"->>'acuerdo_confirmado'='true') OR ("contactedAt" AT TIME ZONE 'America/Bogota')::date=$2::date),FALSE) AS blocked,
+          COALESCE(bool_or("optOut" OR "status" IN ('DISPATCHING','DIALING','ACCEPTED','UNKNOWN') OR "outcome"->>'pago_informado'='true' OR ("managementId" IS NULL AND "outcome"->>'acuerdo_confirmado'='true') OR (NOT $3::boolean AND ("contactedAt" AT TIME ZONE 'America/Bogota')::date=$2::date)),FALSE) AS blocked,
           count(*) FILTER(WHERE ("createdAt" AT TIME ZONE 'America/Bogota')::date=$2::date)::int AS today,count(*)::int AS total
-          FROM "CollectionVoiceAttempt" WHERE "debtorKey"=$1`,debtorKey,colombiaClock(now).day);
+          FROM "CollectionVoiceAttempt" WHERE "debtorKey"=$1`,debtorKey,colombiaClock(now).day,options.test===true);
         const contacts=await db.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CreditMoraManagementEvent" m JOIN "Credito" c ON c."id"=m."creditoId"
           WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND m."actedAt">=date_trunc('week',CURRENT_TIMESTAMP AT TIME ZONE 'America/Bogota') AT TIME ZONE 'America/Bogota'
           AND ((m."action"='MSJ_TEXTO' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA') OR (m."action"='LLAMADA' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA' AND (m."actedAt" AT TIME ZONE 'America/Bogota')::date=$2::date))`,doc,colombiaClock(now).day);
