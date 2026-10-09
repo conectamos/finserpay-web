@@ -19,6 +19,24 @@ function lookup<T>(table: Readonly<Record<string, T>>, word: string): T | undefi
   return Object.hasOwn(table, word) ? table[word] : undefined;
 }
 
+function expandDoubleDigitWords(value: string): string | null {
+  const words = value.split(" ");
+  const expanded: string[] = [];
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index];
+    if (word !== "doble") {
+      expanded.push(word);
+      continue;
+    }
+    // Only an explicit single spoken digit may repeat, within this same block.
+    const digit = words[index + 1];
+    if (lookup(digitWords, digit) === undefined) return null;
+    expanded.push(digit, digit);
+    index++;
+  }
+  return expanded.join(" ");
+}
+
 function underOneHundred(words: string[]): number | null {
   if (words.length === 1) return lookup(smallCardinals, words[0]) ?? lookup(tens, words[0]) ?? null;
   const ten = lookup(tens, words[0]);
@@ -96,7 +114,10 @@ export function parseWelcomeVoiceSpokenDocument(raw: unknown): string | null {
     document = numericDocument(value);
   } else {
     const blocks = value.split(/[,;]/).map(block => block.trim());
-    const parsed = blocks.map(unambiguousSpokenBlock);
+    const parsed = blocks.map(block => {
+      const expanded = expandDoubleDigitWords(block);
+      return expanded === null ? null : unambiguousSpokenBlock(expanded);
+    });
     document = parsed.some(block => block === null) ? null : parsed.join("");
   }
   return document !== null && /^\d{5,15}$/.test(document) ? document : null;

@@ -97,9 +97,12 @@ export function matchWelcomeVoiceIdentity(
     && matchesRegisteredWelcomeVoiceName(providedName, expectedName) && expectedDocument === providedDocument;
 }
 
-/** Bounded Colombian pronunciation equivalence, applied to whole welcome-name tokens only. */
+/** Bounded pronunciation/transcription equivalence, applied to whole welcome-name tokens only. */
 function welcomeApplicationNamePronunciation(token: string) {
-  return token.replace(/c(?=[ei])/g, "s").replace(/z/g, "s");
+  // An ASR-spelled double T has the same sound here (Arrietta/Arrieta).
+  // Do not collapse RR, LL or CC, or substitute/complete other letters.
+  const spelling = token.length >= 5 ? token.replace(/(?<!t)tt(?!t)/g, "t") : token;
+  return spelling.replace(/c(?=[ei])/g, "s").replace(/z/g, "s");
 }
 
 /** A name component is only one part of the welcome policy, never identity proof by itself. */
