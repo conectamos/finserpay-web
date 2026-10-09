@@ -11,23 +11,29 @@ export function parseControlledWelcomeVoiceTestArgs(args) {
   const values = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
-    if (!["--credit-id", "--expected-phone"].includes(flag) || flag in values ||
+    if (!["--credit-id", "--expected-phone", "--test-phone"].includes(flag) || flag in values ||
       !args[index + 1] || args[index + 1].startsWith("--")) throw controlledTestError("INVALID_ARGUMENTS");
     values[flag] = args[index + 1];
   }
   const creditId = Number(values["--credit-id"]);
   const expectedPhone = values["--expected-phone"];
+  const testPhone = values["--test-phone"];
   if (!/^\d+$/.test(values["--credit-id"] || "") || !Number.isSafeInteger(creditId) || creditId < 1 ||
-    typeof expectedPhone !== "string" || !expectedPhone || expectedPhone.length > 80) {
+    typeof expectedPhone !== "string" || !expectedPhone || expectedPhone.length > 80 ||
+    typeof testPhone !== "string" || !testPhone || testPhone.length > 80) {
     throw controlledTestError("INVALID_ARGUMENTS");
   }
-  return { creditId, expectedPhone };
+  return { creditId, expectedPhone, testPhone };
 }
 
 /** Dependencies make the only network boundary testable without production credentials. */
 export async function runControlledWelcomeVoiceTest(input, deps) {
   if (!Number.isSafeInteger(input.creditId) || input.creditId < 1 || typeof input.expectedPhone !== "string" ||
-    !input.expectedPhone || input.expectedPhone.length > 80) throw controlledTestError("INVALID_ARGUMENTS");
+    !input.expectedPhone || input.expectedPhone.length > 80 || typeof input.testPhone !== "string" ||
+    !input.testPhone || input.testPhone.length > 80) throw controlledTestError("INVALID_ARGUMENTS");
+  const expectedPhone = deps.normalizePhone(input.expectedPhone);
+  const testPhone = deps.normalizePhone(input.testPhone);
+  if (!expectedPhone || !testPhone) throw controlledTestError("INVALID_ARGUMENTS");
   if (deps.env.DAPTA_WELCOME_VOICE_ENABLED !== "false") throw controlledTestError("GLOBAL_FEATURE_MUST_BE_DISABLED");
   // This copy enables configuration validation for this request only; process.env is unchanged.
   const config = deps.getConfig({ ...deps.env, DAPTA_WELCOME_VOICE_ENABLED: "true" });
@@ -45,8 +51,9 @@ export async function runControlledWelcomeVoiceTest(input, deps) {
     claim: async () => {
       if (claimed) throw controlledTestError("CONTROLLED_TEST_ALREADY_ATTEMPTED");
       claimed = true;
-      claim = await deps.store.prepareCreditWelcomeVoiceControlledTest(input);
+      claim = await deps.store.prepareCreditWelcomeVoiceControlledTest({ creditId: input.creditId, expectedPhone: input.expectedPhone });
       requireClaim(claim.eventId);
+      if (claim.snapshot.phone !== expectedPhone) throw controlledTestError("CONTROLLED_TEST_SCOPE_MISMATCH");
       return [claim];
     },
     prepare: async eventId => {
@@ -56,7 +63,9 @@ export async function runControlledWelcomeVoiceTest(input, deps) {
         prepared.snapshot.phone !== claim.snapshot.phone)) {
         throw controlledTestError("CONTROLLED_TEST_SCOPE_MISMATCH");
       }
-      return prepared;
+      // The backend retains the real contact and financial snapshot. Only this
+      // local request's destination is replaced after every stored-data check.
+      return prepared ? { ...prepared, snapshot: { ...prepared.snapshot, phone: testPhone } } : null;
     },
     accepted: async (eventId, callId) => {
       requireClaim(eventId);
@@ -81,7 +90,7 @@ async function main() {
   try {
     const input = parseControlledWelcomeVoiceTestArgs(process.argv.slice(2));
     if (!input) {
-      console.log("node scripts/test-credit-welcome-voice.mjs --credit-id ID --expected-phone +57NUMERO_PERSONAL_AUTORIZADO");
+      console.log("node scripts/test-credit-welcome-voice.mjs --credit-id ID --expected-phone +57CELULAR_REGISTRADO --test-phone +57NUMERO_PERSONAL_AUTORIZADO");
       return;
     }
     if (process.env.DAPTA_WELCOME_VOICE_ENABLED !== "false") throw controlledTestError("GLOBAL_FEATURE_MUST_BE_DISABLED");
@@ -93,9 +102,11 @@ async function main() {
     } });
     const dispatch = await jiti.import("../lib/credit-welcome-voice-dispatch.ts");
     const ledger = await jiti.import("../lib/credit-welcome-voice-store.ts");
+    const { normalizeColombianMobile } = await jiti.import("../lib/dapta-welcome.ts");
     ({ default: prisma } = await jiti.import("../lib/prisma.ts"));
     const result = await runControlledWelcomeVoiceTest(input, { env: process.env,
       getConfig: dispatch.getCreditWelcomeVoiceConfig, dispatch: dispatch.dispatchCreditWelcomeVoice,
+      normalizePhone: normalizeColombianMobile,
       ensureSchema: ledger.ensureCreditWelcomeVoiceSchema,
       store: ledger.createCreditWelcomeVoiceStore({ database: prisma, enabled: () => true }) });
     console.log(JSON.stringify(result));

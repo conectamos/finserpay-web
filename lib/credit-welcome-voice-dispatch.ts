@@ -81,15 +81,16 @@ export async function dispatchCreditWelcomeVoice(
       summary.skipped++;
       return;
     }
-    // Send only the destination and a scoped token. The agent obtains financial
-    // conditions from the identity endpoint after checking the person's answers.
+    // The short opening uses the revalidated name/document for confirmation.
+    // Financial conditions still come only from the authenticated identity tool.
     let callId: string | null = null;
     try {
       const response = await (deps.fetcher ?? fetch)(config.webhookUrl, {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         redirect: "error", signal: AbortSignal.timeout(20_000),
         body: JSON.stringify({ event_id: prepared.eventId, credito_id: String(prepared.creditId),
-          event_token: token, to_number: `+${prepared.snapshot.phone}` }),
+          event_token: token, to_number: `+${prepared.snapshot.phone}`,
+          customer_name: prepared.snapshot.name, customer_document: prepared.snapshot.document }),
       });
       if (response.ok) {
         const length = Number(response.headers.get("content-length"));

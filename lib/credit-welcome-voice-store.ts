@@ -44,7 +44,7 @@ export async function ensureCreditWelcomeVoiceSchema() {
   if (!schemaReady) {
     schemaReady = prisma.$transaction(async db => {
       await db.$executeRawUnsafe("SET LOCAL lock_timeout='10s'");
-      await db.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext('finserpay-credit-welcome-voice-schema'))");
+      await db.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext('finserpay-credit-welcome-voice-schema'))::text");
       for (const statement of creditWelcomeVoiceSchemaStatements) await db.$executeRawUnsafe(statement);
     }, { timeout: 30_000 }).catch(error => { schemaReady = null; throw error; });
   }

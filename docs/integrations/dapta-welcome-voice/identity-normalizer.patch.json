@@ -1,0 +1,15 @@
+{
+  "flow_id": "YxVoY",
+  "expected_content_hash": "sha256:a5fbbac600b0152a1d7b57f018580c0a83f31f4dd7117ed7369c02ca2d48d779",
+  "ops": [
+    {
+      "op": "set_param",
+      "node_id": "nrmId",
+      "path": "api_action.code_action.code",
+      "value": "const body = params.trigger.body;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);\nif (!isRecord(body)) throw new Error('Solicitud de identidad invalida');\nconst hasArgs = owns(body, 'args');\nif (hasArgs && (!isRecord(body.args) || ['event_token', 'customer_name', 'customer_document'].some((key) => owns(body, key)))) throw new Error('Solicitud de identidad invalida');\nconst data = hasArgs ? body.args : body;\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de identidad invalida');\n  return value.trim();\n};\nconst event_token = required(data.event_token, 1000);\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 80);\nconst request_body = JSON.stringify({ event_token, customer_name, customer_document });\nmodule.exports = { request_body };"
+    }
+  ],
+  "strict": true,
+  "auto_layout": false,
+  "workspace_id": "7496b9a3-2fe6-4e28-8411-7d54ee788b2c"
+}

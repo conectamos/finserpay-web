@@ -107,6 +107,51 @@ test("callback accepts observed call/data envelopes, normalizes milliseconds, an
   assert.deepEqual(f.calls[1], saved); assert.deepEqual(f.calls[2], saved);
 });
 
+test("callback accepts the observed provider prefix only for the configured agent UUID and preserves its private call link", async () => {
+  const expectedAgent = "a5ec9f40-70dd-4e52-8ecb-79b1a0edf263";
+  const f = resultFixture({ expectedAgent });
+  const call = validCall();
+  call.call_id = "call_66a8c4c3-f2f8-4b4d-8518-c242322ff2ca";
+  call.duration_ms = 126347;
+  call.recording_url = `https://app.dapta.ai/agents-studio/voice-agents/calls-history/66a8c4c3-f2f8-4b4d-8518-c242322ff2ca?agent_id=${expectedAgent}&segment=transcription`;
+  for (const [index, agentId] of [expectedAgent, `agent_${expectedAgent}`].entries()) {
+    call.agent_id = agentId;
+    const response = await f.POST(request({ event: "call_analyzed", call }, "resultado"));
+    assert.equal(response.status, 200); assertPrivate(response);
+    assert.deepEqual(await response.json(), { ok: true, duplicate: index > 0 });
+  }
+  assert.equal(f.calls.length, 2);
+  assert.deepEqual(f.calls[0], f.calls[1]);
+  assert.equal(f.calls[1].recordingUrl, call.recording_url);
+  assert.equal(f.calls[1].providerCallId, call.call_id);
+  assert.equal(f.calls[1].durationSeconds, 126);
+  assert.equal(f.calls[1].eventId, identity.eventId);
+  assert.equal(f.calls[1].creditId, identity.creditId);
+  assert.equal("identityVerified" in f.calls[1], false);
+});
+
+test("callback rejects other or altered provider agent prefixes before storage and retains signed event/credit scopes", async () => {
+  const expectedAgent = "a5ec9f40-70dd-4e52-8ecb-79b1a0edf263";
+  const f = resultFixture({ expectedAgent });
+  for (const agentId of ["agent_8d541ef0-e066-45b4-a1c3-cf25c01b04f6", `agent_agent_${expectedAgent}`,
+    `Agent_${expectedAgent}`, `agent_${expectedAgent}-extra`, `agent_${expectedAgent} `]) {
+    const call = validCall(); call.agent_id = agentId;
+    const response = await f.POST(request({ call }, "resultado"));
+    assert.equal(response.status, 403); assertPrivate(response);
+    assert.deepEqual(await response.json(), { ok: false, code: "CALL_SCOPE_MISMATCH", error: "Solicitud de bienvenida no válida." });
+  }
+  for (const [change, status] of [
+    [call => { call.dynamic_variables.event_token = "invalid"; }, 401],
+    [call => { call.dynamic_variables.event_id = "different-event"; }, 403],
+    [call => { call.dynamic_variables.credito_id = "73"; }, 403],
+    [call => { call.dynamic_variables.credito_id = identity.creditId; }, 403],
+  ]) {
+    const call = validCall(); call.agent_id = `agent_${expectedAgent}`; change(call);
+    assert.equal((await f.POST(request({ call }, "resultado"))).status, status);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
 test("callback correlates agent, event and credit before any write and rejects active/invalid calls", async () => {
   const f = resultFixture();
   const changes = [call => { call.dynamic_variables.event_token = "invalid"; }, call => { delete call.dynamic_variables.event_token; },

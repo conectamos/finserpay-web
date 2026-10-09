@@ -5,12 +5,13 @@ import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { parseControlledWelcomeVoiceTestArgs, runControlledWelcomeVoiceTest } from "../scripts/test-credit-welcome-voice.mjs";
 
 const core = await createJiti(import.meta.url).import("../lib/credit-welcome-voice-core.ts");
+const { normalizeColombianMobile } = await createJiti(import.meta.url).import("../lib/dapta-welcome.ts");
 const dispatch = loadReissueModule("lib/credit-welcome-voice-dispatch.ts", {
   "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-store": {},
 }, { AbortSignal });
-const claim = { eventId: "25ea074e-a7e5-4f2c-8c8e-e64258fe345d", creditId: 72,
-  snapshot: { phone: "573000000001", name: "TEST PERSON", document: "000123456" } };
-const input = { creditId: 72, expectedPhone: "+573000000001" };
+const claim = Object.freeze({ eventId: "25ea074e-a7e5-4f2c-8c8e-e64258fe345d", creditId: 72,
+  snapshot: Object.freeze({ phone: "573000000001", name: "TEST PERSON", document: "000123456" }) });
+const input = { creditId: 72, expectedPhone: "+573000000001", testPhone: "+573000000099" };
 const safe = value => JSON.parse(JSON.stringify(value));
 function fixture(overrides = {}) {
   const requests = [], changes = [], prepared = [];
@@ -21,7 +22,7 @@ function fixture(overrides = {}) {
   const store = {
     claimPendingCreditWelcomeVoice: () => assert.fail("The global queue must never be selected"),
     prepareCreditWelcomeVoiceControlledTest: async value => {
-      assert.deepEqual(value, input);
+      assert.deepEqual(value, { creditId: input.creditId, expectedPhone: input.expectedPhone });
       if (attempted) throw Object.assign(new Error("Already attempted"), { code: "CONTROLLED_TEST_ALREADY_ATTEMPTED" });
       attempted = true; prepared.push(value); return claim;
     },
@@ -31,6 +32,7 @@ function fixture(overrides = {}) {
     markCreditWelcomeVoiceDispatchUnknown: async (...values) => { changes.push(["unknown", ...values]); },
   };
   const deps = { env, store, getConfig: dispatch.getCreditWelcomeVoiceConfig, dispatch: dispatch.dispatchCreditWelcomeVoice,
+    normalizePhone: normalizeColombianMobile,
     ensureSchema: async () => {}, fetcher: async (url, options) => {
       requests.push({ url, body: JSON.parse(options.body) });
       return Response.json({ ok: true, call_id: "controlled-call-1" });
@@ -38,32 +40,57 @@ function fixture(overrides = {}) {
   return { deps, store, env, requests, changes, prepared };
 }
 
-test("CLI requires exactly one chosen credit and expected number, never accepts secrets as arguments", () => {
-  assert.deepEqual(parseControlledWelcomeVoiceTestArgs(["--credit-id", "72", "--expected-phone", "+573000000001"]), input);
+test("CLI requires one credit, its expected contact and an explicit test destination, never secret arguments", () => {
+  assert.deepEqual(parseControlledWelcomeVoiceTestArgs(["--credit-id", "72", "--expected-phone", "+573000000001", "--test-phone", "+573000000099"]), input);
   assert.equal(parseControlledWelcomeVoiceTestArgs(["--help"]), null);
-  for (const args of [[], ["--credit-id", "0", "--expected-phone", "+573000000001"],
-    ["--credit-id", "1e2", "--expected-phone", "+573000000001"],
+  for (const args of [[], ["--credit-id", "0", "--expected-phone", "+573000000001", "--test-phone", "+573000000099"],
+    ["--credit-id", "1e2", "--expected-phone", "+573000000001", "--test-phone", "+573000000099"],
+    ["--credit-id", "72", "--expected-phone", "+573000000001"],
+    ["--credit-id", "72", "--test-phone", "+573000000099"],
     ["--credit-id", "72"], ["--credit-id", "72", "--credit-id", "73", "--expected-phone", "+573000000001"],
     ["--credit-id", "72", "--expected-phone", "+573000000001", "--secret", "synthetic"]]) {
     assert.throws(() => parseControlledWelcomeVoiceTestArgs(args), error => error.code === "INVALID_ARGUMENTS");
   }
 });
 
-test("directed helper signs and dispatches exactly the chosen event while the service flag remains disabled", async () => {
+test("directed helper calls only the distinct test phone, retaining the real immutable snapshot and disabled service flag", async () => {
   const f = fixture();
+  const savedSnapshot = safe(claim.snapshot);
   const result = await runControlledWelcomeVoiceTest(input, f.deps);
   assert.deepEqual(result, { eventId: claim.eventId, creditId: 72, status: "ACCEPTED" });
   assert.equal(f.env.DAPTA_WELCOME_VOICE_ENABLED, "false");
   assert.equal(f.requests.length, 1);
   assert.equal(f.prepared.length, 1);
-  assert.equal(f.requests[0].body.to_number, "+573000000001");
+  assert.equal(f.requests[0].body.to_number, input.testPhone);
+  assert.equal(JSON.stringify(f.requests[0].body).includes(claim.snapshot.phone), false);
+  assert.deepEqual(safe(claim.snapshot), savedSnapshot);
+  assert.deepEqual(f.prepared, [{ creditId: 72, expectedPhone: "+573000000001" }]);
   const token = core.verifyWelcomeVoiceToken(f.requests[0].body.event_token, { secret: f.env.DAPTA_WELCOME_VOICE_TOKEN_SECRET });
   assert.equal(token.eventId, claim.eventId); assert.equal(token.creditId, 72);
-  assert.deepEqual(Object.keys(f.requests[0].body).sort(), ["credito_id", "event_id", "event_token", "to_number"]);
+  assert.deepEqual(Object.keys(f.requests[0].body).sort(), ["credito_id", "customer_document", "customer_name", "event_id", "event_token", "to_number"]);
   assert.deepEqual(f.changes, [["accepted", claim.eventId, "controlled-call-1"]]);
   assert.deepEqual(Object.keys(result).sort(), ["creditId", "eventId", "status"]);
   await assert.rejects(runControlledWelcomeVoiceTest(input, f.deps), error => error.code === "CONTROLLED_TEST_ALREADY_ATTEMPTED");
   assert.equal(f.requests.length, 1);
+});
+
+test("missing or invalid test destination blocks before schema, claim and HTTP without using the real phone", async () => {
+  for (const testPhone of [undefined, null, "", "not-a-phone", "+12025550123", "+57300000009", "x".repeat(81)]) {
+    const f = fixture({ ensureSchema: () => assert.fail("Must stop before schema preparation") });
+    await assert.rejects(runControlledWelcomeVoiceTest({ ...input, testPhone }, f.deps), error => error.code === "INVALID_ARGUMENTS");
+    assert.equal(f.prepared.length, 0);
+    assert.equal(f.requests.length, 0);
+    assert.deepEqual(safe(claim.snapshot), { phone: "573000000001", name: "TEST PERSON", document: "000123456" });
+  }
+});
+
+test("test destination is normalized separately and is never passed to persisted-event preparation", async () => {
+  const f = fixture();
+  const result = await runControlledWelcomeVoiceTest({ ...input, testPhone: "300 000 0099" }, f.deps);
+  assert.equal(result.status, "ACCEPTED");
+  assert.equal(f.requests[0].body.to_number, "+573000000099");
+  assert.deepEqual(f.prepared, [{ creditId: 72, expectedPhone: "+573000000001" }]);
+  assert.equal(claim.snapshot.phone, "573000000001");
 });
 
 test("invalid configuration stops before schema preparation, and wrong contact never reaches Dapta", async () => {
@@ -100,6 +127,10 @@ test("the local helper refuses a mismatched credit/event returned by dependencie
     await assert.rejects(runControlledWelcomeVoiceTest(input, f.deps), error => error.code === "CONTROLLED_TEST_SCOPE_MISMATCH");
     assert.equal(f.requests.length, 0);
   }
+  const f = fixture();
+  f.store.prepareCreditWelcomeVoiceControlledTest = async () => ({ ...claim, snapshot: { ...claim.snapshot, phone: "573000000088" } });
+  await assert.rejects(runControlledWelcomeVoiceTest(input, f.deps), error => error.code === "CONTROLLED_TEST_SCOPE_MISMATCH");
+  assert.equal(f.requests.length, 0);
 });
 
 test("an ambiguous controlled request stays UNKNOWN and re-running never sends another request", async () => {
