@@ -93,16 +93,42 @@ test("identity validates strings and enforces actual byte limits, JSON object an
 
 test("spoken document blocks and individual digits are parsed without an expected document or LLM conversion", async () => {
   const f = identityFixture();
-  for (const spoken of ["treinta y ocho, ciento cuarenta y cuatro, cero noventa y dos", "tres ocho uno cuatro cuatro cero nueve dos"]) {
+  for (const spoken of ["treinta y ocho, ciento cuarenta y cuatro, cero noventa y dos", "tres ocho uno cuatro cuatro cero nueve dos",
+    "treinta y ocho ciento cuarenta y cuatro cero noventa y dos"]) {
     const response = await f.POST(request({ ...validIdentity(), customer_document: spoken }));
     assert.equal(response.status, 200);
     assert.equal(f.calls.at(-1).customerDocument, "38144092");
   }
-  for (const spoken of ["12abc345", "1234", "treinta ocho", "treinta y ocho ciento cuarenta y cuatro cero noventa y dos"]) {
+  for (const spoken of ["12abc345", "1234", "treinta ocho", "doscientos cuarenta y cuatro veinte"]) {
     const response = await f.POST(request({ ...validIdentity(), customer_document: spoken }));
     assert.deepEqual(await response.json(), { ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" });
   }
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 3);
+});
+
+test("the two observed ASR payloads with sentence punctuation verify the registered components and exact document", async () => {
+  const calls = [];
+  const flowSecret = "synthetic-dedicated-identity-flow-key-32-or-more";
+  const registered = { name: "LUZ HERNANDEZ", document: "38144092" };
+  const POST = http.createCreditWelcomeVoiceIdentityHandler({ verifyToken,
+    verifyFlowAuthorization: value => core.verifyWelcomeVoiceIdentityFlowAuthorization(value, { secret: flowSecret }),
+    verifyIdentity: async input => {
+      calls.push(plain(input));
+      return core.matchWelcomeVoiceIdentity(registered, { name: input.customerName, document: input.customerDocument })
+        ? { verificado: true, condiciones: { installmentCount: 18 } } : { verificado: false };
+    },
+  });
+  for (const utterance of ["Treinta y ocho, uno cuarenta y cuatro, cero nueve dos.",
+    "treinta y ocho, ciento cuarenta y cuatro, cero noventa y dos.", "Tres ocho uno cuatro cuatro cero nueve dos."]) {
+    const response = await POST(request({ event_id: identity.eventId, customer_name: "Luz, que esté a la Hernández.",
+      customer_document: utterance }, "identidad", { authorization: `Bearer ${flowSecret}` }));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, verificado: true, condiciones: { installmentCount: 18 } });
+    assert.equal(calls.at(-1).customerDocument, registered.document);
+  }
+  const wrong = await POST(request({ event_id: identity.eventId, customer_name: "Luz, que esté a la Hernández.",
+    customer_document: "tres ocho uno cuatro cuatro cero nueve tres." }, "identidad", { authorization: `Bearer ${flowSecret}` }));
+  assert.deepEqual(await wrong.json(), { ok: true, verificado: false });
 });
 
 test("trusted identity flow uses a private HTTP bearer and derives credit scope from the event only", async () => {

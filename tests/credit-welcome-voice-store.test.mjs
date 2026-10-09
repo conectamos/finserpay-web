@@ -332,7 +332,7 @@ test("additional spoken names can match all registered components only with the 
   await f.store.claimPendingCreditWelcomeVoice();
   assert.equal((await f.identity(eventId, { customerName: "Luz Estela Hernández Gili", customerDocument: "38144093" })).verificado, false);
   assert.equal((await f.identity(eventId, { customerName: "Luz Estela García Gili", customerDocument: "38144092" })).verificado, false);
-  assert.equal((await f.identity(eventId, { customerName: "Luz Estela Hernández Gili", customerDocument: "38144092" })).verificado, true);
+  assert.equal((await f.identity(eventId, { customerName: "Luz, que esté a la Hernández.", customerDocument: "38144092" })).verificado, true);
 });
 
 test("successful postcall is idempotent and markAccepted cannot overwrite a fast completed callback", async t => {

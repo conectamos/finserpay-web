@@ -51,6 +51,12 @@ test("identity requires every registered name component and exact document, pres
     { name: "Luz Estela Hernández Gili", document: "38144092" }), true);
   assert.equal(core.matchWelcomeVoiceIdentity({ name: "LUZ HERNANDEZ", document: "38144092" },
     { name: "Luz Estela Hernández Gili", document: "38144093" }), false);
+  assert.equal(core.matchWelcomeVoiceIdentity({ name: "LUZ HERNANDEZ", document: "38144092" },
+    { name: "Luz, que esté a la Hernández.", document: "38144092" }), true);
+  assert.equal(core.matchWelcomeVoiceIdentity({ name: "LUZ HERNANDEZ", document: "38144092" },
+    { name: "Luz, que esté a la Hernández.", document: "38144093" }), false);
+  assert.equal(core.matchWelcomeVoiceIdentity({ name: "LUZ HERNANDEZ", document: "38144092" },
+    { name: "Luz, que esté a la García.", document: "38144092" }), false);
   assert.equal(core.normalizeWelcomeVoiceDocument(12345678), null);
 });
 

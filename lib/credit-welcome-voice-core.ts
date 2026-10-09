@@ -81,7 +81,7 @@ export function normalizeWelcomeVoiceDocument(value: unknown): string | null {
 export function normalizeWelcomeVoiceName(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 240) return null;
   const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("es-CO").replace(/[’']/g, "").replace(/[-\s]+/g, " ").trim();
+    .toLocaleLowerCase("es-CO").replace(/[’']/g, "").replace(/[.,-\s]+/g, " ").trim();
   return /^[a-z]+(?: [a-z]+)*$/.test(normalized) ? normalized : null;
 }
 
