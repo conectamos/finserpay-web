@@ -1,4 +1,5 @@
 "use client";
+import type { DataCreditoIdentity } from "@/lib/datacredito/identity";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -60,6 +61,7 @@ export type DataCreditoApprovedResult = {
   assessmentId: string;
   documentNumber: string;
   firstSurname: string;
+  identity?: { original: DataCreditoIdentity; effective: DataCreditoIdentity } | null;
   offer: DataCreditoOffer;
   expiresAt: string;
 };
@@ -314,6 +316,7 @@ function normalizeApprovedAssessment(
     assessmentId,
     documentNumber,
     firstSurname,
+    identity: (source.identity || payload.identity || null) as DataCreditoApprovedResult["identity"],
     expiresAt,
     offer: {
       ...offerSource,

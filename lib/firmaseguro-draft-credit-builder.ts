@@ -1,3 +1,4 @@
+import { enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import "server-only";
 
 import {
@@ -159,10 +160,11 @@ export async function getDraftDataCreditoOffer(
     );
   }
 
+  const identity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
   const assessment = await getApprovedDataCreditoAssessmentForCredit({
     assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
     documentNumber,
-    firstSurname: sanitizeText(payload.clientePrimerApellido),
+    firstSurname: identity?.querySurname || sanitizeText(payload.clientePrimerApellido),
     platform,
     providerEnvironment: dataCreditoProvider.environment,
     userId: row.usuarioId,
@@ -223,6 +225,7 @@ export async function getDraftDataCreditoOffer(
 
 export async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   const payload = payloadObject(row.payload);
+  const dataCreditoIdentity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
   const clientePrimerNombre = sanitizeText(payload.clientePrimerNombre);
   const clientePrimerApellido = sanitizeText(payload.clientePrimerApellido);
   const clienteNombre =
@@ -454,6 +457,7 @@ export async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit>
     contratoSnapshot: {
       borradorId: row.id,
       origen: "BORRADOR_FIRMASEGURO",
+      dataCreditoIdentity,
       ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
         ? {
             financiero: {

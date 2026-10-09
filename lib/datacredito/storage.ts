@@ -2845,6 +2845,19 @@ export function dataCreditoAssessmentMatchesScope(
   );
 }
 
+export async function readDataCreditoIdentitySource(row: DataCreditoAssessmentRow) {
+  await ensureDataCreditoSchema();
+  const rows = await prisma.$queryRawUnsafe<ReusableDataCreditoSecurePayloadRow[]>(    'SELECT root."id" AS "assessmentId", root."correlationId", secure.* FROM "DataCreditoAssessment" root INNER JOIN "DataCreditoAssessmentSecurePayload" secure ON secure."assessmentId" = root."id" WHERE root."id" = $1 AND root."retainedUntil" > CURRENT_TIMESTAMP LIMIT 1',
+    row.reusedFromAssessmentId || row.id
+  );
+  if (!rows[0]) return null;
+  const source = decryptDataCreditoSecureRecord(rows[0]);
+  if (buildDataCreditoIdentityHashes({ documentNumber: source.documentNumber, firstSurname: source.firstSurname }).documentHash !== row.documentHash) {
+    throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
+  }
+  return source;
+}
+
 export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
   const approved = row.status === "APROBADO";
   const financingTerms = approved

@@ -1,3 +1,4 @@
+import { enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
@@ -145,10 +146,11 @@ async function validateDraftReadyForVeriff(
   if (!dataCreditoConfig.enabled) {
     return { ok: true as const };
   }
+  const identity = await enforceDataCreditoCustomerIdentity(payload, { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId }, false);
   const assessment = await getApprovedDataCreditoAssessmentForCredit({
     assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
     documentNumber: String(draft.clienteDocumento || "").replace(/\D/g, ""),
-    firstSurname: sanitizeText(payload.clientePrimerApellido),
+    firstSurname: identity?.querySurname || sanitizeText(payload.clientePrimerApellido),
     platform,
     providerEnvironment: dataCreditoConfig.environment,
     userId: draft.usuarioId,

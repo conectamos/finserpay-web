@@ -1,3 +1,4 @@
+import { dataCreditoIdentityToFirmaSeguroNames, type DataCreditoIdentity } from "@/lib/datacredito/identity";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
@@ -268,6 +269,15 @@ function normalizePhone(value: string | null | undefined) {
 }
 
 function splitClientName(credito: FirmaSeguroCredit): PersonPayload {
+  const snapshot = credito.contratoSnapshot as { dataCreditoIdentity?: { effective?: DataCreditoIdentity } } | null;
+  if (snapshot?.dataCreditoIdentity?.effective) {
+    return {
+      ...dataCreditoIdentityToFirmaSeguroNames(snapshot.dataCreditoIdentity.effective),
+      document: cleanText(credito.clienteDocumento),
+      email: normalizeEmail(credito.clienteCorreo),
+      phone: normalizePhone(credito.clienteTelefono),
+    };
+  }
   const nameParts = cleanName(credito.clienteNombre).split(" ").filter(Boolean);
   const firstName = ensureProviderName(
     cleanName(credito.clientePrimerNombre) || nameParts[0] || "Cliente",

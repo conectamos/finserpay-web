@@ -3099,6 +3099,7 @@ export default function CreditFactoryConsole({
   const [clientePrimerNombre, setClientePrimerNombre] = useState("");
   const [clientePrimerApellido, setClientePrimerApellido] = useState("");
   const [clienteSegundoApellido, setClienteSegundoApellido] = useState("");
+  const [editingDataCreditoNames, setEditingDataCreditoNames] = useState(false);
   const preservedCanonicalClientNameRef = useRef<{
     firstNames: string;
     firstSurname: string;
@@ -5093,7 +5094,7 @@ export default function CreditFactoryConsole({
       .replace(/\s+/g, " ")
       .trim()
       .toLocaleUpperCase("es-CO");
-    const approvedSurname = dataCreditoApproval.firstSurname
+    const approvedSurname = (dataCreditoApproval.identity?.effective.firstSurname || "")
       .normalize("NFKC")
       .replace(/\s+/g, " ")
       .trim()
@@ -5110,6 +5111,11 @@ export default function CreditFactoryConsole({
 
     setDataCreditoApproval(null);
     setDataCreditoAssessmentId(null);
+    if (currentDocument !== dataCreditoApproval.documentNumber.replace(/\D/g, "")) {
+      preservedCanonicalClientNameRef.current = null;
+      setClientePrimerNombre(""); setClientePrimerApellido(""); setClienteSegundoApellido("");
+      setEditingDataCreditoNames(false);
+    }
     setDataCreditoResumeErrorCode(null);
     setFianzaPorcentaje(
       String(
@@ -5358,6 +5364,7 @@ export default function CreditFactoryConsole({
   );
   const stepClienteReady =
     dataCreditoFlowReady &&
+    (!dataCreditoApproval || Boolean(dataCreditoApproval.identity?.effective.firstSurname && dataCreditoApproval.identity?.effective.documentNumber && dataCreditoApproval.identity?.effective.documentType)) &&
     clientFormValidation.complete &&
     contactPhoneValidation.ok;
   const markClientFieldTouched = useCallback((field: CreditClientField) => {
@@ -8115,7 +8122,7 @@ export default function CreditFactoryConsole({
 
     let copiedFields = 0;
 
-    if (firstName && !auditedIdentityCorrectionRef.current) {
+    if (firstName && !dataCreditoIdentityLocked && !auditedIdentityCorrectionRef.current) {
       copiedFields += 1;
       setClientePrimerNombre(firstName);
     }
@@ -12308,7 +12315,14 @@ export default function CreditFactoryConsole({
     setDataCreditoBypassed(false);
     setClienteTipoDocumento("CEDULA_DE_CIUDADANIA");
     setClienteDocumento(result.documentNumber);
-    setClientePrimerApellido(result.firstSurname);
+    const recoveredIdentity = result.identity?.effective;
+    setClientePrimerApellido(recoveredIdentity?.firstSurname || "");
+    if (!auditedIdentityCorrectionRef.current && (!sameAssessment || !editingDataCreditoNames)) {
+      preservedCanonicalClientNameRef.current = null;
+      setClientePrimerNombre(recoveredIdentity?.names || "");
+      setClienteSegundoApellido(recoveredIdentity?.secondSurname || "");
+    }
+    setEditingDataCreditoNames(false);
     setFianzaPorcentaje(String(restoredSuretyPercentage));
     setPlazoMeses(String(installmentCount));
     setFechaPrimerPago(firstPaymentDate);
@@ -14601,8 +14615,8 @@ export default function CreditFactoryConsole({
                           Información del cliente
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          La cédula y el primer apellido corresponden a la consulta
-                          DataCrédito. Completa los demás campos para preparar el
+                          Revisa los datos recuperados de DataCrédito y completa
+                          la información faltante para preparar el
                           contrato y el pagaré.
                         </p>
                       </div>
@@ -14626,6 +14640,16 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
 
+                    {dataCreditoApproval ? <div className="mt-4 text-sm">
+                      <p className="font-semibold">Datos obtenidos de DataCrédito</p>
+                      {dataCreditoApproval.identity?.original.missing.length ? <p role="status">DataCrédito no entregó: {dataCreditoApproval.identity.original.missing.join(", ")}. Completa los nombres mediante la opción de edición. Para documento o primer apellido faltante, solicita revisión autorizada; no se permite firmar con identidad incompleta.</p> : null}
+                      {!dataCreditoApproval.identity ? <p role="alert">La consulta no tiene datos de identidad recuperables. Solicita revisión autorizada.</p> : null}
+                      {dataCreditoApproval.identity?.original.fullName ? <p>Nombre completo informado: {dataCreditoApproval.identity.original.fullName}</p> : null}
+                      {dataCreditoApproval.identity && (clientePrimerNombre !== dataCreditoApproval.identity.original.names || clienteSegundoApellido !== dataCreditoApproval.identity.original.secondSurname) ? <p>Datos corregidos por el asesor. Original DataCrédito: {dataCreditoApproval.identity.original.names || "Nombres no informados"} · {dataCreditoApproval.identity.original.secondSurname || "Segundo apellido no informado"}.</p> : null}
+                      {dataCreditoApproval.identity?.effective.manuallyCompleted?.length ? <p>Identidad completada mediante revisión autorizada; los campos faltantes no están verificados por DataCrédito.</p> : null}
+                      <Button type="button" variant="secondary" onClick={() => setEditingDataCreditoNames(!editingDataCreditoNames)}>{editingDataCreditoNames ? "Bloquear nombres y segundo apellido" : "Editar nombres y segundo apellido"}</Button>
+                      {editingDataCreditoNames ? <p>La corrección se guardará con el asesor responsable y la fecha. El segundo apellido puede quedar vacío.</p> : null}
+                    </div> : null}
                     <section className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
                       <div className="mb-5 flex items-start justify-between gap-4">
                         <div className="flex items-start gap-3">
@@ -14651,6 +14675,7 @@ export default function CreditFactoryConsole({
                         <input
                           {...clientFieldInputProps("clientePrimerNombre")}
                           value={clientePrimerNombre}
+                          readOnly={Boolean(dataCreditoApproval) && !editingDataCreditoNames}
                           onChange={(event) => setClientePrimerNombre(event.target.value)}
                           placeholder="Ejemplo: Carlos"
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
@@ -14665,6 +14690,7 @@ export default function CreditFactoryConsole({
                         <input
                           {...clientFieldInputProps("clientePrimerApellido")}
                           value={clientePrimerApellido}
+                          readOnly={Boolean(dataCreditoApproval)}
                           onChange={(event) => setClientePrimerApellido(event.target.value)}
                           placeholder="Ejemplo: Ochoa"
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
@@ -14679,6 +14705,7 @@ export default function CreditFactoryConsole({
                         <input
                           id="clienteSegundoApellido"
                           value={clienteSegundoApellido}
+                          readOnly={Boolean(dataCreditoApproval) && !editingDataCreditoNames}
                           onChange={(event) => setClienteSegundoApellido(event.target.value)}
                           placeholder="Segundo apellido"
                           maxLength={90}
@@ -14694,6 +14721,7 @@ export default function CreditFactoryConsole({
                         <select
                           {...clientFieldInputProps("clienteTipoDocumento")}
                           value={clienteTipoDocumento}
+                          disabled={Boolean(dataCreditoApproval)}
                           onChange={(event) => setClienteTipoDocumento(event.target.value)}
                           className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
                         >
@@ -14713,6 +14741,7 @@ export default function CreditFactoryConsole({
                         <input
                           {...clientFieldInputProps("clienteDocumento")}
                           value={clienteDocumento}
+                          readOnly={Boolean(dataCreditoApproval)}
                           onChange={(event) =>
                             setClienteDocumento(event.target.value.replace(/\D/g, ""))
                           }

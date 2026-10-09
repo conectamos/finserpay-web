@@ -47,9 +47,10 @@ const [
     readProjectFile("app/api/creditos/datacredito/politica/route.ts"),
     readProjectFile("app/api/creditos/datacredito/retencion/route.ts"),
     readProjectFile("app/api/creditos/route.ts"),
-    readProjectFile(
-      "app/api/creditos/borradores/[id]/firma-seguro/route.ts"
-    ),
+    Promise.all([
+      readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
+      readProjectFile("lib/firmaseguro-draft-credit-builder.ts"),
+    ]).then((sources) => sources.join("\n")),
     readProjectFile("app/api/creditos/configuracion/route.ts"),
     readProjectFile(
       "app/api/creditos/configuracion/cupo-manual/route.ts"

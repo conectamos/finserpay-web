@@ -1,3 +1,4 @@
+import { completeMissingDataCreditoIdentity, getDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
@@ -312,7 +313,7 @@ export async function GET(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       ok: true,
-      ...serializeDataCreditoAssessment(row),
+      ...serializeDataCreditoAssessment(row), identity: await getDataCreditoCustomerIdentity(row),
       ...(draftId
         ? {
             documentNumber: normalizeDataCreditoDocument(identityDocument),
@@ -331,5 +332,20 @@ export async function GET(request: Request, context: RouteContext) {
       { ok: false, error: "No se pudo consultar la evaluacion" },
       { status: 500 }
     );
+  }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const user = await getSessionUser();
+  if (!user || !isAdminRole(user.rolNombre)) return NextResponse.json({ error: "Requiere revisión de un administrador autorizado" }, { status: 403 });
+  const { id } = await context.params;
+  const row = await getDataCreditoAssessmentById(id);
+  if (!row || row.sedeId !== user.sedeId || row.aliadoId !== (user.aliadoId || null)) return NextResponse.json({ error: "Evaluación no encontrada" }, { status: 404 });
+  if (row.status !== "APROBADO" || row.consumedAt) return NextResponse.json({ error: "La identidad de esta solicitud ya no admite cambios" }, { status: 409 });
+  try {
+    const identity = await completeMissingDataCreditoIdentity(row, await request.json(), { userId: user.id, sellerId: null });
+    return NextResponse.json({ ok: true, identity });
+  } catch (error) {
+    return NextResponse.json({ error: "No se pudo completar la identidad. Solo se admiten datos ausentes, del documento consultado.", code: error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_") ? error.message : "DATACREDITO_IDENTITY_REVIEW_FAILED" }, { status: 409 });
   }
 }

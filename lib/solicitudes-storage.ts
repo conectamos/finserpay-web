@@ -87,6 +87,7 @@ type SolicitudRow = {
 };
 
 export type SaveSolicitudDraftInput = {
+  verifiedDataCreditoFirstSurname?: string;
   id?: number | null;
   usuarioId: number;
   vendedorId: number | null;
@@ -1275,7 +1276,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           storedDocument: targetRow.clienteDocumento,
           storedPayloadDocument: targetRow.payload?.clienteDocumento,
           storedPayloadFirstSurname:
-            targetRow.payload?.clientePrimerApellido,
+            input.verifiedDataCreditoFirstSurname || targetRow.payload?.clientePrimerApellido,
           storedAssessmentId: targetRow.dataCreditoAssessmentId,
           storedPayloadAssessmentId: targetRow.payload?.dataCreditoAssessmentId,
           incomingDocument: input.clienteDocumento,
