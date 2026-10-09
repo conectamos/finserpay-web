@@ -27,6 +27,11 @@ function compileLockPrefix(source = transactionPrefix) {
     mutationId,
     allyId,
     SETTLEMENT_INCLUDE: {},
+    lockAllyPaymentAlly: (transaction, selectedAllyId) =>
+      transaction.$executeRawUnsafe(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        "ALLY_PAYMENT_ALLY:" + selectedAllyId
+      ),
   });
 }
 

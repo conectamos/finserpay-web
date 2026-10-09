@@ -78,3 +78,28 @@ export function filterPendingAllyCollections<T extends PendingCollection>(items:
     && matchesSearch(filters.search, [item.clienteNombre, item.clienteDocumento, item.imei])
     && matchesDate(allyPaymentColombiaDate(item.fechaAbono), filters));
 }
+
+type PendingAnnulmentAdjustment = {
+  aliadoId?: number | null; aliado?: Ally; fechaAnulacion?: string | null;
+  numeroCreditoVisible?: string | null; folio?: string | null;
+  clienteNombre?: string | null; clienteDocumento?: string | null;
+  imei?: string | null; plataforma?: string | null; motivo?: string | null;
+  liquidacionOrigenId?: number | string | null;
+};
+
+export function filterPendingAllyAnnulmentAdjustments<T extends PendingAnnulmentAdjustment>(
+  items: T[],
+  filters: AllyPaymentViewFilters
+): T[] {
+  return items.filter(item => {
+    const allyId = item.aliadoId ?? item.aliado?.id;
+    if (filters.allyId && allyId != null && String(allyId) !== filters.allyId) return false;
+    return (filters.platform === "ALL" || item.plataforma?.toUpperCase() === filters.platform)
+      && matchesSearch(filters.search, [
+        item.numeroCreditoVisible, item.folio, item.clienteNombre,
+        item.clienteDocumento, item.imei, item.motivo, item.liquidacionOrigenId,
+        item.liquidacionOrigenId == null ? null : `LA-${item.liquidacionOrigenId}`,
+      ])
+      && matchesDate(allyPaymentColombiaDate(item.fechaAnulacion), filters);
+  });
+}

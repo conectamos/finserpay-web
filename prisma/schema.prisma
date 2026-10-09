@@ -91,6 +91,7 @@ model Aliado {
   dataCreditoDailyQuotaUsage      DataCreditoDailyQuotaUsage[]
   dataCreditoDailyQuotaAudit      DataCreditoDailyQuotaAudit[]
   liquidacionesAliado             LiquidacionAliado[]
+  ajustesAnulacionCredito         AjusteAnulacionCreditoAliado[]
   sedes                           Sede[]
   createdAt                       DateTime                           @default(now())
   updatedAt                       DateTime                           @updatedAt
@@ -215,6 +216,7 @@ model Usuario {
   ventas          Venta[]
   arqueosDiarios  ArqueoDiario[]
   liquidacionesAliadoRegistradas LiquidacionAliado[]
+  ajustesAnulacionCreditoCreados AjusteAnulacionCreditoAliado[] @relation("AjusteAnulacionCreditoCreadoPor")
   reemisionesFirma CreditApprovalReissue[]
   approvalSharedGrantsIssued CreditApprovalSharedGrant[] @relation("ApprovalSharedIssuer")
   approvalSharedGrantsRevoked CreditApprovalSharedGrant[] @relation("ApprovalSharedRevoker")
@@ -402,6 +404,7 @@ model Credito {
   amortizacion                  CreditoAmortizacion?
   wompiPaymentIntents           WompiPaymentIntent[]
   liquidacionAliadoCredito      LiquidacionAliadoCredito?
+  ajusteAnulacionAliado         AjusteAnulacionCreditoAliado?
   exclusionLiquidacionAliado     CreditAllyPaymentExclusion?
   reemisionesFirma            CreditApprovalReissue[]
   revisionesEvidencia          CreditApprovalEvidenceRevision[]
@@ -869,6 +872,8 @@ model LiquidacionAliado {
   totalIntermediacion         Decimal                     @db.Decimal(20, 2)
   totalPagar                  Decimal                     @db.Decimal(20, 2)
   totalRecaudosAliado         Decimal?                    @db.Decimal(20, 2)
+  numeroAjustesAnulacion      Int                         @default(0)
+  totalAjustesAnulacion       Decimal                     @default(0) @db.Decimal(20, 2)
   saldoNeto                   Decimal?                    @db.Decimal(20, 2)
   direccionSaldo              String?                     @db.VarChar(32)
   registradoPorUsuarioId      Int
@@ -880,6 +885,8 @@ model LiquidacionAliado {
   registradoPor               Usuario                     @relation(fields: [registradoPorUsuarioId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   creditos                    LiquidacionAliadoCredito[]
   recaudos                    LiquidacionAliadoRecaudo[]
+  ajustesAnulacion            LiquidacionAliadoAjusteAnulacion[]
+  ajustesAnulacionOrigen      AjusteAnulacionCreditoAliado[] @relation("LiquidacionAliadoAjusteOrigen")
 
   @@index([aliadoId, pagadoAt])
   @@index([periodoInicio, periodoFin])
@@ -930,9 +937,58 @@ model LiquidacionAliadoCredito {
   createdAt                DateTime           @default(now())
   liquidacion              LiquidacionAliado @relation(fields: [liquidacionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   credito                  Credito            @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ajusteAnulacionOrigen    AjusteAnulacionCreditoAliado?
 
   @@index([liquidacionId, plataforma])
   @@index([plataforma, fechaCredito])
+  @@index([estado, createdAt])
+}
+
+model AjusteAnulacionCreditoAliado {
+  id                         Int @id @default(autoincrement())
+  creditoId                  Int @unique(map: "AjusteAnulacionCreditoAliado_creditoId_key")
+  liquidacionCreditoOrigenId Int @unique(map: "AjusteAnulacionCreditoAliado_origenCredito_key")
+  aliadoId                   Int
+  aliadoNombre               String @db.VarChar(180)
+  fechaAnulacion             DateTime @db.Timestamp(3)
+  fechaAnulacionFuente       String @db.VarChar(32)
+  folio                      String @db.VarChar(80)
+  clienteNombre              String @db.VarChar(180)
+  clienteDocumento           String @db.VarChar(80)
+  imei                       String @db.VarChar(80)
+  equipo                     String @db.VarChar(240)
+  plataforma                 String @db.VarChar(16)
+  sedeId                     Int
+  sedeNombre                 String @db.VarChar(180)
+  liquidacionOrigenId        Int
+  valorDescuento             Decimal @db.Decimal(20, 2)
+  motivo                     String @db.VarChar(500)
+  creadoPorUsuarioId         Int?
+  creadoPorNombre            String @db.VarChar(160)
+  createdAt                  DateTime @default(now()) @db.Timestamp(3)
+  credito                    Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "AjusteAnulacionCreditoAliado_creditoId_fkey")
+  liquidacionCreditoOrigen   LiquidacionAliadoCredito @relation(fields: [liquidacionCreditoOrigenId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "AjusteAnulacionCreditoAliado_origenCredito_fkey")
+  aliado                     Aliado @relation(fields: [aliadoId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "AjusteAnulacionCreditoAliado_aliadoId_fkey")
+  liquidacionOrigen          LiquidacionAliado @relation("LiquidacionAliadoAjusteOrigen", fields: [liquidacionOrigenId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "AjusteAnulacionCreditoAliado_origenLiquidacion_fkey")
+  creadoPor                  Usuario? @relation("AjusteAnulacionCreditoCreadoPor", fields: [creadoPorUsuarioId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "AjusteAnulacionCreditoAliado_creadoPor_fkey")
+  aplicacion                 LiquidacionAliadoAjusteAnulacion?
+
+  @@index([aliadoId, fechaAnulacion], map: "AjusteAnulacionCreditoAliado_aliadoId_fechaAnulacion_idx")
+  @@index([liquidacionOrigenId])
+  @@index([fechaAnulacionFuente, createdAt], map: "AjusteAnulacionCreditoAliado_fuente_createdAt_idx")
+}
+
+model LiquidacionAliadoAjusteAnulacion {
+  id             Int @id @default(autoincrement())
+  liquidacionId  Int
+  ajusteId       Int @unique(map: "LiquidacionAliadoAjusteAnulacion_ajusteId_key")
+  valorDescuento Decimal @db.Decimal(20, 2)
+  estado         String @default("DESCONTADO") @db.VarChar(24)
+  createdAt      DateTime @default(now()) @db.Timestamp(3)
+  liquidacion    LiquidacionAliado @relation(fields: [liquidacionId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "LiquidacionAliadoAjusteAnulacion_liquidacionId_fkey")
+  ajuste         AjusteAnulacionCreditoAliado @relation(fields: [ajusteId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "LiquidacionAliadoAjusteAnulacion_ajusteId_fkey")
+
+  @@index([liquidacionId, createdAt])
   @@index([estado, createdAt])
 }
 

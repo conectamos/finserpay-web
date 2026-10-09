@@ -40,6 +40,11 @@ import { hasCreditAmortization } from "@/lib/credit-amortization-storage";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
+import {
+  lockAllyPaymentAlly,
+  registerPaidCreditAnnulmentAdjustment,
+  resolvePaidCreditAllyId,
+} from "@/lib/ally-payment-annulments";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -290,8 +295,11 @@ function serializeCredit(
   };
 }
 
-async function loadCredit(id: number) {
-  return prisma.credito.findUnique({
+async function loadCredit(
+  id: number,
+  transaction?: Prisma.TransactionClient
+) {
+  const args = {
     where: { id },
     omit: CREDIT_DELIVERY_PHOTO_OMIT,
     include: {
@@ -317,7 +325,11 @@ async function loadCredit(id: number) {
         },
       },
     },
-  });
+  } satisfies Prisma.CreditoFindUniqueArgs;
+
+  return transaction
+    ? transaction.credito.findUnique(args)
+    : prisma.credito.findUnique(args);
 }
 
 async function loadPaymentSummary(creditId: number) {
@@ -715,52 +727,147 @@ export async function POST(
           );
         }
 
-        const reason = observacionAdmin || "Anulado por administrador";
-        const timestamp = new Date().toISOString();
-        const nextObservation = [
-          current.observacionAdmin,
-          `[${timestamp}] ANULACION: ${reason}`,
-        ]
-          .filter(Boolean)
-          .join("\n");
+        const result = await prisma.$transaction(
+          async (tx) => {
+            // Lock ordering is deliberate: ally first, then the credit row. The
+            // settlement transaction uses the same ally lock before consuming
+            // pending adjustments, so an annulment cannot be missed or doubled.
+            const paidAllyId = await resolvePaidCreditAllyId(tx, current.id);
+            const allyLockId = paidAllyId ?? current.sede.aliadoId;
+            if (allyLockId !== null) {
+              await lockAllyPaymentAlly(tx, allyLockId);
+            }
+            await tx.$queryRawUnsafe<Array<{ id: number }>>(
+              'SELECT "id" FROM public."Credito" WHERE "id" = $1 FOR UPDATE',
+              current.id
+            );
 
-        const updated = await prisma.credito.update({
-          where: { id: current.id, planCapitalVigente: { equals: Prisma.DbNull } },
-          data: {
-            estado: "ANULADO",
-            deliverableReady: false,
-            deliverableLabel: "Anulado",
-            bloqueoMora: false,
-            bloqueoMoraAt: null,
-            bloqueoRobo: false,
-            bloqueoRoboAt: null,
-            observacionAdmin: nextObservation,
+            const locked = await loadCredit(current.id, tx);
+            if (!locked) {
+              return {
+                status: 404 as const,
+                error: "Credito no encontrado",
+                updated: null,
+              };
+            }
+            if (locked.sede.aliadoId !== current.sede.aliadoId) {
+              return {
+                status: 409 as const,
+                error:
+                  "El aliado del credito cambio durante la operacion. Intenta nuevamente.",
+                updated: null,
+              };
+            }
+            if (
+              !adminCentral &&
+              locked.sede.aliadoId !== Number(user.aliadoAccesoId || 0)
+            ) {
+              return {
+                status: 404 as const,
+                error: "Credito no encontrado",
+                updated: null,
+              };
+            }
+            if (
+              ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(
+                String(locked.estado || "").trim().toUpperCase()
+              )
+            ) {
+              return {
+                status: 400 as const,
+                error: "Este credito ya esta anulado",
+                updated: null,
+              };
+            }
+            if (locked.planCapitalVigente) {
+              return {
+                status: 409 as const,
+                error:
+                  "El plan reducido por abono a capital conserva sus fechas y valores auditados. Un cambio o anulacion requiere una revision financiera especifica.",
+                updated: null,
+              };
+            }
+
+            const reason = observacionAdmin || "Anulado por administrador";
+            const annulledAt = new Date();
+            const nextObservation = [
+              locked.observacionAdmin,
+              `[${annulledAt.toISOString()}] ANULACION: ${reason}`,
+            ]
+              .filter(Boolean)
+              .join("\n");
+
+            // Create the financial event first in this transaction. The database
+            // trigger installed during deployment is a compatibility safety net
+            // for older application instances and becomes a no-op on this row.
+            await registerPaidCreditAnnulmentAdjustment(tx, {
+              creditoId: locked.id,
+              aliadoId: allyLockId,
+              fechaAnulacion: annulledAt,
+              fechaAnulacionFuente: "OPERACION_EN_LINEA",
+              motivo: reason,
+              creadoPorUsuarioId: user.id,
+              creadoPorNombre: user.nombre,
+            });
+
+            const updated = await tx.credito.update({
+              where: {
+                id: locked.id,
+                planCapitalVigente: { equals: Prisma.DbNull },
+              },
+              data: {
+                estado: "ANULADO",
+                deliverableReady: false,
+                deliverableLabel: "Anulado",
+                bloqueoMora: false,
+                bloqueoMoraAt: null,
+                bloqueoRobo: false,
+                bloqueoRoboAt: null,
+                observacionAdmin: nextObservation,
+              },
+              omit: CREDIT_DELIVERY_PHOTO_OMIT,
+              include: {
+                usuario: {
+                  select: {
+                    id: true,
+                    nombre: true,
+                    usuario: true,
+                  },
+                },
+                vendedor: {
+                  select: {
+                    id: true,
+                    nombre: true,
+                    documento: true,
+                  },
+                },
+                sede: {
+                  select: {
+                    id: true,
+                    nombre: true,
+                    aliadoId: true,
+                  },
+                },
+              },
+            });
+
+            return { status: 200 as const, error: null, updated };
           },
-          omit: CREDIT_DELIVERY_PHOTO_OMIT,
-          include: {
-            usuario: {
-              select: {
-                id: true,
-                nombre: true,
-                usuario: true,
-              },
-            },
-            vendedor: {
-              select: {
-                id: true,
-                nombre: true,
-                documento: true,
-              },
-            },
-            sede: {
-              select: {
-                id: true,
-                nombre: true,
-                aliadoId: true,
-              },
-            },
-          },
-        });
+          {
+            isolationLevel: "Serializable",
+            maxWait: 5_000,
+            timeout: 20_000,
+          }
+        );
+
+        if (!result.updated) {
+          return NextResponse.json(
+            { error: result.error },
+            { status: result.status }
+          );
+        }
+
+        const updated = result.updated;
         const paymentSummary = await loadPaymentSummary(updated.id);
 
         return NextResponse.json({
@@ -896,6 +1003,12 @@ export async function POST(
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
       return NextResponse.json({ error: "El crédito cambió durante la operación. Consulta nuevamente su plan vigente." }, { status: 409 });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      return NextResponse.json(
+        { error: "El credito cambio durante la anulacion. Intenta nuevamente." },
+        { status: 409 }
+      );
     }
     console.error("ERROR APLICANDO COMANDO DE CREDITO:", error);
 

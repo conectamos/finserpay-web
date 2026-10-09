@@ -70,7 +70,13 @@ export async function GET(
       throw new Error("La liquidacion no tiene una fecha de pago valida.");
     }
 
-    const visibleNumbers = await getCreditDisplayNumbers(settlement.recaudos.map(item => item.creditoId));
+    const annulmentAdjustments = Array.isArray(settlement.ajustesAnulacion)
+      ? settlement.ajustesAnulacion
+      : [];
+    const visibleNumbers = await getCreditDisplayNumbers([
+      ...settlement.recaudos.map(item => item.creditoId),
+      ...annulmentAdjustments.map(item => item.creditoId),
+    ]);
     const pdf = await buildAllyPaymentSettlementPdf({
       settlementId: settlement.id,
       allyName: settlement.aliado.nombre,
@@ -87,6 +93,7 @@ export async function GET(
       totalIntermediation: settlement.totalIntermediacion,
       totalPayable: settlement.totalPagar,
       totalAllyCollections: settlement.totalRecaudosAliado,
+      totalAnnulmentAdjustments: settlement.totalAjustesAnulacion,
       netBalance: settlement.saldoNeto,
       balanceDirection: settlement.direccionSaldo,
       platformSummary: {
@@ -130,6 +137,23 @@ export async function GET(
         siteName: item.sedeNombre,
         paymentMethod: item.metodoPago,
         value: item.valor,
+        status: item.estado,
+      })),
+      annulmentAdjustments: annulmentAdjustments.map((item) => ({
+        adjustmentId: item.ajusteId ?? item.id,
+        creditId: item.creditoId,
+        annulledAt: item.fechaAnulacion,
+        folio: item.folio,
+        visibleCreditNumber: visibleNumbers.get(item.creditoId) || item.folio,
+        clientName: item.clienteNombre,
+        clientDocument: item.clienteDocumento,
+        equipment: item.equipo,
+        imei: item.imei,
+        platform: item.plataforma,
+        siteName: item.sedeNombre,
+        sourceSettlementId: item.liquidacionOrigenId,
+        discountValue: item.valorDescuento,
+        reason: item.motivo,
         status: item.estado,
       })),
     });

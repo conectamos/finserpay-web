@@ -75,6 +75,8 @@
 .netAmount { display: block; margin: 19px 0 24px; color: white; font-size: clamp(26px,3.15vw,48px); letter-spacing: -.035em; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; overflow-wrap: anywhere; }
 .netBreakdown { margin-top: auto; padding-top: 17px; border-top: 1px solid #667078; display: grid; gap: 13px; font-size: 14px; }
 .netBreakdown dd { margin-left: auto; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.netBreakdown .annulmentBreakdown { color: #ffd9d5; }
+.netBreakdown .annulmentBreakdown dd { color: #ffb4ad; }
 .creditDetail { min-width: 0; overflow: hidden; padding: 0; margin-top: 15px; border: 1px solid var(--fp-border); border-radius: 11px; background: white; box-shadow: 0 3px 12px rgb(21 26 33 / 3%); }
 .detailHeading { display: flex; align-items: center; gap: 12px; padding: 11px 16px; min-height: 59px; }
 .detailHeading h2 { margin-right: auto; font-size: 20px; font-weight: 800; letter-spacing: -.025em; }
@@ -126,6 +128,25 @@
 .previewCollections[open] > summary > svg:last-child { transform: rotate(90deg); }
 .previewCollections > section, .previewCollections > div { margin: 0 16px 16px; }
 .collectionsTotal { margin-left: auto; font-variant-numeric: tabular-nums; }
+.annulmentAdjustments { min-width: 0; overflow: hidden; margin-top: 15px; border: 1px solid #f3b7b2; border-radius: var(--fp-radius-md); background: var(--fp-surface); }
+.annulmentHeading { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: var(--fp-danger-soft); border-bottom: 1px solid #f3b7b2; }
+.annulmentHeading > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.annulmentHeading h2 { margin: 0; color: var(--fp-danger); font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+.annulmentHeading p { margin: 3px 0 0; color: #7a302a; font-size: 12px; line-height: 1.45; }
+.annulmentIcon { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: white; color: var(--fp-danger); border: 1px solid #f3b7b2; }
+.annulmentIcon svg { width: 20px; height: 20px; }
+.annulmentHeading > span { margin-left: auto; }
+.annulmentTotal { color: var(--fp-danger); font-size: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.annulmentTableWrap { overflow-x: auto; border: 0; border-radius: 0; }
+.annulmentTable { width: 100%; min-width: 1510px; border-collapse: collapse; color: var(--fp-graphite); font-size: 13px; }
+.annulmentTable th { padding: 12px 14px; text-align: left; background: #fff8f7; color: #6d302b; border-bottom: 1px solid #f3b7b2; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.annulmentTable td { padding: 12px 14px; vertical-align: middle; border-top: 1px solid #f6d7d4; }
+.annulledRow { background: #fffdfc; }
+.annulledRow:hover { background: var(--fp-danger-soft); }
+.annulledCredit, .originSettlement { color: var(--fp-danger); font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.annulmentReason { min-width: 180px; max-width: 300px; color: #69433f; }
+.annulmentAmount { color: var(--fp-danger); font-size: 14px; font-weight: 850; }
+.annulmentEmpty { margin-top: 15px; border-color: #f3b7b2; background: var(--fp-danger-soft); }
 .registerCard { margin-top: 15px; }
 .registerRow { display: grid; grid-template-columns: minmax(250px,1fr) minmax(260px,.65fr); align-items: end; gap: 18px; }
 .registerRow input, .registerRow > button { min-height: 42px; height: 42px; font-size: 13px; }
@@ -182,6 +203,10 @@
   .pagination button { padding: 0 5px; font-size: 11px; }
   .registerRow { grid-template-columns: minmax(0,1fr); }
   .previewCollections > summary { padding: 12px; gap: 6px; font-size: 12px; }
+  .annulmentHeading { align-items: flex-start; flex-wrap: wrap; padding: 13px; }
+  .annulmentHeading > div { width: 100%; }
+  .annulmentHeading > span { margin-left: 0; }
+  .annulmentTotal { margin-left: auto; font-size: 17px; }
 }
 @media (prefers-reduced-motion: reduce) { .previewCollections > summary > svg:last-child { transition: none; } }
 @media (min-width: 1600px) { .main { padding-left: 46px; padding-right: 46px; } }

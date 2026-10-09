@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleMinus,
   Info,
   RefreshCw,
   RotateCcw,
@@ -32,7 +33,7 @@ import {
   ALLY_PAYMENTS_AVAILABLE_FROM,
   ALLY_PAYMENTS_AVAILABLE_FROM_LABEL,
   calculateAllyPaymentAmounts,
-  calculateAllySettlementBalance,
+  roundAllyPaymentMoney,
   summarizeAllyPayments,
   type AllyPaymentIntermediationAdjustment,
 } from "@/lib/ally-payments-core";
@@ -40,10 +41,10 @@ import {
 import { PendingPaymentsView, PlatformIcon, ReceivedPaymentsView } from "./ally-payment-views";
 import styles from "./ally-payments-console.module.css";
 import HistoricalSettlementDetail from "./historical-settlement-detail";
-import type { AllyOption, PaymentCreditItem, PaymentCollectionItem, PaymentSummaryBucket, PaymentSummary, Settlement, PaymentPreview, AllyPaymentsResponse } from "./ally-payment-types";
+import type { AllyOption, PaymentAnnulmentAdjustmentItem, PaymentCreditItem, PaymentCollectionItem, PaymentSummaryBucket, PaymentSummary, Settlement, PaymentPreview, AllyPaymentsResponse } from "./ally-payment-types";
 import { numberValue, formatMoney, formatNumber, formatPercent, formatDate, formatDateTime, statusTone, platformLabel } from "./ally-payment-format";
 import {
-  emptyAllyPaymentViewFilters, filterPendingAllyCollections, filterPendingAllyCredits,
+  emptyAllyPaymentViewFilters, filterPendingAllyAnnulmentAdjustments, filterPendingAllyCollections, filterPendingAllyCredits,
   filterReceivedAllyPayments, type AllyPaymentViewFilters,
 } from "@/lib/ally-payment-view-filters";
 
@@ -199,6 +200,47 @@ function collectionItems(source: { recaudos?: PaymentCollectionItem[] | null } |
   return Array.isArray(source?.recaudos) ? source.recaudos : [];
 }
 
+function annulmentAdjustmentItems(
+  source: { ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[] | null } | null
+) {
+  return Array.isArray(source?.ajustesAnulacion) ? source.ajustesAnulacion : [];
+}
+
+function totalAnnulmentAdjustments(source: {
+  totalAjustesAnulacion?: number | null;
+  ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[] | null;
+} | null) {
+  if (source?.totalAjustesAnulacion != null) {
+    return Math.max(0, roundAllyPaymentMoney(source.totalAjustesAnulacion));
+  }
+  return roundAllyPaymentMoney(
+    annulmentAdjustmentItems(source).reduce(
+      (total, item) => total + Math.max(0, numberValue(item.valorDescuento)),
+      0
+    )
+  );
+}
+
+function calculateDisplayedSettlementBalance(
+  totalPagarCreditos: unknown,
+  totalRecaudosAliado: unknown,
+  totalAjustesAnulacion: unknown
+) {
+  const saldoNeto = roundAllyPaymentMoney(
+    Math.max(0, numberValue(totalPagarCreditos)) -
+      Math.max(0, numberValue(totalRecaudosAliado)) -
+      Math.max(0, numberValue(totalAjustesAnulacion))
+  );
+  return {
+    saldoNeto,
+    direccionSaldo: saldoNeto > 0
+      ? "PAGO_ALIADO"
+      : saldoNeto < 0
+        ? "CONSIGNACION_ALIADO"
+        : "SALDO_CERO",
+  } as const;
+}
+
 function settlementSummary(settlement: Settlement | null) {
   if (!settlement) return null;
   if (settlement.summary || settlement.resumen) {
@@ -213,6 +255,8 @@ function settlementSummary(settlement: Settlement | null) {
       totalCuotaInicial: settlement.totalCuotaInicial,
       totalIntermediacion: settlement.totalIntermediacion,
       totalPagar: settlement.totalPagar,
+      numeroAjustesAnulacion: settlement.numeroAjustesAnulacion,
+      totalAjustesAnulacion: settlement.totalAjustesAnulacion,
       porcentajeIntermediacion: null,
     },
   };
@@ -317,12 +361,18 @@ function SettlementSummary({
   summary,
   totalPagarCreditos,
   totalRecaudosAliado,
+  totalAjustesAnulacion,
 }: {
   summary: PaymentSummary | null;
   totalPagarCreditos: number;
   totalRecaudosAliado: number;
+  totalAjustesAnulacion: number;
 }) {
-  const balance = calculateAllySettlementBalance(totalPagarCreditos, totalRecaudosAliado);
+  const balance = calculateDisplayedSettlementBalance(
+    totalPagarCreditos,
+    totalRecaudosAliado,
+    totalAjustesAnulacion
+  );
   const direction = balance.saldoNeto < 0
     ? "El aliado paga a FINSER PAY"
     : balance.saldoNeto === 0
@@ -364,6 +414,7 @@ function SettlementSummary({
         <dl className={styles.netBreakdown}>
           <div><dt>Valor por créditos</dt><dd>{formatMoney(totalPagarCreditos)}</dd></div>
           <div><dt>Recaudos del aliado</dt><dd>− {formatMoney(totalRecaudosAliado)}</dd></div>
+          <div className={styles.annulmentBreakdown}><dt>Créditos anulados</dt><dd>− {formatMoney(totalAjustesAnulacion)}</dd></div>
         </dl>
       </Card>
     </section>
@@ -527,6 +578,80 @@ function CollectionItems({
   );
 }
 
+function AnnulmentAdjustmentItems({
+  items,
+  emptyDescription,
+}: {
+  items: PaymentAnnulmentAdjustmentItem[];
+  emptyDescription: string;
+}) {
+  if (!items.length) {
+    return (
+      <EmptyState
+        className={styles.annulmentEmpty}
+        title="No hay créditos anulados por descontar"
+        description={emptyDescription}
+      />
+    );
+  }
+
+  const total = items.reduce(
+    (sum, item) => sum + Math.max(0, numberValue(item.valorDescuento)),
+    0
+  );
+  const statusLabel = (value: string | null | undefined) => {
+    const normalized = String(value || "PENDIENTE_DESCUENTO").trim().toUpperCase();
+    return normalized === "PENDIENTE_DESCUENTO"
+      ? "PENDIENTE DE DESCUENTO"
+      : normalized.replaceAll("_", " ");
+  };
+
+  return (
+    <section className={styles.annulmentAdjustments} aria-label="Descuentos por créditos anulados">
+      <header className={styles.annulmentHeading}>
+        <div>
+          <span className={styles.annulmentIcon}><CircleMinus aria-hidden="true" /></span>
+          <div>
+            <h2>Descuentos por créditos anulados</h2>
+            <p>Valores pagados anteriormente que se descuentan una sola vez en esta liquidación.</p>
+          </div>
+        </div>
+        <Badge tone="danger">{formatNumber(items.length)} anulados</Badge>
+        <strong className={styles.annulmentTotal}>− {formatMoney(total)}</strong>
+      </header>
+      <DataTable className={styles.annulmentTableWrap}>
+        <table className={styles.annulmentTable}>
+          <caption className="sr-only">Relación de créditos anulados descontados en la liquidación</caption>
+          <thead>
+            <tr>
+              <th>Fecha anulación</th><th>Crédito</th><th>Cliente / Cédula</th>
+              <th>Sede</th><th>Equipo / IMEI</th><th>Plataforma</th>
+              <th>Liquidación original</th><th>Motivo</th>
+              <th className={styles.moneyColumn}>Valor descontado</th><th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, index) => (
+              <tr className={styles.annulledRow} key={String(item.ajusteId ?? item.id ?? `${item.creditoId}-${index}`)}>
+                <td className={styles.dateCell}>{formatDate(item.fechaAnulacion)}</td>
+                <td className={styles.annulledCredit}>{creditDisplayNumber(item)}</td>
+                <td className={styles.clientCell}><strong>{item.clienteNombre || "Cliente sin nombre"}</strong><span>{item.clienteDocumento?.replace(/[.\s]/g, "") || "Sin documento"}</span></td>
+                <td className={styles.siteCell}>{item.sedeNombre || "Sede sin nombre"}</td>
+                <td><div className={styles.equipmentCell}><PlatformIcon platform={String(item.plataforma).toUpperCase() === "ANDROID" ? "ANDROID" : "IPHONE"} /><div><span>{item.equipo || "Sin referencia"}</span><small>IMEI: {item.imei?.replace(/[.\s]/g, "") || "Sin IMEI"}</small></div></div></td>
+                <td>{platformLabel(item.plataforma)}</td>
+                <td className={styles.originSettlement}>{item.liquidacionOrigenId == null ? "—" : `LA-${item.liquidacionOrigenId}`}</td>
+                <td className={styles.annulmentReason}>{item.motivo || "Anulación aprobada"}</td>
+                <td className={`${styles.moneyColumn} ${styles.annulmentAmount}`}>− {formatMoney(item.valorDescuento)}</td>
+                <td className={styles.statusCell}><StatusPill tone="danger">{statusLabel(item.estado)}</StatusPill></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </DataTable>
+    </section>
+  );
+}
+
 function settlementPdfUrl(settlementId: Settlement["id"], download = false) {
   const base = `/api/pagos-aliados/${encodeURIComponent(String(settlementId))}/comprobante`;
   return download ? `${base}?download=1` : base;
@@ -559,7 +684,7 @@ function PaymentViewFilters({ filters, onChange, onApply, onClear, allies, admin
     <div className={styles.filterRow}>
       <div className={styles.search}>
         <Search aria-hidden="true" />
-        <Input aria-label={pending ? "Buscar cliente, cédula o IMEI" : "Buscar aliado o aprobación"} placeholder={pending ? "Cliente, cédula o IMEI" : "Buscar aliado o aprobación"} value={filters.search} onChange={event => onChange({ ...filters, search: event.target.value })} />
+        <Input aria-label={pending ? "Buscar crédito, cliente, cédula o IMEI" : "Buscar aliado o aprobación"} placeholder={pending ? "Crédito, cliente, cédula o IMEI" : "Buscar aliado o aprobación"} value={filters.search} onChange={event => onChange({ ...filters, search: event.target.value })} />
       </div>
       <Select aria-label="Filtrar por aliado" value={filters.allyId} onChange={event => onChange({ ...filters, allyId: event.target.value })}>
         <option value="">{adminCentral ? "Todos los aliados" : "Mi aliado"}</option>
@@ -614,6 +739,8 @@ export default function AllyPaymentsConsole({
   const [pending, setPending] = useState<NonNullable<AllyPaymentsResponse["pending"]>>({
     items: [],
     summary: null,
+    recaudos: [],
+    ajustesAnulacion: [],
   });
   const [receivedDraft, setReceivedDraft] = useState(emptyAllyPaymentViewFilters);
   const [receivedFilters, setReceivedFilters] = useState(emptyAllyPaymentViewFilters);
@@ -680,6 +807,14 @@ export default function AllyPaymentsConsole({
     () => previewCollections.reduce((total, item) => total + numberValue(item.valor), 0),
     [previewCollections]
   );
+  const previewAnnulmentAdjustments = useMemo(
+    () => annulmentAdjustmentItems(preview),
+    [preview]
+  );
+  const previewAnnulmentTotal = useMemo(
+    () => totalAnnulmentAdjustments(preview),
+    [preview]
+  );
   const updateIntermediation = useCallback((creditId: number, value: string) => {
     setIntermediationValues((current) => ({ ...current, [String(creditId)]: value }));
     setPendingMutationId(null);
@@ -735,6 +870,9 @@ export default function AllyPaymentsConsole({
         items: Array.isArray(payload.pending?.items) ? payload.pending.items : [],
         summary: payload.pending?.summary || null,
         recaudos: Array.isArray(payload.pending?.recaudos) ? payload.pending.recaudos : [],
+        ajustesAnulacion: Array.isArray(payload.pending?.ajustesAnulacion) ? payload.pending.ajustesAnulacion : [],
+        numeroAjustesAnulacion: payload.pending?.numeroAjustesAnulacion ?? 0,
+        totalAjustesAnulacion: payload.pending?.totalAjustesAnulacion ?? 0,
       });
       return true;
     } catch (error) {
@@ -824,7 +962,7 @@ export default function AllyPaymentsConsole({
       if (!raw?.preview) {
         setNotice({
           tone: "neutral",
-          text: "No hay creditos elegibles sin liquidar para el aliado y periodo seleccionados.",
+          text: "No hay créditos, recaudos ni anulaciones pendientes para el aliado y período seleccionados.",
         });
       }
     } catch (error) {
@@ -970,9 +1108,10 @@ export default function AllyPaymentsConsole({
     "totalPagar",
     "valorPagar"
   );
-  const previewBalance = calculateAllySettlementBalance(
+  const previewBalance = calculateDisplayedSettlementBalance(
     previewGrossTotal,
-    previewCollectionsTotal
+    previewCollectionsTotal,
+    previewAnnulmentTotal
   );
   const previewTotal = Math.abs(previewBalance.saldoNeto);
   const previewIsConsignment =
@@ -996,6 +1135,17 @@ export default function AllyPaymentsConsole({
   }, [pending.items, pendingFilters]);
   const filteredPendingSummary = useMemo(() => summarizePreviewItems(filteredPendingItems), [filteredPendingItems]);
   const filteredPendingCollections = useMemo(() => filterPendingAllyCollections(collectionItems(pending), pendingFilters), [pending, pendingFilters]);
+  const filteredPendingAnnulments = useMemo(
+    () => filterPendingAllyAnnulmentAdjustments(annulmentAdjustmentItems(pending), pendingFilters),
+    [pending, pendingFilters]
+  );
+  const filteredPendingAnnulmentTotal = useMemo(
+    () => filteredPendingAnnulments.reduce(
+      (total, item) => total + Math.max(0, numberValue(item.valorDescuento)),
+      0
+    ),
+    [filteredPendingAnnulments]
+  );
   const applyViewFilters = (view: "recibidos" | "pendientes") => {
     const draft = view === "recibidos" ? receivedDraft : pendingDraft;
     if (draft.start && draft.end && draft.start > draft.end) {
@@ -1167,7 +1317,12 @@ export default function AllyPaymentsConsole({
                   <span className={styles.readyCount}>{formatNumber(adjustedPreviewSummary?.total?.numeroCreditos)} créditos</span>
                   {adjustmentState.adjustments.length > 0 ? (
                     <Badge tone="positive">
-                      {formatNumber(adjustmentState.adjustments.length)} ajustes
+                      {formatNumber(adjustmentState.adjustments.length)} tasas modificadas
+                    </Badge>
+                  ) : null}
+                  {previewAnnulmentAdjustments.length > 0 ? (
+                    <Badge tone="danger">
+                      {formatNumber(previewAnnulmentAdjustments.length)} créditos anulados
                     </Badge>
                   ) : null}
                   {Object.keys(intermediationValues).length > 0 ? (
@@ -1190,12 +1345,19 @@ export default function AllyPaymentsConsole({
               <SettlementSummary summary={adjustedPreviewSummary}
                 totalPagarCreditos={previewGrossTotal}
                 totalRecaudosAliado={previewCollectionsTotal}
+                totalAjustesAnulacion={previewAnnulmentTotal}
               />
               <SettlementCreditItems
                 key={preview.previewToken || preview.token || "preview"}
                 items={adjustedPreviewItems}
                 intermediationEditor={intermediationEditor}
               />
+              {previewAnnulmentAdjustments.length > 0 ? (
+                <AnnulmentAdjustmentItems
+                  items={previewAnnulmentAdjustments}
+                  emptyDescription="No se encontraron créditos pagados y anulados pendientes de descuento dentro del período."
+                />
+              ) : null}
               <details className={styles.previewCollections}>
                 <summary><WalletCards size={18} aria-hidden="true" />Recaudos del aliado <span className={styles.countBadge}>{formatNumber(previewCollections.length)}</span><span className={styles.collectionsTotal}>{formatMoney(previewCollectionsTotal)}</span><ChevronRight size={18} aria-hidden="true" /></summary>
                 <CollectionItems items={previewCollections} emptyDescription="No se encontraron recaudos recibidos por sedes de este aliado dentro del período." />
@@ -1259,7 +1421,7 @@ export default function AllyPaymentsConsole({
             <EmptyState
               className="mt-4"
                title="No hay movimientos para conciliar en este periodo"
-               description="Amplia el periodo o selecciona otro aliado. Los creditos y recaudos posteriores permaneceran pendientes automaticamente."
+               description="Amplía el período o selecciona otro aliado. Los créditos, recaudos y anulaciones posteriores permanecerán pendientes automáticamente."
             />
           ) : null}
         </div>
@@ -1286,8 +1448,14 @@ export default function AllyPaymentsConsole({
         <div id="ally-payments-pending-panel" role="tabpanel" aria-labelledby="ally-payments-pending-tab">
           <PaymentViewFilters pending filters={pendingDraft} onChange={setPendingDraft} allies={allies} adminCentral={adminCentral} onApply={() => applyViewFilters("pendientes")} onClear={() => { const empty = emptyAllyPaymentViewFilters(); setPendingDraft(empty); setPendingFilters(empty); setNotice(null); }} />
           <PendingPaymentsView items={filteredPendingItems} summary={filteredPendingSummary} platform={pendingFilters.platform} platformCounts={pendingCounts}
+            annulmentCount={filteredPendingAnnulments.length}
+            annulmentTotal={filteredPendingAnnulmentTotal}
             onPlatformChange={platform => { const value = platform === "ANDROID" || platform === "IPHONE" ? platform : "ALL"; setPendingFilters(current => ({ ...current, platform: value })); setPendingDraft(current => ({ ...current, platform: value })); }}
             onReviewCollections={() => { setShowPendingCollections(true); requestAnimationFrame(() => collectionsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }} />
+          <AnnulmentAdjustmentItems
+            items={filteredPendingAnnulments}
+            emptyDescription="No existen créditos anulados pendientes de descuento con los filtros aplicados."
+          />
           {showPendingCollections && <section className={styles.collections} ref={collectionsSectionRef} aria-label="Recaudos pendientes de liquidar">
             <div className={styles.collectionHeader}>
               <div><h2>Recaudos pendientes de liquidar</h2><p>Se filtran por fecha de abono. Se descontarán al conciliar la liquidación.</p></div>
@@ -1307,6 +1475,9 @@ export default function AllyPaymentsConsole({
           items={settlementItems(selectedSettlement)}
           collectionCount={collectionItems(selectedSettlement).length}
           collectionDetail={<CollectionItems items={collectionItems(selectedSettlement)} emptyDescription="Sin recaudos asociados" />}
+          annulmentCount={annulmentAdjustmentItems(selectedSettlement).length}
+          annulmentTotal={totalAnnulmentAdjustments(selectedSettlement)}
+          annulmentDetail={<AnnulmentAdjustmentItems items={annulmentAdjustmentItems(selectedSettlement)} emptyDescription="Sin créditos anulados asociados" />}
           onPrint={() => openSettlementPdf(selectedSettlement.id)}
           onDownload={() => downloadSettlementPdf(selectedSettlement.id)}
           onClose={closeHistoricalDetail}
@@ -1317,7 +1488,7 @@ export default function AllyPaymentsConsole({
         title={previewIsConsignment ? "Confirmar consignacion del aliado" : "Confirmar liquidacion"}
         description={`Se registrara ${previewIsConsignment ? "una consignacion de" : previewIsZero ? "una conciliacion en cero para" : "un pago a"} ${effectiveAllyName}${previewIsZero ? "" : ` por ${formatMoney(previewTotal)}`}, correspondiente al periodo ${formatDate(fechaInicio)} al ${formatDate(
           fechaFin
-        )}. ${supportLabel}: ${approvalNumber.trim() || "-"}. Se conciliarán ${formatMoney(previewGrossTotal)} por créditos menos ${formatMoney(previewCollectionsTotal)} en recaudos. ${
+        )}. ${supportLabel}: ${approvalNumber.trim() || "-"}. Se conciliarán ${formatMoney(previewGrossTotal)} por créditos menos ${formatMoney(previewCollectionsTotal)} en recaudos y ${formatMoney(previewAnnulmentTotal)} por créditos anulados. ${
           adjustmentState.adjustments.length
             ? `${adjustmentState.adjustments.length} venta(s) con intermediacion ajustada.`
             : "Sin ajustes manuales de intermediacion."

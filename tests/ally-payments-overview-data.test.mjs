@@ -26,6 +26,15 @@ const allies = load("lib/aliados.ts");
 const importFlags = load("lib/credit-import-flags.ts");
 const approval = load("lib/credit-approval-policy.ts", { "./credit-import-flags": importFlags });
 const eligibility = load("lib/ally-payment-eligibility.ts", { "./ally-payments-core": core, "./credit-approval-policy": approval });
+const annulments = {
+  loadPendingAllyPaymentAnnulmentAdjustments: async () => [],
+  lockAllyPaymentAlly: async () => {},
+  serializeStoredAllyPaymentAnnulmentAdjustment: item => item,
+  totalAllyPaymentAnnulmentAdjustments: items => items.reduce(
+    (total, item) => Number((total + Number(item.valorDescuento || 0)).toFixed(2)),
+    0
+  ),
+};
 
 function settled(id, overrides = {}) {
   return {
@@ -34,6 +43,7 @@ function settled(id, overrides = {}) {
     numeroAprobacionBancaria: "0000-" + id, estado: "PAGADA", numeroCreditos: 1,
     totalValorVenta: "1000.25", totalCreditoAutorizado: "800.25", totalCuotaInicial: "200.00",
     totalIntermediacion: "80.03", totalPagar: "720.22", totalRecaudosAliado: "120.09",
+    numeroAjustesAnulacion: 0, totalAjustesAnulacion: "0.00",
     saldoNeto: "600.13", direccionSaldo: "PAGO_ALIADO", registradoPorNombre: "Usuario histórico QA",
     pagadoAt: new Date("2026-10-07T04:30:00Z"), createdAt: new Date("2026-10-07T04:30:00Z"),
     creditos: [{
@@ -48,6 +58,7 @@ function settled(id, overrides = {}) {
       folio: "0000-F-" + id, clienteNombre: "Cliente histórico QA", clienteDocumento: "001234567890",
       sedeNombre: "Sede congelada QA", metodoPago: "EFECTIVO", valor: "120.09",
     }],
+    ajustesAnulacion: [],
     ...overrides,
   };
 }
@@ -84,6 +95,7 @@ function harness({ history = [], credits = [], collections = [] } = {}) {
   const storage = load("lib/ally-payments.ts", {
     "server-only": {}, "node:crypto": crypto, "@/lib/aliados": allies, "@/lib/ally-payments-core": core,
     "@/lib/colombia-date": dates, "@/lib/ally-payment-eligibility": eligibility,
+    "@/lib/ally-payment-annulments": annulments,
     "@/lib/credit-ally-payment-exclusion-storage": { ensureCreditAllyPaymentExclusionSchema: async () => {} },
     "@/lib/datacredito/database-errors": { isDataCreditoUniqueViolation: () => false },
     "@/lib/prisma": { default: database },

@@ -14,6 +14,8 @@ type SummaryBucket = {
   totalPagar?: number | null;
   totalPagarCreditos?: number | null;
   totalRecaudosAliado?: number | null;
+  numeroAjustesAnulacion?: number | null;
+  totalAjustesAnulacion?: number | null;
   saldoNeto?: number | null;
   valorVenta?: number | null;
   creditoAutorizado?: number | null;
@@ -39,6 +41,8 @@ export type ReceivedPaymentViewItem = {
   totalCuotaInicial?: number | null;
   totalIntermediacion?: number | null;
   totalRecaudosAliado?: number | null;
+  numeroAjustesAnulacion?: number | null;
+  totalAjustesAnulacion?: number | null;
   totalPagar?: number | null;
   saldoNeto?: number | null;
   numeroAprobacionBancaria?: string | null;
@@ -195,6 +199,7 @@ export function ReceivedPaymentsView<T extends ReceivedPaymentViewItem>({
                 <th>Período</th><th>Aliado</th><th className={styles.numeric}>Créditos</th>
                 <th className={styles.numeric}>Crédito autorizado</th><th className={styles.numeric}>Inicial</th>
                 <th className={styles.numeric}>Intermediación</th><th className={styles.numeric}>Recaudos</th>
+                <th className={styles.numeric}>Créditos anulados</th>
                 <th className={styles.numeric}>Resultado neto</th><th>Aprobación</th><th>Registro</th><th className={styles.detailHeading}>Detalle</th>
               </tr></thead>
               <tbody>{pagination.rows.map((item) => {
@@ -210,6 +215,7 @@ export function ReceivedPaymentsView<T extends ReceivedPaymentViewItem>({
                   <td className={styles.numeric}>{amount(item.totalCuotaInicial ?? stored?.totalCuotaInicial ?? stored?.cuotaInicial)}</td>
                   <td className={styles.numeric}>{amount(item.totalIntermediacion ?? stored?.totalIntermediacion ?? stored?.valorIntermediacion)}</td>
                   <td className={styles.numeric}>{amount(item.totalRecaudosAliado ?? stored?.totalRecaudosAliado)}</td>
+                  <td className={`${styles.numeric} ${styles.annulmentAmount}`}>{Number(item.totalAjustesAnulacion ?? stored?.totalAjustesAnulacion) > 0 ? `− ${amount(item.totalAjustesAnulacion ?? stored?.totalAjustesAnulacion)}` : amount(0)}{Number(item.numeroAjustesAnulacion ?? stored?.numeroAjustesAnulacion) > 0 ? <small>{count(item.numeroAjustesAnulacion ?? stored?.numeroAjustesAnulacion)} anulados</small> : null}</td>
                   <td className={`${styles.numeric} ${styles.net}`}><strong>{amount(Math.abs(net))}</strong><small className={net < 0 ? styles.consignation : undefined}>{net < 0 ? "Consignación del aliado" : net > 0 ? "Pago al aliado" : "Saldo cero"}</small></td>
                   <td className={styles.approval}>{item.numeroAprobacionBancaria || "—"}</td>
                   <td className={styles.registration}><span>{item.registradoPorNombre || "—"}</span><small>{date(recordedAt)}{time(recordedAt) ? `, ${time(recordedAt)}` : ""}</small></td>
@@ -230,12 +236,15 @@ export function PlatformIcon({ platform }: { platform: "ANDROID" | "IPHONE" }) {
 }
 
 export function PendingPaymentsView({
-  items, summary, platform, platformCounts, onPlatformChange, onReviewCollections,
+  items, summary, platform, platformCounts, annulmentCount, annulmentTotal,
+  onPlatformChange, onReviewCollections,
 }: {
   items: PendingPaymentViewItem[];
   summary: AllyPaymentViewSummary | null | undefined;
   platform: string;
   platformCounts: { all: number; IPHONE: number; ANDROID: number };
+  annulmentCount: number;
+  annulmentTotal: number;
   onPlatformChange: (value: string) => void;
   onReviewCollections: () => void;
 }) {
@@ -251,7 +260,7 @@ export function PendingPaymentsView({
     <section className={styles.pendingView}>
       <div className={styles.summaryStripe}>
         <dl className={styles.summaryMetrics}>{metrics.map((metric) => <div key={metric.label}><dt>{metric.label}</dt><dd>{amount(metric.value)}</dd></div>)}</dl>
-        <div className={styles.pendingTotal}><span>Por créditos pendientes</span><strong>{amount(total?.totalPagarCreditos ?? total?.totalPagar ?? total?.valorPagar)}</strong><small>Antes de descontar recaudos del aliado.</small></div>
+        <div className={styles.pendingTotal}><span>Por créditos pendientes</span><strong>{amount(total?.totalPagarCreditos ?? total?.totalPagar ?? total?.valorPagar)}</strong>{annulmentCount > 0 ? <small className={styles.pendingAnnulments}>− {amount(annulmentTotal)} por {count(annulmentCount)} crédito{annulmentCount === 1 ? "" : "s"} anulado{annulmentCount === 1 ? "" : "s"}</small> : null}<small>Antes de descontar recaudos y créditos anulados.</small></div>
       </div>
       <div className={styles.platformSummary}>{(["ANDROID", "IPHONE"] as const).map((key) => {
         const bucket = summary?.[key];

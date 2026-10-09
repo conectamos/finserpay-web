@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   allyPaymentColombiaDate,
   emptyAllyPaymentViewFilters,
+  filterPendingAllyAnnulmentAdjustments,
   filterPendingAllyCollections,
   filterPendingAllyCredits,
   filterReceivedAllyPayments,
@@ -98,6 +99,33 @@ test("recaudos se filtra con metadata propia aunque el crédito ya haya sido liq
   assert.deepEqual(ids(filterPendingAllyCollections(rows, filters({ search: "leonel" }))), [1]);
   assert.deepEqual(ids(filterPendingAllyCollections(rows, filters({ platform: "ANDROID" }))), [2, 3]);
   assert.equal(filterPendingAllyCollections(rows, filters()).length, 4);
+});
+
+test("ajustes por anulacion se filtran por aliado, fecha, plataforma e identificadores", () => {
+  const rows = [
+    {
+      id: 1, aliadoId: 7, aliado: { id: 7, nombre: "Aliado QA" },
+      fechaAnulacion: "2026-10-09T04:59:59Z", plataforma: "IPHONE",
+      numeroCreditoVisible: "QA-ANULADO-001", folio: "FOLIO-INTERNO-1",
+      clienteNombre: "Crédito Anulado", clienteDocumento: "001234567890",
+      imei: "000012345678901", motivo: "Solicitud aprobada", liquidacionOrigenId: 41,
+    },
+    {
+      id: 2, aliadoId: 8, aliado: { id: 8, nombre: "Otro aliado" },
+      fechaAnulacion: "2026-10-09T05:00:00Z", plataforma: "ANDROID",
+      numeroCreditoVisible: "36555941", clienteDocumento: "001234567891",
+      imei: "000098765432102", liquidacionOrigenId: 42,
+    },
+  ];
+
+  assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({
+    allyId: "7", platform: "IPHONE", start: "2026-10-08", end: "2026-10-08",
+  }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ search: "QA-ANULADO-001" }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ search: "001.234.567.890" }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ search: "000098765432102" }))), [2]);
+  assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ search: "LA-41" }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ platform: "ANDROID" }))), [2]);
 });
 
 test("todos los resultados filtrados conservan cantidades y montos antes de la paginación, incluido cada tipo de equipo", () => {

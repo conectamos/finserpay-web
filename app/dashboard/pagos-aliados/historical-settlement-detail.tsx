@@ -105,12 +105,15 @@ function SavedCreditTable({ items }: { items: PaymentCreditItem[] }) {
   );
 }
 
-export default function HistoricalSettlementDetail({ settlement, summary, items, collectionCount, collectionDetail, onPrint, onDownload, onClose }: {
+export default function HistoricalSettlementDetail({ settlement, summary, items, collectionCount, collectionDetail, annulmentCount, annulmentTotal, annulmentDetail, onPrint, onDownload, onClose }: {
   settlement: Settlement;
   summary: PaymentSummary | null;
   items: PaymentCreditItem[];
   collectionCount: number;
   collectionDetail: ReactNode;
+  annulmentCount: number;
+  annulmentTotal: number;
+  annulmentDetail: ReactNode;
   onPrint: () => void;
   onDownload: () => void;
   onClose: () => void;
@@ -140,9 +143,10 @@ export default function HistoricalSettlementDetail({ settlement, summary, items,
       <section className={styles.summary} aria-label="Resumen de liquidación guardada">
         <SavedProductSummary platform="IPHONE" bucket={summary?.IPHONE} />
         <SavedProductSummary platform="ANDROID" bucket={summary?.ANDROID} />
-        <Card className={styles.netCard}><h2>{title}</h2><strong className={styles.netAmount}>{formatMoney(Math.abs(net))}</strong><div className={`${styles.result} ${annulled ? styles.annulled : ""}`}><CheckCircle2 size={32} aria-hidden="true" /><span>{result}</span></div><dl><div><dt>Valor por créditos</dt><dd>{formatMoney(creditsTotal)}</dd></div><div><dt>Recaudos del aliado</dt><dd>− {formatMoney(collectionsTotal)}</dd></div></dl></Card>
+        <Card className={styles.netCard}><h2>{title}</h2><strong className={styles.netAmount}>{formatMoney(Math.abs(net))}</strong><div className={`${styles.result} ${annulled ? styles.annulled : ""}`}><CheckCircle2 size={32} aria-hidden="true" /><span>{result}</span></div><dl><div><dt>Valor por créditos</dt><dd>{formatMoney(creditsTotal)}</dd></div><div><dt>Recaudos del aliado</dt><dd>− {formatMoney(collectionsTotal)}</dd></div><div className={styles.annulmentBreakdown}><dt>Créditos anulados</dt><dd>− {formatMoney(annulmentTotal)}</dd></div></dl></Card>
       </section>
       <SavedCreditTable key={String(settlement.id)} items={items} />
+      {annulmentCount > 0 ? annulmentDetail : null}
       {collectionCount ? <details className={styles.collections}>
         <summary><Database size={25} aria-hidden="true" /><strong>Recaudos del aliado</strong><span className={styles.countBadge}>{formatNumber(collectionCount)} recaudos</span><span className={styles.collectionValue}>{formatMoney(collectionsTotal)}</span><ChevronRight size={18} aria-hidden="true" /></summary>
         <div className={styles.collectionDetail}>{collectionDetail}</div>

@@ -20,11 +20,19 @@ import {
 } from "@/lib/ally-payments-core";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { buildAllyPaymentEligibilityQuery } from "@/lib/ally-payment-eligibility";
+import {
+  loadPendingAllyPaymentAnnulmentAdjustments,
+  lockAllyPaymentAlly,
+  serializeStoredAllyPaymentAnnulmentAdjustment,
+  totalAllyPaymentAnnulmentAdjustments,
+  type AllyPaymentAnnulmentAdjustmentLine,
+} from "@/lib/ally-payment-annulments";
 import { ensureCreditAllyPaymentExclusionSchema } from "@/lib/credit-ally-payment-exclusion-storage";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
 
-const PAYMENT_CALCULATION_VERSION = "ALLY_INTERMEDIATION_COLLECTIONS_V1";
+const PAYMENT_CALCULATION_VERSION =
+  "ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_V2";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH_PATTERN = /^[0-9a-f]{64}$/i;
@@ -122,6 +130,9 @@ export type AllyPaymentCollectionLine = {
   valor: number;
   estado: "PENDIENTE_DESCUENTO" | "DESCONTADO";
 };
+
+export type AllyPaymentAnnulmentAdjustment =
+  AllyPaymentAnnulmentAdjustmentLine;
 
 export type AllyPaymentSummaryPayload = {
   ANDROID: ReturnType<typeof serializeSummaryBucket>;
@@ -473,6 +484,12 @@ const SETTLEMENT_INCLUDE = {
   recaudos: {
     orderBy: [{ fechaAbono: "asc" }, { id: "asc" }],
   },
+  ajustesAnulacion: {
+    orderBy: [{ id: "asc" }],
+    include: {
+      ajuste: true,
+    },
+  },
 } satisfies Prisma.LiquidacionAliadoInclude;
 
 type StoredSettlement = Prisma.LiquidacionAliadoGetPayload<{
@@ -487,7 +504,8 @@ function previewFingerprint(
   allyId: number,
   period: ReturnType<typeof resolveColombiaPaymentPeriod>,
   lines: readonly AllyPaymentLine[],
-  collections: readonly AllyPaymentCollectionLine[]
+  collections: readonly AllyPaymentCollectionLine[],
+  annulmentAdjustments: readonly AllyPaymentAnnulmentAdjustmentLine[]
 ) {
   return sha256({
     version: PAYMENT_CALCULATION_VERSION,
@@ -518,6 +536,16 @@ function previewFingerprint(
       fechaAbono: item.fechaAbono,
       metodoPago: item.metodoPago,
       valor: item.valor,
+    })),
+    ajustesAnulacion: annulmentAdjustments.map((item) => ({
+      ajusteId: item.ajusteId,
+      creditoId: item.creditoId,
+      fechaAnulacion: item.fechaAnulacion,
+      fechaAnulacionFuente: item.fechaAnulacionFuente,
+      sedeId: item.sedeId,
+      liquidacionOrigenId: item.liquidacionOrigenId,
+      valorDescuento: item.valorDescuento,
+      motivo: item.motivo,
     })),
   });
 }
@@ -591,13 +619,21 @@ function serializeSettlement(settlement: StoredSettlement) {
     serializeStoredLine(detail, settlement.aliado)
   );
   const recaudos = settlement.recaudos.map(serializeStoredCollection);
+  const ajustesAnulacion = (settlement.ajustesAnulacion || []).map(
+    serializeStoredAllyPaymentAnnulmentAdjustment
+  );
   const totalPagarCreditos = Number(settlement.totalPagar);
   const totalRecaudosAliado = settlement.totalRecaudosAliado == null
     ? 0
     : Number(settlement.totalRecaudosAliado);
+  const totalAjustesAnulacion = Number(
+    settlement.totalAjustesAnulacion ??
+      totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
+  );
   const balance = calculateAllySettlementBalance(
     totalPagarCreditos,
-    totalRecaudosAliado
+    totalRecaudosAliado,
+    totalAjustesAnulacion
   );
   const saldoNeto = settlement.saldoNeto == null
     ? balance.saldoNeto
@@ -620,6 +656,8 @@ function serializeSettlement(settlement: StoredSettlement) {
     totalPagar: Number(settlement.totalPagar),
     totalPagarCreditos,
     totalRecaudosAliado,
+    numeroAjustesAnulacion: settlement.numeroAjustesAnulacion,
+    totalAjustesAnulacion,
     saldoNeto,
     direccionSaldo,
     valorPagarAliado: Math.max(saldoNeto, 0),
@@ -631,6 +669,7 @@ function serializeSettlement(settlement: StoredSettlement) {
     summary: serializeSummary(summarizeAllyPayments(items)),
     items,
     recaudos,
+    ajustesAnulacion,
   };
 }
 
@@ -694,19 +733,23 @@ export async function listAllyPaymentPending(input: {
   allyId: number | null;
 }) {
   const allyId = input.allyId === null ? null : positiveId(input.allyId, "El aliado");
-  const [items, recaudos] = await Promise.all([
+  const [items, recaudos, ajustesAnulacion] = await Promise.all([
     loadEligibleLines(prisma, { allyId }),
     loadEligibleCollections(prisma, { allyId }),
+    loadPendingAllyPaymentAnnulmentAdjustments(prisma, { allyId }),
   ]);
   const summary = serializeSummary(summarizeAllyPayments(items));
   const balance = calculateAllySettlementBalance(
     summary.total.totalPagar,
-    totalCollections(recaudos)
+    totalCollections(recaudos),
+    totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
   );
 
   return {
     items,
     recaudos,
+    ajustesAnulacion,
+    numeroAjustesAnulacion: ajustesAnulacion.length,
     summary,
     ...balance,
   };
@@ -720,7 +763,7 @@ export async function getAllyPaymentPreview(input: {
   const allyId = positiveId(input.allyId, "El aliado");
   const period = parsePaymentPeriod(input.startDate, input.endDate);
   const ally = await requirePayableAlly(prisma, allyId);
-  const [items, recaudos] = await Promise.all([
+  const [items, recaudos, ajustesAnulacion] = await Promise.all([
     loadEligibleLines(prisma, {
       allyId,
       start: period.start,
@@ -731,15 +774,27 @@ export async function getAllyPaymentPreview(input: {
       start: period.start,
       endExclusive: period.endExclusive,
     }),
+    loadPendingAllyPaymentAnnulmentAdjustments(prisma, {
+      allyId,
+      start: period.start,
+      endExclusive: period.endExclusive,
+    }),
   ]);
   const summary = serializeSummary(summarizeAllyPayments(items));
   const balance = calculateAllySettlementBalance(
     summary.total.totalPagar,
-    totalCollections(recaudos)
+    totalCollections(recaudos),
+    totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
   );
 
   return {
-    token: previewFingerprint(allyId, period, items, recaudos),
+    token: previewFingerprint(
+      allyId,
+      period,
+      items,
+      recaudos,
+      ajustesAnulacion
+    ),
     aliado: {
       id: ally.id,
       nombre: ally.nombre,
@@ -748,6 +803,8 @@ export async function getAllyPaymentPreview(input: {
     periodoFin: period.endDate,
     items,
     recaudos,
+    ajustesAnulacion,
+    numeroAjustesAnulacion: ajustesAnulacion.length,
     summary,
     ...balance,
   };
@@ -897,10 +954,7 @@ export async function createAllyPayment(input: {
           };
         }
 
-        await tx.$executeRawUnsafe(
-          "SELECT pg_advisory_xact_lock(hashtext($1))",
-          "ALLY_PAYMENT_ALLY:" + allyId
-        );
+        await lockAllyPaymentAlly(tx, allyId);
         const ally = await requirePayableAlly(tx, allyId);
         const approvalAlreadyUsed = await tx.liquidacionAliado.findUnique({
           where: {
@@ -928,19 +982,32 @@ export async function createAllyPayment(input: {
           endExclusive: period.endExclusive,
           lock: true,
         });
+        const ajustesAnulacion =
+          await loadPendingAllyPaymentAnnulmentAdjustments(tx, {
+            allyId,
+            start: period.start,
+            endExclusive: period.endExclusive,
+            lock: true,
+          });
 
-        if (!items.length && !recaudos.length) {
+        if (!items.length && !recaudos.length && !ajustesAnulacion.length) {
           throw new AllyPaymentConflictError(
             "ALLY_PAYMENT_EMPTY",
-            "Ya no hay creditos ni recaudos pendientes para el aliado y periodo seleccionados."
+            "Ya no hay creditos, recaudos ni ajustes pendientes para el aliado y periodo seleccionados."
           );
         }
 
-        const currentPreviewToken = previewFingerprint(allyId, period, items, recaudos);
+        const currentPreviewToken = previewFingerprint(
+          allyId,
+          period,
+          items,
+          recaudos,
+          ajustesAnulacion
+        );
         if (currentPreviewToken !== previewToken) {
           throw new AllyPaymentConflictError(
             "ALLY_PAYMENT_PREVIEW_CHANGED",
-            "Los creditos, recaudos o porcentajes cambiaron. Actualiza la previsualizacion antes de registrar."
+            "Los creditos, recaudos, ajustes por anulacion o porcentajes cambiaron. Actualiza la previsualizacion antes de registrar."
           );
         }
 
@@ -948,7 +1015,8 @@ export async function createAllyPayment(input: {
         const summary = summarizeAllyPayments(payableItems);
         const balance = calculateAllySettlementBalance(
           summary.total.valorPagar,
-          totalCollections(recaudos)
+          totalCollections(recaudos),
+          totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
         );
         const created = await tx.liquidacionAliado.create({
           data: {
@@ -970,6 +1038,10 @@ export async function createAllyPayment(input: {
             ),
             totalPagar: moneyForDatabase(summary.total.valorPagar),
             totalRecaudosAliado: moneyForDatabase(balance.totalRecaudosAliado),
+            numeroAjustesAnulacion: ajustesAnulacion.length,
+            totalAjustesAnulacion: moneyForDatabase(
+              balance.totalAjustesAnulacion
+            ),
             saldoNeto: moneyForDatabase(balance.saldoNeto),
             direccionSaldo: balance.direccionSaldo,
             registradoPorNombre: actorName,
@@ -1013,6 +1085,13 @@ export async function createAllyPayment(input: {
                 estado: "DESCONTADO",
               })),
             } } : {}),
+            ...(ajustesAnulacion.length ? { ajustesAnulacion: {
+              create: ajustesAnulacion.map((item) => ({
+                valorDescuento: moneyForDatabase(item.valorDescuento),
+                estado: "DESCONTADO",
+                ajuste: { connect: { id: item.ajusteId } },
+              })),
+            } } : {}),
           },
           include: SETTLEMENT_INCLUDE,
         });
@@ -1039,7 +1118,7 @@ export async function createAllyPayment(input: {
     if (isDataCreditoUniqueViolation(error)) {
       throw new AllyPaymentConflictError(
         "ALLY_PAYMENT_DUPLICATE",
-        "La liquidacion, el soporte, alguno de sus creditos o recaudos ya fue registrado."
+        "La liquidacion, el soporte, alguno de sus creditos, recaudos o ajustes por anulacion ya fue registrado."
       );
     }
 

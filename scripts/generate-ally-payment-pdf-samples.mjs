@@ -33,9 +33,10 @@ function line(index, platform, percentage, overrides = {}) {
   };
 }
 
-function settlement({ id, allyName, lines, collections = [], approval }) {
+function settlement({ id, allyName, lines, collections = [], annulmentAdjustments = [], approval }) {
   const total = (key) => lines.reduce((sum, item) => sum + item[key], 0);
   const totalAllyCollections = collections.reduce((sum, item) => sum + item.value, 0);
+  const totalAnnulmentAdjustments = annulmentAdjustments.reduce((sum, item) => sum + item.discountValue, 0);
   const totalPayable = total("payableValue");
   const bucket = (platform) => {
     const items = lines.filter((item) => item.platform === platform);
@@ -62,11 +63,13 @@ function settlement({ id, allyName, lines, collections = [], approval }) {
     totalIntermediation: total("intermediationValue"),
     totalPayable,
     totalAllyCollections,
-    netBalance: totalPayable - totalAllyCollections,
-    balanceDirection: totalPayable >= totalAllyCollections ? "PAGO_ALIADO" : "CONSIGNACION_ALIADO",
+    totalAnnulmentAdjustments,
+    netBalance: totalPayable - totalAllyCollections - totalAnnulmentAdjustments,
+    balanceDirection: totalPayable >= totalAllyCollections + totalAnnulmentAdjustments ? "PAGO_ALIADO" : "CONSIGNACION_ALIADO",
     platformSummary: { ANDROID: bucket("ANDROID"), IPHONE: bucket("IPHONE") },
     lines,
     collections,
+    annulmentAdjustments,
   };
 }
 
@@ -108,6 +111,25 @@ const collections = [
     status: "DESCONTADO",
   },
 ];
+const annulmentAdjustments = [
+  {
+    adjustmentId: 301,
+    creditId: 91_001,
+    annulledAt: "2026-09-26T18:10:00.000Z",
+    folio: "QA-ANULADO-001",
+    visibleCreditNumber: "QA-ANULADO-001",
+    clientName: "Cliente anulación demostración",
+    clientDocument: "1032458799",
+    equipment: "iPhone 16 Pro 256 GB",
+    imei: "359876543219999",
+    platform: "IPHONE",
+    siteName: "Sede Norte",
+    sourceSettlementId: 188,
+    discountValue: 2_430_000,
+    reason: "Anulación aprobada después del pago al aliado",
+    status: "DESCONTADO",
+  },
+];
 
 await mkdir(outputDir, { recursive: true });
 const outputs = [
@@ -117,7 +139,7 @@ const outputs = [
   ],
   [
     "comprobante-liquidacion-aliado-varios-creditos.pdf",
-    settlement({ id: 202, allyName: "Aliado demostración multipágina", lines: manyLines, collections, approval: "APR-DEMO-202" }),
+    settlement({ id: 202, allyName: "Aliado demostración multipágina", lines: manyLines, collections, annulmentAdjustments, approval: "APR-DEMO-202" }),
   ],
 ];
 

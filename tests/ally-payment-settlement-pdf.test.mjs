@@ -77,6 +77,7 @@ test("genera el comprobante horizontal de un crédito y oculta la plataforma vac
     totalIntermediation: line.intermediationValue,
     totalPayable: line.payableValue,
     totalAllyCollections: 0,
+    totalAnnulmentAdjustments: 0,
     netBalance: 2_852_000,
     balanceDirection: "PAGO_ALIADO",
     platformSummary: {
@@ -85,6 +86,7 @@ test("genera el comprobante horizontal de un crédito y oculta la plataforma vac
     },
     lines: [line],
     collections: [],
+    annulmentAdjustments: [],
   });
 
   const pages = await pdfPagesText(pdf);
@@ -120,6 +122,7 @@ test("genera un comprobante PDF multipagina desde el snapshot pagado", async () 
     totalIntermediation: total("intermediationValue"),
     totalPayable: total("payableValue"),
     totalAllyCollections: 350_000,
+    totalAnnulmentAdjustments: 0,
     netBalance: total("payableValue") - 350_000,
     balanceDirection: "PAGO_ALIADO",
     platformSummary: {
@@ -148,6 +151,7 @@ test("genera un comprobante PDF multipagina desde el snapshot pagado", async () 
         status: "DESCONTADO",
       },
     ],
+    annulmentAdjustments: [],
   });
 
   assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");
@@ -186,6 +190,7 @@ test("rechaza un comprobante cuyos totales financieros no cuadran", async () => 
       totalIntermediation: line.intermediationValue,
       totalPayable: line.payableValue,
       totalAllyCollections: 0,
+      totalAnnulmentAdjustments: 0,
       netBalance: line.payableValue + 100,
       balanceDirection: "PAGO_ALIADO",
       platformSummary: {
@@ -194,16 +199,18 @@ test("rechaza un comprobante cuyos totales financieros no cuadran", async () => 
       },
       lines: [line],
       collections: [],
+      annulmentAdjustments: [],
     }),
     /no cuadra en saldo neto/
   );
 });
 
-function savedSnapshot(lines, collections = []) {
+function savedSnapshot(lines, collections = [], annulmentAdjustments = []) {
   const total = (items, field) => items.reduce((sum, item) => sum + Math.round(item[field] * 100), 0) / 100;
   const totalPayable = total(lines, "payableValue");
   const totalAllyCollections = total(collections, "value");
-  const netBalance = Math.round((totalPayable - totalAllyCollections) * 100) / 100;
+  const totalAnnulmentAdjustments = total(annulmentAdjustments, "discountValue");
+  const netBalance = Math.round((totalPayable - totalAllyCollections - totalAnnulmentAdjustments) * 100) / 100;
   const bucket = platform => {
     const items = lines.filter(item => item.platform === platform);
     const percentages = [...new Set(items.map(item => item.intermediationPercentage))];
@@ -229,11 +236,13 @@ function savedSnapshot(lines, collections = []) {
     totalIntermediation: total(lines, "intermediationValue"),
     totalPayable,
     totalAllyCollections,
+    totalAnnulmentAdjustments,
     netBalance,
     balanceDirection: netBalance < 0 ? "CONSIGNACION_ALIADO" : netBalance > 0 ? "PAGO_ALIADO" : "SIN_SALDO",
     platformSummary: { ANDROID: bucket("ANDROID"), IPHONE: bucket("IPHONE") },
     lines,
     collections,
+    annulmentAdjustments,
   };
 }
 
@@ -265,6 +274,59 @@ function savedCollection(index, value = 12.34) {
     status: "DESCONTADO",
   };
 }
+
+function savedAnnulment(index, value = 2_430_000) {
+  return {
+    adjustmentId: 7_000 + index,
+    creditId: 91_000 + index,
+    annulledAt: "2026-10-09T14:30:00.000Z",
+    folio: `FOLIO-ANULADO-${index}`,
+    visibleCreditNumber: `QA-ANULADO-${String(index + 1).padStart(3, "0")}`,
+    clientName: `Cliente anulado QA ${index + 1}`,
+    clientDocument: `0012345678${String(index).padStart(2, "0")}`,
+    equipment: `Equipo previamente pagado ${index + 1}`,
+    imei: `000099887766${String(index).padStart(3, "0")}`,
+    platform: index % 2 ? "ANDROID" : "IPHONE",
+    siteName: "Sede histórica QA",
+    sourceSettlementId: 440 + index,
+    discountValue: value,
+    reason: "Anulación aprobada después del pago al aliado",
+    status: "DESCONTADO",
+  };
+}
+
+test("el PDF muestra en rojo conceptual una liquidación compuesta solo por créditos anulados", async () => {
+  const adjustment = savedAnnulment(0);
+  const input = savedSnapshot([], [], [adjustment]);
+  assert.equal(input.netBalance, -2_430_000);
+  assert.equal(input.balanceDirection, "CONSIGNACION_ALIADO");
+
+  const pages = await pdfPagesText(await buildAllyPaymentSettlementPdf(input));
+  const text = pages.join(" ");
+  assert.match(pages[0], /Total a consignar por el aliado/);
+  assert.match(pages[0], /Créditos anulados/);
+  assert.doesNotMatch(pages[0], /Intermediación \(mixta\)/);
+  assert.doesNotMatch(pages[0], /Detalle por crédito/);
+  assert.match(text, /Descuentos por créditos anulados/);
+  assert.match(text, /QA-ANULADO-001/);
+  assert.match(text, /LA-440/);
+  assert.match(text, /2\.430\.000/);
+  assert.match(text, /DESCONTADO/);
+});
+
+test("el PDF pagina todos los descuentos por anulaciones y repite sus encabezados", async () => {
+  const adjustments = Array.from({ length: 17 }, (_, index) => savedAnnulment(index, 10_000 + index));
+  const pages = await pdfPagesText(await buildAllyPaymentSettlementPdf(savedSnapshot([], [], adjustments)));
+  const adjustmentPages = pages.filter(page => /Descuentos por créditos anulados/.test(page));
+  assert.ok(adjustmentPages.length >= 2);
+  adjustmentPages.forEach(page => {
+    assert.match(page, /Fecha anulación/);
+    assert.match(page, /Liq\. original/);
+    assert.match(page, /Descuento/);
+  });
+  const text = pages.join(" ");
+  adjustments.forEach(item => assert.match(text, new RegExp(item.visibleCreditNumber)));
+});
 
 test("el PDF conserva centavos, tasas guardadas y todos los créditos y recaudos más allá de diez filas", async () => {
   const lines = Array.from({ length: 13 }, (_, index) => fractionalSavedLine(index));
@@ -331,6 +393,8 @@ function pdfRouteFixture(snapshot, access) {
     totalCuotaInicial: snapshot.totalInitialPayment, totalCreditoAutorizado: snapshot.totalAuthorizedCredit,
     totalIntermediacion: snapshot.totalIntermediation, totalPagar: snapshot.totalPayable,
     totalRecaudosAliado: snapshot.totalAllyCollections, saldoNeto: snapshot.netBalance,
+    numeroAjustesAnulacion: snapshot.annulmentAdjustments.length,
+    totalAjustesAnulacion: snapshot.totalAnnulmentAdjustments,
     direccionSaldo: snapshot.balanceDirection,
     summary: Object.fromEntries(Object.entries(snapshot.platformSummary).map(([platform, bucket]) => [platform, {
       numeroCreditos: bucket.creditCount, porcentajeIntermediacion: bucket.intermediationPercentage,
@@ -348,6 +412,15 @@ function pdfRouteFixture(snapshot, access) {
       clienteNombre: item.clientName, clienteDocumento: item.clientDocument, sedeNombre: item.siteName,
       metodoPago: item.paymentMethod, valor: item.value, estado: item.status,
     })),
+    ajustesAnulacion: snapshot.annulmentAdjustments.map(item => ({
+      ajusteId: item.adjustmentId, id: item.adjustmentId, creditoId: item.creditId,
+      fechaAnulacion: item.annulledAt, folio: item.folio,
+      numeroCreditoVisible: item.visibleCreditNumber,
+      clienteNombre: item.clientName, clienteDocumento: item.clientDocument,
+      equipo: item.equipment, imei: item.imei, plataforma: item.platform,
+      sedeNombre: item.siteName, liquidacionOrigenId: item.sourceSettlementId,
+      valorDescuento: item.discountValue, motivo: item.reason, estado: item.status,
+    })),
   };
   class NextResponse extends Response {
     static json(body, init) {
@@ -364,7 +437,11 @@ function pdfRouteFixture(snapshot, access) {
       getAllyPaymentDetail: async input => { calls.push(["detail", input]); return settlement; },
     },
     "@/lib/credit-display-number-server": {
-      getCreditDisplayNumbers: async ids => new Map(ids.map((id, index) => [id, snapshot.collections[index].numeroCreditoVisible])),
+      getCreditDisplayNumbers: async ids => new Map(ids.map(id => {
+        const collection = snapshot.collections.find((_, index) => index + 1000 === id);
+        const adjustment = snapshot.annulmentAdjustments.find(item => item.creditId === id);
+        return [id, collection?.numeroCreditoVisible || adjustment?.visibleCreditNumber || `CR-${id}`];
+      })),
     },
     "@/lib/ally-payment-settlement-pdf": {
       buildAllyPaymentSettlementPdf: async input => { calls.push(["pdf", input]); return buildAllyPaymentSettlementPdf(input); },
@@ -386,6 +463,7 @@ test("imprimir y descargar consultan el snapshot completo con el mismo alcance, 
   const snapshot = savedSnapshot(
     Array.from({ length: 13 }, (_, index) => fractionalSavedLine(index)),
     Array.from({ length: 17 }, (_, index) => savedCollection(index)),
+    [savedAnnulment(0, 33.33)],
   );
   for (const [kind, allyId] of [["CENTRAL_ADMIN", null], ["ALLY_ADMIN", 7]]) {
     await t.test(kind, async () => {
@@ -401,6 +479,7 @@ test("imprimir y descargar consultan el snapshot completo con el mismo alcance, 
         const text = await pdfText(Buffer.from(await response.arrayBuffer()));
         for (const line of snapshot.lines) assert.ok(text.includes(line.imei));
         for (const collection of snapshot.collections) assert.ok(text.includes(collection.numeroCreditoVisible));
+        for (const adjustment of snapshot.annulmentAdjustments) assert.ok(text.includes(adjustment.visibleCreditNumber));
       }
       for (const [name, input] of api.calls) {
         if (name === "detail") {
@@ -409,6 +488,8 @@ test("imprimir y descargar consultan el snapshot completo con el mismo alcance, 
         } else {
           assert.equal(input.lines.length, 13);
           assert.equal(input.collections.length, 17);
+          assert.equal(input.annulmentAdjustments.length, 1);
+          assert.equal(input.totalAnnulmentAdjustments, 33.33);
           assert.equal(input.netBalance, snapshot.netBalance);
           assert.equal(input.bankApprovalNumber, snapshot.bankApprovalNumber);
           assert.equal(input.lines[12].intermediationPercentage, snapshot.lines[12].intermediationPercentage);

@@ -36,12 +36,21 @@ export function withCreditDisplayNumber<T extends { id: number; folio?: string |
 export async function withSettlementDisplayNumbers<T extends {
   items: Array<{ creditoId: number; folio: string }>;
   recaudos: Array<{ creditoId: number; folio: string }>;
+  ajustesAnulacion?: Array<{ creditoId: number; folio: string }>;
 }>(settlements: T[]) {
-  const numbers = await getCreditDisplayNumbers(settlements.flatMap(item => [...item.items, ...item.recaudos].map(line => line.creditoId)));
+  const numbers = await getCreditDisplayNumbers(settlements.flatMap(item => [
+    ...item.items,
+    ...item.recaudos,
+    ...(item.ajustesAnulacion || []),
+  ].map(line => line.creditoId)));
   return settlements.map(settlement => ({
     ...settlement,
     items: settlement.items.map(line => ({ ...line, numeroCreditoVisible: numbers.get(line.creditoId) || line.folio })),
     recaudos: settlement.recaudos.map(line => ({ ...line, numeroCreditoVisible: numbers.get(line.creditoId) || line.folio })),
+    ajustesAnulacion: (settlement.ajustesAnulacion || []).map(line => ({
+      ...line,
+      numeroCreditoVisible: numbers.get(line.creditoId) || line.folio,
+    })),
   }));
 }
 
