@@ -419,11 +419,18 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         if (children.length) {
           throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_ALREADY_REPEATED", "Esa llamada ya tiene una repetición registrada; no se redespacha.");
         }
+        // Scheduled calls share this sequence; the parent may no longer be the latest attempt.
+        const attempts = await db.$queryRawUnsafe<Array<{ max: number }>>(`SELECT COALESCE(MAX("attemptNumber"),0) AS "max"
+          FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ'`, input.creditId);
+        const attempt = attempts[0].max + 1;
+        if (!Number.isSafeInteger(attempt) || attempt > 2_147_483_647) {
+          throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_REPEAT_NOT_ALLOWED", "No hay un número de intento disponible para la repetición.");
+        }
         const eventId = randomUUID();
         await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
           ("id","creditoId","type","source","attemptNumber","repeatOf","status","snapshot","dispatchedAt","createdAt","updatedAt")
           VALUES ($1::uuid,$2,'BIENVENIDA_VOZ','CONTROLLED_TEST',$3,$4::uuid,'DISPATCHING',$5::jsonb,$6,$6,$6)`,
-        eventId, input.creditId, parent.attemptNumber + 1, parent.id, JSON.stringify(snapshot), now());
+        eventId, input.creditId, attempt, parent.id, JSON.stringify(snapshot), now());
         return { eventId, creditId: input.creditId, snapshot };
       }
       await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
