@@ -70,8 +70,8 @@
         "CONTINUE"
       ],
       "questions": {
-        "ASK_NAME": "¿Me repite su nombre completo, por favor?",
-        "ASK_DOCUMENT": "¿Me repite su número de cédula, por favor?",
+        "ASK_NAME": "¿Me dice solo su primer nombre, por favor?",
+        "ASK_DOCUMENT": "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?",
         "REVIEW": "No pude confirmar sus datos. Un asesor revisará su caso."
       },
       "waiting": "ASK_* has mayEndCall=false and remainingAttempts 1..2; ask exactly question, wait, update only that literal field and reuse the same event.",
