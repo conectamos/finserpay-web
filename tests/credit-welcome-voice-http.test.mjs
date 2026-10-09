@@ -163,11 +163,11 @@ test("private flow forwards unrecognized literal documents to the locked store a
     nextAction: "REVIEW", remainingAttempts: 0, mayEndCall: true, identity_confirmed: true };
   assert.deepEqual(await (await POST(request(body, "identidad", header))).json(), { ok: true, verificado: false, condiciones: null,
     code: "DOCUMENT_NOT_UNDERSTOOD", nextAction: "ASK_DOCUMENT", remainingAttempts: 2,
-    question: "¿Me repite su número de cédula, por favor?", mayEndCall: false });
+    question: "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?", mayEndCall: false });
   assert.equal(calls[0].customerDocument, body.customer_document); assert.equal(calls[0].requireFreshDispatch, true);
   result = { ...result, nextAction: "ASK_NAME", remainingAttempts: 1, code: "IDENTITY_NOT_CONFIRMED" };
   const second = await (await POST(request(body, "identidad", header))).json();
-  assert.equal(second.nextAction, "ASK_NAME"); assert.equal(second.mayEndCall, false); assert.equal(second.question, "¿Me repite su nombre completo, por favor?");
+  assert.equal(second.nextAction, "ASK_NAME"); assert.equal(second.mayEndCall, false); assert.equal(second.question, "¿Me dice solo su primer nombre, por favor?");
   result = { ...result, remainingAttempts: 0 };
   const terminal = await (await POST(request(body, "identidad", header))).json();
   assert.equal(terminal.nextAction, "REVIEW"); assert.equal(terminal.mayEndCall, true); assert.equal(terminal.condiciones, null);

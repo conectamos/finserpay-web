@@ -285,8 +285,8 @@ function recoveryResponse(nextAction: WelcomeVoiceIdentityRecoveryResponse["next
   code: WelcomeVoiceIdentityRecoveryResponse["code"] = "IDENTITY_NOT_CONFIRMED"): WelcomeVoiceIdentityRecoveryResponse {
   return { code: nextAction === "CONTINUE" ? null : code, nextAction,
     remainingAttempts: nextAction === "REVIEW" ? 0 : Math.min(2, Math.max(0, 3 - attempts)),
-    question: nextAction === "ASK_NAME" ? "¿Me repite su nombre completo, por favor?"
-      : nextAction === "ASK_DOCUMENT" ? "¿Me repite su número de cédula, por favor?"
+    question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
+      : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?"
         : nextAction === "REVIEW" ? "No pude confirmar sus datos. Un asesor revisará su caso." : null,
     mayEndCall: nextAction === "REVIEW" };
 }

@@ -33,9 +33,14 @@ const identityUnavailable = { ok: false, verificado: false, condiciones: null, c
 const verifiedIdentity = (condiciones = validConditions, overrides = {}) => ({ ok: true, verificado: true, condiciones,
   code: null, nextAction: "CONTINUE", remainingAttempts: 2, question: null, mayEndCall: false, ...overrides });
 const identityQuestions = {
+  ASK_NAME: "¿Me dice solo su primer nombre, por favor?",
+  ASK_DOCUMENT: "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?",
+  REVIEW: "No pude confirmar sus datos. Un asesor revisará su caso.",
+};
+const legacyIdentityQuestions = {
   ASK_NAME: "¿Me repite su nombre completo, por favor?",
   ASK_DOCUMENT: "¿Me repite su número de cédula, por favor?",
-  REVIEW: "No pude confirmar sus datos. Un asesor revisará su caso.",
+  REVIEW: identityQuestions.REVIEW,
 };
 const identityRecovery = (nextAction = "ASK_NAME", remainingAttempts = 2, code = "IDENTITY_NOT_CONFIRMED") => ({
   ok: true, verificado: false, condiciones: null, code, nextAction, remainingAttempts,
@@ -193,6 +198,30 @@ test("server recovery is forwarded with exact question, bounded attempts and no 
   ]) assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), response);
 });
 
+test("rolling identity deployments accept only the exact old and new question for each action", () => {
+  for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"]) {
+    for (const question of new Set([identityQuestions[action], legacyIdentityQuestions[action]])) {
+      for (const code of action === "ASK_NAME" ? ["IDENTITY_NOT_CONFIRMED"] : ["IDENTITY_NOT_CONFIRMED", "DOCUMENT_NOT_UNDERSTOOD"]) {
+        const response = { ...identityRecovery(action, action === "REVIEW" ? 0 : 2, code), question };
+        assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), response);
+        assert.equal(response.condiciones, null);
+      }
+    }
+  }
+});
+
+test("question compatibility cannot retag a recovery action or accept a similar clarification", () => {
+  for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"]) {
+    const response = identityRecovery(action, action === "REVIEW" ? 0 : 1);
+    const wrongQuestions = Object.keys(identityQuestions).filter(other => other !== action)
+      .flatMap(other => [identityQuestions[other], legacyIdentityQuestions[other]]);
+    for (const question of [...wrongQuestions, identityQuestions[action] + " ", [identityQuestions[action]],
+      identityQuestions[action].slice(0, -1), "¿Puede repetir los datos esperados?"]) {
+      assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: { ...response, question } }), identityUnavailable);
+    }
+  }
+});
+
 test("a name with no matching registered component asks for clarification without altering the mixed spoken document", () => {
   const captured = { ...validIdentity, customer_name: "Cliente Ejemplo.",
     customer_document: "Treinta y ocho, uno cuatro cuatro cero nueve dos." };
@@ -288,7 +317,11 @@ test("the current Diana script waits for the server clarification and preserves 
   const prompt = readFileSync(new URL("../docs/DAPTA_DIANA_VOICE_PROMPT.md", import.meta.url), "utf8");
   const recovery = prompt.slice(prompt.indexOf("### Recuperación dirigida por el servidor"), prompt.indexOf("### Fuente de las condiciones"));
   for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW", "CONTINUE"]) assert.ok(recovery.includes("nextAction=" + action));
-  for (const question of Object.values(identityQuestions)) assert.ok(recovery.includes(question));
+  assert.ok(recovery.includes(identityQuestions.REVIEW));
+  assert.equal((recovery.match(/lee exactamente el campo question recibido del servidor/g) || []).length, 2);
+  assert.match(recovery, /solo su primer nombre.*sin volver a exigir el nombre completo/);
+  assert.match(recovery, /cédula completa desde el primer dígito.*sin unirla con la cédula anterior ni completar dígitos/);
+  assert.match(recovery, /Solo el backend decide si está completa/);
   assert.match(recovery, /Termina ese turno sin despedirte ni ejecutar end_call/);
   assert.match(recovery, /Espera la nueva respuesta/);
   assert.match(recovery, /última cédula literal sin modificar/);
