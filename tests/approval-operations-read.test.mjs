@@ -501,6 +501,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   let correctionPending = false;
   const processUuid = "20000000-0000-4000-8000-000000000002";
   let deliveryProcessUuid = processUuid;
+  let signed = false;
   const db = { $queryRawUnsafe: async (sql, ...params) => {
     calls.push({ sql, params });
     if (sql.includes('FROM "CreditoBorrador" draft')) return [{
@@ -511,8 +512,8 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
       createdAt: stamp, updatedAt: stamp, expiresAt: "2030-01-01T00:00:00.000Z",
     }];
     if (sql.includes('FROM "FirmaSeguroProcess"')) return [{
-      id: 30, processUuid, status: "PENDING", draftPayload: {}, requestPayload,
-      lastError: null, hasSignedDocument: false, createdAt: stamp, completedAt: null, supersededAt: null,
+      id: 30, processUuid, status: signed ? "SIGNED" : "PENDING", draftPayload: {}, requestPayload,
+      lastError: null, hasSignedDocument: signed, createdAt: stamp, completedAt: signed ? stamp : null, supersededAt: null,
     }];
     if (sql.includes('to_regclass(')) return [{ present: params[0].includes('FirmaSeguroRecipientDelivery') }];
     if (sql.includes('SELECT "id"::text,"status","processUuid","afterContact","reason","actorName"')) {
@@ -579,6 +580,15 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   }
 
   deliveryStatus = "RESEND_UNCERTAIN";
+  signed = true;
+  const completedWithUncertainNotice = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(completedWithUncertainNotice.capabilities.canRedirectPendingSignature, false,
+    "una firma completada nunca se vuelve a reenviar");
+  assert.equal(completedWithUncertainNotice.capabilities.canChangeImei, true,
+    "la incertidumbre de la notificación no bloquea una corrección contractual tras firmar");
+  assert.equal(completedWithUncertainNotice.pendingRecipientDelivery.status, "RESEND_UNCERTAIN",
+    "se conserva la trazabilidad sin inventar confirmación de entrega");
+  signed = false;
   deliveryProcessUuid = "historical-superseded-process";
   confirmedContact = null;
   const oldUncertain = await read.getOperationalCase("DRAFT", "30", db);

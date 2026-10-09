@@ -719,7 +719,9 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
           reason: pending.reason, actorName: pending.actorName,
           retryable: pending.processUuid === signature.processUuid &&
             ["PREPARING", "EDITING", "RECIPIENT_UPDATED", "RESEND_FAILED", "EDIT_UNCERTAIN"].includes(pending.status) };
-        unresolvedDraftDispatch ||= !pendingRecipientDelivery.retryable;
+        // A notification with no delivery acknowledgement cannot invalidate a
+        // completed signature or block a later authorized contract correction.
+        unresolvedDraftDispatch ||= signature.status !== "SIGNED" && !pendingRecipientDelivery.retryable;
       }
       if (signature.processUuid) {
         const deliveries = await optionalQuery<RecipientDeliveryContactRow>(db,
