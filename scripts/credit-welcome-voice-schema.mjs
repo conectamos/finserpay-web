@@ -48,6 +48,7 @@ export const creditWelcomeVoiceSchemaStatements = [
     "completedAt" TIMESTAMPTZ(3),
     "providerCallId" VARCHAR(160) UNIQUE,
     "identityAttempts" INTEGER NOT NULL DEFAULT 0 CHECK ("identityAttempts" BETWEEN 0 AND 3),
+    "identityRecovery" JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof("identityRecovery")='object'),
     "identityVerifiedAt" TIMESTAMPTZ(3),
     "durationSeconds" DOUBLE PRECISION CHECK ("durationSeconds" IS NULL OR ("durationSeconds">=0 AND "durationSeconds"<=86400)),
     "summary" TEXT,
@@ -76,6 +77,13 @@ export const creditWelcomeVoiceSchemaStatements = [
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "campaignSlot" VARCHAR(16)`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "communicationOutcome" VARCHAR(32)`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "disconnectionReason" VARCHAR(64)`,
+  `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "identityRecovery" JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass AND conname='CreditWelcomeVoiceEvent_identityRecovery_check') THEN
+      ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_identityRecovery_check"
+        CHECK (jsonb_typeof("identityRecovery")='object');
+    END IF;
+  END $$`,
   `DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass
       AND conname='CreditWelcomeVoiceEvent_credit_type_key' AND contype='u'

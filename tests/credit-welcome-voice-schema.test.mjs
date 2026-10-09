@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PGlite } from "@electric-sql/pglite";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { creditWelcomeVoiceSchemaStatements } from "../scripts/credit-welcome-voice-schema.mjs";
 const campaignPolicy = loadReissueModule("lib/credit-voice-review-campaign-core.ts");
@@ -64,6 +65,7 @@ function fixture({ failFirstLock = false } = {}) {
     "@/lib/credit-factory-snapshot": {}, "@/lib/cartera-export": {}, "@/lib/dapta-welcome": {},
     "@/lib/credit-welcome-voice-core": {},
     "@/lib/credit-welcome-voice-speech": {},
+    "@/lib/credit-welcome-voice-document": {},
     "@/lib/credit-voice-review-campaign-core": campaignPolicy,
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   });
@@ -88,4 +90,26 @@ test("a failed schema lock executes no DDL and clears the cached attempt for saf
   await f.store.ensureCreditWelcomeVoiceSchema();
   assert.equal(f.transactions(), 2);
   assert.deepEqual(f.events.slice(3), ["BEGIN", "TIMEOUT", "LOCK", ...creditWelcomeVoiceSchemaStatements.map(() => "DDL"), "COMMIT"]);
+});
+test("additive recovery schema upgrades existing events twice without resetting identity or completed history", async t => {
+  const db = new PGlite(); t.after(() => db.close());
+  await db.exec('CREATE TABLE "Credito" ("id" integer PRIMARY KEY); INSERT INTO "Credito" VALUES(1)');
+  for (const statement of creditWelcomeVoiceSchemaStatements) {
+    const oldCreate = statement.startsWith('CREATE TABLE IF NOT EXISTS public."CreditWelcomeVoiceEvent"');
+    if (!oldCreate && statement.includes('identityRecovery')) continue;
+    await db.exec(oldCreate ? statement.replace(/^\s*"identityRecovery"[^\n]*\n/m, "") : statement);
+  }
+  const id = "11111111-1111-4111-8111-111111111111", verifiedAt = "2026-10-08T15:00:00.000Z";
+  await db.query(`INSERT INTO "CreditWelcomeVoiceEvent" ("id","creditoId","source","status","snapshot","identityAttempts","identityVerifiedAt","providerCallId","resultHash")
+    VALUES($1,1,'NORMAL','COMPLETED',$2::jsonb,2,$3,'call-historical',$4)`, [id, JSON.stringify({ name: "synthetic", document: "00123456" }), verifiedAt, "a".repeat(64)]);
+  for (let replay = 0; replay < 2; replay++) for (const statement of creditWelcomeVoiceSchemaStatements) await db.exec(statement);
+  const row = (await db.query('SELECT * FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1', [id])).rows[0];
+  assert.equal(row.status, "COMPLETED"); assert.equal(row.identityAttempts, 2); assert.deepEqual(row.identityRecovery, {});
+  assert.equal(new Date(row.identityVerifiedAt).toISOString(), verifiedAt); assert.equal(row.resultHash, "a".repeat(64));
+  assert.equal(row.providerCallId, "call-historical"); assert.deepEqual(row.snapshot, { name: "synthetic", document: "00123456" });
+  await assert.rejects(db.query('UPDATE "CreditWelcomeVoiceEvent" SET "identityRecovery"=\'[]\'::jsonb WHERE "id"=$1', [id]), error => error.code === "23514");
+  const flags = { askedName: true, askedDocument: false, reviewRequired: false };
+  await db.query('UPDATE "CreditWelcomeVoiceEvent" SET "identityRecovery"=$2::jsonb WHERE "id"=$1', [id, JSON.stringify(flags)]);
+  for (const statement of creditWelcomeVoiceSchemaStatements) await db.exec(statement);
+  assert.deepEqual((await db.query('SELECT "identityRecovery" FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1', [id])).rows[0].identityRecovery, flags);
 });

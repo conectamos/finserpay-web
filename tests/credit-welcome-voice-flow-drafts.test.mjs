@@ -28,6 +28,19 @@ const validSpeech = {
   installmentAmounts: Array.from({ length: 18 }, () => "ciento cincuenta y nueve mil ciento cincuenta pesos"),
 };
 const validConditions = { initialPayment: 0, installmentAmount: 159150, installmentCount: 18, speech: validSpeech };
+const identityUnavailable = { ok: false, verificado: false, condiciones: null, code: "IDENTITY_UNAVAILABLE",
+  nextAction: null, remainingAttempts: null, question: null, mayEndCall: null };
+const verifiedIdentity = (condiciones = validConditions, overrides = {}) => ({ ok: true, verificado: true, condiciones,
+  code: null, nextAction: "CONTINUE", remainingAttempts: 2, question: null, mayEndCall: false, ...overrides });
+const identityQuestions = {
+  ASK_NAME: "¿Me repite su nombre completo, por favor?",
+  ASK_DOCUMENT: "¿Me repite su número de cédula, por favor?",
+  REVIEW: "No pude confirmar sus datos. Un asesor revisará su caso.",
+};
+const identityRecovery = (nextAction = "ASK_NAME", remainingAttempts = 2, code = "IDENTITY_NOT_CONFIRMED") => ({
+  ok: true, verificado: false, condiciones: null, code, nextAction, remainingAttempts,
+  question: identityQuestions[nextAction], mayEndCall: nextAction === "REVIEW",
+});
 const validCall = {
   event_id: "cce44e9a-3f06-4f1b-8c9f-88c9c1f9f931",
   credito_id: "42",
@@ -122,23 +135,21 @@ test("identity response remains strict boolean after args normalization and has 
   }
 });
 
-test("identity transport patch is scoped to input, safe JSON, private header and verified response", () => {
+test("identity recovery patch changes only response mappings and validator, preserving input and private credentials", () => {
   const patch = JSON.parse(readFileSync(new URL("identity-normalizer.patch.json", base), "utf8"));
   assert.equal(patch.flow_id, "YxVoY");
   assert.match(patch.expected_content_hash, /^sha256:[0-9a-f]{64}$/);
   assert.deepEqual(patch.ops.map(op => [op.op, op.node_id, op.path]), [
-    ["set_param", "trgId", "api_trigger.trigger_params"],
-    ["set_param", "nrmId", "api_action.code_action.code"],
-    ["set_param", "qryId", "api_action.external_api_action.headers"],
     ["set_param", "qryId", "api_action.response"],
     ["set_param", "chkId", "api_action.code_action.code"],
+    ["set_param", "chkId", "api_action.response"],
+    ["set_param", "rspId", "api_response.response_params"],
   ]);
-  assert.deepEqual(patch.ops[0].value, identity.api_nodes.find(node => node.id === "trgId").api_trigger.trigger_params);
-  assert.equal(patch.ops[1].value, identity.api_nodes.find(node => node.id === "nrmId").api_action.code_action.code);
-  assert.deepEqual(patch.ops[2].value, identity.api_nodes.find(node => node.id === "qryId").api_action.external_api_action.headers);
-  assert.deepEqual(patch.ops[3].value, identity.api_nodes.find(node => node.id === "qryId").api_action.response);
-  assert.equal(patch.ops[4].value, identity.api_nodes.find(node => node.id === "chkId").api_action.code_action.code);
-  assert.doesNotMatch(JSON.stringify(patch), /https:\/\/|x-api-key|previewToken|preview_token/);
+  assert.deepEqual(patch.ops[0].value, identity.api_nodes.find(node => node.id === "qryId").api_action.response);
+  assert.equal(patch.ops[1].value, identity.api_nodes.find(node => node.id === "chkId").api_action.code_action.code);
+  assert.deepEqual(patch.ops[2].value, identity.api_nodes.find(node => node.id === "chkId").api_action.response);
+  assert.deepEqual(patch.ops[3].value, identity.api_nodes.find(node => node.id === "rspId").api_response.response_params);
+  assert.doesNotMatch(JSON.stringify(patch), /https:\/\/|Authorization|Bearer|x-api-key|previewToken|preview_token/);
   assert.equal(identity.api_nodes.find(node => node.id === "nrmId").api_action.on_error, "stop");
 });
 
@@ -173,36 +184,159 @@ test("identity document utterances reach the backend literally without numeric c
   }
 });
 
-test("only an explicit unverified document clarification code is exposed without financial conditions", () => {
-  assert.deepEqual(runCode(identity, "chkId", {
-    verificar_identidad: { ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD", condiciones: validConditions },
-  }), { ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" });
+test("server recovery is forwarded with exact question, bounded attempts and no financial conditions", () => {
   for (const response of [
-    { ok: true, verificado: false, code: "private-error-details" },
-    { ok: true, verificado: "false", code: "DOCUMENT_NOT_UNDERSTOOD" },
-    { ok: true, code: "DOCUMENT_NOT_UNDERSTOOD" },
-  ]) assert.deepEqual(runCode(identity, "chkId", {
-    verificar_identidad: response,
-  }), { ok: true, verificado: false, condiciones: null, code: null });
-  assert.deepEqual(runCode(identity, "chkId", {
-    verificar_identidad: { ok: false, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" },
-  }), { ok: false, verificado: false, condiciones: null, code: "IDENTITY_UNAVAILABLE" });
+    identityRecovery("ASK_NAME", 2), identityRecovery("ASK_DOCUMENT", 1), identityRecovery("REVIEW", 0),
+    identityRecovery("ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD"),
+    identityRecovery("REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD"),
+    identityRecovery("ASK_NAME", 1),
+  ]) assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), response);
+});
+
+test("a name with no matching registered component asks for clarification without altering the mixed spoken document", () => {
+  const captured = { ...validIdentity, customer_name: "Cliente Ejemplo.",
+    customer_document: "Treinta y ocho, uno cuatro cuatro cero nueve dos." };
+  const request = runCode(identity, "nrmId", { trigger: { body: { args: captured } } });
+  assert.deepEqual(JSON.parse(request.request_body), captured);
+  const first = runCode(identity, "chkId", { verificar_identidad: identityRecovery("ASK_NAME", 2) });
+  assert.equal(first.nextAction, "ASK_NAME");
+  assert.equal(first.question, identityQuestions.ASK_NAME);
+  assert.equal(first.mayEndCall, false);
+  assert.equal(first.condiciones, null);
+  const clarified = { ...captured, customer_name: "Persona Hernández Prueba" };
+  const retry = runCode(identity, "nrmId", { trigger: { body: { args: clarified } } });
+  assert.deepEqual(JSON.parse(retry.request_body), clarified);
+  assert.equal(JSON.parse(retry.request_body).customer_document, captured.customer_document);
+  assert.equal(JSON.parse(retry.request_body).event_id, captured.event_id);
+  const verified = runCode(identity, "chkId", { verificar_identidad: verifiedIdentity(validConditions, { remainingAttempts: 1 }) });
+  assert.equal(verified.nextAction, "CONTINUE");
+  assert.deepEqual(verified.condiciones, validConditions);
+});
+
+test("one matching name component and an exact document can continue without a name clarification", () => {
+  const captured = { ...validIdentity, customer_name: "Persona Fernández Gil.",
+    customer_document: "Treinta y ocho, uno cuatro cuatro cero nueve dos." };
+  const request = runCode(identity, "nrmId", { trigger: { body: { args: captured } } });
+  assert.deepEqual(JSON.parse(request.request_body), captured);
+  const output = runCode(identity, "chkId", { verificar_identidad: verifiedIdentity() });
+  assert.equal(output.nextAction, "CONTINUE");
+  assert.equal(output.question, null);
+  assert.deepEqual(output.condiciones, validConditions);
+});
+
+test("both recovery orders preserve server state through the final allowed consultation", () => {
+  for (const path of [
+    [identityRecovery("ASK_NAME", 2), identityRecovery("ASK_DOCUMENT", 1), identityRecovery("REVIEW", 0)],
+    [identityRecovery("ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD"), identityRecovery("ASK_NAME", 1), verifiedIdentity(validConditions, { remainingAttempts: 0 })],
+    [identityRecovery("ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD"), identityRecovery("REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD")],
+  ]) {
+    for (const response of path) {
+      const output = runCode(identity, "chkId", { verificar_identidad: response });
+      assert.deepEqual(output, response);
+      if (!output.verificado) assert.equal(output.condiciones, null);
+      if (output.nextAction.startsWith("ASK_")) assert.equal(output.mayEndCall, false);
+      if (output.nextAction === "REVIEW") assert.equal(output.remainingAttempts, 0);
+    }
+  }
+});
+
+test("missing, malformed or contradictory recovery fields fail technically without inventing a question", () => {
+  const valid = identityRecovery();
+  const invalid = [
+    { ...valid, ok: "true" }, { ...valid, verificado: "false" },
+    { ...valid, nextAction: "ASK_EXPECTED_NAME" }, { ...valid, code: "private-error-details" },
+    { ...valid, code: "DOCUMENT_NOT_UNDERSTOOD" },
+    { ...valid, condiciones: validConditions }, { ...valid, condiciones: undefined },
+    { ...valid, question: "¿Su nombre registrado es Persona Esperada?" },
+    { ...valid, mayEndCall: true }, { ...valid, mayEndCall: "false" },
+    ...[0, 3, -1, 1.5, "2", null].map(remainingAttempts => ({ ...valid, remainingAttempts })),
+    { ...identityRecovery("REVIEW", 0), remainingAttempts: 1 },
+    { ...identityRecovery("REVIEW", 0), mayEndCall: false },
+    { ok: true, verificado: false, condiciones: null, code: null },
+    { ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" },
+  ];
+  for (const key of ["nextAction", "remainingAttempts", "question", "mayEndCall", "code"]) {
+    const missing = { ...valid }; delete missing[key]; invalid.push(missing);
+  }
+  for (const response of invalid) assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), identityUnavailable);
+});
+
+test("verified finance also requires the complete CONTINUE control contract", () => {
+  const valid = verifiedIdentity();
+  const invalid = [
+    { ...valid, nextAction: "ASK_NAME" }, { ...valid, question: identityQuestions.ASK_NAME },
+    { ...valid, mayEndCall: true }, { ...valid, code: "IDENTITY_NOT_CONFIRMED" },
+    { ...valid, remainingAttempts: 3 }, { ...valid, remainingAttempts: "0" },
+  ];
+  for (const key of ["nextAction", "remainingAttempts", "question", "mayEndCall", "code"]) {
+    const missing = { ...valid }; delete missing[key]; invalid.push(missing);
+  }
+  for (const response of invalid) assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), identityUnavailable);
+});
+
+test("all response mappings export the full server control contract unchanged", () => {
+  const keys = ["ok", "verificado", "condiciones", "code", "nextAction", "remainingAttempts", "question", "mayEndCall"];
+  for (const [nodeId, prefix] of [["qryId", "response."], ["chkId", ""]]) {
+    assert.deepEqual(identity.api_nodes.find(node => node.id === nodeId).api_action.response,
+      keys.map(key => ({ variable_name: key, response_value_path: prefix + key })));
+  }
+  assert.deepEqual(identity.api_nodes.find(node => node.id === "rspId").api_response.response_params,
+    keys.map(key => ({ key, value: "{{preparar_respuesta_identidad." + key + "}}" })));
+});
+
+test("the current Diana script waits for the server clarification and preserves the three independent agreements", () => {
+  const prompt = readFileSync(new URL("../docs/DAPTA_DIANA_VOICE_PROMPT.md", import.meta.url), "utf8");
+  const recovery = prompt.slice(prompt.indexOf("### Recuperación dirigida por el servidor"), prompt.indexOf("### Fuente de las condiciones"));
+  for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW", "CONTINUE"]) assert.ok(recovery.includes("nextAction=" + action));
+  for (const question of Object.values(identityQuestions)) assert.ok(recovery.includes(question));
+  assert.match(recovery, /Termina ese turno sin despedirte ni ejecutar end_call/);
+  assert.match(recovery, /Espera la nueva respuesta/);
+  assert.match(recovery, /última cédula literal sin modificar/);
+  assert.match(recovery, /último nombre literal sin modificar/);
+  assert.match(recovery, /Un verificado=false.*no es un cierre ni autoriza end_call/);
+  assert.match(recovery, /El éxito en la tercera consulta permite continuar/);
+  assert.match(recovery, /no inventes una aclaración ni otra consulta/);
+  assert.doesNotMatch(recovery, /admite condiciones ausente|Aclar[a-z]* primero el nombre si aún puedes/);
+  for (const block of ["Primer acuerdo: plan", "Segundo acuerdo: calendario", "Tercer acuerdo: aplicativo"]) assert.ok(prompt.includes(block));
+  assert.match(prompt, /Nunca ejecutes end_call en una salida que aún haga una pregunta o mientras esperas respuesta/);
+  assert.match(prompt, /Solo después de escuchar la tercera/);
+});
+
+test("operational identity instructions and metadata preserve the current matching rule and server-controlled recovery", () => {
+  const canonical = readFileSync(new URL("../docs/DAPTA_DIANA_VOICE_PROMPT.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const operational = readFileSync(new URL("agent-instructions.txt", base), "utf8").replace(/\r\n/g, "\n");
+  const identitySection = canonical.slice(canonical.indexOf("### Nombre, cédula y validación") + "### Nombre, cédula y validación".length,
+    canonical.indexOf("### Fuente de las condiciones")).trim().replace("### Recuperación dirigida por el servidor", "RECUPERACIÓN DIRIGIDA POR EL SERVIDOR");
+  assert.ok(operational.includes(identitySection));
+  assert.match(identitySection, /al menos un nombre o apellido registrado como palabra completa/);
+  assert.match(identitySection, /Siempre exige la cédula completa exacta/);
+  assert.match(identitySection, /excluyendo las partículas de, del, la, las, los e y/);
+  const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
+  assert.match(config.pendingIdentityTool.description, /al menos un nombre o apellido registrado como palabra completa/);
+  assert.match(config.pendingIdentityTool.description, /cédula completa exacta/);
+  assert.match(config.pendingEndCallTool.description, /ASK_NAME o ASK_DOCUMENT con mayEndCall=false/);
+  assert.match(config.pendingEndCallTool.description, /no autoriza cerrar/);
+  const manifest = JSON.parse(readFileSync(new URL("draft-manifest.json", base), "utf8"));
+  assert.equal(manifest.identityBackend.identityClarification.maximumConsultations, 3);
+  assert.deepEqual(manifest.identityBackend.identityClarification.questions, identityQuestions);
+  assert.equal(manifest.preparedLivePatches.find(item => item.file === "identity-normalizer.patch.json").expectedContentHash,
+    JSON.parse(readFileSync(new URL("identity-normalizer.patch.json", base), "utf8")).expected_content_hash);
 });
 
 test("identity success requires a conditions object and strict booleans", () => {
   const conditions = validConditions;
   assert.deepEqual(runCode(identity, "chkId", {
-    verificar_identidad: { ok: true, verificado: true, condiciones: conditions },
-  }), { ok: true, verificado: true, condiciones: conditions, code: null });
+    verificar_identidad: verifiedIdentity(conditions),
+  }), verifiedIdentity(conditions));
   for (const condiciones of [undefined, null, "conditions", []]) {
     assert.deepEqual(runCode(identity, "chkId", {
-      verificar_identidad: { ok: true, verificado: true, condiciones },
-    }), { ok: false, verificado: false, condiciones: null, code: "IDENTITY_UNAVAILABLE" });
+      verificar_identidad: verifiedIdentity(validConditions, { condiciones }),
+    }), identityUnavailable);
   }
   for (const ok of [false, "true", undefined]) {
     assert.deepEqual(runCode(identity, "chkId", {
-      verificar_identidad: { ok, verificado: true, condiciones: conditions },
-    }), { ok: false, verificado: false, condiciones: null, code: "IDENTITY_UNAVAILABLE" });
+      verificar_identidad: verifiedIdentity(conditions, { ok }),
+    }), identityUnavailable);
   }
 });
 
@@ -224,15 +358,15 @@ test("identity reply rejects raw-only conditions or incomplete spoken financial 
   }
   for (const condiciones of invalid) {
     assert.deepEqual(runCode(identity, "chkId", {
-      verificar_identidad: { ok: true, verificado: true, condiciones },
+      verificar_identidad: verifiedIdentity(condiciones),
       invented_conditions: { speech: validSpeech },
-    }), { ok: false, verificado: false, condiciones: null, code: "IDENTITY_UNAVAILABLE" });
+    }), identityUnavailable);
   }
 });
 
 test("identity reply preserves exact backend speech without converting raw amounts", () => {
   const result = runCode(identity, "chkId", {
-    verificar_identidad: { ok: true, verificado: true, condiciones: validConditions },
+    verificar_identidad: verifiedIdentity(),
   });
   assert.equal(result.ok, true);
   assert.equal(result.verificado, true);
@@ -283,16 +417,16 @@ test("voice tool captures actual customer identity without prefilled answers or 
     "Hola, soy Diana de FINSER PEY y quiero darle la bienvenida y confirmar los datos de la financiación de su celular. Esta llamada está siendo grabada y monitoreada para efectos de calidad y seguridad. ¿Me confirma, por favor, su nombre completo?");
   assert.doesNotMatch(config.updateAfterCreate.begin_message, /podemos continuar|tiene un momento|puede hablar/i);
   assert.ok(prompt.includes("¿Su número de cédula, por favor?"));
-  assert.match(prompt, /Acepta la cédula en bloques hablados, dígito a dígito o como números/);
-  assert.match(prompt, /No exijas un formato ni ofrezcas ejemplos/);
-  assert.match(prompt, /code=DOCUMENT_NOT_UNDERSTOOD/);
-  assert.match(prompt, /Si ya pediste repetir/);
+  assert.match(prompt, /Acepta la cédula en bloques hablados, dígito a dígito o (?:como|en) números/);
+  assert.match(prompt, /No conviertas.*ni ofrezcas ejemplos/);
+  assert.match(prompt, /DOCUMENT_NOT_UNDERSTOOD/);
+  assert.match(prompt, /nextAction=ASK_DOCUMENT/);
   assert.doesNotMatch(prompt, /solo (?:en )?(?:dígitos|números)|por ejemplo/i);
   for (const field of ["initialPayment", "installmentAmount", "installmentCount", "firstDueDate"]) {
     assert.ok(prompt.includes("[speech." + field + "]"));
     assert.ok(!prompt.includes("[" + field + "]"));
   }
-  assert.doesNotMatch(prompt, /customer_(?:name|document)/);
+  assert.doesNotMatch(prompt, /\{\{customer_(?:name|document)/);
   assert.match(prompt, /speech incompleto/);
   assert.match(prompt, /sin decir ningún importe o fecha/);
   assert.match(prompt, /calendar confirma/);
@@ -317,7 +451,7 @@ test("optional equipment speech is preserved only inside verified conditions", (
     if (equipmentReference !== undefined) speech.equipmentReference = equipmentReference;
     const condiciones = { ...validConditions, speech };
     const verified = runCode(identity, "chkId", {
-      verificar_identidad: { ok: true, verificado: true, condiciones },
+      verificar_identidad: verifiedIdentity(condiciones),
     });
     assert.equal(verified.verificado, true);
     assert.deepEqual(verified.condiciones, condiciones);
@@ -407,8 +541,8 @@ test("analysis distinguishes actual identity, continuity after notice and all th
 test("identity mismatch never exposes supplied conditions", () => {
   for (const verificado of [false, "true", undefined]) {
     assert.deepEqual(runCode(identity, "chkId", {
-      verificar_identidad: { ok: true, verificado, condiciones: { monto: "confidential" } },
-    }), { ok: true, verificado: false, condiciones: null, code: null });
+      verificar_identidad: { ...identityRecovery(), verificado, condiciones: { monto: "confidential" } },
+    }), identityUnavailable);
   }
 });
 

@@ -83,7 +83,7 @@
   "pendingIdentityTool": {
     "name": "verificar_cliente_bienvenida",
     "type": "custom",
-    "description": "Verifica el nombre completo y la cédula realmente proporcionados por la persona durante esta llamada, en el evento indicado. Invoca únicamente después de recibir ambos datos. Envía la cédula literal con sus palabras o dígitos; el backend la interpreta. Nunca sustituir respuestas por datos registrados ni ofrecer ejemplos. Un error o condiciones sin speech completo no permiten revelar producto, importes ni fechas.",
+    "description": "Verifica el nombre y la cédula realmente proporcionados por la persona en este evento, solo después de recibir ambos datos. Envía las respuestas literales; el backend interpreta el documento y exige la cédula completa exacta. Para el nombre admite al menos un nombre o apellido registrado como palabra completa, ignorando tildes/mayúsculas y excluyendo de/del/la/las/los/y; sin fuzzy ni substrings. No reveles ni sustituyas datos esperados. Sigue nextAction y lee question exactamente: ASK_NAME o ASK_DOCUMENT con mayEndCall=false requiere preguntar y esperar otro turno, sin cerrar; REVIEW/0/true permite salida de identidad. Solo CONTINUE con ok/verificado booleanos verdaderos y speech completo permite explicar las condiciones. Un error o contrato incompleto no permite finanzas ni recuperación inventada.",
     "parameters": {
       "type": "object",
       "required": [
@@ -108,7 +108,7 @@
         },
         "customer_name": {
           "type": "string",
-          "description": "Envía el nombre completo que la persona realmente haya dicho al responder la pregunta abierta de nombre en esta llamada. Nunca sustituir la respuesta por datos registrados, enviar sí u otra confirmación, completar partes ni inventarlas. Si no se entiende, pedir repetir y esperar antes de invocar."
+          "description": "Envía el nombre completo que la persona realmente haya dicho en esta llamada, con todas sus palabras literales, aunque parezca extraño o comience con No. Nunca sustituir por datos registrados, completar partes ni inventarlas. El backend decide la coincidencia de al menos un componente significativo registrado; no hagas tú esa comparación ni reveles cuál coincide. Si no hubo respuesta audible, pide el dato pendiente y espera."
         },
         "customer_document": {
           "type": "string",
@@ -128,6 +128,6 @@
   "pendingEndCallTool": {
     "name": "end_call",
     "type": "end_call",
-    "description": "Finaliza la llamada después de la despedida. Nunca ejecutes esta herramienta en el mismo turno de una pregunta ni mientras esperas una respuesta. El cierre normal exige tres respuestas afirmativas reales e independientes: al plan, al calendario con primera fecha y a la política del aplicativo; después di Gracias por su tiempo y cuelga. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva únicamente las salidas anticipadas por rechazo de grabación, petición expresa de terminar, identidad no verificada, fallo, discrepancia que requiere asesor o buzón; no reveles datos en buzón."
+    "description": "Finaliza la llamada después de decir Gracias por su tiempo. Nunca ejecutes esta herramienta en el mismo turno de una pregunta ni mientras esperas su respuesta. Un resultado ASK_NAME o ASK_DOCUMENT con mayEndCall=false obliga a leer question y escuchar; identidad no verificada con aclaración pendiente no autoriza cerrar. REVIEW con remainingAttempts=0 y mayEndCall=true permite la salida de identidad después de su explicación y despedida. El cierre normal exige tres respuestas afirmativas reales e independientes: al plan, al calendario con primera fecha y a la política del aplicativo. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva las salidas anticipadas por rechazo de grabación, petición expresa de terminar, fallo técnico, discrepancia que requiere asesor o buzón; no reveles datos personales ni financieros en buzón."
   }
 }

@@ -38,9 +38,9 @@
       "customer_document"
     ],
     "auth": "Private Authorization Bearer DAPTA_WELCOME_VOICE_IDENTITY_FLOW_TOKEN, configured only in the Dapta HTTP node and FINSERPAY. The backend authenticates in constant time, resolves this event's ledger snapshot only in DISPATCHING/ACCEPTED/UNKNOWN within 24 h and enforces at most three identity attempts. No private bearer reaches voice tools, dynamic call variables or exports.",
-    "success": "ok=true, verificado=true, condiciones object with complete speech",
-    "mismatch": "ok=true, verificado=false, condiciones=null",
-    "failure": "ok=false, verificado=false, condiciones=null, code=IDENTITY_UNAVAILABLE",
+    "success": "ok=true, verificado=true, condiciones object with complete speech; nextAction=CONTINUE, code=null, question=null, mayEndCall=false, remainingAttempts integer 0..2",
+    "mismatch": "ok=true, verificado=false, condiciones=null; nextAction=ASK_NAME|ASK_DOCUMENT|REVIEW, remainingAttempts integer 0..2, fixed question and strict mayEndCall",
+    "failure": "ok=false, verificado=false, condiciones=null, code=IDENTITY_UNAVAILABLE; nextAction/remainingAttempts/question/mayEndCall=null. Do not invent a recovery action.",
     "envelopes": [
       "Direct body object",
       "Body object with an own args object; identity fields must not appear in both locations"
@@ -57,8 +57,28 @@
     "privateHeaderPlaceholder": "Bearer NEW_PRIVATE_IDENTITY_FLOW_TOKEN",
     "legacySignedTokenMode": "The backend retains per-event HMAC event_token mode for compatibility; this new identity flow does not send event_token. The original signed token stays in the native call for the authenticated result callback.",
     "documentInput": "Literal customer utterance, numeric text or spoken Spanish blocks/digits, up to 240 characters. A deterministic backend parser preserves leading zeros; it never chooses or completes a value using the expected document.",
-    "nameVerification": "All registered name components must match exactly and in order, with the same first component; extra provided middle/surname components are permitted. No fuzzy matching, omitted registered components, expected-name disclosure or document tolerance.",
-    "documentClarification": "ok=true, verificado=false, condiciones=null, code=DOCUMENT_NOT_UNDERSTOOD permits one clarification and a new real customer utterance. No other backend code is forwarded by this flow."
+    "nameVerification": "Private event flow: at least one exact significant registered name/surname component matches a whole provided component after case/accent normalization; exclude de/del/la/las/los/y. Exact full document is always mandatory. No fuzzy matching, substrings or expected-identity disclosure. Legacy signed-token matching remains unchanged.",
+    "documentClarification": "DOCUMENT_NOT_UNDERSTOOD consumes the persisted three-consultation budget. Follow server ASK_DOCUMENT once; repeated unparsed document becomes REVIEW. A corrected document may proceed to ASK_NAME when no registered component matches and that clarification remains available.",
+    "identityClarification": {
+      "source": "server-persisted event state",
+      "maximumConsultations": 3,
+      "maximumRequestedClarificationsPerField": 1,
+      "actions": [
+        "ASK_NAME",
+        "ASK_DOCUMENT",
+        "REVIEW",
+        "CONTINUE"
+      ],
+      "questions": {
+        "ASK_NAME": "¿Me repite su nombre completo, por favor?",
+        "ASK_DOCUMENT": "¿Me repite su número de cédula, por favor?",
+        "REVIEW": "No pude confirmar sus datos. Un asesor revisará su caso."
+      },
+      "waiting": "ASK_* has mayEndCall=false and remainingAttempts 1..2; ask exactly question, wait, update only that literal field and reuse the same event.",
+      "terminal": "REVIEW has remainingAttempts=0 and mayEndCall=true; no further consultation or financial conditions.",
+      "success": "CONTINUE may succeed on consultation three; full verified speech and exact control contract required.",
+      "privacy": "Never include expected identity, match details, tokens or financial conditions in an unverified response."
+    }
   },
   "callInput": [
     "event_id",
@@ -109,13 +129,13 @@
     "Dapta public route URLs and preview tokens are intentionally not included.",
     "The guide documents response_params mapping but does not guarantee interpolation types. Code exports genuine booleans; the exact dynamic HTTP response type is not live-tested, so the dispatcher requires strict boolean true."
   ],
-  "financialConditionsSource": "Only backend conditions after ok=true, verificado=true and complete speech. The agent reads speech literally and never converts numeric amounts, installment count or ISO dates. The native call receives no financial conditions.",
+  "financialConditionsSource": "Only backend conditions after nextAction=CONTINUE, strict ok=true/verificado=true, complete control fields and complete speech. The agent reads speech literally and never converts financial values. Native call receives no expected identity or financial conditions.",
   "preparedLivePatches": [
     {
       "file": "identity-normalizer.patch.json",
       "flowId": "YxVoY",
-      "expectedContentHash": "sha256:627ea9951f2661fe82e5776c28c450f9b3a6b43882c46643348cf001fececdfd",
-      "scope": "Three-string event input, strict direct/args normalization with safe JSON, private Authorization header placeholder, HTTP code mapping and verified response with one document clarification code. Preserve node identifiers and financial speech guard."
+      "expectedContentHash": "sha256:0faebf567cea8329110e1e9f0f629396d8a52a969cb8583029ec0f0fa28c8246",
+      "scope": "Four response-only operations: qryId exports, chkId strict validator/exports, rspId dynamic response. Preserve input, normalization, private credentials, endpoint, node identifiers and financial speech guard."
     },
     {
       "file": "call-identity-variables.patch.json",

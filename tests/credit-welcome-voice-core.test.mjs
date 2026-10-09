@@ -66,3 +66,18 @@ test("only private Dapta application links are exposed to the operator", () => {
     assert.equal(core.safeDaptaWelcomeVoiceUrl(url), null);
   }
 });
+test("welcome application accepts one whole registered name or surname only with the exact full document", () => {
+  const expected = { name: "LUZ HERNANDEZ", document: "38144092" };
+  for (const name of ["Luz Fernández Gil.", "Luz", "Hernández", "Estela Hernández Gil"]) {
+    assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document: "38.144.092" }), true, name);
+    assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document: "38144093" }), false, name);
+  }
+  for (const name of ["Fernández Gil", "Luzmila", "Hernande", "Otro Nombre", "de la y"]) {
+    assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document: "38144092" }), false, name);
+  }
+  assert.equal(core.matchWelcomeVoiceApplicationIdentity({ name: "Ana de la Cruz", document: "00123456" }, { name: "de la", document: "00123456" }), false);
+  assert.equal(core.matchWelcomeVoiceApplicationIdentity({ name: "Ana de la Cruz", document: "00123456" }, { name: "Cruz", document: "00123456" }), true);
+  assert.equal(core.matchWelcomeVoiceApplicationIdentity({ name: "Ana", document: "00123456" }, { name: "Ana", document: "123456" }), false);
+  assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name: "Luz " + "otra ".repeat(20), document: "38144092" }), false);
+  assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: "Luz Fernández Gil.", document: "38144092" }), false, "collections/default policy is unchanged");
+});

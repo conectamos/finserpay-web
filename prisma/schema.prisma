@@ -979,6 +979,7 @@ model CreditWelcomeVoiceEvent {
   completedAt        DateTime? @db.Timestamptz(3)
   providerCallId     String?  @unique @db.VarChar(160)
   identityAttempts   Int      @default(0)
+  identityRecovery   Json     @default("{}")
   identityVerifiedAt DateTime? @db.Timestamptz(3)
   durationSeconds    Float?
   summary            String?

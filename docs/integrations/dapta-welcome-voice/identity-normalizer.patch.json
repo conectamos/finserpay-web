@@ -1,56 +1,7 @@
 {
   "flow_id": "YxVoY",
-  "expected_content_hash": "sha256:627ea9951f2661fe82e5776c28c450f9b3a6b43882c46643348cf001fececdfd",
+  "expected_content_hash": "sha256:0faebf567cea8329110e1e9f0f629396d8a52a969cb8583029ec0f0fa28c8246",
   "ops": [
-    {
-      "op": "set_param",
-      "node_id": "trgId",
-      "path": "api_trigger.trigger_params",
-      "value": [
-        {
-          "id": "pm000",
-          "origin": "body",
-          "key": "event_id",
-          "type": "text",
-          "required": true
-        },
-        {
-          "id": "pm001",
-          "origin": "body",
-          "key": "customer_name",
-          "type": "text",
-          "required": true
-        },
-        {
-          "id": "pm002",
-          "origin": "body",
-          "key": "customer_document",
-          "type": "text",
-          "required": true
-        }
-      ]
-    },
-    {
-      "op": "set_param",
-      "node_id": "nrmId",
-      "path": "api_action.code_action.code",
-      "value": "const body = params.trigger.body;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);\nif (!isRecord(body)) throw new Error('Solicitud de identidad invalida');\nconst hasArgs = owns(body, 'args');\nif (hasArgs && (!isRecord(body.args) || ['event_id', 'event_token', 'customer_name', 'customer_document'].some((key) => owns(body, key)))) throw new Error('Solicitud de identidad invalida');\nconst data = hasArgs ? body.args : body;\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de identidad invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event_id)) throw new Error('Solicitud de identidad invalida');\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 240);\nconst request_body = JSON.stringify({ event_id, customer_name, customer_document });\nmodule.exports = { request_body };"
-    },
-    {
-      "op": "set_param",
-      "node_id": "qryId",
-      "path": "api_action.external_api_action.headers",
-      "value": [
-        {
-          "key": "Content-Type",
-          "value": "application/json"
-        },
-        {
-          "key": "Authorization",
-          "value": "Bearer NEW_PRIVATE_IDENTITY_FLOW_TOKEN"
-        }
-      ]
-    },
     {
       "op": "set_param",
       "node_id": "qryId",
@@ -71,6 +22,22 @@
         {
           "variable_name": "code",
           "response_value_path": "response.code"
+        },
+        {
+          "variable_name": "nextAction",
+          "response_value_path": "response.nextAction"
+        },
+        {
+          "variable_name": "remainingAttempts",
+          "response_value_path": "response.remainingAttempts"
+        },
+        {
+          "variable_name": "question",
+          "response_value_path": "response.question"
+        },
+        {
+          "variable_name": "mayEndCall",
+          "response_value_path": "response.mayEndCall"
         }
       ]
     },
@@ -78,7 +45,85 @@
       "op": "set_param",
       "node_id": "chkId",
       "path": "api_action.code_action.code",
-      "value": "const result = params.verificar_identidad || {};\nconst ok = result.ok === true;\nconst verificado = ok && result.verificado === true;\nconst hasConditions = Boolean(result.condiciones && typeof result.condiciones === 'object' && !Array.isArray(result.condiciones));\nconst speech = hasConditions ? result.condiciones.speech : null;\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst hasSpeech = Boolean(speech && typeof speech === 'object' && !Array.isArray(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString));\nconst complete = !verificado || (hasConditions && hasSpeech);\nmodule.exports = {\n  ok: ok && complete,\n  verificado: verificado && hasConditions && hasSpeech,\n  condiciones: verificado && hasConditions && hasSpeech ? result.condiciones : null,\n  code: ok && complete ? (result.verificado === false && result.code === 'DOCUMENT_NOT_UNDERSTOOD' ? 'DOCUMENT_NOT_UNDERSTOOD' : null) : 'IDENTITY_UNAVAILABLE'\n};"
+      "value": "const result = params.verificar_identidad;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst unavailable = { ok: false, verificado: false, condiciones: null, code: 'IDENTITY_UNAVAILABLE', nextAction: null, remainingAttempts: null, question: null, mayEndCall: null };\nconst questions = {\n  ASK_NAME: '¿Me repite su nombre completo, por favor?',\n  ASK_DOCUMENT: '¿Me repite su número de cédula, por favor?',\n  REVIEW: 'No pude confirmar sus datos. Un asesor revisará su caso.'\n};\nlet output = unavailable;\nif (isRecord(result) && result.ok === true && typeof result.verificado === 'boolean' && Number.isInteger(result.remainingAttempts) && result.remainingAttempts >= 0 && result.remainingAttempts <= 2) {\n  if (result.verificado === true) {\n    const conditions = isRecord(result.condiciones) ? result.condiciones : null;\n    const speech = conditions && conditions.speech;\n    const hasSpeech = isRecord(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString);\n    if (hasSpeech && result.code === null && result.nextAction === 'CONTINUE' && result.question === null && result.mayEndCall === false) {\n      output = { ok: true, verificado: true, condiciones: conditions, code: null, nextAction: 'CONTINUE', remainingAttempts: result.remainingAttempts, question: null, mayEndCall: false };\n    }\n  } else if (result.condiciones === null && ['IDENTITY_NOT_CONFIRMED', 'DOCUMENT_NOT_UNDERSTOOD'].includes(result.code)) {\n    const action = result.nextAction;\n    const asking = (action === 'ASK_NAME' || action === 'ASK_DOCUMENT') && result.remainingAttempts >= 1 && result.mayEndCall === false;\n    const reviewing = action === 'REVIEW' && result.remainingAttempts === 0 && result.mayEndCall === true;\n    const documentAction = result.code !== 'DOCUMENT_NOT_UNDERSTOOD' || action === 'ASK_DOCUMENT' || action === 'REVIEW';\n    if ((asking || reviewing) && documentAction && result.question === questions[action]) {\n      output = { ok: true, verificado: false, condiciones: null, code: result.code, nextAction: action, remainingAttempts: result.remainingAttempts, question: result.question, mayEndCall: result.mayEndCall };\n    }\n  }\n}\nmodule.exports = output;"
+    },
+    {
+      "op": "set_param",
+      "node_id": "chkId",
+      "path": "api_action.response",
+      "value": [
+        {
+          "variable_name": "ok",
+          "response_value_path": "ok"
+        },
+        {
+          "variable_name": "verificado",
+          "response_value_path": "verificado"
+        },
+        {
+          "variable_name": "condiciones",
+          "response_value_path": "condiciones"
+        },
+        {
+          "variable_name": "code",
+          "response_value_path": "code"
+        },
+        {
+          "variable_name": "nextAction",
+          "response_value_path": "nextAction"
+        },
+        {
+          "variable_name": "remainingAttempts",
+          "response_value_path": "remainingAttempts"
+        },
+        {
+          "variable_name": "question",
+          "response_value_path": "question"
+        },
+        {
+          "variable_name": "mayEndCall",
+          "response_value_path": "mayEndCall"
+        }
+      ]
+    },
+    {
+      "op": "set_param",
+      "node_id": "rspId",
+      "path": "api_response.response_params",
+      "value": [
+        {
+          "key": "ok",
+          "value": "{{preparar_respuesta_identidad.ok}}"
+        },
+        {
+          "key": "verificado",
+          "value": "{{preparar_respuesta_identidad.verificado}}"
+        },
+        {
+          "key": "condiciones",
+          "value": "{{preparar_respuesta_identidad.condiciones}}"
+        },
+        {
+          "key": "code",
+          "value": "{{preparar_respuesta_identidad.code}}"
+        },
+        {
+          "key": "nextAction",
+          "value": "{{preparar_respuesta_identidad.nextAction}}"
+        },
+        {
+          "key": "remainingAttempts",
+          "value": "{{preparar_respuesta_identidad.remainingAttempts}}"
+        },
+        {
+          "key": "question",
+          "value": "{{preparar_respuesta_identidad.question}}"
+        },
+        {
+          "key": "mayEndCall",
+          "value": "{{preparar_respuesta_identidad.mayEndCall}}"
+        }
+      ]
     }
   ],
   "strict": true,
