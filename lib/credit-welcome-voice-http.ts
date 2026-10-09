@@ -2,6 +2,7 @@ import { isAdminRole, isApprovalAnalystRole, canReviewCreditApprovals } from "@/
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 import type { WelcomeVoiceToken } from "@/lib/credit-welcome-voice-core";
+import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-document";
 
 export const welcomeVoicePrivateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -98,21 +99,32 @@ function analysisText(value: unknown, maxLength: number): string | null {
 type TokenVerifier = (value: unknown) => WelcomeVoiceToken | null;
 export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
   verifyToken: TokenVerifier;
-  verifyIdentity: (input: { eventId: string; creditId: number; customerName: string; customerDocument: string }) => Promise<{
+  verifyFlowAuthorization?: (value: unknown) => boolean;
+  verifyIdentity: (input: { eventId: string; creditId?: number; requireFreshDispatch?: boolean; customerName: string; customerDocument: string }) => Promise<{
     verificado: boolean; condiciones?: unknown;
   }>;
 }) {
   return async function POST(request: Request) {
     try {
       const body = await readBody(request, 4096);
-      const token = dependencies.verifyToken(body.event_token);
-      if (!token) return unauthorized();
-      const customerName = requiredString(body.customer_name, 240);
-      const customerDocument = requiredString(body.customer_document, 80);
-      if (!/^[\d\s.,-]+$/.test(customerDocument) || !/^\d{5,15}$/.test(customerDocument.replace(/[\s.,-]/g, ""))) {
-        throw new WelcomeVoiceRequestError("INVALID_INPUT");
+      // Select one transport; a bad bearer must not fall back to a model-copied token.
+      const usesFlow = Object.prototype.hasOwnProperty.call(body, "event_id");
+      let scope: { eventId: string; creditId?: number; requireFreshDispatch?: boolean };
+      if (usesFlow) {
+        if (!dependencies.verifyFlowAuthorization?.(request.headers.get("authorization"))) return unauthorized();
+        const eventId = requiredString(body.event_id, 36);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(eventId)
+          || Object.prototype.hasOwnProperty.call(body, "event_token")) throw new WelcomeVoiceRequestError("INVALID_INPUT");
+        scope = { eventId, requireFreshDispatch: true };
+      } else {
+        const token = dependencies.verifyToken(body.event_token);
+        if (!token) return unauthorized();
+        scope = { eventId: token.eventId, creditId: token.creditId };
       }
-      const result = await dependencies.verifyIdentity({ eventId: token.eventId, creditId: token.creditId, customerName, customerDocument });
+      const customerName = requiredString(body.customer_name, 240);
+      const customerDocument = parseWelcomeVoiceSpokenDocument(requiredString(body.customer_document, 240));
+      if (!customerDocument) return response({ ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" });
+      const result = await dependencies.verifyIdentity({ ...scope, customerName, customerDocument });
       return response(result.verificado === true
         ? { ok: true, verificado: true, condiciones: result.condiciones }
         : { ok: true, verificado: false });

@@ -1,12 +1,84 @@
 {
   "flow_id": "YxVoY",
-  "expected_content_hash": "sha256:ba298097d660aafd7e197c052b0ef64f8d78162bce8c6fccc85160c18cacf2b2",
+  "expected_content_hash": "sha256:627ea9951f2661fe82e5776c28c450f9b3a6b43882c46643348cf001fececdfd",
   "ops": [
+    {
+      "op": "set_param",
+      "node_id": "trgId",
+      "path": "api_trigger.trigger_params",
+      "value": [
+        {
+          "id": "pm000",
+          "origin": "body",
+          "key": "event_id",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "pm001",
+          "origin": "body",
+          "key": "customer_name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "pm002",
+          "origin": "body",
+          "key": "customer_document",
+          "type": "text",
+          "required": true
+        }
+      ]
+    },
+    {
+      "op": "set_param",
+      "node_id": "nrmId",
+      "path": "api_action.code_action.code",
+      "value": "const body = params.trigger.body;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);\nif (!isRecord(body)) throw new Error('Solicitud de identidad invalida');\nconst hasArgs = owns(body, 'args');\nif (hasArgs && (!isRecord(body.args) || ['event_id', 'event_token', 'customer_name', 'customer_document'].some((key) => owns(body, key)))) throw new Error('Solicitud de identidad invalida');\nconst data = hasArgs ? body.args : body;\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de identidad invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event_id)) throw new Error('Solicitud de identidad invalida');\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 240);\nconst request_body = JSON.stringify({ event_id, customer_name, customer_document });\nmodule.exports = { request_body };"
+    },
+    {
+      "op": "set_param",
+      "node_id": "qryId",
+      "path": "api_action.external_api_action.headers",
+      "value": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "key": "Authorization",
+          "value": "Bearer NEW_PRIVATE_IDENTITY_FLOW_TOKEN"
+        }
+      ]
+    },
+    {
+      "op": "set_param",
+      "node_id": "qryId",
+      "path": "api_action.response",
+      "value": [
+        {
+          "variable_name": "ok",
+          "response_value_path": "response.ok"
+        },
+        {
+          "variable_name": "verificado",
+          "response_value_path": "response.verificado"
+        },
+        {
+          "variable_name": "condiciones",
+          "response_value_path": "response.condiciones"
+        },
+        {
+          "variable_name": "code",
+          "response_value_path": "response.code"
+        }
+      ]
+    },
     {
       "op": "set_param",
       "node_id": "chkId",
       "path": "api_action.code_action.code",
-      "value": "const result = params.verificar_identidad || {};\nconst ok = result.ok === true;\nconst verificado = ok && result.verificado === true;\nconst hasConditions = Boolean(result.condiciones && typeof result.condiciones === 'object' && !Array.isArray(result.condiciones));\nconst speech = hasConditions ? result.condiciones.speech : null;\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst hasSpeech = Boolean(speech && typeof speech === 'object' && !Array.isArray(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString));\nconst complete = !verificado || (hasConditions && hasSpeech);\nmodule.exports = {\n  ok: ok && complete,\n  verificado: verificado && hasConditions && hasSpeech,\n  condiciones: verificado && hasConditions && hasSpeech ? result.condiciones : null,\n  code: ok && complete ? null : 'IDENTITY_UNAVAILABLE'\n};"
+      "value": "const result = params.verificar_identidad || {};\nconst ok = result.ok === true;\nconst verificado = ok && result.verificado === true;\nconst hasConditions = Boolean(result.condiciones && typeof result.condiciones === 'object' && !Array.isArray(result.condiciones));\nconst speech = hasConditions ? result.condiciones.speech : null;\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst hasSpeech = Boolean(speech && typeof speech === 'object' && !Array.isArray(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString));\nconst complete = !verificado || (hasConditions && hasSpeech);\nmodule.exports = {\n  ok: ok && complete,\n  verificado: verificado && hasConditions && hasSpeech,\n  condiciones: verificado && hasConditions && hasSpeech ? result.condiciones : null,\n  code: ok && complete ? (result.verificado === false && result.code === 'DOCUMENT_NOT_UNDERSTOOD' ? 'DOCUMENT_NOT_UNDERSTOOD' : null) : 'IDENTITY_UNAVAILABLE'\n};"
     }
   ],
   "strict": true,

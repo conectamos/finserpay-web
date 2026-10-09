@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { matchesRegisteredWelcomeVoiceName } from "./credit-welcome-voice-name";
 
 const TOKEN_PURPOSE = "credit-welcome-voice";
 const TOKEN_MAX_SECONDS = 24 * 60 * 60;
@@ -10,6 +11,16 @@ export type WelcomeVoiceToken = {
   issuedAt: number;
   expiresAt: number;
 };
+
+/** The identity flow keeps this credential in its HTTP node, never in model arguments. */
+export function verifyWelcomeVoiceIdentityFlowAuthorization(value: unknown, options: { secret?: string } = {}): boolean {
+  const secret = options.secret ?? process.env.DAPTA_WELCOME_VOICE_IDENTITY_FLOW_TOKEN;
+  if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{32,256}$/.test(secret) || typeof value !== "string") return false;
+  const match = /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(value);
+  if (!match) return false;
+  const supplied = Buffer.from(match[1]), expected = Buffer.from(secret);
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
 
 function getTokenSecret(secret?: string) {
   const configured = secret ?? process.env.DAPTA_WELCOME_VOICE_TOKEN_SECRET;
@@ -83,7 +94,7 @@ export function matchWelcomeVoiceIdentity(
   const expectedDocument = normalizeWelcomeVoiceDocument(expected.document);
   const providedDocument = normalizeWelcomeVoiceDocument(provided.document);
   return !!expectedName && !!providedName && !!expectedDocument && !!providedDocument
-    && expectedName === providedName && expectedDocument === providedDocument;
+    && matchesRegisteredWelcomeVoiceName(providedName, expectedName) && expectedDocument === providedDocument;
 }
 
 export function safeDaptaWelcomeVoiceUrl(value: unknown): string | null {

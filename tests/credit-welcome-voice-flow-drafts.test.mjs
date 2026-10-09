@@ -16,7 +16,7 @@ function runCode(flow, nodeId, params) {
 }
 
 const validIdentity = {
-  event_token: "synthetic-event-token",
+  event_id: "cce44e9a-3f06-4f1b-8c9f-88c9c1f9f931",
   customer_name: "Persona de Prueba",
   customer_document: "12345678",
 };
@@ -50,17 +50,17 @@ test("identity body JSON preserves quotes, slashes and allowed control character
   const output = runCode(identity, "nrmId", { trigger: { body: supplied } });
   const body = JSON.parse(output.request_body);
   assert.deepEqual(body, supplied);
-  assert.deepEqual(Object.keys(body), ["event_token", "customer_name", "customer_document"]);
+  assert.deepEqual(Object.keys(body), ["event_id", "customer_name", "customer_document"]);
 });
 
 test("identity normalization rejects forbidden controls, missing values and excessive input", () => {
   for (const body of [
     { ...validIdentity, customer_name: "Ana\u0000Pérez" },
     { ...validIdentity, customer_document: "123\u001f456" },
-    { ...validIdentity, event_token: "token\u007f" },
+    { ...validIdentity, event_id: "event\u007f" },
     { ...validIdentity, customer_name: "a".repeat(241) },
-    { ...validIdentity, customer_document: "1".repeat(81) },
-    { ...validIdentity, event_token: "a".repeat(1001) },
+    { ...validIdentity, customer_document: "1".repeat(241) },
+    { ...validIdentity, event_id: "a".repeat(37) },
     { ...validIdentity, customer_document: 12345678 },
     { ...validIdentity, customer_name: " " },
     {},
@@ -86,17 +86,18 @@ test("identity envelope rejects malformed args and mixed locations instead of fa
     { args: null }, { args: [] }, { args: "not-json" }, { args: false },
     { ...validIdentity, args: null },
     { ...validIdentity, args: { ...validIdentity } },
-    { event_token: validIdentity.event_token, args: { customer_name: validIdentity.customer_name, customer_document: validIdentity.customer_document } },
+    { event_id: validIdentity.event_id, args: { customer_name: validIdentity.customer_name, customer_document: validIdentity.customer_document } },
+    { event_token: "legacy-token", args: validIdentity },
   ]) {
     assert.throws(() => runCode(identity, "nrmId", { trigger: { body } }), /Solicitud de identidad invalida/);
   }
 });
 
-test("direct and args identity bodies require their own valid token", () => {
+test("direct and args identity bodies require their own scoped event UUID", () => {
   for (const wrap of [body => body, body => ({ args: body })]) {
-    for (const token of [undefined, null, 123, "", " ", "token\u0000", "a".repeat(1001)]) {
+    for (const eventId of [undefined, null, 123, "", " ", "event\u0000", "a".repeat(37), "not-a-uuid", "synthetic-event-token"]) {
       assert.throws(() => runCode(identity, "nrmId", {
-        trigger: { body: wrap({ ...validIdentity, event_token: token }) },
+        trigger: { body: wrap({ ...validIdentity, event_id: eventId }) },
       }), /Solicitud de identidad invalida/);
     }
   }
@@ -121,27 +122,71 @@ test("identity response remains strict boolean after args normalization and has 
   }
 });
 
-test("identity speech patch changes only the live verified response Code field", () => {
+test("identity transport patch is scoped to input, safe JSON, private header and verified response", () => {
   const patch = JSON.parse(readFileSync(new URL("identity-normalizer.patch.json", base), "utf8"));
   assert.equal(patch.flow_id, "YxVoY");
   assert.match(patch.expected_content_hash, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(patch.ops.length, 1);
-  assert.deepEqual(
-    { op: patch.ops[0].op, node_id: patch.ops[0].node_id, path: patch.ops[0].path },
-    { op: "set_param", node_id: "chkId", path: "api_action.code_action.code" },
-  );
-  assert.equal(patch.ops[0].value, identity.api_nodes.find(node => node.id === "chkId").api_action.code_action.code);
+  assert.deepEqual(patch.ops.map(op => [op.op, op.node_id, op.path]), [
+    ["set_param", "trgId", "api_trigger.trigger_params"],
+    ["set_param", "nrmId", "api_action.code_action.code"],
+    ["set_param", "qryId", "api_action.external_api_action.headers"],
+    ["set_param", "qryId", "api_action.response"],
+    ["set_param", "chkId", "api_action.code_action.code"],
+  ]);
+  assert.deepEqual(patch.ops[0].value, identity.api_nodes.find(node => node.id === "trgId").api_trigger.trigger_params);
+  assert.equal(patch.ops[1].value, identity.api_nodes.find(node => node.id === "nrmId").api_action.code_action.code);
+  assert.deepEqual(patch.ops[2].value, identity.api_nodes.find(node => node.id === "qryId").api_action.external_api_action.headers);
+  assert.deepEqual(patch.ops[3].value, identity.api_nodes.find(node => node.id === "qryId").api_action.response);
+  assert.equal(patch.ops[4].value, identity.api_nodes.find(node => node.id === "chkId").api_action.code_action.code);
   assert.doesNotMatch(JSON.stringify(patch), /https:\/\/|x-api-key|previewToken|preview_token/);
   assert.equal(identity.api_nodes.find(node => node.id === "nrmId").api_action.on_error, "stop");
 });
 
-test("identity HTTP action sends only safe serialized JSON and no backend secret", () => {
+test("identity private bearer is a header placeholder and never a model parameter or JSON body", () => {
   const api = identity.api_nodes.find(node => node.id === "qryId").api_action.external_api_action;
   assert.equal(api.request_type, "post");
   assert.equal(api.url, "https://finserpay.com/api/integraciones/dapta/bienvenida-voz/identidad");
   assert.equal(api.body, "{{normalizar_identidad.request_body}}");
-  assert.deepEqual(api.headers, [{ key: "Content-Type", value: "application/json" }]);
+  assert.deepEqual(api.headers, [
+    { key: "Content-Type", value: "application/json" },
+    { key: "Authorization", value: "Bearer NEW_PRIVATE_IDENTITY_FLOW_TOKEN" },
+  ]);
   assert.equal(api.authorization.token, "");
+  assert.deepEqual(identity.api_nodes.find(node => node.id === "qryId").api_action.response.find(field => field.variable_name === "code"),
+    { variable_name: "code", response_value_path: "response.code" });
+  const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
+  assert.doesNotMatch(JSON.stringify(config.pendingIdentityTool), /NEW_PRIVATE_IDENTITY_FLOW_TOKEN|event_token|Authorization/);
+  const exported = runCode(identity, "nrmId", { trigger: { body: { ...validIdentity, event_token: "ignored-signed-token", authorization: "ignored-bearer" } } });
+  assert.deepEqual(JSON.parse(exported.request_body), validIdentity);
+});
+
+test("identity document utterances reach the backend literally without numeric conversion or expected values", () => {
+  for (const customer_document of [
+    "doce, trescientos cuarenta y cinco, cero sesenta y siete",
+    "uno dos tres cuatro cinco cero seis siete",
+    "00123456",
+    "doce; trescientos cuarenta y cinco; cero cero seis",
+  ]) {
+    const supplied = { ...validIdentity, customer_document };
+    const exported = runCode(identity, "nrmId", { trigger: { body: { args: supplied } } });
+    assert.deepEqual(JSON.parse(exported.request_body), supplied);
+  }
+});
+
+test("only an explicit unverified document clarification code is exposed without financial conditions", () => {
+  assert.deepEqual(runCode(identity, "chkId", {
+    verificar_identidad: { ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD", condiciones: validConditions },
+  }), { ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" });
+  for (const response of [
+    { ok: true, verificado: false, code: "private-error-details" },
+    { ok: true, verificado: "false", code: "DOCUMENT_NOT_UNDERSTOOD" },
+    { ok: true, code: "DOCUMENT_NOT_UNDERSTOOD" },
+  ]) assert.deepEqual(runCode(identity, "chkId", {
+    verificar_identidad: response,
+  }), { ok: true, verificado: false, condiciones: null, code: null });
+  assert.deepEqual(runCode(identity, "chkId", {
+    verificar_identidad: { ok: false, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" },
+  }), { ok: false, verificado: false, condiciones: null, code: "IDENTITY_UNAVAILABLE" });
 });
 
 test("identity success requires a conditions object and strict booleans", () => {
@@ -212,27 +257,46 @@ test("call preserves prepared document blocks and the zero-preserving raw docume
   }
 });
 
-test("voice tool retains raw identity constants while the prompt requires literal speech and consent", () => {
+test("voice tool captures actual customer identity without prefilled answers or extra authorization", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
   const tool = config.pendingIdentityTool;
-  assert.match(tool.parameters.properties.customer_name.description, /\{\{customer_name\}\}/);
-  assert.match(tool.parameters.properties.customer_document.description, /\{\{customer_document\}\}/);
-  assert.doesNotMatch(tool.parameters.properties.customer_document.description, /\{\{customer_document_spoken\}\}/);
+  assert.match(tool.parameters.properties.customer_name.description, /realmente haya dicho/);
+  assert.match(tool.parameters.properties.customer_document.description, /literalmente/);
+  assert.match(tool.parameters.properties.customer_document.description, /palabras o dígitos/);
+  assert.match(tool.parameters.properties.customer_document.description, /No convertir/);
+  assert.match(tool.parameters.properties.customer_document.description, /sin exigir un formato/);
+  for (const key of ["customer_name", "customer_document"]) {
+    assert.doesNotMatch(tool.parameters.properties[key].description, /\{\{/);
+    assert.equal(tool.parameters.properties[key].const, undefined);
+  }
+  assert.equal(tool.parameters.properties.event_token, undefined);
+  assert.match(tool.parameters.properties.event_id.description, /\{\{event_id\}\}/);
+  assert.deepEqual(tool.parameters.required,
+    ["dapta_api_id", "dapta_webhook", "event_id", "customer_name", "customer_document"]);
   assert.equal(tool.parameters.properties.dapta_webhook.const, "NEW_PRIVATE_IDENTITY_FLOW_URL");
   assert.equal(tool.parameters.properties.dapta_api_id.const, "NEW_IDENTITY_FLOW_ID");
   for (const param of Object.values(tool.parameters.properties)) assert.equal(param.type, "string");
-  assert.equal(config.updateAfterCreate.begin_message, "Hola, soy Sofía de FINSER PAY. Esta llamada se graba para confirmar su crédito. ¿Podemos continuar?");
-  for (const affirmative of ["sí", "ok", "vale", "claro", "de acuerdo"]) assert.ok(prompt.includes("«" + affirmative + "»"));
+  assert.equal(config.createArguments.identity_name, "Diana");
+  assert.equal(config.createArguments.company_name, "FINSER PAY");
+  assert.equal(config.updateAfterCreate.begin_message,
+    "Hola, soy Diana de FINSER PEY y quiero darle la bienvenida y confirmar los datos de la financiación de su celular. Esta llamada está siendo grabada y monitoreada para efectos de calidad y seguridad. ¿Me confirma, por favor, su nombre completo?");
+  assert.doesNotMatch(config.updateAfterCreate.begin_message, /podemos continuar|tiene un momento|puede hablar/i);
+  assert.ok(prompt.includes("¿Su número de cédula, por favor?"));
+  assert.match(prompt, /Acepta la cédula en bloques hablados, dígito a dígito o como números/);
+  assert.match(prompt, /No exijas un formato ni ofrezcas ejemplos/);
+  assert.match(prompt, /code=DOCUMENT_NOT_UNDERSTOOD/);
+  assert.match(prompt, /Si ya pediste repetir/);
+  assert.doesNotMatch(prompt, /solo (?:en )?(?:dígitos|números)|por ejemplo/i);
   for (const field of ["initialPayment", "installmentAmount", "installmentCount", "firstDueDate"]) {
     assert.ok(prompt.includes("[speech." + field + "]"));
     assert.ok(!prompt.includes("[" + field + "]"));
   }
-  assert.ok(prompt.includes("customer_name_spoken") && prompt.includes("customer_document_spoken"));
+  assert.doesNotMatch(prompt, /customer_(?:name|document)/);
   assert.match(prompt, /speech incompleto/);
   assert.match(prompt, /sin decir ningún importe o fecha/);
   assert.match(prompt, /calendar confirma/);
-  assert.match(prompt, /el sistema genera un bloqueo/);
+  assert.match(prompt, /El dispositivo cuenta con un aplicativo de bloqueo/);
   assert.doesNotMatch(prompt, /<\s*(?:speak|break|say-as|prosody)\b/i);
 });
 
@@ -268,45 +332,76 @@ test("optional equipment speech is preserved only inside verified conditions", (
   }
 });
 
-test("equipment reference guard precedes the plan and handles missing data or discrepancies", () => {
+test("equipment is named only after verification and before verified financial amounts", () => {
   const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
-  const referenceAt = prompt.indexOf("REFERENCIA DEL CELULAR");
-  const planAt = prompt.indexOf("PLAN Y CONFIRMACIÓN DE LA PRIMERA CUOTA");
-  assert.ok(referenceAt > 0 && referenceAt < planAt);
-  const reference = prompt.slice(referenceAt, planAt);
+  const planAt = prompt.indexOf("PLAN DE PAGOS: PRIMER ACUERDO");
+  const calendarAt = prompt.indexOf("CALENDARIO Y PRIMERA FECHA: SEGUNDO ACUERDO");
+  const reference = prompt.slice(planAt, calendarAt);
   for (const guard of ["ok=true", "verificado=true", "condiciones.speech completo"]) assert.ok(reference.includes(guard));
   assert.ok(reference.includes("[speech.equipmentReference]"));
   assert.match(reference, /referencia exacta/);
+  assert.ok(reference.indexOf("[speech.equipmentReference]") < reference.indexOf("[speech.initialPayment]"));
   assert.match(reference, /equipmentReference falta, es null o está vacío/);
   assert.match(reference, /no adivines/);
-  assert.match(reference, /Si el cliente señala una diferencia/);
-  assert.match(reference, /pregunta una sola vez/);
-  assert.match(reference, /Un asesor debe revisar esa diferencia/);
-  assert.match(reference, /sin.*inventar otra referencia/);
+  assert.match(reference, /un asesor debe revisarla/);
+  assert.match(reference, /installmentsEqual=false/);
+  assert.match(reference, /no afirmes que todas cuestan lo mismo/);
 });
 
-test("conversational document instructions use prepared blocks without changing identity", () => {
+test("normal hangup waits for three separate agreements and preserves early exits", () => {
   const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
   assert.match(prompt, /tono cordial y conversacional/);
-  assert.match(prompt, /cada bloque completo tal como lo recibes/);
-  assert.match(prompt, /sin cambiar los ceros/);
-  assert.match(prompt, /repite únicamente ese bloque tal como está/);
-  assert.match(prompt, /No conviertas los bloques/);
+  const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
+  const gates = ["PLAN DE PAGOS: PRIMER ACUERDO", "CALENDARIO Y PRIMERA FECHA: SEGUNDO ACUERDO", "APLICATIVO: TERCER ACUERDO"];
+  for (let i = 0; i < gates.length; i++) {
+    const start = prompt.indexOf(gates[i]);
+    const end = i + 1 < gates.length ? prompt.indexOf(gates[i + 1]) : prompt.indexOf("TURNOS, DIFERENCIAS Y CIERRE");
+    const block = prompt.slice(start, end);
+    assert.ok(start > 0 && end > start);
+    assert.match(block, /¿Está de acuerdo\?/);
+    assert.match(block, /Espera una respuesta real/);
+  }
+  // The user requested these sentences verbatim; prepared financial texts replace only their placeholders.
+  for (const sentence of [
+    "Le confirmo su plan de pagos: [speech.equipmentReference]",
+    "Con una cuota inicial de [speech.initialPayment]",
+    "Su financiación tiene un plazo de [speech.installmentCount] de [speech.installmentAmount]. ¿Está de acuerdo?",
+    "Sus fechas de pago son para todos los dos y diecisiete de cada mes",
+    "Su primer pago está para el día [speech.firstDueDate]. ¿Está de acuerdo?",
+    "El dispositivo cuenta con un aplicativo de bloqueo. En caso de mora se bloqueará el equipo y su activación podrá tardar hasta veinticuatro horas después de realizar el pago correspondiente. ¿Está de acuerdo?",
+  ]) assert.ok(prompt.includes(sentence), sentence);
+  assert.match(prompt, /Nunca ejecutes end_call en el mismo turno de una pregunta ni mientras esperas su respuesta/);
+  assert.match(prompt, /tres respuestas afirmativas independientes/);
+  assert.match(prompt, /Si falta una respuesta o el agente cuelga antes/);
+  assert.equal(config.pendingEndCallTool.name, "end_call");
+  assert.equal(config.pendingEndCallTool.type, "end_call");
+  assert.match(config.pendingEndCallTool.description, /tres respuestas afirmativas reales e independientes/);
+  assert.match(config.pendingEndCallTool.description, /Nunca ejecutes esta herramienta en el mismo turno de una pregunta/);
+  for (const reason of ["rechazo de grabación", "petición expresa de terminar", "identidad no verificada", "fallo", "discrepancia", "buzón"]) {
+    assert.ok(config.pendingEndCallTool.description.includes(reason));
+  }
   assert.match(prompt, /No hables lentamente palabra por palabra/);
   assert.match(prompt, /no uses tono cantado ni una cadencia de lista/);
-  assert.match(prompt, /valores originales customer_name y customer_document/);
-  assert.doesNotMatch(prompt, /palabras de cada dígito, despacio/);
+  assert.match(prompt, /Gracias por su tiempo/);
 });
 
-test("analysis definitions distinguish verified identity and yes to date from all terms", () => {
+test("analysis distinguishes actual identity, continuity after notice and all three agreements", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   const definitions = Object.fromEntries(config.createArguments.post_call_analysis_data.map(field => [field.name, field.description]));
-  assert.match(definitions.identity_confirmed, /respuesta real de la herramienta/);
-  assert.match(definitions.identity_confirmed, /ok=true, verificado=true/);
+  assert.match(definitions.identity_confirmed, /resultado real de la herramienta/);
+  assert.match(definitions.identity_confirmed, /booleanos verdaderos/);
   assert.match(definitions.first_payment_confirmed, /speech.firstDueDate/);
   for (const affirmative of ["sí", "ok", "vale", "claro", "de acuerdo"]) assert.ok(definitions.first_payment_confirmed.includes(affirmative));
-  assert.match(definitions.terms_confirmed, /Confirmar identidad, referencia del celular o primera fecha por separado no confirma todos los términos/);
-  assert.match(definitions.customer_discrepancies, /referencia del celular/);
+  for (const field of ["identity_confirmed", "payment_plan_confirmed", "first_payment_confirmed", "device_policy_confirmed"]) {
+    assert.ok(definitions.terms_confirmed.includes(field));
+  }
+  assert.match(definitions.terms_confirmed, /tres respuestas afirmativas independientes/);
+  assert.match(definitions.payment_plan_confirmed, /primera pregunta/);
+  assert.match(definitions.first_payment_confirmed, /segunda pregunta/);
+  assert.match(definitions.device_policy_confirmed, /tercera pregunta/);
+  assert.match(definitions.recording_accepted, /continuidad tras el aviso/);
+  assert.match(definitions.recording_accepted, /no.*consentimiento expreso/);
+  assert.match(config.createArguments.analysis_successful_prompt, /Un cierre mientras se esperaba respuesta/);
 });
 
 test("identity mismatch never exposes supplied conditions", () => {
@@ -350,7 +445,7 @@ test("call requires both analyst identity fields and preserves quoted names as s
   }
 });
 
-test("native call variables receive exported analyst identity and no financial conditions", () => {
+test("native call excludes expected identity while legacy trigger inputs remain compatible", () => {
   const normalized = runCode(call, "nrmCl", { trigger: { body: validCall } });
   const normalizer = call.api_nodes.find(node => node.id === "nrmCl");
   const trigger = call.api_nodes.find(node => node.id === "trgCl");
@@ -359,13 +454,13 @@ test("native call variables receive exported analyst identity and no financial c
     assert.equal(typeof normalized[key], "string");
     assert.equal(normalizer.api_action.response.find(field => field.variable_name === key).response_value_path, key);
     assert.equal(trigger.api_trigger.trigger_params.find(field => field.key === key).required, true);
-    assert.equal(native.api_action.custom_action.values.variables.find(field => field.key === key).value, "{{normalizar_llamada." + key + "}}");
+    assert.equal(native.api_action.custom_action.values.variables.find(field => field.key === key), undefined);
   }
   assert.deepEqual(native.api_action.custom_action.values.variables.map(field => field.key),
-    ["event_id", "credito_id", "event_token", "customer_name", "customer_document", "customer_name_spoken", "customer_document_spoken"]);
+    ["event_id", "credito_id", "event_token"]);
   assert.equal(trigger.api_trigger.trigger_params.length, 8);
   assert.equal(normalizer.api_action.response.length, 8);
-  assert.equal(native.api_action.custom_action.values.variables.length, 7);
+  assert.equal(native.api_action.custom_action.values.variables.length, 3);
 });
 
 test("call variable patch preserves native identifiers, template attributes and credentials by omission", () => {
@@ -459,10 +554,6 @@ test("native draft retains the template and scoped variables with credentials re
     { key: "event_id", value: "{{normalizar_llamada.event_id}}" },
     { key: "credito_id", value: "{{normalizar_llamada.credito_id}}" },
     { key: "event_token", value: "{{normalizar_llamada.event_token}}" },
-    { key: "customer_name", value: "{{normalizar_llamada.customer_name}}" },
-    { key: "customer_document", value: "{{normalizar_llamada.customer_document}}" },
-    { key: "customer_name_spoken", value: "{{normalizar_llamada.customer_name_spoken}}" },
-    { key: "customer_document_spoken", value: "{{normalizar_llamada.customer_document_spoken}}" },
   ]);
   for (const text of [JSON.stringify(identity), JSON.stringify(call)]) {
     assert.doesNotMatch(text, /x-api-key[=:%]|Authorization[=:]/i);

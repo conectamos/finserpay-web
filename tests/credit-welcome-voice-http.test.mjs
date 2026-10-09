@@ -5,9 +5,12 @@ import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 const roles = loadReissueModule("lib/roles.ts");
 const allies = loadReissueModule("lib/aliados.ts");
 const lookup = loadReissueModule("lib/credit-route-lookup.ts");
-const core = loadReissueModule("lib/credit-welcome-voice-core.ts");
+const core = loadReissueModule("lib/credit-welcome-voice-core.ts", {
+  "./credit-welcome-voice-name": loadReissueModule("lib/credit-welcome-voice-name.ts"),
+});
 const http = loadReissueModule("lib/credit-welcome-voice-http.ts", {
   "@/lib/roles": roles, "@/lib/aliados": allies, "@/lib/credit-route-lookup": lookup,
+  "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
 });
 const now = new Date("2026-10-08T15:00:00.000Z");
 const secret = "test-welcome-voice-secret-at-least-thirty-two-characters";
@@ -67,7 +70,7 @@ test("identity only returns backend verified conditions and ignores caller finan
   const f = identityFixture();
   const response = await f.POST(request({ ...validIdentity(), credit_id: 99, verificado: true, identity_confirmed: true, installmentAmount: 1 }));
   assert.equal(response.status, 200); assertPrivate(response);
-  assert.deepEqual(f.calls, [{ ...identity, customerName: "Ana María Pérez", customerDocument: "00.123.456-78" }]);
+  assert.deepEqual(f.calls, [{ ...identity, customerName: "Ana María Pérez", customerDocument: "0012345678" }]);
   assert.deepEqual(await response.json(), { ok: true, verificado: true, condiciones: { installmentCount: 4, installmentAmount: 130000 } });
   const denied = identityFixture({ result: { verificado: false, condiciones: { secret: "hidden" }, customer_document: "hidden" } });
   assert.deepEqual(await (await denied.POST(request(validIdentity()))).json(), { ok: true, verificado: false });
@@ -77,7 +80,7 @@ test("identity validates strings and enforces actual byte limits, JSON object an
   const f = identityFixture();
   for (const body of [[], null, "{", { ...validIdentity(), customer_name: 1 }, { ...validIdentity(), customer_name: "" },
     { ...validIdentity(), customer_name: "a".repeat(241) }, { ...validIdentity(), customer_document: 12345678 },
-    { ...validIdentity(), customer_document: "12abc345" }, { ...validIdentity(), customer_document: "1234" },
+    { ...validIdentity(), customer_document: "a".repeat(241) },
     { ...validIdentity(), customer_name: "Ana\u0000Pérez" }]) {
     assert.equal((await f.POST(request(body))).status, 400);
   }
@@ -86,6 +89,39 @@ test("identity validates strings and enforces actual byte limits, JSON object an
   assert.equal((await f.POST(request(tooLarge, "identidad", { "content-length": "1" }))).status, 413);
   assert.equal((await f.POST(request(validIdentity(), "identidad", { "content-length": "5000" }))).status, 413);
   assert.equal(f.calls.length, 0);
+});
+
+test("spoken document blocks and individual digits are parsed without an expected document or LLM conversion", async () => {
+  const f = identityFixture();
+  for (const spoken of ["treinta y ocho, ciento cuarenta y cuatro, cero noventa y dos", "tres ocho uno cuatro cuatro cero nueve dos"]) {
+    const response = await f.POST(request({ ...validIdentity(), customer_document: spoken }));
+    assert.equal(response.status, 200);
+    assert.equal(f.calls.at(-1).customerDocument, "38144092");
+  }
+  for (const spoken of ["12abc345", "1234", "treinta ocho", "treinta y ocho ciento cuarenta y cuatro cero noventa y dos"]) {
+    const response = await f.POST(request({ ...validIdentity(), customer_document: spoken }));
+    assert.deepEqual(await response.json(), { ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" });
+  }
+  assert.equal(f.calls.length, 2);
+});
+
+test("trusted identity flow uses a private HTTP bearer and derives credit scope from the event only", async () => {
+  const calls = [];
+  const flowSecret = "flow-only-private-key-with-at-least-32-characters";
+  const POST = http.createCreditWelcomeVoiceIdentityHandler({ verifyToken,
+    verifyFlowAuthorization: value => core.verifyWelcomeVoiceIdentityFlowAuthorization(value, { secret: flowSecret }),
+    verifyIdentity: async input => { calls.push(plain(input)); return { verificado: true, condiciones: { installmentCount: 4 } }; },
+  });
+  const body = { event_id: identity.eventId, customer_name: "Ana María Pérez", customer_document: "0012345678", credit_id: 999 };
+  for (const header of [undefined, `Bearer ${token}`, "Bearer wrong", `Bearer ${flowSecret}-bad`]) {
+    assert.equal((await POST(request(body, "identidad", header ? { authorization: header } : {}))).status, 401);
+  }
+  assert.equal(calls.length, 0);
+  const header = { authorization: `Bearer ${flowSecret}` };
+  assert.equal((await POST(request({ ...body, event_token: token }, "identidad", header))).status, 400);
+  assert.equal((await POST(request({ ...body, event_id: "not-uuid" }, "identidad", header))).status, 400);
+  assert.equal((await POST(request(body, "identidad", header))).status, 200);
+  assert.deepEqual(calls, [{ eventId: identity.eventId, requireFreshDispatch: true, customerName: "Ana María Pérez", customerDocument: "0012345678" }]);
 });
 
 test("callback accepts observed call/data envelopes, normalizes milliseconds, and never trusts model identity", async () => {

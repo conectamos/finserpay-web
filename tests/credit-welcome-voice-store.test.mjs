@@ -307,6 +307,34 @@ test("identity verifies backend data, preserves document zeroes and excludes doc
   assert.equal((await f.identity(eventId, { creditId: 2 })).verificado, false);
 });
 
+test("identity flow derives credit from a fresh active event and rejects stale, future or closed dispatches", async t => {
+  const f = await fixture(t);
+  const { eventId } = await f.enqueue();
+  const flowInput = { eventId, requireFreshDispatch: true, customerName: "Ana Maria Prueba", customerDocument: "00123456" };
+  assert.equal((await f.store.verifyCreditWelcomeVoiceIdentity(flowInput)).verificado, false);
+  await f.store.claimPendingCreditWelcomeVoice();
+  assert.equal((await f.store.verifyCreditWelcomeVoiceIdentity({ ...flowInput, requireFreshDispatch: false })).verificado, false);
+  for (const dispatchedAt of [null, "2026-10-07T14:59:59.000Z", "2026-10-08T15:00:01.000Z"]) {
+    await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "dispatchedAt"=$2 WHERE "id"=$1::uuid', [eventId, dispatchedAt]);
+    assert.equal((await f.store.verifyCreditWelcomeVoiceIdentity(flowInput)).verificado, false);
+  }
+  assert.equal((await f.rows())[0].identityAttempts, 0);
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "dispatchedAt"=$2 WHERE "id"=$1::uuid', [eventId, "2026-10-08T15:00:00.000Z"]);
+  assert.equal((await f.store.verifyCreditWelcomeVoiceIdentity({ ...flowInput, customerDocument: "99999999" })).verificado, false);
+  assert.equal((await f.store.verifyCreditWelcomeVoiceIdentity(flowInput)).verificado, true);
+  await f.result(eventId);
+  assert.equal((await f.store.verifyCreditWelcomeVoiceIdentity(flowInput)).verificado, false);
+});
+
+test("additional spoken names can match all registered components only with the exact document", async t => {
+  const f = await fixture(t, { credits: [sample(1, { clienteNombre: "LUZ HERNANDEZ", clienteDocumento: "38144092" })] });
+  const { eventId } = await f.enqueue();
+  await f.store.claimPendingCreditWelcomeVoice();
+  assert.equal((await f.identity(eventId, { customerName: "Luz Estela Hernández Gili", customerDocument: "38144093" })).verificado, false);
+  assert.equal((await f.identity(eventId, { customerName: "Luz Estela García Gili", customerDocument: "38144092" })).verificado, false);
+  assert.equal((await f.identity(eventId, { customerName: "Luz Estela Hernández Gili", customerDocument: "38144092" })).verificado, true);
+});
+
 test("successful postcall is idempotent and markAccepted cannot overwrite a fast completed callback", async t => {
   const f = await fixture(t);
   const { eventId } = await f.enqueue();

@@ -1,6 +1,6 @@
 {
   "flow_id": "WdOvp",
-  "expected_content_hash": "sha256:9f83a1a09e4bfc59edb81f61c80313614347c4fd673cc10d498c2d915b8c7515",
+  "expected_content_hash": "sha256:1e5de923793488b35e150dfbcd3aaee63b5a12c0eda98cb28e3af088528f26c4",
   "ops": [
     {
       "op": "set_param",
@@ -126,22 +126,6 @@
         {
           "key": "event_token",
           "value": "{{normalizar_llamada.event_token}}"
-        },
-        {
-          "key": "customer_name",
-          "value": "{{normalizar_llamada.customer_name}}"
-        },
-        {
-          "key": "customer_document",
-          "value": "{{normalizar_llamada.customer_document}}"
-        },
-        {
-          "key": "customer_name_spoken",
-          "value": "{{normalizar_llamada.customer_name_spoken}}"
-        },
-        {
-          "key": "customer_document_spoken",
-          "value": "{{normalizar_llamada.customer_document_spoken}}"
         }
       ]
     }
