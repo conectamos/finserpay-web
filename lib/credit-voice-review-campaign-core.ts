@@ -37,7 +37,7 @@ export function getVoiceReviewCampaignSlot(config: VoiceReviewCampaignConfig, no
   const fields = Object.fromEntries(parts.map(part => [part.type, part.value]));
   const date = `${fields.year}-${fields.month}-${fields.day}`;
   if (date < config.startDate) return null;
-  const hours = date === config.startDate ? [8, 10, 14] : [10, 14];
+  const hours = [8, 10, 14, 17];
   const hour = Number(fields.hour), minute = Number(fields.minute);
   return hours.includes(hour) && minute >= 0 && minute < VOICE_REVIEW_WINDOW_MINUTES
     ? `${date}T${String(hour).padStart(2, "0")}:00` : null;

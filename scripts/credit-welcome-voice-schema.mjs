@@ -5,6 +5,19 @@ export const creditWelcomeVoiceSchemaStatements = [
     "creditIds" JSONB NOT NULL CHECK (jsonb_typeof("creditIds")='array'),
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
+  `CREATE TABLE IF NOT EXISTS public."VoiceReviewCampaignManualWindow" (
+    "campaignId" VARCHAR(64) NOT NULL REFERENCES public."VoiceReviewCampaign"("id") ON DELETE RESTRICT,
+    "slot" VARCHAR(16) NOT NULL,
+    "startsAt" TIMESTAMPTZ(3) NOT NULL,
+    "expiresAt" TIMESTAMPTZ(3) NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "reason" VARCHAR(240) NOT NULL CHECK (length(btrim("reason"))>0 AND "reason" !~ '[[:cntrl:]]'),
+    PRIMARY KEY ("campaignId","slot"),
+    CHECK (isfinite("startsAt") AND isfinite("expiresAt") AND isfinite("createdAt")),
+    CHECK ("expiresAt">"startsAt" AND "expiresAt"<="startsAt"+INTERVAL '10 minutes'),
+    CHECK ("slot" ~ '^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$'
+      AND "slot"=to_char("startsAt" AT TIME ZONE 'America/Bogota','YYYY-MM-DD"T"HH24:MI'))
+  )`,
   `CREATE TABLE IF NOT EXISTS public."VoiceReviewCampaignMember" (
     "campaignId" VARCHAR(64) NOT NULL REFERENCES public."VoiceReviewCampaign"("id") ON DELETE RESTRICT,
     "creditoId" INTEGER NOT NULL REFERENCES public."Credito"("id") ON DELETE RESTRICT,

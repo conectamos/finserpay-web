@@ -88,6 +88,7 @@ const validCreditId = (id: number) => Number.isSafeInteger(id) && id > 0 && id <
 const validCampaignId = (id: string) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id);
 const validCampaignSlot = (slot: string) => typeof slot === "string" && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(slot) && calendarDay(slot) === slot.slice(0, 10);
 type CampaignRow = { id: string; startDate: string; creditIds: number[] };
+type CampaignManualWindow = { slot: string; startsAt: Date | string; expiresAt: Date | string; createdAt: Date | string; reason: string };
 type CampaignMember = { campaignId: string; creditoId: number; state: "ACTIVE" | "CONTACTED" | "STOPPED" | "HELD";
   lastEventId: string | null; reviewRevision: number | null; reviewHash: string | null };
 type ReviewRow = { status: string; revision: number; reviewHash: string | null };
@@ -97,6 +98,15 @@ function calendarDay(value: unknown): string | null {
   if (!day) return null;
   const date = new Date(day + "T12:00:00.000Z");
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === day ? day : null;
+}
+function colombiaMinute(value: Date): string | null {
+  if (!Number.isFinite(value.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(value);
+  const fields = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}`;
 }
 function number(value: unknown): number | null {
   if (value == null || value === "") return null;
@@ -249,9 +259,40 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     await db.$executeRawUnsafe(`UPDATE "VoiceReviewCampaignMember" SET "state"=$3,"stopReason"=$4,"updatedAt"=$5
       WHERE "campaignId"=$1 AND "creditoId"=$2 AND "state"='ACTIVE'`, campaignId, creditId, state, reason, now());
   }
-  async function readCampaign(db: WelcomeVoiceTransaction, id: string, lock = false) {
+  async function readCampaign(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, id: string, lock = false) {
     return (await db.$queryRawUnsafe<CampaignRow[]>(`SELECT "id","startDate"::text,"creditIds" FROM "VoiceReviewCampaign"
       WHERE "id"=$1 ${lock ? "FOR UPDATE" : ""}`, id))[0] ?? null;
+  }
+  async function resolveCampaignDispatchSlot(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, campaign: CampaignRow, time: Date) {
+    if (!colombiaMinute(time)) return null;
+    const regular = getVoiceReviewCampaignSlot(campaign, time);
+    if (regular) return regular;
+    const windows = await db.$queryRawUnsafe<CampaignManualWindow[]>(`SELECT "slot","startsAt","expiresAt","createdAt","reason"
+      FROM "VoiceReviewCampaignManualWindow" WHERE "campaignId"=$1 AND "startsAt"<=$2 AND "expiresAt">$2
+      ORDER BY "startsAt" DESC,"slot" DESC LIMIT 2`, campaign.id, time);
+    // Reading the authorization can itself cross its expiry or a regular slot.
+    const checkedAt = now(), currentMinute = colombiaMinute(checkedAt);
+    if (!currentMinute) return null;
+    const currentRegular = getVoiceReviewCampaignSlot(campaign, checkedAt);
+    if (currentRegular) return currentRegular;
+    // Overlapping authorizations are ambiguous; do not switch slots and redial.
+    if (windows.length !== 1) return null;
+    const window = windows[0], startsAt = new Date(window.startsAt), expiresAt = new Date(window.expiresAt);
+    const duration = expiresAt.getTime() - startsAt.getTime();
+    if (!validCampaignSlot(window.slot) || colombiaMinute(startsAt) !== window.slot ||
+      !Number.isFinite(duration) || duration <= 0 || duration > 10 * 60_000 ||
+      startsAt.getTime() > checkedAt.getTime() || expiresAt.getTime() <= checkedAt.getTime() ||
+      !Number.isFinite(new Date(window.createdAt).getTime()) ||
+      typeof window.reason !== "string" || !window.reason.trim() || window.reason.length > 240 || /[\p{Cc}\p{Cf}]/u.test(window.reason) ||
+      window.slot.slice(0, 10) < campaign.startDate || window.slot.slice(0, 10) !== currentMinute.slice(0, 10)) return null;
+    return window.slot;
+  }
+  /** A manual exception is valid only when an audited, short-lived row exists. */
+  async function getVoiceReviewCampaignDispatchSlot(campaignId: string): Promise<string | null> {
+    if (!enabled()) return null;
+    if (!validCampaignId(campaignId)) throw new CreditWelcomeVoiceStoreError("INVALID_CAMPAIGN", "Campaña inválida.", 400);
+    const campaign = await readCampaign(database, campaignId);
+    return campaign ? resolveCampaignDispatchSlot(database, campaign, now()) : null;
   }
   async function readReview(db: WelcomeVoiceTransaction, creditId: number) {
     return (await db.$queryRawUnsafe<ReviewRow[]>(`SELECT "status","revision","reviewHash" FROM "CreditApprovalReview"
@@ -351,7 +392,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     return database.$transaction(async db => {
       const campaign = await readCampaign(db, input.campaignId);
       if (!campaign) throw new CreditWelcomeVoiceStoreError("CAMPAIGN_NOT_FOUND", "Campaña no encontrada.", 404);
-      if (getVoiceReviewCampaignSlot(campaign, now()) !== input.slot) return [];
+      if (await resolveCampaignDispatchSlot(db, campaign, now()) !== input.slot) return [];
       const members = await db.$queryRawUnsafe<CampaignMember[]>(`SELECT "campaignId","creditoId","state","lastEventId"::text,"reviewRevision","reviewHash"
         FROM "VoiceReviewCampaignMember" m WHERE "campaignId"=$1 AND "state"='ACTIVE'
         AND NOT EXISTS (SELECT 1 FROM "CreditWelcomeVoiceEvent" e WHERE e."campaignId"=m."campaignId" AND e."creditoId"=m."creditoId" AND e."campaignSlot"=$2)
@@ -496,7 +537,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           return null;
         }
         const campaign = await readCampaign(db, member.campaignId);
-        if (!campaign || getVoiceReviewCampaignSlot(campaign, now()) !== event.campaignSlot) {
+        if (!campaign || await resolveCampaignDispatchSlot(db, campaign, now()) !== event.campaignSlot) {
           await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='FAILED',"resultCode"='WINDOW_CLOSED_BEFORE_DISPATCH',"updatedAt"=$2
             WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, event.id, now());
           return null;
@@ -640,7 +681,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     });
   }
   return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceControlledTest, prepareCreditWelcomeVoiceDispatch,
-    ensureVoiceReviewCampaign, claimVoiceReviewCampaign, prepareVoiceReviewCampaign,
+    ensureVoiceReviewCampaign, getVoiceReviewCampaignDispatchSlot, claimVoiceReviewCampaign, prepareVoiceReviewCampaign,
     markCreditWelcomeVoiceDispatchAccepted, markCreditWelcomeVoiceDispatchUnknown, markCreditWelcomeVoiceDispatchFailed,
     verifyCreditWelcomeVoiceIdentity, saveCreditWelcomeVoiceResult, listCreditWelcomeVoiceCallsForCredit };
 }
@@ -649,6 +690,7 @@ const store = createCreditWelcomeVoiceStore();
 export const enqueueCreditWelcomeVoice = store.enqueueCreditWelcomeVoice;
 export const claimPendingCreditWelcomeVoice = store.claimPendingCreditWelcomeVoice;
 export const ensureVoiceReviewCampaign = store.ensureVoiceReviewCampaign;
+export const getVoiceReviewCampaignDispatchSlot = store.getVoiceReviewCampaignDispatchSlot;
 export const claimVoiceReviewCampaign = store.claimVoiceReviewCampaign;
 export const prepareVoiceReviewCampaign = store.prepareVoiceReviewCampaign;
 export const prepareCreditWelcomeVoiceDispatch = store.prepareCreditWelcomeVoiceDispatch;

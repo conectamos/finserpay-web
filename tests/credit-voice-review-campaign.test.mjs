@@ -39,10 +39,12 @@ const claim = { eventId: "25ea074e-a7e5-4f2c-8c8e-e64258fe345d", creditId: 1,
     firstDueDate: "2026-10-17", calendar: ["2026-10-17"] } };
 
 function fixture({ env = environment(), clock = () => new Date("2026-10-09T13:00:00.000Z"),
-  prepare = async () => claim, claims = [claim], dispatch } = {}) {
+  prepare = async () => claim, claims = [claim], dispatch,
+  resolveSlot = async () => policy.getVoiceReviewCampaignSlot(campaign, clock()) } = {}) {
   const operations = [];
   const store = {
     ensureVoiceReviewCampaign: async input => { operations.push(["cohort", safe(input)]); },
+    getVoiceReviewCampaignDispatchSlot: resolveSlot,
     claimVoiceReviewCampaign: async input => { operations.push(["claim", safe(input)]); return claims; },
     prepareVoiceReviewCampaign: async eventId => { operations.push(["prepare", eventId]); return prepare(eventId); },
     claimPendingCreditWelcomeVoice: () => assert.fail("The automatic global queue must stay untouched"),
@@ -99,7 +101,7 @@ test("disabled, malformed or ambiguous campaign configuration fails closed", () 
   }
 });
 
-test("first date has 08/10/14 Colombia slots; later dates only 10/14 without catch-up", () => {
+test("pending calls have daily 08/10/14/17 Colombia slots without catch-up", () => {
   for (const [time, slot] of [
     ["2026-10-08T19:00:00Z", null],
     ["2026-10-09T12:59:59.999Z", null],
@@ -111,10 +113,13 @@ test("first date has 08/10/14 Colombia slots; later dates only 10/14 without cat
     ["2026-10-09T15:10:00Z", null],
     ["2026-10-09T19:00:00Z", "2026-10-09T14:00"],
     ["2026-10-09T19:10:00Z", null],
+    ["2026-10-09T22:00:00Z", "2026-10-09T17:00"],
+    ["2026-10-09T22:10:00Z", null],
     ["2026-10-10T01:00:00Z", null],
-    ["2026-10-10T13:00:00Z", null],
+    ["2026-10-10T13:00:00Z", "2026-10-10T08:00"],
     ["2026-10-10T15:00:00Z", "2026-10-10T10:00"],
     ["2026-10-10T19:00:00Z", "2026-10-10T14:00"],
+    ["2026-10-10T22:00:00Z", "2026-10-10T17:00"],
     ["2026-11-01T15:09:59Z", "2026-11-01T10:00"],
     ["2026-11-01T15:10:00Z", null],
   ]) assert.equal(policy.getVoiceReviewCampaignSlot(campaign, new Date(time)), slot, time);
@@ -170,7 +175,7 @@ test("disabled or incomplete Dapta configuration never touches schema, cohort or
 });
 
 test("outside a current slot only persists the frozen cohort and does not catch up calls", async () => {
-  for (const date of ["2026-10-08T15:00:00Z", "2026-10-09T13:10:00Z", "2026-10-10T13:00:00Z"]) {
+  for (const date of ["2026-10-08T15:00:00Z", "2026-10-09T13:10:00Z", "2026-10-10T13:10:00Z"]) {
     const f = fixture({ clock: () => new Date(date) });
     const result = await job.runVoiceReviewCampaign(f.deps);
     assert.equal(result.configured, true); assert.equal(result.inWindow, false); assert.equal(result.selected, 0);
@@ -198,6 +203,47 @@ test("a claim that crosses the slot boundary cannot prepare or start an external
   const result = await job.runVoiceReviewCampaign(f.deps);
   assert.equal(result.selected, 1); assert.equal(result.accepted, 0); assert.equal(result.skipped, 1);
   assert.equal(f.operations.some(([operation]) => operation === "prepare" || operation === "accepted"), false);
+  assert.deepEqual(f.operations.at(-1), ["failed", claim.eventId, "WINDOW_CLOSED_BEFORE_DISPATCH"]);
+});
+
+test("an operator-authorized current slot dispatches only the frozen campaign outside its regular hours", async () => {
+  const requestedCampaigns = [];
+  const f = fixture({ clock: () => new Date("2026-10-09T17:20:00Z"), resolveSlot: async id => {
+    requestedCampaigns.push(id);
+    return "2026-10-09T12:20";
+  } });
+  const result = await job.runVoiceReviewCampaign(f.deps);
+  assert.equal(result.accepted, 1);
+  assert.equal(result.inWindow, true);
+  assert.deepEqual(requestedCampaigns, [campaign.id, campaign.id, campaign.id]);
+  assert.deepEqual(f.operations.find(([operation]) => operation === "claim"),
+    ["claim", { campaignId: campaign.id, slot: "2026-10-09T12:20", limit: 3 }]);
+  assert.equal(f.env.DAPTA_WELCOME_VOICE_ENABLED, "false");
+});
+
+test("an expired or replaced operator window between selection and dispatch cannot place a call", async () => {
+  for (const nextSlot of [null, "2026-10-09T12:21"]) {
+    let reads = 0;
+    const f = fixture({ resolveSlot: async () => reads++ === 0 ? "2026-10-09T12:20" : nextSlot });
+    const result = await job.runVoiceReviewCampaign(f.deps);
+    assert.equal(result.selected, 1);
+    assert.equal(result.accepted, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(f.operations.some(([operation]) => operation === "prepare" || operation === "accepted"), false);
+    assert.deepEqual(f.operations.at(-1), ["failed", claim.eventId, "WINDOW_CLOSED_BEFORE_DISPATCH"]);
+  }
+});
+
+test("a database preparation that crosses the operator expiry cannot send the external request", async () => {
+  let open = true;
+  const f = fixture({ resolveSlot: async () => open ? "2026-10-09T12:20" : null,
+    prepare: async () => { open = false; return claim; } });
+  const result = await job.runVoiceReviewCampaign(f.deps);
+  assert.equal(result.selected, 1);
+  assert.equal(result.accepted, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(f.operations.some(([operation]) => operation === "prepare"), true);
+  assert.equal(f.operations.some(([operation]) => operation === "accepted"), false);
   assert.deepEqual(f.operations.at(-1), ["failed", claim.eventId, "WINDOW_CLOSED_BEFORE_DISPATCH"]);
 });
 
