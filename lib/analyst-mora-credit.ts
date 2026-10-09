@@ -82,6 +82,7 @@ export function moraCreditSummary(credit: MoraCreditSummarySource, now = new Dat
     equipo: credit.referenciaEquipo?.trim() || [credit.equipoMarca, credit.equipoModelo].filter(Boolean).join(" "),
     imei: credit.imei || credit.deviceUid || null,
     valorVencido: Math.round(overdue.reduce((total, row) => total + row.saldoPendiente, 0)),
+    valorUnaCuotaVencida: overdue[0] ? Math.round(overdue[0].saldoPendiente) : null,
     diasMora: first ? Math.max(0, Math.round((Date.parse(today+"T00:00:00Z")-Date.parse(first+"T00:00:00Z"))/86400000)) : 0,
     ultimoPago: credit.abonos.at(-1)?.fechaAbono.toISOString() || null,
     fechaCredito: credit.fechaCredito.toISOString(), enMora: overdue.length > 0,
