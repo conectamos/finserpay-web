@@ -3,6 +3,7 @@ import { runCreditDueReminders } from "@/lib/credit-due-reminders";
 import { runCreditOverdueDataCampaign } from "@/lib/credit-overdue-data-campaign";
 import { dispatchCreditWelcomeVoice } from "@/lib/credit-welcome-voice-dispatch";
 import { runVoiceReviewCampaign } from "@/lib/credit-voice-review-campaign";
+import { runCollectionVoice, runCollectionMessages } from "@/lib/collection-voice-runtime";
 import {
   processPendingDeviceUnlockCommands,
   recoverRecentApprovedWompiUnlockCommands,
@@ -21,7 +22,7 @@ import {
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
 const MERCHANT_APPLICATION_INTERVAL_MINUTES = 5;
-type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice" | "voice-review-campaign";
+type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice" | "voice-review-campaign" | "collection-voice";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -133,6 +134,13 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "collection-voice") {
+      const summary = await runCollectionVoice();
+      await runCollectionMessages();
+      if (summary.eligible > 0) logCron("Gestiones de voz de cobranza procesadas.", summary);
+      completed = true;
+      return;
+    }
     if (taskName === "voice-review-campaign") {
       const summary = await runVoiceReviewCampaign();
       if (summary.selected > 0) logCron("Llamadas de solicitudes pendientes procesadas.", summary);
@@ -263,6 +271,7 @@ async function tick() {
   // independently so provider latency cannot delay payment/device tasks.
   void runScheduledTask("credit-welcome-voice", `credit-welcome-voice:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
   void runScheduledTask("voice-review-campaign", `voice-review-campaign:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
+  void runScheduledTask("collection-voice", `collection-voice:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
 
   await runScheduledTask(
     "unlock",
