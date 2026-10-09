@@ -28,6 +28,8 @@ import {
 import {
   MORA_ACTIONS,
   MORA_MANAGEMENT_STATES,
+  moraResultsForAction,
+  moraResultLabel,
   type MoraManagementEvent,
   type MoraManagementInput,
   type MoraPortfolioItem,
@@ -47,6 +49,8 @@ type PortfolioResponse = {
 };
 type MoraCreditDetail = Omit<MoraPortfolioItem, "ultimaGestion"> & {
   clienteTelefono: string | null;
+  referenciaFamiliar1Telefono: string | null;
+  referenciaFamiliar2Telefono: string | null;
   enMora: boolean;
 };
 type DetailResponse = {
@@ -70,7 +74,9 @@ type ManagementForm = {
   action: MoraManagementInput["action"];
   actedAt: string;
   responsibleUserId: string;
-  result: string;
+  result: MoraManagementInput["result"] | "";
+  agreementDate: string;
+  agreementAmount: string;
   comment: string;
   nextFollowUpAt: string;
   managementStatus: MoraManagementInput["managementStatus"];
@@ -86,8 +92,9 @@ const emptyFilters: Filters = {
   followUp: "",
 };
 
-const actionLabels: Record<MoraManagementInput["action"], string> = {
+const actionLabels: Record<string, string> = {
   LLAMADA: "Llamada",
+  MSJ_TEXTO: "Msj de texto",
   WHATSAPP: "WhatsApp",
   SIN_RESPUESTA: "Sin respuesta",
   PROMESA_PAGO: "Promesa de pago",
@@ -97,7 +104,7 @@ const actionLabels: Record<MoraManagementInput["action"], string> = {
   VISITA_PENDIENTE: "Visita pendiente",
 };
 
-const statusLabels: Record<MoraManagementInput["managementStatus"], string> = {
+const statusLabels: Record<string, string> = {
   PENDIENTE: "Pendiente",
   CONTACTADO: "Contactado",
   SIN_RESPUESTA: "Sin respuesta",
@@ -106,6 +113,8 @@ const statusLabels: Record<MoraManagementInput["managementStatus"], string> = {
   SOPORTE_RECIBIDO: "Soporte recibido",
   ESCALADO: "Escalado",
   CERRADO: "Cerrado",
+  SOLUCIONADO: "Solucionado",
+  SEGUIMIENTO: "Seguimiento",
 };
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -155,14 +164,16 @@ function freshManagement(responsibleUserId = ""): ManagementForm {
     actedAt: bogotaInputValue(now),
     responsibleUserId,
     result: "",
+    agreementDate: "",
+    agreementAmount: "",
     comment: "",
     nextFollowUpAt: bogotaInputValue(new Date(now.getTime() + 86_400_000)),
-    managementStatus: "PENDIENTE",
+    managementStatus: "SEGUIMIENTO",
   };
 }
 
-function statusTone(status: MoraManagementInput["managementStatus"] | undefined) {
-  if (status === "CERRADO") return "positive" as const;
+function statusTone(status: string | undefined) {
+  if (status === "CERRADO" || status === "SOLUCIONADO") return "positive" as const;
   if (status === "ESCALADO" || status === "SIN_RESPUESTA") return "danger" as const;
   if (status === "PROMESA_PAGO" || status === "ACUERDO_PAGO" || status === "SOPORTE_RECIBIDO") return "warning" as const;
   return "neutral" as const;
@@ -247,7 +258,15 @@ export default function MoraPortfolioClient() {
 
   function updateManagement<K extends keyof ManagementForm>(key: K, value: ManagementForm[K]) {
     idempotencyKey.current = null;
-    setManagement((current) => ({ ...current, [key]: value }));
+    setManagement((current) => {
+      const next = { ...current, [key]: value };
+      if (next.result && !moraResultsForAction(next.action).includes(next.result)) next.result = "";
+      if (next.result !== "ACUERDO_PAGO") {
+        next.agreementDate = "";
+        next.agreementAmount = "";
+      }
+      return next;
+    });
     setSaveError("");
     setNotice("");
   }
@@ -295,12 +314,23 @@ export default function MoraPortfolioClient() {
     const nextFollowUpAt = bogotaIso(management.nextFollowUpAt);
     const responsibleUserId = detail.currentResponsible.id;
     if (!actedAt || !nextFollowUpAt || !Number.isSafeInteger(responsibleUserId) || responsibleUserId < 1
-      || management.result.trim().length < 3 || management.comment.trim().length < 5) {
+      || !management.result || !moraResultsForAction(management.action).includes(management.result) || management.comment.trim().length < 5) {
       setSaveError("Completa la fecha y hora, el responsable, el resultado, el comentario y la próxima gestión.");
       return;
     }
     if (Date.parse(nextFollowUpAt) <= Date.parse(actedAt)) {
       setSaveError("La próxima gestión debe programarse después de la fecha y hora de esta gestión.");
+      return;
+    }
+    const agreementAmount = Number(management.agreementAmount);
+    if (management.result === "ACUERDO_PAGO" &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(management.agreementDate) ||
+        !Number.isFinite(Date.parse(`${management.agreementDate}T12:00:00Z`)) ||
+        new Date(`${management.agreementDate}T12:00:00Z`).toISOString().slice(0, 10) !== management.agreementDate ||
+        management.agreementDate < management.actedAt.slice(0, 10) ||
+        !Number.isFinite(agreementAmount) || agreementAmount <= 0 || agreementAmount > 999_999_999_999.99 ||
+        Math.abs(agreementAmount * 100 - Math.round(agreementAmount * 100)) > 0.001)) {
+      setSaveError("Indica una fecha de pago válida desde el día de la gestión y un valor acordado mayor a cero.");
       return;
     }
 
@@ -310,7 +340,9 @@ export default function MoraPortfolioClient() {
       action: management.action,
       actedAt,
       responsibleUserId,
-      result: management.result.trim(),
+      result: management.result,
+      agreementDate: management.result === "ACUERDO_PAGO" ? management.agreementDate : null,
+      agreementAmount: management.result === "ACUERDO_PAGO" ? agreementAmount : null,
       comment: management.comment.trim(),
       nextFollowUpAt,
       managementStatus: management.managementStatus,
@@ -392,16 +424,35 @@ export default function MoraPortfolioClient() {
             {loadingDetail ? <div className="p-5"><LoadingState label="Cargando crédito e historial..." /></div> : null}
             {detailError ? <div className="space-y-3 p-5"><p role="alert" className="text-sm text-[var(--fp-danger)]">{detailError}</p>{portfolio?.items.find((item) => item.id === selectedId) ? <Button variant="secondary" onClick={() => void openCredit(portfolio.items.find((item) => item.id === selectedId)!)}>Reintentar</Button> : null}</div> : null}
             {detail ? <>
-              <section className="space-y-4 border-b border-[var(--fp-border)] p-5" aria-labelledby="mora-credit-summary"><div className="flex items-start justify-between gap-3"><div><h3 id="mora-credit-summary" className="font-black">{detail.credit.clienteNombre}</h3><p className="mt-1 text-sm text-[var(--fp-muted)]">{detail.credit.aliadoNombre}</p></div><Badge tone="danger">{detail.credit.diasMora} días</Badge></div><dl className="grid grid-cols-2 gap-4"><DetailValue label="Cédula" value={detail.credit.clienteDocumento || "No disponible"} /><DetailValue label="Teléfono" value={detail.credit.clienteTelefono || "No disponible"} /><DetailValue label="Equipo" value={detail.credit.equipo || "No disponible"} /><DetailValue label="IMEI" value={detail.credit.imei || "No disponible"} /><DetailValue label="Valor vencido" value={money.format(detail.credit.valorVencido)} /><DetailValue label="Último pago" value={displayDateTime(detail.credit.ultimoPago)} /></dl></section>
+              <section className="space-y-4 border-b border-[var(--fp-border)] p-5" aria-labelledby="mora-credit-summary">
+                <div className="flex items-start justify-between gap-3"><div><h3 id="mora-credit-summary" className="font-black">{detail.credit.clienteNombre}</h3><p className="mt-1 text-sm text-[var(--fp-muted)]">{detail.credit.aliadoNombre}</p></div><Badge tone="danger">{detail.credit.diasMora} días</Badge></div>
+                <dl className="grid grid-cols-2 gap-4">
+                  <DetailValue label="Cédula" value={detail.credit.clienteDocumento || "No disponible"} />
+                  <DetailValue label="Teléfono" value={detail.credit.clienteTelefono || "No disponible"} />
+                  {detail.credit.referenciaFamiliar1Telefono && <DetailValue label="Teléfono de referencia 1" value={detail.credit.referenciaFamiliar1Telefono} />}
+                  {detail.credit.referenciaFamiliar2Telefono && <DetailValue label="Teléfono de referencia 2" value={detail.credit.referenciaFamiliar2Telefono} />}
+                  <DetailValue label="Equipo" value={detail.credit.equipo || "No disponible"} />
+                  <DetailValue label="IMEI" value={detail.credit.imei || "No disponible"} />
+                  <DetailValue label="Valor vencido" value={money.format(detail.credit.valorVencido)} />
+                  <DetailValue label="Último pago" value={displayDateTime(detail.credit.ultimoPago)} />
+                </dl>
+              </section>
 
               <form onSubmit={saveManagement} className="space-y-4 border-b border-[var(--fp-border)] p-5" aria-labelledby="mora-management-form"><div><h3 id="mora-management-form" className="flex items-center gap-2 font-black"><CircleDollarSign className="h-5 w-5" aria-hidden="true" />Nueva gestión</h3><p className="mt-1 text-sm text-[var(--fp-muted)]">Todos los campos son obligatorios. Cada registro se agrega al historial.</p></div>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Acción realizada</span><Select required value={management.action} disabled={saving} onChange={(event) => updateManagement("action", event.target.value as ManagementForm["action"])}>{MORA_ACTIONS.map((action) => <option key={action} value={action}>{actionLabels[action]}</option>)}</Select></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Acción realizada</span><Select id="mora-management-action" required value={management.action} disabled={saving} onChange={(event) => updateManagement("action", event.target.value as ManagementForm["action"])}>{MORA_ACTIONS.map((action) => <option key={action} value={action}>{actionLabels[action]}</option>)}</Select></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Fecha y hora de gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.actedAt} disabled={saving} onChange={(event) => updateManagement("actedAt", event.target.value)} /></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Responsable</span><Input value={detail.currentResponsible.nombre} readOnly aria-readonly="true" /></label>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Resultado</span><Input required minLength={3} maxLength={500} value={management.result} disabled={saving} onChange={(event) => updateManagement("result", event.target.value)} placeholder="Describe el resultado obtenido" /></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Resultado</span><Select id="mora-management-result" required value={management.result} disabled={saving} onChange={(event) => updateManagement("result", event.target.value as ManagementForm["result"])}>
+                  <option value="">Selecciona el resultado</option>
+                  {moraResultsForAction(management.action).map(result => <option key={result} value={result}>{moraResultLabel(result, management.action)}</option>)}
+                </Select></label>
+                {management.result === "ACUERDO_PAGO" && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="block min-w-0 space-y-1.5"><span className="text-sm font-bold">Fecha de pago acordada</span><Input id="mora-management-agreement-date" required type="date" min={management.actedAt.slice(0, 10)} value={management.agreementDate} disabled={saving} onChange={event => updateManagement("agreementDate", event.target.value)} /></label>
+                  <label className="block min-w-0 space-y-1.5"><span className="text-sm font-bold">Valor acordado (COP)</span><Input id="mora-management-agreement-amount" required type="number" min="0.01" max="999999999999.99" step="0.01" inputMode="decimal" value={management.agreementAmount} disabled={saving} onChange={event => updateManagement("agreementAmount", event.target.value)} /></label>
+                </div>}
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Comentario</span><textarea required minLength={5} maxLength={2000} rows={4} value={management.comment} disabled={saving} onChange={(event) => updateManagement("comment", event.target.value)} placeholder="Registra el contexto y los compromisos acordados" className="fp-ui-input min-h-28 w-full resize-y" /></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Próxima gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.nextFollowUpAt} disabled={saving} onChange={(event) => updateManagement("nextFollowUpAt", event.target.value)} /></label>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Estado de gestión</span><Select required value={management.managementStatus} disabled={saving} onChange={(event) => updateManagement("managementStatus", event.target.value as ManagementForm["managementStatus"])}>{MORA_MANAGEMENT_STATES.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</Select></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Estado de gestión</span><Select id="mora-management-status" required value={management.managementStatus} disabled={saving} onChange={(event) => updateManagement("managementStatus", event.target.value as ManagementForm["managementStatus"])}>{MORA_MANAGEMENT_STATES.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</Select></label>
                 {saveError ? <p role="alert" className="rounded-[var(--fp-radius-sm)] bg-[var(--fp-danger-soft)] px-3 py-2 text-sm text-[var(--fp-danger)]">{saveError}</p> : null}{notice ? <p role="status" className="rounded-[var(--fp-radius-sm)] bg-[var(--fp-lime-soft)] px-3 py-2 text-sm">{notice}</p> : null}
                 <Button type="submit" className="w-full" disabled={saving || managementFingerprint === lastSavedFingerprint}>{saving ? "Guardando..." : managementFingerprint === lastSavedFingerprint ? "Gestión guardada" : "Guardar gestión"}</Button>
               </form>
