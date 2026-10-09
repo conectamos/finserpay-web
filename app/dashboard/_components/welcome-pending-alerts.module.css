@@ -7,8 +7,10 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 12px;
-  max-width: calc(100vw - 32px);
+  width: max-content;
+  max-width: calc(100% - 32px);
   color: var(--fp-graphite);
+  pointer-events: none;
 }
 
 .card {
@@ -18,6 +20,7 @@
   overflow-y: auto;
   padding: 16px;
   box-shadow: var(--fp-shadow-md);
+  pointer-events: auto;
 }
 
 .heading {
@@ -95,6 +98,27 @@
 
 .launcher {
   box-shadow: var(--fp-shadow-md);
+}
+
+.launcherRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.move {
+  min-width: 40px;
+  min-height: 44px;
+  padding: 8px;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  box-shadow: var(--fp-shadow-md);
+}
+
+.move:active {
+  cursor: grabbing;
 }
 
 @media (max-width: 640px) {
