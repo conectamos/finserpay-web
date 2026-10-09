@@ -83,3 +83,9 @@ test('el cierre registra medios en cartera una sola vez y no acepta otro cierre 
   const repeated=await(await s.call({action:'postcall',call})).json();assert.equal(repeated.duplicate,true);assert.equal(s.writes.length,1);
   assert.equal((await s.call({action:'postcall',call:{...call,disconnection_reason:'dial_no_answer'}})).status,409);
 });
+
+test('la llamada al celular de pruebas jamás crea acuerdos en la cartera real',async()=>{
+  const s=setup({verified:true});s.state.testCall=true;
+  const result=await(await s.call({action:'register',result:'ACUERDO_PAGO',agreementConfirmed:'true',agreementDate:'2026-10-20',agreementAmount:'50000'})).json();
+  assert.equal(result.registrado,false);assert.equal(result.test,true);assert.equal(s.writes.length,0);
+});
