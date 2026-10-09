@@ -1,4 +1,4 @@
-import { getDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
+import { getDataCreditoCustomerIdentityForDisplay } from "@/lib/datacredito/customer-identity";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
@@ -634,7 +634,7 @@ export async function POST(request: Request) {
         ok: true,
         reused: true,
         solicitudId,
-        ...serializeDataCreditoAssessment(cached.assessment), identity: await getDataCreditoCustomerIdentity(cached.assessment),
+        ...serializeDataCreditoAssessment(cached.assessment), identity: await getDataCreditoCustomerIdentityForDisplay(cached.assessment),
       });
     }
     if (lockedFinancialTermsRecovery) {
@@ -753,7 +753,7 @@ export async function POST(request: Request) {
         ok: true,
         reused: true,
         solicitudId,
-        ...serializeDataCreditoAssessment(reservation.assessment), identity: await getDataCreditoCustomerIdentity(reservation.assessment),
+        ...serializeDataCreditoAssessment(reservation.assessment), identity: await getDataCreditoCustomerIdentityForDisplay(reservation.assessment),
       });
     }
     if (reservation.kind === "ALREADY_CONSUMED") {
@@ -1080,7 +1080,7 @@ export async function POST(request: Request) {
       ok: true,
       reused: false,
       solicitudId,
-      ...serializeDataCreditoAssessment(completed), identity: await getDataCreditoCustomerIdentity(completed),
+      ...serializeDataCreditoAssessment(completed), identity: await getDataCreditoCustomerIdentityForDisplay(completed),
     });
   } catch (error) {
     const blacklistResponse = documentBlacklistErrorResponse(error);

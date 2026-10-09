@@ -9,8 +9,12 @@ export function extractDataCreditoIdentity(payload: unknown, queriedDocument: st
   const content = record(record(payload).content);
   const basics = record(record(record(content.respuesta).validacion).datosBasicos);
   const available = [true, 1, "1", "true", "S", "SI", "si", "sí"].includes(basics.conInformacion as never);
-  const documentNumber = available ? text(basics.numeroDocumento).replace(/[.\s]/g, "") : "";
-  if (documentNumber && (!/^\d+$/.test(documentNumber) || documentNumber !== queriedDocument.replace(/\D/g, ""))) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
+  const returnedDocument = available ? text(basics.numeroDocumento).replace(/[.\s]/g, "") : "";
+  // A Colombian CC is numeric; fixed-width provider fields may pad it with zeros.
+  // Compare strings without numeric conversion (and without losing precision).
+  const documentNumber = returnedDocument.replace(/^0+(?=\d)/, "");
+  const expectedDocument = queriedDocument.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  if (documentNumber && (!/^\d+$/.test(documentNumber) || documentNumber !== expectedDocument)) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
   const rawType = available ? text(basics.tipoDocumento) : "";
   const documentType = ["1", "CC", "C.C.", "CEDULA_DE_CIUDADANIA", "Cédula de Ciudadanía"].includes(rawType) ? "CEDULA_DE_CIUDADANIA" : rawType;
   const names = available ? [text(basics.primerNombre), text(basics.segundoNombre)].filter(Boolean).join(" ") : "";

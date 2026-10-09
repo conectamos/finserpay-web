@@ -2847,7 +2847,7 @@ export function dataCreditoAssessmentMatchesScope(
 
 export async function readDataCreditoIdentitySource(row: DataCreditoAssessmentRow) {
   await ensureDataCreditoSchema();
-  const rows = await prisma.$queryRawUnsafe<ReusableDataCreditoSecurePayloadRow[]>(    'SELECT root."id" AS "assessmentId", root."correlationId", secure.* FROM "DataCreditoAssessment" root INNER JOIN "DataCreditoAssessmentSecurePayload" secure ON secure."assessmentId" = root."id" WHERE root."id" = $1 AND root."retainedUntil" > CURRENT_TIMESTAMP LIMIT 1',
+  const rows = await prisma.$queryRawUnsafe<ReusableDataCreditoSecurePayloadRow[]>(    'SELECT root."id" AS "assessmentId", root."correlationId", secure."algorithm", secure."keyId", secure."aadVersion", secure."plaintextVersion", secure."nonce", secure."authTag", secure."ciphertext", secure."plaintextBytes" FROM "DataCreditoAssessment" root INNER JOIN "DataCreditoAssessmentSecurePayload" secure ON secure."assessmentId" = root."id" WHERE root."id" = $1 AND root."retainedUntil" > CURRENT_TIMESTAMP LIMIT 1',
     row.reusedFromAssessmentId || row.id
   );
   if (!rows[0]) return null;
