@@ -9,7 +9,7 @@ const jiti=createJiti(import.meta.url);
 const policy=await jiti.import('../lib/collection-voice-policy.ts');
 const source=readFileSync(new URL('../lib/collection-voice-runtime.ts',import.meta.url),'utf8');
 const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-function setup({verified=false,expired=false,persistenceFails=false}={}) {
+function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=false}={}) {
   const secret='synthetic-runtime-test-secret-00000000';
   const state={id:'00000000-0000-4000-8000-000000000081',creditoId:81,phone:'573001234567',status:'ACCEPTED',createdAt:new Date(Date.now()-(expired?7200000:1000)),identityAttempts:0,identityVerifiedAt:verified?new Date():null,managementId:null,optOut:false};
   const writes=[];
@@ -28,7 +28,7 @@ function setup({verified=false,expired=false,persistenceFails=false}={}) {
   };
   const modules={
     'server-only':{},'node:crypto':crypto,'@/lib/prisma':{default:db},
-    '@/lib/analyst-mora-management':{getMoraManagement:async()=>({credit:{clienteNombre:'Cliente Sintetico',clienteDocumento:'100000001',numeroCreditoVisible:'TEST-81',valorVencido:50000,diasMora:5,enMora:true},history:[]}),
+    '@/lib/analyst-mora-management':{getMoraManagement:async()=>({credit:{clienteNombre:'Cliente Sintetico',clienteDocumento:'100000001',clienteTelefono:ownedPhone?'573001234567':null,numeroCreditoVisible:'TEST-81',valorVencido:50000,valorUnaCuotaVencida:25000,diasMora:5,enMora:true},history:[]}),
       createMoraManagement:async(_id,input)=>{if(persistenceFails)throw new Error('simulated database failure');writes.push(input);return{item:{id:'00000000-0000-4000-8000-000000000082',...input}};},parseMoraManagement:v=>v,listMoraPortfolio:async()=>({items:[],hasMore:false})},
     '@/lib/analyst-mora-schema':{ensureAnalystMoraSchema:async()=>{}},
     '@/lib/credit-welcome-voice-core':{matchWelcomeVoiceIdentity:(expected,provided)=>expected.document===provided.document&&expected.name===provided.name},
@@ -49,6 +49,22 @@ test('máximo tres verificaciones, sin datos financieros cuando no coincide',asy
   const s=setup();for(let n=0;n<4;n++){const body=await(await s.call({action:'identity',name:'Otro',document:'999999999'})).json();assert.equal(body.verified,false);assert.equal(body.credito,undefined);}
   assert.equal(s.state.identityAttempts,3);
 });
+test('confirmación breve exige nombre exacto y teléfono autorizado del titular',async()=>{
+  const s=setup();
+  for(const body of [{name:'Cliente Sintetico',holderConfirmed:true},{name:'Otro',holderConfirmed:'true'},{name:'Cliente Sintetico',holderConfirmed:'true'}]){
+    const result=await(await s.call({action:'identity',...body})).json();
+    assert.equal(result.verified,false);assert.equal(result.credito,undefined);
+  }
+  const isolated=setup();isolated.state.testCall=true;
+  // A test flag alone does not authorize an arbitrary destination.
+  assert.equal((await(await isolated.call({action:'identity',name:'Cliente Sintetico',holderConfirmed:'true'})).json()).verified,false);
+  const owned=setup({ownedPhone:true});
+  const accepted=await(await owned.call({action:'identity',name:'cliente sintetico',holderConfirmed:'true'})).json();
+  assert.equal(accepted.verified,true);assert.equal(accepted.credito.valorUnaCuotaVencida,25000);assert.equal(accepted.evaluacionJudicialDecidida,null);
+  const expired=setup({ownedPhone:true,expired:true});
+  assert.equal((await expired.call({action:'identity',name:'Cliente Sintetico',holderConfirmed:'true'})).status,409);
+});
+
 test('sesiones vencidas y acuerdos sin verificar no llegan al repositorio',async()=>{
   assert.equal((await setup({expired:true}).call({action:'identity',name:'Cliente Sintetico',document:'100000001'})).status,409);
   const s=setup();assert.equal((await s.call({action:'register',result:'ACUERDO_PAGO',confirmed:'true',agreementDate:'2026-10-20',agreementAmount:'50000'})).status,409);assert.equal(s.writes.length,0);

@@ -165,22 +165,31 @@ async function operation(body:Record<string,unknown>) {
   await ensureCollectionVoiceSchema();
   if(body.action==="authorize") {
     const a=await activeSession(body);
+    const context=await financialContext(a.creditoId,!!a.followupFor);
     const testAuthorized=a.testCall&&normalizeColombianMobile(process.env.DAPTA_COBRANZA_TEST_PHONE)===a.phone;
     if(a.status!=="DISPATCHING"||(!testAuthorized&&process.env.DAPTA_COBRANZA_ENABLED!=="true")||process.env.DAPTA_COBRANZA_LIVE_READY!=="true"||!collectionCallingAllowed(new Date())||(await financialContext(a.creditoId,!!a.followupFor)).suspended)
       return {ok:false,allowed:false};
     const claimed=await prisma.$queryRawUnsafe<Array<{id:string}>>(`UPDATE "CollectionVoiceAttempt" SET "status"='DIALING' WHERE "id"=$1::uuid AND "status"='DISPATCHING' RETURNING "id"`,a.id);
     if(!claimed.length) return {ok:false,allowed:false};
-    return {ok:true,allowed:true,to_number:"+"+a.phone,credito_id:String(a.creditoId),finser_agent_id:agent()};
+    return {ok:true,allowed:true,to_number:"+"+a.phone,credito_id:String(a.creditoId),finser_agent_id:agent(),customer_name:context.credit.clienteNombre};
   }
   if(body.action==="identity") {
     const a=await activeSession(body);
     const counts=await prisma.$queryRawUnsafe<Array<{identityAttempts:number}>>(`UPDATE "CollectionVoiceAttempt" SET "identityAttempts"="identityAttempts"+1 WHERE "id"=$1::uuid AND "identityAttempts"<3 RETURNING "identityAttempts"`,a.id);
     if(!counts.length) return {ok:false,verified:false,review:true};
     const context=await financialContext(a.creditoId,!!a.followupFor);
-    if(!matchWelcomeVoiceIdentity({name:context.credit.clienteNombre,document:context.credit.clienteDocumento},{name:body.name,document:parseWelcomeVoiceSpokenDocument(body.document)})) return {ok:true,verified:false,review:counts[0].identityAttempts>=3};
+    const normalizedName=(v:unknown)=>typeof v==="string"?v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().replace(/\s+/g," ").toLowerCase():"";
+    const c=context.credit;
+    const authorizedPhones=[c.clienteTelefono,...(process.env.DAPTA_COBRANZA_REFERENCES_OWNED==="true"?[c.referenciaFamiliar1Telefono,c.referenciaFamiliar2Telefono]:[])].map(normalizeColombianMobile).filter(Boolean);
+    const authorizedTest=a.testCall&&String(c.clienteDocumento).replace(/\D/g,"")===process.env.DAPTA_COBRANZA_TEST_DOCUMENT&&normalizeColombianMobile(process.env.DAPTA_COBRANZA_TEST_PHONE)===a.phone;
+    // User-authorized brief confirmation is bound to this credit's full registered
+    // name and its current titular numbers (or the explicitly isolated test).
+    const namedConfirmation=body.holderConfirmed==="true"&&!!normalizedName(c.clienteNombre)&&normalizedName(body.name)===normalizedName(c.clienteNombre)&&(authorizedPhones.includes(a.phone)||authorizedTest);
+    const originalVerification=matchWelcomeVoiceIdentity({name:c.clienteNombre,document:c.clienteDocumento},{name:body.name,document:parseWelcomeVoiceSpokenDocument(body.document)});
+    if(!namedConfirmation&&!originalVerification) return {ok:true,verified:false,review:counts[0].identityAttempts>=3};
     await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "identityVerifiedAt"=CURRENT_TIMESTAMP,"contactedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid`,a.id);
     if(context.suspended) return {ok:true,verified:true,suspend:true};
-    return {ok:true,verified:true,suspend:false,followup:!!a.followupFor,credito:{numero:context.credit.numeroCreditoVisible,valorVencido:context.credit.valorVencido,diasMora:context.credit.diasMora},bloqueoAplica:null,reporteHabilitado:null,trasladoPrejuridico:null,evaluacionJudicialDecidida:null};
+    return {ok:true,verified:true,suspend:false,followup:!!a.followupFor,credito:{numero:context.credit.numeroCreditoVisible,valorVencido:context.credit.valorVencido,diasMora:context.credit.diasMora,valorUnaCuotaVencida:context.credit.valorUnaCuotaVencida},bloqueoAplica:null,reporteHabilitado:null,trasladoPrejuridico:null,evaluacionJudicialDecidida:null};
   }
   if(body.action==="register") {
     const a=await activeSession(body); if(!a.identityVerifiedAt) throw new Error("Verifique la titularidad");
