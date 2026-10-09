@@ -10,7 +10,7 @@ import { matchWelcomeVoiceIdentity, normalizeWelcomeVoiceDocument, normalizeWelc
   safeDaptaWelcomeVoiceUrl } from "@/lib/credit-welcome-voice-core";
 import { creditWelcomeVoiceSchemaStatements } from "@/scripts/credit-welcome-voice-schema.mjs";
 
-export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT";
+export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST";
 export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | "COMPLETED" |
   "FAILED" | "UNKNOWN" | "CANCELLED" | "SKIPPED";
 export type CreditWelcomeVoiceSnapshot = {
@@ -224,6 +224,43 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       return claims;
     });
   }
+  /** Local operator helper only: never scans the queue or retries an attempted call. */
+  async function prepareCreditWelcomeVoiceControlledTest(input: { creditId: number; expectedPhone: string }): Promise<VoiceDispatchClaim> {
+    const expectedPhone = normalizeColombianMobile(input.expectedPhone);
+    if (!validCreditId(input.creditId) || !expectedPhone) {
+      throw new CreditWelcomeVoiceStoreError("INVALID_CONTROLLED_TEST", "Crédito o número de prueba inválido.", 400);
+    }
+    if (!enabled()) throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_DISABLED", "La fábrica de prueba no está habilitada.");
+    return database.$transaction(async db => {
+      // Serializes preparation for this credit, including the first insert. No other credit is selected.
+      await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, input.creditId);
+      const credit = await readCredit(db, input.creditId);
+      if (!credit) throw new CreditWelcomeVoiceStoreError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+      const snapshot = buildCreditWelcomeVoiceSnapshot(credit);
+      if (creditExclusion(credit, snapshot) || !snapshot) {
+        throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_INELIGIBLE", "El crédito no puede recibir la llamada de prueba.");
+      }
+      if (snapshot.phone !== expectedPhone) {
+        throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_PHONE_MISMATCH", "El número del crédito no corresponde al autorizado para la prueba.");
+      }
+      await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
+        ("id","creditoId","type","source","status","snapshot","createdAt","updatedAt")
+        VALUES ($1::uuid,$2,'BIENVENIDA_VOZ','CONTROLLED_TEST','PENDING',$3::jsonb,$4,$4)
+        ON CONFLICT ("creditoId","type") DO NOTHING`, randomUUID(), input.creditId, JSON.stringify(snapshot), now());
+      const rows = await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent"
+        WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ' FOR UPDATE`, input.creditId);
+      const event = rows[0];
+      if (!event || event.status !== "PENDING") {
+        throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_ALREADY_ATTEMPTED", "El evento ya fue intentado o está cerrado; no se redespacha.");
+      }
+      if (!event.snapshot || event.snapshot.phone !== expectedPhone || !sameSnapshot(event.snapshot, snapshot)) {
+        throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_SNAPSHOT_CHANGED", "Los datos del evento no corresponden al crédito vigente.");
+      }
+      await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "source"='CONTROLLED_TEST',
+        "status"='DISPATCHING',"dispatchedAt"=$2,"updatedAt"=$2 WHERE "id"=$1::uuid AND "status"='PENDING'`, event.id, now());
+      return { eventId: event.id, creditId: input.creditId, snapshot };
+    });
+  }
   /** The worker calls this just before its one external request; it never claims an old dispatch. */
   async function prepareCreditWelcomeVoiceDispatch(eventId: string): Promise<VoiceDispatchClaim | null> {
     if (!enabled()) return null;
@@ -321,7 +358,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         recordingUrl, audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: row.resultCode };
     });
   }
-  return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceDispatch,
+  return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceControlledTest, prepareCreditWelcomeVoiceDispatch,
     markCreditWelcomeVoiceDispatchAccepted, markCreditWelcomeVoiceDispatchUnknown, markCreditWelcomeVoiceDispatchFailed,
     verifyCreditWelcomeVoiceIdentity, saveCreditWelcomeVoiceResult, listCreditWelcomeVoiceCallsForCredit };
 }

@@ -44,6 +44,18 @@ El receptor valida token, evento, crédito y agente, deduplica `call_id` y recha
 5. Confirmar callback, vínculo al crédito, privacidad del log y botón de descarga manual de audio. Revisar que volver a enviar el mismo callback no duplique registros.
 6. Activar `DAPTA_WELCOME_VOICE_ENABLED=true` para nuevos créditos. Vigilar estados por confirmar/fallidos sin reintentos automáticos.
 
+### Ejecutar únicamente la prueba dirigida
+
+Desde el checkout completo, con dependencias de desarrollo instaladas y las variables privadas ya disponibles en un entorno autorizado, mantener explícitamente `DAPTA_WELCOME_VOICE_ENABLED=false` y ejecutar:
+
+```sh
+node scripts/test-credit-welcome-voice.mjs --credit-id ID_CREDITO_PRUEBA --expected-phone +57NUMERO_PERSONAL_AUTORIZADO
+```
+
+Este comando solicita una llamada real, únicamente al crédito indicado. El celular registrado debe coincidir con el número personal autorizado; no cambia el contacto del crédito ni toma otro número como reemplazo. La fábrica habilitada existe solo en ese proceso y no modifica el interruptor del servicio. El helper inserta o reutiliza el evento `PENDING` de ese crédito y lo reclama por su identificador, con origen auditado `CONTROLLED_TEST`; conserva pendientes los eventos de otros créditos. Revalida contacto, condiciones y saldo antes de la solicitud a Dapta. Un evento ya intentado (`DISPATCHING`, `ACCEPTED`, `UNKNOWN` o cualquier estado cerrado) impide otra llamada.
+
+La salida contiene solo `eventId`, `creditId` y `status`; no muestra número, URL privada, token ni condiciones. `ACCEPTED` significa que Dapta devolvió el identificador de llamada, no que la persona contestó. `UNKNOWN` exige conciliar el registro de Dapta y el callback; volver a ejecutar el comando no redespacha ese evento. El evento de prueba usa la misma unicidad por crédito que la llamada normal, por lo que habilitar posteriormente la función no vuelve a llamar a ese crédito.
+
 La importación automática del archivo de audio permanece pendiente del contrato de descarga privada de Dapta. No se garantiza audio para llamadas no conectadas ni retención indefinida.
 
 ## Referencias

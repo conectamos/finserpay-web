@@ -1,0 +1,113 @@
+// Local operational tool. No HTTP endpoint and no automatic queue selection.
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+function controlledTestError(code) {
+  return Object.assign(new Error("No se puede ejecutar la prueba dirigida."), { code });
+}
+
+export function parseControlledWelcomeVoiceTestArgs(args) {
+  if (args.length === 1 && args[0] === "--help") return null;
+  const values = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    if (!["--credit-id", "--expected-phone"].includes(flag) || flag in values ||
+      !args[index + 1] || args[index + 1].startsWith("--")) throw controlledTestError("INVALID_ARGUMENTS");
+    values[flag] = args[index + 1];
+  }
+  const creditId = Number(values["--credit-id"]);
+  const expectedPhone = values["--expected-phone"];
+  if (!/^\d+$/.test(values["--credit-id"] || "") || !Number.isSafeInteger(creditId) || creditId < 1 ||
+    typeof expectedPhone !== "string" || !expectedPhone || expectedPhone.length > 80) {
+    throw controlledTestError("INVALID_ARGUMENTS");
+  }
+  return { creditId, expectedPhone };
+}
+
+/** Dependencies make the only network boundary testable without production credentials. */
+export async function runControlledWelcomeVoiceTest(input, deps) {
+  if (!Number.isSafeInteger(input.creditId) || input.creditId < 1 || typeof input.expectedPhone !== "string" ||
+    !input.expectedPhone || input.expectedPhone.length > 80) throw controlledTestError("INVALID_ARGUMENTS");
+  if (deps.env.DAPTA_WELCOME_VOICE_ENABLED !== "false") throw controlledTestError("GLOBAL_FEATURE_MUST_BE_DISABLED");
+  // This copy enables configuration validation for this request only; process.env is unchanged.
+  const config = deps.getConfig({ ...deps.env, DAPTA_WELCOME_VOICE_ENABLED: "true" });
+  if (!config) throw controlledTestError("INVALID_DISPATCH_CONFIG");
+  await deps.ensureSchema();
+  let claim;
+  let claimed = false;
+  const requireClaim = eventId => {
+    if (!claim || claim.eventId !== eventId || claim.creditId !== input.creditId) {
+      throw controlledTestError("CONTROLLED_TEST_SCOPE_MISMATCH");
+    }
+  };
+  const report = await deps.dispatch({ limit: 1 }, {
+    config, ensureSchema: async () => {},
+    claim: async () => {
+      if (claimed) throw controlledTestError("CONTROLLED_TEST_ALREADY_ATTEMPTED");
+      claimed = true;
+      claim = await deps.store.prepareCreditWelcomeVoiceControlledTest(input);
+      requireClaim(claim.eventId);
+      return [claim];
+    },
+    prepare: async eventId => {
+      requireClaim(eventId);
+      const prepared = await deps.store.prepareCreditWelcomeVoiceDispatch(eventId);
+      if (prepared && (prepared.eventId !== claim.eventId || prepared.creditId !== input.creditId ||
+        prepared.snapshot.phone !== claim.snapshot.phone)) {
+        throw controlledTestError("CONTROLLED_TEST_SCOPE_MISMATCH");
+      }
+      return prepared;
+    },
+    accepted: async (eventId, callId) => {
+      requireClaim(eventId);
+      await deps.store.markCreditWelcomeVoiceDispatchAccepted(eventId, callId);
+    },
+    failed: async (eventId, code) => {
+      requireClaim(eventId);
+      await deps.store.markCreditWelcomeVoiceDispatchFailed(eventId, code);
+    },
+    unknown: async (eventId, code) => {
+      requireClaim(eventId);
+      await deps.store.markCreditWelcomeVoiceDispatchUnknown(eventId, code);
+    },
+    ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
+  });
+  return { eventId: claim?.eventId ?? null, creditId: input.creditId,
+    status: report.accepted ? "ACCEPTED" : report.unknown ? "UNKNOWN" : report.skipped ? "SKIPPED" : "NOT_DISPATCHED" };
+}
+
+async function main() {
+  let prisma;
+  try {
+    const input = parseControlledWelcomeVoiceTestArgs(process.argv.slice(2));
+    if (!input) {
+      console.log("node scripts/test-credit-welcome-voice.mjs --credit-id ID --expected-phone +57NUMERO_PERSONAL_AUTORIZADO");
+      return;
+    }
+    if (process.env.DAPTA_WELCOME_VOICE_ENABLED !== "false") throw controlledTestError("GLOBAL_FEATURE_MUST_BE_DISABLED");
+    const [{ createRequire }, { createJiti }] = await Promise.all([import("node:module"), import("jiti")]);
+    const require = createRequire(import.meta.url);
+    const jiti = createJiti(import.meta.url, { alias: {
+      "@": fileURLToPath(new URL("../", import.meta.url)),
+      "server-only": require.resolve("next/dist/compiled/server-only/empty.js"),
+    } });
+    const dispatch = await jiti.import("../lib/credit-welcome-voice-dispatch.ts");
+    const ledger = await jiti.import("../lib/credit-welcome-voice-store.ts");
+    ({ default: prisma } = await jiti.import("../lib/prisma.ts"));
+    const result = await runControlledWelcomeVoiceTest(input, { env: process.env,
+      getConfig: dispatch.getCreditWelcomeVoiceConfig, dispatch: dispatch.dispatchCreditWelcomeVoice,
+      ensureSchema: ledger.ensureCreditWelcomeVoiceSchema,
+      store: ledger.createCreditWelcomeVoiceStore({ database: prisma, enabled: () => true }) });
+    console.log(JSON.stringify(result));
+    if (result.status !== "ACCEPTED") process.exitCode = 1;
+  } catch (error) {
+    // Never print the exception message, request body, private URL, phone or token.
+    const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,64}$/.test(error.code) ? error.code : "CONTROLLED_TEST_FAILED";
+    console.error(JSON.stringify({ status: code }));
+    process.exitCode = 1;
+  } finally {
+    await prisma?.$disconnect().catch(() => undefined);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

@@ -3,7 +3,8 @@ export const creditWelcomeVoiceSchemaStatements = [
     "id" UUID PRIMARY KEY,
     "creditoId" INTEGER NOT NULL REFERENCES public."Credito"("id") ON DELETE RESTRICT,
     "type" VARCHAR(32) NOT NULL DEFAULT 'BIENVENIDA_VOZ' CHECK ("type"='BIENVENIDA_VOZ'),
-    "source" VARCHAR(32) NOT NULL CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT')),
+    "source" VARCHAR(32) NOT NULL CONSTRAINT "CreditWelcomeVoiceEvent_source_check"
+      CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST')),
     "status" VARCHAR(16) NOT NULL CHECK ("status" IN ('PENDING','DISPATCHING','ACCEPTED','COMPLETED','FAILED','UNKNOWN','CANCELLED','SKIPPED')),
     "snapshot" JSONB,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -23,6 +24,14 @@ export const creditWelcomeVoiceSchemaStatements = [
     "resultHash" VARCHAR(64),
     CONSTRAINT "CreditWelcomeVoiceEvent_credit_type_key" UNIQUE ("creditoId","type")
   )`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass
+      AND conname='CreditWelcomeVoiceEvent_source_check' AND pg_get_constraintdef(oid) LIKE '%CONTROLLED_TEST%') THEN
+      ALTER TABLE public."CreditWelcomeVoiceEvent" DROP CONSTRAINT IF EXISTS "CreditWelcomeVoiceEvent_source_check";
+      ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_source_check"
+        CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST'));
+    END IF;
+  END $$`,
   `CREATE INDEX IF NOT EXISTS "CreditWelcomeVoiceEvent_pending_idx"
     ON public."CreditWelcomeVoiceEvent" ("status","createdAt","id")`,
 ];

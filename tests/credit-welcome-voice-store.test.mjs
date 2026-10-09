@@ -74,6 +74,8 @@ test("disabled feature does not read or enqueue, and a disabled processor claims
   const f = await fixture(t, { enabled: false });
   assert.equal(await f.enqueue(), null);
   assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "+573000000001" }),
+    error => error.code === "CONTROLLED_TEST_DISABLED");
   assert.equal(f.queries(), 0);
 });
 
@@ -255,4 +257,112 @@ test("schema has no approval recording relation or audio bytes and installs repe
   for (const statement of creditWelcomeVoiceSchemaStatements) await f.db.exec(statement);
   const columns = (await f.db.query("SELECT column_name FROM information_schema.columns WHERE table_name='CreditWelcomeVoiceEvent'")).rows.map(row => row.column_name);
   for (const forbidden of ["bytes", "revision", "reviewHash", "callRecordingId"]) assert.equal(columns.includes(forbidden), false);
+});
+
+test("controlled test works through an isolated factory while global creation stays disabled and unrelated queue stays pending", async t => {
+  const f = await fixture(t, { credits: [sample(1), sample(2, { clienteTelefono: "3000000002" }), sample(3)] });
+  const unrelated = await f.enqueue(1);
+  f.setEnabled(false);
+  const queryCount = f.queries();
+  assert.equal(await f.enqueue(3), null);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.equal(f.queries(), queryCount);
+  const directed = f.loaded.createCreditWelcomeVoiceStore({ database: f.client, enabled: () => true });
+  const chosen = await directed.prepareCreditWelcomeVoiceControlledTest({ creditId: 2, expectedPhone: "+57 300 000 0002" });
+  assert.equal(chosen.creditId, 2);
+  assert.equal(chosen.snapshot.phone, "573000000002");
+  const records = await f.rows();
+  assert.equal(records.length, 2);
+  assert.equal(records[0].id, unrelated.eventId);
+  assert.equal(records[0].status, "PENDING");
+  assert.equal(records[0].source, "NORMAL");
+  assert.equal(records[1].id, chosen.eventId);
+  assert.equal(records[1].status, "DISPATCHING");
+  assert.equal(records[1].source, "CONTROLLED_TEST");
+  assert.equal(await f.enqueue(3), null);
+});
+
+test("controlled test validates the expected number and eligible real credit before inserting anything", async t => {
+  const f = await fixture(t, { credits: [sample(1), sample(2, { estado: "ANULADO" }),
+    sample(3, { estado: "PAGADO" }), sample(4, { pazYSalvoEmitidoAt: "2026-10-08" }),
+    sample(5, { abonos: [{ valor: 300, estado: "ACTIVO", fechaAbono: "2026-10-08" }] }),
+    sample(6, { amortizacion: null, fechaPrimerPago: "2026-02-30" })] });
+  const prepare = input => f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  await assert.rejects(prepare({ creditId: 1, expectedPhone: "not-a-phone" }), error => error.code === "INVALID_CONTROLLED_TEST");
+  assert.equal(f.queries(), 0);
+  await assert.rejects(prepare({ creditId: 1, expectedPhone: "+573000000099" }), error => error.code === "CONTROLLED_TEST_PHONE_MISMATCH");
+  await assert.rejects(prepare({ creditId: 99, expectedPhone: "+573000000001" }), error => error.code === "CREDIT_NOT_FOUND");
+  for (const creditId of [2, 3, 4, 5, 6]) {
+    await assert.rejects(prepare({ creditId, expectedPhone: "+573000000001" }), error => error.code === "CONTROLLED_TEST_INELIGIBLE");
+  }
+  assert.equal((await f.rows()).length, 0);
+});
+
+test("controlled test reuses only the chosen pending event and refuses altered snapshots without changing them", async t => {
+  const f = await fixture(t, { credits: [sample(1), sample(2), sample(3)] });
+  const one = await f.enqueue(1), two = await f.enqueue(2), three = await f.enqueue(3);
+  await f.update(2, { clienteTelefono: "3000000002" });
+  await f.update(3, { cuotaInicial: 210 });
+  for (const [creditId, expectedPhone] of [[2, "+573000000002"], [3, "+573000000001"]]) {
+    await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ creditId, expectedPhone }),
+      error => error.code === "CONTROLLED_TEST_SNAPSHOT_CHANGED");
+  }
+  const chosen = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "3000000001" });
+  assert.equal(chosen.eventId, one.eventId);
+  const records = await f.rows();
+  assert.equal(records.length, 3);
+  assert.equal(records[0].source, "CONTROLLED_TEST");
+  for (const [index, previous] of [[1, two], [2, three]]) {
+    assert.equal(records[index].id, previous.eventId);
+    assert.equal(records[index].status, "PENDING");
+    assert.equal(records[index].source, "NORMAL");
+  }
+});
+
+test("controlled test refuses every attempted or closed state and cannot claim a credit twice concurrently", async t => {
+  const states = ["DISPATCHING", "ACCEPTED", "COMPLETED", "FAILED", "UNKNOWN", "CANCELLED", "SKIPPED"];
+  const f = await fixture(t, { credits: [...states.map((_, index) => sample(index + 1)), sample(8)] });
+  for (let index = 0; index < states.length; index++) {
+    const event = await f.enqueue(index + 1);
+    await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "status"=$2 WHERE "id"=$1::uuid', [event.eventId, states[index]]);
+    await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: index + 1, expectedPhone: "+573000000001" }),
+      error => error.code === "CONTROLLED_TEST_ALREADY_ATTEMPTED");
+  }
+  const attempts = await Promise.allSettled([1, 2].map(() => f.store.prepareCreditWelcomeVoiceControlledTest({
+    creditId: 8, expectedPhone: "+573000000001" })));
+  assert.equal(attempts.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(attempts.find(result => result.status === "rejected").reason.code, "CONTROLLED_TEST_ALREADY_ATTEMPTED");
+  const records = await f.rows();
+  assert.deepEqual(records.slice(0, 7).map(row => row.status), states);
+  assert.ok(records.slice(0, 7).every(row => row.source === "NORMAL"));
+  assert.equal(records[7].status, "DISPATCHING");
+});
+
+test("controlled test preparation rolls back atomically, then a retry of the unsent transaction can succeed", async t => {
+  const f = await fixture(t, { failTransaction: true });
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest(input));
+  assert.equal((await f.rows()).length, 0);
+  const claim = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  assert.equal((await f.rows())[0].id, claim.eventId);
+  assert.equal((await f.rows())[0].status, "DISPATCHING");
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest(input), error => error.code === "CONTROLLED_TEST_ALREADY_ATTEMPTED");
+});
+
+test("controlled test source migrates a previously installed check idempotently without losing existing events", async t => {
+  const f = await fixture(t, { credits: [sample(1), sample(2)] });
+  const original = await f.enqueue(1);
+  await f.db.exec(`ALTER TABLE "CreditWelcomeVoiceEvent" DROP CONSTRAINT "CreditWelcomeVoiceEvent_source_check";
+    ALTER TABLE "CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_source_check"
+      CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT'));`);
+  for (let run = 0; run < 2; run++) {
+    for (const statement of creditWelcomeVoiceSchemaStatements) await f.db.exec(statement);
+  }
+  await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 2, expectedPhone: "+573000000001" });
+  const records = await f.rows();
+  assert.equal(records[0].id, original.eventId);
+  assert.equal(records[0].status, "PENDING");
+  assert.equal(records[1].source, "CONTROLLED_TEST");
+  await assert.rejects(f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "source"=$2 WHERE "id"=$1::uuid',
+    [original.eventId, "UNSUPPORTED_SOURCE"]));
 });
