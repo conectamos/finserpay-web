@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getMoraActor } from "@/lib/analyst-mora-access";
 import {
   actOnMoraExceptionRequest,
+  amendMoraExceptionRequest,
   getMoraExceptionRequest,
+  parseCentralMoraExceptionAmendment,
   parseMoraExceptionDecision,
   parseCentralMoraExceptionDecision,
 } from "@/lib/mora-exception-requests";
@@ -29,10 +31,13 @@ export async function PATCH(request: Request, context: Context) {
     const actor = await getMoraActor();
     const { id } = await context.params;
     const body = await readApprovalRequest(request, { maxBytes: 5_000 });
-    const input = actor.centralAdmin ? parseCentralMoraExceptionDecision(body) : parseMoraExceptionDecision(body);
-    const result = await actOnMoraExceptionRequest(id, input, actor);
+    const action = body && typeof body === "object" && "action" in body ? body.action : null;
+    const isAmendment = action === "EDIT" || action === "CANCEL";
+    const result = isAmendment
+      ? await amendMoraExceptionRequest(id, parseCentralMoraExceptionAmendment(body), actor)
+      : await actOnMoraExceptionRequest(id, actor.centralAdmin ? parseCentralMoraExceptionDecision(body) : parseMoraExceptionDecision(body), actor);
     let moraSync: { ok: boolean; action: string; message: string } | null = null;
-    if (input.action === "APPROVE" && result.item.status === "APPROVED") {
+    if ((action === "APPROVE" && result.item.status === "APPROVED") || ("affectsMora" in result && result.affectsMora)) {
       try {
         const synced = await syncCreditMoraById(result.item.creditoId, { forceRemoteAudit: true });
         moraSync = { ok: synced.action !== "FAILED", action: synced.action, message: synced.message };
@@ -45,7 +50,9 @@ export async function PATCH(request: Request, context: Context) {
         moraSync = {
           ok: false,
           action: "FAILED",
-          message: "La excepción quedó aprobada, pero no se pudo sincronizar el desbloqueo inmediato. La sincronización automática volverá a intentarlo.",
+          message: isAmendment
+            ? "El cambio quedó guardado, pero no se pudo sincronizar el estado del equipo de inmediato. La sincronización automática volverá a intentarlo."
+            : "La excepción quedó aprobada, pero no se pudo sincronizar el desbloqueo inmediato. La sincronización automática volverá a intentarlo.",
         };
       }
     }

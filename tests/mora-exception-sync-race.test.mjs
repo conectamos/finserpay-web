@@ -4,13 +4,14 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 
-function loadSync({ exceptionAppears }) {
+function loadSync({ exceptionAppears, exceptionSequence = null, unlockError = null }) {
   const source = readFileSync(new URL("../lib/credit-mora-sync.ts", import.meta.url), "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   });
   const loaded = { exports: {} };
   const calls = { order: [], locks: 0, unlocks: 0, updates: [] };
+  let exceptionReads = 0;
   const update = async ({ data }) => {
     calls.updates.push(data.bloqueoMora);
     return { estado: data.estado, equalityState: data.equalityState || null, equalityService: data.equalityService || null, bloqueoMora: data.bloqueoMora, bloqueoMoraAt: data.bloqueoMoraAt || null };
@@ -34,9 +35,9 @@ function loadSync({ exceptionAppears }) {
     "@/lib/equality-zero-touch": {
       isEqualityApiError: () => false,
       isEqualityConfigured: () => true,
-      lockEqualityDevice: async () => { calls.locks += 1; return { ok: true }; },
+      lockEqualityDevice: async () => { calls.order.push("remote-lock"); calls.locks += 1; return { ok: true }; },
       queryEqualityDevices: async () => null,
-      unlockEqualityDevice: async () => { calls.unlocks += 1; return { ok: true }; },
+      unlockEqualityDevice: async () => { calls.order.push("remote-unlock"); calls.unlocks += 1; if (unlockError) throw unlockError; return { ok: true }; },
     },
     "@/lib/credit-factory": { resolveCreditState: () => "INSCRITO", sanitizeText: (value) => String(value || "") },
     "@/lib/credit-lock-message": { buildMoraLockMessage: () => "Pago vencido" },
@@ -49,9 +50,10 @@ function loadSync({ exceptionAppears }) {
     "@/lib/mora-exception-requests": {
       getActiveMoraExceptionByCreditId: async () => null,
       getActiveMoraExceptionsByCreditIds: async (_ids, _at, database) => {
-        assert.equal(database, tx);
+        assert.ok(database === tx || database === undefined);
         calls.order.push("exception-read");
-        return exceptionAppears ? new Map([[41, { fechaFin: new Date(), type: "EXCEPCION" }]]) : new Map();
+        const active = exceptionSequence ? exceptionSequence[Math.min(exceptionReads++, exceptionSequence.length - 1)] : exceptionAppears;
+        return active ? new Map([[41, { fechaFin: new Date(), type: "EXCEPCION" }]]) : new Map();
       },
     },
     "@/lib/prisma": { default: prisma },
@@ -107,7 +109,7 @@ function credit() {
 test("snapshot stale del cron revalida bajo lock y nunca vuelve a bloquear un crédito recién exceptuado", async () => {
   const { sync, calls } = loadSync({ exceptionAppears: true });
   const result = await sync(credit(), { exemptCreditIds: new Set(), today: new Date("2026-10-03T17:00:00.000Z") });
-  assert.deepEqual(calls.order, ["credit-lock", "exception-read"]);
+  assert.deepEqual(calls.order, ["credit-lock", "exception-read", "remote-unlock", "credit-lock", "exception-read"]);
   assert.equal(calls.locks, 0);
   assert.equal(calls.unlocks, 1);
   assert.deepEqual(calls.updates, [false]);
@@ -117,9 +119,54 @@ test("snapshot stale del cron revalida bajo lock y nunca vuelve a bloquear un cr
 test("sin excepción tras adquirir el lock conserva el bloqueo normal por mora", async () => {
   const { sync, calls } = loadSync({ exceptionAppears: false });
   const result = await sync(credit(), { exemptCreditIds: new Set(), today: new Date("2026-10-03T17:00:00.000Z") });
-  assert.deepEqual(calls.order, ["credit-lock", "exception-read"]);
+  assert.deepEqual(calls.order, ["credit-lock", "exception-read", "remote-lock"]);
   assert.equal(calls.locks, 1);
   assert.equal(calls.unlocks, 0);
   assert.deepEqual(calls.updates, [true]);
   assert.equal(result.action, "LOCKED");
+});
+
+test("cancelación durante un desbloqueo en vuelo descarta el snapshot y restablece el bloqueo por mora", async () => {
+  const { sync, calls } = loadSync({ exceptionAppears: false });
+  const result = await sync(credit(), { exemptCreditIds: new Set([41]), forceRemoteAudit: true, today: new Date("2026-10-03T17:00:00.000Z") });
+  assert.deepEqual(calls.order, ["remote-unlock", "credit-lock", "exception-read", "credit-lock", "exception-read", "remote-lock"]);
+  assert.equal(calls.unlocks, 1);
+  assert.equal(calls.locks, 1);
+  assert.deepEqual(calls.updates, [true], "La lectura antigua no debe volver a guardar desbloqueo");
+  assert.equal(result.action, "LOCKED");
+});
+
+test("excepción vigente se revalida después de la llamada remota y guarda el resultado bajo lock corto", async () => {
+  const { sync, calls } = loadSync({ exceptionAppears: true });
+  const result = await sync(credit(), { exemptCreditIds: new Set([41]), forceRemoteAudit: true, today: new Date("2026-10-03T17:00:00.000Z") });
+  assert.deepEqual(calls.order, ["remote-unlock", "credit-lock", "exception-read"]);
+  assert.equal(calls.unlocks, 1);
+  assert.equal(calls.locks, 0);
+  assert.deepEqual(calls.updates, [false]);
+  assert.equal(result.action, "UNLOCKED");
+});
+
+test("excepción revocada tras revalidación del cron no deja que su intento de desbloqueo antiguo gane", async () => {
+  const { sync, calls } = loadSync({ exceptionSequence: [true, false, false] });
+  const result = await sync(credit(), { exemptCreditIds: new Set(), today: new Date("2026-10-03T17:00:00.000Z") });
+  assert.equal(calls.unlocks, 1);
+  assert.equal(calls.locks, 1);
+  assert.deepEqual(calls.updates, [true]);
+  assert.equal(result.action, "LOCKED");
+});
+
+test("respuesta de desbloqueo perdida con excepción cancelada también reconcilia el equipo", async () => {
+  const { sync, calls } = loadSync({ exceptionAppears: false, unlockError: new Error("Respuesta perdida") });
+  const result = await sync(credit(), { exemptCreditIds: new Set([41]), forceRemoteAudit: true, today: new Date("2026-10-03T17:00:00.000Z") });
+  assert.deepEqual(calls.order, ["remote-unlock", "exception-read", "credit-lock", "exception-read", "remote-lock"]);
+  assert.deepEqual(calls.updates, [true]);
+  assert.equal(result.action, "LOCKED");
+});
+
+test("fallo remoto sin revocación mantiene FAILED y no bloquea una excepción vigente", async () => {
+  const { sync, calls } = loadSync({ exceptionAppears: true, unlockError: new Error("Respuesta perdida") });
+  const result = await sync(credit(), { exemptCreditIds: new Set([41]), forceRemoteAudit: true, today: new Date("2026-10-03T17:00:00.000Z") });
+  assert.equal(calls.locks, 0);
+  assert.deepEqual(calls.updates, []);
+  assert.equal(result.action, "FAILED");
 });

@@ -4,7 +4,7 @@ export function moraExceptionRequestSchemaStatements() {
       "id" UUID PRIMARY KEY,
       "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
       "type" VARCHAR(16) NOT NULL CHECK ("type" IN ('EXCEPCION','PRORROGA')),
-      "status" VARCHAR(16) NOT NULL DEFAULT 'PENDING' CHECK ("status" IN ('PENDING','APPROVED','REJECTED','EXPIRED','REPLACED')),
+      "status" VARCHAR(16) NOT NULL DEFAULT 'PENDING' CHECK ("status" IN ('PENDING','APPROVED','REJECTED','EXPIRED','REPLACED','CANCELLED')),
       "source" VARCHAR(24) NOT NULL DEFAULT 'ANALYST_REQUEST' CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT')),
       "version" INTEGER NOT NULL DEFAULT 1 CHECK ("version">0),
       "installmentNumber" INTEGER CHECK ("installmentNumber">0),
@@ -42,20 +42,18 @@ export function moraExceptionRequestSchemaStatements() {
       ALTER COLUMN "promiseDate" DROP NOT NULL`,
     `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_status_check"`,
     `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_status_check"
-      CHECK ("status" IN ('PENDING','APPROVED','REJECTED','EXPIRED','REPLACED'))`,
+      CHECK ("status" IN ('PENDING','APPROVED','REJECTED','EXPIRED','REPLACED','CANCELLED'))`,
     `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='"CreditMoraExceptionRequest"'::regclass
       AND conname='CreditMoraExceptionRequest_source_values') THEN
       ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_values"
         CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT'));
       END IF; END $$`,
-    `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='"CreditMoraExceptionRequest"'::regclass
-      AND conname='CreditMoraExceptionRequest_source_fields') THEN
-      ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_fields"
+    `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_source_fields"`,
+    `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_fields"
         CHECK (("source"='ANALYST_REQUEST' AND "installmentNumber" IS NOT NULL AND "installmentDueDate" IS NOT NULL
           AND "expiresOn" IS NOT NULL AND "promiseAmount" IS NOT NULL AND "promiseDate" IS NOT NULL)
           OR ("source"='CENTRAL_DIRECT' AND "installmentNumber" IS NULL AND "installmentDueDate" IS NULL
-            AND "promiseAmount" IS NULL AND "promiseDate" IS NULL AND "status" IN ('APPROVED','EXPIRED','REPLACED')));
-      END IF; END $$`,
+            AND "promiseAmount" IS NULL AND "promiseDate" IS NULL AND "status" IN ('APPROVED','EXPIRED','REPLACED','CANCELLED')))`,
     `DROP INDEX IF EXISTS "CreditMoraExceptionRequest_one_pending"`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "CreditMoraExceptionRequest_one_open"
       ON "CreditMoraExceptionRequest" ("creditoId") WHERE "status" IN ('PENDING','APPROVED')`,
@@ -94,7 +92,7 @@ export function moraExceptionRequestSchemaStatements() {
       "requestId" UUID NOT NULL REFERENCES "CreditMoraExceptionRequest"("id") ON DELETE RESTRICT,
       "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
       "version" INTEGER NOT NULL CHECK ("version">0),
-      "action" VARCHAR(16) NOT NULL CHECK ("action" IN ('SUBMITTED','APPROVED','REJECTED','EXPIRED','OBSERVED','REPLACED')),
+      "action" VARCHAR(16) NOT NULL CHECK ("action" IN ('SUBMITTED','APPROVED','REJECTED','EXPIRED','OBSERVED','REPLACED','EDITED','CANCELLED')),
       "fromStatus" VARCHAR(16),
       "toStatus" VARCHAR(16) NOT NULL,
       "payload" JSONB NOT NULL,
@@ -107,7 +105,7 @@ export function moraExceptionRequestSchemaStatements() {
     )`,
     `ALTER TABLE "CreditMoraExceptionEvent" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionEvent_action_check"`,
     `ALTER TABLE "CreditMoraExceptionEvent" ADD CONSTRAINT "CreditMoraExceptionEvent_action_check"
-      CHECK ("action" IN ('SUBMITTED','APPROVED','REJECTED','EXPIRED','OBSERVED','REPLACED'))`,
+      CHECK ("action" IN ('SUBMITTED','APPROVED','REJECTED','EXPIRED','OBSERVED','REPLACED','EDITED','CANCELLED'))`,
     `CREATE INDEX IF NOT EXISTS "CreditMoraExceptionEvent_history"
       ON "CreditMoraExceptionEvent" ("requestId","createdAt","id")`,
     `CREATE OR REPLACE FUNCTION public.mora_exception_history_immutable() RETURNS trigger AS $$

@@ -433,7 +433,15 @@ export async function syncCreditMora(
       );
       const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
       const deviceMeta = getEqualityDeviceMeta(payloadSource);
-      const updated = await prisma.credito.update({
+      // The remote operation runs outside the lock. Before storing its result,
+      // recheck the exception under the same short credit lock used to cancel it.
+      const updated = await prisma.$transaction(async db => {
+        await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
+        if (!documentExempt) {
+          const currentException = await getActiveMoraExceptionsByCreditIds([credit.id], effectiveAt, db);
+          if (!currentException.has(credit.id)) return null;
+        }
+        return db.credito.update({
         where: { id: credit.id },
         data: {
           estado: resolveCreditState({
@@ -468,7 +476,15 @@ export async function syncCreditMora(
           bloqueoMora: true,
           bloqueoMoraAt: true,
         },
-      });
+        });
+      }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+
+      // A cancellation or shortened expiry may have committed while Equality
+      // was responding. Reconcile from current authorizations instead of saving
+      // the stale unlocked state; this also repairs the completed remote unlock.
+      if (!updated) {
+        return syncCreditMora(credit, { ...options, exemptCreditIds: new Set<number>(), forceRemoteAudit: true });
+      }
 
       return buildUpdatedResult(
         credit,
@@ -479,6 +495,16 @@ export async function syncCreditMora(
         payloadSource
       );
     } catch (error) {
+      // A lost remote response can still mean the unlock reached the provider.
+      // If the authorization was revoked meanwhile, reconcile it as well.
+      if (!documentExempt) {
+        try {
+          const currentException = await getActiveMoraExceptionsByCreditIds([credit.id], effectiveAt);
+          if (!currentException.has(credit.id)) {
+            return syncCreditMora(credit, { ...options, exemptCreditIds: new Set<number>(), forceRemoteAudit: true });
+          }
+        } catch { /* Preserve a failed result for the automatic retry when storage is unavailable. */ }
+      }
       return buildResult(
         credit,
         "FAILED",
