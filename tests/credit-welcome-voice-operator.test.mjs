@@ -35,13 +35,14 @@ async function fixture(t, { credits = [sample()], enabled = false } = {}) {
   await db.exec('CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY,"data" JSONB NOT NULL)');
   for (const statement of creditWelcomeVoiceSchemaStatements) await db.exec(statement);
   for (const credit of credits) await db.query('INSERT INTO "Credito" VALUES ($1,$2::jsonb)', [credit.id, JSON.stringify(credit)]);
-  let rollback = false, queries = 0, flag = enabled;
+  let rollback = false, queries = 0, writes = 0, transactions = 0, flag = enabled;
   const adapter = connection => ({
     $queryRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).rows; },
-    $executeRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).affectedRows; },
+    $executeRawUnsafe: async (sql, ...values) => { queries++; writes++; return (await connection.query(sql, values)).affectedRows; },
     credito: { findUnique: async ({ where }) => (await connection.query('SELECT "data" FROM "Credito" WHERE "id"=$1', [where.id])).rows[0]?.data ?? null },
   });
   const client = { ...adapter(db), $transaction: callback => db.transaction(async connection => {
+    transactions++;
     const result = await callback(adapter(connection));
     if (rollback) { rollback = false; throw new Error("Synthetic operator rollback"); }
     return result;
@@ -62,6 +63,7 @@ async function fixture(t, { credits = [sample()], enabled = false } = {}) {
     providerCallId: `call-operator-${call.eventId}`, status: "COMPLETED", communicationOutcome: "HUMAN_CONTACT", completedAt: now.toISOString() });
   const update = fields => db.query('UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1', [1, JSON.stringify(fields)]);
   return { db, client, store, loaded, events, requests, complete, update, queries: () => queries,
+    writes: () => writes, transactions: () => transactions,
     rollbackNext: () => { rollback = true; }, setEnabled: value => { flag = value; } };
 }
 
@@ -225,4 +227,36 @@ test("paid credits and changes to the original phone or terms block the prepared
     }
     await f.db.query('UPDATE "Credito" SET "data"=$2::jsonb WHERE "id"=$1', [1, JSON.stringify(sample())]);
   }
+});
+
+test("operator request lookup is read-only and returns only current status to the same UI actor and credit", async t => {
+  const f = await fixture(t, { credits: [sample(), sample(2)] });
+  const call = await f.store.prepareCreditWelcomeVoiceOperatorCall(input());
+  const before = { writes: f.writes(), transactions: f.transactions(), events: await f.events(), requests: await f.requests() };
+  const lookup = await f.store.getCreditWelcomeVoiceOperatorRequest(input());
+  assert.deepEqual(lookup, { eventId: call.eventId, status: "DISPATCHING" });
+  assert.deepEqual(Object.keys(lookup).sort(), ["eventId", "status"]);
+  assert.equal(f.writes(), before.writes); assert.equal(f.transactions(), before.transactions);
+  for (const override of [{ actorId: 52 }, { creditId: 2 }, { requestId: requestId2 }]) {
+    assert.equal(await f.store.getCreditWelcomeVoiceOperatorRequest(input(override)), null);
+  }
+  assert.deepEqual(await f.events(), before.events); assert.deepEqual(await f.requests(), before.requests);
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "status"=$2 WHERE "id"=$1::uuid', [call.eventId, "UNKNOWN"]);
+  assert.deepEqual(await f.store.getCreditWelcomeVoiceOperatorRequest(input()), { eventId: call.eventId, status: "UNKNOWN" });
+  const codex = await f.store.prepareCreditWelcomeVoiceOperatorCall(input({ creditId: 2, requestId: requestId2, actorId: null,
+    origin: "CODEX_AUTHORIZED", phone: "3000000002", expectedDocument: "00123456" }));
+  const afterCodex = { writes: f.writes(), transactions: f.transactions() };
+  assert.ok(codex.eventId);
+  assert.equal(await f.store.getCreditWelcomeVoiceOperatorRequest(input({ creditId: 2, requestId: requestId2 })), null);
+  assert.equal(f.writes(), afterCodex.writes); assert.equal(f.transactions(), afterCodex.transactions);
+});
+
+test("operator request lookup rejects invalid UUID or IDs before querying", async t => {
+  const f = await fixture(t);
+  const queries = f.queries();
+  for (const override of [{ requestId: "bad" }, { requestId: `${requestId}suffix` }, { actorId: 0 },
+    { actorId: null }, { actorId: 2_147_483_648 }, { creditId: 0 }, { creditId: Number.NaN }]) {
+    await assert.rejects(f.store.getCreditWelcomeVoiceOperatorRequest(input(override)), error => error.code === "INVALID_OPERATOR_CALL");
+  }
+  assert.equal(f.queries(), queries); assert.equal(f.writes(), 0); assert.equal(f.transactions(), 0);
 });

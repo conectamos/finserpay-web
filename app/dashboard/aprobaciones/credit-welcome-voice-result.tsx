@@ -43,6 +43,7 @@ type ManualCall = { canCall: boolean; phone: string | null; reason?: string };
 type CallRequest = { creditId: number; requestId: string; eventId?: string; busy: boolean;
   pending: boolean; message: string; error: boolean };
 type PendingRequest = { creditId: number; requestId: string; eventId?: string; controller?: AbortController; busy: boolean };
+type RequestLookup = { requestId: string; found: boolean; eventId?: string; status?: string };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const closedStates = new Set(["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"]);
 function rememberRequest(creditId: number, requestId: string | null) {
@@ -59,9 +60,9 @@ function savedRequest(creditId: number) {
   } catch { return null; }
 }
 function requestMessage(status: string) {
-  if (status === "UNKNOWN") return "La solicitud está por confirmar. Consulta su estado antes de intentar otra llamada.";
+  if (status === "UNKNOWN") return "La solicitud está por confirmar. El estado se actualizará automáticamente; también puedes usar Actualizar.";
   if (status === "ACCEPTED") return "Dapta aceptó la solicitud. Aún no se confirma que el cliente haya contestado.";
-  if (status === "DISPATCHING" || status === "PENDING") return "La llamada se está solicitando. Puedes consultar el estado de este mismo intento.";
+  if (status === "DISPATCHING" || status === "PENDING") return "La llamada se está solicitando. Su estado aparecerá en este expediente.";
   return `Resultado del intento: ${states[status] || "Por confirmar"}.`;
 }
 
@@ -79,9 +80,14 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   const busy = currentRequest?.busy === true;
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api/creditos/${creditId}/bienvenida-voz`, { cache: "no-store", signal: controller.signal })
+    const requestedPending = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
+    const requestId = requestedPending?.requestId || savedRequest(creditId);
+    const query = requestId ? `?requestId=${encodeURIComponent(requestId)}` : "";
+    void fetch(`/api/creditos/${creditId}/bienvenida-voz${query}`, { cache: "no-store", signal: controller.signal })
       .then(async response => {
-        const body = await response.json().catch(() => null) as { ok?: boolean; items?: WelcomeVoiceCallView[]; manualCall?: ManualCall } | null;
+        const body = await response.json().catch(() => null) as {
+          ok?: boolean; items?: WelcomeVoiceCallView[]; manualCall?: ManualCall; request?: RequestLookup;
+        } | null;
         if (!response.ok || !body?.ok || !Array.isArray(body.items)) throw new Error("No se pudo consultar la bienvenida por voz.");
         if (controller.signal.aborted) return;
         const items = body.items.filter(item => item.creditId === creditId);
@@ -97,14 +103,32 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
           pending = requestId ? { creditId, requestId, busy: false } : null;
           pendingRequest.current = pending;
           if (pending) setRequest({ ...pending, pending: true, error: false,
-            message: "Hay una solicitud pendiente de confirmar. Consulta su estado para continuar con el mismo intento." });
+            message: "Verificando el estado de la solicitud anterior..." });
         }
-        const completed = pending?.eventId ? items.find(item => item.id === pending.eventId && closedStates.has(item.status)) : null;
-        if (pending && !pending.busy && completed) {
+        const lookup = body.request;
+        if (!pending || pending.busy || !requestId || pending.requestId !== requestId ||
+          (requestedPending && pending !== requestedPending)) return;
+        setRequest({ creditId, requestId, eventId: pending.eventId, busy: false, pending: true, error: false,
+          message: "Verificando el estado de la solicitud anterior..." });
+        if (!lookup || lookup.requestId !== requestId || typeof lookup.found !== "boolean") return;
+        if (!lookup.found) {
+          // Keep the key: an earlier POST can still arrive after a lost response.
+          pending.eventId = undefined;
+          setRequest({ creditId, requestId, busy: false, pending: false, error: false,
+            message: "No se había registrado la llamada. Puedes iniciarla con Llamar ahora." });
+          return;
+        }
+        if (typeof lookup.eventId !== "string" || !uuid.test(lookup.eventId) || typeof lookup.status !== "string" ||
+          !Object.prototype.hasOwnProperty.call(states, lookup.status)) return;
+        pending.eventId = lookup.eventId;
+        if (closedStates.has(lookup.status)) {
           rememberRequest(creditId, null);
           pendingRequest.current = null;
-          setRequest({ creditId, requestId: pending.requestId, eventId: completed.id, busy: false, pending: false,
-            error: false, message: requestMessage(completed.status) });
+          setRequest({ creditId, requestId, eventId: lookup.eventId, busy: false, pending: false,
+            error: false, message: requestMessage(lookup.status) });
+        } else {
+          setRequest({ creditId, requestId, eventId: lookup.eventId, busy: false, pending: true,
+            error: false, message: requestMessage(lookup.status) });
         }
       })
       .catch(() => { if (!controller.signal.aborted) setRead({ creditId, revision, items: [], error: "No se pudo consultar la bienvenida por voz. Intenta actualizarla." }); });
@@ -117,18 +141,23 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
       pendingRequest.current = null;
     }
   }, [creditId]);
+  useEffect(() => {
+    if (!currentRequest?.pending || busy || loading) return;
+    const timeout = setTimeout(() => setRevision(value => value + 1), 5000);
+    return () => clearTimeout(timeout);
+  }, [creditId, currentRequest?.pending, busy, loading, revision]);
 
   async function callNow() {
     if (!manualCall || loading) return;
     const previous = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
-    if (previous?.busy || (!manualCall.canCall && !previous)) return;
+    if (previous?.busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone) return;
     const requestId = previous?.requestId || savedRequest(creditId) || crypto.randomUUID();
     const controller = new AbortController();
     const pending: PendingRequest = { creditId, requestId, eventId: previous?.eventId, busy: true, controller };
     pendingRequest.current = pending;
     rememberRequest(creditId, requestId);
     setRequest({ creditId, requestId, eventId: pending.eventId, busy: true, pending: true, error: false,
-      message: previous ? "Consultando el estado del intento..." : "Solicitando la llamada..." });
+      message: "Solicitando la llamada..." });
     const timeout = setTimeout(() => controller.abort(), 60_000);
     try {
       const response = await fetch(`/api/creditos/${creditId}/bienvenida-voz`, { method: "POST", cache: "no-store",
@@ -158,7 +187,8 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
     } catch {
       if (pendingRequest.current !== pending) return;
       setRequest({ creditId, requestId, eventId: pending.eventId, busy: false, pending: true, error: true,
-        message: "No se pudo confirmar la solicitud. Consulta el estado del mismo intento; no se iniciará otra llamada." });
+        message: "No se pudo confirmar la solicitud. El estado se consultará automáticamente; también puedes usar Actualizar." });
+      setRevision(value => value + 1);
     } finally {
       clearTimeout(timeout);
       pending.busy = false;
@@ -169,9 +199,9 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><Headphones size={20} aria-hidden="true" />Bienvenida por voz</h2>
       <div className="flex flex-wrap items-center gap-2">
-      {manualCall ? <Button disabled={loading || busy || (!currentRequest?.pending && (!manualCall.canCall || !manualCall.phone))}
-        onClick={() => { void callNow(); }} aria-label={currentRequest?.pending ? "Consultar estado del intento de llamada" : "Llamar ahora al celular registrado"}>
-        <Phone size={16} aria-hidden="true" />{busy ? "Procesando..." : currentRequest?.pending ? "Consultar estado" : "Llamar ahora"}
+      {manualCall ? <Button disabled={loading || busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone}
+        onClick={() => { void callNow(); }} aria-label="Llamar ahora al celular registrado">
+        <Phone size={16} aria-hidden="true" />Llamar ahora
       </Button> : null}
       <Button variant="ghost" disabled={loading || busy} onClick={() => setRevision(value => value + 1)} aria-label="Actualizar resultado de la bienvenida por voz">
         <RefreshCw size={16} aria-hidden="true" />Actualizar

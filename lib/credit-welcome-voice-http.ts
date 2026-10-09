@@ -282,6 +282,7 @@ export type WelcomeVoiceCallView = {
   audioStorage: "DAPTA_PRIVATE_LINK" | "UNAVAILABLE"; resultCode: string | null;
 };
 export type WelcomeVoiceManualCallView = { canCall: boolean; phone: string | null; reason?: string };
+export type WelcomeVoiceManualRequestView = { requestId: string; found: boolean; eventId?: string; status?: string };
 
 /** A manual call uses the authorized credit's stored contact; the browser cannot choose another recipient. */
 export function createCreditWelcomeVoiceManualHandler(dependencies: {
@@ -361,6 +362,7 @@ export function createCreditWelcomeVoiceReadHandler(dependencies: {
   listCalls: (id: number) => Promise<WelcomeVoiceCallView[]>;
   safeUrl: (value: unknown) => string | null;
   getManualCall?: (id: number) => Promise<WelcomeVoiceManualCallView>;
+  getManualRequest?: (input: { creditId: number; requestId: string; actorId: number }) => Promise<{ eventId: string; status: string } | null>;
 }) {
   return async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
     try {
@@ -385,6 +387,14 @@ export function createCreditWelcomeVoiceReadHandler(dependencies: {
         aliadoId: user.aliadoAccesoId, sedeId: user.sedeId, sellerSedeId: seller?.sedeId, supervisor: seller?.tipoPerfil === "SUPERVISOR" });
       const credit = await dependencies.findCredit(id, access);
       if (!credit) return response({ ok: false, code: "CREDIT_NOT_FOUND", error: "Crédito no encontrado." }, 404);
+      const requestIds = new URL(_request.url).searchParams.getAll("requestId");
+      if (requestIds.length > 1 || (requestIds.length === 1
+        && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestIds[0]))) {
+        throw new WelcomeVoiceRequestError("INVALID_INPUT");
+      }
+      if (requestIds.length && !admin && !analyst) {
+        return response({ ok: false, code: "FORBIDDEN", error: "No tienes permiso para consultar esta solicitud de llamada." }, 403);
+      }
       const items = (await dependencies.listCalls(credit.id)).map(call => {
         const recordingUrl = dependencies.safeUrl(call.recordingUrl);
         // Explicit projection prevents stored transcripts, snapshots and tokens from reaching the browser.
@@ -395,7 +405,13 @@ export function createCreditWelcomeVoiceReadHandler(dependencies: {
           audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: call.resultCode };
       });
       const manualCall = dependencies.getManualCall && (admin || analyst) ? await dependencies.getManualCall(credit.id) : undefined;
-      return response({ ok: true, items, ...(manualCall ? { manualCall } : {}) });
+      let request: WelcomeVoiceManualRequestView | undefined;
+      if (requestIds.length && dependencies.getManualRequest) {
+        const requestId = requestIds[0];
+        const linked = await dependencies.getManualRequest({ creditId: credit.id, requestId, actorId: user.id });
+        request = linked ? { requestId, found: true, eventId: linked.eventId, status: linked.status } : { requestId, found: false };
+      }
+      return response({ ok: true, items, ...(manualCall ? { manualCall } : {}), ...(request ? { request } : {}) });
     } catch (error) { return requestError(error); }
   };
 }

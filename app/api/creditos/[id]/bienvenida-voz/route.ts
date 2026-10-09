@@ -3,7 +3,7 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { createCreditWelcomeVoiceManualHandler, createCreditWelcomeVoiceReadHandler } from "@/lib/credit-welcome-voice-http";
 import { safeDaptaWelcomeVoiceUrl } from "@/lib/credit-welcome-voice-core";
-import { ensureCreditWelcomeVoiceSchema, getCreditWelcomeVoiceOperatorAvailability, listCreditWelcomeVoiceCallsForCredit,
+import { ensureCreditWelcomeVoiceSchema, getCreditWelcomeVoiceOperatorAvailability, getCreditWelcomeVoiceOperatorRequest, listCreditWelcomeVoiceCallsForCredit,
   prepareCreditWelcomeVoiceOperatorCall } from "@/lib/credit-welcome-voice-store";
 import { dispatchCreditWelcomeVoice, getCreditWelcomeVoiceConfig } from "@/lib/credit-welcome-voice-dispatch";
 import { isSameApprovalOrigin } from "@/lib/credit-approval-http";
@@ -20,6 +20,7 @@ export const GET = createCreditWelcomeVoiceReadHandler({
   findCredit: (id, access) => prisma.credito.findFirst({ where: { AND: [{ id }, access] }, select: { id: true } }),
   listCalls: listCreditWelcomeVoiceCallsForCredit,
   safeUrl: safeDaptaWelcomeVoiceUrl,
+  getManualRequest: getCreditWelcomeVoiceOperatorRequest,
   getManualCall: async id => getCreditWelcomeVoiceConfig()
     ? getCreditWelcomeVoiceOperatorAvailability(id)
     : { canCall: false, phone: null, reason: "Las llamadas de bienvenida no están disponibles en este momento." },
