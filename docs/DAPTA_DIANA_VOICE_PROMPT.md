@@ -1,6 +1,6 @@
 # Diana: bienvenida por voz
 
-Propuesta local basada en la configuración vigente de FINSERPAY. Conservar la voz Angie, las herramientas, la autenticación privada, el webhook de resultados y los límites actuales de llamada. Este archivo no modifica Dapta ni garantiza que el proveedor reproduzca todo el audio antes de colgar.
+Guion aplicado en Dapta el 9 de octubre de 2026. Conserva Angie, las herramientas de identidad, la autenticación privada, el webhook de resultados y los límites de llamada. El flujo de bienvenida fija el origen +573124085562. La configuración fue releída y verificada; queda pendiente comprobar una llamada real. Este cambio no garantiza que el proveedor reproduzca todo el audio antes de colgar.
 
 ## Prompt
 
