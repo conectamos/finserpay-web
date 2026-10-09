@@ -14,6 +14,21 @@ export async function getDataCreditoCustomerIdentity(row: DataCreditoAssessmentR
   const corrections = await prisma.$queryRawUnsafe<Array<{ effective: typeof original }>>('SELECT "effective" FROM "DataCreditoIdentityCorrection" WHERE "assessmentId" = $1 ORDER BY "id" DESC LIMIT 1', row.id);
   return { queryDocumentNumber: source.documentNumber, querySurname: source.firstSurname, original, effective: corrections[0]?.effective || original };
 }
+// Display recovery must never invalidate a completed credit evaluation or cause
+// a paid retry. Signing and saving continue to use the strict reader above.
+export async function getDataCreditoCustomerIdentityForDisplay(row: DataCreditoAssessmentRow) {
+  try {
+    return await getDataCreditoCustomerIdentity(row);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    console.error("DATACREDITO_IDENTITY_RECOVERY_FAILED", {
+      correlationId: row.correlationId,
+      code: /^DATACREDITO_[A-Z_]+$/.test(message) ? message : "IDENTITY_READ_FAILED",
+      errorType: error instanceof Error ? error.name : "UnknownError",
+    });
+    return null;
+  }
+}
 export async function enforceDataCreditoCustomerIdentity(payload: Record<string, unknown>, scope: DataCreditoAssessmentScope, saveCorrection = true, actor = { userId: scope.userId, sellerId: scope.sellerId }) {
   const id = String(payload.dataCreditoAssessmentId || "");
   if (!id) return null;

@@ -32,3 +32,11 @@ test('FirmaSeguro receives structured corrected names without splitting compound
  const corrected=resolve(extract(fixture(basics),'1234567'),{...input,clienteSegundoApellido:''});
  assert.deepEqual(dataCreditoIdentityToFirmaSeguroNames(corrected),{firstName:'María del Mar José',secondName:null,firstLastName:'De la Peña',secondLastName:null});
 });
+
+test('fixed-width CC padding is accepted only for the same numeric document',()=>{
+ const identity=extract(fixture({...basics,numeroDocumento:'0000001234567'}),'1234567');
+ assert.equal(identity.documentNumber,'1234567');
+ assert.equal(identity.names,'María del Mar José');
+ assert.throws(()=>extract(fixture({...basics,numeroDocumento:'0000007654321'}),'1234567'),/DOCUMENT_MISMATCH/);
+ assert.throws(()=>extract(fixture({...basics,numeroDocumento:'0001234567X'}),'1234567'),/DOCUMENT_MISMATCH/);
+});

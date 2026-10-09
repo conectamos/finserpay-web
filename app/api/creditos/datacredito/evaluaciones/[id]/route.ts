@@ -1,4 +1,4 @@
-import { completeMissingDataCreditoIdentity, getDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
+import { completeMissingDataCreditoIdentity, getDataCreditoCustomerIdentityForDisplay } from "@/lib/datacredito/customer-identity";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
@@ -313,7 +313,7 @@ export async function GET(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       ok: true,
-      ...serializeDataCreditoAssessment(row), identity: await getDataCreditoCustomerIdentity(row),
+      ...serializeDataCreditoAssessment(row), identity: await getDataCreditoCustomerIdentityForDisplay(row),
       ...(draftId
         ? {
             documentNumber: normalizeDataCreditoDocument(identityDocument),
