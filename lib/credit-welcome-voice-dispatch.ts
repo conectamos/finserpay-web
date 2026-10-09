@@ -97,7 +97,7 @@ export async function dispatchCreditWelcomeVoice(
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         redirect: "error", signal: AbortSignal.timeout(20_000),
         body: JSON.stringify({ event_id: prepared.eventId, credito_id: String(prepared.creditId),
-          event_token: token, to_number: `+${prepared.snapshot.phone}`,
+          event_token: token, to_number: `+${prepared.destinationPhone ?? prepared.snapshot.phone}`,
           customer_name: prepared.snapshot.name, customer_document: prepared.snapshot.document,
           customer_name_spoken: spokenName, customer_document_spoken: spokenDocument }),
       });

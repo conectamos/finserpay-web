@@ -14,7 +14,7 @@ import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/c
 import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-document";
 import { getCreditWelcomeVoicePendingSlot, planCreditWelcomeVoiceFollowup, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
 
-export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN" | "AUTOMATIC_RETRY";
+export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN" | "AUTOMATIC_RETRY" | "OPERATOR_REQUEST";
 export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | "COMPLETED" |
   "FAILED" | "UNKNOWN" | "CANCELLED" | "SKIPPED";
 export type CreditWelcomeVoiceSnapshot = {
@@ -25,7 +25,8 @@ export type CreditWelcomeVoiceSnapshot = {
   frequency: string; firstDueDate: string; calendar: string[];
 };
 export type VoiceFinancialSnapshot = Omit<CreditWelcomeVoiceSnapshot, "document" | "phone"> & { speech: WelcomeVoiceFinancialSpeech | null };
-export type VoiceDispatchClaim = { eventId: string; creditId: number; snapshot: CreditWelcomeVoiceSnapshot };
+export type VoiceDispatchClaim = { eventId: string; creditId: number; snapshot: CreditWelcomeVoiceSnapshot; destinationPhone?: string };
+export type VoiceOperatorCall = VoiceDispatchClaim & { created: boolean; destinationPhone: string; status: CreditWelcomeVoiceStatus };
 export type WelcomeVoiceIdentityRecoveryResponse = {
   code: "IDENTITY_NOT_CONFIRMED" | "DOCUMENT_NOT_UNDERSTOOD" | null;
   nextAction: "ASK_NAME" | "ASK_DOCUMENT" | "REVIEW" | "CONTINUE";
@@ -82,6 +83,9 @@ const creditSelect = {
     cuotas: { orderBy: { numero: "asc" }, select: { numero: true, fechaVencimiento: true, cuotaCobro: true } } } },
 } as const;
 type Credit = Prisma.CreditoGetPayload<{ select: typeof creditSelect }>;
+type CreditReader = { credito: {
+  findUnique: (args: { where: { id: number }; select: typeof creditSelect }) => PromiseLike<Credit | null>;
+} };
 type EventRow = {
   id: string; creditoId: number; source: CreditWelcomeVoiceSource; status: CreditWelcomeVoiceStatus;
   attemptNumber: number; repeatOf: string | null;
@@ -95,6 +99,7 @@ type EventRow = {
 const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","identityRecovery","resultHash","dispatchedAt","completedAt","createdAt","retryPhase","retrySlot","campaignId","campaignSlot","resultCode","communicationOutcome","disconnectionReason"`;
 type FollowupRow = { creditoId: number; initialEventId: string; lastEventId: string; phase: CreditWelcomeVoiceFollowupPhase;
   fastAttempts: number; nextAttemptAt: Date | string | null; lastPendingSlot: string | null; reason: string | null };
+type OperatorRequestRow = { requestId: string; eventId: string; actorId: number | null; origin: "UI" | "CODEX_AUTHORIZED"; destinationPhone: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validCreditId = (id: number) => Number.isSafeInteger(id) && id > 0 && id <= 2_147_483_647;
 const validCampaignId = (id: string) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id);
@@ -291,7 +296,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   const enabled = deps.enabled ?? (() => process.env.DAPTA_WELCOME_VOICE_ENABLED === "true");
   const now = deps.now ?? (() => new Date());
   const env = deps.env ?? process.env;
-  const readCredit = (db: WelcomeVoiceTransaction, id: number) => db.credito.findUnique({ where: { id }, select: creditSelect });
+  const readCredit = (db: CreditReader, id: number) => db.credito.findUnique({ where: { id }, select: creditSelect });
   async function readEvent(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, id: string, lock = true) {
     const rows = await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1::uuid ${lock ? "FOR UPDATE" : ""}`, id);
     return rows[0] || null;
@@ -369,6 +374,37 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (events.some(event => event.communicationOutcome === "OPT_OUT" || event.resultCode === "RECORDING_DECLINED")) return { phase: "STOPPED" as const, reason: "OPT_OUT" };
     if (events.some(event => event.identityVerifiedAt || event.communicationOutcome === "HUMAN_CONTACT")) return { phase: "CONTACTED" as const, reason: "HUMAN_CONTACT" };
     return events.length ? { phase: null, reason: "OTHER_CALL_IN_FLIGHT" } : null;
+  }
+  async function operatorCallBlock(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, creditId: number, currentEventId: string | null = null) {
+    const excluded = await db.$queryRawUnsafe<Array<{ creditoId: number }>>(`SELECT "creditoId" FROM "VoiceReviewCampaignMember"
+      WHERE "creditoId"=$1 AND "stopReason"='OPERATOR_EXCLUDED' LIMIT 1`, creditId);
+    if (excluded.length) return "OPERATOR_EXCLUDED";
+    const events = await db.$queryRawUnsafe<Array<Pick<EventRow, "source" | "status" | "communicationOutcome" | "resultCode">>>(`SELECT "source","status","communicationOutcome","resultCode"
+      FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 AND ($2::uuid IS NULL OR "id"<>$2::uuid)
+      AND ("status" IN ('PENDING','DISPATCHING','ACCEPTED','UNKNOWN') OR
+        ("source"<>'CONTROLLED_TEST' AND ("communicationOutcome"='OPT_OUT' OR "resultCode"='RECORDING_DECLINED')))`, creditId, currentEventId);
+    if (events.some(event => event.source !== "CONTROLLED_TEST" && (event.communicationOutcome === "OPT_OUT" || event.resultCode === "RECORDING_DECLINED"))) return "OPT_OUT";
+    return events.some(event => ["PENDING", "DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(event.status)) ? "OTHER_CALL_IN_FLIGHT" : null;
+  }
+  async function readOperatorRequest(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, field: "requestId" | "eventId", id: string, lock = false) {
+    return (await db.$queryRawUnsafe<OperatorRequestRow[]>(`SELECT "requestId"::text,"eventId"::text,"actorId","origin","destinationPhone"
+      FROM "CreditWelcomeVoiceOperatorRequest" WHERE "${field}"=$1::uuid ${lock ? "FOR UPDATE" : ""}`, id))[0] ?? null;
+  }
+  async function getCreditWelcomeVoiceOperatorAvailability(creditId: number): Promise<{ canCall: boolean; phone: string | null; reason?: string }> {
+    if (!validCreditId(creditId)) throw new CreditWelcomeVoiceStoreError("INVALID_OPERATOR_CALL", "Crédito inválido.", 400);
+    const credit = await readCredit(database, creditId), snapshot = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
+    const reason = creditExclusion(credit, snapshot) ?? await operatorCallBlock(database, creditId);
+    const phone = snapshot?.phone ?? normalizeColombianMobile(credit?.clienteTelefono);
+    const messages: Record<string, string> = {
+      CREDIT_MISSING: "No se encontró el crédito.",
+      CREDIT_CLOSED: "El crédito está cerrado y no puede recibir esta llamada.",
+      CREDIT_PAID: "El crédito ya no tiene saldo pendiente.",
+      INVALID_CONDITIONS: "Faltan datos válidos del crédito para realizar la llamada.",
+      OTHER_CALL_IN_FLIGHT: "Hay una llamada pendiente o con resultado sin confirmar.",
+      OPT_OUT: "El cliente pidió no recibir llamadas o no autorizó la grabación.",
+      OPERATOR_EXCLUDED: "Este crédito está excluido de las llamadas.",
+    };
+    return reason ? { canCall: false, phone, reason: messages[reason] ?? "Este crédito no puede recibir llamadas en este momento." } : { canCall: true, phone };
   }
   async function revalidate(db: WelcomeVoiceTransaction, event: EventRow): Promise<CreditWelcomeVoiceSnapshot | null> {
     const credit = await readCredit(db, event.creditoId);
@@ -605,6 +641,57 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       return claims;
     }, { timeout: 30_000 });
   }
+  /** Explicit operator authorization creates one auditable call, independently of the automatic queue. */
+  async function prepareCreditWelcomeVoiceOperatorCall(input: {
+    creditId: number; requestId: string; actorId: number | null; origin?: "UI" | "CODEX_AUTHORIZED"; phone?: string; expectedDocument?: string;
+  }): Promise<VoiceOperatorCall> {
+    const origin = input.origin ?? "UI";
+    const destination = input.phone === undefined ? null : normalizeColombianMobile(input.phone);
+    const expectedDocument = input.expectedDocument === undefined ? null : normalizeWelcomeVoiceDocument(input.expectedDocument);
+    if (!validCreditId(input.creditId) || !uuid.test(input.requestId) || !["UI", "CODEX_AUTHORIZED"].includes(origin)
+      || (origin === "UI" ? input.actorId === null || !validCreditId(input.actorId)
+        : input.actorId !== null || !destination || !expectedDocument)
+      || (input.phone !== undefined && !destination) || (input.expectedDocument !== undefined && !expectedDocument)) {
+      throw new CreditWelcomeVoiceStoreError("INVALID_OPERATOR_CALL", "Solicitud de llamada inválida.", 400);
+    }
+    return database.$transaction(async db => {
+      // One request key has one actor/credit/destination scope, even across different credits.
+      await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))::text`, `finserpay-welcome-operator:${input.requestId.toLowerCase()}`);
+      await readFollowup(db, input.creditId);
+      await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, input.creditId);
+      const previous = await readOperatorRequest(db, "requestId", input.requestId, true);
+      if (previous) {
+        const event = await readEvent(db, previous.eventId);
+        if (!event?.snapshot || event.source !== "OPERATOR_REQUEST" || event.creditoId !== input.creditId || previous.actorId !== input.actorId || previous.origin !== origin
+          || previous.destinationPhone !== (destination ?? event.snapshot.phone)
+          || (expectedDocument && expectedDocument !== event.snapshot.document)) {
+          throw new CreditWelcomeVoiceStoreError("OPERATOR_CALL_REQUEST_MISMATCH", "La solicitud ya pertenece a otra llamada.");
+        }
+        return { created: false, eventId: event.id, creditId: event.creditoId, snapshot: event.snapshot,
+          destinationPhone: previous.destinationPhone, status: event.status };
+      }
+      const credit = await readCredit(db, input.creditId);
+      if (!credit) throw new CreditWelcomeVoiceStoreError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+      const snapshot = buildCreditWelcomeVoiceSnapshot(credit);
+      if (creditExclusion(credit, snapshot) || !snapshot) throw new CreditWelcomeVoiceStoreError("OPERATOR_CALL_INELIGIBLE", "El crédito no puede recibir esta llamada.");
+      if (expectedDocument && expectedDocument !== snapshot.document) throw new CreditWelcomeVoiceStoreError("OPERATOR_CALL_DOCUMENT_MISMATCH", "El crédito no corresponde al documento indicado.");
+      const blocked = await operatorCallBlock(db, input.creditId);
+      if (blocked) throw new CreditWelcomeVoiceStoreError(blocked, "La llamada está bloqueada por una restricción vigente.");
+      const highest = (await db.$queryRawUnsafe<Array<{ max: number }>>(`SELECT COALESCE(MAX("attemptNumber"),-1) AS "max"
+        FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ'`, input.creditId))[0].max;
+      const attempt = highest + 1;
+      if (!Number.isSafeInteger(attempt) || attempt < 0 || attempt > 2_147_483_647) throw new CreditWelcomeVoiceStoreError("OPERATOR_CALL_ATTEMPT_LIMIT", "No hay un número de intento disponible.");
+      const eventId = randomUUID(), time = now(), destinationPhone = destination ?? snapshot.phone;
+      await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
+        ("id","creditoId","type","source","attemptNumber","status","snapshot","dispatchedAt","createdAt","updatedAt")
+        VALUES ($1::uuid,$2,'BIENVENIDA_VOZ','OPERATOR_REQUEST',$3,'DISPATCHING',$4::jsonb,$5,$5,$5)`,
+        eventId, input.creditId, attempt, JSON.stringify(snapshot), time);
+      await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceOperatorRequest"
+        ("requestId","eventId","actorId","origin","destinationPhone","reason","createdAt")
+        VALUES ($1::uuid,$2::uuid,$3,$4,$5,'MANUAL_WELCOME_CALL',$6)`, input.requestId, eventId, input.actorId, origin, destinationPhone, time);
+      return { created: true, eventId, creditId: input.creditId, snapshot, destinationPhone, status: "DISPATCHING" };
+    }, { timeout: 30_000 });
+  }
   /** Local operator helper only: never scans the queue or retries an attempted call. */
   async function prepareCreditWelcomeVoiceControlledTest(input: { creditId: number; expectedPhone: string; repeatOf?: string }): Promise<VoiceDispatchClaim> {
     const expectedPhone = normalizeColombianMobile(input.expectedPhone);
@@ -672,16 +759,25 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   }
   /** The worker calls this just before its one external request; it never claims an old dispatch. */
   async function prepareCreditWelcomeVoiceDispatch(eventId: string): Promise<VoiceDispatchClaim | null> {
-    if (!enabled()) return null;
     requireEventIdentity(eventId);
     const candidate = await readEvent(database, eventId, false);
-    if (!candidate) return null;
+    if (!candidate || (candidate.source !== "OPERATOR_REQUEST" && !enabled())) return null;
     return database.$transaction(async db => {
       const automatic = ["NORMAL", "INDIVIDUAL_IMPORT", "AUTOMATIC_RETRY"].includes(candidate.source);
-      const followup = automatic ? await readFollowup(db, candidate.creditoId) : null;
-      if (followup) await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, candidate.creditoId);
+      const operator = candidate.source === "OPERATOR_REQUEST";
+      const followup = automatic || operator ? await readFollowup(db, candidate.creditoId) : null;
+      if (followup || operator) await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, candidate.creditoId);
       const event = await readEvent(db, eventId);
       if (!event || event.status !== "DISPATCHING") return null;
+      if (operator) {
+        const request = await readOperatorRequest(db, "eventId", event.id);
+        const blocked = await operatorCallBlock(db, event.creditoId, event.id);
+        if (!request || !normalizeColombianMobile(request.destinationPhone) || blocked) {
+          await exclude(db, event, blocked ?? "INVALID_OPERATOR_REQUEST"); return null;
+        }
+        const snapshot = await revalidate(db, event);
+        return snapshot ? { eventId, creditId: event.creditoId, snapshot, destinationPhone: request.destinationPhone } : null;
+      }
       if (automatic) {
         if (!followup || !["FAST", "PENDING"].includes(followup.phase) || followup.lastEventId !== event.id) return null;
         if (event.source === "AUTOMATIC_RETRY" && event.retryPhase === "PENDING" && getCreditWelcomeVoicePendingSlot(now()) !== event.retrySlot) {
@@ -892,7 +988,8 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         recordingUrl, audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: row.resultCode };
     });
   }
-  return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceControlledTest, prepareCreditWelcomeVoiceDispatch,
+  return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceControlledTest, prepareCreditWelcomeVoiceOperatorCall,
+    getCreditWelcomeVoiceOperatorAvailability, prepareCreditWelcomeVoiceDispatch,
     ensureVoiceReviewCampaign, getVoiceReviewCampaignDispatchSlot, claimVoiceReviewCampaign, prepareVoiceReviewCampaign,
     markCreditWelcomeVoiceDispatchAccepted, markCreditWelcomeVoiceDispatchUnknown, markCreditWelcomeVoiceDispatchFailed,
     verifyCreditWelcomeVoiceIdentity, saveCreditWelcomeVoiceResult, listCreditWelcomeVoiceCallsForCredit };
@@ -906,6 +1003,8 @@ export const getVoiceReviewCampaignDispatchSlot = store.getVoiceReviewCampaignDi
 export const claimVoiceReviewCampaign = store.claimVoiceReviewCampaign;
 export const prepareVoiceReviewCampaign = store.prepareVoiceReviewCampaign;
 export const prepareCreditWelcomeVoiceDispatch = store.prepareCreditWelcomeVoiceDispatch;
+export const prepareCreditWelcomeVoiceOperatorCall = store.prepareCreditWelcomeVoiceOperatorCall;
+export const getCreditWelcomeVoiceOperatorAvailability = store.getCreditWelcomeVoiceOperatorAvailability;
 export const markCreditWelcomeVoiceDispatchAccepted = store.markCreditWelcomeVoiceDispatchAccepted;
 export const markCreditWelcomeVoiceDispatchUnknown = store.markCreditWelcomeVoiceDispatchUnknown;
 export const markCreditWelcomeVoiceDispatchFailed = store.markCreditWelcomeVoiceDispatchFailed;

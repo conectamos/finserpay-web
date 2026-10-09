@@ -3,7 +3,7 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 import type { WelcomeVoiceToken } from "@/lib/credit-welcome-voice-core";
 import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-document";
-import type { WelcomeVoiceIdentityRecoveryResponse } from "@/lib/credit-welcome-voice-store";
+import type { WelcomeVoiceIdentityRecoveryResponse, VoiceDispatchClaim } from "@/lib/credit-welcome-voice-store";
 
 export const welcomeVoicePrivateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -281,6 +281,78 @@ export type WelcomeVoiceCallView = {
   identityVerified: boolean; summary: string | null; doubts: string | null; recordingUrl: string | null;
   audioStorage: "DAPTA_PRIVATE_LINK" | "UNAVAILABLE"; resultCode: string | null;
 };
+export type WelcomeVoiceManualCallView = { canCall: boolean; phone: string | null; reason?: string };
+
+/** A manual call uses the authorized credit's stored contact; the browser cannot choose another recipient. */
+export function createCreditWelcomeVoiceManualHandler(dependencies: {
+  getUser: () => Promise<WelcomeVoiceReadUser | null>;
+  sameOrigin: (request: Request) => boolean;
+  configured: () => boolean;
+  findCredit: (id: number, access: ReturnType<typeof buildCreditAccessWhere>) => Promise<{ id: number } | null>;
+  prepare: (input: { creditId: number; requestId: string; actorId: number }) => Promise<VoiceDispatchClaim & { created: boolean }>;
+  dispatch: (claim: VoiceDispatchClaim) => Promise<unknown>;
+  listCalls: (id: number) => Promise<WelcomeVoiceCallView[]>;
+}) {
+  return async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+    let requestReserved = false;
+    const rejected = (code: string, error: string, status: number) => response({ ok: false, code, error }, status);
+    try {
+      if (!dependencies.sameOrigin(request)) return rejected("INVALID_ORIGIN", "Realiza la llamada desde FINSER PAY.", 403);
+      const user = await dependencies.getUser();
+      if (!user) return rejected("UNAUTHORIZED", "Solicitud no autorizada.", 401);
+      const admin = isAdminRole(user.rolNombre);
+      const analyst = isApprovalAnalystRole(user.rolNombre) && canReviewCreditApprovals(user);
+      if (user.activo !== true || user.sedeAccesoActiva !== true || user.aliadoAccesoActivo !== true || (!admin && !analyst)) {
+        return rejected("FORBIDDEN", "No tienes permiso para solicitar esta llamada.", 403);
+      }
+      const rawId = (await context.params).id;
+      if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(Number(rawId))) throw new WelcomeVoiceRequestError("INVALID_CREDIT");
+      const creditId = Number(rawId);
+      const access = buildCreditAccessWhere({ admin, adminCentral: analyst || (admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo)),
+        aliadoId: user.aliadoAccesoId, sedeId: user.sedeId });
+      const credit = await dependencies.findCredit(creditId, access);
+      if (!credit) return rejected("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+      const body = await readBody(request, 1024);
+      const requestId = body.requestId;
+      if (Object.keys(body).some(key => key !== "requestId") || typeof requestId !== "string"
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+        throw new WelcomeVoiceRequestError("INVALID_INPUT");
+      }
+      if (!dependencies.configured()) return rejected("VOICE_NOT_CONFIGURED", "Las llamadas de bienvenida no están disponibles en este momento.", 503);
+      const prepared = await dependencies.prepare({ creditId: credit.id, requestId, actorId: user.id });
+      requestReserved = true;
+      // A replay is a status query, never a second provider request.
+      if (prepared.created) await dependencies.dispatch(prepared);
+      const call = (await dependencies.listCalls(credit.id)).find(item => item.id === prepared.eventId && item.creditId === credit.id);
+      const status = call?.status ?? "UNKNOWN";
+      const message = status === "UNKNOWN" ? "El estado de la llamada está por confirmar. Consulta este mismo intento."
+        : status === "ACCEPTED" ? "Llamada solicitada. El resultado aparecerá en este registro."
+          : status === "DISPATCHING" ? "La llamada se está solicitando. Consulta este mismo intento."
+            : "El resultado de este intento está disponible en el registro.";
+      return response({ ok: true, eventId: prepared.eventId, status, message }, prepared.created ? 202 : 200);
+    } catch (error) {
+      const detail = object(error);
+      // Only a definite pre-reservation rejection may release the browser's UUID.
+      // A network/database failure can follow a committed reservation: keep it ambiguous.
+      const rejections: Record<string, { status: number; message: string }> = {
+        INVALID_OPERATOR_CALL: { status: 400, message: "Solicitud de llamada no válida." },
+        CREDIT_NOT_FOUND: { status: 404, message: "Crédito no encontrado." },
+        OTHER_CALL_IN_FLIGHT: { status: 409, message: "Ya hay una llamada en curso o por confirmar para este crédito." },
+        OPT_OUT: { status: 409, message: "El cliente solicitó no recibir estas llamadas." },
+        OPERATOR_EXCLUDED: { status: 409, message: "Este crédito está excluido de las llamadas de bienvenida." },
+        OPERATOR_CALL_REQUEST_MISMATCH: { status: 409, message: "Esta solicitud corresponde a otro intento. Actualiza el registro." },
+        OPERATOR_CALL_INELIGIBLE: { status: 409, message: "Este crédito no puede recibir una llamada de bienvenida en su estado actual." },
+        OPERATOR_CALL_DOCUMENT_MISMATCH: { status: 409, message: "Los datos del crédito cambiaron. Actualiza el registro." },
+        OPERATOR_CALL_ATTEMPT_LIMIT: { status: 409, message: "Este crédito alcanzó el límite de intentos de llamada." },
+      };
+      const rejection = typeof detail?.code === "string" ? rejections[detail.code] : undefined;
+      if (!requestReserved && rejection) {
+        return response({ ok: false, code: String(detail!.code), error: rejection.message, requestCreated: false }, rejection.status);
+      }
+      return requestError(error);
+    }
+  };
+}
 
 export function createCreditWelcomeVoiceReadHandler(dependencies: {
   getUser: () => Promise<WelcomeVoiceReadUser | null>;
@@ -288,6 +360,7 @@ export function createCreditWelcomeVoiceReadHandler(dependencies: {
   findCredit: (id: number, access: ReturnType<typeof buildCreditAccessWhere>) => Promise<{ id: number } | null>;
   listCalls: (id: number) => Promise<WelcomeVoiceCallView[]>;
   safeUrl: (value: unknown) => string | null;
+  getManualCall?: (id: number) => Promise<WelcomeVoiceManualCallView>;
 }) {
   return async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
     try {
@@ -321,7 +394,8 @@ export function createCreditWelcomeVoiceReadHandler(dependencies: {
           summary: call.summary, doubts: call.doubts, recordingUrl,
           audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: call.resultCode };
       });
-      return response({ ok: true, items });
+      const manualCall = dependencies.getManualCall && (admin || analyst) ? await dependencies.getManualCall(credit.id) : undefined;
+      return response({ ok: true, items, ...(manualCall ? { manualCall } : {}) });
     } catch (error) { return requestError(error); }
   };
 }

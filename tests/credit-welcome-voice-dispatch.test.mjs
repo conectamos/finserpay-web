@@ -85,6 +85,18 @@ test("controlled destination override keeps real credit identity and sends no st
   const token = core.verifyWelcomeVoiceToken(body.event_token, { secret: config.secret });
   assert.equal(token.eventId, claim.eventId); assert.equal(token.creditId, claim.creditId);
 });
+
+test("an audited operator destination changes only the dialled number and preserves the original credit snapshot", async () => {
+  const prepared = { ...claim, destinationPhone: "573000000088" };
+  const f = fixture({ prepare: async () => prepared });
+  assert.equal((await dispatch.dispatchCreditWelcomeVoice({}, f.deps)).accepted, 1);
+  assert.equal(f.received[0].body.to_number, "+573000000088");
+  assert.equal(prepared.snapshot.phone, "573000000001");
+  assert.equal(f.received[0].body.customer_document, claim.snapshot.document);
+  const token = core.verifyWelcomeVoiceToken(f.received[0].body.event_token, { secret: config.secret });
+  assert.equal(token.eventId, claim.eventId); assert.equal(token.creditId, claim.creditId);
+  assert.equal(JSON.stringify(f.received[0].body).includes(prepared.snapshot.phone), false);
+});
 test("credit cancelled or contact changed after claim never reaches Dapta", async () => {
   const f = fixture({ prepare: async () => null });
   const result = await dispatch.dispatchCreditWelcomeVoice({}, f.deps);
