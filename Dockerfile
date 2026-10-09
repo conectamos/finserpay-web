@@ -1,4 +1,5 @@
-FROM node:24-bookworm-slim AS base
+# Docker Official Images mirror avoids Docker Hub's shared-builder pull limits.
+FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS base
 WORKDIR /app
 
 FROM base AS deps
@@ -17,7 +18,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:24-bookworm-slim AS runner
+FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
