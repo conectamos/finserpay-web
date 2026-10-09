@@ -54,6 +54,19 @@ function cardinalBlock(words: string[]): number | null {
   return remainder !== null && remainder > 0 ? hundred + remainder : null;
 }
 
+function thousandCardinalBlock(words: string[]): string | null {
+  const boundary = words.indexOf("mil");
+  if (boundary === -1 || boundary !== words.lastIndexOf("mil")) return null;
+  const prefix = boundary === 0 ? 1 : cardinalBlock(words.slice(0, boundary));
+  const remainderWords = words.slice(boundary + 1);
+  const remainder = remainderWords.length === 0 ? 0 : cardinalBlock(remainderWords);
+  // "mil" is canonical for one thousand. An explicit zero after it can be
+  // another document block, so it needs a separator rather than a guessed join.
+  if (prefix === null || prefix < (boundary === 0 ? 1 : 2) || prefix > 999
+    || remainder === null || (remainderWords.length > 0 && remainder === 0)) return null;
+  return String(prefix * 1000 + remainder);
+}
+
 function spokenBlock(value: string): string | null {
   // Numeric/spoken blocks cannot mix within a block; its boundary must be explicit.
   if (/^\d{1,3}$/.test(value)) return value;
@@ -67,10 +80,13 @@ function spokenBlock(value: string): string | null {
 }
 
 function unambiguousSpokenBlock(value: string): string | null {
+  const words = value.split(" ");
+  // Thousands must occupy the whole explicit block. Do not let the fallback
+  // choose between a cardinal such as 1112 and concatenated blocks 1000|112.
+  if (words.includes("mil")) return thousandCardinalBlock(words);
   const whole = spokenBlock(value);
   if (whole !== null) return whole;
   if (!/^[a-z]+(?: [a-z]+)*$/.test(value)) return null;
-  const words = value.split(" ");
   // A missing "y" or "ciento" could change the number, not merely its grouping.
   for (let index = 0; index < words.length - 1; index++) {
     const unit = lookup(digitWords, words[index + 1]);
@@ -103,6 +119,12 @@ function numericDocument(value: string): string | null {
   return groups.map(group => group.replace(/[.,]/g, "")).join("");
 }
 
+function spokenDocumentBlocks(value: string): string[] {
+  // A sentence stop between spoken words is explicit. Numeric grouping and
+  // decimal-looking punctuation never enter this replacement.
+  return value.replace(/([a-z])\.(?= [a-z])/g, "$1;").split(/[,;]/).map(block => block.trim());
+}
+
 /** Parse only the document actually spoken during the welcome call, without an expected value. */
 export function parseWelcomeVoiceSpokenDocument(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.length > 240 || /[\p{Cc}\p{Cf}]/u.test(raw)) return null;
@@ -113,7 +135,7 @@ export function parseWelcomeVoiceSpokenDocument(raw: unknown): string | null {
   if (/^[\d .,-]+$/.test(value)) {
     document = numericDocument(value);
   } else {
-    const blocks = value.split(/[,;]/).map(block => block.trim());
+    const blocks = spokenDocumentBlocks(value);
     const parsed = blocks.map(block => {
       const expanded = expandDoubleDigitWords(block);
       return expanded === null ? null : unambiguousSpokenBlock(expanded);
@@ -121,6 +143,31 @@ export function parseWelcomeVoiceSpokenDocument(raw: unknown): string | null {
     document = parsed.some(block => block === null) ? null : parsed.join("");
   }
   return document !== null && /^\d{5,15}$/.test(document) ? document : null;
+}
+
+/** Recognize only an unequivocal short digit dictation; this cannot verify an identity. */
+export function isWelcomeVoiceDocumentFragment(raw: unknown): boolean {
+  if (typeof raw !== "string" || raw.length > 240 || /[\p{Cc}\p{Cf}]/u.test(raw)) return false;
+  const value = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es-CO").trim().replace(/\s+/g, " ").replace(/[.!?…]+$/u, "").trim();
+  if (!value) return false;
+  if (/^[\d .,-]+$/.test(value)) {
+    const digits = numericDocument(value);
+    return digits !== null && /^\d{1,4}$/.test(digits);
+  }
+  const digits: string[] = [];
+  for (const block of spokenDocumentBlocks(value)) {
+    if (/^\d+$/.test(block)) {
+      digits.push(block);
+      continue;
+    }
+    const expanded = expandDoubleDigitWords(block);
+    if (expanded === null) return false;
+    const words = expanded.split(" ");
+    if (!words.every(word => lookup(digitWords, word) !== undefined)) return false;
+    digits.push(words.map(word => lookup(digitWords, word)).join(""));
+  }
+  return /^\d{1,4}$/.test(digits.join(""));
 }
 
 /** A completion control never supplies, repairs or selects any document digits. */

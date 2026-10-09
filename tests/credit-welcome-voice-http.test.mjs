@@ -163,7 +163,7 @@ test("private flow forwards unrecognized literal documents to the locked store a
     nextAction: "REVIEW", remainingAttempts: 0, mayEndCall: true, identity_confirmed: true };
   assert.deepEqual(await (await POST(request(body, "identidad", header))).json(), { ok: true, verificado: false, condiciones: null,
     code: "DOCUMENT_NOT_UNDERSTOOD", nextAction: "ASK_DOCUMENT", remainingAttempts: 2,
-    question: 'Diga su cédula completa, número por número. Cuando termine, diga "terminé".', mayEndCall: false });
+    question: "¿Me repite su cédula completa? Puede decirla seguida o en bloques.", mayEndCall: false });
   assert.equal(calls[0].customerDocument, body.customer_document); assert.equal(calls[0].requireFreshDispatch, true);
   result = { ...result, nextAction: "ASK_NAME", remainingAttempts: 1, code: "IDENTITY_NOT_CONFIRMED" };
   const second = await (await POST(request(body, "identidad", header))).json();
