@@ -4,7 +4,9 @@ La campaña llama a un lote cerrado de créditos ya finalizados que siguen pendi
 
 ## Horario
 
-La zona es `America/Bogota`. En `startDate`, los lotes comienzan a las 08:00, 10:00 y 14:00. Los días posteriores, a las 10:00 y 14:00, mientras queden contactos activos. Cada lote admite despachos durante diez minutos; un reinicio no reproduce franjas anteriores. El cron del servidor comprueba la cola cada treinta segundos y despacha hasta tres contactos por tanda.
+La zona es `America/Bogota`. Desde `startDate`, los lotes comienzan diariamente a las 08:00, 10:00, 14:00 y 17:00, mientras queden contactos activos. Cada lote admite despachos durante diez minutos; un reinicio no reproduce franjas anteriores. El cron del servidor comprueba la cola cada treinta segundos y despacha hasta tres contactos por tanda.
+
+Un operador puede autorizar un intento inmediato para una campaña concreta registrando una ventana en `VoiceReviewCampaignManualWindow`, con su franja local, inicio, caducidad de hasta diez minutos y motivo. No hay un endpoint público para crear esa autorización. Tanto la selección como la preparación vuelven a comprobar la ventana vigente; sin ella, fuera de los horarios normales no sale ninguna llamada. El intento conserva la fuente `SCHEDULED_CAMPAIGN`, un evento y token propios y la unicidad por crédito y franja. La ventana no cambia los reintentos normales ni habilita las llamadas generales a créditos nuevos.
 
 ## Activación independiente
 

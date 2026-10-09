@@ -1,5 +1,5 @@
 import "server-only";
-import { getVoiceReviewCampaignConfig, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
+import { getVoiceReviewCampaignConfig } from "@/lib/credit-voice-review-campaign-core";
 import { dispatchCreditWelcomeVoice, getCreditWelcomeVoiceConfig } from "@/lib/credit-welcome-voice-dispatch";
 import { createCreditWelcomeVoiceStore, ensureCreditWelcomeVoiceSchema } from "@/lib/credit-welcome-voice-store";
 
@@ -27,7 +27,7 @@ export async function runVoiceReviewCampaign(deps: CampaignDependencies = {}) {
   await (deps.ensureSchema ?? ensureCreditWelcomeVoiceSchema)();
   // Persist and verify the immutable cohort even before the first scheduled call.
   await store.ensureVoiceReviewCampaign(campaign);
-  const slot = getVoiceReviewCampaignSlot(campaign, now());
+  const slot = await store.getVoiceReviewCampaignDispatchSlot(campaign.id);
   if (!slot) return report;
   report.inWindow = true;
   const result = await (deps.dispatch ?? dispatchCreditWelcomeVoice)({ limit: 3 }, {
@@ -36,11 +36,16 @@ export async function runVoiceReviewCampaign(deps: CampaignDependencies = {}) {
     claim: () => store.claimVoiceReviewCampaign({ campaignId: campaign.id, slot, limit: 3 }),
     prepare: async eventId => {
       // Do not start an external call if a slow claim crossed the window boundary.
-      if (getVoiceReviewCampaignSlot(campaign, now()) !== slot) {
+      if (await store.getVoiceReviewCampaignDispatchSlot(campaign.id) !== slot) {
         await store.markCreditWelcomeVoiceDispatchFailed(eventId, "WINDOW_CLOSED_BEFORE_DISPATCH");
         return null;
       }
-      return store.prepareVoiceReviewCampaign(eventId);
+      const prepared = await store.prepareVoiceReviewCampaign(eventId);
+      if (prepared && await store.getVoiceReviewCampaignDispatchSlot(campaign.id) !== slot) {
+        await store.markCreditWelcomeVoiceDispatchFailed(eventId, "WINDOW_CLOSED_BEFORE_DISPATCH");
+        return null;
+      }
+      return prepared;
     },
     accepted: store.markCreditWelcomeVoiceDispatchAccepted,
     failed: store.markCreditWelcomeVoiceDispatchFailed,

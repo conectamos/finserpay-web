@@ -36,9 +36,14 @@ async function fixture(t, { count = 1, enabled = true } = {}) {
     await db.query('INSERT INTO "CreditApprovalReview" VALUES ($1,\'PENDING\',1,$2)', [id, "a".repeat(64)]);
   }
   for (const statement of creditWelcomeVoiceSchemaStatements) await db.exec(statement);
-  let time = new Date("2026-10-09T13:00:00Z"), queries = 0;
+  let time = new Date("2026-10-09T13:00:00Z"), queries = 0, afterManualRead = null;
   const adapter = connection => ({
-    $queryRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).rows; },
+    $queryRawUnsafe: async (sql, ...values) => {
+      queries++;
+      const result = await connection.query(sql, values);
+      if (sql.includes('FROM "VoiceReviewCampaignManualWindow"') && afterManualRead) afterManualRead();
+      return result.rows;
+    },
     $executeRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).affectedRows; },
     credito: { findUnique: async ({ where }) => (await connection.query('SELECT "data" FROM "Credito" WHERE "id"=$1', [where.id])).rows[0]?.data ?? null },
   });
@@ -63,7 +68,14 @@ async function fixture(t, { count = 1, enabled = true } = {}) {
   const update = (id, fields) => db.query('UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1', [id, JSON.stringify(fields)]);
   const save = (event, fields = {}) => store.saveCreditWelcomeVoiceResult({ eventId: event.eventId, creditId: event.creditId,
     providerCallId: `call-fixture-${event.eventId}`, status: "COMPLETED", communicationOutcome: "NO_ANSWER", disconnectionReason: "dial_no_answer", ...fields });
-  return { db, client, store, config, ensure, claim, rows, members, update, save,
+  const manualWindow = (fields = {}) => {
+    const window = { campaignId: config.id, slot: "2026-10-09T12:05", startsAt: "2026-10-09T17:05:30Z",
+      expiresAt: "2026-10-09T17:15:30Z", createdAt: "2026-10-09T17:05:30Z", reason: "OPERATOR_AUTHORIZED_PENDING_CALLS", ...fields };
+    return db.query(`INSERT INTO "VoiceReviewCampaignManualWindow" ("campaignId","slot","startsAt","expiresAt","createdAt","reason")
+      VALUES ($1,$2,$3,$4,$5,$6)`, [window.campaignId, window.slot, window.startsAt, window.expiresAt, window.createdAt, window.reason]);
+  };
+  return { db, client, store, config, ensure, claim, rows, members, update, save, manualWindow,
+    afterManualRead: callback => { afterManualRead = callback; },
     queries: () => queries, time: value => { time = new Date(value); } };
 }
 
@@ -215,4 +227,104 @@ test("database rejects campaign attempts without their frozen member and forbids
   await assert.rejects(f.db.exec(`INSERT INTO "CreditWelcomeVoiceEvent" ("id","creditoId","source","attemptNumber","campaignId","campaignSlot","status")
     VALUES ('11111111-1111-4111-8111-111111111111',2,'SCHEDULED_CAMPAIGN',1,'pending-fixture','2026-10-09T08:00','DISPATCHING')`));
   assert.equal((await f.rows()).length, 0);
+});
+
+test("a current audited manual window permits only its campaign and retains ordinary scheduled windows", async t => {
+  const f = await fixture(t);
+  await f.ensure();
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), "2026-10-09T08:00");
+  f.time("2026-10-09T17:06:00Z");
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), null);
+  assert.equal((await f.claim("2026-10-09T12:05")).length, 0);
+  await f.manualWindow();
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot("another-campaign"), null);
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), "2026-10-09T12:05");
+  const [event] = await f.claim("2026-10-09T12:05");
+  assert.ok(await f.store.prepareVoiceReviewCampaign(event.eventId));
+  assert.equal((await f.rows())[0].source, "SCHEDULED_CAMPAIGN");
+  assert.equal((await f.rows())[0].campaignSlot, "2026-10-09T12:05");
+  f.time("2026-10-09T19:00:00Z");
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), "2026-10-09T14:00");
+  f.time("2026-10-10T15:00:00Z");
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), "2026-10-10T10:00");
+});
+
+test("future, expired, pre-campaign, overlapping and disabled manual windows fail closed", async t => {
+  const f = await fixture(t);
+  await f.ensure();
+  await f.manualWindow();
+  f.time("2026-10-09T17:05:29.999Z");
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), null);
+  f.time("2026-10-09T17:15:30Z");
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), null);
+  f.time("2026-10-10T17:06:00Z");
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), null);
+  f.time("2026-10-09T17:06:30Z");
+  await f.manualWindow({ slot: "2026-10-09T12:06", startsAt: "2026-10-09T17:06:00Z", expiresAt: "2026-10-09T17:10:00Z" });
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), null);
+  assert.equal((await f.claim("2026-10-09T12:06")).length, 0);
+  const future = await fixture(t);
+  future.config.startDate = "2026-10-10";
+  await future.ensure(); await future.manualWindow(); future.time("2026-10-09T17:06:00Z");
+  assert.equal(await future.store.getVoiceReviewCampaignDispatchSlot(future.config.id), null);
+  const disabled = await fixture(t, { enabled: false });
+  assert.equal(await disabled.store.getVoiceReviewCampaignDispatchSlot(disabled.config.id), null);
+  assert.equal(disabled.queries(), 0);
+});
+
+test("manual authorization schema rejects malformed slots, excessive lifetime, missing audit and foreign campaigns", async t => {
+  const f = await fixture(t);
+  await f.ensure();
+  for (const fields of [
+    { slot: "2026-10-09T12:04" }, { slot: "2026-10-09T25:05" },
+    { expiresAt: "2026-10-09T17:05:30Z" }, { expiresAt: "2026-10-09T17:15:30.001Z" },
+    { startsAt: "infinity", expiresAt: "infinity" }, { reason: " " }, { reason: "unsafe\nreason" },
+    { campaignId: "nonexistent" },
+  ]) await assert.rejects(f.manualWindow(fields));
+  assert.equal((await f.db.query('SELECT * FROM "VoiceReviewCampaignManualWindow"')).rows.length, 0);
+  await f.manualWindow();
+  await assert.rejects(f.manualWindow(), error => error.code === "23505");
+});
+
+test("manual expiry between claim and prepare prevents a call and allows the authorized 14:00 retry", async t => {
+  const f = await fixture(t);
+  await f.ensure(); await f.manualWindow(); f.time("2026-10-09T17:15:29.999Z");
+  const [event] = await f.claim("2026-10-09T12:05");
+  assert.ok(event);
+  f.time("2026-10-09T17:15:30Z");
+  assert.equal(await f.store.prepareVoiceReviewCampaign(event.eventId), null);
+  assert.equal((await f.rows())[0].status, "FAILED");
+  assert.equal((await f.rows())[0].resultCode, "WINDOW_CLOSED_BEFORE_DISPATCH");
+  assert.equal((await f.members())[0].state, "ACTIVE");
+  f.time("2026-10-09T19:00:00Z");
+  const [retry] = await f.claim("2026-10-09T14:00");
+  assert.ok(retry && retry.eventId !== event.eventId);
+  assert.ok(await f.store.prepareVoiceReviewCampaign(retry.eventId));
+  assert.equal((await f.claim("2026-10-09T14:00")).length, 0);
+});
+
+test("authorization expiry during its database read is rejected against the fresh server clock", async t => {
+  const f = await fixture(t);
+  await f.ensure(); await f.manualWindow(); f.time("2026-10-09T17:15:29.999Z");
+  f.afterManualRead(() => f.time("2026-10-09T17:15:30Z"));
+  assert.equal(await f.store.getVoiceReviewCampaignDispatchSlot(f.config.id), null);
+  assert.equal((await f.rows()).length, 0);
+});
+
+test("manual claims preserve exclusions, ignore owner-only controlled tests and never duplicate a member in one slot", async t => {
+  const f = await fixture(t, { count: 4 });
+  const controlled = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 2, expectedPhone: "3000000001" });
+  await f.save(controlled, { communicationOutcome: "HUMAN_CONTACT" });
+  await f.ensure();
+  await f.db.exec(`UPDATE "VoiceReviewCampaignMember" SET "state"='STOPPED',"stopReason"='OPERATOR_EXCLUDED' WHERE "creditoId"=4`);
+  await f.manualWindow(); f.time("2026-10-09T17:06:00Z");
+  const events = (await Promise.all([f.claim("2026-10-09T12:05"), f.claim("2026-10-09T12:05")])).flat();
+  assert.deepEqual(events.map(event => event.creditId).sort(), [1, 2, 3]);
+  assert.equal((await f.claim("2026-10-09T12:05")).length, 0);
+  for (const event of events) await f.save(event, event.creditId === 1 ? { communicationOutcome: "HUMAN_CONTACT" } : {});
+  f.time("2026-10-09T19:00:00Z");
+  const retries = await f.claim("2026-10-09T14:00");
+  assert.deepEqual(Array.from(retries, event => event.creditId), [2, 3]);
+  assert.equal((await f.claim("2026-10-09T14:00")).length, 0);
+  assert.deepEqual((await f.members()).map(row => [row.creditoId, row.state]), [[1, "CONTACTED"], [2, "ACTIVE"], [3, "ACTIVE"], [4, "STOPPED"]]);
 });
