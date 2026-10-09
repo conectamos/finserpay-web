@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import ReportDetailView, { type ReportDetails } from "./report-details";
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -48,6 +49,9 @@ type ReportRequest = {
 };
 
 type ReportRow = {
+  approved: number;
+  rejected: number;
+  notEvaluated: number;
   allyId: number | null;
   allyName: string;
   allyCode: string | null;
@@ -58,7 +62,7 @@ type ReportRow = {
   salesVsOriginalQueriesPercent: number | null;
 };
 
-type ReportResponse = {
+type ReportResponse = ReportDetails & {
   ok: true;
   filters: {
     mode: FilterMode;
@@ -201,10 +205,31 @@ export default function DataCreditoVentasClient({ initialDay }: { initialDay: st
   const [lastRequest, setLastRequest] = useState<ReportRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"xlsx" | "pdf" | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  async function exportReport(format: "xlsx" | "pdf") {
+    if (!report || exporting || loading) return;
+    setExporting(format); setExportError(null);
+    try {
+      const response = await fetch("/api/reportes/datacredito-ventas/export", {
+        method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...report.filters, format }),
+      });
+      if (!response.ok) { const body = await response.json().catch(()=>null); throw new Error(body?.error || "No se pudo exportar el informe."); }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob), link = document.createElement("a");
+      link.href = url; link.download = response.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] || `FINSER_PAY_DataCredito.${format}`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    } catch (cause) { setExportError(cause instanceof Error ? cause.message : "No se pudo exportar el informe."); }
+    finally { setExporting(null); }
+  }
 
   const loadReport = useCallback(async (request: ReportRequest, signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
+    setExportError(null);
     setLastRequest(request);
 
     try {
@@ -315,7 +340,7 @@ export default function DataCreditoVentasClient({ initialDay }: { initialDay: st
       <PageHeader
         eyebrow="Riesgo y desempeño"
         title="Consultas DataCrédito vs. ventas"
-        description="Compara la actividad de DataCrédito con las ventas finalizadas de cada aliado."
+        description="Consulta aprobaciones, rechazos, ventas y rankings por aliado. Exporta el informe con los filtros aplicados."
         actions={
           <Link href="/dashboard/reportes" className="fp-ui-button is-secondary">
             <ArrowLeft aria-hidden="true" className="h-4 w-4" strokeWidth={1.8} />
@@ -511,6 +536,14 @@ export default function DataCreditoVentasClient({ initialDay }: { initialDay: st
             </Badge>
           </div>
 
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button variant="secondary" disabled={Boolean(exporting) || loading} onClick={()=>void exportReport("xlsx")}>{exporting === "xlsx" ? "Generando Excel..." : "Exportar Excel"}</Button>
+            <Button variant="secondary" disabled={Boolean(exporting) || loading} onClick={()=>void exportReport("pdf")}>{exporting === "pdf" ? "Generando PDF..." : "Exportar PDF"}</Button>
+            <span className="text-xs text-[var(--fp-muted)]">Se exporta el período y aliado del resultado mostrado, con los datos disponibles al generar el archivo.</span>
+          </div>
+          {exportError ? <p role="alert" className="mt-2 text-sm text-[var(--fp-danger)]">{exportError}</p> : null}
+          {new Date(report.period.start).getTime() < Date.now()-report.retentionDays*86400000 ? <p role="status" className="mt-3 rounded-lg bg-[var(--fp-amber-soft)] p-3 text-sm">El período comienza antes de la retención vigente de {report.retentionDays} días. Los resultados pueden estar incompletos.</p> : null}
+
           <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               className="!rounded-lg !p-5"
@@ -565,6 +598,7 @@ export default function DataCreditoVentasClient({ initialDay }: { initialDay: st
             />
           </div>
 
+          <ReportDetailView report={report} />
           {report.rows.length ? (
             <Card className="mt-4 overflow-hidden !rounded-lg !p-0">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e4e7ec] px-4 py-4 sm:px-5">
@@ -620,6 +654,7 @@ export default function DataCreditoVentasClient({ initialDay }: { initialDay: st
                     <tr>
                       <th scope="col" className="px-5 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Aliado</th>
                       <th scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Consultas nuevas</th>
+                      {["Aprobadas", "Rechazadas", "No evaluadas"].map(label => <th key={label} scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">{label}</th>)}
                       <th scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Reutilizadas sin cobro</th>
                       <th scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Ventas finalizadas</th>
                       <th scope="col" className="px-5 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Ventas / consultas</th>
@@ -644,6 +679,7 @@ export default function DataCreditoVentasClient({ initialDay }: { initialDay: st
                           </div>
                         </th>
                         <td className="px-4 py-4 text-right font-bold tabular-nums text-[#344054]">{formatCount(row.originalQueries)}</td>
+                        {[row.approved,row.rejected,row.notEvaluated].map((n,i)=><td key={i} className="px-4 py-4 text-right tabular-nums">{formatCount(n)}</td>)}
                         <td className="px-4 py-4 text-right font-bold tabular-nums text-[#344054]">{formatCount(row.reusedAssessments)}</td>
                         <td className="px-4 py-4 text-right font-black tabular-nums text-[#151a21]">{formatCount(row.sales)}</td>
                         <td className="px-5 py-4 text-right font-black tabular-nums text-[#151a21]">

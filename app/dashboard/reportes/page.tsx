@@ -64,8 +64,8 @@ const REPORTS: ReportDefinition[] = [
   {
     category: "Riesgo",
     description:
-      "Consultas y ventas por aliado.",
-    formats: ["Vista web"],
+      "Aprobaciones, rechazos, ventas y rankings por aliado, sede y vendedor.",
+    formats: ["Excel", "PDF", "Vista web"],
     href: "/dashboard/reportes/datacredito-ventas",
     kind: "datacredito-sales",
     permission: "central",

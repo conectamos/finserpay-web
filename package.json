@@ -7,6 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:datacredito-informe": "node --experimental-strip-types --test tests/datacredito-query-sales-report.test.mjs tests/datacredito-query-report-details.test.mjs",
     "test:capital": "node --experimental-strip-types --test tests/credit-principal-payment*.test.mjs tests/credit-outstanding-balance.test.mjs",
     "test:mora-analista": "node --experimental-strip-types --test tests/analyst-mora*.test.mjs tests/mora-exception*.test.mjs tests/approval-analyst-mora-ui.test.mjs",
     "test:ares": "node --experimental-strip-types --test tests/ares-*.test.mjs",
