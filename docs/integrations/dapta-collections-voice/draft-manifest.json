@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "7496b9a3-2fe6-4e28-8411-7d54ee788b2c",
+  "agentId": "546f13ab-19cf-47a3-bb13-49240e42ec6b",
+  "caller": "+573124085562",
+  "drafts": [
+    {
+      "file": "call-flow.draft.json",
+      "deployableAfterFreshPreview": false
+    },
+    {
+      "file": "identity-flow.draft.json",
+      "deployableAfterFreshPreview": false
+    },
+    {
+      "file": "management-flow.draft.json",
+      "deployableAfterFreshPreview": false
+    }
+  ],
+  "privateFlowHeaderEnv": "FINSERPAY_COLLECTIONS_VOICE_FLOW_TOKEN",
+  "privateHeaderPlaceholder": "Bearer NEW_PRIVATE_COLLECTIONS_FLOW_TOKEN",
+  "callback": "https://finserpay.com/api/integraciones/cobranza/voz/resultado",
+  "callbackChange": "Replace the legacy postcall_cobranzas webhook; do not send the new event contract to 7atXD or persist model-extracted agreements.",
+  "rehydrateNativeTemplate": "Retrieve a9bb5e23-e7f9-4f16-b382-5e062db2b10c through Dapta MCP; replace the entire native api_action with template_data while restoring values, on_error and response. Do not save credential-bearing native URLs to Git.",
+  "variables": [
+    "event_id",
+    "credito_id",
+    "event_token"
+  ],
+  "pending": [
+    "Customer authorization for voice, recorded with evidence.",
+    "Shared cross-channel coordination. The backend fails closed while existing WhatsApp workers are enabled.",
+    "Fresh flow validation and previews, private header configuration, agent tool wiring and controlled test."
+  ],
+  "activation": "Draft files do not activate the batch. Keep FINSERPAY_COLLECTIONS_VOICE_ENABLED unset/false."
+}

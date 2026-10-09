@@ -1,0 +1,176 @@
+{
+  "type": "api",
+  "name": "Verificar identidad y mora — Valeria",
+  "engine": "v1",
+  "api_nodes": [
+    {
+      "id": "trgId",
+      "type": "trigger",
+      "name": "Trigger",
+      "api_trigger": {
+        "trigger_options": "http",
+        "trigger_type": "post",
+        "trigger_params": [
+          {
+            "id": "pm000",
+            "origin": "body",
+            "key": "event_id",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "pm001",
+            "origin": "body",
+            "key": "customer_name",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "pm002",
+            "origin": "body",
+            "key": "customer_document",
+            "type": "text",
+            "required": true
+          }
+        ]
+      },
+      "childRef": "nrmId"
+    },
+    {
+      "id": "nrmId",
+      "type": "action",
+      "name": "Normalizar identidad",
+      "parentRefs": [
+        "trgId"
+      ],
+      "childRef": "qryId",
+      "api_action": {
+        "action_type": "code",
+        "on_error": "stop",
+        "code_action": {
+          "code": "const body = params.trigger.body;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);\nif (!isRecord(body)) throw new Error('Solicitud de identidad invalida');\nconst hasArgs = owns(body, 'args');\nif (hasArgs && (!isRecord(body.args) || ['event_id', 'event_token', 'customer_name', 'customer_document'].some((key) => owns(body, key)))) throw new Error('Solicitud de identidad invalida');\nconst data = hasArgs ? body.args : body;\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de identidad invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event_id)) throw new Error('Solicitud de identidad invalida');\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 240);\nconst request_body = JSON.stringify({ event_id, customer_name, customer_document });\nmodule.exports = { request_body };"
+        },
+        "response": [
+          {
+            "variable_name": "request_body",
+            "response_value_path": "request_body"
+          }
+        ]
+      }
+    },
+    {
+      "id": "qryId",
+      "type": "action",
+      "name": "Verificar identidad",
+      "parentRefs": [
+        "nrmId"
+      ],
+      "childRef": "chkId",
+      "api_action": {
+        "action_type": "api",
+        "on_error": "continue",
+        "external_api_action": {
+          "request_type": "post",
+          "url": "https://finserpay.com/api/integraciones/cobranza/voz/identidad",
+          "body_format": "raw",
+          "body": "{{normalizar_identidad.request_body}}",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Authorization",
+              "value": "Bearer NEW_PRIVATE_COLLECTIONS_FLOW_TOKEN"
+            }
+          ],
+          "authorization": {
+            "type": "",
+            "token": ""
+          }
+        },
+        "response": [
+          {
+            "variable_name": "ok",
+            "response_value_path": "response.ok"
+          },
+          {
+            "variable_name": "verificado",
+            "response_value_path": "response.verificado"
+          },
+          {
+            "variable_name": "credito",
+            "response_value_path": "response.credito"
+          },
+          {
+            "variable_name": "code",
+            "response_value_path": "response.code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chkId",
+      "type": "action",
+      "name": "Preparar respuesta identidad",
+      "parentRefs": [
+        "qryId"
+      ],
+      "childRef": "rspId",
+      "api_action": {
+        "action_type": "code",
+        "on_error": "stop",
+        "code_action": {
+          "code": "const result = params.verificar_identidad || {};\nconst ok = result.ok === true;\nconst verificado = ok && result.verificado === true;\nconst credito = result.credito && typeof result.credito === 'object' && !Array.isArray(result.credito) ? result.credito : null;\nconst speech = credito && credito.speech;\nconst spoken = value => typeof value === 'string' && value.trim().length > 0;\nconst complete = Boolean(credito && speech && spoken(speech.valorVencido) && spoken(speech.diasMora));\nmodule.exports = {ok:ok && (!verificado || complete),verificado:verificado && complete,credito:verificado && complete ? credito : null,\ncode:ok && !verificado && result.code === 'DOCUMENT_NOT_UNDERSTOOD' ? 'DOCUMENT_NOT_UNDERSTOOD' : !ok || (verificado && !complete) ? 'IDENTITY_UNAVAILABLE' : null};"
+        },
+        "response": [
+          {
+            "variable_name": "ok",
+            "response_value_path": "ok"
+          },
+          {
+            "variable_name": "verificado",
+            "response_value_path": "verificado"
+          },
+          {
+            "variable_name": "credito",
+            "response_value_path": "credito"
+          },
+          {
+            "variable_name": "code",
+            "response_value_path": "code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rspId",
+      "type": "response",
+      "name": "Respuesta identidad",
+      "parentRefs": [
+        "chkId"
+      ],
+      "api_response": {
+        "response_params": [
+          {
+            "key": "ok",
+            "value": "{{preparar_respuesta_identidad.ok}}"
+          },
+          {
+            "key": "verificado",
+            "value": "{{preparar_respuesta_identidad.verificado}}"
+          },
+          {
+            "key": "credito",
+            "value": "{{preparar_respuesta_identidad.credito}}"
+          },
+          {
+            "key": "code",
+            "value": "{{preparar_respuesta_identidad.code}}"
+          }
+        ]
+      }
+    }
+  ],
+  "note_nodes": []
+}

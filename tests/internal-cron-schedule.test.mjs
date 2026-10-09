@@ -9,19 +9,23 @@ const plain = value => JSON.parse(JSON.stringify(value));
 
 function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, initialBatchDate,
   welcomeEnabled = false, holdWelcome = false, failWelcome = false, cronEnabled = true,
-  reviewEnabled = false, holdReview = false, failReview = false } = {}) {
+  reviewEnabled = false, holdReview = false, failReview = false,
+  collectionsEnabled = false, holdCollections = false, failCollections = false } = {}) {
   let clock = new Date(now);
   let timerCallback;
   let paused = hold;
   let welcomePaused = holdWelcome;
   let reviewPaused = holdReview;
+  let collectionsPaused = holdCollections;
   const calls = [];
   const welcomeCalls = [];
   const reviewCalls = [];
+  const collectionsCalls = [];
   const operationalCalls = [];
   const releases = [];
   const welcomeReleases = [];
   const reviewReleases = [];
+  const collectionsReleases = [];
   const logs = [];
   const errors = [];
   const scope = {};
@@ -63,6 +67,15 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
         return { enabled: true, configured: true, inWindow: true, selected: 2, accepted: 2, unknown: 0, skipped: 0 };
       },
     },
+    "@/lib/collections-voice-dispatch": {
+      runCollectionsVoiceCampaign: async () => {
+        collectionsCalls.push({});
+        if (!collectionsEnabled) return { enabled: false, selected: 0 };
+        if (failCollections) throw new Error("private phone token webhook credential");
+        if (collectionsPaused) await new Promise(resolve => collectionsReleases.push(resolve));
+        return { enabled: true, inWindow: true, selected: 3, accepted: 3, unknown: 0, skipped: 0 };
+      },
+    },
     "@/lib/device-unlock-queue": {
       processPendingDeviceUnlockCommands: async options => { operationalCalls.push({ name: "unlock", options: plain(options) }); return { processed: 0 }; },
       recoverRecentApprovedWompiUnlockCommands: async options => { operationalCalls.push({ name: "recover-unlock", options: plain(options) }); return { recovered: 0 }; },
@@ -85,7 +98,8 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     release: () => { paused = false; releases.splice(0).forEach(resolve => resolve()); },
     releaseWelcome: () => { welcomePaused = false; welcomeReleases.splice(0).forEach(resolve => resolve()); },
     releaseReview: () => { reviewPaused = false; reviewReleases.splice(0).forEach(resolve => resolve()); },
-    calls, welcomeCalls, reviewCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
+    releaseCollections: () => { collectionsPaused = false; collectionsReleases.splice(0).forEach(resolve => resolve()); },
+    calls, welcomeCalls, reviewCalls, collectionsCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
   };
 }
 
@@ -301,6 +315,35 @@ test("review campaign errors remain sanitized and never block reminders or devic
   assert.equal(f.state().running.has("voice-review-campaign"), false);
   assert.equal(f.errors.length, 1);
   assert.match(JSON.stringify(f.errors), /campana de solicitudes pendientes/);
+  assert.doesNotMatch(JSON.stringify(f.errors), /private|phone|token|webhook|credential/);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+});
+
+test("collections worker keeps its own lock while reminders and unlocks continue", async () => {
+  const f = cronFixture({ now: "2026-10-09T15:00:00Z", collectionsEnabled: true, holdCollections: true });
+  f.start(); await nextTurn();
+  assert.equal(f.collectionsCalls.length, 1);
+  assert.equal(f.state().running.has("collections-voice"), true);
+  assert.deepEqual(f.calls.map(call => call.name), campaigns);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+  f.tick(); f.tick(); await nextTurn();
+  assert.equal(f.collectionsCalls.length, 1);
+  f.releaseCollections(); await nextTurn();
+  f.tick(); await nextTurn();
+  assert.equal(f.collectionsCalls.length, 2);
+  f.tick(); await nextTurn();
+  assert.equal(f.collectionsCalls.length, 2);
+  f.setClock("2026-10-09T15:00:30Z"); f.tick(); await nextTurn();
+  assert.equal(f.collectionsCalls.length, 3);
+});
+
+test("collections failures stay sanitized and release their lock without interrupting other jobs", async () => {
+  const f = cronFixture({ now: "2026-10-09T15:00:00Z", collectionsEnabled: true, failCollections: true });
+  f.start(); await nextTurn();
+  assert.deepEqual(f.calls.map(call => call.name), campaigns);
+  assert.equal(f.state().running.has("collections-voice"), false);
+  assert.equal(f.errors.length, 1);
+  assert.match(JSON.stringify(f.errors), /cobranza de voz/);
   assert.doesNotMatch(JSON.stringify(f.errors), /private|phone|token|webhook|credential/);
   assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
 });
