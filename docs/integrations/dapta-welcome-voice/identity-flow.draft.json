@@ -14,7 +14,7 @@
           {
             "id": "pm000",
             "origin": "body",
-            "key": "event_token",
+            "key": "event_id",
             "type": "text",
             "required": true
           },
@@ -48,7 +48,7 @@
         "action_type": "code",
         "on_error": "stop",
         "code_action": {
-          "code": "const body = params.trigger.body;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);\nif (!isRecord(body)) throw new Error('Solicitud de identidad invalida');\nconst hasArgs = owns(body, 'args');\nif (hasArgs && (!isRecord(body.args) || ['event_token', 'customer_name', 'customer_document'].some((key) => owns(body, key)))) throw new Error('Solicitud de identidad invalida');\nconst data = hasArgs ? body.args : body;\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de identidad invalida');\n  return value.trim();\n};\nconst event_token = required(data.event_token, 1000);\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 80);\nconst request_body = JSON.stringify({ event_token, customer_name, customer_document });\nmodule.exports = { request_body };"
+          "code": "const body = params.trigger.body;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);\nif (!isRecord(body)) throw new Error('Solicitud de identidad invalida');\nconst hasArgs = owns(body, 'args');\nif (hasArgs && (!isRecord(body.args) || ['event_id', 'event_token', 'customer_name', 'customer_document'].some((key) => owns(body, key)))) throw new Error('Solicitud de identidad invalida');\nconst data = hasArgs ? body.args : body;\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de identidad invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event_id)) throw new Error('Solicitud de identidad invalida');\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 240);\nconst request_body = JSON.stringify({ event_id, customer_name, customer_document });\nmodule.exports = { request_body };"
         },
         "response": [
           {
@@ -78,6 +78,10 @@
             {
               "key": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "key": "Authorization",
+              "value": "Bearer NEW_PRIVATE_IDENTITY_FLOW_TOKEN"
             }
           ],
           "authorization": {
@@ -97,6 +101,10 @@
           {
             "variable_name": "condiciones",
             "response_value_path": "response.condiciones"
+          },
+          {
+            "variable_name": "code",
+            "response_value_path": "response.code"
           }
         ]
       }
@@ -113,7 +121,7 @@
         "action_type": "code",
         "on_error": "stop",
         "code_action": {
-          "code": "const result = params.verificar_identidad || {};\nconst ok = result.ok === true;\nconst verificado = ok && result.verificado === true;\nconst hasConditions = Boolean(result.condiciones && typeof result.condiciones === 'object' && !Array.isArray(result.condiciones));\nconst speech = hasConditions ? result.condiciones.speech : null;\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst hasSpeech = Boolean(speech && typeof speech === 'object' && !Array.isArray(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString));\nconst complete = !verificado || (hasConditions && hasSpeech);\nmodule.exports = {\n  ok: ok && complete,\n  verificado: verificado && hasConditions && hasSpeech,\n  condiciones: verificado && hasConditions && hasSpeech ? result.condiciones : null,\n  code: ok && complete ? null : 'IDENTITY_UNAVAILABLE'\n};"
+          "code": "const result = params.verificar_identidad || {};\nconst ok = result.ok === true;\nconst verificado = ok && result.verificado === true;\nconst hasConditions = Boolean(result.condiciones && typeof result.condiciones === 'object' && !Array.isArray(result.condiciones));\nconst speech = hasConditions ? result.condiciones.speech : null;\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst hasSpeech = Boolean(speech && typeof speech === 'object' && !Array.isArray(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString));\nconst complete = !verificado || (hasConditions && hasSpeech);\nmodule.exports = {\n  ok: ok && complete,\n  verificado: verificado && hasConditions && hasSpeech,\n  condiciones: verificado && hasConditions && hasSpeech ? result.condiciones : null,\n  code: ok && complete ? (result.verificado === false && result.code === 'DOCUMENT_NOT_UNDERSTOOD' ? 'DOCUMENT_NOT_UNDERSTOOD' : null) : 'IDENTITY_UNAVAILABLE'\n};"
         },
         "response": [
           {

@@ -8,6 +8,15 @@ const secret = "synthetic-welcome-voice-secret-32-bytes-or-more";
 const now = new Date("2026-10-08T15:00:00.000Z");
 const identity = { eventId: "25ea074e-a7e5-4f2c-8c8e-e64258fe345d", creditId: 72 };
 
+test("identity-flow credential only authenticates the dedicated private bearer", () => {
+  const flowSecret = "synthetic-dedicated-identity-flow-key-32-or-more";
+  assert.equal(core.verifyWelcomeVoiceIdentityFlowAuthorization(`Bearer ${flowSecret}`, { secret: flowSecret }), true);
+  for (const value of [null, undefined, 123, flowSecret, `Bearer ${flowSecret}-other`, `Bearer ${secret}`, `Bearer ${flowSecret}\n`]) {
+    assert.equal(core.verifyWelcomeVoiceIdentityFlowAuthorization(value, { secret: flowSecret }), false);
+  }
+  assert.equal(core.verifyWelcomeVoiceIdentityFlowAuthorization("Bearer short", { secret: "short" }), false);
+});
+
 test("signed token is restricted to one event and credit and expires", () => {
   const token = core.createWelcomeVoiceToken(identity, { secret, now, ttlSeconds: 60 });
   assert.deepEqual(core.verifyWelcomeVoiceToken(token, { secret, now }), {
@@ -31,13 +40,17 @@ test("tokens reject invalid configuration and future issue times", () => {
   assert.equal(core.verifyWelcomeVoiceToken(future, { secret, now }), null);
 });
 
-test("identity requires full matching name and document, preserving leading zeroes", () => {
+test("identity requires every registered name component and exact document, preserving leading zeroes", () => {
   const expected = { name: "Ana María Pérez", document: "0012345678" };
   assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: " ANA MARIA  PEREZ ", document: "00.123.456-78" }), true);
   assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: "Ana Pérez", document: "0012345678" }), false);
   assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: "Ana María Pérez", document: "12345678" }), false);
   assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: "Ana María Pérez", document: "0012?45678" }), false);
   assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: "Otra Persona", document: "0012345678" }), false);
+  assert.equal(core.matchWelcomeVoiceIdentity({ name: "LUZ HERNANDEZ", document: "38144092" },
+    { name: "Luz Estela Hernández Gili", document: "38144092" }), true);
+  assert.equal(core.matchWelcomeVoiceIdentity({ name: "LUZ HERNANDEZ", document: "38144092" },
+    { name: "Luz Estela Hernández Gili", document: "38144093" }), false);
   assert.equal(core.normalizeWelcomeVoiceDocument(12345678), null);
 });
 

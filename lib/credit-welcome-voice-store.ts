@@ -69,8 +69,9 @@ type EventRow = {
   attemptNumber: number; repeatOf: string | null;
   snapshot: CreditWelcomeVoiceSnapshot | null; providerCallId: string | null; identityAttempts: number;
   identityVerifiedAt: Date | string | null; resultHash: string | null;
+  dispatchedAt: Date | string | null;
 };
-const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","resultHash"`;
+const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","resultHash","dispatchedAt"`;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validCreditId = (id: number) => Number.isSafeInteger(id) && id > 0;
 function calendarDay(value: unknown): string | null {
@@ -340,14 +341,20 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   }
   const markCreditWelcomeVoiceDispatchUnknown = (eventId: string, code = "DISPATCH_OUTCOME_UNKNOWN") => markDispatch(eventId, "UNKNOWN", code);
   const markCreditWelcomeVoiceDispatchFailed = (eventId: string, code = "DISPATCH_REJECTED") => markDispatch(eventId, "FAILED", code);
-  async function verifyCreditWelcomeVoiceIdentity(input: { eventId: string; creditId: number; customerName: string; customerDocument: string }):
+  async function verifyCreditWelcomeVoiceIdentity(input: { eventId: string; creditId?: number; requireFreshDispatch?: boolean; customerName: string; customerDocument: string }):
     Promise<{ verificado: false } | { verificado: true; condiciones: VoiceFinancialSnapshot }> {
     requireEventIdentity(input.eventId, input.creditId);
+    if (input.creditId === undefined && input.requireFreshDispatch !== true) return { verificado: false };
     return database.$transaction(async db => {
       const event = await readEvent(db, input.eventId);
-      if (!event || event.creditoId !== input.creditId || !["DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(event.status) || !event.snapshot) return { verificado: false };
-      const correct = matchWelcomeVoiceIdentity({ name: input.customerName, document: input.customerDocument },
-        { name: event.snapshot.name, document: event.snapshot.document });
+      if (!event || (input.creditId !== undefined && event.creditoId !== input.creditId) || !["DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(event.status) || !event.snapshot) return { verificado: false };
+      if (input.requireFreshDispatch) {
+        const dispatchTime = event.dispatchedAt ? new Date(event.dispatchedAt).getTime() : NaN;
+        const age = now().getTime() - dispatchTime;
+        if (!Number.isFinite(age) || age < 0 || age > 24 * 60 * 60 * 1000) return { verificado: false };
+      }
+      const correct = matchWelcomeVoiceIdentity({ name: event.snapshot.name, document: event.snapshot.document },
+        { name: input.customerName, document: input.customerDocument });
       const credit = await readCredit(db, event.creditoId);
       const current = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
       if (creditExclusion(credit, current) || !current || !sameSnapshot(current, event.snapshot)) return { verificado: false };

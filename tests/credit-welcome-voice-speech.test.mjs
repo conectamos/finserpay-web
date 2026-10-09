@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
-const core = loadReissueModule("lib/credit-welcome-voice-core.ts");
+const core = loadReissueModule("lib/credit-welcome-voice-core.ts", {
+  "./credit-welcome-voice-name": loadReissueModule("lib/credit-welcome-voice-name.ts"),
+});
 const speech = loadReissueModule("lib/credit-welcome-voice-speech.ts", { "@/lib/credit-welcome-voice-core": core });
 const snapshot = () => ({ initialPayment:760000, installmentAmount:159150, installmentCount:18,
   frequency:"QUINCENAL", firstDueDate:"2026-10-17", installmentAmounts:Array(18).fill(159150) });

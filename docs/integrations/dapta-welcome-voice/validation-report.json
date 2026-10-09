@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "workspace": "FINSERPAY",
   "workspaceId": "7496b9a3-2fe6-4e28-8411-7d54ee788b2c",
   "identityFlow": {
@@ -49,18 +49,13 @@
     "validator_ruleset": "2026-09-22-layout-and-legacy-loops"
   },
   "identityPreview": {
-    "generated": true,
+    "generated": false,
     "committed": false,
-    "flowCreated": false,
-    "auto_layout": "all",
-    "tokenPersisted": true,
-    "tokenTracked": false,
-    "privateRecoveryFile": "tmp/voice-identity-preview.private.json",
-    "flowId": null
+    "reason": "New authenticated event-ID transport requires the backend/parser and a privately hydrated Authorization header before a fresh user-approved preview."
   },
   "callPreview": {
     "generated": false,
-    "reason": "The new welcome voice agent does not exist. A real UUID is required before preview/deployment."
+    "reason": "No native call transport changes in this revision; the reusable draft retains its agent and credential placeholders. Existing callback variables remain unchanged."
   },
   "validationInput": "Native call validation used the complete live public template in memory. Exported call draft has template URL credentials redacted and is not directly deployable.",
   "fixtures": {
@@ -134,9 +129,9 @@
   "checkedInTests": {
     "file": "tests/credit-welcome-voice-flow-drafts.test.mjs",
     "command": "node --test tests/credit-welcome-voice-flow-drafts.test.mjs",
-    "passed": 44,
+    "passed": 50,
     "failed": 0,
-    "scope": "VM execution of actual JSON Code: strict direct/args identity envelope, safe JSON, strict boolean identity flags, complete speech required, literal speech preservation, raw and spoken identity separation, 8 input/exports and 7 native variables, native receipt contradiction/ambiguity guards, credentials redacted, tool raw-identity placeholders retained, prompt literal speech/consent, and voice settings."
+    "scope": "VM execution of actual JSON Code: strict direct/args event UUID envelope, safe JSON, literal spoken document forwarding, private bearer placeholder only in HTTP header, code response mapping, explicit unverified document clarification without conditions, strict identity/speech, three agreement waits and exact script, 8 legacy call inputs and 3 native callback variables, native receipt contradiction/ambiguity guards."
   },
   "responseTypeEvidence": {
     "codeExportsNativeBooleans": true,
@@ -146,7 +141,28 @@
     "dynamicMappingLiveTested": false,
     "dispatcherRequirement": "Only boolean ok===true and a valid call_id are accepted; string true is rejected."
   },
-  "livePatchValidations": [
+  "pronunciationContract": {
+    "callInputCount": 8,
+    "normalizerExportCount": 8,
+    "nativeVariableCount": 3,
+    "identityToolDocumentLiteral": true,
+    "signedTokenCopiedByIdentityTool": false,
+    "speechRequired": true,
+    "noSsml": true,
+    "newTransportLiveAudioTested": false
+  },
+  "activityScope": "Identity transport revision: static draft authoring, readonly live-shape inspection and official static validation only. No Dapta writes or customer calls by this revision.",
+  "historicalIdentityPreview": {
+    "generated": true,
+    "committed": false,
+    "flowCreated": false,
+    "auto_layout": "all",
+    "tokenPersisted": true,
+    "tokenTracked": false,
+    "privateRecoveryFile": "tmp/voice-identity-preview.private.json",
+    "flowId": null
+  },
+  "historicalLivePatchValidations": [
     {
       "flowId": "WdOvp",
       "expectedContentHash": "sha256:9f83a1a09e4bfc59edb81f61c80313614347c4fd673cc10d498c2d915b8c7515",
@@ -174,13 +190,35 @@
       "validatedInMemoryOnly": true
     }
   ],
-  "pronunciationContract": {
-    "callInputCount": 8,
-    "normalizerExportCount": 8,
-    "nativeVariableCount": 7,
-    "identityToolStillRaw": true,
-    "speechRequired": true,
-    "noSsml": true,
-    "liveAudioTested": false
+  "identityTransportRevision": {
+    "flowId": "YxVoY",
+    "readOnlyContentHash": "sha256:627ea9951f2661fe82e5776c28c450f9b3a6b43882c46643348cf001fececdfd",
+    "patchOperations": 5,
+    "inputFields": [
+      "event_id",
+      "customer_name",
+      "customer_document"
+    ],
+    "privateHeaderPlaceholder": "Bearer NEW_PRIVATE_IDENTITY_FLOW_TOKEN",
+    "privateHeaderMustBeHydratedInMemory": true,
+    "privateCredentialIncluded": false,
+    "httpResponseCodeMapped": true,
+    "documentClarification": {
+      "code": "DOCUMENT_NOT_UNDERSTOOD",
+      "requiresOkBooleanTrue": true,
+      "requiresVerifiedBooleanFalse": true,
+      "exposesConditions": false,
+      "promptMaximumClarifications": 1
+    },
+    "backendContract": "Bearer authentication, one scoped active ledger event within24h, bounded identity attempts, deterministic document parsing and exact document match; no expected-value completion.",
+    "nameContract": "Exact registered components in order and same first component; extras permitted, no fuzzy matching.",
+    "callVariablesPreserved": [
+      "event_id",
+      "credito_id",
+      "event_token"
+    ],
+    "staticValidationPassed": true,
+    "runtimeExecution": false,
+    "committed": false
   }
 }

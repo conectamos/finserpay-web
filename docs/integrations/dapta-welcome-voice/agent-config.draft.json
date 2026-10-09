@@ -83,13 +83,13 @@
   "pendingIdentityTool": {
     "name": "verificar_cliente_bienvenida",
     "type": "custom",
-    "description": "Verifica el nombre completo y la cédula proporcionados por la persona durante esta llamada y consulta el plan real solo si coinciden con el crédito del evento. Invoca únicamente después de recibir ambos datos. Nunca sustituir respuestas por datos registrados. Un error o condiciones sin speech completo no permiten revelar producto, importes ni fechas.",
+    "description": "Verifica el nombre completo y la cédula realmente proporcionados por la persona durante esta llamada, en el evento indicado. Invoca únicamente después de recibir ambos datos. Envía la cédula literal con sus palabras o dígitos; el backend la interpreta. Nunca sustituir respuestas por datos registrados ni ofrecer ejemplos. Un error o condiciones sin speech completo no permiten revelar producto, importes ni fechas.",
     "parameters": {
       "type": "object",
       "required": [
         "dapta_api_id",
         "dapta_webhook",
-        "event_token",
+        "event_id",
         "customer_name",
         "customer_document"
       ],
@@ -102,9 +102,9 @@
           "type": "string",
           "const": "NEW_PRIVATE_IDENTITY_FLOW_URL"
         },
-        "event_token": {
+        "event_id": {
           "type": "string",
-          "description": "Envía este valor exacto sin modificar, sin leerlo al cliente: {{event_token}}"
+          "description": "Envía este identificador exacto sin modificar, sin leerlo al cliente: {{event_id}}. No inventar otro evento ni consultar otro crédito."
         },
         "customer_name": {
           "type": "string",
@@ -112,7 +112,7 @@
         },
         "customer_document": {
           "type": "string",
-          "description": "Envía únicamente los dígitos inequívocamente proporcionados por la persona al responder la pregunta de cédula en esta llamada, como texto numérico conservando todos los dígitos y ceros iniciales. No enviar palabras, sí ni una confirmación. Nunca inferir de datos registrados; si algún dígito es ambiguo, pedir repetición y esperar antes de invocar."
+          "description": "Envía literalmente la cédula que la persona realmente diga en esta llamada, con sus palabras o dígitos y separadores. Acepta bloques o dígito a dígito sin exigir un formato. No convertir, completar, inventar, ofrecer ejemplos ni sustituir por datos registrados. El backend la interpreta de forma determinista. Solo si no se escuchó, pedir repetición una vez y esperar antes de invocar."
         }
       }
     },

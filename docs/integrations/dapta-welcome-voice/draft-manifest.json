@@ -4,7 +4,7 @@
     {
       "file": "identity-flow.draft.json",
       "name": "Verificar identidad — Bienvenida de voz",
-      "deployableAfterFreshPreview": true
+      "deployableAfterFreshPreview": false
     },
     {
       "file": "call-flow.draft.json",
@@ -26,17 +26,18 @@
     "Get the native template by UUID again through Dapta MCP. Replace the entire native api_action with template_data, then restore custom_action.values, on_error, and response mappings from the draft.",
     "Preserve native custom_action.attributes, dynamicLoad, selector configuration, template_id, and from_template. Never save raw catalog URLs containing credentials to this repository.",
     "Replace agent_id with the UUID of the new welcome voice agent. Never reuse the Cobranza agent. Confirm the new agent is linked to an allowed outbound caller.",
-    "Validate again, then preview with auto_layout=all. This draft does not authorize committing or executing a flow."
+    "Validate again, then preview with auto_layout=all. This draft does not authorize committing or executing a flow.",
+    "Before previewing the identity patch, hydrate only qryId Authorization with the private DAPTA_WELCOME_VOICE_IDENTITY_FLOW_TOKEN from an authorized source. Never write that value to Git, voice tools, call variables, exports or logs. Deploy the authenticated backend/parser before publishing the new flow and tool contract."
   ],
   "identityBackend": {
     "method": "POST",
     "url": "https://finserpay.com/api/integraciones/dapta/bienvenida-voz/identidad",
     "input": [
-      "event_token",
+      "event_id",
       "customer_name",
       "customer_document"
     ],
-    "auth": "Per-event HMAC token from FINSERPAY, maximum 24 h. No HMAC secret is stored in Dapta or these files.",
+    "auth": "Private Authorization Bearer DAPTA_WELCOME_VOICE_IDENTITY_FLOW_TOKEN, configured only in the Dapta HTTP node and FINSERPAY. The backend authenticates in constant time, resolves this event's ledger snapshot only in DISPATCHING/ACCEPTED/UNKNOWN within 24 h and enforces at most three identity attempts. No private bearer reaches voice tools, dynamic call variables or exports.",
     "success": "ok=true, verificado=true, condiciones object with complete speech",
     "mismatch": "ok=true, verificado=false, condiciones=null",
     "failure": "ok=false, verificado=false, condiciones=null, code=IDENTITY_UNAVAILABLE",
@@ -44,14 +45,20 @@
       "Direct body object",
       "Body object with an own args object; identity fields must not appear in both locations"
     ],
-    "invalidEnvelope": "Malformed, mixed or missing-token input throws before the ERP request. The agent must not speak financial conditions without verified backend conditions.",
+    "invalidEnvelope": "Malformed, mixed or missing/invalid-event input throws before the ERP request. The agent must not speak financial conditions without verified backend conditions.",
     "speech": {
       "initialPayment": "non-empty string",
       "installmentAmount": "non-empty string",
       "installmentCount": "non-empty string with count and frequency",
       "firstDueDate": "non-empty string",
       "installmentAmounts": "non-empty array of non-empty strings, canonical one per installment from the same snapshot"
-    }
+    },
+    "privateHeaderSecretEnv": "DAPTA_WELCOME_VOICE_IDENTITY_FLOW_TOKEN",
+    "privateHeaderPlaceholder": "Bearer NEW_PRIVATE_IDENTITY_FLOW_TOKEN",
+    "legacySignedTokenMode": "The backend retains per-event HMAC event_token mode for compatibility; this new identity flow does not send event_token. The original signed token stays in the native call for the authenticated result callback.",
+    "documentInput": "Literal customer utterance, numeric text or spoken Spanish blocks/digits, up to 240 characters. A deterministic backend parser preserves leading zeros; it never chooses or completes a value using the expected document.",
+    "nameVerification": "All registered name components must match exactly and in order, with the same first component; extra provided middle/surname components are permitted. No fuzzy matching, omitted registered components, expected-name disclosure or document tolerance.",
+    "documentClarification": "ok=true, verificado=false, condiciones=null, code=DOCUMENT_NOT_UNDERSTOOD permits one clarification and a new real customer utterance. No other backend code is forwarded by this flow."
   },
   "callInput": [
     "event_id",
@@ -68,7 +75,7 @@
     "credito_id",
     "event_token"
   ],
-  "identitySource": "The customer's actual full name and document spoken during the call. Expected identity values stay outside the voice agent's initial context; the backend verifies both against the signed event snapshot.",
+  "identitySource": "The customer's actual full name and literal document utterance during the call. Expected identity values stay outside the voice agent's initial context. The authenticated backend resolves the scoped event snapshot and requires the exact normalized document.",
   "nativeOutputMapping": {
     "response": "response.result",
     "error": "response.error"
@@ -98,7 +105,7 @@
   },
   "limitations": [
     "Native call receipt shape has not been live-tested; unknown native output is conservatively rejected.",
-    "No agent or flow has been created, committed, or executed.",
+    "This transport revision has not been committed or executed in Dapta. Static drafts do not authorize publishing or customer calls.",
     "Dapta public route URLs and preview tokens are intentionally not included.",
     "The guide documents response_params mapping but does not guarantee interpolation types. Code exports genuine booleans; the exact dynamic HTTP response type is not live-tested, so the dispatcher requires strict boolean true."
   ],
@@ -107,8 +114,8 @@
     {
       "file": "identity-normalizer.patch.json",
       "flowId": "YxVoY",
-      "expectedContentHash": "sha256:ba298097d660aafd7e197c052b0ef64f8d78162bce8c6fccc85160c18cacf2b2",
-      "scope": "One verified-response Code field; requires complete financial speech before exposing verified conditions."
+      "expectedContentHash": "sha256:627ea9951f2661fe82e5776c28c450f9b3a6b43882c46643348cf001fececdfd",
+      "scope": "Three-string event input, strict direct/args normalization with safe JSON, private Authorization header placeholder, HTTP code mapping and verified response with one document clarification code. Preserve node identifiers and financial speech guard."
     },
     {
       "file": "call-identity-variables.patch.json",
@@ -120,10 +127,11 @@
   "pronunciation": {
     "callFields": [],
     "identityToolUses": [
+      "event_id",
       "customer_name",
       "customer_document"
     ],
-    "identityToolSource": "Actual customer responses, never preloaded expected identity or spoken versions.",
+    "identityToolSource": "Actual customer name and literal document utterance; event_id is the exact scoped call variable. No expected identity, spoken snapshots or signed event token is copied by the model.",
     "voiceModel": "eleven_multilingual_v2",
     "voiceSpeed": 1,
     "voiceTemperature": 1,
