@@ -300,13 +300,13 @@ test("voice tool captures actual customer identity without prefilled answers or 
   assert.doesNotMatch(prompt, /<\s*(?:speak|break|say-as|prosody)\b/i);
 });
 
-test("voice configuration restores Lina with conversational multilingual delivery", () => {
+test("voice configuration selects Angie with conversational multilingual delivery", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   assert.equal(config.updateAfterCreate.voice_speed, 1);
   assert.equal(config.updateAfterCreate.voice_temperature, 1);
   assert.equal(config.updateAfterCreate.normalize_for_speech, true);
   assert.equal(config.createArguments.voice_language, "es-419");
-  assert.equal(config.createArguments.voice, "custom_voice_fd6d90e0e756bbb2e81c101bba");
+  assert.equal(config.createArguments.voice, "custom_voice_b7f9d4e2175e188767738b4a1c");
   assert.equal(config.updateAfterCreate.voice, config.createArguments.voice);
   assert.equal(config.updateAfterCreate.voice_model, "eleven_multilingual_v2");
 });
@@ -404,7 +404,8 @@ test("normal hangup waits for three separate agreements and preserves early exit
     const block = prompt.slice(start, end);
     assert.ok(start > 0 && end > start);
     assert.match(block, /¿Está de acuerdo\?/);
-    assert.match(block, /Espera una respuesta real/);
+    assert.match(block, /entonación interrogativa, como una pregunta real/);
+    assert.match(block, /Termina esa salida sin herramientas y espera una nueva intervención/);
   }
   // The user requested these sentences verbatim; prepared financial texts replace only their placeholders.
   for (const sentence of [
@@ -421,7 +422,7 @@ test("normal hangup waits for three separate agreements and preserves early exit
   assert.equal(config.pendingEndCallTool.name, "end_call");
   assert.equal(config.pendingEndCallTool.type, "end_call");
   assert.match(config.pendingEndCallTool.description, /tres respuestas afirmativas reales e independientes/);
-  assert.match(config.pendingEndCallTool.description, /Nunca ejecutes esta herramienta en el mismo turno de una pregunta/);
+  assert.match(config.pendingEndCallTool.description, /No ejecutes end_call si esta salida todavía hace una pregunta ni mientras esperas una respuesta/);
   for (const reason of ["rechazo de grabación", "petición expresa de terminar", "identidad no verificada", "fallo", "discrepancia", "buzón"]) {
     assert.ok(config.pendingEndCallTool.description.includes(reason));
   }
@@ -430,21 +431,23 @@ test("normal hangup waits for three separate agreements and preserves early exit
   assert.match(prompt, /Gracias por su tiempo/);
 });
 
-test("end_call owns the fixed audible goodbye and its sparse patch preserves other tools", () => {
+test("agent speaks goodbye before end_call and its sparse patch preserves other tools", () => {
   const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   const patch = JSON.parse(readFileSync(new URL("end-call-goodbye.patch.json", base), "utf8"));
   const endCall = config.pendingEndCallTool;
-  assert.equal(endCall.speak_during_execution, true);
+  assert.equal(endCall.speak_during_execution, false);
   assert.equal(endCall.execution_message_type, "static_text");
   assert.equal(endCall.execution_message_description, "Gracias por su tiempo.");
   assert.equal(Object.hasOwn(endCall, "finish_delay"), false);
   assert.equal(Object.hasOwn(endCall, "speak_after_execution"), false);
-  assert.match(prompt, /Solo después de recibir el tercer acuerdo, ejecuta end_call/);
-  assert.match(prompt, /No digas esa despedida por separado ni agregues otra frase de cierre/);
-  assert.match(endCall.description, /No digas esa despedida por separado/);
-  assert.doesNotMatch(prompt, /di «Gracias por su tiempo»/);
-  assert.doesNotMatch(prompt, /después de esa despedida, ejecuta end_call/);
+  assert.match(prompt, /Solo después de escuchar la tercera respuesta afirmativa, di tú misma en voz alta exactamente «Gracias por su tiempo\.» y solo después ejecuta end_call/);
+  assert.match(prompt, /No agregues otra frase de cierre ni una cuarta pregunta/);
+  assert.match(prompt, /no dependas de un mensaje nativo de ejecución/);
+  assert.match(endCall.description, /La despedida debe ser una salida hablada previa a esta herramienta/);
+  assert.match(endCall.description, /No reutilices un sí u ok entre acuerdos/);
+  assert.match(prompt, /En cada salida anticipada dirigida a una persona, da primero la explicación apropiada sin preguntas, di en voz alta «Gracias por su tiempo\.» y solo después ejecuta end_call/);
+  assert.doesNotMatch(prompt, /No digas esa despedida por separado/);
   assert.deepEqual(Object.keys(patch).sort(), ["agent_id", "tools_patch_by_name", "workspace_id"]);
   assert.equal(patch.tools_patch_by_name.length, 1);
   assert.equal(patch.tools_patch_by_name[0].name, "end_call");
@@ -452,7 +455,7 @@ test("end_call owns the fixed audible goodbye and its sparse patch preserves oth
   const set = patch.tools_patch_by_name[0].set;
   assert.deepEqual(Object.keys(set).sort(), ["description", "execution_message_description", "execution_message_type", "speak_during_execution"]);
   for (const key of Object.keys(set)) assert.equal(set[key], endCall[key]);
-  // This checks the supported configuration contract; actual audio playback requires an authorized call.
+  // This checks the configuration contract, not actual playback or runtime drain before hangup.
   assert.doesNotMatch(JSON.stringify(patch), /verificar_cliente_bienvenida|dapta_webhook|https?:/);
 });
 

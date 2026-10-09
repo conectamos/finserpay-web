@@ -9,7 +9,7 @@
     "company_website": "https://finserpay.com",
     "identity_name": "Diana",
     "voice_language": "es-419",
-    "voice": "custom_voice_fd6d90e0e756bbb2e81c101bba",
+    "voice": "custom_voice_b7f9d4e2175e188767738b4a1c",
     "model": "gpt-4.1",
     "enable_voicemail_detection": true,
     "voicemail_option": {
@@ -63,7 +63,7 @@
     ]
   },
   "updateAfterCreate": {
-    "voice": "custom_voice_fd6d90e0e756bbb2e81c101bba",
+    "voice": "custom_voice_b7f9d4e2175e188767738b4a1c",
     "begin_message_type": "ai_initiates_predefined",
     "begin_message": "Hola, soy Diana de FINSER PEY y quiero darle la bienvenida y confirmar los datos de la financiación de su celular. Esta llamada está siendo grabada y monitoreada para efectos de calidad y seguridad. ¿Me confirma, por favor, su nombre completo?",
     "boosted_keywords": [
@@ -129,8 +129,8 @@
   "pendingEndCallTool": {
     "name": "end_call",
     "type": "end_call",
-    "description": "Despide y finaliza la llamada: esta herramienta pronuncia una sola vez Gracias por su tiempo antes de colgar. No digas esa despedida por separado. Nunca ejecutes esta herramienta en el mismo turno de una pregunta ni mientras esperas una respuesta. El cierre normal exige tres respuestas afirmativas reales e independientes: al plan, al calendario con primera fecha y a la política del aplicativo. Solo después de recibir el tercer acuerdo, ejecuta end_call para la despedida y el cierre. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva únicamente las salidas anticipadas por rechazo de grabación, petición expresa de terminar, identidad no verificada después de agotar las aclaraciones o consultas permitidas, fallo, discrepancia que requiere asesor o buzón; primero da la explicación apropiada cuando corresponda y después ejecuta end_call. No reveles datos en buzón.",
-    "speak_during_execution": true,
+    "description": "Finaliza la llamada solo después de que Diana haya dicho en voz alta Gracias por su tiempo. La despedida debe ser una salida hablada previa a esta herramienta; no dependas del mensaje nativo de ejecución. No ejecutes end_call si esta salida todavía hace una pregunta ni mientras esperas una respuesta: termina esa salida sin herramientas y espera una nueva intervención del cliente. El cierre normal exige tres respuestas afirmativas reales e independientes en tres intervenciones nuevas del cliente: al plan, al calendario con primera fecha y a la política del aplicativo. No reutilices un sí u ok entre acuerdos. Solo después de escuchar el tercer acuerdo, di exactamente Gracias por su tiempo. y después ejecuta end_call, sin otra frase de cierre ni una cuarta pregunta. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva únicamente las salidas anticipadas por rechazo de grabación, petición expresa de terminar, identidad no verificada después de agotar las aclaraciones o consultas permitidas, fallo, discrepancia que requiere asesor o buzón. En una salida anticipada dirigida a una persona, da primero la explicación apropiada sin preguntas, di Gracias por su tiempo. y solo después ejecuta end_call. En buzón no reveles datos personales ni financieros; si el agente realiza el cierre, di únicamente Gracias por su tiempo. antes de end_call.",
+    "speak_during_execution": false,
     "execution_message_type": "static_text",
     "execution_message_description": "Gracias por su tiempo."
   }
