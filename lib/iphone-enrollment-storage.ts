@@ -22,6 +22,7 @@ import {
   type IphoneEnrollmentPortalSessionPayload,
 } from "@/lib/iphone-enrollment";
 import prisma from "@/lib/prisma";
+import { assertMoraActor } from "@/lib/analyst-mora-access";
 import { hmacDataCreditoValue } from "@/lib/datacredito/storage";
 import {
   ensureFirmaSeguroSchema,
@@ -1399,10 +1400,19 @@ export async function getIphoneEnrollmentReviewForSolicitud(
   return serializeReview(row);
 }
 
+/** Reserved namespace: a nominal grant is never a public portal credential. */
+export function isNominalIphoneEnrollmentGrant(
+  grant: Pick<IphoneEnrollmentGrantSession, "analyst">
+) {
+  return grant.analyst.externalId.startsWith("FINSER-USER:");
+}
+
 export async function approveIphoneEnrollmentCase(input: {
   caseToken: IphoneEnrollmentCaseTokenPayload;
   grant: IphoneEnrollmentGrantSession;
   checklist: IphoneEnrollmentChecklist;
+  /** Server-only identity: never populated from the request body. */
+  nominalActor?: { id: number };
 }) {
   await ensureIphoneEnrollmentSchema();
   await ensureCreditDeviceReplacementSchema();
@@ -1412,6 +1422,15 @@ export async function approveIphoneEnrollmentCase(input: {
     expireStaleSolicitudes(),
   ]);
   return prisma.$transaction(async (transaction) => {
+    // Lock the current nominal account before the grant and case, so revoking
+    // its role/activity cannot race a confirmation through the private portal.
+    if (input.nominalActor) {
+      await assertMoraActor(transaction, {
+        id: input.nominalActor.id,
+        nombre: input.grant.analyst.name,
+        centralAdmin: false,
+      });
+    }
     const activeGrant = await readActivePortalAccessForSession(
       input.grant.session,
       transaction,
@@ -1429,6 +1448,18 @@ export async function approveIphoneEnrollmentCase(input: {
       throw new IphoneEnrollmentGrantError(
         "GRANT_NOT_ACTIVE",
         "La sesion del analista ya no esta activa."
+      );
+    }
+    if (
+      (isNominalIphoneEnrollmentGrant(activeGrant) && !input.nominalActor) ||
+      (input.nominalActor &&
+        (activeGrant.accessMode !== "GRANT" ||
+          activeGrant.issuedBy?.userId !== input.nominalActor.id ||
+          activeGrant.analyst.externalId !== `FINSER-USER:${input.nominalActor.id}`))
+    ) {
+      throw new IphoneEnrollmentGrantError(
+        "GRANT_NOT_ACTIVE",
+        "La sesión de enrolamiento no pertenece a tu cuenta."
       );
     }
     if (

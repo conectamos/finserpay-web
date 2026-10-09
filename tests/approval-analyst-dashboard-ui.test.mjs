@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("el sidebar del analista expone los ocho módulos bajo Aprobaciones", () => {
+test("el sidebar del analista incluye enrolamiento iPhone bajo Aprobaciones", () => {
   const source = read("app/dashboard/_components/admin-sidebar.tsx");
   const analystNavigation = source.slice(
     source.indexOf("isApprovalAnalystRole(rolUsuario)"),
@@ -15,6 +15,7 @@ test("el sidebar del analista expone los ocho módulos bajo Aprobaciones", () =>
     ["/dashboard/aprobaciones", "Aprobaciones"],
     ["/dashboard/aprobaciones/solicitudes", "Solicitudes"],
     ["/dashboard/aprobaciones/cambio-imei", "Cambio de IMEI"],
+    ["/dashboard/aprobaciones/enrolamiento", "Enrolamiento iPhone"],
     ["/dashboard/aprobaciones/firma-seguro", "Gestionar firma"],
     ["/dashboard/aprobaciones/liberar-consulta", "Liberar consulta"],
     ["/dashboard/aprobaciones/sadmin", "Creación Sadmin"],
@@ -38,6 +39,13 @@ test("las subrutas operativas exigen la cuenta nominal del analista", () => {
       /requireNominalApprovalDashboardAccess\(\)/,
     );
   }
+});
+
+test("el Centro del analista ofrece enrolamiento operativo sin herramientas administrativas", () => {
+  const center = read("app/dashboard/aprobaciones/centro/analyst-center.tsx");
+  const modules = center.slice(center.indexOf("const operationModules"), center.indexOf("const followUpModules"));
+  assert.match(modules, /href: "\/dashboard\/aprobaciones\/enrolamiento", title: "Enrolamiento iPhone"/);
+  assert.doesNotMatch(modules, /integraciones|access-grant|shared-access|administrar accesos/i);
 });
 
 test("la mesa del analista conserva el expediente completo y sus accesos operativos", () => {

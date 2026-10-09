@@ -15,6 +15,7 @@ import {
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import FinserBrand from "@/app/_components/finser-brand";
+import type { IphoneEnrollmentDiagnostics } from "@/lib/iphone-enrollment-diagnostics";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
   Badge,
@@ -71,6 +72,8 @@ type ApiResponse = {
   alreadyApproved?: boolean;
   analyst?: AuthorizedAnalyst;
   expiresAt?: string;
+  submitted?: { document: string; imei: string };
+  diagnostics?: IphoneEnrollmentDiagnostics;
 };
 
 const ANALYST_VERIFICATIONS = [
@@ -104,10 +107,14 @@ function formatDateTime(value: string) {
   }).format(date);
 }
 
-export default function IphoneEnrollmentPortal() {
+export default function IphoneEnrollmentPortal({
+  mode = "PUBLIC", initialDocument = "", initialImei = "",
+}: { mode?: "PUBLIC" | "ANALYST"; initialDocument?: string; initialImei?: string }) {
+  const nominal = mode === "ANALYST";
+  const apiBase = nominal ? "/api/aprobaciones/enrolamiento" : "/api/public/iphone-enrollment";
   const [accessState, setAccessState] = useState<AccessState>("checking");
-  const [document, setDocument] = useState("");
-  const [imei, setImei] = useState("");
+  const [document, setDocument] = useState(initialDocument);
+  const [imei, setImei] = useState(initialImei);
   const [analyst, setAnalyst] = useState<AuthorizedAnalyst | null>(null);
   const [caseToken, setCaseToken] = useState("");
   const [enrollmentCase, setEnrollmentCase] = useState<EnrollmentCase | null>(null);
@@ -118,6 +125,9 @@ export default function IphoneEnrollmentPortal() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [successOpen, setSuccessOpen] = useState(false);
   const [message, setMessage] = useState("");
+  const [diagnostic, setDiagnostic] = useState<{
+    submitted: { document: string; imei: string }; diagnostics: IphoneEnrollmentDiagnostics;
+  } | null>(null);
   const analystVerificationComplete = ANALYST_VERIFICATIONS.every(
     ({ key }) => analystVerifications[key]
   );
@@ -126,9 +136,9 @@ export default function IphoneEnrollmentPortal() {
     let cancelled = false;
 
     const authorize = async () => {
-      const fragment = new URLSearchParams(window.location.hash.slice(1));
+      const fragment = new URLSearchParams(nominal ? "" : window.location.hash.slice(1));
       const accessToken = fragment.get("acceso") || "";
-      if (window.location.hash) {
+      if (!nominal && window.location.hash) {
         window.history.replaceState(
           null,
           "",
@@ -137,7 +147,12 @@ export default function IphoneEnrollmentPortal() {
       }
 
       try {
-        const response = accessToken
+        const response = nominal
+          ? await fetch("/api/aprobaciones/enrolamiento/session", {
+              method: "POST", credentials: "same-origin", cache: "no-store",
+              headers: { "Content-Type": "application/json" }, body: "{}",
+            })
+          : accessToken
           ? await fetch("/api/public/iphone-enrollment/access", {
               method: "POST",
               credentials: "same-origin",
@@ -156,7 +171,7 @@ export default function IphoneEnrollmentPortal() {
           return;
         }
         setAccessState(response.status === 503 ? "unavailable" : "locked");
-        setMessage(data.error || "El enlace de acceso no es valido o vencio.");
+        setMessage(data.error || (nominal ? "No se pudo verificar tu cuenta. Actualiza la página." : "El enlace de acceso no es valido o vencio."));
       } catch {
         if (!cancelled) {
           setAccessState("unavailable");
@@ -169,10 +184,11 @@ export default function IphoneEnrollmentPortal() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [nominal]);
 
   const resetCase = () => {
     setEnrollmentCase(null);
+    setDiagnostic(null);
     setCaseToken("");
     setAnalystVerifications(EMPTY_ANALYST_VERIFICATIONS);
     setConfirmOpen(false);
@@ -188,13 +204,15 @@ export default function IphoneEnrollmentPortal() {
 
   const searchCase = async (event: FormEvent) => {
     event.preventDefault();
+    if (searching || approving || accessState !== "authorized") return;
     setSearching(true);
     setMessage("");
     setEnrollmentCase(null);
+    setDiagnostic(null);
     setCaseToken("");
     setAnalystVerifications(EMPTY_ANALYST_VERIFICATIONS);
     try {
-      const response = await fetch("/api/public/iphone-enrollment/cases", {
+      const response = await fetch(`${apiBase}/cases`, {
         method: "POST",
         credentials: "same-origin",
         cache: "no-store",
@@ -204,11 +222,14 @@ export default function IphoneEnrollmentPortal() {
       const data = await readJson(response);
       if (response.status === 401) {
         setAccessState("locked");
-        setMessage("El acceso venció. Vuelva a abrir el enlace compartido.");
+        setMessage(nominal ? "El acceso venció. Actualiza la página para verificar tu cuenta." : "El acceso venció. Vuelva a abrir el enlace compartido.");
         setConfirmOpen(false);
         return;
       }
       if (!response.ok || !data.item || !data.caseToken) {
+        if (nominal && data.diagnostics && data.submitted) {
+          setDiagnostic({ diagnostics: data.diagnostics, submitted: data.submitted });
+        }
         setMessage(data.error || "No se pudo consultar la solicitud.");
         return;
       }
@@ -235,7 +256,7 @@ export default function IphoneEnrollmentPortal() {
     setMessage("");
     try {
       const response = await fetch(
-        "/api/public/iphone-enrollment/cases/approve",
+        `${apiBase}/cases/approve`,
         {
           method: "POST",
           credentials: "same-origin",
@@ -250,7 +271,7 @@ export default function IphoneEnrollmentPortal() {
       const data = await readJson(response);
       if (response.status === 401) {
         setAccessState("locked");
-        setMessage("El acceso venció. Vuelva a abrir el enlace compartido.");
+        setMessage(nominal ? "El acceso venció. Actualiza la página para verificar tu cuenta." : "El acceso venció. Vuelva a abrir el enlace compartido.");
         setConfirmOpen(false);
         return;
       }
@@ -307,8 +328,8 @@ export default function IphoneEnrollmentPortal() {
       : 1;
 
   return (
-    <main className="min-h-svh bg-[var(--fp-client-bg)] text-[var(--fp-graphite)]">
-      <div className="border-b border-white/10 bg-[var(--fp-client-matte)] px-4 sm:px-6">
+    <main className={`${nominal ? "min-h-full" : "min-h-svh"} bg-[var(--fp-client-bg)] text-[var(--fp-graphite)]`}>
+      {!nominal ? <div className="border-b border-white/10 bg-[var(--fp-client-matte)] px-4 sm:px-6">
         <div className="mx-auto grid min-h-[68px] max-w-5xl grid-cols-[1fr_auto] items-center gap-4 sm:grid-cols-[1fr_auto_1fr]">
           <FinserBrand wordmarkOnly dark accentFinser showTagline={false} />
           <p className="hidden text-base font-black text-white sm:block">
@@ -331,7 +352,7 @@ export default function IphoneEnrollmentPortal() {
             <span />
           )}
         </div>
-      </div>
+      </div> : null}
 
       <div className="mx-auto w-full max-w-5xl px-4 py-7 sm:px-6 sm:py-8">
         <header className="max-w-3xl">
@@ -358,7 +379,7 @@ export default function IphoneEnrollmentPortal() {
               <h2 className="mt-4 text-2xl font-black">
                 {accessState === "unavailable"
                   ? "Módulo no disponible"
-                  : "Acceso compartido requerido"}
+                  : nominal ? "Cuenta personal requerida" : "Acceso compartido requerido"}
               </h2>
             </div>
             <EmptyState
@@ -366,11 +387,11 @@ export default function IphoneEnrollmentPortal() {
               title={
                 accessState === "unavailable"
                   ? "No se pudo habilitar el módulo"
-                  : "Abra el enlace compartido por FINSER PAY"
+                  : nominal ? "Verifica tu sesión de FINSER PAY" : "Abra el enlace compartido por FINSER PAY"
               }
               description={
                 message ||
-                "Este módulo no utiliza el inicio de sesión general. El equipo especializado entra siempre mediante el mismo acceso compartido."
+                (nominal ? "Ingresa con tu cuenta personal autorizada y actualiza la página." : "Este módulo no utiliza el inicio de sesión general. El equipo especializado entra siempre mediante el mismo acceso compartido.")
               }
             />
           </Card>
@@ -397,8 +418,9 @@ export default function IphoneEnrollmentPortal() {
                     value={document}
                     onChange={(event) => {
                       setDocument(event.target.value.replace(/\D/g, "").slice(0, 20));
-                      if (enrollmentCase) resetCase();
+                      resetCase();
                     }}
+                    disabled={searching || approving}
                     inputMode="numeric"
                     autoComplete="off"
                     placeholder="Número de cédula"
@@ -420,8 +442,9 @@ export default function IphoneEnrollmentPortal() {
                     value={imei}
                     onChange={(event) => {
                       setImei(event.target.value.replace(/\D/g, "").slice(0, 15));
-                      if (enrollmentCase) resetCase();
+                      resetCase();
                     }}
+                    disabled={searching || approving}
                     inputMode="numeric"
                     autoComplete="off"
                     placeholder="15 dígitos"
@@ -440,7 +463,7 @@ export default function IphoneEnrollmentPortal() {
                 <Button
                   type="submit"
                   className="mt-1 min-h-12 w-full !rounded-[var(--fp-radius-md)]"
-                  disabled={searching || document.length < 5 || imei.length !== 15}
+                  disabled={searching || approving || document.length < 5 || imei.length !== 15}
                 >
                   {searching ? "CONSULTANDO..." : "CONSULTAR SOLICITUD"}
                 </Button>
@@ -460,6 +483,8 @@ export default function IphoneEnrollmentPortal() {
             <Card className="min-h-[360px] p-5 sm:p-6">
               {searching ? (
                 <LoadingState label="Buscando la solicitud exacta..." />
+              ) : diagnostic ? (
+                <EnrollmentDiagnostics {...diagnostic} />
               ) : !enrollmentCase ? (
                 <EmptyState
                   title="Consulta pendiente"
@@ -924,6 +949,61 @@ function EnrollmentSuccessRow({
   );
 }
 
+function EnrollmentDiagnostics({ submitted, diagnostics }: {
+  submitted: { document: string; imei: string };
+  diagnostics: IphoneEnrollmentDiagnostics;
+}) {
+  const mismatch = diagnostics.kind === "MISMATCH";
+  const statusLabels: Record<string, string> = {
+    ABIERTO: "En proceso", CERRADO: "Cerrada", EXPIRADO: "Vencida",
+    APROBADO: "Aprobado", APROBADA: "Aprobada", ACTIVO: "Activo",
+    CANCELADO: "Cancelado", CANCELADA: "Cancelada", RECHAZADO: "Rechazado",
+    PENDING_ENROLLMENT: "Pendiente de enrolamiento", ENROLLMENT_APPROVED: "Enrolamiento aprobado",
+    COMPLETED: "Completado", CANCELLED: "Cancelado",
+  };
+  return <section aria-labelledby="enrollment-diagnostic-title">
+    <h2 id="enrollment-diagnostic-title" className="text-xl font-black text-black">
+      {mismatch ? "Los datos no coinciden" : diagnostics.candidates.length ? "Estado de la solicitud" : "Sin registros coincidentes"}
+    </h2>
+    <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
+      {mismatch ? "Estos son los registros encontrados por cédula o IMEI. Comprueba ambos datos antes de consultar nuevamente." : "Consulta la etapa actual y los datos registrados de la venta."}
+    </p>
+    <div className="mt-4 rounded-[var(--fp-radius-md)] bg-[var(--fp-bg)] p-4">
+      <h3 className="text-sm font-bold">Datos ingresados</h3>
+      <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+        <CaseDetail label="Cédula ingresada" value={submitted.document} />
+        <CaseDetail label="IMEI ingresado" value={submitted.imei} />
+      </dl>
+    </div>
+    <ul className="mt-4 divide-y divide-[var(--fp-border)]">
+      {diagnostics.candidates.map((item) => <li key={`${item.source}:${item.sourceId}`} className="py-4 first:pt-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-bold text-black">{item.solicitudNumero || item.creditoFolio || "Registro encontrado"}</h3>
+          <StatusPill tone="neutral">{statusLabels[item.status] || item.status}</StatusPill>
+        </div>
+        <p className="mt-2 text-sm font-bold">{item.clienteNombre}</p>
+        <p className="mt-2 text-sm">Etapa actual: <strong>{item.stepLabel}</strong></p>
+        {item.pendingReason ? <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">{item.pendingReason}</p> : null}
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <CaseDetail label="Cédula registrada" value={item.document || "Sin registro"} />
+          <CaseDetail label="IMEI registrado" value={item.imei || "Sin registro"} />
+          {item.creditoFolio ? <CaseDetail label="Crédito" value={item.creditoFolio} /> : null}
+          {item.platform ? <CaseDetail label="Plataforma" value={item.platform} /> : null}
+          {item.updatedAt ? <CaseDetail label="Última actualización" value={formatDateTime(item.updatedAt)} /> : null}
+        </dl>
+        {mismatch ? <p className="mt-3 text-sm font-bold text-[var(--fp-amber)]">
+          {item.matchedBy === "DOCUMENT" ? "La cédula coincide; el IMEI ingresado es diferente al registrado." : "El IMEI coincide; la cédula ingresada es diferente a la registrada."}
+        </p> : null}
+        {item.source === "APPLICATION" && item.solicitudId ? <a
+          href={`/dashboard/aprobaciones/solicitudes/D-${item.solicitudId}`}
+          className="mt-3 inline-flex min-h-10 items-center text-sm font-bold underline underline-offset-4"
+        >Ver solicitud</a> : null}
+      </li>)}
+    </ul>
+    {diagnostics.hasMore ? <p className="mt-3 text-sm text-[var(--fp-muted)]">Hay más registros coincidentes. Verifica los datos para acotar la consulta.</p> : null}
+  </section>;
+}
+
 function CaseDetail({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-h-[60px] rounded-[var(--fp-radius-sm)] border border-[var(--fp-border)] bg-[#fcfcfb] px-3 py-2">
@@ -969,7 +1049,7 @@ function ApprovedCase({
         <div className="flex items-start gap-3">
           <UserRoundCheck className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]" aria-hidden="true" />
           <p>
-            Confirmado por: <strong>Equipo especializado de enrolamiento</strong>
+            Confirmado por: <strong>{review.analystName}</strong>
           </p>
         </div>
         <div className="flex items-start gap-3">

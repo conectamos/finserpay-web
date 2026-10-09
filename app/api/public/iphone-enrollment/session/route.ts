@@ -5,7 +5,7 @@ import {
   IPHONE_ENROLLMENT_RESPONSE_HEADERS,
   verifyIphoneEnrollmentPortalSession,
 } from "@/lib/iphone-enrollment";
-import { validateIphoneEnrollmentPortalSession } from "@/lib/iphone-enrollment-storage";
+import { isNominalIphoneEnrollmentGrant, validateIphoneEnrollmentPortalSession } from "@/lib/iphone-enrollment-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     const grantSession = signedSession
       ? await validateIphoneEnrollmentPortalSession(signedSession)
       : null;
-    if (!grantSession) {
+    if (!grantSession || isNominalIphoneEnrollmentGrant(grantSession)) {
       return response(
         {
           ok: false,

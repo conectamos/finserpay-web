@@ -16,6 +16,7 @@ import {
 import {
   approveIphoneEnrollmentCase,
   consumeIphoneEnrollmentRateLimit,
+  isNominalIphoneEnrollmentGrant,
   IphoneEnrollmentApprovalError,
   IphoneEnrollmentGrantError,
   validateIphoneEnrollmentPortalSession,
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
     const grantSession = signedSession
       ? await validateIphoneEnrollmentPortalSession(signedSession)
       : null;
-    if (!signedSession || !grantSession) {
+    if (!signedSession || !grantSession || isNominalIphoneEnrollmentGrant(grantSession)) {
       return response({ ok: false, error: "Acceso no autorizado" }, 401);
     }
 

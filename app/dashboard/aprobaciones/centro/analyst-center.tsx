@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, ChevronRight, ClipboardList, Clock3, Database, Signature, History, LockKeyholeOpen, Search, Smartphone, Wallet, X } from "lucide-react";
+import { ArrowRight, ChevronRight, ClipboardList, Clock3, Database, Signature, History, LockKeyholeOpen, Search, ShieldCheck, Smartphone, Wallet, X } from "lucide-react";
 import { Badge, Button, EmptyState, Input, LoadingState, StatusPill } from "@/app/_components/finser-ui";
 import type { AnalystCenterCase, AnalystCenterDetailResponse, AnalystCenterSearchResponse } from "@/lib/analyst-center-types";
 import { isExcludedCarteraCreditState } from "@/lib/cartera-export";
@@ -12,6 +12,7 @@ import CreditWelcomeVoiceResult from "../credit-welcome-voice-result";
 const operationModules = [
   { href: "/dashboard/aprobaciones", title: "Aprobaciones", description: "Solicitudes y bienvenida", icon: ClipboardList },
   { href: "/dashboard/aprobaciones/cambio-imei", title: "Cambio de IMEI", description: "Actualiza el equipo asociado", icon: Smartphone },
+  { href: "/dashboard/aprobaciones/enrolamiento", title: "Enrolamiento iPhone", description: "Consulta y valida el enrolamiento", icon: ShieldCheck },
   { href: "/dashboard/aprobaciones/firma-seguro", title: "Gestionar firma", description: "Envíos y datos de contacto", icon: Signature },
   { href: "/dashboard/aprobaciones/sadmin", title: "Creación Sadmin", description: "Registro y número de crédito", icon: Database },
 ];
