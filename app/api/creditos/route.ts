@@ -1,3 +1,5 @@
+import type { DataCreditoIdentity } from "@/lib/datacredito/identity";
+import { getScopedDataCreditoCustomerIdentity, enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import { createHash } from "node:crypto";
 import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
@@ -1600,6 +1602,7 @@ export async function POST(req: Request) {
     const dataCreditoProvider = getDataCreditoPublicConfig();
     const dataCreditoRequired = dataCreditoProvider.enabled;
     let dataCreditoAssessment: DataCreditoAssessmentRow | null = null;
+    let recoveredCustomerIdentity: { original: DataCreditoIdentity; effective: DataCreditoIdentity; querySurname: string } | null = null;
 
     if (dataCreditoRequired) {
       if (!dataCreditoProvider.configured || !isDataCreditoAuditConfigured()) {
@@ -1662,10 +1665,14 @@ export async function POST(req: Request) {
         );
       }
 
+      recoveredCustomerIdentity = authoritativeSignedTerms ? await getScopedDataCreditoCustomerIdentity(assessmentId, { userId: creditOwner.usuarioId, sellerId: creditOwner.vendedorId, sedeId: creditOwner.sedeId, aliadoId: creditOwner.aliadoId }) : await enforceDataCreditoCustomerIdentity(body as unknown as Record<string, unknown>, {
+        userId: creditOwner.usuarioId, sellerId: creditOwner.vendedorId,
+        sedeId: creditOwner.sedeId, aliadoId: creditOwner.aliadoId,
+      }, false);
       dataCreditoAssessmentMatch = {
         assessmentId,
         documentNumber: clienteDocumento,
-        firstSurname: clientePrimerApellido,
+        firstSurname: recoveredCustomerIdentity?.querySurname || clientePrimerApellido,
         platform: dataCreditoPlatform,
         providerEnvironment: dataCreditoProvider.environment,
         userId: creditOwner.usuarioId,
@@ -3117,7 +3124,16 @@ export async function POST(req: Request) {
         titulo: CONTRACT_TEMPLATE_TITLE,
         vigenteDesde: "2026-04-21",
       },
+      dataCreditoIdentity: recoveredCustomerIdentity ? {
+        ...recoveredCustomerIdentity,
+        effective: { ...recoveredCustomerIdentity.effective,
+          names: clientePrimerNombre, firstSurname: clientePrimerApellido,
+          secondSurname: clienteSegundoApellido, documentType: clienteTipoDocumento,
+          documentNumber: clienteDocumento, fullName: clienteNombreFinal, missing: [],
+        },
+      } : null,
       cliente: {
+        segundoApellido: clienteSegundoApellido,
         nombre: clienteNombreFinal,
         primerNombre: clientePrimerNombre,
         primerApellido: clientePrimerApellido,
@@ -3880,6 +3896,7 @@ export async function POST(req: Request) {
         : null,
     });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_")) return NextResponse.json({ code: error.message, error: "Guarda y verifica la identidad de DataCrédito antes de continuar." }, { status: 409 });
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
     if (error instanceof SecondCreditAuthorizationError) {

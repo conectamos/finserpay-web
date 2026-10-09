@@ -1,3 +1,4 @@
+import { enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
@@ -420,7 +421,7 @@ export async function POST(req: Request) {
       sanitizeText(body.payloadScope).toUpperCase() === "DELIVERY_EVIDENCE"
         ? "DELIVERY_EVIDENCE"
         : "FULL";
-    const fields = extractDraftFields(payload);
+    let fields = extractDraftFields(payload);
     const draftId = parsePositiveId(body.id);
     const existingDraft = draftId
       ? await getActiveSolicitudCreditContext(draftId)
@@ -447,7 +448,13 @@ export async function POST(req: Request) {
       vendedorId: access.seller?.id || null,
       sedeId: access.user.sedeId,
     };
+    const signed = draftId ? await prisma.$queryRawUnsafe<Array<{ signed: boolean }>>('SELECT EXISTS (SELECT 1 FROM "FirmaSeguroProcess" WHERE "draftId" = $1 AND "completedAt" IS NOT NULL) AS "signed"', draftId) : [];
+    const recoveredIdentity = payloadScope === "FULL" && !signed[0]?.signed
+      ? await enforceDataCreditoCustomerIdentity(payload, { userId: owner.usuarioId, sellerId: owner.vendedorId, sedeId: owner.sedeId, aliadoId: existingDraft?.aliadoId ?? access.user.aliadoId ?? null }, true, { userId: access.user.id, sellerId: access.seller?.id || null })
+      : null;
+    fields = extractDraftFields(payload);
     const saved = await saveSolicitudDraft({
+      verifiedDataCreditoFirstSurname: recoveredIdentity?.effective.firstSurname,
       id: draftId,
       usuarioId: owner.usuarioId,
       vendedorId: owner.vendedorId,
@@ -497,6 +504,7 @@ export async function POST(req: Request) {
         { status: error.status }
       );
     }
+    if (error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_")) return NextResponse.json({ code: error.message, error: "Revisa los datos obtenidos de DataCrédito. Los datos primarios faltantes requieren revisión autorizada." }, { status: 409 });
     console.error("ERROR GUARDANDO BORRADOR:", error);
     const forbidden = error instanceof Error && error.message === "SOLICITUD_NO_AUTORIZADA";
     return NextResponse.json(

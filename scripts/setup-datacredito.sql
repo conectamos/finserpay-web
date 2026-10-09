@@ -1053,4 +1053,17 @@ CREATE INDEX IF NOT EXISTS "DataCreditoAdminAudit_retention_idx"
 CREATE INDEX IF NOT EXISTS "DataCreditoAdminAudit_assessment_created_idx"
   ON "DataCreditoAdminAccessAudit" ("assessmentId", "createdAt" DESC);
 
+CREATE TABLE IF NOT EXISTS "DataCreditoIdentityCorrection" (
+  "id" BIGSERIAL PRIMARY KEY,
+  "assessmentId" UUID NOT NULL REFERENCES "DataCreditoAssessment"("id") ON DELETE CASCADE,
+  "userId" INTEGER NOT NULL,
+  "sellerId" INTEGER,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "original" JSONB NOT NULL,
+  "previous" JSONB NOT NULL,
+  "effective" JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "DataCreditoIdentityCorrection_assessment_idx"
+  ON "DataCreditoIdentityCorrection" ("assessmentId", "id" DESC);
+
 COMMIT;
