@@ -311,6 +311,50 @@ test("voice configuration uses the authorized paisa voice with conversational mu
   assert.equal(config.updateAfterCreate.voice_model, "eleven_multilingual_v2");
 });
 
+test("identity recovery is bounded, scoped and uses one new literal response at a time", () => {
+  const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
+  const manifest = JSON.parse(readFileSync(new URL("draft-manifest.json", base), "utf8"));
+  const policy = manifest.identityBackend.identityClarification;
+  assert.equal(policy.maxToolConsultations, 3);
+  assert.equal(policy.maxClarificationsPerField, 1);
+  assert.equal(policy.includesPreverificationRepetitions, true);
+  assert.equal(policy.countsDocumentNotUnderstood, true);
+  assert.equal(policy.neverExpectedData, true);
+  assert.deepEqual(policy.mismatchPriority, ["customer_name", "customer_document"]);
+  assert.deepEqual(policy.documentNotUnderstoodPriority, ["customer_document"]);
+  assert.equal(policy.stopOnDocumentNotUnderstoodAfterDocumentClarification, true);
+  const recovery = prompt.slice(prompt.indexOf("RECUPERACIÓN DE IDENTIDAD"), prompt.indexOf("REGLA BLOQUEANTE PARA PRODUCTO"));
+  assert.match(recovery, /como máximo tres consultas/);
+  assert.match(recovery, /incluida la primera y las que devuelvan DOCUMENT_NOT_UNDERSTOOD/);
+  assert.match(recovery, /una aclaración del nombre y una aclaración de la cédula en toda la llamada/);
+  assert.match(recovery, /también cuentan las repeticiones pedidas antes de la primera consulta/);
+  assert.match(recovery, /Antes de pedir una aclaración, comprueba que queda una consulta disponible/);
+  assert.match(recovery, /Disculpe, no alcancé a confirmar sus datos\. ¿Me repite su nombre completo, por favor\?/);
+  assert.match(recovery, /Termina ese turno y espera el nuevo nombre completo/);
+  assert.match(recovery, /ese nuevo nombre literal, la última cédula literal comunicada por la persona y el mismo event_id/);
+  assert.match(recovery, /code=DOCUMENT_NOT_UNDERSTOOD, prioriza la aclaración de cédula/);
+  assert.match(recovery, /Si vuelve DOCUMENT_NOT_UNDERSTOOD o la cédula ya se había aclarado/);
+  assert.match(recovery, /end_call sin otra consulta ni condiciones financieras/);
+  assert.match(recovery, /No pidas repetir el nombre mientras el documento siga sin interpretarse/);
+  assert.match(recovery, /Solo si la nueva consulta devuelve ok=true, verificado=false y condiciones=null sin code=DOCUMENT_NOT_UNDERSTOOD, aplica la aclaración de nombre/);
+  assert.match(recovery, /esa nueva transcripción literal, el último nombre literal comunicado y el mismo event_id/);
+  assert.match(recovery, /cambia solo el dato que la persona acaba de repetir/);
+  assert.match(recovery, /no afirmes que el nombre o la cédula están mal ni reveles los registrados/);
+  assert.match(recovery, /Un error no permite otra consulta ni cambiar de evento/);
+  assert.match(recovery, /permite avanzar al plan, también si llega en la tercera consulta/);
+  assert.match(prompt, /identidad no verificada después de agotar la recuperación permitida/);
+  assert.match(prompt, /verificado=false y condiciones=null no es un error de herramienta/);
+  // The executable flow still withholds supplied financial conditions for either recoverable result.
+  for (const code of [undefined, "DOCUMENT_NOT_UNDERSTOOD"]) {
+    const result = runCode(identity, "chkId", {
+      verificar_identidad: { ok: true, verificado: false, code, condiciones: validConditions },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.verificado, false);
+    assert.equal(result.condiciones, null);
+  }
+});
+
 
 test("optional equipment speech is preserved only inside verified conditions", () => {
   for (const equipmentReference of [undefined, null, "Equipo de prueba de ciento veintiocho gigabytes"]) {
