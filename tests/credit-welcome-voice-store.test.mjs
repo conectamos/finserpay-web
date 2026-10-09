@@ -17,6 +17,7 @@ const [core, plan, snapshot, cartera, phone, speech] = await Promise.all([
 ]);
 const sample = (id = 1, overrides = {}) => ({ id, folio: "FC-TEST-" + id,
   clienteNombre: "ANA MARÍA PRUEBA", clienteDocumento: "00123456", clienteTelefono: "3000000001",
+  referenciaEquipo: null, equipoMarca: null, equipoModelo: null,
   estado: "INSCRITO", pazYSalvoEmitidoAt: null, cuotaInicial: 200, montoCredito: 300, valorCuota: 100,
   plazoMeses: 3, frecuenciaPago: "QUINCENAL", fechaPrimerPago: "2026-10-17", fechaProximoPago: "2026-10-17",
   contratoSnapshot: null, planCapitalVigente: null, abonos: [],
@@ -41,6 +42,9 @@ async function fixture(t, { credits = [sample()], enabled = true, failTransactio
     credito: { findUnique: async ({ where, select }) => {
       assert.equal(select.amortizacion.select.numeroCuotas, true);
       assert.equal(select.abonos.where.estado.not, "ANULADO");
+      assert.equal(select.referenciaEquipo, true);
+      assert.equal(select.equipoMarca, true);
+      assert.equal(select.equipoModelo, true);
       queries++;
       return (await connection.query('SELECT "data" FROM "Credito" WHERE "id"=$1', [where.id])).rows[0]?.data ?? null;
     } },
@@ -119,6 +123,103 @@ test("different final installment is preserved, with installmentsEqual=false", a
   const snap = (await f.rows())[0].snapshot;
   assert.equal(snap.installmentsEqual, false);
   assert.deepEqual(snap.installmentAmounts, [100, 100, 99.5]);
+});
+
+test("equipment reference prefers the purchased contractual equipment and reaches verified conditions only", async t => {
+  const f = await fixture(t, { credits: [sample(1, {
+    referenciaEquipo: "Samsung Galaxy A56", equipoMarca: "Samsung", equipoModelo: "Galaxy A56",
+    contratoSnapshot: { equipo: { referencia: "  iPhone 16   Pro 256GB  ", marca: "Apple", modelo: "iPhone 15" } },
+  })] });
+  const { eventId } = await f.enqueue();
+  const persisted = (await f.rows())[0].snapshot;
+  assert.equal(persisted.equipmentReference, "iPhone 16 Pro 256GB");
+  assert.equal(persisted.initialPayment, 200);
+  assert.equal(persisted.installmentAmount, 100);
+  assert.deepEqual(persisted.calendar, ["2026-10-17", "2026-11-02", "2026-11-17"]);
+  const rejected = await f.identity(eventId);
+  assert.equal(rejected.verificado, false);
+  assert.equal("condiciones" in rejected, false);
+  await f.store.claimPendingCreditWelcomeVoice();
+  const verified = await f.identity(eventId);
+  assert.equal(verified.verificado, true);
+  assert.equal(verified.condiciones.equipmentReference, "iPhone 16 Pro 256GB");
+  assert.equal(verified.condiciones.speech.equipmentReference, speech.welcomeVoiceEquipmentSpoken(persisted.equipmentReference));
+});
+
+test("equipment reference falls back only to registered labels, preserving contractual brand/model when present", async t => {
+  const f = await fixture(t);
+  const build = fields => f.loaded.buildCreditWelcomeVoiceSnapshot(sample(1, fields));
+  assert.equal(build({ referenciaEquipo: "Galaxy S24 128GB", equipoMarca: "Samsung", equipoModelo: "Galaxy A55" }).equipmentReference,
+    "Galaxy S24 128GB");
+  assert.equal(build({ equipoMarca: " Samsung  ", equipoModelo: " Galaxy A55   256GB " }).equipmentReference,
+    "Samsung Galaxy A55 256GB");
+  assert.equal(build({ equipoModelo: "iPhone 16", equipoMarca: null }).equipmentReference, "iPhone 16");
+  assert.equal(build({ referenciaEquipo: "Otro equipo actual", contratoSnapshot: { equipo: { marca: "Apple", modelo: "iPhone 16" } } }).equipmentReference,
+    "Apple iPhone 16");
+  assert.equal(build({ referenciaEquipo: "   ", equipoMarca: " ", equipoModelo: null }).equipmentReference, null);
+  assert.equal(build({}).equipmentReference, null);
+});
+
+test("equipment reference is bounded and never includes controls or unsafe markup instead of substituting a different purchase", async t => {
+  const f = await fixture(t);
+  const build = fields => f.loaded.buildCreditWelcomeVoiceSnapshot(sample(1, fields));
+  for (const reference of ["iPhone\n16", "Galaxy\u0085A55", "iPhone\u0000 16", "<modelo>", "x".repeat(241)]) {
+    assert.equal(build({ referenciaEquipo: reference }).equipmentReference, null);
+    assert.equal(build({ referenciaEquipo: "Otro equipo", contratoSnapshot: { equipo: { referencia: reference } } }).equipmentReference, null);
+  }
+  assert.equal(build({ referenciaEquipo: "x".repeat(240) }).equipmentReference, "x".repeat(240));
+});
+
+test("changed purchased equipment blocks postclaim dispatch and discloses no conditions", async t => {
+  const credits = [
+    sample(1, { contratoSnapshot: { equipo: { referencia: "iPhone 16 128GB" } } }),
+    sample(2, { equipoMarca: "Samsung", equipoModelo: "Galaxy A55" }),
+    sample(3),
+  ];
+  const f = await fixture(t, { credits });
+  for (const credit of credits) await f.enqueue(credit.id);
+  const claims = await f.store.claimPendingCreditWelcomeVoice();
+  await f.update(1, { contratoSnapshot: { equipo: { referencia: "iPhone 17 128GB" } } });
+  await f.update(2, { equipoModelo: "Galaxy A56" });
+  await f.update(3, { referenciaEquipo: "Equipo ahora registrado" });
+  for (const claim of claims) {
+    assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(claim.eventId), null);
+    const row = (await f.rows()).find(row => row.id === claim.eventId);
+    assert.equal(row.status, "SKIPPED");
+    assert.equal(row.resultCode, "CONDITIONS_CHANGED");
+    const identity = await f.identity(claim.eventId, { creditId: claim.creditId });
+    assert.equal(identity.verificado, false);
+    assert.equal("condiciones" in identity, false);
+  }
+});
+
+test("legacy completed test without equipment reference can create a fresh child without changing its parent", async t => {
+  const f = await fixture(t, { credits: [sample(1, { referenciaEquipo: "iPhone 16 256GB" })] });
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  await f.db.query(`UPDATE "CreditWelcomeVoiceEvent" SET "snapshot"="snapshot"-'equipmentReference' WHERE "id"=$1::uuid`, [original.eventId]);
+  await f.result(original.eventId);
+  const before = (await f.rows())[0];
+  const child = await f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: original.eventId });
+  assert.notEqual(child.eventId, original.eventId);
+  assert.equal(child.snapshot.equipmentReference, "iPhone 16 256GB");
+  assert.equal((await f.store.prepareCreditWelcomeVoiceDispatch(child.eventId)).snapshot.equipmentReference, "iPhone 16 256GB");
+  const verified = await f.identity(child.eventId);
+  assert.equal(verified.verificado, true);
+  assert.equal(verified.condiciones.equipmentReference, "iPhone 16 256GB");
+  assert.deepEqual((await f.rows())[0], before);
+});
+
+test("a completed test with recorded equipment reference cannot be repeated after purchase changes", async t => {
+  const f = await fixture(t, { credits: [sample(1, { referenciaEquipo: "iPhone 16 128GB" })] });
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  await f.result(original.eventId);
+  const before = (await f.rows())[0];
+  await f.update(1, { referenciaEquipo: "iPhone 17 128GB" });
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: original.eventId }),
+    error => error.code === "CONTROLLED_TEST_SNAPSHOT_CHANGED");
+  assert.deepEqual(await f.rows(), [before]);
 });
 
 test("individual mass creation without amortization uses stored contract conditions and dates", async t => {

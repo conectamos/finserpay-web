@@ -16,6 +16,7 @@ export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | 
   "FAILED" | "UNKNOWN" | "CANCELLED" | "SKIPPED";
 export type CreditWelcomeVoiceSnapshot = {
   creditId: number; folio: string; name: string; spokenName?: string; document: string; phone: string;
+  equipmentReference?: string | null;
   initialPayment: number; installmentCount: number; installmentAmount: number;
   installmentsEqual: boolean; installmentAmounts: number[];
   frequency: string; firstDueDate: string; calendar: string[];
@@ -54,6 +55,7 @@ export async function ensureCreditWelcomeVoiceSchema() {
 
 const creditSelect = {
   id: true, folio: true, clienteNombre: true, clienteDocumento: true, clienteTelefono: true,
+  referenciaEquipo: true, equipoMarca: true, equipoModelo: true,
   estado: true, pazYSalvoEmitidoAt: true, cuotaInicial: true, montoCredito: true, valorCuota: true,
   plazoMeses: true, frecuenciaPago: true, fechaPrimerPago: true, fechaProximoPago: true,
   contratoSnapshot: true, planCapitalVigente: true,
@@ -83,6 +85,18 @@ function number(value: unknown): number | null {
   const result = Number(value);
   return Number.isFinite(result) ? result : null;
 }
+function equipmentReferenceText(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 240 || /[\p{Cc}\p{Cf}<>]/u.test(value)) return null;
+  return value.trim().replace(/\s+/g, " ") || null;
+}
+function registeredEquipmentReference(contractual: string | null, credit: Credit): string | null {
+  // A present contractual label is authoritative; an invalid one is omitted,
+  // rather than replaced with a potentially different current purchase.
+  const candidate = [contractual, credit.referenciaEquipo,
+    [credit.equipoMarca, credit.equipoModelo].filter(value => typeof value === "string" && value.trim()).join(" ")]
+    .find(value => typeof value === "string" && value.trim());
+  return equipmentReferenceText(candidate);
+}
 
 /** Conditions come from the committed amortization/contract, never from caller input. */
 export function buildCreditWelcomeVoiceSnapshot(credit: Credit): CreditWelcomeVoiceSnapshot | null {
@@ -91,6 +105,7 @@ export function buildCreditWelcomeVoiceSnapshot(credit: Credit): CreditWelcomeVo
   const document = normalizeWelcomeVoiceDocument(credit.clienteDocumento);
   const phone = normalizeColombianMobile(credit.clienteTelefono);
   const contractual = extractCreditFactorySnapshotDetails(credit.contratoSnapshot).paso2;
+  const equipmentReference = registeredEquipmentReference(contractual.equipoReferencia, credit);
   const initialPayment = number(contractual.cuotaInicial ?? credit.cuotaInicial);
   const installmentCount = number(credit.amortizacion?.numeroCuotas ?? contractual.numeroCuotas ?? credit.plazoMeses);
   const installmentAmount = number(credit.amortizacion?.cuotaComercial ?? contractual.valorCuotaComercial ?? contractual.valorCuota ?? credit.valorCuota);
@@ -118,7 +133,7 @@ export function buildCreditWelcomeVoiceSnapshot(credit: Credit): CreditWelcomeVo
   const calendar = rows.map(row => row.date!);
   const installmentAmounts = rows.map(row => row.amount!);
   if (firstDueDate && firstDueDate !== calendar[0]) return null;
-  return { creditId: credit.id, folio: credit.folio, name, spokenName, document, phone, initialPayment,
+  return { creditId: credit.id, folio: credit.folio, name, spokenName, document, phone, equipmentReference, initialPayment,
     installmentCount, installmentAmount, frequency, firstDueDate: calendar[0], calendar,
     installmentAmounts, installmentsEqual: installmentAmounts.every(amount => amount === installmentAmounts[0]) };
 }
@@ -131,6 +146,12 @@ function sameSnapshot(first: CreditWelcomeVoiceSnapshot, second: CreditWelcomeVo
   // JSONB does not preserve object-key order. Compare the explicitly defined DTO.
   // spokenName is display-only, validated against name; older snapshots omit it.
   if ([first, second].some(value => value.spokenName !== undefined && normalizeWelcomeVoiceName(value.spokenName) !== value.name)) return false;
+  // Legacy snapshots omitted the label. Once recorded, purchase changes must
+  // invalidate dispatch/repeat, including a label added to a recorded null.
+  if ([first, second].some(value => value.equipmentReference !== undefined && value.equipmentReference !== null &&
+    equipmentReferenceText(value.equipmentReference) !== value.equipmentReference)) return false;
+  if (first.equipmentReference !== undefined && second.equipmentReference !== undefined &&
+    first.equipmentReference !== second.equipmentReference) return false;
   const values = (value: CreditWelcomeVoiceSnapshot) => [value.creditId, value.folio, value.name, value.document, value.phone,
     value.initialPayment, value.installmentCount, value.installmentAmount, value.installmentsEqual,
     value.installmentAmounts, value.frequency, value.firstDueDate, value.calendar];
