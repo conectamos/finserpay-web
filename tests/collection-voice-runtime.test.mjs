@@ -17,6 +17,11 @@ function setup({verified=false,expired=false,persistenceFails=false}={}) {
     $executeRawUnsafe:async(sql,...args)=>{if(sql.includes('"identityVerifiedAt"=CURRENT_TIMESTAMP'))state.identityVerifiedAt=new Date();if(sql.includes('"managementId"=$2'))state.managementId=args[1];return 1;},
     $queryRawUnsafe:async(sql,...args)=>{
       if(sql.includes('SELECT * FROM "CollectionVoiceAttempt"'))return [state];
+      if(sql.includes('"callbackHash" IS NULL RETURNING')){
+        if(state.callbackHash)return [];
+        state.callbackHash=args[3];state.outcome=JSON.parse(args[2]);return [{id:state.id}];
+      }
+      if(sql.includes('SELECT "callbackHash"'))return [{callbackHash:state.callbackHash}];
       if(sql.includes('"identityAttempts"="identityAttempts"+1'))return state.identityAttempts<3?[{identityAttempts:++state.identityAttempts}]:[];
       throw new Error('Unexpected query '+sql);
     },
@@ -33,7 +38,7 @@ function setup({verified=false,expired=false,persistenceFails=false}={}) {
   const loaded={exports:{}};
   runInNewContext(code,{module:loaded,exports:loaded.exports,require:n=>{assert.ok(n in modules,n);return modules[n];},process:{env:{FINSERPAY_COBRANZA_API_TOKEN:secret,FINSERPAY_COBRANZA_AGENT_ID:'synthetic-agent',FINSERPAY_COBRANZA_ACTOR_ID:'51'}},Buffer,Uint8Array,URL,URLSearchParams,Date,Request,Response,AbortSignal,fetch:()=>{throw new Error('No external calls allowed in tests');}});
   const call=async(body,auth=secret)=>loaded.exports.collectionVoiceOperation(new Request('https://example.test',{method:'POST',headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:JSON.stringify({event_token:policy.collectionSessionToken(state.id,secret),...body})}));
-  return{call,state,writes};
+  return{call,state,writes,token:policy.collectionSessionToken(state.id,secret)};
 }
 test('la autorización y la firma de sesión son obligatorias',async()=>{
   const s=setup();assert.equal((await s.call({action:'identity'},'wrong')).status,401);
@@ -68,4 +73,13 @@ test('un acuerdo exige el campo de confirmación utilizado por la herramienta de
   assert.equal(s.writes[0].agreementDate,'2026-10-20');
   assert.equal(s.writes[0].agreementAmount,50000);
   assert.equal(s.writes[0].managementStatus,'ACUERDO_PAGO');
+});
+
+test('el cierre registra medios en cartera una sola vez y no acepta otro cierre contradictorio',async()=>{
+  const s=setup({verified:true});
+  const call={call_id:'synthetic-call-81',dynamic_variables:{event_token:s.token},disconnection_reason:'user_hangup',call_analysis:{custom_analysis_data:{resultado_gestion:'MEDIOS_PAGO',observacion_gestion:'Se compartió el portal de pagos.'}}};
+  const first=await(await s.call({action:'postcall',call})).json();
+  assert.equal(first.registrado,true);assert.equal(s.writes[0].result,'MEDIOS_PAGO');
+  const repeated=await(await s.call({action:'postcall',call})).json();assert.equal(repeated.duplicate,true);assert.equal(s.writes.length,1);
+  assert.equal((await s.call({action:'postcall',call:{...call,disconnection_reason:'dial_no_answer'}})).status,409);
 });
