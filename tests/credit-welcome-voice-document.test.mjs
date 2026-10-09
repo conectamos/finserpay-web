@@ -30,6 +30,37 @@ test("a sequence of spoken digits preserves every digit and leading zero", () =>
   assert.equal(parse(Array(16).fill("uno").join(" ")), null);
 });
 
+test("sentence punctuation does not change numeric formatting or spoken digits", () => {
+  for (const [raw, expected] of [
+    ["00.123.456-78.", "0012345678"], ["12345!", "12345"],
+    ["12.345.678?", "12345678"], ["cero cero uno dos tres cuatro cinco…", "0012345"],
+    ["uno dos tres cuatro cinco.", "12345"],
+  ]) assert.equal(parse(raw), expected, raw);
+  for (const raw of ["12345.67.", "12345,67!", "12.34?", "-12345678.", "12..345.678…",
+    "doce. trescientos. noventa.", "uno dos tres cuatro equis."]) {
+    assert.equal(parse(raw), null, raw);
+  }
+});
+
+test("uniquely decomposable spoken fragments accept the actual call transcripts without guessing", () => {
+  for (const [raw, expected] of [
+    ["Treinta y ocho, uno cuarenta y cuatro, cero nueve dos.", "38144092"],
+    ["treinta y ocho, ciento cuarenta y cuatro, cero noventa y dos.", "38144092"],
+    ["treinta y ocho ciento cuarenta y cuatro cero noventa y dos", "38144092"],
+    ["treinta y ocho ciento cuarenta y cuatro cero noventa y dos.", "38144092"],
+    ["doce; uno cuarenta y cuatro; cero noventa y dos", "12144092"],
+    ["treinta, ocho, cero nueve dos", "308092"],
+    ["diez once doce", "101112"],
+    ["cero uno noventa y dos; ciento cuarenta; treinta", "019214030"],
+    ["cien, uno, doscientos, noventa", "100120090"],
+  ]) assert.equal(parse(raw), expected, raw);
+  for (const raw of ["doscientos cuarenta y cuatro veinte", "doce; doscientos cuarenta y cuatro veinte",
+    "treinta ocho; ciento cuarenta y cuatro; cero noventa y dos", "veinte dos; ciento cuarenta y cuatro; cero noventa y dos",
+    "treinta y ocho, uno cuarenta y cuatro, cero equis dos."]) {
+    assert.equal(parse(raw), null, raw);
+  }
+});
+
 test("explicit cardinal blocks accept 0–999 and retain leading zeroes inside a block", () => {
   for (const [raw, expected] of [
     ["treinta y ocho, ciento cuarenta y cuatro, cero noventa y dos", "38144092"],
@@ -56,7 +87,6 @@ test("numeric and spoken blocks may mix only across explicit comma or semicolon 
 
 test("ambiguous grouping, unknown words, unsupported cardinals and malformed separators fail closed", () => {
   for (const raw of [
-    "treinta y ocho ciento cuarenta y cuatro cero noventa y dos",
     "treinta ocho; ciento cuarenta cuatro; noventa dos",
     "treinta y cero; ciento cuarenta y cuatro; noventa y dos",
     "ciento; cuarenta; cuatro", "cien uno; doscientos; noventa",
@@ -66,7 +96,6 @@ test("ambiguous grouping, unknown words, unsupported cardinals and malformed sep
     "mi cédula es uno dos tres cuatro cinco", "uno dos tres cuatro equis", "constructor; doce; trescientos",
     "doce;; trescientos; noventa", ";doce; trescientos; noventa", "doce; trescientos; noventa;",
     "doce,; trescientos; noventa", "doce. trescientos. noventa", "doce / trescientos / noventa",
-    "cero uno noventa y dos; ciento cuarenta; treinta", "diez once doce",
   ]) assert.equal(parse(raw), null, raw);
 });
 

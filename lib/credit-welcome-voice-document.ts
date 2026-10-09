@@ -48,6 +48,34 @@ function spokenBlock(value: string): string | null {
   return number === null ? null : "0".repeat(zeroes) + String(number);
 }
 
+function unambiguousSpokenBlock(value: string): string | null {
+  const whole = spokenBlock(value);
+  if (whole !== null) return whole;
+  if (!/^[a-z]+(?: [a-z]+)*$/.test(value)) return null;
+  const words = value.split(" ");
+  // A missing "y" or "ciento" could change the number, not merely its grouping.
+  for (let index = 0; index < words.length - 1; index++) {
+    const unit = lookup(digitWords, words[index + 1]);
+    const isTen = words[index] === "veinte" || lookup(tens, words[index]) !== undefined;
+    if ((isTen && unit !== undefined && unit !== "0") || words[index] === "cien") return null;
+  }
+  // Keep at most two distinct outputs at each boundary: two prove ambiguity.
+  // No expected document or desired length participates in choosing a parse.
+  const outputs: Set<string>[] = Array.from({ length: words.length + 1 }, () => new Set<string>());
+  outputs[words.length].add("");
+  for (let start = words.length - 1; start >= 0; start--) {
+    for (let end = start + 1; end <= words.length && outputs[start].size < 2; end++) {
+      const prefix = spokenBlock(words.slice(start, end).join(" "));
+      if (prefix === null) continue;
+      for (const suffix of outputs[end]) {
+        outputs[start].add(prefix + suffix);
+        if (outputs[start].size === 2) break;
+      }
+    }
+  }
+  return outputs[0].size === 1 ? outputs[0].values().next().value ?? null : null;
+}
+
 function numericDocument(value: string): string | null {
   if (value.includes(".") && value.includes(",")) return null;
   // Dots/commas mean grouping only when all trailing groups contain three digits.
@@ -61,14 +89,14 @@ function numericDocument(value: string): string | null {
 export function parseWelcomeVoiceSpokenDocument(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.length > 240 || /[\p{Cc}\p{Cf}]/u.test(raw)) return null;
   const value = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("es-CO").trim().replace(/\s+/g, " ");
+    .toLocaleLowerCase("es-CO").trim().replace(/\s+/g, " ").replace(/[.!?…]+$/u, "").trim();
   if (!value) return null;
   let document: string | null;
   if (/^[\d .,-]+$/.test(value)) {
     document = numericDocument(value);
   } else {
     const blocks = value.split(/[,;]/).map(block => block.trim());
-    const parsed = blocks.map(spokenBlock);
+    const parsed = blocks.map(unambiguousSpokenBlock);
     document = parsed.some(block => block === null) ? null : parsed.join("");
   }
   return document !== null && /^\d{5,15}$/.test(document) ? document : null;
