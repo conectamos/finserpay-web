@@ -390,6 +390,17 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     return (await db.$queryRawUnsafe<OperatorRequestRow[]>(`SELECT "requestId"::text,"eventId"::text,"actorId","origin","destinationPhone"
       FROM "CreditWelcomeVoiceOperatorRequest" WHERE "${field}"=$1::uuid ${lock ? "FOR UPDATE" : ""}`, id))[0] ?? null;
   }
+  async function getCreditWelcomeVoiceOperatorRequest(input: { creditId: number; requestId: string; actorId: number }):
+    Promise<{ eventId: string; status: CreditWelcomeVoiceStatus } | null> {
+    if (!validCreditId(input.creditId) || !validCreditId(input.actorId) || !uuid.test(input.requestId)) {
+      throw new CreditWelcomeVoiceStoreError("INVALID_OPERATOR_CALL", "Solicitud de llamada inválida.", 400);
+    }
+    const rows = await database.$queryRawUnsafe<Array<{ eventId: string; status: CreditWelcomeVoiceStatus }>>(`SELECT e."id"::text AS "eventId",e."status"
+      FROM "CreditWelcomeVoiceOperatorRequest" r JOIN "CreditWelcomeVoiceEvent" e ON e."id"=r."eventId"
+      WHERE r."requestId"=$1::uuid AND e."creditoId"=$2 AND r."actorId"=$3 AND r."origin"='UI'
+        AND e."source"='OPERATOR_REQUEST' LIMIT 1`, input.requestId, input.creditId, input.actorId);
+    return rows[0] ?? null;
+  }
   async function getCreditWelcomeVoiceOperatorAvailability(creditId: number): Promise<{ canCall: boolean; phone: string | null; reason?: string }> {
     if (!validCreditId(creditId)) throw new CreditWelcomeVoiceStoreError("INVALID_OPERATOR_CALL", "Crédito inválido.", 400);
     const credit = await readCredit(database, creditId), snapshot = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
@@ -989,7 +1000,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     });
   }
   return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceControlledTest, prepareCreditWelcomeVoiceOperatorCall,
-    getCreditWelcomeVoiceOperatorAvailability, prepareCreditWelcomeVoiceDispatch,
+    getCreditWelcomeVoiceOperatorAvailability, getCreditWelcomeVoiceOperatorRequest, prepareCreditWelcomeVoiceDispatch,
     ensureVoiceReviewCampaign, getVoiceReviewCampaignDispatchSlot, claimVoiceReviewCampaign, prepareVoiceReviewCampaign,
     markCreditWelcomeVoiceDispatchAccepted, markCreditWelcomeVoiceDispatchUnknown, markCreditWelcomeVoiceDispatchFailed,
     verifyCreditWelcomeVoiceIdentity, saveCreditWelcomeVoiceResult, listCreditWelcomeVoiceCallsForCredit };
@@ -1005,6 +1016,7 @@ export const prepareVoiceReviewCampaign = store.prepareVoiceReviewCampaign;
 export const prepareCreditWelcomeVoiceDispatch = store.prepareCreditWelcomeVoiceDispatch;
 export const prepareCreditWelcomeVoiceOperatorCall = store.prepareCreditWelcomeVoiceOperatorCall;
 export const getCreditWelcomeVoiceOperatorAvailability = store.getCreditWelcomeVoiceOperatorAvailability;
+export const getCreditWelcomeVoiceOperatorRequest = store.getCreditWelcomeVoiceOperatorRequest;
 export const markCreditWelcomeVoiceDispatchAccepted = store.markCreditWelcomeVoiceDispatchAccepted;
 export const markCreditWelcomeVoiceDispatchUnknown = store.markCreditWelcomeVoiceDispatchUnknown;
 export const markCreditWelcomeVoiceDispatchFailed = store.markCreditWelcomeVoiceDispatchFailed;
