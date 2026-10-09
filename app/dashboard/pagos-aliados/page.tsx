@@ -15,7 +15,7 @@ export default async function PagosAliadosPage() {
 
   return (
     <>
-      <FinserNavigation admin adminCentral={adminCentral} nombreUsuario={session.nombre} rolUsuario={session.rolNombre} variant="requests" />
+      <FinserNavigation admin adminCentral={adminCentral} nombreUsuario={session.nombre} rolUsuario={session.rolNombre} variant="settlement" />
       <AllyPaymentsConsole
         initialAdminCentral={adminCentral}
         initialAllyId={Number.isInteger(allyId) && allyId > 0 ? allyId : null}

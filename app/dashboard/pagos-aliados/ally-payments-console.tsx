@@ -2,12 +2,14 @@
 
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Download,
-  Filter,
+  Info,
   Printer,
   RefreshCw,
   RotateCcw,
@@ -38,7 +40,7 @@ import {
   type AllyPaymentIntermediationAdjustment,
 } from "@/lib/ally-payments-core";
 
-import { PendingPaymentsView, ReceivedPaymentsView } from "./ally-payment-views";
+import { PendingPaymentsView, PlatformIcon, ReceivedPaymentsView } from "./ally-payment-views";
 import styles from "./ally-payments-console.module.css";
 import {
   emptyAllyPaymentViewFilters, filterPendingAllyCollections, filterPendingAllyCredits,
@@ -572,6 +574,7 @@ function SummaryGrid({
 }
 
 type IntermediationEditor = {
+  disabled?: boolean;
   basePercentages: Record<string, number>;
   changedKeys: ReadonlySet<string>;
   errors: Record<string, string>;
@@ -582,9 +585,11 @@ type IntermediationEditor = {
 function IntermediationField({
   editor,
   item,
+  compact = false,
 }: {
   editor: IntermediationEditor | null;
   item: PaymentCreditItem;
+  compact?: boolean;
 }) {
   const creditId = itemCreditId(item);
   if (!editor || !creditId) {
@@ -600,11 +605,11 @@ function IntermediationField({
   const changed = editor.changedKeys.has(key);
 
   return (
-    <div className="flex min-w-28 flex-col items-end gap-1">
-      <div className="relative w-28">
+    <div className={compact ? styles.intermediationField : "flex min-w-28 flex-col items-end gap-1"}>
+      <div className={compact ? styles.percentageInput : "relative w-28"}>
         <Input
           className={[
-            "!h-10 !pr-8 text-right tabular-nums",
+            compact ? "tabular-nums" : "!h-10 !pr-8 text-right tabular-nums",
             changed ? "!border-[#9cc84b] !bg-[var(--fp-lime-soft)]" : "",
           ].join(" ")}
           type="number"
@@ -616,12 +621,13 @@ function IntermediationField({
           onChange={(event) => editor.onChange(creditId, event.target.value)}
           aria-label={`Porcentaje de intermediacion del credito ${item.imei || creditId}`}
           aria-invalid={Boolean(error)}
+          disabled={editor.disabled}
         />
-        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-[var(--fp-muted)]">
+        <span className={compact ? styles.percentageSymbol : "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-[var(--fp-muted)]"}>
           %
         </span>
       </div>
-      {changed ? (
+      {changed && !compact ? (
         <span className="text-[10px] font-bold text-[#5c7a13]">
           Base {formatPercent(basePercentage)}
         </span>
@@ -632,6 +638,170 @@ function IntermediationField({
         </span>
       ) : null}
     </div>
+  );
+}
+
+function PaymentInfo({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <details className={styles.info}>
+      <summary aria-label={label}>
+        <Info size={16} aria-hidden="true" />
+      </summary>
+      <div>{children}</div>
+    </details>
+  );
+}
+
+function SettlementSummary({
+  summary,
+  totalPagarCreditos,
+  totalRecaudosAliado,
+}: {
+  summary: PaymentSummary | null;
+  totalPagarCreditos: number;
+  totalRecaudosAliado: number;
+}) {
+  const balance = calculateAllySettlementBalance(totalPagarCreditos, totalRecaudosAliado);
+  const direction = balance.saldoNeto < 0
+    ? "El aliado paga a FINSER PAY"
+    : balance.saldoNeto === 0
+      ? "Sin saldo por transferir"
+      : "FINSER PAY paga al aliado";
+
+  return (
+    <section className={styles.previewSummary} aria-label="Resumen de liquidación">
+      {(["IPHONE", "ANDROID"] as const).map((platform) => {
+        const bucket = summary?.[platform];
+        const count = numberValue(bucket?.numeroCreditos);
+        return (
+          <Card className={styles.productCard} key={platform}>
+            <div className={styles.productHeading}>
+              <PlatformIcon platform={platform} />
+              <h2>{platformLabel(platform)}</h2>
+              <span className={styles.countBadge}>{formatNumber(count)} créditos</span>
+            </div>
+            <dl className={styles.productAmounts}>
+              <div><dt>Valor venta</dt><dd>{formatMoney(summaryValue(bucket, "totalValorVenta", "valorVenta"))}</dd></div>
+              <div><dt>Inicial</dt><dd>{formatMoney(summaryValue(bucket, "totalCuotaInicial", "cuotaInicial"))}</dd></div>
+              <div><dt>Crédito autorizado</dt><dd>{formatMoney(summaryValue(bucket, "totalCreditoAutorizado", "creditoAutorizado"))}</dd></div>
+              <div><dt>Intermediación</dt><dd>{count ? <>{formatPercent(bucket?.porcentajeIntermediacion)} <span>·</span> {formatMoney(summaryValue(bucket, "totalIntermediacion", "valorIntermediacion"))}</> : "—"}</dd></div>
+            </dl>
+            <div className={styles.productTotal}>
+              <span>Valor por créditos</span>
+              <strong>{formatMoney(summaryValue(bucket, "totalPagar", "valorPagar"))}</strong>
+            </div>
+          </Card>
+        );
+      })}
+      <Card className={styles.netCard}>
+        <div className={styles.netHeading}>
+          <WalletCards size={26} aria-hidden="true" />
+          <h2>TOTAL A CONSIGNAR</h2>
+          <span className={styles.directionBadge}>{direction}</span>
+        </div>
+        <strong className={styles.netAmount}>{formatMoney(Math.abs(balance.saldoNeto))}</strong>
+        <dl className={styles.netBreakdown}>
+          <div><dt>Valor por créditos</dt><dd>{formatMoney(totalPagarCreditos)}</dd></div>
+          <div><dt>Recaudos del aliado</dt><dd>− {formatMoney(totalRecaudosAliado)}</dd></div>
+        </dl>
+      </Card>
+    </section>
+  );
+}
+
+const PREVIEW_PAGE_SIZE = 10;
+
+function normalizeDetailSearch(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-CO").trim();
+}
+
+function SettlementCreditItems({
+  items,
+  intermediationEditor,
+}: {
+  items: PaymentCreditItem[];
+  intermediationEditor: IntermediationEditor;
+}) {
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const filtered = useMemo(() => {
+    const search = normalizeDetailSearch(query);
+    if (!search) return items;
+    const identifierSearch = search.replace(/[.\s]/g, "");
+    return items.filter((item) =>
+      normalizeDetailSearch(`${itemClient(item)} ${item.equipo || ""}`).includes(search) ||
+      (identifierSearch.length > 0 && [item.clienteDocumento, item.imei].some((value) =>
+        String(value || "").replace(/[.\s]/g, "").includes(identifierSearch)
+      ))
+    );
+  }, [items, query]);
+  const pages = Math.max(1, Math.ceil(filtered.length / PREVIEW_PAGE_SIZE));
+  const currentPage = Math.min(page, pages);
+  const start = (currentPage - 1) * PREVIEW_PAGE_SIZE;
+  const visible = filtered.slice(start, start + PREVIEW_PAGE_SIZE);
+  const pageNumbers = Array.from({ length: pages }, (_, index) => index + 1)
+    .filter((value) => value === 1 || value === pages || Math.abs(value - currentPage) <= 1);
+
+  return (
+    <Card className={styles.creditDetail}>
+      <div className={styles.detailHeading}>
+        <h2>Detalle por crédito</h2>
+        <span className={styles.countBadge}>{formatNumber(filtered.length)} registros</span>
+        <label className={styles.detailSearch}>
+          <Search size={18} aria-hidden="true" />
+          <Input
+            aria-label="Buscar cliente, cédula, equipo o IMEI"
+            placeholder="Buscar cliente, cédula, equipo o IMEI..."
+            value={query}
+            maxLength={100}
+            onChange={(event) => { setQuery(event.target.value); setPage(1); }}
+          />
+        </label>
+      </div>
+      <div className={styles.previewTableScroll} role="region" aria-label="Detalle por crédito, tabla desplazable" tabIndex={0}>
+        <table className={styles.previewTable}>
+          <caption className="sr-only">Créditos incluidos en la previsualización de liquidación</caption>
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Cliente / Cédula</th><th>Sede</th><th>Equipo / IMEI</th>
+              <th className={styles.moneyColumn}>Valor venta<br />Inicial</th>
+              <th className={styles.moneyColumn}>Crédito autorizado</th>
+              <th className={styles.moneyColumn}><span className={styles.intermediationHeading}>Intermediación <PaymentInfo label="Cómo se calcula la intermediación">Se aplica sobre el crédito autorizado, con IVA incluido y el redondeo vigente. Puedes ajustar cada porcentaje antes de confirmar.</PaymentInfo></span></th>
+              <th className={styles.moneyColumn}>Valor a pagar</th><th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((item, index) => (
+              <tr key={itemKey(item, start + index)}>
+                <td className={styles.dateCell}>{formatDate(itemDate(item))}</td>
+                <td className={styles.clientCell}><strong>{itemClient(item)}</strong><span>{item.clienteDocumento?.replace(/[.\s]/g, "") || "Sin documento"}</span></td>
+                <td className={styles.siteCell}>{itemSite(item)}</td>
+                <td><div className={styles.equipmentCell}><PlatformIcon platform={String(item.plataforma).toUpperCase() === "ANDROID" ? "ANDROID" : "IPHONE"} /><div><span>{item.equipo || "Sin referencia"}</span><small>IMEI: {item.imei?.replace(/[.\s]/g, "") || "Sin IMEI"}</small></div></div></td>
+                <td className={styles.moneyColumn}><strong>{formatMoney(item.valorVenta)}</strong><span className={styles.secondaryAmount}>{formatMoney(item.cuotaInicial)}</span></td>
+                <td className={styles.moneyColumn}>{formatMoney(item.creditoAutorizado)}</td>
+                <td className={styles.moneyColumn}><IntermediationField compact editor={intermediationEditor} item={item} /><span className={styles.feeAmount}>{formatMoney(item.valorIntermediacion)}</span></td>
+                <td className={`${styles.moneyColumn} ${styles.payableCell}`}>{formatMoney(item.valorPagar)}</td>
+                <td className={styles.statusCell}><StatusPill tone={statusTone(itemStatus(item))}>{itemStatus(item)}</StatusPill></td>
+              </tr>
+            ))}
+            {!visible.length && <tr><td colSpan={9} className={styles.emptyDetail}>{items.length ? "No hay créditos que coincidan con la búsqueda." : "No hay créditos en esta liquidación."}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div className={styles.detailFooter}>
+        <p>Mostrando {filtered.length ? start + 1 : 0}–{Math.min(start + PREVIEW_PAGE_SIZE, filtered.length)} de {formatNumber(filtered.length)} créditos</p>
+        <nav className={styles.pagination} aria-label="Páginas del detalle de créditos">
+          <button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={16} aria-hidden="true" /><span>Anterior</span></button>
+          {pageNumbers.map((value, index) => (
+            <span className={styles.pageItem} key={value}>
+              {index > 0 && value - pageNumbers[index - 1] > 1 && <span className={styles.pageEllipsis}>…</span>}
+              <button type="button" aria-label={`Página ${value}`} aria-current={value === currentPage ? "page" : undefined} onClick={() => setPage(value)}>{value}</button>
+            </span>
+          ))}
+          <button type="button" disabled={currentPage === pages} onClick={() => setPage(currentPage + 1)}><span>Siguiente</span><ChevronRight size={16} aria-hidden="true" /></button>
+        </nav>
+      </div>
+    </Card>
   );
 }
 
@@ -1042,6 +1212,7 @@ export default function AllyPaymentsConsole({
   const [loading, setLoading] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingMutationId, setPendingMutationId] = useState<string | null>(null);
   const [selectedSettlement, setSelectedSettlement] = useState<Settlement | null>(null);
@@ -1090,6 +1261,7 @@ export default function AllyPaymentsConsole({
   }, []);
   const intermediationEditor = useMemo<IntermediationEditor>(
     () => ({
+      disabled: submitting || confirmOpen,
       basePercentages,
       changedKeys: adjustmentState.changedKeys,
       errors: adjustmentState.errors,
@@ -1101,6 +1273,8 @@ export default function AllyPaymentsConsole({
       adjustmentState.errors,
       basePercentages,
       intermediationValues,
+      submitting,
+      confirmOpen,
       updateIntermediation,
     ]
   );
@@ -1257,6 +1431,7 @@ export default function AllyPaymentsConsole({
   };
 
   const submitSettlement = async () => {
+    if (submittingRef.current) return;
     const previewToken = preview?.previewToken || preview?.token;
     if (!preview || !previewToken || !pendingMutationId) {
       setConfirmOpen(false);
@@ -1272,6 +1447,7 @@ export default function AllyPaymentsConsole({
       return;
     }
 
+    submittingRef.current = true;
     try {
       setSubmitting(true);
       const response = await fetch("/api/pagos-aliados", {
@@ -1320,6 +1496,7 @@ export default function AllyPaymentsConsole({
         text: error instanceof Error ? error.message : "Error registrando el pago",
       });
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -1396,14 +1573,14 @@ export default function AllyPaymentsConsole({
   const refreshBusy = loading || previewLoading || submitting || Boolean(detailLoadingId);
 
   return (
-    <main className={styles.main}>
+    <main className={`${styles.main} ${activeTab === "liquidar" ? styles.liquidateMain : ""}`}>
       <div className={styles.header}>
         <div>
-          <div className={styles.eyebrow}>{adminCentral ? "Operación financiera" : "Consulta del aliado"}</div>
+          {activeTab !== "liquidar" && <div className={styles.eyebrow}>{adminCentral ? "Operación financiera" : "Consulta del aliado"}</div>}
           <h1>Pagos a aliados</h1>
-          {activeTab !== "pendientes" && <p>{activeTab === "recibidos" ? "Consulta las liquidaciones registradas." : "Consulta y prepara las liquidaciones."}</p>}
+          {activeTab !== "pendientes" && <p>{activeTab === "recibidos" ? "Consulta las liquidaciones registradas." : "Previsualización de liquidación"}</p>}
         </div>
-        <Button variant="secondary" onClick={() => void loadOverview()} disabled={refreshBusy}>
+        <Button variant="secondary" onClick={() => void loadOverview()} disabled={refreshBusy || confirmOpen}>
           <RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} aria-hidden="true" />
           Actualizar
         </Button>
@@ -1472,8 +1649,8 @@ export default function AllyPaymentsConsole({
           role="tabpanel"
           aria-labelledby="ally-payments-liquidate-tab"
         >
-          <Card className="mt-4 !rounded-lg !p-4">
-            <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.2fr)_minmax(170px,.8fr)_minmax(170px,.8fr)_auto] lg:items-end">
+          <Card className={styles.previewFilters}>
+            <div className={styles.previewFilterRow}>
               <label>
                 <span className="mb-2 block text-sm font-bold text-[#344054]">Aliado</span>
                 <Select
@@ -1482,7 +1659,7 @@ export default function AllyPaymentsConsole({
                     setSelectedAllyId(event.target.value);
                     invalidatePreview();
                   }}
-                  disabled={previewLoading || submitting}
+                  disabled={previewLoading || submitting || confirmOpen}
                 >
                   <option value="">Seleccionar aliado</option>
                   {allies.map((ally) => (
@@ -1493,7 +1670,7 @@ export default function AllyPaymentsConsole({
                 </Select>
               </label>
               <label>
-                <span className="mb-2 block text-sm font-bold text-[#344054]">Fecha inicial</span>
+                <span className="mb-2 flex items-center gap-2 text-sm font-bold text-[#344054]">Fecha inicial <PaymentInfo label="Fechas y movimientos incluidos">Fechas de Colombia. Incluye créditos elegibles por su fecha de liquidación y recaudos recibidos en sedes del aliado por su fecha de pago, sin conciliar. Información disponible desde el {ALLY_PAYMENTS_AVAILABLE_FROM_LABEL}.</PaymentInfo></span>
                 <Input
                   type="date"
                   value={fechaInicio}
@@ -1502,7 +1679,7 @@ export default function AllyPaymentsConsole({
                     setFechaInicio(event.target.value);
                     invalidatePreview();
                   }}
-                  disabled={previewLoading || submitting}
+                  disabled={previewLoading || submitting || confirmOpen}
                 />
               </label>
               <label>
@@ -1515,27 +1692,18 @@ export default function AllyPaymentsConsole({
                     setFechaFin(event.target.value);
                     invalidatePreview();
                   }}
-                  disabled={previewLoading || submitting}
+                  disabled={previewLoading || submitting || confirmOpen}
                 />
               </label>
               <Button
                 variant="primary"
                 onClick={() => void requestPreview()}
-                disabled={previewLoading || submitting || !selectedAllyId || !fechaInicio || !fechaFin}
+                disabled={previewLoading || submitting || confirmOpen || !selectedAllyId || !fechaInicio || !fechaFin}
               >
-                <Filter className="h-4 w-4" aria-hidden="true" />
+                <Search className="h-5 w-5" aria-hidden="true" />
                 {previewLoading ? "Previsualizando..." : "Previsualizar"}
               </Button>
             </div>
-            <p className="mt-3 text-xs leading-5 text-[var(--fp-muted)]">
-              La informacion esta disponible desde el {ALLY_PAYMENTS_AVAILABLE_FROM_LABEL}. El periodo usa fechas de Colombia y muestra creditos elegibles y recaudos recibidos en sedes del aliado que no hayan sido conciliados antes.
-            </p>
-            <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
-              Valor por creditos = credito autorizado - intermediacion. Saldo neto = valor por creditos - recaudos del aliado. Si el resultado es negativo, el aliado debe consignar la diferencia.
-            </p>
-            <p className="mt-1 text-xs font-semibold leading-5 text-[#5c7a13]">
-              En la previsualización puedes ajustar el porcentaje de cada venta; la fila y el total se recalculan antes de confirmar. Al registrar el pago, Finser y el aliado consultarán exactamente los mismos valores guardados.
-            </p>
           </Card>
 
           {previewLoading ? (
@@ -1546,23 +1714,12 @@ export default function AllyPaymentsConsole({
 
           {!previewLoading && preview ? (
             <>
-              <Card className="mt-4 flex flex-col gap-3 !rounded-lg !p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-start gap-3">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--fp-lime-soft)] text-[#5c7a13]">
-                    <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <div>
-                    <h2 className="font-black text-[var(--fp-graphite)]">Previsualizacion lista</h2>
-                    <p className="mt-1 text-sm text-[var(--fp-muted)]">
-                      {effectiveAllyName} · {formatDate(preview.periodoInicio || fechaInicio)} al{" "}
-                      {formatDate(preview.periodoFin || fechaFin)}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <StatusPill tone="positive">
-                    {formatNumber(adjustedPreviewSummary?.total?.numeroCreditos)} creditos elegibles
-                  </StatusPill>
+              <div className={styles.previewStatus} role="status">
+                <CheckCircle2 size={26} aria-hidden="true" />
+                <strong>Previsualización lista</strong>
+                <span className={styles.previewPeriod}>{effectiveAllyName} · {formatDate(preview.periodoInicio || fechaInicio)} al {formatDate(preview.periodoFin || fechaFin)}</span>
+                <div className={styles.previewStatusActions}>
+                  <span className={styles.readyCount}>{formatNumber(adjustedPreviewSummary?.total?.numeroCreditos)} créditos</span>
                   {adjustmentState.adjustments.length > 0 ? (
                     <Badge tone="positive">
                       {formatNumber(adjustmentState.adjustments.length)} ajustes
@@ -1576,29 +1733,28 @@ export default function AllyPaymentsConsole({
                         setPendingMutationId(null);
                         setNotice(null);
                       }}
-                      disabled={submitting}
+                      disabled={submitting || confirmOpen}
                     >
                       <RotateCcw className="h-4 w-4" aria-hidden="true" />
                       Restablecer porcentajes
                     </Button>
                   ) : null}
                 </div>
-              </Card>
+              </div>
 
-              <SummaryGrid summary={adjustedPreviewSummary} title="Resumen de la liquidacion" />
-              <ReconciliationCard
+              <SettlementSummary summary={adjustedPreviewSummary}
                 totalPagarCreditos={previewGrossTotal}
                 totalRecaudosAliado={previewCollectionsTotal}
               />
-              <CreditItems
+              <SettlementCreditItems
+                key={preview.previewToken || preview.token || "preview"}
                 items={adjustedPreviewItems}
                 intermediationEditor={intermediationEditor}
-                emptyDescription="La previsualizacion no contiene detalle de creditos."
               />
-              <CollectionItems
-                items={previewCollections}
-                emptyDescription="No se encontraron recaudos recibidos por sedes de este aliado dentro del periodo."
-              />
+              <details className={styles.previewCollections}>
+                <summary><WalletCards size={18} aria-hidden="true" />Recaudos del aliado <span className={styles.countBadge}>{formatNumber(previewCollections.length)}</span><span className={styles.collectionsTotal}>{formatMoney(previewCollectionsTotal)}</span><ChevronRight size={18} aria-hidden="true" /></summary>
+                <CollectionItems items={previewCollections} emptyDescription="No se encontraron recaudos recibidos por sedes de este aliado dentro del período." />
+              </details>
 
               {Object.keys(adjustmentState.errors).length > 0 ? (
                 <p className="mt-3 text-sm font-semibold text-[var(--fp-danger)]" role="alert">
@@ -1606,11 +1762,11 @@ export default function AllyPaymentsConsole({
                 </p>
               ) : null}
 
-              <Card className="mt-4 !rounded-lg !p-5">
-                <div className="grid gap-4 lg:grid-cols-[minmax(280px,1fr)_minmax(260px,.8fr)] lg:items-end">
+              <Card className={styles.registerCard}>
+                <div className={styles.registerRow}>
                   <label>
-                    <span className="mb-2 block text-sm font-black text-[var(--fp-graphite)]">
-                      {supportLabel}
+                    <span className="mb-2 flex items-center gap-2 text-sm font-bold text-[var(--fp-graphite)]">
+                      {supportLabel} <PaymentInfo label="Confirmación y soporte bancario">Obligatorio. Se guarda junto con el usuario, la fecha, los porcentajes e importes confirmados. FINSER PAY y el aliado consultarán los mismos valores guardados.</PaymentInfo>
                     </span>
                     <Input
                       value={approvalNumber}
@@ -1623,18 +1779,15 @@ export default function AllyPaymentsConsole({
                       maxLength={120}
                       autoComplete="off"
                       placeholder={previewIsConsignment ? "Ingresa el numero de la consignacion recibida" : "Ingresa el numero entregado por el banco"}
-                      disabled={submitting}
+                      disabled={submitting || confirmOpen}
                     />
-                    <span className="mt-2 block text-xs text-[var(--fp-muted)]">
-                      Obligatorio. Se guardara junto con el usuario y la fecha del registro.
-                    </span>
                   </label>
                   <Button
                     className="w-full"
                     variant="primary"
                     onClick={prepareConfirmation}
                     disabled={
-                      submitting ||
+                      submitting || confirmOpen ||
                       !approvalNumber.trim() ||
                       Object.keys(adjustmentState.errors).length > 0 ||
                       !(preview.previewToken || preview.token)
@@ -1785,7 +1938,7 @@ export default function AllyPaymentsConsole({
         title={previewIsConsignment ? "Confirmar consignacion del aliado" : "Confirmar liquidacion"}
         description={`Se registrara ${previewIsConsignment ? "una consignacion de" : previewIsZero ? "una conciliacion en cero para" : "un pago a"} ${effectiveAllyName}${previewIsZero ? "" : ` por ${formatMoney(previewTotal)}`}, correspondiente al periodo ${formatDate(fechaInicio)} al ${formatDate(
           fechaFin
-        )}. ${supportLabel}: ${approvalNumber.trim() || "-"}. Se conciliaron ${formatMoney(previewGrossTotal)} por creditos menos ${formatMoney(previewCollectionsTotal)} en recaudos. ${
+        )}. ${supportLabel}: ${approvalNumber.trim() || "-"}. Se conciliarán ${formatMoney(previewGrossTotal)} por créditos menos ${formatMoney(previewCollectionsTotal)} en recaudos. ${
           adjustmentState.adjustments.length
             ? `${adjustmentState.adjustments.length} venta(s) con intermediacion ajustada.`
             : "Sin ajustes manuales de intermediacion."
@@ -1793,7 +1946,7 @@ export default function AllyPaymentsConsole({
         confirmLabel="Confirmar y registrar"
         busy={submitting}
         onCancel={() => {
-          if (!submitting) {
+          if (!submittingRef.current) {
             setConfirmOpen(false);
             setPendingMutationId(null);
           }

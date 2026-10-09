@@ -225,7 +225,7 @@ export function ReceivedPaymentsView<T extends ReceivedPaymentViewItem>({
   );
 }
 
-function PlatformIcon({ platform }: { platform: "ANDROID" | "IPHONE" }) {
+export function PlatformIcon({ platform }: { platform: "ANDROID" | "IPHONE" }) {
   return <span aria-hidden="true" className={`${styles.platformIcon} ${platform === "ANDROID" ? styles.androidIcon : styles.appleIcon}`} />;
 }
 

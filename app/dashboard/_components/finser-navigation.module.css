@@ -66,3 +66,74 @@
 .reports .account{display:flex;align-items:center;gap:18px;}.reports .notification{border-right:1px solid var(--fp-border);padding-right:18px;min-height:36px;color:var(--fp-graphite);}.reports .notification svg{width:20px;height:20px;}
 @media(max-width:480px){.reports .account{gap:10px;}.reports .notification{padding-right:10px;}}
 .reports .brand p{font-size:21px;letter-spacing:0;}
+
+.topbar.settlement {
+  height: 57px;
+  min-height: 57px;
+  padding: 0 36px;
+  grid-template-columns: 182px minmax(0, 1fr) auto;
+  gap: 20px;
+  background: var(--fp-surface);
+  border-bottom: 1px solid var(--fp-border);
+  color: var(--fp-graphite);
+}
+.settlement .brand {
+  padding: 5px 15px;
+  border-radius: 24px;
+  background: var(--fp-graphite);
+  box-shadow: var(--fp-shadow-sm);
+}
+.settlement .brand p { font-size: 22px; line-height: 26px; letter-spacing: -.015em; }
+.settlement .navigation { justify-content: flex-start; gap: 28px; min-width: 0; font-size: 14px; }
+.settlement .navigation > a, .settlement .navigation > div { height: 57px; gap: 12px; white-space: nowrap; }
+.settlement .navigation > a > svg, .settlement .navLabel .sectionIcon { width: 19px; height: 19px; opacity: 1; stroke-width: 1.8; }
+.settlement .navLabel { gap: 12px; }
+.settlement .navLabel > svg:last-child { display: none; }
+.settlement .active { color: var(--fp-client-green); font-weight: 700; }
+.settlement .active::after { height: 3px; left: -14px; right: -14px; background: var(--fp-client-green); }
+.settlement .account { display: flex; align-items: center; gap: 24px; min-width: 0; }
+.settings { display: grid !important; place-items: center; width: 40px; height: 40px; color: var(--fp-muted); }
+.settings > svg { width: 20px !important; height: 20px !important; stroke-width: 1.8; }
+.menuHeading { display: block; padding: 12px 12px 5px; color: var(--fp-muted); font-size: 12px; font-weight: 700; }
+.settlementProfile { display: flex !important; align-items: center; gap: 9px; color: var(--fp-graphite); }
+.settlementProfile > svg { width: 15px !important; height: 15px !important; }
+.settlementProfile .avatar { width: 34px; height: 34px; color: white; background: var(--fp-graphite); font-size: 13px; font-weight: 500; }
+.settlementProfile .avatar svg { width: 19px; height: 19px; }
+.settlementProfile .profileName { display: inline; max-width: 160px; font-size: 14px; font-weight: 400; }
+.settlement .account details > div { max-height: calc(100dvh - 76px); max-width: calc(100vw - 32px); overflow-y: auto; }
+.settlement summary:focus-visible, .settlement a:focus-visible { outline-color: var(--fp-client-green); }
+.settlement summary:hover, .settlement .navigation > a:hover { color: var(--fp-client-green); }
+
+@media(max-width:1250px) {
+  .topbar.settlement { padding: 0 24px; grid-template-columns: 164px minmax(0, 1fr) auto; gap: 16px; }
+  .settlement .navigation { gap: 24px; }
+  .settlement .navigation > a, .settlement .navLabel { gap: 8px; }
+  .settlement .account { gap: 12px; }
+  .settlementProfile .profileName { max-width: 110px; }
+}
+@media(max-width:1040px) {
+  .topbar.settlement { height: auto; min-height: 57px; padding: 10px 20px 0; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; }
+  .settlement .account { grid-row: 1; grid-column: 2; }
+  .settlement .navigation { grid-row: 2; grid-column: 1 / -1; flex-wrap: wrap; gap: 4px 28px; }
+  .settlement .navigation > a, .settlement .navigation > div { height: 46px; }
+  .settlement .navigation > div, .settlement .navigation details { position: static; }
+  .settlement .navigation details > div { top: 100%; left: 20px; right: 20px; min-width: 0; max-height: calc(100dvh - 120px); overflow-y: auto; }
+  .settlement .active::after { left: -8px; right: -8px; }
+}
+@media(max-width:500px) {
+  .topbar.settlement { padding-left: 16px; padding-right: 16px; }
+  .settlement .brand { padding: 4px 12px; }
+  .settlement .brand p { font-size: 19px; line-height: 26px; }
+  .settlement .account { gap: 4px; }
+  .settlementProfile .profileName { display: none; }
+  .settlementProfile { gap: 6px; }
+  .settlement .navigation { gap: 0 22px; font-size: 13px; }
+  .settlement .navigation > a, .settlement .navLabel { gap: 7px; }
+  .settlement .navigation > a > svg, .settlement .navLabel .sectionIcon { width: 17px; height: 17px; }
+  .settlement .account details > div { position: fixed; top: 60px; right: 16px; left: 16px; min-width: 0; }
+}
+@media(max-width:360px) {
+  .settlement .brand { padding: 4px 10px; }
+  .settlement .brand p { font-size: 18px; }
+  .settlement .navigation { column-gap: 18px; }
+}

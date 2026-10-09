@@ -324,7 +324,7 @@ test("la interfaz recalcula y envia ajustes manuales por credito", () => {
   assert.match(consoleSource, /Object\.keys\(adjustmentState\.errors\)\.length\s*>\s*0/);
   assert.match(
     consoleSource,
-    /Al registrar el pago, Finser y el aliado consultarán exactamente los mismos valores guardados/
+    /<PaymentInfo label="Confirmación y soporte bancario">[^<]*FINSER PAY y el aliado consultarán los mismos valores guardados\.<\/PaymentInfo>/
   );
 });
 
