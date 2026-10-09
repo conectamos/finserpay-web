@@ -17,7 +17,7 @@ Las URL de los webhooks contienen credenciales y solo deben configurarse como se
 
 `DAPTA_COBRANZA_REFERENCES_OWNED=true` permite usar referencias solamente cuando el administrador haya verificado que pertenecen al titular y están autorizadas. Se normalizan y eliminan duplicados. Cada intento cuenta por documento, no por teléfono. El orden es teléfono principal, referencia 1 y referencia 2.
 
-La prueba usa exclusivamente `DAPTA_COBRANZA_TEST_DOCUMENT` y `DAPTA_COBRANZA_TEST_PHONE`, configurados por el administrador con autorización del titular. `action=testcall` no acepta un destino arbitrario en el cuerpo. Mantiene la consulta real y las restricciones del libro de intentos. Los registros de una prueba en un crédito real también son reales: no crear acuerdos ficticios.
+La prueba usa exclusivamente `DAPTA_COBRANZA_TEST_DOCUMENT` y `DAPTA_COBRANZA_TEST_PHONE`, configurados por el administrador para una prueba autorizada en su propio celular. `action=testcall` no acepta un destino arbitrario en el cuerpo. Mantiene la consulta y la verificación real, pero utiliza un libro de intentos separado de los contactos al cliente y no crea gestiones ni acuerdos ficticios en la cartera. Permite probar con `DAPTA_COBRANZA_LIVE_READY=true` y `DAPTA_COBRANZA_ENABLED=false`; esta excepción solo autoriza el teléfono de prueba configurado. El envío de una plantilla aceptada en la prueba sí es real.
 
 ## Ejecución y límites
 

@@ -9,7 +9,7 @@ import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { collectionCallKey } from "@/lib/dapta-collections-http";
 import { collectionCallingAllowed, collectionSlot, colombiaClock, collectionSessionToken, verifyCollectionSessionToken, nextCollectionDate } from "@/lib/collection-voice-policy";
 
-type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;managementId:string|null;followupFor:string|null;optOut:boolean;outcome:Record<string,unknown>|null};
+type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;managementId:string|null;followupFor:string|null;testCall:boolean;optOut:boolean;outcome:Record<string,unknown>|null};
 const secret=()=>process.env.FINSERPAY_COBRANZA_API_TOKEN||"";
 const agent=()=>process.env.FINSERPAY_COBRANZA_AGENT_ID||"";
 const actor=()=>Number(process.env.FINSERPAY_COBRANZA_ACTOR_ID);
@@ -28,6 +28,7 @@ export async function ensureCollectionVoiceSchema() {
       "messageState" TEXT,"messageReceipt" TEXT, UNIQUE("debtorKey","slot"))`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "CollectionVoiceAttempt_debtor_created" ON "CollectionVoiceAttempt"("debtorKey","createdAt")`);
     await prisma.$executeRawUnsafe(`ALTER TABLE "CollectionVoiceAttempt" ADD COLUMN IF NOT EXISTS "followupFor" UUID`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "CollectionVoiceAttempt" ADD COLUMN IF NOT EXISTS "testCall" BOOLEAN NOT NULL DEFAULT FALSE`);
   })().catch(error=>{schema=null;throw error;});
   await schema;
 }
@@ -80,7 +81,7 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
   const url=webhook("DAPTA_COBRANZA_CALL_WEBHOOK_URL");
   const report={enabled:process.env.DAPTA_COBRANZA_ENABLED==="true",ready:process.env.DAPTA_COBRANZA_LIVE_READY==="true",inWindow:!!slot,eligible:0,accepted:0,unknown:0,skipped:0};
   if(!slot||secret().length<32||!agent()||!actor()) return report;
-  if(!options.dryRun&&(!report.enabled||!report.ready||!url)) return report;
+  if(!options.dryRun&&((!report.enabled&&!options.test)||!report.ready||!url)) return report;
   await ensureCollectionVoiceSchema();
   let count=0;
   for(let page=1;page<=100;page++) {
@@ -93,7 +94,7 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
       if(!/^\d{5,15}$/.test(doc)){report.skipped++;continue;}
       const phones=(options.test?[process.env.DAPTA_COBRANZA_TEST_PHONE]:[c.clienteTelefono,...(process.env.DAPTA_COBRANZA_REFERENCES_OWNED==="true"?[c.referenciaFamiliar1Telefono,c.referenciaFamiliar2Telefono]:[])]).map(normalizeColombianMobile).filter((v):v is string=>!!v);
       const unique=[...new Set(phones)];if(!unique.length){report.skipped++;continue;}
-      const debtorKey=digest(doc),id=randomUUID();
+      const debtorKey=digest(options.test?"test:"+doc+":"+unique[0]:doc),id=randomUUID();
       const claimed=await prisma.$transaction(async db=>{
         await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))::text`,"collections:"+debtorKey);
         const prior=await db.$queryRawUnsafe<Array<{blocked:boolean;today:number;total:number}>>(`SELECT
@@ -109,10 +110,10 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
           EXISTS(SELECT 1 FROM "CreditOverdueDataAttempt" r WHERE r."creditoId"=c."id" AND r."status" IN ('CLAIMED','ACCEPTED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days') OR
           EXISTS(SELECT 1 FROM "CreditWelcomeVoiceEvent" r WHERE r."creditoId"=c."id" AND (r."status" IN ('DISPATCHING','ACCEPTED','UNKNOWN') OR (r."identityVerifiedAt" AT TIME ZONE 'America/Bogota')::date=$2::date)))`,doc,colombiaClock(now).day);
         const followed=context.followupFor?await db.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CollectionVoiceAttempt" WHERE "followupFor"=$1::uuid AND "contactedAt" IS NOT NULL`,context.followupFor):[];
-        if(prior[0].blocked||prior[0].today>=3||contacts[0].n||other[0].n||followed[0]?.n) return null;
+        if(prior[0].blocked||prior[0].today>=3||(!options.test&&(contacts[0].n||other[0].n||followed[0]?.n))) return null;
         if(options.dryRun) return {phone:unique[prior[0].total%unique.length]};
         const phone=unique[prior[0].total%unique.length];
-        const rows=await db.$queryRawUnsafe<Array<{id:string}>>(`INSERT INTO "CollectionVoiceAttempt"("id","creditoId","debtorKey","phone","slot","status","followupFor") VALUES($1::uuid,$2,$3,$4,$5,'DISPATCHING',$6::uuid) ON CONFLICT("debtorKey","slot") DO NOTHING RETURNING "id"`,id,c.id,debtorKey,phone,slot,context.followupFor);
+        const rows=await db.$queryRawUnsafe<Array<{id:string}>>(`INSERT INTO "CollectionVoiceAttempt"("id","creditoId","debtorKey","phone","slot","status","followupFor","testCall") VALUES($1::uuid,$2,$3,$4,$5,'DISPATCHING',$6::uuid,$7) ON CONFLICT("debtorKey","slot") DO NOTHING RETURNING "id"`,id,c.id,debtorKey,phone,slot,context.followupFor,options.test===true);
         return rows.length?{phone}:null;
       });
       if(!claimed){report.skipped++;continue;}
@@ -162,7 +163,8 @@ async function operation(body:Record<string,unknown>) {
   await ensureCollectionVoiceSchema();
   if(body.action==="authorize") {
     const a=await activeSession(body);
-    if(a.status!=="DISPATCHING"||process.env.DAPTA_COBRANZA_ENABLED!=="true"||process.env.DAPTA_COBRANZA_LIVE_READY!=="true"||!collectionCallingAllowed(new Date())||(await financialContext(a.creditoId,!!a.followupFor)).suspended)
+    const testAuthorized=a.testCall&&normalizeColombianMobile(process.env.DAPTA_COBRANZA_TEST_PHONE)===a.phone;
+    if(a.status!=="DISPATCHING"||(!testAuthorized&&process.env.DAPTA_COBRANZA_ENABLED!=="true")||process.env.DAPTA_COBRANZA_LIVE_READY!=="true"||!collectionCallingAllowed(new Date())||(await financialContext(a.creditoId,!!a.followupFor)).suspended)
       return {ok:false,allowed:false};
     const claimed=await prisma.$queryRawUnsafe<Array<{id:string}>>(`UPDATE "CollectionVoiceAttempt" SET "status"='DIALING' WHERE "id"=$1::uuid AND "status"='DISPATCHING' RETURNING "id"`,a.id);
     if(!claimed.length) return {ok:false,allowed:false};
@@ -183,6 +185,7 @@ async function operation(body:Record<string,unknown>) {
     if(a.managementId) return {ok:true,registrado:false,alreadyRegistered:true,review:true};
     if((await financialContext(a.creditoId,!!a.followupFor)).suspended) return {ok:true,registrado:false,suspend:true};
     if(!["ACUERDO_PAGO","PAGO_REALIZADO"].includes(String(body.result))) throw new Error("Resultado no admitido");
+    if(a.testCall) return {ok:true,registrado:false,test:true,review:true,message:"Prueba autorizada: no se modifica la cartera real."};
     const saved=await saveManagement(a,body.result as "ACUERDO_PAGO"|"PAGO_REALIZADO"|"MEDIOS_PAGO",body);
     return {ok:true,registrado:true,item:saved.item};
   }
@@ -209,7 +212,7 @@ async function operation(body:Record<string,unknown>) {
       return {ok:true,processed:true,duplicate:true};
     }
     let registered=!!a.managementId;
-    if(!a.managementId&&!a.optOut&&(noAnswer||(a.identityVerifiedAt&&analysis.resultado_gestion==="MEDIOS_PAGO"))) {
+    if(!a.testCall&&!a.managementId&&!a.optOut&&(noAnswer||(a.identityVerifiedAt&&analysis.resultado_gestion==="MEDIOS_PAGO"))) {
       try{
         await saveManagement(a,noAnswer?"SIN_RESPUESTA":"MEDIOS_PAGO",{comment:noAnswer?"El proveedor informó que no hubo respuesta.":String(analysis.observacion_gestion||"Se informaron medios de pago durante la llamada.")});
         registered=true;
