@@ -300,13 +300,14 @@ test("voice tool captures actual customer identity without prefilled answers or 
   assert.doesNotMatch(prompt, /<\s*(?:speak|break|say-as|prosody)\b/i);
 });
 
-test("voice configuration uses conversational multilingual delivery without changing the voice", () => {
+test("voice configuration uses the authorized paisa voice with conversational multilingual delivery", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   assert.equal(config.updateAfterCreate.voice_speed, 1);
   assert.equal(config.updateAfterCreate.voice_temperature, 1);
   assert.equal(config.updateAfterCreate.normalize_for_speech, true);
   assert.equal(config.createArguments.voice_language, "es-419");
-  assert.equal(config.createArguments.voice, "custom_voice_fd6d90e0e756bbb2e81c101bba");
+  assert.equal(config.createArguments.voice, "custom_voice_0586aed08dfec4bef4c9f8b25d");
+  assert.equal(config.updateAfterCreate.voice, config.createArguments.voice);
   assert.equal(config.updateAfterCreate.voice_model, "eleven_multilingual_v2");
 });
 
@@ -383,6 +384,32 @@ test("normal hangup waits for three separate agreements and preserves early exit
   assert.match(prompt, /No hables lentamente palabra por palabra/);
   assert.match(prompt, /no uses tono cantado ni una cadencia de lista/);
   assert.match(prompt, /Gracias por su tiempo/);
+});
+
+test("end_call owns the fixed audible goodbye and its sparse patch preserves other tools", () => {
+  const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
+  const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
+  const patch = JSON.parse(readFileSync(new URL("end-call-goodbye.patch.json", base), "utf8"));
+  const endCall = config.pendingEndCallTool;
+  assert.equal(endCall.speak_during_execution, true);
+  assert.equal(endCall.execution_message_type, "static_text");
+  assert.equal(endCall.execution_message_description, "Gracias por su tiempo.");
+  assert.equal(Object.hasOwn(endCall, "finish_delay"), false);
+  assert.equal(Object.hasOwn(endCall, "speak_after_execution"), false);
+  assert.match(prompt, /Solo después de recibir el tercer acuerdo, ejecuta end_call/);
+  assert.match(prompt, /No digas esa despedida por separado ni agregues otra frase de cierre/);
+  assert.match(endCall.description, /No digas esa despedida por separado/);
+  assert.doesNotMatch(prompt, /di «Gracias por su tiempo»/);
+  assert.doesNotMatch(prompt, /después de esa despedida, ejecuta end_call/);
+  assert.deepEqual(Object.keys(patch).sort(), ["agent_id", "tools_patch_by_name", "workspace_id"]);
+  assert.equal(patch.tools_patch_by_name.length, 1);
+  assert.equal(patch.tools_patch_by_name[0].name, "end_call");
+  assert.deepEqual(Object.keys(patch.tools_patch_by_name[0]).sort(), ["name", "set"]);
+  const set = patch.tools_patch_by_name[0].set;
+  assert.deepEqual(Object.keys(set).sort(), ["description", "execution_message_description", "execution_message_type", "speak_during_execution"]);
+  for (const key of Object.keys(set)) assert.equal(set[key], endCall[key]);
+  // This checks the supported configuration contract; actual audio playback requires an authorized call.
+  assert.doesNotMatch(JSON.stringify(patch), /verificar_cliente_bienvenida|dapta_webhook|https?:/);
 });
 
 test("analysis distinguishes actual identity, continuity after notice and all three agreements", () => {
