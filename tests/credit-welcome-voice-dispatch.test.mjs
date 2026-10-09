@@ -4,8 +4,9 @@ import { createJiti } from "jiti";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 const core = await createJiti(import.meta.url).import("../lib/credit-welcome-voice-core.ts");
+const speech = loadReissueModule("lib/credit-welcome-voice-speech.ts", { "@/lib/credit-welcome-voice-core": core });
 const dispatch = loadReissueModule("lib/credit-welcome-voice-dispatch.ts", {
-  "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-store": {},
+  "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-store": {}, "@/lib/credit-welcome-voice-speech": speech,
 }, { AbortSignal });
 const config = { webhookUrl: "https://api.dapta.ai/test-private-flow", secret: "synthetic-welcome-secret-32-bytes-or-more",
   agentId: "923f7952-87bc-4f1f-a77d-1972302200ee" };
@@ -44,11 +45,13 @@ test("dispatch sends real snapshot identity for confirmation, preserving documen
   const f = fixture();
   const result = await dispatch.dispatchCreditWelcomeVoice({}, f.deps);
   assert.equal(result.accepted, 1);
-  assert.deepEqual(Object.keys(f.received[0].body).sort(), ["credito_id", "customer_document", "customer_name", "event_id", "event_token", "to_number"]);
+  assert.deepEqual(Object.keys(f.received[0].body).sort(), ["credito_id", "customer_document", "customer_document_spoken", "customer_name", "customer_name_spoken", "event_id", "event_token", "to_number"]);
   assert.equal(f.received[0].body.to_number, "+573000000001");
   assert.equal(f.received[0].body.customer_name, claim.snapshot.name);
   assert.equal(f.received[0].body.customer_document, "000123456");
   assert.equal(typeof f.received[0].body.customer_document, "string");
+  assert.equal(f.received[0].body.customer_document_spoken, "cero, cero, cero, uno, dos, tres, cuatro, cinco, seis");
+  assert.equal(f.received[0].body.customer_name_spoken, "Test Person");
   for (const field of ["snapshot", "initialPayment", "installmentAmount", "installmentCount", "firstDueDate", "calendar"]) {
     assert.equal(field in f.received[0].body, false);
   }
@@ -78,7 +81,7 @@ test("controlled destination override keeps real credit identity and sends no st
   assert.equal(body.customer_document, claim.snapshot.document);
   assert.equal(JSON.stringify(body).includes(claim.snapshot.phone), false);
   assert.equal(claim.snapshot.phone, "573000000001");
-  assert.deepEqual(Object.keys(body).sort(), ["credito_id", "customer_document", "customer_name", "event_id", "event_token", "to_number"]);
+  assert.deepEqual(Object.keys(body).sort(), ["credito_id", "customer_document", "customer_document_spoken", "customer_name", "customer_name_spoken", "event_id", "event_token", "to_number"]);
   const token = core.verifyWelcomeVoiceToken(body.event_token, { secret: config.secret });
   assert.equal(token.eventId, claim.eventId); assert.equal(token.creditId, claim.creditId);
 });
@@ -86,6 +89,20 @@ test("credit cancelled or contact changed after claim never reaches Dapta", asyn
   const f = fixture({ prepare: async () => null });
   const result = await dispatch.dispatchCreditWelcomeVoice({}, f.deps);
   assert.equal(result.skipped, 1); assert.equal(f.received.length, 0); assert.equal(f.states.length, 0);
+});
+
+test("spoken identity preserves registered accents and cannot replace the credit's identity", async () => {
+  const prepared = { ...claim, snapshot: { ...claim.snapshot, name: "ana maria prueba", spokenName:"ANA MARÍA PRUEBA" } };
+  const valid = fixture({ prepare: async () => prepared });
+  assert.equal((await dispatch.dispatchCreditWelcomeVoice({},valid.deps)).accepted,1);
+  assert.equal(valid.received[0].body.customer_name,"ana maria prueba");
+  assert.equal(valid.received[0].body.customer_name_spoken,"Ana María Prueba");
+  for (const patch of [{spokenName:"Otra Persona"},{document:"INVALID"}]) {
+    const invalid = fixture({ prepare:async()=>({...prepared,snapshot:{...prepared.snapshot,...patch}}) });
+    assert.equal((await dispatch.dispatchCreditWelcomeVoice({},invalid.deps)).skipped,1);
+    assert.equal(invalid.received.length,0);
+    assert.deepEqual(invalid.states,[["failed",claim.eventId,"INVALID_IDENTITY_SPEECH"]]);
+  }
 });
 test("timeout, HTTP errors, empty receipts and execution errors become unknown with one request only", async () => {
   for (const response of [null, { ok: false }, { ok: true }, { error: "native action failed", ok: true, call_id: "wrong" },

@@ -134,9 +134,9 @@
   "checkedInTests": {
     "file": "tests/credit-welcome-voice-flow-drafts.test.mjs",
     "command": "node --test tests/credit-welcome-voice-flow-drafts.test.mjs",
-    "passed": 39,
+    "passed": 44,
     "failed": 0,
-    "scope": "VM execution of actual draft Code fields: safe identity JSON, strict identity flags, call input validation, native acceptance, contradictory errors at all levels, malformed/ambiguous receipts, bounded traversal, credential redaction. Strict body.args/direct envelopes, invalid or missing token, backend-only identity responses, required analyst identity strings, and minimal live patch contracts."
+    "scope": "VM execution of actual JSON Code: strict direct/args identity envelope, safe JSON, strict boolean identity flags, complete speech required, literal speech preservation, raw and spoken identity separation, 8 input/exports and 7 native variables, native receipt contradiction/ambiguity guards, credentials redacted, tool raw-identity placeholders retained, prompt literal speech/consent, and voice settings."
   },
   "responseTypeEvidence": {
     "codeExportsNativeBooleans": true,
@@ -148,9 +148,9 @@
   },
   "livePatchValidations": [
     {
-      "flowId": "YxVoY",
-      "expectedContentHash": "sha256:a5fbbac600b0152a1d7b57f018580c0a83f31f4dd7117ed7369c02ca2d48d779",
-      "ops": 1,
+      "flowId": "WdOvp",
+      "expectedContentHash": "sha256:9f83a1a09e4bfc59edb81f61c80313614347c4fd673cc10d498c2d915b8c7515",
+      "ops": 4,
       "strict": true,
       "valid": true,
       "errors": 0,
@@ -161,9 +161,9 @@
       "validatedInMemoryOnly": true
     },
     {
-      "flowId": "WdOvp",
-      "expectedContentHash": "sha256:a16b94f72074ce18f634161a05a2377529df732149cd014fb34c746b120991b1",
-      "ops": 4,
+      "flowId": "YxVoY",
+      "expectedContentHash": "sha256:ba298097d660aafd7e197c052b0ef64f8d78162bce8c6fccc85160c18cacf2b2",
+      "ops": 1,
       "strict": true,
       "valid": true,
       "errors": 0,
@@ -173,5 +173,14 @@
       "committed": false,
       "validatedInMemoryOnly": true
     }
-  ]
+  ],
+  "pronunciationContract": {
+    "callInputCount": 8,
+    "normalizerExportCount": 8,
+    "nativeVariableCount": 7,
+    "identityToolStillRaw": true,
+    "speechRequired": true,
+    "noSsml": true,
+    "liveAudioTested": false
+  }
 }

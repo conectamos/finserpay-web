@@ -1,6 +1,6 @@
 {
   "flow_id": "WdOvp",
-  "expected_content_hash": "sha256:a16b94f72074ce18f634161a05a2377529df732149cd014fb34c746b120991b1",
+  "expected_content_hash": "sha256:9f83a1a09e4bfc59edb81f61c80313614347c4fd673cc10d498c2d915b8c7515",
   "ops": [
     {
       "op": "set_param",
@@ -37,15 +37,29 @@
         },
         {
           "id": "pm004",
-          "origin": "body",
           "key": "customer_name",
           "type": "text",
+          "origin": "body",
           "required": true
         },
         {
           "id": "pm005",
-          "origin": "body",
           "key": "customer_document",
+          "type": "text",
+          "origin": "body",
+          "required": true
+        },
+        {
+          "id": "pm006",
+          "origin": "body",
+          "key": "customer_name_spoken",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "pm007",
+          "origin": "body",
+          "key": "customer_document_spoken",
           "type": "text",
           "required": true
         }
@@ -55,7 +69,7 @@
       "op": "set_param",
       "node_id": "nrmCl",
       "path": "api_action.code_action.code",
-      "value": "const data = params.trigger.body || {};\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de llamada invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nconst credito_id = required(data.credito_id, 16);\nconst event_token = required(data.event_token, 1000);\nconst to_number = required(data.to_number, 16);\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 80);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event_id) || !/^[1-9]\\d*$/.test(credito_id) || !/^\\+573\\d{9}$/.test(to_number)) throw new Error('Solicitud de llamada invalida');\nmodule.exports = { event_id, credito_id, event_token, to_number, customer_name, customer_document };"
+      "value": "const data = params.trigger.body || {};\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de llamada invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nconst credito_id = required(data.credito_id, 16);\nconst event_token = required(data.event_token, 1000);\nconst to_number = required(data.to_number, 16);\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 80);\nconst customer_name_spoken = required(data.customer_name_spoken, 240);\nconst customer_document_spoken = required(data.customer_document_spoken, 240);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event_id) || !/^[1-9]\\d*$/.test(credito_id) || !/^\\+573\\d{9}$/.test(to_number)) throw new Error('Solicitud de llamada invalida');\nmodule.exports = { event_id, credito_id, event_token, to_number, customer_name, customer_document, customer_name_spoken, customer_document_spoken };"
     },
     {
       "op": "set_param",
@@ -85,6 +99,14 @@
         {
           "variable_name": "customer_document",
           "response_value_path": "customer_document"
+        },
+        {
+          "variable_name": "customer_name_spoken",
+          "response_value_path": "customer_name_spoken"
+        },
+        {
+          "variable_name": "customer_document_spoken",
+          "response_value_path": "customer_document_spoken"
         }
       ]
     },
@@ -112,6 +134,14 @@
         {
           "key": "customer_document",
           "value": "{{normalizar_llamada.customer_document}}"
+        },
+        {
+          "key": "customer_name_spoken",
+          "value": "{{normalizar_llamada.customer_name_spoken}}"
+        },
+        {
+          "key": "customer_document_spoken",
+          "value": "{{normalizar_llamada.customer_document_spoken}}"
         }
       ]
     }

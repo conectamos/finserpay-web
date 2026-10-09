@@ -62,6 +62,7 @@ function fixture({ failFirstLock = false } = {}) {
     "@/lib/prisma": { default: database }, "@/lib/credit-payment-plan": {},
     "@/lib/credit-factory-snapshot": {}, "@/lib/cartera-export": {}, "@/lib/dapta-welcome": {},
     "@/lib/credit-welcome-voice-core": {},
+    "@/lib/credit-welcome-voice-speech": {},
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   });
   return { store, events, transactions: () => transactions };

@@ -37,14 +37,21 @@
       "customer_document"
     ],
     "auth": "Per-event HMAC token from FINSERPAY, maximum 24 h. No HMAC secret is stored in Dapta or these files.",
-    "success": "ok=true, verificado=true, condiciones object",
+    "success": "ok=true, verificado=true, condiciones object with complete speech",
     "mismatch": "ok=true, verificado=false, condiciones=null",
     "failure": "ok=false, verificado=false, condiciones=null, code=IDENTITY_UNAVAILABLE",
     "envelopes": [
       "Direct body object",
       "Body object with an own args object; identity fields must not appear in both locations"
     ],
-    "invalidEnvelope": "Malformed, mixed or missing-token input throws before the ERP request. The agent must not speak financial conditions without verified backend conditions."
+    "invalidEnvelope": "Malformed, mixed or missing-token input throws before the ERP request. The agent must not speak financial conditions without verified backend conditions.",
+    "speech": {
+      "initialPayment": "non-empty string",
+      "installmentAmount": "non-empty string",
+      "installmentCount": "non-empty string with count and frequency",
+      "firstDueDate": "non-empty string",
+      "installmentAmounts": "non-empty array of non-empty strings, canonical one per installment from the same snapshot"
+    }
   },
   "callInput": [
     "event_id",
@@ -52,14 +59,18 @@
     "event_token",
     "to_number",
     "customer_name",
-    "customer_document"
+    "customer_document",
+    "customer_name_spoken",
+    "customer_document_spoken"
   ],
   "callVariables": [
     "event_id",
     "credito_id",
     "event_token",
     "customer_name",
-    "customer_document"
+    "customer_document",
+    "customer_name_spoken",
+    "customer_document_spoken"
   ],
   "nativeOutputMapping": {
     "response": "response.result",
@@ -94,17 +105,33 @@
     "Dapta public route URLs and preview tokens are intentionally not included.",
     "The guide documents response_params mapping but does not guarantee interpolation types. Code exports genuine booleans; the exact dynamic HTTP response type is not live-tested, so the dispatcher requires strict boolean true."
   ],
-  "financialConditionsSource": "Only identidad backend conditions after ok=true and verificado=true. The native call receives no financial conditions.",
+  "financialConditionsSource": "Only backend conditions after ok=true, verificado=true and complete speech. The agent reads speech literally and never converts numeric amounts, installment count or ISO dates. The native call receives no financial conditions.",
   "preparedLivePatches": [
     {
       "file": "identity-normalizer.patch.json",
       "flowId": "YxVoY",
-      "scope": "One normalizer Code field; accepts direct body or strict args envelope."
+      "expectedContentHash": "sha256:ba298097d660aafd7e197c052b0ef64f8d78162bce8c6fccc85160c18cacf2b2",
+      "scope": "One verified-response Code field; requires complete financial speech before exposing verified conditions."
     },
     {
       "file": "call-identity-variables.patch.json",
       "flowId": "WdOvp",
-      "scope": "Required name/document input, normalized exports, and two native variables. Existing template and agent identifiers unchanged."
+      "expectedContentHash": "sha256:9f83a1a09e4bfc59edb81f61c80313614347c4fd673cc10d498c2d915b8c7515",
+      "scope": "Eight required input strings, eight normalized exports and seven native variables. Existing template, caller and agent identifiers unchanged."
     }
-  ]
+  ],
+  "pronunciation": {
+    "callFields": [
+      "customer_name_spoken",
+      "customer_document_spoken"
+    ],
+    "identityToolUses": [
+      "customer_name",
+      "customer_document"
+    ],
+    "voiceSpeed": 0.9,
+    "voiceTemperature": 0.5,
+    "normalizeForSpeech": true,
+    "ssml": false
+  }
 }

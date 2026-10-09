@@ -940,6 +940,8 @@ model CreditWelcomeVoiceEvent {
   creditoId          Int
   type               String   @default("BIENVENIDA_VOZ") @db.VarChar(32)
   source             String   @db.VarChar(32)
+  attemptNumber      Int      @default(0)
+  repeatOf           String?  @unique(map: "CreditWelcomeVoiceEvent_repeatOf_key") @db.Uuid
   status             String   @db.VarChar(16)
   snapshot           Json?
   createdAt          DateTime @default(now()) @db.Timestamptz(3)
@@ -958,8 +960,10 @@ model CreditWelcomeVoiceEvent {
   resultCode         String?  @db.VarChar(64)
   resultHash         String?  @db.VarChar(64)
   credito            Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  previousTest       CreditWelcomeVoiceEvent? @relation("WelcomeVoiceControlledRepeats", fields: [repeatOf], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  nextTest           CreditWelcomeVoiceEvent? @relation("WelcomeVoiceControlledRepeats")
 
-  @@unique([creditoId, type], map: "CreditWelcomeVoiceEvent_credit_type_key")
+  @@unique([creditoId, type, attemptNumber], map: "CreditWelcomeVoiceEvent_credit_type_key")
   @@index([status, createdAt, id], map: "CreditWelcomeVoiceEvent_pending_idx")
 }
 
