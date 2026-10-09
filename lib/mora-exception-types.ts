@@ -1,5 +1,5 @@
 export type MoraExceptionType = "EXCEPCION" | "PRORROGA";
-export type MoraExceptionStatus = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED" | "REPLACED";
+export type MoraExceptionStatus = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED" | "REPLACED" | "CANCELLED";
 export type MoraPromiseConditionStatus = "NOT_APPLICABLE" | "PENDING" | "FULFILLED" | "BREACHED";
 
 export type MoraExceptionRequestItem = {
@@ -67,7 +67,7 @@ export type MoraExceptionEvent = {
   requestId: string;
   creditoId: number;
   version: number;
-  action: "SUBMITTED" | "APPROVED" | "REJECTED" | "EXPIRED" | "OBSERVED" | "REPLACED";
+  action: "SUBMITTED" | "APPROVED" | "REJECTED" | "EXPIRED" | "OBSERVED" | "REPLACED" | "EDITED" | "CANCELLED";
   fromStatus: MoraExceptionStatus | null;
   toStatus: MoraExceptionStatus;
   payload: unknown;

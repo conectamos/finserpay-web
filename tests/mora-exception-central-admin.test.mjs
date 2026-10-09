@@ -19,9 +19,9 @@ function load(path, dependencies) {
   const { outputText } = ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   });
-  const module = { exports: {} };
+  const loadedModule = { exports: {} };
   runInNewContext(outputText, {
-    exports: module.exports, module, Buffer, Date, Intl, Map, URL, URLSearchParams,
+    exports: loadedModule.exports, module: loadedModule, Buffer, Date, Intl, Map, URL, URLSearchParams,
     require(name) {
       if (name === "server-only") return {};
       if (name === "node:crypto") return { createHash, randomUUID };
@@ -29,7 +29,7 @@ function load(path, dependencies) {
       return dependencies[name];
     },
   }, { filename: path });
-  return module.exports;
+  return loadedModule.exports;
 }
 
 const dates = load("lib/colombia-date.ts", {});
@@ -115,6 +115,198 @@ function analystInput(api, patch = {}) {
     promiseAmount: 200, promiseDate: "2026-10-10", reason: "Cliente confirma pago", observation: "Seguimiento documentado",
     idempotencyKey: randomUUID(), ...patch });
 }
+
+function amendmentInput(api, item, patch = {}) {
+  return api.parseCentralMoraExceptionAmendment({ action: "EDIT", version: item.version,
+    expiresOn: item.expiresOn, reason: item.reason, observation: item.observation,
+    idempotencyKey: randomUUID(), ...patch });
+}
+
+test("central edita plazo, motivo y observación sin recrear la excepción ni alterar el crédito", async t => {
+  const f = await harness(t, { plan: { estadoPago: "AL_DIA", saldoPendiente: 900, installments: [] } });
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service, { type: "PRORROGA", expiresOn: "2026-10-09" }), central, now);
+  const input = amendmentInput(f.service, created.item, { expiresOn: "2035-12-31", reason: "Cambio autorizado",
+    observation: "Fecha ajustada por central", auditReason: "Corrección de fecha" });
+  const result = await f.service.amendMoraExceptionRequest(created.item.id, input, central, now);
+  assert.equal(result.item.id, created.item.id);
+  assert.equal(result.item.creditoId, 77);
+  assert.equal(result.item.type, "PRORROGA");
+  assert.equal(result.item.status, "APPROVED");
+  assert.equal(result.item.source, "CENTRAL_DIRECT");
+  assert.equal(result.item.expiresOn, "2035-12-31");
+  assert.equal(result.item.reason, "Cambio autorizado");
+  assert.equal(result.item.observation, "Fecha ajustada por central");
+  assert.equal(result.item.version, created.item.version + 1);
+  assert.equal(result.item.decidedAt, created.item.decidedAt);
+  assert.equal(result.affectsMora, true);
+  const history = (await f.database.query(`SELECT * FROM "CreditMoraExceptionEvent" WHERE "action"='EDITED'`)).rows;
+  assert.equal(history.length, 1);
+  assert.equal(history[0].actorUserId, 1);
+  assert.equal(history[0].actorName, "Administrador vigente");
+  assert.equal(history[0].payload.before.expiresOn, "2026-10-09");
+  assert.equal(history[0].payload.after.expiresOn, "2035-12-31");
+  assert.equal(history[0].payload.auditReason, "Corrección de fecha");
+  assert.equal(history[0].version, result.item.version);
+  assert.equal((await f.database.query(`SELECT COUNT(*)::int AS n FROM "CreditMoraExceptionRequest"`)).rows[0].n, 1);
+  assert.equal(f.queries.some(sql => /UPDATE "Credito" SET/.test(sql)), false);
+});
+
+test("cancelar una excepción aprobada la quita inmediatamente de las activas y conserva sus datos", async t => {
+  const f = await harness(t);
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service), central, now);
+  assert.equal((await f.service.getActiveMoraExceptionsByCreditIds([77], now)).has(77), true);
+  const input = f.service.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: created.item.version,
+    idempotencyKey: randomUUID() });
+  const result = await f.service.amendMoraExceptionRequest(created.item.id, input, central, now);
+  assert.equal(result.item.status, "CANCELLED");
+  assert.equal(result.item.reason, created.item.reason);
+  assert.equal(result.item.decidedAt, created.item.decidedAt);
+  assert.equal(result.item.version, 2);
+  assert.equal(result.affectsMora, true);
+  assert.equal((await f.service.getActiveMoraExceptionsByCreditIds([77], now)).has(77), false);
+  const event = (await f.database.query(`SELECT * FROM "CreditMoraExceptionEvent" WHERE "action"='CANCELLED'`)).rows[0];
+  assert.equal(event.fromStatus, "APPROVED"); assert.equal(event.toStatus, "CANCELLED");
+  assert.equal(event.payload.before.status, "APPROVED"); assert.equal(event.payload.after.status, "CANCELLED");
+  assert.equal(event.payload.auditReason, "Cancelada por administrador central");
+  assert.equal((await f.database.query(`SELECT COUNT(*)::int AS n FROM "CreditMoraExceptionRequest"`)).rows[0].n, 1);
+  await assert.rejects(f.database.query(`DELETE FROM "CreditMoraExceptionRequest"`), /inmutable/i);
+});
+
+test("central cancela una solicitud pendiente del analista sin aprobarla y registra su responsable", async t => {
+  const f = await harness(t);
+  const created = await f.service.createMoraExceptionRequest(analystInput(f.service), analyst, now);
+  const input = f.service.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: created.item.version,
+    auditReason: "Cliente desistió", idempotencyKey: randomUUID() });
+  const result = await f.service.amendMoraExceptionRequest(created.item.id, input, central, now);
+  assert.equal(result.item.status, "CANCELLED"); assert.equal(result.affectsMora, false);
+  assert.equal(result.item.createdByUserId, 2); assert.equal(result.item.decidedByUserId, 1);
+  assert.equal(result.item.decidedByName, "Administrador vigente"); assert.ok(result.item.decidedAt);
+  assert.equal(result.item.decisionReason, "Cliente desistió");
+  assert.equal(result.item.promiseAmount, created.item.promiseAmount);
+  assert.equal(result.item.source, "ANALYST_REQUEST");
+  const replay = await f.service.amendMoraExceptionRequest(created.item.id, input, central, now);
+  assert.equal(replay.unchanged, true); assert.equal(replay.affectsMora, false);
+  assert.equal((await f.database.query(`SELECT COUNT(*)::int AS n FROM "CreditMoraExceptionEvent"`)).rows[0].n, 2);
+});
+
+test("editar compromiso del analista conserva cuota, origen, estado y ventana de pagos de la aprobación", async t => {
+  const f = await harness(t);
+  const pending = await f.service.createMoraExceptionRequest(analystInput(f.service), analyst, now);
+  const pendingEdited = await f.service.amendMoraExceptionRequest(pending.item.id,
+    amendmentInput(f.service, pending.item, { observation: "Corrección mientras espera aprobación" }), central, now);
+  assert.equal(pendingEdited.item.status, "PENDING"); assert.equal(pendingEdited.affectsMora, false);
+  assert.equal(pendingEdited.item.decidedAt, null); assert.equal(pendingEdited.item.decidedByUserId, null);
+  const decision = f.service.parseCentralMoraExceptionDecision({ action: "APPROVE", version: pendingEdited.item.version,
+    idempotencyKey: randomUUID() });
+  const approved = await f.service.actOnMoraExceptionRequest(pending.item.id, decision, central, now);
+  const input = amendmentInput(f.service, approved.item, { expiresOn: "2027-01-31", promiseAmount: 1000.25,
+    promiseDate: "2027-01-30", reason: "Compromiso actualizado" });
+  const result = await f.service.amendMoraExceptionRequest(approved.item.id, input, central, now);
+  assert.equal(result.item.status, "APPROVED");
+  assert.equal(result.item.promiseAmount, 1000.25);
+  assert.equal(result.item.promiseDate, "2027-01-30");
+  assert.equal(result.item.source, "ANALYST_REQUEST");
+  assert.equal(result.item.installmentNumber, approved.item.installmentNumber);
+  assert.equal(result.item.installmentDueDate, approved.item.installmentDueDate);
+  assert.equal(result.item.decidedAt, approved.item.decidedAt);
+});
+
+test("versiones e idempotencia evitan editar o cancelar sobre un registro cambiado", async t => {
+  const f = await harness(t);
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service), central, now);
+  const input = amendmentInput(f.service, created.item, { expiresOn: "2026-11-30" });
+  const first = await f.service.amendMoraExceptionRequest(created.item.id, input, central, now);
+  const replay = await f.service.amendMoraExceptionRequest(created.item.id, input, central, now);
+  assert.equal(replay.unchanged, true); assert.equal(replay.affectsMora, true); assert.equal(replay.item.version, first.item.version);
+  await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id, { ...input, expiresOn: "2026-12-31" }, central, now), { code: "IDEMPOTENCY_CONFLICT" });
+  await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id, { ...input, idempotencyKey: randomUUID() }, central, now), { code: "MORA_REQUEST_CHANGED" });
+  const cancel = f.service.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: first.item.version,
+    idempotencyKey: randomUUID() });
+  await f.service.amendMoraExceptionRequest(created.item.id, cancel, central, now);
+  const cancelledReplay = await f.service.amendMoraExceptionRequest(created.item.id, cancel, central, now);
+  assert.equal(cancelledReplay.affectsMora, true); assert.equal(cancelledReplay.unchanged, true);
+  assert.equal((await f.database.query(`SELECT COUNT(*)::int AS n FROM "CreditMoraExceptionEvent"`)).rows[0].n, 3);
+});
+
+test("los estados terminales jamás se reactivan por editar y no aceptan otra cancelación", async t => {
+  const f = await harness(t);
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service), central, now);
+  for (const status of ["EXPIRED", "REPLACED", "CANCELLED"]) {
+    await f.database.query(`UPDATE "CreditMoraExceptionRequest" SET "status"=$1 WHERE "id"=$2`, [status, created.item.id]);
+    await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id, amendmentInput(f.service, created.item), central, now), { code: "MORA_REQUEST_TERMINAL" });
+    await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id,
+      f.service.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: 1, idempotencyKey: randomUUID() }), central, now), { code: "MORA_REQUEST_TERMINAL" });
+  }
+  assert.equal((await f.database.query(`SELECT COUNT(*)::int AS n FROM "CreditMoraExceptionEvent"`)).rows[0].n, 1);
+});
+
+test("editar y cancelar revalidan rol central en base de datos, incluidos permisos retirados", async t => {
+  const f = await harness(t);
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service), central, now);
+  for (const actor of [analyst, { ...analyst, centralAdmin: true }, { id: 3, nombre: "Aliado", centralAdmin: true }]) {
+    await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id, amendmentInput(f.service, created.item), actor, now), { code: "FORBIDDEN" });
+    await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id,
+      f.service.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: 1, idempotencyKey: randomUUID() }), actor, now), { code: "FORBIDDEN" });
+  }
+  await f.database.exec(`UPDATE "Usuario" SET "activo"=FALSE WHERE "id"=1`);
+  await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id, amendmentInput(f.service, created.item), central, now), { code: "FORBIDDEN" });
+  assert.equal((await f.database.query(`SELECT "version" FROM "CreditMoraExceptionRequest"`)).rows[0].version, 1);
+});
+
+test("central puede fijar una fecha pasada explícita y la excepción deja de estar activa sin reactivaciones", async t => {
+  const f = await harness(t);
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service), central, now);
+  const result = await f.service.amendMoraExceptionRequest(created.item.id,
+    amendmentInput(f.service, created.item, { expiresOn: "2026-09-01" }), central, now);
+  assert.equal(result.item.status, "EXPIRED"); assert.equal(result.affectsMora, true);
+  assert.equal((await f.service.getActiveMoraExceptionsByCreditIds([77], now)).has(77), false);
+  assert.equal((await f.database.query(`SELECT "toStatus" FROM "CreditMoraExceptionEvent" WHERE "action"='EDITED'`)).rows[0].toStatus, "EXPIRED");
+});
+
+test("migrar una base existente admite cancelación de central directo y mantiene historial inmutable", async t => {
+  const f = await harness(t);
+  await f.database.exec(`ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT "CreditMoraExceptionRequest_source_fields";
+    ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_fields"
+      CHECK (("source"='ANALYST_REQUEST' AND "installmentNumber" IS NOT NULL AND "installmentDueDate" IS NOT NULL
+        AND "expiresOn" IS NOT NULL AND "promiseAmount" IS NOT NULL AND "promiseDate" IS NOT NULL)
+        OR ("source"='CENTRAL_DIRECT' AND "installmentNumber" IS NULL AND "installmentDueDate" IS NULL
+          AND "promiseAmount" IS NULL AND "promiseDate" IS NULL AND "status" IN ('APPROVED','EXPIRED','REPLACED')));`);
+  await installMoraExceptionRequestSchema({ query: (sql, params = []) => f.database.query(sql, params) });
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service), central, now);
+  const result = await f.service.amendMoraExceptionRequest(created.item.id,
+    f.service.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: 1, idempotencyKey: randomUUID() }), central, now);
+  assert.equal(result.item.status, "CANCELLED");
+  await assert.rejects(f.database.exec(`UPDATE "CreditMoraExceptionEvent" SET "actorName"='Otro'`), /inmutable/i);
+});
+
+test("si no se puede guardar la traza, editar o cancelar revierte el cambio completo", async t => {
+  const f = await harness(t);
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service), central, now);
+  await f.database.exec(`CREATE FUNCTION public.reject_amendment_trace() RETURNS trigger AS $$
+    BEGIN IF NEW."action" IN ('EDITED','CANCELLED') THEN RAISE EXCEPTION 'TRACE_WRITE_FAILURE'; END IF; RETURN NEW; END;
+    $$ LANGUAGE plpgsql;
+    CREATE TRIGGER reject_amendment_trace BEFORE INSERT ON "CreditMoraExceptionEvent"
+      FOR EACH ROW EXECUTE FUNCTION public.reject_amendment_trace();`);
+  await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id,
+    amendmentInput(f.service, created.item, { expiresOn: "2035-12-31" }), central, now), /TRACE_WRITE_FAILURE/);
+  await assert.rejects(f.service.amendMoraExceptionRequest(created.item.id,
+    f.service.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: 1, idempotencyKey: randomUUID() }), central, now), /TRACE_WRITE_FAILURE/);
+  const row = (await f.database.query(`SELECT "status","version","expiresOn" FROM "CreditMoraExceptionRequest"`)).rows[0];
+  assert.equal(row.status, "APPROVED"); assert.equal(row.version, 1); assert.equal(row.expiresOn, null);
+  assert.equal((await f.service.getActiveMoraExceptionsByCreditIds([77], now)).has(77), true);
+});
+
+test("el parser de correcciones no admite identidad, finanzas, cambios de tipo ni valores inválidos", () => {
+  const api = service();
+  const base = { action: "EDIT", version: 1, expiresOn: null, idempotencyKey: randomUUID() };
+  for (const patch of [{ creditoId: 78 }, { type: "PRORROGA" }, { montoCredito: 100 }, { status: "APPROVED" },
+    { actorUserId: 3 }, { version: 0 }, { expiresOn: "2026-02-30" }, { promiseAmount: -1 },
+    { promiseAmount: 1.001 }, { promiseAmount: true }, { promiseDate: "2026-02-30" }, { auditReason: 123 }])
+    assert.throws(() => api.parseCentralMoraExceptionAmendment({ ...base, ...patch }), { code: "INVALID_MORA_EXCEPTION" });
+  assert.equal(api.parseCentralMoraExceptionAmendment(base).auditReason, "Editada por administrador central");
+  assert.throws(() => api.parseCentralMoraExceptionAmendment({ action: "CANCEL", version: 1, expiresOn: null,
+    idempotencyKey: randomUUID() }), { code: "INVALID_MORA_EXCEPTION" });
+});
 
 test("central registra con datos mínimos y rechaza campos que intentan imponer identidad o estado", () => {
   const api = service();

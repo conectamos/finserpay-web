@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 
-function loadRoute({ action, syncImpl, events, errors = [] }) {
+function loadRoute({ action, syncImpl, events, errors = [], centralAdmin = true, affectsMora = false, amendmentError = null, unchanged = false }) {
   const path = new URL("../app/api/aprobaciones/excepciones-mora/[id]/route.ts", import.meta.url);
   const { outputText } = ts.transpileModule(readFileSync(path, "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -14,8 +14,16 @@ function loadRoute({ action, syncImpl, events, errors = [] }) {
     "next/server": {
       NextResponse: { json: (body, options = {}) => ({ body, status: options.status || 200, headers: options.headers }) },
     },
-    "@/lib/analyst-mora-access": { getMoraActor: async () => ({ id: 1, nombre: "Central", centralAdmin: true }) },
+    "@/lib/analyst-mora-access": { getMoraActor: async () => ({ id: centralAdmin ? 1 : 2, nombre: centralAdmin ? "Central" : "Analista", centralAdmin }) },
     "@/lib/mora-exception-requests": {
+      parseCentralMoraExceptionAmendment: () => ({ action, version: 1, auditReason: "Corrección autorizada", idempotencyKey: "50000000-0000-4000-8000-000000000001" }),
+      amendMoraExceptionRequest: async (_id, input, actor) => {
+        assert.equal(input.action, action);
+        if (amendmentError) throw amendmentError;
+        assert.equal(actor.centralAdmin, true);
+        events.push("commit-amendment");
+        return { item: { id: "request", creditoId: 77, status: action === "CANCEL" ? "CANCELLED" : affectsMora ? "APPROVED" : "PENDING" }, unchanged, affectsMora };
+      },
       parseMoraExceptionDecision: () => ({
         action,
         version: 1,
@@ -35,9 +43,9 @@ function loadRoute({ action, syncImpl, events, errors = [] }) {
       },
     },
     "@/lib/credit-approval-http": {
-      approvalErrorResponse: (error) => ({ status: 500, body: { error: error.message } }),
+      approvalErrorResponse: (error) => ({ status: error.status || 500, body: { error: error.message } }),
       approvalPrivateHeaders: { "Cache-Control": "private, no-store" },
-      readApprovalRequest: async () => ({}),
+      readApprovalRequest: async () => ({ action }),
     },
     "@/lib/credit-mora-sync": {
       syncCreditMoraById: syncImpl,
@@ -110,6 +118,65 @@ test("OBSERVE no ejecuta sincronización operativa", async () => {
   assert.deepEqual(events, ["commit"]);
   assert.equal(syncCalls, 0);
   assert.equal("moraSync" in response.body, false);
+});
+
+for (const action of ["EDIT", "CANCEL"]) {
+  test(`${action} de excepción aprobada sincroniza su crédito solo después de guardar`, async () => {
+    const events = [];
+    const calls = [];
+    const route = loadRoute({ action, events, affectsMora: true, syncImpl: async (creditoId, options) => {
+      events.push("sync"); calls.push({ creditoId, options }); return { action: "LOCKED", message: "Estado actualizado" };
+    } });
+    const response = await route.PATCH({}, context);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.item.status, action === "CANCEL" ? "CANCELLED" : "APPROVED");
+    assert.deepEqual(events, ["commit-amendment", "sync"]);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ creditoId: 77, options: { forceRemoteAudit: true } }]);
+    assert.equal(response.body.moraSync.ok, true);
+    assert.match(response.headers["Cache-Control"], /no-store/);
+  });
+
+  test(`${action} pendiente no altera el equipo`, async () => {
+    const events = [];
+    const route = loadRoute({ action, events, syncImpl: async () => { assert.fail("No debe sincronizar"); } });
+    const response = await route.PATCH({}, context);
+    assert.equal(response.status, 200);
+    assert.deepEqual(events, ["commit-amendment"]);
+    assert.equal("moraSync" in response.body, false);
+  });
+
+  test(`${action} denegado por el backend no ejecuta sincronización`, async () => {
+    const events = [];
+    const route = loadRoute({ action, events, centralAdmin: false,
+      amendmentError: Object.assign(new Error("Solo el administrador central puede gestionar esta excepción."), { status: 403 }),
+      syncImpl: async () => { assert.fail("No debe sincronizar"); },
+    });
+    const response = await route.PATCH({}, context);
+    assert.equal(response.status, 403);
+    assert.deepEqual(events, []);
+  });
+}
+
+test("CANCEL conserva la cancelación ante fallo remoto y el replay vuelve a sincronizar sin duplicarla", async () => {
+  const events = [];
+  const errors = [];
+  let attempts = 0;
+  const route = loadRoute({ action: "CANCEL", events, errors, affectsMora: true, unchanged: true, syncImpl: async () => {
+    events.push("sync");
+    if (++attempts === 1) throw new Error("TOKEN=secreto remoto");
+    return { action: "LOCKED", message: "Estado actualizado" };
+  } });
+  const first = await route.PATCH({}, context);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.item.status, "CANCELLED");
+  assert.equal(first.body.moraSync.ok, false);
+  assert.match(first.body.moraSync.message, /cambio quedó guardado/);
+  assert.doesNotMatch(JSON.stringify({ first, errors }), /TOKEN|secreto remoto/);
+  const retry = await route.PATCH({}, context);
+  assert.equal(retry.body.unchanged, true);
+  assert.equal(retry.body.item.id, first.body.item.id);
+  assert.equal(retry.body.moraSync.ok, true);
+  assert.deepEqual(events, ["commit-amendment", "sync", "commit-amendment", "sync"]);
 });
 
 function loadCreateRoute({ centralAdmin = true, syncImpl, events = [], errors = [] }) {

@@ -11,8 +11,8 @@ import type { MoraExceptionCreditSummary, MoraExceptionEligibility, MoraExceptio
 import MoraSupports from "../mora-supports";
 import styles from "./mora-exception-requests.module.css";
 
-const states: Record<MoraExceptionStatus, string> = { PENDING: "Pendiente", APPROVED: "Aprobada", REJECTED: "Rechazada", EXPIRED: "Vencida", REPLACED: "Reemplazada" };
-const actions: Record<MoraExceptionEvent["action"], string> = { SUBMITTED: "Enviada a revisión", APPROVED: "Aprobada", REJECTED: "Rechazada", EXPIRED: "Vencida", OBSERVED: "Observación registrada", REPLACED: "Reemplazada" };
+const states: Record<MoraExceptionStatus, string> = { PENDING: "Pendiente", APPROVED: "Aprobada", REJECTED: "Rechazada", EXPIRED: "Vencida", REPLACED: "Reemplazada", CANCELLED: "Cancelada" };
+const actions: Record<MoraExceptionEvent["action"], string> = { SUBMITTED: "Enviada a revisión", APPROVED: "Aprobada", REJECTED: "Rechazada", EXPIRED: "Vencida", OBSERVED: "Observación registrada", REPLACED: "Reemplazada", EDITED: "Solicitud editada", CANCELLED: "Solicitud cancelada" };
 const tabs = [{ value: "", label: "Todas" }, { value: "PENDING", label: "Pendientes" }, { value: "APPROVED", label: "Aprobadas" }, { value: "EXPIRED", label: "Vencidas" }];
 const money = (value: number) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
 const identifier = (value?: string | null) => value ? String(value).replace(/[.\s,]/g, "") : "Sin registro";
@@ -22,7 +22,7 @@ function date(value: string | null, time = false) {
   if (!Number.isFinite(parsed.getTime())) return "Fecha no disponible";
   return new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "2-digit", year: "numeric", ...(time ? { hour: "2-digit", minute: "2-digit" } : {}), timeZone: "America/Bogota" }).format(parsed);
 }
-function tone(status: MoraExceptionStatus) { return status === "APPROVED" ? "positive" : status === "REJECTED" || status === "EXPIRED" ? "danger" : status === "REPLACED" ? "neutral" : "warning"; }
+function tone(status: MoraExceptionStatus) { return status === "APPROVED" ? "positive" : status === "REJECTED" || status === "EXPIRED" ? "danger" : status === "REPLACED" || status === "CANCELLED" ? "neutral" : "warning"; }
 function expiry(value: string | null) { return value ? date(value) : "Sin vencimiento"; }
 function CreditNumber({ number }: { number?: string | null }) {
   return number ? <strong className={styles.creditNumber}>Sadmin: {number}</strong> : <Badge tone="warning" className={styles.pendingSadmin}>PENDIENTE SADMIN</Badge>;
@@ -36,10 +36,26 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 function eventReason(payload: unknown) {
   if (!payload || typeof payload !== "object") return "";
   const body = payload as Record<string, unknown>;
-  return [body.reason, body.observation, body.decisionReason, body.bypassReason].filter(value => typeof value === "string").join(" · ");
+  return [body.auditReason, body.reason, body.observation, body.decisionReason, body.bypassReason].filter(value => typeof value === "string").join(" · ");
+}
+function eventChanges(payload: unknown) {
+  if (!payload || typeof payload !== "object") return [];
+  const { before, after } = payload as { before?: Record<string, unknown>; after?: Record<string, unknown> };
+  if (!before || !after || typeof before !== "object" || typeof after !== "object") return [];
+  const fields: Array<{ key: string; label: string; format: (value: unknown) => string }> = [
+    { key: "expiresOn", label: "Vencimiento", format: value => expiry(typeof value === "string" ? value : null) },
+    { key: "promiseDate", label: "Fecha del compromiso", format: value => date(typeof value === "string" ? value : null) },
+    { key: "promiseAmount", label: "Valor del compromiso", format: value => typeof value === "number" ? money(value) : "Sin compromiso" },
+    { key: "reason", label: "Motivo de la solicitud", format: value => typeof value === "string" && value ? value : "Sin nota registrada" },
+    { key: "observation", label: "Observación", format: value => typeof value === "string" && value ? value : "Sin observación" },
+    { key: "status", label: "Estado", format: value => states[value as MoraExceptionStatus] || String(value) },
+  ];
+  return fields.filter(field => field.key in before && field.key in after && before[field.key] !== after[field.key])
+    .map(field => ({ key: field.key, label: field.label, before: field.format(before[field.key]), after: field.format(after[field.key]) }));
 }
 type List = { items: MoraExceptionRequestItem[]; total: number; page: number; pageSize: number; totalPages: number; credit?: MoraExceptionCreditSummary; eligibility?: MoraExceptionEligibility };
 type Detail = { item: MoraExceptionRequestItem; history: MoraExceptionEvent[]; credit?: MoraExceptionCreditSummary; eligibility?: MoraExceptionEligibility };
+type AmendmentDraft = { action: "EDIT" | "CANCEL"; version: number; expiresOn: string; noExpiry: boolean; reason: string; observation: string; promiseAmount: string; promiseDate: string; auditReason: string };
 
 export default function MoraExceptionRequestsClient({ centralAdmin, initialCreditId = null, initialCreateOpen = false }: { centralAdmin: boolean; initialCreditId?: number | null; initialCreateOpen?: boolean }) {
   const [status, setStatus] = useState("");
@@ -75,14 +91,16 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
   const [decisionReason, setDecisionReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [confirm, setConfirm] = useState<"APPROVE" | "REJECT" | null>(null);
+  const [confirm, setConfirm] = useState<"APPROVE" | "REJECT" | "EDIT" | "CANCEL" | null>(null);
+  const [amendment, setAmendment] = useState<AmendmentDraft | null>(null);
   const createKey = useRef<string | null>(null);
-  const changeKey = useRef<string | null>(null);
+  const changeKey = useRef<{ intent: string; key: string } | null>(null);
   const submitting = useRef(false);
   const candidateController = useRef<AbortController | null>(null);
   const today = colombiaDateKey(new Date());
   useEffect(() => { createKey.current = null; }, [creditId, kind, expiresOn, noExpiry, promiseDate, promiseAmount, reason, observation]);
   useEffect(() => () => candidateController.current?.abort(), []);
+  useEffect(() => { setAmendment(null); setConfirm(null); changeKey.current = null; }, [detailId]);
 
   useEffect(() => {
     const controller = new AbortController(); setLoading(true); setListError("");
@@ -98,7 +116,7 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
   }, [status, typeFilter, appliedSearch, page, pageSize, reload]);
   useEffect(() => {
     if (!detailId) return;
-    const controller = new AbortController(); setDetailLoading(true); setDetail(null); setDetailError(""); setDecisionReason(""); changeKey.current = null;
+    const controller = new AbortController(); setDetailLoading(true); setDetail(null); setDetailError(""); setDecisionReason("");
     request<Detail>("/api/aprobaciones/excepciones-mora/" + detailId, { signal: controller.signal })
       .then(data => { if (!controller.signal.aborted) setDetail(data); })
       .catch(e => { if (!controller.signal.aborted) setDetailError(e.message); })
@@ -153,13 +171,53 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
   }
   async function change(action: "APPROVE" | "REJECT" | "OBSERVE") {
     if (!detail || submitting.current) return;
-    submitting.current = true; setSaving(true); setError(""); setNotice(""); changeKey.current ??= crypto.randomUUID();
+    const payload = { action, version: detail.item.version, reason: decisionReason.trim() || (action === "APPROVE" ? "Aprobada por administrador central" : "Rechazada por administrador central") };
+    const intent = JSON.stringify({ id: detail.item.id, ...payload });
+    if (changeKey.current?.intent !== intent) changeKey.current = { intent, key: crypto.randomUUID() };
+    submitting.current = true; setSaving(true); setError(""); setNotice("");
     try {
-      const response = await request<{ moraSync?: { ok: boolean; message: string } }>("/api/aprobaciones/excepciones-mora/" + detail.item.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, version: detail.item.version, reason: decisionReason.trim() || (action === "APPROVE" ? "Aprobada por administrador central" : "Rechazada por administrador central"), idempotencyKey: changeKey.current }) });
+      const response = await request<{ moraSync?: { ok: boolean; message: string } }>("/api/aprobaciones/excepciones-mora/" + detail.item.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, idempotencyKey: changeKey.current.key }) });
       changeKey.current = null; setConfirm(null); setReload(value => value + 1);
       setNotice(action === "OBSERVE" ? "Observación guardada en el historial." : "Decisión guardada en el historial.");
       if (response.moraSync && !response.moraSync.ok) setError(response.moraSync.message);
     } catch (e) { setConfirm(null); setError(e instanceof Error ? e.message : "No se pudo registrar la gestión."); }
+    finally { submitting.current = false; setSaving(false); }
+  }
+  function openAmendment(action: "EDIT" | "CANCEL") {
+    if (!centralAdmin || !detail || saving || !["PENDING", "APPROVED"].includes(detail.item.status)) return;
+    setError(""); setNotice("");
+    setAmendment({ action, version: detail.item.version, expiresOn: detail.item.expiresOn || "", noExpiry: detail.item.expiresOn === null,
+      reason: detail.item.reason, observation: detail.item.observation, promiseAmount: detail.item.promiseAmount === null ? "" : String(detail.item.promiseAmount),
+      promiseDate: detail.item.promiseDate || "", auditReason: "" });
+  }
+  function updateAmendment(patch: Partial<AmendmentDraft>) {
+    setAmendment(current => current ? { ...current, ...patch } : null);
+  }
+  function confirmAmendment(event: FormEvent) {
+    event.preventDefault();
+    if (!centralAdmin || !detail || !amendment || saving) return;
+    if (amendment.action === "EDIT" && ((!amendment.noExpiry && !amendment.expiresOn) ||
+      (!detail.item.centralDirect && (!amendment.promiseDate || !Number.isFinite(Number(amendment.promiseAmount)) || Number(amendment.promiseAmount) <= 0)))) {
+      setError("Completa el vencimiento y los datos del compromiso que correspondan."); return;
+    }
+    setConfirm(amendment.action);
+  }
+  async function amend() {
+    if (!centralAdmin || !detail || !amendment || submitting.current) return;
+    const payload = { action: amendment.action, version: amendment.version,
+      auditReason: amendment.auditReason.trim() || (amendment.action === "EDIT" ? "Editada por administrador central" : "Cancelada por administrador central"),
+      ...(amendment.action === "EDIT" ? { expiresOn: amendment.noExpiry ? null : amendment.expiresOn, reason: amendment.reason, observation: amendment.observation,
+        ...(!detail.item.centralDirect ? { promiseAmount: Number(amendment.promiseAmount), promiseDate: amendment.promiseDate } : {}) } : {}) };
+    const intent = JSON.stringify({ id: detail.item.id, ...payload });
+    if (changeKey.current?.intent !== intent) changeKey.current = { intent, key: crypto.randomUUID() };
+    submitting.current = true; setSaving(true); setError(""); setNotice("");
+    try {
+      const response = await request<{ moraSync?: { ok: boolean; message: string } }>("/api/aprobaciones/excepciones-mora/" + detail.item.id,
+        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, idempotencyKey: changeKey.current.key }) });
+      changeKey.current = null; setConfirm(null); setAmendment(null); setReload(value => value + 1);
+      setNotice(amendment.action === "EDIT" ? "Cambios guardados. La versión anterior permanece en el historial." : "Solicitud cancelada. La autorización dejó de estar vigente y su historial se conserva.");
+      if (response.moraSync && !response.moraSync.ok) setError(response.moraSync.message);
+    } catch (e) { setConfirm(null); setError(e instanceof Error ? e.message : "No se pudo guardar el cambio."); }
     finally { submitting.current = false; setSaving(false); }
   }
   const currentPage = list?.page || page;
@@ -168,6 +226,12 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
   const from = total ? (currentPage - 1) * (list?.pageSize || pageSize) + 1 : 0;
   const to = total ? from + (list?.items.length || 0) - 1 : 0;
   const detailCredit = detail?.credit || detail?.item.credit;
+  const canAmend = centralAdmin && detail && ["PENDING", "APPROVED"].includes(detail.item.status);
+  const confirmationTitle = confirm === "EDIT" ? "Guardar cambios de la solicitud" : confirm === "CANCEL" ? "Cancelar solicitud" : confirm === "APPROVE" ? "Aprobar solicitud" : "Rechazar solicitud";
+  const confirmationDescription = confirm === "CANCEL" ? "La solicitud quedará cancelada y dejará de autorizar la excepción o prórroga. Su historial se conservará con tu usuario, fecha y hora." :
+    confirm === "EDIT" ? `Se actualizará la solicitud${amendment?.noExpiry ? " sin vencimiento" : ` con vencimiento ${date(amendment?.expiresOn || null)}`}. La versión anterior y el motivo del cambio quedarán en el historial.` :
+    decisionReason.trim() ? `Se registrará tu decisión y el motivo: ${decisionReason}` : "Se registrará la decisión del administrador central con tu usuario, fecha y hora.";
+  const confirmationLabel = confirm === "EDIT" ? "Confirmar cambios" : confirm === "CANCEL" ? "Confirmar cancelación" : confirm === "APPROVE" ? "Confirmar aprobación" : "Confirmar rechazo";
 
   return <main className={styles.main}>
     <header className={styles.heading}>
@@ -181,8 +245,8 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
         <div className={styles.tabs} role="tablist" aria-label="Estados de solicitudes">
           {tabs.map((tab, index) => <button key={tab.value} type="button" role="tab" aria-selected={status === tab.value} aria-controls="mora-results" tabIndex={status === tab.value || (!tabs.some(item => item.value === status) && index === 0) ? 0 : -1} className={status === tab.value ? styles.activeTab : ""} onClick={() => filterStatus(tab.value)} onKeyDown={event => tabKey(event, index)}>{tab.label}</button>)}
         </div>
-        <Select aria-label="Otros estados" className={styles.otherStates} value={status === "REJECTED" || status === "REPLACED" ? status : ""} onChange={event => { if (event.target.value) filterStatus(event.target.value); }}>
-          <option value="">Otros estados</option><option value="REJECTED">Rechazadas</option><option value="REPLACED">Reemplazadas</option>
+        <Select aria-label="Otros estados" className={styles.otherStates} value={["REJECTED", "REPLACED", "CANCELLED"].includes(status) ? status : ""} onChange={event => { if (event.target.value) filterStatus(event.target.value); }}>
+          <option value="">Otros estados</option><option value="REJECTED">Rechazadas</option><option value="REPLACED">Reemplazadas</option><option value="CANCELLED">Canceladas</option>
         </Select>
       </div>
       <div className={styles.toolbar}>
@@ -192,7 +256,7 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
           <button type="submit" className={styles.searchSubmit} aria-label="Buscar solicitudes"><ArrowRight size={18} aria-hidden="true" /></button>
         </form>
         <Select aria-label="Filtrar tipo" value={typeFilter} className={styles.typeFilter} onChange={event => { setTypeFilter(event.target.value); setPage(1); }}><option value="">Todos los tipos</option><option value="EXCEPCION">Excepción</option><option value="PRORROGA">Prórroga</option></Select>
-        <Button variant="secondary" className={styles.refresh} title="Actualizar" aria-label="Actualizar" onClick={() => setReload(value => value + 1)} disabled={loading}><RefreshCw size={19} aria-hidden="true" /></Button>
+        <Button variant="secondary" className={styles.refresh} title="Actualizar" aria-label="Actualizar" onClick={() => setReload(value => value + 1)} disabled={loading || saving}><RefreshCw size={19} aria-hidden="true" /></Button>
       </div>
       <section id="mora-results" role="tabpanel" aria-label={tabs.find(tab => tab.value === status)?.label || states[status as MoraExceptionStatus]} aria-busy={loading}>
         {loading ? <LoadingState label="Cargando solicitudes de excepción…" /> : listError ? <div className={styles.listError}><p role="alert">{listError}</p><Button variant="secondary" onClick={() => setReload(value => value + 1)}>Reintentar</Button></div> : !list?.items.length ? <EmptyState title="Sin solicitudes" description="No se encontraron solicitudes con estos filtros." /> :
@@ -263,14 +327,27 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
           {detail.item.conditionStatus === "FULFILLED" && <Badge tone="positive">Compromiso cumplido</Badge>}
           {detail.item.conditionStatus === "BREACHED" && <Badge tone="danger">Compromiso incumplido</Badge>}
           <MoraSupports key={detail.item.id} creditoId={detail.item.creditoId} subjectKind="EXCEPCION" subjectId={detail.item.id} defaultOpen={!centralAdmin} />
-          <div className={styles.form}><label>{centralAdmin ? "Observación (opcional)" : "Observación o motivo de decisión"}<textarea className="fp-ui-input" value={decisionReason} onChange={event => { setDecisionReason(event.target.value); changeKey.current = null; }} minLength={centralAdmin ? undefined : 5} maxLength={1000} disabled={saving} /></label>
+          {canAmend && !amendment && <div className={styles.management} aria-label="Administrar solicitud"><Button variant="secondary" disabled={saving} onClick={() => openAmendment("EDIT")}>Editar solicitud</Button><Button variant="danger" disabled={saving} onClick={() => openAmendment("CANCEL")}>Cancelar solicitud</Button></div>}
+          {amendment && <form className={`${styles.form} ${styles.amendment}`} aria-labelledby="mora-amendment-title" onSubmit={confirmAmendment}>
+            <h3 id="mora-amendment-title">{amendment.action === "EDIT" ? "Editar solicitud" : "Cancelar solicitud"}</h3>
+            {amendment.action === "EDIT" ? <>
+              {detail.item.centralDirect && <label className={styles.checkbox}><input type="checkbox" checked={amendment.noExpiry} onChange={event => updateAmendment({ noExpiry: event.target.checked })} disabled={saving} /> Sin vencimiento</label>}
+              {!amendment.noExpiry && <label>Vencimiento<Input type="date" value={amendment.expiresOn} onChange={event => updateAmendment({ expiresOn: event.target.value })} required disabled={saving} /></label>}
+              <label>Motivo de la solicitud (opcional)<textarea className="fp-ui-input" value={amendment.reason} onChange={event => updateAmendment({ reason: event.target.value })} maxLength={500} disabled={saving} /></label>
+              <label>Observación (opcional)<textarea className="fp-ui-input" value={amendment.observation} onChange={event => updateAmendment({ observation: event.target.value })} maxLength={2000} disabled={saving} /></label>
+              {!detail.item.centralDirect && <><label>Valor del compromiso<Input type="number" min="0.01" step="0.01" value={amendment.promiseAmount} onChange={event => updateAmendment({ promiseAmount: event.target.value })} required disabled={saving} /></label><label>Fecha del compromiso<Input type="date" value={amendment.promiseDate} onChange={event => updateAmendment({ promiseDate: event.target.value })} required disabled={saving} /></label></>}
+            </> : <p>La cancelación desactiva esta autorización y conserva todos sus registros.</p>}
+            <label>Motivo {amendment.action === "EDIT" ? "del cambio" : "de cancelación"} (opcional)<textarea className="fp-ui-input" value={amendment.auditReason} onChange={event => updateAmendment({ auditReason: event.target.value })} maxLength={1000} disabled={saving} /></label>
+            <div className={styles.management}><Button type="submit" variant={amendment.action === "CANCEL" ? "danger" : "primary"} disabled={saving}>{saving ? "Guardando…" : amendment.action === "EDIT" ? "Revisar cambios" : "Revisar cancelación"}</Button><Button type="button" variant="secondary" disabled={saving} onClick={() => setAmendment(null)}>Volver al detalle</Button></div>
+          </form>}
+          {!amendment && <div className={styles.form}><label>{centralAdmin ? "Observación (opcional)" : "Observación o motivo de decisión"}<textarea className="fp-ui-input" value={decisionReason} onChange={event => { setDecisionReason(event.target.value); changeKey.current = null; }} minLength={centralAdmin ? undefined : 5} maxLength={1000} disabled={saving} /></label>
             <div className={styles.management}><Button variant="secondary" disabled={saving || decisionReason.trim().length < (centralAdmin ? 1 : 5)} onClick={() => void change("OBSERVE")}>Guardar observación</Button>{centralAdmin && detail.item.status === "PENDING" && <><Button disabled={saving} onClick={() => setConfirm("APPROVE")}>Aprobar</Button><Button variant="danger" disabled={saving} onClick={() => setConfirm("REJECT")}>Rechazar</Button></>}</div>
-          </div>
+          </div>}
           {!centralAdmin && detail.item.status === "PENDING" && <p className={styles.muted}>La decisión corresponde al administrador central autorizado.</p>}
-          <section className={styles.history}><h3>Historial de decisiones y responsables</h3><ol>{detail.history.map(item => <li key={item.id}><strong>{actions[item.action]}</strong><p>{date(item.createdAt, true)} · {item.actorName}</p><p>Resultado: {states[item.toStatus]}</p><p className={styles.muted}>{eventReason(item.payload)}</p></li>)}</ol></section>
+          <section className={styles.history}><h3>Historial de decisiones y responsables</h3><ol>{detail.history.map(item => <li key={item.id}><strong>{actions[item.action]}</strong><p>{date(item.createdAt, true)} · {item.actorName}</p><p>Resultado: {states[item.toStatus]}</p><p className={styles.muted}>{eventReason(item.payload)}</p>{eventChanges(item.payload).length > 0 && <dl className={styles.historyChanges}>{eventChanges(item.payload).map(change => <div key={change.key}><dt>{change.label}</dt><dd><span>Antes: {change.before}</span><span>Después: {change.after}</span></dd></div>)}</dl>}</li>)}</ol></section>
         </>}
       </div>
-      <ConfirmDialog open={Boolean(confirm)} title={confirm === "APPROVE" ? "Aprobar solicitud" : "Rechazar solicitud"} description={decisionReason.trim() ? `Se registrará tu decisión y el motivo: ${decisionReason}` : "Se registrará la decisión del administrador central con tu usuario, fecha y hora."} confirmLabel={confirm === "APPROVE" ? "Confirmar aprobación" : "Confirmar rechazo"} danger={confirm === "REJECT"} busy={saving} onCancel={() => { if (!submitting.current) setConfirm(null); }} onConfirm={() => { if (confirm) void change(confirm); }} />
+      <ConfirmDialog open={Boolean(confirm)} title={confirmationTitle} description={confirmationDescription} confirmLabel={confirmationLabel} danger={confirm === "REJECT" || confirm === "CANCEL"} busy={saving} onCancel={() => { if (!submitting.current) setConfirm(null); }} onConfirm={() => { if (confirm === "EDIT" || confirm === "CANCEL") void amend(); else if (confirm) void change(confirm); }} />
     </FinserSidePanel>
   </main>;
 }
