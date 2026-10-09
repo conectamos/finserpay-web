@@ -80,6 +80,17 @@ export async function completeMissingDataCreditoIdentity(row: DataCreditoAssessm
   return { original: identity.original, effective };
 }
 
+// A completed signature preserves its signed identity. The credit approval still
+// has to match the encrypted query document and its owner, never the browser input.
+export async function getScopedDataCreditoQueryIdentity(id: string, scope: DataCreditoAssessmentScope, expectedDocument: string) {
+  const row = await getDataCreditoAssessmentById(id);
+  if (!row || row.status !== "APROBADO" || !dataCreditoAssessmentMatchesScope(row, scope)) throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
+  const source = await readDataCreditoIdentitySource(row);
+  if (!source) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
+  if (source.documentNumber !== expectedDocument.replace(/\D/g, "")) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
+  return { documentNumber: source.documentNumber, querySurname: source.firstSurname, assessment: row };
+}
+
 export async function getScopedDataCreditoCustomerIdentity(id: string, scope: DataCreditoAssessmentScope) {
   const row = await getDataCreditoAssessmentById(id);
   if (!row || !dataCreditoAssessmentMatchesScope(row, scope)) throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");

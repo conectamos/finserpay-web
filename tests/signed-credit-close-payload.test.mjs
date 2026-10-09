@@ -380,7 +380,7 @@ test("la ruta canonicaliza el expediente válido antes de refrescar y exige firm
   );
   assert.match(
     source,
-    /const clienteNombreFinal =\s*authoritativeSignedTerms/
+    /const clienteNombreFinal =\s*hasAuthoritativeSignedIdentity \|\| authoritativeSignedTerms/
   );
   assert.match(source, /clienteNombre\s*\|\|\s*clienteNombreDesdePartes/);
 });
@@ -416,4 +416,11 @@ test("la activación calcula y persiste sus fechas desde un solo instante del se
   assert.ok(createArgsBlock, "debe existir el payload de creación del crédito");
   assert.match(createArgsBlock, /\bfechaCredito,\s*\n/);
   assert.match(createArgsBlock, /\bfechaPrimerPago,\s*\n/);
+});
+
+test('legacy completed signature without financial seal preserves signed identity and rejects incoming replacement',()=>{
+ const signed={clienteDocumento:'1234567',clienteNombre:'María del Mar De la Peña',clientePrimerNombre:'María del Mar',clientePrimerApellido:'De la Peña',clienteSegundoApellido:'',dataCreditoAssessmentId:'saved-assessment'};
+ const closed=buildSignedCreditClosePayload(signed,{clienteDocumento:'7654321',clientePrimerNombre:'Otro',clientePrimerApellido:'Otro',clienteSegundoApellido:'Inventado',dataCreditoAssessmentId:'other-assessment',solicitudId:2876,firmaSeguroProcessUuid:'completed-server-process',firmaSeguroPasoContratos:true,fotoEntregaDataUrl:'data:image/jpeg;base64,entrega'});
+ for(const [field,value] of Object.entries(signed))assert.equal(closed[field],value);
+ assert.equal(closed.solicitudId,2876);assert.equal(closed.fotoEntregaDataUrl,'data:image/jpeg;base64,entrega');
 });

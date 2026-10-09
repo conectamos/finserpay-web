@@ -1,5 +1,5 @@
 import type { DataCreditoIdentity } from "@/lib/datacredito/identity";
-import { getScopedDataCreditoCustomerIdentity, enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
+import { getScopedDataCreditoQueryIdentity, getDataCreditoCustomerIdentityForDisplay, enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import { createHash } from "node:crypto";
 import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
@@ -1151,6 +1151,7 @@ export async function POST(req: Request) {
     }
 
     let authoritativeSignedTerms: FinancingTermsSeal | null = null;
+    let hasAuthoritativeSignedIdentity = false;
     const preloadedSolicitudId = parseId(sanitizeText(body.solicitudId));
     const preloadedFirmaSeguroProcessUuid = sanitizeText(
       body.firmaSeguroProcessUuid
@@ -1172,6 +1173,20 @@ export async function POST(req: Request) {
       const signedSeal = readFinancingTermsSeal(
         signedPayload?.financialTermsSeal
       );
+      const completedSignedPayload = Boolean(
+        preloadedFirmaSeguroProcess &&
+        preloadedFirmaSeguroProcess.draftId === preloadedSolicitudId &&
+        !preloadedFirmaSeguroProcess.creditoId &&
+        signedPayload &&
+        (preloadedFirmaSeguroProcess.completedAt || preloadedFirmaSeguroProcess.signedDocumentBase64)
+      );
+      if (completedSignedPayload && signedPayload) {
+        hasAuthoritativeSignedIdentity = true;
+        body = buildSignedCreditClosePayload(
+          signedPayload,
+          body as unknown as Record<string, unknown>
+        ) as CreditCreateBody;
+      }
       if (
         preloadedFirmaSeguroProcess &&
         preloadedFirmaSeguroProcess.draftId === preloadedSolicitudId &&
@@ -1396,7 +1411,7 @@ export async function POST(req: Request) {
       firstSurname: clientePrimerApellido,
       secondSurname: clienteSegundoApellido,
     });
-    const clienteNombreFinal = authoritativeSignedTerms
+    const clienteNombreFinal = hasAuthoritativeSignedIdentity || authoritativeSignedTerms
       ? clienteNombre || clienteNombreDesdePartes
       : clienteNombreDesdePartes || clienteNombre;
     const equipoMarca = sanitizeText(body.equipoMarca);
@@ -1665,14 +1680,22 @@ export async function POST(req: Request) {
         );
       }
 
-      recoveredCustomerIdentity = authoritativeSignedTerms ? await getScopedDataCreditoCustomerIdentity(assessmentId, { userId: creditOwner.usuarioId, sellerId: creditOwner.vendedorId, sedeId: creditOwner.sedeId, aliadoId: creditOwner.aliadoId }) : await enforceDataCreditoCustomerIdentity(body as unknown as Record<string, unknown>, {
-        userId: creditOwner.usuarioId, sellerId: creditOwner.vendedorId,
-        sedeId: creditOwner.sedeId, aliadoId: creditOwner.aliadoId,
-      }, false);
+      const identityScope = { userId: creditOwner.usuarioId, sellerId: creditOwner.vendedorId, sedeId: creditOwner.sedeId, aliadoId: creditOwner.aliadoId };
+      let querySurname = "";
+      if (hasAuthoritativeSignedIdentity) {
+        const signedQueryIdentity = await getScopedDataCreditoQueryIdentity(assessmentId, identityScope, clienteDocumento);
+        querySurname = signedQueryIdentity.querySurname;
+        // Provider names are optional metadata here, never a new prerequisite
+        // for delivery of a document whose identity is already signed.
+        recoveredCustomerIdentity = await getDataCreditoCustomerIdentityForDisplay(signedQueryIdentity.assessment);
+      } else {
+        recoveredCustomerIdentity = await enforceDataCreditoCustomerIdentity(body as unknown as Record<string, unknown>, identityScope, false);
+        querySurname = recoveredCustomerIdentity?.querySurname || "";
+      }
       dataCreditoAssessmentMatch = {
         assessmentId,
         documentNumber: clienteDocumento,
-        firstSurname: recoveredCustomerIdentity?.querySurname || clientePrimerApellido,
+        firstSurname: querySurname || clientePrimerApellido,
         platform: dataCreditoPlatform,
         providerEnvironment: dataCreditoProvider.environment,
         userId: creditOwner.usuarioId,
