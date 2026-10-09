@@ -146,3 +146,17 @@ blanca de consulta sobre el marfil compartido. Los tokens `--fp-client-matte`
 y `--fp-client-muted` mantienen negro y gris neutros sin matices azules.
 Se reutilizan Button y FinserSupportLink. Los controles tienen áreas táctiles
 de al menos 44 px; la mascota respeta prefers-reduced-motion.
+
+## Informe de consultas y ventas
+
+La referencia aprobada para `/dashboard/reportes/datacredito-ventas` usa navegación
+superior blanca con marca sobre grafito, en la variante `reports` de
+`FinserNavigation`. Conserva los menús y permisos de la plataforma. Los indicadores
+principales forman una franja grafito; los resultados comerciales usan una fila
+blanca. Los contornos y separadores usan `--fp-border`; los controles y tablas
+reutilizan `finser-ui`. El buscador se limita a la tabla de mayor actividad;
+las exportaciones incluyen el período y aliado del resultado consultado completo.
+Las ayudas son accesibles con foco y al pasar el cursor. En móvil los indicadores
+se distribuyen en dos columnas y las tablas permiten desplazamiento horizontal.
+El PDF sigue la referencia aprobada de portada y detalles A4 horizontal, con
+paginación de todos los registros y empates, fuente Roboto y marca grafito/lima.

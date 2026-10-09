@@ -67,3 +67,11 @@ test('PDF multipágina con nombres largos y tablas vacías genera archivo válid
   const empty=makeReport();empty.rows=[];empty.sites=[];empty.sellers=[];empty.leaders=[];
   assert.ok((await buildQueryReportPdf(empty)).length>1000);
 });
+
+test('PDF conserva todos los líderes empatados y pagina nombres largos',async()=>{
+  const report=makeReport();
+  report.leaders[0].sellers=Array.from({length:24},(_,i)=>({...report.sellers[0],key:`tie:${i}`,name:`Líder empatado ${i} con un nombre extenso para comprobar la continuación completa de los resultados`}));
+  const pdf=await buildQueryReportPdf(report);
+  assert.ok(pdf.length>8000);
+  assert.ok([...pdf.toString('latin1').matchAll(/\/Type \/Page\b/g)].length>3);
+});

@@ -1,6 +1,5 @@
 import { AppShell } from "@/app/_components/finser-ui";
-import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
-import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
+import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import DataCreditoVentasClient from "./datacredito-ventas-client";
 
@@ -28,22 +27,8 @@ export default async function DataCreditoVentasReportPage() {
   const { session } = await requireCentralAdminDashboardAccess();
 
   return (
-    <AppShell
-      sidebar={
-        <AdminSidebar
-          activeHref="/dashboard/reportes"
-          adminCentral
-          nombreUsuario={session.nombre}
-          rolUsuario={session.rolNombre}
-        />
-      }
-    >
-      <AdminWorkspaceTopbar
-        parent="Reportes"
-        current="DataCrédito vs. ventas"
-        userName={session.nombre}
-        userRole={session.rolNombre}
-      />
+    <AppShell>
+      <FinserNavigation admin adminCentral variant="reports" activeSection="reports" nombreUsuario={session.nombre} rolUsuario={session.rolNombre} />
       <DataCreditoVentasClient initialDay={bogotaToday()} />
     </AppShell>
   );

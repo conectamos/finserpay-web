@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import ReportDetailView, { type ReportDetails } from "./report-details";
+import { ReportHelp } from "./report-details";
+import styles from "./query-report.module.css";
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -15,23 +17,21 @@ import {
   BarChart3,
   Building2,
   CalendarDays,
-  CircleDollarSign,
+  ShoppingCart,
+  FileSpreadsheet,
+  FileText,
   FileSearch,
   Filter,
-  Info,
   RefreshCw,
   RotateCcw,
-  ShieldCheck,
 } from "lucide-react";
 import {
-  Badge,
   Button,
   Card,
   DataTable,
   EmptyState,
   Input,
   LoadingState,
-  MetricCard,
   PageHeader,
   Select,
   Tabs,
@@ -335,392 +335,44 @@ export default function DataCreditoVentasClient({ initialDay }: { initialDay: st
     void loadReport({ allyId: null, day: initialDay, mode: "day" });
   }
 
-  return (
-    <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
-      <PageHeader
-        eyebrow="Riesgo y desempeño"
-        title="Consultas DataCrédito vs. ventas"
-        description="Consulta aprobaciones, rechazos, ventas y rankings por aliado. Exporta el informe con los filtros aplicados."
-        actions={
-          <Link href="/dashboard/reportes" className="fp-ui-button is-secondary">
-            <ArrowLeft aria-hidden="true" className="h-4 w-4" strokeWidth={1.8} />
-            Centro de reportes
-          </Link>
-        }
-      />
-
-      <Card className="mt-4 !rounded-lg !p-4 sm:!p-5">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className="text-base font-black text-[#151a21]">Filtros del reporte</h2>
-            <p className="mt-1 text-sm text-[#667085]">
-              Las fechas se interpretan en la zona horaria de Bogotá.
-            </p>
-          </div>
-          {report ? (
-            <Badge className="mt-2 self-start sm:mt-0" tone="neutral">
-              {report.period.label}
-            </Badge>
-          ) : null}
+  const ready = Boolean(report) && !loading && !error;
+  return <main className={styles.page}>
+    <PageHeader className={styles.heading} title="Consultas y ventas" description="DataCrédito" actions={<>
+      <Link href="/dashboard/reportes" className="fp-ui-button is-secondary"><ArrowLeft aria-hidden="true" />Centro de reportes</Link>
+      <Button variant="secondary" disabled={!ready || Boolean(exporting)} onClick={()=>void exportReport("xlsx")}><FileSpreadsheet className={styles.excelIcon} aria-hidden="true" />{exporting === "xlsx" ? "Generando Excel…" : "Exportar Excel"}</Button>
+      <Button variant="secondary" disabled={!ready || Boolean(exporting)} onClick={()=>void exportReport("pdf")}><FileText className={styles.pdfIcon} aria-hidden="true" />{exporting === "pdf" ? "Generando PDF…" : "Exportar PDF"}</Button>
+    </>} />
+    {exportError && <p role="alert" className={styles.error}>{exportError}</p>}
+    <Card className={styles.filters}>
+      <form onSubmit={submitFilters} className={styles.filterForm} aria-label="Filtros del reporte">
+        <Tabs className={styles.periodTabs} aria-label="Agrupación del periodo">{PERIOD_TABS.map(tab=><button key={tab.value} id={`period-tab-${tab.value}`} type="button" role="tab" aria-selected={mode===tab.value} aria-controls="period-filter-panel" tabIndex={mode===tab.value?0:-1} disabled={loading} onClick={()=>setMode(tab.value)} onKeyDown={handlePeriodTabKeyDown}>{tab.label}</button>)}</Tabs>
+        <div id="period-filter-panel" role="tabpanel" aria-labelledby={`period-tab-${mode}`} className={styles.dates}>
+          {mode === "day" && <label className={styles.dateControl}><span className="sr-only">Día</span><CalendarDays aria-hidden="true"/><Input id="report-day" type="date" value={day} disabled={loading} required onChange={e=>setDay(e.target.value)} /></label>}
+          {mode === "month" && <label className={styles.dateControl}><span className="sr-only">Mes</span><CalendarDays aria-hidden="true"/><Input id="report-month" type="month" value={month} disabled={loading} required onChange={e=>setMonth(e.target.value)} /></label>}
+          {mode === "range" && <div className={styles.range}><label><span>Desde</span><Input id="report-from" type="date" value={from} disabled={loading} required onChange={e=>setFrom(e.target.value)} /></label><label><span>Hasta (incluido)</span><Input id="report-to" type="date" value={to} min={from} disabled={loading} required onChange={e=>setTo(e.target.value)} /></label></div>}
         </div>
-
-        <Tabs className="mt-4" aria-label="Agrupación del periodo">
-          {PERIOD_TABS.map((tab) => (
-            <button
-              key={tab.value}
-              id={`period-tab-${tab.value}`}
-              type="button"
-              role="tab"
-              aria-selected={mode === tab.value}
-              aria-controls="period-filter-panel"
-              tabIndex={mode === tab.value ? 0 : -1}
-              disabled={loading}
-              onClick={() => setMode(tab.value)}
-              onKeyDown={handlePeriodTabKeyDown}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </Tabs>
-
-        <form
-          id="period-filter-panel"
-          role="tabpanel"
-          aria-labelledby={`period-tab-${mode}`}
-          className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,1fr)_auto_auto] lg:items-end"
-          onSubmit={submitFilters}
-        >
-          <div>
-            {mode === "day" ? (
-              <label htmlFor="report-day" className="block text-xs font-bold text-[#475467]">
-                Día
-                <span className="relative mt-2 block">
-                  <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[#667085]" strokeWidth={1.8} />
-                  <Input
-                    id="report-day"
-                    type="date"
-                    className="!pl-10"
-                    value={day}
-                    disabled={loading}
-                    onChange={(event) => setDay(event.target.value)}
-                    required
-                  />
-                </span>
-              </label>
-            ) : null}
-
-            {mode === "month" ? (
-              <label htmlFor="report-month" className="block text-xs font-bold text-[#475467]">
-                Mes
-                <span className="relative mt-2 block">
-                  <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[#667085]" strokeWidth={1.8} />
-                  <Input
-                    id="report-month"
-                    type="month"
-                    className="!pl-10"
-                    value={month}
-                    disabled={loading}
-                    onChange={(event) => setMonth(event.target.value)}
-                    required
-                  />
-                </span>
-              </label>
-            ) : null}
-
-            {mode === "range" ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label htmlFor="report-from" className="block text-xs font-bold text-[#475467]">
-                  Desde
-                  <Input
-                    id="report-from"
-                    type="date"
-                    className="mt-2"
-                    value={from}
-                    disabled={loading}
-                    onChange={(event) => setFrom(event.target.value)}
-                    required
-                  />
-                </label>
-                <label htmlFor="report-to" className="block text-xs font-bold text-[#475467]">
-                  Hasta (incluido)
-                  <Input
-                    id="report-to"
-                    type="date"
-                    className="mt-2"
-                    value={to}
-                    disabled={loading}
-                    onChange={(event) => setTo(event.target.value)}
-                    required
-                  />
-                </label>
-              </div>
-            ) : null}
-          </div>
-
-          <label htmlFor="report-ally" className="block text-xs font-bold text-[#475467]">
-            Aliado
-            <span className="relative mt-2 block">
-              <Building2 aria-hidden="true" className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[#667085]" strokeWidth={1.8} />
-              <Select
-                id="report-ally"
-                className="!pl-10"
-                value={allyId}
-                disabled={loading}
-                onChange={(event) => setAllyId(event.target.value)}
-              >
-                <option value="">Todos los aliados</option>
-                {allyOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}{option.code ? ` · ${option.code}` : ""}
-                  </option>
-                ))}
-              </Select>
-            </span>
-          </label>
-
-          <Button type="submit" disabled={loading} className="w-full whitespace-nowrap lg:w-auto">
-            <Filter aria-hidden="true" className="h-4 w-4" strokeWidth={1.8} />
-            {loading ? "Consultando" : "Consultar"}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={loading}
-            className="w-full whitespace-nowrap lg:w-auto"
-            onClick={resetFilters}
-          >
-            <RotateCcw aria-hidden="true" className="h-4 w-4" strokeWidth={1.8} />
-            Restablecer
-          </Button>
-        </form>
+        <label className={styles.ally}><span>Aliado</span><span className={styles.selectControl}><Building2 aria-hidden="true"/><Select id="report-ally" value={allyId} disabled={loading} onChange={e=>setAllyId(e.target.value)}><option value="">Todos los aliados</option>{allyOptions.map(a=><option key={a.id} value={a.id}>{a.name}{a.code?` · ${a.code}`:""}</option>)}</Select></span></label>
+        <Button type="submit" disabled={loading} className={styles.consult}><Filter aria-hidden="true"/>{loading?"Consultando…":"Consultar"}</Button>
+        <Button variant="secondary" disabled={loading} onClick={resetFilters}><RotateCcw aria-hidden="true"/>Restablecer</Button>
+      </form>
+    </Card>
+    {loading ? <Card className={styles.state}><LoadingState label="Calculando consultas y ventas…"/></Card> : error ? <div role="alert" className={styles.state}><EmptyState title="No pudimos cargar el reporte" description={error} action={lastRequest?<Button variant="secondary" onClick={()=>void loadReport(lastRequest)}><RefreshCw aria-hidden="true"/>Reintentar</Button>:null}/></div> : report ? <section aria-label="Resultado por aliado">
+      <p className="sr-only" role="status">Reporte cargado para {report.period.label}: {formatCount(report.rows.length)} aliados, {formatCount(report.summary.originalQueries)} consultas nuevas y {formatCount(report.summary.sales)} ventas finalizadas.</p>
+      {new Date(report.period.start).getTime()<Date.now()-report.retentionDays*86400000 && <p role="status" className={styles.warning}>Historial parcial: el período supera la retención de {report.retentionDays} días.</p>}
+      {!report.provider.isProduction && <p className={styles.warning}>Ambiente de pruebas: {report.provider.environment}</p>}
+      <div className={styles.metrics}>
+        {[
+          {label:"Consultas nuevas",value:formatCount(report.summary.originalQueries),Icon:FileSearch,help:"Consultas originales al proveedor. Excluye respuestas reutilizadas, pendientes y fallos previos a la consulta."},
+          {label:"Reutilizadas sin cobro",value:formatCount(report.summary.reusedAssessments),Icon:RefreshCw,help:"Respuestas vigentes reutilizadas. No cuentan como consultas nuevas."},
+          {label:"Ventas finalizadas",value:formatCount(report.summary.sales),Icon:ShoppingCart,help:"Créditos DataCrédito no anulados creados en el período consultado."},
+          {label:"Ventas / consultas",value:formatPercent(report.summary.salesVsOriginalQueriesPercent,report.summary.originalQueries),Icon:BarChart3,help:"Ventas / consultas nuevas. Compara eventos del período, no una cohorte; puede superar el 100 %."},
+        ].map(({label,value,Icon,help})=><div key={label} className={styles.metric}><span className={styles.metricIcon}><Icon aria-hidden="true"/></span><div><strong>{value}</strong><span>{label} <ReportHelp text={help}/></span></div></div>)}
+      </div>
+      <ReportDetailView report={report} periodLabel={report.period.label} allyName={reportedAllyName}/>
+      <Card className={styles.panel}>
+        <div className={styles.panelHeading}><h2>Detalle operativo</h2><span>{report.rows.length} {report.rows.length===1?"aliado":"aliados"}<ReportHelp text={`Zona horaria: America/Bogota. Historial disponible: ${report.retentionDays} días. Ambiente: ${report.provider.environment}.`}/></span></div>
+        {report.rows.length ? <DataTable className={styles.tableWrap}><table className={styles.table}><caption className="sr-only">Consultas DataCrédito y ventas finalizadas por aliado</caption><thead><tr>{["Aliado","Consultas nuevas","Aprobadas","Rechazadas","No evaluadas","Reutilizadas","Ventas finalizadas","Ventas / consultas"].map((label,i)=><th scope="col" key={label} className={i?styles.numeric:undefined}>{label}</th>)}</tr></thead><tbody>{report.rows.map(row=><tr key={row.allyId??"none"}><th scope="row">{row.allyName}<small>{row.allyCode} · {activityLabel(row)}</small></th>{[row.originalQueries,row.approved,row.rejected,row.notEvaluated,row.reusedAssessments,row.sales].map((n,i)=><td key={i} className={styles.numeric}>{formatCount(n)}</td>)}<td className={styles.numeric}>{formatPercent(row.salesVsOriginalQueriesPercent,row.originalQueries)}</td></tr>)}</tbody></table></DataTable>:<EmptyState title="Sin resultados" description="No hay aliados para los filtros consultados."/>}
       </Card>
-
-      {loading ? (
-        <Card className="mt-4 !rounded-lg !p-5">
-          <LoadingState label="Calculando consultas y ventas por aliado..." />
-        </Card>
-      ) : error ? (
-        <div className="mt-4" role="alert">
-          <EmptyState
-            className="bg-white"
-            title="No pudimos cargar el reporte"
-            description={error}
-            action={
-              lastRequest ? (
-                <Button variant="secondary" className="mt-2" onClick={() => void loadReport(lastRequest)}>
-                  <RefreshCw aria-hidden="true" className="h-4 w-4" strokeWidth={1.8} />
-                  Reintentar
-                </Button>
-              ) : null
-            }
-          />
-        </div>
-      ) : report ? (
-        <section className="mt-5" aria-labelledby="report-results-title">
-          <p className="sr-only" role="status">
-            Reporte cargado para {report.period.label}: {formatCount(report.rows.length)} aliados,
-            {" "}{formatCount(report.summary.originalQueries)} consultas nuevas y
-            {" "}{formatCount(report.summary.sales)} ventas finalizadas.
-          </p>
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 id="report-results-title" className="text-lg font-black text-[#151a21]">
-                Resultado por aliado
-              </h2>
-              <p className="mt-1 text-sm text-[#667085]">
-                {report.period.label} · {reportedAllyName}
-              </p>
-            </div>
-            <Badge tone={report.provider.isProduction ? "positive" : "warning"}>
-              Ambiente {report.provider.environment}
-            </Badge>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <Button variant="secondary" disabled={Boolean(exporting) || loading} onClick={()=>void exportReport("xlsx")}>{exporting === "xlsx" ? "Generando Excel..." : "Exportar Excel"}</Button>
-            <Button variant="secondary" disabled={Boolean(exporting) || loading} onClick={()=>void exportReport("pdf")}>{exporting === "pdf" ? "Generando PDF..." : "Exportar PDF"}</Button>
-            <span className="text-xs text-[var(--fp-muted)]">Se exporta el período y aliado del resultado mostrado, con los datos disponibles al generar el archivo.</span>
-          </div>
-          {exportError ? <p role="alert" className="mt-2 text-sm text-[var(--fp-danger)]">{exportError}</p> : null}
-          {new Date(report.period.start).getTime() < Date.now()-report.retentionDays*86400000 ? <p role="status" className="mt-3 rounded-lg bg-[var(--fp-amber-soft)] p-3 text-sm">El período comienza antes de la retención vigente de {report.retentionDays} días. Los resultados pueden estar incompletos.</p> : null}
-
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
-              className="!rounded-lg !p-5"
-              label={
-                <span className="flex items-center gap-2">
-                  <FileSearch aria-hidden="true" className="h-4 w-4 text-[#5c7a13]" strokeWidth={1.8} />
-                  Consultas nuevas
-                </span>
-              }
-              value={<span className="!text-3xl tabular-nums">{formatCount(report.summary.originalQueries)}</span>}
-              detail="Consultas originales registradas"
-            />
-            <MetricCard
-              className="!rounded-lg !p-5"
-              label={
-                <span className="flex items-center gap-2">
-                  <RefreshCw aria-hidden="true" className="h-4 w-4 text-[#5c7a13]" strokeWidth={1.8} />
-                  Reutilizadas sin cobro
-                </span>
-              }
-              value={<span className="!text-3xl tabular-nums">{formatCount(report.summary.reusedAssessments)}</span>}
-              detail="Respuestas vigentes reutilizadas"
-            />
-            <MetricCard
-              className="!rounded-lg !p-5"
-              label={
-                <span className="flex items-center gap-2">
-                  <CircleDollarSign aria-hidden="true" className="h-4 w-4 text-[#5c7a13]" strokeWidth={1.8} />
-                  Ventas finalizadas
-                </span>
-              }
-              value={<span className="!text-3xl tabular-nums">{formatCount(report.summary.sales)}</span>}
-              detail="Créditos DataCrédito no anulados"
-            />
-            <MetricCard
-              className="!rounded-lg !p-5"
-              label={
-                <span className="flex items-center gap-2">
-                  <BarChart3 aria-hidden="true" className="h-4 w-4 text-[#5c7a13]" strokeWidth={1.8} />
-                  Ventas / consultas
-                </span>
-              }
-              value={
-                <span className="!text-3xl tabular-nums">
-                  {formatPercent(
-                    report.summary.salesVsOriginalQueriesPercent,
-                    report.summary.originalQueries
-                  )}
-                </span>
-              }
-              detail="Ventas finalizadas / consultas nuevas"
-            />
-          </div>
-
-          <ReportDetailView report={report} />
-          {report.rows.length ? (
-            <Card className="mt-4 overflow-hidden !rounded-lg !p-0">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e4e7ec] px-4 py-4 sm:px-5">
-                <div>
-                  <h3 className="font-black text-[#151a21]">Detalle operativo</h3>
-                  <p className="mt-1 text-xs text-[#667085]">
-                    {report.rows.length} {report.rows.length === 1 ? "resultado" : "resultados"}
-                  </p>
-                </div>
-                <span className="text-xs font-semibold text-[#667085]">Zona horaria: {report.period.timezone}</span>
-              </div>
-
-              <div className="divide-y divide-[#e4e7ec] lg:hidden">
-                {report.rows.map((row) => (
-                  <article key={`${row.allyId ?? "none"}-${row.allyName}`} className="px-4 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h4 className="truncate font-black text-[#151a21]">{row.allyName}</h4>
-                        <p className="mt-1 text-xs text-[#667085]">{row.allyCode || "Sin código"}</p>
-                      </div>
-                      <Badge tone={row.active === true ? "positive" : "neutral"}>{activityLabel(row)}</Badge>
-                    </div>
-                    <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-md bg-[#f7f8f8] px-3 py-3">
-                      <div>
-                        <dt className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#667085]">Consultas nuevas</dt>
-                        <dd className="mt-1 text-lg font-black tabular-nums text-[#151a21]">{formatCount(row.originalQueries)}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#667085]">Reutilizadas</dt>
-                        <dd className="mt-1 text-lg font-black tabular-nums text-[#151a21]">{formatCount(row.reusedAssessments)}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#667085]">Ventas</dt>
-                        <dd className="mt-1 text-lg font-black tabular-nums text-[#151a21]">{formatCount(row.sales)}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#667085]">Ventas / consultas</dt>
-                        <dd className="mt-1 text-lg font-black tabular-nums text-[#151a21]">
-                          {formatPercent(row.salesVsOriginalQueriesPercent, row.originalQueries)}
-                        </dd>
-                      </div>
-                    </dl>
-                  </article>
-                ))}
-              </div>
-
-              <DataTable className="hidden !rounded-none !border-0 lg:block">
-                <table className="w-full min-w-[820px] text-sm">
-                  <caption className="sr-only">
-                    Consultas DataCrédito y ventas finalizadas por aliado
-                  </caption>
-                  <thead className="bg-[#151a21] text-white">
-                    <tr>
-                      <th scope="col" className="px-5 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.08em]">Aliado</th>
-                      <th scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Consultas nuevas</th>
-                      {["Aprobadas", "Rechazadas", "No evaluadas"].map(label => <th key={label} scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">{label}</th>)}
-                      <th scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Reutilizadas sin cobro</th>
-                      <th scope="col" className="px-4 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Ventas finalizadas</th>
-                      <th scope="col" className="px-5 py-3.5 text-right text-[11px] font-bold uppercase tracking-[0.08em]">Ventas / consultas</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#e4e7ec]">
-                    {report.rows.map((row) => (
-                      <tr key={`${row.allyId ?? "none"}-${row.allyName}`} className="bg-white transition-colors even:bg-[#fbfcfa] hover:bg-[#f6f9ef]">
-                        <th scope="row" className="px-5 py-4 text-left font-normal">
-                          <div className="flex items-center gap-3">
-                            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#eef1f4] text-[#344054]">
-                              <Building2 aria-hidden="true" className="h-4 w-4" strokeWidth={1.8} />
-                            </span>
-                            <span className="min-w-0">
-                              <strong className="block truncate text-[#151a21]">{row.allyName}</strong>
-                              <span className="mt-1 flex items-center gap-2 text-xs text-[#667085]">
-                                {row.allyCode || "Sin código"}
-                                <span aria-hidden="true">·</span>
-                                {activityLabel(row)}
-                              </span>
-                            </span>
-                          </div>
-                        </th>
-                        <td className="px-4 py-4 text-right font-bold tabular-nums text-[#344054]">{formatCount(row.originalQueries)}</td>
-                        {[row.approved,row.rejected,row.notEvaluated].map((n,i)=><td key={i} className="px-4 py-4 text-right tabular-nums">{formatCount(n)}</td>)}
-                        <td className="px-4 py-4 text-right font-bold tabular-nums text-[#344054]">{formatCount(row.reusedAssessments)}</td>
-                        <td className="px-4 py-4 text-right font-black tabular-nums text-[#151a21]">{formatCount(row.sales)}</td>
-                        <td className="px-5 py-4 text-right font-black tabular-nums text-[#151a21]">
-                          {formatPercent(row.salesVsOriginalQueriesPercent, row.originalQueries)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </DataTable>
-            </Card>
-          ) : (
-            <EmptyState
-              className="mt-4 bg-white"
-              title="No hay información para este periodo"
-              description="Prueba otro día, mes, rango o aliado para consultar actividad."
-            />
-          )}
-
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <div className="flex items-start gap-3 rounded-lg border border-[#d6e4fb] bg-[#f5f8ff] px-4 py-3 text-xs leading-5 text-[#475467]">
-              <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[#4169a1]" strokeWidth={1.8} />
-              <p>
-                Esta relación compara eventos del periodo; no es una conversión de cohorte. Una venta puede usar una consulta realizada hasta 15 días antes, por lo que el porcentaje puede superar 100 %.
-              </p>
-            </div>
-            <div className="flex items-start gap-3 rounded-lg border border-[#e4e7ec] bg-white px-4 py-3 text-xs leading-5 text-[#475467]">
-              <ShieldCheck aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[#5c7a13]" strokeWidth={1.8} />
-              <p>
-                Historial disponible según la retención vigente de {formatCount(report.retentionDays)} días. Ambiente del proveedor: <strong>{report.provider.environment}</strong>. {report.provider.configured ? "Configuración disponible" : "Sin configuración completa"} y {report.provider.enabled ? "servicio habilitado" : "servicio deshabilitado"}.
-              </p>
-            </div>
-          </div>
-        </section>
-      ) : (
-        <EmptyState
-          className="mt-4 bg-white"
-          title="Consulta un periodo"
-          description="Selecciona los filtros para ver consultas y ventas por aliado."
-        />
-      )}
-    </main>
-  );
+    </section>:null}
+  </main>;
 }
