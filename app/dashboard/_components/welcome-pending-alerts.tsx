@@ -1,7 +1,7 @@
 "use client";
 
-import { Bell, Volume2, VolumeX, X } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Bell, GripHorizontal, Volume2, VolumeX, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Badge, Button, Card } from "@/app/_components/finser-ui";
 import {
   parseWelcomeAlertReceipt,
@@ -17,6 +17,25 @@ import styles from "./welcome-pending-alerts.module.css";
 type SoundState = "off" | "locked" | "ready" | "blocked" | "unsupported";
 const memoryReceipts = new Map<string, WelcomeAlertReceipt>();
 const memoryPreferences = new Map<string, boolean>();
+const memoryPositions = new Map<string, number>();
+
+function readPosition(key: string) {
+  try {
+    const stored = window.localStorage.getItem(key);
+    const value = stored === null ? NaN : Number(stored);
+    if (Number.isFinite(value) && value >= 0 && value <= 1) return value;
+  } catch { /* Keep the position available when browser storage is disabled. */ }
+  return memoryPositions.get(key) ?? 0;
+}
+
+function savePosition(key: string, value: number) {
+  memoryPositions.set(key, value);
+  try { window.localStorage.setItem(key, String(value)); } catch { /* Use the page-session fallback. */ }
+}
+
+function viewportWidth() {
+  return document.documentElement?.clientWidth || window.innerWidth;
+}
 
 function readPreference(key: string) {
   try {
@@ -60,6 +79,10 @@ export default function WelcomePendingAlerts({
   const [authorized, setAuthorized] = useState(true);
   const [soundWanted, setSoundWanted] = useState(false);
   const [soundState, setSoundState] = useState<SoundState>("off");
+  const [rightPosition, setRightPosition] = useState<number | undefined>(undefined);
+  const container = useRef<HTMLElement | null>(null);
+  const position = useRef(0);
+  const drag = useRef<{ pointerId: number; startX: number; startRight: number; moved: boolean } | null>(null);
   const active = useRef(false);
   const permitted = useRef(true);
   const currentSummary = useRef<WelcomeAlertSummary | null>(null);
@@ -72,6 +95,71 @@ export default function WelcomePendingAlerts({
   const unlockPending = useRef<Promise<boolean> | null>(null);
   const preferenceKey = `finser:welcome-alerts:${encodeURIComponent(actorKey)}:sound`;
   const receiptKey = `finser:welcome-alerts:${encodeURIComponent(actorKey)}:receipt`;
+  const positionKey = `finser:welcome-alerts:${encodeURIComponent(actorKey)}:position`;
+
+  const horizontalBounds = useCallback(() => {
+    const width = container.current?.getBoundingClientRect().width ?? 0;
+    return { min: 16, max: Math.max(16, viewportWidth() - width - 16) };
+  }, []);
+
+  const moveTo = useCallback((right: number) => {
+    const bounds = horizontalBounds();
+    const next = Math.min(bounds.max, Math.max(bounds.min, right));
+    if (bounds.max > bounds.min) position.current = (next - bounds.min) / (bounds.max - bounds.min);
+    setRightPosition(next);
+  }, [horizontalBounds]);
+
+  // Movement has its own lifecycle: moving the notice never restarts polling or audio.
+  useEffect(() => {
+    if (!authorized) return;
+    position.current = readPosition(positionKey);
+    const measure = () => {
+      const bounds = horizontalBounds();
+      setRightPosition(bounds.min + position.current * (bounds.max - bounds.min));
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    if (container.current) observer?.observe(container.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+      drag.current = null;
+    };
+  }, [positionKey, horizontalBounds, authorized]);
+
+  function startMove(event: PointerEvent<HTMLButtonElement>) {
+    if (!event.isPrimary || event.button !== 0 || !container.current) return;
+    const rect = container.current.getBoundingClientRect();
+    drag.current = { pointerId: event.pointerId, startX: event.clientX, startRight: viewportWidth() - rect.right, moved: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function continueMove(event: PointerEvent<HTMLButtonElement>) {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    if (Math.abs(event.clientX - current.startX) < 4 && !current.moved) return;
+    current.moved = true;
+    moveTo(current.startRight - (event.clientX - current.startX));
+  }
+
+  function finishMove(event: PointerEvent<HTMLButtonElement>) {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    drag.current = null;
+    if (current.moved) savePosition(positionKey, position.current);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function moveWithKeyboard(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!container.current || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const bounds = horizontalBounds();
+    const current = viewportWidth() - container.current.getBoundingClientRect().right;
+    const step = event.shiftKey ? 80 : 32;
+    moveTo(event.key === "Home" ? bounds.max : event.key === "End" ? bounds.min : current + (event.key === "ArrowLeft" ? step : -step));
+    savePosition(positionKey, position.current);
+  }
 
   const stopTones = useCallback(() => {
     for (const tone of tones.current) {
@@ -330,7 +418,7 @@ export default function WelcomePendingAlerts({
     soundState === "ready" ? "Sonido activo mientras Finser Pay está abierto." : "Puedes activar un sonido breve para los avisos.";
 
   return (
-    <aside className={styles.alerts} aria-label="Avisos de bienvenidas">
+    <aside ref={container} className={styles.alerts} style={{ right: rightPosition }} aria-label="Avisos de bienvenidas">
       {panel !== "closed" ? (
         <Card className={styles.card} id={panelId}>
           <div className={styles.heading}>
@@ -352,12 +440,20 @@ export default function WelcomePendingAlerts({
           </div>
         </Card>
       ) : null}
+      <div className={styles.launcherRow}>
+      <Button variant="secondary" className={styles.move} aria-label="Mover aviso de bienvenidas"
+        title="Arrastra hacia los lados o usa las flechas izquierda y derecha"
+        onPointerDown={startMove} onPointerMove={continueMove} onPointerUp={finishMove}
+        onPointerCancel={finishMove} onLostPointerCapture={finishMove} onKeyDown={moveWithKeyboard}>
+        <GripHorizontal size={18} aria-hidden="true" />
+      </Button>
       <Button variant="secondary" className={styles.launcher} aria-expanded={panel !== "closed"} aria-controls={panelId}
         aria-label={`Abrir avisos de bienvenidas${count === undefined ? "" : `: ${count} por gestionar`}`}
         onClick={() => panel === "closed" ? setPanel("manual") : dismiss()}>
         <Bell size={18} aria-hidden="true" /><span>Bienvenidas</span>
         {count !== undefined ? <Badge tone={count > 0 ? "warning" : "neutral"}>{count}</Badge> : null}
       </Button>
+      </div>
     </aside>
   );
 }
