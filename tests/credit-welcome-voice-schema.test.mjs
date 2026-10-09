@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { creditWelcomeVoiceSchemaStatements } from "../scripts/credit-welcome-voice-schema.mjs";
+const campaignPolicy = loadReissueModule("lib/credit-voice-review-campaign-core.ts");
 
 function fixture({ failFirstLock = false } = {}) {
   const events = [];
@@ -63,6 +64,7 @@ function fixture({ failFirstLock = false } = {}) {
     "@/lib/credit-factory-snapshot": {}, "@/lib/cartera-export": {}, "@/lib/dapta-welcome": {},
     "@/lib/credit-welcome-voice-core": {},
     "@/lib/credit-welcome-voice-speech": {},
+    "@/lib/credit-voice-review-campaign-core": campaignPolicy,
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   });
   return { store, events, transactions: () => transactions };

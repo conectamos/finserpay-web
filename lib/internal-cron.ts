@@ -2,6 +2,7 @@ import { syncAllCreditMora } from "@/lib/credit-mora-sync";
 import { runCreditDueReminders } from "@/lib/credit-due-reminders";
 import { runCreditOverdueDataCampaign } from "@/lib/credit-overdue-data-campaign";
 import { dispatchCreditWelcomeVoice } from "@/lib/credit-welcome-voice-dispatch";
+import { runVoiceReviewCampaign } from "@/lib/credit-voice-review-campaign";
 import {
   processPendingDeviceUnlockCommands,
   recoverRecentApprovedWompiUnlockCommands,
@@ -20,7 +21,7 @@ import {
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
 const MERCHANT_APPLICATION_INTERVAL_MINUTES = 5;
-type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice";
+type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice" | "voice-review-campaign";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -132,6 +133,12 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "voice-review-campaign") {
+      const summary = await runVoiceReviewCampaign();
+      if (summary.selected > 0) logCron("Llamadas de solicitudes pendientes procesadas.", summary);
+      completed = true;
+      return;
+    }
     if (taskName === "credit-welcome-voice") {
       const summary = await dispatchCreditWelcomeVoice({ limit: 5 });
       if (summary.selected > 0) logCron("Bienvenidas de voz procesadas.", summary);
@@ -211,7 +218,9 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    if (taskName === "credit-welcome-voice") {
+    if (taskName === "voice-review-campaign") {
+      console.error("[finserpay-cron] No se pudo procesar la campana de solicitudes pendientes.");
+    } else if (taskName === "credit-welcome-voice") {
       console.error("[finserpay-cron] No se pudo procesar la cola de bienvenidas de voz.");
     } else if (taskName === "credit-overdue-data") {
       console.error("[finserpay-cron] No se pudo procesar la campana Datos de clientes en mora.");
@@ -253,6 +262,7 @@ async function tick() {
   // The locked outbox prevents duplicate calls across instances. Launch it
   // independently so provider latency cannot delay payment/device tasks.
   void runScheduledTask("credit-welcome-voice", `credit-welcome-voice:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
+  void runScheduledTask("voice-review-campaign", `voice-review-campaign:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
 
   await runScheduledTask(
     "unlock",
@@ -276,6 +286,7 @@ async function runStartupRecovery() {
   const { dateKey, timeKey } = getBogotaClock();
   const moraEffectiveDate = getMoraEffectiveDate(dateKey);
   void runScheduledTask("credit-welcome-voice", `credit-welcome-voice:startup:${dateKey}:${timeKey}`);
+  void runScheduledTask("voice-review-campaign", `voice-review-campaign:startup:${dateKey}:${timeKey}`);
 
   try {
     const recovered = await recoverRecentApprovedWompiUnlockCommands({

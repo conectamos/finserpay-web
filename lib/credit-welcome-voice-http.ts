@@ -132,11 +132,53 @@ export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
   };
 }
 
+export type WelcomeVoiceCommunicationOutcome = "HUMAN_CONTACT" | "NO_ANSWER" | "OPT_OUT" | "UNCERTAIN";
+
 export type WelcomeVoiceCallbackData = {
   eventId: string; creditId: number; providerCallId: string; status: "COMPLETED" | "FAILED";
   recordingUrl: string | null; summary: string | null; transcript: string | null; doubts: string | null;
   durationSeconds: number | null; completedAt: string | null; resultCode: string;
+  communicationOutcome: WelcomeVoiceCommunicationOutcome; disconnectionReason: string | null;
 };
+
+function callbackDisconnectionReason(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const reason = value.trim().toLowerCase();
+  return /^[a-z0-9_]{1,64}$/.test(reason) ? reason : null;
+}
+
+function spokenUserTurns(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  // Dapta's structured transcript distinguishes spoken user content from agent/tool text.
+  // Never infer speakers from the free-form transcript, summaries or model identity flags.
+  return value.flatMap(entry => {
+    const turn = object(entry);
+    if (turn?.role !== "user" || typeof turn.content !== "string") return [];
+    const text = turn.content.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+    if (!/[\p{L}\p{N}]/u.test(text)
+      || /^(?:inaudible|ininteligible|unintelligible|unclear|silence|silencio|noise|ruido|no audio|hmm|mmm|um|uh|eh)$/.test(text)) return [];
+    return [text];
+  });
+}
+
+function callbackCommunicationOutcome(call: ObjectValue, analysis: ObjectValue, custom: ObjectValue,
+  failed: boolean, disconnectionReason: string | null): WelcomeVoiceCommunicationOutcome {
+  const userTurns = spokenUserTurns(call.transcript_object);
+  const optedOut = custom.recording_accepted === false || userTurns.some(text =>
+    /\b(?:no (?:me|nos) (?:llames?|llamen|vuelvas? a llamar|vuelvan a llamar)|no quiero (?:recibir )?(?:mas )?llamadas|numero (?:equivocado|incorrecto))\b/.test(text));
+  if (optedOut) return "OPT_OUT";
+  const voicemail = analysis.in_voicemail === true || disconnectionReason === "voicemail_reached";
+  const notConnected = voicemail || ["dial_no_answer", "dial_failed", "dial_busy", "concurrency_limit_reached"].includes(disconnectionReason || "")
+    || /^error_[a-z0-9_]+$/.test(disconnectionReason || "");
+  // Contradictory voicemail/no-answer metadata must not trigger an unsafe automatic retry.
+  if (userTurns.length >= 2) return notConnected ? "UNCERTAIN" : "HUMAN_CONTACT";
+  if (voicemail) return "NO_ANSWER";
+  if (userTurns.length === 0 && (notConnected || (failed && (typeof call.transcript !== "string" || !call.transcript.trim())))) {
+    return "NO_ANSWER";
+  }
+  return "UNCERTAIN";
+}
 
 function parseCallback(body: ObjectValue, token: WelcomeVoiceToken, expectedAgent: string, safeUrl: (value: unknown) => string | null): WelcomeVoiceCallbackData {
   const call = object(body.call ?? body.data ?? body);
@@ -170,11 +212,13 @@ function parseCallback(body: ObjectValue, token: WelcomeVoiceToken, expectedAgen
     : custom.recording_accepted === false ? "RECORDING_DECLINED"
       : discrepancies ? "CUSTOMER_DISCREPANCY" : questions ? "CUSTOMER_QUESTIONS"
         : custom.terms_confirmed === true ? "TERMS_REVIEWED" : "CALL_COMPLETED";
+  const disconnectionReason = callbackDisconnectionReason(call.disconnection_reason);
   return { eventId: token.eventId, creditId: token.creditId, providerCallId, status: failed ? "FAILED" : "COMPLETED",
     // Do not accept public audio hosts or a provider/model's identity_confirmed flag.
     recordingUrl: safeUrl(call.recording_url) || safeUrl(call.public_log_url),
     summary: optionalText(analysis.call_summary, 4000), transcript: optionalText(call.transcript, 32768),
-    doubts, durationSeconds, completedAt: null, resultCode };
+    doubts, durationSeconds, completedAt: null, resultCode, disconnectionReason,
+    communicationOutcome: callbackCommunicationOutcome(call, analysis, custom, failed, disconnectionReason) };
 }
 
 export function createCreditWelcomeVoiceResultHandler(dependencies: {

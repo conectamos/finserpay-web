@@ -417,6 +417,7 @@ model Credito {
   recordatoriosCuota             CreditDueReminder[]
   intentosCampanaDatos           CreditOverdueDataAttempt[]
   llamadasBienvenidaVoz          CreditWelcomeVoiceEvent[]
+  campanasRevisionVoz            VoiceReviewCampaignMember[]
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
 
@@ -935,6 +936,31 @@ model LiquidacionAliadoCredito {
   @@index([estado, createdAt])
 }
 
+model VoiceReviewCampaign {
+  id        String @id @db.VarChar(64)
+  startDate DateTime @db.Date
+  creditIds Json
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  members   VoiceReviewCampaignMember[]
+}
+
+model VoiceReviewCampaignMember {
+  campaignId    String @db.VarChar(64)
+  creditoId     Int
+  state         String @default("ACTIVE") @db.VarChar(16)
+  stopReason    String? @db.VarChar(64)
+  lastEventId   String? @db.Uuid
+  reviewRevision Int?
+  reviewHash    String? @db.VarChar(64)
+  updatedAt     DateTime @default(now()) @db.Timestamptz(3)
+  campaign      VoiceReviewCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  credito       Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  events        CreditWelcomeVoiceEvent[]
+
+  @@id([campaignId, creditoId])
+  @@index([campaignId, state, creditoId], map: "VoiceReviewCampaignMember_active_idx")
+}
+
 model CreditWelcomeVoiceEvent {
   id                 String   @id @db.Uuid
   creditoId          Int
@@ -942,6 +968,8 @@ model CreditWelcomeVoiceEvent {
   source             String   @db.VarChar(32)
   attemptNumber      Int      @default(0)
   repeatOf           String?  @unique(map: "CreditWelcomeVoiceEvent_repeatOf_key") @db.Uuid
+  campaignId         String?  @db.VarChar(64)
+  campaignSlot       String?  @db.VarChar(16)
   status             String   @db.VarChar(16)
   snapshot           Json?
   createdAt          DateTime @default(now()) @db.Timestamptz(3)
@@ -958,12 +986,16 @@ model CreditWelcomeVoiceEvent {
   transcript         String?
   recordingUrl       String?
   resultCode         String?  @db.VarChar(64)
+  communicationOutcome String? @db.VarChar(32)
+  disconnectionReason String? @db.VarChar(64)
   resultHash         String?  @db.VarChar(64)
   credito            Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   previousTest       CreditWelcomeVoiceEvent? @relation("WelcomeVoiceControlledRepeats", fields: [repeatOf], references: [id], onDelete: Restrict, onUpdate: NoAction)
   nextTest           CreditWelcomeVoiceEvent? @relation("WelcomeVoiceControlledRepeats")
+  campaignMember     VoiceReviewCampaignMember? @relation(fields: [campaignId, creditoId], references: [campaignId, creditoId], onDelete: Restrict, onUpdate: NoAction, map: "CreditWelcomeVoiceEvent_campaign_member_fkey")
 
   @@unique([creditoId, type, attemptNumber], map: "CreditWelcomeVoiceEvent_credit_type_key")
+  @@unique([campaignId, creditoId, campaignSlot], map: "CreditWelcomeVoiceEvent_campaign_slot_key")
   @@index([status, createdAt, id], map: "CreditWelcomeVoiceEvent_pending_idx")
 }
 

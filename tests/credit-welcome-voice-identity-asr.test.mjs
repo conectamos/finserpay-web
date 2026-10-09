@@ -9,13 +9,14 @@ import { creditWelcomeVoiceSchemaStatements } from "../scripts/credit-welcome-vo
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
-const [core, plan, snapshot, cartera, phone, speech] = await Promise.all([
+const [core, plan, snapshot, cartera, phone, speech, campaignPolicy] = await Promise.all([
   jiti.import("../lib/credit-welcome-voice-core.ts"),
   jiti.import("../lib/credit-payment-plan.ts"),
   jiti.import("../lib/credit-factory-snapshot.ts"),
   jiti.import("../lib/cartera-export.ts"),
   jiti.import("../lib/dapta-welcome.ts"),
   jiti.import("../lib/credit-welcome-voice-speech.ts"),
+  jiti.import("../lib/credit-voice-review-campaign-core.ts"),
 ]);
 const http = loadReissueModule("lib/credit-welcome-voice-http.ts", {
   "@/lib/roles": loadReissueModule("lib/roles.ts"),
@@ -68,6 +69,7 @@ async function fixture(t) {
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,
     "@/lib/credit-welcome-voice-speech": speech,
+    "@/lib/credit-voice-review-campaign-core": campaignPolicy,
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   }, { process: { env: {} } });
   const store = loaded.createCreditWelcomeVoiceStore({ database: client, enabled: () => true, now: () => now });
