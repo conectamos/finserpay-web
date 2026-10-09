@@ -5,9 +5,10 @@ import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { parseControlledWelcomeVoiceTestArgs, runControlledWelcomeVoiceTest } from "../scripts/test-credit-welcome-voice.mjs";
 
 const core = await createJiti(import.meta.url).import("../lib/credit-welcome-voice-core.ts");
+const speech = loadReissueModule("lib/credit-welcome-voice-speech.ts", { "@/lib/credit-welcome-voice-core": core });
 const { normalizeColombianMobile } = await createJiti(import.meta.url).import("../lib/dapta-welcome.ts");
 const dispatch = loadReissueModule("lib/credit-welcome-voice-dispatch.ts", {
-  "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-store": {},
+  "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-store": {}, "@/lib/credit-welcome-voice-speech": speech,
 }, { AbortSignal });
 const claim = Object.freeze({ eventId: "25ea074e-a7e5-4f2c-8c8e-e64258fe345d", creditId: 72,
   snapshot: Object.freeze({ phone: "573000000001", name: "TEST PERSON", document: "000123456" }) });
@@ -53,6 +54,84 @@ test("CLI requires one credit, its expected contact and an explicit test destina
   }
 });
 
+test("CLI accepts repeat-of only as an explicit strict event UUID and leaves default calls unchanged", () => {
+  const args = ["--credit-id", "72", "--expected-phone", "+573000000001", "--test-phone", "+573000000099"];
+  assert.equal("repeatOf" in parseControlledWelcomeVoiceTestArgs(args), false);
+  assert.deepEqual(parseControlledWelcomeVoiceTestArgs([...args, "--repeat-of", claim.eventId]), { ...input, repeatOf: claim.eventId });
+  assert.deepEqual(parseControlledWelcomeVoiceTestArgs([...args, "--repeat-of", claim.eventId.toUpperCase()]),
+    { ...input, repeatOf: claim.eventId.toUpperCase() });
+  for (const repeatOf of ["", "not-a-uuid", "call_" + claim.eventId, " " + claim.eventId, claim.eventId + " ",
+    "00000000-0000-0000-0000-000000000000", "25ea074e-a7e5-0f2c-8c8e-e64258fe345d", "25ea074e-a7e5-4f2c-0c8e-e64258fe345d"]) {
+    assert.throws(() => parseControlledWelcomeVoiceTestArgs([...args, "--repeat-of", repeatOf]), error => error.code === "INVALID_ARGUMENTS");
+  }
+  for (const trailing of [["--repeat-of"], ["--repeat-of", claim.eventId, "--repeat-of", claim.eventId],
+    ["--repeat-of", claim.eventId, "--secret", "synthetic"]]) {
+    assert.throws(() => parseControlledWelcomeVoiceTestArgs([...args, ...trailing]), error => error.code === "INVALID_ARGUMENTS");
+  }
+});
+
+test("invalid repeat IDs stop before schema, event preparation and HTTP", async () => {
+  for (const repeatOf of [null, "", "not-a-uuid", 1, [], {}, claim.eventId + " ", "00000000-0000-0000-0000-000000000000"]) {
+    const f = fixture({ ensureSchema: () => assert.fail("Must stop before schema preparation") });
+    await assert.rejects(runControlledWelcomeVoiceTest({ ...input, repeatOf }, f.deps), error => error.code === "INVALID_ARGUMENTS");
+    assert.equal(f.prepared.length, 0); assert.equal(f.requests.length, 0);
+  }
+});
+
+test("an explicit repeat passes only its parent to storage, dispatches one fresh event and signs only the new event", async () => {
+  const f = fixture();
+  const fresh = { ...claim, eventId: "df3b0367-fcee-4ed8-b0a5-559ae3e7b299" };
+  const repeatInput = { ...input, repeatOf: claim.eventId };
+  let repeated = false;
+  f.store.prepareCreditWelcomeVoiceControlledTest = async value => {
+    assert.deepEqual(value, { creditId: input.creditId, expectedPhone: input.expectedPhone, repeatOf: claim.eventId });
+    if (repeated) throw Object.assign(new Error("Parent already repeated"), { code: "CONTROLLED_TEST_ALREADY_REPEATED" });
+    repeated = true; f.prepared.push(safe(value)); return fresh;
+  };
+  f.store.prepareCreditWelcomeVoiceDispatch = async eventId => { assert.equal(eventId, fresh.eventId); return fresh; };
+  const result = await runControlledWelcomeVoiceTest(repeatInput, f.deps);
+  assert.deepEqual(result, { eventId: fresh.eventId, creditId: input.creditId, status: "ACCEPTED" });
+  assert.equal(f.env.DAPTA_WELCOME_VOICE_ENABLED, "false");
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].body.event_id, fresh.eventId);
+  assert.equal(f.requests[0].body.to_number, input.testPhone);
+  assert.equal("repeatOf" in f.requests[0].body, false);
+  assert.equal("repeat_of" in f.requests[0].body, false);
+  const token = core.verifyWelcomeVoiceToken(f.requests[0].body.event_token, { secret: f.env.DAPTA_WELCOME_VOICE_TOKEN_SECRET });
+  assert.equal(token.eventId, fresh.eventId); assert.notEqual(token.eventId, repeatInput.repeatOf);
+  assert.equal(token.creditId, input.creditId);
+  assert.deepEqual(f.changes, [["accepted", fresh.eventId, "controlled-call-1"]]);
+  assert.deepEqual(safe(claim.snapshot), { phone: "573000000001", name: "TEST PERSON", document: "000123456" });
+  await assert.rejects(runControlledWelcomeVoiceTest(repeatInput, f.deps), error => error.code === "CONTROLLED_TEST_ALREADY_REPEATED");
+  assert.equal(f.requests.length, 1); assert.equal(f.prepared.length, 1);
+});
+
+test("repeat cannot reuse its parent event or cross the credit/contact boundary", async () => {
+  for (const repeatedClaim of [claim, { ...claim, eventId: claim.eventId.toUpperCase() },
+    { ...claim, eventId: "df3b0367-fcee-4ed8-b0a5-559ae3e7b299", creditId: 73 },
+    { ...claim, eventId: "df3b0367-fcee-4ed8-b0a5-559ae3e7b299", snapshot: { ...claim.snapshot, phone: "573000000088" } }]) {
+    const f = fixture();
+    f.store.prepareCreditWelcomeVoiceControlledTest = async () => repeatedClaim;
+    await assert.rejects(runControlledWelcomeVoiceTest({ ...input, repeatOf: claim.eventId }, f.deps),
+      error => error.code === "CONTROLLED_TEST_SCOPE_MISMATCH");
+    assert.equal(f.requests.length, 0); assert.equal(f.changes.length, 0);
+  }
+});
+
+test("repeat retains disabled-feature and explicit test-number guards before storage", async () => {
+  for (const patch of [{ testPhone: undefined }, { testPhone: "+12025550123" }, { expectedPhone: "not-a-phone" }]) {
+    const f = fixture({ ensureSchema: () => assert.fail("Must stop before schema preparation") });
+    await assert.rejects(runControlledWelcomeVoiceTest({ ...input, repeatOf: claim.eventId, ...patch }, f.deps),
+      error => error.code === "INVALID_ARGUMENTS");
+    assert.equal(f.requests.length, 0); assert.equal(f.prepared.length, 0);
+  }
+  const f = fixture({ ensureSchema: () => assert.fail("Must stop before schema preparation") });
+  f.env.DAPTA_WELCOME_VOICE_ENABLED = "true";
+  await assert.rejects(runControlledWelcomeVoiceTest({ ...input, repeatOf: claim.eventId }, f.deps),
+    error => error.code === "GLOBAL_FEATURE_MUST_BE_DISABLED");
+  assert.equal(f.requests.length, 0); assert.equal(f.prepared.length, 0);
+});
+
 test("directed helper calls only the distinct test phone, retaining the real immutable snapshot and disabled service flag", async () => {
   const f = fixture();
   const savedSnapshot = safe(claim.snapshot);
@@ -67,7 +146,7 @@ test("directed helper calls only the distinct test phone, retaining the real imm
   assert.deepEqual(f.prepared, [{ creditId: 72, expectedPhone: "+573000000001" }]);
   const token = core.verifyWelcomeVoiceToken(f.requests[0].body.event_token, { secret: f.env.DAPTA_WELCOME_VOICE_TOKEN_SECRET });
   assert.equal(token.eventId, claim.eventId); assert.equal(token.creditId, 72);
-  assert.deepEqual(Object.keys(f.requests[0].body).sort(), ["credito_id", "customer_document", "customer_name", "event_id", "event_token", "to_number"]);
+  assert.deepEqual(Object.keys(f.requests[0].body).sort(), ["credito_id", "customer_document", "customer_document_spoken", "customer_name", "customer_name_spoken", "event_id", "event_token", "to_number"]);
   assert.deepEqual(f.changes, [["accepted", claim.eventId, "controlled-call-1"]]);
   assert.deepEqual(Object.keys(result).sort(), ["creditId", "eventId", "status"]);
   await assert.rejects(runControlledWelcomeVoiceTest(input, f.deps), error => error.code === "CONTROLLED_TEST_ALREADY_ATTEMPTED");

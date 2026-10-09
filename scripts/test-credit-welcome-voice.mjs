@@ -6,31 +6,38 @@ function controlledTestError(code) {
   return Object.assign(new Error("No se puede ejecutar la prueba dirigida."), { code });
 }
 
+const eventUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export function parseControlledWelcomeVoiceTestArgs(args) {
   if (args.length === 1 && args[0] === "--help") return null;
   const values = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
-    if (!["--credit-id", "--expected-phone", "--test-phone"].includes(flag) || flag in values ||
+    if (!["--credit-id", "--expected-phone", "--test-phone", "--repeat-of"].includes(flag) || flag in values ||
       !args[index + 1] || args[index + 1].startsWith("--")) throw controlledTestError("INVALID_ARGUMENTS");
     values[flag] = args[index + 1];
   }
   const creditId = Number(values["--credit-id"]);
   const expectedPhone = values["--expected-phone"];
   const testPhone = values["--test-phone"];
+  const repeatOf = values["--repeat-of"];
   if (!/^\d+$/.test(values["--credit-id"] || "") || !Number.isSafeInteger(creditId) || creditId < 1 ||
     typeof expectedPhone !== "string" || !expectedPhone || expectedPhone.length > 80 ||
-    typeof testPhone !== "string" || !testPhone || testPhone.length > 80) {
+    typeof testPhone !== "string" || !testPhone || testPhone.length > 80 ||
+    (repeatOf !== undefined && (typeof repeatOf !== "string" || !eventUuid.test(repeatOf)))) {
     throw controlledTestError("INVALID_ARGUMENTS");
   }
-  return { creditId, expectedPhone, testPhone };
+  return { creditId, expectedPhone, testPhone, ...(repeatOf === undefined ? {} : { repeatOf }) };
 }
 
 /** Dependencies make the only network boundary testable without production credentials. */
 export async function runControlledWelcomeVoiceTest(input, deps) {
   if (!Number.isSafeInteger(input.creditId) || input.creditId < 1 || typeof input.expectedPhone !== "string" ||
     !input.expectedPhone || input.expectedPhone.length > 80 || typeof input.testPhone !== "string" ||
-    !input.testPhone || input.testPhone.length > 80) throw controlledTestError("INVALID_ARGUMENTS");
+    !input.testPhone || input.testPhone.length > 80 ||
+    (input.repeatOf !== undefined && (typeof input.repeatOf !== "string" || !eventUuid.test(input.repeatOf)))) {
+    throw controlledTestError("INVALID_ARGUMENTS");
+  }
   const expectedPhone = deps.normalizePhone(input.expectedPhone);
   const testPhone = deps.normalizePhone(input.testPhone);
   if (!expectedPhone || !testPhone) throw controlledTestError("INVALID_ARGUMENTS");
@@ -51,8 +58,12 @@ export async function runControlledWelcomeVoiceTest(input, deps) {
     claim: async () => {
       if (claimed) throw controlledTestError("CONTROLLED_TEST_ALREADY_ATTEMPTED");
       claimed = true;
-      claim = await deps.store.prepareCreditWelcomeVoiceControlledTest({ creditId: input.creditId, expectedPhone: input.expectedPhone });
+      claim = await deps.store.prepareCreditWelcomeVoiceControlledTest({ creditId: input.creditId, expectedPhone: input.expectedPhone,
+        ...(input.repeatOf === undefined ? {} : { repeatOf: input.repeatOf }) });
       requireClaim(claim.eventId);
+      if (input.repeatOf !== undefined && String(claim.eventId).toLowerCase() === input.repeatOf.toLowerCase()) {
+        throw controlledTestError("CONTROLLED_TEST_SCOPE_MISMATCH");
+      }
       if (claim.snapshot.phone !== expectedPhone) throw controlledTestError("CONTROLLED_TEST_SCOPE_MISMATCH");
       return [claim];
     },
@@ -90,7 +101,7 @@ async function main() {
   try {
     const input = parseControlledWelcomeVoiceTestArgs(process.argv.slice(2));
     if (!input) {
-      console.log("node scripts/test-credit-welcome-voice.mjs --credit-id ID --expected-phone +57CELULAR_REGISTRADO --test-phone +57NUMERO_PERSONAL_AUTORIZADO");
+      console.log("node scripts/test-credit-welcome-voice.mjs --credit-id ID --expected-phone +57CELULAR_REGISTRADO --test-phone +57NUMERO_PERSONAL_AUTORIZADO [--repeat-of UUID_EVENTO_TERMINADO]");
       return;
     }
     if (process.env.DAPTA_WELCOME_VOICE_ENABLED !== "false") throw controlledTestError("GLOBAL_FEATURE_MUST_BE_DISABLED");

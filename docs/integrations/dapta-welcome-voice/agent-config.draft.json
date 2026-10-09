@@ -17,8 +17,8 @@
         "type": "hangup"
       }
     },
-    "analysis_successful_prompt": "La bienvenida solo es completa cuando el cliente aceptó continuar, confirmó el nombre y cédula registrados, la herramienta devolvió una verificación real con condiciones, se explicó el plan real y el cliente confirmó expresamente la primera fecha de pago. Deben indicarse calendario y bloqueo. URL de respuesta, error, datos inventados, silencio, buzón o discrepancia no son éxito.",
-    "analysis_summary_prompt": "Resume en español la aceptación de continuar tras el aviso de grabación, confirmación del nombre y cédula registrados, resultado real de la herramienta, primera fecha de pago confirmada, dudas y diferencias. No incluya la cédula completa ni tokens. No marque verificación si la herramienta devolvió una URL, error o resultado sin verificado=true.",
+    "analysis_successful_prompt": "La bienvenida solo es completa cuando el cliente aceptó continuar, confirmó el nombre y cédula registrados, la herramienta devolvió ok=true, verificado=true y condiciones.speech completo, se leyó literalmente el plan preparado por FINSERPAY y el cliente confirmó expresamente la primera fecha de pago. Deben indicarse calendario y bloqueo. URL de respuesta, error, speech ausente, cifras convertidas o inventadas, silencio, buzón o discrepancia no son éxito.",
+    "analysis_summary_prompt": "Resume en español la aceptación de continuar tras el aviso de grabación, confirmación del nombre y cédula registrados, resultado real de la herramienta con speech completo, primera fecha de pago confirmada, dudas y diferencias. No incluya la cédula completa ni tokens. No marque verificación si la herramienta devolvió una URL, error o resultado sin verificado=true; no marque plan explicado si faltaban los textos de speech.",
     "post_call_analysis_data": [
       {
         "name": "recording_accepted",
@@ -64,12 +64,14 @@
     "max_call_duration_ms": 600000,
     "end_call_after_silence_ms": 45000,
     "stt_mode": "accurate",
-    "normalize_for_speech": true
+    "normalize_for_speech": true,
+    "voice_speed": 0.9,
+    "voice_temperature": 0.5
   },
   "pendingIdentityTool": {
     "name": "verificar_cliente_bienvenida",
     "type": "custom",
-    "description": "Consulta las condiciones reales solo después de que la persona confirme el nombre y cédula registrados para este crédito. Un error o URL de respuesta no verifica nada.",
+    "description": "Consulta las condiciones reales solo después de que la persona confirme el nombre y cédula registrados para este crédito. Usa los valores originales, nunca versiones habladas. Un error, URL de respuesta o condiciones sin speech completo no permiten explicar importes ni fechas.",
     "parameters": {
       "type": "object",
       "required": [
@@ -94,11 +96,11 @@
         },
         "customer_name": {
           "type": "string",
-          "description": "Solo después de que el cliente lo confirme, envía este nombre registrado exacto: {{customer_name}}. Nunca enviar sí, nombres inventados ni otro cliente."
+          "description": "Solo después de que el cliente lo confirme, envía este nombre registrado original exacto: {{customer_name}}. Nunca enviar sí, customer_name_spoken, nombres inventados ni otro cliente."
         },
         "customer_document": {
           "type": "string",
-          "description": "Solo después de que el cliente lo confirme, envía este documento registrado exacto: {{customer_document}}. Texto de dígitos conservando ceros, nunca sí ni otro documento."
+          "description": "Solo después de que el cliente lo confirme, envía este documento registrado original exacto: {{customer_document}}. Texto de dígitos conservando ceros; nunca enviar sí, customer_document_spoken ni palabras de los dígitos."
         }
       }
     },

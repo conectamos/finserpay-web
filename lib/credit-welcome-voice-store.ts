@@ -9,17 +9,18 @@ import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { matchWelcomeVoiceIdentity, normalizeWelcomeVoiceDocument, normalizeWelcomeVoiceName,
   safeDaptaWelcomeVoiceUrl } from "@/lib/credit-welcome-voice-core";
 import { creditWelcomeVoiceSchemaStatements } from "@/scripts/credit-welcome-voice-schema.mjs";
+import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } from "@/lib/credit-welcome-voice-speech";
 
 export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST";
 export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | "COMPLETED" |
   "FAILED" | "UNKNOWN" | "CANCELLED" | "SKIPPED";
 export type CreditWelcomeVoiceSnapshot = {
-  creditId: number; folio: string; name: string; document: string; phone: string;
+  creditId: number; folio: string; name: string; spokenName?: string; document: string; phone: string;
   initialPayment: number; installmentCount: number; installmentAmount: number;
   installmentsEqual: boolean; installmentAmounts: number[];
   frequency: string; firstDueDate: string; calendar: string[];
 };
-export type VoiceFinancialSnapshot = Omit<CreditWelcomeVoiceSnapshot, "document" | "phone">;
+export type VoiceFinancialSnapshot = Omit<CreditWelcomeVoiceSnapshot, "document" | "phone"> & { speech: WelcomeVoiceFinancialSpeech | null };
 export type VoiceDispatchClaim = { eventId: string; creditId: number; snapshot: CreditWelcomeVoiceSnapshot };
 export type CreditWelcomeVoiceResultPayload = {
   eventId: string; creditId: number; providerCallId: string; status: "COMPLETED" | "FAILED";
@@ -63,10 +64,11 @@ const creditSelect = {
 type Credit = Prisma.CreditoGetPayload<{ select: typeof creditSelect }>;
 type EventRow = {
   id: string; creditoId: number; source: CreditWelcomeVoiceSource; status: CreditWelcomeVoiceStatus;
+  attemptNumber: number; repeatOf: string | null;
   snapshot: CreditWelcomeVoiceSnapshot | null; providerCallId: string | null; identityAttempts: number;
   identityVerifiedAt: Date | string | null; resultHash: string | null;
 };
-const eventColumns = `"id"::text,"creditoId","source","status","snapshot","providerCallId", "identityAttempts","identityVerifiedAt","resultHash"`;
+const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","resultHash"`;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validCreditId = (id: number) => Number.isSafeInteger(id) && id > 0;
 function calendarDay(value: unknown): string | null {
@@ -85,6 +87,7 @@ function number(value: unknown): number | null {
 /** Conditions come from the committed amortization/contract, never from caller input. */
 export function buildCreditWelcomeVoiceSnapshot(credit: Credit): CreditWelcomeVoiceSnapshot | null {
   const name = normalizeWelcomeVoiceName(credit.clienteNombre);
+  const spokenName = credit.clienteNombre.trim().replace(/\s+/g, " ");
   const document = normalizeWelcomeVoiceDocument(credit.clienteDocumento);
   const phone = normalizeColombianMobile(credit.clienteTelefono);
   const contractual = extractCreditFactorySnapshotDetails(credit.contratoSnapshot).paso2;
@@ -93,7 +96,8 @@ export function buildCreditWelcomeVoiceSnapshot(credit: Credit): CreditWelcomeVo
   const installmentAmount = number(credit.amortizacion?.cuotaComercial ?? contractual.valorCuotaComercial ?? contractual.valorCuota ?? credit.valorCuota);
   const frequency = String(credit.amortizacion?.frecuenciaPago ?? contractual.frecuenciaPago ?? credit.frecuenciaPago).trim().toUpperCase();
   const firstDueDate = calendarDay(contractual.fechaPrimerPago ?? credit.fechaPrimerPago);
-  if (!validCreditId(credit.id) || !credit.folio || !name || !document || !phone || initialPayment === null || initialPayment < 0 ||
+  if (!validCreditId(credit.id) || !credit.folio || !name || normalizeWelcomeVoiceName(spokenName) !== name ||
+    !document || !phone || initialPayment === null || initialPayment < 0 ||
     installmentCount === null || !Number.isSafeInteger(installmentCount) || installmentCount < 1 || installmentCount > 1000 ||
     installmentAmount === null || installmentAmount <= 0 || !["QUINCENAL", "CATORCENAL", "MENSUAL"].includes(frequency)) return null;
   let rows: Array<{ numero: number; date: string | null; amount: number | null }>;
@@ -114,17 +118,19 @@ export function buildCreditWelcomeVoiceSnapshot(credit: Credit): CreditWelcomeVo
   const calendar = rows.map(row => row.date!);
   const installmentAmounts = rows.map(row => row.amount!);
   if (firstDueDate && firstDueDate !== calendar[0]) return null;
-  return { creditId: credit.id, folio: credit.folio, name, document, phone, initialPayment,
+  return { creditId: credit.id, folio: credit.folio, name, spokenName, document, phone, initialPayment,
     installmentCount, installmentAmount, frequency, firstDueDate: calendar[0], calendar,
     installmentAmounts, installmentsEqual: installmentAmounts.every(amount => amount === installmentAmounts[0]) };
 }
 function financialConditions(snapshot: CreditWelcomeVoiceSnapshot): VoiceFinancialSnapshot {
   const { document: _document, phone: _phone, ...conditions } = snapshot;
   void _document; void _phone;
-  return conditions;
+  return { ...conditions, speech: buildWelcomeVoiceFinancialSpeech(conditions) };
 }
 function sameSnapshot(first: CreditWelcomeVoiceSnapshot, second: CreditWelcomeVoiceSnapshot) {
   // JSONB does not preserve object-key order. Compare the explicitly defined DTO.
+  // spokenName is display-only, validated against name; older snapshots omit it.
+  if ([first, second].some(value => value.spokenName !== undefined && normalizeWelcomeVoiceName(value.spokenName) !== value.name)) return false;
   const values = (value: CreditWelcomeVoiceSnapshot) => [value.creditId, value.folio, value.name, value.document, value.phone,
     value.initialPayment, value.installmentCount, value.installmentAmount, value.installmentsEqual,
     value.installmentAmounts, value.frequency, value.firstDueDate, value.calendar];
@@ -201,9 +207,9 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     const snapshot = buildCreditWelcomeVoiceSnapshot(credit);
     const exclusion = creditExclusion(credit, snapshot);
     const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(`INSERT INTO "CreditWelcomeVoiceEvent"
-      ("id","creditoId","type","source","status","snapshot","resultCode","createdAt","updatedAt")
-      VALUES ($1::uuid,$2,'BIENVENIDA_VOZ',$3,$4,$5::jsonb,$6,$7,$7)
-      ON CONFLICT ("creditoId","type") DO NOTHING RETURNING "id"::text`, randomUUID(), input.creditId,
+      ("id","creditoId","type","source","attemptNumber","status","snapshot","resultCode","createdAt","updatedAt")
+      VALUES ($1::uuid,$2,'BIENVENIDA_VOZ',$3,0,$4,$5::jsonb,$6,$7,$7)
+      ON CONFLICT ("creditoId","type","attemptNumber") DO NOTHING RETURNING "id"::text`, randomUUID(), input.creditId,
       input.source, exclusion ? "SKIPPED" : "PENDING", JSON.stringify(snapshot), exclusion, now());
     return rows[0] ? { eventId: rows[0].id } : null;
   }
@@ -212,7 +218,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     const limit = Math.max(1, Math.min(25, Math.trunc(options.limit || 5)));
     return database.$transaction(async db => {
       const pending = await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent"
-        WHERE "status"='PENDING' ORDER BY "createdAt","id" LIMIT $1 FOR UPDATE SKIP LOCKED`, limit);
+        WHERE "status"='PENDING' AND "attemptNumber"=0 ORDER BY "createdAt","id" LIMIT $1 FOR UPDATE SKIP LOCKED`, limit);
       const claims: VoiceDispatchClaim[] = [];
       for (const event of pending) {
         const snapshot = await revalidate(db, event);
@@ -225,9 +231,9 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     });
   }
   /** Local operator helper only: never scans the queue or retries an attempted call. */
-  async function prepareCreditWelcomeVoiceControlledTest(input: { creditId: number; expectedPhone: string }): Promise<VoiceDispatchClaim> {
+  async function prepareCreditWelcomeVoiceControlledTest(input: { creditId: number; expectedPhone: string; repeatOf?: string }): Promise<VoiceDispatchClaim> {
     const expectedPhone = normalizeColombianMobile(input.expectedPhone);
-    if (!validCreditId(input.creditId) || !expectedPhone) {
+    if (!validCreditId(input.creditId) || !expectedPhone || (input.repeatOf !== undefined && !uuid.test(input.repeatOf))) {
       throw new CreditWelcomeVoiceStoreError("INVALID_CONTROLLED_TEST", "Crédito o número de prueba inválido.", 400);
     }
     if (!enabled()) throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_DISABLED", "La fábrica de prueba no está habilitada.");
@@ -243,12 +249,33 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       if (snapshot.phone !== expectedPhone) {
         throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_PHONE_MISMATCH", "El número del crédito no corresponde al autorizado para la prueba.");
       }
+      if (input.repeatOf !== undefined) {
+        const parent = await readEvent(db, input.repeatOf);
+        if (!parent || parent.creditoId !== input.creditId || parent.source !== "CONTROLLED_TEST" ||
+          parent.status !== "COMPLETED" || !parent.providerCallId || !parent.resultHash ||
+          !Number.isSafeInteger(parent.attemptNumber) || parent.attemptNumber < 0 || parent.attemptNumber >= 2_147_483_647) {
+          throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_REPEAT_NOT_ALLOWED", "La repetición requiere una llamada de prueba completada del mismo crédito.");
+        }
+        if (!parent.snapshot || !sameSnapshot(parent.snapshot, snapshot)) {
+          throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_SNAPSHOT_CHANGED", "Los datos de la llamada anterior no corresponden al crédito vigente.");
+        }
+        const children = await db.$queryRawUnsafe<Array<{ id: string }>>(`SELECT "id"::text FROM "CreditWelcomeVoiceEvent" WHERE "repeatOf"=$1::uuid`, parent.id);
+        if (children.length) {
+          throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_ALREADY_REPEATED", "Esa llamada ya tiene una repetición registrada; no se redespacha.");
+        }
+        const eventId = randomUUID();
+        await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
+          ("id","creditoId","type","source","attemptNumber","repeatOf","status","snapshot","dispatchedAt","createdAt","updatedAt")
+          VALUES ($1::uuid,$2,'BIENVENIDA_VOZ','CONTROLLED_TEST',$3,$4::uuid,'DISPATCHING',$5::jsonb,$6,$6,$6)`,
+        eventId, input.creditId, parent.attemptNumber + 1, parent.id, JSON.stringify(snapshot), now());
+        return { eventId, creditId: input.creditId, snapshot };
+      }
       await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
-        ("id","creditoId","type","source","status","snapshot","createdAt","updatedAt")
-        VALUES ($1::uuid,$2,'BIENVENIDA_VOZ','CONTROLLED_TEST','PENDING',$3::jsonb,$4,$4)
-        ON CONFLICT ("creditoId","type") DO NOTHING`, randomUUID(), input.creditId, JSON.stringify(snapshot), now());
+        ("id","creditoId","type","source","attemptNumber","status","snapshot","createdAt","updatedAt")
+        VALUES ($1::uuid,$2,'BIENVENIDA_VOZ','CONTROLLED_TEST',0,'PENDING',$3::jsonb,$4,$4)
+        ON CONFLICT ("creditoId","type","attemptNumber") DO NOTHING`, randomUUID(), input.creditId, JSON.stringify(snapshot), now());
       const rows = await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent"
-        WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ' FOR UPDATE`, input.creditId);
+        WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ' AND "attemptNumber"=0 FOR UPDATE`, input.creditId);
       const event = rows[0];
       if (!event || event.status !== "PENDING") {
         throw new CreditWelcomeVoiceStoreError("CONTROLLED_TEST_ALREADY_ATTEMPTED", "El evento ya fue intentado o está cerrado; no se redespacha.");

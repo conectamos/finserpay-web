@@ -9,10 +9,11 @@ import { creditWelcomeVoiceSchemaStatements } from "../scripts/credit-welcome-vo
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
-const [core, plan, snapshot, cartera, phone] = await Promise.all([
+const [core, plan, snapshot, cartera, phone, speech] = await Promise.all([
   jiti.import("../lib/credit-welcome-voice-core.ts"), jiti.import("../lib/credit-payment-plan.ts"),
   jiti.import("../lib/credit-factory-snapshot.ts"), jiti.import("../lib/cartera-export.ts"),
   jiti.import("../lib/dapta-welcome.ts"),
+  jiti.import("../lib/credit-welcome-voice-speech.ts"),
 ]);
 const sample = (id = 1, overrides = {}) => ({ id, folio: "FC-TEST-" + id,
   clienteNombre: "ANA MARÍA PRUEBA", clienteDocumento: "00123456", clienteTelefono: "3000000001",
@@ -53,12 +54,13 @@ async function fixture(t, { credits = [sample()], enabled = true, failTransactio
     "@/lib/prisma": { default: client }, "@/lib/credit-payment-plan": plan,
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,
+    "@/lib/credit-welcome-voice-speech": speech,
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   }, { process: { env: {} } });
   const store = loaded.createCreditWelcomeVoiceStore({ database: client, enabled: () => flag,
     now: () => new Date("2026-10-08T15:00:00.000Z") });
   const enqueue = (creditId = 1, source = "NORMAL") => client.$transaction(tx => store.enqueueCreditWelcomeVoice(tx, { creditId, source }));
-  const rows = () => db.query('SELECT * FROM "CreditWelcomeVoiceEvent" ORDER BY "creditoId"').then(result => result.rows);
+  const rows = () => db.query('SELECT * FROM "CreditWelcomeVoiceEvent" ORDER BY "creditoId","attemptNumber"').then(result => result.rows);
   const update = (id, fields) => db.query('UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1', [id, JSON.stringify(fields)]);
   const identity = (eventId, fields = {}) => store.verifyCreditWelcomeVoiceIdentity({ eventId, creditId: 1,
     customerName: "Ana Maria Prueba", customerDocument: "00.123.456", ...fields });
@@ -67,7 +69,7 @@ async function fixture(t, { credits = [sample()], enabled = true, failTransactio
     doubts: "Preguntó por los medios de pago.", transcript: "Transcripción privada de prueba.", durationSeconds: 75,
     recordingUrl: "https://app.dapta.ai/calls/call-test-1", ...fields });
   return { db, client, loaded, store, enqueue, rows, update, identity, result,
-    queries: () => queries, setEnabled: value => { flag = value; } };
+    queries: () => queries, setEnabled: value => { flag = value; }, rollbackNext: () => { rollback = true; } };
 }
 
 test("disabled feature does not read or enqueue, and a disabled processor claims nothing", async t => {
@@ -99,6 +101,9 @@ test("snapshot reads commercial decimal amount and the real amortization calenda
   await f.enqueue();
   const snap = (await f.rows())[0].snapshot;
   assert.equal(snap.document, "00123456");
+  assert.equal(snap.name, "ana maria prueba");
+  assert.equal(snap.spokenName, "ANA MARÍA PRUEBA");
+  assert.equal(core.normalizeWelcomeVoiceName(snap.spokenName), snap.name);
   assert.equal(snap.phone, "573000000001");
   assert.equal(snap.installmentCount, 3);
   assert.equal(snap.installmentAmount, 100);
@@ -365,4 +370,170 @@ test("controlled test source migrates a previously installed check idempotently 
   assert.equal(records[1].source, "CONTROLLED_TEST");
   await assert.rejects(f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "source"=$2 WHERE "id"=$1::uuid',
     [original.eventId, "UNSUPPORTED_SOURCE"]));
+});
+
+test("manual repeat creates exactly one fresh auditable child, leaving the completed call and callback scope intact", async t => {
+  const f = await fixture(t);
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  // Existing production snapshots predate spokenName; repeating one must preserve it.
+  await f.db.query(`UPDATE "CreditWelcomeVoiceEvent" SET "snapshot"="snapshot"-'spokenName' WHERE "id"=$1::uuid`, [original.eventId]);
+  await f.identity(original.eventId);
+  await f.result(original.eventId);
+  const before = (await f.rows())[0];
+  const attempts = await Promise.allSettled([1, 2, 3].map(() => f.store.prepareCreditWelcomeVoiceControlledTest({
+    ...input, repeatOf: original.eventId })));
+  assert.equal(attempts.filter(result => result.status === "fulfilled").length, 1);
+  assert.ok(attempts.filter(result => result.status === "rejected").every(result => result.reason.code === "CONTROLLED_TEST_ALREADY_REPEATED"));
+  const repeated = attempts.find(result => result.status === "fulfilled").value;
+  assert.notEqual(repeated.eventId, original.eventId);
+  const [parent, child] = await f.rows();
+  assert.deepEqual(parent, before);
+  assert.equal(child.attemptNumber, 1);
+  assert.equal(child.repeatOf, original.eventId);
+  assert.equal(child.source, "CONTROLLED_TEST");
+  assert.equal(child.status, "DISPATCHING");
+  assert.equal(child.providerCallId, null);
+  assert.equal(child.identityVerifiedAt, null);
+  assert.equal(child.identityAttempts, 0);
+  assert.equal(child.snapshot.spokenName, "ANA MARÍA PRUEBA");
+  assert.equal(child.snapshot.phone, "573000000001");
+  assert.equal((await f.result(original.eventId)).unchanged, true);
+  assert.equal((await f.rows())[1].status, "DISPATCHING");
+  const secret = "synthetic-repeat-token-secret-long-enough";
+  const oldToken = core.createWelcomeVoiceToken({ creditId: 1, eventId: original.eventId }, { secret });
+  const newToken = core.createWelcomeVoiceToken({ creditId: 1, eventId: repeated.eventId }, { secret });
+  assert.notEqual(oldToken, newToken);
+  assert.equal(core.verifyWelcomeVoiceToken(newToken, { secret }).eventId, repeated.eventId);
+  await assert.rejects(f.result(repeated.eventId), error => error.code === "CALL_ID_CONFLICT");
+  await f.store.markCreditWelcomeVoiceDispatchUnknown(repeated.eventId);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.equal((await f.identity(repeated.eventId)).verificado, true);
+  await f.result(repeated.eventId, { providerCallId: "call-repeat-1" });
+  assert.deepEqual((await f.rows())[0], before);
+  assert.equal((await f.rows())[1].providerCallId, "call-repeat-1");
+  assert.equal(await f.enqueue(), null);
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest(input), error => error.code === "CONTROLLED_TEST_ALREADY_ATTEMPTED");
+});
+
+test("repeat requires a completed real controlled call of the same credit and rejects every ambiguous or closed alternative", async t => {
+  const states = ["PENDING", "DISPATCHING", "ACCEPTED", "FAILED", "UNKNOWN", "CANCELLED", "SKIPPED", "COMPLETED"];
+  const f = await fixture(t, { credits: Array.from({ length: 10 }, (_, index) => sample(index + 1)) });
+  for (let index = 0; index < states.length; index++) {
+    const original = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: index + 1, expectedPhone: "+573000000001" });
+    await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "status"=$2 WHERE "id"=$1::uuid', [original.eventId, states[index]]);
+    // Even COMPLETED without a real callback receipt/hash must not permit a redial.
+    await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: index + 1,
+      expectedPhone: "+573000000001", repeatOf: original.eventId }), error => error.code === "CONTROLLED_TEST_REPEAT_NOT_ALLOWED");
+  }
+  const ordinary = await f.enqueue(9);
+  await f.store.claimPendingCreditWelcomeVoice();
+  await f.result(ordinary.eventId, { creditId: 9, providerCallId: "ordinary-completed-call" });
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 9, expectedPhone: "+573000000001", repeatOf: ordinary.eventId }),
+    error => error.code === "CONTROLLED_TEST_REPEAT_NOT_ALLOWED");
+  const controlled = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 10, expectedPhone: "+573000000001" });
+  await f.result(controlled.eventId, { creditId: 10, providerCallId: "controlled-completed-call" });
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 9, expectedPhone: "+573000000001", repeatOf: controlled.eventId }),
+    error => error.code === "CONTROLLED_TEST_REPEAT_NOT_ALLOWED");
+  assert.equal((await f.rows()).length, 10);
+});
+
+test("manual repeat retains credit/contact/condition guards and never changes its parent on rejection", async t => {
+  const f = await fixture(t);
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  await f.result(original.eventId);
+  const before = (await f.rows())[0];
+  const queryCount = f.queries();
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: "not-a-uuid" }), error => error.code === "INVALID_CONTROLLED_TEST");
+  assert.equal(f.queries(), queryCount);
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, expectedPhone: "+573000000099", repeatOf: original.eventId }),
+    error => error.code === "CONTROLLED_TEST_PHONE_MISMATCH");
+  for (const [changes, code] of [
+    [{ cuotaInicial: 210 }, "CONTROLLED_TEST_SNAPSHOT_CHANGED"],
+    [{ estado: "ANULADO" }, "CONTROLLED_TEST_INELIGIBLE"],
+    [{ estado: "PAGADO" }, "CONTROLLED_TEST_INELIGIBLE"],
+    [{ abonos: [{ valor: 300, fechaAbono: "2026-10-08", estado: "ACTIVO" }] }, "CONTROLLED_TEST_INELIGIBLE"],
+  ]) {
+    await f.update(1, { ...sample(), ...changes });
+    await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: original.eventId }), error => error.code === code);
+    assert.deepEqual(await f.rows(), [before]);
+  }
+});
+
+test("spoken name may retain accents but a stored display name for another identity cannot pass revalidation", async t => {
+  const f = await fixture(t);
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "+573000000001" });
+  assert.equal(original.snapshot.spokenName, "ANA MARÍA PRUEBA");
+  await f.db.query(`UPDATE "CreditWelcomeVoiceEvent" SET "snapshot"=jsonb_set("snapshot",'{spokenName}','"OTRA PERSONA"'::jsonb)
+    WHERE "id"=$1::uuid`, [original.eventId]);
+  assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(original.eventId), null);
+  const row = (await f.rows())[0];
+  assert.equal(row.status, "SKIPPED");
+  assert.equal(row.resultCode, "CONDITIONS_CHANGED");
+});
+
+test("ordinary queue never claims a manual-repeat event even if it is pending, and automatic creation remains unique at attempt zero", async t => {
+  const f = await fixture(t, { credits: [sample(1), sample(2)] });
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "+573000000001" });
+  await f.result(original.eventId);
+  const child = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "+573000000001", repeatOf: original.eventId });
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "status"=\'PENDING\' WHERE "id"=$1::uuid', [child.eventId]);
+  const normal = await f.enqueue(2);
+  assert.equal(await f.enqueue(1), null);
+  const claimed = await f.store.claimPendingCreditWelcomeVoice();
+  assert.deepEqual(Array.from(claimed, row => row.eventId), [normal.eventId]);
+  assert.equal((await f.rows()).find(row => row.id === child.eventId).status, "PENDING");
+  assert.equal((await f.rows()).filter(row => row.creditoId === 1 && row.attemptNumber === 0).length, 1);
+});
+
+test("a failed repeat transaction rolls back only its fresh child and an explicit completed child can be repeated once", async t => {
+  const f = await fixture(t);
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  await f.result(original.eventId);
+  const before = (await f.rows())[0];
+  f.rollbackNext();
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: original.eventId }));
+  assert.deepEqual(await f.rows(), [before]);
+  const child = await f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: original.eventId });
+  await f.result(child.eventId, { providerCallId: "repeat-chain-1" });
+  const grandchild = await f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: child.eventId });
+  assert.notEqual(grandchild.eventId, child.eventId);
+  const records = await f.rows();
+  assert.deepEqual(records.map(row => row.attemptNumber), [0, 1, 2]);
+  assert.deepEqual(records.map(row => row.repeatOf), [null, original.eventId, child.eventId]);
+  assert.deepEqual(records[0], before);
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: child.eventId }), error => error.code === "CONTROLLED_TEST_ALREADY_REPEATED");
+});
+
+test("schema migrates the previous two-column uniqueness preserving old calls and enforces manual repeat constraints", async t => {
+  const f = await fixture(t);
+  const original = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "+573000000001" });
+  await f.result(original.eventId);
+  const before = (await f.rows())[0];
+  await f.db.exec(`ALTER TABLE "CreditWelcomeVoiceEvent" DROP CONSTRAINT "CreditWelcomeVoiceEvent_repeatOf_fkey";
+    ALTER TABLE "CreditWelcomeVoiceEvent" DROP CONSTRAINT "CreditWelcomeVoiceEvent_repeatOf_key";
+    ALTER TABLE "CreditWelcomeVoiceEvent" DROP CONSTRAINT "CreditWelcomeVoiceEvent_attempt_check";
+    ALTER TABLE "CreditWelcomeVoiceEvent" DROP CONSTRAINT "CreditWelcomeVoiceEvent_credit_type_key";
+    ALTER TABLE "CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_credit_type_key" UNIQUE ("creditoId","type");
+    ALTER TABLE "CreditWelcomeVoiceEvent" DROP COLUMN "attemptNumber";
+    ALTER TABLE "CreditWelcomeVoiceEvent" DROP COLUMN "repeatOf";`);
+  for (let run = 0; run < 2; run++) {
+    for (const statement of creditWelcomeVoiceSchemaStatements) await f.db.exec(statement);
+  }
+  assert.deepEqual((await f.rows())[0], before);
+  let sequence = 0;
+  const insert = (attemptNumber, repeatOf, source = "CONTROLLED_TEST") => f.db.query(`INSERT INTO "CreditWelcomeVoiceEvent"
+    ("id","creditoId","type","source","status","attemptNumber","repeatOf") VALUES ($1::uuid,1,'BIENVENIDA_VOZ',$2,'PENDING',$3,$4::uuid)`,
+  [`00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`, source, attemptNumber, repeatOf]);
+  for (const [attemptNumber, repeatOf, source] of [[-1, null, "CONTROLLED_TEST"], [0, original.eventId, "CONTROLLED_TEST"],
+    [1, null, "CONTROLLED_TEST"], [1, original.eventId, "NORMAL"], [1, "00000000-0000-4000-8000-999999999999", "CONTROLLED_TEST"]]) {
+    await assert.rejects(insert(attemptNumber, repeatOf, source));
+  }
+  const child = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "+573000000001", repeatOf: original.eventId });
+  await assert.rejects(insert(2, original.eventId));
+  await assert.rejects(f.db.query('DELETE FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1::uuid', [original.eventId]));
+  assert.equal((await f.rows())[1].id, child.eventId);
+  assert.deepEqual((await f.rows())[0], before);
 });

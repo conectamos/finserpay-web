@@ -1,5 +1,6 @@
 import "server-only";
 import { createWelcomeVoiceToken } from "@/lib/credit-welcome-voice-core";
+import { welcomeVoiceDocumentSpoken, welcomeVoiceNameSpoken } from "@/lib/credit-welcome-voice-speech";
 import {
   claimPendingCreditWelcomeVoice,
   ensureCreditWelcomeVoiceSchema,
@@ -73,6 +74,13 @@ export async function dispatchCreditWelcomeVoice(
   await Promise.all(claims.map(async claim => {
     const prepared = await (deps.prepare ?? prepareCreditWelcomeVoiceDispatch)(claim.eventId);
     if (!prepared) { summary.skipped++; return; }
+    const spokenName = welcomeVoiceNameSpoken(prepared.snapshot.spokenName ?? prepared.snapshot.name, prepared.snapshot.name);
+    const spokenDocument = welcomeVoiceDocumentSpoken(prepared.snapshot.document);
+    if (!spokenName || !spokenDocument) {
+      await (deps.failed ?? markCreditWelcomeVoiceDispatchFailed)(claim.eventId, "INVALID_IDENTITY_SPEECH");
+      summary.skipped++;
+      return;
+    }
     let token: string;
     try {
       token = createWelcomeVoiceToken({ eventId: prepared.eventId, creditId: prepared.creditId }, { secret: config.secret });
@@ -90,7 +98,8 @@ export async function dispatchCreditWelcomeVoice(
         redirect: "error", signal: AbortSignal.timeout(20_000),
         body: JSON.stringify({ event_id: prepared.eventId, credito_id: String(prepared.creditId),
           event_token: token, to_number: `+${prepared.snapshot.phone}`,
-          customer_name: prepared.snapshot.name, customer_document: prepared.snapshot.document }),
+          customer_name: prepared.snapshot.name, customer_document: prepared.snapshot.document,
+          customer_name_spoken: spokenName, customer_document_spoken: spokenDocument }),
       });
       if (response.ok) {
         const length = Number(response.headers.get("content-length"));
