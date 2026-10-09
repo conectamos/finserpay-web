@@ -81,3 +81,34 @@ test("welcome application accepts one whole registered name or surname only with
   assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name: "Luz " + "otra ".repeat(20), document: "38144092" }), false);
   assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: "Luz Fernández Gil.", document: "38144092" }), false, "collections/default policy is unchanged");
 });
+
+test("private welcome recognizes the observed Cindy/Sindy pronunciation with an exact complete document", () => {
+  // The utterance is the observed ASR shape; the document is a synthetic fixture.
+  const expected = { name: "SINDY MALLERLY GUTIERREZ LOZANO", document: "0012345678" };
+  const name = "Cindy, ayer liquidé relocanos.";
+  assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document: "00.123.456-78" }), true);
+  for (const document of ["0012345679", "12345678", "001234567", "001234?678", 12345678, null]) {
+    assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document }), false);
+  }
+  assert.equal(core.matchWelcomeVoiceIdentity(expected, { name, document: expected.document }), false);
+});
+
+test("private welcome pronunciation is limited to soft C and S/Z in entire meaningful tokens", () => {
+  for (const [registered, spoken] of [
+    ["Sindy", "Cindy"], ["Cindy", "Sindy"], ["Sindy", "Zindy"],
+    ["Cecilia", "Sesilia"], ["César", "Sésar"], ["Luz", "Lus"],
+    ["Ana de la Cruz", "Crus"], ["SÍNDY", "CÍNDY"],
+  ]) assert.equal(core.matchesWelcomeVoiceApplicationName(registered, spoken), true, `${registered}/${spoken}`);
+  for (const [registered, spoken] of [
+    ["Sindy", "Cindyrella"], ["Sindy", "Cin"], ["Sindy", "Cinthia"],
+    ["Carlos", "Sarlos"], ["Cata", "Sata"], ["Cora", "Sora"],
+    ["Cuca", "Suca"], ["Chaves", "Shaves"], ["Cristina", "Sristina"],
+    ["Carla", "Karla"], ["Luz", "César"], ["Ana de la Cruz", "de la"],
+    ["de del la las los y el", "de la y"], ["Sindy", "Cindy?"],
+  ]) assert.equal(core.matchesWelcomeVoiceApplicationName(registered, spoken), false, `${registered}/${spoken}`);
+  assert.equal(core.matchesWelcomeVoiceApplicationName("Sindy", "Cindy " + "otra ".repeat(20)), false);
+  for (const [registered, spoken] of [["Sindy", "Cindy"], ["César", "Sésar"], ["Luz", "Lus"]]) {
+    assert.equal(core.matchWelcomeVoiceIdentity({ name: registered, document: "0012345678" },
+      { name: spoken, document: "0012345678" }), false, "generic matcher stays literal");
+  }
+});

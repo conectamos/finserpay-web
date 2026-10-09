@@ -71,3 +71,9 @@ test("limits apply to both inputs, including exact equality, and empty or malfor
     assert.equal(matches(value, value), false);
   }
 });
+
+test("strict name matching does not inherit private welcome pronunciation equivalences", () => {
+  for (const [provided, registered] of [["cindy", "sindy"], ["sesar", "cesar"], ["lus", "luz"], ["ana crus", "ana cruz"]]) {
+    assert.equal(matches(provided, registered), false);
+  }
+});

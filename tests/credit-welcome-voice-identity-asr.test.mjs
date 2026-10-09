@@ -53,11 +53,11 @@ async function fixture(t) {
   await db.exec('CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "data" JSONB NOT NULL)');
   for (const statement of creditWelcomeVoiceSchemaStatements) await db.exec(statement);
   await db.query('INSERT INTO "Credito" ("id","data") VALUES ($1,$2::jsonb)', [72, JSON.stringify(credit())]);
-  let queries = 0;
+  let queries = 0, writes = 0;
   let rollback = false;
   const adapter = connection => ({
     $queryRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).rows; },
-    $executeRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).affectedRows; },
+    $executeRawUnsafe: async (sql, ...values) => { queries++; writes++; return (await connection.query(sql, values)).affectedRows; },
     credito: { findUnique: async ({ where, select }) => {
       assert.equal(select.amortizacion.select.cuotas.orderBy.numero, "asc");
       assert.equal(select.abonos.where.estado.not, "ANULADO");
@@ -96,7 +96,7 @@ async function fixture(t) {
     return { status: response.status, body: await response.json() };
   };
   const row = () => db.query('SELECT * FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1::uuid', [eventId]).then(result => result.rows[0]);
-  return { db, store, eventId, post, row, queries: () => queries,
+  return { db, store, eventId, post, row, queries: () => queries, writes: () => writes,
     rollbackNext: () => { rollback = true; },
     claim: () => store.claimPendingCreditWelcomeVoice() };
 }
@@ -125,6 +125,19 @@ function assertRecovery(body, nextAction = "REVIEW", remainingAttempts = 0, code
     question: nextAction === "ASK_NAME" ? "¿Me repite su nombre completo, por favor?"
       : nextAction === "ASK_DOCUMENT" ? "¿Me repite su número de cédula, por favor?" : "No pude confirmar sus datos. Un asesor revisará su caso.",
     mayEndCall: nextAction === "REVIEW" });
+}
+function assertRecoveryState(row, expected) {
+  const { lastFailure, failedInputHashes, ...flags } = row.identityRecovery;
+  assert.deepEqual(flags, expected);
+  if (lastFailure) {
+    assert.deepEqual(Object.keys(lastFailure).sort(), ["attempts", "code", "inputHash", "nextAction"]);
+    assert.match(lastFailure.inputHash, /^[a-f0-9]{64}$/);
+    assert.equal(lastFailure.attempts, row.identityAttempts);
+    assert.ok(failedInputHashes.includes(lastFailure.inputHash));
+    assert.equal(new Set(failedInputHashes).size, failedInputHashes.length);
+    assert.ok(failedInputHashes.length <= row.identityAttempts);
+  }
+  return lastFailure;
 }
 
 test("observed ASR payloads pass HTTP, literal parsing and the real store, persisting verified identity and registered conditions", async t => {
@@ -183,11 +196,11 @@ test("ambiguous document consumes a persisted attempt, then missing name can rec
   assert.equal((await f.row()).identityAttempts, 3);
 });
 
-test("three backend mismatches lock the event even when the next HTTP payload contains the correct spoken identity", async t => {
+test("three distinct backend mismatches lock the event even when the next HTTP payload contains the correct spoken identity", async t => {
   const f = await fixture(t);
   await f.claim();
   for (let attempt = 1; attempt <= 3; attempt++) {
-    assertRecovery((await f.post({ customer_name: "Clara García", customer_document: "38144093." })).body, ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"][attempt - 1], attempt === 3 ? 0 : 3 - attempt);
+    assertRecovery((await f.post({ customer_name: ["Clara García", "Ana García", "Marta García"][attempt - 1], customer_document: "38144093." })).body, ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"][attempt - 1], attempt === 3 ? 0 : 3 - attempt);
     assert.equal((await f.row()).identityAttempts, attempt);
   }
   assertRecovery((await f.post()).body);
@@ -239,22 +252,30 @@ test("one registered component plus exact document accepts the observed surname 
 test("an acceptable name with a different complete document asks only for the document and correction can continue", async t => {
   const f = await fixture(t); await f.claim();
   assertRecovery((await f.post({ customer_name: "Luz", customer_document: "38144093" })).body, "ASK_DOCUMENT", 2);
-  assert.deepEqual((await f.row()).identityRecovery, { askedName: false, askedDocument: true, reviewRequired: false });
+  assertRecoveryState(await f.row(), { askedName: false, askedDocument: true, reviewRequired: false });
   const corrected = await f.post({ customer_name: "Luz", customer_document: "38144092" });
   assertRegisteredConditions(corrected.body); assert.equal(corrected.body.remainingAttempts, 1); assert.equal((await f.row()).identityAttempts, 2);
 });
 test("a first name mismatch asks for the real name and cannot close; corrected name verifies on the next attempt", async t => {
   const f = await fixture(t); await f.claim();
   assertRecovery((await f.post({ customer_name: "Clara Fernández Gil." })).body, "ASK_NAME", 2);
-  assert.deepEqual((await f.row()).identityRecovery, { askedName: true, askedDocument: false, reviewRequired: false });
+  assertRecoveryState(await f.row(), { askedName: true, askedDocument: false, reviewRequired: false });
   const good = await f.post({ customer_name: "Hernández" }); assertRegisteredConditions(good.body);
   assert.equal(good.body.remainingAttempts, 1); assert.equal((await f.row()).identityAttempts, 2);
 });
-test("repeated unrecognized documents terminate recovery early and legacy credentials cannot bypass persisted review", async t => {
+test("identical unrecognized documents reuse guidance; a different failed clarification ends recovery and legacy cannot bypass it", async t => {
   const f = await fixture(t); await f.claim();
   const bad = { customer_document: "doscientos cuarenta y cuatro veinte." };
   assertRecovery((await f.post(bad)).body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
-  assertRecovery((await f.post(bad)).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
+  const before = await f.row(), writes = f.writes();
+  assertRecovery((await f.post({ customer_document: "  DOSCIENTOS  cuarenta y cuatro VEINTE.  " })).body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
+  assert.deepEqual((await f.row()).identityRecovery, before.identityRecovery);
+  assert.equal((await f.row()).identityAttempts, 1); assert.equal(f.writes(), writes);
+  const distinctBad = { customer_document: "treinta ocho" };
+  assertRecovery((await f.post(distinctBad)).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
+  const terminal = await f.row();
+  assertRecovery((await f.post(distinctBad)).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
+  assert.deepEqual((await f.row()).identityRecovery, terminal.identityRecovery);
   assertRecovery((await f.post()).body);
   assert.equal((await f.row()).identityAttempts, 2); assert.equal((await f.row()).identityVerifiedAt, null);
   const legacy = await f.store.verifyCreditWelcomeVoiceIdentity({ eventId: f.eventId, creditId: 72, customerName: "LUZ HERNANDEZ", customerDocument: "38144092" });
@@ -267,13 +288,96 @@ test("unrecognized documents share the same three-attempt budget with name corre
   assertRecovery((await f.post({ customer_document: "treinta ocho" })).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
   assert.equal((await f.row()).identityAttempts, 3); assertRecovery((await f.post()).body);
 });
-test("concurrent recovery requests serialize name/document steps and rollback cannot consume budget or flags", async t => {
+test("concurrent identical recovery requests consume one attempt and rollback cannot save budget, flags or a replay hash", async t => {
   const f = await fixture(t); await f.claim();
   f.rollbackNext(); const failed = await f.post({ customer_document: "treinta ocho" }); assert.equal(failed.status, 503);
   assert.equal((await f.row()).identityAttempts, 0); assert.deepEqual((await f.row()).identityRecovery, {});
   const results = await Promise.all([f.post({ customer_name: "Clara García" }), f.post({ customer_name: "Clara García" })]);
-  assert.deepEqual(results.map(r => r.body.nextAction).sort(), ["ASK_DOCUMENT", "ASK_NAME"]);
-  assert.equal((await f.row()).identityAttempts, 2);
-  assert.deepEqual((await f.row()).identityRecovery, { askedName: true, askedDocument: true, reviewRequired: false });
+  assert.deepEqual(results[0].body, results[1].body);
+  assertRecovery(results[0].body, "ASK_NAME", 2);
+  assert.equal((await f.row()).identityAttempts, 1);
+  assertRecoveryState(await f.row(), { askedName: true, askedDocument: false, reviewRequired: false });
+  assertRecovery((await f.post({ customer_name: "Ana García" })).body, "ASK_DOCUMENT", 1);
   assertRegisteredConditions((await f.post()).body); assert.equal((await f.row()).identityAttempts, 3);
+  assert.equal("lastFailure" in (await f.row()).identityRecovery, false);
+});
+
+test("a repeated tool request after the second distinct answer preserves its remaining attempt for a correct name", async t => {
+  const f = await fixture(t); await f.claim();
+  assertRecovery((await f.post({ customer_name: "Clara García." })).body, "ASK_NAME", 2);
+  const second = { customer_name: "Ana García.", customer_document: actualDocuments[0] };
+  const secondResponse = await f.post(second);
+  assertRecovery(secondResponse.body, "ASK_DOCUMENT", 1);
+  const secondRow = await f.row(), writes = f.writes();
+  for (const customer_document of [actualDocuments[0], "38144092", "38.144.092", actualDocuments[1]]) {
+    const duplicate = await f.post({ customer_name: "  ANA,  GARCÍA.  ", customer_document });
+    assert.deepEqual(duplicate.body, secondResponse.body);
+    assert.equal(duplicate.body.condiciones, null);
+  }
+  // A,B,A must return the current guidance rather than reopening the first name question.
+  assert.deepEqual((await f.post({ customer_name: "Clara García." })).body, secondResponse.body);
+  assert.equal((await f.row()).identityAttempts, 2); assert.equal((await f.row()).identityVerifiedAt, null);
+  assert.equal(f.writes(), writes); assert.deepEqual((await f.row()).identityRecovery, secondRow.identityRecovery);
+  const cached = assertRecoveryState(secondRow, { askedName: true, askedDocument: true, reviewRequired: false });
+  assert.equal(cached.nextAction, "ASK_DOCUMENT"); assert.equal(cached.attempts, 2);
+  assert.equal(secondRow.identityRecovery.failedInputHashes.length, 2);
+  const persisted = JSON.stringify(secondRow.identityRecovery);
+  for (const forbidden of ["Ana", "ana", "Garcia", "garcia", "38144092", "document", "phone", "condiciones", "initialPayment"]) {
+    assert.equal(persisted.includes(forbidden), false, forbidden);
+  }
+  assertRegisteredConditions((await f.post({ customer_name: "Hernández" })).body);
+  assert.equal((await f.row()).identityAttempts, 3); assert.ok((await f.row()).identityVerifiedAt);
+  assert.equal("lastFailure" in (await f.row()).identityRecovery, false);
+  assert.equal("failedInputHashes" in (await f.row()).identityRecovery, false);
+});
+
+test("cached failed guidance is unavailable with stale, foreign or closed scope and changed current credit", async t => {
+  const f = await fixture(t); await f.claim();
+  const input = { customer_name: "Clara García." };
+  const failure = await f.post(input); assertRecovery(failure.body, "ASK_NAME", 2);
+  const original = await f.row(), writes = f.writes();
+  for (const dispatchedAt of [null, new Date(now.getTime() - 86400001), new Date(now.getTime() + 1)]) {
+    await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "dispatchedAt"=$2 WHERE "id"=$1::uuid', [f.eventId, dispatchedAt]);
+    assertRecovery((await f.post(input)).body);
+  }
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "dispatchedAt"=$2 WHERE "id"=$1::uuid', [f.eventId, now]);
+  const foreign = await f.store.verifyCreditWelcomeVoiceIdentity({ eventId: f.eventId, creditId: 73,
+    requireFreshDispatch: true, customerName: input.customer_name, customerDocument: actualDocuments[0] });
+  assert.equal(foreign.verificado, false); assert.equal(foreign.nextAction, "REVIEW"); assert.equal(foreign.condiciones, null);
+  for (const change of [{ cuotaInicial: 1 }, { clienteTelefono: "3000000002" }, { estado: "PAGADO" },
+    { abonos: [{ valor: 477450, fechaAbono: "2026-10-08", estado: "APROBADO" }] }]) {
+    await f.db.query('UPDATE "Credito" SET "data"=$2::jsonb WHERE "id"=$1', [72, JSON.stringify({ ...credit(), ...change })]);
+    assertRecovery((await f.post(input)).body);
+  }
+  await f.db.query('UPDATE "Credito" SET "data"=$2::jsonb WHERE "id"=$1', [72, JSON.stringify(credit())]);
+  assert.deepEqual((await f.post(input)).body, failure.body);
+  const unauthorizedBefore = f.queries();
+  assert.equal((await f.post(input, "Bearer wrong")).status, 401); assert.equal(f.queries(), unauthorizedBefore);
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "status"=$2 WHERE "id"=$1::uuid', [f.eventId, "COMPLETED"]);
+  assertRecovery((await f.post(input)).body);
+  assert.equal((await f.row()).identityAttempts, 1); assert.equal((await f.row()).identityVerifiedAt, null);
+  assert.deepEqual((await f.row()).identityRecovery, original.identityRecovery); assert.equal(f.writes(), writes);
+});
+
+test("a legacy last-failure hash stays replayable while malformed or inconsistent cached metadata fails closed", async t => {
+  const f = await fixture(t); await f.claim();
+  const input = { customer_name: "Clara García." };
+  const failure = await f.post(input), original = await f.row(), writes = f.writes();
+  const legacyRecovery = { ...original.identityRecovery };
+  delete legacyRecovery.failedInputHashes;
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "identityRecovery"=$2::jsonb WHERE "id"=$1::uuid', [f.eventId, JSON.stringify(legacyRecovery)]);
+  assert.deepEqual((await f.post(input)).body, failure.body); assert.equal(f.writes(), writes);
+  const malformed = [
+    { ...original.identityRecovery, failedInputHashes: Array(4).fill(original.identityRecovery.lastFailure.inputHash) },
+    { ...original.identityRecovery, failedInputHashes: ["a".repeat(64)] },
+    { ...original.identityRecovery, lastFailure: { ...original.identityRecovery.lastFailure, nextAction: ["ASK_NAME"] } },
+    { ...original.identityRecovery, lastFailure: { ...original.identityRecovery.lastFailure, code: ["IDENTITY_NOT_CONFIRMED"] } },
+    { ...original.identityRecovery, lastFailure: { ...original.identityRecovery.lastFailure, attempts: 2 } },
+  ];
+  for (const recovery of malformed) {
+    await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "identityRecovery"=$2::jsonb WHERE "id"=$1::uuid', [f.eventId, JSON.stringify(recovery)]);
+    assertRecovery((await f.post(input)).body); assertRecovery((await f.post()).body);
+    assert.equal((await f.row()).identityAttempts, 1); assert.equal((await f.row()).identityVerifiedAt, null);
+    assert.equal(f.writes(), writes);
+  }
 });
