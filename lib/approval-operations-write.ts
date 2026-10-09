@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { canDispatchReservedVersion, exactImei, hasVerifiedDraftSignature, isVerifiedPendingSignatureStatus, isVerifiedTerminalOperationalRetry, isVerifiedTerminalSignatureFailure,
+import { canDispatchReservedVersion, exactImei, hasVerifiedDraftSignature, isVerifiedTerminalOperationalRetry, isVerifiedTerminalSignatureFailure,
   operationalCreditEligibility, operationalImeiEligibility, operationalDraftCorrectionStatus, operationalProcessToSupersede,
   operationalSignatureLineage,
   operationalFrozenCredit, signedPdfBytes } from "@/lib/approval-operations-core";
@@ -15,26 +15,19 @@ import {
 } from "@/lib/credit-device-replacement-storage";
 import { correctFirmaSeguroDraftImei } from "@/lib/firmaseguro-imei-correction";
 import { buildFirmaSeguroCreditPdf } from "@/lib/firmaseguro-folio-pdf";
-import { buildFrozenPendingContactRedirect } from "@/lib/firmaseguro-draft-frozen";
+import { deliverExistingFirmaSeguroSignature, FirmaSeguroRecipientDeliveryError } from "@/lib/firmaseguro-recipient-delivery";
 import { prepareFirmaSeguroReissue, refreshFirmaSeguroProcess } from "@/lib/firmaseguro-credit";
 import { isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
 import { ensureFirmaSeguroSchema, lockSolicitudOperationMutation, markFirmaSeguroDraftProcessesSuperseded, type FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 import { frozenReissueCredit, reissueHash } from "@/lib/credit-approval-reissue-source";
-import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import { parseApprovalDataCorrection } from "@/lib/credit-approval-data-core";
 import { correctCreditApprovalData } from "@/lib/credit-approval-data";
 import { CreditApprovalError, getCreditApprovalDetail } from "@/lib/credit-approval";
 import { parseCreditApprovalReissue, requestCreditApprovalReissue } from "@/lib/credit-approval-reissue";
 import { requestInitialApprovalSignature } from "@/lib/approval-initial-signature";
 import {
-  dispatchReservedDraft,
   ensureDraftDispatchSchema,
-  finalizeDraftDispatch,
-  getDraftDispatch,
-  getDraftDispatchReceipt,
   getUnresolvedDraftDispatch,
-  reserveDraftDispatch,
-  type DraftDispatchRow,
 } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import { requestSafeDraftSignature } from "@/lib/firmaseguro-draft-safe-request";
 import type { ApprovalDataCorrectionChainEntry } from "@/lib/credit-approval-data-core";
@@ -879,38 +872,14 @@ export async function updateOperationalContact(kind: OperationalKind, targetId: 
   }, { timeout: 15000 });
 }
 
-function draftRedirectPublic(row: DraftDispatchRow) {
-  const message = row.status === "AWAITING_SIGNATURE"
-    ? "Firma reenviada al nuevo contacto. Esperando la firma del cliente."
-    : row.status === "FAILED_SAFE"
-      ? "No se envió la nueva firma. Revisa el expediente antes de intentar otra vez."
-      : row.status === "UNCERTAIN"
-        ? "El resultado del reenvío no pudo confirmarse. Requiere conciliación; no lo repitas."
-        : row.status === "DISPATCHING"
-          ? "El reenvío está en curso. Consulta el expediente antes de intentar otra vez."
-          : "El reenvío quedó preparado.";
-  return { id: row.id, status: row.status, message, processUuid: row.processUuid };
-}
-
-async function resumeDraftRedirect(row: DraftDispatchRow) {
-  if (row.status === "PREPARING") return dispatchReservedDraft(row.id);
-  if (["DISPATCHING", "UNCERTAIN"].includes(row.status) && await getDraftDispatchReceipt(row.id)) {
-    return finalizeDraftDispatch(row.id);
-  }
-  return row;
-}
-
-/**
- * Redirect a pending draft signature to a corrected recipient. The provider
- * cannot mutate a recipient in place, so the old process is archived and a
- * new process is created from its verified, frozen financial seal.
- */
+/** Update delivery contact and resend the existing provider signature without replacing its document. */
 export async function redirectPendingDraftSignature(kind: OperationalKind, targetId: number, input: {
   phone?: unknown; email?: unknown; reason: unknown; idempotencyKey: unknown;
   expectedProcessUuid: unknown; confirmed: unknown;
 }, actor: OperationalActor) {
   assertActor(actor);
-  assertConfirmed(input.confirmed);
+  if (input.confirmed !== true && input.confirmed !== "true")
+    throw new ApprovalOperationalError("CONFIRMATION_REQUIRED", "Confirma el reenvío del mismo documento al contacto indicado.", 400);
   if (kind !== "DRAFT") throw new ApprovalOperationalError("DRAFT_REQUIRED",
     "Esta operación solo está disponible para solicitudes pendientes de FirmaSeguro.", 400);
   if (!Number.isSafeInteger(targetId) || targetId < 1)
@@ -923,143 +892,21 @@ export async function redirectPendingDraftSignature(kind: OperationalKind, targe
   const hasPhone = input.phone !== undefined && input.phone !== null && input.phone !== "";
   const hasEmail = input.email !== undefined && input.email !== null && input.email !== "";
   if (!hasPhone && !hasEmail) throw new ApprovalOperationalError("CONTACT_REQUIRED",
-    "Ingresa el nuevo celular o correo de envío.", 400);
+    "Ingresa el celular o correo de envío.", 400);
   const providedPhone = hasPhone ? phone(input.phone) : null;
   const providedEmail = hasEmail ? email(input.email) : null;
-  const intentFingerprint = createHash("sha256").update(JSON.stringify({
-    version: 1,
-    phone: { present: hasPhone, value: providedPhone },
-    email: { present: hasEmail, value: providedEmail },
-  })).digest("hex");
-
   await ensureFirmaSeguroSchema();
   await ensureApprovalOperationalSchema();
   await ensureDraftDispatchSchema();
-
-  const replay = await getDraftDispatch(id);
-  if (replay) {
-    const after = object(replay.updatedPayload);
-    if (replay.draftId !== targetId || replay.actorUserId !== actor.id || replay.reason !== motive
-      || replay.expectedProcessUuid !== wantedProcess
-      || after.firmaSeguroPendingContactRedirectId !== id
-      || after.firmaSeguroPendingContactRedirectSourceProcessUuid !== wantedProcess
-      || typeof after.firmaSeguroPendingContactRedirectSourceChecksum !== "string"
-      || !/^[a-f0-9]{64}$/i.test(after.firmaSeguroPendingContactRedirectSourceChecksum)
-      || after.firmaSeguroPendingContactRedirectIntentSha256 !== intentFingerprint
-      || (hasPhone && after.clienteTelefono !== providedPhone)
-      || (hasEmail && after.clienteCorreo !== providedEmail)) {
-      throw new ApprovalOperationalError("IDEMPOTENCY_CONFLICT",
-        "Esta confirmación pertenece a otro reenvío de firma.");
-    }
-    return draftRedirectPublic(await resumeDraftRedirect(replay));
-  }
-
-  if (await getUnresolvedDraftDispatch(targetId))
-    throw new ApprovalOperationalError("SIGNATURE_PENDING",
-      "Hay un envío de firma en curso o pendiente de conciliación. Consulta su estado antes de reenviar.");
-  const draft = await readDraft(prisma, targetId);
-  if (draft.currentStep < 3 || draft.currentStep > 4)
-    throw new ApprovalOperationalError("DRAFT_STEP_CHANGED", "La solicitud ya no está en Identidad y firma.");
-  const sourcePayload = object(draft.payload);
-  const draftPlatform = clean(draft.plataforma, 32) || clean(sourcePayload.plataformaDispositivo, 32);
-  if (draftPlatform.toUpperCase() !== "IPHONE")
-    throw new ApprovalOperationalError("IPHONE_REQUIRED",
-      "Esta operación está disponible por ahora únicamente para iPhone.");
-  const current = await currentProcess(prisma, "DRAFT", targetId);
-  if (!current || current.processUuid !== wantedProcess)
-    throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma vigente cambió. Actualiza el expediente.");
-
-  let refreshed: FirmaSeguroProcessRow | null;
   try {
-    refreshed = await refreshFirmaSeguroProcess(current);
-  } catch {
-    throw new ApprovalOperationalError("SIGNATURE_REFRESH_FAILED",
-      "No se pudo verificar con FirmaSeguro que la solicitud siga sin firmar. Intenta actualizar el expediente.", 502);
+    return await deliverExistingFirmaSeguroSignature({ id, draftId: targetId, processUuid: wantedProcess,
+      actor, reason: motive, phone: providedPhone, email: providedEmail, hasPhone, hasEmail });
+  } catch (error) {
+    if (error instanceof FirmaSeguroRecipientDeliveryError)
+      throw new ApprovalOperationalError(error.code, error.message, error.status);
+    throw error;
   }
-  if (!refreshed || refreshed.processUuid !== wantedProcess || refreshed.supersededAt)
-    throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma vigente cambió. Actualiza el expediente.");
-  if (refreshed.signedDocumentBase64 || refreshed.completedAt || isFirmaSeguroCompletedStatus(refreshed.status))
-    throw new ApprovalOperationalError("SIGNATURE_ALREADY_COMPLETED",
-      "El cliente ya firmó. Actualiza el expediente antes de reenviar.");
-  const terminalFailedSource = isVerifiedTerminalSignatureFailure(refreshed.status);
-  const pendingSource = isVerifiedPendingSignatureStatus(refreshed.status);
-  if ((!terminalFailedSource && !pendingSource) || (refreshed.lastError && !terminalFailedSource))
-    throw new ApprovalOperationalError("SIGNATURE_NOT_PENDING",
-      "La firma ya no está pendiente. Actualiza el expediente antes de reenviar.");
-
-  const sourceSeal = readFinancingTermsSeal(object(refreshed.draftPayload).financialTermsSeal);
-  if (!sourceSeal) throw new ApprovalOperationalError("CONTRACT_NOT_VERIFIED",
-    "No se pudieron verificar las condiciones congeladas del contrato. Requiere revisión técnica.");
-  const storedPhoneDigits = digits(draft.clienteTelefono || sourcePayload.clienteTelefono
-    || sourceSeal.snapshot.clienteTelefono);
-  const currentPhone = storedPhoneDigits.length === 12 && storedPhoneDigits.startsWith("57")
-    ? storedPhoneDigits.slice(2) : storedPhoneDigits;
-  const currentEmail = (clean(sourcePayload.clienteCorreo, 254)
-    || clean(sourceSeal.snapshot.clienteCorreo, 254)).toLowerCase();
-  const after = {
-    clienteTelefono: providedPhone ?? phone(currentPhone),
-    // Historical phone-only requests may have no email. Provider preparation applies
-    // the configured delivery/notification requirements before the dispatch claim.
-    clienteCorreo: providedEmail ?? (currentEmail ? email(currentEmail) : ""),
-  };
-  const before = { clienteTelefono: currentPhone, clienteCorreo: currentEmail };
-  if (before.clienteTelefono === after.clienteTelefono && before.clienteCorreo === after.clienteCorreo)
-    throw new ApprovalOperationalError("CONTACT_UNCHANGED", "El contacto no cambió.", 400);
-
-  let frozen: ReturnType<typeof buildFrozenPendingContactRedirect>;
-  try {
-    frozen = buildFrozenPendingContactRedirect({ draft, source: refreshed,
-      phone: after.clienteTelefono, email: after.clienteCorreo });
-  } catch {
-    throw new ApprovalOperationalError("CONTRACT_NOT_VERIFIED",
-      "No se pudieron verificar las condiciones congeladas del contrato. Requiere revisión técnica.");
-  }
-  const updatedPayload: Record<string, unknown> = {
-    ...sourcePayload,
-    ...after,
-    wizardStep: 4,
-    firmaSeguroDraftFolio: refreshed.draftFolio,
-    firmaSeguroContactCorrectionPending: true,
-    firmaSeguroPendingContactRedirectId: id,
-    firmaSeguroPendingContactRedirectSourceProcessUuid: wantedProcess,
-    firmaSeguroPendingContactRedirectSourceChecksum: sourceSeal.checksum,
-    firmaSeguroPendingContactRedirectIntentSha256: intentFingerprint,
-  };
-  delete updatedPayload.financialTermsSeal;
-  const draftPayload: Record<string, unknown> = { ...updatedPayload, financialTermsSeal: frozen.seal };
-  delete draftPayload.iphoneSelfieCedulaDataUrl;
-  delete draftPayload.iphoneSelfieCedulaCapturedAt;
-  delete draftPayload.iphoneSelfieCedulaSource;
-  const document = await buildFirmaSeguroCreditPdf(frozen.credit);
-  if (document.length > 32 * 1024 * 1024 || document.subarray(0, 5).toString() !== "%PDF-")
-    throw new ApprovalOperationalError("CONTRACT_DOCUMENT_INVALID",
-      "No se pudo generar un contrato verificable para el reenvío.");
-
-  const reserved = await reserveDraftDispatch({
-    id, draftId: targetId, actor, reason: motive, expectedProcessUuid: wantedProcess,
-    sourcePayload: draft.payload, updatedPayload, draftPayload,
-    draftFolio: refreshed.draftFolio || frozen.credit.folio, frozenCredit: frozen.credit,
-    document, supersedeActive: true,
-    options: {
-      requireUnsignedActive: true,
-      allowTerminalFailedActive: terminalFailedSource,
-    },
-  });
-  const reservedContact = object(reserved.updatedPayload);
-  if (reserved.draftId !== targetId || reserved.actorUserId !== actor.id || reserved.reason !== motive
-    || reserved.expectedProcessUuid !== wantedProcess
-    || reservedContact.firmaSeguroPendingContactRedirectId !== id
-    || reservedContact.firmaSeguroPendingContactRedirectSourceProcessUuid !== wantedProcess
-    || reservedContact.firmaSeguroPendingContactRedirectSourceChecksum !== sourceSeal.checksum
-    || reservedContact.firmaSeguroPendingContactRedirectIntentSha256 !== intentFingerprint
-    || reservedContact.clienteTelefono !== after.clienteTelefono
-    || reservedContact.clienteCorreo !== after.clienteCorreo) {
-    throw new ApprovalOperationalError("IDEMPOTENCY_CONFLICT",
-      "Esta confirmación pertenece a otro reenvío de firma.");
-  }
-  return draftRedirectPublic(await resumeDraftRedirect(reserved));
 }
-
 export async function requestOperationalSignature(kind: OperationalKind, targetId: number, input: {
   reason: unknown; idempotencyKey: unknown; expectedProcessUuid: unknown; confirmed: unknown;
   expectedRevision?: unknown; expectedReviewHash?: unknown;

@@ -74,6 +74,7 @@ function harness(firstOutcome, { refreshFails = false } = {}) {
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
       if (name === "@/app/_components/finser-confirm-dialog") return { default: ConfirmDialog };
+      if (name === "./credit-welcome-voice-result") return { default: () => null };
       if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },

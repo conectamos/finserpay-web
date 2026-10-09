@@ -466,11 +466,11 @@ test("una única firma pendiente de borrador habilita redirección solo mientras
   completedAt = null;
   for (const terminal of ["REJECTED", "DECLINED", "CANCELLED", "EXPIRED", "REVOKED"]) {
     status = terminal;
-    const retryable = await read.getOperationalCase("DRAFT", "30", db);
-    assert.equal(retryable.signature.status, "TECHNICAL_ERROR", terminal);
-    assert.equal(retryable.capabilities.canRedirectPendingSignature, true,
-      `${terminal} confirmado y sin PDF permite un reintento explícito`);
-    assert.equal(retryable.capabilities.pendingSignatureRedirectReason, null, terminal);
+    const blocked = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(blocked.signature.status, "TECHNICAL_ERROR", terminal);
+    assert.equal(blocked.capabilities.canRedirectPendingSignature, false,
+      `${terminal} no permite editar y reenviar el mismo proceso`);
+    assert.match(blocked.capabilities.pendingSignatureRedirectReason, /no está pendiente|actualiza/i);
   }
 
   for (const ambiguousFailure of ["ERROR", "FAILED", "FAILURE"]) {
@@ -486,7 +486,143 @@ test("una única firma pendiente de borrador habilita redirección solo mientras
   duplicateActive = true;
   const ambiguous = await read.getOperationalCase("DRAFT", "30", db);
   assert.equal(ambiguous.capabilities.canRedirectPendingSignature, false,
-    "dos procesos activos nunca deben ofrecer un tercer envío");
+    "dos procesos activos no permiten identificar el destinatario vigente");
+});
+
+test("el reenvío conserva contacto contractual y refleja solo la entrega confirmada del mismo proceso", async () => {
+  const calls = [];
+  let deliveryPending = false;
+  let deliveryStatus = "RESEND_UNCERTAIN";
+  let confirmedContact = { phone: "3101234567", email: "nuevo@example.com" };
+  let resentAt = "2026-10-09T16:05:00.000Z";
+  let requestPayload = { endpoint: "create-full-by-company", payload: {
+    signers: [{ number: "3218928117", email: "original@example.com" }],
+  } };
+  let correctionPending = false;
+  const processUuid = "20000000-0000-4000-8000-000000000002";
+  let deliveryProcessUuid = processUuid;
+  let signed = false;
+  const db = { $queryRawUnsafe: async (sql, ...params) => {
+    calls.push({ sql, params });
+    if (sql.includes('FROM "CreditoBorrador" draft')) return [{
+      id: 30, estado: "ABIERTO", currentStep: 4, clienteNombre: "Cliente",
+      clienteDocumento: "1052962070", clienteTelefono: "3218928117", clienteCorreo: "original@example.com",
+      imei: "358015864286170", plataforma: "IPHONE",
+      payload: { referenciaEquipo: "iPhone", firmaSeguroClientCorrectionPending: correctionPending },
+      createdAt: stamp, updatedAt: stamp, expiresAt: "2030-01-01T00:00:00.000Z",
+    }];
+    if (sql.includes('FROM "FirmaSeguroProcess"')) return [{
+      id: 30, processUuid, status: signed ? "SIGNED" : "PENDING", draftPayload: {}, requestPayload,
+      lastError: null, hasSignedDocument: signed, createdAt: stamp, completedAt: signed ? stamp : null, supersededAt: null,
+    }];
+    if (sql.includes('to_regclass(')) return [{ present: params[0].includes('FirmaSeguroRecipientDelivery') }];
+    if (sql.includes('SELECT "id"::text,"status","processUuid","afterContact","reason","actorName"')) {
+      assert.deepEqual(plain(params), [30, processUuid]);
+      assert.match(sql, /"draftId"=\$1 AND "processUuid"=\$2/,
+        "un reenvío histórico incierto no bloquea otro proceso vigente");
+      return deliveryPending && deliveryProcessUuid === params[1] ? [{ id: "60000000-0000-4000-8000-000000000006",
+        status: deliveryStatus, processUuid: deliveryProcessUuid, afterContact: { phone: "3101234567", email: "nuevo@example.com" },
+        reason: "El número original no tiene WhatsApp", actorName: "Analista nominal" }] : [];
+    }
+    if (sql.includes('SELECT delivery."afterContact"')) {
+      assert.deepEqual(plain(params), [30, processUuid]);
+      assert.match(sql, /"editedAt" IS NOT NULL/);
+      assert.match(sql, /MAX\(previous\."resentAt"\)/, "la última edición no borra la fecha del último reenvío confirmado");
+      return confirmedContact ? [{ afterContact: confirmedContact, resentAt }] : [];
+    }
+    if (sql.includes('FROM "FirmaSeguroRecipientDeliveryEvent"')) return [{
+      id: "delivery-event", status: deliveryPending ? "RESEND_UNCERTAIN" : "RESENT",
+      actorName: "Analista nominal", reason: "El número original no tiene WhatsApp",
+      beforeContact: { phone: "3218928117", email: "original@example.com" },
+      afterContact: confirmedContact || {}, createdAt: "2026-10-09T16:05:00.000Z",
+    }];
+    return [];
+  } };
+  const ready = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(ready.signature.processUuid, processUuid);
+  assert.equal(ready.phone, "3218928117", "el teléfono contractual del cliente permanece intacto");
+  assert.equal(ready.email, "original@example.com");
+  assert.equal(ready.signature.sentPhone, "3101234567");
+  assert.equal(ready.signature.sentEmail, "nuevo@example.com");
+  assert.equal(ready.signature.sentAt, resentAt);
+  assert.equal(ready.capabilities.canRedirectPendingSignature, true, "no se exige sello para reenviar el documento existente");
+  assert.ok(ready.timeline.some(event => event.label === "Mismo documento reenviado" &&
+    event.actor === "Analista nominal" && event.detail.includes("3218928117 → 3101234567")));
+  assert.ok(calls.every(call => !/\b(INSERT|UPDATE|DELETE)\b/.test(call.sql)), "la consulta no altera ningún registro");
+
+  correctionPending = true;
+  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, true,
+    "el nuevo contrato pendiente de una corrección también admite reenviar su documento vigente");
+  correctionPending = false;
+  deliveryPending = true;
+  resentAt = null;
+  const uncertain = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(uncertain.signature.sentPhone, "3101234567", "una edición confirmada persiste aunque el reenvío sea incierto");
+  assert.equal(uncertain.signature.sentAt, stamp, "no se declara un envío nuevo sin confirmación");
+  assert.equal(uncertain.capabilities.canRedirectPendingSignature, false);
+  assert.match(uncertain.capabilities.pendingSignatureRedirectReason, /conciliación/i);
+  assert.equal(uncertain.pendingRecipientDelivery.retryable, false);
+  for (const retryable of ["PREPARING", "EDITING", "RECIPIENT_UPDATED", "RESEND_FAILED", "EDIT_UNCERTAIN"]) {
+    deliveryStatus = retryable;
+    const resumed = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(resumed.capabilities.canRedirectPendingSignature, true, retryable);
+    assert.deepEqual(plain(resumed.pendingRecipientDelivery), {
+      id: "60000000-0000-4000-8000-000000000006", status: retryable, processUuid,
+      phone: "3101234567", email: "nuevo@example.com", reason: "El número original no tiene WhatsApp",
+      actorName: "Analista nominal", retryable: true,
+    }, "la recarga conserva el id durable, contacto y motivo para reintentar la misma operación");
+  }
+  for (const blocked of ["RESENDING", "RESEND_UNCERTAIN"]) {
+    deliveryStatus = blocked;
+    const ongoing = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(ongoing.capabilities.canRedirectPendingSignature, false, blocked);
+    assert.equal(ongoing.pendingRecipientDelivery.retryable, false, blocked);
+  }
+
+  deliveryStatus = "RESEND_UNCERTAIN";
+  signed = true;
+  const completedWithUncertainNotice = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(completedWithUncertainNotice.capabilities.canRedirectPendingSignature, false,
+    "una firma completada nunca se vuelve a reenviar");
+  assert.equal(completedWithUncertainNotice.capabilities.canChangeImei, true,
+    "la incertidumbre de la notificación no bloquea una corrección contractual tras firmar");
+  assert.equal(completedWithUncertainNotice.pendingRecipientDelivery.status, "RESEND_UNCERTAIN",
+    "se conserva la trazabilidad sin inventar confirmación de entrega");
+  signed = false;
+  deliveryProcessUuid = "historical-superseded-process";
+  confirmedContact = null;
+  const oldUncertain = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(oldUncertain.pendingRecipientDelivery, null);
+  assert.equal(oldUncertain.capabilities.canRedirectPendingSignature, true,
+    "un proceso archivado no bloquea reenviar el documento actual");
+  assert.ok(oldUncertain.timeline.some(event => event.label === "Reenvío pendiente de conciliación"),
+    "el resultado histórico incierto permanece en la trazabilidad");
+
+  deliveryPending = false;
+  confirmedContact = null;
+  const unedited = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(unedited.signature.sentPhone, "3218928117", "una edición no confirmada no reemplaza el destinatario");
+  assert.equal(unedited.signature.sentEmail, "original@example.com");
+  assert.equal(unedited.signature.sentAt, stamp);
+  requestPayload = { endpoint: "create-full-by-company", payload: {
+    signers: [{ number: "3218928117" }, { number: "3101234567" }],
+  } };
+  const multipleSigners = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(multipleSigners.capabilities.canRedirectPendingSignature, false);
+  assert.match(multipleSigners.capabilities.pendingSignatureRedirectReason, /único firmante/i);
+  requestPayload = { endpoint: "create-full", payload: { signatures: [{ contactInformation: {
+    phone: { number: "3218928117" }, email: "original@example.com",
+  } }] } };
+  const standard = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(standard.capabilities.canRedirectPendingSignature, true,
+    "el requestPayload envuelto real de company y estándar comparten el permiso");
+  assert.equal(standard.signature.sentPhone, "3218928117");
+  assert.equal(standard.signature.sentEmail, "original@example.com");
+  requestPayload = { endpoint: "create-full", payload: {
+    signers: [{ number: "3218928117" }], signatures: [{ contactInformation: { phone: { number: "3218928117" } } }],
+  } };
+  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, false,
+    "dos estructuras simultáneas no identifican inequívocamente el firmante");
 });
 
 test("tras corregir el IMEI solo permite nueva firma desde fuente firmada y sin despacho incierto", async () => {

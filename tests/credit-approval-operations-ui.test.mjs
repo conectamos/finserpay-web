@@ -52,6 +52,7 @@ for (const panel of ["imei", "signature"]) test(`el enlace contextual de ${panel
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
       if (name === "@/app/_components/finser-confirm-dialog") return { default: () => null };
+      if (name === "./credit-welcome-voice-result") return { default: () => null };
       if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
@@ -253,6 +254,7 @@ test("las gestiones se abren bajo demanda y la remisión firmada requiere revisi
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
       if (name === "@/app/_components/finser-confirm-dialog") return { default: ConfirmDialog };
+      if (name === "./credit-welcome-voice-result") return { default: () => null };
       if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
@@ -295,21 +297,9 @@ test("las gestiones se abren bajo demanda y la remisión firmada requiere revisi
   caseDetail.capabilities.canUpdateContact = true;
   caseDetail.capabilities.canResendSignature = true;
   tree = render();
-  button(tree, "Actualizar contacto").props.onClick();
-  tree = render();
-  find(tree, item => item.type === components.Input && item.props.id === "approval-signature-phone")
-    .props.onChange({ target: { value: "3119876543" } });
-  find(tree, item => item.type === components.Input && item.props.id === "approval-signature-email")
-    .props.onChange({ target: { value: "nuevo@example.com" } });
-  find(tree, item => item.type === components.Input && item.props.id === "approval-contact-reason")
-    .props.onChange({ target: { value: "Corrección de contacto solicitada" } });
-  tree = render();
-  assert.equal(button(tree, "Reenviar firma")?.props.disabled, true,
-    "no permite enviar antes de guardar el contacto editado");
-  button(tree, "Guardar contacto").props.onClick();
-  await setImmediate();
-  assert.equal(contactRequest.expectedRevision, 3);
-  assert.equal(contactRequest.expectedReviewHash, "a".repeat(64));
+  assert.equal(button(tree, "Actualizar contacto"), undefined,
+    "un contrato firmado no ofrece cambiar el contacto como si fuera un reenvío del documento existente");
+  assert.equal(contactRequest, null);
 
   tree = render();
   button(tree, "Reenviar firma").props.onClick();
@@ -320,10 +310,10 @@ test("las gestiones se abren bajo demanda y la remisión firmada requiere revisi
   button(tree, "Continuar").props.onClick();
   tree = render();
   const reissueConfirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Reenviar firma");
-  assert.match(reissueConfirm.props.description, /3119876543.*nuevo@example\.com/);
+  assert.match(reissueConfirm.props.description, /3001234567.*qa@example\.com/);
   reissueConfirm.props.onConfirm();
   await setImmediate();
-  assert.equal(approvalReviewReads, 2, "el cliente obtiene la revisión vigente antes de cada acción");
+  assert.equal(approvalReviewReads, 1, "el cliente obtiene la revisión vigente antes de solicitar otra versión contractual");
   assert.equal(signatureRequest.expectedRevision, 3);
   assert.equal(signatureRequest.expectedReviewHash, "a".repeat(64));
   assert.equal(signatureRequest.expectedProcessUuid, "process-8");
@@ -446,6 +436,7 @@ test("FirmaSeguro permite corregir contacto y enviar una firma inicial sin antic
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
       if (name === "@/app/_components/finser-confirm-dialog") return { default: ConfirmDialog };
+      if (name === "./credit-welcome-voice-result") return { default: () => null };
       if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
@@ -503,7 +494,8 @@ test("FirmaSeguro permite corregir contacto y enviar una firma inicial sin antic
   assert.equal(caseDetail.signature.status, "PENDING", "el envío no se presenta como firma aprobada");
 });
 
-test("una firma terminal fallida se redirige y reintenta con la misma idempotencia sin tocar el contacto ordinario", async () => {
+for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) test(
+  `el mismo documento pendiente se reenvía sin cambiar UUID ni contrato (${scenario})`, async () => {
   const components = Object.fromEntries(["Badge", "Button", "Card", "Input", "LoadingState", "Select", "StatusPill"]
     .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
   const ConfirmDialog = () => null;
@@ -520,12 +512,15 @@ test("una firma terminal fallida se redirige y reintenta con la misma idempotenc
     useEffect() { cursor++; },
   };
   const previousProcessUuid = "20000000-0000-4000-8000-000000000002";
-  const nextProcessUuid = "30000000-0000-4000-8000-000000000003";
+  const operationId = "10000000-0000-4000-8000-000000000001";
+  const nextPhone = scenario === "sameContact" ? "3218928117" : "3119876543";
+  const nextEmail = scenario === "sameContact" ? "cliente@example.com" : "nuevo@example.com";
+  const reason = scenario === "sameContact" ? "Recordatorio del documento pendiente" : "Número anterior sin WhatsApp";
   const caseDetail = {
     kind: "DRAFT", id: 22, number: "SOL-22", clientName: "Cliente pendiente", document: "1052962070",
     phone: "3218928117", email: "cliente@example.com", status: "EN_FIRMA", equipment: "iPhone QA",
     imei: "111111111111111", updatedAt: "2026-10-05T20:27:00Z", timeline: [],
-    signature: { status: "TECHNICAL_ERROR", rawStatus: null, processUuid: previousProcessUuid,
+    signature: { status: "PENDING", rawStatus: "PENDING", processUuid: previousProcessUuid,
       sentPhone: "3218928117", sentEmail: "cliente@example.com", sentAt: "2026-10-05T20:27:00Z", signedAt: null },
     enrollmentReviewId: null, requiresEnrollmentReapproval: false, pendingVersion: null,
     replacement: null, remission: null,
@@ -535,6 +530,13 @@ test("una firma terminal fallida se redirige y reintenta con la misma idempotenc
       canRedirectPendingSignature: true, pendingSignatureRedirectReason: null,
       reason: null, signatureReason: null },
   };
+  const pending = () => ({ id: operationId, status: "RESEND_FAILED", processUuid: previousProcessUuid,
+    phone: nextPhone, email: nextEmail, reason, actorName: "Analista nominal", retryable: true });
+  if (scenario === "durable") {
+    caseDetail.pendingRecipientDelivery = pending();
+    caseDetail.signature.sentPhone = nextPhone;
+    caseDetail.signature.sentEmail = nextEmail;
+  }
   const requests = [];
   let postAttempts = 0;
   let uuidCalls = 0;
@@ -545,7 +547,7 @@ test("una firma terminal fallida se redirige y reintenta con la misma idempotenc
   const loaded = { exports: {} };
   runInNewContext(compiled, {
     module: loaded, exports: loaded.exports, AbortController, Intl, Date,
-    crypto: { randomUUID: () => { uuidCalls++; return "10000000-0000-4000-8000-000000000001"; } },
+    crypto: { randomUUID: () => { uuidCalls++; return operationId; } },
     fetch: async (url, init) => {
       if (url.startsWith("/api/aprobaciones/operativo?q=")) return response({ ok: true, items: [caseDetail] });
       if (url === "/api/aprobaciones/operativo/draft/22" && (!init || !init.method))
@@ -554,12 +556,19 @@ test("una firma terminal fallida se redirige y reintenta con la misma idempotenc
         const body = JSON.parse(init.body);
         requests.push({ url, body });
         postAttempts++;
-        if (postAttempts === 1) return response({ ok: false, error: "FirmaSeguro no respondió" }, false);
-        caseDetail.phone = body.phone;
-        caseDetail.signature = { ...caseDetail.signature, status: "PENDING", rawStatus: "CREATED", processUuid: nextProcessUuid,
-          sentPhone: body.phone, sentAt: "2026-10-05T20:30:00Z" };
-        return response({ ok: true, operation: { id: body.idempotencyKey, status: "AWAITING_SIGNATURE",
-          message: "Firma reenviada", processUuid: nextProcessUuid } });
+        if (postAttempts === 1 && scenario === "network") throw new Error("La red perdió la respuesta");
+        if (postAttempts === 1 && scenario === "RESEND_FAILED") {
+          caseDetail.pendingRecipientDelivery = pending();
+          caseDetail.signature.sentPhone = body.phone;
+          caseDetail.signature.sentEmail = body.email;
+          return response({ ok: true, operation: { id: operationId, status: "RESEND_FAILED",
+            message: "Destinatario actualizado. Falta completar el reenvío.", processUuid: previousProcessUuid } });
+        }
+        caseDetail.signature = { ...caseDetail.signature, status: "PENDING", rawStatus: "PENDING", processUuid: previousProcessUuid,
+          sentPhone: body.phone, sentEmail: body.email, sentAt: "2026-10-05T20:30:00Z" };
+        caseDetail.pendingRecipientDelivery = null;
+        return response({ ok: true, operation: { id: body.idempotencyKey, status: "RESENT",
+          message: "Mismo documento reenviado", processUuid: previousProcessUuid } });
       }
       if (url.endsWith("/contacto")) throw new Error("La redirección no debe usar PATCH contacto");
       throw new Error("Unexpected request: " + url);
@@ -570,6 +579,7 @@ test("una firma terminal fallida se redirige y reintenta con la misma idempotenc
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
       if (name === "@/app/_components/finser-confirm-dialog") return { default: ConfirmDialog };
+      if (name === "./credit-welcome-voice-result") return { default: () => null };
       if (name === "./approval-operations.module.css") return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
@@ -594,49 +604,86 @@ test("una firma terminal fallida se redirige y reintenta con la misma idempotenc
   tree = render();
   assert.equal(input(tree, "approval-signature-phone").props.readOnly, true);
   assert.equal(input(tree, "approval-signature-email").props.readOnly, true);
-  assert.ok(button(tree, "Cambiar número y reenviar firma"));
+  assert.ok(button(tree, "Editar destinatario y reenviar"));
 
-  button(tree, "Cambiar número y reenviar firma").props.onClick();
+  button(tree, "Editar destinatario y reenviar").props.onClick();
   tree = render();
-  assert.equal(button(tree, "Cambiar número y reenviar firma").props.disabled, true,
-    "sin celular y motivo no se puede confirmar");
-  input(tree, "approval-signature-redirect-phone").props.onChange({ target: { value: "3218928117" } });
-  input(tree, "approval-signature-redirect-reason").props.onChange({ target: { value: "Número anterior sin WhatsApp" } });
+  assert.equal(input(tree, "approval-signature-redirect-phone").props.value,
+    scenario === "durable" ? nextPhone : "3218928117", "el formulario parte del destinatario vigente");
+  assert.equal(input(tree, "approval-signature-redirect-email").props.value,
+    scenario === "durable" ? nextEmail : "cliente@example.com");
+  if (scenario === "durable") {
+    assert.equal(input(tree, "approval-signature-redirect-phone").props.disabled, true);
+    assert.equal(input(tree, "approval-signature-redirect-email").props.disabled, true);
+    assert.equal(input(tree, "approval-signature-redirect-reason").props.disabled, true);
+    assert.equal(input(tree, "approval-signature-redirect-reason").props.value, reason);
+  } else {
+    assert.equal(button(tree, "Editar destinatario y reenviar").props.disabled, true,
+      "el motivo es obligatorio aunque el contacto esté precargado");
+    input(tree, "approval-signature-redirect-reason").props.onChange({ target: { value: reason } });
+    tree = render();
+    assert.equal(button(tree, "Editar destinatario y reenviar").props.disabled, false,
+      "reenviar al mismo contacto válido está permitido");
+    input(tree, "approval-signature-redirect-phone").props.onChange({ target: { value: nextPhone } });
+    input(tree, "approval-signature-redirect-email").props.onChange({ target: { value: "correo-inválido" } });
+    tree = render();
+    assert.equal(button(tree, "Editar destinatario y reenviar").props.disabled, true,
+      "no se envía un destinatario con correo inválido");
+    input(tree, "approval-signature-redirect-email").props.onChange({ target: { value: nextEmail.toUpperCase() } });
+  }
   tree = render();
-  assert.equal(button(tree, "Cambiar número y reenviar firma").props.disabled, true,
-    "el mismo celular del envío anterior no es un destino nuevo");
-  input(tree, "approval-signature-redirect-phone").props.onChange({ target: { value: "+57 311 987 6543" } });
+  const submitLabel = scenario === "durable" ? "Completar reenvío" : "Editar destinatario y reenviar";
+  assert.equal(button(tree, submitLabel).props.disabled, false);
+  button(tree, submitLabel).props.onClick();
   tree = render();
-  assert.equal(button(tree, "Cambiar número y reenviar firma").props.disabled, false);
-  button(tree, "Cambiar número y reenviar firma").props.onClick();
-  tree = render();
-  let confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Cambiar número y reenviar firma");
-  assert.match(confirm.props.description, /3218928117/);
-  assert.match(confirm.props.description, /3119876543/);
-  assert.match(confirm.props.description, /conservará las mismas condiciones y valores/);
+  let confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar");
+  assert.ok(confirm.props.description.includes(nextPhone));
+  assert.match(confirm.props.description, /mismo documento pendiente/);
+  assert.match(confirm.props.description, /solicitud de firma y el documento existentes/);
+  assert.doesNotMatch(confirm.props.description, /nueva solicitud|archivado|reemplazada/);
   confirm.props.onConfirm();
   confirm.props.onConfirm();
   await setImmediate();
   await setImmediate();
   assert.equal(requests.length, 1, "un doble clic no inicia dos POST");
   assert.deepEqual(requests[0].body, {
-    phone: "3119876543", reason: "Número anterior sin WhatsApp",
-    idempotencyKey: "10000000-0000-4000-8000-000000000001",
+    phone: nextPhone, email: nextEmail, reason,
+    idempotencyKey: operationId,
     expectedProcessUuid: previousProcessUuid, confirmed: true,
   });
 
-  tree = render();
-  button(tree, "Cambiar número y reenviar firma").props.onClick();
-  tree = render();
-  confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Cambiar número y reenviar firma");
-  confirm.props.onConfirm();
-  await setImmediate();
-  await setImmediate();
-  assert.equal(requests.length, 2);
-  assert.equal(requests[1].body.idempotencyKey, requests[0].body.idempotencyKey,
-    "el retry de red conserva la misma clave idempotente");
-  assert.equal(uuidCalls, 1);
-  assert.equal(caseDetail.signature.processUuid, nextProcessUuid);
-  assert.equal(caseDetail.signature.sentPhone, "3119876543");
+  if (["network", "RESEND_FAILED"].includes(scenario)) {
+    tree = render();
+    const retryLabel = scenario === "RESEND_FAILED" ? "Completar reenvío" : "Editar destinatario y reenviar";
+    assert.equal(button(tree, retryLabel).props.disabled, false);
+    if (scenario === "RESEND_FAILED") assert.equal(input(tree, "approval-signature-redirect-phone").props.disabled, true,
+      "una entrega parcial mantiene el intento registrado para continuar con la misma llave");
+    button(tree, retryLabel).props.onClick();
+    tree = render();
+    confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar");
+    confirm.props.onConfirm();
+    await setImmediate();
+    await setImmediate();
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests[1].body, requests[0].body,
+      "el reintento conserva contacto, motivo y clave idempotente");
+  }
+  assert.equal(uuidCalls, scenario === "durable" ? 0 : 1,
+    "una recarga recupera la llave durable sin crear otra operación");
+  assert.equal(caseDetail.signature.processUuid, previousProcessUuid);
+  assert.equal(caseDetail.signature.sentPhone, nextPhone);
+  assert.equal(caseDetail.signature.sentEmail, nextEmail);
+  assert.equal(caseDetail.phone, "3218928117", "el teléfono contractual del cliente no cambia");
+  assert.equal(caseDetail.email, "cliente@example.com", "el correo contractual del cliente no cambia");
   assert.equal(caseDetail.signature.status, "PENDING", "el reenvío no anticipa una firma completada");
+  tree = render();
+  assert.equal(input(tree, "approval-signature-redirect-phone"), undefined, "el formulario se cierra al confirmar RESENT del mismo proceso");
+  button(tree, "FirmaSeguro").props.onClick();
+  tree = render();
+  button(tree, "FirmaSeguro").props.onClick();
+  await setImmediate();
+  tree = render();
+  assert.equal(input(tree, "approval-signature-phone").props.value, nextPhone,
+    "cerrar y abrir el panel conserva el destinatario de entrega confirmado");
+  assert.equal(input(tree, "approval-signature-email").props.value, nextEmail);
 });

@@ -28,6 +28,27 @@ type RequestOptions = {
   token?: string;
   body?: unknown;
   retryAuthorization?: boolean;
+  timeoutMs?: number;
+};
+
+/** FirmaSeguro's v2 SignatureEditAPI, which edits an existing signer, not its PDF. */
+export type FirmaSeguroSignatureEditInput = {
+  uuid: string;
+  signature_id: number;
+  authentication_method_id: number;
+  contact_information: {
+    email: string;
+    first_name: string;
+    second_name?: string | null;
+    first_last_name: string;
+    second_last_name?: string | null;
+    identification_type_id?: number;
+    identification?: string | null;
+    indicative?: string | null;
+    mobile_number: string;
+  };
+  signatory_type?: string | null;
+  template_rol?: string | null;
 };
 
 export class FirmaSeguroApiError extends Error {
@@ -534,6 +555,7 @@ async function firmaSeguroRequest<T>(
       headers,
       body,
       cache: "no-store",
+      ...(options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
     });
     const payload = await parseResponse(response);
     return { response, payload, authorizationMode };
@@ -1070,10 +1092,10 @@ export async function firmaSeguroCreateFullByCompany(
   });
 }
 
-export async function firmaSeguroGetProcessStatus(token: string, uuid: string) {
+export async function firmaSeguroGetProcessStatus(token: string, uuid: string, options: { timeoutMs?: number } = {}) {
   return firmaSeguroRequest<unknown>(
     `/api/v2/Process/get-process-status/${encodeURIComponent(uuid)}`,
-    { token }
+    { token, timeoutMs: options.timeoutMs }
   );
 }
 
@@ -1094,11 +1116,67 @@ export async function firmaSeguroGetAuthenticationTypes(token: string) {
   });
 }
 
-export async function firmaSeguroGetSignaturesStatus(token: string, uuid: string) {
+export async function firmaSeguroGetSignaturesStatus(token: string, uuid: string, options: { timeoutMs?: number } = {}) {
   return firmaSeguroRequest<unknown>(
     `/api/v2/Signature/get-signatures-status/${encodeURIComponent(uuid)}`,
-    { token }
+    { token, timeoutMs: options.timeoutMs }
   );
+}
+
+function requireFirmaSeguroSignatureId(signatureId: number) {
+  if (!Number.isSafeInteger(signatureId) || signatureId <= 0 || signatureId > 2_147_483_647) {
+    throw new FirmaSeguroApiError("El identificador del firmante no es válido.", 400, null);
+  }
+}
+
+function validateFirmaSeguroRecipientMutationResponse(payload: unknown) {
+  function explicitFailure(value: unknown, depth = 0): boolean {
+    if (value === false) return true;
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return false;
+    return Object.entries(value as Record<string, unknown>).some(([key, item]) =>
+      (["success", "ok", "issuccess", "succeeded"].includes(key.toLowerCase()) && item === false) ||
+      (["error", "errors"].includes(key.toLowerCase()) && item !== false && item != null &&
+        item !== "" && (!Array.isArray(item) || item.length > 0)) ||
+      (["data", "result"].includes(key.toLowerCase()) && explicitFailure(item, depth + 1))
+    );
+  }
+  if (explicitFailure(payload)) {
+    // HTTP 200 with an error body is not a confirmed mutation. Keep it uncertain
+    // so the caller reconciles provider state before attempting another write.
+    throw new FirmaSeguroApiError(
+      "FirmaSeguro no confirmó la actualización o el reenvío del firmante.", 502, null
+    );
+  }
+  return payload;
+}
+
+export async function firmaSeguroEditSignature(
+  token: string,
+  payload: FirmaSeguroSignatureEditInput
+) {
+  requireFirmaSeguroSignatureId(payload.signature_id);
+  if (!payload.uuid.trim()) {
+    throw new FirmaSeguroApiError("Falta el proceso de FirmaSeguro del firmante.", 400, null);
+  }
+  const response = await firmaSeguroRequest<unknown>("/api/v2/Signature/edit-signature", {
+    method: "PUT",
+    token,
+    body: payload,
+    retryAuthorization: false,
+    timeoutMs: 30_000,
+  });
+  return validateFirmaSeguroRecipientMutationResponse(response);
+}
+
+export async function firmaSeguroResendSignature(token: string, signatureId: number) {
+  requireFirmaSeguroSignatureId(signatureId);
+  // The provider uses GET for this mutation. Never retry automatically: a lost
+  // response does not establish whether the notification was already sent.
+  const response = await firmaSeguroRequest<unknown>(
+    `/api/v2/Signature/resend-signature/${signatureId}`,
+    { token, retryAuthorization: false, timeoutMs: 30_000 }
+  );
+  return validateFirmaSeguroRecipientMutationResponse(response);
 }
 
 export async function firmaSeguroGetDocumentsByUuid(uuid: string, token?: string) {

@@ -93,6 +93,27 @@ type DraftImeiEventRow = {
   reason: string | null;
   createdAt: Date | string;
 };
+type RecipientDeliveryContactRow = {
+  afterContact: unknown;
+  resentAt: Date | string | null;
+};
+type PendingRecipientDeliveryRow = {
+  id: string;
+  status: string;
+  processUuid: string;
+  afterContact: unknown;
+  reason: string;
+  actorName: string;
+};
+type RecipientDeliveryEventRow = {
+  id: string;
+  status: string;
+  actorName: string;
+  reason: string;
+  beforeContact: unknown;
+  afterContact: unknown;
+  createdAt: Date | string;
+};
 type EnrollmentReviewRow = { id: string };
 type OperationalActionRow = {
   id: string;
@@ -258,7 +279,8 @@ export async function searchOperationalCases(value: unknown, db: Database = pris
 }
 
 function signatureContact(row: SignatureRow, fallback: { phone: string | null; email: string | null }) {
-  const request = record(row.requestPayload);
+  const stored = record(row.requestPayload);
+  const request = record(stored.payload ?? stored);
   const signer = Array.isArray(request.signers) ? record(request.signers[0]) : {};
   const signature = Array.isArray(request.signatures) ? record(request.signatures[0]) : {};
   const contact = record(signature.contactInformation);
@@ -267,6 +289,13 @@ function signatureContact(row: SignatureRow, fallback: { phone: string | null; e
     phone: clean(signer.number) || clean(record(contact.phone).number) || clean(draft.clienteTelefono) || fallback.phone,
     email: clean(signer.email) || clean(contact.email) || clean(draft.clienteCorreo) || fallback.email,
   };
+}
+function hasSingleSignatureRecipient(row: SignatureRow) {
+  const stored = record(row.requestPayload);
+  const request = record(stored.payload ?? stored);
+  const lists = [request.signers, request.signatures].filter(value => value !== undefined && value !== null);
+  return lists.length === 1 && Array.isArray(lists[0]) && lists[0].length === 1 &&
+    Object.keys(record(lists[0][0])).length > 0;
 }
 export function operationalSignatureState(row: SignatureRow | null): OperationalSignature["status"] {
   if (!row) return "NOT_SENT";
@@ -445,24 +474,22 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
   const clientCorrectionPending = payload.firmaSeguroClientCorrectionPending === true;
   canResendSignature ||= Boolean(open && supported && clientCorrectionPending &&
     terminalFailedSource && frozenPendingSource && !unresolvedDispatch);
-  const redirectableSignature = signature.status === "PENDING"
-    || (signature.status === "TECHNICAL_ERROR" && terminalFailedSource);
+  const redirectableSignature = signature.status === "PENDING";
+  const singleRecipient = Boolean(activeSignature && hasSingleSignatureRecipient(activeSignature));
   const canRedirectPendingSignature = Boolean(open && supported && !unresolvedDispatch &&
-    !clientCorrectionPending && redirectableSignature && signature.processUuid && activeSignatures.length === 1
-    && activeSignature && frozenPendingSource);
+    redirectableSignature && signature.processUuid && activeSignatures.length === 1 && singleRecipient);
   const pendingSignatureRedirectReason = canRedirectPendingSignature ? null
-    : clientCorrectionPending ? "Para corregir el contacto usa Editar datos en la solicitud. La nueva versión está pendiente de firma."
     : !open ? "La solicitud ya no está abierta en Identidad y firma."
     : !supported ? "La redirección de FirmaSeguro está disponible por ahora para iPhone."
     : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
     : signature.status === "SIGNED" ? "El cliente ya firmó esta solicitud."
-    : signature.status === "TECHNICAL_ERROR" && !terminalFailedSource
-      ? "La firma ya no está pendiente; actualiza el expediente."
+    : signature.status === "TECHNICAL_ERROR"
+      ? "La firma ya no está pendiente. Actualiza el expediente antes de reenviar el documento."
     : !redirectableSignature || !signature.processUuid
       ? "La solicitud no tiene una firma pendiente para redirigir."
     : activeSignatures.length !== 1
       ? "El expediente no tiene una única firma vigente. Requiere revisión técnica."
-    : !frozenPendingSource ? "No se pudo verificar el origen contractual congelado. Requiere revisión técnica."
+    : !singleRecipient ? "No se pudo identificar un único firmante para reenviar el mismo documento. Requiere revisión técnica."
     : "La firma pendiente no se puede redirigir en este momento.";
   const reason = !open ? "La solicitud ya no está abierta en Identidad y firma."
     : !supported ? "El cambio de IMEI con nueva firma está disponible solo para iPhone."
@@ -542,6 +569,7 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
   let initialSignaturePending = false;
   let historicalSignedSource = false;
   let unresolvedDraftDispatch = false;
+  let pendingRecipientDelivery: OperationalCaseDetail["pendingRecipientDelivery"] = null;
   if (kind === "CREDIT") {
     const credit = rows[0] as CreditRow;
     if (credit.hasApprovalReview === true && credit.hasAllySettlement !== true) {
@@ -677,6 +705,73 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
          AND "status" IN ('PREPARING','DISPATCHING','UNCERTAIN') LIMIT 1`, id);
       unresolvedDraftDispatch = dispatch.length > 0;
     }
+    if (await relationExists(db, "FirmaSeguroRecipientDelivery")) {
+      const pendingDeliveries = await optionalQuery<PendingRecipientDeliveryRow>(db,
+        `SELECT "id"::text,"status","processUuid","afterContact","reason","actorName"
+         FROM "FirmaSeguroRecipientDelivery" WHERE "draftId"=$1 AND "processUuid"=$2
+           AND "status" NOT IN ('RESENT','FAILED_SAFE')
+         ORDER BY "createdAt" DESC,"id" DESC LIMIT 1`, id, signature.processUuid);
+      if (pendingDeliveries[0]) {
+        const pending = pendingDeliveries[0];
+        const contact = record(pending.afterContact);
+        pendingRecipientDelivery = { id: pending.id, status: pending.status,
+          processUuid: pending.processUuid, phone: clean(contact.phone), email: clean(contact.email),
+          reason: pending.reason, actorName: pending.actorName,
+          retryable: pending.processUuid === signature.processUuid &&
+            ["PREPARING", "EDITING", "RECIPIENT_UPDATED", "RESEND_FAILED", "EDIT_UNCERTAIN"].includes(pending.status) };
+        // A notification with no delivery acknowledgement cannot invalidate a
+        // completed signature or block a later authorized contract correction.
+        unresolvedDraftDispatch ||= signature.status !== "SIGNED" && !pendingRecipientDelivery.retryable;
+      }
+      if (signature.processUuid) {
+        const deliveries = await optionalQuery<RecipientDeliveryContactRow>(db,
+          `SELECT delivery."afterContact",(SELECT MAX(previous."resentAt")
+             FROM "FirmaSeguroRecipientDelivery" previous
+             WHERE previous."draftId"=$1 AND previous."processUuid"=$2) AS "resentAt"
+           FROM "FirmaSeguroRecipientDelivery" delivery
+           WHERE delivery."draftId"=$1 AND delivery."processUuid"=$2 AND delivery."editedAt" IS NOT NULL
+           ORDER BY delivery."editedAt" DESC,delivery."id" DESC LIMIT 1`, id, signature.processUuid);
+        if (deliveries[0]) {
+          const contact = record(deliveries[0].afterContact);
+          signature.sentPhone = clean(contact.phone) || signature.sentPhone;
+          signature.sentEmail = clean(contact.email) || signature.sentEmail;
+          signature.sentAt = iso(deliveries[0].resentAt) || signature.sentAt;
+        }
+      }
+      if (await relationExists(db, "FirmaSeguroRecipientDeliveryEvent")) {
+        const deliveryEvents = await optionalQuery<RecipientDeliveryEventRow>(db,
+          `SELECT event."id"::text,event."status",event."createdAt",delivery."actorName",delivery."reason",
+            delivery."beforeContact",delivery."afterContact"
+           FROM "FirmaSeguroRecipientDeliveryEvent" event
+           JOIN "FirmaSeguroRecipientDelivery" delivery ON delivery."id"=event."deliveryId"
+           WHERE delivery."draftId"=$1 ORDER BY event."createdAt" DESC,event."id" DESC LIMIT 25`, id);
+        const deliveryLabels: Record<string, string> = {
+          PREPARING: "Preparando reenvío del documento",
+          EDITING: "Actualizando destinatario de FirmaSeguro",
+          RECIPIENT_UPDATED: "Destinatario de FirmaSeguro actualizado",
+          RESENDING: "Reenviando el mismo documento",
+          RESENT: "Mismo documento reenviado",
+          EDIT_UNCERTAIN: "Cambio de destinatario pendiente de conciliación",
+          RESEND_FAILED: "No se pudo reenviar el documento",
+          RESEND_UNCERTAIN: "Reenvío pendiente de conciliación",
+          FAILED_SAFE: "Reenvío no realizado",
+        };
+        for (const event of deliveryEvents) {
+          const at = iso(event.createdAt);
+          if (!at) continue;
+          const before = record(event.beforeContact);
+          const after = record(event.afterContact);
+          const changes = ["phone", "email"].flatMap(field =>
+            clean(before[field]) !== clean(after[field])
+              ? [`${field === "phone" ? "Celular" : "Correo"}: ${clean(before[field]) || "Sin registro"} → ${clean(after[field]) || "Sin registro"}`]
+              : []);
+          timeline.push({ id: `firma-destino:${event.id}`, at,
+            label: deliveryLabels[event.status] || "Reenvío de FirmaSeguro actualizado",
+            detail: [clean(event.reason), ...changes].filter(Boolean).join(" · ") || null,
+            actor: clean(event.actorName), status: event.status });
+        }
+      }
+    }
     const reviews = await optionalQuery<EnrollmentReviewRow>(db,
       `SELECT "id"::text FROM "IphoneEnrollmentReview"
        WHERE "solicitudId"=$1 AND "supersededAt" IS NULL
@@ -752,6 +847,7 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
   const remission = replacement ? await getReplacementRemission(replacement.id, db) : null;
   return {
     ...summary, signature, enrollmentReviewId,
+    ...(kind === "DRAFT" ? { pendingRecipientDelivery } : {}),
     requiresEnrollmentReapproval: Boolean(enrollmentReviewId),
     pendingVersion: pendingVersion ? {
       id: pendingVersion.id, status: pendingVersion.status,
