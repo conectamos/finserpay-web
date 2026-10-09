@@ -66,6 +66,7 @@ async function saveManagement(a:Attempt,result:"ACUERDO_PAGO"|"PAGO_REALIZADO"|"
   const now=new Date();
   const agreement=result==="ACUERDO_PAGO";
   if(agreement&&(body.agreementConfirmed!=="true"||typeof body.agreementDate!=="string"||typeof body.agreementAmount!=="string")) throw new Error("Falta confirmación explícita del acuerdo");
+  if(agreement&&!/^[1-9]\d{0,11}(?:\.\d{1,2})?$/.test(body.agreementAmount as string)) throw new Error("Valor del acuerdo ambiguo");
   const date=agreement?body.agreementDate as string:undefined;
   const input=parseMoraManagement({action:"LLAMADA",actedAt:now.toISOString(),responsibleUserId:actor(),result,
     managementStatus:agreement?"ACUERDO_PAGO":result==="SIN_RESPUESTA"?"SIN_RESPUESTA":result==="PAGO_REALIZADO"?"SEGUIMIENTO":"CONTACTADO",
