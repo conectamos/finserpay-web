@@ -7,7 +7,7 @@ import {
   ensureSecondCreditAuthorizationSchema,
   SecondCreditAuthorizationError,
 } from "@/lib/second-credit-authorization";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { readMassCreditComponents } from "@/lib/mass-credit-financial-components";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
@@ -3785,10 +3785,11 @@ export async function POST(req: Request) {
       if (!linkedSolicitudId) {
         throw new Error("SOLICITUD_COMPLETION_CONFLICT");
       }
-      await enqueueCreditWelcomeVoice(transaction, { creditId: credit.id, source: "NORMAL" });
+      const voiceWelcome = await enqueueCreditWelcomeVoice(transaction, { creditId: credit.id, source: "NORMAL" });
       return {
         credit: persistedCredit,
         veriffValidation: linkedVeriffValidation,
+        voiceWelcomeEnqueued: Boolean(voiceWelcome?.eventId),
       };
     };
 
@@ -3818,6 +3819,21 @@ export async function POST(req: Request) {
       creationResult = await prisma.$transaction((transaction) =>
         createCreditWithAmortization(transaction)
       );
+    }
+    // Only a committed outbox event wakes voice. The cron remains the durable fallback.
+    if (creationResult.voiceWelcomeEnqueued && process.env.DAPTA_WELCOME_VOICE_ENABLED === "true") {
+      try {
+        after(async () => {
+          try {
+            const { dispatchCreditWelcomeVoice } = await import("@/lib/credit-welcome-voice-dispatch");
+            await dispatchCreditWelcomeVoice({ limit: 5 });
+          } catch {
+            console.error("[dapta-welcome-voice] Post-commit wakeup failed; the durable queue remains pending.");
+          }
+        });
+      } catch {
+        console.error("[dapta-welcome-voice] Could not schedule post-commit wakeup; the cron will process the queue.");
+      }
     }
     const created = creationResult.credit;
     veriffValidation = creationResult.veriffValidation;

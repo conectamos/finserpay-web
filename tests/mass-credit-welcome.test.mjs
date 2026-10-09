@@ -5,9 +5,10 @@ import { routeFixture, catalogs, sample, call } from "./mass-credit-sadmin-fixtu
 
 // Exercise the real route, validations and commit/replay branches with a local
 // transactional store. The welcome sender is a spy: no database or WhatsApp is used.
-function fixture({ failRegistration = false, senderResult = "sent", voiceEnabled = false, failAfterEnqueue = false } = {}) {
+function fixture({ failRegistration = false, senderResult = "sent", voiceEnabled = false, failAfterEnqueue = false,
+  failVoiceDispatch = false, failSchedule = false, enqueueResult = true } = {}) {
   const state = { credits: [], registrations: [], audits: [], inTransaction: false, sends: [],
-    voiceEvents: [], voiceAttempts: [], ensureCalls: 0, activeTransaction: null };
+    voiceEvents: [], voiceAttempts: [], ensureCalls: 0, activeTransaction: null, afterCallbacks: [], voiceDispatches: [] };
   const adapter = storage => ({
     ...catalogs,
     $queryRawUnsafe: async (sql, ...params) => {
@@ -70,12 +71,25 @@ function fixture({ failRegistration = false, senderResult = "sent", voiceEnabled
   };
   const route = routeFixture(db, {
     env: voiceEnabled ? { DAPTA_WELCOME_VOICE_ENABLED: "true" } : {},
+    after: callback => {
+      assert.equal(state.inTransaction, false, "Voice work is registered only after commit");
+      assert.ok(state.voiceEvents.length, "Committed outbox event must exist before scheduling");
+      if (failSchedule) throw new Error("Synthetic scheduling error");
+      state.afterCallbacks.push(callback);
+    },
+    dispatchCreditWelcomeVoice: async options => {
+      assert.equal(state.inTransaction, false);
+      assert.ok(state.credits.length && state.voiceEvents.length);
+      state.voiceDispatches.push({ ...options });
+      if (failVoiceDispatch) throw new Error("Synthetic private provider error");
+      return { accepted: 1 };
+    },
     ensureCreditWelcomeVoiceSchema: async () => {
       assert.equal(state.inTransaction, false, "Schema preparation happens before the credit transaction");
       state.ensureCalls++;
     },
     enqueueCreditWelcomeVoice: async (transaction, input) => {
-      if (!voiceEnabled) return null;
+      if (!voiceEnabled || !enqueueResult) return null;
       assert.equal(state.inTransaction, true, "Voice outbox must enqueue inside the credit transaction");
       assert.equal(transaction, state.activeTransaction.transaction, "Voice uses the same transaction as credit creation");
       const credit = state.activeTransaction.staged.credits.find(saved => saved.id === input.creditId);
@@ -281,4 +295,41 @@ test("SADMIN failure prevents enqueue and a later commit failure rolls back cred
   assert.equal(commitFailure.state.credits.length, 0);
   assert.equal(commitFailure.state.voiceEvents.length, 0, "Outbox rolls back with credit transaction");
   assert.equal(commitFailure.state.sends.length, 0);
+  assert.equal(commitFailure.state.afterCallbacks.length, 0);
+});
+
+test("a committed voice event wakes the bounded dispatcher only after the response, once per new credit", async () => {
+  const f = fixture({ voiceEnabled: true });
+  const request = confirmation({ welcomeOnCreate: true });
+  const first = await call(f.route, [sample()], request);
+  assert.equal(first.status, 200);
+  assert.equal(f.state.afterCallbacks.length, 1);
+  assert.equal(f.state.voiceDispatches.length, 0, "HTTP response does not await the provider");
+  await f.state.afterCallbacks[0]();
+  assert.deepEqual(f.state.voiceDispatches, [{ limit: 5 }]);
+  assert.deepEqual(await call(f.route, [sample()], request), first);
+  assert.equal(f.state.afterCallbacks.length, 1, "Confirmation replay must not schedule again");
+});
+
+test("voice dispatch and scheduling failures cannot change a committed import response", async () => {
+  for (const failure of [{ failVoiceDispatch: true }, { failSchedule: true }]) {
+    const f = fixture({ voiceEnabled: true, ...failure });
+    const response = await call(f.route, [sample()], confirmation({ welcomeOnCreate: true }));
+    assert.equal(response.status, 200);
+    assert.equal(response.data.created, 1);
+    for (const callback of f.state.afterCallbacks) await assert.doesNotReject(callback);
+    assert.equal(f.state.credits.length, 1);
+    assert.equal(f.state.voiceEvents.length, 1);
+  }
+});
+
+test("disabled voice, an absent outbox event and historical imports never schedule voice work", async () => {
+  for (const options of [{}, { voiceEnabled: true, enqueueResult: false }]) {
+    const f = fixture(options);
+    assert.equal((await call(f.route, [sample()], confirmation({ welcomeOnCreate: true }))).status, 200);
+    assert.equal(f.state.afterCallbacks.length, 0);
+  }
+  const historical = fixture({ voiceEnabled: true });
+  await call(historical.route, [sample(), sample(2)], confirmation());
+  assert.equal(historical.state.afterCallbacks.length, 0);
 });
