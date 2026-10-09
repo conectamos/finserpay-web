@@ -4,7 +4,8 @@ const creditWelcomeVoiceAttemptCheck = `"attemptNumber">=0 AND
    ("source"<>'AUTOMATIC_RETRY' AND "retryPhase" IS NULL AND "retrySlot" IS NULL AND
     (("source"='SCHEDULED_CAMPAIGN' AND "attemptNumber">0 AND "repeatOf" IS NULL AND "campaignId" IS NOT NULL AND "campaignSlot" IS NOT NULL) OR
      ("source"<>'SCHEDULED_CAMPAIGN' AND "campaignId" IS NULL AND "campaignSlot" IS NULL AND
-      (("attemptNumber"=0 AND "repeatOf" IS NULL) OR ("attemptNumber">0 AND "source"='CONTROLLED_TEST' AND "repeatOf" IS NOT NULL))))))`;
+      (("source"='OPERATOR_REQUEST' AND "repeatOf" IS NULL) OR
+       ("source"<>'OPERATOR_REQUEST' AND (("attemptNumber"=0 AND "repeatOf" IS NULL) OR ("attemptNumber">0 AND "source"='CONTROLLED_TEST' AND "repeatOf" IS NOT NULL))))))))`;
 
 export const creditWelcomeVoiceSchemaStatements = [
   `CREATE TABLE IF NOT EXISTS public."VoiceReviewCampaign" (
@@ -55,7 +56,7 @@ export const creditWelcomeVoiceSchemaStatements = [
     "creditoId" INTEGER NOT NULL REFERENCES public."Credito"("id") ON DELETE RESTRICT,
     "type" VARCHAR(32) NOT NULL DEFAULT 'BIENVENIDA_VOZ' CHECK ("type"='BIENVENIDA_VOZ'),
     "source" VARCHAR(32) NOT NULL CONSTRAINT "CreditWelcomeVoiceEvent_source_check"
-      CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN','AUTOMATIC_RETRY')),
+      CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN','AUTOMATIC_RETRY','OPERATOR_REQUEST')),
     "attemptNumber" INTEGER NOT NULL DEFAULT 0,
     "repeatOf" UUID,
     "campaignId" VARCHAR(64),
@@ -131,7 +132,7 @@ export const creditWelcomeVoiceSchemaStatements = [
         FOREIGN KEY ("repeatOf") REFERENCES public."CreditWelcomeVoiceEvent"("id") ON DELETE RESTRICT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass
-      AND conname='CreditWelcomeVoiceEvent_attempt_check' AND pg_get_constraintdef(oid) LIKE '%AUTOMATIC_RETRY%') THEN
+      AND conname='CreditWelcomeVoiceEvent_attempt_check' AND pg_get_constraintdef(oid) LIKE '%OPERATOR_REQUEST%') THEN
       ALTER TABLE public."CreditWelcomeVoiceEvent" DROP CONSTRAINT IF EXISTS "CreditWelcomeVoiceEvent_attempt_check";
       ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_attempt_check"
         CHECK (${creditWelcomeVoiceAttemptCheck});
@@ -139,10 +140,30 @@ export const creditWelcomeVoiceSchemaStatements = [
   END $$`,
   `DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass
-      AND conname='CreditWelcomeVoiceEvent_source_check' AND pg_get_constraintdef(oid) LIKE '%AUTOMATIC_RETRY%') THEN
+      AND conname='CreditWelcomeVoiceEvent_source_check' AND pg_get_constraintdef(oid) LIKE '%OPERATOR_REQUEST%') THEN
       ALTER TABLE public."CreditWelcomeVoiceEvent" DROP CONSTRAINT IF EXISTS "CreditWelcomeVoiceEvent_source_check";
       ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_source_check"
-        CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN','AUTOMATIC_RETRY'));
+        CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN','AUTOMATIC_RETRY','OPERATOR_REQUEST'));
+    END IF;
+  END $$`,
+  `CREATE TABLE IF NOT EXISTS public."CreditWelcomeVoiceOperatorRequest" (
+    "requestId" UUID PRIMARY KEY,
+    "eventId" UUID NOT NULL UNIQUE REFERENCES public."CreditWelcomeVoiceEvent"("id") ON DELETE RESTRICT,
+    "actorId" INTEGER CHECK ("actorId" IS NULL OR "actorId">0),
+    "origin" VARCHAR(32) NOT NULL DEFAULT 'UI',
+    "destinationPhone" VARCHAR(12) NOT NULL CHECK ("destinationPhone" ~ '^573\\d{9}$'),
+    "reason" VARCHAR(64) NOT NULL DEFAULT 'MANUAL_WELCOME_CALL' CHECK ("reason"='MANUAL_WELCOME_CALL'),
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP CHECK (isfinite("createdAt")),
+    CONSTRAINT "CreditWelcomeVoiceOperatorRequest_origin_check" CHECK (
+      ("origin"='UI' AND "actorId" IS NOT NULL AND "actorId">0) OR ("origin"='CODEX_AUTHORIZED' AND "actorId" IS NULL))
+  )`,
+  `ALTER TABLE public."CreditWelcomeVoiceOperatorRequest" ADD COLUMN IF NOT EXISTS "origin" VARCHAR(32) NOT NULL DEFAULT 'UI'`,
+  `ALTER TABLE public."CreditWelcomeVoiceOperatorRequest" ALTER COLUMN "actorId" DROP NOT NULL`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceOperatorRequest"'::regclass
+      AND conname='CreditWelcomeVoiceOperatorRequest_origin_check') THEN
+      ALTER TABLE public."CreditWelcomeVoiceOperatorRequest" ADD CONSTRAINT "CreditWelcomeVoiceOperatorRequest_origin_check" CHECK (
+        ("origin"='UI' AND "actorId" IS NOT NULL AND "actorId">0) OR ("origin"='CODEX_AUTHORIZED' AND "actorId" IS NULL));
     END IF;
   END $$`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "CreditWelcomeVoiceEvent_pending_retry_slot_key"

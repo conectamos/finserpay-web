@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as jsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
@@ -26,18 +25,41 @@ const call = (patch = {}) => ({ id: "event-one", creditId: 72, status: "COMPLETE
   recordingUrl: "https://app.dapta.ai/call-log/private-one", audioStorage: "DAPTA_PRIVATE_LINK", resultCode: "CUSTOMER_DISCREPANCY",
   ...patch,
 });
-function fixture({ items = [call()], loading = false, error = "", fetch } = {}) {
-  const states = [loading ? null : { creditId: 72, revision: 0, items, error }, 0]; const effects = []; const changes = [];
-  let index = 0;
-  const hooks = { useState: () => { const slot = index++; return [states[slot], value => { changes.push({ slot, value }); }]; },
-    useEffect: callback => effects.push(callback) };
+const requestId = "f2c3a440-73de-49e3-8901-fdef75132504";
+const secondRequestId = "06b6f7b1-0aa6-4078-9651-fc50a72fce7c";
+const eventId = "cf372fb9-89ac-48c7-aaf4-14abc7ac6206";
+const flush = () => new Promise(resolve => setImmediate(resolve));
+function fixture({ items = [call()], loading = false, error = "", manualCall, fetch, storage = new Map() } = {}) {
+  const states = [loading ? null : { creditId: 72, revision: 0, items, error, manualCall }, 0, null];
+  const effects = []; const changes = []; const refs = []; const effectSlots = [];
+  let index = 0; let refIndex = 0; let effectIndex = 0; let uuidCalls = 0;
+  const hooks = { useState: initial => { const slot = index++; if (!(slot in states)) states[slot] = initial;
+    return [states[slot], value => { changes.push({ slot, value }); states[slot] = typeof value === "function" ? value(states[slot]) : value; }]; },
+    useRef: initial => refs[refIndex++] ??= { current: initial },
+    useEffect: (callback, dependencies) => {
+      const slot = effectIndex++; const old = effectSlots[slot];
+      if (!old || dependencies.some((value, item) => value !== old.dependencies[item])) {
+        effectSlots[slot] = { callback, dependencies }; effects.push(callback);
+      }
+    } };
   const Icon = () => null;
   const Component = load("app/dashboard/aprobaciones/credit-welcome-voice-result.tsx", {
-    react: hooks, "react/jsx-runtime": jsxRuntime, "lucide-react": { ExternalLink: Icon, Headphones: Icon, RefreshCw: Icon },
+    react: hooks, "react/jsx-runtime": jsxRuntime, "lucide-react": { ExternalLink: Icon, Headphones: Icon, Phone: Icon, RefreshCw: Icon },
     "@/app/_components/finser-ui": ui,
-  }, { fetch }).default;
-  const render = (creditId = 72) => { index = 0; return renderToStaticMarkup(createElement(Component, { creditId })); };
-  return { render, effects, changes };
+  }, { fetch, setTimeout, clearTimeout, crypto: { randomUUID: () => { uuidCalls++; return uuidCalls === 1 ? requestId : secondRequestId; } }, sessionStorage: {
+    getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key),
+  } }).default;
+  const tree = (creditId = 72) => { index = 0; refIndex = 0; effectIndex = 0; return Component({ creditId }); };
+  const render = (creditId = 72) => renderToStaticMarkup(tree(creditId));
+  const walk = node => {
+    if (!node || typeof node !== "object") return [];
+    return [node, ...[node.props?.children].flat(Infinity).flatMap(walk)];
+  };
+  const action = label => { const button = walk(tree()).find(node => node.type === ui.Button && node.props["aria-label"] === label);
+    assert.ok(button, `Missing action ${label}`); return button.props.onClick; };
+  const click = label => action(label)();
+  return { render, tree, click, action, effects, changes, storage, get uuidCalls() { return uuidCalls; },
+    read: async () => { effectSlots[0].callback(); await flush(); } };
 }
 
 test("voice result renders actual outcome and a private Dapta link while explaining manual audio download", () => {
@@ -77,4 +99,125 @@ test("closing/changing the credit aborts its read so a late response cannot over
   resolveResponse({ ok: true, json: async () => ({ ok: true, items: [call()] }) });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.changes.length, 0);
+});
+
+test("manual call is available only when supplied by the server and explains a disabled action", () => {
+  assert.doesNotMatch(fixture().render(), /Llamar ahora|Consultar estado|Celular registrado/);
+  const permitted = fixture({ manualCall: { canCall: true, phone: "+573001234567" } }).render();
+  assert.match(permitted, /Llamar ahora/); assert.match(permitted, /Celular registrado: \+573001234567/);
+  assert.doesNotMatch(permitted, /<input|Confirmar llamada/);
+  const disabled = fixture({ manualCall: { canCall: false, phone: "+573001234567", reason: "Hay una llamada en curso." } }).render();
+  assert.match(disabled, /disabled=""[^>]*aria-label="Llamar ahora al celular registrado"/);
+  assert.match(disabled, /Hay una llamada en curso/);
+  assert.doesNotMatch(fixture({ manualCall: { canCall: true, phone: "+573001234567" } }).render(99), /573001234567|Llamar ahora/);
+});
+
+test("double click issues one POST and UNKNOWN queries reuse its request ID after refresh", async () => {
+  const posts = []; let resolvePost;
+  const manualCall = { canCall: true, phone: "+573001234567" };
+  const f = fixture({ manualCall, fetch: async (url, options) => {
+    assert.equal(url, "/api/creditos/72/bienvenida-voz");
+    if (options.method === "POST") {
+      posts.push(options);
+      if (posts.length === 1) return new Promise(resolve => { resolvePost = resolve; });
+      return { ok: true, json: async () => ({ ok: true, eventId, status: "UNKNOWN" }) };
+    }
+    return { ok: true, json: async () => ({ ok: true, items: [], manualCall: { ...manualCall, canCall: false, reason: "Intento pendiente." } }) };
+  } });
+  const trigger = f.action("Llamar ahora al celular registrado"); trigger(); trigger();
+  assert.equal(posts.length, 1); assert.equal(f.uuidCalls, 1);
+  assert.deepEqual(JSON.parse(posts[0].body), { requestId });
+  assert.equal(posts[0].cache, "no-store"); assert.equal(posts[0].headers["Content-Type"], "application/json");
+  assert.match(f.render(), /Procesando/);
+  resolvePost({ ok: true, json: async () => ({ ok: true, eventId, status: "UNKNOWN", message: "internal diagnostic ignored" }) });
+  await flush(); f.render(); await f.read();
+  assert.match(f.render(), /por confirmar/); assert.match(f.render(), /Consultar estado/);
+  assert.doesNotMatch(f.render(), /internal diagnostic|llamada hecha/);
+  f.click("Consultar estado del intento de llamada"); await flush();
+  assert.equal(posts.length, 2); assert.equal(f.uuidCalls, 1);
+  assert.deepEqual(JSON.parse(posts[1].body), { requestId });
+});
+
+test("network ambiguity survives remount, stays scoped to the credit, and never generates another request ID", async () => {
+  const storage = new Map(); const posts = [];
+  const manualCall = { canCall: true, phone: "+573001234567" };
+  const first = fixture({ storage, manualCall, fetch: async (_url, options) => {
+    posts.push(options); throw new Error("private transport details");
+  } });
+  first.click("Llamar ahora al celular registrado"); await flush();
+  assert.match(first.render(), /No se pudo confirmar la solicitud/);
+  assert.doesNotMatch(first.render(), /private transport details/);
+  const second = fixture({ storage, loading: true, fetch: async (_url, options) => {
+    if (options.method === "POST") { posts.push(options); return { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) }; }
+    return { ok: true, json: async () => ({ ok: true, items: [], manualCall }) };
+  } });
+  second.render(); await second.read();
+  assert.match(second.render(), /Consultar estado/);
+  assert.doesNotMatch(second.render(99), /Consultar estado|573001234567|solicitud pendiente/);
+  second.render(); second.click("Consultar estado del intento de llamada"); await flush();
+  assert.equal(posts.length, 2); assert.equal(second.uuidCalls, 0);
+  assert.deepEqual(JSON.parse(posts[1].body), { requestId });
+  assert.match(second.render(), /Consultando llamada de bienvenida/);
+  await second.read(); assert.match(second.render(), /Aún no se confirma que el cliente haya contestado/);
+});
+
+test("a terminal matching history result releases the pending request, without using another credit's result", async () => {
+  const manualCall = { canCall: true, phone: "+573001234567" }; const posts = [];
+  let items = [call({ id: eventId, creditId: 99 })];
+  const f = fixture({ manualCall, fetch: async (_url, options) => {
+    if (options.method === "POST") { posts.push(options); return { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) }; }
+    return { ok: true, json: async () => ({ ok: true, items, manualCall }) };
+  } });
+  f.click("Llamar ahora al celular registrado"); await flush(); f.render(); await f.read();
+  assert.match(f.render(), /Consultar estado/); assert.equal(f.storage.size, 1);
+  items = [call({ id: eventId })];
+  f.click("Actualizar resultado de la bienvenida por voz"); f.render(); await f.read();
+  assert.match(f.render(), /Llamar ahora/); assert.doesNotMatch(f.render(), /Consultar estado/);
+  assert.equal(f.storage.size, 0); assert.equal(posts.length, 1);
+});
+
+test("changing the credit aborts the manual request and a late receipt cannot update the new credit", async () => {
+  let options; let resolvePost;
+  const f = fixture({ manualCall: { canCall: true, phone: "+573001234567" }, fetch: (_url, supplied) => {
+    options = supplied; return new Promise(resolve => { resolvePost = resolve; });
+  } });
+  f.render(); const close = f.effects[1]();
+  f.click("Llamar ahora al celular registrado"); const previousChanges = f.changes.length;
+  close(); assert.equal(options.signal.aborted, true); f.render(99);
+  resolvePost({ ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) }); await flush();
+  assert.equal(f.changes.length, previousChanges);
+  assert.doesNotMatch(f.render(99), /573001234567|Dapta aceptó|Consultar estado/);
+  assert.equal(f.storage.size, 1, "The uncertain request ID is preserved for its original credit");
+});
+
+test("a firm pre-reservation rejection releases its request ID and a later click creates a fresh request", async () => {
+  const posts = []; const manualCall = { canCall: true, phone: "+573001234567" };
+  const f = fixture({ manualCall, fetch: async (_url, options) => {
+    if (options.method !== "POST") return { ok: true, json: async () => ({ ok: true, items: [], manualCall }) };
+    posts.push(JSON.parse(options.body));
+    return posts.length === 1
+      ? { ok: false, status: 409, json: async () => ({ ok: false, code: "OTHER_CALL_IN_FLIGHT", requestCreated: false,
+        error: "Hay otra llamada en curso. Intenta nuevamente cuando finalice." }) }
+      : { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) };
+  } });
+  f.click("Llamar ahora al celular registrado"); await flush();
+  assert.equal(f.storage.size, 0); f.render(); await f.read();
+  assert.match(f.render(), /Hay otra llamada en curso/);
+  assert.doesNotMatch(f.render(), /Consultar estado|OTHER_CALL_IN_FLIGHT/);
+  f.click("Llamar ahora al celular registrado"); await flush();
+  assert.deepEqual(posts, [{ requestId }, { requestId: secondRequestId }]);
+  assert.equal(f.uuidCalls, 2);
+});
+
+test("an ambiguous server error without a firm rejection marker preserves the same request", async () => {
+  const posts = []; const manualCall = { canCall: true, phone: "+573001234567" };
+  const f = fixture({ manualCall, fetch: async (_url, options) => {
+    posts.push(JSON.parse(options.body));
+    return { ok: false, status: 503, json: async () => ({ ok: false, code: "UNAVAILABLE", error: "Diagnostic not for display" }) };
+  } });
+  f.click("Llamar ahora al celular registrado"); await flush();
+  assert.equal(f.storage.size, 1); assert.match(f.render(), /Consultar estado/);
+  assert.doesNotMatch(f.render(), /Diagnostic not for display/);
+  f.click("Consultar estado del intento de llamada"); await flush();
+  assert.deepEqual(posts, [{ requestId }, { requestId }]); assert.equal(f.uuidCalls, 1);
 });

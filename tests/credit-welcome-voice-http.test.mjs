@@ -483,7 +483,7 @@ test("credit result reads reject invalid ids, suppress raw PII/token/transcript 
   assert.doesNotMatch(await failed.text(), /private|customer|database/);
 });
 
-test("GET route wires a scoped id-only lookup and accepts nominal analysts after a regular session lookup", async () => {
+test("welcome route wires a scoped lookup, nominal analysts and the manual POST", async () => {
   const seen = [];
   const store = { listCreditWelcomeVoiceCallsForCredit: async id => { seen.push(["list", id]); return [callView()]; } };
   const route = loadReissueModule("app/api/creditos/[id]/bienvenida-voz/route.ts", {
@@ -491,9 +491,11 @@ test("GET route wires a scoped id-only lookup and accepts nominal analysts after
     "@/lib/seller-auth": { getSellerSessionUser: async () => assert.fail("Analysts do not use seller auth") },
     "@/lib/prisma": { default: { credito: { findFirst: async options => { seen.push(["credit", plain(options)]); return { id: 72 }; } } } },
     "@/lib/credit-welcome-voice-http": http, "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-store": store,
+    "@/lib/credit-welcome-voice-dispatch": { getCreditWelcomeVoiceConfig: () => null },
+    "@/lib/credit-approval-http": { isSameApprovalOrigin: () => true },
   });
   const response = await route.GET(new Request("https://finser.test/api/creditos/72/bienvenida-voz"), { params: Promise.resolve({ id: "72" }) });
   assert.equal(response.status, 200);
   assert.deepEqual(plain(seen), [["auth", null], ["auth", { allowApprovalAnalyst: true }], ["credit", { where: { AND: [{ id: 72 }, {}] }, select: { id: true } }], ["list", 72]]);
-  assert.equal("POST" in route, false);
+  assert.equal(typeof route.POST, "function");
 });
