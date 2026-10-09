@@ -38,6 +38,17 @@ export type OperationalCaseDetail = OperationalCaseSummary & {
   enrollmentReviewId: string | null;
   requiresEnrollmentReapproval: boolean;
   signature: OperationalSignature;
+  /** A durable delivery retry keeps the original process and request identity. */
+  pendingRecipientDelivery?: {
+    id: string;
+    status: string;
+    processUuid: string;
+    phone: string | null;
+    email: string | null;
+    reason: string;
+    actorName: string;
+    retryable: boolean;
+  } | null;
   pendingVersion: {
     id: string;
     status: string;
