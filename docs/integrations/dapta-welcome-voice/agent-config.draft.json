@@ -17,8 +17,8 @@
         "type": "hangup"
       }
     },
-    "analysis_successful_prompt": "La bienvenida solo es completa cuando el cliente aceptó continuar, confirmó el nombre y cédula registrados, la herramienta devolvió ok=true, verificado=true y condiciones.speech completo, se leyó literalmente el plan preparado por FINSERPAY y el cliente confirmó expresamente la primera fecha de pago. Deben indicarse calendario y bloqueo. URL de respuesta, error, speech ausente, cifras convertidas o inventadas, silencio, buzón o discrepancia no son éxito.",
-    "analysis_summary_prompt": "Resume en español la aceptación de continuar tras el aviso de grabación, confirmación del nombre y cédula registrados, resultado real de la herramienta con speech completo, primera fecha de pago confirmada, dudas y diferencias. No incluya la cédula completa ni tokens. No marque verificación si la herramienta devolvió una URL, error o resultado sin verificado=true; no marque plan explicado si faltaban los textos de speech.",
+    "analysis_successful_prompt": "La bienvenida es completa cuando el cliente acepta continuar, confirma el nombre y cédula registrados, la herramienta devuelve ok=true, verificado=true y condiciones.speech completo, se explica literalmente el plan real y el cliente confirma expresamente la primera fecha de pago. Deben indicarse calendario y bloqueo. La referencia real se menciona si speech.equipmentReference está disponible; una discrepancia confirmada en referencia o condiciones requiere revisión y no es éxito. Una respuesta afirmativa a la primera fecha confirma esa fecha, sin confirmar automáticamente todos los términos. URL de respuesta, error, speech ausente, cifras convertidas o inventadas, silencio o buzón no son éxito.",
+    "analysis_summary_prompt": "Resume en español la aceptación de continuar, confirmación de nombre y cédula registrados, resultado real de verificar_cliente_bienvenida, referencia real mencionada si existe, primera fecha de pago confirmada y dudas o diferencias. Considera la respuesta real de la herramienta: ok=true y verificado=true con condiciones.speech completo valida identidad aunque Sofía no diga «identidad verificada». Un sí, ok, vale, claro o de acuerdo después de la pregunta sobre la primera fecha confirma esa fecha. No infiera confirmación de todos los términos a partir de identidad, referencia o fecha. No incluya cédula completa ni tokens, ni datos inventados.",
     "post_call_analysis_data": [
       {
         "name": "recording_accepted",
@@ -28,22 +28,22 @@
       {
         "name": "identity_confirmed",
         "type": "boolean",
-        "description": "Verdadero únicamente si verificar_cliente_bienvenida devuelve verificado=true; no inferir identidad a partir del teléfono o del reconocimiento del nombre."
+        "description": "Verdadero cuando verificar_cliente_bienvenida devuelve un objeto con ok=true, verificado=true y condiciones.speech completo. Usa la respuesta real de la herramienta aunque Sofía no anuncie expresamente «identidad verificada». Falso para error, URL, falta de speech o verificado=false; no inferir por teléfono ni solo por confirmación de nombre."
       },
       {
         "name": "terms_confirmed",
         "type": "boolean",
-        "description": "Verdadero únicamente si el cliente confirma expresamente que las condiciones explicadas coinciden con las de su compra; falso para duda, silencio, discrepancia o explicación incompleta."
+        "description": "Verdadero únicamente si el cliente confirma expresamente el conjunto de condiciones explicadas. Confirmar identidad, referencia del celular o primera fecha por separado no confirma todos los términos; falso para duda, silencio, discrepancia o explicación incompleta."
       },
       {
         "name": "first_payment_confirmed",
         "type": "boolean",
-        "description": "Verdadero solo si, tras una consulta real verificada, el cliente confirma expresamente que le informaron la primera fecha de pago indicada. Falso para silencio, discrepancia, dato inventado o herramienta fallida."
+        "description": "Verdadero si, después de una consulta real verificada y de comunicar speech.firstDueDate, el cliente responde sí, ok, vale, claro o de acuerdo a «¿Confirma que le informaron esa fecha?». Esa respuesta confirma la primera fecha aunque no repita la fecha ni diga «confirmo». Falso para silencio, discrepancia, dato inventado o herramienta fallida."
       },
       {
         "name": "customer_discrepancies",
         "type": "string",
-        "description": "Diferencias que el cliente expresa respecto a inicial, cantidad de cuotas, valor, fechas o bloqueo. Texto vacío si no expresa diferencias; no inventar correcciones."
+        "description": "Diferencias expresadas por el cliente sobre referencia del celular, inicial, cantidad de cuotas, valor, fechas o bloqueo. Texto vacío si no expresa diferencias; no inventar referencias ni correcciones."
       },
       {
         "name": "customer_questions",
@@ -65,8 +65,9 @@
     "end_call_after_silence_ms": 45000,
     "stt_mode": "accurate",
     "normalize_for_speech": true,
-    "voice_speed": 0.9,
-    "voice_temperature": 0.5
+    "voice_speed": 1,
+    "voice_temperature": 1,
+    "voice_model": "eleven_multilingual_v2"
   },
   "pendingIdentityTool": {
     "name": "verificar_cliente_bienvenida",

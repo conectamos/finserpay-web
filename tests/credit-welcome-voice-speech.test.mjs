@@ -34,9 +34,11 @@ test("first payment uses a complete Spanish date independent of the host timezon
     assert.equal(speech.welcomeVoiceDateSpoken(invalid),null);
 });
 
-test("government identifier is one word per digit, preserving all leading zeros", () => {
-  assert.equal(speech.welcomeVoiceDocumentSpoken("38155093"),"tres, ocho, uno, cinco, cinco, cero, nueve, tres");
-  assert.equal(speech.welcomeVoiceDocumentSpoken("00.123-456"),"cero, cero, uno, dos, tres, cuatro, cinco, seis");
+test("government identifier uses short natural groups while preserving every leading zero", () => {
+  assert.equal(speech.welcomeVoiceDocumentSpoken("38155093"),"treinta y ocho; ciento cincuenta y cinco; cero noventa y tres");
+  assert.equal(speech.welcomeVoiceDocumentSpoken("00.123-456"),"cero cero; ciento veintitrés; cuatrocientos cincuenta y seis");
+  assert.equal(speech.welcomeVoiceDocumentSpoken("001000021"),"cero cero uno; cero cero cero; cero veintiuno");
+  assert.equal(speech.welcomeVoiceDocumentSpoken("1110177001"),"uno; ciento diez; ciento setenta y siete; cero cero uno");
   assert.equal(speech.welcomeVoiceDocumentSpoken("38155O93"),null);
 });
 
@@ -50,13 +52,22 @@ test("spoken conditions are computed from the verified plan and preserve differi
   const result = speech.buildWelcomeVoiceFinancialSpeech(snapshot());
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { initialPayment:"setecientos sesenta mil pesos",
     installmentAmount:"ciento cincuenta y nueve mil ciento cincuenta pesos", installmentCount:"dieciocho cuotas quincenales",
-    firstDueDate:"diecisiete de octubre de dos mil veintiséis",
+    firstDueDate:"diecisiete de octubre de dos mil veintiséis", equipmentReference:null,
     installmentAmounts:Array(18).fill("ciento cincuenta y nueve mil ciento cincuenta pesos") });
   const unequal = speech.buildWelcomeVoiceFinancialSpeech({...snapshot(),installmentAmounts:[...Array(17).fill(159150),120000]});
   assert.equal(unequal.installmentAmounts[17],"ciento veinte mil pesos");
   assert.equal(speech.buildWelcomeVoiceFinancialSpeech({...snapshot(),installmentCount:1,installmentAmounts:[159150],frequency:"MENSUAL"}).installmentCount,"una cuota mensual");
   assert.equal(speech.buildWelcomeVoiceFinancialSpeech({...snapshot(),installmentCount:21,installmentAmounts:Array(21).fill(159150)}).installmentCount,"veintiuna cuotas quincenales");
   assert.equal(speech.buildWelcomeVoiceFinancialSpeech({...snapshot(),frequency:"CATORCENAL"}).installmentCount,"dieciocho cuotas cada catorce días");
+});
+
+test("equipment speech preserves registered model and storage instead of inventing a reference", () => {
+  assert.equal(speech.welcomeVoiceEquipmentSpoken("Samsung Galaxy A17 128GB"),"Samsung Galaxy A diecisiete de ciento veintiocho gigabytes");
+  assert.equal(speech.welcomeVoiceEquipmentSpoken("IPHONE IPHONE 16 Pro Max 1 TB"),"iPhone dieciséis Pro Max de un terabyte");
+  assert.equal(speech.welcomeVoiceEquipmentSpoken("Modelo A007"),"Modelo A cero cero siete");
+  const actual = speech.buildWelcomeVoiceFinancialSpeech({...snapshot(),equipmentReference:"Samsung Galaxy A17 128GB"});
+  assert.equal(actual.equipmentReference,"Samsung Galaxy A diecisiete de ciento veintiocho gigabytes");
+  for (const value of [undefined,null,"","A\u0000B","<break>","X".repeat(241)]) assert.equal(speech.welcomeVoiceEquipmentSpoken(value),null);
 });
 
 test("inconsistent or unpronounceable financial snapshots fail closed", () => {

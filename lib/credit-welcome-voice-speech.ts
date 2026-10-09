@@ -52,7 +52,14 @@ export function welcomeVoiceDateSpoken(value: string): string | null {
 
 export function welcomeVoiceDocumentSpoken(value: string): string | null {
   const document = normalizeWelcomeVoiceDocument(value);
-  return document ? [...document].map(digit => small[Number(digit)]).join(", ") : null;
+  if (!document) return null;
+  const groups: string[] = [];
+  for (let end = document.length; end > 0; end -= 3) groups.unshift(document.slice(Math.max(0, end - 3), end));
+  return groups.map(group => {
+    const zeros = group.match(/^0+/)?.[0].length ?? 0;
+    const remaining = group.slice(zeros);
+    return [...Array(zeros).fill("cero"), ...(remaining ? [cardinal(Number(remaining))] : [])].join(" ");
+  }).join("; ");
 }
 
 export function welcomeVoiceNameSpoken(value: string, expected: string): string | null {
@@ -62,13 +69,28 @@ export function welcomeVoiceNameSpoken(value: string, expected: string): string 
 
 export type WelcomeVoiceFinancialSpeech = {
   initialPayment: string; installmentAmount: string; installmentCount: string;
-  firstDueDate: string; installmentAmounts: string[];
+  firstDueDate: string; installmentAmounts: string[]; equipmentReference: string | null;
 };
+
+/** Model numbers and capacity come only from the registered equipment label. */
+export function welcomeVoiceEquipmentSpoken(value: string | null | undefined): string | null {
+  if (typeof value !== "string" || !value.trim() || value.length > 240 || /[\u0000-\u001f\u007f<>]/.test(value)) return null;
+  const modelNumber = (digits: string) => digits.length > 12 || (digits.length > 1 && digits.startsWith("0"))
+    ? [...digits].map(digit => small[Number(digit)]).join(" ") : cardinal(Number(digits));
+  return value.trim().replace(/\s+/g, " ")
+    .replace(/\biphone(?:\s+iphone)*\b/gi, "iPhone")
+    .replace(/(\d+)\s*(GB|TB)\b/gi, (_match, digits: string, unit: string, offset: number) =>
+      `${offset ? "de " : ""}${masculine(modelNumber(digits))} ${unit.toUpperCase() === "GB" ? "gigabyte" : "terabyte"}${digits === "1" ? "" : "s"}`)
+    .replace(/\bGB\b/gi, "gigabytes").replace(/\bTB\b/gi, "terabytes")
+    .replace(/\d+/g, digits => ` ${modelNumber(digits)} `)
+    .replace(/\s+/g, " ").trim();
+}
 
 /** Spoken values are derived exclusively from the same verified financial snapshot. */
 export function buildWelcomeVoiceFinancialSpeech(input: {
   initialPayment: number; installmentAmount: number; installmentCount: number;
   frequency: string; firstDueDate: string; installmentAmounts: number[];
+  equipmentReference?: string | null;
 }): WelcomeVoiceFinancialSpeech | null {
   const initialPayment = welcomeVoiceMoneySpoken(input.initialPayment);
   const installmentAmount = welcomeVoiceMoneySpoken(input.installmentAmount);
@@ -83,5 +105,6 @@ export function buildWelcomeVoiceFinancialSpeech(input: {
   const plural = input.installmentCount !== 1;
   const cadence = input.frequency === "CATORCENAL" ? frequency : plural ? `${frequency.slice(0, -2)}ales` : frequency;
   return { initialPayment, installmentAmount, firstDueDate, installmentAmounts: installmentAmounts as string[],
+    equipmentReference: welcomeVoiceEquipmentSpoken(input.equipmentReference),
     installmentCount: `${feminineCount} ${plural ? "cuotas" : "cuota"} ${cadence}` };
 }

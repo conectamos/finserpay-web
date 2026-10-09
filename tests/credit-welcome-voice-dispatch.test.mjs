@@ -50,7 +50,7 @@ test("dispatch sends real snapshot identity for confirmation, preserving documen
   assert.equal(f.received[0].body.customer_name, claim.snapshot.name);
   assert.equal(f.received[0].body.customer_document, "000123456");
   assert.equal(typeof f.received[0].body.customer_document, "string");
-  assert.equal(f.received[0].body.customer_document_spoken, "cero, cero, cero, uno, dos, tres, cuatro, cinco, seis");
+  assert.equal(f.received[0].body.customer_document_spoken, "cero cero cero; ciento veintitrés; cuatrocientos cincuenta y seis");
   assert.equal(f.received[0].body.customer_name_spoken, "Test Person");
   for (const field of ["snapshot", "initialPayment", "installmentAmount", "installmentCount", "firstDueDate", "calendar"]) {
     assert.equal(field in f.received[0].body, false);

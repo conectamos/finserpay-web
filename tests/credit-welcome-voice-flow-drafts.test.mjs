@@ -36,7 +36,7 @@ const validCall = {
   customer_name: "Persona de Prueba",
   customer_document: "12345678",
   customer_name_spoken: "Persona de Prueba",
-  customer_document_spoken: "uno, dos, tres, cuatro, cinco, seis, siete, ocho",
+  customer_document_spoken: "doce; trescientos cuarenta y cinco; seiscientos setenta y ocho",
 };
 const accepted = { ok: true, call_id: "call_123", code: null };
 const failed = { ok: false, call_id: null, code: "NATIVE_CALL_ERROR" };
@@ -198,8 +198,8 @@ test("identity reply preserves exact backend speech without converting raw amoun
   assert.deepEqual(result.condiciones.speech.installmentAmounts, validSpeech.installmentAmounts);
 });
 
-test("call requires independent spoken identity strings and keeps zero-preserving raw document", () => {
-  const supplied = { ...validCall, customer_document: "00123456", customer_document_spoken: "cero, cero, uno, dos, tres, cuatro, cinco, seis" };
+test("call preserves prepared document blocks and the zero-preserving raw document", () => {
+  const supplied = { ...validCall, customer_document: "00123456", customer_document_spoken: "cero cero; ciento veintitrés; cuatrocientos cincuenta y seis" };
   const normalized = runCode(call, "nrmCl", { trigger: { body: supplied } });
   assert.equal(normalized.customer_document, "00123456");
   assert.equal(normalized.customer_document_spoken, supplied.customer_document_spoken);
@@ -236,12 +236,77 @@ test("voice tool retains raw identity constants while the prompt requires litera
   assert.doesNotMatch(prompt, /<\s*(?:speak|break|say-as|prosody)\b/i);
 });
 
-test("voice pronunciation configuration keeps normalization with slower consistent delivery", () => {
+test("voice configuration uses conversational multilingual delivery without changing the voice", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
-  assert.equal(config.updateAfterCreate.voice_speed, 0.9);
-  assert.equal(config.updateAfterCreate.voice_temperature, 0.5);
+  assert.equal(config.updateAfterCreate.voice_speed, 1);
+  assert.equal(config.updateAfterCreate.voice_temperature, 1);
   assert.equal(config.updateAfterCreate.normalize_for_speech, true);
   assert.equal(config.createArguments.voice_language, "es-419");
+  assert.equal(config.createArguments.voice, "custom_voice_fd6d90e0e756bbb2e81c101bba");
+  assert.equal(config.updateAfterCreate.voice_model, "eleven_multilingual_v2");
+});
+
+
+test("optional equipment speech is preserved only inside verified conditions", () => {
+  for (const equipmentReference of [undefined, null, "Equipo de prueba de ciento veintiocho gigabytes"]) {
+    const speech = { ...validSpeech };
+    if (equipmentReference !== undefined) speech.equipmentReference = equipmentReference;
+    const condiciones = { ...validConditions, speech };
+    const verified = runCode(identity, "chkId", {
+      verificar_identidad: { ok: true, verificado: true, condiciones },
+    });
+    assert.equal(verified.verificado, true);
+    assert.deepEqual(verified.condiciones, condiciones);
+    for (const result of [
+      { ok: false, verificado: true, condiciones },
+      { ok: true, verificado: false, condiciones },
+    ]) {
+      const blocked = runCode(identity, "chkId", { verificar_identidad: result });
+      assert.equal(blocked.verificado, false);
+      assert.equal(blocked.condiciones, null);
+    }
+  }
+});
+
+test("equipment reference guard precedes the plan and handles missing data or discrepancies", () => {
+  const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
+  const referenceAt = prompt.indexOf("REFERENCIA DEL CELULAR");
+  const planAt = prompt.indexOf("PLAN Y CONFIRMACIÓN DE LA PRIMERA CUOTA");
+  assert.ok(referenceAt > 0 && referenceAt < planAt);
+  const reference = prompt.slice(referenceAt, planAt);
+  for (const guard of ["ok=true", "verificado=true", "condiciones.speech completo"]) assert.ok(reference.includes(guard));
+  assert.ok(reference.includes("[speech.equipmentReference]"));
+  assert.match(reference, /referencia exacta/);
+  assert.match(reference, /equipmentReference falta, es null o está vacío/);
+  assert.match(reference, /no adivines/);
+  assert.match(reference, /Si el cliente señala una diferencia/);
+  assert.match(reference, /pregunta una sola vez/);
+  assert.match(reference, /Un asesor debe revisar esa diferencia/);
+  assert.match(reference, /sin.*inventar otra referencia/);
+});
+
+test("conversational document instructions use prepared blocks without changing identity", () => {
+  const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
+  assert.match(prompt, /tono cordial y conversacional/);
+  assert.match(prompt, /cada bloque completo tal como lo recibes/);
+  assert.match(prompt, /sin cambiar los ceros/);
+  assert.match(prompt, /repite únicamente ese bloque tal como está/);
+  assert.match(prompt, /No conviertas los bloques/);
+  assert.match(prompt, /No hables lentamente palabra por palabra/);
+  assert.match(prompt, /no uses tono cantado ni una cadencia de lista/);
+  assert.match(prompt, /valores originales customer_name y customer_document/);
+  assert.doesNotMatch(prompt, /palabras de cada dígito, despacio/);
+});
+
+test("analysis definitions distinguish verified identity and yes to date from all terms", () => {
+  const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
+  const definitions = Object.fromEntries(config.createArguments.post_call_analysis_data.map(field => [field.name, field.description]));
+  assert.match(definitions.identity_confirmed, /respuesta real de la herramienta/);
+  assert.match(definitions.identity_confirmed, /ok=true, verificado=true/);
+  assert.match(definitions.first_payment_confirmed, /speech.firstDueDate/);
+  for (const affirmative of ["sí", "ok", "vale", "claro", "de acuerdo"]) assert.ok(definitions.first_payment_confirmed.includes(affirmative));
+  assert.match(definitions.terms_confirmed, /Confirmar identidad, referencia del celular o primera fecha por separado no confirma todos los términos/);
+  assert.match(definitions.customer_discrepancies, /referencia del celular/);
 });
 
 test("identity mismatch never exposes supplied conditions", () => {
