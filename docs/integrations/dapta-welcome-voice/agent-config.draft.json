@@ -9,7 +9,7 @@
     "company_website": "https://finserpay.com",
     "identity_name": "Diana",
     "voice_language": "es-419",
-    "voice": "custom_voice_0586aed08dfec4bef4c9f8b25d",
+    "voice": "custom_voice_fd6d90e0e756bbb2e81c101bba",
     "model": "gpt-4.1",
     "enable_voicemail_detection": true,
     "voicemail_option": {
@@ -63,7 +63,7 @@
     ]
   },
   "updateAfterCreate": {
-    "voice": "custom_voice_0586aed08dfec4bef4c9f8b25d",
+    "voice": "custom_voice_fd6d90e0e756bbb2e81c101bba",
     "begin_message_type": "ai_initiates_predefined",
     "begin_message": "Hola, soy Diana de FINSER PEY y quiero darle la bienvenida y confirmar los datos de la financiación de su celular. Esta llamada está siendo grabada y monitoreada para efectos de calidad y seguridad. ¿Me confirma, por favor, su nombre completo?",
     "boosted_keywords": [

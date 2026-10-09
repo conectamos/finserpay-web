@@ -300,13 +300,13 @@ test("voice tool captures actual customer identity without prefilled answers or 
   assert.doesNotMatch(prompt, /<\s*(?:speak|break|say-as|prosody)\b/i);
 });
 
-test("voice configuration uses the authorized paisa voice with conversational multilingual delivery", () => {
+test("voice configuration restores Lina with conversational multilingual delivery", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   assert.equal(config.updateAfterCreate.voice_speed, 1);
   assert.equal(config.updateAfterCreate.voice_temperature, 1);
   assert.equal(config.updateAfterCreate.normalize_for_speech, true);
   assert.equal(config.createArguments.voice_language, "es-419");
-  assert.equal(config.createArguments.voice, "custom_voice_0586aed08dfec4bef4c9f8b25d");
+  assert.equal(config.createArguments.voice, "custom_voice_fd6d90e0e756bbb2e81c101bba");
   assert.equal(config.updateAfterCreate.voice, config.createArguments.voice);
   assert.equal(config.updateAfterCreate.voice_model, "eleven_multilingual_v2");
 });
