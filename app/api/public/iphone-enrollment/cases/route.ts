@@ -17,6 +17,7 @@ import {
 } from "@/lib/iphone-enrollment";
 import {
   consumeIphoneEnrollmentRateLimit,
+  isNominalIphoneEnrollmentGrant,
   findIphoneEnrollmentCase,
   validateIphoneEnrollmentPortalSession,
 } from "@/lib/iphone-enrollment-storage";
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
     const grantSession = signedSession
       ? await validateIphoneEnrollmentPortalSession(signedSession)
       : null;
-    if (!signedSession || !grantSession) {
+    if (!signedSession || !grantSession || isNominalIphoneEnrollmentGrant(grantSession)) {
       return response({ ok: false, error: "Acceso no autorizado" }, 401);
     }
 
@@ -112,7 +113,7 @@ export async function POST(request: NextRequest) {
           ok: false,
           code: "NOT_READY_FOR_ENROLLMENT",
           error:
-            "La solicitud está aprobada, pero el asesor todavía no ha llegado al paso 4 de enrolamiento.",
+            "La solicitud aún no está lista para enrolamiento. Revisa su etapa y las validaciones de identidad y firma desde el dashboard del analista.",
         },
         409
       );

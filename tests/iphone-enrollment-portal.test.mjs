@@ -1251,7 +1251,7 @@ test("la fábrica sincroniza el resultado y el portal usa un acceso compartido s
   assert.match(confirmDialog, /analystVerificationComplete/);
 
   const approvalRequestStart = portalSource.indexOf(
-    "/api/public/iphone-enrollment/cases/approve"
+    "`${apiBase}/cases/approve`"
   );
   const approvalRequestEnd = portalSource.indexOf(
     "const data = await readJson(response)",
@@ -1269,7 +1269,7 @@ test("la fábrica sincroniza el resultado y el portal usa un acceso compartido s
 test("la aprobación confirmada abre un resumen modal accesible y responsive", () => {
   const approvalResponseStart = portalSource.indexOf(
     "const data = await readJson(response)",
-    portalSource.indexOf("/api/public/iphone-enrollment/cases/approve")
+    portalSource.indexOf("`${apiBase}/cases/approve`")
   );
   const approvalResponseEnd = portalSource.indexOf("} catch", approvalResponseStart);
   const approvalResponse = portalSource.slice(

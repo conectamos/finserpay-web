@@ -140,6 +140,7 @@ export default function AdminSidebar({
         { href: "/dashboard/aprobaciones", icon: LayoutDashboard, label: "Aprobaciones" },
         { href: "/dashboard/aprobaciones/solicitudes", icon: ClipboardList, label: "Solicitudes" },
         { href: "/dashboard/aprobaciones/cambio-imei", icon: Smartphone, label: "Cambio de IMEI" },
+        { href: "/dashboard/aprobaciones/enrolamiento", icon: ShieldCheck, label: "Enrolamiento iPhone" },
         { href: "/dashboard/aprobaciones/firma-seguro", icon: FilePenLine, label: "Gestionar firma" },
         { href: "/dashboard/aprobaciones/liberar-consulta", icon: RefreshCcw, label: "Liberar consulta" },
         { href: "/dashboard/aprobaciones/sadmin", icon: Files, label: "Creación Sadmin" },

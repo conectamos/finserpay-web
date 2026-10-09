@@ -18,6 +18,7 @@ import {
   consumeIphoneEnrollmentRateLimit,
   exchangeIphoneEnrollmentAccessGrant,
   IphoneEnrollmentGrantError,
+  isNominalIphoneEnrollmentGrant,
 } from "@/lib/iphone-enrollment-storage";
 
 export const runtime = "nodejs";
@@ -212,6 +213,9 @@ export async function POST(request: NextRequest) {
     }
 
     const exchange = await exchangeIphoneEnrollmentAccessGrant(token);
+    if (isNominalIphoneEnrollmentGrant(exchange.grant)) {
+      return response({ ok: false, error: "Ingresa con tu cuenta personal para este acceso." }, 401);
+    }
     return authorizedResponse(exchange.session);
   } catch (error) {
     if (error instanceof IphoneEnrollmentRequestBodyError) {
