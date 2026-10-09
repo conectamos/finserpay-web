@@ -61,25 +61,25 @@ test("manual welcome rejects invalid destinations, financial data or impersonate
 });
 
 test("manual destination is validated and normalized before preparing the authorized operator call", async () => {
-  for (const phone of ["3018297193", "573018297193", "+57 (301) 829-7193"]) {
+  for (const phone of ["3000000009", "573000000009", "+57 (300) 000-0009"]) {
     const f = fixture();
     const result = await f.post({ requestId: uuid, phone });
     assert.equal(result.status, 202);
-    assert.deepEqual(JSON.parse(JSON.stringify(f.calls.prepare[0])), { creditId: 72, requestId: uuid, actorId: 7, phone: "573018297193" });
+    assert.deepEqual(JSON.parse(JSON.stringify(f.calls.prepare[0])), { creditId: 72, requestId: uuid, actorId: 7, phone: "573000000009" });
     assert.equal(f.calls.dispatch.length, 1);
     const body = await result.json();
     assert.equal("phone" in body, false);
     assert.equal("snapshot" in body, false);
   }
-  for (const phone of [null, false, 3018297193, "", " ", "hello3018297193", "3018297193 ext 7", "+1 3018297193",
-    "001573018297193", "6018297193", "30182971939", "++573018297193", "+3018297193", "3018297193\n", " ".repeat(41)]) {
+  for (const phone of [null, false, 3000000009, "", " ", "hello3000000009", "3000000009 ext 7", "+1 3000000009",
+    "001573000000009", "6000000009", "30000000099", "++573000000009", "+3000000009", "3000000009\n", " ".repeat(41)]) {
     const f = fixture();
     assert.equal((await f.post({ requestId: uuid, phone })).status, 400, JSON.stringify(phone));
     assert.equal(f.calls.prepare.length, 0); assert.equal(f.calls.dispatch.length, 0);
   }
   for (const options of [{ user: actor({ rolNombre: "VENDEDOR" }) }, { user: actor({ activo: false }) }, { sameOrigin: false }, { allowed: false }]) {
     const f = fixture(options);
-    assert.ok([403, 404].includes((await f.post({ requestId: uuid, phone: "3018297193" })).status));
+    assert.ok([403, 404].includes((await f.post({ requestId: uuid, phone: "3000000009" })).status));
     assert.equal(f.calls.prepare.length, 0); assert.equal(f.calls.dispatch.length, 0);
   }
 });
