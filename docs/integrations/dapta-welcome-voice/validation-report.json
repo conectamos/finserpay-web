@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "workspace": "FINSERPAY",
+  "workspaceId": "7496b9a3-2fe6-4e28-8411-7d54ee788b2c",
+  "identityFlow": {
+    "valid": true,
+    "strict": true,
+    "node_count": 5,
+    "errors_count": 0,
+    "warnings_count": 1,
+    "info_count": 1,
+    "issues": [
+      {
+        "node_id": "qryId",
+        "node_name": "Verificar identidad",
+        "rule": "Rule 9: Credential shape",
+        "severity": "info",
+        "message": "write node (POST) with on_error:continue: failures will not show in run status — check the node in get_flow_execution_detail, not the run summary."
+      },
+      {
+        "rule": "Rule 10: Layout",
+        "severity": "warning",
+        "message": "5 node(s) have no canvas coordinates (trgId, nrmId, qryId, chkId, rspId). Flow Studio draws a node without numeric x/y at (0,0), stacked on the others. preview_create_flow, preview_update_flow and preview_patch_flow place them with auto_layout (on by default); do not position them by hand."
+      }
+    ],
+    "validator_ruleset": "2026-09-22-layout-and-legacy-loops"
+  },
+  "callFlow": {
+    "valid": true,
+    "strict": true,
+    "node_count": 5,
+    "errors_count": 0,
+    "warnings_count": 1,
+    "info_count": 1,
+    "issues": [
+      {
+        "node_id": "natCl",
+        "node_name": "Llamada bienvenida",
+        "rule": "Rule 9: Credential shape",
+        "severity": "info",
+        "message": "write node (POST) with on_error:continue: failures will not show in run status — check the node in get_flow_execution_detail, not the run summary."
+      },
+      {
+        "rule": "Rule 10: Layout",
+        "severity": "warning",
+        "message": "5 node(s) have no canvas coordinates (trgCl, nrmCl, natCl, chkCl, rspCl). Flow Studio draws a node without numeric x/y at (0,0), stacked on the others. preview_create_flow, preview_update_flow and preview_patch_flow place them with auto_layout (on by default); do not position them by hand."
+      }
+    ],
+    "validator_ruleset": "2026-09-22-layout-and-legacy-loops"
+  },
+  "identityPreview": {
+    "generated": true,
+    "committed": false,
+    "flowCreated": false,
+    "auto_layout": "all",
+    "tokenPersisted": true,
+    "tokenTracked": false,
+    "privateRecoveryFile": "tmp/voice-identity-preview.private.json",
+    "flowId": null
+  },
+  "callPreview": {
+    "generated": false,
+    "reason": "The new welcome voice agent does not exist. A real UUID is required before preview/deployment."
+  },
+  "validationInput": "Native call validation used the complete live public template in memory. Exported call draft has template URL credentials redacted and is not directly deployable.",
+  "fixtures": {
+    "nativeReceipt": [
+      {
+        "name": "created",
+        "passed": true
+      },
+      {
+        "name": "wrapped",
+        "passed": true
+      },
+      {
+        "name": "empty200",
+        "passed": true
+      },
+      {
+        "name": "missing",
+        "passed": true
+      },
+      {
+        "name": "nativeError",
+        "passed": true
+      },
+      {
+        "name": "responseError",
+        "passed": true
+      },
+      {
+        "name": "explicitFailure",
+        "passed": true
+      },
+      {
+        "name": "failedStatus",
+        "passed": true
+      },
+      {
+        "name": "badId",
+        "passed": true
+      }
+    ],
+    "identityReceipt": [
+      {
+        "name": "correct",
+        "passed": true
+      },
+      {
+        "name": "wrong",
+        "passed": true
+      },
+      {
+        "name": "noConditions",
+        "passed": true
+      },
+      {
+        "name": "backendFailure",
+        "passed": true
+      }
+    ],
+    "referenceNames": true
+  },
+  "externalCalls": {
+    "identityEndpoint": 0,
+    "customerCalls": 0
+  },
+  "mutations": {
+    "agentsCreated": 0,
+    "flowsCreated": 0,
+    "commits": 0
+  },
+  "checkedInTests": {
+    "file": "tests/credit-welcome-voice-flow-drafts.test.mjs",
+    "command": "node --test tests/credit-welcome-voice-flow-drafts.test.mjs",
+    "passed": 31,
+    "failed": 0,
+    "scope": "VM execution of actual draft Code fields: safe identity JSON, strict identity flags, call input validation, native acceptance, contradictory errors at all levels, malformed/ambiguous receipts, bounded traversal, credential redaction."
+  },
+  "responseTypeEvidence": {
+    "codeExportsNativeBooleans": true,
+    "responseMapsWholeVariable": true,
+    "guideConfirms": "A terminal response node uses api_response.response_params to map the variables returned to the client.",
+    "guideGuaranteesInterpolationType": false,
+    "dynamicMappingLiveTested": false,
+    "dispatcherRequirement": "Only boolean ok===true and a valid call_id are accepted; string true is rejected."
+  }
+}

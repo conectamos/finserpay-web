@@ -14,6 +14,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import prisma from "@/lib/prisma";
 import { sendDaptaWelcome } from "@/lib/dapta-welcome";
+import { enqueueCreditWelcomeVoice, ensureCreditWelcomeVoiceSchema } from "@/lib/credit-welcome-voice-store";
 import { creditNumberSearchWhere, getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
 import {
   calculateFinancedBalance,
@@ -3504,6 +3505,7 @@ export async function POST(req: Request) {
     await ensureCreditAmortizationSchema();
     await ensureSolicitudSchema();
     await ensureCreditDeviceReplacementSchema();
+    if (process.env.DAPTA_WELCOME_VOICE_ENABLED === "true") await ensureCreditWelcomeVoiceSchema();
 
     const creditCreateArgs = {
       data: {
@@ -3783,6 +3785,7 @@ export async function POST(req: Request) {
       if (!linkedSolicitudId) {
         throw new Error("SOLICITUD_COMPLETION_CONFLICT");
       }
+      await enqueueCreditWelcomeVoice(transaction, { creditId: credit.id, source: "NORMAL" });
       return {
         credit: persistedCredit,
         veriffValidation: linkedVeriffValidation,

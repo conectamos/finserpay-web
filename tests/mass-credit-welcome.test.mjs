@@ -5,8 +5,9 @@ import { routeFixture, catalogs, sample, call } from "./mass-credit-sadmin-fixtu
 
 // Exercise the real route, validations and commit/replay branches with a local
 // transactional store. The welcome sender is a spy: no database or WhatsApp is used.
-function fixture({ failRegistration = false, senderResult = "sent" } = {}) {
-  const state = { credits: [], registrations: [], audits: [], inTransaction: false, sends: [] };
+function fixture({ failRegistration = false, senderResult = "sent", voiceEnabled = false, failAfterEnqueue = false } = {}) {
+  const state = { credits: [], registrations: [], audits: [], inTransaction: false, sends: [],
+    voiceEvents: [], voiceAttempts: [], ensureCalls: 0, activeTransaction: null };
   const adapter = storage => ({
     ...catalogs,
     $queryRawUnsafe: async (sql, ...params) => {
@@ -49,19 +50,43 @@ function fixture({ failRegistration = false, senderResult = "sent" } = {}) {
   });
   const db = adapter(state);
   db.$transaction = async work => {
-    const staged = { credits: [...state.credits], registrations: [...state.registrations], audits: [...state.audits] };
+    const staged = { credits: [...state.credits], registrations: [...state.registrations], audits: [...state.audits],
+      voiceEvents: [...state.voiceEvents] };
     state.inTransaction = true;
+    const transaction = adapter(staged);
+    state.activeTransaction = { transaction, staged };
     try {
-      const result = await work(adapter(staged));
+      const result = await work(transaction);
+      if (failAfterEnqueue) throw new Error("Synthetic commit failure after voice enqueue");
       state.credits = staged.credits;
       state.registrations = staged.registrations;
       state.audits = staged.audits;
+      state.voiceEvents = staged.voiceEvents;
       return result;
     } finally {
       state.inTransaction = false;
+      state.activeTransaction = null;
     }
   };
-  const route = routeFixture(db, { sendDaptaWelcome: async credit => {
+  const route = routeFixture(db, {
+    env: voiceEnabled ? { DAPTA_WELCOME_VOICE_ENABLED: "true" } : {},
+    ensureCreditWelcomeVoiceSchema: async () => {
+      assert.equal(state.inTransaction, false, "Schema preparation happens before the credit transaction");
+      state.ensureCalls++;
+    },
+    enqueueCreditWelcomeVoice: async (transaction, input) => {
+      if (!voiceEnabled) return null;
+      assert.equal(state.inTransaction, true, "Voice outbox must enqueue inside the credit transaction");
+      assert.equal(transaction, state.activeTransaction.transaction, "Voice uses the same transaction as credit creation");
+      const credit = state.activeTransaction.staged.credits.find(saved => saved.id === input.creditId);
+      assert.ok(credit, "The credit must exist in the staged transaction");
+      assert.equal(input.source, "INDIVIDUAL_IMPORT");
+      state.voiceAttempts.push({ ...input, phone: credit.clienteTelefono, name: credit.clienteNombre });
+      const event = { eventId: randomUUID(), ...input, phone: credit.clienteTelefono, name: credit.clienteNombre };
+      state.activeTransaction.staged.voiceEvents.push(event);
+      return { eventId: event.eventId };
+    },
+    sendDaptaWelcome: async credit => {
     assert.equal(state.inTransaction, false, "Welcome must run after the transaction finishes");
     assert.ok(state.credits.some(saved => saved.id === credit.creditId), "Credit must already be committed");
     state.sends.push(JSON.parse(JSON.stringify(credit)));
@@ -184,4 +209,76 @@ test("request identity cannot change whether a confirmed import requests a welco
     assert.equal(state.credits.length, 1);
     assert.equal(state.sends.length, firstFlag ? 1 : 0);
   }
+});
+
+test("voice outbox enqueues only the new individual credit inside its transaction using saved contact", async () => {
+  const { route, state } = fixture({ voiceEnabled: true });
+  const row = sample(1, { telefono: "300 000 0042", cliente: "ANA PEREZ" });
+  const result = await call(route, [row], confirmation({ welcomeOnCreate: true }));
+  assert.equal(result.status, 200);
+  assert.equal(result.data.commit, true);
+  assert.equal(state.ensureCalls, 1);
+  assert.equal(state.voiceEvents.length, 1);
+  const event = state.voiceEvents[0], credit = state.credits[0];
+  assert.equal(event.creditId, credit.id);
+  assert.equal(event.phone, credit.clienteTelefono);
+  assert.equal(event.name, credit.clienteNombre);
+  assert.equal(event.source, "INDIVIDUAL_IMPORT");
+  assert.deepEqual(state.sends, [{ creditId: event.creditId, phone: event.phone, name: event.name }]);
+});
+
+test("voice replay returns the same credit without another enqueue", async () => {
+  const { route, state } = fixture({ voiceEnabled: true });
+  const request = confirmation({ welcomeOnCreate: true });
+  const rows = [sample()];
+  const first = await call(route, rows, request);
+  assert.equal(first.status, 200);
+  assert.deepEqual(await call(route, rows, request), first);
+  assert.equal(state.credits.length, 1);
+  assert.equal(state.voiceAttempts.length, 1);
+  assert.equal(state.voiceEvents.length, 1);
+});
+
+test("historical single-row and bulk imports do not enqueue voice events with feature enabled", async () => {
+  for (const rows of [[sample()], [sample(), sample(2)]]) {
+    const { route, state } = fixture({ voiceEnabled: true });
+    const result = await call(route, rows, confirmation());
+    assert.equal(result.status, 200);
+    assert.equal(result.data.created, rows.length);
+    assert.equal(state.voiceEvents.length, 0);
+    assert.equal(state.voiceAttempts.length, 0);
+    assert.equal(state.ensureCalls, 0);
+  }
+});
+
+test("voice flag is strict: preview, invalid rows, nonboolean flag and disabled feature do not enqueue", async () => {
+  for (const flag of [false, "true", 1]) {
+    const { route, state } = fixture({ voiceEnabled: true });
+    const result = await call(route, [sample()], confirmation({ welcomeOnCreate: flag }));
+    assert.equal(result.status, 200);
+    assert.equal(state.voiceEvents.length, 0);
+  }
+  const { route, state } = fixture({ voiceEnabled: true });
+  await call(route, [sample()], { welcomeOnCreate: true });
+  assert.equal(state.ensureCalls, 0);
+  await call(route, [sample(1, { correo: "invalid-email" })], confirmation({ welcomeOnCreate: true }));
+  assert.equal(state.voiceAttempts.length, 0);
+  assert.equal(state.voiceEvents.length, 0);
+  const disabled = fixture();
+  assert.equal((await call(disabled.route, [sample()], confirmation({ welcomeOnCreate: true }))).status, 200);
+  assert.equal(disabled.state.ensureCalls, 0);
+  assert.equal(disabled.state.voiceEvents.length, 0);
+});
+
+test("SADMIN failure prevents enqueue and a later commit failure rolls back credit plus outbox", async () => {
+  const registrationFailure = fixture({ voiceEnabled: true, failRegistration: true });
+  assert.equal((await call(registrationFailure.route, [sample()], confirmation({ welcomeOnCreate: true }))).status, 500);
+  assert.equal(registrationFailure.state.voiceAttempts.length, 0);
+  assert.equal(registrationFailure.state.voiceEvents.length, 0);
+  const commitFailure = fixture({ voiceEnabled: true, failAfterEnqueue: true });
+  assert.equal((await call(commitFailure.route, [sample()], confirmation({ welcomeOnCreate: true }))).status, 500);
+  assert.equal(commitFailure.state.voiceAttempts.length, 1, "Hook executed before injected commit failure");
+  assert.equal(commitFailure.state.credits.length, 0);
+  assert.equal(commitFailure.state.voiceEvents.length, 0, "Outbox rolls back with credit transaction");
+  assert.equal(commitFailure.state.sends.length, 0);
 });

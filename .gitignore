@@ -13,6 +13,8 @@
 # testing
 /coverage
 /tmp/pdfs/
+/tmp/voice-identity-preview.private.json
+/tmp/voice-welcome-config.private.json
 
 # next.js
 /.next/

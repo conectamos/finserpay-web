@@ -12,6 +12,7 @@ import LastPdfPagePreview from "./last-pdf-page-preview";
 import ApprovalEvidenceCorrection from "./approval-evidence-correction";
 import ApprovalSignatureReissue from "./approval-signature-reissue";
 import ApprovalCallRecording from "./approval-call-recording";
+import CreditWelcomeVoiceResult from "./credit-welcome-voice-result";
 import ApprovalNoveltyPanel from "./approval-novelty-panel";
 import { Badge, Button, Card, DataTable, EmptyState, LoadingState, MetricCard, PageHeader, StatusPill, Tabs } from "@/app/_components/finser-ui";
 import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalQueueOptions, type ApprovalStatus, type ApprovalView } from "./approval-client";
@@ -392,7 +393,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
       onBack: backToList,
       onRetryDetail: () => { if (selectedId && !busy) void loadDetail(selectedId); },
       onUpdated: reloadAfterCorrection, onCorrectionBusy: setCorrectionBusy, onOpenSadmin,
-      callPanel: detail ? <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} /> : null,
+      callPanel: detail ? <><ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />{!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}</> : null,
       noveltyPanel: detail ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null,
       signaturePanel: detail ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null,
       approvalPanel: detail && detail.review.required && detail.review.status === "PENDING" ? <Card data-approval-decision="true">
@@ -509,6 +510,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
             </Card>
 
             {detail.review.required ? <aside aria-label="Acciones de revisión" className="min-w-0 space-y-6">
+              {!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}
               <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />
               {view === "pending" ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
               {view === "pending" ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}

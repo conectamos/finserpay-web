@@ -8,6 +8,8 @@ const APPROVAL_SHARED_COOKIE_NAME = "approval_shared_session";
 const SELLER_SESSION_COOKIE_NAME = "seller_session";
 const APPROVAL_ANALYST_RETRY_RELEASE_ROUTE =
   /^\/api\/creditos\/datacredito\/admin\/evaluaciones\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/autorizar-reintento$/i;
+const APPROVAL_ANALYST_WELCOME_VOICE_READ_ROUTE =
+  /^\/api\/creditos\/[1-9]\d*\/bienvenida-voz$/;
 
 const LEGACY_PAGE_PREFIXES = [
   "/inventario",
@@ -149,10 +151,13 @@ export function proxy(request: NextRequest) {
     );
   const approvalAnalystSolicitudesApi =
     ["GET", "PATCH"].includes(request.method) && pathname === "/api/solicitudes";
+  const approvalAnalystWelcomeVoiceReadApi =
+    request.method === "GET" && APPROVAL_ANALYST_WELCOME_VOICE_READ_ROUTE.test(pathname);
   const approvalAnalystApi =
     approvalApi ||
     approvalAnalystRetryReleaseApi ||
     approvalAnalystSolicitudesApi ||
+    approvalAnalystWelcomeVoiceReadApi ||
     pathname === "/api/session" ||
     pathname === "/api/login" ||
     pathname === "/api/logout";

@@ -1,0 +1,417 @@
+{
+  "type": "api",
+  "name": "Llamada de bienvenida al crear crédito",
+  "engine": "v1",
+  "api_nodes": [
+    {
+      "id": "trgCl",
+      "type": "trigger",
+      "name": "Trigger",
+      "api_trigger": {
+        "trigger_options": "http",
+        "trigger_type": "post",
+        "trigger_params": [
+          {
+            "id": "pm000",
+            "origin": "body",
+            "key": "event_id",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "pm001",
+            "origin": "body",
+            "key": "credito_id",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "pm002",
+            "origin": "body",
+            "key": "event_token",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "pm003",
+            "origin": "body",
+            "key": "to_number",
+            "type": "text",
+            "required": true
+          }
+        ]
+      },
+      "childRef": "nrmCl"
+    },
+    {
+      "id": "nrmCl",
+      "type": "action",
+      "name": "Normalizar llamada",
+      "parentRefs": [
+        "trgCl"
+      ],
+      "childRef": "natCl",
+      "api_action": {
+        "action_type": "code",
+        "on_error": "stop",
+        "code_action": {
+          "code": "const data = params.trigger.body || {};\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de llamada invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nconst credito_id = required(data.credito_id, 16);\nconst event_token = required(data.event_token, 1000);\nconst to_number = required(data.to_number, 16);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event_id) || !/^[1-9]\\d*$/.test(credito_id) || !/^\\+573\\d{9}$/.test(to_number)) throw new Error('Solicitud de llamada invalida');\nmodule.exports = { event_id, credito_id, event_token, to_number };"
+        },
+        "response": [
+          {
+            "variable_name": "event_id",
+            "response_value_path": "event_id"
+          },
+          {
+            "variable_name": "credito_id",
+            "response_value_path": "credito_id"
+          },
+          {
+            "variable_name": "event_token",
+            "response_value_path": "event_token"
+          },
+          {
+            "variable_name": "to_number",
+            "response_value_path": "to_number"
+          }
+        ]
+      }
+    },
+    {
+      "id": "natCl",
+      "type": "action",
+      "name": "Llamada bienvenida",
+      "from_template": true,
+      "template_id": "a9bb5e23-e7f9-4f16-b382-5e062db2b10c",
+      "guide": "<h3><strong>Visit Dapta Docs to learn more about this template: </strong></h3>\n<a href=\"https://docs.dapta.ai/flow-studio/nodes/dapta-phone-call\" rel=\"noopener noreferrer\" target=\"_blank\"><h3>Dapta Phone Call</h3></a>",
+      "parentRefs": [
+        "nrmCl"
+      ],
+      "childRef": "chkCl",
+      "api_action": {
+        "action_type": "custom.dapta_phonecall",
+        "on_error": "continue",
+        "database_action": null,
+        "external_api_action": {
+          "request_type": "post",
+          "url": "__REHYDRATE_DAPTA_NATIVE_TEMPLATE_URL__",
+          "body_format": "raw",
+          "body": "",
+          "body_params": [],
+          "path_params": [],
+          "query_params": [],
+          "authorization": {
+            "type": "",
+            "token": "",
+            "username": "",
+            "password": "",
+            "credential": ""
+          },
+          "headers": [],
+          "selfsignedCertificate": "false"
+        },
+        "code_action": null,
+        "communication_action": null,
+        "generate_file_action": null,
+        "google_sheets_action": null,
+        "notion_action": null,
+        "openai_action": null,
+        "webflow_action": null,
+        "custom_action": {
+          "attributes": [
+            {
+              "name": "from_number",
+              "displayName": "From Number",
+              "type": "select",
+              "isDynamicLoading": true,
+              "dynamicLoad": {
+                "dependencies": {},
+                "useUserContext": {
+                  "org_id": "{{userContext.organization_id}}"
+                },
+                "external_api_action": {
+                  "request_type": "post",
+                  "url": "__REHYDRATE_DAPTA_NATIVE_TEMPLATE_URL__",
+                  "body_format": "raw",
+                  "headers": [],
+                  "body": "",
+                  "body_params": [],
+                  "path_params": [],
+                  "query_params": [],
+                  "authorization": {
+                    "type": "",
+                    "token": "",
+                    "username": "",
+                    "password": "",
+                    "credential": ""
+                  },
+                  "selfsignedCertificate": "false"
+                },
+                "custom_action": {
+                  "attributes": [
+                    {
+                      "name": "org_id",
+                      "displayName": "Org ID",
+                      "type": "input",
+                      "external_api_action": {
+                        "body": {
+                          "org_id": "{{value}}"
+                        },
+                        "body_format": "raw"
+                      }
+                    }
+                  ]
+                },
+                "resultMapping": {
+                  "type": "selector",
+                  "displayName": "nickname",
+                  "value": "phone_number",
+                  "array": "response.phoneNumbers"
+                },
+                "noOptionsAction": {
+                  "enabled": true,
+                  "alwaysShow": true,
+                  "label": "Add Phone Number",
+                  "redirectUrl": "/agents-studio/phone-numbers",
+                  "queryParams": {
+                    "create": true
+                  },
+                  "type": "redirect"
+                }
+              },
+              "external_api_action": {
+                "body": {
+                  "from_number": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            },
+            {
+              "name": "to_number",
+              "displayName": "To Number",
+              "type": "input",
+              "external_api_action": {
+                "body": {
+                  "to_number": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            },
+            {
+              "name": "agent_id",
+              "displayName": "Agent",
+              "type": "select",
+              "isDynamicLoading": true,
+              "dynamicLoad": {
+                "dependencies": {},
+                "useUserContext": {
+                  "org_id": "{{userContext.organization_id}}"
+                },
+                "external_api_action": {
+                  "request_type": "post",
+                  "url": "__REHYDRATE_DAPTA_NATIVE_TEMPLATE_URL__",
+                  "body_format": "raw",
+                  "headers": [],
+                  "body": "",
+                  "body_params": [],
+                  "path_params": [],
+                  "query_params": [],
+                  "authorization": {
+                    "type": "",
+                    "token": "",
+                    "username": "",
+                    "password": "",
+                    "credential": ""
+                  },
+                  "selfsignedCertificate": "false"
+                },
+                "custom_action": {
+                  "attributes": [
+                    {
+                      "name": "org_id",
+                      "displayName": "Org ID",
+                      "type": "input",
+                      "external_api_action": {
+                        "body": {
+                          "org_id": "{{value}}"
+                        },
+                        "body_format": "raw"
+                      }
+                    }
+                  ]
+                },
+                "resultMapping": {
+                  "type": "selector",
+                  "displayName": "name",
+                  "value": "voice_voice-provider_agent_id",
+                  "array": "response.agents"
+                },
+                "optionRedirect": {
+                  "enabled": true,
+                  "idField": "id",
+                  "basePath": "/agents-studio/voice-agents/"
+                }
+              },
+              "external_api_action": {
+                "body": {
+                  "agent_id": "{{value}}"
+                },
+                "body_format": "raw"
+              },
+              "dynamicOptions": []
+            },
+            {
+              "name": "variables",
+              "displayName": "Variables",
+              "type": "key-value",
+              "addButtonText": "Add Variables",
+              "external_api_action": {
+                "body": {
+                  "variables": "{{value}}"
+                },
+                "body_format": "raw"
+              },
+              "isDynamicLoading": true,
+              "dynamicLoad": {
+                "dependencies": {
+                  "agent_id": {
+                    "inheritConfig": true
+                  }
+                },
+                "useUserContext": {
+                  "org_id": "{{userContext.organization_id}}"
+                },
+                "external_api_action": {
+                  "request_type": "post",
+                  "url": "__REHYDRATE_DAPTA_NATIVE_TEMPLATE_URL__",
+                  "body_format": "raw",
+                  "headers": [],
+                  "body": "",
+                  "body_params": [],
+                  "path_params": [],
+                  "query_params": [],
+                  "authorization": {
+                    "type": "",
+                    "token": "",
+                    "username": "",
+                    "password": "",
+                    "credential": ""
+                  },
+                  "selfsignedCertificate": "false"
+                },
+                "custom_action": {
+                  "attributes": [
+                    {
+                      "name": "org_id",
+                      "displayName": "Org ID",
+                      "type": "input",
+                      "external_api_action": {
+                        "body": {
+                          "org_id": "{{value}}"
+                        },
+                        "body_format": "raw"
+                      }
+                    }
+                  ]
+                },
+                "resultMapping": {
+                  "type": "selector",
+                  "displayName": "key",
+                  "value": "value",
+                  "array": "response.variables"
+                }
+              }
+            }
+          ],
+          "values": {
+            "from_number": "+573124085562",
+            "to_number": "{{normalizar_llamada.to_number}}",
+            "agent_id": "NEW_WELCOME_VOICE_AGENT_UUID",
+            "variables": [
+              {
+                "key": "event_id",
+                "value": "{{normalizar_llamada.event_id}}"
+              },
+              {
+                "key": "credito_id",
+                "value": "{{normalizar_llamada.credito_id}}"
+              },
+              {
+                "key": "event_token",
+                "value": "{{normalizar_llamada.event_token}}"
+              }
+            ]
+          },
+          "type": "external_api_action",
+          "view": "simple",
+          "version": 1
+        },
+        "response": [
+          {
+            "variable_name": "response",
+            "response_value_path": "response.result"
+          },
+          {
+            "variable_name": "error",
+            "response_value_path": "response.error"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chkCl",
+      "type": "action",
+      "name": "Confirmar recepcion",
+      "parentRefs": [
+        "natCl"
+      ],
+      "childRef": "rspCl",
+      "api_action": {
+        "action_type": "code",
+        "on_error": "stop",
+        "code_action": {
+          "code": "const native = params.llamada_bienvenida || {};\nconst hasError = (value) => value !== undefined && value !== null && value !== '' && value !== false && (typeof value !== 'object' || Object.keys(value).length > 0);\nconst parseContainer = (value) => {\n  if (typeof value !== 'string') return value;\n  try { return JSON.parse(value); } catch { return value; }\n};\nconst executionFailed = (value, depth = 0) => {\n  const parsed = parseContainer(value);\n  if (!parsed || typeof parsed !== 'object') return false;\n  if (depth > 12) return true;\n  if (Array.isArray(parsed)) return parsed.some((child) => executionFailed(child, depth + 1));\n  if (hasError(parsed.error) || hasError(parsed.errors) || hasError(parsed.node_errors) || parsed.ok === false || parsed.success === false || [parsed.call_status, parsed.status].some((status) => ['error', 'failed', 'rejected', 'cancelled', 'canceled'].includes(String(status || '').toLowerCase()))) return true;\n  return Object.values(parsed).some((child) => executionFailed(child, depth + 1));\n};\nlet current = native.response;\nconst failed = executionFailed(native);\nlet call_id = null;\nfor (let depth = 0; !failed && depth < 4; depth++) {\n  current = parseContainer(current);\n  if (!current || typeof current !== 'object' || Array.isArray(current)) break;\n  if (typeof current.call_id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(current.call_id)) { call_id = current.call_id; break; }\n  current = current.response ?? current.result ?? current.data;\n}\nmodule.exports = { ok: !failed && Boolean(call_id), call_id: !failed ? call_id : null, code: failed ? 'NATIVE_CALL_ERROR' : call_id ? null : 'NATIVE_CALL_UNKNOWN' };"
+        },
+        "response": [
+          {
+            "variable_name": "ok",
+            "response_value_path": "ok"
+          },
+          {
+            "variable_name": "call_id",
+            "response_value_path": "call_id"
+          },
+          {
+            "variable_name": "code",
+            "response_value_path": "code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rspCl",
+      "type": "response",
+      "name": "Respuesta llamada",
+      "parentRefs": [
+        "chkCl"
+      ],
+      "api_response": {
+        "response_params": [
+          {
+            "key": "ok",
+            "value": "{{confirmar_recepcion.ok}}"
+          },
+          {
+            "key": "call_id",
+            "value": "{{confirmar_recepcion.call_id}}"
+          },
+          {
+            "key": "code",
+            "value": "{{confirmar_recepcion.code}}"
+          }
+        ]
+      }
+    }
+  ],
+  "note_nodes": []
+}

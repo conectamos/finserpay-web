@@ -4,19 +4,20 @@ import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 const nativeRequire = createRequire(import.meta.url);
-export function load(path, mocks = {}) {
+export function load(path, mocks = {}, globals = {}) {
   const loaded = { exports: {} };
   const source = readFileSync(new URL("../" + path, import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
   } }).outputText;
   runInNewContext(compiled, { module: loaded, exports: loaded.exports, Date, console, Request, Response,
+    process: { env: {} }, ...globals,
     require(name) {
       if (name === "server-only") return {};
       if (name in mocks) return mocks[name];
       if (name.startsWith("node:")) return nativeRequire(name);
       if (name === "../scripts/second-credit-authorization-schema.mjs") return nativeRequire(name);
-      if (name.startsWith("@/lib/")) return load(name.slice(2) + ".ts", mocks);
+      if (name.startsWith("@/lib/")) return load(name.slice(2) + ".ts", mocks, globals);
       throw new Error("Unexpected dependency: " + name);
     },
   });
@@ -57,6 +58,10 @@ export function routeFixture(db, options = {}) {
     "@/lib/mass-credit-sadmin": helper, "@/lib/credit-approval-errors": approvalErrors,
     "@/lib/second-credit-authorization": secondCreditHelper,
     "@/lib/dapta-welcome": { sendDaptaWelcome: options.sendDaptaWelcome ?? (async () => "disabled") },
+    "@/lib/credit-welcome-voice-store": {
+      enqueueCreditWelcomeVoice: options.enqueueCreditWelcomeVoice ?? (async () => null),
+      ensureCreditWelcomeVoiceSchema: options.ensureCreditWelcomeVoiceSchema ?? (async () => {}),
+    },
     "@/lib/document-blacklist-core": blacklistErrors,
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async document => {
       if (options.blocked === document) throw new blacklistErrors.DocumentBlacklistError("DOCUMENT_BLACKLISTED", "Cédula bloqueada", 403);
@@ -74,7 +79,7 @@ export function routeFixture(db, options = {}) {
       generatePaymentReference: folio => folio, MAX_CREDIT_INSTALLMENTS: 36,
       sanitizeDeviceValue: value => String(value ?? "").trim(), sanitizeText: value => String(value ?? "").trim(),
     },
-  });
+  }, { process: { env: options.env ?? {} } });
 }
 export const catalogs = {
   aliado: { findMany: async () => [{ id: 2, nombre: "ALIADO PRUEBA", codigo: "ALLY", activo: true }] },

@@ -7,6 +7,7 @@ import { Badge, Button, EmptyState, Input, LoadingState, StatusPill } from "@/ap
 import type { AnalystCenterCase, AnalystCenterDetailResponse, AnalystCenterSearchResponse } from "@/lib/analyst-center-types";
 import { isExcludedCarteraCreditState } from "@/lib/cartera-export";
 import styles from "./analyst-center.module.css";
+import CreditWelcomeVoiceResult from "../credit-welcome-voice-result";
 
 const operationModules = [
   { href: "/dashboard/aprobaciones", title: "Aprobaciones", description: "Solicitudes y bienvenida", icon: ClipboardList },
@@ -158,7 +159,7 @@ export default function AnalystCenter() {
       </div>
       {(!canImei && credit.capabilities.reason) && <p className={styles.availability}>{credit.capabilities.reason}</p>}
       {(!canSignature && credit.capabilities.signatureReason) && <p className={styles.availability}>{credit.capabilities.signatureReason}</p>}
-      <div className={styles.welcome}><strong>Bienvenida</strong>{detail?.welcome.creditFinalized && credit.kind === "CREDIT" ? <Link href={`/dashboard/aprobaciones?credito=${credit.id}`}>Consultar en Aprobaciones <ArrowRight aria-hidden="true" /></Link> : <span>No disponible aún</span>}</div>
+      {credit.kind === "CREDIT" ? <CreditWelcomeVoiceResult key={`welcome-voice:${credit.id}`} creditId={credit.id} /> : <div className={styles.welcome}><strong>Bienvenida por voz</strong><span>Disponible cuando finalice la creación del crédito.</span></div>}
     </section>}
 
     <div className={styles.groups}>
