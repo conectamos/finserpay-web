@@ -275,6 +275,96 @@ test("callback retries produce the same normalized result and storage conflicts 
   assert.equal(failure.status, 503); assert.doesNotMatch(await failure.text(), /private|customer|document|token|database/);
 });
 
+function communicationCall({ turns = [], reason, status = "ended", voicemail = false, recordingAccepted = true, transcript = "", duration = 0 } = {}) {
+  return { ...validCall(), call_status: status, disconnection_reason: reason, transcript_object: turns,
+    transcript, duration_ms: duration, call_analysis: { in_voicemail: voicemail,
+      custom_analysis_data: { recording_accepted: recordingAccepted, identity_confirmed: true, terms_confirmed: true } } };
+}
+const userTurn = content => ({ role: "user", content, words: [], metadata: {} });
+const agentTurn = content => ({ role: "agent", content, words: [], metadata: {} });
+const humanTurns = () => [userTurn("Buenos días."), agentTurn("Le escucho."), userTurn("Sí, soy yo.")];
+async function saveCommunication(call) {
+  const fixture = resultFixture();
+  const response = await fixture.POST(request({ event: "call_analyzed", call }, "resultado"));
+  assert.equal(response.status, 200); assertPrivate(response);
+  assert.deepEqual(await response.json(), { ok: true, duplicate: false });
+  return fixture.calls[0];
+}
+
+test("terminal callbacks classify known unanswered failures and voicemail without relying on duration", async () => {
+  for (const reason of ["voicemail_reached", "dial_no_answer", "dial_failed", "dial_busy", "concurrency_limit_reached", "error_connection_failed"]) {
+    const saved = await saveCommunication(communicationCall({ reason, duration: 180000 }));
+    assert.equal(saved.communicationOutcome, "NO_ANSWER", reason);
+    assert.equal(saved.disconnectionReason, reason);
+  }
+  for (const status of ["failed", "error", "not_connected", "no_answer", "no-answer"]) {
+    const saved = await saveCommunication(communicationCall({ status }));
+    assert.equal(saved.communicationOutcome, "NO_ANSWER", status);
+    assert.equal(saved.status, "FAILED");
+  }
+  const voicemail = await saveCommunication(communicationCall({ voicemail: true, turns: [userTurn("Deje su mensaje después del tono.")] }));
+  assert.equal(voicemail.communicationOutcome, "NO_ANSWER");
+});
+
+test("two meaningful structured user turns establish human contact, while contradictory failure evidence stays uncertain", async () => {
+  for (const duration of [0, 300000]) {
+    const saved = await saveCommunication(communicationCall({ reason: "agent_hangup", turns: humanTurns(), duration }));
+    assert.equal(saved.communicationOutcome, "HUMAN_CONTACT");
+    assert.equal(saved.disconnectionReason, "agent_hangup");
+    assert.equal("identityVerified" in saved, false);
+  }
+  for (const evidence of [{ voicemail: true }, { reason: "voicemail_reached" }, { reason: "dial_no_answer" }, { reason: "error_connection_failed" }]) {
+    const saved = await saveCommunication(communicationCall({ ...evidence, turns: humanTurns() }));
+    assert.equal(saved.communicationOutcome, "UNCERTAIN");
+  }
+  const failedAfterSpeech = await saveCommunication(communicationCall({ status: "failed", transcript: "Conversación existente sin turnos estructurados." }));
+  assert.equal(failedAfterSpeech.communicationOutcome, "UNCERTAIN");
+  const interrupted = await saveCommunication(communicationCall({ reason: "dial_busy", turns: [userTurn("¿Con quién hablo?")] }));
+  assert.equal(interrupted.communicationOutcome, "UNCERTAIN");
+});
+
+test("a confused single turn, model flags and unstructured text cannot claim human contact or verified identity", async () => {
+  for (const turns of [[userTurn("¿Con quién hablo?")], [userTurn("   "), userTurn("...")],
+    [userTurn("[inaudible]"), userTurn("[silencio]")], [agentTurn("No me llame. Número equivocado."), { role: "tool", content: "Sí, soy yo." }],
+    [{ role: "user", content: { text: "Hola" } }, { role: "assistant", content: "Hola" }], "user: Hola. user: Sí."]) {
+    const saved = await saveCommunication(communicationCall({ turns, duration: 300000,
+      transcript: "Agent: No me llame. User: Hola. User: Sí." }));
+    assert.equal(saved.communicationOutcome, "UNCERTAIN");
+    for (const key of ["identity_confirmed", "identityVerified", "terms_confirmed", "transcript_object", "event_token"]) assert.equal(key in saved, false);
+    assert.equal(saved.transcript, "Agent: No me llame. User: Hola. User: Sí.");
+  }
+});
+
+test("explicit user opt-outs and recording refusal take precedence over contact and voicemail evidence", async () => {
+  for (const utterance of ["Por favor, no me llame más.", "No me llamen.", "No me vuelva a llamar.",
+    "No quiero llamadas.", "No quiero recibir más llamadas.", "Es un número equivocado."]) {
+    const saved = await saveCommunication(communicationCall({ voicemail: true, reason: "dial_busy",
+      turns: [...humanTurns(), userTurn(utterance)] }));
+    assert.equal(saved.communicationOutcome, "OPT_OUT", utterance);
+  }
+  const declined = await saveCommunication(communicationCall({ recordingAccepted: false, reason: "voicemail_reached" }));
+  assert.equal(declined.communicationOutcome, "OPT_OUT");
+  const forged = communicationCall();
+  forged.communicationOutcome = "HUMAN_CONTACT";
+  forged.call_analysis.custom_analysis_data.communicationOutcome = "HUMAN_CONTACT";
+  assert.equal((await saveCommunication(forged)).communicationOutcome, "UNCERTAIN");
+});
+
+test("disconnection reasons are bounded safe codes and normalized callbacks remain replay-stable", async () => {
+  for (const reason of ["a".repeat(65), "error_bad private-value", "error_bad\nprivate", "https://private.test", { code: "dial_busy" }]) {
+    const saved = await saveCommunication(communicationCall({ reason }));
+    assert.equal(saved.disconnectionReason, null);
+    assert.equal(saved.communicationOutcome, "UNCERTAIN");
+  }
+  const f = resultFixture();
+  const call = communicationCall({ reason: "DIAL_BUSY" });
+  assert.deepEqual(await (await f.POST(request({ call }, "resultado"))).json(), { ok: true, duplicate: false });
+  assert.deepEqual(await (await f.POST(request({ call }, "resultado"))).json(), { ok: true, duplicate: true });
+  assert.deepEqual(f.calls[0], f.calls[1]);
+  assert.equal(f.calls[0].disconnectionReason, "dial_busy");
+  assert.equal(f.calls[0].communicationOutcome, "NO_ANSWER");
+});
+
 const user = (patch = {}) => ({ id: 7, activo: true, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY",
   aliadoAccesoId: 2, sedeId: 5, sedeAccesoActiva: true, aliadoAccesoActivo: true, ...patch });
 const callView = () => ({ id: identity.eventId, creditId: 72, source: "NORMAL", status: "COMPLETED", providerCallId: "call-example-01",

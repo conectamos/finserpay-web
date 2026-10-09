@@ -10,8 +10,9 @@ import { matchWelcomeVoiceIdentity, normalizeWelcomeVoiceDocument, normalizeWelc
   safeDaptaWelcomeVoiceUrl } from "@/lib/credit-welcome-voice-core";
 import { creditWelcomeVoiceSchemaStatements } from "@/scripts/credit-welcome-voice-schema.mjs";
 import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } from "@/lib/credit-welcome-voice-speech";
+import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
 
-export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST";
+export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN";
 export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | "COMPLETED" |
   "FAILED" | "UNKNOWN" | "CANCELLED" | "SKIPPED";
 export type CreditWelcomeVoiceSnapshot = {
@@ -27,6 +28,7 @@ export type CreditWelcomeVoiceResultPayload = {
   eventId: string; creditId: number; providerCallId: string; status: "COMPLETED" | "FAILED";
   recordingUrl?: string | null; summary?: string | null; transcript?: string | null; doubts?: string | null;
   durationSeconds?: number | null; completedAt?: string | null; resultCode?: string | null;
+  communicationOutcome?: string | null; disconnectionReason?: string | null;
 };
 export type VoiceCallRecord = {
   id: string; creditId: number; source: CreditWelcomeVoiceSource; status: CreditWelcomeVoiceStatus;
@@ -70,10 +72,18 @@ type EventRow = {
   snapshot: CreditWelcomeVoiceSnapshot | null; providerCallId: string | null; identityAttempts: number;
   identityVerifiedAt: Date | string | null; resultHash: string | null;
   dispatchedAt: Date | string | null;
+  campaignId: string | null; campaignSlot: string | null; resultCode: string | null;
+  communicationOutcome: string | null; disconnectionReason: string | null;
 };
-const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","resultHash","dispatchedAt"`;
+const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","resultHash","dispatchedAt","campaignId","campaignSlot","resultCode","communicationOutcome","disconnectionReason"`;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const validCreditId = (id: number) => Number.isSafeInteger(id) && id > 0;
+const validCreditId = (id: number) => Number.isSafeInteger(id) && id > 0 && id <= 2_147_483_647;
+const validCampaignId = (id: string) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id);
+const validCampaignSlot = (slot: string) => typeof slot === "string" && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(slot) && calendarDay(slot) === slot.slice(0, 10);
+type CampaignRow = { id: string; startDate: string; creditIds: number[] };
+type CampaignMember = { campaignId: string; creditoId: number; state: "ACTIVE" | "CONTACTED" | "STOPPED" | "HELD";
+  lastEventId: string | null; reviewRevision: number | null; reviewHash: string | null };
+type ReviewRow = { status: string; revision: number; reviewHash: string | null };
 function calendarDay(value: unknown): string | null {
   const day = value instanceof Date ? (Number.isFinite(value.getTime()) ? value.toISOString().slice(0, 10) : "")
     : typeof value === "string" ? /^\d{4}-\d{2}-\d{2}(?:$|T)/.test(value) ? value.slice(0, 10) : "" : "";
@@ -198,7 +208,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   const enabled = deps.enabled ?? (() => process.env.DAPTA_WELCOME_VOICE_ENABLED === "true");
   const now = deps.now ?? (() => new Date());
   const readCredit = (db: WelcomeVoiceTransaction, id: number) => db.credito.findUnique({ where: { id }, select: creditSelect });
-  async function readEvent(db: WelcomeVoiceTransaction, id: string, lock = true) {
+  async function readEvent(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, id: string, lock = true) {
     const rows = await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1::uuid ${lock ? "FOR UPDATE" : ""}`, id);
     return rows[0] || null;
   }
@@ -206,6 +216,32 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     const status = ["CREDIT_MISSING", "CREDIT_CLOSED", "CREDIT_PAID"].includes(code) ? "CANCELLED" : "SKIPPED";
     await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"=$2,"resultCode"=$3,"updatedAt"=$4
       WHERE "id"=$1::uuid AND "status" IN ('PENDING','DISPATCHING')`, row.id, status, code, now());
+    if (row.campaignId) await setMemberState(db, row.campaignId, row.creditoId, status === "CANCELLED" ? "STOPPED" : "HELD", code);
+  }
+  async function setMemberState(db: WelcomeVoiceTransaction, campaignId: string, creditId: number,
+    state: CampaignMember["state"], reason: string) {
+    await db.$executeRawUnsafe(`UPDATE "VoiceReviewCampaignMember" SET "state"=$3,"stopReason"=$4,"updatedAt"=$5
+      WHERE "campaignId"=$1 AND "creditoId"=$2 AND "state"='ACTIVE'`, campaignId, creditId, state, reason, now());
+  }
+  async function readCampaign(db: WelcomeVoiceTransaction, id: string, lock = false) {
+    return (await db.$queryRawUnsafe<CampaignRow[]>(`SELECT "id","startDate"::text,"creditIds" FROM "VoiceReviewCampaign"
+      WHERE "id"=$1 ${lock ? "FOR UPDATE" : ""}`, id))[0] ?? null;
+  }
+  async function readReview(db: WelcomeVoiceTransaction, creditId: number) {
+    return (await db.$queryRawUnsafe<ReviewRow[]>(`SELECT "status","revision","reviewHash" FROM "CreditApprovalReview"
+      WHERE "creditoId"=$1 FOR SHARE`, creditId))[0] ?? null;
+  }
+  async function checkCampaignReview(db: WelcomeVoiceTransaction, member: CampaignMember) {
+    const review = await readReview(db, member.creditoId);
+    if (!review || review.status !== "PENDING") {
+      await setMemberState(db, member.campaignId, member.creditoId, "STOPPED", "REVIEW_NOT_PENDING");
+      return false;
+    }
+    if (review.revision !== member.reviewRevision || review.reviewHash !== member.reviewHash) {
+      await setMemberState(db, member.campaignId, member.creditoId, "HELD", "REVIEW_CHANGED");
+      return false;
+    }
+    return true;
   }
   async function revalidate(db: WelcomeVoiceTransaction, event: EventRow): Promise<CreditWelcomeVoiceSnapshot | null> {
     const credit = await readCredit(db, event.creditoId);
@@ -251,6 +287,104 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       }
       return claims;
     });
+  }
+  /** Cohort and review revision are frozen once; repeating configuration never replaces them. */
+  async function ensureVoiceReviewCampaign(input: { id: string; startDate: string; creditIds: number[] }) {
+    if (!enabled()) throw new CreditWelcomeVoiceStoreError("CAMPAIGN_DISABLED", "Campaña no habilitada.");
+    if (!validCampaignId(input.id) || !/^\d{4}-\d{2}-\d{2}$/.test(input.startDate) || calendarDay(input.startDate) !== input.startDate ||
+      !Array.isArray(input.creditIds) || input.creditIds.length < 1 || input.creditIds.length > 100 ||
+      input.creditIds.some(id => !validCreditId(id)) || new Set(input.creditIds).size !== input.creditIds.length) {
+      throw new CreditWelcomeVoiceStoreError("INVALID_CAMPAIGN", "Configuración de campaña inválida.", 400);
+    }
+    const creditIds = [...input.creditIds].sort((a, b) => a - b);
+    return database.$transaction(async db => {
+      const inserted = await db.$queryRawUnsafe<Array<{ id: string }>>(`INSERT INTO "VoiceReviewCampaign" ("id","startDate","creditIds","createdAt")
+        VALUES ($1,$2::date,$3::jsonb,$4) ON CONFLICT ("id") DO NOTHING RETURNING "id"`, input.id, input.startDate, JSON.stringify(creditIds), now());
+      const campaign = await readCampaign(db, input.id, true);
+      if (!campaign || campaign.startDate !== input.startDate || JSON.stringify(campaign.creditIds) !== JSON.stringify(creditIds)) {
+        throw new CreditWelcomeVoiceStoreError("CAMPAIGN_CONFLICT", "La campaña ya tiene una cohorte o fecha diferente.");
+      }
+      // Only the winning first insert captures revisions. Existing members are never refreshed.
+      if (inserted.length) for (const creditId of creditIds) {
+        const review = await readReview(db, creditId);
+        const active = review?.status === "PENDING";
+        await db.$executeRawUnsafe(`INSERT INTO "VoiceReviewCampaignMember"
+          ("campaignId","creditoId","state","stopReason","reviewRevision","reviewHash","updatedAt")
+          VALUES ($1,$2,$3,$4,$5,$6,$7)`, input.id, creditId, active ? "ACTIVE" : "STOPPED", active ? null : "REVIEW_NOT_PENDING",
+          review?.revision ?? null, review?.reviewHash ?? null, now());
+      }
+      return { id: input.id, created: inserted.length > 0 };
+    }, { timeout: 30_000 });
+  }
+  async function claimVoiceReviewCampaign(input: { campaignId: string; slot: string; limit?: number }): Promise<VoiceDispatchClaim[]> {
+    if (!enabled()) return [];
+    if (!validCampaignId(input.campaignId) || !validCampaignSlot(input.slot)) {
+      throw new CreditWelcomeVoiceStoreError("INVALID_CAMPAIGN", "Campaña o franja inválida.", 400);
+    }
+    const limit = Math.max(1, Math.min(25, Number.isFinite(input.limit) ? Math.trunc(input.limit!) : 5));
+    return database.$transaction(async db => {
+      const campaign = await readCampaign(db, input.campaignId);
+      if (!campaign) throw new CreditWelcomeVoiceStoreError("CAMPAIGN_NOT_FOUND", "Campaña no encontrada.", 404);
+      if (getVoiceReviewCampaignSlot(campaign, now()) !== input.slot) return [];
+      const members = await db.$queryRawUnsafe<CampaignMember[]>(`SELECT "campaignId","creditoId","state","lastEventId"::text,"reviewRevision","reviewHash"
+        FROM "VoiceReviewCampaignMember" m WHERE "campaignId"=$1 AND "state"='ACTIVE'
+        AND NOT EXISTS (SELECT 1 FROM "CreditWelcomeVoiceEvent" e WHERE e."campaignId"=m."campaignId" AND e."creditoId"=m."creditoId" AND e."campaignSlot"=$2)
+        ORDER BY "creditoId" LIMIT 100 FOR UPDATE OF m SKIP LOCKED`, input.campaignId, input.slot);
+      const claims: VoiceDispatchClaim[] = [];
+      for (const member of members) {
+        if (claims.length >= limit) break;
+        await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1),$2)::text`, input.campaignId, member.creditoId);
+        await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, member.creditoId);
+        if (!await checkCampaignReview(db, member)) continue;
+        const credit = await readCredit(db, member.creditoId);
+        const snapshot = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
+        const exclusion = creditExclusion(credit, snapshot);
+        if (exclusion || !snapshot) {
+          const code = exclusion ?? "INVALID_CONDITIONS";
+          await setMemberState(db, input.campaignId, member.creditoId,
+            ["CREDIT_MISSING", "CREDIT_CLOSED", "CREDIT_PAID"].includes(code) ? "STOPPED" : "HELD", code);
+          continue;
+        }
+        const latest = (await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent"
+          WHERE "campaignId"=$1 AND "creditoId"=$2 ORDER BY "attemptNumber" DESC LIMIT 1`, input.campaignId, member.creditoId))[0];
+        if (latest) {
+          // A missing/uncertain external response must never cause another call.
+          if (["PENDING", "DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(latest.status)) continue;
+          const decision = classifyVoiceCampaignResult(latest);
+          if (decision !== "RETRY") {
+            await setMemberState(db, input.campaignId, member.creditoId, decision,
+              latest.communicationOutcome ?? latest.resultCode ?? decision);
+            continue;
+          }
+          if (latest.campaignSlot && latest.campaignSlot >= input.slot) continue;
+        }
+        const inflight = await db.$queryRawUnsafe<Array<{ id: string }>>(`SELECT "id"::text FROM "CreditWelcomeVoiceEvent"
+          WHERE "creditoId"=$1 AND "source"<>'CONTROLLED_TEST' AND "status" IN ('DISPATCHING','ACCEPTED','UNKNOWN') LIMIT 1`, member.creditoId);
+        if (inflight.length) continue;
+        const first = (await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent"
+          WHERE "campaignId"=$1 AND "creditoId"=$2 ORDER BY "attemptNumber" ASC LIMIT 1`, input.campaignId, member.creditoId))[0];
+        if (first && (!first.snapshot || !sameSnapshot(first.snapshot, snapshot))) {
+          const changedContact = first.snapshot && (first.snapshot.phone !== snapshot.phone || first.snapshot.name !== snapshot.name || first.snapshot.document !== snapshot.document);
+          await setMemberState(db, input.campaignId, member.creditoId, "HELD", changedContact ? "CONTACT_CHANGED" : "CONDITIONS_CHANGED");
+          continue;
+        }
+        const attempts = await db.$queryRawUnsafe<Array<{ max: number }>>(`SELECT COALESCE(MAX("attemptNumber"),0) AS "max"
+          FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ'`, member.creditoId);
+        const attempt = attempts[0].max + 1;
+        if (!Number.isSafeInteger(attempt) || attempt > 2_147_483_647) {
+          await setMemberState(db, input.campaignId, member.creditoId, "HELD", "ATTEMPT_LIMIT"); continue;
+        }
+        const eventId = randomUUID(), time = now();
+        await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
+          ("id","creditoId","source","attemptNumber","campaignId","campaignSlot","status","snapshot","dispatchedAt","createdAt","updatedAt")
+          VALUES ($1::uuid,$2,'SCHEDULED_CAMPAIGN',$3,$4,$5,'DISPATCHING',$6::jsonb,$7,$7,$7)`,
+          eventId, member.creditoId, attempt, input.campaignId, input.slot, JSON.stringify(first?.snapshot ?? snapshot), time);
+        await db.$executeRawUnsafe(`UPDATE "VoiceReviewCampaignMember" SET "lastEventId"=$3::uuid,"updatedAt"=$4
+          WHERE "campaignId"=$1 AND "creditoId"=$2`, input.campaignId, member.creditoId, eventId, time);
+        claims.push({ eventId, creditId: member.creditoId, snapshot: first?.snapshot ?? snapshot });
+      }
+      return claims;
+    }, { timeout: 30_000 });
   }
   /** Local operator helper only: never scans the queue or retries an attempted call. */
   async function prepareCreditWelcomeVoiceControlledTest(input: { creditId: number; expectedPhone: string; repeatOf?: string }): Promise<VoiceDispatchClaim> {
@@ -317,9 +451,34 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     return database.$transaction(async db => {
       const event = await readEvent(db, eventId);
       if (!event || event.status !== "DISPATCHING") return null;
+      if (event.source === "SCHEDULED_CAMPAIGN") {
+        const member = (await db.$queryRawUnsafe<CampaignMember[]>(`SELECT "campaignId","creditoId","state","lastEventId"::text,"reviewRevision","reviewHash"
+          FROM "VoiceReviewCampaignMember" WHERE "campaignId"=$1 AND "creditoId"=$2 FOR UPDATE`, event.campaignId, event.creditoId))[0];
+        if (!member || member.state !== "ACTIVE" || member.lastEventId !== event.id) {
+          await exclude(db, event, "CAMPAIGN_MEMBER_NOT_ACTIVE"); return null;
+        }
+        if (!await checkCampaignReview(db, member)) {
+          await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='CANCELLED',"resultCode"='REVIEW_NOT_PENDING',"updatedAt"=$2
+            WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, event.id, now());
+          return null;
+        }
+        const campaign = await readCampaign(db, member.campaignId);
+        if (!campaign || getVoiceReviewCampaignSlot(campaign, now()) !== event.campaignSlot) {
+          await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='FAILED',"resultCode"='WINDOW_CLOSED_BEFORE_DISPATCH',"updatedAt"=$2
+            WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, event.id, now());
+          return null;
+        }
+      }
       const snapshot = await revalidate(db, event);
       return snapshot ? { eventId, creditId: event.creditoId, snapshot } : null;
-    });
+    }, { timeout: 30_000 });
+  }
+  async function prepareVoiceReviewCampaign(eventId: string): Promise<VoiceDispatchClaim | null> {
+    if (!enabled()) return null;
+    requireEventIdentity(eventId);
+    const event = await readEvent(database, eventId, false);
+    if (!event || event.source !== "SCHEDULED_CAMPAIGN") return null;
+    return prepareCreditWelcomeVoiceDispatch(eventId);
   }
   async function markCreditWelcomeVoiceDispatchAccepted(eventId: string, callId?: string | null) {
     requireEventIdentity(eventId);
@@ -377,10 +536,19 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (duration !== null && (!Number.isFinite(duration) || duration < 0 || duration > 86400)) throw new CreditWelcomeVoiceStoreError("INVALID_RESULT", "Duración inválida.", 400);
     const resultCode = input.resultCode ?? null;
     if (resultCode !== null && !/^[A-Z0-9_]{1,64}$/.test(resultCode)) throw new CreditWelcomeVoiceStoreError("INVALID_RESULT", "Código de resultado inválido.", 400);
+    const communicationOutcome = input.communicationOutcome ?? null, disconnectionReason = input.disconnectionReason ?? null;
+    if (communicationOutcome !== null && !["HUMAN_CONTACT", "NO_ANSWER", "OPT_OUT", "UNCERTAIN"].includes(communicationOutcome)) {
+      throw new CreditWelcomeVoiceStoreError("INVALID_RESULT", "Resultado de comunicación inválido.", 400);
+    }
+    if (disconnectionReason !== null && !/^[a-z0-9_]{1,64}$/.test(disconnectionReason)) {
+      throw new CreditWelcomeVoiceStoreError("INVALID_RESULT", "Motivo de desconexión inválido.", 400);
+    }
     const completedAt = input.completedAt ? new Date(input.completedAt) : null;
     if (completedAt && !Number.isFinite(completedAt.getTime())) throw new CreditWelcomeVoiceStoreError("INVALID_RESULT", "Fecha inválida.", 400);
     const resultHash = createHash("sha256").update(JSON.stringify({ callId, status: input.status, recordingUrl, summary, transcript, doubts,
-      duration, completedAt: completedAt?.toISOString() ?? null, resultCode })).digest("hex");
+      duration, completedAt: completedAt?.toISOString() ?? null, resultCode,
+      ...(Object.hasOwn(input, "communicationOutcome") ? { communicationOutcome } : {}),
+      ...(Object.hasOwn(input, "disconnectionReason") ? { disconnectionReason } : {}) })).digest("hex");
     return database.$transaction(async db => {
       const event = await readEvent(db, input.eventId);
       if (!event || event.creditoId !== input.creditId) throw new CreditWelcomeVoiceStoreError("EVENT_NOT_FOUND", "Evento no encontrado.", 404);
@@ -394,8 +562,8 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       if (linked.length) throw new CreditWelcomeVoiceStoreError("CALL_ID_CONFLICT", "La llamada ya está vinculada a otro evento.");
       await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"=$2,"providerCallId"=$3,
         "completedAt"=$4,"durationSeconds"=$5,"summary"=$6,"transcript"=$7,"doubts"=$8,"recordingUrl"=$9,
-        "resultCode"=$10,"resultHash"=$11,"updatedAt"=$12 WHERE "id"=$1::uuid`, event.id, input.status, callId,
-        completedAt ?? now(), duration, summary, transcript, doubts, recordingUrl, resultCode, resultHash, now());
+        "resultCode"=$10,"resultHash"=$11,"updatedAt"=$12,"communicationOutcome"=$13,"disconnectionReason"=$14 WHERE "id"=$1::uuid`, event.id, input.status, callId,
+        completedAt ?? now(), duration, summary, transcript, doubts, recordingUrl, resultCode, resultHash, now(), communicationOutcome, disconnectionReason);
       return { eventId: event.id, unchanged: false };
     });
   }
@@ -414,6 +582,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     });
   }
   return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceControlledTest, prepareCreditWelcomeVoiceDispatch,
+    ensureVoiceReviewCampaign, claimVoiceReviewCampaign, prepareVoiceReviewCampaign,
     markCreditWelcomeVoiceDispatchAccepted, markCreditWelcomeVoiceDispatchUnknown, markCreditWelcomeVoiceDispatchFailed,
     verifyCreditWelcomeVoiceIdentity, saveCreditWelcomeVoiceResult, listCreditWelcomeVoiceCallsForCredit };
 }
@@ -421,6 +590,9 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
 const store = createCreditWelcomeVoiceStore();
 export const enqueueCreditWelcomeVoice = store.enqueueCreditWelcomeVoice;
 export const claimPendingCreditWelcomeVoice = store.claimPendingCreditWelcomeVoice;
+export const ensureVoiceReviewCampaign = store.ensureVoiceReviewCampaign;
+export const claimVoiceReviewCampaign = store.claimVoiceReviewCampaign;
+export const prepareVoiceReviewCampaign = store.prepareVoiceReviewCampaign;
 export const prepareCreditWelcomeVoiceDispatch = store.prepareCreditWelcomeVoiceDispatch;
 export const markCreditWelcomeVoiceDispatchAccepted = store.markCreditWelcomeVoiceDispatchAccepted;
 export const markCreditWelcomeVoiceDispatchUnknown = store.markCreditWelcomeVoiceDispatchUnknown;
