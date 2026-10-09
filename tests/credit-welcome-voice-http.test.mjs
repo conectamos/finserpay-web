@@ -101,7 +101,7 @@ test("spoken document blocks and individual digits are parsed without an expecte
   }
   for (const spoken of ["12abc345", "1234", "treinta ocho", "doscientos cuarenta y cuatro veinte"]) {
     const response = await f.POST(request({ ...validIdentity(), customer_document: spoken }));
-    assert.deepEqual(await response.json(), { ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" });
+    assert.deepEqual(await response.json(), { ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" });
   }
   assert.equal(f.calls.length, 3);
 });
@@ -342,12 +342,51 @@ test("explicit user opt-outs and recording refusal take precedence over contact 
       turns: [...humanTurns(), userTurn(utterance)] }));
     assert.equal(saved.communicationOutcome, "OPT_OUT", utterance);
   }
-  const declined = await saveCommunication(communicationCall({ recordingAccepted: false, reason: "voicemail_reached" }));
+  const declined = await saveCommunication(communicationCall({ recordingAccepted: false,
+    turns: [userTurn("No autorizo que me graben.")] }));
   assert.equal(declined.communicationOutcome, "OPT_OUT");
+  assert.equal(declined.resultCode, "RECORDING_DECLINED");
   const forged = communicationCall();
   forged.communicationOutcome = "HUMAN_CONTACT";
   forged.call_analysis.custom_analysis_data.communicationOutcome = "HUMAN_CONTACT";
   assert.equal((await saveCommunication(forged)).communicationOutcome, "UNCERTAIN");
+});
+
+test("a bare no followed by a name correction never becomes recording refusal from a model flag", async () => {
+  for (const utterance of ["No, mi nombre es Natalia de la Peña.", "No, viene Natalie a la pesca buena.", "No.", "No, gracias, sí pueden grabar."]) {
+    const saved = await saveCommunication(communicationCall({ recordingAccepted: false, reason: "agent_hangup",
+      turns: [userTurn(utterance)] }));
+    assert.equal(saved.communicationOutcome, "UNCERTAIN", utterance);
+    assert.notEqual(saved.resultCode, "RECORDING_DECLINED", utterance);
+  }
+  const missing = communicationCall({ recordingAccepted: false, reason: "agent_hangup", transcript: "No autorizo que me graben." });
+  delete missing.transcript_object;
+  const saved = await saveCommunication(missing);
+  assert.equal(saved.communicationOutcome, "UNCERTAIN");
+  assert.notEqual(saved.resultCode, "RECORDING_DECLINED");
+});
+
+test("recording refusal requires explicit structured user speech and remains opt-out despite affirmative model flags", async () => {
+  for (const utterance of ["No autorizo que me graben.", "No acepto la grabación.", "No quiero ser grabada.",
+    "Prefiero que no me graben.", "Deje de grabarme.", "No estoy de acuerdo con la grabación."]) {
+    const saved = await saveCommunication(communicationCall({ recordingAccepted: true,
+      turns: [...humanTurns(), userTurn(utterance)] }));
+    assert.equal(saved.communicationOutcome, "OPT_OUT", utterance);
+    assert.equal(saved.resultCode, "RECORDING_DECLINED", utterance);
+  }
+  const agentOnly = await saveCommunication(communicationCall({ recordingAccepted: false,
+    turns: [agentTurn("No autorizo que me graben.")] }));
+  assert.equal(agentOnly.communicationOutcome, "UNCERTAIN");
+  assert.notEqual(agentOnly.resultCode, "RECORDING_DECLINED");
+});
+
+test("known no-answer and voicemail remain retryable despite a false recording model flag", async () => {
+  for (const fields of [{ reason: "dial_no_answer" }, { status: "failed", reason: "dial_busy" },
+    { reason: "voicemail_reached", turns: [userTurn("Deje su mensaje después del tono.")] }, { voicemail: true }]) {
+    const saved = await saveCommunication(communicationCall({ ...fields, recordingAccepted: false }));
+    assert.equal(saved.communicationOutcome, "NO_ANSWER");
+    assert.notEqual(saved.resultCode, "RECORDING_DECLINED");
+  }
 });
 
 test("disconnection reasons are bounded safe codes and normalized callbacks remain replay-stable", async () => {

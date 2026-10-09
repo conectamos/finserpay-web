@@ -123,7 +123,7 @@ export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
       }
       const customerName = requiredString(body.customer_name, 240);
       const customerDocument = parseWelcomeVoiceSpokenDocument(requiredString(body.customer_document, 240));
-      if (!customerDocument) return response({ ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" });
+      if (!customerDocument) return response({ ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" });
       const result = await dependencies.verifyIdentity({ ...scope, customerName, customerDocument });
       return response(result.verificado === true
         ? { ok: true, verificado: true, condiciones: result.condiciones }
@@ -162,10 +162,20 @@ function spokenUserTurns(value: unknown): string[] {
   });
 }
 
-function callbackCommunicationOutcome(call: ObjectValue, analysis: ObjectValue, custom: ObjectValue,
-  failed: boolean, disconnectionReason: string | null): WelcomeVoiceCommunicationOutcome {
+function explicitlyRefusesRecording(userTurns: string[]): boolean {
+  // A model's recording_accepted flag, a bare "no" or a correction of a name
+  // is not an opt-out. Require an explicit refusal about recording in user speech.
+  return userTurns.some(text =>
+    /\bno (?:autorizo|acepto|consiento|permito|quiero|deseo) (?:(?:la|esta) grabacion|ser grabad[oa]|que (?:me|nos) grab(?:e|en|es)|que grab(?:e|en|es)(?: (?:mi|nuestra|la|esta) llamada)?|que (?:la|esta) llamada (?:sea|este siendo) grabada)\b/.test(text)
+    || /\bno (?:me|nos) grab(?:e|en|es)\b/.test(text)
+    || /\b(?:deje|dejen|deja) de grabar(?:me|nos)?\b/.test(text)
+    || /\bno estoy de acuerdo con (?:(?:la|esta) grabacion|que (?:me|nos) grab(?:e|en|es))\b/.test(text));
+}
+
+function callbackCommunicationOutcome(call: ObjectValue, analysis: ObjectValue,
+  failed: boolean, disconnectionReason: string | null, recordingDeclined: boolean): WelcomeVoiceCommunicationOutcome {
   const userTurns = spokenUserTurns(call.transcript_object);
-  const optedOut = custom.recording_accepted === false || userTurns.some(text =>
+  const optedOut = recordingDeclined || userTurns.some(text =>
     /\b(?:no (?:me|nos) (?:llames?|llamen|vuelvas? a llamar|vuelvan a llamar)|no quiero (?:recibir )?(?:mas )?llamadas|numero (?:equivocado|incorrecto))\b/.test(text));
   if (optedOut) return "OPT_OUT";
   const voicemail = analysis.in_voicemail === true || disconnectionReason === "voicemail_reached";
@@ -208,8 +218,9 @@ function parseCallback(body: ObjectValue, token: WelcomeVoiceToken, expectedAgen
     }
     durationSeconds = Math.round(call.duration_ms / 1000);
   }
+  const recordingDeclined = explicitlyRefusesRecording(spokenUserTurns(call.transcript_object));
   const resultCode = failed ? "CALL_FAILED" : analysis.in_voicemail === true ? "VOICEMAIL"
-    : custom.recording_accepted === false ? "RECORDING_DECLINED"
+    : recordingDeclined ? "RECORDING_DECLINED"
       : discrepancies ? "CUSTOMER_DISCREPANCY" : questions ? "CUSTOMER_QUESTIONS"
         : custom.terms_confirmed === true ? "TERMS_REVIEWED" : "CALL_COMPLETED";
   const disconnectionReason = callbackDisconnectionReason(call.disconnection_reason);
@@ -218,7 +229,7 @@ function parseCallback(body: ObjectValue, token: WelcomeVoiceToken, expectedAgen
     recordingUrl: safeUrl(call.recording_url) || safeUrl(call.public_log_url),
     summary: optionalText(analysis.call_summary, 4000), transcript: optionalText(call.transcript, 32768),
     doubts, durationSeconds, completedAt: null, resultCode, disconnectionReason,
-    communicationOutcome: callbackCommunicationOutcome(call, analysis, custom, failed, disconnectionReason) };
+    communicationOutcome: callbackCommunicationOutcome(call, analysis, failed, disconnectionReason, recordingDeclined) };
 }
 
 export function createCreditWelcomeVoiceResultHandler(dependencies: {
