@@ -547,6 +547,54 @@ test("manual repeat creates exactly one fresh auditable child, leaving the compl
   await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest(input), error => error.code === "CONTROLLED_TEST_ALREADY_ATTEMPTED");
 });
 
+test("manual repeat allocates after an intervening scheduled attempt and concurrent replay preserves both completed calls", async t => {
+  const f = await fixture(t);
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  const first = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  await f.result(first.eventId);
+  const parent = await f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: first.eventId });
+  await f.result(parent.eventId, { providerCallId: "completed-controlled-13" });
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "attemptNumber"=13 WHERE "id"=$1::uuid', [parent.eventId]);
+  await f.db.exec(`INSERT INTO "VoiceReviewCampaign" ("id","startDate","creditIds") VALUES ('intervening','2026-10-09','[1]');
+    INSERT INTO "VoiceReviewCampaignMember" ("campaignId","creditoId") VALUES ('intervening',1);`);
+  const scheduledId = "00000000-0000-4000-8000-000000000014";
+  await f.db.query(`INSERT INTO "CreditWelcomeVoiceEvent"
+    ("id","creditoId","source","attemptNumber","campaignId","campaignSlot","status","snapshot","providerCallId","resultHash")
+    SELECT $1::uuid,1,'SCHEDULED_CAMPAIGN',14,'intervening','2026-10-09T08:00','COMPLETED',"snapshot",'scheduled-14',$2
+      FROM "CreditWelcomeVoiceEvent" WHERE "id"=$3::uuid`, [scheduledId, "a".repeat(64), parent.eventId]);
+  const before = await f.rows();
+  const attempts = await Promise.allSettled([1, 2].map(() => f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: parent.eventId })));
+  assert.equal(attempts.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(attempts.find(result => result.status === "rejected").reason.code, "CONTROLLED_TEST_ALREADY_REPEATED");
+  const claim = attempts.find(result => result.status === "fulfilled").value;
+  const records = await f.rows();
+  assert.deepEqual(records.slice(0, 3), before);
+  assert.equal(records.length, 4);
+  assert.equal(records[3].id, claim.eventId);
+  assert.equal(records[3].attemptNumber, 15);
+  assert.equal(records[3].repeatOf, parent.eventId);
+  assert.equal(records[3].source, "CONTROLLED_TEST");
+  assert.equal(records[3].status, "DISPATCHING");
+  assert.equal(records[3].providerCallId, null);
+});
+
+test("manual repeat fails without insertion when the shared credit attempt sequence is exhausted", async t => {
+  const f = await fixture(t);
+  const input = { creditId: 1, expectedPhone: "+573000000001" };
+  const first = await f.store.prepareCreditWelcomeVoiceControlledTest(input);
+  await f.result(first.eventId);
+  await f.db.exec(`INSERT INTO "VoiceReviewCampaign" ("id","startDate","creditIds") VALUES ('exhausted','2026-10-09','[1]');
+    INSERT INTO "VoiceReviewCampaignMember" ("campaignId","creditoId") VALUES ('exhausted',1);`);
+  await f.db.query(`INSERT INTO "CreditWelcomeVoiceEvent"
+    ("id","creditoId","source","attemptNumber","campaignId","campaignSlot","status","snapshot")
+    SELECT '00000000-0000-4000-8000-000000000099'::uuid,1,'SCHEDULED_CAMPAIGN',2147483647,'exhausted','2026-10-09T08:00','COMPLETED',"snapshot"
+      FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1::uuid`, [first.eventId]);
+  const before = await f.rows();
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ ...input, repeatOf: first.eventId }),
+    error => error.code === "CONTROLLED_TEST_REPEAT_NOT_ALLOWED");
+  assert.deepEqual(await f.rows(), before);
+});
+
 test("repeat requires a completed real controlled call of the same credit and rejects every ambiguous or closed alternative", async t => {
   const states = ["PENDING", "DISPATCHING", "ACCEPTED", "FAILED", "UNKNOWN", "CANCELLED", "SKIPPED", "COMPLETED"];
   const f = await fixture(t, { credits: Array.from({ length: 10 }, (_, index) => sample(index + 1)) });
