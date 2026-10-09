@@ -6,11 +6,12 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { extractCreditFactorySnapshotDetails } from "@/lib/credit-factory-snapshot";
 import { isExcludedCarteraCreditState } from "@/lib/cartera-export";
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
-import { matchWelcomeVoiceIdentity, normalizeWelcomeVoiceDocument, normalizeWelcomeVoiceName,
+import { matchWelcomeVoiceIdentity, matchWelcomeVoiceApplicationIdentity, matchesWelcomeVoiceApplicationName, normalizeWelcomeVoiceDocument, normalizeWelcomeVoiceName,
   safeDaptaWelcomeVoiceUrl } from "@/lib/credit-welcome-voice-core";
 import { creditWelcomeVoiceSchemaStatements } from "@/scripts/credit-welcome-voice-schema.mjs";
 import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } from "@/lib/credit-welcome-voice-speech";
 import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
+import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-document";
 
 export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN";
 export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | "COMPLETED" |
@@ -24,6 +25,12 @@ export type CreditWelcomeVoiceSnapshot = {
 };
 export type VoiceFinancialSnapshot = Omit<CreditWelcomeVoiceSnapshot, "document" | "phone"> & { speech: WelcomeVoiceFinancialSpeech | null };
 export type VoiceDispatchClaim = { eventId: string; creditId: number; snapshot: CreditWelcomeVoiceSnapshot };
+export type WelcomeVoiceIdentityRecoveryResponse = {
+  code: "IDENTITY_NOT_CONFIRMED" | "DOCUMENT_NOT_UNDERSTOOD" | null;
+  nextAction: "ASK_NAME" | "ASK_DOCUMENT" | "REVIEW" | "CONTINUE";
+  remainingAttempts: number; question: string | null; mayEndCall: boolean;
+};
+type IdentityRecoveryState = { askedName: boolean; askedDocument: boolean; reviewRequired: boolean };
 export type CreditWelcomeVoiceResultPayload = {
   eventId: string; creditId: number; providerCallId: string; status: "COMPLETED" | "FAILED";
   recordingUrl?: string | null; summary?: string | null; transcript?: string | null; doubts?: string | null;
@@ -70,12 +77,12 @@ type EventRow = {
   id: string; creditoId: number; source: CreditWelcomeVoiceSource; status: CreditWelcomeVoiceStatus;
   attemptNumber: number; repeatOf: string | null;
   snapshot: CreditWelcomeVoiceSnapshot | null; providerCallId: string | null; identityAttempts: number;
-  identityVerifiedAt: Date | string | null; resultHash: string | null;
+  identityVerifiedAt: Date | string | null; identityRecovery: unknown; resultHash: string | null;
   dispatchedAt: Date | string | null;
   campaignId: string | null; campaignSlot: string | null; resultCode: string | null;
   communicationOutcome: string | null; disconnectionReason: string | null;
 };
-const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","resultHash","dispatchedAt","campaignId","campaignSlot","resultCode","communicationOutcome","disconnectionReason"`;
+const eventColumns = `"id"::text,"creditoId","source","status","attemptNumber","repeatOf"::text,"snapshot","providerCallId", "identityAttempts","identityVerifiedAt","identityRecovery","resultHash","dispatchedAt","campaignId","campaignSlot","resultCode","communicationOutcome","disconnectionReason"`;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validCreditId = (id: number) => Number.isSafeInteger(id) && id > 0 && id <= 2_147_483_647;
 const validCampaignId = (id: string) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id);
@@ -201,6 +208,25 @@ function providerId(value: unknown): string {
     throw new CreditWelcomeVoiceStoreError("INVALID_CALL_ID", "Identificador de llamada inválido.", 400);
   }
   return value;
+}
+function identityRecoveryState(value: unknown): IdentityRecoveryState {
+  const empty = { askedName: false, askedDocument: false, reviewRequired: false };
+  if (value === undefined || value === null) return empty;
+  if (typeof value !== "object" || Array.isArray(value)) return { ...empty, reviewRequired: true };
+  const fields = value as Record<string, unknown>;
+  if (Object.keys(fields).some(key => !["askedName", "askedDocument", "reviewRequired"].includes(key) || typeof fields[key] !== "boolean")) {
+    return { ...empty, reviewRequired: true };
+  }
+  return { askedName: fields.askedName === true, askedDocument: fields.askedDocument === true, reviewRequired: fields.reviewRequired === true };
+}
+function recoveryResponse(nextAction: WelcomeVoiceIdentityRecoveryResponse["nextAction"], attempts: number,
+  code: WelcomeVoiceIdentityRecoveryResponse["code"] = "IDENTITY_NOT_CONFIRMED"): WelcomeVoiceIdentityRecoveryResponse {
+  return { code: nextAction === "CONTINUE" ? null : code, nextAction,
+    remainingAttempts: nextAction === "REVIEW" ? 0 : Math.min(2, Math.max(0, 3 - attempts)),
+    question: nextAction === "ASK_NAME" ? "¿Me repite su nombre completo, por favor?"
+      : nextAction === "ASK_DOCUMENT" ? "¿Me repite su número de cédula, por favor?"
+        : nextAction === "REVIEW" ? "No pude confirmar sus datos. Un asesor revisará su caso." : null,
+    mayEndCall: nextAction === "REVIEW" };
 }
 
 export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; enabled?: () => boolean; now?: () => Date } = {}) {
@@ -508,25 +534,50 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   const markCreditWelcomeVoiceDispatchUnknown = (eventId: string, code = "DISPATCH_OUTCOME_UNKNOWN") => markDispatch(eventId, "UNKNOWN", code);
   const markCreditWelcomeVoiceDispatchFailed = (eventId: string, code = "DISPATCH_REJECTED") => markDispatch(eventId, "FAILED", code);
   async function verifyCreditWelcomeVoiceIdentity(input: { eventId: string; creditId?: number; requireFreshDispatch?: boolean; customerName: string; customerDocument: string }):
-    Promise<{ verificado: false } | { verificado: true; condiciones: VoiceFinancialSnapshot }> {
+    Promise<({ verificado: false; condiciones?: null } | { verificado: true; condiciones: VoiceFinancialSnapshot }) & Partial<WelcomeVoiceIdentityRecoveryResponse>> {
     requireEventIdentity(input.eventId, input.creditId);
+    const privateFlow = input.requireFreshDispatch === true;
+    const denied = () => privateFlow ? { verificado: false as const, condiciones: null, ...recoveryResponse("REVIEW", 3) } : { verificado: false as const };
     if (input.creditId === undefined && input.requireFreshDispatch !== true) return { verificado: false };
     return database.$transaction(async db => {
       const event = await readEvent(db, input.eventId);
-      if (!event || (input.creditId !== undefined && event.creditoId !== input.creditId) || !["DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(event.status) || !event.snapshot) return { verificado: false };
+      if (!event || (input.creditId !== undefined && event.creditoId !== input.creditId) || !["DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(event.status) || !event.snapshot) return denied();
       if (input.requireFreshDispatch) {
         const dispatchTime = event.dispatchedAt ? new Date(event.dispatchedAt).getTime() : NaN;
         const age = now().getTime() - dispatchTime;
-        if (!Number.isFinite(age) || age < 0 || age > 24 * 60 * 60 * 1000) return { verificado: false };
+        if (!Number.isFinite(age) || age < 0 || age > 24 * 60 * 60 * 1000) return denied();
       }
-      const correct = matchWelcomeVoiceIdentity({ name: event.snapshot.name, document: event.snapshot.document },
-        { name: input.customerName, document: input.customerDocument });
+      const document = privateFlow ? parseWelcomeVoiceSpokenDocument(input.customerDocument) : input.customerDocument;
+      const nameAccepted = privateFlow && matchesWelcomeVoiceApplicationName(event.snapshot.name, input.customerName);
+      const correct = (privateFlow ? matchWelcomeVoiceApplicationIdentity : matchWelcomeVoiceIdentity)({ name: event.snapshot.name, document: event.snapshot.document },
+        { name: input.customerName, document: document ?? "" });
       const credit = await readCredit(db, event.creditoId);
       const current = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
-      if (creditExclusion(credit, current) || !current || !sameSnapshot(current, event.snapshot)) return { verificado: false };
+      if (creditExclusion(credit, current) || !current || !sameSnapshot(current, event.snapshot)) return denied();
       // A verified retry can read the same conditions; a wrong identity never gets them.
-      if (event.identityVerifiedAt) return correct ? { verificado: true, condiciones: financialConditions(event.snapshot) } : { verificado: false };
-      if (event.identityAttempts >= 3) return { verificado: false };
+      if (event.identityVerifiedAt) return correct
+        ? { verificado: true as const, condiciones: financialConditions(event.snapshot), ...(privateFlow ? recoveryResponse("CONTINUE", event.identityAttempts) : {}) }
+        : denied();
+      if (event.identityAttempts >= 3) return denied();
+      const recovery = identityRecoveryState(event.identityRecovery);
+      if (recovery.reviewRequired) return denied();
+      if (privateFlow) {
+        const attempts = event.identityAttempts + 1;
+        let nextAction: WelcomeVoiceIdentityRecoveryResponse["nextAction"] = "CONTINUE";
+        if (!correct) {
+          nextAction = attempts >= 3 ? "REVIEW" : !document || nameAccepted ? recovery.askedDocument ? "REVIEW" : "ASK_DOCUMENT"
+            : !recovery.askedName ? "ASK_NAME" : !recovery.askedDocument ? "ASK_DOCUMENT" : "REVIEW";
+          if (nextAction === "ASK_NAME") recovery.askedName = true;
+          if (nextAction === "ASK_DOCUMENT") recovery.askedDocument = true;
+          if (nextAction === "REVIEW") recovery.reviewRequired = true;
+        }
+        await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "identityAttempts"=$2,"identityRecovery"=$3::jsonb,
+          "identityVerifiedAt"=CASE WHEN $4 THEN $5 ELSE "identityVerifiedAt" END,"updatedAt"=$5 WHERE "id"=$1::uuid`,
+          event.id, attempts, JSON.stringify(recovery), correct, now());
+        const guidance = recoveryResponse(nextAction, attempts, document ? "IDENTITY_NOT_CONFIRMED" : "DOCUMENT_NOT_UNDERSTOOD");
+        return correct ? { verificado: true as const, condiciones: financialConditions(event.snapshot), ...guidance }
+          : { verificado: false as const, condiciones: null, ...guidance };
+      }
       await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "identityAttempts"="identityAttempts"+1,
         "identityVerifiedAt"=CASE WHEN $2 THEN $3 ELSE "identityVerifiedAt" END,"updatedAt"=$3 WHERE "id"=$1::uuid`, event.id, correct, now());
       return correct ? { verificado: true, condiciones: financialConditions(event.snapshot) } : { verificado: false };

@@ -105,6 +105,22 @@
           {
             "variable_name": "code",
             "response_value_path": "response.code"
+          },
+          {
+            "variable_name": "nextAction",
+            "response_value_path": "response.nextAction"
+          },
+          {
+            "variable_name": "remainingAttempts",
+            "response_value_path": "response.remainingAttempts"
+          },
+          {
+            "variable_name": "question",
+            "response_value_path": "response.question"
+          },
+          {
+            "variable_name": "mayEndCall",
+            "response_value_path": "response.mayEndCall"
           }
         ]
       }
@@ -121,7 +137,7 @@
         "action_type": "code",
         "on_error": "stop",
         "code_action": {
-          "code": "const result = params.verificar_identidad || {};\nconst ok = result.ok === true;\nconst verificado = ok && result.verificado === true;\nconst hasConditions = Boolean(result.condiciones && typeof result.condiciones === 'object' && !Array.isArray(result.condiciones));\nconst speech = hasConditions ? result.condiciones.speech : null;\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst hasSpeech = Boolean(speech && typeof speech === 'object' && !Array.isArray(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString));\nconst complete = !verificado || (hasConditions && hasSpeech);\nmodule.exports = {\n  ok: ok && complete,\n  verificado: verificado && hasConditions && hasSpeech,\n  condiciones: verificado && hasConditions && hasSpeech ? result.condiciones : null,\n  code: ok && complete ? (result.verificado === false && result.code === 'DOCUMENT_NOT_UNDERSTOOD' ? 'DOCUMENT_NOT_UNDERSTOOD' : null) : 'IDENTITY_UNAVAILABLE'\n};"
+          "code": "const result = params.verificar_identidad;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nconst spokenString = (value) => typeof value === 'string' && value.trim().length > 0;\nconst unavailable = { ok: false, verificado: false, condiciones: null, code: 'IDENTITY_UNAVAILABLE', nextAction: null, remainingAttempts: null, question: null, mayEndCall: null };\nconst questions = {\n  ASK_NAME: '¿Me repite su nombre completo, por favor?',\n  ASK_DOCUMENT: '¿Me repite su número de cédula, por favor?',\n  REVIEW: 'No pude confirmar sus datos. Un asesor revisará su caso.'\n};\nlet output = unavailable;\nif (isRecord(result) && result.ok === true && typeof result.verificado === 'boolean' && Number.isInteger(result.remainingAttempts) && result.remainingAttempts >= 0 && result.remainingAttempts <= 2) {\n  if (result.verificado === true) {\n    const conditions = isRecord(result.condiciones) ? result.condiciones : null;\n    const speech = conditions && conditions.speech;\n    const hasSpeech = isRecord(speech) && ['initialPayment', 'installmentAmount', 'installmentCount', 'firstDueDate'].every((key) => spokenString(speech[key])) && Array.isArray(speech.installmentAmounts) && speech.installmentAmounts.length > 0 && speech.installmentAmounts.every(spokenString);\n    if (hasSpeech && result.code === null && result.nextAction === 'CONTINUE' && result.question === null && result.mayEndCall === false) {\n      output = { ok: true, verificado: true, condiciones: conditions, code: null, nextAction: 'CONTINUE', remainingAttempts: result.remainingAttempts, question: null, mayEndCall: false };\n    }\n  } else if (result.condiciones === null && ['IDENTITY_NOT_CONFIRMED', 'DOCUMENT_NOT_UNDERSTOOD'].includes(result.code)) {\n    const action = result.nextAction;\n    const asking = (action === 'ASK_NAME' || action === 'ASK_DOCUMENT') && result.remainingAttempts >= 1 && result.mayEndCall === false;\n    const reviewing = action === 'REVIEW' && result.remainingAttempts === 0 && result.mayEndCall === true;\n    const documentAction = result.code !== 'DOCUMENT_NOT_UNDERSTOOD' || action === 'ASK_DOCUMENT' || action === 'REVIEW';\n    if ((asking || reviewing) && documentAction && result.question === questions[action]) {\n      output = { ok: true, verificado: false, condiciones: null, code: result.code, nextAction: action, remainingAttempts: result.remainingAttempts, question: result.question, mayEndCall: result.mayEndCall };\n    }\n  }\n}\nmodule.exports = output;"
         },
         "response": [
           {
@@ -139,6 +155,22 @@
           {
             "variable_name": "code",
             "response_value_path": "code"
+          },
+          {
+            "variable_name": "nextAction",
+            "response_value_path": "nextAction"
+          },
+          {
+            "variable_name": "remainingAttempts",
+            "response_value_path": "remainingAttempts"
+          },
+          {
+            "variable_name": "question",
+            "response_value_path": "question"
+          },
+          {
+            "variable_name": "mayEndCall",
+            "response_value_path": "mayEndCall"
           }
         ]
       }
@@ -167,6 +199,22 @@
           {
             "key": "code",
             "value": "{{preparar_respuesta_identidad.code}}"
+          },
+          {
+            "key": "nextAction",
+            "value": "{{preparar_respuesta_identidad.nextAction}}"
+          },
+          {
+            "key": "remainingAttempts",
+            "value": "{{preparar_respuesta_identidad.remainingAttempts}}"
+          },
+          {
+            "key": "question",
+            "value": "{{preparar_respuesta_identidad.question}}"
+          },
+          {
+            "key": "mayEndCall",
+            "value": "{{preparar_respuesta_identidad.mayEndCall}}"
           }
         ]
       }

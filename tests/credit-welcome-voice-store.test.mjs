@@ -9,6 +9,7 @@ import { creditWelcomeVoiceSchemaStatements } from "../scripts/credit-welcome-vo
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
+const documentParser = loadReissueModule("lib/credit-welcome-voice-document.ts");
 const [core, plan, snapshot, cartera, phone, speech, campaignPolicy] = await Promise.all([
   jiti.import("../lib/credit-welcome-voice-core.ts"), jiti.import("../lib/credit-payment-plan.ts"),
   jiti.import("../lib/credit-factory-snapshot.ts"), jiti.import("../lib/cartera-export.ts"),
@@ -60,6 +61,7 @@ async function fixture(t, { credits = [sample()], enabled = true, failTransactio
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,
     "@/lib/credit-welcome-voice-speech": speech,
+    "@/lib/credit-welcome-voice-document": documentParser,
     "@/lib/credit-voice-review-campaign-core": campaignPolicy,
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   }, { process: { env: {} } });

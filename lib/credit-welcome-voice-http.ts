@@ -3,6 +3,7 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 import type { WelcomeVoiceToken } from "@/lib/credit-welcome-voice-core";
 import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-document";
+import type { WelcomeVoiceIdentityRecoveryResponse } from "@/lib/credit-welcome-voice-store";
 
 export const welcomeVoicePrivateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -102,7 +103,7 @@ export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
   verifyFlowAuthorization?: (value: unknown) => boolean;
   verifyIdentity: (input: { eventId: string; creditId?: number; requireFreshDispatch?: boolean; customerName: string; customerDocument: string }) => Promise<{
     verificado: boolean; condiciones?: unknown;
-  }>;
+  } & Partial<WelcomeVoiceIdentityRecoveryResponse>>;
 }) {
   return async function POST(request: Request) {
     try {
@@ -122,9 +123,26 @@ export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
         scope = { eventId: token.eventId, creditId: token.creditId };
       }
       const customerName = requiredString(body.customer_name, 240);
-      const customerDocument = parseWelcomeVoiceSpokenDocument(requiredString(body.customer_document, 240));
+      const suppliedDocument = requiredString(body.customer_document, 240);
+      // Private live calls parse and count every submitted identity under the
+      // event's row lock, including unrecognized documents. Legacy tokens retain
+      // their existing canonical-input contract.
+      const customerDocument = usesFlow ? suppliedDocument : parseWelcomeVoiceSpokenDocument(suppliedDocument);
       if (!customerDocument) return response({ ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" });
       const result = await dependencies.verifyIdentity({ ...scope, customerName, customerDocument });
+      if (usesFlow) {
+        const remainingAttempts = Number.isInteger(result.remainingAttempts) && Number(result.remainingAttempts) >= 0 && Number(result.remainingAttempts) <= 2
+          ? result.remainingAttempts : 0;
+        if (result.verificado === true) return response({ ok: true, verificado: true, condiciones: result.condiciones,
+          code: null, nextAction: "CONTINUE", remainingAttempts, question: null, mayEndCall: false });
+        const nextAction = Number(remainingAttempts) > 0 && (result.nextAction === "ASK_NAME" || result.nextAction === "ASK_DOCUMENT") ? result.nextAction : "REVIEW";
+        return response({ ok: true, verificado: false, condiciones: null,
+          code: result.code === "DOCUMENT_NOT_UNDERSTOOD" ? result.code : "IDENTITY_NOT_CONFIRMED", nextAction,
+          remainingAttempts: nextAction === "REVIEW" ? 0 : remainingAttempts,
+          question: nextAction === "ASK_NAME" ? "¿Me repite su nombre completo, por favor?"
+            : nextAction === "ASK_DOCUMENT" ? "¿Me repite su número de cédula, por favor?" : "No pude confirmar sus datos. Un asesor revisará su caso.",
+          mayEndCall: nextAction === "REVIEW" });
+      }
       return response(result.verificado === true
         ? { ok: true, verificado: true, condiciones: result.condiciones }
         : { ok: true, verificado: false });

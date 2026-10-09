@@ -47,6 +47,7 @@ async function fixture(t, { count = 1, enabled = true } = {}) {
     return db.transaction(connection => callback(adapter(connection)));
   } };
   const loaded = loadReissueModule("lib/credit-welcome-voice-store.ts", {
+    "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
     "@/lib/prisma": { default: client }, "@/lib/credit-payment-plan": plan,
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,

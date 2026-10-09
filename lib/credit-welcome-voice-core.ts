@@ -97,6 +97,28 @@ export function matchWelcomeVoiceIdentity(
     && matchesRegisteredWelcomeVoiceName(providedName, expectedName) && expectedDocument === providedDocument;
 }
 
+/** A name component is only one part of the welcome policy, never identity proof by itself. */
+export function matchesWelcomeVoiceApplicationName(expected: unknown, provided: unknown) {
+  const expectedName = normalizeWelcomeVoiceName(expected), providedName = normalizeWelcomeVoiceName(provided);
+  if (!expectedName || !providedName) return false;
+  const registered = expectedName.split(" "), spoken = providedName.split(" ");
+  if (registered.length > 20 || spoken.length > 20) return false;
+  const particles = new Set(["de", "del", "la", "las", "los", "y", "el"]);
+  const meaningful = new Set(registered.filter(token => !particles.has(token)));
+  return spoken.some(token => meaningful.has(token));
+}
+
+/** Welcome application's authorized policy; other callers retain the strict matcher above. */
+export function matchWelcomeVoiceApplicationIdentity(
+  expected: { name: unknown; document: unknown },
+  provided: { name: unknown; document: unknown },
+) {
+  const expectedDocument = normalizeWelcomeVoiceDocument(expected.document);
+  const providedDocument = normalizeWelcomeVoiceDocument(provided.document);
+  return !!expectedDocument && !!providedDocument && expectedDocument === providedDocument
+    && matchesWelcomeVoiceApplicationName(expected.name, provided.name);
+}
+
 export function safeDaptaWelcomeVoiceUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 2048) return null;
   try {

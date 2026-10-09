@@ -8,9 +8,10 @@ const lookup = loadReissueModule("lib/credit-route-lookup.ts");
 const core = loadReissueModule("lib/credit-welcome-voice-core.ts", {
   "./credit-welcome-voice-name": loadReissueModule("lib/credit-welcome-voice-name.ts"),
 });
+const documentParser = loadReissueModule("lib/credit-welcome-voice-document.ts");
 const http = loadReissueModule("lib/credit-welcome-voice-http.ts", {
   "@/lib/roles": roles, "@/lib/aliados": allies, "@/lib/credit-route-lookup": lookup,
-  "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
+  "@/lib/credit-welcome-voice-document": documentParser,
 });
 const now = new Date("2026-10-08T15:00:00.000Z");
 const secret = "test-welcome-voice-secret-at-least-thirty-two-characters";
@@ -114,8 +115,8 @@ test("the two observed ASR payloads with sentence punctuation verify the registe
     verifyFlowAuthorization: value => core.verifyWelcomeVoiceIdentityFlowAuthorization(value, { secret: flowSecret }),
     verifyIdentity: async input => {
       calls.push(plain(input));
-      return core.matchWelcomeVoiceIdentity(registered, { name: input.customerName, document: input.customerDocument })
-        ? { verificado: true, condiciones: { installmentCount: 18 } } : { verificado: false };
+      return core.matchWelcomeVoiceIdentity(registered, { name: input.customerName, document: documentParser.parseWelcomeVoiceSpokenDocument(input.customerDocument) })
+        ? { verificado: true, condiciones: { installmentCount: 18 }, remainingAttempts: 2 } : { verificado: false };
     },
   });
   for (const utterance of ["Treinta y ocho, uno cuarenta y cuatro, cero nueve dos.",
@@ -123,12 +124,14 @@ test("the two observed ASR payloads with sentence punctuation verify the registe
     const response = await POST(request({ event_id: identity.eventId, customer_name: "Luz, que esté a la Hernández.",
       customer_document: utterance }, "identidad", { authorization: `Bearer ${flowSecret}` }));
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { ok: true, verificado: true, condiciones: { installmentCount: 18 } });
-    assert.equal(calls.at(-1).customerDocument, registered.document);
+    assert.deepEqual(await response.json(), { ok: true, verificado: true, condiciones: { installmentCount: 18 },
+      code: null, nextAction: "CONTINUE", remainingAttempts: 2, question: null, mayEndCall: false });
+    assert.equal(calls.at(-1).customerDocument, utterance);
   }
   const wrong = await POST(request({ event_id: identity.eventId, customer_name: "Luz, que esté a la Hernández.",
     customer_document: "tres ocho uno cuatro cuatro cero nueve tres." }, "identidad", { authorization: `Bearer ${flowSecret}` }));
-  assert.deepEqual(await wrong.json(), { ok: true, verificado: false });
+  assert.deepEqual(await wrong.json(), { ok: true, verificado: false, condiciones: null, code: "IDENTITY_NOT_CONFIRMED",
+    nextAction: "REVIEW", remainingAttempts: 0, question: "No pude confirmar sus datos. Un asesor revisará su caso.", mayEndCall: true });
 });
 
 test("trusted identity flow uses a private HTTP bearer and derives credit scope from the event only", async () => {
@@ -148,6 +151,25 @@ test("trusted identity flow uses a private HTTP bearer and derives credit scope 
   assert.equal((await POST(request({ ...body, event_id: "not-uuid" }, "identidad", header))).status, 400);
   assert.equal((await POST(request(body, "identidad", header))).status, 200);
   assert.deepEqual(calls, [{ eventId: identity.eventId, requireFreshDispatch: true, customerName: "Ana María Pérez", customerDocument: "0012345678" }]);
+});
+test("private flow forwards unrecognized literal documents to the locked store and projects server recovery only", async () => {
+  const calls = [], header = { authorization: "Bearer private-flow" };
+  let result = { verificado: false, condiciones: { secret: "hidden" }, customer_document: "hidden", code: "DOCUMENT_NOT_UNDERSTOOD",
+    nextAction: "ASK_DOCUMENT", remainingAttempts: 2, question: "untrusted extra data", mayEndCall: true };
+  const POST = http.createCreditWelcomeVoiceIdentityHandler({ verifyToken, verifyFlowAuthorization: value => value === header.authorization,
+    verifyIdentity: async input => { calls.push(plain(input)); return result; } });
+  const body = { event_id: identity.eventId, customer_name: "Ana Prueba", customer_document: "doscientos cuarenta y cuatro veinte",
+    nextAction: "REVIEW", remainingAttempts: 0, mayEndCall: true, identity_confirmed: true };
+  assert.deepEqual(await (await POST(request(body, "identidad", header))).json(), { ok: true, verificado: false, condiciones: null,
+    code: "DOCUMENT_NOT_UNDERSTOOD", nextAction: "ASK_DOCUMENT", remainingAttempts: 2,
+    question: "¿Me repite su número de cédula, por favor?", mayEndCall: false });
+  assert.equal(calls[0].customerDocument, body.customer_document); assert.equal(calls[0].requireFreshDispatch, true);
+  result = { ...result, nextAction: "ASK_NAME", remainingAttempts: 1, code: "IDENTITY_NOT_CONFIRMED" };
+  const second = await (await POST(request(body, "identidad", header))).json();
+  assert.equal(second.nextAction, "ASK_NAME"); assert.equal(second.mayEndCall, false); assert.equal(second.question, "¿Me repite su nombre completo, por favor?");
+  result = { ...result, remainingAttempts: 0 };
+  const terminal = await (await POST(request(body, "identidad", header))).json();
+  assert.equal(terminal.nextAction, "REVIEW"); assert.equal(terminal.mayEndCall, true); assert.equal(terminal.condiciones, null);
 });
 
 test("callback accepts observed call/data envelopes, normalizes milliseconds, and never trusts model identity", async () => {
