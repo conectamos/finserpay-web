@@ -155,7 +155,7 @@ test("a changed digit, wrong surname and ambiguous transcription never disclose 
   const f = await fixture(t);
   await f.claim();
   const ambiguous = await f.post({ customer_document: "doscientos cuarenta y cuatro veinte." });
-  assert.deepEqual(ambiguous.body, { ok: true, verificado: false, code: "DOCUMENT_NOT_UNDERSTOOD" });
+  assert.deepEqual(ambiguous.body, { ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" });
   assert.equal((await f.row()).identityAttempts, 0);
   for (const overrides of [
     { customer_document: "tres ocho uno cuatro cuatro cero nueve tres." },
