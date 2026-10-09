@@ -125,9 +125,9 @@ export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
       }
       const customerName = requiredString(body.customer_name, 240);
       const suppliedDocument = requiredString(body.customer_document, 240);
-      // Private live calls parse and count every submitted identity under the
-      // event's row lock, including unrecognized documents. Legacy tokens retain
-      // their existing canonical-input contract.
+      // Private live calls parse completed identity answers under the event's
+      // row lock. Incomplete document clarifications wait without spending an
+      // attempt. Legacy tokens retain their existing canonical-input contract.
       const customerDocument = usesFlow ? suppliedDocument : parseWelcomeVoiceSpokenDocument(suppliedDocument);
       if (!customerDocument) return response({ ok: true, verificado: false, condiciones: null, code: "DOCUMENT_NOT_UNDERSTOOD" });
       const result = await dependencies.verifyIdentity({ ...scope, customerName, customerDocument });
@@ -141,7 +141,7 @@ export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
           code: result.code === "DOCUMENT_NOT_UNDERSTOOD" ? result.code : "IDENTITY_NOT_CONFIRMED", nextAction,
           remainingAttempts: nextAction === "REVIEW" ? 0 : remainingAttempts,
           question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
-            : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?" : "No pude confirmar sus datos. Un asesor revisará su caso.",
+            : nextAction === "ASK_DOCUMENT" ? 'Diga su cédula completa, número por número. Cuando termine, diga "terminé".' : "No pude confirmar sus datos. Un asesor revisará su caso.",
           mayEndCall: nextAction === "REVIEW" });
       }
       return response(result.verificado === true

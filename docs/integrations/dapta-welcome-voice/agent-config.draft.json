@@ -75,6 +75,7 @@
     "max_call_duration_ms": 600000,
     "end_call_after_silence_ms": 45000,
     "stt_mode": "accurate",
+    "voice_responsiveness": 0.6,
     "normalize_for_speech": true,
     "voice_speed": 1,
     "voice_temperature": 1,
@@ -83,7 +84,7 @@
   "pendingIdentityTool": {
     "name": "verificar_cliente_bienvenida",
     "type": "custom",
-    "description": "Verifica el nombre y la cédula realmente proporcionados por la persona en este evento, solo después de recibir ambos datos. Envía las respuestas literales; el backend interpreta el documento y exige la cédula completa exacta. Para el nombre admite al menos un nombre o apellido registrado como palabra completa, ignorando tildes/mayúsculas y excluyendo de/del/la/las/los/y; sin fuzzy ni substrings. No reveles ni sustituyas datos esperados. Sigue nextAction y lee question exactamente: ASK_NAME o ASK_DOCUMENT con mayEndCall=false requiere preguntar y esperar otro turno, sin cerrar; REVIEW/0/true permite salida de identidad. Solo CONTINUE con ok/verificado booleanos verdaderos y speech completo permite explicar las condiciones. Un error o contrato incompleto no permite finanzas ni recuperación inventada.",
+    "description": "Verifica el nombre y la cédula realmente proporcionados por la persona en este evento, solo después de recibir ambos datos. Envía las respuestas literales; el backend interpreta el documento y exige la cédula completa exacta. Para el nombre admite al menos un nombre o apellido registrado como palabra completa, ignorando tildes/mayúsculas y excluyendo de/del/la/las/los/y; sin fuzzy ni substrings. No reveles ni sustituyas datos esperados. Sigue nextAction y lee question exactamente: ASK_NAME o ASK_DOCUMENT con mayEndCall=false requiere preguntar y esperar otro turno, sin cerrar; REVIEW/0/true permite salida de identidad. Solo CONTINUE con ok/verificado booleanos verdaderos y speech completo permite explicar las condiciones. Un error o contrato incompleto no permite finanzas ni recuperación inventada. En ASK_DOCUMENT, recoge únicamente la nueva respuesta literal completa hasta que el cliente diga \"terminé\" al final; conserva ese cierre en customer_document. No invocar entre dígitos ni inferir el cierre.",
     "parameters": {
       "type": "object",
       "required": [
@@ -112,7 +113,7 @@
         },
         "customer_document": {
           "type": "string",
-          "description": "Envía literalmente la cédula que la persona realmente diga en esta llamada, con sus palabras o dígitos y separadores. Acepta bloques o dígito a dígito sin exigir un formato. No convertir, completar, inventar, ofrecer ejemplos ni sustituir por datos registrados. El backend la interpreta de forma determinista. Solo si no se escuchó, pedir repetición una vez y esperar antes de invocar."
+          "description": "Envía literalmente la cédula que la persona realmente diga en esta llamada, con sus palabras o dígitos y separadores. Acepta bloques o dígito a dígito sin exigir un formato. No convertir, completar, inventar, ofrecer ejemplos ni sustituir por datos registrados. El backend la interpreta de forma determinista. Solo si no se escuchó, pedir repetición una vez y esperar antes de invocar. Durante ASK_DOCUMENT, espera al cierre literal \"terminé\" pronunciado por el cliente. Conserva en orden todos los fragmentos de ESTA nueva respuesta y esa palabra final, sin unirlos con intentos anteriores ni añadir tú el cierre."
         }
       }
     },
@@ -128,6 +129,6 @@
   "pendingEndCallTool": {
     "name": "end_call",
     "type": "end_call",
-    "description": "Finaliza la llamada después de decir Gracias por su tiempo. Nunca ejecutes esta herramienta en el mismo turno de una pregunta ni mientras esperas su respuesta. Un resultado ASK_NAME o ASK_DOCUMENT con mayEndCall=false obliga a leer question y escuchar; identidad no verificada con aclaración pendiente no autoriza cerrar. REVIEW con remainingAttempts=0 y mayEndCall=true permite la salida de identidad después de su explicación y despedida. El cierre normal exige tres respuestas afirmativas reales e independientes: al plan, al calendario con primera fecha y a la política del aplicativo. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva las salidas anticipadas por rechazo de grabación, petición expresa de terminar, fallo técnico, discrepancia que requiere asesor o buzón; no reveles datos personales ni financieros en buzón."
+    "description": "Finaliza la llamada después de decir Gracias por su tiempo. Nunca ejecutes esta herramienta en el mismo turno de una pregunta ni mientras esperas su respuesta. Un resultado ASK_NAME o ASK_DOCUMENT con mayEndCall=false obliga a leer question y escuchar; identidad no verificada con aclaración pendiente no autoriza cerrar. REVIEW con remainingAttempts=0 y mayEndCall=true permite la salida de identidad después de su explicación y despedida. El cierre normal exige tres respuestas afirmativas reales e independientes: al plan, al calendario con primera fecha y a la política del aplicativo. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva las salidas anticipadas por rechazo de grabación, petición expresa de terminar, fallo técnico, discrepancia que requiere asesor o buzón; no reveles datos personales ni financieros en buzón. Durante una aclaración de cédula ya iniciada, escucha hasta el cierre literal \"terminé\"; una pausa o un fragmento nunca autoriza colgar ni repetir la pregunta entre dígitos."
   }
 }

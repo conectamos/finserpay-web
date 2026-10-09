@@ -58,7 +58,7 @@
     "legacySignedTokenMode": "The backend retains per-event HMAC event_token mode for compatibility; this new identity flow does not send event_token. The original signed token stays in the native call for the authenticated result callback.",
     "documentInput": "Literal customer utterance, numeric text or spoken Spanish blocks/digits, up to 240 characters. A deterministic backend parser preserves leading zeros; it never chooses or completes a value using the expected document.",
     "nameVerification": "Private event flow: at least one exact significant registered name/surname component matches a whole provided component after case/accent normalization; exclude de/del/la/las/los/y. Exact full document is always mandatory. No fuzzy matching, substrings or expected-identity disclosure. Legacy signed-token matching remains unchanged.",
-    "documentClarification": "DOCUMENT_NOT_UNDERSTOOD consumes the persisted three-consultation budget. Follow server ASK_DOCUMENT once; repeated unparsed document becomes REVIEW. A corrected document may proceed to ASK_NAME when no registered component matches and that clarification remains available.",
+    "documentClarification": "Prepared completion contract: after server ASK_DOCUMENT, accept a new document for validation only when the literal answer ends with the spoken marker terminé. An unfinished fragment remains ASK_DOCUMENT with mayEndCall=false, no financial conditions and no consumption of identity attempts. Completed invalid input follows the persisted clarification and three-attempt limits; rolling flow guards also accept the two previous fixed ASK_DOCUMENT questions.",
     "identityClarification": {
       "source": "server-persisted event state",
       "maximumConsultations": 3,
@@ -71,13 +71,21 @@
       ],
       "questions": {
         "ASK_NAME": "¿Me dice solo su primer nombre, por favor?",
-        "ASK_DOCUMENT": "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?",
+        "ASK_DOCUMENT": "Diga su cédula completa, número por número. Cuando termine, diga \"terminé\".",
         "REVIEW": "No pude confirmar sus datos. Un asesor revisará su caso."
       },
       "waiting": "ASK_* has mayEndCall=false and remainingAttempts 1..2; ask exactly question, wait, update only that literal field and reuse the same event.",
       "terminal": "REVIEW has remainingAttempts=0 and mayEndCall=true; no further consultation or financial conditions.",
       "success": "CONTINUE may succeed on consultation three; full verified speech and exact control contract required.",
-      "privacy": "Never include expected identity, match details, tokens or financial conditions in an unverified response."
+      "privacy": "Never include expected identity, match details, tokens or financial conditions in an unverified response.",
+      "maximumConsultationsMeaning": "At most three distinct completed identity-validation attempts. Replayed inputs and unfinished document dictation do not consume the validation budget."
+    },
+    "documentCompletion": {
+      "afterAction": "ASK_DOCUMENT",
+      "finalMarker": "terminé",
+      "question": "Diga su cédula completa, número por número. Cuando termine, diga \"terminé\".",
+      "incomplete": "No financial conditions, no identity-attempt consumption, keep ASK_DOCUMENT and mayEndCall=false. This pending backend contract is not evidence of a live deployment.",
+      "expectedIdentity": "Never infer, complete or replace digits using the registered identity."
     }
   },
   "callInput": [
@@ -134,8 +142,8 @@
     {
       "file": "identity-normalizer.patch.json",
       "flowId": "YxVoY",
-      "expectedContentHash": "sha256:0faebf567cea8329110e1e9f0f629396d8a52a969cb8583029ec0f0fa28c8246",
-      "scope": "Four response-only operations: qryId exports, chkId strict validator/exports, rspId dynamic response. Preserve input, normalization, private credentials, endpoint, node identifiers and financial speech guard."
+      "expectedContentHash": "sha256:7f1ac3139c22c0f35bde0e5215019a673e42c9c04e2125fa2391b0c4b39c4136",
+      "scope": "Four response-only operations preserving existing exports; the changed validator adds the exact terminé ASK_DOCUMENT question alongside both previous questions. Preserve input, normalization, private credentials, endpoint, node identifiers and financial speech guard."
     },
     {
       "file": "call-identity-variables.patch.json",

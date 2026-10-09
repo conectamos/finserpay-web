@@ -122,3 +122,16 @@ export function parseWelcomeVoiceSpokenDocument(raw: unknown): string | null {
   }
   return document !== null && /^\d{5,15}$/.test(document) ? document : null;
 }
+
+/** A completion control never supplies, repairs or selects any document digits. */
+export function parseWelcomeVoiceDocumentDictation(raw: unknown): { document: string | null; complete: boolean } {
+  if (typeof raw !== "string" || raw.length > 240 || /[\p{Cc}\p{Cf}]/u.test(raw)) {
+    return { document: null, complete: false };
+  }
+  const value = raw.normalize("NFC").trim();
+  const completed = /^(.*?)(?:\s*[,.;]\s*|\s+)termin[eé][.,;!?…]*$/iu.exec(value);
+  if (!completed || !completed[1].trim()) {
+    return { document: parseWelcomeVoiceSpokenDocument(raw), complete: false };
+  }
+  return { document: parseWelcomeVoiceSpokenDocument(completed[1]), complete: true };
+}
