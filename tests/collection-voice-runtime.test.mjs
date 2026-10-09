@@ -68,6 +68,7 @@ test('un acuerdo exige el campo de confirmación utilizado por la herramienta de
   const body={action:'register',result:'ACUERDO_PAGO',agreementDate:'2026-10-20',agreementAmount:'50000'};
   assert.equal((await s.call(body)).status,409);
   assert.equal((await s.call({...body,confirmed:'true'})).status,409);
+  assert.equal((await s.call({...body,agreementConfirmed:'true',agreementAmount:'50.000'})).status,409);
   const response=await(await s.call({...body,agreementConfirmed:'true'})).json();
   assert.equal(response.registrado,true);
   assert.equal(s.writes[0].agreementDate,'2026-10-20');

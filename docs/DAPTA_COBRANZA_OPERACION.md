@@ -19,6 +19,8 @@ Las URL de los webhooks contienen credenciales y solo deben configurarse como se
 
 La prueba usa exclusivamente `DAPTA_COBRANZA_TEST_DOCUMENT` y `DAPTA_COBRANZA_TEST_PHONE`, configurados por el administrador para una prueba autorizada en su propio celular. `action=testcall` no acepta un destino arbitrario en el cuerpo. Mantiene la consulta y la verificación real, pero utiliza un libro de intentos separado de los contactos al cliente y no crea gestiones ni acuerdos ficticios en la cartera. Permite probar con `DAPTA_COBRANZA_LIVE_READY=true` y `DAPTA_COBRANZA_ENABLED=false`; esta excepción solo autoriza el teléfono de prueba configurado. El envío de una plantilla aceptada en la prueba sí es real.
 
+Una prueba terminada puede repetirse por solicitud expresa, como máximo tres veces al día y una vez por minuto. Una prueba activa, incierta o con exclusión de contacto sigue bloqueada. Esta excepción no cambia los límites de los cobros al cliente.
+
 ## Ejecución y límites
 
 El cron interno revisa cada 30 segundos. Las ventanas de no respuesta son 10:00, 14:00 y 17:00 de lunes a viernes, y 08:00, 10:00 y 14:00 los sábados, durante los primeros diez minutos de cada ventana. No llama domingos ni festivos colombianos. Una ejecución manual también debe respetar el horario legal. El límite es tres intentos diarios por titular; después de un contacto humano no se marca nuevamente ese día. No hay reintento automático a cinco minutos tras contacto humano.
