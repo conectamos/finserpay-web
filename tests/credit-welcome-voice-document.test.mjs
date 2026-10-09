@@ -3,7 +3,7 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { parseWelcomeVoiceSpokenDocument: parse } = await jiti.import("../lib/credit-welcome-voice-document.ts");
+const { parseWelcomeVoiceSpokenDocument: parse, parseWelcomeVoiceDocumentDictation: dictation } = await jiti.import("../lib/credit-welcome-voice-document.ts");
 
 test("numeric document accepts explicit formatting without guessing signs or decimal fractions", () => {
   for (const [raw, expected] of [
@@ -142,4 +142,65 @@ test("input and output bounds reject unknown types, controls, invisible characte
   assert.equal(parse(" ".repeat(235) + "12345"), "12345"); // Exactly 240 input characters.
   assert.equal(parse("cero cero cero cero cero cero cero cero cero cero cero cero cero cero cero"), "0".repeat(15));
   assert.equal(parse("cero cero cero cero cero cero cero cero cero cero cero cero cero cero cero cero"), null);
+});
+
+test("dictation without its literal completion control retains the strict parser result and stays incomplete", () => {
+  for (const [raw, document] of [
+    ["Uno.", null], ["00123456", "00123456"],
+    ["cero cero uno dos tres cuatro cinco", "0012345"],
+    ["doce; trescientos cuarenta y cinco; 678", "12345678"],
+    ["Uno doble cero dos cuatro cuarenta y tres uno diez.", "1002443110"],
+    ["treinta seis; uno dos tres cuatro", null],
+  ]) assert.deepEqual(dictation(raw), { document, complete: false }, raw);
+});
+
+test("dictation recognizes only the separate final termine control and preserves actual leading zeroes and blocks", () => {
+  for (const [raw, document] of [
+    ["cero cero uno dos tres cuatro cinco terminé", "0012345"],
+    ["doce; trescientos cuarenta y cinco; 678, terminé.", "12345678"],
+    ["Uno doble cero dos cuatro cuarenta y tres uno diez; TERMINE!", "1002443110"],
+    ["00123456. terminé?", "00123456"],
+    ["12345,terminé", "12345"], ["12345; termine…", "12345"],
+    [" 12345  TERMINÉ!? ", "12345"], ["12345 termine\u0301.", "12345"],
+    ["12345 terminé,;", "12345"],
+  ]) {
+    assert.deepEqual(dictation(raw), { document, complete: true }, raw);
+    assert.equal(parse(raw), null, "The strict parser itself must not accept the control marker");
+  }
+});
+
+test("a final control cannot make a short, ambiguous, repeated, malformed or foreign document valid", () => {
+  for (const raw of [
+    "Uno. terminé", "uno dos tres cuatro terminé", "treinta seis; uno dos tres cuatro terminé",
+    "cien uno; doscientos; noventa terminé", "12345 terminé terminé",
+    "terminé 12345 terminé", "uno dos terminé tres cuatro cinco terminé",
+    "12345;; terminé", "12345,; terminé", "uno doble; cero tres cuatro cinco terminé",
+    "12345.67 terminé", "12345,67 terminé", "+12345 terminé", "-12345 terminé",
+    "mi documento es 12345 terminé", "uno dos tres cuatro equis terminé",
+    "uno dos tres cuatro cinco / terminé", "12345: terminé", "12345 / terminé", "1234567890123456 terminé",
+    "１２３４５ terminé", "12345\u200b terminé", "12345\n terminé",
+  ]) assert.equal(dictation(raw).document, null, raw);
+});
+
+test("initial, embedded, attached and nonliteral finish words never establish a valid completed document", () => {
+  for (const raw of [
+    "terminé", "terminé 12345", "terminé, 12345", "123 terminé 45",
+    "12345 terminé seis", "12345 terminé, seis", "12345termine",
+    "12345termine.", "12345 terminamos", "12345 finalicé", "12345 terminé ya",
+    "12345 termíne", "12345-terminé",
+  ]) {
+    assert.equal(dictation(raw).document, null, raw);
+    assert.equal(dictation(raw).complete, false, raw);
+  }
+});
+
+test("dictation bounds cover the complete raw input before removing its control marker", () => {
+  for (const raw of [null, undefined, 12345, {}, [], true, "", " ", "12345\u0000 terminé",
+    "12345\u200d terminé", " ".repeat(241), " ".repeat(228) + "12345 terminé"]) {
+    assert.deepEqual(dictation(raw), { document: null, complete: false });
+  }
+  const exactLimit = " ".repeat(240 - "12345 terminé".length) + "12345 terminé";
+  assert.equal(exactLimit.length, 240);
+  assert.deepEqual(dictation(exactLimit), { document: "12345", complete: true });
+  assert.deepEqual(dictation(" " + exactLimit), { document: null, complete: false });
 });

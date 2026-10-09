@@ -34,7 +34,7 @@ const verifiedIdentity = (condiciones = validConditions, overrides = {}) => ({ o
   code: null, nextAction: "CONTINUE", remainingAttempts: 2, question: null, mayEndCall: false, ...overrides });
 const identityQuestions = {
   ASK_NAME: "¿Me dice solo su primer nombre, por favor?",
-  ASK_DOCUMENT: "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?",
+  ASK_DOCUMENT: 'Diga su cédula completa, número por número. Cuando termine, diga "terminé".',
   REVIEW: "No pude confirmar sus datos. Un asesor revisará su caso.",
 };
 const legacyIdentityQuestions = {
@@ -42,6 +42,7 @@ const legacyIdentityQuestions = {
   ASK_DOCUMENT: "¿Me repite su número de cédula, por favor?",
   REVIEW: identityQuestions.REVIEW,
 };
+const previousDigitQuestion = "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?";
 const identityRecovery = (nextAction = "ASK_NAME", remainingAttempts = 2, code = "IDENTITY_NOT_CONFIRMED") => ({
   ok: true, verificado: false, condiciones: null, code, nextAction, remainingAttempts,
   question: identityQuestions[nextAction], mayEndCall: nextAction === "REVIEW",
@@ -200,7 +201,7 @@ test("server recovery is forwarded with exact question, bounded attempts and no 
 
 test("rolling identity deployments accept only the exact old and new question for each action", () => {
   for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"]) {
-    for (const question of new Set([identityQuestions[action], legacyIdentityQuestions[action]])) {
+    for (const question of new Set([identityQuestions[action], legacyIdentityQuestions[action], ...(action === "ASK_DOCUMENT" ? [previousDigitQuestion] : [])])) {
       for (const code of action === "ASK_NAME" ? ["IDENTITY_NOT_CONFIRMED"] : ["IDENTITY_NOT_CONFIRMED", "DOCUMENT_NOT_UNDERSTOOD"]) {
         const response = { ...identityRecovery(action, action === "REVIEW" ? 0 : 2, code), question };
         assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), response);
@@ -214,7 +215,7 @@ test("question compatibility cannot retag a recovery action or accept a similar 
   for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"]) {
     const response = identityRecovery(action, action === "REVIEW" ? 0 : 1);
     const wrongQuestions = Object.keys(identityQuestions).filter(other => other !== action)
-      .flatMap(other => [identityQuestions[other], legacyIdentityQuestions[other]]);
+      .flatMap(other => [identityQuestions[other], legacyIdentityQuestions[other], ...(other === "ASK_DOCUMENT" ? [previousDigitQuestion] : [])]);
     for (const question of [...wrongQuestions, identityQuestions[action] + " ", [identityQuestions[action]],
       identityQuestions[action].slice(0, -1), "¿Puede repetir los datos esperados?"]) {
       assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: { ...response, question } }), identityUnavailable);
@@ -320,7 +321,11 @@ test("the current Diana script waits for the server clarification and preserves 
   assert.ok(recovery.includes(identityQuestions.REVIEW));
   assert.equal((recovery.match(/lee exactamente el campo question recibido del servidor/g) || []).length, 2);
   assert.match(recovery, /solo su primer nombre.*sin volver a exigir el nombre completo/);
-  assert.match(recovery, /cédula completa desde el primer dígito.*sin unirla con la cédula anterior ni completar dígitos/);
+  assert.ok(recovery.includes(identityQuestions.ASK_DOCUMENT));
+  assert.match(recovery, /No hables ni llames herramientas entre dígitos/);
+  assert.match(recovery, /No consultes hasta escuchar al cliente decir literalmente «terminé» al final/);
+  assert.match(recovery, /nunca la añadas tú ni la deduzcas del silencio o de la longitud/);
+  assert.match(recovery, /sin unirla con la cédula anterior ni completar dígitos/);
   assert.match(recovery, /Solo el backend decide si está completa/);
   assert.match(recovery, /Termina ese turno sin despedirte ni ejecutar end_call/);
   assert.match(recovery, /Espera la nueva respuesta/);
