@@ -149,7 +149,7 @@ function mountQuotaRecheckEffect(harness, clockTimestamp) {
 
 const helperNames = [
   "isRecord", "readString", "readNumber", "readPlatform", "readJson",
-  "getCorrelationId", "getResponseCode", "normalizeDecision",
+  "getCorrelationId", "getResponseCode", "getResponseSolicitudId", "getAssessmentConflictMessage", "normalizeDecision",
   "normalizeApprovedAssessment", "normalizeDailyQueryLimitReached", "isRecoverableInitialAssessmentFailure",
 ];
 
@@ -187,7 +187,7 @@ function createGateHarness({ responses = [], overrides = {}, callbacks = ["check
     ...state,
     platform: "IPHONE", initialSolicitudId: null, initialAssessmentId: null,
     normalizedInitialDocument: "123456789", normalizedInitialSurname: "PRUEBA",
-    normalizedInitialErrorCode: "", identityMismatchRecovery: false, newQueryRetryRecovery: false,
+    normalizedInitialErrorCode: "", identityMismatchRecovery: false, newQueryRetryRecovery: false, pendingAssessmentRecovery: false,
     financialTermsRecovery: false, financialReuseUnavailable: false, hasCurrentCreditOriginationTerms,
     quotaRefreshAbortRef: { current: null }, submissionInFlightRef: { current: false },
     expiredRequerySolicitudIdRef: { current: null },
@@ -213,7 +213,7 @@ function createGateHarness({ responses = [], overrides = {}, callbacks = ["check
   };
   for (const key of [
     "view", "dailyQueryLimitReached", "dailyQuotaModalOpen", "correlationId",
-    "conflictMessage", "retryMode", "formErrors", "consentAccepted", "consentText",
+    "conflictMessage", "conflictCode", "conflictSolicitudId", "retryMode", "formErrors", "consentAccepted", "consentText",
     "consumedCreditId", "approvedResult", "documentNumber", "firstSurname",
     "checkingDailyQuota", "dailyQuotaCheckError", "financialReuseUnavailable",
   ]) {
@@ -612,4 +612,165 @@ test("approved and ready states never install the quota recheck interval", () =>
     assert.equal(effect.documentListeners.size, 0);
     assert.equal(harness.requests.length, 0);
   }
+});
+
+test("409 business conflicts preserve the server explanation and do not trigger another query", async () => {
+  for (const code of ["ASSESSMENT_REQUIRES_REVIEW", "ASSESSMENT_IDENTITY_MISMATCH", "EVALUATION_IN_PROGRESS", "ASSESSMENT_ALREADY_CONSUMED"]) {
+    const error = "La consulta vigente requiere revisión; no se hizo otra consulta.";
+    const harness = createGateHarness({ responses: [{ status: 409, body: { ok: false, code, error, correlationId: "tracking-conflict" } }] });
+    await harness.functions.submitAssessment({ preventDefault() {} });
+    assert.equal(harness.state.view, "technical-error");
+    assert.equal(harness.state.conflictMessage, error);
+    assert.equal(harness.state.conflictCode, code);
+    assert.equal(harness.state.correlationId, "tracking-conflict");
+    assert.equal(harness.approvals.length, 0);
+    assert.equal(harness.requests.length, 1);
+  }
+});
+
+test("restoring a saved assessment preserves a business conflict using reads only", async () => {
+  const error = "La consulta guardada está en revisión administrativa.";
+  const harness = createGateHarness({
+    responses: [{ body: policy }, { status: 409, body: { ok: false, code: "ASSESSMENT_REQUIRES_REVIEW", error, correlationId: "tracking-read" } }],
+    callbacks: ["loadInitialState"],
+    overrides: { initialAssessmentId: approved.assessment.assessmentId, initialSolicitudId: 12, conflictMessage: "Mensaje anterior" },
+  });
+  await harness.functions.loadInitialState();
+  assert.equal(harness.state.view, "technical-error");
+  assert.equal(harness.state.conflictMessage, error);
+  assert.equal(harness.state.correlationId, "tracking-read");
+  assert.equal(harness.requests.length, 2);
+  assert.ok(harness.requests.every(request => request.method === "GET"));
+});
+
+test("technical payloads are not exposed as business explanations", async () => {
+  for (const status of [409, 500]) {
+    const harness = createGateHarness({ responses: [{ status, body: { ok: false, code: "EVALUATION_ERROR", error: "Sensitive internal failure" } }] });
+    await harness.functions.submitAssessment({ preventDefault() {} });
+    assert.equal(harness.state.view, "technical-error");
+    assert.equal(harness.state.conflictMessage, null);
+  }
+});
+
+test("review and in-progress conflicts link to authorized solicitudes without a paid retry or admin-only route", () => {
+  const ui = loadJsxModule(sharedUi);
+  const Panel = loadJsxModule(realDeclaration("TechnicalErrorPanel") + "\nmodule.exports = TechnicalErrorPanel;", {}, {
+    ...ui, ...icons,
+    Link: ({ children, ...props }) => React.createElement("a", props, children),
+  });
+  for (const [conflictCode, title] of [["ASSESSMENT_REQUIRES_REVIEW", "Consulta pendiente de revisión"], ["EVALUATION_IN_PROGRESS", "Consulta en proceso"]]) {
+    const html = renderToStaticMarkup(React.createElement(Panel, {
+      conflictCode, conflictMessage: "La consulta vigente requiere atención.",
+      correlationId: "tracking-code", consumedCreditId: null, onRetry() { assert.fail("Unexpected query retry"); },
+    }));
+    assert.ok(html.includes(title));
+    assert.ok(html.includes(conflictCode));
+    assert.ok(html.includes('href="/dashboard/solicitudes"'));
+    assert.ok(!html.includes('/dashboard/datacredito'));
+    assert.ok(html.includes("Volver a solicitudes"));
+    assert.ok(!html.includes("Intentar de nuevo"));
+    assert.ok(!html.includes("No se pudo evaluar"));
+    if (conflictCode === "EVALUATION_IN_PROGRESS") assert.ok(html.includes("Desistir la solicitud no cancela una consulta ya enviada"));
+  }
+});
+
+test("a conflict preserves the created solicitud id and continuing opens that same draft", async () => {
+  const harness = createGateHarness({ responses: [{ status: 409, body: {
+    ok: false, code: "ASSESSMENT_REQUIRES_REVIEW", solicitudId: 2883,
+    error: "La consulta vigente requiere revisión.",
+  } }] });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.state.conflictSolicitudId, 2883);
+  assert.equal(harness.requests.length, 1);
+  const ui = loadJsxModule(sharedUi);
+  const Panel = loadJsxModule(realDeclaration("TechnicalErrorPanel") + "\nmodule.exports = TechnicalErrorPanel;", {}, {
+    ...ui, ...icons, Link: ({ children, ...props }) => React.createElement("a", props, children),
+  });
+  const html = renderToStaticMarkup(React.createElement(Panel, {
+    conflictCode: harness.state.conflictCode, conflictMessage: harness.state.conflictMessage,
+    continuationHref: "/dashboard/creditos?mode=create-client&platform=iphone&draft=2883",
+    correlationId: null, consumedCreditId: null, onRetry() { assert.fail("Unexpected new query"); },
+  }));
+  assert.ok(html.includes("Continuar solicitud"));
+  assert.ok(html.includes("draft=2883"));
+  assert.ok(!html.includes("Intentar de nuevo"));
+  for (const solicitudId of [null, -1, 0, "other", 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(harness.functions.getResponseSolicitudId({ solicitudId }), null);
+  }
+});
+
+test("a pending solicitud opens a manual reuse-only recovery with no automatic credit query", async () => {
+  const harness = createGateHarness({ responses: [{ body: policy }], callbacks: ["loadInitialState", "submitAssessment"],
+    overrides: { initialSolicitudId: 2883, initialAssessmentId: null, pendingAssessmentRecovery: true },
+  });
+  await harness.functions.loadInitialState();
+  assert.equal(harness.state.view, "ready");
+  assert.equal(harness.state.consentAccepted, false);
+  assert.equal(harness.requests.length, 1);
+  assert.equal(harness.requests[0].method, "GET");
+  harness.context.consentAccepted = true;
+  harness.context.fetch = async (url, options) => {
+    harness.requests.push({ url, method: options.method, body: options.body });
+    return Response.json({ ok: false, code: "EVALUATION_IN_PROGRESS", solicitudId: 2883, error: "La consulta está en proceso." }, { status: 409 });
+  };
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  const request = JSON.parse(harness.requests.at(-1).body);
+  assert.equal(request.solicitudId, 2883);
+  assert.equal(request.reuseOnly, true);
+  assert.equal(request.documentNumber, "123456789");
+  assert.equal(request.firstSurname, "PRUEBA");
+  assert.equal(harness.state.conflictCode, "EVALUATION_IN_PROGRESS");
+  assert.equal(harness.state.conflictSolicitudId, 2883);
+  assert.equal(harness.requests.length, 2);
+  assert.equal(harness.approvals.length, 0);
+});
+
+
+test("a pending recovery accepts the saved approval on the same solicitud without additional requests", async () => {
+  const harness = createGateHarness({
+    responses: [{ body: { ...approved, assessment: { ...approved.assessment, solicitudId: 2883 } } }],
+    overrides: { initialSolicitudId: 2883, pendingAssessmentRecovery: true },
+  });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.state.view, "approved");
+  assert.equal(harness.approvals.length, 1);
+  assert.equal(harness.approvals[0].solicitudId, 2883);
+  assert.equal(JSON.parse(harness.requests[0].body).reuseOnly, true);
+  assert.equal(harness.requests.length, 1);
+});
+
+
+test("the advisor can reopen the current pending draft's saved-result form without issuing a request", async () => {
+  const harness = createGateHarness({
+    responses: [{ status: 409, body: { ok: false, code: "EVALUATION_IN_PROGRESS", solicitudId: 2883, error: "La consulta está en proceso." } }],
+    callbacks: ["submitAssessment", "retryTechnicalFailure"],
+    overrides: { initialSolicitudId: 2883, pendingAssessmentRecovery: true },
+  });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  const ui = loadJsxModule(sharedUi);
+  const Panel = loadJsxModule(realDeclaration("TechnicalErrorPanel") + "\nmodule.exports = TechnicalErrorPanel;", {}, {
+    ...ui, ...icons, Link: ({ children, ...props }) => React.createElement("a", props, children),
+  });
+  const html = renderToStaticMarkup(React.createElement(Panel, {
+    conflictMessage: harness.state.conflictMessage, conflictCode: harness.state.conflictCode,
+    continuationHref: null, canReviewSavedResult: true, solicitudWallHref: "/dashboard/solicitudes?q=123456789",
+    correlationId: null, consumedCreditId: null, onRetry: harness.functions.retryTechnicalFailure,
+  }));
+  assert.ok(html.includes("Revisar resultado guardado"));
+  assert.ok(!html.includes("Intentar de nuevo"));
+  assert.ok(!html.includes('/dashboard/datacredito'));
+  harness.functions.retryTechnicalFailure();
+  assert.equal(harness.state.view, "ready");
+  assert.equal(harness.requests.length, 1);
+  assert.equal(JSON.parse(harness.requests[0].body).reuseOnly, true);
+});
+
+test("a technical failure cannot reopen a form that would send a fresh paid query", async () => {
+  const harness = createGateHarness({ responses: [{ status: 500, body: { ok: false, code: "EVALUATION_ERROR" } }],
+    callbacks: ["submitAssessment", "retryTechnicalFailure"],
+  });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  harness.functions.retryTechnicalFailure();
+  assert.equal(harness.state.view, "technical-error");
+  assert.equal(harness.requests.length, 1);
 });

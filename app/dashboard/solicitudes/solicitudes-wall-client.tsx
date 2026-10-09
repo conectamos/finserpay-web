@@ -489,7 +489,7 @@ export default function SolicitudesWallClient({
       setDesistTarget(null);
       setNotice(
         payload?.identityReleased
-          ? "La solicitud fue desistida y dejó de bloquear una nueva venta."
+          ? "La solicitud fue desistida. Esto no cancela las consultas ya enviadas a DataCrédito; una consulta pendiente requiere revisión."
           : "La solicitud fue desistida, pero existen otros expedientes para esta cédula. Es necesario gestionarlos antes de iniciar otra venta."
       );
       updateUrl((params) => params.delete("id"));

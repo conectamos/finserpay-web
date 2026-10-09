@@ -104,7 +104,7 @@ async function bootstrapRestoredGate(overrides = {}, policyOverrides = {}) {
   let approvals = 0;
   let bypasses = 0;
   const setters = Object.fromEntries(
-    ["View", "CorrelationId", "ConsumedCreditId", "DailyQueryLimitReached", "DailyQuotaModalOpen", "DailyQuotaCheckError",
+    ["View", "CorrelationId", "ConflictMessage", "ConflictCode", "ConflictSolicitudId", "ConsumedCreditId", "DailyQueryLimitReached", "DailyQuotaModalOpen", "DailyQuotaCheckError",
       "CheckingDailyQuota", "ApprovedResult", "RetryMode", "ConsentText", "ConsentAccepted", "FormErrors"]
       .map((name) => [`set${name}`, (value) => {
         state[name[0].toLowerCase() + name.slice(1)] = value;

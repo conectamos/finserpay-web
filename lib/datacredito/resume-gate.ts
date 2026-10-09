@@ -26,7 +26,7 @@ function normalizedPlatform(value: unknown) {
   return platform === "ANDROID" || platform === "IPHONE" ? platform : "";
 }
 
-export function canRecoverAssessmentIdentityMismatch(input: {
+type AssessmentRecoveryInput = {
   reuseOnly: boolean;
   solicitudId: unknown;
   currentStep: unknown;
@@ -37,7 +37,9 @@ export function canRecoverAssessmentIdentityMismatch(input: {
   assessmentId: unknown;
   imei: unknown;
   errorCode: unknown;
-}) {
+};
+
+function isRecoverableUnlinkedAssessment(input: AssessmentRecoveryInput) {
   const storedDocument = normalizedDocument(input.storedDocument);
   const submittedDocument = normalizedDocument(input.submittedDocument);
   const storedPlatform = normalizedPlatform(input.storedPlatform);
@@ -52,8 +54,23 @@ export function canRecoverAssessmentIdentityMismatch(input: {
     Boolean(storedPlatform) &&
     storedPlatform === submittedPlatform &&
     !String(input.assessmentId || "").trim() &&
-    !normalizedDocument(input.imei) &&
+    !normalizedDocument(input.imei)
+  );
+}
+
+export function canRecoverAssessmentIdentityMismatch(input: AssessmentRecoveryInput) {
+  return (
+    isRecoverableUnlinkedAssessment(input) &&
     String(input.errorCode || "").trim().toUpperCase() ===
       "ASSESSMENT_IDENTITY_MISMATCH"
+  );
+}
+
+// This only polls a retained result after a pending lookup. It never permits a
+// new provider request or recovery of an ambiguous paid outcome.
+export function canRecoverPendingAssessment(input: AssessmentRecoveryInput) {
+  return (
+    isRecoverableUnlinkedAssessment(input) &&
+    String(input.errorCode || "").trim().toUpperCase() === "EVALUATION_IN_PROGRESS"
   );
 }

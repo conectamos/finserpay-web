@@ -538,11 +538,13 @@ test("autosave, desistimiento y vencimiento comparten el lock de operacion", asy
     storage,
     /lockSolicitudOperationsInOrder[\s\S]{0,260}\.sort\(\(left, right\) => left - right\)[\s\S]{0,180}lockSolicitudOperationMutation\(database, id\)/
   );
-  assert.equal(
-    [...storage.matchAll(/lockSolicitudOperationsInOrder\(\s*transaction,/g)]
-      .length,
-    2
-  );
+  for (const workflow of ["desistSolicitud", "desistSolicitudAsApprovalAnalyst", "desistSolicitudAsCentralAdmin"]) {
+    const start = storage.indexOf(`export async function ${workflow}(`);
+    assert.ok(start >= 0, `missing desist workflow ${workflow}`);
+    const next = storage.indexOf("export async function ", start + 1);
+    const body = storage.slice(start, next < 0 ? undefined : next);
+    assert.match(body, /lockSolicitudOperationsInOrder\(\s*transaction,/);
+  }
   assert.match(
     storage,
     /if \(targetId\) \{\s*await lockSolicitudOperationMutation\(transaction, targetId\);\s*if \(await getUnresolvedDraftDispatch\(targetId, transaction\)\) \{\s*throw new SolicitudCanonicalMutationError\("SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE"\)/

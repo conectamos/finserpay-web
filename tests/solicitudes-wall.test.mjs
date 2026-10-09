@@ -819,9 +819,12 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
     factory,
     /normalizePaymentFrequency\(restoredDraftSnapshot\.frecuenciaPago\)[\s\S]{0,500}restoredDraftSnapshot\.fechaPrimerPago/
   );
+  const approvalStart = factory.indexOf("setDataCreditoApproval(approvedResult)");
+  const approvalEnd = factory.indexOf("if (refreshingFinancialTerms)", approvalStart);
+  assert.ok(approvalStart >= 0 && approvalEnd > approvalStart);
   assert.match(
-    factory,
-    /setDataCreditoApproval\(approvedResult\)[\s\S]{0,400}setFianzaPorcentaje\(String\(restoredSuretyPercentage\)\)/
+    factory.slice(approvalStart, approvalEnd),
+    /setFianzaPorcentaje\(String\(restoredSuretyPercentage\)\)/
   );
   assert.match(
     factory,

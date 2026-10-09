@@ -55,7 +55,7 @@ import {
   type DataCreditoAssessmentScope,
   type DataCreditoDailyQuotaReservation,
 } from "@/lib/datacredito/storage";
-import { canRecoverAssessmentIdentityMismatch } from "@/lib/datacredito/resume-gate";
+import { canRecoverAssessmentIdentityMismatch, canRecoverPendingAssessment } from "@/lib/datacredito/resume-gate";
 import { getLatestFirmaSeguroProcessByDraft, tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
 import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
@@ -122,8 +122,14 @@ function technicalResponse(input: {
   code: string;
   error: string;
   status: number;
+  solicitudId?: number;
   dailyQuota?: DataCreditoDailyQuotaSnapshot;
 }) {
+  console.warn("DATACREDITO_EVALUATION_RESPONSE", {
+    correlationId: input.correlationId,
+    code: input.code,
+    status: input.status,
+  });
   return NextResponse.json(
     {
       ok: false,
@@ -131,6 +137,7 @@ function technicalResponse(input: {
       error: input.error,
       code: input.code,
       correlationId: input.correlationId,
+      ...(input.solicitudId ? { solicitudId: input.solicitudId } : {}),
       ...(input.dailyQuota ? { dailyQuota: input.dailyQuota } : {}),
     },
     { status: input.status }
@@ -159,11 +166,12 @@ async function solicitudTechnicalResponse(input: {
         code: error.code,
         error: error.message,
         status: error.status,
+        solicitudId,
       });
     }
     throw error;
   }
-  return technicalResponse(response);
+  return technicalResponse({ ...response, solicitudId });
 }
 
 async function solicitudRecoverableResponse(input: {
@@ -189,11 +197,12 @@ async function solicitudRecoverableResponse(input: {
         code: error.code,
         error: error.message,
         status: error.status,
+        solicitudId,
       });
     }
     throw error;
   }
-  return technicalResponse(response);
+  return technicalResponse({ ...response, solicitudId });
 }
 
 function safeProviderValue(value: unknown, maximumLength: number) {
@@ -407,12 +416,26 @@ export async function POST(request: Request) {
           errorCode: solicitudContext.dataCreditoErrorCode,
         })
       : false;
+    const pendingAssessmentRecovery = solicitudContext
+      ? canRecoverPendingAssessment({
+          reuseOnly,
+          solicitudId: requestedSolicitudId,
+          currentStep: solicitudContext.currentStep,
+          storedDocument: solicitudContext.clienteDocumento,
+          submittedDocument: documentNumber,
+          storedPlatform: solicitudContext.plataforma,
+          submittedPlatform: platform,
+          assessmentId: solicitudContext.dataCreditoAssessmentId,
+          imei: solicitudContext.imei,
+          errorCode: solicitudContext.dataCreditoErrorCode,
+        })
+      : false;
     const financialTermsRecovery = await canRefreshFinancialTerms({
       requested: financialTermsRefreshRequested, reuseOnly, context: solicitudContext,
       documentNumber, firstSurname, platform,
     });
     if ((financialTermsRefreshRequested && !financialTermsRecovery) ||
-        (reuseOnly && !identityMismatchRecovery && !financialTermsRecovery)) {
+        (reuseOnly && !identityMismatchRecovery && !pendingAssessmentRecovery && !financialTermsRecovery)) {
       return technicalResponse({
         correlationId,
         code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",
@@ -517,6 +540,7 @@ export async function POST(request: Request) {
         error:
           "La solicitud esta siendo actualizada por otra operacion. Intenta nuevamente.",
         status: 409,
+        solicitudId: solicitudReservation.id,
       });
       response.headers.set("Retry-After", "2");
       return response;
@@ -560,12 +584,24 @@ export async function POST(request: Request) {
         imei: lockedSolicitudContext.imei,
         errorCode: lockedSolicitudContext.dataCreditoErrorCode,
       });
+    const lockedPendingAssessmentRecovery = canRecoverPendingAssessment({
+      reuseOnly,
+      solicitudId: requestedSolicitudId,
+      currentStep: lockedSolicitudContext.currentStep,
+      storedDocument: lockedSolicitudContext.clienteDocumento,
+      submittedDocument: documentNumber,
+      storedPlatform: lockedSolicitudContext.plataforma,
+      submittedPlatform: platform,
+      assessmentId: lockedSolicitudContext.dataCreditoAssessmentId,
+      imei: lockedSolicitudContext.imei,
+      errorCode: lockedSolicitudContext.dataCreditoErrorCode,
+    });
     const lockedFinancialTermsRecovery = await canRefreshFinancialTerms({
       requested: financialTermsRefreshRequested, reuseOnly, context: lockedSolicitudContext,
       documentNumber, firstSurname, platform,
     });
     if ((financialTermsRefreshRequested && !lockedFinancialTermsRecovery) ||
-        (reuseOnly && !lockedIdentityMismatchRecovery && !lockedFinancialTermsRecovery)) {
+        (reuseOnly && !lockedIdentityMismatchRecovery && !lockedPendingAssessmentRecovery && !lockedFinancialTermsRecovery)) {
       return technicalResponse({
         correlationId,
         code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",

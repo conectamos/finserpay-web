@@ -21,15 +21,46 @@ La respuesta completa ya se almacenaba cifrada, pero el formulario no recibía
 estos campos. El parser de riesgo sigue leyendo score, estado, indicadores de
 información y código de transacción. No se cambia la petición paga.
 
-No fue posible inspeccionar una respuesta real en este entorno: no hay
-`DATABASE_URL` configurado. Los nombres de campos anteriores provienen de la
-integración existente y sus fixtures, no de una confirmación de producción.
-Antes de publicar, revisar un registro cifrado existente con acceso autorizado;
-no es necesario consultar nuevamente a DataCrédito. Si solo existe
-`nombreCompleto`, solicitar al proveedor que habilite los campos estructurados
-anteriores para el producto MiDecisor contratado, o su mapeo oficial documentado.
-No se puede identificar con certeza nombres y apellidos compuestos a partir de
-una cadena de nombre completo.
+## Evidencia disponible y límite de la integración
+
+La captura de producción reportada el 9 de octubre de 2026 muestra una
+evaluación aprobada con `nombreCompleto`, tipo y número de documento recuperados,
+pero con «Nombre(s)» y «Primer apellido» señalados como ausentes. El nombre
+completo permanece visible como referencia; no se divide para simular esos
+campos. Esta evidencia confirma que el extractor no encontró los componentes
+estructurados esperados para ese expediente. No confirma que estén ausentes en
+todas las rutas posibles del payload original.
+
+No fue posible inspeccionar directamente ese expediente cifrado en este entorno:
+no hay `DATABASE_URL` configurado. Los campos estructurados contemplados por el
+parser proceden de la integración existente y sus fixtures; el repositorio no
+incluye un contrato OpenAPI/XSD ni una respuesta real que confirme su entrega.
+El extractor lee la respuesta original descifrada, antes de la allowlist del
+reporte administrativo, por lo que esa allowlist no elimina los campos usados
+por el autollenado.
+
+La [descripción oficial de MiDecisor de DataCrédito Experian](https://www.datacredito.com.co/empresas/midecisor-empresas),
+en «Valida la identidad del consultado», anuncia nombre completo, tipo y número
+de identificación y rango de edad. Esa descripción comercial no documenta
+campos separados de nombres y apellidos ni garantiza que el producto contratado
+los entregue.
+
+Para cerrar la integración se requiere revisar, con acceso autorizado, un
+expediente ya guardado y contrastarlo con el contrato técnico de la versión y
+producto MiDecisor contratado. Si los componentes existen en otra ruta, debe
+implementarse su mapeo oficial documentado. Si la respuesta sólo incluye
+`nombreCompleto`, se debe solicitar a Experian la habilitación o el producto que
+entregue nombres y apellidos estructurados, confirmando el contrato de respuesta
+y su efecto en costos antes de cambiar la petición. No se agregarán aliases
+supuestos, ni se ejecutará otra consulta paga para este diagnóstico. No se puede
+identificar con certeza nombres y apellidos compuestos a partir de una cadena de
+nombre completo; el autollenado estructurado sigue pendiente de esa confirmación.
+
+Un diagnóstico adicional puede limitarse a nombres de propiedades, rutas, tipos
+y presencia de campos del payload guardado, bajo el acceso administrativo
+auditado existente y sin valores personales ni credenciales. No está
+implementado: la respuesta administrativa actual aplica una allowlist y no
+permite descartar propiedades desconocidas mirando únicamente ese reporte.
 
 ## Correcciones y datos ausentes
 
@@ -54,6 +85,15 @@ admitido actualmente es `CEDULA_DE_CIUDADANIA`. La revisión queda auditada y
 marcada en `effective.manuallyCompleted`. Recargar el formulario recupera el
 resultado. Este procedimiento administrativo no habilita al asesor para editar
 esos campos.
+
+La revisión autorizada del paso 1 expone este procedimiento para completar un
+primer apellido faltante a partir del documento revisado por el administrador.
+La persona autorizada debe confirmar el componente; el sistema no lo deduce del
+nombre completo ni adopta el apellido digitado para consultar. Los nombres se
+completan mediante la opción del asesor y el segundo apellido puede quedar vacío
+cuando no aplique. La revisión permite continuar con datos humanos identificados
+y auditados; no convierte esos componentes en datos entregados por DataCrédito
+ni demuestra que el autollenado del proveedor esté completo.
 
 ## Persistencia y documentos
 

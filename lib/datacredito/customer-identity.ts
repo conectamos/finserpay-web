@@ -59,25 +59,41 @@ export async function enforceDataCreditoCustomerIdentity(payload: Record<string,
 // Separate administrative procedure: only fills fields absent from the provider.
 // It never changes a field returned by DataCrédito or marks manual values as verified.
 export async function completeMissingDataCreditoIdentity(row: DataCreditoAssessmentRow, input: Record<string, unknown>, actor: { userId: number; sellerId: number | null }) {
-  const identity = await getDataCreditoCustomerIdentity(row);
+  // Read the immutable provider record before holding a transactional connection.
+  // All mutable identity reads and writes below use that same transaction client.
   const source = await readDataCreditoIdentitySource(row);
-  if (!identity || !source) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
-  const effective = { ...identity.effective, manuallyCompleted: [...(identity.effective.manuallyCompleted || [])] };
-  for (const field of ["firstSurname", "documentType", "documentNumber"] as const) {
-    if (!input[field]) continue;
-    if (identity.original[field] || identity.effective[field]) throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");
-    const value = String(input[field]).normalize("NFC").replace(/\s+/g, " ").trim();
-    if (field === "documentNumber" && value !== source.documentNumber) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
-    if (field === "documentType" && value !== "CEDULA_DE_CIUDADANIA") throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");
-    if (field === "firstSurname" && (!/^[\p{L}\p{M} '’-]+$/u.test(value) || value.length > 90)) throw new Error("DATACREDITO_IDENTITY_INVALID_NAMES");
-    effective[field] = value;
-    effective.manuallyCompleted.push(field);
-  }
-  if (effective.manuallyCompleted.length === (identity.effective.manuallyCompleted?.length || 0)) throw new Error("DATACREDITO_IDENTITY_INCOMPLETE");
-  effective.missing = [!effective.names && "Nombre(s)", !effective.firstSurname && "Primer apellido", !effective.documentNumber && "Número de documento", !effective.documentType && "Tipo de documento"].filter(Boolean) as string[];
-  effective.fullName = [effective.names, effective.firstSurname, effective.secondSurname].filter(Boolean).join(" ");
-  await prisma.$executeRawUnsafe('INSERT INTO "DataCreditoIdentityCorrection" ("assessmentId", "userId", "sellerId", "original", "previous", "effective") VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb)', row.id, actor.userId, actor.sellerId, JSON.stringify(identity.original), JSON.stringify(identity.effective), JSON.stringify(effective));
-  return { original: identity.original, effective };
+  if (!source) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
+  const original = extractDataCreditoIdentity(source.providerPayload, source.documentNumber);
+  await ensureSchema();
+
+  return prisma.$transaction(async (transaction) => {
+    const locked = await transaction.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
+      'SELECT * FROM "DataCreditoAssessment" WHERE "id" = $1 FOR UPDATE', row.id
+    );
+    if (!locked[0] || locked[0].status !== "APROBADO" || locked[0].consumedAt) {
+      throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
+    }
+    const corrections = await transaction.$queryRawUnsafe<Array<{ effective: typeof original }>>(
+      'SELECT "effective" FROM "DataCreditoIdentityCorrection" WHERE "assessmentId" = $1 ORDER BY "id" DESC LIMIT 1', row.id
+    );
+    const previous = corrections[0]?.effective || original;
+    const effective = { ...previous, manuallyCompleted: [...(previous.manuallyCompleted || [])] };
+    for (const field of ["firstSurname", "documentType", "documentNumber"] as const) {
+      if (!input[field]) continue;
+      if (original[field] || previous[field]) throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");
+      const value = String(input[field]).normalize("NFC").replace(/\s+/g, " ").trim();
+      if (field === "documentNumber" && value !== source.documentNumber) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
+      if (field === "documentType" && value !== "CEDULA_DE_CIUDADANIA") throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");
+      if (field === "firstSurname" && (!/^[\p{L}\p{M} '’-]+$/u.test(value) || value.length > 90)) throw new Error("DATACREDITO_IDENTITY_INVALID_NAMES");
+      effective[field] = value;
+      effective.manuallyCompleted.push(field);
+    }
+    if (effective.manuallyCompleted.length === (previous.manuallyCompleted?.length || 0)) throw new Error("DATACREDITO_IDENTITY_INCOMPLETE");
+    effective.missing = [!effective.names && "Nombre(s)", !effective.firstSurname && "Primer apellido", !effective.documentNumber && "Número de documento", !effective.documentType && "Tipo de documento"].filter(Boolean) as string[];
+    effective.fullName = [effective.names, effective.firstSurname, effective.secondSurname].filter(Boolean).join(" ");
+    await transaction.$executeRawUnsafe('INSERT INTO "DataCreditoIdentityCorrection" ("assessmentId", "userId", "sellerId", "original", "previous", "effective") VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb)', row.id, actor.userId, actor.sellerId, JSON.stringify(original), JSON.stringify(previous), JSON.stringify(effective));
+    return { original, effective };
+  });
 }
 
 // A completed signature preserves its signed identity. The credit approval still
