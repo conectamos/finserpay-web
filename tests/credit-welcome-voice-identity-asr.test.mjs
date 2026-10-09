@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
@@ -124,7 +125,7 @@ function assertRegisteredConditions(body, expectedName = "luz hernandez") {
 function assertRecovery(body, nextAction = "REVIEW", remainingAttempts = 0, code = "IDENTITY_NOT_CONFIRMED") {
   assert.deepEqual(body, { ok: true, verificado: false, condiciones: null, code, nextAction, remainingAttempts,
     question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
-      : nextAction === "ASK_DOCUMENT" ? 'Diga su cédula completa, número por número. Cuando termine, diga "terminé".' : "No pude confirmar sus datos. Un asesor revisará su caso.",
+      : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa? Puede decirla seguida o en bloques." : "No pude confirmar sus datos. Un asesor revisará su caso.",
     mayEndCall: nextAction === "REVIEW" });
 }
 function assertRecoveryState(row, expected) {
@@ -187,7 +188,7 @@ test("ambiguous document consumes a persisted attempt, then missing name can rec
   const ambiguous = await f.post({ customer_document: "doscientos cuarenta y cuatro veinte." });
   assertRecovery(ambiguous.body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
   assert.equal((await f.row()).identityAttempts, 1);
-  assertRecovery((await f.post({ customer_name: "Clara García.", customer_document: actualDocuments[0] + " terminé" })).body, "ASK_NAME", 1);
+  assertRecovery((await f.post({ customer_name: "Clara García.", customer_document: actualDocuments[0] })).body, "ASK_NAME", 1);
   assert.equal((await f.row()).identityVerifiedAt, null);
   assert.equal((await f.row()).identityAttempts, 2);
   assertRegisteredConditions((await f.post()).body);
@@ -201,7 +202,7 @@ test("three distinct backend mismatches lock the event even when the next HTTP p
   const f = await fixture(t);
   await f.claim();
   for (let attempt = 1; attempt <= 3; attempt++) {
-    assertRecovery((await f.post({ customer_name: ["Clara García", "Ana García", "Marta García"][attempt - 1], customer_document: attempt === 3 ? "38144093, terminé." : "38144093." })).body, ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"][attempt - 1], attempt === 3 ? 0 : 3 - attempt);
+    assertRecovery((await f.post({ customer_name: ["Clara García", "Ana García", "Marta García"][attempt - 1], customer_document: "38144093." })).body, ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"][attempt - 1], attempt === 3 ? 0 : 3 - attempt);
     assert.equal((await f.row()).identityAttempts, attempt);
   }
   assertRecovery((await f.post()).body);
@@ -275,7 +276,7 @@ test("the surname spelling cannot authorize a wrong document and one registered 
   assertRecovery(mismatch.body, "ASK_DOCUMENT", 2);
   assert.equal((await f.row()).identityVerifiedAt, null);
   assert.equal(mismatch.body.condiciones, null);
-  const corrected = await f.post({ customer_name: "Ana García", customer_document: "0012345678, terminé" });
+  const corrected = await f.post({ customer_name: "Ana García", customer_document: "0012345678" });
   assertRegisteredConditions(corrected.body, "ana arrieta lopez");
   assert.equal(corrected.body.remainingAttempts, 1);
   assert.equal((await f.row()).identityAttempts, 2);
@@ -286,30 +287,50 @@ test("an acceptable name with a different complete document asks only for the do
   const f = await fixture(t); await f.claim();
   assertRecovery((await f.post({ customer_name: "Luz", customer_document: "38144093" })).body, "ASK_DOCUMENT", 2);
   assertRecoveryState(await f.row(), { askedName: false, askedDocument: true, reviewRequired: false });
-  const corrected = await f.post({ customer_name: "Luz", customer_document: "38144092, terminé" });
+  const corrected = await f.post({ customer_name: "Luz", customer_document: "38144092" });
   assertRegisteredConditions(corrected.body); assert.equal(corrected.body.remainingAttempts, 1); assert.equal((await f.row()).identityAttempts, 2);
 });
 
-test("pauses and cumulative fragments cannot spend the document clarification or verify before its literal closing word", async t => {
+test("short literal fragments wait without spending the document clarification; the complete answer verifies without a closing word", async t => {
   const f = await fixture(t, { clienteNombre: "ANA SANCHEZ TORRES", clienteDocumento: "1020304567" });
   await f.claim();
   const name = "Yo, Sánchez Torres.";
   const first = await f.post({ customer_name: name, customer_document: "uno cero veinte tres cero cuatro cinco seis siete" });
   assertRecovery(first.body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
   const initial = await f.row(), writes = f.writes();
-  for (const fragment of ["Uno.", "cero", "uno cero", "10203", "1020304567",
-    "uno cero dos cero tres cero cuatro cinco seis siete", "un documento desconocido"]) {
+  for (const fragment of ["Uno.", "cero", "uno cero", "1020", "uno cero dos cero", "doble cero"]) {
     const responses = await Promise.all([1, 2].map(() => f.post({ customer_name: name, customer_document: fragment })));
     for (const response of responses) assert.deepEqual(response.body, first.body);
     const row = await f.row();
     assert.equal(row.identityAttempts, 1); assert.equal(row.identityVerifiedAt, null);
     assert.deepEqual(row.identityRecovery, initial.identityRecovery); assert.equal(f.writes(), writes);
   }
-  const complete = { customer_name: name, customer_document: "uno cero dos cero tres cero cuatro cinco seis siete, terminé." };
+  const complete = { customer_name: name, customer_document: "uno cero dos cero tres cero cuatro cinco seis siete." };
   assertRegisteredConditions((await f.post(complete)).body, "ana sanchez torres");
   assert.equal((await f.row()).identityAttempts, 2); assert.ok((await f.row()).identityVerifiedAt);
   assertRegisteredConditions((await f.post(complete)).body, "ana sanchez torres");
   assertRegisteredConditions((await f.post({ customer_name: name, customer_document: "1020304567" })).body, "ana sanchez torres");
+  assert.equal((await f.row()).identityAttempts, 2);
+});
+
+test("a spoken thousand block followed by sentence-separated digits verifies directly without a closing word", async t => {
+  const f = await fixture(t, { clienteNombre: "ANA LOPEZ SOTO", clienteDocumento: "1112518467" });
+  await f.claim();
+  const response = await f.post({ customer_name: "Otra López Soto.", customer_document: "Mil ciento doce. cinco dieciocho cuatro seis siete." });
+  assertRegisteredConditions(response.body, "ana lopez soto");
+  assert.equal((await f.row()).identityAttempts, 1); assert.ok((await f.row()).identityVerifiedAt);
+  assertRegisteredConditions((await f.post({ customer_name: "López", customer_document: "1112518467" })).body, "ana lopez soto");
+  assert.equal((await f.row()).identityAttempts, 1);
+});
+
+test("a mistaken thousand block cannot authorize conditions and a fresh full literal dictation recovers without stutter history", async t => {
+  const f = await fixture(t, { clienteNombre: "ANA LOPEZ SOTO", clienteDocumento: "1112518467" });
+  await f.claim();
+  assertRecovery((await f.post({ customer_name: "López Soto", customer_document: "Mil ciento trece. cinco dieciocho cuatro seis siete." })).body, "ASK_DOCUMENT", 2);
+  assert.equal((await f.row()).identityVerifiedAt, null);
+  assertRecovery((await f.post({ customer_name: "López Soto", customer_document: "uno, uno" })).body, "ASK_DOCUMENT", 2);
+  const complete = await f.post({ customer_name: "López Soto", customer_document: "uno uno uno dos cinco uno ocho cuatro seis siete." });
+  assertRegisteredConditions(complete.body, "ana lopez soto");
   assert.equal((await f.row()).identityAttempts, 2);
 });
 
@@ -319,7 +340,9 @@ test("a completed wrong document is a real second answer; repeated tool calls ca
   const input = { customer_name: "Ana", customer_document: "1020304568" };
   assertRecovery((await f.post(input)).body, "ASK_DOCUMENT", 2);
   assertRecovery((await f.post(input)).body, "ASK_DOCUMENT", 2);
-  const completed = { ...input, customer_document: "1020304568, terminé." };
+  assertRecovery((await f.post({ ...input, customer_document: input.customer_document + ", terminé." })).body, "ASK_DOCUMENT", 2);
+  assert.equal((await f.row()).identityAttempts, 1);
+  const completed = { ...input, customer_document: "1020304569." };
   assertRecovery((await f.post(completed)).body);
   const terminal = await f.row(), writes = f.writes();
   assert.equal(terminal.identityAttempts, 2);
@@ -331,21 +354,40 @@ test("a completed wrong document is a real second answer; repeated tool calls ca
   }
 });
 
+test("a canonical document replays an older completed-transport hash without spending another attempt", async t => {
+  const f = await fixture(t, { clienteNombre: "ANA SANCHEZ TORRES", clienteDocumento: "1020304567" });
+  await f.claim();
+  const input = { customer_name: "Ana", customer_document: "1020304568" };
+  assertRecovery((await f.post(input)).body, "ASK_DOCUMENT", 2);
+  const original = await f.row();
+  const legacyHash = createHash("sha256").update(JSON.stringify(["identity-recovery-completed-v1", f.eventId,
+    core.normalizeWelcomeVoiceName(input.customer_name), ["canonical", input.customer_document]])).digest("hex");
+  const recovery = { ...original.identityRecovery, failedInputHashes: [legacyHash],
+    lastFailure: { ...original.identityRecovery.lastFailure, inputHash: legacyHash } };
+  await f.db.query('UPDATE "CreditWelcomeVoiceEvent" SET "identityRecovery"=$2::jsonb WHERE "id"=$1::uuid', [f.eventId, JSON.stringify(recovery)]);
+  const writes = f.writes();
+  for (const customer_document of [input.customer_document, input.customer_document + ", terminé."]) {
+    assertRecovery((await f.post({ ...input, customer_document })).body, "ASK_DOCUMENT", 2);
+    assert.equal((await f.row()).identityAttempts, 1); assert.equal((await f.row()).identityVerifiedAt, null);
+    assert.deepEqual((await f.row()).identityRecovery, recovery); assert.equal(f.writes(), writes);
+  }
+});
+
 test("the server never joins partial answers or repairs an ambiguous completed document", async t => {
-  for (const ending of ["cero, terminé", "uno cero veinte tres cero cuatro cinco seis siete, terminé"]) await t.test(ending, async subtest => {
+  for (const ending of ["uno cero veinte tres cero cuatro cinco seis siete", "uno, un... uno cero dos cero tres cero cuatro cinco seis siete"]) await t.test(ending, async subtest => {
     const f = await fixture(subtest, { clienteNombre: "ANA SANCHEZ TORRES", clienteDocumento: "1020304567" });
     await f.claim();
     assertRecovery((await f.post({ customer_name: "Ana", customer_document: "uno" })).body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
-    assertRecovery((await f.post({ customer_name: "Ana", customer_document: "1020304567" })).body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
+    assertRecovery((await f.post({ customer_name: "Ana", customer_document: "cero" })).body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
     assertRecovery((await f.post({ customer_name: "Ana", customer_document: ending })).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
     assert.equal((await f.row()).identityAttempts, 2); assert.equal((await f.row()).identityVerifiedAt, null);
   });
 });
 
-test("a completed document can ask for the name without requiring another document closing word on the name answer", async t => {
+test("a complete document can ask for the name and a corrected name verifies without a closing word", async t => {
   const f = await fixture(t); await f.claim();
   assertRecovery((await f.post({ customer_name: "Clara", customer_document: "uno" })).body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
-  assertRecovery((await f.post({ customer_name: "Clara", customer_document: "38144092, terminé" })).body, "ASK_NAME", 1);
+  assertRecovery((await f.post({ customer_name: "Clara", customer_document: "38144092" })).body, "ASK_NAME", 1);
   assertRecoveryState(await f.row(), { askedName: true, askedDocument: true, reviewRequired: false });
   assertRegisteredConditions((await f.post({ customer_name: "Hernández", customer_document: "38144092" })).body);
   assert.equal((await f.row()).identityAttempts, 3);
@@ -391,7 +433,7 @@ test("identical unrecognized documents reuse guidance; a different failed clarif
   assertRecovery((await f.post({ customer_document: "  DOSCIENTOS  cuarenta y cuatro VEINTE.  " })).body, "ASK_DOCUMENT", 2, "DOCUMENT_NOT_UNDERSTOOD");
   assert.deepEqual((await f.row()).identityRecovery, before.identityRecovery);
   assert.equal((await f.row()).identityAttempts, 1); assert.equal(f.writes(), writes);
-  const distinctBad = { customer_document: "treinta ocho, terminé" };
+  const distinctBad = { customer_document: "treinta ocho" };
   assertRecovery((await f.post(distinctBad)).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
   const terminal = await f.row();
   assertRecovery((await f.post(distinctBad)).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
@@ -405,7 +447,7 @@ test("unrecognized documents share the same three-attempt budget with name corre
   const f = await fixture(t); await f.claim();
   assertRecovery((await f.post({ customer_name: "Clara García" })).body, "ASK_NAME", 2);
   assertRecovery((await f.post({ customer_document: "un documento desconocido" })).body, "ASK_DOCUMENT", 1, "DOCUMENT_NOT_UNDERSTOOD");
-  assertRecovery((await f.post({ customer_document: "treinta ocho, terminé" })).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
+  assertRecovery((await f.post({ customer_document: "treinta ocho" })).body, "REVIEW", 0, "DOCUMENT_NOT_UNDERSTOOD");
   assert.equal((await f.row()).identityAttempts, 3); assertRecovery((await f.post()).body);
 });
 test("concurrent identical recovery requests consume one attempt and rollback cannot save budget, flags or a replay hash", async t => {
@@ -418,7 +460,7 @@ test("concurrent identical recovery requests consume one attempt and rollback ca
   assert.equal((await f.row()).identityAttempts, 1);
   assertRecoveryState(await f.row(), { askedName: true, askedDocument: false, reviewRequired: false });
   assertRecovery((await f.post({ customer_name: "Ana García" })).body, "ASK_DOCUMENT", 1);
-  assertRegisteredConditions((await f.post({ customer_document: actualDocuments[0] + " terminé" })).body); assert.equal((await f.row()).identityAttempts, 3);
+  assertRegisteredConditions((await f.post()).body); assert.equal((await f.row()).identityAttempts, 3);
   assert.equal("lastFailure" in (await f.row()).identityRecovery, false);
 });
 
@@ -445,7 +487,7 @@ test("a repeated tool request after the second distinct answer preserves its rem
   for (const forbidden of ["Ana", "ana", "Garcia", "garcia", "38144092", "document", "phone", "condiciones", "initialPayment"]) {
     assert.equal(persisted.includes(forbidden), false, forbidden);
   }
-  assertRegisteredConditions((await f.post({ customer_name: "Hernández", customer_document: actualDocuments[0] + " terminé" })).body);
+  assertRegisteredConditions((await f.post({ customer_name: "Hernández" })).body);
   assert.equal((await f.row()).identityAttempts, 3); assert.ok((await f.row()).identityVerifiedAt);
   assert.equal("lastFailure" in (await f.row()).identityRecovery, false);
   assert.equal("failedInputHashes" in (await f.row()).identityRecovery, false);

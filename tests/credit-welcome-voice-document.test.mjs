@@ -3,7 +3,11 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { parseWelcomeVoiceSpokenDocument: parse, parseWelcomeVoiceDocumentDictation: dictation } = await jiti.import("../lib/credit-welcome-voice-document.ts");
+const {
+  parseWelcomeVoiceSpokenDocument: parse,
+  parseWelcomeVoiceDocumentDictation: dictation,
+  isWelcomeVoiceDocumentFragment: fragment,
+} = await jiti.import("../lib/credit-welcome-voice-document.ts");
 
 test("numeric document accepts explicit formatting without guessing signs or decimal fractions", () => {
   for (const [raw, expected] of [
@@ -40,6 +44,7 @@ test("explicit doble repeats one digit word before the existing grouped-number p
   assert.equal(parse("DOBLE   NUEVE doble ocho doble siete!"), "998877");
   assert.equal(parse("12; doble cero; tres cuatro cinco"), "1200345");
   assert.equal(parse("doce, doble cero tres cuatro cinco"), "1200345");
+  assert.equal(parse("uno doble cero. tres cuatro cinco"), "100345");
 });
 
 test("doble cannot infer a digit, cross a block boundary or introduce other multipliers", () => {
@@ -56,7 +61,7 @@ test("double digits preserve ambiguity, separator validation and document bounds
   for (const raw of [
     "cien doble uno; doscientos; noventa", "treinta doble ocho; uno dos tres", "doscientos doble dos; uno dos tres",
     "doscientos cuarenta y cuatro veinte doble uno", "uno doble cero;; tres cuatro cinco",
-    "uno doble cero / tres cuatro cinco", "uno doble cero. tres cuatro cinco", "uno doble cero\u200b tres cuatro cinco",
+    "uno doble cero / tres cuatro cinco", "uno doble cero.. tres cuatro cinco", "uno doble cero\u200b tres cuatro cinco",
     "uno doble cero\n tres cuatro cinco", "doble cero uno dos", Array(8).fill("doble cero").join(" "),
   ]) assert.equal(parse(raw), null, raw);
   assert.equal(parse(Array(7).fill("doble cero").join(" ") + " uno"), "0".repeat(14) + "1");
@@ -70,9 +75,10 @@ test("sentence punctuation does not change numeric formatting or spoken digits",
     ["00.123.456-78.", "0012345678"], ["12345!", "12345"],
     ["12.345.678?", "12345678"], ["cero cero uno dos tres cuatro cinco…", "0012345"],
     ["uno dos tres cuatro cinco.", "12345"],
+    ["doce. trescientos. noventa.", "1230090"],
   ]) assert.equal(parse(raw), expected, raw);
   for (const raw of ["12345.67.", "12345,67!", "12.34?", "-12345678.", "12..345.678…",
-    "doce. trescientos. noventa.", "uno dos tres cuatro equis."]) {
+    "doce.. trescientos. noventa.", "uno dos tres cuatro equis."]) {
     assert.equal(parse(raw), null, raw);
   }
 });
@@ -108,6 +114,7 @@ test("explicit cardinal blocks accept 0–999 and retain leading zeroes inside a
     ["ciento uno; ciento diez; ciento veintinueve", "101110129"],
     ["treinta y uno; cuarenta y dos; cincuenta y tres; sesenta y cuatro", "31425364"],
     ["setenta y cinco; ochenta y seis; noventa y siete", "758697"],
+    ["mil; ciento cuarenta; noventa", "100014090"],
   ]) assert.equal(parse(raw), expected, raw);
 });
 
@@ -126,11 +133,11 @@ test("ambiguous grouping, unknown words, unsupported cardinals and malformed sep
     "treinta y cero; ciento cuarenta y cuatro; noventa y dos",
     "ciento; cuarenta; cuatro", "cien uno; doscientos; noventa",
     "ciento cero; ciento cuarenta; noventa", "dos cientos; ciento cuarenta; noventa",
-    "mil; ciento cuarenta; noventa", "menos doce; trescientos cuarenta; noventa",
+    "mil ciento cuarenta noventa", "menos doce; trescientos cuarenta; noventa",
     "doce punto cinco; trescientos; noventa", "doce coma cinco; trescientos; noventa",
     "mi cédula es uno dos tres cuatro cinco", "uno dos tres cuatro equis", "constructor; doce; trescientos",
     "doce;; trescientos; noventa", ";doce; trescientos; noventa", "doce; trescientos; noventa;",
-    "doce,; trescientos; noventa", "doce. trescientos. noventa", "doce / trescientos / noventa",
+    "doce,; trescientos; noventa", "doce.. trescientos. noventa", "doce / trescientos / noventa",
   ]) assert.equal(parse(raw), null, raw);
 });
 
@@ -203,4 +210,62 @@ test("dictation bounds cover the complete raw input before removing its control 
   assert.equal(exactLimit.length, 240);
   assert.deepEqual(dictation(exactLimit), { document: "12345", complete: true });
   assert.deepEqual(dictation(" " + exactLimit), { document: null, complete: false });
+});
+
+test("whole explicit thousand cardinals and sentence stops preserve literal document blocks", () => {
+  for (const [raw, document] of [
+    ["Mil ciento doce. cinco dieciocho cuatro seis siete.", "1112518467"],
+    ["mil ciento doce; cero", "11120"], ["mil; cero", "10000"],
+    ["dos mil. tres cuatro", "200034"], ["doce mil ciento doce", "12112"],
+    ["cien mil; dos", "1000002"], ["quinientos mil", "500000"],
+    ["novecientos noventa y nueve mil novecientos noventa y nueve. cero uno", "99999901"],
+    ["cero cero. mil ciento doce", "001112"],
+  ]) assert.equal(parse(raw), document, raw);
+  assert.deepEqual(dictation("Mil ciento doce. cinco dieciocho cuatro seis siete."), {
+    document: "1112518467", complete: false,
+  });
+});
+
+test("thousands never infer missing block boundaries, grammar or a preferred decomposition", () => {
+  for (const raw of [
+    "mil ciento doce cinco dieciocho cuatro seis siete", "mil ciento doce cero",
+    "mil cero; uno dos tres", "uno mil; cero", "un mil; cero", "cero mil; uno dos tres",
+    "mil mil; uno dos tres", "dos mil mil; uno dos tres", "mil y doce; uno dos tres",
+    "mil cien doce; uno dos tres", "mil ciento cero; uno dos tres", "mil treinta seis; uno dos tres",
+    "dos tres mil; uno dos tres", "cien uno mil; uno dos tres", "ciento mil; uno dos tres",
+    "mil doble cero; uno dos tres", "doble mil; uno dos tres", "un millon; uno dos tres",
+    "mil 112; uno dos tres", "12 mil; uno dos tres", "mil ciento doce.cinco dieciocho cuatro seis siete",
+  ]) assert.equal(parse(raw), null, raw);
+});
+
+test("sentence stops do not relax numeric decimal/grouping, separator or input/output bounds", () => {
+  for (const raw of [
+    "12.34", "12.34; uno dos tres", "mil ciento doce. 5 dieciocho cuatro seis siete",
+    "mil ciento doce.. cinco dieciocho cuatro seis siete", "mil ciento doce.; cinco dieciocho cuatro seis siete",
+    "mil ciento doce\ncinco dieciocho cuatro seis siete", "mil ciento doce\u200b. cinco dieciocho cuatro seis siete",
+    "novecientos noventa y nueve mil novecientos noventa y nueve; " + "uno ".repeat(10),
+    " ".repeat(241) + "mil; cero",
+  ]) assert.equal(parse(raw), null, raw);
+  assert.equal(parse("novecientos noventa y nueve mil novecientos noventa y nueve; " + "uno ".repeat(9)), "999999" + "1".repeat(9));
+  assert.equal(parse("12.345.678"), "12345678");
+});
+
+test("short fragments are only one to four literal digits, with explicit double and block boundaries", () => {
+  for (const raw of [
+    "Uno.", "cero", "CERO cero uno dos!", "doble cero", "uno doble cero", "doble NUEVE doble ocho",
+    "uno. cero. dos", "uno; cero, dos", "1", "0012", "1 2 3 4", "1.234", "0-012", "12; tres",
+  ]) {
+    assert.equal(fragment(raw), true, raw);
+    assert.equal(parse(raw), null, "Short fragments must not become valid documents");
+  }
+  for (const raw of [
+    "12345", "uno dos tres cuatro cinco", "doble nueve doble ocho uno", "once", "mil", "ciento doce",
+    "treinta seis", "uno cuarenta", "uno doble", "doble diez", "doble 0", "doble doble cero",
+    "uno doble; cero", "uno.. cero", "uno,; cero", "12.34", "1,2", "-1234", "+1234",
+    "12 tres", "uno equis", "mi cedula es uno", "Uno terminé", "１２３４", "uno\n cero", "uno\u200b cero",
+    null, undefined, 1234, {}, [], "", " ", " ".repeat(240) + "uno",
+  ]) assert.equal(fragment(raw), false, String(raw));
+  const exactLimit = " ".repeat(237) + "uno";
+  assert.equal(fragment(exactLimit), true);
+  assert.equal(fragment(" " + exactLimit), false);
 });

@@ -11,7 +11,7 @@ import { matchWelcomeVoiceIdentity, matchWelcomeVoiceApplicationIdentity, matche
 import { creditWelcomeVoiceSchemaStatements } from "@/scripts/credit-welcome-voice-schema.mjs";
 import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } from "@/lib/credit-welcome-voice-speech";
 import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
-import { parseWelcomeVoiceDocumentDictation } from "@/lib/credit-welcome-voice-document";
+import { isWelcomeVoiceDocumentFragment, parseWelcomeVoiceDocumentDictation } from "@/lib/credit-welcome-voice-document";
 import { getCreditWelcomeVoicePendingSlot, planCreditWelcomeVoiceFollowup, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
 
 export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN" | "AUTOMATIC_RETRY" | "OPERATOR_REQUEST";
@@ -274,10 +274,10 @@ function identityRecoveryState(value: unknown): IdentityRecoveryState {
   }
   return state;
 }
-function identityRecoveryInputHash(eventId: string, name: string, rawDocument: string, document: string | null, complete: boolean) {
+function identityRecoveryInputHash(eventId: string, name: string, rawDocument: string, document: string | null, legacyCompleted = false) {
   const normalizedRaw = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase("es-CO").trim().replace(/\s+/g, " ");
-  return createHash("sha256").update(JSON.stringify([complete ? "identity-recovery-completed-v1" : "identity-recovery-v1", eventId,
+  return createHash("sha256").update(JSON.stringify([legacyCompleted ? "identity-recovery-completed-v1" : "identity-recovery-v1", eventId,
     normalizeWelcomeVoiceName(name) ?? normalizedRaw(name), document ? ["canonical", document] : ["raw", normalizedRaw(rawDocument)]]))
     .digest("hex");
 }
@@ -286,7 +286,7 @@ function recoveryResponse(nextAction: WelcomeVoiceIdentityRecoveryResponse["next
   return { code: nextAction === "CONTINUE" ? null : code, nextAction,
     remainingAttempts: nextAction === "REVIEW" ? 0 : Math.min(2, Math.max(0, 3 - attempts)),
     question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
-      : nextAction === "ASK_DOCUMENT" ? 'Diga su cédula completa, número por número. Cuando termine, diga "terminé".'
+      : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa? Puede decirla seguida o en bloques."
         : nextAction === "REVIEW" ? "No pude confirmar sus datos. Un asesor revisará su caso." : null,
     mayEndCall: nextAction === "REVIEW" };
 }
@@ -905,21 +905,24 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         ? { verificado: true as const, condiciones: financialConditions(event.snapshot), ...(privateFlow ? recoveryResponse("CONTINUE", event.identityAttempts) : {}) }
         : denied();
       const recovery = identityRecoveryState(event.identityRecovery);
-      const inputHash = privateFlow ? identityRecoveryInputHash(event.id, input.customerName, input.customerDocument, document, dictation!.complete) : null;
+      const inputHash = privateFlow ? identityRecoveryInputHash(event.id, input.customerName, input.customerDocument, document) : null;
+      // Read hashes from the former optional-closing-word transport as aliases.
+      // A formatting/control word is not a different answer from the customer.
+      const legacyInputHash = privateFlow ? identityRecoveryInputHash(event.id, input.customerName, input.customerDocument, document, true) : null;
       if (privateFlow && recovery.lastFailure && recovery.lastFailure.attempts !== event.identityAttempts) return denied();
       // Replay guidance only after scope, freshness and the current credit have been revalidated.
       // Repeated tool requests are not evidence of another answer from the customer.
-      if (privateFlow && !correct && inputHash && recovery.failedInputHashes?.includes(inputHash)
+      if (privateFlow && !correct && inputHash && recovery.failedInputHashes?.some(hash => hash === inputHash || hash === legacyInputHash)
         && recovery.lastFailure?.attempts === event.identityAttempts) {
         const cached = recovery.lastFailure;
         return { verificado: false as const, condiciones: null, ...recoveryResponse(cached.nextAction, cached.attempts, cached.code) };
       }
       if (event.identityAttempts >= 3) return denied();
       if (recovery.reviewRequired) return denied();
-      // A pause between digits is not a completed clarification. Wait for the
-      // customer's literal closing word, even if a fragment parses as a document.
-      // Never accumulate fragments or fill digits from the registered identity.
-      if (privateFlow && recovery.lastFailure?.nextAction === "ASK_DOCUMENT" && !dictation!.complete) {
+      // An isolated short digit fragment is not another completed clarification.
+      // Do not require a closing word, join answers or infer any missing digits.
+      if (privateFlow && recovery.lastFailure?.nextAction === "ASK_DOCUMENT"
+        && isWelcomeVoiceDocumentFragment(input.customerDocument)) {
         return { verificado: false as const, condiciones: null,
           ...recoveryResponse("ASK_DOCUMENT", event.identityAttempts, recovery.lastFailure.code) };
       }
