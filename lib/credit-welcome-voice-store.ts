@@ -31,7 +31,15 @@ export type WelcomeVoiceIdentityRecoveryResponse = {
   nextAction: "ASK_NAME" | "ASK_DOCUMENT" | "REVIEW" | "CONTINUE";
   remainingAttempts: number; question: string | null; mayEndCall: boolean;
 };
-type IdentityRecoveryState = { askedName: boolean; askedDocument: boolean; reviewRequired: boolean };
+type IdentityRecoveryFailure = {
+  inputHash: string; attempts: number;
+  nextAction: Exclude<WelcomeVoiceIdentityRecoveryResponse["nextAction"], "CONTINUE">;
+  code: Exclude<WelcomeVoiceIdentityRecoveryResponse["code"], null>;
+};
+type IdentityRecoveryState = {
+  askedName: boolean; askedDocument: boolean; reviewRequired: boolean;
+  lastFailure?: IdentityRecoveryFailure; failedInputHashes?: string[];
+};
 export type CreditWelcomeVoiceResultPayload = {
   eventId: string; creditId: number; providerCallId: string; status: "COMPLETED" | "FAILED";
   recordingUrl?: string | null; summary?: string | null; transcript?: string | null; doubts?: string | null;
@@ -228,10 +236,45 @@ function identityRecoveryState(value: unknown): IdentityRecoveryState {
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) return { ...empty, reviewRequired: true };
   const fields = value as Record<string, unknown>;
-  if (Object.keys(fields).some(key => !["askedName", "askedDocument", "reviewRequired"].includes(key) || typeof fields[key] !== "boolean")) {
+  if (Object.keys(fields).some(key => !["askedName", "askedDocument", "reviewRequired", "lastFailure", "failedInputHashes"].includes(key)
+    || (!["lastFailure", "failedInputHashes"].includes(key) && typeof fields[key] !== "boolean"))) {
     return { ...empty, reviewRequired: true };
   }
-  return { askedName: fields.askedName === true, askedDocument: fields.askedDocument === true, reviewRequired: fields.reviewRequired === true };
+  const state: IdentityRecoveryState = { askedName: fields.askedName === true, askedDocument: fields.askedDocument === true, reviewRequired: fields.reviewRequired === true };
+  if (fields.lastFailure !== undefined) {
+    const failure = fields.lastFailure;
+    if (!failure || typeof failure !== "object" || Array.isArray(failure)) return { ...empty, reviewRequired: true };
+    const cached = failure as Record<string, unknown>;
+    if (Object.keys(cached).length !== 4 || Object.keys(cached).some(key => !["inputHash", "attempts", "nextAction", "code"].includes(key))
+      || typeof cached.inputHash !== "string" || !/^[a-f0-9]{64}$/.test(cached.inputHash)
+      || !Number.isInteger(cached.attempts) || Number(cached.attempts) < 1 || Number(cached.attempts) > 3
+      || typeof cached.nextAction !== "string" || !["ASK_NAME", "ASK_DOCUMENT", "REVIEW"].includes(cached.nextAction)
+      || typeof cached.code !== "string" || !["IDENTITY_NOT_CONFIRMED", "DOCUMENT_NOT_UNDERSTOOD"].includes(cached.code)
+      || (cached.nextAction === "REVIEW" ? !state.reviewRequired
+        : state.reviewRequired || Number(cached.attempts) >= 3
+          || (cached.nextAction === "ASK_NAME" ? !state.askedName : !state.askedDocument))
+      || (cached.code === "DOCUMENT_NOT_UNDERSTOOD" && cached.nextAction === "ASK_NAME")) return { ...empty, reviewRequired: true };
+    state.lastFailure = cached as IdentityRecoveryFailure;
+  }
+  if (fields.failedInputHashes !== undefined) {
+    const hashes = fields.failedInputHashes;
+    if (!state.lastFailure || !Array.isArray(hashes) || hashes.length < 1 || hashes.length > 3
+      || hashes.some(hash => typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash))
+      || new Set(hashes).size !== hashes.length || !hashes.includes(state.lastFailure.inputHash)
+      || hashes.length > state.lastFailure.attempts) return { ...empty, reviewRequired: true };
+    state.failedInputHashes = hashes;
+  } else if (state.lastFailure) {
+    // A previously stored last evaluation remains replayable after an additive rollout.
+    state.failedInputHashes = [state.lastFailure.inputHash];
+  }
+  return state;
+}
+function identityRecoveryInputHash(eventId: string, name: string, rawDocument: string, document: string | null) {
+  const normalizedRaw = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es-CO").trim().replace(/\s+/g, " ");
+  return createHash("sha256").update(JSON.stringify(["identity-recovery-v1", eventId,
+    normalizeWelcomeVoiceName(name) ?? normalizedRaw(name), document ? ["canonical", document] : ["raw", normalizedRaw(rawDocument)]]))
+    .digest("hex");
 }
 function recoveryResponse(nextAction: WelcomeVoiceIdentityRecoveryResponse["nextAction"], attempts: number,
   code: WelcomeVoiceIdentityRecoveryResponse["code"] = "IDENTITY_NOT_CONFIRMED"): WelcomeVoiceIdentityRecoveryResponse {
@@ -753,8 +796,17 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       if (event.identityVerifiedAt) return correct
         ? { verificado: true as const, condiciones: financialConditions(event.snapshot), ...(privateFlow ? recoveryResponse("CONTINUE", event.identityAttempts) : {}) }
         : denied();
-      if (event.identityAttempts >= 3) return denied();
       const recovery = identityRecoveryState(event.identityRecovery);
+      const inputHash = privateFlow ? identityRecoveryInputHash(event.id, input.customerName, input.customerDocument, document) : null;
+      if (privateFlow && recovery.lastFailure && recovery.lastFailure.attempts !== event.identityAttempts) return denied();
+      // Replay guidance only after scope, freshness and the current credit have been revalidated.
+      // Repeated tool requests are not evidence of another answer from the customer.
+      if (privateFlow && !correct && inputHash && recovery.failedInputHashes?.includes(inputHash)
+        && recovery.lastFailure?.attempts === event.identityAttempts) {
+        const cached = recovery.lastFailure;
+        return { verificado: false as const, condiciones: null, ...recoveryResponse(cached.nextAction, cached.attempts, cached.code) };
+      }
+      if (event.identityAttempts >= 3) return denied();
       if (recovery.reviewRequired) return denied();
       if (privateFlow) {
         const attempts = event.identityAttempts + 1;
@@ -765,6 +817,12 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           if (nextAction === "ASK_NAME") recovery.askedName = true;
           if (nextAction === "ASK_DOCUMENT") recovery.askedDocument = true;
           if (nextAction === "REVIEW") recovery.reviewRequired = true;
+          recovery.lastFailure = { inputHash: inputHash!, attempts, nextAction,
+            code: document ? "IDENTITY_NOT_CONFIRMED" : "DOCUMENT_NOT_UNDERSTOOD" };
+          recovery.failedInputHashes = [...(recovery.failedInputHashes ?? []), inputHash!];
+        } else {
+          delete recovery.lastFailure;
+          delete recovery.failedInputHashes;
         }
         await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "identityAttempts"=$2,"identityRecovery"=$3::jsonb,
           "identityVerifiedAt"=CASE WHEN $4 THEN $5 ELSE "identityVerifiedAt" END,"updatedAt"=$5 WHERE "id"=$1::uuid`,

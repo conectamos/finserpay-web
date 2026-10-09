@@ -97,6 +97,11 @@ export function matchWelcomeVoiceIdentity(
     && matchesRegisteredWelcomeVoiceName(providedName, expectedName) && expectedDocument === providedDocument;
 }
 
+/** Bounded Colombian pronunciation equivalence, applied to whole welcome-name tokens only. */
+function welcomeApplicationNamePronunciation(token: string) {
+  return token.replace(/c(?=[ei])/g, "s").replace(/z/g, "s");
+}
+
 /** A name component is only one part of the welcome policy, never identity proof by itself. */
 export function matchesWelcomeVoiceApplicationName(expected: unknown, provided: unknown) {
   const expectedName = normalizeWelcomeVoiceName(expected), providedName = normalizeWelcomeVoiceName(provided);
@@ -104,8 +109,8 @@ export function matchesWelcomeVoiceApplicationName(expected: unknown, provided: 
   const registered = expectedName.split(" "), spoken = providedName.split(" ");
   if (registered.length > 20 || spoken.length > 20) return false;
   const particles = new Set(["de", "del", "la", "las", "los", "y", "el"]);
-  const meaningful = new Set(registered.filter(token => !particles.has(token)));
-  return spoken.some(token => meaningful.has(token));
+  const meaningful = new Set(registered.filter(token => !particles.has(token)).map(welcomeApplicationNamePronunciation));
+  return spoken.some(token => meaningful.has(welcomeApplicationNamePronunciation(token)));
 }
 
 /** Welcome application's authorized policy; other callers retain the strict matcher above. */
