@@ -46,9 +46,9 @@ const COLORS = {
 } as const;
 
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
-  style: "currency", currency: "COP", maximumFractionDigits: 0,
+  style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 20,
 });
-const numberFormatter = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
+const numberFormatter = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 4 });
 
 const TABLE_COLUMNS = [
   { key: "date", label: "Fecha", width: 55, align: "left" },
@@ -293,7 +293,7 @@ function drawTableHeader(doc: PDFKit.PDFDocument, y: number) {
 function lineValues(line: AllyPaymentSettlementPdfLine) {
   return {
     date: dateLabel(line.creditDate),
-    client: `${safeText(line.clientName, "Cliente", 60)}\nCC ${safeText(line.clientDocument, "-", 28)}`,
+    client: `${safeText(line.clientName, "Cliente", 60)}\nCC ${safeText(line.clientDocument.replace(/[.\s]/g, ""), "-", 28)}`,
     equipment: `${safeText(line.equipment, "Equipo", 70)}\n${safeText(line.imei, "Sin IMEI", 30)}`,
     site: safeText(line.siteName, "Sede sin nombre", 55),
     sale: money(line.saleValue), initial: money(line.initialPayment),
@@ -358,7 +358,7 @@ function collectionValues(item: AllyPaymentSettlementPdfCollection) {
   return {
     date: dateTimeLabel(new Date(item.paymentDate)),
     folio: safeText(creditDisplayNumber(item), "-", 30),
-    client: `${safeText(item.clientName, "Cliente", 60)}\nCC ${safeText(item.clientDocument, "-", 28)}`,
+    client: `${safeText(item.clientName, "Cliente", 60)}\nCC ${safeText(item.clientDocument.replace(/[.\s]/g, ""), "-", 28)}`,
     site: safeText(item.siteName, "Sede", 60), method: safeText(item.paymentMethod, "-", 30),
     value: money(item.value), status: safeText(item.status, "DESCONTADO", 18).toUpperCase(),
   };

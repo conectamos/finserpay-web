@@ -1,0 +1,133 @@
+.detail { min-width: 0; color: var(--fp-graphite); }
+.breadcrumb { display: flex; align-items: center; gap: 16px; margin: -4px 0 12px; font-size: 13px; color: #59667a; }
+.breadcrumb button { min-height: 40px; cursor: pointer; }
+.breadcrumb strong { color: var(--fp-client-green); font-weight: 650; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 16px; }
+.eyebrow { color: #59667a; font-size: 11px; font-weight: 600; letter-spacing: .14em; margin-bottom: 5px; }
+.header h1 { font-size: 30px; font-weight: 800; letter-spacing: -.025em; line-height: 1.2; }
+.period { font-size: 18px; color: #4d5b70; margin-top: 3px; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 12px; padding-top: 4px; }
+.actions button { height: 48px; font-size: 14px; padding: 0 18px; white-space: nowrap; }
+.actions .close { position: relative; width: 54px; padding: 0; }
+.metadata { background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 9px; padding: 8px 0; box-shadow: 0 3px 14px rgb(21 26 33 / 3%); }
+.metadata dl { display: grid; grid-template-columns: 1.05fr .96fr .96fr 1.04fr; }
+.metadata dl > div { padding: 6px 24px; border-right: 1px solid var(--fp-border); }
+.metadata dl > div:last-child { border-right: 0; }
+.metadata dt { font-size: 13px; color: #5e6b7e; margin-bottom: 6px; }
+.metadata dd { font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.metadata dd > span { font-size: 12px; padding: 7px 15px; }
+.summary { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: 17px; margin-top: 19px; }
+.productCard { display: flex; flex-direction: column; min-width: 0; padding: 19px 25px 20px; border: 1px solid var(--fp-border); border-radius: 9px; background: var(--fp-surface); box-shadow: 0 3px 14px rgb(21 26 33 / 3%); }
+.productHeading { display: flex; align-items: center; gap: 20px; border-bottom: 1px solid var(--fp-border); padding: 0 0 18px; }
+.productHeading > span:first-child { flex-basis: 34px; width: 34px; height: 40px; }
+.productHeading h2 { font-size: 20px; font-weight: 750; letter-spacing: -.025em; }
+.countBadge { display: inline-flex; justify-content: center; align-items: center; border: 1px solid var(--fp-border); border-radius: 999px; background: #f5f7f8; padding: 6px 15px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.productHeading .countBadge { margin-left: auto; }
+.productAmounts { display: grid; gap: 12px; margin: 15px 0 24px; font-size: 14px; }
+.productAmounts > div, .productTotal, .netCard dl > div { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
+.productAmounts dt { color: #59667a; }
+.productAmounts dd { margin-left: auto; font-variant-numeric: tabular-nums; text-align: right; font-weight: 550; white-space: nowrap; }
+.productTotal { margin-top: auto; border-top: 1px solid var(--fp-border); padding-top: 18px; color: #59667a; font-size: 14px; }
+.productTotal strong { color: var(--fp-graphite); font-size: 20px; font-weight: 750; white-space: nowrap; font-variant-numeric: tabular-nums; margin-left: auto; }
+.missingBreakdown { padding: 25px 0; color: var(--fp-muted); font-size: 14px; }
+.netCard { display: flex; flex-direction: column; min-width: 0; padding: 24px 26px; border: 1px solid #344049; border-radius: 9px; background: linear-gradient(120deg,#1b292d,#223236); color: white; box-shadow: 0 3px 14px rgb(21 26 33 / 6%); }
+.netCard h2 { font-size: 14px; font-weight: 650; letter-spacing: .1em; color: white; }
+.netAmount { display: block; font-size: clamp(28px,3.15vw,46px); font-weight: 800; letter-spacing: -.025em; font-variant-numeric: tabular-nums; line-height: 1.2; margin: 13px 0 16px; color: white; overflow-wrap: anywhere; }
+.result { display: flex; align-items: center; gap: 15px; padding: 8px 15px; background: #274b39; color: #d3f3bc; border-radius: 7px; font-size: 14px; font-weight: 650; }
+.result > svg { flex-shrink: 0; fill: #66d755; stroke: #17491e; }
+.annulled { background: #633737; color: #fff1f0; }
+.annulled > svg { fill: #ffa39e; stroke: #651c19; }
+.netCard dl { display: grid; gap: 13px; margin-top: 18px; padding-top: 17px; border-top: 1px solid #829093; font-size: 14px; }
+.netCard dd { font-variant-numeric: tabular-nums; white-space: nowrap; margin-left: auto; font-size: 18px; font-weight: 650; }
+.creditCard { min-width: 0; padding: 0; overflow: hidden; margin-top: 19px; border: 1px solid var(--fp-border); border-radius: 9px; background: var(--fp-surface); box-shadow: none; }
+.tableHeading { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 12px 16px; }
+.tableHeading h2 { font-size: 20px; font-weight: 800; letter-spacing: -.025em; }
+.tableScroll { position: relative; overflow-x: auto; overscroll-behavior-x: contain; }
+.tableScroll:focus-visible { outline: 2px solid var(--fp-client-action); outline-offset: -2px; }
+.creditTable { width: 100%; min-width: 1370px; border-collapse: collapse; font-size: 13px; text-align: left; }
+.creditTable th { background: #f1f4f6; border: 1px solid #e2e7ec; border-left: 0; padding: 11px 14px; font-size: 12px; font-weight: 600; color: #344054; }
+.creditTable th:last-child { border-right: 0; }
+.creditTable td { padding: 13px 14px; border: 1px solid #e2e7ec; border-left: 0; height: 61px; vertical-align: middle; }
+.creditTable td:last-child { border-right: 0; }
+.creditTable tbody tr:hover { background: #fafcf9; }
+.creditTable .dateCell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.clientCell { min-width: 165px; max-width: 250px; }
+.clientCell small { display: block; margin-top: 3px; color: #58677d; font-size: 12px; white-space: nowrap; }
+.equipment { display: flex; align-items: center; gap: 14px; min-width: 205px; }
+.equipment > span { flex-basis: 23px; width: 23px; height: 28px; }
+.equipment small { display: block; margin-top: 3px; color: #58677d; font-size: 12px; white-space: nowrap; }
+.numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.payable { font-weight: 750; }
+.statusCell > span { padding: 6px 13px; font-size: 11px; }
+.emptyTable { text-align: center; padding: 28px !important; color: var(--fp-muted); }
+.tableFooter { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 9px 20px; }
+.tableFooter p { font-size: 12px; color: #4f5d72; }
+.paginationControls, .pagination, .pageItem { display: flex; align-items: center; gap: 7px; }
+.paginationControls { flex-wrap: wrap; gap: 20px; }
+.pageSize { border: 1px solid var(--fp-border); border-radius: 6px; padding: 8px 15px; color: #59667a; font-size: 12px; }
+.pagination { flex-wrap: wrap; }
+.pagination button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; min-width: 40px; min-height: 40px; border: 1px solid var(--fp-border); border-radius: 6px; background: white; padding: 0 8px; font-size: 12px; }
+.pagination button[aria-current="page"] { background: #f2f4f6; color: var(--fp-graphite); font-weight: 650; }
+.pagination button:disabled { opacity: .4; cursor: default; }
+.pagination button:focus-visible, .breadcrumb button:focus-visible { outline: 2px solid var(--fp-client-action); outline-offset: 2px; }
+.ellipsis { font-size: 12px; padding: 0 2px; }
+.collections, .emptyCollections { border: 1px solid var(--fp-border); border-radius: 9px; background: white; margin-top: 13px; }
+.collections > summary, .emptyCollections { display: flex; align-items: center; gap: 20px; padding: 14px 22px; min-height: 67px; font-size: 14px; }
+.collections > summary { list-style: none; cursor: pointer; }
+.collections > summary::-webkit-details-marker { display: none; }
+.collections > summary > svg:first-child, .emptyCollections > svg { color: var(--fp-client-green); flex-shrink: 0; }
+.collections > summary > strong, .emptyCollections > strong { font-weight: 650; }
+.collectionValue { margin-left: auto; font-size: 18px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.collections > summary > svg:last-child { transition: transform .15s ease; }
+.collections[open] > summary > svg:last-child { transform: rotate(90deg); }
+.collectionDetail { padding: 0 18px 18px; min-width: 0; }
+.collectionDetail > section { margin-top: 0; }
+.emptyCollections > div { margin-left: auto; display: grid; gap: 2px; text-align: right; }
+.emptyCollections > div > strong { font-size: 18px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.emptyCollections > div > span { font-size: 12px; color: var(--fp-muted); }
+@media (max-width: 1200px) {
+  .productCard { padding: 17px; }
+  .productHeading { gap: 10px; }
+  .productHeading h2 { font-size: 18px; }
+  .countBadge { padding-left: 11px; padding-right: 11px; }
+  .productAmounts, .productTotal { font-size: 13px; }
+  .productTotal strong { font-size: 18px; }
+  .netCard { padding: 22px 20px; }
+  .metadata dl > div { padding-left: 18px; padding-right: 18px; }
+  .metadata dd { font-size: 14px; }
+}
+@media (max-width: 1000px) {
+  .header { flex-wrap: wrap; gap: 14px; }
+  .actions { justify-content: flex-start; }
+  .summary { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+  .netCard { grid-column: 1 / -1; }
+  .netAmount { font-size: 42px; }
+  .metadata dl { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+  .metadata dl > div { padding: 10px 20px; }
+  .metadata dl > div:nth-child(2) { border-right: 0; }
+}
+@media (max-width: 640px) {
+  .breadcrumb { margin-bottom: 17px; gap: 12px; font-size: 12px; }
+  .header h1 { font-size: 27px; overflow-wrap: anywhere; }
+  .period { font-size: 15px; }
+  .actions { width: 100%; gap: 8px; }
+  .actions button { font-size: 12px; padding: 0 12px; }
+  .actions .close { width: 44px; padding: 0; }
+  .summary { grid-template-columns: minmax(0,1fr); gap: 13px; }
+  .netCard { grid-column: auto; }
+  .productCard { padding: 18px 22px; }
+  .productAmounts, .productTotal { font-size: 14px; }
+  .productTotal strong { font-size: 20px; }
+  .netAmount { font-size: clamp(24px,7.5vw,37px); }
+  .metadata dl > div { padding: 10px 14px; }
+  .metadata dt { font-size: 12px; }
+  .metadata dd { font-size: 13px; }
+  .tableHeading h2 { font-size: 18px; }
+  .tableFooter { padding: 12px; }
+  .paginationControls { gap: 10px; }
+  .pagination { gap: 4px; }
+  .pagination button { padding: 0 5px; font-size: 11px; }
+  .collections > summary, .emptyCollections { padding: 13px; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+  .collectionDetail { padding: 0 12px 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .collections > summary > svg:last-child { transition: none; } }

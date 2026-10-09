@@ -160,3 +160,15 @@ Las ayudas son accesibles con foco y al pasar el cursor. En móvil los indicador
 se distribuyen en dos columnas y las tablas permiten desplazamiento horizontal.
 El PDF sigue la referencia aprobada de portada y detalles A4 horizontal, con
 paginación de todos los registros y empates, fuente Roboto y marca grafito/lima.
+
+## Liquidaciones guardadas de aliados
+
+El detalle histórico de `/dashboard/pagos-aliados` reutiliza la navegación
+`settlement`, los iconos SVG de plataforma y los formatos compartidos. Su
+composición separa encabezado, franja de registro, dos resúmenes de producto,
+saldo grafito y tabla con un máximo de diez créditos por página. Presenta
+únicamente valores confirmados; la previsualización editable es una vista distinta.
+Los resúmenes y comprobantes incluyen toda la liquidación. Al cerrar, el historial
+permanece montado y conserva filtros, tamaño de página, página, posición y foco.
+Los recaudos se consultan desde una franja compacta; sin registros asociados no
+se muestra una tabla vacía. Montos y porcentajes guardados conservan sus decimales.

@@ -8,13 +8,10 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Download,
   Info,
-  Printer,
   RefreshCw,
   RotateCcw,
   Search,
-  Smartphone,
   WalletCards,
   X,
 } from "lucide-react";
@@ -42,236 +39,15 @@ import {
 
 import { PendingPaymentsView, PlatformIcon, ReceivedPaymentsView } from "./ally-payment-views";
 import styles from "./ally-payments-console.module.css";
+import HistoricalSettlementDetail from "./historical-settlement-detail";
+import type { AllyOption, PaymentCreditItem, PaymentCollectionItem, PaymentSummaryBucket, PaymentSummary, Settlement, PaymentPreview, AllyPaymentsResponse } from "./ally-payment-types";
+import { numberValue, formatMoney, formatNumber, formatPercent, formatDate, formatDateTime, statusTone, platformLabel } from "./ally-payment-format";
 import {
   emptyAllyPaymentViewFilters, filterPendingAllyCollections, filterPendingAllyCredits,
   filterReceivedAllyPayments, type AllyPaymentViewFilters,
 } from "@/lib/ally-payment-view-filters";
 
 type PaymentsTab = "liquidar" | "recibidos" | "pendientes";
-
-type AllyOption = {
-  id: number;
-  nombre: string;
-  codigo?: string | null;
-  activo?: boolean;
-};
-
-type PaymentCreditItem = {
-  numeroCreditoVisible?: string | null;
-  id?: number | string;
-  creditoId?: number | string;
-  fecha?: string | null;
-  fechaCredito?: string | null;
-  fechaLiquidacion?: string | null;
-  folio?: string | null;
-  cliente?: string | null;
-  clienteNombre?: string | null;
-  clienteDocumento?: string | null;
-  imei?: string | null;
-  equipo?: string | null;
-  plataforma?: string | null;
-  valorVenta?: number | null;
-  creditoAutorizado?: number | null;
-  cuotaInicial?: number | null;
-  porcentajeIntermediacion?: number | null;
-  valorIntermediacion?: number | null;
-  valorPagar?: number | null;
-  estado?: string | null;
-  estadoLiquidacion?: string | null;
-  aliado?: AllyOption | null;
-  sede?: {
-    id?: number | null;
-    nombre?: string | null;
-  } | null;
-};
-
-type PaymentCollectionItem = {
-  aliado?: AllyOption | null;
-  plataforma?: string | null;
-  imei?: string | null;
-  numeroCreditoVisible?: string | null;
-  id?: number | string;
-  abonoId?: number | string;
-  creditoId?: number | string;
-  sedeId?: number | string;
-  fechaAbono?: string | null;
-  folio?: string | null;
-  clienteNombre?: string | null;
-  clienteDocumento?: string | null;
-  sedeNombre?: string | null;
-  metodoPago?: string | null;
-  valor?: number | null;
-  estado?: string | null;
-};
-
-type PaymentSummaryBucket = {
-  plataforma?: string | null;
-  numeroCreditos?: number | null;
-  totalValorVenta?: number | null;
-  totalCreditoAutorizado?: number | null;
-  totalCuotaInicial?: number | null;
-  totalIntermediacion?: number | null;
-  totalPagar?: number | null;
-  totalPagarCreditos?: number | null;
-  totalRecaudosAliado?: number | null;
-  saldoNeto?: number | null;
-  direccionSaldo?: string | null;
-  valorPagarAliado?: number | null;
-  valorConsignarAliado?: number | null;
-  numeroRecaudos?: number | null;
-  porcentajeIntermediacion?: number | null;
-  valorVenta?: number | null;
-  creditoAutorizado?: number | null;
-  cuotaInicial?: number | null;
-  valorIntermediacion?: number | null;
-  valorPagar?: number | null;
-};
-
-type PaymentSummary = {
-  ANDROID?: PaymentSummaryBucket | null;
-  IPHONE?: PaymentSummaryBucket | null;
-  total?: PaymentSummaryBucket | null;
-};
-
-type Settlement = {
-  id: number | string;
-  aliadoId?: number | null;
-  aliado?: AllyOption | null;
-  aliadoNombre?: string | null;
-  periodoInicio?: string | null;
-  periodoFin?: string | null;
-  numeroCreditos?: number | null;
-  totalValorVenta?: number | null;
-  totalCreditoAutorizado?: number | null;
-  totalCuotaInicial?: number | null;
-  totalIntermediacion?: number | null;
-  totalPagar?: number | null;
-  totalPagarCreditos?: number | null;
-  totalRecaudosAliado?: number | null;
-  saldoNeto?: number | null;
-  direccionSaldo?: string | null;
-  valorPagarAliado?: number | null;
-  valorConsignarAliado?: number | null;
-  numeroRecaudos?: number | null;
-  numeroAprobacionBancaria?: string | null;
-  pagadoAt?: string | null;
-  createdAt?: string | null;
-  registradoPorNombre?: string | null;
-  estado?: string | null;
-  summary?: PaymentSummary | null;
-  resumen?: PaymentSummary | null;
-  items?: PaymentCreditItem[] | null;
-  creditos?: PaymentCreditItem[] | null;
-  detalles?: PaymentCreditItem[] | null;
-  recaudos?: PaymentCollectionItem[] | null;
-};
-
-type PaymentPreview = {
-  previewToken?: string | null;
-  token?: string | null;
-  aliado?: AllyOption | null;
-  periodoInicio?: string | null;
-  periodoFin?: string | null;
-  summary?: PaymentSummary | null;
-  resumen?: PaymentSummary | null;
-  items?: PaymentCreditItem[] | null;
-  creditos?: PaymentCreditItem[] | null;
-  recaudos?: PaymentCollectionItem[] | null;
-  totalPagarCreditos?: number | null;
-  totalRecaudosAliado?: number | null;
-  saldoNeto?: number | null;
-  direccionSaldo?: string | null;
-  valorPagarAliado?: number | null;
-  valorConsignarAliado?: number | null;
-};
-
-type AllyPaymentsResponse = {
-  access?: {
-    adminCentral?: boolean;
-    allyId?: number | null;
-  };
-  allies?: AllyOption[];
-  settlements?: Settlement[];
-  pending?: {
-    items?: PaymentCreditItem[];
-    summary?: PaymentSummary | null;
-    recaudos?: PaymentCollectionItem[];
-    totalPagarCreditos?: number | null;
-    totalRecaudosAliado?: number | null;
-    saldoNeto?: number | null;
-    direccionSaldo?: string | null;
-  } | null;
-  preview?: PaymentPreview | null;
-  error?: string;
-  message?: string;
-};
-
-const moneyFormatter = new Intl.NumberFormat("es-CO", {
-  currency: "COP",
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 20,
-  style: "currency",
-});
-
-const numberFormatter = new Intl.NumberFormat("es-CO", {
-  maximumFractionDigits: 0,
-});
-
-const percentFormatter = new Intl.NumberFormat("es-CO", {
-  maximumFractionDigits: 2,
-});
-
-function numberValue(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatMoney(value: unknown) {
-  return moneyFormatter.format(numberValue(value));
-}
-
-function formatNumber(value: unknown) {
-  return numberFormatter.format(Math.round(numberValue(value)));
-}
-
-function formatPercent(value: unknown) {
-  if (value === undefined || value === "") return "-";
-  if (value === null) return "Mixto";
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? `${percentFormatter.format(parsed)}%` : "-";
-}
-
-function formatDate(value: string | null | undefined) {
-  const normalized = String(value || "").trim();
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized);
-
-  if (dateOnly) {
-    return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
-  }
-
-  if (!normalized) return "-";
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return normalized;
-
-  return new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: "America/Bogota",
-    year: "numeric",
-  }).format(date);
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-
-  return new Intl.DateTimeFormat("es-CO", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "America/Bogota",
-  }).format(date);
-}
 
 function itemDate(item: PaymentCreditItem) {
   return item.fechaCredito || item.fecha || null;
@@ -396,14 +172,6 @@ function summarizePreviewItems(items: PaymentCreditItem[]): PaymentSummary {
   return summarizeAllyPayments(recognizedItems);
 }
 
-function statusTone(status: string | null | undefined) {
-  const normalized = String(status || "").toUpperCase();
-  if (normalized.includes("ANUL") || normalized.includes("ERROR")) return "danger" as const;
-  if (normalized.includes("PAG") || normalized.includes("LIQUID")) return "positive" as const;
-  if (normalized.includes("PEND") || normalized.includes("PROCES")) return "warning" as const;
-  return "neutral" as const;
-}
-
 function summaryValue(
   bucket: PaymentSummaryBucket | null | undefined,
   totalKey:
@@ -464,113 +232,6 @@ function responseMessage(payload: unknown, fallback: string) {
     if (typeof data.message === "string" && data.message.trim()) return data.message;
   }
   return fallback;
-}
-
-function platformLabel(value: string | null | undefined) {
-  const normalized = String(value || "").toUpperCase();
-  if (normalized === "IPHONE" || normalized === "IOS") return "iPhone";
-  if (normalized === "ANDROID") return "Android";
-  return value || "Sin plataforma";
-}
-
-function SummaryGrid({
-  summary,
-  title,
-}: {
-  summary: PaymentSummary | null | undefined;
-  title: string;
-}) {
-  const buckets = [
-    { key: "ANDROID", label: "Android", value: summary?.ANDROID },
-    { key: "IPHONE", label: "iPhone", value: summary?.IPHONE },
-    { key: "total", label: "Total consolidado", value: summary?.total },
-  ] as const;
-
-  if (!summary) {
-    return (
-      <EmptyState
-        className="mt-4"
-        title="Sin resumen disponible"
-        description="El servidor no entrego valores consolidados para esta consulta."
-      />
-    );
-  }
-
-  return (
-    <section className="mt-4" aria-label={title}>
-      <h2 className="text-lg font-black text-[var(--fp-graphite)]">{title}</h2>
-      <div className="mt-3 grid gap-3 xl:grid-cols-3">
-        {buckets.map((entry) => {
-          const bucket = entry.value;
-          const total = entry.key === "total";
-
-          return (
-            <Card
-              key={entry.key}
-              className={[
-                "!rounded-lg !p-4",
-                total ? "!border-[#b9d873] !bg-[#fbfdf5]" : "",
-              ].join(" ")}
-            >
-              <div className="flex items-center justify-between gap-3 border-b border-[var(--fp-border)] pb-3">
-                <div className="flex items-center gap-2">
-                  {entry.key === "total" ? (
-                    <WalletCards className="h-4 w-4 text-[#5c7a13]" aria-hidden="true" />
-                  ) : (
-                    <Smartphone className="h-4 w-4 text-[#5c7a13]" aria-hidden="true" />
-                  )}
-                  <h3 className="font-black text-[var(--fp-graphite)]">{entry.label}</h3>
-                </div>
-                <Badge tone={total ? "positive" : "neutral"}>
-                  {formatNumber(bucket?.numeroCreditos)} creditos
-                </Badge>
-              </div>
-              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <div>
-                  <dt className="text-xs text-[var(--fp-muted)]">Valor venta</dt>
-                  <dd className="mt-1 font-bold tabular-nums text-[var(--fp-graphite)]">
-                    {formatMoney(summaryValue(bucket, "totalValorVenta", "valorVenta"))}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[var(--fp-muted)]">Credito autorizado</dt>
-                  <dd className="mt-1 font-bold tabular-nums text-[var(--fp-graphite)]">
-                    {formatMoney(summaryValue(bucket, "totalCreditoAutorizado", "creditoAutorizado"))}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[var(--fp-muted)]">Inicial</dt>
-                  <dd className="mt-1 font-bold tabular-nums text-[var(--fp-graphite)]">
-                    {formatMoney(summaryValue(bucket, "totalCuotaInicial", "cuotaInicial"))}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[var(--fp-muted)]">% intermediacion</dt>
-                  <dd className="mt-1 font-bold text-[var(--fp-graphite)]">
-                    {formatPercent(bucket?.porcentajeIntermediacion)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[var(--fp-muted)]">Intermediacion</dt>
-                  <dd className="mt-1 font-bold tabular-nums text-[var(--fp-graphite)]">
-                    {formatMoney(summaryValue(bucket, "totalIntermediacion", "valorIntermediacion"))}
-                  </dd>
-                </div>
-              </dl>
-              <div className="mt-4 flex items-end justify-between gap-3 border-t border-[var(--fp-border)] pt-3">
-                <span className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                  Valor a pagar
-                </span>
-                <strong className="text-xl tabular-nums text-[var(--fp-graphite)]">
-                  {formatMoney(summaryValue(bucket, "totalPagar", "valorPagar"))}
-                </strong>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-    </section>
-  );
 }
 
 type IntermediationEditor = {
@@ -805,198 +466,6 @@ function SettlementCreditItems({
   );
 }
 
-function CreditItems({
-  alwaysTable = false,
-  emptyDescription,
-  intermediationEditor = null,
-  items,
-}: {
-  emptyDescription: string;
-  alwaysTable?: boolean;
-  intermediationEditor?: IntermediationEditor | null;
-  items: PaymentCreditItem[];
-}) {
-  if (!items.length) {
-    return (
-      <EmptyState
-        className="mt-4"
-        title="No hay creditos para mostrar"
-        description={emptyDescription}
-      />
-    );
-  }
-
-  return (
-    <section className="mt-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-black text-[var(--fp-graphite)]">Detalle por credito</h2>
-        <Badge tone="neutral">{formatNumber(items.length)} registros</Badge>
-      </div>
-
-      <div className={alwaysTable ? "hidden" : "mt-3 divide-y divide-[var(--fp-border)] overflow-hidden rounded-lg border border-[var(--fp-border)] bg-white lg:hidden"}>
-        {items.map((item, index) => (
-          <article key={itemKey(item, index)} className="p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                  Fecha
-                </p>
-                <p className="mt-1 flex items-center gap-1.5 text-sm font-bold text-[var(--fp-graphite)]">
-                  <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
-                  {formatDate(itemDate(item))}
-                </p>
-              </div>
-              <StatusPill tone={statusTone(itemStatus(item))}>{itemStatus(item)}</StatusPill>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                  Aliado
-                </p>
-                <p className="mt-1 font-bold text-[var(--fp-graphite)]">
-                  {item.aliado?.nombre || "-"}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                  Sede
-                </p>
-                <p className="mt-1 font-bold text-[var(--fp-graphite)]">{itemSite(item)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                  Cliente
-                </p>
-                <p className="mt-1 font-bold text-[var(--fp-graphite)]">{itemClient(item)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                  Cédula
-                </p>
-                <p className="mt-1 font-mono text-sm font-semibold text-[#344054]">
-                  {item.clienteDocumento?.replace(/[.\s]/g, "") || "Sin documento"}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-                  Equipo
-                </p>
-                <p className="mt-1 text-sm font-semibold text-[#344054]">
-                  {item.equipo || "Sin referencia"}
-                </p>
-                <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
-                  IMEI: {item.imei?.replace(/[.\s]/g, "") || "Sin IMEI"}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-md bg-[#f7f8f8] p-3 text-sm">
-              <div>
-                <p className="text-xs text-[var(--fp-muted)]">Plataforma</p>
-                <p className="mt-1 font-bold">{platformLabel(item.plataforma)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-[var(--fp-muted)]">Valor venta</p>
-                <p className="mt-1 font-bold tabular-nums">{formatMoney(item.valorVenta)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-[var(--fp-muted)]">Inicial</p>
-                <p className="mt-1 font-bold tabular-nums">{formatMoney(item.cuotaInicial)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-[var(--fp-muted)]">Crédito autorizado</p>
-                <p className="mt-1 font-bold tabular-nums">{formatMoney(item.creditoAutorizado)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-[var(--fp-muted)]">Intermediación</p>
-                <div className="mt-1 font-bold tabular-nums">
-                  <IntermediationField editor={intermediationEditor} item={item} />
-                </div>
-              </div>
-              <div>
-                <p className="text-xs text-[var(--fp-muted)]">Valor intermediación</p>
-                <p className="mt-1 font-bold tabular-nums">{formatMoney(item.valorIntermediacion)}</p>
-              </div>
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <span className="text-xs font-bold uppercase text-[var(--fp-muted)]">Valor a pagar</span>
-              <strong className="tabular-nums text-[var(--fp-graphite)]">{formatMoney(item.valorPagar)}</strong>
-            </div>
-          </article>
-        ))}
-      </div>
-
-      <DataTable className={alwaysTable ? "mt-3" : "mt-3 hidden lg:block"}>
-        <table className="w-full min-w-[1760px] text-[13px]">
-          <caption className="sr-only">Detalle de creditos incluidos en el pago a aliados</caption>
-          <thead className="bg-[var(--fp-graphite)] text-white">
-            <tr>
-              <th className="px-3 py-3 text-left">Fecha</th>
-              <th className="px-3 py-3 text-left">Aliado</th>
-              <th className="px-3 py-3 text-left">Sede</th>
-              <th className="px-3 py-3 text-left">Cliente</th>
-              <th className="px-3 py-3 text-left">Cédula</th>
-              <th className="px-3 py-3 text-left">Equipo</th>
-              <th className="px-3 py-3 text-left">Plataforma</th>
-              <th className="px-3 py-3 text-right">Valor venta</th>
-              <th className="px-3 py-3 text-right">Inicial</th>
-              <th className="px-3 py-3 text-right">Crédito autorizado</th>
-              <th className="px-3 py-3 text-right">Intermediación</th>
-              <th className="px-3 py-3 text-right">Valor intermediación</th>
-              <th className="px-3 py-3 text-right">Valor a pagar</th>
-              <th className="px-3 py-3 text-left">Estado</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--fp-border)]">
-            {items.map((item, index) => (
-              <tr key={itemKey(item, index)} className="bg-white even:bg-[#fbfcfa]">
-                <td className="whitespace-nowrap px-3 py-3">{formatDate(itemDate(item))}</td>
-                <td className="max-w-44 break-words px-3 py-3">{item.aliado?.nombre || "-"}</td>
-                <td className="max-w-44 break-words px-3 py-3 font-semibold">{itemSite(item)}</td>
-                <td className="px-3 py-3 font-semibold">{itemClient(item)}</td>
-                <td className="whitespace-nowrap px-3 py-3 font-mono">{item.clienteDocumento?.replace(/[.\s]/g, "") || "-"}</td>
-                <td className="max-w-60 break-words px-3 py-3">
-                  <p>{item.equipo || "-"}</p>
-                  <p className="mt-1 break-all font-mono text-xs text-[var(--fp-muted)]">
-                    IMEI: {item.imei?.replace(/[.\s]/g, "") || "-"}
-                  </p>
-                </td>
-                <td className="px-3 py-3">
-                  <Badge tone="neutral">{platformLabel(item.plataforma)}</Badge>
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  {formatMoney(item.valorVenta)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  {formatMoney(item.cuotaInicial)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  {formatMoney(item.creditoAutorizado)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right">
-                  <div className="flex justify-end">
-                    <IntermediationField editor={intermediationEditor} item={item} />
-                  </div>
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                  {formatMoney(item.valorIntermediacion)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right font-black tabular-nums">
-                  {formatMoney(item.valorPagar)}
-                </td>
-                <td className="px-3 py-3">
-                  <StatusPill tone={statusTone(itemStatus(item))}>{itemStatus(item)}</StatusPill>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </DataTable>
-    </section>
-  );
-}
-
 function CollectionItems({
   items,
   emptyDescription,
@@ -1056,52 +525,6 @@ function CollectionItems({
       </DataTable>
     </section>
   );
-}
-
-function ReconciliationCard({
-  totalPagarCreditos,
-  totalRecaudosAliado,
-  storedSettlement,
-}: {
-  totalPagarCreditos: number;
-  totalRecaudosAliado: number;
-  storedSettlement?: Settlement;
-}) {
-  const savedNet = storedSettlement?.saldoNeto ?? storedSettlement?.totalPagar;
-  const balance = savedNet != null ? {
-    totalPagarCreditos,
-    totalRecaudosAliado,
-    saldoNeto: savedNet,
-    direccionSaldo: storedSettlement?.direccionSaldo || (savedNet < 0 ? "CONSIGNACION_ALIADO" : savedNet > 0 ? "PAGO_ALIADO" : "SALDO_CERO"),
-  } : calculateAllySettlementBalance(totalPagarCreditos, totalRecaudosAliado);
-  const consignacion = balance.direccionSaldo === "CONSIGNACION_ALIADO";
-  const cero = balance.direccionSaldo === "SALDO_CERO";
-  return (
-    <Card className="mt-4 !rounded-lg !border-[#b9d873] !bg-[#fbfdf5] !p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#5c7a13]">Conciliacion del periodo</p>
-          <dl className="mt-3 grid gap-4 sm:grid-cols-2">
-            <div><dt className="text-xs text-[var(--fp-muted)]">Valor por creditos</dt><dd className="mt-1 font-black tabular-nums">{formatMoney(balance.totalPagarCreditos)}</dd></div>
-            <div><dt className="text-xs text-[var(--fp-muted)]">Menos recaudos del aliado</dt><dd className="mt-1 font-black tabular-nums">- {formatMoney(balance.totalRecaudosAliado)}</dd></div>
-          </dl>
-        </div>
-        <div className="rounded-lg bg-white px-5 py-4 text-right shadow-sm">
-          <p className="flex items-center justify-end gap-2 text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">
-            <WalletCards className="h-4 w-4" />
-            {cero ? "Saldo conciliado" : consignacion ? "El aliado debe consignar" : "FINSER PAY paga al aliado"}
-          </p>
-          <strong className="mt-1 block text-2xl tabular-nums text-[var(--fp-graphite)]">
-            {formatMoney(Math.abs(balance.saldoNeto))}
-          </strong>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function settlementAllyName(settlement: Settlement) {
-  return settlement.aliado?.nombre || settlement.aliadoNombre || "Aliado";
 }
 
 function settlementPdfUrl(settlementId: Settlement["id"], download = false) {
@@ -1199,6 +622,8 @@ export default function AllyPaymentsConsole({
   const [showPendingCollections, setShowPendingCollections] = useState(false);
   const [overviewError, setOverviewError] = useState(false);
   const detailSectionRef = useRef<HTMLElement>(null);
+  const historyScrollRef = useRef(0);
+  const historyTriggerRef = useRef<HTMLElement | null>(null);
   const collectionsSectionRef = useRef<HTMLElement>(null);
   const [preview, setPreview] = useState<PaymentPreview | null>(null);
   const [previewRequested, setPreviewRequested] = useState(false);
@@ -1216,6 +641,7 @@ export default function AllyPaymentsConsole({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingMutationId, setPendingMutationId] = useState<string | null>(null);
   const [selectedSettlement, setSelectedSettlement] = useState<Settlement | null>(null);
+  const selectedSettlementId = selectedSettlement?.id;
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
 
@@ -1332,6 +758,15 @@ export default function AllyPaymentsConsole({
       setActiveTab("recibidos");
     }
   }, [activeTab, adminCentral]);
+
+  useEffect(() => {
+    if (activeTab !== "recibidos" || selectedSettlementId == null) return;
+    const frame = requestAnimationFrame(() => {
+      detailSectionRef.current?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeTab, selectedSettlementId]);
 
   const invalidatePreview = () => {
     setPreview(null);
@@ -1502,6 +937,8 @@ export default function AllyPaymentsConsole({
   };
 
   const openSettlement = async (settlement: Settlement) => {
+    historyScrollRef.current = window.scrollY;
+    historyTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     try {
       setDetailLoadingId(String(settlement.id));
       setNotice(null);
@@ -1518,7 +955,6 @@ export default function AllyPaymentsConsole({
       }
 
       setSelectedSettlement(raw.settlement);
-      requestAnimationFrame(() => detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (error) {
       setNotice({
         tone: "error",
@@ -1571,9 +1007,18 @@ export default function AllyPaymentsConsole({
     else setPendingFilters({ ...draft });
   };
   const refreshBusy = loading || previewLoading || submitting || Boolean(detailLoadingId);
+  const historicalDetailOpen = activeTab === "recibidos" && Boolean(selectedSettlement);
+  const closeHistoricalDetail = () => {
+    setSelectedSettlement(null);
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: historyScrollRef.current, behavior: "instant" });
+      historyTriggerRef.current?.focus({ preventScroll: true });
+    });
+  };
 
   return (
-    <main className={`${styles.main} ${activeTab === "liquidar" ? styles.liquidateMain : ""}`}>
+    <main className={`${styles.main} ${activeTab === "liquidar" ? styles.liquidateMain : ""} ${historicalDetailOpen ? styles.historyDetailMain : ""}`}>
+      <div hidden={historicalDetailOpen}>
       <div className={styles.header}>
         <div>
           {activeTab !== "liquidar" && <div className={styles.eyebrow}>{adminCentral ? "Operación financiera" : "Consulta del aliado"}</div>}
@@ -1833,87 +1278,7 @@ export default function AllyPaymentsConsole({
             onOpen={(settlement) => void openSettlement(settlement)}
           />
 
-          {selectedSettlement ? (
-            <section ref={detailSectionRef} className="mt-5 scroll-mt-6" aria-label="Detalle del periodo pagado">
-              <Card className="!rounded-lg !p-4 sm:!p-5">
-                <div className="flex items-start justify-between gap-4 border-b border-[var(--fp-border)] pb-4">
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#5c7a13]">
-                    Detalle del periodo
-                  </p>
-                  <h2 className="mt-1 text-xl font-black text-[var(--fp-graphite)]">
-                    {settlementAllyName(selectedSettlement)}
-                  </h2>
-                  <p className="mt-1 text-sm text-[var(--fp-muted)]">
-                    {formatDate(selectedSettlement.periodoInicio)} al{" "}
-                    {formatDate(selectedSettlement.periodoFin)}
-                  </p>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={() => openSettlementPdf(selectedSettlement.id)}
-                  >
-                    <Printer className="h-4 w-4" aria-hidden="true" />
-                    Ver / imprimir PDF
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => downloadSettlementPdf(selectedSettlement.id)}
-                  >
-                    <Download className="h-4 w-4" aria-hidden="true" />
-                    Descargar PDF
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setSelectedSettlement(null)}
-                    aria-label="Cerrar detalle del periodo"
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                    Cerrar
-                  </Button>
-                </div>
-                </div>
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-md bg-[#f7f8f8] p-3">
-                  <p className="text-xs text-[var(--fp-muted)]">Aprobacion bancaria</p>
-                  <p className="mt-1 break-all font-black">{selectedSettlement.numeroAprobacionBancaria || "-"}</p>
-                </div>
-                <div className="rounded-md bg-[#f7f8f8] p-3">
-                  <p className="text-xs text-[var(--fp-muted)]">Fecha de pago</p>
-                  <p className="mt-1 font-black">{formatDateTime(selectedSettlement.pagadoAt || selectedSettlement.createdAt)}</p>
-                </div>
-                <div className="rounded-md bg-[#f7f8f8] p-3">
-                  <p className="text-xs text-[var(--fp-muted)]">Registrado por</p>
-                  <p className="mt-1 font-black">{selectedSettlement.registradoPorNombre || "-"}</p>
-                </div>
-                <div className="rounded-md bg-[#f7f8f8] p-3">
-                  <p className="text-xs text-[var(--fp-muted)]">Estado</p>
-                  <StatusPill className="mt-1" tone={statusTone(selectedSettlement.estado || "PAGADO")}>
-                    {selectedSettlement.estado || "PAGADO"}
-                  </StatusPill>
-                </div>
-                </div>
-              </Card>
-
-              <SummaryGrid summary={settlementSummary(selectedSettlement)} title="Android, iPhone y total" />
-              <ReconciliationCard
-                totalPagarCreditos={numberValue(selectedSettlement.totalPagarCreditos ?? selectedSettlement.totalPagar)}
-                totalRecaudosAliado={numberValue(selectedSettlement.totalRecaudosAliado)}
-                storedSettlement={selectedSettlement}
-              />
-              <CreditItems
-                items={settlementItems(selectedSettlement)}
-                alwaysTable
-                emptyDescription="El servidor no entrego el detalle de creditos de este periodo."
-              />
-              <CollectionItems
-                items={collectionItems(selectedSettlement)}
-                emptyDescription="Esta liquidacion historica no tiene recaudos del aliado asociados."
-              />
-            </section>
-          ) : null}
         </div>
       ) : null}
 
@@ -1933,6 +1298,20 @@ export default function AllyPaymentsConsole({
         </div>
       ) : null}
 
+      </div>
+      {historicalDetailOpen && selectedSettlement && <section ref={detailSectionRef} aria-label="Detalle de liquidación guardada" tabIndex={-1}>
+        <HistoricalSettlementDetail
+          key={String(selectedSettlement.id)}
+          settlement={selectedSettlement}
+          summary={settlementSummary(selectedSettlement)}
+          items={settlementItems(selectedSettlement)}
+          collectionCount={collectionItems(selectedSettlement).length}
+          collectionDetail={<CollectionItems items={collectionItems(selectedSettlement)} emptyDescription="Sin recaudos asociados" />}
+          onPrint={() => openSettlementPdf(selectedSettlement.id)}
+          onDownload={() => downloadSettlementPdf(selectedSettlement.id)}
+          onClose={closeHistoricalDetail}
+        />
+      </section>}
       <ConfirmDialog
         open={confirmOpen}
         title={previewIsConsignment ? "Confirmar consignacion del aliado" : "Confirmar liquidacion"}

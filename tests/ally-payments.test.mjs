@@ -28,6 +28,7 @@ const [
   pdfRouteSource,
   pdfBuilderSource,
   eligibilitySource,
+  historicalDetailSource,
 ] = await Promise.all([
   readProjectFile("lib/ally-payment-access.ts"),
   readProjectFile("app/api/pagos-aliados/route.ts"),
@@ -44,6 +45,7 @@ const [
   readProjectFile("app/api/pagos-aliados/[id]/comprobante/route.ts"),
   readProjectFile("lib/ally-payment-settlement-pdf.ts"),
   readProjectFile("lib/ally-payment-eligibility.ts"),
+  readProjectFile("app/dashboard/pagos-aliados/historical-settlement-detail.tsx"),
 ]);
 
 function sectionBetween(contents, startMarker, endMarker) {
@@ -330,41 +332,38 @@ test("la interfaz recalcula y envia ajustes manuales por credito", () => {
 
 test("el detalle muestra la sede real y respeta el orden solicitado con cedula e IMEI", () => {
   const creditItems = sectionBetween(
-    consoleSource,
-    "function CreditItems(",
-    "function CollectionItems"
+    historicalDetailSource,
+    "function SavedCreditTable(",
+    "export default function HistoricalSettlementDetail"
   );
   const desktopTable = sectionBetween(
     creditItems,
-    '<DataTable className=',
-    "</DataTable>"
+    '<table className=',
+    "</table>"
   );
 
   assertInOrder(
     desktopTable,
     [
       ">Fecha</th>",
-      ">Aliado</th>",
+      ">Cliente / Cédula</th>",
       ">Sede</th>",
-      ">Cliente</th>",
-      ">Cédula</th>",
-      ">Equipo</th>",
-      ">Plataforma</th>",
-      ">Valor venta</th>",
+      ">Equipo / IMEI</th>",
+      ">Venta</th>",
       ">Inicial</th>",
       ">Crédito autorizado</th>",
       ">Intermediación</th>",
-      ">Valor intermediación</th>",
-      ">Valor a pagar</th>",
+      ">Valor liquidado</th>",
       ">Estado</th>",
     ],
     "El orden de columnas del detalle"
   );
   assert.doesNotMatch(creditItems, />Folio<\/th>|Sin folio|item\.folio/);
-  assert.match(creditItems, /item\.clienteDocumento/);
-  assert.match(creditItems, /IMEI:\s*{item\.imei/);
-  assert.match(consoleSource, /function itemSite[\s\S]*?item\.sede\?\.nombre/);
-  assert.match(creditItems, />\s*Sede\s*</);
+  assert.match(creditItems, /identifier\(item\.clienteDocumento\)/);
+  assert.match(creditItems, /identifier\(item\.imei\)/);
+  assert.match(creditItems, /item\.sede\?\.nombre/);
+  assert.match(creditItems, /formatMoney\(item\.valorPagar\)/);
+  assert.doesNotMatch(historicalDetailSource, /calculateAllyPaymentAmounts|summarizeAllyPayments|IntermediationField|<input\b/);
 });
 
 test("la sede viaja desde el credito real y tambien aparece en pagos historicos", () => {
@@ -517,8 +516,10 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
   assert.match(pdfBuilderSource, /platformSummary\[platform\]\.creditCount > 0/);
   assert.match(pdfBuilderSource, /assertFinancialConsistency\(input\)/);
   assert.doesNotMatch(pdfBuilderSource, /resolveRedescuentoPercentageByPlatform/);
-  assert.match(consoleSource, /Ver \/ imprimir PDF/);
-  assert.match(consoleSource, /Descargar PDF/);
+  assert.match(historicalDetailSource, /Ver \/ imprimir PDF/);
+  assert.match(historicalDetailSource, /Descargar PDF/);
+  assert.match(consoleSource, /onPrint=\{\(\) => openSettlementPdf\(selectedSettlement\.id\)\}/);
+  assert.match(consoleSource, /onDownload=\{\(\) => downloadSettlementPdf\(selectedSettlement\.id\)\}/);
 });
 
 test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", () => {

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { createJiti } from "jiti";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import ts from "typescript";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("../", import.meta.url)) } });
 const { buildAllyPaymentSettlementPdf } = await jiti.import("../lib/ally-payment-settlement-pdf.ts");
@@ -194,4 +197,234 @@ test("rechaza un comprobante cuyos totales financieros no cuadran", async () => 
     }),
     /no cuadra en saldo neto/
   );
+});
+
+function savedSnapshot(lines, collections = []) {
+  const total = (items, field) => items.reduce((sum, item) => sum + Math.round(item[field] * 100), 0) / 100;
+  const totalPayable = total(lines, "payableValue");
+  const totalAllyCollections = total(collections, "value");
+  const netBalance = Math.round((totalPayable - totalAllyCollections) * 100) / 100;
+  const bucket = platform => {
+    const items = lines.filter(item => item.platform === platform);
+    const percentages = [...new Set(items.map(item => item.intermediationPercentage))];
+    return {
+      creditCount: items.length,
+      intermediationPercentage: percentages.length === 1 ? percentages[0] : null,
+      payableValue: total(items, "payableValue"),
+    };
+  };
+  return {
+    settlementId: 901,
+    allyName: "Aliado histórico QA",
+    periodStart: "2026-09-01",
+    periodEnd: "2026-09-30",
+    bankApprovalNumber: "0000-BANCO-QA",
+    status: "PAGADA",
+    paidAt: new Date("2026-10-01T04:05:00.000Z"),
+    registeredBy: "Usuario histórico QA",
+    creditCount: lines.length,
+    totalSaleValue: total(lines, "saleValue"),
+    totalInitialPayment: total(lines, "initialPayment"),
+    totalAuthorizedCredit: total(lines, "authorizedCredit"),
+    totalIntermediation: total(lines, "intermediationValue"),
+    totalPayable,
+    totalAllyCollections,
+    netBalance,
+    balanceDirection: netBalance < 0 ? "CONSIGNACION_ALIADO" : netBalance > 0 ? "PAGO_ALIADO" : "SIN_SALDO",
+    platformSummary: { ANDROID: bucket("ANDROID"), IPHONE: bucket("IPHONE") },
+    lines,
+    collections,
+  };
+}
+
+function fractionalSavedLine(index) {
+  return {
+    ...sampleLine(index),
+    clientName: `Cliente histórico QA ${String(index).padStart(3, "0")}`,
+    clientDocument: `00.12 3456${String(index).padStart(3, "0")}`,
+    imei: `000012345678${String(index).padStart(3, "0")}`,
+    saleValue: 1_000.25,
+    initialPayment: 200,
+    authorizedCredit: 800.25,
+    intermediationPercentage: 5.125,
+    intermediationValue: 41.01,
+    payableValue: 759.24,
+  };
+}
+
+function savedCollection(index, value = 12.34) {
+  return {
+    paymentDate: "2026-09-30T23:40:00.000Z",
+    folio: `FOLIO-ININTERNO-${index}`,
+    numeroCreditoVisible: `0000-SADMIN-${String(index).padStart(3, "0")}`,
+    clientName: `Recaudo histórico QA ${String(index).padStart(3, "0")}`,
+    clientDocument: `00.98 7654${String(index).padStart(3, "0")}`,
+    siteName: "Sede guardada QA",
+    paymentMethod: index % 2 ? "BANCOLOMBIA" : "BRE-B",
+    value,
+    status: "DESCONTADO",
+  };
+}
+
+test("el PDF conserva centavos, tasas guardadas y todos los créditos y recaudos más allá de diez filas", async () => {
+  const lines = Array.from({ length: 13 }, (_, index) => fractionalSavedLine(index));
+  const collections = Array.from({ length: 17 }, (_, index) => savedCollection(index));
+  const input = savedSnapshot(lines, collections);
+  const before = structuredClone(input);
+  const pages = await pdfPagesText(await buildAllyPaymentSettlementPdf(input));
+  const text = pages.join(" ");
+  const money = value => new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: 0, maximumFractionDigits: 20,
+  }).format(value);
+
+  assert.ok(pages.filter(page => /Detalle por crédito/.test(page)).length > 1);
+  assert.ok(pages.filter(page => /Recaudos aplicados/.test(page)).length > 1);
+  for (const line of lines) {
+    assert.ok(text.includes(line.clientName), `Falta el crédito ${line.creditId}.`);
+    assert.ok(text.includes(line.imei), `IMEI completo con ceros: ${line.imei}.`);
+    assert.ok(text.includes(line.clientDocument.replace(/[.\s]/g, "")));
+    assert.ok(!text.includes(line.clientDocument), "La cédula no conserva puntos ni espacios.");
+  }
+  for (const collection of collections) {
+    assert.ok(text.includes(collection.clientName), `Falta el recaudo ${collection.numeroCreditoVisible}.`);
+    assert.ok(text.includes(collection.numeroCreditoVisible), "Sadmin conserva sus ceros iniciales.");
+    assert.ok(text.includes(collection.clientDocument.replace(/[.\s]/g, "")));
+  }
+  for (const amount of [1_000.25, 800.25, 41.01, 759.24, 12.34,
+    input.totalIntermediation, input.totalAllyCollections, input.netBalance]) {
+    assert.ok(text.includes(money(amount)), `Valor guardado sin redondear: ${money(amount)}.`);
+  }
+  assert.match(text, /5,125 %/);
+  assert.match(text, /0000-BANCO-QA/);
+  assert.match(text, /Usuario histórico QA/);
+  assert.match(text, /30\/09\/2026/); // Hora Colombia: el pago fue antes de la medianoche local.
+  assert.deepEqual(input, before, "Imprimir no modifica los datos históricos.");
+});
+
+test("el PDF conserva el sentido histórico de consignación del aliado y saldo cero", async t => {
+  const lines = [fractionalSavedLine(0)];
+  for (const scenario of [
+    { value: 1_000.01, headline: /Total a consignar por el aliado/, amount: /240,77/, direction: "CONSIGNACION_ALIADO" },
+    { value: 759.24, headline: /Liquidación conciliada/, amount: /Neto conciliado/, direction: "SIN_SALDO" },
+  ]) {
+    await t.test(scenario.direction, async () => {
+      const input = savedSnapshot(lines, [savedCollection(0, scenario.value)]);
+      assert.equal(input.balanceDirection, scenario.direction);
+      const text = await pdfText(await buildAllyPaymentSettlementPdf(input));
+      assert.match(text, scenario.headline);
+      assert.match(text, scenario.amount);
+      assert.doesNotMatch(text, /Total pagado al aliado/);
+      assert.match(text, /0000-SADMIN-000/);
+    });
+  }
+});
+
+function pdfRouteFixture(snapshot, access) {
+  const calls = [];
+  const settlement = {
+    id: snapshot.settlementId,
+    aliado: { id: 7, nombre: snapshot.allyName },
+    periodoInicio: snapshot.periodStart, periodoFin: snapshot.periodEnd,
+    numeroAprobacionBancaria: snapshot.bankApprovalNumber,
+    estado: snapshot.status, pagadoAt: snapshot.paidAt.toISOString(), registradoPorNombre: snapshot.registeredBy,
+    numeroCreditos: snapshot.creditCount, totalValorVenta: snapshot.totalSaleValue,
+    totalCuotaInicial: snapshot.totalInitialPayment, totalCreditoAutorizado: snapshot.totalAuthorizedCredit,
+    totalIntermediacion: snapshot.totalIntermediation, totalPagar: snapshot.totalPayable,
+    totalRecaudosAliado: snapshot.totalAllyCollections, saldoNeto: snapshot.netBalance,
+    direccionSaldo: snapshot.balanceDirection,
+    summary: Object.fromEntries(Object.entries(snapshot.platformSummary).map(([platform, bucket]) => [platform, {
+      numeroCreditos: bucket.creditCount, porcentajeIntermediacion: bucket.intermediationPercentage,
+      totalPagar: bucket.payableValue,
+    }])),
+    items: snapshot.lines.map(line => ({
+      creditoId: line.creditId, fechaCredito: line.creditDate, sede: { nombre: line.siteName },
+      clienteNombre: line.clientName, clienteDocumento: line.clientDocument, equipo: line.equipment,
+      imei: line.imei, plataforma: line.platform, valorVenta: line.saleValue, cuotaInicial: line.initialPayment,
+      creditoAutorizado: line.authorizedCredit, porcentajeIntermediacion: line.intermediationPercentage,
+      valorIntermediacion: line.intermediationValue, valorPagar: line.payableValue, estado: line.status,
+    })),
+    recaudos: snapshot.collections.map((item, index) => ({
+      creditoId: index + 1000, fechaAbono: item.paymentDate, folio: item.folio,
+      clienteNombre: item.clientName, clienteDocumento: item.clientDocument, sedeNombre: item.siteName,
+      metodoPago: item.paymentMethod, valor: item.value, estado: item.status,
+    })),
+  };
+  class NextResponse extends Response {
+    static json(body, init) {
+      return new NextResponse(JSON.stringify(body), { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
+    }
+  }
+  class AllyPaymentNotFoundError extends Error {}
+  class AllyPaymentValidationError extends Error {}
+  const dependencies = {
+    "next/server": { NextResponse },
+    "@/lib/ally-payment-access": { getAllyPaymentAccess: async () => access },
+    "@/lib/ally-payments": {
+      AllyPaymentNotFoundError, AllyPaymentValidationError,
+      getAllyPaymentDetail: async input => { calls.push(["detail", input]); return settlement; },
+    },
+    "@/lib/credit-display-number-server": {
+      getCreditDisplayNumbers: async ids => new Map(ids.map((id, index) => [id, snapshot.collections[index].numeroCreditoVisible])),
+    },
+    "@/lib/ally-payment-settlement-pdf": {
+      buildAllyPaymentSettlementPdf: async input => { calls.push(["pdf", input]); return buildAllyPaymentSettlementPdf(input); },
+    },
+  };
+  const source = readFileSync(new URL("../app/api/pagos-aliados/[id]/comprobante/route.ts", import.meta.url), "utf8");
+  const compiled = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText;
+  const loadedModule = { exports: {} };
+  runInNewContext(compiled, {
+    module: loadedModule, exports: loadedModule.exports, Date, URL, Uint8Array, console,
+    require(name) { assert.ok(name in dependencies, `Dependencia inesperada: ${name}`); return dependencies[name]; },
+  });
+  return { get: loadedModule.exports.GET, calls };
+}
+
+test("imprimir y descargar consultan el snapshot completo con el mismo alcance, independientemente de la página visible", async t => {
+  const snapshot = savedSnapshot(
+    Array.from({ length: 13 }, (_, index) => fractionalSavedLine(index)),
+    Array.from({ length: 17 }, (_, index) => savedCollection(index)),
+  );
+  for (const [kind, allyId] of [["CENTRAL_ADMIN", null], ["ALLY_ADMIN", 7]]) {
+    await t.test(kind, async () => {
+      const api = pdfRouteFixture(snapshot, { ok: true, kind, allyId });
+      for (const download of [false, true]) {
+        const response = await api.get(new Request(`https://qa.invalid/api/pagos-aliados/901/comprobante?page=2&pageSize=10${download ? "&download=1" : ""}`), {
+          params: Promise.resolve({ id: "901" }),
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("Content-Type"), "application/pdf");
+        assert.ok(response.headers.get("Content-Disposition").startsWith(download ? "attachment;" : "inline;"));
+        assert.match(response.headers.get("Cache-Control"), /private, no-store/);
+        const text = await pdfText(Buffer.from(await response.arrayBuffer()));
+        for (const line of snapshot.lines) assert.ok(text.includes(line.imei));
+        for (const collection of snapshot.collections) assert.ok(text.includes(collection.numeroCreditoVisible));
+      }
+      for (const [name, input] of api.calls) {
+        if (name === "detail") {
+          assert.equal(input.id, snapshot.settlementId);
+          assert.equal(input.allyId, allyId);
+        } else {
+          assert.equal(input.lines.length, 13);
+          assert.equal(input.collections.length, 17);
+          assert.equal(input.netBalance, snapshot.netBalance);
+          assert.equal(input.bankApprovalNumber, snapshot.bankApprovalNumber);
+          assert.equal(input.lines[12].intermediationPercentage, snapshot.lines[12].intermediationPercentage);
+        }
+      }
+    });
+  }
+});
+
+test("el comprobante rechaza sesiones sin autorización antes de consultar el histórico o generar PDF", async () => {
+  for (const status of [401, 403]) {
+    const api = pdfRouteFixture(savedSnapshot([fractionalSavedLine(0)]), { ok: false, status });
+    const response = await api.get(new Request("https://qa.invalid/api/pagos-aliados/901/comprobante"), {
+      params: Promise.resolve({ id: "901" }),
+    });
+    assert.equal(response.status, status);
+    assert.deepEqual(api.calls, []);
+  }
 });
