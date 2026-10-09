@@ -53,6 +53,28 @@ export type PaymentCollectionItem = {
   estado?: string | null;
 };
 
+export type PaymentAnnulmentAdjustmentItem = {
+  ajusteId?: number | string;
+  id?: number | string;
+  creditoId?: number | string;
+  fechaAnulacion?: string | null;
+  folio?: string | null;
+  numeroCreditoVisible?: string | null;
+  clienteNombre?: string | null;
+  clienteDocumento?: string | null;
+  imei?: string | null;
+  equipo?: string | null;
+  plataforma?: string | null;
+  sedeId?: number | string | null;
+  sedeNombre?: string | null;
+  liquidacionOrigenId?: number | string | null;
+  valorDescuento?: number | null;
+  motivo?: string | null;
+  estado?: string | null;
+  aliadoId?: number | null;
+  aliado?: AllyOption | null;
+};
+
 export type PaymentSummaryBucket = {
   plataforma?: string | null;
   numeroCreditos?: number | null;
@@ -68,6 +90,8 @@ export type PaymentSummaryBucket = {
   valorPagarAliado?: number | null;
   valorConsignarAliado?: number | null;
   numeroRecaudos?: number | null;
+  numeroAjustesAnulacion?: number | null;
+  totalAjustesAnulacion?: number | null;
   porcentajeIntermediacion?: number | null;
   valorVenta?: number | null;
   creditoAutorizado?: number | null;
@@ -102,6 +126,8 @@ export type Settlement = {
   valorPagarAliado?: number | null;
   valorConsignarAliado?: number | null;
   numeroRecaudos?: number | null;
+  numeroAjustesAnulacion?: number | null;
+  totalAjustesAnulacion?: number | null;
   numeroAprobacionBancaria?: string | null;
   pagadoAt?: string | null;
   createdAt?: string | null;
@@ -113,6 +139,7 @@ export type Settlement = {
   creditos?: PaymentCreditItem[] | null;
   detalles?: PaymentCreditItem[] | null;
   recaudos?: PaymentCollectionItem[] | null;
+  ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[] | null;
 };
 
 export type PaymentPreview = {
@@ -126,8 +153,11 @@ export type PaymentPreview = {
   items?: PaymentCreditItem[] | null;
   creditos?: PaymentCreditItem[] | null;
   recaudos?: PaymentCollectionItem[] | null;
+  ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[] | null;
   totalPagarCreditos?: number | null;
   totalRecaudosAliado?: number | null;
+  numeroAjustesAnulacion?: number | null;
+  totalAjustesAnulacion?: number | null;
   saldoNeto?: number | null;
   direccionSaldo?: string | null;
   valorPagarAliado?: number | null;
@@ -145,8 +175,11 @@ export type AllyPaymentsResponse = {
     items?: PaymentCreditItem[];
     summary?: PaymentSummary | null;
     recaudos?: PaymentCollectionItem[];
+    ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[];
     totalPagarCreditos?: number | null;
     totalRecaudosAliado?: number | null;
+    numeroAjustesAnulacion?: number | null;
+    totalAjustesAnulacion?: number | null;
     saldoNeto?: number | null;
     direccionSaldo?: string | null;
   } | null;

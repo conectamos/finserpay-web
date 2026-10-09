@@ -31,6 +31,18 @@ const policy = load("lib/credit-approval-policy.ts", { "./credit-import-flags": 
 const eligibility = load("lib/ally-payment-eligibility.ts", {
   "./ally-payments-core": core, "./credit-approval-policy": policy,
 });
+const annulments = {
+  loadPendingAllyPaymentAnnulmentAdjustments: async () => [],
+  lockAllyPaymentAlly: async (database, allyId) => database.$executeRawUnsafe(
+    "SELECT pg_advisory_xact_lock(hashtext($1))",
+    "ALLY_PAYMENT_ALLY:" + allyId
+  ),
+  serializeStoredAllyPaymentAnnulmentAdjustment: item => item,
+  totalAllyPaymentAnnulmentAdjustments: items => items.reduce(
+    (total, item) => Number((total + Number(item.valorDescuento || 0)).toFixed(2)),
+    0
+  ),
+};
 
 function credit(id, platform = "IPHONE") {
   return {
@@ -94,6 +106,7 @@ function ledger({ rows = [credit(1)], collectionValue = "123.45" } = {}) {
             credito: { sede: { id: 4, nombre: "Sede sintética" } },
           })),
           recaudos: (data.recaudos?.create || []).map((item, index) => ({ ...item, id: index + 1 })),
+          ajustesAnulacion: [],
         };
         settlements.push(result);
         return result;
@@ -107,6 +120,7 @@ function ledger({ rows = [credit(1)], collectionValue = "123.45" } = {}) {
   const storage = load("lib/ally-payments.ts", {
     "server-only": {}, "node:crypto": crypto, "@/lib/aliados": allies, "@/lib/ally-payments-core": core,
     "@/lib/colombia-date": dates, "@/lib/ally-payment-eligibility": eligibility,
+    "@/lib/ally-payment-annulments": annulments,
     "@/lib/credit-ally-payment-exclusion-storage": { ensureCreditAllyPaymentExclusionSchema: async () => {} },
     "@/lib/datacredito/database-errors": { isDataCreditoUniqueViolation: () => false },
     "@/lib/prisma": { default: database },

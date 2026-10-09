@@ -39,6 +39,8 @@
 .annulled > svg { fill: #ffa39e; stroke: #651c19; }
 .netCard dl { display: grid; gap: 13px; margin-top: 18px; padding-top: 17px; border-top: 1px solid #829093; font-size: 14px; }
 .netCard dd { font-variant-numeric: tabular-nums; white-space: nowrap; margin-left: auto; font-size: 18px; font-weight: 650; }
+.netCard .annulmentBreakdown { color: #ffd9d5; }
+.netCard .annulmentBreakdown dd { color: #ffb4ad; }
 .creditCard { min-width: 0; padding: 0; overflow: hidden; margin-top: 19px; border: 1px solid var(--fp-border); border-radius: 9px; background: var(--fp-surface); box-shadow: none; }
 .tableHeading { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 12px 16px; }
 .tableHeading h2 { font-size: 20px; font-weight: 800; letter-spacing: -.025em; }

@@ -406,15 +406,16 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
   assert.match(create, /isolationLevel:\s*"Serializable"/);
   assert.equal(
     (create.match(/pg_advisory_xact_lock/g) || []).length,
-    2,
-    "La mutacion y el aliado requieren locks independientes"
+    1,
+    "La mutacion conserva su lock independiente"
   );
+  assert.match(create, /await\s+lockAllyPaymentAlly\(tx, allyId\)/);
   assertInOrder(
     create,
     [
       '"ALLY_PAYMENT_MUTATION:" + mutationId',
       "const existing =",
-      '"ALLY_PAYMENT_ALLY:" + allyId',
+      "await lockAllyPaymentAlly(tx, allyId)",
       "const approvalAlreadyUsed =",
       "lock: true",
       "const currentPreviewToken =",
@@ -457,7 +458,7 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
     assert.match(requestHash, new RegExp("\\b" + field + ":"));
   }
   assert.match(create, /requestHash,/);
-  assert.match(storage, /ALLY_INTERMEDIATION_COLLECTIONS_V1/);
+  assert.match(storage, /ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_V2/);
 });
 
 test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado", () => {
@@ -575,8 +576,14 @@ test("los recaudos del aliado se filtran por sede, periodo y uso previo", () => 
   assert.match(loader, /payment\."fechaAbono"\s*</);
   assert.match(loader, /snapshot\."id"\s+IS NULL/);
   assert.match(loader, /FOR UPDATE OF payment/);
-  assert.match(storage, /previewFingerprint\(allyId, period, items, recaudos\)/);
-  assert.match(storage, /if \(!items\.length && !recaudos\.length\)/);
+  assert.match(
+    storage,
+    /previewFingerprint\(\s*allyId,\s*period,\s*items,\s*recaudos,\s*ajustesAnulacion\s*\)/
+  );
+  assert.match(
+    storage,
+    /if \(!items\.length && !recaudos\.length && !ajustesAnulacion\.length\)/
+  );
   assert.match(storage, /totalRecaudosAliado:\s*moneyForDatabase/);
   assert.match(storage, /saldoNeto:\s*moneyForDatabase/);
   assert.match(storage, /create:\s*recaudos\.map/);

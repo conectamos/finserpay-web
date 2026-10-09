@@ -51,6 +51,7 @@ test("concilia creditos menos recaudos y define quien debe transferir", () => {
   assert.deepEqual(calculateAllySettlementBalance(2_250_000, 600_000), {
     totalPagarCreditos: 2_250_000,
     totalRecaudosAliado: 600_000,
+    totalAjustesAnulacion: 0,
     saldoNeto: 1_650_000,
     direccionSaldo: "PAGO_ALIADO",
     valorPagarAliado: 1_650_000,
@@ -59,6 +60,7 @@ test("concilia creditos menos recaudos y define quien debe transferir", () => {
   assert.deepEqual(calculateAllySettlementBalance(800_000, 1_100_000), {
     totalPagarCreditos: 800_000,
     totalRecaudosAliado: 1_100_000,
+    totalAjustesAnulacion: 0,
     saldoNeto: -300_000,
     direccionSaldo: "CONSIGNACION_ALIADO",
     valorPagarAliado: 0,
