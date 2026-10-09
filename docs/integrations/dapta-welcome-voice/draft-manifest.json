@@ -58,7 +58,25 @@
     "legacySignedTokenMode": "The backend retains per-event HMAC event_token mode for compatibility; this new identity flow does not send event_token. The original signed token stays in the native call for the authenticated result callback.",
     "documentInput": "Literal customer utterance, numeric text or spoken Spanish blocks/digits, up to 240 characters. A deterministic backend parser preserves leading zeros; it never chooses or completes a value using the expected document.",
     "nameVerification": "All registered name components must match exactly and in order, with the same first component; extra provided middle/surname components are permitted. No fuzzy matching, omitted registered components, expected-name disclosure or document tolerance.",
-    "documentClarification": "ok=true, verificado=false, condiciones=null, code=DOCUMENT_NOT_UNDERSTOOD permits one clarification and a new real customer utterance. No other backend code is forwarded by this flow."
+    "documentClarification": "ok=true, verificado=false, condiciones=null, code=DOCUMENT_NOT_UNDERSTOOD permits the one available document clarification. If that code persists after the document clarification was used, stop without another consultation. Name clarification is available only after a valid unverified response without DOCUMENT_NOT_UNDERSTOOD. Every response is literal and stays scoped to the same event_id. No other backend code is forwarded by this flow.",
+    "identityClarification": {
+      "maxToolConsultations": 3,
+      "maxClarificationsPerField": 1,
+      "includesPreverificationRepetitions": true,
+      "countsDocumentNotUnderstood": true,
+      "mismatchPriority": [
+        "customer_name",
+        "customer_document"
+      ],
+      "documentNotUnderstoodPriority": [
+        "customer_document"
+      ],
+      "stopOnDocumentNotUnderstoodAfterDocumentClarification": true,
+      "scope": "Same event_id and authenticated ledger snapshot in every consultation; no alternate credit, event or expected identity reaches the model.",
+      "reconsultation": "Wait for the customer's new literal response, replace only the clarified field and retain the latest literal response for the other field. Never combine versions or suggest expected values.",
+      "neverExpectedData": true,
+      "stop": "On tool error, invalid response, exhausted consultation/clarification limit or an unclear repeated response, explain that an adviser must review, then use end_call's fixed farewell without financial conditions. A valid unverified identity response is not a tool error."
+    }
   },
   "callInput": [
     "event_id",

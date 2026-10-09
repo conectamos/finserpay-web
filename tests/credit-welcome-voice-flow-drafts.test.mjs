@@ -300,14 +300,59 @@ test("voice tool captures actual customer identity without prefilled answers or 
   assert.doesNotMatch(prompt, /<\s*(?:speak|break|say-as|prosody)\b/i);
 });
 
-test("voice configuration uses conversational multilingual delivery without changing the voice", () => {
+test("voice configuration selects Angie with conversational multilingual delivery", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   assert.equal(config.updateAfterCreate.voice_speed, 1);
   assert.equal(config.updateAfterCreate.voice_temperature, 1);
   assert.equal(config.updateAfterCreate.normalize_for_speech, true);
   assert.equal(config.createArguments.voice_language, "es-419");
-  assert.equal(config.createArguments.voice, "custom_voice_fd6d90e0e756bbb2e81c101bba");
+  assert.equal(config.createArguments.voice, "custom_voice_b7f9d4e2175e188767738b4a1c");
+  assert.equal(config.updateAfterCreate.voice, config.createArguments.voice);
   assert.equal(config.updateAfterCreate.voice_model, "eleven_multilingual_v2");
+});
+
+test("identity recovery is bounded, scoped and uses one new literal response at a time", () => {
+  const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
+  const manifest = JSON.parse(readFileSync(new URL("draft-manifest.json", base), "utf8"));
+  const policy = manifest.identityBackend.identityClarification;
+  assert.equal(policy.maxToolConsultations, 3);
+  assert.equal(policy.maxClarificationsPerField, 1);
+  assert.equal(policy.includesPreverificationRepetitions, true);
+  assert.equal(policy.countsDocumentNotUnderstood, true);
+  assert.equal(policy.neverExpectedData, true);
+  assert.deepEqual(policy.mismatchPriority, ["customer_name", "customer_document"]);
+  assert.deepEqual(policy.documentNotUnderstoodPriority, ["customer_document"]);
+  assert.equal(policy.stopOnDocumentNotUnderstoodAfterDocumentClarification, true);
+  const recovery = prompt.slice(prompt.indexOf("RECUPERACIÓN DE IDENTIDAD"), prompt.indexOf("REGLA BLOQUEANTE PARA PRODUCTO"));
+  assert.match(recovery, /como máximo tres consultas/);
+  assert.match(recovery, /incluida la primera y las que devuelvan DOCUMENT_NOT_UNDERSTOOD/);
+  assert.match(recovery, /una aclaración del nombre y una aclaración de la cédula en toda la llamada/);
+  assert.match(recovery, /también cuentan las repeticiones pedidas antes de la primera consulta/);
+  assert.match(recovery, /Antes de pedir una aclaración, comprueba que queda una consulta disponible/);
+  assert.match(recovery, /Disculpe, no alcancé a confirmar sus datos\. ¿Me repite su nombre completo, por favor\?/);
+  assert.match(recovery, /Termina ese turno y espera el nuevo nombre completo/);
+  assert.match(recovery, /ese nuevo nombre literal, la última cédula literal comunicada por la persona y el mismo event_id/);
+  assert.match(recovery, /code=DOCUMENT_NOT_UNDERSTOOD, prioriza la aclaración de cédula/);
+  assert.match(recovery, /Si vuelve DOCUMENT_NOT_UNDERSTOOD o la cédula ya se había aclarado/);
+  assert.match(recovery, /end_call sin otra consulta ni condiciones financieras/);
+  assert.match(recovery, /No pidas repetir el nombre mientras el documento siga sin interpretarse/);
+  assert.match(recovery, /Solo si la nueva consulta devuelve ok=true, verificado=false y condiciones=null sin code=DOCUMENT_NOT_UNDERSTOOD, aplica la aclaración de nombre/);
+  assert.match(recovery, /esa nueva transcripción literal, el último nombre literal comunicado y el mismo event_id/);
+  assert.match(recovery, /cambia solo el dato que la persona acaba de repetir/);
+  assert.match(recovery, /no afirmes que el nombre o la cédula están mal ni reveles los registrados/);
+  assert.match(recovery, /Un error no permite otra consulta ni cambiar de evento/);
+  assert.match(recovery, /permite avanzar al plan, también si llega en la tercera consulta/);
+  assert.match(prompt, /identidad no verificada después de agotar la recuperación permitida/);
+  assert.match(prompt, /verificado=false y condiciones=null no es un error de herramienta/);
+  // The executable flow still withholds supplied financial conditions for either recoverable result.
+  for (const code of [undefined, "DOCUMENT_NOT_UNDERSTOOD"]) {
+    const result = runCode(identity, "chkId", {
+      verificar_identidad: { ok: true, verificado: false, code, condiciones: validConditions },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.verificado, false);
+    assert.equal(result.condiciones, null);
+  }
 });
 
 
@@ -359,7 +404,8 @@ test("normal hangup waits for three separate agreements and preserves early exit
     const block = prompt.slice(start, end);
     assert.ok(start > 0 && end > start);
     assert.match(block, /¿Está de acuerdo\?/);
-    assert.match(block, /Espera una respuesta real/);
+    assert.match(block, /entonación interrogativa, como una pregunta real/);
+    assert.match(block, /Termina esa salida sin herramientas y espera una nueva intervención/);
   }
   // The user requested these sentences verbatim; prepared financial texts replace only their placeholders.
   for (const sentence of [
@@ -376,13 +422,41 @@ test("normal hangup waits for three separate agreements and preserves early exit
   assert.equal(config.pendingEndCallTool.name, "end_call");
   assert.equal(config.pendingEndCallTool.type, "end_call");
   assert.match(config.pendingEndCallTool.description, /tres respuestas afirmativas reales e independientes/);
-  assert.match(config.pendingEndCallTool.description, /Nunca ejecutes esta herramienta en el mismo turno de una pregunta/);
+  assert.match(config.pendingEndCallTool.description, /No ejecutes end_call si esta salida todavía hace una pregunta ni mientras esperas una respuesta/);
   for (const reason of ["rechazo de grabación", "petición expresa de terminar", "identidad no verificada", "fallo", "discrepancia", "buzón"]) {
     assert.ok(config.pendingEndCallTool.description.includes(reason));
   }
   assert.match(prompt, /No hables lentamente palabra por palabra/);
   assert.match(prompt, /no uses tono cantado ni una cadencia de lista/);
   assert.match(prompt, /Gracias por su tiempo/);
+});
+
+test("agent speaks goodbye before end_call and its sparse patch preserves other tools", () => {
+  const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
+  const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
+  const patch = JSON.parse(readFileSync(new URL("end-call-goodbye.patch.json", base), "utf8"));
+  const endCall = config.pendingEndCallTool;
+  assert.equal(endCall.speak_during_execution, false);
+  assert.equal(endCall.execution_message_type, "static_text");
+  assert.equal(endCall.execution_message_description, "Gracias por su tiempo.");
+  assert.equal(Object.hasOwn(endCall, "finish_delay"), false);
+  assert.equal(Object.hasOwn(endCall, "speak_after_execution"), false);
+  assert.match(prompt, /Solo después de escuchar la tercera respuesta afirmativa, di tú misma en voz alta exactamente «Gracias por su tiempo\.» y solo después ejecuta end_call/);
+  assert.match(prompt, /No agregues otra frase de cierre ni una cuarta pregunta/);
+  assert.match(prompt, /no dependas de un mensaje nativo de ejecución/);
+  assert.match(endCall.description, /La despedida debe ser una salida hablada previa a esta herramienta/);
+  assert.match(endCall.description, /No reutilices un sí u ok entre acuerdos/);
+  assert.match(prompt, /En cada salida anticipada dirigida a una persona, da primero la explicación apropiada sin preguntas, di en voz alta «Gracias por su tiempo\.» y solo después ejecuta end_call/);
+  assert.doesNotMatch(prompt, /No digas esa despedida por separado/);
+  assert.deepEqual(Object.keys(patch).sort(), ["agent_id", "tools_patch_by_name", "workspace_id"]);
+  assert.equal(patch.tools_patch_by_name.length, 1);
+  assert.equal(patch.tools_patch_by_name[0].name, "end_call");
+  assert.deepEqual(Object.keys(patch.tools_patch_by_name[0]).sort(), ["name", "set"]);
+  const set = patch.tools_patch_by_name[0].set;
+  assert.deepEqual(Object.keys(set).sort(), ["description", "execution_message_description", "execution_message_type", "speak_during_execution"]);
+  for (const key of Object.keys(set)) assert.equal(set[key], endCall[key]);
+  // This checks the configuration contract, not actual playback or runtime drain before hangup.
+  assert.doesNotMatch(JSON.stringify(patch), /verificar_cliente_bienvenida|dapta_webhook|https?:/);
 });
 
 test("analysis distinguishes actual identity, continuity after notice and all three agreements", () => {

@@ -1,0 +1,15 @@
+{
+  "agent_id": "ffcdd3e7-334f-4cd7-9d55-df2d7bf4ea74",
+  "workspace_id": "7496b9a3-2fe6-4e28-8411-7d54ee788b2c",
+  "tools_patch_by_name": [
+    {
+      "name": "end_call",
+      "set": {
+        "description": "Finaliza la llamada solo después de que Diana haya dicho en voz alta Gracias por su tiempo. La despedida debe ser una salida hablada previa a esta herramienta; no dependas del mensaje nativo de ejecución. No ejecutes end_call si esta salida todavía hace una pregunta ni mientras esperas una respuesta: termina esa salida sin herramientas y espera una nueva intervención del cliente. El cierre normal exige tres respuestas afirmativas reales e independientes en tres intervenciones nuevas del cliente: al plan, al calendario con primera fecha y a la política del aplicativo. No reutilices un sí u ok entre acuerdos. Solo después de escuchar el tercer acuerdo, di exactamente Gracias por su tiempo. y después ejecuta end_call, sin otra frase de cierre ni una cuarta pregunta. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva únicamente las salidas anticipadas por rechazo de grabación, petición expresa de terminar, identidad no verificada después de agotar las aclaraciones o consultas permitidas, fallo, discrepancia que requiere asesor o buzón. En una salida anticipada dirigida a una persona, da primero la explicación apropiada sin preguntas, di Gracias por su tiempo. y solo después ejecuta end_call. En buzón no reveles datos personales ni financieros; si el agente realiza el cierre, di únicamente Gracias por su tiempo. antes de end_call.",
+        "speak_during_execution": false,
+        "execution_message_type": "static_text",
+        "execution_message_description": "Gracias por su tiempo."
+      }
+    }
+  ]
+}
