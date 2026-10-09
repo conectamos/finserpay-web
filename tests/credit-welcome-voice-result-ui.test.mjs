@@ -19,6 +19,7 @@ function load(path, dependencies, globals = {}) {
   return compiledModule.exports;
 }
 const ui = load("app/_components/finser-ui.tsx", { "react/jsx-runtime": jsxRuntime });
+const voicePhone = load("lib/credit-welcome-voice-phone.ts", {});
 const call = (patch = {}) => ({ id: "event-one", creditId: 72, status: "COMPLETED", source: "NORMAL", providerCallId: "call-one",
   createdAt: "2026-10-08T15:00:00Z", dispatchedAt: "2026-10-08T15:00:00Z", completedAt: "2026-10-08T15:02:00Z",
   durationSeconds: 94, identityVerified: false, summary: "Se conversó con el cliente.", doubts: "Revisar una fecha.",
@@ -36,6 +37,7 @@ function fixture({ items = [call()], loading = false, error = "", manualCall, fe
   const hooks = { useState: initial => { const slot = index++; if (!(slot in states)) states[slot] = initial;
     return [states[slot], value => { changes.push({ slot, value }); states[slot] = typeof value === "function" ? value(states[slot]) : value; }]; },
     useRef: initial => refs[refIndex++] ??= { current: initial },
+    useId: () => "welcome-voice-phone",
     useEffect: (callback, dependencies) => {
       const slot = effectIndex++; const old = effectSlots[slot];
       if (!old || dependencies.some((value, item) => value !== old.dependencies[item])) {
@@ -46,6 +48,7 @@ function fixture({ items = [call()], loading = false, error = "", manualCall, fe
   const Component = load("app/dashboard/aprobaciones/credit-welcome-voice-result.tsx", {
     react: hooks, "react/jsx-runtime": jsxRuntime, "lucide-react": { ExternalLink: Icon, Headphones: Icon, Phone: Icon, RefreshCw: Icon },
     "@/app/_components/finser-ui": ui,
+    "@/lib/credit-welcome-voice-phone": voicePhone,
   }, { fetch, ...timers, crypto: { randomUUID: () => { uuidCalls++; return uuidCalls === 1 ? requestId : secondRequestId; } }, sessionStorage: {
     getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key),
   } }).default;
@@ -55,10 +58,16 @@ function fixture({ items = [call()], loading = false, error = "", manualCall, fe
     if (!node || typeof node !== "object") return [];
     return [node, ...[node.props?.children].flat(Infinity).flatMap(walk)];
   };
-  const action = label => { const button = walk(tree()).find(node => node.type === ui.Button && node.props["aria-label"] === label);
+  const action = (label, creditId = 72) => { const button = walk(tree(creditId)).find(node => node.type === ui.Button && node.props["aria-label"] === label);
     assert.ok(button, `Missing action ${label}`); return button.props.onClick; };
-  const click = label => action(label)();
-  return { render, tree, click, action, effects, changes, storage, get uuidCalls() { return uuidCalls; },
+  const click = (label, creditId = 72) => action(label, creditId)();
+  const control = (type, creditId = 72) => {
+    const input = walk(tree(creditId)).find(node => (node.type === "input" || node.type === ui.Input) && node.props.type === type);
+    assert.ok(input, `Missing control ${type}`); return input.props;
+  };
+  const other = (checked, creditId = 72) => control("checkbox", creditId).onChange({ target: { checked } });
+  const phone = (value, creditId = 72) => control("tel", creditId).onChange({ target: { value } });
+  return { render, tree, click, action, control, other, phone, effects, changes, storage, get uuidCalls() { return uuidCalls; },
     read: async () => { effectSlots[0].callback(); await flush(); }, auto: () => effectSlots[2].callback() };
 }
 
@@ -105,7 +114,8 @@ test("manual call is available only when supplied by the server and explains a d
   assert.doesNotMatch(fixture().render(), /Llamar ahora|Consultar estado|Celular registrado/);
   const permitted = fixture({ manualCall: { canCall: true, phone: "+573001234567" } }).render();
   assert.match(permitted, /Llamar ahora/); assert.match(permitted, /Celular registrado: \+573001234567/);
-  assert.doesNotMatch(permitted, /<input|Confirmar llamada/);
+  assert.match(permitted, /Llamar a otro número/);
+  assert.doesNotMatch(permitted, /type="tel"|Confirmar llamada/);
   const disabled = fixture({ manualCall: { canCall: false, phone: "+573001234567", reason: "Hay una llamada en curso." } }).render();
   assert.match(disabled, /disabled=""[^>]*aria-label="Llamar ahora al celular registrado"/);
   assert.match(disabled, /Hay una llamada en curso/);
@@ -290,4 +300,157 @@ test("a late missing-reservation GET cannot overwrite a newer accepted POST usin
   assert.match(f.render(), /Dapta aceptó la solicitud/);
   assert.doesNotMatch(f.render(), /No se había registrado la llamada/);
   assert.deepEqual(posts, [{ requestId }]); assert.equal(f.uuidCalls, 0); assert.equal(storage.size, 1);
+});
+
+test("an alternate Colombian mobile sends only a normalized call destination and leaves the registered phone visible", async () => {
+  for (const value of ["301 234 5678", "573012345678", "+57 (301) 234-5678"]) {
+    const posts = []; const manualCall = { canCall: true, phone: "+573001234567" };
+    const f = fixture({ manualCall, fetch: async (_url, options) => {
+      if (options.method !== "POST") return { ok: true, json: async () => ({ ok: true, items: [], manualCall,
+        request: { requestId, found: true, eventId, status: "ACCEPTED" } }) };
+      posts.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) };
+    } });
+    f.other(true);
+    assert.match(f.render(), /Número para esta llamada/);
+    assert.match(f.render(), /for="welcome-voice-phone"/);
+    assert.match(f.render(), /Se usará únicamente para esta llamada. No cambia el celular registrado del cliente/);
+    f.phone(value);
+    assert.doesNotMatch(f.render(), /disabled=""[^>]*aria-label="Llamar ahora al número indicado"/);
+    f.click("Llamar ahora al número indicado"); await flush();
+    assert.deepEqual(posts, [{ requestId, phone: "573012345678" }]);
+    f.render(); await f.read();
+    assert.match(f.render(), /Celular registrado: \+573001234567/);
+    assert.deepEqual(JSON.parse([...f.storage.values()][0]), { requestId, phone: "573012345678" });
+  }
+});
+
+test("invalid alternate destinations cannot create a request even through the click handler", async () => {
+  for (const value of ["", "301234567", "30123456789", "+1 3012345678", "+3012345678", "6012345678", "3012345678 ext 5", "tel3012345678", "3012345678x", "３０１２３４５６７８", "++573012345678"]) {
+    const posts = [];
+    const f = fixture({ manualCall: { canCall: true, phone: "+573001234567" }, fetch: async (_url, options) => { posts.push(options); } });
+    f.other(true); f.phone(value);
+    assert.match(f.render(), /disabled=""[^>]*aria-label="Llamar ahora al número indicado"/);
+    if (value) assert.match(f.render(), /celular colombiano válido/);
+    f.click("Llamar ahora al número indicado"); await flush();
+    assert.equal(posts.length, 0); assert.equal(f.uuidCalls, 0); assert.equal(f.storage.size, 0);
+  }
+});
+
+test("turning off an unsubmitted alternate number uses the registered phone without sending a phone override", async () => {
+  const posts = [];
+  const f = fixture({ manualCall: { canCall: true, phone: "+573001234567" }, fetch: async (_url, options) => {
+    posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) };
+  } });
+  f.other(true); f.phone("3012345678"); f.other(false);
+  assert.doesNotMatch(f.render(), /type="tel"/);
+  f.click("Llamar ahora al celular registrado"); await flush();
+  assert.deepEqual(posts, [{ requestId }]);
+  assert.deepEqual(JSON.parse([...f.storage.values()][0]), { requestId });
+});
+
+test("a firm rejection removes both the alternate destination and its key before a fresh registered-phone request", async () => {
+  const posts = []; const manualCall = { canCall: true, phone: "+573001234567" };
+  const f = fixture({ manualCall, fetch: async (_url, options) => {
+    if (options.method !== "POST") return { ok: true, json: async () => ({ ok: true, items: [], manualCall }) };
+    posts.push(JSON.parse(options.body));
+    return posts.length === 1 ? { ok: false, status: 409, json: async () => ({ ok: false, requestCreated: false, error: "No se creó la llamada." }) }
+      : { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) };
+  } });
+  f.other(true); f.phone("3012345678"); f.click("Llamar ahora al número indicado"); await flush();
+  assert.equal(f.storage.size, 0); f.render(); await f.read();
+  assert.equal(f.control("checkbox").checked, false); assert.doesNotMatch(f.render(), /type="tel"/);
+  f.click("Llamar ahora al celular registrado"); await flush();
+  assert.deepEqual(posts, [{ requestId, phone: "573012345678" }, { requestId: secondRequestId }]);
+});
+
+test("alternate selections and their saved requests remain scoped to the original credit", async () => {
+  const posts = [];
+  const manualCall = { canCall: true, phone: "+573001234567" };
+  const f = fixture({ manualCall, fetch: async (url, options) => {
+    if (options.method === "POST") {
+      posts.push({ url, body: JSON.parse(options.body) });
+      return { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) };
+    }
+    return { ok: true, json: async () => ({ ok: true, items: [], manualCall: { canCall: true, phone: "+573101234567" } }) };
+  } });
+  f.other(true); f.phone("3012345678"); f.click("Llamar ahora al número indicado"); await flush();
+  f.render(99); await f.read();
+  assert.equal(f.control("checkbox", 99).checked, false);
+  assert.doesNotMatch(f.render(99), /3012345678|3001234567|type="tel"/);
+  f.click("Llamar ahora al celular registrado", 99); await flush();
+  assert.deepEqual(posts, [
+    { url: "/api/creditos/72/bienvenida-voz", body: { requestId, phone: "573012345678" } },
+    { url: "/api/creditos/99/bienvenida-voz", body: { requestId: secondRequestId } },
+  ]);
+  assert.equal(f.storage.size, 2);
+});
+
+test("pending call guards freeze the destination even against handlers captured before the POST", async () => {
+  let resolvePost; const posts = []; const manualCall = { canCall: true, phone: "+573001234567" };
+  const f = fixture({ manualCall, fetch: async (_url, options) => {
+    if (options.method === "POST") {
+      posts.push(JSON.parse(options.body)); return new Promise(resolve => { resolvePost = resolve; });
+    }
+    return { ok: true, json: async () => ({ ok: true, items: [], manualCall,
+      request: { requestId, found: true, eventId, status: "UNKNOWN" } }) };
+  } });
+  f.other(true); f.phone("3012345678");
+  const oldPhone = f.control("tel").onChange; const oldSelector = f.control("checkbox").onChange;
+  const send = f.action("Llamar ahora al número indicado"); send(); send();
+  oldPhone({ target: { value: "3022345678" } }); oldSelector({ target: { checked: false } });
+  assert.equal(f.control("tel").value, "3012345678");
+  assert.equal(f.control("tel").disabled, true); assert.equal(f.control("checkbox").disabled, true);
+  resolvePost({ ok: true, json: async () => ({ ok: true, eventId, status: "UNKNOWN" }) });
+  await flush(); f.render(); await f.read();
+  assert.equal(f.control("tel").disabled, true); assert.equal(f.control("checkbox").disabled, true);
+  assert.deepEqual(posts, [{ requestId, phone: "573012345678" }]); assert.equal(f.uuidCalls, 1);
+});
+
+test("a lost alternate request survives remount and found:false replays the exact destination with the same key", async () => {
+  const storage = new Map(); const posts = []; const manualCall = { canCall: true, phone: "+573001234567" };
+  const first = fixture({ storage, manualCall, fetch: async (_url, options) => {
+    posts.push(JSON.parse(options.body)); throw new Error("lost response");
+  } });
+  first.other(true); first.phone("+57 (301) 234-5678"); first.click("Llamar ahora al número indicado"); await flush();
+  assert.deepEqual(JSON.parse([...storage.values()][0]), { requestId, phone: "573012345678" });
+  const reads = [];
+  const second = fixture({ storage, loading: true, fetch: async (url, options) => {
+    if (options.method === "POST") {
+      posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) };
+    }
+    reads.push(url); return { ok: true, json: async () => ({ ok: true, items: [], manualCall,
+      request: { requestId, found: false } }) };
+  } });
+  second.render(); await second.read();
+  assert.equal(second.control("tel").value, "573012345678");
+  assert.equal(second.control("checkbox").checked, true);
+  assert.equal(second.control("checkbox").disabled, true); assert.equal(second.control("tel").disabled, true);
+  assert.doesNotMatch(second.render(), /disabled=""[^>]*aria-label="Llamar ahora al número indicado"/);
+  second.phone("3022345678"); second.other(false);
+  assert.equal(second.control("tel").value, "573012345678");
+  second.click("Llamar ahora al número indicado"); await flush();
+  assert.deepEqual(posts, [{ requestId, phone: "573012345678" }, { requestId, phone: "573012345678" }]);
+  assert.equal(second.uuidCalls, 0); assert.deepEqual(reads, [`/api/creditos/72/bienvenida-voz?requestId=${requestId}`]);
+});
+
+test("a legacy UUID preserves the registered destination until its authoritative terminal result releases selection", async () => {
+  const storage = new Map([["finserpay:welcome-voice:request:72", requestId]]); const posts = [];
+  const manualCall = { canCall: true, phone: "+573001234567" }; let status;
+  const f = fixture({ storage, loading: true, fetch: async (_url, options) => {
+    if (options.method === "POST") {
+      posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) };
+    }
+    return { ok: true, json: async () => ({ ok: true, items: [], manualCall,
+      request: status ? { requestId, found: true, eventId, status } : { requestId, found: false } }) };
+  } });
+  f.render(); await f.read();
+  assert.equal(f.control("checkbox").disabled, true); f.other(true);
+  assert.equal(f.control("checkbox").checked, false); assert.doesNotMatch(f.render(), /type="tel"/);
+  f.click("Llamar ahora al celular registrado"); await flush();
+  assert.deepEqual(posts, [{ requestId }]); assert.equal(f.uuidCalls, 0);
+  status = "COMPLETED"; f.render(); await f.read();
+  assert.equal(f.storage.size, 0); assert.equal(f.control("checkbox").disabled, false);
+  f.other(true); f.phone("3012345678");
+  assert.equal(f.control("tel").value, "3012345678");
 });

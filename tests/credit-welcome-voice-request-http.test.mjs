@@ -7,6 +7,7 @@ const { createCreditWelcomeVoiceReadHandler } = loadReissueModule("lib/credit-we
   "@/lib/aliados": loadReissueModule("lib/aliados.ts"),
   "@/lib/credit-route-lookup": loadReissueModule("lib/credit-route-lookup.ts"),
   "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
+  "@/lib/credit-welcome-voice-phone": loadReissueModule("lib/credit-welcome-voice-phone.ts"),
 });
 const requestId = "62e6a6a9-3591-4a7f-a5d6-3d52ef675dfe";
 const eventId = "c0b4c3c8-f5f2-4470-9de2-fbeac40da2bb";

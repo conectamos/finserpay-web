@@ -10,6 +10,7 @@ const { createCreditWelcomeVoiceManualHandler } = loadReissueModule("lib/credit-
   "@/lib/aliados": loadReissueModule("lib/aliados.ts"),
   "@/lib/credit-route-lookup": loadReissueModule("lib/credit-route-lookup.ts"),
   "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
+  "@/lib/credit-welcome-voice-phone": loadReissueModule("lib/credit-welcome-voice-phone.ts"),
 });
 const requestId = "2d91ef46-9a50-45d7-aa91-d9dc98ebcf1e";
 const actor = { id: 7, activo: true, rolNombre: "ANALISTA_APROBACION", aliadoAccesoCodigo: "FINSERPAY",

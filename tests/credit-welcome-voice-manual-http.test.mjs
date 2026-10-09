@@ -7,6 +7,7 @@ const http = loadReissueModule("lib/credit-welcome-voice-http.ts", {
   "@/lib/aliados": loadReissueModule("lib/aliados.ts"),
   "@/lib/credit-route-lookup": loadReissueModule("lib/credit-route-lookup.ts"),
   "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
+  "@/lib/credit-welcome-voice-phone": loadReissueModule("lib/credit-welcome-voice-phone.ts"),
 });
 const uuid = "1b088834-d9a8-4052-841f-68cf734160a8";
 const actor = patch => ({ id: 7, activo: true, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY",
@@ -47,9 +48,9 @@ test("manual welcome requires an active authorized operator and same-origin requ
   await ally.post(); assert.equal(ally.calls.find[0].access.sede.aliadoId, 9);
 });
 
-test("manual welcome rejects a browser destination, financial data or impersonated actor and requires a UUID", async () => {
+test("manual welcome rejects invalid destinations, financial data or impersonated actor and requires a UUID", async () => {
   const f = fixture();
-  for (const body of [{}, { requestId: "wrong" }, { requestId: uuid, phone: "573000000002" },
+  for (const body of [{}, { requestId: "wrong" }, { requestId: uuid, phone: "123" },
     { requestId: uuid, actorId: 1 }, { requestId: uuid, source: "CONTROLLED_TEST" },
     { requestId: uuid, installmentAmount: 1 }, { requestId: uuid, origin: "CODEX_AUTHORIZED" }, { requestId: "a".repeat(1100) }]) {
     assert.ok([400, 413].includes((await f.post(body)).status));
@@ -57,6 +58,30 @@ test("manual welcome rejects a browser destination, financial data or impersonat
   assert.equal((await f.post({ requestId: uuid }, "72", { "content-type": "text/plain" })).status, 415);
   for (const id of ["0", "-1", "72bad", "9007199254740992"]) assert.equal((await f.post({ requestId: uuid }, id)).status, 400);
   assert.equal(f.calls.prepare.length, 0); assert.equal(f.calls.dispatch.length, 0);
+});
+
+test("manual destination is validated and normalized before preparing the authorized operator call", async () => {
+  for (const phone of ["3018297193", "573018297193", "+57 (301) 829-7193"]) {
+    const f = fixture();
+    const result = await f.post({ requestId: uuid, phone });
+    assert.equal(result.status, 202);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.calls.prepare[0])), { creditId: 72, requestId: uuid, actorId: 7, phone: "573018297193" });
+    assert.equal(f.calls.dispatch.length, 1);
+    const body = await result.json();
+    assert.equal("phone" in body, false);
+    assert.equal("snapshot" in body, false);
+  }
+  for (const phone of [null, false, 3018297193, "", " ", "hello3018297193", "3018297193 ext 7", "+1 3018297193",
+    "001573018297193", "6018297193", "30182971939", "++573018297193", "+3018297193", "3018297193\n", " ".repeat(41)]) {
+    const f = fixture();
+    assert.equal((await f.post({ requestId: uuid, phone })).status, 400, JSON.stringify(phone));
+    assert.equal(f.calls.prepare.length, 0); assert.equal(f.calls.dispatch.length, 0);
+  }
+  for (const options of [{ user: actor({ rolNombre: "VENDEDOR" }) }, { user: actor({ activo: false }) }, { sameOrigin: false }, { allowed: false }]) {
+    const f = fixture(options);
+    assert.ok([403, 404].includes((await f.post({ requestId: uuid, phone: "3018297193" })).status));
+    assert.equal(f.calls.prepare.length, 0); assert.equal(f.calls.dispatch.length, 0);
+  }
 });
 
 test("double click or network replay queries the same manual event and sends exactly one provider request", async () => {

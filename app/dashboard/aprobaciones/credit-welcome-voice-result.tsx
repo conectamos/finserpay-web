@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ExternalLink, Headphones, Phone, RefreshCw } from "lucide-react";
-import { Badge, Button, Card, EmptyState, LoadingState } from "@/app/_components/finser-ui";
+import { Badge, Button, Card, EmptyState, Input, LoadingState } from "@/app/_components/finser-ui";
 import type { WelcomeVoiceCallView } from "@/lib/credit-welcome-voice-http";
+import { normalizeManualVoicePhone } from "@/lib/credit-welcome-voice-phone";
 
 const dates = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
 const states: Record<string, string> = {
@@ -42,21 +43,29 @@ function tone(status: string): "neutral" | "positive" | "warning" | "danger" {
 type ManualCall = { canCall: boolean; phone: string | null; reason?: string };
 type CallRequest = { creditId: number; requestId: string; eventId?: string; busy: boolean;
   pending: boolean; message: string; error: boolean };
-type PendingRequest = { creditId: number; requestId: string; eventId?: string; controller?: AbortController; busy: boolean };
+type PendingRequest = { creditId: number; requestId: string; phone?: string; eventId?: string; controller?: AbortController; busy: boolean };
+type SavedRequest = { requestId: string; phone?: string };
+type Destination = { creditId: number; other: boolean; value: string };
 type RequestLookup = { requestId: string; found: boolean; eventId?: string; status?: string };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const closedStates = new Set(["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"]);
-function rememberRequest(creditId: number, requestId: string | null) {
+function rememberRequest(creditId: number, requestId: string | null, phone?: string) {
   try {
     if (typeof sessionStorage === "undefined") return;
     const key = `finserpay:welcome-voice:request:${creditId}`;
-    if (requestId) sessionStorage.setItem(key, requestId); else sessionStorage.removeItem(key);
+    if (requestId) sessionStorage.setItem(key, JSON.stringify({ requestId, ...(phone ? { phone } : {}) }));
+    else sessionStorage.removeItem(key);
   } catch { /* The in-memory guard still applies when storage is unavailable. */ }
 }
-function savedRequest(creditId: number) {
+function savedRequest(creditId: number): SavedRequest | null {
   try {
     const value = typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(`finserpay:welcome-voice:request:${creditId}`);
-    return value && uuid.test(value) ? value : null;
+    if (!value) return null;
+    if (uuid.test(value)) return { requestId: value };
+    const saved = JSON.parse(value) as SavedRequest | null;
+    if (!saved || typeof saved.requestId !== "string" || !uuid.test(saved.requestId) ||
+      (saved.phone !== undefined && (typeof saved.phone !== "string" || normalizeManualVoicePhone(saved.phone) !== saved.phone))) return null;
+    return { requestId: saved.requestId, ...(saved.phone ? { phone: saved.phone } : {}) };
   } catch { return null; }
 }
 function requestMessage(status: string) {
@@ -70,7 +79,9 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   const [read, setRead] = useState<{ creditId: number; revision: number; items: WelcomeVoiceCallView[]; error: string; manualCall?: ManualCall } | null>(null);
   const [revision, setRevision] = useState(0);
   const [request, setRequest] = useState<CallRequest | null>(null);
+  const [destination, setDestination] = useState<Destination | null>(null);
   const pendingRequest = useRef<PendingRequest | null>(null);
+  const phoneFieldId = useId();
   const current = read?.creditId === creditId && read.revision === revision ? read : null;
   const items = current?.items || [];
   const loading = current === null;
@@ -78,10 +89,14 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   const manualCall = current?.manualCall;
   const currentRequest = request?.creditId === creditId ? request : null;
   const busy = currentRequest?.busy === true;
+  const retainedRequest = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
+  const currentDestination = destination?.creditId === creditId ? destination : { creditId, other: false, value: "" };
+  const alternatePhone = currentDestination.other ? normalizeManualVoicePhone(currentDestination.value) : null;
+  const destinationLocked = loading || busy || Boolean(retainedRequest) || !manualCall?.canCall;
   useEffect(() => {
     const controller = new AbortController();
     const requestedPending = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
-    const requestId = requestedPending?.requestId || savedRequest(creditId);
+    const requestId = requestedPending?.requestId || savedRequest(creditId)?.requestId;
     const query = requestId ? `?requestId=${encodeURIComponent(requestId)}` : "";
     void fetch(`/api/creditos/${creditId}/bienvenida-voz${query}`, { cache: "no-store", signal: controller.signal })
       .then(async response => {
@@ -99,12 +114,15 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
         setRead({ creditId, revision, items, error: "", manualCall });
         let pending = pendingRequest.current;
         if (!pending || pending.creditId !== creditId) {
-          const requestId = savedRequest(creditId);
-          pending = requestId ? { creditId, requestId, busy: false } : null;
+          const saved = savedRequest(creditId);
+          pending = saved ? { creditId, ...saved, busy: false } : null;
           pendingRequest.current = pending;
           if (pending) setRequest({ ...pending, pending: true, error: false,
             message: "Verificando el estado de la solicitud anterior..." });
         }
+        const restoredPhone = pending?.phone;
+        setDestination(previous => previous?.creditId === creditId ? previous
+          : { creditId, other: Boolean(restoredPhone), value: restoredPhone || "" });
         const lookup = body.request;
         if (!pending || pending.busy || !requestId || pending.requestId !== requestId ||
           (requestedPending && pending !== requestedPending)) return;
@@ -124,6 +142,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
         if (closedStates.has(lookup.status)) {
           rememberRequest(creditId, null);
           pendingRequest.current = null;
+          setDestination({ creditId, other: false, value: "" });
           setRequest({ creditId, requestId, eventId: lookup.eventId, busy: false, pending: false,
             error: false, message: requestMessage(lookup.status) });
         } else {
@@ -150,18 +169,22 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   async function callNow() {
     if (!manualCall || loading) return;
     const previous = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
-    if (previous?.busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone) return;
-    const requestId = previous?.requestId || savedRequest(creditId) || crypto.randomUUID();
+    const retained = previous || savedRequest(creditId);
+    if (previous?.busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone ||
+      (!retained && currentDestination.other && !alternatePhone)) return;
+    const requestId = retained?.requestId || crypto.randomUUID();
+    const phone = retained ? retained.phone : currentDestination.other && alternatePhone ? alternatePhone : undefined;
     const controller = new AbortController();
-    const pending: PendingRequest = { creditId, requestId, eventId: previous?.eventId, busy: true, controller };
+    const pending: PendingRequest = { creditId, requestId, phone, eventId: previous?.eventId, busy: true, controller };
     pendingRequest.current = pending;
-    rememberRequest(creditId, requestId);
+    rememberRequest(creditId, requestId, phone);
     setRequest({ creditId, requestId, eventId: pending.eventId, busy: true, pending: true, error: false,
       message: "Solicitando la llamada..." });
     const timeout = setTimeout(() => controller.abort(), 60_000);
     try {
       const response = await fetch(`/api/creditos/${creditId}/bienvenida-voz`, { method: "POST", cache: "no-store",
-        headers: { "Content-Type": "application/json" }, signal: controller.signal, body: JSON.stringify({ requestId }) });
+        headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        body: JSON.stringify({ requestId, ...(phone ? { phone } : {}) }) });
       const body = await response.json().catch(() => null) as {
         ok?: boolean; eventId?: string; status?: string; requestCreated?: boolean; error?: string;
       } | null;
@@ -169,6 +192,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
         if (controller.signal.aborted || pendingRequest.current !== pending) return;
         rememberRequest(creditId, null);
         pendingRequest.current = null;
+        setDestination({ creditId, other: false, value: "" });
         const rejection = typeof body.error === "string" ? body.error.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 240) : "";
         setRequest({ creditId, requestId, busy: false, pending: false, error: true,
           message: rejection || "No se creó una llamada. Actualiza el expediente para revisar su disponibilidad." });
@@ -180,7 +204,10 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
       if (controller.signal.aborted || pendingRequest.current !== pending) return;
       pending.eventId = body.eventId;
       const closed = closedStates.has(body.status);
-      if (closed) { rememberRequest(creditId, null); pendingRequest.current = null; }
+      if (closed) {
+        rememberRequest(creditId, null); pendingRequest.current = null;
+        setDestination({ creditId, other: false, value: "" });
+      }
       setRequest({ creditId, requestId, eventId: body.eventId, busy: false, pending: !closed,
         message: requestMessage(body.status), error: false });
       setRevision(value => value + 1);
@@ -199,8 +226,8 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><Headphones size={20} aria-hidden="true" />Bienvenida por voz</h2>
       <div className="flex flex-wrap items-center gap-2">
-      {manualCall ? <Button disabled={loading || busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone}
-        onClick={() => { void callNow(); }} aria-label="Llamar ahora al celular registrado">
+      {manualCall ? <Button disabled={loading || busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone || (currentDestination.other && !alternatePhone)}
+        onClick={() => { void callNow(); }} aria-label={currentDestination.other ? "Llamar ahora al número indicado" : "Llamar ahora al celular registrado"}>
         <Phone size={16} aria-hidden="true" />Llamar ahora
       </Button> : null}
       <Button variant="ghost" disabled={loading || busy} onClick={() => setRevision(value => value + 1)} aria-label="Actualizar resultado de la bienvenida por voz">
@@ -209,6 +236,27 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
       </div>
     </div>
     {manualCall ? <p className="mt-3 text-sm text-[var(--fp-muted)]">{manualCall.phone ? `Celular registrado: ${manualCall.phone}. ` : ""}{!manualCall.canCall ? manualCall.reason || "No se puede solicitar una nueva llamada en este momento." : "La llamada y su resultado quedarán en este expediente."}</p> : null}
+    {manualCall ? <div className="mt-3 space-y-2">
+      <label className="inline-flex min-h-10 items-center gap-2 text-sm font-medium">
+        <input type="checkbox" className="h-4 w-4 accent-[var(--fp-graphite)]" checked={currentDestination.other}
+          disabled={destinationLocked} onChange={event => {
+            if (!destinationLocked && pendingRequest.current?.creditId !== creditId) setDestination({ ...currentDestination, other: event.target.checked });
+          }} />Llamar a otro número
+      </label>
+      {currentDestination.other ? <div className="max-w-sm space-y-2">
+        <label htmlFor={phoneFieldId} className="block text-sm font-medium">Número para esta llamada</label>
+        <Input id={phoneFieldId} type="tel" inputMode="tel" autoComplete="tel" maxLength={40}
+          value={currentDestination.value} disabled={destinationLocked} aria-describedby={`${phoneFieldId}-help`}
+          aria-invalid={Boolean(currentDestination.value && !alternatePhone)} onChange={event => {
+            if (!destinationLocked && pendingRequest.current?.creditId !== creditId) setDestination({ ...currentDestination, value: event.target.value });
+          }} />
+        <p id={`${phoneFieldId}-help`} className={`text-sm ${currentDestination.value && !alternatePhone ? "text-[var(--fp-danger)]" : "text-[var(--fp-muted)]"}`}>
+          {currentDestination.value && !alternatePhone ? "Ingresa un celular colombiano válido, sin letras ni extensiones. " : "Puedes escribir los 10 dígitos del celular o incluir +57. "}
+          Se usará únicamente para esta llamada. No cambia el celular registrado del cliente.
+        </p>
+      </div> : null}
+      {retainedRequest ? <p className="text-sm text-[var(--fp-muted)]">El destino de este intento se conserva hasta que finalice.</p> : null}
+    </div> : null}
     {currentRequest ? <p role="status" aria-live="polite" className={`mt-3 text-sm ${currentRequest.error ? "text-[var(--fp-danger)]" : "text-[var(--fp-muted)]"}`}>{currentRequest.message}</p> : null}
     <p className="mt-3 text-sm text-[var(--fp-muted)]">El audio permanece en Dapta y se descarga manualmente allí. FINSER PAY guarda el resultado y el enlace; no guarda el archivo de audio.</p>
     {loading ? <div className="mt-4"><LoadingState label="Consultando llamada de bienvenida..." /></div>

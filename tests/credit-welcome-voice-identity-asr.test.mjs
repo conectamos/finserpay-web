@@ -24,6 +24,7 @@ const http = loadReissueModule("lib/credit-welcome-voice-http.ts", {
   "@/lib/aliados": loadReissueModule("lib/aliados.ts"),
   "@/lib/credit-route-lookup": loadReissueModule("lib/credit-route-lookup.ts"),
   "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
+  "@/lib/credit-welcome-voice-phone": loadReissueModule("lib/credit-welcome-voice-phone.ts"),
 });
 const now = new Date("2026-10-08T15:00:00.000Z");
 const flowSecret = "synthetic-dedicated-identity-flow-key-32-or-more";
