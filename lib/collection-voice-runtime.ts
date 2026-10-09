@@ -97,7 +97,7 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
       const claimed=await prisma.$transaction(async db=>{
         await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))::text`,"collections:"+debtorKey);
         const prior=await db.$queryRawUnsafe<Array<{blocked:boolean;today:number;total:number}>>(`SELECT
-          COALESCE(bool_or("optOut" OR "status" IN ('DISPATCHING','DIALING','ACCEPTED','UNKNOWN') OR ("contactedAt" AT TIME ZONE 'America/Bogota')::date=$2::date),FALSE) AS blocked,
+          COALESCE(bool_or("optOut" OR "status" IN ('DISPATCHING','DIALING','ACCEPTED','UNKNOWN') OR "outcome"->>'pago_informado'='true' OR ("managementId" IS NULL AND "outcome"->>'acuerdo_confirmado'='true') OR ("contactedAt" AT TIME ZONE 'America/Bogota')::date=$2::date),FALSE) AS blocked,
           count(*) FILTER(WHERE ("createdAt" AT TIME ZONE 'America/Bogota')::date=$2::date)::int AS today,count(*)::int AS total
           FROM "CollectionVoiceAttempt" WHERE "debtorKey"=$1`,debtorKey,colombiaClock(now).day);
         const contacts=await db.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CreditMoraManagementEvent" m JOIN "Credito" c ON c."id"=m."creditoId"
@@ -208,15 +208,19 @@ async function operation(body:Record<string,unknown>) {
       if(prior[0]?.callbackHash!==hash) throw new Error("Evento de cierre en conflicto");
       return {ok:true,processed:true,duplicate:true};
     }
-    if(noAnswer&&!a.managementId&&!a.optOut) {
-      try{await saveManagement(a,"SIN_RESPUESTA",{comment:"El proveedor informó que no hubo respuesta."});}catch{/* Retained in call ledger for review; never claim a portfolio record. */}
+    let registered=!!a.managementId;
+    if(!a.managementId&&!a.optOut&&(noAnswer||(a.identityVerifiedAt&&analysis.resultado_gestion==="MEDIOS_PAGO"))) {
+      try{
+        await saveManagement(a,noAnswer?"SIN_RESPUESTA":"MEDIOS_PAGO",{comment:noAnswer?"El proveedor informó que no hubo respuesta.":String(analysis.observacion_gestion||"Se informaron medios de pago durante la llamada.")});
+        registered=true;
+      }catch{/* Retained in call ledger for review; never claim a portfolio record. */}
     }
     // A template is sent only if the caller requested that information. Its
     // receipt is tracked independently from the portfolio record.
     if(a.identityVerifiedAt&&analysis.whatsapp_solicitado===true&&!analysis.finalizar_solicitado) {
       await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "messageState"='PENDING' WHERE "id"=$1::uuid`,id);
     }
-    return {ok:true,processed:true,registrado:!!a.managementId};
+    return {ok:true,processed:true,registrado:registered};
   }
   throw new Error("Operación no admitida");
 }
