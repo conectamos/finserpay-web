@@ -14,7 +14,7 @@ globalThis.__finserIdentityTest={extractDataCreditoIdentity,resolveDataCreditoId
  prisma:{$executeRawUnsafe:async(sql,...args)=>{await db.query(sql,args);if(sql.startsWith('INSERT'))rows.push({effective:JSON.parse(args[5]),original:JSON.parse(args[3]),previous:JSON.parse(args[4]),userId:args[1],sellerId:args[2]});},$queryRawUnsafe:async()=>rows.slice(-1)},
  getDataCreditoAssessmentById:async()=>({id:'12345678-1234-4234-8234-123456789012',status:'APROBADO'}),dataCreditoAssessmentMatchesScope:()=>authorized,
  readDataCreditoIdentitySource:async()=>({documentNumber:'1234567',firstSurname:'DIGITADO',providerPayload:{content:{respuesta:{validacion:{datosBasicos:{conInformacion:true,primerNombre:original.names,primerApellido:missingPrimary ? "" : original.firstSurname,segundoApellido:original.secondSurname,tipoDocumento:'CC',numeroDocumento:original.documentNumber}}}}}})};
-const {enforceDataCreditoCustomerIdentity:enforce,getDataCreditoCustomerIdentity:get,completeMissingDataCreditoIdentity:complete}=await jiti.import(path.join(dir,'identity.ts'));
+const {enforceDataCreditoCustomerIdentity:enforce,getDataCreditoCustomerIdentity:get,completeMissingDataCreditoIdentity:complete,getScopedDataCreditoQueryIdentity:signedQuery}=await jiti.import(path.join(dir,'identity.ts'));
 const scope={userId:23,sellerId:45,sedeId:1,aliadoId:null};const payload={dataCreditoAssessmentId:'12345678-1234-4234-8234-123456789012',clientePrimerNombre:'María José',clientePrimerApellido:original.firstSurname,clienteSegundoApellido:'',clienteDocumento:original.documentNumber,clienteTipoDocumento:original.documentType};
 test('correction audit preserves provider original, effective value and trusted actor; reload and signing retain correction',async()=>{
  const data={...payload};await enforce(data,scope);assert.equal(rows.length,1);assert.equal(rows[0].userId,23);assert.equal(rows[0].sellerId,45);
@@ -37,4 +37,15 @@ test('authorized completion fills missing primary identity, keeps provenance and
  assert.equal(signed.effective.firstSurname,'De la Peña');
  await assert.rejects(complete({id:payload.dataCreditoAssessmentId},{firstSurname:'Otro'},{userId:99,sellerId:null}),/LOCKED_FIELDS/);
  missingPrimary=false;
+});
+
+test('signed closing validates encrypted query and owner without revalidating provider names',async()=>{
+ const previous=original.documentNumber;original.documentNumber='7654321';
+ try{
+  await assert.rejects(get({id:payload.dataCreditoAssessmentId}),/DOCUMENT_MISMATCH/);
+  const signed=await signedQuery(payload.dataCreditoAssessmentId,scope,'1234567');
+  assert.equal(signed.querySurname,'DIGITADO');assert.equal(signed.documentNumber,'1234567');
+  await assert.rejects(signedQuery(payload.dataCreditoAssessmentId,scope,'7654321'),/DOCUMENT_MISMATCH/);
+  authorized=false;await assert.rejects(signedQuery(payload.dataCreditoAssessmentId,scope,'1234567'),/UNAUTHORIZED/);
+ }finally{authorized=true;original.documentNumber=previous;}
 });
