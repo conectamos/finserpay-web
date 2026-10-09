@@ -3,6 +3,7 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 import type { WelcomeVoiceToken } from "@/lib/credit-welcome-voice-core";
 import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-document";
+import { normalizeManualVoicePhone } from "@/lib/credit-welcome-voice-phone";
 import type { WelcomeVoiceIdentityRecoveryResponse, VoiceDispatchClaim } from "@/lib/credit-welcome-voice-store";
 
 export const welcomeVoicePrivateHeaders = {
@@ -284,13 +285,13 @@ export type WelcomeVoiceCallView = {
 export type WelcomeVoiceManualCallView = { canCall: boolean; phone: string | null; reason?: string };
 export type WelcomeVoiceManualRequestView = { requestId: string; found: boolean; eventId?: string; status?: string };
 
-/** A manual call uses the authorized credit's stored contact; the browser cannot choose another recipient. */
+/** Authorized operators may choose a one-call destination without changing the credit's contact. */
 export function createCreditWelcomeVoiceManualHandler(dependencies: {
   getUser: () => Promise<WelcomeVoiceReadUser | null>;
   sameOrigin: (request: Request) => boolean;
   configured: () => boolean;
   findCredit: (id: number, access: ReturnType<typeof buildCreditAccessWhere>) => Promise<{ id: number } | null>;
-  prepare: (input: { creditId: number; requestId: string; actorId: number }) => Promise<VoiceDispatchClaim & { created: boolean }>;
+  prepare: (input: { creditId: number; requestId: string; actorId: number; phone?: string }) => Promise<VoiceDispatchClaim & { created: boolean }>;
   dispatch: (claim: VoiceDispatchClaim) => Promise<unknown>;
   listCalls: (id: number) => Promise<WelcomeVoiceCallView[]>;
 }) {
@@ -315,12 +316,14 @@ export function createCreditWelcomeVoiceManualHandler(dependencies: {
       if (!credit) return rejected("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
       const body = await readBody(request, 1024);
       const requestId = body.requestId;
-      if (Object.keys(body).some(key => key !== "requestId") || typeof requestId !== "string"
+      const phone = body.phone === undefined ? undefined : normalizeManualVoicePhone(body.phone);
+      if (Object.keys(body).some(key => key !== "requestId" && key !== "phone") || typeof requestId !== "string"
+        || (body.phone !== undefined && !phone)
         || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
         throw new WelcomeVoiceRequestError("INVALID_INPUT");
       }
       if (!dependencies.configured()) return rejected("VOICE_NOT_CONFIGURED", "Las llamadas de bienvenida no están disponibles en este momento.", 503);
-      const prepared = await dependencies.prepare({ creditId: credit.id, requestId, actorId: user.id });
+      const prepared = await dependencies.prepare({ creditId: credit.id, requestId, actorId: user.id, ...(phone ? { phone } : {}) });
       requestReserved = true;
       // A replay is a status query, never a second provider request.
       if (prepared.created) await dependencies.dispatch(prepared);

@@ -16,6 +16,12 @@ const [core, plan, snapshot, cartera, phone, speech, campaign] = await Promise.a
   jiti.import("../lib/dapta-welcome.ts"), jiti.import("../lib/credit-welcome-voice-speech.ts"),
   jiti.import("../lib/credit-voice-review-campaign-core.ts"),
 ]);
+const dispatcher = loadReissueModule("lib/credit-welcome-voice-dispatch.ts", {
+  "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-speech": speech,
+  "@/lib/credit-welcome-voice-store": {},
+}, { AbortSignal });
+const dispatchConfig = { webhookUrl: "https://api.dapta.ai/synthetic-operator-test", secret: "synthetic-operator-dispatch-secret-at-least-32-characters",
+  agentId: "4b68b7b8-382f-4f9a-8e1f-8b88665acf38" };
 const now = new Date("2026-10-09T18:30:00.000Z");
 const requestId = "98a7dfb4-a20d-482c-9411-8bff948ab001";
 const requestId2 = "98a7dfb4-a20d-482c-9411-8bff948ab002";
@@ -259,4 +265,57 @@ test("operator request lookup rejects invalid UUID or IDs before querying", asyn
     await assert.rejects(f.store.getCreditWelcomeVoiceOperatorRequest(input(override)), error => error.code === "INVALID_OPERATOR_CALL");
   }
   assert.equal(f.queries(), queries); assert.equal(f.writes(), 0); assert.equal(f.transactions(), 0);
+});
+
+test("UI alternate destination is audited, canonical replays do not redial and real dispatcher keeps the original credit intact", async t => {
+  const f = await fixture(t), received = [];
+  const beforeCredit = (await f.db.query('SELECT "data" FROM "Credito" WHERE "id"=1')).rows[0].data;
+  const call = await f.store.prepareCreditWelcomeVoiceOperatorCall(input({ phone: "+57 300 000 0002" }));
+  const originalSnapshot = (await f.events())[0].snapshot;
+  const metadata = (await f.requests())[0];
+  assert.equal(metadata.origin, "UI"); assert.equal(metadata.actorId, 51); assert.equal(metadata.destinationPhone, "573000000002");
+  assert.equal(originalSnapshot.phone, "573000000001"); assert.equal(originalSnapshot.initialPayment, 200);
+  assert.deepEqual(originalSnapshot.installmentAmounts, [100, 100, 100]);
+  const deps = { config: dispatchConfig, ensureSchema: async () => {}, claim: async () => [call],
+    prepare: f.store.prepareCreditWelcomeVoiceDispatch,
+    accepted: f.store.markCreditWelcomeVoiceDispatchAccepted, failed: f.store.markCreditWelcomeVoiceDispatchFailed,
+    unknown: f.store.markCreditWelcomeVoiceDispatchUnknown,
+    fetcher: async (url, options) => {
+      received.push({ url, body: JSON.parse(options.body) });
+      return Response.json({ ok: true, call_id: "call-ui-alternate-destination" });
+    } };
+  assert.equal((await dispatcher.dispatchCreditWelcomeVoice({}, deps)).accepted, 1);
+  assert.equal(received.length, 1); assert.equal(received[0].body.to_number, "+573000000002");
+  assert.equal(received[0].body.customer_name, originalSnapshot.name);
+  assert.equal(received[0].body.customer_document, originalSnapshot.document);
+  assert.equal(JSON.stringify(received[0].body).includes(originalSnapshot.phone), false);
+  for (const field of ["snapshot", "initialPayment", "installmentAmount", "installmentCount", "firstDueDate", "calendar"]) {
+    assert.equal(field in received[0].body, false);
+  }
+  const token = core.verifyWelcomeVoiceToken(received[0].body.event_token, { secret: dispatchConfig.secret });
+  assert.equal(token.eventId, call.eventId); assert.equal(token.creditId, 1);
+  for (const canonicalPhone of ["3000000002", "573000000002", "+573000000002", "+57 300 000 0002"]) {
+    const replay = await f.store.prepareCreditWelcomeVoiceOperatorCall(input({ phone: canonicalPhone }));
+    assert.equal(replay.created, false); assert.equal(replay.eventId, call.eventId); assert.equal(replay.status, "ACCEPTED");
+    assert.equal(replay.destinationPhone, "573000000002");
+  }
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall(input({ phone: "3000000003" })), error => error.code === "OPERATOR_CALL_REQUEST_MISMATCH");
+  assert.equal(received.length, 1); assert.equal((await f.events()).length, 1); assert.equal((await f.requests()).length, 1);
+  assert.deepEqual((await f.events())[0].snapshot, originalSnapshot);
+  assert.deepEqual((await f.db.query('SELECT "data" FROM "Credito" WHERE "id"=1')).rows[0].data, beforeCredit);
+});
+
+test("an alternate destination never bypasses original-contact revalidation before the real dispatcher fetch", async t => {
+  const f = await fixture(t);
+  const call = await f.store.prepareCreditWelcomeVoiceOperatorCall(input({ phone: "3000000002" }));
+  await f.update({ clienteTelefono: "3000000003" });
+  const result = await dispatcher.dispatchCreditWelcomeVoice({}, {
+    config: dispatchConfig, ensureSchema: async () => {}, claim: async () => [call], prepare: f.store.prepareCreditWelcomeVoiceDispatch,
+    accepted: async () => assert.fail("A rejected prepare must not be accepted"),
+    failed: async () => assert.fail("Revalidation owns the local rejection"), unknown: async () => assert.fail("No external request was made"),
+    fetcher: async () => assert.fail("Changed original contact must never reach the provider"),
+  });
+  assert.equal(result.accepted, 0); assert.equal(result.skipped, 1);
+  const event = (await f.events())[0]; assert.equal(event.status, "SKIPPED"); assert.equal(event.resultCode, "CONTACT_CHANGED");
+  assert.equal(event.snapshot.phone, "573000000001"); assert.equal((await f.requests())[0].destinationPhone, "573000000002");
 });

@@ -12,6 +12,7 @@ const documentParser = loadReissueModule("lib/credit-welcome-voice-document.ts")
 const http = loadReissueModule("lib/credit-welcome-voice-http.ts", {
   "@/lib/roles": roles, "@/lib/aliados": allies, "@/lib/credit-route-lookup": lookup,
   "@/lib/credit-welcome-voice-document": documentParser,
+  "@/lib/credit-welcome-voice-phone": loadReissueModule("lib/credit-welcome-voice-phone.ts"),
 });
 const now = new Date("2026-10-08T15:00:00.000Z");
 const secret = "test-welcome-voice-secret-at-least-thirty-two-characters";
