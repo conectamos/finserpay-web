@@ -1,0 +1,122 @@
+{
+  "flow_id": "WdOvp",
+  "expected_content_hash": "sha256:a16b94f72074ce18f634161a05a2377529df732149cd014fb34c746b120991b1",
+  "ops": [
+    {
+      "op": "set_param",
+      "node_id": "trgCl",
+      "path": "api_trigger.trigger_params",
+      "value": [
+        {
+          "id": "pm000",
+          "key": "event_id",
+          "type": "text",
+          "origin": "body",
+          "required": true
+        },
+        {
+          "id": "pm001",
+          "key": "credito_id",
+          "type": "text",
+          "origin": "body",
+          "required": true
+        },
+        {
+          "id": "pm002",
+          "key": "event_token",
+          "type": "text",
+          "origin": "body",
+          "required": true
+        },
+        {
+          "id": "pm003",
+          "key": "to_number",
+          "type": "text",
+          "origin": "body",
+          "required": true
+        },
+        {
+          "id": "pm004",
+          "origin": "body",
+          "key": "customer_name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "pm005",
+          "origin": "body",
+          "key": "customer_document",
+          "type": "text",
+          "required": true
+        }
+      ]
+    },
+    {
+      "op": "set_param",
+      "node_id": "nrmCl",
+      "path": "api_action.code_action.code",
+      "value": "const data = params.trigger.body || {};\nconst required = (value, limit) => {\n  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\\u0000-\\u001f\\u007f]/.test(value)) throw new Error('Solicitud de llamada invalida');\n  return value.trim();\n};\nconst event_id = required(data.event_id, 36);\nconst credito_id = required(data.credito_id, 16);\nconst event_token = required(data.event_token, 1000);\nconst to_number = required(data.to_number, 16);\nconst customer_name = required(data.customer_name, 240);\nconst customer_document = required(data.customer_document, 80);\nif (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event_id) || !/^[1-9]\\d*$/.test(credito_id) || !/^\\+573\\d{9}$/.test(to_number)) throw new Error('Solicitud de llamada invalida');\nmodule.exports = { event_id, credito_id, event_token, to_number, customer_name, customer_document };"
+    },
+    {
+      "op": "set_param",
+      "node_id": "nrmCl",
+      "path": "api_action.response",
+      "value": [
+        {
+          "variable_name": "event_id",
+          "response_value_path": "event_id"
+        },
+        {
+          "variable_name": "credito_id",
+          "response_value_path": "credito_id"
+        },
+        {
+          "variable_name": "event_token",
+          "response_value_path": "event_token"
+        },
+        {
+          "variable_name": "to_number",
+          "response_value_path": "to_number"
+        },
+        {
+          "variable_name": "customer_name",
+          "response_value_path": "customer_name"
+        },
+        {
+          "variable_name": "customer_document",
+          "response_value_path": "customer_document"
+        }
+      ]
+    },
+    {
+      "op": "set_param",
+      "node_id": "natCl",
+      "path": "api_action.custom_action.values.variables",
+      "value": [
+        {
+          "key": "event_id",
+          "value": "{{normalizar_llamada.event_id}}"
+        },
+        {
+          "key": "credito_id",
+          "value": "{{normalizar_llamada.credito_id}}"
+        },
+        {
+          "key": "event_token",
+          "value": "{{normalizar_llamada.event_token}}"
+        },
+        {
+          "key": "customer_name",
+          "value": "{{normalizar_llamada.customer_name}}"
+        },
+        {
+          "key": "customer_document",
+          "value": "{{normalizar_llamada.customer_document}}"
+        }
+      ]
+    }
+  ],
+  "strict": true,
+  "auto_layout": false,
+  "workspace_id": "7496b9a3-2fe6-4e28-8411-7d54ee788b2c"
+}

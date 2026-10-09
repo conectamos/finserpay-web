@@ -10,7 +10,8 @@ const dispatch = loadReissueModule("lib/credit-welcome-voice-dispatch.ts", {
 const config = { webhookUrl: "https://api.dapta.ai/test-private-flow", secret: "synthetic-welcome-secret-32-bytes-or-more",
   agentId: "923f7952-87bc-4f1f-a77d-1972302200ee" };
 const claim = { eventId: "25ea074e-a7e5-4f2c-8c8e-e64258fe345d", creditId: 72,
-  snapshot: { phone: "573000000001", name: "TEST PERSON", document: "000123456", initialPayment: 123 } };
+  snapshot: { phone: "573000000001", name: "TEST PERSON", document: "000123456", initialPayment: 123,
+    installmentAmount: 321, installmentCount: 4, firstDueDate: "2026-10-17", calendar: ["2026-10-17", "2026-11-02"] } };
 function fixture(overrides = {}) {
   const received = []; const states = [];
   const deps = { config, ensureSchema: async () => {}, claim: async () => [claim], prepare: async () => claim,
@@ -39,16 +40,47 @@ test("disabled or incomplete configuration does not query the queue or place cal
   const result = await dispatch.dispatchCreditWelcomeVoice({}, f.deps);
   assert.equal(result.selected, 0); assert.equal(f.received.length, 0);
 });
-test("dispatch sends destination plus scoped token, withholding identity and financial conditions", async () => {
+test("dispatch sends real snapshot identity for confirmation, preserving document zeroes and withholding all financial conditions", async () => {
   const f = fixture();
   const result = await dispatch.dispatchCreditWelcomeVoice({}, f.deps);
   assert.equal(result.accepted, 1);
-  assert.deepEqual(Object.keys(f.received[0].body).sort(), ["credito_id", "event_id", "event_token", "to_number"]);
+  assert.deepEqual(Object.keys(f.received[0].body).sort(), ["credito_id", "customer_document", "customer_name", "event_id", "event_token", "to_number"]);
   assert.equal(f.received[0].body.to_number, "+573000000001");
+  assert.equal(f.received[0].body.customer_name, claim.snapshot.name);
+  assert.equal(f.received[0].body.customer_document, "000123456");
+  assert.equal(typeof f.received[0].body.customer_document, "string");
+  for (const field of ["snapshot", "initialPayment", "installmentAmount", "installmentCount", "firstDueDate", "calendar"]) {
+    assert.equal(field in f.received[0].body, false);
+  }
   assert.equal(f.received[0].options.redirect, "error");
   const token = core.verifyWelcomeVoiceToken(f.received[0].body.event_token, { secret: config.secret });
   assert.equal(token.creditId, 72); assert.equal(token.eventId, claim.eventId);
   assert.deepEqual(f.states, [["accepted", claim.eventId, "call-test-123"]]);
+});
+test("opening identity comes from the prepared snapshot, ignoring stale claims and caller-provided examples", async () => {
+  const prepared = { ...claim, snapshot: { ...claim.snapshot, name: "CLIENTE VIGENTE DEL CREDITO", document: "000765432" } };
+  const f = fixture({ prepare: async () => prepared });
+  const result = await dispatch.dispatchCreditWelcomeVoice({ customer_name: "Nombre indicado por entrada", customer_document: "99999999" }, f.deps);
+  assert.equal(result.accepted, 1);
+  assert.equal(f.received[0].body.customer_name, prepared.snapshot.name);
+  assert.equal(f.received[0].body.customer_document, prepared.snapshot.document);
+  assert.equal(JSON.stringify(f.received[0].body).includes(claim.snapshot.name), false);
+  assert.equal(JSON.stringify(f.received[0].body).includes("Nombre indicado por entrada"), false);
+  assert.equal(JSON.stringify(f.received[0].body).includes("99999999"), false);
+});
+test("controlled destination override keeps real credit identity and sends no stored customer phone or financial snapshot", async () => {
+  const prepared = { ...claim, snapshot: { ...claim.snapshot, phone: "573000000099" } };
+  const f = fixture({ prepare: async () => prepared });
+  assert.equal((await dispatch.dispatchCreditWelcomeVoice({}, f.deps)).accepted, 1);
+  const body = f.received[0].body;
+  assert.equal(body.to_number, "+573000000099");
+  assert.equal(body.customer_name, claim.snapshot.name);
+  assert.equal(body.customer_document, claim.snapshot.document);
+  assert.equal(JSON.stringify(body).includes(claim.snapshot.phone), false);
+  assert.equal(claim.snapshot.phone, "573000000001");
+  assert.deepEqual(Object.keys(body).sort(), ["credito_id", "customer_document", "customer_name", "event_id", "event_token", "to_number"]);
+  const token = core.verifyWelcomeVoiceToken(body.event_token, { secret: config.secret });
+  assert.equal(token.eventId, claim.eventId); assert.equal(token.creditId, claim.creditId);
 });
 test("credit cancelled or contact changed after claim never reaches Dapta", async () => {
   const f = fixture({ prepare: async () => null });

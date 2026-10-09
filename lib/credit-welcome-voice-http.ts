@@ -134,7 +134,9 @@ function parseCallback(body: ObjectValue, token: WelcomeVoiceToken, expectedAgen
     || !/^[1-9]\d*$/.test(variables.credito_id) || Number(variables.credito_id) !== token.creditId) {
     throw new WelcomeVoiceRequestError("CALL_SCOPE_MISMATCH", 403);
   }
-  if (call.agent_id !== expectedAgent) throw new WelcomeVoiceRequestError("CALL_SCOPE_MISMATCH", 403);
+  if (call.agent_id !== expectedAgent && call.agent_id !== `agent_${expectedAgent}`) {
+    throw new WelcomeVoiceRequestError("CALL_SCOPE_MISMATCH", 403);
+  }
   const providerCallId = requiredString(call.call_id, 160);
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(providerCallId)) throw new WelcomeVoiceRequestError("INVALID_CALL");
   const callStatus = requiredString(call.call_status, 40).toLowerCase();

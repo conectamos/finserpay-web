@@ -25,6 +25,8 @@ const validCall = {
   credito_id: "42",
   event_token: "synthetic-event-token",
   to_number: "+573001234567",
+  customer_name: "Persona de Prueba",
+  customer_document: "12345678",
 };
 const accepted = { ok: true, call_id: "call_123", code: null };
 const failed = { ok: false, call_id: null, code: "NATIVE_CALL_ERROR" };
@@ -55,6 +57,72 @@ test("identity normalization rejects forbidden controls, missing values and exce
   ]) {
     assert.throws(() => runCode(identity, "nrmId", { trigger: { body } }), /Solicitud de identidad invalida/);
   }
+});
+
+test("voice tool args envelope serializes only the identity fields", () => {
+  const supplied = {
+    ...validIdentity,
+    customer_name: 'Ana "Prueba" \\ Pérez\nDos\tTres',
+  };
+  const output = runCode(identity, "nrmId", {
+    trigger: { body: { args: { ...supplied, dapta_api_id: "synthetic-flow", dapta_webhook: "ignored" }, call: { id: "synthetic-call" } } },
+  });
+  assert.deepEqual(JSON.parse(output.request_body), supplied);
+});
+
+test("identity envelope rejects malformed args and mixed locations instead of falling back", () => {
+  for (const body of [
+    undefined, null, [], "not-json",
+    { args: null }, { args: [] }, { args: "not-json" }, { args: false },
+    { ...validIdentity, args: null },
+    { ...validIdentity, args: { ...validIdentity } },
+    { event_token: validIdentity.event_token, args: { customer_name: validIdentity.customer_name, customer_document: validIdentity.customer_document } },
+  ]) {
+    assert.throws(() => runCode(identity, "nrmId", { trigger: { body } }), /Solicitud de identidad invalida/);
+  }
+});
+
+test("direct and args identity bodies require their own valid token", () => {
+  for (const wrap of [body => body, body => ({ args: body })]) {
+    for (const token of [undefined, null, 123, "", " ", "token\u0000", "a".repeat(1001)]) {
+      assert.throws(() => runCode(identity, "nrmId", {
+        trigger: { body: wrap({ ...validIdentity, event_token: token }) },
+      }), /Solicitud de identidad invalida/);
+    }
+  }
+});
+
+test("identity response remains strict boolean after args normalization and has no invented conditions fallback", () => {
+  const normalized = runCode(identity, "nrmId", { trigger: { body: { args: validIdentity } } });
+  assert.deepEqual(JSON.parse(normalized.request_body), validIdentity);
+  for (const response of [
+    undefined, {}, { ok: false }, { ok: "true", verificado: true },
+    { ok: true, verificado: true, condiciones: null },
+  ]) {
+    const result = runCode(identity, "chkId", {
+      verificar_identidad: response,
+      invented_conditions: { monto: "999999", cuota: "1" },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.verificado, false);
+    assert.equal(result.condiciones, null);
+    assert.equal(typeof result.ok, "boolean");
+    assert.equal(typeof result.verificado, "boolean");
+  }
+});
+
+test("identity fix preview payload changes only the live normalizer Code field", () => {
+  const patch = JSON.parse(readFileSync(new URL("identity-normalizer.patch.json", base), "utf8"));
+  assert.equal(patch.flow_id, "YxVoY");
+  assert.match(patch.expected_content_hash, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(patch.ops.length, 1);
+  assert.deepEqual(
+    { op: patch.ops[0].op, node_id: patch.ops[0].node_id, path: patch.ops[0].path },
+    { op: "set_param", node_id: "nrmId", path: "api_action.code_action.code" },
+  );
+  assert.equal(patch.ops[0].value, identity.api_nodes.find(node => node.id === "nrmId").api_action.code_action.code);
+  assert.doesNotMatch(JSON.stringify(patch), /https:\/\/|x-api-key|previewToken|preview_token/);
+  assert.equal(identity.api_nodes.find(node => node.id === "nrmId").api_action.on_error, "stop");
 });
 
 test("identity HTTP action sends only safe serialized JSON and no backend secret", () => {
@@ -104,6 +172,54 @@ test("call inputs preserve the scoped token and reject an unsafe destination or 
   ]) {
     assert.throws(() => runCode(call, "nrmCl", { trigger: { body } }), /Solicitud de llamada invalida/);
   }
+});
+
+test("call requires both analyst identity fields and preserves quoted names as strings", () => {
+  const supplied = { ...validCall, customer_name: 'Ana "Prueba" \\ Pérez' };
+  assert.deepEqual(runCode(call, "nrmCl", { trigger: { body: supplied } }), supplied);
+  for (const key of ["customer_name", "customer_document"]) {
+    for (const invalid of [undefined, null, 123, "", " ", [], {}, "value\n", "value\u0000"]) {
+      assert.throws(() => runCode(call, "nrmCl", {
+        trigger: { body: { ...validCall, [key]: invalid } },
+      }), /Solicitud de llamada invalida/);
+    }
+  }
+  for (const body of [
+    { ...validCall, customer_name: "a".repeat(241) },
+    { ...validCall, customer_document: "1".repeat(81) },
+  ]) {
+    assert.throws(() => runCode(call, "nrmCl", { trigger: { body } }), /Solicitud de llamada invalida/);
+  }
+});
+
+test("native call variables receive exported analyst identity and no financial conditions", () => {
+  const normalized = runCode(call, "nrmCl", { trigger: { body: validCall } });
+  const normalizer = call.api_nodes.find(node => node.id === "nrmCl");
+  const trigger = call.api_nodes.find(node => node.id === "trgCl");
+  const native = call.api_nodes.find(node => node.id === "natCl");
+  for (const key of ["customer_name", "customer_document"]) {
+    assert.equal(typeof normalized[key], "string");
+    assert.equal(normalizer.api_action.response.find(field => field.variable_name === key).response_value_path, key);
+    assert.equal(trigger.api_trigger.trigger_params.find(field => field.key === key).required, true);
+    assert.equal(native.api_action.custom_action.values.variables.find(field => field.key === key).value, "{{normalizar_llamada." + key + "}}");
+  }
+  assert.deepEqual(native.api_action.custom_action.values.variables.map(field => field.key),
+    ["event_id", "credito_id", "event_token", "customer_name", "customer_document"]);
+});
+
+test("call variable patch preserves native identifiers, template attributes and credentials by omission", () => {
+  const patch = JSON.parse(readFileSync(new URL("call-identity-variables.patch.json", base), "utf8"));
+  assert.equal(patch.flow_id, "WdOvp");
+  assert.match(patch.expected_content_hash, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(patch.ops.map(op => [op.op, op.node_id, op.path]), [
+    ["set_param", "trgCl", "api_trigger.trigger_params"],
+    ["set_param", "nrmCl", "api_action.code_action.code"],
+    ["set_param", "nrmCl", "api_action.response"],
+    ["set_param", "natCl", "api_action.custom_action.values.variables"],
+  ]);
+  assert.equal(patch.ops[1].value, call.api_nodes.find(node => node.id === "nrmCl").api_action.code_action.code);
+  assert.deepEqual(patch.ops[3].value, call.api_nodes.find(node => node.id === "natCl").api_action.custom_action.values.variables);
+  assert.doesNotMatch(JSON.stringify(patch), /https:\/\/|x-api-key|previewToken|preview_token/);
 });
 
 for (const [name, native] of [
@@ -182,6 +298,8 @@ test("native draft retains the template and scoped variables with credentials re
     { key: "event_id", value: "{{normalizar_llamada.event_id}}" },
     { key: "credito_id", value: "{{normalizar_llamada.credito_id}}" },
     { key: "event_token", value: "{{normalizar_llamada.event_token}}" },
+    { key: "customer_name", value: "{{normalizar_llamada.customer_name}}" },
+    { key: "customer_document", value: "{{normalizar_llamada.customer_document}}" },
   ]);
   for (const text of [JSON.stringify(identity), JSON.stringify(call)]) {
     assert.doesNotMatch(text, /x-api-key[=:%]|Authorization[=:]/i);

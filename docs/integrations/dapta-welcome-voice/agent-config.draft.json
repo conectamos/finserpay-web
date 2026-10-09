@@ -17,8 +17,8 @@
         "type": "hangup"
       }
     },
-    "analysis_successful_prompt": "La bienvenida solo es completa cuando el cliente aceptó continuar, el backend validó su identidad, se explicaron las condiciones reales y el cliente confirmó expresamente que coinciden. Silencio, buzón, fin prematuro o discrepancia no son conformidad.",
-    "analysis_summary_prompt": "Resume el resultado de la bienvenida en español: disponibilidad, aceptación o rechazo de grabación, identidad confirmada por herramienta, condiciones explicadas y confirmación expresa, dudas y discrepancias. No incluya la cédula completa ni tokens. No atribuya acciones de backend que no ocurrieron.",
+    "analysis_successful_prompt": "La bienvenida solo es completa cuando el cliente aceptó continuar, confirmó el nombre y cédula registrados, la herramienta devolvió una verificación real con condiciones, se explicó el plan real y el cliente confirmó expresamente la primera fecha de pago. Deben indicarse calendario y bloqueo. URL de respuesta, error, datos inventados, silencio, buzón o discrepancia no son éxito.",
+    "analysis_summary_prompt": "Resume en español la aceptación de continuar tras el aviso de grabación, confirmación del nombre y cédula registrados, resultado real de la herramienta, primera fecha de pago confirmada, dudas y diferencias. No incluya la cédula completa ni tokens. No marque verificación si la herramienta devolvió una URL, error o resultado sin verificado=true.",
     "post_call_analysis_data": [
       {
         "name": "recording_accepted",
@@ -36,6 +36,11 @@
         "description": "Verdadero únicamente si el cliente confirma expresamente que las condiciones explicadas coinciden con las de su compra; falso para duda, silencio, discrepancia o explicación incompleta."
       },
       {
+        "name": "first_payment_confirmed",
+        "type": "boolean",
+        "description": "Verdadero solo si, tras una consulta real verificada, el cliente confirma expresamente que le informaron la primera fecha de pago indicada. Falso para silencio, discrepancia, dato inventado o herramienta fallida."
+      },
+      {
         "name": "customer_discrepancies",
         "type": "string",
         "description": "Diferencias que el cliente expresa respecto a inicial, cantidad de cuotas, valor, fechas o bloqueo. Texto vacío si no expresa diferencias; no inventar correcciones."
@@ -49,7 +54,7 @@
   },
   "updateAfterCreate": {
     "begin_message_type": "ai_initiates_predefined",
-    "begin_message": "Hola, buen día. Soy Sofía, asistente virtual de FINSER PAY. Esta llamada se graba para respaldar su atención. ¿Está de acuerdo en continuar?",
+    "begin_message": "Hola, soy Sofía de FINSER PAY. Esta llamada se graba para confirmar su crédito. ¿Podemos continuar?",
     "boosted_keywords": [
       "FINSER PAY",
       "Sofía",
@@ -64,7 +69,7 @@
   "pendingIdentityTool": {
     "name": "verificar_cliente_bienvenida",
     "type": "custom",
-    "description": "Verifica el nombre completo y cédula expresados por la persona antes de revelar las condiciones reales del crédito de esta llamada.",
+    "description": "Consulta las condiciones reales solo después de que la persona confirme el nombre y cédula registrados para este crédito. Un error o URL de respuesta no verifica nada.",
     "parameters": {
       "type": "object",
       "required": [
@@ -89,11 +94,11 @@
         },
         "customer_name": {
           "type": "string",
-          "description": "Nombre completo expresado por la persona durante esta llamada; nunca completar nombres o apellidos por suposición."
+          "description": "Solo después de que el cliente lo confirme, envía este nombre registrado exacto: {{customer_name}}. Nunca enviar sí, nombres inventados ni otro cliente."
         },
         "customer_document": {
           "type": "string",
-          "description": "Número de cédula expresado por la persona, como texto de dígitos conservando ceros iniciales; no inventar ni consultar otro documento."
+          "description": "Solo después de que el cliente lo confirme, envía este documento registrado exacto: {{customer_document}}. Texto de dígitos conservando ceros, nunca sí ni otro documento."
         }
       }
     },
