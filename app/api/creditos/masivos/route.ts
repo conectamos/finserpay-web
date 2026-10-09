@@ -20,7 +20,7 @@ import {
   registerImportedSadminCredit,
   type ImportSadminMode,
 } from "@/lib/mass-credit-sadmin";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import type { Prisma } from "@/app/generated/prisma/client";
@@ -919,7 +919,7 @@ export async function POST(req: Request) {
         if (previous.length !== rows.length || previous.some(item => item.requestHash !== requestHash)) {
           throw new CreditApprovalError("IMPORT_REQUEST_CONFLICT", "Esta operación ya se usó con otros datos. Valida una nueva carga.", 409);
         }
-        return { response: committedResponse(previous), welcome: null };
+        return { response: committedResponse(previous), welcome: null, voiceWelcomeEnqueued: false };
       }
       // Same document lock used by ordinary credit creation and the blacklist.
       const documents = [...new Set(rows.map(row => importDocument(row.cedula)).filter(Boolean))].sort();
@@ -928,7 +928,7 @@ export async function POST(req: Request) {
       }
       const validation = await validateRows(rows, tx, temporaryImeiConfirmed, sadminMode);
       if (validation.summary.invalid > 0) {
-        return { response: { ok: false, commit: false, rows: validation.rows, summary: validation.summary }, welcome: null };
+        return { response: { ok: false, commit: false, rows: validation.rows, summary: validation.summary }, welcome: null, voiceWelcomeEnqueued: false };
       }
       const secondCreditEligibility = await getSecondCreditEligibility(tx, documents);
       const createdAt = new Date();
@@ -1044,9 +1044,10 @@ export async function POST(req: Request) {
       }
 
       const first = created[0];
-      if (welcomeOnCreate) await enqueueCreditWelcomeVoice(tx, { creditId: first.id, source: "INDIVIDUAL_IMPORT" });
+      const voiceWelcome = welcomeOnCreate ? await enqueueCreditWelcomeVoice(tx, { creditId: first.id, source: "INDIVIDUAL_IMPORT" }) : null;
       return {
         response: committedResponse(created),
+        voiceWelcomeEnqueued: Boolean(voiceWelcome?.eventId),
         welcome: welcomeOnCreate ? {
           creditId: first.id,
           phone: first.row.normalized.telefono,
@@ -1054,6 +1055,21 @@ export async function POST(req: Request) {
         } : null,
       };
     }, { timeout: 60_000 });
+    // A replay, preview or rollback never wakes voice; only its committed outbox does.
+    if (outcome.voiceWelcomeEnqueued && process.env.DAPTA_WELCOME_VOICE_ENABLED === "true") {
+      try {
+        after(async () => {
+          try {
+            const { dispatchCreditWelcomeVoice } = await import("@/lib/credit-welcome-voice-dispatch");
+            await dispatchCreditWelcomeVoice({ limit: 5 });
+          } catch {
+            console.error("[dapta-welcome-voice] Post-commit wakeup failed; the durable queue remains pending.");
+          }
+        });
+      } catch {
+        console.error("[dapta-welcome-voice] Could not schedule post-commit wakeup; the cron will process the queue.");
+      }
+    }
     // Replayed confirmations return a receipt without a welcome payload.
     // Only a newly committed individual credit requests a welcome.
     if (outcome.welcome) {

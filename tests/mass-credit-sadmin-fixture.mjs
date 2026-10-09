@@ -54,7 +54,8 @@ export const sample = (index = 1, changes = {}) => ({
 });
 export function routeFixture(db, options = {}) {
   return load("app/api/creditos/masivos/route.ts", {
-    "next/server": { NextResponse: Response }, "@/lib/prisma": { __esModule: true, default: db },
+    "next/server": { NextResponse: Response, after: options.after ?? (() => {}) }, "@/lib/prisma": { __esModule: true, default: db },
+    "@/lib/credit-welcome-voice-dispatch": { dispatchCreditWelcomeVoice: options.dispatchCreditWelcomeVoice ?? (async () => ({ configured: false })) },
     "@/lib/mass-credit-sadmin": helper, "@/lib/credit-approval-errors": approvalErrors,
     "@/lib/second-credit-authorization": secondCreditHelper,
     "@/lib/dapta-welcome": { sendDaptaWelcome: options.sendDaptaWelcome ?? (async () => "disabled") },

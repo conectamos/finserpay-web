@@ -66,6 +66,7 @@ function fixture({ failFirstLock = false } = {}) {
     "@/lib/credit-welcome-voice-core": {},
     "@/lib/credit-welcome-voice-speech": {},
     "@/lib/credit-welcome-voice-document": {},
+    "@/lib/credit-welcome-voice-followup-core": loadReissueModule("lib/credit-welcome-voice-followup-core.ts"),
     "@/lib/credit-voice-review-campaign-core": campaignPolicy,
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   });
