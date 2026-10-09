@@ -30,6 +30,41 @@ test("a sequence of spoken digits preserves every digit and leading zero", () =>
   assert.equal(parse(Array(16).fill("uno").join(" ")), null);
 });
 
+test("explicit doble repeats one digit word before the existing grouped-number parser", () => {
+  // Synthetic document with the same spoken grouping as the reported call.
+  assert.equal(parse("Uno doble cero dos cuatro cuarenta y tres uno diez."), "1002443110");
+  for (const [digit, expected] of [
+    ["cero", "10092"], ["uno", "11192"], ["dos", "12292"], ["tres", "13392"], ["cuatro", "14492"],
+    ["cinco", "15592"], ["seis", "16692"], ["siete", "17792"], ["ocho", "18892"], ["nueve", "19992"],
+  ]) assert.equal(parse(`uno doble ${digit} nueve dos`), expected, digit);
+  assert.equal(parse("DOBLE   NUEVE doble ocho doble siete!"), "998877");
+  assert.equal(parse("12; doble cero; tres cuatro cinco"), "1200345");
+  assert.equal(parse("doce, doble cero tres cuatro cinco"), "1200345");
+});
+
+test("doble cannot infer a digit, cross a block boundary or introduce other multipliers", () => {
+  for (const raw of [
+    "uno dos tres doble", "uno doble equis tres cuatro", "uno doble 0 tres cuatro", "uno doble diez tres cuatro",
+    "uno doble cien tres cuatro", "uno doble veinte tres cuatro", "uno doble doble cero tres cuatro",
+    "uno triple cero tres cuatro", "uno doble triple cero tres cuatro", "uno dobles cero tres cuatro",
+    "uno doble ceros tres cuatro", "uno redoble cero tres cuatro", "uno doble, cero tres cuatro cinco",
+    "uno doble; cero tres cuatro cinco", "12 doble cero tres cuatro cinco", "uno doblecero tres cuatro cinco",
+  ]) assert.equal(parse(raw), null, raw);
+});
+
+test("double digits preserve ambiguity, separator validation and document bounds", () => {
+  for (const raw of [
+    "cien doble uno; doscientos; noventa", "treinta doble ocho; uno dos tres", "doscientos doble dos; uno dos tres",
+    "doscientos cuarenta y cuatro veinte doble uno", "uno doble cero;; tres cuatro cinco",
+    "uno doble cero / tres cuatro cinco", "uno doble cero. tres cuatro cinco", "uno doble cero\u200b tres cuatro cinco",
+    "uno doble cero\n tres cuatro cinco", "doble cero uno dos", Array(8).fill("doble cero").join(" "),
+  ]) assert.equal(parse(raw), null, raw);
+  assert.equal(parse(Array(7).fill("doble cero").join(" ") + " uno"), "0".repeat(14) + "1");
+  const withinLimit = " ".repeat(240 - "uno doble cero nueve dos".length) + "uno doble cero nueve dos";
+  assert.equal(parse(withinLimit), "10092");
+  assert.equal(parse(" " + withinLimit), null);
+});
+
 test("sentence punctuation does not change numeric formatting or spoken digits", () => {
   for (const [raw, expected] of [
     ["00.123.456-78.", "0012345678"], ["12345!", "12345"],

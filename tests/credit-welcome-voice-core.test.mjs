@@ -112,3 +112,22 @@ test("private welcome pronunciation is limited to soft C and S/Z in entire meani
       { name: spoken, document: "0012345678" }), false, "generic matcher stays literal");
   }
 });
+
+test("private welcome accepts the bounded double-T spelling of a whole surname with an exact document", () => {
+  const expected = { name: "ANA ARRIETA LOPEZ", document: "0012345678" };
+  for (const name of ["Otro Arrietta Otro.", "Arrietta", "Ana García"]) {
+    assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document: expected.document }), true, name);
+    for (const document of ["0012345679", "12345678", "001234567", null]) {
+      assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document }), false, `${name}/${document}`);
+    }
+  }
+  for (const name of ["Arriett", "Arriettana", "Arriettta", "Otro Nombre", "de la"]) {
+    assert.equal(core.matchWelcomeVoiceApplicationIdentity(expected, { name, document: expected.document }), false, name);
+  }
+  for (const [registered, spoken] of [["Carrillo", "Carillo"], ["Carrillo", "Carrilo"],
+    ["Accardi", "Acardi"], ["Charri", "Charris"], ["Deiby", "David"], ["Deiby", "Davis"], ["Matt", "Mat"]]) {
+    assert.equal(core.matchesWelcomeVoiceApplicationName(registered, spoken), false, `${registered}/${spoken}`);
+  }
+  assert.equal(core.matchesWelcomeVoiceApplicationName("Arrietta", "Arrieta"), true);
+  assert.equal(core.matchWelcomeVoiceIdentity(expected, { name: "Ana Arrietta Lopez", document: expected.document }), false);
+});

@@ -48,12 +48,12 @@ const credit = () => ({
     cuotas: calendar.map((fechaVencimiento, index) => ({ numero: index + 1, fechaVencimiento, cuotaCobro: "159150.00" })) },
 });
 
-async function fixture(t) {
+async function fixture(t, creditOverrides = {}) {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec('CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "data" JSONB NOT NULL)');
   for (const statement of creditWelcomeVoiceSchemaStatements) await db.exec(statement);
-  await db.query('INSERT INTO "Credito" ("id","data") VALUES ($1,$2::jsonb)', [72, JSON.stringify(credit())]);
+  await db.query('INSERT INTO "Credito" ("id","data") VALUES ($1,$2::jsonb)', [72, JSON.stringify({ ...credit(), ...creditOverrides })]);
   let queries = 0, writes = 0;
   let rollback = false;
   const adapter = connection => ({
@@ -102,14 +102,14 @@ async function fixture(t) {
     claim: () => store.claimPendingCreditWelcomeVoice() };
 }
 
-function assertRegisteredConditions(body) {
+function assertRegisteredConditions(body, expectedName = "luz hernandez") {
   assert.equal(body.ok, true);
   assert.equal(body.verificado, true);
   assert.equal(body.nextAction, "CONTINUE"); assert.equal(body.code, null); assert.equal(body.question, null); assert.equal(body.mayEndCall, false);
   const value = body.condiciones;
   assert.equal(value.creditId, 72);
   assert.equal(value.folio, "FC-ASR-TEST-72");
-  assert.equal(value.name, "luz hernandez");
+  assert.equal(value.name, expectedName);
   assert.equal(value.initialPayment, 200000);
   assert.equal(value.installmentCount, 3);
   assert.equal(value.installmentAmount, 159150);
@@ -250,6 +250,38 @@ test("one registered component plus exact document accepts the observed surname 
   assert.equal((await f.row()).identityAttempts, 1);
   assert.equal(core.matchWelcomeVoiceIdentity({ name: "LUZ HERNANDEZ", document: "38144092" }, { name: "Luz Fernández Gil.", document: "38144092" }), false);
 });
+test("literal double-zero speech and a whole double-T surname verify on the first private-flow attempt", async t => {
+  const f = await fixture(t, { clienteNombre: "ANA ARRIETA LOPEZ", clienteDocumento: "0012345678" });
+  await f.claim();
+  const input = { customer_name: "Otro Arrietta Otro.",
+    customer_document: "doble cero doce treinta y cuatro cincuenta y seis setenta y ocho." };
+  const response = await f.post(input);
+  assert.equal(response.status, 200);
+  assertRegisteredConditions(response.body, "ana arrieta lopez");
+  assert.equal(response.body.remainingAttempts, 2);
+  const persisted = await f.row();
+  assert.equal(persisted.identityAttempts, 1);
+  assert.equal(persisted.snapshot.document, "0012345678");
+  assert.ok(persisted.identityVerifiedAt);
+  assertRegisteredConditions((await f.post(input)).body, "ana arrieta lopez");
+  assert.equal((await f.row()).identityAttempts, 1);
+});
+
+test("the surname spelling cannot authorize a wrong document and one registered first name needs no surname match", async t => {
+  const f = await fixture(t, { clienteNombre: "ANA ARRIETA LOPEZ", clienteDocumento: "0012345678" });
+  await f.claim();
+  const mismatch = await f.post({ customer_name: "Arrietta",
+    customer_document: "doble cero doce treinta y cuatro cincuenta y seis setenta y nueve." });
+  assertRecovery(mismatch.body, "ASK_DOCUMENT", 2);
+  assert.equal((await f.row()).identityVerifiedAt, null);
+  assert.equal(mismatch.body.condiciones, null);
+  const corrected = await f.post({ customer_name: "Ana García", customer_document: "0012345678" });
+  assertRegisteredConditions(corrected.body, "ana arrieta lopez");
+  assert.equal(corrected.body.remainingAttempts, 1);
+  assert.equal((await f.row()).identityAttempts, 2);
+  assert.ok((await f.row()).identityVerifiedAt);
+});
+
 test("an acceptable name with a different complete document asks only for the document and correction can continue", async t => {
   const f = await fixture(t); await f.claim();
   assertRecovery((await f.post({ customer_name: "Luz", customer_document: "38144093" })).body, "ASK_DOCUMENT", 2);
