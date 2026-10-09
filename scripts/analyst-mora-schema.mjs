@@ -2,12 +2,30 @@ export function analystMoraSchemaStatements() {
   return [
     `CREATE TABLE IF NOT EXISTS "CreditMoraManagementEvent" (
       "id" UUID PRIMARY KEY, "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
-      "action" VARCHAR(32) NOT NULL CHECK ("action" IN ('LLAMADA','WHATSAPP','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','VISITA_PENDIENTE')),
+      "action" VARCHAR(32) NOT NULL CHECK ("action" IN ('LLAMADA','MSJ_TEXTO','WHATSAPP','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','VISITA_PENDIENTE')),
       "actedAt" TIMESTAMPTZ NOT NULL, "responsibleUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT,
       "responsibleName" VARCHAR(180) NOT NULL, "result" VARCHAR(500) NOT NULL CHECK (LENGTH(BTRIM("result"))>=3), "comment" VARCHAR(2000) NOT NULL CHECK (LENGTH(BTRIM("comment"))>=5),
-      "nextFollowUpAt" TIMESTAMPTZ NOT NULL CHECK ("nextFollowUpAt">"actedAt"), "managementStatus" VARCHAR(32) NOT NULL CHECK ("managementStatus" IN ('PENDIENTE','CONTACTADO','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','CERRADO')),
+      "nextFollowUpAt" TIMESTAMPTZ NOT NULL CHECK ("nextFollowUpAt">"actedAt"), "managementStatus" VARCHAR(32) NOT NULL CHECK ("managementStatus" IN ('PENDIENTE','CONTACTADO','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','CERRADO','SOLUCIONADO','SEGUIMIENTO')),
       "actorUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT, "actorName" VARCHAR(180) NOT NULL,
       "idempotencyKey" UUID NOT NULL UNIQUE, "requestHash" CHAR(64) NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    // Add structured results without changing append-only historical records.
+    `ALTER TABLE "CreditMoraManagementEvent" ADD COLUMN IF NOT EXISTS "resultCode" VARCHAR(32)`,
+    `ALTER TABLE "CreditMoraManagementEvent" ADD COLUMN IF NOT EXISTS "agreementDate" DATE`,
+    `ALTER TABLE "CreditMoraManagementEvent" ADD COLUMN IF NOT EXISTS "agreementAmount" NUMERIC(14,2)`,
+    `ALTER TABLE "CreditMoraManagementEvent" DROP CONSTRAINT IF EXISTS "CreditMoraManagementEvent_action_check"`,
+    `ALTER TABLE "CreditMoraManagementEvent" ADD CONSTRAINT "CreditMoraManagementEvent_action_check"
+      CHECK ("action" IN ('LLAMADA','MSJ_TEXTO','WHATSAPP','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','VISITA_PENDIENTE'))`,
+    `ALTER TABLE "CreditMoraManagementEvent" DROP CONSTRAINT IF EXISTS "CreditMoraManagementEvent_managementStatus_check"`,
+    `ALTER TABLE "CreditMoraManagementEvent" ADD CONSTRAINT "CreditMoraManagementEvent_managementStatus_check"
+      CHECK ("managementStatus" IN ('PENDIENTE','CONTACTADO','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','CERRADO','SOLUCIONADO','SEGUIMIENTO'))`,
+    `ALTER TABLE "CreditMoraManagementEvent" DROP CONSTRAINT IF EXISTS "CreditMoraManagementEvent_result_details_check"`,
+    `ALTER TABLE "CreditMoraManagementEvent" ADD CONSTRAINT "CreditMoraManagementEvent_result_details_check" CHECK (
+      ("resultCode" IS NULL AND "agreementDate" IS NULL AND "agreementAmount" IS NULL)
+      OR ("resultCode" IS NOT NULL AND "resultCode" IN ('ACUERDO_PAGO','PAGO_REALIZADO','SIN_RESPUESTA','VISITA_PENDIENTE','PRORROGA_APROBADA','MEDIOS_PAGO','NUMERO_SIN_WHATSAPP')
+        AND "action" IN ('LLAMADA','MSJ_TEXTO') AND "managementStatus" IN ('CONTACTADO','SIN_RESPUESTA','ACUERDO_PAGO','CERRADO','SOLUCIONADO','SEGUIMIENTO')
+        AND (("resultCode"='ACUERDO_PAGO' AND "agreementDate" IS NOT NULL AND "agreementAmount" IS NOT NULL
+          AND "agreementDate">=("actedAt" AT TIME ZONE 'America/Bogota')::date AND "agreementAmount">0 AND "agreementAmount"<=999999999999.99)
+          OR ("resultCode"<>'ACUERDO_PAGO' AND "agreementDate" IS NULL AND "agreementAmount" IS NULL))))`,
     `CREATE INDEX IF NOT EXISTS "CreditMoraManagementEvent_latest" ON "CreditMoraManagementEvent" ("creditoId","createdAt" DESC,"id" DESC)`,
     `CREATE TABLE IF NOT EXISTS "CreditMoraSupport" (
       "id" UUID PRIMARY KEY, "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,

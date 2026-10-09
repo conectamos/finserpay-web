@@ -15,8 +15,8 @@ const numbers = loadApprovalModule("lib/credit-display-number.ts");
 const actor = { id: 7, nombre: "Analista", centralAdmin: false };
 const now = new Date("2026-10-06T20:00:00Z");
 const valid = () => ({ action: "LLAMADA", actedAt: "2026-10-06T14:30:00-05:00", responsibleUserId: 7,
-  result: "Cliente promete pagar", comment: "Se confirma fecha de abono", nextFollowUpAt: "2026-10-07T14:30:00-05:00",
-  managementStatus: "PROMESA_PAGO", idempotencyKey: randomUUID() });
+  result: "SIN_RESPUESTA", comment: "Se confirma fecha de abono", nextFollowUpAt: "2026-10-07T14:30:00-05:00",
+  managementStatus: "SIN_RESPUESTA", idempotencyKey: randomUUID() });
 function management(prisma = {}, credit = {}) {
   return loadApprovalModule("lib/analyst-mora-management.ts", {
     "@/lib/prisma": { default: prisma }, "@/lib/credit-approval-errors": approvalErrors,
@@ -36,11 +36,51 @@ test("la gestión exige acción, responsable, resultado, comentario y seguimient
     assert.throws(() => service.parseMoraManagement({ ...valid(), ...patch }, now), approvalErrors.CreditApprovalError);
   }
 });
+test("la nueva gestión separa los dos canales, sus resultados y los seis estados solicitados", () => {
+  assert.deepEqual(Array.from(types.MORA_ACTIONS), ["LLAMADA", "MSJ_TEXTO"]);
+  assert.deepEqual(Array.from(types.MORA_RESULTS), ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA"]);
+  assert.deepEqual(Array.from(types.moraResultsForAction("LLAMADA")), ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA"]);
+  assert.deepEqual(Array.from(types.moraResultsForAction("MSJ_TEXTO")), ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA"]);
+  assert.equal(types.moraResultLabel("SIN_RESPUESTA", "MSJ_TEXTO"), "No contesta");
+  assert.equal(types.moraResultLabel("SIN_RESPUESTA", "LLAMADA"), "No contesta");
+  assert.deepEqual(Array.from(types.MORA_MANAGEMENT_STATES), ["CONTACTADO", "SIN_RESPUESTA", "ACUERDO_PAGO", "CERRADO", "SOLUCIONADO", "SEGUIMIENTO"]);
+  const service = management();
+  for (const action of types.MORA_ACTIONS) for (const managementStatus of types.MORA_MANAGEMENT_STATES) {
+    assert.equal(service.parseMoraManagement({ ...valid(), action, managementStatus }, now).action, action);
+  }
+  for (const result of types.MORA_RESULTS.filter(value => value !== "ACUERDO_PAGO")) {
+    const input = service.parseMoraManagement({ ...valid(), action: "MSJ_TEXTO", result }, now);
+    assert.equal(input.result, result);
+    assert.equal(input.agreementDate, null);
+    assert.equal(input.agreementAmount, null);
+  }
+  for (const patch of [{ action: "WHATSAPP" }, { action: "ACUERDO_PAGO" }, { managementStatus: "PROMESA_PAGO" },
+    { managementStatus: "PENDIENTE" }, { result: "Contactado por llamada" }, { result: "PRORROGA_APROBADA", agreementDate: "2026-10-09" },
+    { result: "PAGO_REALIZADO", agreementAmount: 25000 }]) {
+    assert.throws(() => service.parseMoraManagement({ ...valid(), ...patch }, now), approvalErrors.CreditApprovalError);
+  }
+});
+test("el acuerdo exige fecha de Bogotá válida y valor positivo sin aceptar montos o fechas ambiguos", () => {
+  const service = management();
+  const agreement = { ...valid(), result: "ACUERDO_PAGO", agreementDate: "2026-10-06", agreementAmount: 125000.25 };
+  const input = service.parseMoraManagement(agreement, now);
+  assert.equal(input.agreementDate, "2026-10-06");
+  assert.equal(input.agreementAmount, 125000.25);
+  // This UTC timestamp is still October 5 in Colombia; do not reject its same-day agreement.
+  assert.equal(service.parseMoraManagement({ ...agreement, actedAt: "2026-10-06T02:00:00Z", agreementDate: "2026-10-05" }, now).agreementDate, "2026-10-05");
+  for (const patch of [{ agreementDate: undefined }, { agreementDate: "2026-10-05" }, { agreementDate: "2026-02-30" },
+    { agreementDate: "06/10/2026" }, { agreementDate: "2026-10-06T12:00:00Z" }, { agreementAmount: undefined },
+    { agreementAmount: "125000" }, { agreementAmount: 0 }, { agreementAmount: -1 }, { agreementAmount: NaN },
+    { agreementAmount: Infinity }, { agreementAmount: 1e12 }, { agreementAmount: 25.123 }, { agreementAmount: 25.000001 }]) {
+    assert.throws(() => service.parseMoraManagement({ ...agreement, ...patch }, now), approvalErrors.CreditApprovalError);
+  }
+});
 test("los filtros de gestión se aplican antes de paginar y el seguimiento usa fecha de Colombia", async () => {
   const credits = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, enMora: true, diasMora: i + 1,
     folio: `FC-${i + 1}`, numeroCreditoVisible: `SA-${i + 1}`, clienteNombre: "Cliente", clienteDocumento: "123",
     imei: "imei", aliadoId: 2, aliadoNombre: "Aliado" }));
   const events = credits.map(item => ({ ...valid(), id: randomUUID(), creditoId: item.id, responsibleName: "Analista",
+    managementStatus: "PROMESA_PAGO", result: "Cliente promete pagar", resultCode: null,
     actorUserId: 7, actorName: "Analista", actedAt: now, nextFollowUpAt: new Date("2026-10-08T02:00:00Z"), createdAt: now }));
   const service = management({ credito: { findMany: async () => credits }, $queryRawUnsafe: async sql => sql.includes("DISTINCT ON") ? events : [{ id: 7, nombre: "Analista" }] });
   const first = await service.listMoraPortfolio(new URLSearchParams("followUp=2026-10-07&status=PROMESA_PAGO"));
@@ -60,17 +100,25 @@ test("reenviar una gestión no la duplica y no permite reutilizar el envío con 
     if (sql.startsWith("INSERT")) {
       assert.ok(locked); inserts++;
       stored = { id: p[0], creditoId: p[1], action: p[2], actedAt: new Date(p[3]), responsibleUserId: p[4], responsibleName: p[5], result: p[6], comment: p[7],
-        nextFollowUpAt: new Date(p[8]), managementStatus: p[9], actorUserId: p[10], actorName: p[11], idempotencyKey: p[12], requestHash: p[13], createdAt: now };
+        nextFollowUpAt: new Date(p[8]), managementStatus: p[9], actorUserId: p[10], actorName: p[11], idempotencyKey: p[12], requestHash: p[13],
+        resultCode: p[14], agreementDate: p[15], agreementAmount: String(p[16]), createdAt: now };
       return [stored];
     }
     throw new Error(sql);
   } };
   const service = management({ $transaction: callback => callback(db) });
-  const input = service.parseMoraManagement(valid(), now);
-  assert.equal((await service.createMoraManagement(81, input, actor)).unchanged, false);
+  const input = service.parseMoraManagement({ ...valid(), result: "ACUERDO_PAGO", agreementDate: "2026-10-09", agreementAmount: 125000.25 }, now);
+  const created = await service.createMoraManagement(81, input, actor);
+  assert.equal(created.unchanged, false);
+  assert.equal(created.item.resultCode, "ACUERDO_PAGO");
+  assert.equal(created.item.agreementDate, "2026-10-09");
+  assert.equal(created.item.agreementAmount, 125000.25);
+  assert.match(created.item.result, /Acuerdo de pago.*09\/10\/2026.*125\.000,25/);
   const replay = await service.createMoraManagement(81, input, actor);
   assert.equal(replay.unchanged, true); assert.equal(inserts, 1); assert.equal("requestHash" in replay.item, false);
   await assert.rejects(service.createMoraManagement(81, { ...input, comment: "Otra observación" }, actor), error => error.code === "IDEMPOTENCY_CONFLICT");
+  await assert.rejects(service.createMoraManagement(81, { ...input, agreementDate: "2026-10-10" }, actor), error => error.code === "IDEMPOTENCY_CONFLICT");
+  await assert.rejects(service.createMoraManagement(81, { ...input, agreementAmount: 250000 }, actor), error => error.code === "IDEMPOTENCY_CONFLICT");
 });
 test("el responsable se toma del usuario validado y no se permite atribuir la gestión a otro perfil", async () => {
   const inserts=[];
@@ -181,7 +229,8 @@ test("Prisma real consulta cartera y detalle con la relación SADMIN del esquema
       "clienteTelefono" TEXT, "imei" TEXT, "deviceUid" TEXT, "referenciaEquipo" TEXT, "equipoMarca" TEXT, "equipoModelo" TEXT,
       "estado" TEXT, "montoCredito" DOUBLE PRECISION, "valorCuota" DOUBLE PRECISION, "plazoMeses" INT, "frecuenciaPago" TEXT,
       "fechaPrimerPago" TIMESTAMP, "fechaProximoPago" TIMESTAMP, "planCapitalVigente" JSONB, "pazYSalvoEmitidoAt" TIMESTAMP,
-      "createdAt" TIMESTAMP, "fechaCredito" TIMESTAMP, "sedeId" INT);
+      "createdAt" TIMESTAMP, "fechaCredito" TIMESTAMP, "sedeId" INT, "contratoSnapshot" JSONB);
+    CREATE TABLE "CreditoBorrador" ("id" TEXT PRIMARY KEY, "creditoId" INT, "payload" JSONB, "updatedAt" TIMESTAMP);
     CREATE TABLE "CreditSadminRegistration" ("creditoId" INT PRIMARY KEY, "numeroCredito" TEXT, "numeroCreditoConfirmado" BOOLEAN);
     CREATE TABLE "CreditoAbono" ("id" INT PRIMARY KEY, "creditoId" INT, "estado" TEXT, "valor" DOUBLE PRECISION, "fechaAbono" TIMESTAMP);
     INSERT INTO "Aliado" VALUES (2,'Aliado','FINSERPAY',TRUE);
@@ -189,7 +238,7 @@ test("Prisma real consulta cartera y detalle con la relación SADMIN del esquema
     INSERT INTO "Rol" VALUES (1,'ANALISTA_APROBACION');
     INSERT INTO "Usuario" VALUES (7,'Analista',TRUE,1,1);
     INSERT INTO "Credito" VALUES (81,'FC-81','Cliente','123','3001234567','123456789012345','device-81','IPHONE 13','IPHONE','13',
-      'ACTIVO',1000000,100000,10,'QUINCENAL','2026-09-17',NULL,NULL,NULL,'2026-09-10','2026-09-10',1);
+      'ACTIVO',1000000,100000,10,'QUINCENAL','2026-09-17',NULL,NULL,NULL,'2026-09-10','2026-09-10',1,NULL);
     INSERT INTO "CreditSadminRegistration" VALUES (81,'010081',TRUE);
     INSERT INTO "CreditoAbono" VALUES (1,81,'ACTIVO',125000,'2026-10-03T15:00:00Z');
   `);
@@ -258,4 +307,83 @@ test("PostgreSQL embebido impide borrar historial o soportes y exige datos consi
     assert.equal((await db.query(`SELECT COUNT(*)::int AS n FROM "${table}"`)).rows[0].n, 1);
   }
   await assert.rejects(db.query('DELETE FROM "Credito" WHERE id=81'), error => error.code === "23503");
+});
+
+test("la migración conserva gestiones históricas y PostgreSQL exige resultados nuevos consistentes", async t => {
+  const db = new PGlite(); t.after(() => db.close());
+  await db.exec(`CREATE TABLE "Credito" ("id" INT PRIMARY KEY); CREATE TABLE "Usuario" ("id" INT PRIMARY KEY);
+    INSERT INTO "Credito" VALUES(81); INSERT INTO "Usuario" VALUES(7);
+    CREATE TABLE "CreditMoraManagementEvent" (
+      "id" UUID PRIMARY KEY, "creditoId" INT NOT NULL REFERENCES "Credito"("id"),
+      "action" VARCHAR(32) NOT NULL CHECK ("action" IN ('LLAMADA','WHATSAPP','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','VISITA_PENDIENTE')),
+      "actedAt" TIMESTAMPTZ NOT NULL, "responsibleUserId" INT NOT NULL REFERENCES "Usuario"("id"), "responsibleName" VARCHAR(180) NOT NULL,
+      "result" VARCHAR(500) NOT NULL, "comment" VARCHAR(2000) NOT NULL, "nextFollowUpAt" TIMESTAMPTZ NOT NULL,
+      "managementStatus" VARCHAR(32) NOT NULL CHECK ("managementStatus" IN ('PENDIENTE','CONTACTADO','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','CERRADO')),
+      "actorUserId" INT NOT NULL REFERENCES "Usuario"("id"), "actorName" VARCHAR(180) NOT NULL,
+      "idempotencyKey" UUID NOT NULL UNIQUE, "requestHash" CHAR(64) NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+  const legacyId = randomUUID();
+  await db.query(`INSERT INTO "CreditMoraManagementEvent" VALUES ($1,81,'WHATSAPP','2026-10-06T19:30:00Z',7,'Analista',
+    'Cliente promete pagar','Acuerdo anterior escrito en comentario','2026-10-07T19:30:00Z','PROMESA_PAGO',7,'Analista',$2,$3,'2026-10-06T20:00:00Z')`,
+    [legacyId, randomUUID(), "a".repeat(64)]);
+  const before = (await db.query(`SELECT * FROM "CreditMoraManagementEvent" WHERE id=$1`, [legacyId])).rows[0];
+  await installAnalystMoraSchema({ query: (sql, values) => db.query(sql, values) });
+  await installAnalystMoraSchema({ query: (sql, values) => db.query(sql, values) });
+  const after = (await db.query(`SELECT * FROM "CreditMoraManagementEvent" WHERE id=$1`, [legacyId])).rows[0];
+  const { resultCode, agreementDate, agreementAmount, ...legacy } = after;
+  assert.deepEqual(legacy, before);
+  assert.deepEqual([resultCode, agreementDate, agreementAmount], [null, null, null]);
+  const adapter = {
+    credito: { findUnique: async () => ({ enMora: true }) },
+    $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+  };
+  const service = management({ $transaction: callback => callback(adapter) });
+  const agreement = service.parseMoraManagement({ ...valid(), action: "MSJ_TEXTO", managementStatus: "ACUERDO_PAGO",
+    result: "ACUERDO_PAGO", agreementDate: "2026-10-09", agreementAmount: 125000.25 }, now);
+  const created = await service.createMoraManagement(81, agreement, actor);
+  assert.equal(created.item.action, "MSJ_TEXTO");
+  assert.equal(created.item.agreementDate, "2026-10-09");
+  assert.equal(created.item.agreementAmount, 125000.25);
+  assert.equal(created.item.resultCode, "ACUERDO_PAGO");
+  assert.match(created.item.result, /09\/10\/2026.*125\.000,25/);
+  assert.equal((await service.createMoraManagement(81, agreement, actor)).unchanged, true);
+  await assert.rejects(service.createMoraManagement(81, { ...agreement, agreementDate: "2026-10-10" }, actor), error => error.code === "IDEMPOTENCY_CONFLICT");
+  const insert = `INSERT INTO "CreditMoraManagementEvent" ("id","creditoId","action","actedAt","responsibleUserId","responsibleName","result","comment","nextFollowUpAt","managementStatus","actorUserId","actorName","idempotencyKey","requestHash","resultCode","agreementDate","agreementAmount")
+    VALUES ($1,81,$2,'2026-10-06T19:30:00Z',7,'Analista','Resultado registrado','Comentario de la gestión','2026-10-07T19:30:00Z',$3,7,'Analista',$4,$5,$6,$7,$8)`;
+  for (const [action, status, result, date, amount] of [
+    ["MSJ_TEXTO", "ACUERDO_PAGO", "ACUERDO_PAGO", null, 100],
+    ["MSJ_TEXTO", "ACUERDO_PAGO", "ACUERDO_PAGO", "2026-10-09", null],
+    ["MSJ_TEXTO", "ACUERDO_PAGO", "ACUERDO_PAGO", "2026-10-05", 100],
+    ["LLAMADA", "CONTACTADO", "ACUERDO_PAGO", "2026-10-09", 0],
+    ["LLAMADA", "CONTACTADO", "PAGO_REALIZADO", "2026-10-09", 100],
+    ["WHATSAPP", "CONTACTADO", "SIN_RESPUESTA", null, null],
+    ["LLAMADA", "PROMESA_PAGO", "SIN_RESPUESTA", null, null],
+    ["LLAMADA", "CONTACTADO", "RESULTADO_INVENTADO", null, null],
+  ]) {
+    await assert.rejects(db.query(insert, [randomUUID(), action, status, randomUUID(), "b".repeat(64), result, date, amount]), error => error.code === "23514");
+  }
+  // These are management outcomes only: recording them never changes a payment or approves an exception.
+  for (const result of ["PAGO_REALIZADO", "PRORROGA_APROBADA", "VISITA_PENDIENTE"]) {
+    const outcome = await service.createMoraManagement(81, service.parseMoraManagement({ ...valid(), result, managementStatus: "SEGUIMIENTO" }, now), actor);
+    assert.equal(outcome.item.result, types.MORA_RESULT_LABELS[result]);
+    assert.equal(outcome.item.resultCode, result);
+    assert.equal(outcome.item.agreementDate, null);
+    assert.equal(outcome.item.agreementAmount, null);
+  }
+  for (const action of types.MORA_ACTIONS) for (const result of ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA"]) {
+    const outcome = await service.createMoraManagement(81, service.parseMoraManagement({ ...valid(), action, result }, now), actor);
+    assert.equal(outcome.item.result, types.moraResultLabel(result, action));
+    assert.equal(outcome.item.resultCode, result);
+    assert.equal(outcome.item.action, action);
+  }
+  for (const mutation of [`UPDATE "CreditMoraManagementEvent" SET "agreementAmount"=200000`,
+    `DELETE FROM "CreditMoraManagementEvent"`, `TRUNCATE "CreditMoraManagementEvent"`]) {
+    await assert.rejects(db.query(mutation), error => error.code === "23514");
+  }
+  const history = management({ $queryRawUnsafe: async sql => sql.includes('FROM "Usuario"') ? [] : (await db.query(sql, [81])).rows },
+    { readMoraCredit: async () => ({ id: 81, enMora: true }) });
+  const old = (await history.getMoraManagement(81)).history.find(item => item.id === legacyId);
+  assert.equal(old.action, "WHATSAPP");
+  assert.equal(old.managementStatus, "PROMESA_PAGO");
+  assert.equal(old.result, "Cliente promete pagar");
+  assert.deepEqual([old.resultCode, old.agreementDate, old.agreementAmount], [null, null, null]);
 });

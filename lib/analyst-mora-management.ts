@@ -5,14 +5,16 @@ import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { assertMoraActor, type MoraActor } from "@/lib/analyst-mora-access";
 import { moraCreditSelect, moraCreditSummary, readMoraCredit } from "@/lib/analyst-mora-credit";
 import { ensureAnalystMoraSchema } from "@/lib/analyst-mora-schema";
-import { MORA_ACTIONS, MORA_MANAGEMENT_STATES, type MoraManagementEvent, type MoraManagementInput } from "@/lib/analyst-mora-types";
+import { MORA_ACTIONS, MORA_MANAGEMENT_STATES, moraResultsForAction, moraResultLabel, type MoraManagementEvent, type MoraManagementInput } from "@/lib/analyst-mora-types";
 import { colombiaDateKey } from "@/lib/colombia-date";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+const historicalManagementStates = ["PENDIENTE", "PROMESA_PAGO", "SOPORTE_RECIBIDO", "ESCALADO"];
+const maxAgreementAmount = 999999999999.99;
 export function parseMoraManagement(value: unknown, now = new Date()): MoraManagementInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new CreditApprovalError("INVALID_REQUEST","Gestión inválida.");
   const body = value as Record<string,unknown>;
-  const allowed = ["action","actedAt","responsibleUserId","result","comment","nextFollowUpAt","managementStatus","idempotencyKey"];
+  const allowed = ["action","actedAt","responsibleUserId","result","agreementDate","agreementAmount","comment","nextFollowUpAt","managementStatus","idempotencyKey"];
   if (Object.keys(body).some(key => !allowed.includes(key))) throw new CreditApprovalError("INVALID_REQUEST","La gestión contiene campos no permitidos.");
   const text = (key: string, min: number, max: number) => {
     const result = typeof body[key] === "string" ? body[key].trim() : "";
@@ -25,14 +27,40 @@ export function parseMoraManagement(value: unknown, now = new Date()): MoraManag
     throw new CreditApprovalError("INVALID_DATE","Indica fecha y hora válidas; el seguimiento debe ser posterior a la gestión.");
   if (!MORA_ACTIONS.includes(body.action as MoraManagementInput["action"]) || !MORA_MANAGEMENT_STATES.includes(body.managementStatus as MoraManagementInput["managementStatus"]) || !Number.isSafeInteger(body.responsibleUserId) || Number(body.responsibleUserId)<1 || !uuid.test(String(body.idempotencyKey)))
     throw new CreditApprovalError("INVALID_REQUEST","Selecciona acción, estado y responsable válidos.");
-  return { action: body.action as MoraManagementInput["action"], actedAt: new Date(acted).toISOString(), nextFollowUpAt: new Date(next).toISOString(), responsibleUserId: Number(body.responsibleUserId), result: text("result",3,500), comment: text("comment",5,2000), managementStatus: body.managementStatus as MoraManagementInput["managementStatus"], idempotencyKey: String(body.idempotencyKey) };
+  if (!moraResultsForAction(body.action as MoraManagementInput["action"]).includes(body.result as MoraManagementInput["result"]))
+    throw new CreditApprovalError("INVALID_REQUEST", "Selecciona el resultado obtenido en la gestión.");
+  let agreementDate: string | null = null;
+  let agreementAmount: number | null = null;
+  if (body.result === "ACUERDO_PAGO") {
+    const date = typeof body.agreementDate === "string" ? body.agreementDate.trim() : "";
+    const dateTime = Date.parse(date + "T12:00:00Z");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(dateTime) || new Date(dateTime).toISOString().slice(0,10) !== date || date < colombiaDateKey(new Date(acted)))
+      throw new CreditApprovalError("INVALID_DATE", "Indica la fecha del acuerdo de pago, igual o posterior al día de la gestión.");
+    const amount = body.agreementAmount;
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > maxAgreementAmount || Number(amount.toFixed(2)) !== amount)
+      throw new CreditApprovalError("INVALID_REQUEST", "Indica un valor de acuerdo de pago positivo, con máximo dos decimales.");
+    agreementDate = date;
+    agreementAmount = Math.round(amount * 100) / 100;
+  } else if ((body.agreementDate !== undefined && body.agreementDate !== null && body.agreementDate !== "") || (body.agreementAmount !== undefined && body.agreementAmount !== null)) {
+    throw new CreditApprovalError("INVALID_REQUEST", "La fecha y el valor del acuerdo solo aplican al resultado Acuerdo de pago.");
+  }
+  return { action: body.action as MoraManagementInput["action"], actedAt: new Date(acted).toISOString(), nextFollowUpAt: new Date(next).toISOString(), responsibleUserId: Number(body.responsibleUserId), result: body.result as MoraManagementInput["result"], agreementDate, agreementAmount, comment: text("comment",5,2000), managementStatus: body.managementStatus as MoraManagementInput["managementStatus"], idempotencyKey: String(body.idempotencyKey) };
 }
-type StoredEvent = Omit<MoraManagementEvent,"actedAt"|"nextFollowUpAt"|"createdAt"> & { actedAt: Date; nextFollowUpAt: Date; createdAt: Date; requestHash?: string };
+type StoredEvent = Omit<MoraManagementEvent,"actedAt"|"nextFollowUpAt"|"createdAt"|"agreementDate"|"agreementAmount"> & { actedAt: Date; nextFollowUpAt: Date; createdAt: Date; agreementDate?: Date | string | null; agreementAmount?: number | string | null; requestHash?: string };
 const eventSql = `SELECT * FROM "CreditMoraManagementEvent"`;
 function eventDto(event: StoredEvent): MoraManagementEvent {
   const { requestHash: _hash, ...item } = event;
   void _hash;
-  return { ...item, actedAt: event.actedAt.toISOString(), nextFollowUpAt: event.nextFollowUpAt.toISOString(), createdAt: event.createdAt.toISOString() };
+  return { ...item, resultCode: event.resultCode || null, agreementDate: event.agreementDate instanceof Date ? event.agreementDate.toISOString().slice(0,10) : event.agreementDate || null,
+    agreementAmount: event.agreementAmount === null || event.agreementAmount === undefined ? null : Number(event.agreementAmount),
+    actedAt: event.actedAt.toISOString(), nextFollowUpAt: event.nextFollowUpAt.toISOString(), createdAt: event.createdAt.toISOString() };
+}
+function resultSummary(input: MoraManagementInput) {
+  const label = moraResultLabel(input.result, input.action);
+  if (input.result !== "ACUERDO_PAGO") return label;
+  const [year, month, day] = input.agreementDate!.split("-");
+  const amount = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(input.agreementAmount!);
+  return `${label} · ${day}/${month}/${year} · ${amount}`;
 }
 export async function moraResponsibles() {
   return prisma.$queryRawUnsafe<Array<{ id: number; nombre: string }>>(`SELECT u."id",u."nombre" FROM "Usuario" u JOIN "Rol" r ON r."id"=u."rolId"
@@ -59,7 +87,7 @@ export async function listMoraPortfolio(search: URLSearchParams) {
   const min = days("minDays"), max = days("maxDays");
   if (min !== null && max !== null && min > max) throw new CreditApprovalError("INVALID_FILTER", "El rango de días de mora es inválido.");
   const status = search.get("status") || "";
-  if (status && !MORA_MANAGEMENT_STATES.includes(status as typeof MORA_MANAGEMENT_STATES[number])) throw new CreditApprovalError("INVALID_FILTER","Estado inválido.");
+  if (status && !MORA_MANAGEMENT_STATES.includes(status as typeof MORA_MANAGEMENT_STATES[number]) && !historicalManagementStates.includes(status)) throw new CreditApprovalError("INVALID_FILTER","Estado inválido.");
   const follow = search.get("followUp") || "";
   if (follow && (!/^\d{4}-\d{2}-\d{2}$/.test(follow) || !Number.isFinite(Date.parse(follow+"T12:00:00Z")) || new Date(follow+"T12:00:00Z").toISOString().slice(0,10)!==follow)) throw new CreditApprovalError("INVALID_FILTER","Fecha inválida.");
   const items = summaries.filter(credit => (!q || [credit.folio,credit.numeroCreditoVisible,credit.clienteNombre,credit.clienteDocumento,credit.imei].some(value=>value?.toLocaleLowerCase("es").includes(q.toLocaleLowerCase("es"))))
@@ -92,9 +120,9 @@ export async function createMoraManagement(id: number, input: MoraManagementInpu
     if (input.responsibleUserId !== verified.id) throw new CreditApprovalError("RESPONSIBLE_MISMATCH", "El responsable debe ser el usuario que inició sesión.", 403);
     const responsible=verified;
     const rows=await db.$queryRawUnsafe<StoredEvent[]>(`INSERT INTO "CreditMoraManagementEvent"
-      ("id","creditoId","action","actedAt","responsibleUserId","responsibleName","result","comment","nextFollowUpAt","managementStatus","actorUserId","actorName","idempotencyKey","requestHash")
-      VALUES ($1::uuid,$2,$3,$4::timestamptz,$5,$6,$7,$8,$9::timestamptz,$10,$11,$12,$13::uuid,$14) RETURNING *`,
-      randomUUID(),id,input.action,input.actedAt,responsible.id,responsible.nombre,input.result,input.comment,input.nextFollowUpAt,input.managementStatus,verified.id,verified.nombre,input.idempotencyKey,hash);
+      ("id","creditoId","action","actedAt","responsibleUserId","responsibleName","result","comment","nextFollowUpAt","managementStatus","actorUserId","actorName","idempotencyKey","requestHash","resultCode","agreementDate","agreementAmount")
+      VALUES ($1::uuid,$2,$3,$4::timestamptz,$5,$6,$7,$8,$9::timestamptz,$10,$11,$12,$13::uuid,$14,$15,$16::date,$17::numeric) RETURNING *`,
+      randomUUID(),id,input.action,input.actedAt,responsible.id,responsible.nombre,resultSummary(input),input.comment,input.nextFollowUpAt,input.managementStatus,verified.id,verified.nombre,input.idempotencyKey,hash,input.result,input.agreementDate || null,input.agreementAmount ?? null);
     return {item:eventDto(rows[0]),unchanged:false};
   });
 }
