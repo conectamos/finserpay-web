@@ -53,6 +53,7 @@ async function fixture(t, { count = 1, enabled = true } = {}) {
   } };
   const loaded = loadReissueModule("lib/credit-welcome-voice-store.ts", {
     "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
+    "@/lib/credit-welcome-voice-followup-core": loadReissueModule("lib/credit-welcome-voice-followup-core.ts"),
     "@/lib/prisma": { default: client }, "@/lib/credit-payment-plan": plan,
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,
@@ -102,7 +103,7 @@ test("disabled campaign performs no database access, and only the current Colomb
   assert.equal((await f.claim("2026-10-09T10:00")).length, 0);
   f.time("2026-10-09T13:10:00Z");
   assert.equal((await f.claim()).length, 0);
-  f.time("2026-10-10T13:00:00Z");
+  f.time("2026-10-10T13:10:00Z");
   assert.equal((await f.claim("2026-10-10T08:00")).length, 0);
   assert.equal((await f.rows()).length, 0);
 });

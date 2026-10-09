@@ -52,8 +52,11 @@ const originalArgs = {
 };
 const clone = value => JSON.parse(JSON.stringify(value));
 
-function fixture({ state = { activeCredits: 1, authorized: true }, veriff = null, blocked = false, blacklistGuard = null } = {}) {
+function fixture({ state = { activeCredits: 1, authorized: true }, veriff = null, blocked = false, blacklistGuard = null,
+  voiceEnabled = false, voiceEvent = true, failCommit = false, failVoiceDispatch = false, failSchedule = false } = {}) {
   const activity = [];
+  const afterCallbacks = [], dispatches = [];
+  let inTransaction = false;
   const transaction = {
     credito: {
       create: async args => { activity.push("create"); state.activeCredits += 1; return { id: 92, ...clone(args.data) }; },
@@ -91,10 +94,84 @@ function fixture({ state = { activeCredits: 1, authorized: true }, veriff = null
       assert.equal(tx, transaction); assert.equal(input.creditoId, 92); assert.equal(input.solicitudId, 7);
       activity.push("complete-solicitud"); return 7;
     },
+    enqueueCreditWelcomeVoice: async (tx, input) => {
+      assert.equal(tx, transaction);
+      assert.equal(input.source, "NORMAL");
+      assert.equal(input.creditId, 92);
+      if (!voiceEnabled || !voiceEvent) return null;
+      assert.equal(inTransaction, true);
+      activity.push("voice-outbox");
+      return { eventId: "00000000-0000-4000-8000-000000000092" };
+    },
   };
   const { create } = evaluate(`const ${creationDeclaration.getText(parsed)}; exports.create = createCreditWithAmortization;`, globals);
-  return { create: () => create(transaction), activity, transaction };
+  const start = source.indexOf("    let creationResult;");
+  const end = source.indexOf("    const created = creationResult.credit;", start);
+  assert.ok(start > 0 && end > start);
+  // Execute the actual transaction and post-commit section, including Next after.
+  const { close } = evaluate(`async function close() { ${source.slice(start, end)} return creationResult; } exports.close = close;`, {
+    createCreditWithAmortization: create, dataCreditoClaim: null,
+    process: { env: voiceEnabled ? { DAPTA_WELCOME_VOICE_ENABLED: "true" } : {} },
+    prisma: { $transaction: async work => {
+      inTransaction = true;
+      try {
+        const result = await work(transaction);
+        if (failCommit) throw new Error("Synthetic commit failure");
+        activity.push("commit");
+        return result;
+      } finally { inTransaction = false; }
+    } },
+    after: callback => {
+      assert.equal(inTransaction, false);
+      assert.ok(activity.includes("commit"));
+      if (failSchedule) throw new Error("Synthetic scheduler failure");
+      afterCallbacks.push(callback);
+    },
+    require: name => {
+      assert.equal(name, "@/lib/credit-welcome-voice-dispatch");
+      return { dispatchCreditWelcomeVoice: async options => {
+        assert.equal(inTransaction, false);
+        dispatches.push({ ...options });
+        if (failVoiceDispatch) throw new Error("Synthetic private provider failure");
+      } };
+    },
+  });
+  return { create: () => create(transaction), close, activity, transaction, afterCallbacks, dispatches };
 }
+
+test("normal finalization schedules bounded voice only after committing an actual outbox event", async () => {
+  const f = fixture({ voiceEnabled: true });
+  const result = await f.close();
+  assert.equal(result.credit.id, 92);
+  assert.equal(result.voiceWelcomeEnqueued, true);
+  assert.ok(f.activity.indexOf("voice-outbox") < f.activity.indexOf("commit"));
+  assert.equal(f.afterCallbacks.length, 1);
+  assert.equal(f.dispatches.length, 0);
+  await f.afterCallbacks[0]();
+  assert.deepEqual(f.dispatches, [{ limit: 5 }]);
+});
+
+test("normal rollback, disabled voice and an absent outbox receipt never schedule a voice request", async () => {
+  const rollback = fixture({ voiceEnabled: true, failCommit: true });
+  await assert.rejects(rollback.close(), /Synthetic commit failure/);
+  assert.equal(rollback.afterCallbacks.length, 0);
+  assert.equal(rollback.dispatches.length, 0);
+  for (const options of [{}, { voiceEnabled: true, voiceEvent: false }]) {
+    const f = fixture(options);
+    await f.close();
+    assert.equal(f.afterCallbacks.length, 0);
+    assert.equal(f.dispatches.length, 0);
+  }
+});
+
+test("normal voice dispatch and after-registration failures never reject a committed close", async () => {
+  for (const failure of [{ failVoiceDispatch: true }, { failSchedule: true }]) {
+    const f = fixture({ voiceEnabled: true, ...failure });
+    assert.equal((await f.close()).credit.id, 92);
+    for (const callback of f.afterCallbacks) await assert.doesNotReject(callback);
+    assert.ok(f.activity.includes("commit"));
+  }
+});
 
 test("sin autorización vigente, el cierre revalida bajo el lock antes de bloquear IMEI o crear", async () => {
   const { create, activity } = fixture({ state: { activeCredits: 1, authorized: false } });

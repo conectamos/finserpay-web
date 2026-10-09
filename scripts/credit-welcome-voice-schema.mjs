@@ -1,3 +1,11 @@
+const creditWelcomeVoiceAttemptCheck = `"attemptNumber">=0 AND
+  (("source"='AUTOMATIC_RETRY' AND "attemptNumber">0 AND "repeatOf" IS NULL AND "campaignId" IS NULL AND "campaignSlot" IS NULL
+    AND "retryPhase" IS NOT NULL AND "retryPhase" IN ('FAST','PENDING') AND (("retryPhase"='FAST' AND "retrySlot" IS NULL) OR ("retryPhase"='PENDING' AND "retrySlot" IS NOT NULL))) OR
+   ("source"<>'AUTOMATIC_RETRY' AND "retryPhase" IS NULL AND "retrySlot" IS NULL AND
+    (("source"='SCHEDULED_CAMPAIGN' AND "attemptNumber">0 AND "repeatOf" IS NULL AND "campaignId" IS NOT NULL AND "campaignSlot" IS NOT NULL) OR
+     ("source"<>'SCHEDULED_CAMPAIGN' AND "campaignId" IS NULL AND "campaignSlot" IS NULL AND
+      (("attemptNumber"=0 AND "repeatOf" IS NULL) OR ("attemptNumber">0 AND "source"='CONTROLLED_TEST' AND "repeatOf" IS NOT NULL))))))`;
+
 export const creditWelcomeVoiceSchemaStatements = [
   `CREATE TABLE IF NOT EXISTS public."VoiceReviewCampaign" (
     "id" VARCHAR(64) PRIMARY KEY,
@@ -47,11 +55,13 @@ export const creditWelcomeVoiceSchemaStatements = [
     "creditoId" INTEGER NOT NULL REFERENCES public."Credito"("id") ON DELETE RESTRICT,
     "type" VARCHAR(32) NOT NULL DEFAULT 'BIENVENIDA_VOZ' CHECK ("type"='BIENVENIDA_VOZ'),
     "source" VARCHAR(32) NOT NULL CONSTRAINT "CreditWelcomeVoiceEvent_source_check"
-      CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN')),
+      CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN','AUTOMATIC_RETRY')),
     "attemptNumber" INTEGER NOT NULL DEFAULT 0,
     "repeatOf" UUID,
     "campaignId" VARCHAR(64),
     "campaignSlot" VARCHAR(16),
+    "retryPhase" VARCHAR(16),
+    "retrySlot" VARCHAR(16),
     "status" VARCHAR(16) NOT NULL CHECK ("status" IN ('PENDING','DISPATCHING','ACCEPTED','COMPLETED','FAILED','UNKNOWN','CANCELLED','SKIPPED')),
     "snapshot" JSONB,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -79,15 +89,14 @@ export const creditWelcomeVoiceSchemaStatements = [
     CONSTRAINT "CreditWelcomeVoiceEvent_campaign_member_fkey" FOREIGN KEY ("campaignId","creditoId")
       REFERENCES public."VoiceReviewCampaignMember"("campaignId","creditoId") ON DELETE RESTRICT,
     CONSTRAINT "CreditWelcomeVoiceEvent_campaign_slot_key" UNIQUE ("campaignId","creditoId","campaignSlot"),
-    CONSTRAINT "CreditWelcomeVoiceEvent_attempt_check" CHECK ("attemptNumber">=0 AND
-      (("source"='SCHEDULED_CAMPAIGN' AND "attemptNumber">0 AND "repeatOf" IS NULL AND "campaignId" IS NOT NULL AND "campaignSlot" IS NOT NULL) OR
-       ("source"<>'SCHEDULED_CAMPAIGN' AND "campaignId" IS NULL AND "campaignSlot" IS NULL AND
-        (("attemptNumber"=0 AND "repeatOf" IS NULL) OR ("attemptNumber">0 AND "source"='CONTROLLED_TEST' AND "repeatOf" IS NOT NULL)))))
+    CONSTRAINT "CreditWelcomeVoiceEvent_attempt_check" CHECK (${creditWelcomeVoiceAttemptCheck})
   )`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "attemptNumber" INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "repeatOf" UUID`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "campaignId" VARCHAR(64)`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "campaignSlot" VARCHAR(16)`,
+  `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "retryPhase" VARCHAR(16)`,
+  `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "retrySlot" VARCHAR(16)`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "communicationOutcome" VARCHAR(32)`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "disconnectionReason" VARCHAR(64)`,
   `ALTER TABLE public."CreditWelcomeVoiceEvent" ADD COLUMN IF NOT EXISTS "identityRecovery" JSONB NOT NULL DEFAULT '{}'::jsonb`,
@@ -122,23 +131,41 @@ export const creditWelcomeVoiceSchemaStatements = [
         FOREIGN KEY ("repeatOf") REFERENCES public."CreditWelcomeVoiceEvent"("id") ON DELETE RESTRICT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass
-      AND conname='CreditWelcomeVoiceEvent_attempt_check' AND pg_get_constraintdef(oid) LIKE '%SCHEDULED_CAMPAIGN%') THEN
+      AND conname='CreditWelcomeVoiceEvent_attempt_check' AND pg_get_constraintdef(oid) LIKE '%AUTOMATIC_RETRY%') THEN
       ALTER TABLE public."CreditWelcomeVoiceEvent" DROP CONSTRAINT IF EXISTS "CreditWelcomeVoiceEvent_attempt_check";
       ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_attempt_check"
-        CHECK ("attemptNumber">=0 AND
-          (("source"='SCHEDULED_CAMPAIGN' AND "attemptNumber">0 AND "repeatOf" IS NULL AND "campaignId" IS NOT NULL AND "campaignSlot" IS NOT NULL) OR
-           ("source"<>'SCHEDULED_CAMPAIGN' AND "campaignId" IS NULL AND "campaignSlot" IS NULL AND
-            (("attemptNumber"=0 AND "repeatOf" IS NULL) OR ("attemptNumber">0 AND "source"='CONTROLLED_TEST' AND "repeatOf" IS NOT NULL)))));
+        CHECK (${creditWelcomeVoiceAttemptCheck});
     END IF;
   END $$`,
   `DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass
-      AND conname='CreditWelcomeVoiceEvent_source_check' AND pg_get_constraintdef(oid) LIKE '%SCHEDULED_CAMPAIGN%') THEN
+      AND conname='CreditWelcomeVoiceEvent_source_check' AND pg_get_constraintdef(oid) LIKE '%AUTOMATIC_RETRY%') THEN
       ALTER TABLE public."CreditWelcomeVoiceEvent" DROP CONSTRAINT IF EXISTS "CreditWelcomeVoiceEvent_source_check";
       ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_source_check"
-        CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN'));
+        CHECK ("source" IN ('NORMAL','INDIVIDUAL_IMPORT','CONTROLLED_TEST','SCHEDULED_CAMPAIGN','AUTOMATIC_RETRY'));
     END IF;
   END $$`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "CreditWelcomeVoiceEvent_pending_retry_slot_key"
+    ON public."CreditWelcomeVoiceEvent" ("creditoId","retrySlot") WHERE "source"='AUTOMATIC_RETRY' AND "retryPhase"='PENDING'`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass AND conname='CreditWelcomeVoiceEvent_retry_slot_check') THEN
+      ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_retry_slot_check"
+        CHECK ("retrySlot" IS NULL OR "retrySlot" ~ '^\\d{4}-\\d{2}-\\d{2}T(08|10|14|17):00$');
+    END IF;
+  END $$`,
+  `CREATE TABLE IF NOT EXISTS public."CreditWelcomeVoiceFollowup" (
+    "creditoId" INTEGER PRIMARY KEY REFERENCES public."Credito"("id") ON DELETE RESTRICT,
+    "initialEventId" UUID NOT NULL UNIQUE REFERENCES public."CreditWelcomeVoiceEvent"("id") ON DELETE RESTRICT,
+    "lastEventId" UUID NOT NULL REFERENCES public."CreditWelcomeVoiceEvent"("id") ON DELETE RESTRICT,
+    "phase" VARCHAR(16) NOT NULL DEFAULT 'FAST' CHECK ("phase" IN ('FAST','PENDING','CONTACTED','STOPPED','HELD')),
+    "fastAttempts" INTEGER NOT NULL DEFAULT 0 CHECK ("fastAttempts" BETWEEN 0 AND 5),
+    "nextAttemptAt" TIMESTAMPTZ(3),
+    "lastPendingSlot" VARCHAR(16) CHECK ("lastPendingSlot" IS NULL OR "lastPendingSlot" ~ '^\\d{4}-\\d{2}-\\d{2}T(08|10|14|17):00$'),
+    "reason" VARCHAR(64),
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS "CreditWelcomeVoiceFollowup_due_idx" ON public."CreditWelcomeVoiceFollowup" ("phase","nextAttemptAt","updatedAt","creditoId")`,
   `DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public."CreditWelcomeVoiceEvent"'::regclass AND conname='CreditWelcomeVoiceEvent_campaign_member_fkey') THEN
       ALTER TABLE public."CreditWelcomeVoiceEvent" ADD CONSTRAINT "CreditWelcomeVoiceEvent_campaign_member_fkey"
