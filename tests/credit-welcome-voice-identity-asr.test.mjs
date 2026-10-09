@@ -123,8 +123,8 @@ function assertRegisteredConditions(body) {
 }
 function assertRecovery(body, nextAction = "REVIEW", remainingAttempts = 0, code = "IDENTITY_NOT_CONFIRMED") {
   assert.deepEqual(body, { ok: true, verificado: false, condiciones: null, code, nextAction, remainingAttempts,
-    question: nextAction === "ASK_NAME" ? "¿Me repite su nombre completo, por favor?"
-      : nextAction === "ASK_DOCUMENT" ? "¿Me repite su número de cédula, por favor?" : "No pude confirmar sus datos. Un asesor revisará su caso.",
+    question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
+      : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?" : "No pude confirmar sus datos. Un asesor revisará su caso.",
     mayEndCall: nextAction === "REVIEW" });
 }
 function assertRecoveryState(row, expected) {
