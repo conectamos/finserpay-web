@@ -212,27 +212,38 @@ test("call preserves prepared document blocks and the zero-preserving raw docume
   }
 });
 
-test("voice tool retains raw identity constants while the prompt requires literal speech and consent", () => {
+test("voice tool captures actual customer identity without prefilled answers or extra authorization", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
   const tool = config.pendingIdentityTool;
-  assert.match(tool.parameters.properties.customer_name.description, /\{\{customer_name\}\}/);
-  assert.match(tool.parameters.properties.customer_document.description, /\{\{customer_document\}\}/);
-  assert.doesNotMatch(tool.parameters.properties.customer_document.description, /\{\{customer_document_spoken\}\}/);
+  assert.match(tool.parameters.properties.customer_name.description, /realmente haya dicho/);
+  assert.match(tool.parameters.properties.customer_document.description, /inequívocamente proporcionados/);
+  assert.match(tool.parameters.properties.customer_document.description, /ceros iniciales/);
+  assert.match(tool.parameters.properties.customer_document.description, /No enviar palabras/);
+  for (const key of ["customer_name", "customer_document"]) {
+    assert.doesNotMatch(tool.parameters.properties[key].description, /\{\{/);
+    assert.equal(tool.parameters.properties[key].const, undefined);
+  }
+  assert.equal(tool.parameters.properties.event_token.description,
+    "Envía este valor exacto sin modificar, sin leerlo al cliente: {{event_token}}");
   assert.equal(tool.parameters.properties.dapta_webhook.const, "NEW_PRIVATE_IDENTITY_FLOW_URL");
   assert.equal(tool.parameters.properties.dapta_api_id.const, "NEW_IDENTITY_FLOW_ID");
   for (const param of Object.values(tool.parameters.properties)) assert.equal(param.type, "string");
-  assert.equal(config.updateAfterCreate.begin_message, "Hola, soy Sofía de FINSER PAY. Esta llamada se graba para confirmar su crédito. ¿Podemos continuar?");
-  for (const affirmative of ["sí", "ok", "vale", "claro", "de acuerdo"]) assert.ok(prompt.includes("«" + affirmative + "»"));
+  assert.equal(config.createArguments.identity_name, "Diana");
+  assert.equal(config.createArguments.company_name, "FINSER PAY");
+  assert.equal(config.updateAfterCreate.begin_message,
+    "Hola, soy Diana de FINSER PEY y quiero darle la bienvenida y confirmar los datos de la financiación de su celular. Esta llamada está siendo grabada y monitoreada para efectos de calidad y seguridad. ¿Me confirma, por favor, su nombre completo?");
+  assert.doesNotMatch(config.updateAfterCreate.begin_message, /podemos continuar|tiene un momento|puede hablar/i);
+  assert.ok(prompt.includes("¿Su número de cédula, por favor?"));
   for (const field of ["initialPayment", "installmentAmount", "installmentCount", "firstDueDate"]) {
     assert.ok(prompt.includes("[speech." + field + "]"));
     assert.ok(!prompt.includes("[" + field + "]"));
   }
-  assert.ok(prompt.includes("customer_name_spoken") && prompt.includes("customer_document_spoken"));
+  assert.doesNotMatch(prompt, /customer_(?:name|document)/);
   assert.match(prompt, /speech incompleto/);
   assert.match(prompt, /sin decir ningún importe o fecha/);
   assert.match(prompt, /calendar confirma/);
-  assert.match(prompt, /el sistema genera un bloqueo/);
+  assert.match(prompt, /El dispositivo cuenta con un aplicativo de bloqueo/);
   assert.doesNotMatch(prompt, /<\s*(?:speak|break|say-as|prosody)\b/i);
 });
 
@@ -268,45 +279,76 @@ test("optional equipment speech is preserved only inside verified conditions", (
   }
 });
 
-test("equipment reference guard precedes the plan and handles missing data or discrepancies", () => {
+test("equipment is named only after verification and before verified financial amounts", () => {
   const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
-  const referenceAt = prompt.indexOf("REFERENCIA DEL CELULAR");
-  const planAt = prompt.indexOf("PLAN Y CONFIRMACIÓN DE LA PRIMERA CUOTA");
-  assert.ok(referenceAt > 0 && referenceAt < planAt);
-  const reference = prompt.slice(referenceAt, planAt);
+  const planAt = prompt.indexOf("PLAN DE PAGOS: PRIMER ACUERDO");
+  const calendarAt = prompt.indexOf("CALENDARIO Y PRIMERA FECHA: SEGUNDO ACUERDO");
+  const reference = prompt.slice(planAt, calendarAt);
   for (const guard of ["ok=true", "verificado=true", "condiciones.speech completo"]) assert.ok(reference.includes(guard));
   assert.ok(reference.includes("[speech.equipmentReference]"));
   assert.match(reference, /referencia exacta/);
+  assert.ok(reference.indexOf("[speech.equipmentReference]") < reference.indexOf("[speech.initialPayment]"));
   assert.match(reference, /equipmentReference falta, es null o está vacío/);
   assert.match(reference, /no adivines/);
-  assert.match(reference, /Si el cliente señala una diferencia/);
-  assert.match(reference, /pregunta una sola vez/);
-  assert.match(reference, /Un asesor debe revisar esa diferencia/);
-  assert.match(reference, /sin.*inventar otra referencia/);
+  assert.match(reference, /un asesor debe revisarla/);
+  assert.match(reference, /installmentsEqual=false/);
+  assert.match(reference, /no afirmes que todas cuestan lo mismo/);
 });
 
-test("conversational document instructions use prepared blocks without changing identity", () => {
+test("normal hangup waits for three separate agreements and preserves early exits", () => {
   const prompt = readFileSync(new URL("agent-instructions.txt", base), "utf8");
   assert.match(prompt, /tono cordial y conversacional/);
-  assert.match(prompt, /cada bloque completo tal como lo recibes/);
-  assert.match(prompt, /sin cambiar los ceros/);
-  assert.match(prompt, /repite únicamente ese bloque tal como está/);
-  assert.match(prompt, /No conviertas los bloques/);
+  const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
+  const gates = ["PLAN DE PAGOS: PRIMER ACUERDO", "CALENDARIO Y PRIMERA FECHA: SEGUNDO ACUERDO", "APLICATIVO: TERCER ACUERDO"];
+  for (let i = 0; i < gates.length; i++) {
+    const start = prompt.indexOf(gates[i]);
+    const end = i + 1 < gates.length ? prompt.indexOf(gates[i + 1]) : prompt.indexOf("TURNOS, DIFERENCIAS Y CIERRE");
+    const block = prompt.slice(start, end);
+    assert.ok(start > 0 && end > start);
+    assert.match(block, /¿Está de acuerdo\?/);
+    assert.match(block, /Espera una respuesta real/);
+  }
+  // The user requested these sentences verbatim; prepared financial texts replace only their placeholders.
+  for (const sentence of [
+    "Le confirmo su plan de pagos: [speech.equipmentReference]",
+    "Con una cuota inicial de [speech.initialPayment]",
+    "Su financiación tiene un plazo de [speech.installmentCount] de [speech.installmentAmount]. ¿Está de acuerdo?",
+    "Sus fechas de pago son para todos los dos y diecisiete de cada mes",
+    "Su primer pago está para el día [speech.firstDueDate]. ¿Está de acuerdo?",
+    "El dispositivo cuenta con un aplicativo de bloqueo. En caso de mora se bloqueará el equipo y su activación podrá tardar hasta veinticuatro horas después de realizar el pago correspondiente. ¿Está de acuerdo?",
+  ]) assert.ok(prompt.includes(sentence), sentence);
+  assert.match(prompt, /Nunca ejecutes end_call en el mismo turno de una pregunta ni mientras esperas su respuesta/);
+  assert.match(prompt, /tres respuestas afirmativas independientes/);
+  assert.match(prompt, /Si falta una respuesta o el agente cuelga antes/);
+  assert.equal(config.pendingEndCallTool.name, "end_call");
+  assert.equal(config.pendingEndCallTool.type, "end_call");
+  assert.match(config.pendingEndCallTool.description, /tres respuestas afirmativas reales e independientes/);
+  assert.match(config.pendingEndCallTool.description, /Nunca ejecutes esta herramienta en el mismo turno de una pregunta/);
+  for (const reason of ["rechazo de grabación", "petición expresa de terminar", "identidad no verificada", "fallo", "discrepancia", "buzón"]) {
+    assert.ok(config.pendingEndCallTool.description.includes(reason));
+  }
   assert.match(prompt, /No hables lentamente palabra por palabra/);
   assert.match(prompt, /no uses tono cantado ni una cadencia de lista/);
-  assert.match(prompt, /valores originales customer_name y customer_document/);
-  assert.doesNotMatch(prompt, /palabras de cada dígito, despacio/);
+  assert.match(prompt, /Gracias por su tiempo/);
 });
 
-test("analysis definitions distinguish verified identity and yes to date from all terms", () => {
+test("analysis distinguishes actual identity, continuity after notice and all three agreements", () => {
   const config = JSON.parse(readFileSync(new URL("agent-config.draft.json", base), "utf8"));
   const definitions = Object.fromEntries(config.createArguments.post_call_analysis_data.map(field => [field.name, field.description]));
-  assert.match(definitions.identity_confirmed, /respuesta real de la herramienta/);
-  assert.match(definitions.identity_confirmed, /ok=true, verificado=true/);
+  assert.match(definitions.identity_confirmed, /resultado real de la herramienta/);
+  assert.match(definitions.identity_confirmed, /booleanos verdaderos/);
   assert.match(definitions.first_payment_confirmed, /speech.firstDueDate/);
   for (const affirmative of ["sí", "ok", "vale", "claro", "de acuerdo"]) assert.ok(definitions.first_payment_confirmed.includes(affirmative));
-  assert.match(definitions.terms_confirmed, /Confirmar identidad, referencia del celular o primera fecha por separado no confirma todos los términos/);
-  assert.match(definitions.customer_discrepancies, /referencia del celular/);
+  for (const field of ["identity_confirmed", "payment_plan_confirmed", "first_payment_confirmed", "device_policy_confirmed"]) {
+    assert.ok(definitions.terms_confirmed.includes(field));
+  }
+  assert.match(definitions.terms_confirmed, /tres respuestas afirmativas independientes/);
+  assert.match(definitions.payment_plan_confirmed, /primera pregunta/);
+  assert.match(definitions.first_payment_confirmed, /segunda pregunta/);
+  assert.match(definitions.device_policy_confirmed, /tercera pregunta/);
+  assert.match(definitions.recording_accepted, /continuidad tras el aviso/);
+  assert.match(definitions.recording_accepted, /no.*consentimiento expreso/);
+  assert.match(config.createArguments.analysis_successful_prompt, /Un cierre mientras se esperaba respuesta/);
 });
 
 test("identity mismatch never exposes supplied conditions", () => {
@@ -350,7 +392,7 @@ test("call requires both analyst identity fields and preserves quoted names as s
   }
 });
 
-test("native call variables receive exported analyst identity and no financial conditions", () => {
+test("native call excludes expected identity while legacy trigger inputs remain compatible", () => {
   const normalized = runCode(call, "nrmCl", { trigger: { body: validCall } });
   const normalizer = call.api_nodes.find(node => node.id === "nrmCl");
   const trigger = call.api_nodes.find(node => node.id === "trgCl");
@@ -359,13 +401,13 @@ test("native call variables receive exported analyst identity and no financial c
     assert.equal(typeof normalized[key], "string");
     assert.equal(normalizer.api_action.response.find(field => field.variable_name === key).response_value_path, key);
     assert.equal(trigger.api_trigger.trigger_params.find(field => field.key === key).required, true);
-    assert.equal(native.api_action.custom_action.values.variables.find(field => field.key === key).value, "{{normalizar_llamada." + key + "}}");
+    assert.equal(native.api_action.custom_action.values.variables.find(field => field.key === key), undefined);
   }
   assert.deepEqual(native.api_action.custom_action.values.variables.map(field => field.key),
-    ["event_id", "credito_id", "event_token", "customer_name", "customer_document", "customer_name_spoken", "customer_document_spoken"]);
+    ["event_id", "credito_id", "event_token"]);
   assert.equal(trigger.api_trigger.trigger_params.length, 8);
   assert.equal(normalizer.api_action.response.length, 8);
-  assert.equal(native.api_action.custom_action.values.variables.length, 7);
+  assert.equal(native.api_action.custom_action.values.variables.length, 3);
 });
 
 test("call variable patch preserves native identifiers, template attributes and credentials by omission", () => {
@@ -459,10 +501,6 @@ test("native draft retains the template and scoped variables with credentials re
     { key: "event_id", value: "{{normalizar_llamada.event_id}}" },
     { key: "credito_id", value: "{{normalizar_llamada.credito_id}}" },
     { key: "event_token", value: "{{normalizar_llamada.event_token}}" },
-    { key: "customer_name", value: "{{normalizar_llamada.customer_name}}" },
-    { key: "customer_document", value: "{{normalizar_llamada.customer_document}}" },
-    { key: "customer_name_spoken", value: "{{normalizar_llamada.customer_name_spoken}}" },
-    { key: "customer_document_spoken", value: "{{normalizar_llamada.customer_document_spoken}}" },
   ]);
   for (const text of [JSON.stringify(identity), JSON.stringify(call)]) {
     assert.doesNotMatch(text, /x-api-key[=:%]|Authorization[=:]/i);

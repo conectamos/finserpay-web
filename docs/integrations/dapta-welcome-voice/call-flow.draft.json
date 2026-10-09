@@ -383,22 +383,6 @@
               {
                 "key": "event_token",
                 "value": "{{normalizar_llamada.event_token}}"
-              },
-              {
-                "key": "customer_name",
-                "value": "{{normalizar_llamada.customer_name}}"
-              },
-              {
-                "key": "customer_document",
-                "value": "{{normalizar_llamada.customer_document}}"
-              },
-              {
-                "key": "customer_name_spoken",
-                "value": "{{normalizar_llamada.customer_name_spoken}}"
-              },
-              {
-                "key": "customer_document_spoken",
-                "value": "{{normalizar_llamada.customer_document_spoken}}"
               }
             ]
           },

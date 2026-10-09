@@ -66,12 +66,9 @@
   "callVariables": [
     "event_id",
     "credito_id",
-    "event_token",
-    "customer_name",
-    "customer_document",
-    "customer_name_spoken",
-    "customer_document_spoken"
+    "event_token"
   ],
+  "identitySource": "The customer's actual full name and document spoken during the call. Expected identity values stay outside the voice agent's initial context; the backend verifies both against the signed event snapshot.",
   "nativeOutputMapping": {
     "response": "response.result",
     "error": "response.error"
@@ -116,21 +113,20 @@
     {
       "file": "call-identity-variables.patch.json",
       "flowId": "WdOvp",
-      "expectedContentHash": "sha256:9f83a1a09e4bfc59edb81f61c80313614347c4fd673cc10d498c2d915b8c7515",
-      "scope": "Eight required input strings, eight normalized exports and seven native variables. Existing template, caller and agent identifiers unchanged."
+      "expectedContentHash": "sha256:1e5de923793488b35e150dfbcd3aaee63b5a12c0eda98cb28e3af088528f26c4",
+      "scope": "Eight compatible input strings and normalized exports; only event_id, credito_id and event_token reach the voice agent. Name and document are collected from the customer. Existing template, caller and agent identifiers unchanged."
     }
   ],
   "pronunciation": {
-    "callFields": [
-      "customer_name_spoken",
-      "customer_document_spoken"
-    ],
+    "callFields": [],
     "identityToolUses": [
       "customer_name",
       "customer_document"
     ],
-    "voiceSpeed": 0.9,
-    "voiceTemperature": 0.5,
+    "identityToolSource": "Actual customer responses, never preloaded expected identity or spoken versions.",
+    "voiceModel": "eleven_multilingual_v2",
+    "voiceSpeed": 1,
+    "voiceTemperature": 1,
     "normalizeForSpeech": true,
     "ssml": false
   }

@@ -7,7 +7,7 @@
     "company_name": "FINSER PAY",
     "company_description": "Financiación de teléfonos celulares. El agente realiza bienvenida y explica las condiciones reales del crédito definitivo.",
     "company_website": "https://finserpay.com",
-    "identity_name": "Sofía",
+    "identity_name": "Diana",
     "voice_language": "es-419",
     "voice": "custom_voice_fd6d90e0e756bbb2e81c101bba",
     "model": "gpt-4.1",
@@ -17,49 +17,60 @@
         "type": "hangup"
       }
     },
-    "analysis_successful_prompt": "La bienvenida es completa cuando el cliente acepta continuar, confirma el nombre y cédula registrados, la herramienta devuelve ok=true, verificado=true y condiciones.speech completo, se explica literalmente el plan real y el cliente confirma expresamente la primera fecha de pago. Deben indicarse calendario y bloqueo. La referencia real se menciona si speech.equipmentReference está disponible; una discrepancia confirmada en referencia o condiciones requiere revisión y no es éxito. Una respuesta afirmativa a la primera fecha confirma esa fecha, sin confirmar automáticamente todos los términos. URL de respuesta, error, speech ausente, cifras convertidas o inventadas, silencio o buzón no son éxito.",
-    "analysis_summary_prompt": "Resume en español la aceptación de continuar, confirmación de nombre y cédula registrados, resultado real de verificar_cliente_bienvenida, referencia real mencionada si existe, primera fecha de pago confirmada y dudas o diferencias. Considera la respuesta real de la herramienta: ok=true y verificado=true con condiciones.speech completo valida identidad aunque Sofía no diga «identidad verificada». Un sí, ok, vale, claro o de acuerdo después de la pregunta sobre la primera fecha confirma esa fecha. No infiera confirmación de todos los términos a partir de identidad, referencia o fecha. No incluya cédula completa ni tokens, ni datos inventados.",
+    "analysis_successful_prompt": "La llamada es exitosa solo si la herramienta verificó realmente la identidad con ok=true y verificado=true y speech completo, se comunicaron el plan, el calendario con primera fecha y la política del aplicativo, y el cliente respondió afirmativamente a cada uno de los tres bloques en tres turnos distintos. Una llamada completada, una grabación, una identidad verificada o un solo sí no bastan. Un cierre mientras se esperaba respuesta o con un bloque pendiente no es exitoso.",
+    "analysis_summary_prompt": "Resume hechos de la llamada: identidad verificada o fallida según el resultado real de verificar_cliente_bienvenida; continuidad del cliente después del aviso de grabación y monitoreo sin atribuir una autorización expresa; producto y plan únicamente si fueron verificados y efectivamente explicados; respuesta separada al plan, al calendario con primera fecha y a la política del aplicativo; dudas, diferencias o rechazo de grabación; y si terminó normalmente o antes de completar el guion. No inventes respuestas ni acuerdos. Si falta una respuesta, indica pendiente, aunque end_call haya sido ejecutado. No incluyas cédula completa, tokens, URLs privadas ni variables internas.",
     "post_call_analysis_data": [
       {
         "name": "recording_accepted",
         "type": "boolean",
-        "description": "Verdadero únicamente si el cliente acepta expresamente continuar tras el aviso de grabación; falso si rechaza o no responde."
+        "description": "Indica que el cliente continuó la interacción después de escuchar el aviso de grabación y monitoreo: verdadero si respondió con su nombre después del aviso y no rechazó la grabación; falso si la rechazó expresamente o no hubo respuesta. No exige una pregunta extra ni afirma una autorización expresa que no se dio. Describir en el resumen como continuidad tras el aviso, no como consentimiento expreso."
       },
       {
         "name": "identity_confirmed",
         "type": "boolean",
-        "description": "Verdadero cuando verificar_cliente_bienvenida devuelve un objeto con ok=true, verificado=true y condiciones.speech completo. Usa la respuesta real de la herramienta aunque Sofía no anuncie expresamente «identidad verificada». Falso para error, URL, falta de speech o verificado=false; no inferir por teléfono ni solo por confirmación de nombre."
+        "description": "Verdadero solo cuando verificar_cliente_bienvenida devuelve ok y verificado booleanos verdaderos con condiciones.speech financiero completo. Usa el resultado real de la herramienta, incluso si no se verbaliza identidad verificada o la llamada termina antes de los acuerdos. No inferir a partir de respuestas afirmativas, datos precargados o un texto del agente."
       },
       {
-        "name": "terms_confirmed",
+        "name": "payment_plan_confirmed",
         "type": "boolean",
-        "description": "Verdadero únicamente si el cliente confirma expresamente el conjunto de condiciones explicadas. Confirmar identidad, referencia del celular o primera fecha por separado no confirma todos los términos; falso para duda, silencio, discrepancia o explicación incompleta."
+        "description": "Verdadero únicamente si el cliente responde afirmativamente a la primera pregunta Está de acuerdo, posterior al producto disponible y al plan verificado: inicial, cantidad de cuotas y valor. Una afirmación en otra parte de la llamada no cuenta. Falso si falta respuesta, duda sin resolver, negativa o cierre anticipado."
       },
       {
         "name": "first_payment_confirmed",
         "type": "boolean",
-        "description": "Verdadero si, después de una consulta real verificada y de comunicar speech.firstDueDate, el cliente responde sí, ok, vale, claro o de acuerdo a «¿Confirma que le informaron esa fecha?». Esa respuesta confirma la primera fecha aunque no repita la fecha ni diga «confirmo». Falso para silencio, discrepancia, dato inventado o herramienta fallida."
+        "description": "Verdadero únicamente si, después de comunicar el calendario verificado cuando corresponde y speech.firstDueDate, el cliente responde sí, ok, vale, claro o de acuerdo a la segunda pregunta «¿Está de acuerdo?». No reutilizar el acuerdo al plan ni inferir por silencio. Falso si falta respuesta, hay diferencia o el bloque queda incompleto."
+      },
+      {
+        "name": "device_policy_confirmed",
+        "type": "boolean",
+        "description": "Verdadero únicamente si el cliente responde afirmativamente a la tercera pregunta Está de acuerdo, posterior al aviso de bloqueo por mora y de que la activación puede tardar hasta 24 horas después del pago. No reutilizar acuerdos anteriores ni inferir por silencio."
+      },
+      {
+        "name": "terms_confirmed",
+        "type": "boolean",
+        "description": "Verdadero únicamente cuando identity_confirmed, payment_plan_confirmed, first_payment_confirmed y device_policy_confirmed son verdaderos, basados en una validación real y tres respuestas afirmativas independientes. Falso si cualquier bloque queda pendiente o rechazado; no inferir aceptación global de un solo sí."
       },
       {
         "name": "customer_discrepancies",
         "type": "string",
-        "description": "Diferencias expresadas por el cliente sobre referencia del celular, inicial, cantidad de cuotas, valor, fechas o bloqueo. Texto vacío si no expresa diferencias; no inventar referencias ni correcciones."
+        "description": "Resume solo diferencias o rechazos expresos sobre identidad, producto, plan, fechas, política del aplicativo o grabación; no incluye cédula completa ni valores internos. Si no hubo diferencias, texto vacío."
       },
       {
         "name": "customer_questions",
         "type": "string",
-        "description": "Dudas del cliente y respuesta dada durante la llamada. Texto vacío si no hay dudas; no añadir datos no conversados."
+        "description": "Resume dudas expresas y si quedaron resueltas o requieren asesor; no inventa dudas ni incluye cédula, tokens o enlaces privados. Si no hubo preguntas, texto vacío."
       }
     ]
   },
   "updateAfterCreate": {
     "begin_message_type": "ai_initiates_predefined",
-    "begin_message": "Hola, soy Sofía de FINSER PAY. Esta llamada se graba para confirmar su crédito. ¿Podemos continuar?",
+    "begin_message": "Hola, soy Diana de FINSER PEY y quiero darle la bienvenida y confirmar los datos de la financiación de su celular. Esta llamada está siendo grabada y monitoreada para efectos de calidad y seguridad. ¿Me confirma, por favor, su nombre completo?",
     "boosted_keywords": [
       "FINSER PAY",
-      "Sofía",
+      "Diana",
       "cédula",
-      "quincenas"
+      "quincenas",
+      "FINSER PEY"
     ],
     "max_call_duration_ms": 600000,
     "end_call_after_silence_ms": 45000,
@@ -72,7 +83,7 @@
   "pendingIdentityTool": {
     "name": "verificar_cliente_bienvenida",
     "type": "custom",
-    "description": "Consulta las condiciones reales solo después de que la persona confirme el nombre y cédula registrados para este crédito. Usa los valores originales, nunca versiones habladas. Un error, URL de respuesta o condiciones sin speech completo no permiten explicar importes ni fechas.",
+    "description": "Verifica el nombre completo y la cédula proporcionados por la persona durante esta llamada y consulta el plan real solo si coinciden con el crédito del evento. Invoca únicamente después de recibir ambos datos. Nunca sustituir respuestas por datos registrados. Un error o condiciones sin speech completo no permiten revelar producto, importes ni fechas.",
     "parameters": {
       "type": "object",
       "required": [
@@ -97,11 +108,11 @@
         },
         "customer_name": {
           "type": "string",
-          "description": "Solo después de que el cliente lo confirme, envía este nombre registrado original exacto: {{customer_name}}. Nunca enviar sí, customer_name_spoken, nombres inventados ni otro cliente."
+          "description": "Envía el nombre completo que la persona realmente haya dicho al responder la pregunta abierta de nombre en esta llamada. Nunca sustituir la respuesta por datos registrados, enviar sí u otra confirmación, completar partes ni inventarlas. Si no se entiende, pedir repetir y esperar antes de invocar."
         },
         "customer_document": {
           "type": "string",
-          "description": "Solo después de que el cliente lo confirme, envía este documento registrado original exacto: {{customer_document}}. Texto de dígitos conservando ceros; nunca enviar sí, customer_document_spoken ni palabras de los dígitos."
+          "description": "Envía únicamente los dígitos inequívocamente proporcionados por la persona al responder la pregunta de cédula en esta llamada, como texto numérico conservando todos los dígitos y ceros iniciales. No enviar palabras, sí ni una confirmación. Nunca inferir de datos registrados; si algún dígito es ambiguo, pedir repetición y esperar antes de invocar."
         }
       }
     },
@@ -113,5 +124,10 @@
     "Confirmar grabación habilitada en el nuevo agente y probar disponibilidad real de audio",
     "Conservar call_log_visibility=private",
     "Descarga manual desde Dapta; sin importación automática del archivo en esta versión"
-  ]
+  ],
+  "pendingEndCallTool": {
+    "name": "end_call",
+    "type": "end_call",
+    "description": "Finaliza la llamada después de la despedida. Nunca ejecutes esta herramienta en el mismo turno de una pregunta ni mientras esperas una respuesta. El cierre normal exige tres respuestas afirmativas reales e independientes: al plan, al calendario con primera fecha y a la política del aplicativo; después di Gracias por su tiempo y cuelga. Una consulta exitosa, el silencio o haber leído el plan no autorizan end_call. Conserva únicamente las salidas anticipadas por rechazo de grabación, petición expresa de terminar, identidad no verificada, fallo, discrepancia que requiere asesor o buzón; no reveles datos en buzón."
+  }
 }
