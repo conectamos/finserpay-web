@@ -12,6 +12,7 @@ const { requestDataValues } = await jiti.import("../lib/approval-request-correct
 const { buildFrozenDraftCorrection, buildFrozenPendingContactRedirect } = await jiti.import("../lib/firmaseguro-draft-frozen.ts");
 const { buildFrozenDraftClientCorrection, readFrozenClientCorrectionSource,
   verifiesFrozenClientCorrectionSource } = await jiti.import("../lib/firmaseguro-draft-client-correction-frozen.ts");
+const { projectFirmaSeguroContractIdentity } = await jiti.import("../lib/firmaseguro-contract-identity.ts");
 
 function fixture({ signed = false, version = "ARES_FRANCES_V2", firstPaymentDate = "2026-11-02", sealedFirstPaymentDate = firstPaymentDate } = {}) {
   const plan = calculateFrenchAmortization({ calculoVersion: version,
@@ -63,6 +64,46 @@ function fixture({ signed = false, version = "ARES_FRANCES_V2", firstPaymentDate
 }
 
 const mutableSealFields = new Set(["clienteNombre", "clienteTelefono", "clienteCorreo", "clienteDireccion"]);
+
+test("corregir sólo contacto y dirección conserva los nombres Veriff del proceso, sin copiar claims del borrador", () => {
+  for (const signed of [false, true]) {
+    const f = fixture({ signed });
+    const metadata = { source: "VERIFF", validationId: 42, documentNumber: f.original.clienteDocumento,
+      canonicalFullName: f.original.clienteNombre, firstName: "Nombre real Veriff", firstLastName: "Apellido original",
+      secondName: null, secondLastName: null };
+    f.source.draftPayload = { ...f.source.draftPayload, firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: metadata };
+    for (const field of ["clienteNombre", "clientePrimerNombre", "clientePrimerApellido", "clienteSegundoApellido"]) {
+      f.draft.payload[field] = f.original[field];
+    }
+    f.draft.payload.firmaSeguroIdentity = { ...metadata, firstName: "Claim del borrador" };
+    f.correction.after = requestDataValues(f.draft.payload);
+    const before = JSON.stringify(f);
+    const result = buildFrozenDraftClientCorrection(f);
+    assert.equal(result.credit.contratoSnapshot.firmaSeguroContractNameVersion, 1);
+    assert.deepEqual(result.credit.contratoSnapshot.firmaSeguroIdentity, metadata);
+    assert.equal(projectFirmaSeguroContractIdentity(result.credit).clienteNombre,
+      `${metadata.firstName} ${metadata.firstLastName}`);
+    assert.equal(result.credit.clienteNombre, f.original.clienteNombre);
+    assert.equal(result.credit.clienteTelefono, f.corrected.clienteTelefono);
+    assert.equal(result.credit.clienteCorreo, f.corrected.clienteCorreo);
+    assert.equal(result.credit.clienteDireccion, f.corrected.clienteDireccion.toUpperCase());
+    assert.equal(result.seal.snapshot.fechaPrimerPago, f.seal.snapshot.fechaPrimerPago);
+    assert.equal(result.seal.snapshot.cuotaPactada, f.seal.snapshot.cuotaPactada);
+    assert.equal(JSON.stringify(f), before);
+  }
+});
+
+test("corrección nominal contractual y fuentes legacy no adoptan los nombres Veriff anteriores", () => {
+  for (const marker of [undefined, 1]) {
+    const f = fixture({ signed: true });
+    f.source.draftPayload = { ...f.source.draftPayload, firmaSeguroContractNameVersion: marker,
+      firmaSeguroIdentity: { firstName: "Nombre anterior Veriff" } };
+    const result = buildFrozenDraftClientCorrection(f);
+    assert.equal(result.credit.clienteNombre, f.corrected.clienteNombre);
+    assert.equal(Object.hasOwn(result.credit.contratoSnapshot, "firmaSeguroContractNameVersion"), false);
+    assert.equal(Object.hasOwn(result.credit.contratoSnapshot, "firmaSeguroIdentity"), false);
+  }
+});
 
 for (const signed of [false, true]) {
   test(`corrige los datos del cliente con una nueva firma ${signed ? "desde contrato firmado" : "desde contrato pendiente"} y conserva TODOS los términos`, () => {

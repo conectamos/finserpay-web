@@ -13,10 +13,10 @@ export type FirmaSeguroFullNameIdentity = {
 type NameEvidence = { firstName?: unknown; lastName?: unknown; fullName?: unknown; documentNumber?: unknown };
 const nameText = (value: unknown) => typeof value === "string" ? value.normalize("NFC").replace(/\s+/g, " ").trim() : "";
 const comparableReviewedName = (value: unknown) => nameText(value).toLocaleUpperCase("es-CO");
-// Provider responses differ in vowel accents. Preserve consonants such as Ñ
-// and never modify the canonical name or the returned signing components.
+// Manual completion retains its existing comparison with full-name evidence.
+// Provider signing components are selected independently of DataCrédito's name.
 const comparableName = (value: unknown) => comparableReviewedName(value).normalize("NFD")
-  .replace(/([AEIOU])\p{M}+/gu, "$1").normalize("NFC");
+  .replace(/\p{M}+/gu, "").normalize("NFC");
 export const firmaSeguroProviderNamesMatch = (left: unknown, right: unknown) => comparableName(left) === comparableName(right);
 function documentText(value: unknown) {
   const raw = typeof value === "string" ? value.trim() : "";
@@ -27,8 +27,8 @@ function documentText(value: unknown) {
 export class FirmaSeguroFullNameIdentityError extends Error {
   readonly code = "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED";
   readonly status = 409;
-  constructor(readonly reason: "components-required" | "invalid-components" | "name-conflict" | "identity-binding" = "components-required") {
-    super("FirmaSeguro requiere nombres y apellidos separados correspondientes al mismo documento y al nombre completo de DataCrédito. Si Veriff aprobó la cédula sin esos componentes, un administrador debe completarlos mediante revisión autorizada. No se realizó un envío ni una nueva consulta.");
+  constructor(readonly reason: "components-required" | "invalid-components" | "identity-binding" = "components-required") {
+    super("FirmaSeguro requiere nombres y apellidos reales de la validación Veriff aprobada para la misma cédula. Si Veriff aprobó la cédula sin esos componentes, un administrador debe completarlos mediante revisión autorizada. No se realizó un envío ni una nueva consulta.");
     this.name = "FirmaSeguroFullNameIdentityError";
   }
 }
@@ -57,26 +57,17 @@ export function resolveFirmaSeguroFullNameIdentity(input: {
   const documentNumber = documentText(input.documentNumber);
   const firstName = nameText(input.firstName);
   const firstLastName = nameText(input.lastName);
-  const canonical = comparableName(input.fullName);
   const validName = (value: string) => value.length >= 2 && value.length <= 100 && /^[\p{L}\p{M} '’-]+$/u.test(value);
   if (!Number.isSafeInteger(input.validationId) || input.validationId <= 0 || !documentNumber ||
-      documentText(input.veriffDocumentNumber) !== documentNumber || !canonical) invalid("identity-binding");
+      documentText(input.veriffDocumentNumber) !== documentNumber || !nameText(input.fullName)) invalid("identity-binding");
   assertFirmaSeguroVeriffEvidenceDocuments(documentNumber, input.additionalIdentities || []);
   if (!firstName || !firstLastName) invalid("components-required");
   if (!validName(firstName) || !validName(firstLastName)) invalid("invalid-components");
-  if (comparableName(`${firstName} ${firstLastName}`) !== canonical) invalid("name-conflict");
-  for (const evidence of input.additionalIdentities || []) {
-    const evidenceFirst = nameText(evidence.firstName);
-    const evidenceLast = nameText(evidence.lastName);
-    if ((evidenceFirst && comparableName(evidenceFirst) !== comparableName(firstName)) ||
-        (evidenceLast && comparableName(evidenceLast) !== comparableName(firstLastName)) ||
-        (nameText(evidence.fullName) && comparableName(evidence.fullName) !== canonical)) invalid("name-conflict");
-  }
   return { source: "VERIFF", validationId: input.validationId, documentNumber,
     canonicalFullName: input.fullName, firstName, firstLastName, secondName: null, secondLastName: null };
 }
 
-/** Select a complete pair from one payload; partial evidence corroborates but never supplies another field. */
+/** Select the first complete authoritative pair; never join fields across provider responses. */
 export function resolveFirmaSeguroFullNameIdentityFromEvidence(input: {
   fullName: string; documentNumber: string; validationId: number;
   veriffDocumentNumber: unknown; identities: readonly NameEvidence[];

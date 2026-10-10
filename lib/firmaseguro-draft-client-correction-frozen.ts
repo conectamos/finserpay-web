@@ -181,6 +181,11 @@ export function buildFrozenDraftClientCorrection(input: {
     folio: corrected.folio,
     contratoSnapshot: {
       borradorId: input.draft.id, origen: "BORRADOR_FIRMASEGURO_CORRECCION_CLIENTE",
+      ...(previous.firmaSeguroContractNameVersion === 1 &&
+        ["clienteNombre", "clientePrimerNombre", "clientePrimerApellido", "clienteSegundoApellido"]
+          .every(field => normalized(correction.before[field]) === normalized(correction.after[field]))
+        ? { firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: previous.firmaSeguroIdentity }
+        : {}),
       financiero: {
         calculoVersion: corrected.calculoVersion, cuotaPactada: cuota,
         cuotaTotalExacta: number(corrected.cuotaTotalExacta), cuotaComercial: number(corrected.cuotaComercial),

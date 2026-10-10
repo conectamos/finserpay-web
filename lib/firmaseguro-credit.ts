@@ -1,4 +1,5 @@
 import { readFirmaSeguroFullNameIdentity } from "@/lib/datacredito/firmaseguro-identity";
+import { readFirmaSeguroContractIdentity } from "@/lib/firmaseguro-contract-identity";
 import { dataCreditoIdentityToFirmaSeguroNames, type DataCreditoIdentity } from "@/lib/datacredito/identity";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
@@ -270,6 +271,11 @@ function normalizePhone(value: string | null | undefined) {
 }
 
 function splitClientName(credito: FirmaSeguroCredit): PersonPayload {
+  const contractIdentity = readFirmaSeguroContractIdentity(credito);
+  if (contractIdentity) {
+    return { ...contractIdentity, document: cleanText(credito.clienteDocumento),
+      email: normalizeEmail(credito.clienteCorreo), phone: normalizePhone(credito.clienteTelefono) };
+  }
   const snapshot = credito.contratoSnapshot as { dataCreditoIdentity?: { effective?: DataCreditoIdentity }; firmaSeguroIdentity?: unknown } | null;
   if (snapshot?.dataCreditoIdentity?.effective?.nameMode === "FULL_NAME_ONLY") {
     const identity = snapshot.dataCreditoIdentity.effective;

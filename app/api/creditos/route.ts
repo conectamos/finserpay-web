@@ -3186,7 +3186,7 @@ export async function POST(req: Request) {
         ? firmaSeguroProcess.draftPayload as Record<string, unknown> : null;
     // Reuse the identity metadata bound to the completed signature. Legacy signed
     // documents remain deliverable without introducing a new names prerequisite.
-    const firmaSeguroIdentity = dataCreditoFullNameOnly && signedIdentityPayload?.firmaSeguroIdentity
+    const firmaSeguroIdentity = signedIdentityPayload?.firmaSeguroIdentity
       ? readFirmaSeguroFullNameIdentity(signedIdentityPayload.firmaSeguroIdentity,
           { fullName: clienteNombreFinal, documentNumber: clienteDocumento })
       : dataCreditoFullNameOnly && !hasAuthoritativeSignedIdentity && veriffValidation
@@ -3196,6 +3196,8 @@ export async function POST(req: Request) {
         : null;
     const contratoSnapshot = {
       firmaSeguroIdentity,
+      ...(firmaSeguroIdentity && signedIdentityPayload?.firmaSeguroContractNameVersion === 1
+        ? { firmaSeguroContractNameVersion: 1 } : {}),
       // Provenance is set by the server; test provider credits earn no commission.
       comisiones: {
         version: 1,

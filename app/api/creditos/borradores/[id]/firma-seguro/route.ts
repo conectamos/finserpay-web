@@ -830,8 +830,12 @@ async function requestDraftSignatureCore(
       // Only server-built/sealed identity metadata belongs to the signing record.
       // Never retain a similarly named field supplied by a browser autosave.
       delete firmaSeguroDraftPayload.firmaSeguroIdentity;
+      delete firmaSeguroDraftPayload.firmaSeguroContractNameVersion;
       const firmaSeguroIdentity = payloadObject(credit.contratoSnapshot).firmaSeguroIdentity;
       if (firmaSeguroIdentity) firmaSeguroDraftPayload.firmaSeguroIdentity = firmaSeguroIdentity;
+      if (firmaSeguroIdentity && payloadObject(credit.contratoSnapshot).firmaSeguroContractNameVersion === 1) {
+        firmaSeguroDraftPayload.firmaSeguroContractNameVersion = 1;
+      }
       if (frozenCorrectionDateSource) {
         firmaSeguroDraftPayload.firmaSeguroFrozenCorrectionDateSource = frozenCorrectionDateSource;
       }

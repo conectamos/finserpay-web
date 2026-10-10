@@ -5,6 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const source = readFileSync(new URL("../app/dashboard/creditos/use-firma-seguro-identity-readiness.ts", import.meta.url), "utf8");
+const consoleSource = readFileSync(new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url), "utf8");
 const binding = { draftId: 2887, validationId: 42, assessmentId: "assessment-current", fullName: "María del Mar De la Peña Muñoz del Río", documentNumber: "001110477922", enabled: true };
 const readyItem = { draftId: binding.draftId, validationId: binding.validationId, assessmentId: binding.assessmentId,
   canonicalFullName: binding.fullName, documentNumber: binding.documentNumber,
@@ -52,6 +53,30 @@ function fixture(initialBinding = binding) {
   };
 }
 async function load(f) { f.render(); await flush(); return f.render(); }
+
+test("Nueva venta exige readiness en ambos modos DataCrédito y mantiene revisión manual exclusiva de FULL_NAME_ONLY", () => {
+  const ast = ts.createSourceFile("console.tsx", consoleSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declarations = new Map();
+  function visit(node) { if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) declarations.set(node.name.text, node.initializer); ts.forEachChild(node, visit); } visit(ast);
+  const evaluate = (node, context) => runInNewContext(ts.transpileModule("(" + node.getText(ast) + ")", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  const enabled = declarations.get("firmaSeguroIdentityReadiness").arguments[0].properties.find(property => property.name?.getText(ast) === "enabled").initializer;
+  for (const fullNameOnly of [false, true]) {
+    const context = { Boolean, dataCreditoFullNameOnly: fullNameOnly, dataCreditoApproval: { identity: { effective: { nameMode: fullNameOnly ? "FULL_NAME_ONLY" : "STRUCTURED" } } }, dataCreditoAssessmentId: "approved-assessment",
+      identitySignatureManagementReady: true, wizardStep: 4, firmaSeguroProcessSent: false, draftResumeHydrating: false, draftResumeLoadFailed: false };
+    context.firmaSeguroRequiresIdentityReadiness = evaluate(declarations.get("firmaSeguroRequiresIdentityReadiness"), context);
+    assert.equal(context.firmaSeguroRequiresIdentityReadiness, true);
+    assert.equal(evaluate(enabled, context), true, "Ambos modos consultan la misma evidencia autorizada");
+    for (const status of ["idle", "loading", "review", "blocked", "error", "ready"]) {
+      context.firmaSeguroIdentityReadiness = { status };
+      assert.equal(evaluate(declarations.get("firmaSeguroSigningIdentityReady"), context), status === "ready", `${fullNameOnly ? "FULL_NAME_ONLY" : "STRUCTURED"}: ${status}`);
+    }
+    context.draftResumeHydrating = true; assert.equal(evaluate(enabled, context), false);
+  }
+  const legacy = { Boolean, dataCreditoApproval: null, dataCreditoAssessmentId: null };
+  assert.equal(evaluate(declarations.get("firmaSeguroRequiresIdentityReadiness"), legacy), false);
+  assert.match(consoleSource, /\{dataCreditoFullNameOnly && draftId && !firmaSeguroSigningIdentityReady[\s\S]*?<FirmaSeguroIdentityReview/);
+  assert.match(consoleSource, /\) : firmaSeguroRequiresIdentityReadiness && !firmaSeguroSigningIdentityReady \? \(/);
+});
 
 test("aprobación vigente comprueba readiness mediante un único GET local y preserva cédula con ceros", async () => {
   const f = fixture(); const result = await load(f);

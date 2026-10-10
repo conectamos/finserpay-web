@@ -16,6 +16,7 @@ import { loadReissueModule, seals } from "./credit-approval-reissue-fixture.mjs"
 // This is not a browser/HTTP credit-creation test, nor a multi-connection race.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
+const contractIdentity = await jiti.import("../lib/firmaseguro-contract-identity.ts");
 const modules = [];
 for (const file of [
   "datacredito/identity", "solicitudes", "credit-factory", "credit-amortization",
@@ -234,6 +235,7 @@ async function fixture(t, providerType) {
     firmaSeguroGetDocumentByUuid: unexpectedNetwork, firmaSeguroGetAuraQuanticDocumentByUuid: unexpectedNetwork,
   };
   const firmaCredit = load("lib/firmaseguro-credit.ts", {
+    "@/lib/firmaseguro-contract-identity": contractIdentity,
     "@/lib/datacredito/firmaseguro-identity": firmaIdentity, "@/lib/datacredito/identity": identity,
     "@/lib/auth": {}, "@/lib/aliados": {}, "@/lib/credit-route-lookup": {},
     "@/lib/firmaseguro": firmaProvider, "@/lib/firmaseguro-folio-pdf": pdf,
@@ -369,7 +371,7 @@ test("same approved CC survives legacy saves, trusted Veriff, one mocked signatu
     assert.equal(reused.created, false); assert.equal(reused.row.id, created.row.id);
     const validationId = created.row.id;
     const decision = { status: "success", verification: { id: "mock-session", status: "approved", code: 9001,
-      person: { idNumber: documentNumber, firstName: "María del Mar", lastName: "De la Peña Muñoz del Río" },
+      person: { idNumber: documentNumber, firstName: "María del Sol", lastName: "Apellido Veriff Compuesto" },
       document: { number: documentNumber, type: "ID_CARD", country: "CO" },
     } };
     await f.veriff.updateVeriffValidationFromDecision(validationId, decision, "decisionPayload");
@@ -382,7 +384,7 @@ test("same approved CC survives legacy saves, trusted Veriff, one mocked signatu
     f.trustVeriff(false); await assert.rejects(f.guard(saved)); f.trustVeriff(true); await f.guard(saved);
     const metadata = await f.bridge.getFirmaSeguroFullNameIdentityForDraft({ fullName, documentNumber, validationId, draftId });
     assert.equal(metadata.source, "VERIFF"); assert.equal(metadata.canonicalFullName, fullName);
-    assert.equal(metadata.firstName, "María del Mar"); assert.equal(metadata.firstLastName, "De la Peña Muñoz del Río");
+    assert.equal(metadata.firstName, "María del Sol"); assert.equal(metadata.firstLastName, "Apellido Veriff Compuesto");
 
     const built = await f.builder.buildDraftCredit(saved, { requireFirmaSeguroIdentity: true });
     assert.equal(built.credit.clienteNombre, fullName);
@@ -410,7 +412,7 @@ test("same approved CC survives legacy saves, trusted Veriff, one mocked signatu
     assert.equal((await f.ledger.getDraftDispatch(operationId)).status, "AWAITING_SIGNATURE");
     assert.equal((await f.db.query('SELECT COUNT(*)::integer AS n FROM "FirmaSeguroDraftDispatchReceipt"')).rows[0].n, 1);
     const signer = f.sentPayloads[0].signatures[0].contactInformation.person;
-    assert.equal(signer.firstName, "María del Mar"); assert.equal(signer.firstLastName, "De la Peña Muñoz del Río");
+    assert.equal(signer.firstName, "María del Sol"); assert.equal(signer.firstLastName, "Apellido Veriff Compuesto");
     assert.equal(signer.identification, documentNumber);
     assert.equal(f.sentPayloads[0].documents.base64String, contractPdf.toString("base64"));
 

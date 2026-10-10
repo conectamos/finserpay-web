@@ -234,7 +234,7 @@ export async function buildDraftCredit(
   const payload = { ...payloadObject(row.payload) };
   const dataCreditoIdentity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
   let firmaSeguroIdentity: Awaited<ReturnType<typeof getFirmaSeguroFullNameIdentityForDraft>> | null = null;
-  if (options.requireFirmaSeguroIdentity && dataCreditoIdentity?.effective.nameMode === "FULL_NAME_ONLY") {
+  if (options.requireFirmaSeguroIdentity && dataCreditoIdentity) {
     try {
       firmaSeguroIdentity = await getFirmaSeguroFullNameIdentityForDraft({
         fullName: dataCreditoIdentity.effective.fullName,
@@ -478,7 +478,7 @@ export async function buildDraftCredit(
       borradorId: row.id,
       origen: "BORRADOR_FIRMASEGURO",
       dataCreditoIdentity,
-      ...(firmaSeguroIdentity ? { firmaSeguroIdentity } : {}),
+      ...(firmaSeguroIdentity ? { firmaSeguroIdentity, firmaSeguroContractNameVersion: 1 } : {}),
       ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
         ? {
             financiero: {

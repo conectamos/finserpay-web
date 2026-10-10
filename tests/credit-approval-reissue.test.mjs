@@ -22,6 +22,34 @@ test("reemisión usa el sello congelado con folio, cantidades y fecha del proces
   assert.equal(result.termsHash, fixture.seal.checksum);
   assert.equal(fixture.credit.contratoSnapshot.firmaSeguro.uuid, "old-process-81");
 });
+
+test("reemisión conserva nombres Veriff del proceso firmado y la identidad DC sellada por separado", () => {
+  const fixture = createReissueFixture();
+  const metadata = { source: "VERIFF", validationId: 42, documentNumber: fixture.seal.snapshot.documento,
+    canonicalFullName: fixture.seal.snapshot.clienteNombre, firstName: "Nombre real Veriff",
+    firstLastName: "Apellido original", secondName: null, secondLastName: null };
+  fixture.process.draftPayload = { ...fixture.process.draftPayload,
+    firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: metadata };
+  fixture.credit.contratoSnapshot.firmaSeguroIdentity = { ...metadata, firstName: "Nombre operativo distinto" };
+  const before = JSON.stringify(fixture);
+  const result = source.frozenReissueCredit(fixture.credit, fixture.process);
+  assert.equal(result.credit.contratoSnapshot.firmaSeguroContractNameVersion, 1);
+  assert.deepEqual(result.credit.contratoSnapshot.firmaSeguroIdentity, metadata);
+  assert.equal(result.credit.clienteNombre, fixture.seal.snapshot.clienteNombre);
+  assert.equal(result.credit.clienteDocumento, fixture.seal.snapshot.documento);
+  assert.equal(result.credit.valorCuota, fixture.credit.valorCuota);
+  assert.equal(result.termsHash, fixture.seal.checksum);
+  assert.equal(JSON.stringify(fixture), before, "no modifica el proceso ni el crédito históricos");
+});
+
+test("reemisión legacy sin marcador de proceso no cambia la identidad contractual por metadata operativa", () => {
+  const fixture = createReissueFixture();
+  fixture.credit.contratoSnapshot.firmaSeguroContractNameVersion = 1;
+  fixture.credit.contratoSnapshot.firmaSeguroIdentity = { firstName: "Nombre operativo" };
+  const result = source.frozenReissueCredit(fixture.credit, fixture.process);
+  assert.equal(Object.hasOwn(result.credit, "contratoSnapshot"), false);
+  assert.equal(result.credit.clienteNombre, fixture.seal.snapshot.clienteNombre);
+});
 test("rechaza sellos ausentes, alterados y discrepancias contractuales sin recalcular", () => {
   const changes = [
     f => { delete f.process.draftPayload.financialTermsSeal; },

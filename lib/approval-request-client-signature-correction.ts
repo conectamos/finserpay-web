@@ -160,9 +160,18 @@ export async function correctAndReissueAnalystRequestData(id: number, input: Req
   const document = await buildFirmaSeguroCreditPdf(frozen.credit);
   if (document.length > 32 * 1024 * 1024 || document.subarray(0, 5).toString() !== "%PDF-")
     throw new RequestDataCorrectionError("CONTRACT_DOCUMENT_INVALID", "No se pudo generar el contrato corregido.");
+  const draftPayload: Record<string, unknown> = { ...updatedPayload,
+    firmaSeguroFrozenClientCorrectionSource: frozen.frozenClientCorrectionSource };
+  delete draftPayload.firmaSeguroIdentity;
+  delete draftPayload.firmaSeguroContractNameVersion;
+  const signingSnapshot = correctionRecord(frozen.credit.contratoSnapshot);
+  if (signingSnapshot.firmaSeguroContractNameVersion === 1 && signingSnapshot.firmaSeguroIdentity) {
+    draftPayload.firmaSeguroIdentity = signingSnapshot.firmaSeguroIdentity;
+    draftPayload.firmaSeguroContractNameVersion = 1;
+  }
   const reserved = await reserveDraftDispatch({ id: input.idempotencyKey, draftId: id, actor,
     reason: input.reason, expectedProcessUuid: source.processUuid, sourcePayload: draft.payload,
-    updatedPayload, draftPayload: { ...updatedPayload, firmaSeguroFrozenClientCorrectionSource: frozen.frozenClientCorrectionSource },
+    updatedPayload, draftPayload,
     draftFolio: frozen.credit.folio, frozenCredit: frozen.credit, document, supersedeActive: true });
   return outcome(id, await resume(reserved));
 }

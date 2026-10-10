@@ -89,7 +89,10 @@ test("el paso 2 no exige Veriff y el paso 3 exige Veriff más FirmaSeguro", asyn
     source,
     /const stepIdentityContractReady = stepContratoReady && stepSignatureReady;/
   );
-  assert.match(source, />\s*Identidad con Veriff\s*</);
+  const identityDialog = await readProjectFile("app/dashboard/creditos/veriff-identity-dialog.tsx");
+  assert.match(source, /<VeriffIdentityDialog/);
+  assert.match(identityDialog, /"Identidad aprobada" : "Valida la identidad"/);
+  assert.match(identityDialog, />Veriff</);
   assert.match(
     source,
     /Aprueba primero la identidad con Veriff antes de enviar el contrato a FirmaSeguro/

@@ -100,7 +100,7 @@ test("GET exposes authoritative readiness from complete Veriff evidence without 
   await assert.rejects(lib.saveFirmaSeguroIdentityReview(530, input(), actor), /ya entregó componentes/);
 });
 
-test("GET accepts corroborating partial names but rejects contradictions and separate incomplete names", async () => {
+test("GET uses a complete Veriff pair without name-content vetoes and rejects separate incomplete names", async () => {
   const payload = person => JSON.stringify({ verification: { person: { idNumber: "123456789", ...person }, document: { number: "123456789", type: "ID_CARD", country: "CO" } } });
   const complete = { firstName: "María del Mar", lastName: "De la Peña Muñoz" };
   const cases = [
@@ -108,8 +108,9 @@ test("GET accepts corroborating partial names but rejects contradictions and sep
     [{ lastName: "De la Peña Muñoz" }, complete, true],
     [{ fullName: canonical }, complete, true],
     [complete, { firstName: "María del Mar" }, true],
-    [{ firstName: "María del Mar", fullName: "Otro Nombre" }, complete, false],
-    [complete, { firstName: "Otro Nombre" }, false],
+    [{ firstName: "María del Mar", fullName: "Otro Nombre" }, complete, true],
+    [complete, { firstName: "Otro Nombre" }, true],
+    [{ firstName: "LUISA MARIA", lastName: "ROJAS PEREZ" }, complete, true],
     [{ firstName: "María del Mar" }, { lastName: "De la Peña Muñoz" }, false],
   ];
   for (const [decision, webhook, ready] of cases) {
@@ -120,14 +121,15 @@ test("GET accepts corroborating partial names but rejects contradictions and sep
   }
 });
 
-test("GET reuses wrapped provider names with vowel accents and preserves Ñ, strict CC and the canonical binding", async () => {
+test("GET accepts real Veriff names independently of DataCrédito while preserving strict CC and the canonical binding", async () => {
   const decisionPayload = { verification: { person: { idNumber: "123456789" }, document: { number: "123456789", type: "ID_CARD", country: "CO" } } };
   for (const [person, ready] of [
     [{ firstName: "Maria del Mar", lastName: "De la Peña Muñoz", idNumber: "123456789" }, true],
     [{ firstName: "María del Mar", lastName: "De la Pen\u0303a Mun\u0303oz", idNumber: "123456789" }, true],
-    [{ firstName: "María del Mar", lastName: "De la Pena Muñoz", idNumber: "123456789" }, false],
-    [{ firstName: "Otro", lastName: "Nombre", idNumber: "123456789" }, false],
+    [{ firstName: "María del Mar", lastName: "De la Pena Munoz", idNumber: "123456789" }, true],
+    [{ firstName: "Otro", lastName: "Nombre", idNumber: "123456789" }, true],
     [{ firstName: "María del Mar", lastName: "De la Peña Muñoz", idNumber: "987654321" }, false],
+    [{ firstName: "Maria del Mar", lastName: "De la Pena Munoz", idNumber: "987654321" }, false],
   ]) {
     await reset();await db.query('UPDATE "VeriffIdentityValidation" SET "decisionPayload"=$1::jsonb', [JSON.stringify({ decisionPayload, personPayload: { person } })]);
     const detail = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
@@ -153,20 +155,32 @@ test("a different CC in a flat person wrapper blocks both readiness and authoriz
   }
 });
 
-test("GET distinguishes incomplete Veriff components from contradictory evidence without changing manual review rules", async () => {
+test("GET distinguishes incomplete components from complete Veriff names without changing manual review rules", async () => {
   await reset();
   await db.query('UPDATE "VeriffIdentityValidation" SET "decisionPayload"=jsonb_set("decisionPayload",\'{verification,person}\',$1::jsonb)', [JSON.stringify({ firstName: "María del Mar", idNumber: "123456789" })]);
   const partial = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
   assert.equal(partial.signingReady, false);assert.equal(partial.eligible, false);assert.match(partial.reason, /componentes parciales/);assert.doesNotMatch(partial.reason, /contradictori/);
   await reset();
   await db.query('UPDATE "VeriffIdentityValidation" SET "webhookPayload"=$1::jsonb', [JSON.stringify({ person: { firstName: "Otro", lastName: "Nombre", idNumber: "123456789" } })]);
-  const conflict = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
-  assert.equal(conflict.signingReady, false);assert.equal(conflict.eligible, false);assert.match(conflict.reason, /no coinciden/);
+  const ready = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
+  assert.equal(ready.signingReady, true);assert.equal(ready.signingSource, "VERIFF");assert.equal(ready.eligible, false);assert.equal(ready.canonicalFullName, canonical);
   await reset();
   await db.query('UPDATE "VeriffIdentityValidation" SET "webhookPayload"=$1::jsonb', [JSON.stringify({ person: { fullName: "Maria del Mar De la Peña Muñoz", idNumber: "123456789" } })]);
   const fullOnly = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
   assert.equal(fullOnly.signingReady, false);assert.equal(fullOnly.eligible, true);assert.equal(fullOnly.canSave, true);
   await assert.rejects(lib.saveFirmaSeguroIdentityReview(530, input({ firstNames: "Maria del Mar" }), actor), /FirmaSeguro requiere/);
+});
+
+test("GET reports Veriff readiness for structured DataCrédito names without broadening manual completion", async () => {
+  await reset();effective = { ...original, nameMode: undefined, names: "María del Mar", firstSurname: "De la Peña", secondSurname: "Muñoz" };
+  await db.query('UPDATE "VeriffIdentityValidation" SET "webhookPayload"=$1::jsonb', [JSON.stringify({ verification: { person: {
+    firstName: "LUISA MARIA", lastName: "ROJAS PEREZ", idNumber: "123456789",
+  } } })]);
+  const detail = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
+  assert.equal(detail.signingReady, true);assert.equal(detail.signingSource, "VERIFF");assert.equal(detail.canonicalFullName, canonical);
+  assert.equal(detail.eligible, false);assert.equal(detail.canSave, false);
+  await assert.rejects(lib.saveFirmaSeguroIdentityReview(530, input(), actor), /sólo completa/);
+  assert.equal((await db.query('SELECT * FROM "FirmaSeguroIdentityReview"')).rows.length, 0);
 });
 
 test("GET fails closed for stale or untrusted approval, changed CC and expired DataCrédito assessment", async () => {
@@ -190,6 +204,7 @@ test("segundo apellido vacío es válido sin dividir nombre completo ni eliminar
   await lib.saveFirmaSeguroIdentityReview(530, values, actor);const metadata = await lib.getStoredFirmaSeguroIdentityReview(binding);
   assert.equal(metadata.firstLastName, "De la Peña Muñoz");assert.equal(metadata.secondLastName, null);
   await reset();await assert.rejects(lib.saveFirmaSeguroIdentityReview(530, input({ firstNames: "Maria del Mar" }), actor));
+  await assert.rejects(lib.saveFirmaSeguroIdentityReview(530, input({ firstSurname: "De la Pena", secondSurname: "Munoz" }), actor));
   assert.equal((await db.query('SELECT * FROM "FirmaSeguroIdentityReview"')).rows.length, 0);
 });
 

@@ -1095,6 +1095,9 @@ export function extractVeriffIdentityData(payload: unknown, options: { inferFull
 export function extractVeriffIdentityDataEvidence(...payloads: unknown[]): VeriffIdentityData[] {
   const identities: VeriffIdentityData[] = [];
   const visited = new Set<object>();
+  // A final decision is authoritative; its person endpoint and then the webhook
+  // may supply a complete pair when the decision contains only document data.
+  const branchOrder = ["decisionpayload", "verification", "data", "person", "persondata", "persons", "personpayload", "webhookpayload"];
   const visit = (value: unknown, personRole = false, depth = 0): void => {
     if (depth > 8) return;
     if (Array.isArray(value)) {
@@ -1112,7 +1115,9 @@ export function extractVeriffIdentityDataEvidence(...payloads: unknown[]): Verif
     }
     // These are provider envelopes or the exact wrappers persisted by our
     // refresh route. Request/create branches are never signing evidence.
-    for (const [key, child] of Object.entries(source)) {
+    const children = Object.entries(source).sort(([left], [right]) =>
+      branchOrder.indexOf(normalizeVeriffFieldKey(left)) - branchOrder.indexOf(normalizeVeriffFieldKey(right)));
+    for (const [key, child] of children) {
       const normalizedKey = normalizeVeriffFieldKey(key);
       if (["person", "persondata", "persons", "personpayload"].includes(normalizedKey)) {
         visit(child, true, depth + 1);

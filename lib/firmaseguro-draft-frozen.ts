@@ -152,6 +152,9 @@ export function buildFrozenDraftCorrection(input: {
     contratoSnapshot: {
       borradorId: input.draft.id,
       origen: "BORRADOR_FIRMASEGURO_CORREGIDO",
+      ...(!input.nameCorrection && previous.firmaSeguroContractNameVersion === 1
+        ? { firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: previous.firmaSeguroIdentity }
+        : {}),
       financiero: { calculoVersion: terms.calculoVersion, cuotaPactada: cuota,
         cuotaTotalExacta: money(terms.cuotaTotalExacta), cuotaComercial: money(terms.cuotaComercial),
         descuentoRedondeo: commercial ? money(terms.descuentoRedondeo || "") : 0 },
@@ -265,6 +268,9 @@ export function buildFrozenPendingContactRedirect(input: {
     contratoSnapshot: {
       borradorId: input.draft.id,
       origen: "BORRADOR_FIRMASEGURO_REDIRECCION_CONTACTO",
+      ...(previous.firmaSeguroContractNameVersion === 1
+        ? { firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: previous.firmaSeguroIdentity }
+        : {}),
       financiero: {
         calculoVersion: terms.calculoVersion,
         cuotaPactada: cuota,

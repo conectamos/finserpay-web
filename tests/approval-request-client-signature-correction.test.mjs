@@ -136,6 +136,30 @@ for (const signed of [false, true]) {
   });
 }
 
+test("corregir sólo contacto conserva los nombres Veriff del proceso; los claims del borrador no los sustituyen", async () => {
+  const f = fixture({ signed: true });
+  const metadata = { source: "VERIFF", validationId: 42, documentNumber: f.original.clienteDocumento,
+    canonicalFullName: f.original.clienteNombre, firstName: "NOMBRES VERIFF", firstLastName: "APELLIDOS VERIFF",
+    secondName: null, secondLastName: null };
+  f.source.draftPayload.firmaSeguroContractNameVersion = 1;
+  f.source.draftPayload.firmaSeguroIdentity = metadata;
+  f.state.draft.payload.firmaSeguroContractNameVersion = 1;
+  f.state.draft.payload.firmaSeguroIdentity = { ...metadata, firstName: "CLAIM NO CONFIABLE" };
+  const input = { ...f.input, values: { ...f.input.values,
+    clientePrimerNombre: f.original.clientePrimerNombre,
+    clienteSegundoApellido: f.original.clienteSegundoApellido } };
+  await f.run(input);
+  assert.equal(f.reserved.draftPayload.firmaSeguroContractNameVersion, 1);
+  assert.deepEqual(f.reserved.draftPayload.firmaSeguroIdentity, metadata);
+  assert.equal(f.calls.send, 1);
+  const renamed = fixture({ signed: true });
+  renamed.state.draft.payload.firmaSeguroContractNameVersion = 1;
+  renamed.state.draft.payload.firmaSeguroIdentity = metadata;
+  await renamed.run();
+  assert.equal(renamed.reserved.draftPayload.firmaSeguroContractNameVersion, undefined);
+  assert.equal(renamed.reserved.draftPayload.firmaSeguroIdentity, undefined);
+});
+
 test("reintentar la misma confirmación entrega el resultado guardado y no vuelve a generar PDF ni enviar", async () => {
   const f = fixture({ signed: true }); const first = await f.run();
   const counters = { ...f.calls };

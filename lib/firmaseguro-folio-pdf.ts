@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
+import { projectFirmaSeguroContractIdentity } from "@/lib/firmaseguro-contract-identity";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
 import type { CreditForFirmaSeguroPdf } from "@/lib/firmaseguro-credit-pdf";
 
@@ -534,6 +535,7 @@ function drawFooters(
 export async function buildFirmaSeguroCreditPdf(
   credito: CreditForFirmaSeguroPdf
 ) {
+  credito = projectFirmaSeguroContractIdentity(credito);
   const fonts = getPdfFonts();
   const doc = new PDFDocument({
     size: "A4",

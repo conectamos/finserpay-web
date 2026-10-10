@@ -6,8 +6,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { createJiti } from "jiti";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
+const { readFirmaSeguroContractIdentity } = await jiti.import("../lib/firmaseguro-contract-identity.ts");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
 
 function sourceBetween(source, start, end) {
@@ -193,6 +196,7 @@ test("el preparador admite WhatsApp histórico sin correo y falla cerrado si cor
     stripTypeScriptTypes(`${identity}\n${delivery}\n${preparation}`) + "\nprepareFirmaSeguroReissue;",
     {
       Buffer,
+      readFirmaSeguroContractIdentity,
       process: { env: { FIRMASEGURO_DELIVERY_CHANNEL: "whatsapp" } },
       isFirmaSeguroConfigured: () => true,
       buildFirmaSeguroCallbackUrl: () => "https://finserpay.test/api/firmaseguro/callback",

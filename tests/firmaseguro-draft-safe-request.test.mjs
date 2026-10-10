@@ -15,6 +15,10 @@ const { createFinancingTermsSeal, readFinancingTermsSeal, resealFinancingTermsId
 const { buildFrozenDraftCorrection, buildFrozenPendingContactRedirect,
   readFrozenCorrectionDateSource, verifiesFrozenCorrectionDateSource } =
   await jiti.import("../lib/firmaseguro-draft-frozen.ts");
+const { readFirmaSeguroFullNameIdentity } =
+  await jiti.import("../lib/datacredito/firmaseguro-identity.ts");
+const { projectFirmaSeguroContractIdentity } =
+  await jiti.import("../lib/firmaseguro-contract-identity.ts");
 
 function signedImeiCorrectionCase(firstPaymentDate, sealedDate = firstPaymentDate) {
   const amortizacion = calculateFrenchAmortization({
@@ -68,6 +72,75 @@ function signedImeiCorrectionCase(firstPaymentDate, sealedDate = firstPaymentDat
       signedDocumentBase64: Buffer.from("%PDF-1.7\ncontrato firmado").toString("base64") },
   };
 }
+
+function signingMetadata() {
+  return { source: "VERIFF", validationId: 42, documentNumber: "1234567890",
+    canonicalFullName: "Cliente Prueba", firstName: "Nombre real de Veriff",
+    firstLastName: "Apellido original", secondName: null, secondLastName: null };
+}
+
+test("IMEI y contacto conservan la identidad Veriff del contrato versionado sin alterar la identidad ni los términos sellados", () => {
+  for (const action of ["IMEI", "CONTACTO"]) {
+    const fixture = signedImeiCorrectionCase("2026-11-02");
+    const metadata = signingMetadata();
+    fixture.source.draftPayload = { ...fixture.source.draftPayload,
+      firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: metadata };
+    if (action === "CONTACTO") {
+      fixture.source.signedDocumentBase64 = null;
+      fixture.source.completedAt = null;
+      fixture.source.createdAt = new Date("2026-10-08T20:00:00Z");
+      fixture.source.draftFolio = fixture.seal.snapshot.folio;
+      fixture.draft.payload = { ...fixture.source.draftPayload };
+    }
+    const before = JSON.stringify(fixture);
+    const result = action === "IMEI"
+      ? buildFrozenDraftCorrection({ ...fixture, folio: "FP-REEMITIDO", imei: "543210987654321" })
+      : buildFrozenPendingContactRedirect({ ...fixture, phone: "3119876543", email: "nuevo@example.com" });
+    assert.equal(result.credit.clienteNombre, "CLIENTE PRUEBA");
+    assert.equal(result.credit.contratoSnapshot.firmaSeguroContractNameVersion, 1);
+    assert.deepEqual(result.credit.contratoSnapshot.firmaSeguroIdentity, metadata);
+    const signer = readFirmaSeguroFullNameIdentity(result.credit.contratoSnapshot.firmaSeguroIdentity,
+      { fullName: metadata.canonicalFullName, documentNumber: result.credit.clienteDocumento });
+    assert.equal(signer.firstName, metadata.firstName);
+    assert.equal(signer.firstLastName, metadata.firstLastName);
+    assert.equal(signer.canonicalFullName, metadata.canonicalFullName);
+    assert.equal(projectFirmaSeguroContractIdentity(result.credit).clienteNombre,
+      `${metadata.firstName} ${metadata.firstLastName}`);
+    for (const field of ["valorVenta", "cuotaInicial", "numeroCuotas", "cuotaPactada", "totalPagar", "fechaPrimerPago"]) {
+      assert.equal(result.seal.snapshot[field], fixture.seal.snapshot[field], `${action}: ${field}`);
+    }
+    assert.equal(JSON.stringify(fixture), before, "la fuente del contrato permanece intacta");
+  }
+});
+
+test("los contratos legacy no incorporan la identidad Veriff sin el marcador versionado del proceso", () => {
+  for (const marker of [undefined, 0, "1"]) {
+    const fixture = signedImeiCorrectionCase("2026-11-02");
+    fixture.source.draftPayload.firmaSeguroIdentity = signingMetadata();
+    fixture.source.draftPayload.firmaSeguroContractNameVersion = marker;
+    const result = buildFrozenDraftCorrection({ ...fixture, folio: "FP-LEGACY", imei: "543210987654321" });
+    assert.equal(Object.hasOwn(result.credit.contratoSnapshot, "firmaSeguroContractNameVersion"), false);
+    assert.equal(Object.hasOwn(result.credit.contratoSnapshot, "firmaSeguroIdentity"), false);
+  }
+});
+
+test("una corrección nominal auditada no reutiliza los nombres Veriff del contrato anterior", () => {
+  const fixture = signedImeiCorrectionCase("2026-11-02");
+  fixture.source.draftPayload = { ...fixture.source.draftPayload,
+    firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: signingMetadata() };
+  fixture.draft.payload = { ...fixture.draft.payload,
+    clienteNombre: "CLIENTE ACTUALIZADO PRUEBA", clientePrimerNombre: "CLIENTE ACTUALIZADO" };
+  const nameCorrection = { draftId: fixture.draft.id,
+    previousProcessUuid: fixture.source.processUuid, sourceSealChecksum: fixture.seal.checksum,
+    previousName: "CLIENTE PRUEBA", newName: "CLIENTE ACTUALIZADO PRUEBA",
+    firstNames: "CLIENTE ACTUALIZADO", firstSurname: "PRUEBA", secondSurname: "" };
+  const result = buildFrozenDraftCorrection({ ...fixture, nameCorrection,
+    folio: "FP-NOMBRE-CORREGIDO", imei: "543210987654321" });
+  assert.equal(result.credit.clienteNombre, nameCorrection.newName);
+  assert.equal(Object.hasOwn(result.credit.contratoSnapshot, "firmaSeguroContractNameVersion"), false);
+  assert.equal(Object.hasOwn(result.credit.contratoSnapshot, "firmaSeguroIdentity"), false);
+  assert.equal(fixture.source.draftPayload.firmaSeguroIdentity.firstName, "Nombre real de Veriff");
+});
 
 test("la reemisión por IMEI conserva la fecha firmada aunque se envíe otro día", () => {
   const { draft, source, seal } = signedImeiCorrectionCase("2024-10-17");

@@ -6010,13 +6010,14 @@ export default function CreditFactoryConsole({
   const firmaSeguroProcessSent =
     !firmaSeguroRequiresFirstPaymentDateReissue &&
     (firmaSeguroProcessUiState === "waiting" || firmaSeguroProcessSigned);
+  const firmaSeguroRequiresIdentityReadiness = Boolean(dataCreditoApproval || dataCreditoAssessmentId);
   const firmaSeguroIdentityReadiness = useFirmaSeguroIdentityReadiness({
     draftId, validationId: veriffValidation?.id || null, assessmentId: dataCreditoAssessmentId,
     fullName: getDataCreditoClientDisplayName(dataCreditoApproval), documentNumber: clienteDocumento,
-    enabled: dataCreditoFullNameOnly && identitySignatureManagementReady && wizardStep === 4 &&
+    enabled: firmaSeguroRequiresIdentityReadiness && identitySignatureManagementReady && wizardStep === 4 &&
       !firmaSeguroProcessSent && !draftResumeHydrating && !draftResumeLoadFailed,
   });
-  const firmaSeguroSigningIdentityReady = !dataCreditoFullNameOnly || firmaSeguroProcessSent ||
+  const firmaSeguroSigningIdentityReady = !firmaSeguroRequiresIdentityReadiness || firmaSeguroProcessSent ||
     firmaSeguroIdentityReadiness.status === "ready";
   const firmaSeguroProcessIssue = firmaSeguroProcessFailed
     ? formatFirmaSeguroProcessIssue(firmaSeguroDraftProcess)
@@ -16695,9 +16696,9 @@ export default function CreditFactoryConsole({
                             setNotice({ text: message, tone: "emerald" });
                             firmaSeguroIdentityReadiness.retry();
                           }} />
-                      ) : dataCreditoFullNameOnly && !firmaSeguroSigningIdentityReady ? (
+                      ) : firmaSeguroRequiresIdentityReadiness && !firmaSeguroSigningIdentityReady ? (
                         <div className="fp-step3-firma-message is-pending" role="status">
-                          <p>{firmaSeguroIdentityReadiness.message || "Comprobando los nombres y apellidos para firma…"}</p>
+                          <p>{firmaSeguroIdentityReadiness.message || "Comprobando la identidad verificada para firma…"}</p>
                           {firmaSeguroIdentityReadiness.status === "error" || firmaSeguroIdentityReadiness.status === "blocked" ? (
                             <Button type="button" variant="secondary" onClick={firmaSeguroIdentityReadiness.retry}>Reintentar comprobación</Button>
                           ) : null}

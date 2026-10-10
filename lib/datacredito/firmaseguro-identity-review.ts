@@ -83,7 +83,7 @@ async function context(db: Database, draft: Draft, mutation = false, manualRevie
   if (!assessmentId || text(payload.dataCreditoAssessmentId) !== assessmentId) fail("FIRMASEGURO_REVIEW_ASSESSMENT_CHANGED", "La consulta vinculada cambió; actualiza la solicitud.");
   const scope = { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId };
   const identity = await enforceDataCreditoCustomerIdentity(payload, scope, false);
-  if (!identity || identity.effective.nameMode !== "FULL_NAME_ONLY" || !identity.effective.fullName) {
+  if (!identity?.effective.fullName || (manualReview && identity.effective.nameMode !== "FULL_NAME_ONLY")) {
     throw new FirmaSeguroIdentityReviewError("FIRMASEGURO_REVIEW_NOT_APPLICABLE", "Esta revisión sólo completa los componentes de un nombre completo de DataCrédito.");
   }
   const documentNumber = text(draft.clienteDocumento).replace(/\D/g, "");
@@ -156,8 +156,9 @@ export async function getFirmaSeguroIdentityReviewDetail(draftId: number, actor:
       if (!(error instanceof FirmaSeguroFullNameIdentityError)) throw error;
       providerFailure = error;
     }
-    let eligible = true;let providerReason: string | null = null;
-    try { assertManualReviewEvidence(ctx.providerIdentities, ctx.canonicalFullName); }
+    let eligible = ctx.identity.effective.nameMode === "FULL_NAME_ONLY";
+    let providerReason: string | null = eligible ? null : "Esta identidad no requiere completar componentes mediante revisión manual.";
+    try { if (eligible) assertManualReviewEvidence(ctx.providerIdentities, ctx.canonicalFullName); }
     catch (error) {
       if (!(error instanceof FirmaSeguroIdentityReviewError)) throw error;
       eligible = false;providerReason = error.message;
@@ -173,7 +174,6 @@ export async function getFirmaSeguroIdentityReviewDetail(draftId: number, actor:
       providerComponents: { names: ctx.identity.effective.names, firstSurname: ctx.identity.effective.firstSurname, secondSurname: ctx.identity.effective.secondSurname },
       lockedFirstSurname: review?.firstSurname || ctx.identity.effective.firstSurname || "", review: publicReview(current),
       reason: providerReady ? "Veriff ya entregó los componentes válidos del firmante; no requieren revisión manual."
-        : providerFailure?.reason === "name-conflict" ? "Los nombres o apellidos de Veriff no coinciden con la identidad de la consulta o entre sus respuestas. Esta revisión no reemplaza esa evidencia."
         : providerFailure?.reason === "invalid-components" ? "Los componentes entregados por Veriff no tienen un formato válido para preparar la firma. Esta revisión no los reemplaza."
         : providerReason || (current ? "Los componentes ya quedaron registrados y no pueden reemplazarse." : reason) };
   } catch (error) {

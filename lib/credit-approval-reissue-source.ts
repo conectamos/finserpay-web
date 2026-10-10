@@ -73,6 +73,9 @@ export function frozenReissueCredit(credit: Record<string, unknown>, process: {
   if (!Number.isFinite(date.getTime())) throw new Error("FROZEN_TERMS_INCOMPLETE");
   const frozen: CreditForFirmaSeguroPdf = {
     folio: terms.folio, clienteTipoDocumento: terms.tipoDocumento, clienteNombre: terms.clienteNombre,
+    ...(draft.firmaSeguroContractNameVersion === 1 ? { contratoSnapshot: {
+      firmaSeguroContractNameVersion: 1, firmaSeguroIdentity: draft.firmaSeguroIdentity,
+    } } : {}),
     clienteDocumento: terms.documento, clienteTelefono: terms.clienteTelefono,
     clienteCorreo: terms.clienteCorreo, clienteDireccion: terms.clienteDireccion,
     referenciaEquipo: terms.referenciaEquipo, equipoMarca: terms.equipoMarca, equipoModelo: terms.equipoModelo,
