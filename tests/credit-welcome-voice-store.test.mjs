@@ -348,7 +348,10 @@ test("successful postcall is idempotent and markAccepted cannot overwrite a fast
   assert.equal((await f.result(eventId)).unchanged, false);
   assert.equal((await f.result(eventId)).unchanged, true);
   await f.store.markCreditWelcomeVoiceDispatchAccepted(eventId, "call-test-1");
-  const row = (await f.rows())[0];
+  const rows = await f.rows();
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.equal(row.id, eventId);
   assert.equal(row.status, "COMPLETED");
   assert.ok(row.identityVerifiedAt);
   assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
@@ -365,8 +368,33 @@ test("a callback cannot manufacture backend identity verification and list omits
   assert.equal(record.identityVerified, false);
   assert.equal(record.audioStorage, "DAPTA_PRIVATE_LINK");
   assert.equal(record.doubts, "Preguntó por los medios de pago.");
+  assert.equal(record.destinationPhone, "573000000001");
+  assert.equal(record.communicationOutcome, null);
+  assert.equal(record.disconnectionReason, null);
   for (const field of ["snapshot", "document", "phone", "transcript", "identityAttempts"]) assert.equal(field in record, false);
   assert.equal((await f.store.listCreditWelcomeVoiceCallsForCredit(2)).length, 0);
+});
+
+test("complete scoped history preserves all attempts newest first without writes or inferred identity", async t => {
+  const f = await fixture(t, { credits: [sample(1), sample(2)] });
+  for (let index = 0; index < 12; index++) {
+    const id = `25ea074e-a7e5-4f2c-8c8e-${String(index).padStart(12, "0")}`;
+    await f.db.query(`INSERT INTO "CreditWelcomeVoiceEvent"
+      ("id","creditoId","source","attemptNumber","status","snapshot","createdAt","communicationOutcome","disconnectionReason")
+      VALUES ($1::uuid,1,'OPERATOR_REQUEST',$2,'COMPLETED',$3::jsonb,$4,'NO_ANSWER','voicemail_reached')`,
+    [id, index, JSON.stringify({ phone: "573000000001" }), new Date(Date.UTC(2026, 9, 8, 15, index)).toISOString()]);
+  }
+  const other = await f.enqueue(2);
+  const before = await f.rows();
+  const history = await f.store.listCreditWelcomeVoiceCallsForCredit(1);
+  assert.equal(history.length, 12);
+  assert.ok(history.every(call => call.creditId === 1 && call.identityVerified === false));
+  assert.equal(history[0].createdAt, "2026-10-08T15:11:00.000Z");
+  assert.equal(history.at(-1).createdAt, "2026-10-08T15:00:00.000Z");
+  assert.equal(history[0].communicationOutcome, "NO_ANSWER");
+  assert.equal(history[0].disconnectionReason, "voicemail_reached");
+  assert.equal(history.some(call => call.id === other.eventId), false);
+  assert.deepEqual(await f.rows(), before);
 });
 
 test("untrusted recording URLs, credit/event mismatches and duplicate provider IDs are rejected", async t => {

@@ -52,6 +52,7 @@ export type VoiceCallRecord = {
   providerCallId: string | null; createdAt: string; dispatchedAt: string | null; completedAt: string | null;
   durationSeconds: number | null; identityVerified: boolean; summary: string | null; doubts: string | null;
   recordingUrl: string | null; audioStorage: "DAPTA_PRIVATE_LINK" | "UNAVAILABLE"; resultCode: string | null;
+  destinationPhone: string | null; communicationOutcome: string | null; disconnectionReason: string | null;
 };
 export class CreditWelcomeVoiceStoreError extends Error {
   constructor(public code: string, message: string, public status = 409) { super(message); }
@@ -1004,14 +1005,19 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (!validCreditId(creditId)) throw new CreditWelcomeVoiceStoreError("INVALID_CREDIT", "Crédito inválido.", 400);
     const rows = await database.$queryRawUnsafe<Array<Omit<VoiceCallRecord, "creditId" | "identityVerified" | "audioStorage"> & {
       creditoId: number; identityVerifiedAt: Date | string | null;
-    }>>(`SELECT "id"::text,"creditoId","source","status","providerCallId","createdAt","dispatchedAt","completedAt", "durationSeconds",
-      "identityVerifiedAt","summary","doubts","recordingUrl","resultCode" FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 ORDER BY "createdAt" DESC,"id" DESC`, creditId);
+    }>>(`SELECT e."id"::text,e."creditoId",e."source",e."status",e."providerCallId",e."createdAt",e."dispatchedAt",e."completedAt",e."durationSeconds",
+      e."identityVerifiedAt",e."summary",e."doubts",e."recordingUrl",e."resultCode",e."communicationOutcome",e."disconnectionReason",
+      COALESCE(r."destinationPhone",e."snapshot"->>'phone') AS "destinationPhone"
+      FROM "CreditWelcomeVoiceEvent" e LEFT JOIN "CreditWelcomeVoiceOperatorRequest" r ON r."eventId"=e."id"
+      WHERE e."creditoId"=$1 ORDER BY e."createdAt" DESC,e."id" DESC`, creditId);
     const iso = (value: Date | string | null) => value ? new Date(value).toISOString() : null;
     return rows.map(row => { const recordingUrl = row.recordingUrl ? safeDaptaWelcomeVoiceUrl(row.recordingUrl) : null;
       return { id: row.id, creditId: row.creditoId, source: row.source, status: row.status, providerCallId: row.providerCallId,
         createdAt: iso(row.createdAt)!, dispatchedAt: iso(row.dispatchedAt), completedAt: iso(row.completedAt),
         durationSeconds: row.durationSeconds, identityVerified: Boolean(row.identityVerifiedAt), summary: row.summary, doubts: row.doubts,
-        recordingUrl, audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: row.resultCode };
+        recordingUrl, audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: row.resultCode,
+        destinationPhone: normalizeColombianMobile(row.destinationPhone), communicationOutcome: row.communicationOutcome,
+        disconnectionReason: row.disconnectionReason };
     });
   }
   return { enqueueCreditWelcomeVoice, claimPendingCreditWelcomeVoice, prepareCreditWelcomeVoiceControlledTest, prepareCreditWelcomeVoiceOperatorCall,

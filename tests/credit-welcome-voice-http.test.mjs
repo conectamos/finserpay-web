@@ -438,7 +438,7 @@ function readFixture({ actor = user(), seller = null, authorized = true, call = 
   const GET = http.createCreditWelcomeVoiceReadHandler({ getUser: async () => actor,
     getSeller: async value => { calls.seller.push(value); return seller; },
     findCredit: async (id, scope) => { calls.find.push({ id, scope: plain(scope) }); return authorized ? { id } : null; },
-    listCalls: async id => { calls.list.push(id); if (error) throw error; return [call]; }, safeUrl: core.safeDaptaWelcomeVoiceUrl });
+    listCalls: async id => { calls.list.push(id); if (error) throw error; return Array.isArray(call) ? call : [call]; }, safeUrl: core.safeDaptaWelcomeVoiceUrl });
   const read = id => GET(new Request(`https://finser.test/api/creditos/${id}/bienvenida-voz`), { params: Promise.resolve({ id }) });
   return { GET, read, calls };
 }
@@ -478,10 +478,33 @@ test("credit result reads reject invalid ids, suppress raw PII/token/transcript 
   const body = await response.json();
   assert.equal(body.items[0].identityVerified, false); assert.equal(body.items[0].recordingUrl, null);
   assert.equal(body.items[0].audioStorage, "UNAVAILABLE");
+  assert.equal(body.total, 1);
   for (const key of ["transcript", "snapshot", "event_token", "document", "phone"]) assert.equal(key in body.items[0], false);
   const failing = readFixture({ error: new Error("private customer data database") });
   const failed = await failing.read("72"); assert.equal(failed.status, 503);
   assert.doesNotMatch(await failed.text(), /private|customer|database/);
+});
+
+test("history reads expose real scoped count and safe per-attempt destination/outcome without opening calls", async () => {
+  const records = Array.from({ length: 12 }, (_, index) => ({ ...callView(), id: `attempt-${index}`,
+    destinationPhone: "573000000002", communicationOutcome: "NO_ANSWER", disconnectionReason: "voicemail_reached" }));
+  records.push({ ...callView(), creditId: 73, destinationPhone: "573000000003", summary: "another credit" });
+  const f = readFixture({ call: records });
+  const response = await f.read("72");
+  const body = await response.json();
+  assert.equal(response.status, 200); assertPrivate(response);
+  assert.equal(body.total, 12); assert.equal(body.items.length, 12);
+  assert.ok(body.items.every(call => call.creditId === 72 && call.destinationPhone === "573000000002"));
+  assert.equal(body.items[0].communicationOutcome, "NO_ANSWER");
+  assert.equal(body.items[0].disconnectionReason, "voicemail_reached");
+  assert.equal(JSON.stringify(body).includes("another credit"), false);
+  assert.deepEqual(f.calls.list, [72]);
+  const invalid = readFixture({ call: { ...callView(), destinationPhone: "javascript:secret", communicationOutcome: "invented",
+    disconnectionReason: "private user text" } });
+  const invalidBody = await (await invalid.read("72")).json();
+  assert.equal(invalidBody.items[0].destinationPhone, null);
+  assert.equal(invalidBody.items[0].communicationOutcome, null);
+  assert.equal(invalidBody.items[0].disconnectionReason, null);
 });
 
 test("welcome route wires a scoped lookup, nominal analysts and the manual POST", async () => {

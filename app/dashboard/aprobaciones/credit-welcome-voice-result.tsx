@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { ExternalLink, Headphones, Phone, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, Headphones, History, Phone, RefreshCw, X } from "lucide-react";
 import { Badge, Button, Card, EmptyState, Input, LoadingState } from "@/app/_components/finser-ui";
 import type { WelcomeVoiceCallView } from "@/lib/credit-welcome-voice-http";
 import { normalizeManualVoicePhone } from "@/lib/credit-welcome-voice-phone";
+import { formatWelcomeVoiceCallDate as dateLabel, formatWelcomeVoiceCallDuration as durationLabel,
+  orderedWelcomeVoiceCalls, welcomeVoiceHistoryPage, welcomeVoicePresentation } from "@/lib/credit-welcome-voice-presentation";
+import styles from "./credit-welcome-voice-result.module.css";
 
-const dates = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
 const states: Record<string, string> = {
   PENDING: "Pendiente", DISPATCHING: "Solicitando llamada", ACCEPTED: "Llamada solicitada",
   COMPLETED: "Llamada finalizada", FAILED: "Llamada fallida", UNKNOWN: "Por confirmar",
@@ -18,15 +20,6 @@ const outcomes: Record<string, string> = {
   CALL_COMPLETED: "Finalizada", CALL_FAILED: "Fallo de llamada",
 };
 
-function dateLabel(value: string | null) {
-  const date = value ? new Date(value) : null;
-  return date && Number.isFinite(date.getTime()) ? dates.format(date) : "Sin registro";
-}
-function durationLabel(value: number | null) {
-  if (value === null || !Number.isFinite(value) || value < 0) return "Sin registro";
-  const seconds = Math.round(value);
-  return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
-}
 function privateCallLink(value: string | null) {
   if (!value) return null;
   try {
@@ -34,10 +27,6 @@ function privateCallLink(value: string | null) {
     return url.protocol === "https:" && url.hostname === "app.dapta.ai" && !url.username && !url.password
       && (!url.port || url.port === "443") ? url.href : null;
   } catch { return null; }
-}
-function tone(status: string): "neutral" | "positive" | "warning" | "danger" {
-  return status === "FAILED" ? "danger" : status === "COMPLETED" ? "positive"
-    : ["PENDING", "DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(status) ? "warning" : "neutral";
 }
 
 type ManualCall = { canCall: boolean; phone: string | null; reason?: string };
@@ -47,6 +36,7 @@ type PendingRequest = { creditId: number; requestId: string; phone?: string; eve
 type SavedRequest = { requestId: string; phone?: string };
 type Destination = { creditId: number; other: boolean; value: string };
 type RequestLookup = { requestId: string; found: boolean; eventId?: string; status?: string };
+type VoiceOverlay = { creditId: number; view: "history" | "detail"; page: number; callId?: string; fromHistory?: boolean };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const closedStates = new Set(["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"]);
 function rememberRequest(creditId: number, requestId: string | null, phone?: string) {
@@ -69,9 +59,9 @@ function savedRequest(creditId: number): SavedRequest | null {
   } catch { return null; }
 }
 function requestMessage(status: string) {
-  if (status === "UNKNOWN") return "La solicitud está por confirmar. El estado se actualizará automáticamente; también puedes usar Actualizar.";
-  if (status === "ACCEPTED") return "Dapta aceptó la solicitud. Aún no se confirma que el cliente haya contestado.";
-  if (status === "DISPATCHING" || status === "PENDING") return "La llamada se está solicitando. Su estado aparecerá en este expediente.";
+  if (status === "UNKNOWN") return "Solicitud por confirmar.";
+  if (status === "ACCEPTED") return "Llamada solicitada.";
+  if (status === "DISPATCHING" || status === "PENDING") return "Solicitando la llamada…";
   return `Resultado del intento: ${states[status] || "Por confirmar"}.`;
 }
 
@@ -80,11 +70,17 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   const [revision, setRevision] = useState(0);
   const [request, setRequest] = useState<CallRequest | null>(null);
   const [destination, setDestination] = useState<Destination | null>(null);
+  const [overlay, setOverlay] = useState<VoiceOverlay | null>(null);
   const pendingRequest = useRef<PendingRequest | null>(null);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const phoneFieldId = useId();
-  const current = read?.creditId === creditId && read.revision === revision ? read : null;
-  const items = current?.items || [];
+  const dialogTitleId = useId();
+  const current = read?.creditId === creditId ? read : null;
+  const items = orderedWelcomeVoiceCalls(current?.items || [], creditId);
+  const latestCall = items[0];
+  const activeAttempt = items.some(call => welcomeVoicePresentation(call).active);
   const loading = current === null;
+  const refreshing = loading || current?.revision !== revision;
   const error = current?.error || "";
   const manualCall = current?.manualCall;
   const currentRequest = request?.creditId === creditId ? request : null;
@@ -92,7 +88,11 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   const retainedRequest = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
   const currentDestination = destination?.creditId === creditId ? destination : { creditId, other: false, value: "" };
   const alternatePhone = currentDestination.other ? normalizeManualVoicePhone(currentDestination.value) : null;
-  const destinationLocked = loading || busy || Boolean(retainedRequest) || !manualCall?.canCall;
+  const destinationLocked = refreshing || busy || activeAttempt || Boolean(retainedRequest) || !manualCall?.canCall;
+  const currentOverlay = overlay?.creditId === creditId ? overlay : null;
+  const selectedCall = currentOverlay?.view === "detail" ? items.find(call => call.id === currentOverlay.callId) : null;
+  const history = welcomeVoiceHistoryPage(items, currentOverlay?.page || 1);
+  const dialogOpen = Boolean(currentOverlay);
   useEffect(() => {
     const controller = new AbortController();
     const requestedPending = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
@@ -161,13 +161,43 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
     }
   }, [creditId]);
   useEffect(() => {
-    if (!currentRequest?.pending || busy || loading) return;
-    const timeout = setTimeout(() => setRevision(value => value + 1), 5000);
-    return () => clearTimeout(timeout);
-  }, [creditId, currentRequest?.pending, busy, loading, revision]);
+    if (busy || refreshing) return;
+    const refresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      setRevision(value => value + 1);
+    };
+    const timeout = setTimeout(refresh, 5000);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", refresh);
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", refresh);
+      window.addEventListener("online", refresh);
+    }
+    return () => {
+      clearTimeout(timeout);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", refresh);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", refresh);
+        window.removeEventListener("online", refresh);
+      }
+    };
+  }, [creditId, currentRequest?.pending, busy, refreshing, revision]);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialogOpen || !dialog) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [dialogOpen, creditId]);
 
   async function callNow() {
-    if (!manualCall || loading) return;
+    if (!manualCall || refreshing || error || activeAttempt) return;
     const previous = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
     const retained = previous || savedRequest(creditId);
     if (previous?.busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone ||
@@ -226,26 +256,30 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><Headphones size={20} aria-hidden="true" />Bienvenida por voz</h2>
       <div className="flex flex-wrap items-center gap-2">
-      {manualCall ? <Button disabled={loading || busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone || (currentDestination.other && !alternatePhone)}
+      {manualCall ? <Button disabled={refreshing || Boolean(error) || busy || activeAttempt || currentRequest?.pending || !manualCall.canCall || !manualCall.phone || (currentDestination.other && !alternatePhone)}
         onClick={() => { void callNow(); }} aria-label={currentDestination.other ? "Llamar ahora al número indicado" : "Llamar ahora al celular registrado"}>
         <Phone size={16} aria-hidden="true" />Llamar ahora
       </Button> : null}
-      <Button variant="ghost" disabled={loading || busy} onClick={() => setRevision(value => value + 1)} aria-label="Actualizar resultado de la bienvenida por voz">
-        <RefreshCw size={16} aria-hidden="true" />Actualizar
+      <Button variant="secondary" aria-label={`Ver historial (${items.length})`} disabled={!items.length}
+        onClick={() => setOverlay({ creditId, view: "history", page: 1 })}>
+        <History size={16} aria-hidden="true" />Ver historial ({items.length})
+      </Button>
+      <Button variant="ghost" disabled={refreshing || busy} onClick={() => setRevision(value => value + 1)} aria-label="Actualizar resultado de la bienvenida por voz" title="Actualizar">
+        <RefreshCw size={16} aria-hidden="true" />
       </Button>
       </div>
     </div>
-    {manualCall ? <p className="mt-3 text-sm text-[var(--fp-muted)]">{manualCall.phone ? `Celular registrado: ${manualCall.phone}. ` : ""}{!manualCall.canCall ? manualCall.reason || "No se puede solicitar una nueva llamada en este momento." : "La llamada y su resultado quedarán en este expediente."}</p> : null}
-    {manualCall ? <div className="mt-3 space-y-2">
+    {manualCall ? <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1">
+      {manualCall.phone ? <p className="text-sm text-[var(--fp-muted)]">Celular registrado: {manualCall.phone}</p> : null}
       <label className="inline-flex min-h-10 items-center gap-2 text-sm font-medium">
         <input type="checkbox" className="h-4 w-4 accent-[var(--fp-graphite)]" checked={currentDestination.other}
           disabled={destinationLocked} onChange={event => {
             if (!destinationLocked && pendingRequest.current?.creditId !== creditId) setDestination({ ...currentDestination, other: event.target.checked });
           }} />Llamar a otro número
       </label>
-      {currentDestination.other ? <div className="max-w-sm space-y-2">
+      {currentDestination.other ? <div className="w-full space-y-2">
         <label htmlFor={phoneFieldId} className="block text-sm font-medium">Número para esta llamada</label>
-        <Input id={phoneFieldId} type="tel" inputMode="tel" autoComplete="tel" maxLength={40}
+        <Input id={phoneFieldId} className="max-w-sm" type="tel" inputMode="tel" autoComplete="tel" maxLength={40}
           value={currentDestination.value} disabled={destinationLocked} aria-describedby={`${phoneFieldId}-help`}
           aria-invalid={Boolean(currentDestination.value && !alternatePhone)} onChange={event => {
             if (!destinationLocked && pendingRequest.current?.creditId !== creditId) setDestination({ ...currentDestination, value: event.target.value });
@@ -255,29 +289,80 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
           Se usará únicamente para esta llamada. No cambia el celular registrado del cliente.
         </p>
       </div> : null}
-      {retainedRequest ? <p className="text-sm text-[var(--fp-muted)]">El destino de este intento se conserva hasta que finalice.</p> : null}
     </div> : null}
-    {currentRequest ? <p role="status" aria-live="polite" className={`mt-3 text-sm ${currentRequest.error ? "text-[var(--fp-danger)]" : "text-[var(--fp-muted)]"}`}>{currentRequest.message}</p> : null}
-    <p className="mt-3 text-sm text-[var(--fp-muted)]">El audio permanece en Dapta y se descarga manualmente allí. FINSER PAY guarda el resultado y el enlace; no guarda el archivo de audio.</p>
+    {manualCall && !manualCall.canCall ? <p className="mt-1 text-sm text-[var(--fp-muted)]">{manualCall.reason || "No se puede solicitar una nueva llamada en este momento."}</p> : null}
+    {currentRequest && (busy || currentRequest.error || !latestCall) ? <p role="status" aria-live="polite" className={`mt-3 text-sm ${currentRequest.error ? "text-[var(--fp-danger)]" : "text-[var(--fp-muted)]"}`}>{currentRequest.message}</p> : null}
     {loading ? <div className="mt-4"><LoadingState label="Consultando llamada de bienvenida..." /></div>
       : error ? <p role="alert" className="mt-4 text-sm text-[var(--fp-danger)]">{error}</p>
         : !items.length ? <EmptyState className="mt-3" title="Sin llamada registrada" description="Todavía no hay una bienvenida por voz asociada a este crédito." />
-          : <div className="mt-4 divide-y divide-[var(--fp-border)]">{items.filter(item => item.creditId === creditId).map(call => {
-            const href = privateCallLink(call.recordingUrl);
-            return <article key={call.id} className="min-w-0 space-y-3 py-4 first:pt-0 last:pb-0" aria-label="Resultado de llamada">
-              <div className="flex flex-wrap items-center gap-2"><Badge tone={tone(call.status)}>{states[call.status] || "Por confirmar"}</Badge>
-                {call.resultCode && outcomes[call.resultCode] ? <span className="text-sm font-medium">{outcomes[call.resultCode]}</span> : null}
-              </div>
-              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                <div><dt className="text-[var(--fp-muted)]">Fecha</dt><dd>{dateLabel(call.completedAt || call.dispatchedAt || call.createdAt)}</dd></div>
-                <div><dt className="text-[var(--fp-muted)]">Duración</dt><dd>{durationLabel(call.durationSeconds)}</dd></div>
-                <div className="sm:col-span-2"><dt className="text-[var(--fp-muted)]">Identidad</dt><dd>{call.identityVerified ? "Verificada en FINSER PAY" : "Sin verificación registrada"}</dd></div>
-              </dl>
-              <div><h3 className="text-sm font-semibold">Resumen</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--fp-muted)]">{call.summary || "El resultado de la conversación aún no está disponible."}</p></div>
-              {call.doubts ? <div className="border-l-2 border-[var(--fp-amber)] pl-3"><h3 className="text-sm font-semibold">Dudas y diferencias reportadas</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm">{call.doubts}</p></div> : null}
-              {href ? <div><a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" className="fp-ui-button is-secondary"><ExternalLink size={16} aria-hidden="true" />Abrir llamada en Dapta</a><p className="mt-2 text-sm text-[var(--fp-muted)]">Necesitas acceso al espacio de trabajo de Dapta para consultar la llamada y descargar su grabación.</p></div>
-                : <p className="text-sm text-[var(--fp-muted)]">No hay un enlace privado disponible para consultar la grabación.</p>}
-            </article>;
-          })}</div>}
+          : latestCall ? <article className={styles.latest} aria-label="Último intento de llamada">
+            <div><span className={styles.caption}>Último intento</span><Badge tone={welcomeVoicePresentation(latestCall).tone}>{welcomeVoicePresentation(latestCall).label}</Badge></div>
+            <dl className={styles.latestData}>
+              <div><dt>Destino</dt><dd>{latestCall.destinationPhone || "Sin registro"}</dd></div>
+              <div><dt>Fecha</dt><dd>{dateLabel(latestCall.dispatchedAt || latestCall.createdAt)}</dd></div>
+              {latestCall.durationSeconds !== null ? <div><dt>Duración</dt><dd>{durationLabel(latestCall.durationSeconds)}</dd></div> : null}
+            </dl>
+            <Button variant="secondary" aria-label="Ver detalle del último intento" onClick={() => setOverlay({ creditId, view: "detail", callId: latestCall.id, page: 1 })}>Ver detalle</Button>
+          </article> : null}
+    {currentOverlay ? <dialog ref={dialogRef} className={styles.dialog} aria-labelledby={dialogTitleId}
+      onCancel={event => { event.preventDefault(); setOverlay(null); }}
+      onClick={event => {
+        if (event.target !== event.currentTarget) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) setOverlay(null);
+      }}>
+      <header className={styles.dialogHeader}>
+        <div><h2 id={dialogTitleId}>{currentOverlay.view === "history" ? "Historial de llamadas" : "Detalle del intento"}</h2>
+          {currentOverlay.view === "history" ? <p>{items.length} {items.length === 1 ? "intento" : "intentos"}</p> : null}
+        </div>
+        <Button variant="ghost" aria-label={currentOverlay.view === "history" ? "Cerrar historial de llamadas" : "Cerrar detalle de llamada"} onClick={() => setOverlay(null)}><X size={20} aria-hidden="true" /></Button>
+      </header>
+      {error ? <p role="alert" className="p-6 text-[var(--fp-danger)]">{error}</p>
+        : currentOverlay.view === "history" ? <>
+          <div className={styles.tableScroll}>
+            <table className={styles.table}>
+              <thead><tr><th>Fecha</th><th>Destino</th><th>Resultado</th><th>Duración</th><th><span className="sr-only">Detalle</span></th></tr></thead>
+              <tbody>{history.items.map(call => {
+                const presentation = welcomeVoicePresentation(call);
+                return <tr key={call.id}>
+                  <td>{dateLabel(call.dispatchedAt || call.createdAt)}</td><td>{call.destinationPhone || "Sin registro"}</td>
+                  <td><Badge tone={presentation.tone}>{presentation.label}</Badge></td><td>{durationLabel(call.durationSeconds)}</td>
+                  <td><Button variant="secondary" aria-label={`Ver detalle del intento ${call.id}`} onClick={() => setOverlay({ creditId, view: "detail", callId: call.id, page: history.page, fromHistory: true })}>Ver detalle</Button></td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+          {!items.length ? <EmptyState title="Sin llamadas registradas" /> : null}
+          <footer className={styles.pagination}>
+            <p>Mostrando {history.start}–{history.end} de {history.total} intentos</p>
+            <nav aria-label="Páginas del historial de llamadas">
+              <Button variant="ghost" disabled={history.page === 1} onClick={() => setOverlay({ ...currentOverlay, page: history.page - 1 })}>Anterior</Button>
+              {Array.from({ length: history.pageCount }, (_, index) => index + 1).filter(page => page === 1 || page === history.pageCount || Math.abs(page - history.page) <= 1).map((page, index, pages) => <span key={page} className={styles.pageNumber}>
+                {index > 0 && page - pages[index - 1] > 1 ? <span aria-hidden="true">…</span> : null}
+                <Button variant={page === history.page ? "primary" : "ghost"} aria-current={page === history.page ? "page" : undefined} aria-label={`Página ${page}`} onClick={() => setOverlay({ ...currentOverlay, page })}>{page}</Button>
+              </span>)}
+              <Button variant="ghost" disabled={history.page === history.pageCount} onClick={() => setOverlay({ ...currentOverlay, page: history.page + 1 })}>Siguiente</Button>
+            </nav>
+          </footer>
+        </> : selectedCall ? <div className={styles.detail}>
+          {currentOverlay.fromHistory ? <Button variant="ghost" onClick={() => setOverlay({ creditId, view: "history", page: history.page })}><ArrowLeft size={16} aria-hidden="true" />Volver al historial</Button> : null}
+          <Badge tone={welcomeVoicePresentation(selectedCall).tone}>{welcomeVoicePresentation(selectedCall).label}</Badge>
+          {selectedCall.resultCode && outcomes[selectedCall.resultCode] ? <p className="text-sm font-medium">{outcomes[selectedCall.resultCode]}</p> : null}
+          <dl className={styles.detailData}>
+            <div><dt>Destino</dt><dd>{selectedCall.destinationPhone || "Sin registro"}</dd></div>
+            <div><dt>Fecha</dt><dd>{dateLabel(selectedCall.dispatchedAt || selectedCall.createdAt)}</dd></div>
+            <div><dt>Duración</dt><dd>{durationLabel(selectedCall.durationSeconds)}</dd></div>
+            <div><dt>Identidad</dt><dd>{selectedCall.identityVerified === true ? "Verificada en FINSER PAY" : "Sin verificación registrada"}</dd></div>
+          </dl>
+          <section><h3>Resumen</h3><p className="whitespace-pre-wrap break-words">{selectedCall.summary || "El resultado de la conversación aún no está disponible."}</p></section>
+          {selectedCall.doubts ? <section className={styles.doubts}><h3>Dudas y diferencias reportadas</h3><p className="whitespace-pre-wrap break-words">{selectedCall.doubts}</p></section> : null}
+          <section><h3>Grabación</h3>
+            {privateCallLink(selectedCall.recordingUrl) ? <>
+              <a href={privateCallLink(selectedCall.recordingUrl)!} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" className="fp-ui-button is-secondary"><ExternalLink size={16} aria-hidden="true" />Abrir llamada en Dapta</a>
+              <p className="text-sm">Necesitas acceso al espacio de trabajo de Dapta para consultar la llamada y descargar su grabación.</p>
+            </> : <p>No hay un enlace privado disponible para consultar la grabación.</p>}
+          </section>
+        </div> : <EmptyState title="Intento no disponible" description="Actualiza el historial para consultarlo." />}
+    </dialog> : null}
   </Card>;
 }

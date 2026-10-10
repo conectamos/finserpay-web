@@ -281,6 +281,7 @@ export type WelcomeVoiceCallView = {
   createdAt: string; dispatchedAt: string | null; completedAt: string | null; durationSeconds: number | null;
   identityVerified: boolean; summary: string | null; doubts: string | null; recordingUrl: string | null;
   audioStorage: "DAPTA_PRIVATE_LINK" | "UNAVAILABLE"; resultCode: string | null;
+  destinationPhone?: string | null; communicationOutcome?: string | null; disconnectionReason?: string | null;
 };
 export type WelcomeVoiceManualCallView = { canCall: boolean; phone: string | null; reason?: string };
 export type WelcomeVoiceManualRequestView = { requestId: string; found: boolean; eventId?: string; status?: string };
@@ -398,14 +399,18 @@ export function createCreditWelcomeVoiceReadHandler(dependencies: {
       if (requestIds.length && !admin && !analyst) {
         return response({ ok: false, code: "FORBIDDEN", error: "No tienes permiso para consultar esta solicitud de llamada." }, 403);
       }
-      const items = (await dependencies.listCalls(credit.id)).map(call => {
+      const items = (await dependencies.listCalls(credit.id)).filter(call => call.creditId === credit.id).map(call => {
         const recordingUrl = dependencies.safeUrl(call.recordingUrl);
         // Explicit projection prevents stored transcripts, snapshots and tokens from reaching the browser.
         return { id: call.id, creditId: call.creditId, status: call.status, source: call.source,
           providerCallId: call.providerCallId, createdAt: call.createdAt, dispatchedAt: call.dispatchedAt,
           completedAt: call.completedAt, durationSeconds: call.durationSeconds, identityVerified: call.identityVerified === true,
           summary: call.summary, doubts: call.doubts, recordingUrl,
-          audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: call.resultCode };
+          audioStorage: recordingUrl ? "DAPTA_PRIVATE_LINK" : "UNAVAILABLE", resultCode: call.resultCode,
+          destinationPhone: normalizeManualVoicePhone(call.destinationPhone),
+          communicationOutcome: ["HUMAN_CONTACT", "NO_ANSWER", "OPT_OUT", "UNCERTAIN"].includes(call.communicationOutcome ?? "")
+            ? call.communicationOutcome : null,
+          disconnectionReason: callbackDisconnectionReason(call.disconnectionReason) };
       });
       const manualCall = dependencies.getManualCall && (admin || analyst) ? await dependencies.getManualCall(credit.id) : undefined;
       let request: WelcomeVoiceManualRequestView | undefined;
@@ -414,7 +419,7 @@ export function createCreditWelcomeVoiceReadHandler(dependencies: {
         const linked = await dependencies.getManualRequest({ creditId: credit.id, requestId, actorId: user.id });
         request = linked ? { requestId, found: true, eventId: linked.eventId, status: linked.status } : { requestId, found: false };
       }
-      return response({ ok: true, items, ...(manualCall ? { manualCall } : {}), ...(request ? { request } : {}) });
+      return response({ ok: true, items, total: items.length, ...(manualCall ? { manualCall } : {}), ...(request ? { request } : {}) });
     } catch (error) { return requestError(error); }
   };
 }

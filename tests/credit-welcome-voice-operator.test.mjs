@@ -84,6 +84,9 @@ test("explicit operator call works with automatic flag off, audits its separate 
   assert.equal(event.campaignId, null); assert.equal(event.retryPhase, null); assert.equal(event.status, "DISPATCHING");
   assert.equal(metadata.requestId, requestId); assert.equal(metadata.eventId, call.eventId); assert.equal(metadata.actorId, 51);
   assert.equal(metadata.destinationPhone, call.destinationPhone); assert.equal(metadata.reason, "MANUAL_WELCOME_CALL");
+  const [listedCall] = await f.store.listCreditWelcomeVoiceCallsForCredit(1);
+  assert.equal(listedCall.destinationPhone, "573000000002");
+  assert.equal(listedCall.identityVerified, false);
   assert.deepEqual((await f.db.query('SELECT "data" FROM "Credito"')).rows, beforeCredit);
   const prepared = await f.store.prepareCreditWelcomeVoiceDispatch(call.eventId);
   assert.equal(prepared.destinationPhone, call.destinationPhone); assert.equal(prepared.snapshot.phone, call.snapshot.phone);
@@ -93,6 +96,7 @@ test("explicit operator call works with automatic flag off, audits its separate 
   assert.equal("phone" in identity.condiciones, false); assert.equal("document" in identity.condiciones, false);
   await f.complete(call); await f.store.markCreditWelcomeVoiceDispatchAccepted(call.eventId, `call-operator-${call.eventId}`);
   assert.equal((await f.events())[0].status, "COMPLETED"); assert.ok((await f.events())[0].identityVerifiedAt);
+  assert.equal((await f.store.listCreditWelcomeVoiceCallsForCredit(1))[0].communicationOutcome, "HUMAN_CONTACT");
   assert.equal((await f.db.query('SELECT count(*)::int AS count FROM "CreditWelcomeVoiceFollowup"')).rows[0].count, 0);
   f.setEnabled(true); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
 });
