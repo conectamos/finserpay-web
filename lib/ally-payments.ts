@@ -385,13 +385,19 @@ async function loadEligibleCollections(
   }
 ): Promise<AllyPaymentCollectionLine[]> {
   await ensureCreditAllyPaymentExclusionSchema();
-  const values: unknown[] = [ALIADO_FINSER_PAY.codigo];
+  const availableFrom = resolveColombiaPaymentPeriod(
+    ALLY_PAYMENTS_AVAILABLE_FROM,
+    ALLY_PAYMENTS_AVAILABLE_FROM
+  ).start;
+  const values: unknown[] = [ALIADO_FINSER_PAY.codigo, availableFrom];
   const conditions = [
     `UPPER(BTRIM(COALESCE(payment."estado", ''))) NOT IN ('ANULADO', 'ANULADA', 'CANCELADO', 'CANCELADA')`,
     `payment."anuladoAt" IS NULL`,
     `payment."valor" > 0`,
     `snapshot."id" IS NULL`,
-    `NOT EXISTS (SELECT 1 FROM public."CreditAllyPaymentExclusion" excluded WHERE excluded."creditoId" = credit."id")`,
+    `payment."fechaAbono" >= $2`,
+    // La exclusión evita pagar nuevamente el crédito, pero el efectivo que el
+    // aliado recaude siempre debe descontarse de su siguiente liquidación.
     `site."aliadoId" IS NOT NULL`,
     `UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> UPPER(BTRIM($1))`,
   ];

@@ -18,8 +18,7 @@ export const creditAllyPaymentExclusionSchemaStatements = [
     RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
       PERFORM 1 FROM public."Credito" WHERE "id" = NEW."creditoId" FOR UPDATE;
-      IF EXISTS (SELECT 1 FROM public."LiquidacionAliadoCredito" WHERE "creditoId" = NEW."creditoId")
-        OR EXISTS (SELECT 1 FROM public."LiquidacionAliadoRecaudo" WHERE "creditoId" = NEW."creditoId") THEN
+      IF EXISTS (SELECT 1 FROM public."LiquidacionAliadoCredito" WHERE "creditoId" = NEW."creditoId") THEN
         RAISE EXCEPTION 'ALLY_PAYMENT_CREDIT_ALREADY_SETTLED' USING ERRCODE = '23514';
       END IF;
       RETURN NEW;
@@ -42,14 +41,20 @@ export const creditAllyPaymentExclusionSchemaStatements = [
     RETURNS trigger LANGUAGE plpgsql AS $$
     DECLARE actual_credit_id INTEGER;
     BEGIN
-      actual_credit_id := NEW."creditoId";
       IF TG_TABLE_NAME = 'LiquidacionAliadoRecaudo' THEN
         SELECT "creditoId" INTO actual_credit_id FROM public."CreditoAbono" WHERE "id" = NEW."abonoId";
+        IF actual_credit_id IS DISTINCT FROM NEW."creditoId" THEN
+          RAISE EXCEPTION 'ALLY_PAYMENT_COLLECTION_CREDIT_MISMATCH' USING ERRCODE = '23514';
+        END IF;
+        -- Una exclusión impide pagar el crédito, no descontar dinero que el
+        -- aliado efectivamente recibió por él.
+        PERFORM 1 FROM public."Credito" WHERE "id" = actual_credit_id FOR UPDATE;
+        RETURN NEW;
       END IF;
       -- Exclusion registration takes this lock too, serializing concurrent inserts.
-      PERFORM 1 FROM public."Credito" WHERE "id" IN (NEW."creditoId", actual_credit_id) ORDER BY "id" FOR UPDATE;
+      PERFORM 1 FROM public."Credito" WHERE "id" = NEW."creditoId" FOR UPDATE;
       IF EXISTS (SELECT 1 FROM public."CreditAllyPaymentExclusion"
-        WHERE "creditoId" IN (NEW."creditoId", actual_credit_id)) THEN
+        WHERE "creditoId" = NEW."creditoId") THEN
         RAISE EXCEPTION 'ALLY_PAYMENT_CREDIT_EXCLUDED' USING ERRCODE = '23514';
       END IF;
       RETURN NEW;
