@@ -1,0 +1,45 @@
+name: Venta, identidad y firma
+
+on:
+  pull_request:
+    paths:
+      - "app/dashboard/creditos/**"
+      - "app/api/creditos/**"
+      - "lib/**"
+      - "tests/**"
+      - "package*.json"
+      - ".github/workflows/credit-origination.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app/dashboard/creditos/**"
+      - "app/api/creditos/**"
+      - "lib/**"
+      - "tests/**"
+      - "package*.json"
+      - ".github/workflows/credit-origination.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: credit-origination-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # All provider responses are local fixtures; no paid queries or signatures.
+      - run: npm run test:credit-origination
+      - run: npm run build
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public
+          SESSION_SECRET: build-only-session-secret

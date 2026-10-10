@@ -78,6 +78,7 @@ import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
 } from "@/app/dashboard/creditos/datacredito-prequalification-gate";
 import ClientValidationHeader from "./client-validation-header";
+import FirmaSeguroIdentityReview from "./firma-seguro-identity-review";
 import clientValidationStyles from "./client-validation-shell.module.css";
 import {
   calculateAndroidSimulatorInitialPayment,
@@ -3360,6 +3361,7 @@ export default function CreditFactoryConsole({
   const [manualPushBody, setManualPushBody] = useState("");
   const [sendingManualPush, setSendingManualPush] = useState(false);
   const [firmaSeguroSubmitting, setFirmaSeguroSubmitting] = useState(false);
+  const [firmaSeguroIdentityReviewDraftId, setFirmaSeguroIdentityReviewDraftId] = useState<number | null>(null);
   const [firmaSeguroRefreshing, setFirmaSeguroRefreshing] = useState(false);
   const [firmaSeguroImeiCorrecting, setFirmaSeguroImeiCorrecting] =
     useState(false);
@@ -9875,17 +9877,18 @@ export default function CreditFactoryConsole({
     );
 
     if (!result.ok || !result.data?.ok) {
-      if (result.data?.code === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE) {
+      const code = result.data?.code;
+      setFirmaSeguroIdentityReviewDraftId(code === "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED" ? currentDraftId : null);
+      if (code === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE) {
         handleDataCreditoFinancialTermsOutdated();
       }
-      throw new Error(
-        formatFirmaSeguroApiFailure(
-          result.data,
-          "No se pudo enviar el expediente a FirmaSeguro"
-        )
-      );
+      const safeCode = typeof code === "string" && /^[A-Z][A-Z0-9_]{2,79}$/.test(code) ? code : null;
+      const failure = new Error(formatFirmaSeguroApiFailure(result.data, "No se pudo enviar el expediente a FirmaSeguro") + (safeCode ? ` Código: ${safeCode}.` : ""));
+      Object.assign(failure, { code: safeCode });
+      throw failure;
     }
 
+    setFirmaSeguroIdentityReviewDraftId(null);
     setFirmaSeguroDraftProcess(result.data.process || null);
     setFirmaSeguroPendingDraftId((pending) => pending === currentDraftId ? null : pending);
     return result.data;
@@ -10770,7 +10773,8 @@ export default function CreditFactoryConsole({
           await saveDraftPayloadForVeriff(
             factoryDraftPayload,
             5,
-            currentDraftId
+            currentDraftId,
+            "DELIVERY_EVIDENCE"
           );
         }
         setWizardStep(5);
@@ -17281,6 +17285,8 @@ export default function CreditFactoryConsole({
                                   : "ENVIAR CONTRATO A FIRMASEGURO"}
                         </button>
                       </div>
+
+                      {dataCreditoFullNameOnly && draftId && firmaSeguroIdentityReviewDraftId === draftId ? <FirmaSeguroIdentityReview key={`${draftId}:${dataCreditoAssessmentId}:${veriffValidation?.id}`} canAdmin={canAdmin} draftId={draftId} fullName={getDataCreditoClientDisplayName(dataCreditoApproval)} documentNumber={clienteDocumento} validationId={veriffValidation?.id || 0} veriffApproved={veriffApproved} onSaved={(message) => setNotice({ text: message, tone: "emerald" })} /> : null}
 
                       {firmaSeguroRequiresFirstPaymentDateReissue ? (
                         <p

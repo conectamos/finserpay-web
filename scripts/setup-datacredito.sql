@@ -1066,4 +1066,21 @@ CREATE TABLE IF NOT EXISTS "DataCreditoIdentityCorrection" (
 CREATE INDEX IF NOT EXISTS "DataCreditoIdentityCorrection_assessment_idx"
   ON "DataCreditoIdentityCorrection" ("assessmentId", "id" DESC);
 
+-- Componentes de firma revisados por ADMIN; fuente distinta del proveedor.
+CREATE TABLE IF NOT EXISTS "FirmaSeguroIdentityReview" (
+      "id" UUID PRIMARY KEY, "draftId" INTEGER NOT NULL, "assessmentId" UUID NOT NULL,
+      "validationId" INTEGER NOT NULL, "documentHash" TEXT NOT NULL, "canonicalFullName" TEXT NOT NULL,
+      "firstNames" TEXT NOT NULL, "firstSurname" TEXT NOT NULL, "secondSurname" TEXT NOT NULL,
+      "actorUserId" INTEGER NOT NULL, "actorName" TEXT NOT NULL, "reason" TEXT NOT NULL,
+      "attestation" BOOLEAN NOT NULL CHECK ("attestation" = TRUE), "inputHash" TEXT NOT NULL,
+      "original" JSONB NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE ("draftId", "assessmentId", "validationId"),
+      CHECK (LENGTH(BTRIM("reason")) BETWEEN 5 AND 500));
+CREATE OR REPLACE FUNCTION "FinserRejectFirmaSeguroIdentityReviewMutation"()
+      RETURNS TRIGGER AS $$ BEGIN RAISE EXCEPTION 'FirmaSeguro identity reviews are immutable'; END; $$ LANGUAGE plpgsql;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger
+      WHERE tgname='FirmaSeguroIdentityReview_immutable' AND tgrelid='"FirmaSeguroIdentityReview"'::regclass AND NOT tgisinternal) THEN
+      CREATE TRIGGER "FirmaSeguroIdentityReview_immutable" BEFORE UPDATE OR DELETE ON "FirmaSeguroIdentityReview"
+      FOR EACH ROW EXECUTE FUNCTION "FinserRejectFirmaSeguroIdentityReviewMutation"(); END IF; END $$;
+
 COMMIT;

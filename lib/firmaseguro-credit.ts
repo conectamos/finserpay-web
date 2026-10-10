@@ -281,7 +281,7 @@ function splitClientName(credito: FirmaSeguroCredit): PersonPayload {
         email: normalizeEmail(credito.clienteCorreo), phone: normalizePhone(credito.clienteTelefono),
       };
     } catch {
-      throw new FirmaSeguroApiError("Los componentes verificados del firmante no coinciden con el nombre completo de DataCrédito. Revisa la validación Veriff existente antes de enviar a FirmaSeguro.", 409, null);
+      throw new FirmaSeguroApiError("Los componentes registrados del firmante no coinciden con el nombre completo de DataCrédito. Revisa la evidencia Veriff o la revisión autorizada antes de enviar a FirmaSeguro.", 409, null);
     }
   }
   if (snapshot?.dataCreditoIdentity?.effective) {
