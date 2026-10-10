@@ -43,7 +43,7 @@ test("el estado y el boton final comparten todas las condiciones de cierre", () 
   );
   assert.match(
     factorySource,
-    /disabled=\{[\s\S]{0,180}!creditClosureReady/
+    /disabled=\{[^{}]*!\s*creditClosureReady\b[^{}]*\}/
   );
 });
 

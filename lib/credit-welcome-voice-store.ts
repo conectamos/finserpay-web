@@ -285,7 +285,7 @@ function recoveryResponse(nextAction: WelcomeVoiceIdentityRecoveryResponse["next
   code: WelcomeVoiceIdentityRecoveryResponse["code"] = "IDENTITY_NOT_CONFIRMED"): WelcomeVoiceIdentityRecoveryResponse {
   return { code: nextAction === "CONTINUE" ? null : code, nextAction,
     remainingAttempts: nextAction === "REVIEW" ? 0 : Math.min(2, Math.max(0, 3 - attempts)),
-    question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
+    question: nextAction === "ASK_NAME" ? "¿Me dice un nombre o un apellido, por favor?"
       : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa? Puede decirla seguida o en bloques."
         : nextAction === "REVIEW" ? "No pude confirmar sus datos. Un asesor revisará su caso." : null,
     mayEndCall: nextAction === "REVIEW" };
@@ -894,6 +894,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       }
       const dictation = privateFlow ? parseWelcomeVoiceDocumentDictation(input.customerDocument) : null;
       const document = privateFlow ? dictation!.document : input.customerDocument;
+      const documentAccepted = privateFlow && document !== null && document === normalizeWelcomeVoiceDocument(event.snapshot.document);
       const nameAccepted = privateFlow && matchesWelcomeVoiceApplicationName(event.snapshot.name, input.customerName);
       const correct = (privateFlow ? matchWelcomeVoiceApplicationIdentity : matchWelcomeVoiceIdentity)({ name: event.snapshot.name, document: event.snapshot.document },
         { name: input.customerName, document: document ?? "" });
@@ -930,7 +931,10 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         const attempts = event.identityAttempts + 1;
         let nextAction: WelcomeVoiceIdentityRecoveryResponse["nextAction"] = "CONTINUE";
         if (!correct) {
-          nextAction = attempts >= 3 ? "REVIEW" : !document || nameAccepted ? recovery.askedDocument ? "REVIEW" : "ASK_DOCUMENT"
+          // Do not spend a document clarification on a document that already
+          // matches after the one permitted name clarification has failed.
+          nextAction = attempts >= 3 || (documentAccepted && !nameAccepted && recovery.askedName) ? "REVIEW"
+            : !document || nameAccepted ? recovery.askedDocument ? "REVIEW" : "ASK_DOCUMENT"
             : !recovery.askedName ? "ASK_NAME" : !recovery.askedDocument ? "ASK_DOCUMENT" : "REVIEW";
           if (nextAction === "ASK_NAME") recovery.askedName = true;
           if (nextAction === "ASK_DOCUMENT") recovery.askedDocument = true;

@@ -33,7 +33,7 @@ const identityUnavailable = { ok: false, verificado: false, condiciones: null, c
 const verifiedIdentity = (condiciones = validConditions, overrides = {}) => ({ ok: true, verificado: true, condiciones,
   code: null, nextAction: "CONTINUE", remainingAttempts: 2, question: null, mayEndCall: false, ...overrides });
 const identityQuestions = {
-  ASK_NAME: "¿Me dice solo su primer nombre, por favor?",
+  ASK_NAME: "¿Me dice un nombre o un apellido, por favor?",
   ASK_DOCUMENT: "¿Me repite su cédula completa? Puede decirla seguida o en bloques.",
   REVIEW: "No pude confirmar sus datos. Un asesor revisará su caso.",
 };
@@ -42,6 +42,7 @@ const legacyIdentityQuestions = {
   ASK_DOCUMENT: "¿Me repite su número de cédula, por favor?",
   REVIEW: identityQuestions.REVIEW,
 };
+const previousFirstNameQuestion = "¿Me dice solo su primer nombre, por favor?";
 const previousDigitQuestion = "¿Me repite su cédula completa, desde el primer dígito, con una pausa entre cada número?";
 const previousClosingQuestion = 'Diga su cédula completa, número por número. Cuando termine, diga "terminé".';
 const identityRecovery = (nextAction = "ASK_NAME", remainingAttempts = 2, code = "IDENTITY_NOT_CONFIRMED") => ({
@@ -200,13 +201,17 @@ test("server recovery is forwarded with exact question, bounded attempts and no 
   ]) assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), response);
 });
 
-test("rolling identity deployments accept only the exact old and new question for each action", () => {
+test("rolling identity deployments accept exact name-or-surname and legacy questions only for their action", () => {
   for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"]) {
-    for (const question of new Set([identityQuestions[action], legacyIdentityQuestions[action], ...(action === "ASK_DOCUMENT" ? [previousDigitQuestion, previousClosingQuestion] : [])])) {
+    for (const question of new Set([identityQuestions[action], legacyIdentityQuestions[action],
+      ...(action === "ASK_NAME" ? [previousFirstNameQuestion] : []),
+      ...(action === "ASK_DOCUMENT" ? [previousDigitQuestion, previousClosingQuestion] : [])])) {
       for (const code of action === "ASK_NAME" ? ["IDENTITY_NOT_CONFIRMED"] : ["IDENTITY_NOT_CONFIRMED", "DOCUMENT_NOT_UNDERSTOOD"]) {
-        const response = { ...identityRecovery(action, action === "REVIEW" ? 0 : 2, code), question };
-        assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), response);
-        assert.equal(response.condiciones, null);
+        for (const remainingAttempts of action === "REVIEW" ? [0] : [1, 2]) {
+          const response = { ...identityRecovery(action, remainingAttempts, code), question };
+          assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: response }), response);
+          assert.equal(response.condiciones, null);
+        }
       }
     }
   }
@@ -216,7 +221,9 @@ test("question compatibility cannot retag a recovery action or accept a similar 
   for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW"]) {
     const response = identityRecovery(action, action === "REVIEW" ? 0 : 1);
     const wrongQuestions = Object.keys(identityQuestions).filter(other => other !== action)
-      .flatMap(other => [identityQuestions[other], legacyIdentityQuestions[other], ...(other === "ASK_DOCUMENT" ? [previousDigitQuestion, previousClosingQuestion] : [])]);
+      .flatMap(other => [identityQuestions[other], legacyIdentityQuestions[other],
+        ...(other === "ASK_NAME" ? [previousFirstNameQuestion] : []),
+        ...(other === "ASK_DOCUMENT" ? [previousDigitQuestion, previousClosingQuestion] : [])]);
     for (const question of [...wrongQuestions, identityQuestions[action] + " ", [identityQuestions[action]],
       identityQuestions[action].slice(0, -1), "¿Puede repetir los datos esperados?"]) {
       assert.deepEqual(runCode(identity, "chkId", { verificar_identidad: { ...response, question } }), identityUnavailable);
@@ -234,11 +241,13 @@ test("a name with no matching registered component asks for clarification withou
   assert.equal(first.question, identityQuestions.ASK_NAME);
   assert.equal(first.mayEndCall, false);
   assert.equal(first.condiciones, null);
-  const clarified = { ...captured, customer_name: "Persona Hernández Prueba" };
-  const retry = runCode(identity, "nrmId", { trigger: { body: { args: clarified } } });
-  assert.deepEqual(JSON.parse(retry.request_body), clarified);
-  assert.equal(JSON.parse(retry.request_body).customer_document, captured.customer_document);
-  assert.equal(JSON.parse(retry.request_body).event_id, captured.event_id);
+  for (const customer_name of ["Persona", "Prueba"]) {
+    const clarified = { ...captured, customer_name };
+    const retry = runCode(identity, "nrmId", { trigger: { body: { args: clarified } } });
+    assert.deepEqual(JSON.parse(retry.request_body), clarified);
+    assert.equal(JSON.parse(retry.request_body).customer_document, captured.customer_document);
+    assert.equal(JSON.parse(retry.request_body).event_id, captured.event_id);
+  }
   const verified = runCode(identity, "chkId", { verificar_identidad: verifiedIdentity(validConditions, { remainingAttempts: 1 }) });
   assert.equal(verified.nextAction, "CONTINUE");
   assert.deepEqual(verified.condiciones, validConditions);
@@ -321,7 +330,7 @@ test("the current Diana script waits for the server clarification and preserves 
   for (const action of ["ASK_NAME", "ASK_DOCUMENT", "REVIEW", "CONTINUE"]) assert.ok(recovery.includes("nextAction=" + action));
   assert.ok(recovery.includes(identityQuestions.REVIEW));
   assert.equal((recovery.match(/lee exactamente el campo question recibido del servidor/g) || []).length, 2);
-  assert.match(recovery, /solo su primer nombre.*sin volver a exigir el nombre completo/);
+  assert.ok(recovery.includes(identityQuestions.ASK_NAME));
   assert.ok(recovery.includes(identityQuestions.ASK_DOCUMENT));
   assert.match(recovery, /No hables ni llames herramientas entre dígitos/);
   assert.match(recovery, /sin exigir ninguna palabra de cierre ni pausas entre cada dígito/);

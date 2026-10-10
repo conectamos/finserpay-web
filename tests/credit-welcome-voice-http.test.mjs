@@ -167,7 +167,7 @@ test("private flow forwards unrecognized literal documents to the locked store a
   assert.equal(calls[0].customerDocument, body.customer_document); assert.equal(calls[0].requireFreshDispatch, true);
   result = { ...result, nextAction: "ASK_NAME", remainingAttempts: 1, code: "IDENTITY_NOT_CONFIRMED" };
   const second = await (await POST(request(body, "identidad", header))).json();
-  assert.equal(second.nextAction, "ASK_NAME"); assert.equal(second.mayEndCall, false); assert.equal(second.question, "¿Me dice solo su primer nombre, por favor?");
+  assert.equal(second.nextAction, "ASK_NAME"); assert.equal(second.mayEndCall, false); assert.equal(second.question, "¿Me dice un nombre o un apellido, por favor?");
   result = { ...result, remainingAttempts: 0 };
   const terminal = await (await POST(request(body, "identidad", header))).json();
   assert.equal(terminal.nextAction, "REVIEW"); assert.equal(terminal.mayEndCall, true); assert.equal(terminal.condiciones, null);

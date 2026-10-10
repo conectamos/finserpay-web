@@ -70,7 +70,7 @@
         "CONTINUE"
       ],
       "questions": {
-        "ASK_NAME": "¿Me dice solo su primer nombre, por favor?",
+        "ASK_NAME": "¿Me dice un nombre o un apellido, por favor?",
         "ASK_DOCUMENT": "¿Me repite su cédula completa? Puede decirla seguida o en bloques.",
         "REVIEW": "No pude confirmar sus datos. Un asesor revisará su caso."
       },
@@ -78,7 +78,13 @@
       "terminal": "REVIEW has remainingAttempts=0 and mayEndCall=true; no further consultation or financial conditions.",
       "success": "CONTINUE may succeed on consultation three; full verified speech and exact control contract required.",
       "privacy": "Never include expected identity, match details, tokens or financial conditions in an unverified response.",
-      "maximumConsultationsMeaning": "At most three distinct complete identity-validation attempts. Replayed inputs and unequivocal incomplete document fragments of one to four digits after ASK_DOCUMENT do not consume the validation budget."
+      "maximumConsultationsMeaning": "At most three distinct complete identity-validation attempts. Replayed inputs and unequivocal incomplete document fragments of one to four digits after ASK_DOCUMENT do not consume the validation budget.",
+      "semantics": {
+        "nameClarification": "If no significant registered name or surname component is accepted, request any one name or surname once. Preserve the actual literal customer answer and the same event; never reveal expected identity or select a component for the customer.",
+        "correctDocumentAfterNameClarification": "If the complete document is already correct and the name remains unacceptable after its single clarification, return REVIEW. Do not request ASK_DOCUMENT solely because the name clarification failed.",
+        "budget": "At most one requested clarification per field and three distinct complete identity-validation attempts. Existing input idempotency and document waiting behavior remain unchanged.",
+        "rollingCompatibility": "ASK_NAME accepts the exact current one-name-or-surname question and both previous fixed name questions only for ASK_NAME. The ASK_DOCUMENT whitelist remains unchanged."
+      }
     },
     "documentCompletion": {
       "afterAction": "ASK_DOCUMENT",
@@ -144,8 +150,8 @@
     {
       "file": "identity-normalizer.patch.json",
       "flowId": "YxVoY",
-      "expectedContentHash": "sha256:67b1e41e8ff8439c0c1ad693ca275255fe4c1c9b60ca0edd4ac12dbf58df04c0",
-      "scope": "Four response-only operations preserving existing exports; the changed validator adds the exact natural ASK_DOCUMENT question alongside all three previous questions for rolling compatibility. No completion marker is required by the prepared backend contract. Preserve input, normalization, private credentials, endpoint, node identifiers and financial speech guard."
+      "expectedContentHash": "sha256:22121f190c404a15e05f5314f975ec51c5f96ab1f4c92d0db5c6c6ffa43181ec",
+      "scope": "Four response-only operations preserving existing exports; the changed validator adds the exact one-name-or-surname ASK_NAME question alongside both previous name questions for rolling compatibility. The ASK_DOCUMENT whitelist is unchanged. Preserve input, normalization, private credentials, endpoint, node identifiers and financial speech guard. Refresh the live content hash before preview."
     },
     {
       "file": "call-identity-variables.patch.json",
