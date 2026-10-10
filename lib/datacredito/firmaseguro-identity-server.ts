@@ -1,7 +1,7 @@
 import { getStoredFirmaSeguroIdentityReview, FirmaSeguroIdentityReviewError } from "./firmaseguro-identity-review";
 import "server-only";
 import prisma from "@/lib/prisma";
-import { extractVeriffIdentityData } from "@/lib/veriff";
+import { extractVeriffIdentityDataEvidence } from "@/lib/veriff";
 import { getVeriffValidationById, isVeriffApproved, serializeVeriffValidation, type VeriffValidationRow } from "@/lib/veriff-storage";
 import { compareStrictIdentityDocuments } from "@/lib/veriff-identity";
 import { FirmaSeguroFullNameIdentityError, resolveFirmaSeguroFullNameIdentityFromEvidence } from "./firmaseguro-identity";
@@ -19,11 +19,9 @@ export function firmaSeguroFullNameIdentityFromValidation(input: {
   }
   const serialized = serializeVeriffValidation(validation);
   if (!serialized || serialized.identityDocumentStatus !== "match") throw new FirmaSeguroFullNameIdentityError();
-  const decisionIdentity = extractVeriffIdentityData(validation.decisionPayload, { inferFullName: false });
-  const webhookIdentity = extractVeriffIdentityData(validation.webhookPayload, { inferFullName: false });
   return resolveFirmaSeguroFullNameIdentityFromEvidence({ fullName: input.fullName, documentNumber: input.documentNumber,
     validationId: validation.id, veriffDocumentNumber: serialized.identityDocumentNumber,
-    identities: [decisionIdentity, webhookIdentity].filter((value): value is NonNullable<typeof value> => Boolean(value)) });
+    identities: extractVeriffIdentityDataEvidence(validation.decisionPayload, validation.webhookPayload) });
 }
 
 export async function getFirmaSeguroFullNameIdentityForDraft(input: {

@@ -1091,6 +1091,40 @@ export function extractVeriffIdentityData(payload: unknown, options: { inferFull
   return Object.values(identityData).some(Boolean) ? identityData : null;
 }
 
+/** Read each persisted provider response independently; never join components across responses. */
+export function extractVeriffIdentityDataEvidence(...payloads: unknown[]): VeriffIdentityData[] {
+  const identities: VeriffIdentityData[] = [];
+  const visited = new Set<object>();
+  const visit = (value: unknown, personRole = false, depth = 0): void => {
+    if (depth > 8) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, personRole, depth + 1);
+      return;
+    }
+    const source = asRecord(value);
+    if (!source || visited.has(source)) return;
+    visited.add(source);
+    if (personRole || ["firstName", "lastName", "fullName", "idNumber", "idCode", "nameComponents"].some(key => Object.hasOwn(source, key))) {
+      // Only national identifiers from the person belong to this evidence.
+      // document.number is a physical serial, evaluated separately below.
+      const identity = extractVeriffIdentityData({ verification: { person: source, document: {} } }, { inferFullName: false });
+      if (identity) identities.push(identity);
+    }
+    // These are provider envelopes or the exact wrappers persisted by our
+    // refresh route. Request/create branches are never signing evidence.
+    for (const [key, child] of Object.entries(source)) {
+      const normalizedKey = normalizeVeriffFieldKey(key);
+      if (["person", "persondata", "persons", "personpayload"].includes(normalizedKey)) {
+        visit(child, true, depth + 1);
+      } else if (["decisionpayload", "webhookpayload", "verification", "data"].includes(normalizedKey)) {
+        visit(child, personRole && ["verification", "data"].includes(normalizedKey), depth + 1);
+      }
+    }
+  };
+  for (const payload of payloads) visit(payload);
+  return identities;
+}
+
 /**
  * Recoge todas las cedulas devueltas dentro de una decision o webhook de Veriff.
  * Deliberadamente omite ramas de request/create porque contienen datos enviados
@@ -1187,7 +1221,7 @@ export function extractVeriffIdentityDocumentEvidence(
   const isExternalBranch = (normalizedKey: string) =>
     externalBranchKeys.has(normalizedKey) ||
     externalBranchMarkers.some((marker) => normalizedKey.includes(marker));
-  const personBranchKeys = new Set(["person", "persondata", "persons"]);
+  const personBranchKeys = new Set(["person", "persondata", "persons", "personpayload"]);
   const documentBranchKeys = new Set([
     "document",
     "documentdata",
@@ -1217,7 +1251,9 @@ export function extractVeriffIdentityDocumentEvidence(
     }
     visited.add(record);
 
-    if (role === "person") {
+    if (role === "person" || (role !== "document" && (
+      Object.hasOwn(record, "idNumber") || Object.hasOwn(record, "idCode") ||
+      (["firstName", "lastName", "fullName", "nameComponents"].some(key => Object.hasOwn(record, key)) && Object.hasOwn(record, "documentNumber"))))) {
       addPerson(record);
     } else if (role === "document") {
       addDocument(record);
@@ -1233,6 +1269,8 @@ export function extractVeriffIdentityDocumentEvidence(
         ? "person"
         : documentBranchKeys.has(normalizedKey)
           ? "document"
+          : role === "person" && ["data", "verification"].includes(normalizedKey)
+            ? "person"
           : null;
       visit(child, childRole, depth + 1);
     }

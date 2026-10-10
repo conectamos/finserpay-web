@@ -6,13 +6,13 @@ import { ensureSolicitudSchema } from "@/lib/solicitudes-storage";
 import { ensureFirmaSeguroSchema, lockSolicitudOperationMutation } from "@/lib/firmaseguro-storage";
 import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import { ensureVeriffSchema, isVeriffApproved, serializeVeriffValidation, type VeriffValidationRow } from "@/lib/veriff-storage";
-import { extractVeriffIdentityData } from "@/lib/veriff";
+import { extractVeriffIdentityDataEvidence } from "@/lib/veriff";
 import { isFirmaSeguroVerifiedCompletedStatus } from "@/lib/firmaseguro-status";
 import { compareStrictIdentityDocuments } from "@/lib/veriff-identity";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import { getApprovedDataCreditoAssessmentForCredit } from "./storage";
 import { enforceDataCreditoCustomerIdentity } from "./customer-identity";
-import { FirmaSeguroFullNameIdentityError, resolveFirmaSeguroFullNameIdentityFromEvidence, resolveReviewedFirmaSeguroFullNameIdentity } from "./firmaseguro-identity";
+import { FirmaSeguroFullNameIdentityError, assertFirmaSeguroVeriffEvidenceDocuments, firmaSeguroProviderNamesMatch, resolveFirmaSeguroFullNameIdentityFromEvidence, resolveReviewedFirmaSeguroFullNameIdentity } from "./firmaseguro-identity";
 
 type Database = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 type Draft = { id: number; estado: string; creditoId: number | null; usuarioId: number; vendedorId: number | null;
@@ -59,12 +59,17 @@ async function readDraft(db: Database, draftId: number, lock = false) {
 function mayReview(actor: FirmaSeguroIdentityReviewActor, draft: Draft) {
   return actor.admin && (actor.central || (actor.aliadoId !== null && actor.aliadoId === draft.aliadoId));
 }
-function assertManualReviewEvidence(evidence: ReturnType<typeof extractVeriffIdentityData>[], canonicalFullName: string) {
+function assertManualReviewEvidence(evidence: ReturnType<typeof extractVeriffIdentityDataEvidence>, canonicalFullName: string) {
   for (const identity of evidence) {
-    if (identity && (text(identity.firstName) || text(identity.lastName) ||
-      (text(identity.fullName) && comparable(identity.fullName) !== comparable(canonicalFullName)))) {
-      fail("FIRMASEGURO_REVIEW_PROVIDER_COMPONENTS", "Veriff entregó componentes o identidad contradictoria. Requiere revisar esa evidencia; esta opción no la reemplaza.");
+    if (text(identity.fullName) && !firmaSeguroProviderNamesMatch(identity.fullName, canonicalFullName)) {
+      fail("FIRMASEGURO_REVIEW_PROVIDER_COMPONENTS", "El nombre completo entregado por Veriff no coincide con DataCrédito. Esta revisión no reemplaza esa evidencia.");
     }
+  }
+  if (evidence.some(identity => text(identity.firstName) || text(identity.lastName))) {
+    const complete = evidence.some(identity => text(identity.firstName) && text(identity.lastName));
+    fail("FIRMASEGURO_REVIEW_PROVIDER_COMPONENTS", complete
+      ? "Veriff ya entregó componentes del firmante. Esta revisión no permite reemplazarlos."
+      : "Veriff entregó componentes parciales del firmante. Esta revisión no permite completarlos ni reemplazarlos.");
   }
 }
 async function context(db: Database, draft: Draft, mutation = false, manualReview = true) {
@@ -98,9 +103,12 @@ async function context(db: Database, draft: Draft, mutation = false, manualRevie
     serialized?.identityDocumentStatus !== "match" || !compareStrictIdentityDocuments(serialized.identityDocumentNumber, documentNumber).ok) {
     fail("FIRMASEGURO_REVIEW_VERIFF_REQUIRED", "Se requiere la última aprobación Veriff confiable para esta misma cédula y solicitud.");
   }
-  const providerIdentities = [extractVeriffIdentityData(validation.decisionPayload, { inferFullName: false }),
-    extractVeriffIdentityData(validation.webhookPayload, { inferFullName: false })]
-    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+  const providerIdentities = extractVeriffIdentityDataEvidence(validation.decisionPayload, validation.webhookPayload);
+  try { assertFirmaSeguroVeriffEvidenceDocuments(documentNumber, providerIdentities); }
+  catch (error) {
+    if (!(error instanceof FirmaSeguroFullNameIdentityError)) throw error;
+    fail("FIRMASEGURO_REVIEW_VERIFF_REQUIRED", "La cédula devuelta por Veriff no coincide en todas sus respuestas con la consulta de DataCrédito.");
+  }
   if (manualReview) assertManualReviewEvidence(providerIdentities, identity.effective.fullName);
   return { draft, assessmentId, identity, validation, documentNumber, documentHash: hash(documentNumber),
     canonicalFullName: identity.effective.fullName, providerIdentities, serialized };
@@ -138,12 +146,16 @@ export async function getFirmaSeguroIdentityReviewDetail(draftId: number, actor:
   try {
     const ctx = await context(prisma, draft, false, false);
     let providerReady = false;
+    let providerFailure: FirmaSeguroFullNameIdentityError | null = null;
     try {
       resolveFirmaSeguroFullNameIdentityFromEvidence({ fullName: ctx.canonicalFullName, documentNumber: ctx.documentNumber,
         validationId: ctx.validation.id, veriffDocumentNumber: ctx.serialized?.identityDocumentNumber,
         identities: ctx.providerIdentities });
       providerReady = true;
-    } catch (error) { if (!(error instanceof FirmaSeguroFullNameIdentityError)) throw error; }
+    } catch (error) {
+      if (!(error instanceof FirmaSeguroFullNameIdentityError)) throw error;
+      providerFailure = error;
+    }
     let eligible = true;let providerReason: string | null = null;
     try { assertManualReviewEvidence(ctx.providerIdentities, ctx.canonicalFullName); }
     catch (error) {
@@ -161,6 +173,8 @@ export async function getFirmaSeguroIdentityReviewDetail(draftId: number, actor:
       providerComponents: { names: ctx.identity.effective.names, firstSurname: ctx.identity.effective.firstSurname, secondSurname: ctx.identity.effective.secondSurname },
       lockedFirstSurname: review?.firstSurname || ctx.identity.effective.firstSurname || "", review: publicReview(current),
       reason: providerReady ? "Veriff ya entregó los componentes válidos del firmante; no requieren revisión manual."
+        : providerFailure?.reason === "name-conflict" ? "Los nombres o apellidos de Veriff no coinciden con la identidad de la consulta o entre sus respuestas. Esta revisión no reemplaza esa evidencia."
+        : providerFailure?.reason === "invalid-components" ? "Los componentes entregados por Veriff no tienen un formato válido para preparar la firma. Esta revisión no los reemplaza."
         : providerReason || (current ? "Los componentes ya quedaron registrados y no pueden reemplazarse." : reason) };
   } catch (error) {
     if (!(error instanceof FirmaSeguroIdentityReviewError)) throw error;

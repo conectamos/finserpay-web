@@ -6,8 +6,8 @@ import { createJiti } from "jiti";
 import ts from "typescript";
 const jiti = createJiti(import.meta.url);
 const pure = await jiti.import("../lib/datacredito/firmaseguro-identity.ts");
-const { extractVeriffIdentityData } = await jiti.import("../lib/veriff.ts");
-const { compareStrictIdentityDocuments } = await jiti.import("../lib/veriff-identity.ts");
+const { extractVeriffIdentityData, extractVeriffIdentityDataEvidence, extractVeriffIdentityDocumentEvidence, extractVeriffSessionUrl } = await jiti.import("../lib/veriff.ts");
+const { compareStrictIdentityDocuments, compareDataCreditoVeriffIdentityEvidence } = await jiti.import("../lib/veriff-identity.ts");
 const canonical = "María del Mar  De la Peña Muñoz";
 const input = { fullName: canonical, documentNumber: "123456789", validationId: 42,
   veriffDocumentNumber: "123.456.789", firstName: "MARÍA DEL MAR", lastName: "DE LA PEÑA MUÑOZ" };
@@ -39,10 +39,25 @@ test("FirmaSeguro gets complete Veriff components without splitting the canonica
   assert.deepEqual(pure.readFirmaSeguroFullNameIdentity(result, { fullName: canonical, documentNumber: "123456789" }), result);
 });
 
+test("provider vowel accents may differ while canonical text, Veriff components, Ñ and name order remain authoritative", () => {
+  const fullName = "MARCOS ANDRES PATIÑO GOMEZ";
+  for (const firstName of ["MARCOS ANDRÉS", "MARCOS ANDRE\u0301S"]) {
+    const result = pure.resolveFirmaSeguroFullNameIdentity({ ...input, fullName, firstName, lastName: "PATIÑO GÓMEZ" });
+    assert.equal(result.canonicalFullName, fullName);assert.equal(result.firstName, "MARCOS ANDRÉS");assert.equal(result.firstLastName, "PATIÑO GÓMEZ");
+    assert.deepEqual(pure.readFirmaSeguroFullNameIdentity(result, { fullName, documentNumber: input.documentNumber }), result);
+  }
+  assert.equal(pure.firmaSeguroProviderNamesMatch("ÁÉÍÓÚÜ", "aeiouu"), true);
+  assert.equal(pure.firmaSeguroProviderNamesMatch("PATI\u004e\u0303O", "PATIÑO"), true);
+  assert.equal(pure.firmaSeguroProviderNamesMatch("PATI\u004e\u0303O", "PATINO"), false);
+  for (const change of [{ lastName: "PATINO GÓMEZ" }, { firstName: "MARIO ANDRÉS" }, { fullName: "PATIÑO GOMEZ MARCOS ANDRES" }]) {
+    assert.throws(() => pure.resolveFirmaSeguroFullNameIdentity({ ...input, fullName, firstName: "MARCOS ANDRÉS", lastName: "PATIÑO GÓMEZ", ...change }), error => error.reason === "name-conflict");
+  }
+});
+
 test("missing, conflicting or incompatible Veriff components fail closed instead of inventing surnames", () => {
   for (const change of [
     { firstName: null }, { lastName: "" }, { lastName: "DE LA PENA MUÑOZ" },
-    { firstName: "MARIA DEL MAR" }, { firstName: "María" },
+    { firstName: "María" },
     { veriffDocumentNumber: "123456780" }, { veriffDocumentNumber: "CC123456789" },
     { validationId: 0 }, { firstName: "x".repeat(101) },
     { additionalIdentities: [{ firstName: "Otro" }] },
@@ -58,18 +73,21 @@ test("missing, conflicting or incompatible Veriff components fail closed instead
 function fixture(overrides = {}) {
   const person = { firstName: "María del Mar", lastName: "De la Peña Muñoz", fullName: canonical, idNumber: input.documentNumber };
   const validation = { id: 42, draftId: 530, creditoId: null, clienteDocumento: input.documentNumber,
-    status: "APPROVED", decisionPayload: { verification: { person } }, webhookPayload: null, ...overrides.validation };
+    status: "APPROVED", decisionPayload: { verification: { person, document: { number: input.documentNumber, type: "ID_CARD", country: "CO" } } }, webhookPayload: null, ...overrides.validation };
   const module = { exports: {} }; const reads = [];
   const source = readFileSync(new URL("../lib/datacredito/firmaseguro-identity-server.ts", import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const modules = {
     "server-only": {}, "@/lib/prisma": { default: { $queryRawUnsafe: async (...args) => { reads.push(args); return [{ id: overrides.latestId ?? 42 }]; } } },
-    "@/lib/veriff": { extractVeriffIdentityData }, "@/lib/veriff-identity": { compareStrictIdentityDocuments },
+    "@/lib/veriff": { extractVeriffIdentityDataEvidence }, "@/lib/veriff-identity": { compareStrictIdentityDocuments },
     "./firmaseguro-identity": pure,
     "./firmaseguro-identity-review": { getStoredFirmaSeguroIdentityReview: async args => { reads.push({ reviewBinding: args });return overrides.review || null; }, FirmaSeguroIdentityReviewError: class extends Error {} },
     "@/lib/veriff-storage": { getVeriffValidationById: async id => { reads.push(id); return validation; },
       isVeriffApproved: row => row.status === "APPROVED" && overrides.trusted !== false,
-      serializeVeriffValidation: () => ({ identityDocumentStatus: overrides.documentStatus || "match", identityDocumentNumber: input.documentNumber }) },
+      serializeVeriffValidation: row => {
+        const compared = compareDataCreditoVeriffIdentityEvidence([extractVeriffIdentityDocumentEvidence(row.decisionPayload), extractVeriffIdentityDocumentEvidence(row.webhookPayload)], row.clienteDocumento);
+        return { identityDocumentStatus: overrides.documentStatus || compared.status, identityDocumentNumber: compared.ok ? compared.documentNumber : null };
+      } },
   };
   runInNewContext(compiled, { module, exports: module.exports, require: name => { assert.ok(modules[name], name); return modules[name]; } });
   return { ...module.exports, validation, reads };
@@ -83,7 +101,7 @@ test("the bridge reuses the latest trusted approval for the same draft and docum
 });
 
 test("a document-only or compatible partial payload cannot hide the other payload's complete Veriff name", async () => {
-  const payload = person => ({ verification: { person: { idNumber: input.documentNumber, ...person } } });
+  const payload = person => ({ verification: { person: { idNumber: input.documentNumber, ...person }, document: { number: input.documentNumber, type: "ID_CARD", country: "CO" } } });
   const complete = payload({ firstName: "María del Mar", lastName: "De la Peña Muñoz" });
   for (const partial of [{}, { fullName: canonical }, { firstName: "María del Mar" }, { lastName: "De la Peña Muñoz" }]) {
     for (const [decisionPayload, webhookPayload] of [[payload(partial), complete], [complete, payload(partial)]]) {
@@ -96,7 +114,7 @@ test("a document-only or compatible partial payload cannot hide the other payloa
 });
 
 test("signing evidence never merges separate partial payloads or ignores explicit contradictory names", async () => {
-  const payload = person => ({ verification: { person: { idNumber: input.documentNumber, ...person } } });
+  const payload = person => ({ verification: { person: { idNumber: input.documentNumber, ...person }, document: { number: input.documentNumber, type: "ID_CARD", country: "CO" } } });
   const complete = payload({ firstName: "María del Mar", lastName: "De la Peña Muñoz" });
   for (const [decisionPayload, webhookPayload] of [
     [payload({ firstName: "María del Mar" }), payload({ lastName: "De la Peña Muñoz" })],
@@ -107,6 +125,69 @@ test("signing evidence never merges separate partial payloads or ignores explici
   ]) {
     const f = fixture({ validation: { decisionPayload, webhookPayload } });
     await assert.rejects(f.getFirmaSeguroFullNameIdentityForDraft({ fullName: canonical, documentNumber: input.documentNumber, draftId: 530, validationId: 42 }), /FirmaSeguro requiere/);
+  }
+});
+
+test("persisted decision/person wrappers yield one complete pair and retain every contradictory provider response", async () => {
+  const decisionPayload = { verification: { person: { idNumber: input.documentNumber }, document: { number: input.documentNumber, type: "ID_CARD", country: "CO" } } };
+  const personPayload = { data: { person: { firstName: "María del Mar", lastName: "De la Peña Muñoz", idNumber: input.documentNumber } } };
+  const wrapper = { decisionPayload, personPayload };
+  const binding = { fullName: canonical, documentNumber: input.documentNumber, draftId: 530, validationId: 42 };
+  const f = fixture({ validation: { decisionPayload: wrapper } });
+  const result = await f.getFirmaSeguroFullNameIdentityForDraft(binding);
+  assert.equal(result.firstName, "María del Mar");assert.equal(result.firstLastName, "De la Peña Muñoz");assert.equal(f.reads.length, 2);
+  for (const person of [
+    { firstName: "María del Mar", idNumber: input.documentNumber },
+    { firstName: "María del Mar", lastName: "De la Peña Muñoz", idNumber: "987654321" },
+    { firstName: "Otro", lastName: "Nombre", idNumber: input.documentNumber },
+  ]) {
+    const broken = fixture({ validation: { decisionPayload: { decisionPayload, personPayload: { person } } } });
+    await assert.rejects(broken.getFirmaSeguroFullNameIdentityForDraft(binding));
+  }
+  const separate = fixture({ validation: { decisionPayload: {
+    decisionPayload: { ...decisionPayload, verification: { ...decisionPayload.verification, person: { firstName: "María del Mar", idNumber: input.documentNumber } } },
+    personPayload: { person: { lastName: "De la Peña Muñoz", idNumber: input.documentNumber } },
+  } } });
+  await assert.rejects(separate.getFirmaSeguroFullNameIdentityForDraft(binding));
+  const conflictingWebhook = fixture({ validation: { decisionPayload: wrapper, webhookPayload: { verification: { person: { firstName: "Otro", idNumber: input.documentNumber } } } } });
+  await assert.rejects(conflictingWebhook.getFirmaSeguroFullNameIdentityForDraft(binding));
+  const ignored = extractVeriffIdentityDataEvidence({ request: personPayload, createPayload: personPayload });
+  assert.equal(ignored.length, 0, "request/create fields never become signing evidence");
+});
+
+test("flat person responses and known arrays cannot conceal a different CC or contradictory name", async () => {
+  const decisionPayload = { verification: { person: { idNumber: input.documentNumber }, document: { number: "PHYSICAL-SERIAL", type: "ID_CARD", country: "CO" } } };
+  const complete = { firstName: "María del Mar", lastName: "De la Peña Muñoz", idNumber: input.documentNumber };
+  const binding = { fullName: canonical, documentNumber: input.documentNumber, draftId: 530, validationId: 42 };
+  const personWithSerial = { person: complete, document: { number: "PHYSICAL-SERIAL", type: "ID_CARD", country: "CO" } };
+  for (const personPayload of [complete, { data: complete }, { verification: complete }, { person: [complete] }, { persons: [complete] }, { personData: complete }, personWithSerial, { data: personWithSerial }]) {
+    const f = fixture({ validation: { decisionPayload: { decisionPayload, personPayload } } });
+    assert.equal((await f.getFirmaSeguroFullNameIdentityForDraft(binding)).source, "VERIFF");
+  }
+  for (const identity of [{ ...complete, idNumber: "987654321" }, { ...complete, firstName: "Otra Persona" }]) {
+    for (const personPayload of [identity, { data: identity }, { verification: identity }, { person: [identity] }, { persons: [identity] }, { personData: identity }]) {
+      const f = fixture({ validation: { decisionPayload: { decisionPayload: { verification: { ...decisionPayload.verification, person: complete } }, personPayload } } });
+      await assert.rejects(f.getFirmaSeguroFullNameIdentityForDraft(binding));
+    }
+  }
+  assert.throws(() => pure.resolveFirmaSeguroFullNameIdentityFromEvidence({ ...input, identities: [{ ...complete, documentNumber: "987654321" }] }), error => error.reason === "identity-binding");
+});
+
+test("the persisted serializer rejects a different CC inside flat provider wrappers without using the physical document serial", () => {
+  const source = readFileSync(new URL("../lib/veriff-storage.ts", import.meta.url), "utf8");
+  const ast = ts.createSourceFile("veriff-storage.ts", source, ts.ScriptTarget.Latest, true);
+  const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "serializeVeriffValidation").getText(ast);
+  const compiled = ts.transpileModule(declaration + "\nmodule.exports = serializeVeriffValidation;", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  const loaded = { exports: {} };
+  runInNewContext(compiled, { module: loaded, exports: loaded.exports, resolveVeriffRowStatus: () => "APPROVED", areVeriffDecisionsTrusted: () => true,
+    extractVeriffIdentityData, extractVeriffIdentityDocumentEvidence, extractVeriffSessionUrl, compareDataCreditoVeriffIdentityEvidence });
+  for (const [idNumber, expected] of [[input.documentNumber, "match"], ["987654321", "conflict"]]) {
+    const decisionPayload = { verification: { person: { idNumber: input.documentNumber }, document: { number: "PHYSICAL-SERIAL", type: "ID_CARD", country: "CO" } } };
+    const person = { firstName: "María del Mar", lastName: "De la Peña Muñoz", idNumber };
+    for (const personPayload of [person, { data: person }, { verification: person }]) {
+      const result = loaded.exports({ clienteDocumento: input.documentNumber, decisionPayload: { decisionPayload, personPayload }, webhookPayload: null });
+      assert.equal(result.identityDocumentStatus, expected);assert.equal(result.identityDocumentNumber, expected === "match" ? input.documentNumber : null);
+    }
   }
 });
 

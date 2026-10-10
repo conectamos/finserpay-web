@@ -10,9 +10,14 @@ export type FirmaSeguroFullNameIdentity = {
   secondLastName: string | null;
 };
 
-type NameEvidence = { firstName?: unknown; lastName?: unknown; fullName?: unknown };
+type NameEvidence = { firstName?: unknown; lastName?: unknown; fullName?: unknown; documentNumber?: unknown };
 const nameText = (value: unknown) => typeof value === "string" ? value.normalize("NFC").replace(/\s+/g, " ").trim() : "";
-const comparableName = (value: unknown) => nameText(value).toLocaleUpperCase("es-CO");
+const comparableReviewedName = (value: unknown) => nameText(value).toLocaleUpperCase("es-CO");
+// Provider responses differ in vowel accents. Preserve consonants such as Ñ
+// and never modify the canonical name or the returned signing components.
+const comparableName = (value: unknown) => comparableReviewedName(value).normalize("NFD")
+  .replace(/([AEIOU])\p{M}+/gu, "$1").normalize("NFC");
+export const firmaSeguroProviderNamesMatch = (left: unknown, right: unknown) => comparableName(left) === comparableName(right);
 function documentText(value: unknown) {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!/^\d+(?:[ .-]\d+)*$/.test(raw)) return "";
@@ -22,12 +27,21 @@ function documentText(value: unknown) {
 export class FirmaSeguroFullNameIdentityError extends Error {
   readonly code = "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED";
   readonly status = 409;
-  constructor() {
+  constructor(readonly reason: "components-required" | "invalid-components" | "name-conflict" | "identity-binding" = "components-required") {
     super("FirmaSeguro requiere nombres y apellidos separados correspondientes al mismo documento y al nombre completo de DataCrédito. Si Veriff aprobó la cédula sin esos componentes, un administrador debe completarlos mediante revisión autorizada. No se realizó un envío ni una nueva consulta.");
     this.name = "FirmaSeguroFullNameIdentityError";
   }
 }
-function invalid(): never { throw new FirmaSeguroFullNameIdentityError(); }
+function invalid(reason?: ConstructorParameters<typeof FirmaSeguroFullNameIdentityError>[0]): never { throw new FirmaSeguroFullNameIdentityError(reason); }
+
+export function assertFirmaSeguroVeriffEvidenceDocuments(documentNumber: string, identities: readonly NameEvidence[]) {
+  const expected = documentText(documentNumber);
+  if (!expected) invalid("identity-binding");
+  for (const identity of identities) {
+    const received = identity.documentNumber;
+    if (received !== undefined && received !== null && String(received).trim() && documentText(received) !== expected) invalid("identity-binding");
+  }
+}
 
 // Veriff supplies these components. No part of DataCrédito's full name is split,
 // inferred, duplicated or substituted, including compound surnames and ñ.
@@ -46,15 +60,17 @@ export function resolveFirmaSeguroFullNameIdentity(input: {
   const canonical = comparableName(input.fullName);
   const validName = (value: string) => value.length >= 2 && value.length <= 100 && /^[\p{L}\p{M} '’-]+$/u.test(value);
   if (!Number.isSafeInteger(input.validationId) || input.validationId <= 0 || !documentNumber ||
-      documentText(input.veriffDocumentNumber) !== documentNumber || !canonical ||
-      !validName(firstName) || !validName(firstLastName) ||
-      comparableName(`${firstName} ${firstLastName}`) !== canonical) invalid();
+      documentText(input.veriffDocumentNumber) !== documentNumber || !canonical) invalid("identity-binding");
+  assertFirmaSeguroVeriffEvidenceDocuments(documentNumber, input.additionalIdentities || []);
+  if (!firstName || !firstLastName) invalid("components-required");
+  if (!validName(firstName) || !validName(firstLastName)) invalid("invalid-components");
+  if (comparableName(`${firstName} ${firstLastName}`) !== canonical) invalid("name-conflict");
   for (const evidence of input.additionalIdentities || []) {
     const evidenceFirst = nameText(evidence.firstName);
     const evidenceLast = nameText(evidence.lastName);
     if ((evidenceFirst && comparableName(evidenceFirst) !== comparableName(firstName)) ||
         (evidenceLast && comparableName(evidenceLast) !== comparableName(firstLastName)) ||
-        (nameText(evidence.fullName) && comparableName(evidence.fullName) !== canonical)) invalid();
+        (nameText(evidence.fullName) && comparableName(evidence.fullName) !== canonical)) invalid("name-conflict");
   }
   return { source: "VERIFF", validationId: input.validationId, documentNumber,
     canonicalFullName: input.fullName, firstName, firstLastName, secondName: null, secondLastName: null };
@@ -102,7 +118,7 @@ export function resolveReviewedFirmaSeguroFullNameIdentity(input: {
       typeof input.validationId !== "number" || !Number.isSafeInteger(input.validationId) || input.validationId <= 0 ||
       !documentNumber || documentText(input.reviewedDocumentNumber) !== documentNumber ||
       !validName(firstName) || !validName(firstLastName) || (secondLastName && !validName(secondLastName)) ||
-      comparableName([firstName, firstLastName, secondLastName].filter(Boolean).join(" ")) !== comparableName(input.fullName)) invalid();
+      comparableReviewedName([firstName, firstLastName, secondLastName].filter(Boolean).join(" ")) !== comparableReviewedName(input.fullName)) invalid();
   return { source: "AUTHORIZED_REVIEW", reviewId: input.reviewId, validationId: input.validationId,
     documentNumber, canonicalFullName: input.fullName, firstName, firstLastName,
     secondName: null, secondLastName: secondLastName || null };
