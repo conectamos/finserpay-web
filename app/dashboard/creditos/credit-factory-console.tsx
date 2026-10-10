@@ -13633,12 +13633,11 @@ export default function CreditFactoryConsole({
                   : "fp-credit-factory-layout mt-4 grid gap-4 xl:grid-cols-[220px_1fr] xl:items-start"
               }
             >
-              <nav
+              {!simulatorMode ? <nav
                 aria-label="Pasos de la nueva venta"
                 className={[
                   "fp-step-rail fp-stepper-horizontal rounded-[22px] border border-[#d8e6e5] bg-white/88 p-2.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
                   createClientMode ? "fp-new-sale-stepper" : "",
-                  simulatorMode ? "hidden" : "",
                 ].join(" ")}
               >
                 {visibleFactorySteps.map((step, stepIndex) => {
@@ -13700,7 +13699,7 @@ export default function CreditFactoryConsole({
                     </button>
                   );
                 })}
-              </nav>
+              </nav> : null}
 
               <div>
                 <div

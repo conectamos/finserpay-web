@@ -40,7 +40,8 @@
 .shell:global(.fp-credit-factory) :global(.fp-step2-section-heading p), .shell:global(.fp-credit-factory) :global(.fp-step2-counter), .shell:global(.fp-credit-factory) :global(.fp-step2-device-preview > strong), .shell:global(.fp-credit-factory) :global(.fp-step2-device-preview > p) { display: none; }
 .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-fields) { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.22fr) minmax(0,1fr); align-items: start; gap: 16px; margin-top: 4px; padding-left: 64px; }
 .shell:global(.fp-credit-factory) :global(.fp-step2-control) { height: 44px !important; min-height: 44px !important; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); padding: 8px 14px; color: #4e5b6e; font-size: 14px; font-weight: 600; background: white; }
-.shell:global(.fp-credit-factory) :global(.fp-step2-control:disabled) { background: #f2f3f4; color: #687481; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-control:is(:disabled,[readonly])),
+.shell:global(.fp-credit-factory) :global(fieldset[disabled] .fp-step2-control) { background: #f2f3f4 !important; color: #687481; }
 .shell:global(.fp-credit-factory) :global(.fp-step2 label) { min-width: 0; }
 .shell:global(.fp-credit-factory) :global(.fp-step2 label > span), .shell:global(.fp-credit-factory) :global(.fp-step2-installments > span), .shell:global(.fp-credit-factory) :global(.fp-step2-percentage > span) { color: var(--fp-muted); font-size: 14px; }
 .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-lower) { display: grid; grid-template-columns: 72px minmax(0,1fr); align-items: end; gap: 22px; margin-top: 18px; padding-left: 64px; }
@@ -96,10 +97,10 @@
 .proposalDevice strong { display: block; color: white; font-size: 17px; font-weight: 800; line-height: 1.4; overflow-wrap: anywhere; }
 .proposalDevice small { display: block; margin-top: 6px; color: #d9e0e5; font-size: 12px; }
 .proposal :global(.fp-step2-proposal-metrics) { display: flex; flex-direction: column; min-width: 0; gap: 0; margin: 0; }
-.proposal :global(.fp-step2-proposal-metrics > div) { display: flex; min-width: 0; flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; min-height: 50px; border: 0; border-bottom: 1px solid #41494d; padding: 12px 0; background: none; }
+.shell:global(.fp-credit-factory) .proposal :global(.fp-step2-proposal-metrics > div) { display: flex; min-width: 0; flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; min-height: 50px; border: 0; border-bottom: 1px solid #41494d; padding: 12px 0; background: none; }
 .proposal :global(.fp-step2-proposal-metrics dt) { color: white; font-size: 14px; line-height: 1.4; }
 .proposal :global(.fp-step2-proposal-metrics dd) { margin: 0; color: white; font-size: 18px; line-height: 1.4; font-weight: 800; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.proposal :global(.fp-step2-proposal-metrics > .fp-step2-proposal-installment) { display: block; min-height: 134px; margin: 0 0 10px; padding: 20px 0 26px; border-bottom: 1px solid #566065; background: none; }
+.shell:global(.fp-credit-factory) .proposal :global(.fp-step2-proposal-metrics > .fp-step2-proposal-installment) { display: block; min-height: 134px; margin: 0 0 10px; padding: 20px 0 26px; border-bottom: 1px solid #566065; background: none; }
 .proposal :global(.fp-step2-proposal-installment)::before, .proposal :global(.fp-step2-proposal-installment > span) { display: none; }
 .proposal :global(.fp-step2-proposal-installment dd) { margin-top: 6px; font-size: clamp(34px,3.7vw,56px); font-weight: 800; line-height: 1.15; text-align: left; letter-spacing: -.035em; }
 .shell:global(.fp-credit-factory) :global(.fp-step2 > details), .shell:global(.fp-credit-factory) :global(.fp-step2 > .fp-step2-inline-alert) { grid-column: 1 / -1; margin-top: 0; }
