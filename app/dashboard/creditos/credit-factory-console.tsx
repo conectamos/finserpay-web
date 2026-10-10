@@ -40,6 +40,8 @@ import {
   Search,
   Save,
   ShieldCheck,
+  Settings,
+  SquarePen,
   ShoppingCart,
   Smartphone,
   UserRound,
@@ -3103,9 +3105,6 @@ export default function CreditFactoryConsole({
     adminFactoryAssistAvailable &&
       (Boolean(normalizedInitialSearch) || Boolean(initialDraftId))
   );
-  const adminFactoryAssistMode = adminFactoryAssistAvailable && showAdminAssist;
-  const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
-  const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
   const [draftDevicePlatform, setDraftDevicePlatform] =
     useState<DevicePlatform | null>(devicePlatform);
   const currentDevicePlatform: DevicePlatform =
@@ -3188,7 +3187,12 @@ export default function CreditFactoryConsole({
   const lookupDetailPanelRef = useRef<HTMLDivElement | null>(null);
   const historySectionRef = useRef<HTMLDivElement | null>(null);
   const registeringPaymentRef = useRef(false);
+  const factoryClosingOperationInFlightRef = useRef(false);
   const [wizardStep, setWizardStep] = useState(simulatorMode ? 2 : 1);
+  const deliveryWorkspace = createClientMode && wizardStep === 5;
+  const adminFactoryAssistMode = adminFactoryAssistAvailable && (showAdminAssist || deliveryWorkspace);
+  const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
+  const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
   const [clienteNombre, setClienteNombre] = useState("");
   const [clientePrimerNombre, setClientePrimerNombre] = useState("");
   const [clientePrimerApellido, setClientePrimerApellido] = useState("");
@@ -6157,6 +6161,21 @@ export default function CreditFactoryConsole({
       : !firmaSeguroProcessSigned
         ? "El contrato debe estar firmado antes de generar la remisión y finalizar el crédito."
       : deliveryPendingMessage;
+  const creditClosurePendingSummary = signedCorrectionAwaitingSignature
+    ? "Pendiente: firma de la nueva versión del contrato."
+    : veriffRequired && !veriffApproved
+      ? "Pendiente: aprobación de identidad."
+      : !firmaSeguroProcessSigned
+        ? "Pendiente: contrato vigente firmado."
+        : !creditRemissionReady
+          ? "Pendiente: validar la remisión vigente."
+          : !deliveryEnrollmentReady
+            ? "Pendiente: enrolamiento y evidencias."
+            : iphoneEvidencePersistenceError
+              ? "No se pudieron guardar las evidencias. Reintenta."
+              : !evidenceFinalizationReady
+                ? "Pendiente: guardar las cinco evidencias."
+                : "Pendiente: validación final de entrega.";
   const paymentOverview = paymentSummary ||
     (selectedCredit
       ? {
@@ -9996,6 +10015,7 @@ export default function CreditFactoryConsole({
   };
 
   const correctFirmaSeguroImei = async () => {
+    if (factoryClosingOperationInFlightRef.current) return;
     const correctedImei = firmaSeguroImeiCorrectionValue.trim();
     const expectedCurrentImei = String(
       firmaSeguroDraftProcess?.draftImei || imeiDigits
@@ -10067,6 +10087,7 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    factoryClosingOperationInFlightRef.current = true;
     try {
       cancelPendingDraftAutosave();
       firmaSeguroRefreshGenerationRef.current += 1;
@@ -10182,11 +10203,13 @@ export default function CreditFactoryConsole({
         tone: "red",
       });
     } finally {
+      factoryClosingOperationInFlightRef.current = false;
       setFirmaSeguroImeiCorrecting(false);
     }
   };
 
   const correctSignedFinancialTerms = async () => {
+    if (factoryClosingOperationInFlightRef.current) return;
     const expectedProcessUuid = String(
       firmaSeguroDraftProcess?.processUuid || ""
     ).trim();
@@ -10276,6 +10299,7 @@ export default function CreditFactoryConsole({
       idempotencyKey,
     };
 
+    factoryClosingOperationInFlightRef.current = true;
     try {
       cancelPendingDraftAutosave();
       firmaSeguroRefreshGenerationRef.current += 1;
@@ -10380,6 +10404,7 @@ export default function CreditFactoryConsole({
         tone: "red",
       });
     } finally {
+      factoryClosingOperationInFlightRef.current = false;
       setSignedTermsCorrectionBusy(false);
     }
   };
@@ -10392,6 +10417,7 @@ export default function CreditFactoryConsole({
     } = {}
   ) => {
     const acceptsByFirmaSeguro = Boolean(options.firmaSeguroPasoContratos);
+    if (factoryClosingOperationInFlightRef.current) return null;
     const documentsReadyForCreate = acceptsByFirmaSeguro
       ? firmaSeguroProcessSigned
       : stepDocumentosReady;
@@ -10476,6 +10502,7 @@ export default function CreditFactoryConsole({
 
     const creditCreateStartedAt = Date.now();
 
+    factoryClosingOperationInFlightRef.current = true;
     try {
       setCreating(true);
       setNotice(null);
@@ -10680,6 +10707,7 @@ export default function CreditFactoryConsole({
       });
       return null;
     } finally {
+      factoryClosingOperationInFlightRef.current = false;
       setCreating(false);
     }
   };
@@ -12852,6 +12880,7 @@ export default function CreditFactoryConsole({
               clientLookupMode ? "fp-client-lookup" : "fp-seller-app",
               createClientMode || simulatorMode ? "fp-credit-factory" : "",
               showDataCreditoGate ? clientValidationStyles.shell : "",
+              deliveryWorkspace ? stepFourStyles.shell : "",
             ].join(" ")
       }
     >
@@ -12974,7 +13003,7 @@ export default function CreditFactoryConsole({
             className={
               clientLookupMode
                 ? "fp-client-lookup-hero"
-                : createClientMode && showDataCreditoGate
+                : createClientMode && (showDataCreditoGate || deliveryWorkspace)
                   ? "fp-new-sale-header"
                 : [
                     "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
@@ -12983,12 +13012,12 @@ export default function CreditFactoryConsole({
                   ].join(" ")
             }
           >
-            {createClientMode && showDataCreditoGate ? (
+            {createClientMode && (showDataCreditoGate || deliveryWorkspace) ? (
               <ClientValidationHeader
                 nombre={initialSeller?.nombre || initialSession.nombre}
                 rol={initialSession.rolNombre}
                 canViewPayments={canViewSavedCredits}
-                canAssist={adminFactoryAssistAvailable}
+                canAssist={adminFactoryAssistAvailable && !deliveryWorkspace}
                 assistOpen={showAdminAssist}
                 onToggleAssist={() => {
                   setShowAdminAssist((value) => !value);
@@ -13265,7 +13294,7 @@ export default function CreditFactoryConsole({
           </section>
         )}
 
-        {notice && (
+        {notice && !(deliveryWorkspace && notice.text === "Identidad aprobada. Datos copiados.") && (
           <div
             ref={noticeRef}
             tabIndex={-1}
@@ -13291,13 +13320,15 @@ export default function CreditFactoryConsole({
                 ? embeddedClientLookup
                   ? "fp-client-lookup-search fp-client-lookup-search-embedded"
                   : "fp-client-lookup-search"
+              : deliveryWorkspace && adminFactoryAssistMode
+                ? stepFourStyles.caseSearch
               : adminFactoryAssistMode
                 ? "fp-surface mt-4 rounded-[24px] p-4"
                 : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
           {clientLookupMode ? <h1 className="fp-client-page-title">Expediente del cliente</h1> : null}
-          {!clientLookupMode ? (
+          {!clientLookupMode && !deliveryWorkspace ? (
             <div
               className={[
                 "inline-flex rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase",
@@ -13352,7 +13383,9 @@ export default function CreditFactoryConsole({
 
           <div
             className={
-              deliveryMode
+              deliveryWorkspace
+                ? stepFourStyles.searchControls
+              : deliveryMode
                 ? "mt-5 flex flex-col gap-3 lg:flex-row"
                 : clientLookupMode
                   ? "fp-client-lookup-command mt-4 flex flex-col gap-2 lg:flex-row"
@@ -13375,6 +13408,7 @@ export default function CreditFactoryConsole({
                   }
                 }}
                 aria-label="Buscar cliente o expediente"
+                title={deliveryWorkspace ? accessScopeLabel : undefined}
                 placeholder={
                   deliveryMode || adminFactoryAssistMode
                     ? "Cedula o IMEI"
@@ -13409,7 +13443,7 @@ export default function CreditFactoryConsole({
                 : deliveryMode
                   ? "Consultar"
                   : adminFactoryAssistMode
-                    ? "Buscar caso"
+                    ? deliveryWorkspace ? "Buscar" : "Buscar caso"
                     : paymentsView || clientLookupMode
                       ? "Buscar"
                       : "Buscar cliente"}
@@ -13428,6 +13462,7 @@ export default function CreditFactoryConsole({
               {clientLookupMode ? <RotateCcw className="h-4 w-4" strokeWidth={1.9} /> : null}
               {paymentsView ? "Nueva busqueda" : "Limpiar"}
             </button>
+            {deliveryWorkspace ? <span className={stepFourStyles.searchScope}><Building2 aria-hidden="true" />Todos los aliados</span> : null}
           </div>
 
           {clientLookupMode && !activeSearch && !selectedCredit ? (
@@ -13561,7 +13596,7 @@ export default function CreditFactoryConsole({
                 </div>
               )}
             </div>
-          ) : deliveryMode || clientLookupMode ? null : (
+          ) : deliveryMode || clientLookupMode || (deliveryWorkspace && !activeSearch) ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                 Alcance: {accessScopeLabel}
@@ -17579,14 +17614,20 @@ export default function CreditFactoryConsole({
                     stepFourStyles.stage,
                   ].join(" ")}
                 >
+                  <Card className={stepFourStyles.mainCard}>
                   <div className={stepFourStyles.heading}>
                     <div className={stepFourStyles.headingCopy}>
-                      <span className={stepFourStyles.eyebrow}>
-                        {hideIdentityWizardStep ? "PASO 4" : "PASO 5"}
-                      </span>
                       <h3>Entrega del equipo</h3>
-                      <p>Completa cada acción para finalizar el crédito.</p>
+                      <p>Completa los pasos para finalizar el crédito.</p>
                     </div>
+                    <div className={stepFourStyles.statusGroup}>
+                      <span className={[stepFourStyles.contractStatus, !firmaSeguroProcessSigned ? stepFourStyles.contractPending : ""].join(" ")} role="status">
+                        <span aria-hidden="true" />
+                        <span>
+                          <strong>{firmaSeguroProcessSigned ? "Contrato firmado" : "Contrato pendiente de firma"}</strong>
+                          {firmaSeguroProcessSigned && !deliveryEnrollmentReady ? iphoneFactory ? " · Esperando confirmación del analista" : " · Esperando confirmación del enrolamiento" : null}
+                        </span>
+                      </span>
                     <StatusPill
                       className={stepFourStyles.headerStatus}
                       tone={
@@ -17601,30 +17642,34 @@ export default function CreditFactoryConsole({
                       title={creditClosureReady ? undefined : creditClosurePendingMessage}
                     >
                       {creditClosureReady
-                        ? "LISTO PARA FINALIZAR"
+                        ? "Listo para finalizar"
                         : !deliveryEvidenceUnlocked
-                          ? "PENDIENTE DE ENROLAMIENTO"
+                          ? "Pendiente de enrolamiento"
                           : iphoneEvidencePersistenceError
-                            ? "ERROR AL GUARDAR"
+                            ? "Error al guardar"
                             : iphoneEvidencePersistencePending
-                              ? "GUARDANDO EVIDENCIAS"
+                              ? "Guardando evidencias"
                               : !evidenceFinalizationReady
-                                ? "PENDIENTE DE EVIDENCIAS"
-                                : "PENDIENTE DE VALIDACIÓN"}
+                                ? "Pendiente de evidencias"
+                                : "Pendiente de validación"}
                     </StatusPill>
+                    </div>
                   </div>
 
-                  <Card className={stepFourStyles.mainCard}>
                     <section
                       className={stepFourStyles.saleSummary}
                       aria-label="Resumen de la venta"
                     >
                       <span className={stepFourStyles.deviceIcon} aria-hidden="true">
-                        <Smartphone strokeWidth={1.8} />
+                        <NextImage
+                          src={iphoneFactory ? "/assets/dashboard/apple.svg" : "/assets/dashboard/android.svg"}
+                          width={34}
+                          height={34}
+                          alt=""
+                        />
                       </span>
                       <div className={stepFourStyles.saleData}>
                         <div>
-                          <span>Referencia del equipo</span>
                           <strong>{creditRemissionData.referenciaEquipo || "Equipo sin seleccionar"}</strong>
                         </div>
                         <div>
@@ -17647,15 +17692,20 @@ export default function CreditFactoryConsole({
                         </summary>
                         <div className={stepFourStyles.detailsPanel}>
                           <div>
-                            <span>Documento</span>
+                            <span>Cédula</span>
                             <strong>
-                              •••• {String(creditRemissionData.clienteDocumento || "").slice(-4) || "----"}
+                              {String(creditRemissionData.clienteDocumento || "").replace(/\D/g, "") || "Sin registrar"}
                             </strong>
                           </div>
                           <div>
                             <span>IMEI</span>
-                            <strong>•••• {String(imei || "").slice(-4) || "----"}</strong>
+                            <strong>{String(imei || "").replace(/\D/g, "") || "Sin registrar"}</strong>
                           </div>
+                          <div><span>Teléfono</span><strong>{clienteTelefono || "Sin registrar"}</strong></div>
+                          <div><span>Correo</span><strong>{clienteCorreo || "Sin registrar"}</strong></div>
+                          <div><span>Valor de venta</span><strong>{currency(creditRemissionData.valorVenta)}</strong></div>
+                          <div><span>Cuota inicial</span><strong>{currency(creditRemissionData.valorInicial)}</strong></div>
+                          <div><span>Número de cuotas</span><strong>{creditRemissionData.numeroCuotas}</strong></div>
                           <div>
                             <span>Valor cuota</span>
                             <strong>{currency(creditRemissionData.valorCuota)}</strong>
@@ -17675,11 +17725,10 @@ export default function CreditFactoryConsole({
                         <span
                           className={[
                             stepFourStyles.stepMarker,
-                            stepFourStyles.stepMarkerComplete,
                           ].join(" ")}
                           aria-hidden="true"
                         >
-                          <Check strokeWidth={2.5} />
+                          1
                         </span>
                         <CreditRemissionNote
                           clienteNombre={creditRemissionData.clienteNombre}
@@ -17692,7 +17741,7 @@ export default function CreditFactoryConsole({
                           fechaPrimerPago={creditRemissionData.fechaPrimerPago}
                           frecuenciaPago={creditRemissionData.frecuenciaPago}
                           versionKey={creditRemissionVersionKey}
-                          autoOpen={wizardStep === 5 && creditRemissionReady}
+                          autoOpen={false}
                           ready={creditRemissionReady}
                           verifyCurrentVersion={verifyCurrentRemissionVersion}
                         />
@@ -17733,7 +17782,7 @@ export default function CreditFactoryConsole({
                               )}
                             </span>
                             <div>
-                              <h4>Confirma el enrolamiento</h4>
+                              <h4>2. Enrolamiento</h4>
                               <p>
                                 {iphoneFactory
                                   ? deliveryEnrollmentReady
@@ -17767,7 +17816,7 @@ export default function CreditFactoryConsole({
                               ) : (
                                 <Clock3 aria-hidden="true" />
                               )}
-                              {deliveryEnrollmentReady ? "COMPLETADO" : "EN PROCESO"}
+                              {deliveryEnrollmentReady ? "Completado" : "En proceso"}
                             </span>
                           ) : (
                             <div className={stepFourStyles.androidActions}>
@@ -17843,8 +17892,9 @@ export default function CreditFactoryConsole({
                               )}
                             </span>
                             <div>
-                              <h4>Carga las evidencias</h4>
+                              <h4>3. Evidencias</h4>
                               <p>5 fotografías obligatorias.</p>
+                              {!deliveryEvidenceUnlocked ? <p>Se habilitan después del enrolamiento.</p> : null}
                             </div>
                           </div>
                           <span
@@ -17867,7 +17917,7 @@ export default function CreditFactoryConsole({
                               <Camera aria-hidden="true" />
                             )}
                             {!deliveryEvidenceUnlocked
-                              ? "BLOQUEADO"
+                              ? "Bloqueado"
                               : evidenceFinalizationReady
                                 ? "COMPLETADO"
                                 : iphoneEvidencePersistenceError
@@ -18091,37 +18141,26 @@ export default function CreditFactoryConsole({
                         </div>
                       </section>
                     ) : null}
-                  </Card>
-
+                  {canSeeInternalPricing && draftId && firmaSeguroProcessSigned ? (
+                    <details className={stepFourStyles.adminTools} open>
+                      <summary>
+                        <Settings aria-hidden="true" />
+                        <strong>Herramientas de administración</strong>
+                        <span className={stepFourStyles.adminBadge}>Solo FINSER PAY</span>
+                        <ChevronDown className={stepFourStyles.disclosureArrow} aria-hidden="true" />
+                      </summary>
+                      <div className={stepFourStyles.adminOptions}>
                   {canSeeInternalPricing &&
                   draftId &&
                   firmaSeguroProcessSigned ? (
-                    <section
-                      className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-5 py-5"
-                      data-testid="signed-financial-correction"
-                    >
-                      <div className="flex items-start gap-3">
-                        <span
-                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-white text-amber-700"
-                          aria-hidden="true"
-                        >
-                          <History className="h-5 w-5" strokeWidth={1.8} />
-                        </span>
-                        <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800">
-                            Control exclusivo FINSER PAY
-                          </p>
-                          <h4 className="mt-1 text-lg font-black text-slate-950">
-                            Corregir valores del cierre
-                          </h4>
-                          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
-                            Úsalo cuando el asesor solicite una corrección después de la firma.
-                            El contrato vigente se conserva en el historial, el cliente debe firmar
-                            una nueva versión y la remisión anterior queda archivada.
-                          </p>
-                        </div>
-                      </div>
-
+                    <details className={stepFourStyles.adminOption} data-testid="signed-financial-correction">
+                      <summary>
+                        <SquarePen aria-hidden="true" />
+                        <span><strong>Corregir valores del cierre</strong><small>Valor de venta, inicial y plazo.</small></span>
+                        <ChevronRight className={stepFourStyles.disclosureArrow} aria-hidden="true" />
+                      </summary>
+                      <div className={stepFourStyles.correctionForm}>
+                        <p className={stepFourStyles.correctionNotice}>El contrato firmado se conserva en el historial. La corrección exige una nueva firma y archiva la remisión anterior.</p>
                       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <label className="block text-sm font-semibold text-slate-800">
                           <span className="mb-2 block">Valor de venta</span>
@@ -18165,9 +18204,9 @@ export default function CreditFactoryConsole({
                             ))}
                           </select>
                         </label>
-                        <div className="rounded-md border border-amber-200 bg-white px-4 py-3">
+                        <div className={stepFourStyles.calculatedCredit}>
                           <span className="block text-xs font-semibold text-slate-500">
-                            Crédito solicitado
+                            Crédito calculado
                           </span>
                           <strong className="mt-1 block text-base text-slate-950">
                             {currency(signedTermsCorrectionFinancedAmount)}
@@ -18200,6 +18239,8 @@ export default function CreditFactoryConsole({
                           onClick={() => void correctSignedFinancialTerms()}
                           disabled={
                             signedTermsCorrectionBusy ||
+                            creating ||
+                            firmaSeguroImeiCorrecting ||
                             firmaSeguroSubmitting ||
                             firmaSeguroRefreshing
                           }
@@ -18218,31 +18259,22 @@ export default function CreditFactoryConsole({
                             : "Corregir y exigir nueva firma"}
                         </button>
                       </div>
-                    </section>
+                      </div>
+                    </details>
                   ) : null}
 
                   {canSeeInternalPricing &&
                   iphoneFactory &&
                   draftId &&
                   firmaSeguroProcessSigned ? (
-                    <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-5 py-5">
-                      <div className="flex items-start gap-3">
-                        <span
-                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-white text-amber-700"
-                          aria-hidden="true"
-                        >
-                          <History className="h-5 w-5" strokeWidth={1.8} />
-                        </span>
-                        <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800">
-                            Control exclusivo FINSER PAY
-                          </p>
-                          <h4 className="mt-1 text-lg font-black text-slate-950">
-                            {iphoneEnrollmentReview
-                              ? "Corregir IMEI y reiniciar firma y enrolamiento"
-                              : "Corregir IMEI y volver a firmar"}
-                          </h4>
-                          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
+                    <details className={stepFourStyles.adminOption} data-testid="signed-imei-correction">
+                      <summary>
+                        <Smartphone aria-hidden="true" />
+                        <span><strong>Corregir IMEI y volver a firmar</strong><small>Corrección del equipo.</small></span>
+                        <ChevronRight className={stepFourStyles.disclosureArrow} aria-hidden="true" />
+                      </summary>
+                      <div className={stepFourStyles.correctionForm}>
+                          <p className={stepFourStyles.correctionNotice}>
                             {iphoneEnrollmentReview ? (
                               <>
                                 Esta solicitud ya tiene un enrolamiento aprobado. Al corregir el IMEI, la
@@ -18259,29 +18291,31 @@ export default function CreditFactoryConsole({
                               </>
                             )}
                           </p>
-                        </div>
-                      </div>
-
                       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(220px,0.65fr)_minmax(320px,1.35fr)_auto] lg:items-end">
                         <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                          <label htmlFor="delivery-correct-imei" className="mb-2 block text-sm font-semibold text-slate-800">
                             IMEI correcto
                           </label>
                           <input
+                            id="delivery-correct-imei"
                             value={firmaSeguroImeiCorrectionValue}
                             onChange={(event) =>
-                              setFirmaSeguroImeiCorrectionValue(event.target.value)
+                              setFirmaSeguroImeiCorrectionValue(event.target.value.replace(/\D/g, ""))
                             }
                             inputMode="numeric"
+                            pattern="[0-9]{15}"
+                            aria-label="IMEI correcto"
+                            aria-invalid={Boolean(firmaSeguroImeiCorrectionValue) && !/^\d{15}$/.test(firmaSeguroImeiCorrectionValue)}
                             placeholder="15 números"
                             className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                           />
                         </div>
                         <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-800">
+                          <label htmlFor="delivery-correct-imei-reason" className="mb-2 block text-sm font-semibold text-slate-800">
                             Motivo de la corrección
                           </label>
                           <input
+                            id="delivery-correct-imei-reason"
                             value={firmaSeguroImeiCorrectionReason}
                             onChange={(event) =>
                               setFirmaSeguroImeiCorrectionReason(event.target.value.slice(0, 240))
@@ -18297,6 +18331,8 @@ export default function CreditFactoryConsole({
                           onClick={() => void correctFirmaSeguroImei()}
                           disabled={
                             firmaSeguroImeiCorrecting ||
+                            creating ||
+                            signedTermsCorrectionBusy ||
                             firmaSeguroSubmitting ||
                             firmaSeguroRefreshing
                           }
@@ -18312,8 +18348,14 @@ export default function CreditFactoryConsole({
                             : "Corregir y exigir nueva firma"}
                         </button>
                       </div>
-                    </section>
+                      </div>
+                    </details>
                   ) : null}
+                      </div>
+                      <p className={stepFourStyles.adminHint}><Info aria-hidden="true" />Las correcciones requieren una nueva firma; se conserva el historial.</p>
+                    </details>
+                  ) : null}
+                  </Card>
                 </div>
               )}
 
@@ -18964,20 +19006,26 @@ export default function CreditFactoryConsole({
                       disabled={
                         creating ||
                         firmaSeguroSubmitting ||
+                        firmaSeguroImeiCorrecting ||
+                        signedTermsCorrectionBusy ||
                         !creditClosureReady
                       }
                       className={stepFourStyles.finalizeButton}
                     >
                       {creating || firmaSeguroSubmitting
-                        ? "FINALIZANDO CRÉDITO…"
-                        : "FINALIZAR CRÉDITO FIRMADO"}
+                        ? "Finalizando crédito…"
+                        : "Finalizar crédito"}
                     </button>
-                    {!creditClosureReady ? (
+                    {!creditClosureReady ||
+                    firmaSeguroImeiCorrecting ||
+                    signedTermsCorrectionBusy ? (
                       <span
                         className={stepFourStyles.finalizeHelp}
                         title={creditClosurePendingMessage}
                       >
-                        Disponible al completar las evidencias.
+                        {firmaSeguroImeiCorrecting || signedTermsCorrectionBusy
+                          ? "Aplicando corrección; espera la nueva firma."
+                          : creditClosurePendingSummary}
                       </span>
                     ) : null}
                   </div>

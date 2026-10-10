@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 const routeSource = readFileSync(
   new URL("../app/api/creditos/route.ts", import.meta.url),
@@ -165,4 +167,117 @@ test("FirmaSeguro se vincula por UUID y draft dentro de la transaccion", () => {
 
   const afterCommitSource = routeSource.slice(transactionEnd);
   assert.doesNotMatch(afterCommitSource, /linkFirmaSeguroProcessForCredit\(/);
+});
+
+test("un proceso vigente no puede omitirse ni reemplazarse por una firma histórica al cerrar", async () => {
+  const ast = ts.createSourceFile("route.ts", routeSource, ts.ScriptTarget.Latest, true);
+  const statements = [];
+  const visit = (node) => {
+    if (ts.isVariableStatement(node) && node.declarationList.declarations.some(
+      (declaration) => ["currentFirmaSeguroProcess", "firmaSeguroWorkflowStarted"].includes(declaration.name.getText(ast))
+    )) statements.push(node);
+    if (ts.isIfStatement(node) && node.expression.getText(ast).startsWith("firmaSeguroWorkflowStarted &&")) {
+      statements.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  assert.equal(statements.length, 3, "Debe ejecutarse el guard real del cierre");
+  const source = statements.sort((left, right) => left.pos - right.pos).map((node) => node.getText(ast)).join("\n");
+  const { outputText } = ts.transpileModule(`(async () => { ${source}\nreturn null; })()`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  });
+  const process = { processUuid: "current-signature", draftId: 45 };
+
+  for (const body of [
+    {},
+    { firmaSeguroPasoContratos: false, contratoFirmaDataUrl: "manual-signature" },
+    { firmaSeguroPasoContratos: 0, firmaSeguroProcessUuid: process.processUuid },
+    { firmaSeguroPasoContratos: true },
+    { firmaSeguroPasoContratos: true, firmaSeguroProcessUuid: "historical-signature" },
+    { firmaSeguroPasoContratos: true, firmaSeguroProcessUuid: "other-draft-signature" },
+  ]) {
+    let reads = 0;
+    const response = await runInNewContext(outputText, {
+      body, requestedSolicitudId: 45,
+      sanitizeText: (value) => String(value ?? "").trim(),
+      getLatestFirmaSeguroProcessByDraft: async (draftId) => {
+        assert.equal(draftId, 45);
+        reads++;
+        return process;
+      },
+      hasFirmaSeguroDraftWorkflowStarted: async () => assert.fail("El proceso vigente ya acredita el inicio"),
+      NextResponse: { json: (payload, options) => ({ payload, status: options.status }) },
+    });
+    assert.equal(reads, 1);
+    assert.equal(response.status, 409);
+    assert.equal(response.payload.code, "FIRMASEGURO_CURRENT_PROCESS_REQUIRED");
+  }
+
+  for (const [current, started, body] of [
+    [process, true, { firmaSeguroPasoContratos: true, firmaSeguroProcessUuid: process.processUuid }],
+    [null, false, { firmaSeguroPasoContratos: false, contratoFirmaDataUrl: "legacy-manual-signature" }],
+  ]) {
+    const result = await runInNewContext(outputText, {
+      body, requestedSolicitudId: 45,
+      sanitizeText: (value) => String(value ?? "").trim(),
+      getLatestFirmaSeguroProcessByDraft: async () => current,
+      hasFirmaSeguroDraftWorkflowStarted: async () => started,
+      NextResponse: { json: () => assert.fail("No debe bloquear la firma vigente ni el flujo manual sin proceso") },
+    });
+    assert.equal(result, null);
+  }
+
+  for (const body of [
+    { firmaSeguroPasoContratos: false, contratoFirmaDataUrl: "manual-after-correction" },
+    { firmaSeguroPasoContratos: true, firmaSeguroProcessUuid: "archived-before-reissue" },
+  ]) {
+    const result = await runInNewContext(outputText, {
+      body, requestedSolicitudId: 45,
+      sanitizeText: (value) => String(value ?? "").trim(),
+      getLatestFirmaSeguroProcessByDraft: async () => null,
+      hasFirmaSeguroDraftWorkflowStarted: async () => true,
+      NextResponse: { json: (payload, options) => ({ payload, status: options.status }) },
+    });
+    assert.equal(result.status, 409, "No debe cerrar entre archivar la firma anterior y emitir la nueva");
+    assert.equal(result.payload.code, "FIRMASEGURO_CURRENT_PROCESS_REQUIRED");
+  }
+
+  const guardPosition = routeSource.indexOf("const currentFirmaSeguroProcess");
+  assert.ok(guardPosition > routeSource.indexOf('code: "SOLICITUD_TITULAR_CAMBIO"'));
+  assert.ok(guardPosition > routeSource.indexOf("await tryAcquireSolicitudOperationLock(requestedSolicitudId)"));
+  assert.ok(guardPosition < routeSource.indexOf("const dataCreditoProvider = getDataCreditoPublicConfig()"));
+  assert.ok(guardPosition < routeSource.indexOf("await refreshFirmaSeguroProcess(storedFirmaSeguroProcess)"));
+});
+
+test("el inicio de FirmaSeguro conserva históricos y despachos inciertos sin exigir tablas opcionales antiguas", async () => {
+  const ast = ts.createSourceFile("storage.ts", firmaSeguroStorageSource, ts.ScriptTarget.Latest, true);
+  const declaration = ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "hasFirmaSeguroDraftWorkflowStarted");
+  assert.ok(declaration);
+  const { outputText } = ts.transpileModule(`${declaration.getText(ast)}\nmodule.exports = hasFirmaSeguroDraftWorkflowStarted;`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  });
+  for (const [processStarted, dispatchTablePresent, dispatchStarted, expected, expectedReads] of [
+    [true, false, false, true, 1],
+    [true, true, false, true, 1],
+    [false, false, false, false, 1],
+    [false, true, true, true, 2],
+    [false, true, false, false, 2],
+  ]) {
+    const queries = [];
+    const testModule = { exports: {} };
+    runInNewContext(outputText, { module: testModule, exports: testModule.exports, ensureFirmaSeguroSchema: async () => {},
+      prisma: { $queryRawUnsafe: async (sql, draftId) => {
+        assert.equal(draftId, 45);
+        queries.push(sql);
+        assert.ok(!sql.includes('"supersededAt"'), "Una firma archivada conserva el inicio del flujo");
+        return queries.length === 1
+          ? [{ started: processStarted, dispatchTablePresent }]
+          : [{ started: dispatchStarted }];
+      } },
+    });
+    assert.equal(await testModule.exports(45), expected);
+    assert.equal(queries.length, expectedReads);
+    if (expectedReads === 2) assert.ok(queries[1].includes('FROM "FirmaSeguroDraftDispatch" WHERE "draftId" = $1'));
+  }
 });

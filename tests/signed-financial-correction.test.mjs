@@ -91,7 +91,7 @@ test("la nueva firma recalcula el sello y no reutiliza términos congelados", as
     /const financialCorrectionPending =\s*sourcePayload\.firmaSeguroFinancialCorrectionPending === true/,
   );
   assert.match(source, /if \(source && frozenCorrectionPending\)/);
-  assert.match(source, /const built = await buildDraftCredit\(lockedAuthorized\.row\)/);
+  assert.match(source, /const built = await buildDraftCredit\(lockedAuthorized\.row, \{ requireFirmaSeguroIdentity: true \}\)/);
   assert.match(source, /createFinancingTermsSeal/);
   assert.match(source, /recordFirmaSeguroFinancialCorrectionReissue/);
   assert.match(source, /financialCorrectionReissue/);
@@ -129,7 +129,7 @@ test("un autosave antiguo no restaura valores ni la foto de remisión", async ()
   assert.match(source, /SOLICITUD_CORRECCION_FINANCIERA_PENDIENTE/);
   assert.match(source, /delete canonicalPayload\[field\]/);
   assert.match(source, /"fotoRemisionDataUrl"/);
-  assert.match(source, /financialCorrectionPending\s*\? 4/);
+  assert.match(source, /financialCorrectionPending[^;]*\? 4/);
   assert.match(source, /WHEN \$10::boolean THEN 4/);
 });
 

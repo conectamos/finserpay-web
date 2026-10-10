@@ -289,7 +289,7 @@ test("el formulario integra HEIC, camara, borrador, cierre y envio final", () =>
     factoryConsole,
     /iphoneEnrolamientoVerificado:\s*(?:options\.|iphoneEnrollmentVerified)/
   );
-  assert.match(factoryConsole, /FINALIZAR CRÉDITO FIRMADO/);
+  assert.match(factoryConsole, /Finalizar crédito/);
   assert.doesNotMatch(factoryConsole, /ABRIR SAFEUEM|Abrir SafeUEM/);
 });
 

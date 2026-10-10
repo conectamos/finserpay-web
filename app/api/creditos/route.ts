@@ -105,6 +105,8 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
 import {
   getFirmaSeguroProcessByUuid,
+  getLatestFirmaSeguroProcessByDraft,
+  hasFirmaSeguroDraftWorkflowStarted,
   tryAcquireSolicitudOperationLock,
 } from "@/lib/firmaseguro-storage";
 import {
@@ -1569,6 +1571,29 @@ export async function POST(req: Request) {
             code: "SOLICITUD_TITULAR_CAMBIO",
             error:
               "La asignación de la solicitud cambió durante el cierre. Actualiza el expediente e intenta nuevamente.",
+          },
+          { status: 409 }
+        );
+      }
+
+      const currentFirmaSeguroProcess =
+        await getLatestFirmaSeguroProcessByDraft(requestedSolicitudId);
+      const firmaSeguroWorkflowStarted = Boolean(
+        currentFirmaSeguroProcess ||
+          await hasFirmaSeguroDraftWorkflowStarted(requestedSolicitudId)
+      );
+      if (
+        firmaSeguroWorkflowStarted &&
+        (!currentFirmaSeguroProcess ||
+          !Boolean(body.firmaSeguroPasoContratos) ||
+          sanitizeText(body.firmaSeguroProcessUuid) !==
+            currentFirmaSeguroProcess.processUuid)
+      ) {
+        return NextResponse.json(
+          {
+            code: "FIRMASEGURO_CURRENT_PROCESS_REQUIRED",
+            error:
+              "Debes finalizar con la firma vigente de esta solicitud. Actualiza el expediente y verifica su estado antes de continuar.",
           },
           { status: 409 }
         );

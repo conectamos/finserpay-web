@@ -27,20 +27,15 @@ const deliveryStep = sourceBlock(
 );
 
 test("el paso 4 presenta el encabezado, estado y resumen compacto solicitados", () => {
-  assert.match(
-    deliveryStep,
-    /\{hideIdentityWizardStep \? "PASO 4" : "PASO 5"\}/,
-  );
   assert.match(deliveryStep, /<h3>Entrega del equipo<\/h3>/);
   assert.match(
     deliveryStep,
-    /Completa cada acción para finalizar el crédito\./,
+    /Completa los pasos para finalizar el crédito\./,
   );
-  assert.match(deliveryStep, /PENDIENTE DE ENROLAMIENTO/);
+  assert.match(deliveryStep, /Pendiente de enrolamiento/);
   assert.match(deliveryStep, /aria-label="Resumen de la venta"/);
 
   for (const label of [
-    "Referencia del equipo",
     "Cliente",
     "Número de solicitud",
     "Ver detalles",
@@ -51,8 +46,8 @@ test("el paso 4 presenta el encabezado, estado y resumen compacto solicitados", 
 
 test("el flujo visual conserva remisión, enrolamiento y evidencias en ese orden", () => {
   const remissionIndex = deliveryStep.indexOf("<CreditRemissionNote");
-  const enrollmentIndex = deliveryStep.indexOf("Confirma el enrolamiento");
-  const evidenceIndex = deliveryStep.indexOf("Carga las evidencias");
+  const enrollmentIndex = deliveryStep.indexOf("2. Enrolamiento");
+  const evidenceIndex = deliveryStep.indexOf("3. Evidencias");
 
   assert.ok(remissionIndex >= 0, "Debe renderizarse la remisión");
   assert.ok(
@@ -66,18 +61,18 @@ test("el flujo visual conserva remisión, enrolamiento y evidencias en ese orden
   assert.match(deliveryStep, /Esperando confirmación del analista\./);
   assert.match(
     deliveryStep,
-    /\{deliveryEnrollmentReady \? "COMPLETADO" : "EN PROCESO"\}/,
+    /\{deliveryEnrollmentReady \? "Completado" : "En proceso"\}/,
   );
   assert.match(deliveryStep, /5 fotografías obligatorias\./);
   assert.match(
     deliveryStep,
-    /autoOpen=\{wizardStep === 5 && creditRemissionReady\}/,
+    /autoOpen=\{false\}/,
   );
   assert.match(deliveryStep, /evidenceFinalizationReady/);
   assert.match(deliveryStep, /GUARDANDO/);
   assert.match(deliveryStep, /ERROR AL GUARDAR/);
   assert.match(deliveryStep, /aria-disabled=\{!deliveryEvidenceUnlocked \|\| undefined\}/);
-  assert.match(deliveryStep, /\? "BLOQUEADO"/);
+  assert.match(deliveryStep, /\? "Bloqueado"/);
 });
 
 test("las cinco evidencias existentes permanecen detrás del enrolamiento", () => {
@@ -129,26 +124,26 @@ test("el cierre firmado conserva la acción y todas las condiciones de bloqueo",
   );
   assert.match(
     finalizeButton,
-    /disabled=\{\s*creating \|\|\s*firmaSeguroSubmitting \|\|\s*!creditClosureReady\s*\}/,
+    /disabled=\{\s*creating \|\|\s*firmaSeguroSubmitting \|\|\s*firmaSeguroImeiCorrecting \|\|\s*signedTermsCorrectionBusy \|\|\s*!creditClosureReady\s*\}/,
   );
-  assert.match(finalizeButton, /FINALIZAR CRÉDITO FIRMADO/);
+  assert.match(finalizeButton, /Finalizar crédito/);
   assert.match(
     finalizeButton,
-    /Disponible al completar las evidencias\./,
+    /creditClosurePendingSummary/,
   );
 });
 
 test("la remisión conserva la impresión actual con las nuevas etiquetas", () => {
-  assert.match(remissionSource, /const handlePrint = \(\) =>/);
+  assert.match(remissionSource, /const handlePrint = async \(\) =>/);
   assert.match(
     remissionSource,
     /window\.requestAnimationFrame\([\s\S]*setPrintInvoked\(true\)[\s\S]*window\.print\(\)/,
   );
-  assert.match(remissionSource, /<h4[^>]*>Imprime la remisión<\/h4>/);
+  assert.match(remissionSource, /<h4[^>]*>1. Remisión<\/h4>/);
   assert.match(
     remissionSource,
-    /El cliente debe firmar como en la cédula\./,
+    /Firma y huella del cliente\./,
   );
   assert.match(remissionSource, /onClick=\{handlePrint\}/);
-  assert.match(remissionSource, /IMPRIMIR REMISIÓN/);
+  assert.match(remissionSource, /Imprimir remisión/);
 });

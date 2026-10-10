@@ -217,7 +217,7 @@ test("el paso 4 visible usa la remisión con la cuota pactada y los datos del cr
   assert.match(source.slice(remediation, internalControls), /verifyCurrentVersion=\{verifyCurrentRemissionVersion\}/);
   assert.match(
     source.slice(remediation, internalControls),
-    /autoOpen=\{wizardStep === 5 && creditRemissionReady\}/,
+    /autoOpen=\{false\}/,
   );
 });
 
@@ -280,10 +280,10 @@ test("la hoja contiene el logo, todos los campos, firma, huella y notas legales"
 
   assert.match(source, /flushSync[\s\S]*setPrintedAt\(new Date\(\)\)/);
   assert.match(source, /window\.requestAnimationFrame\([\s\S]*window\.print\(\)/);
-  assert.match(source, /<h4[^>]*>Imprime la remisión<\/h4>/);
-  assert.match(source, /El cliente debe firmar como en la cédula\./);
+  assert.match(source, /<h4[^>]*>1. Remisión<\/h4>/);
+  assert.match(source, /Firma y huella del cliente\./);
   assert.match(source, /onClick=\{handlePrint\}/);
-  assert.match(source, /IMPRIMIR REMISIÓN/);
+  assert.match(source, /Imprimir remisión/);
   assert.match(source, /preload[\s\S]*unoptimized/);
   assert.match(source, /No fue posible cargar el logo/);
   assert.doesNotMatch(source, /\bpriority\b/);
@@ -311,7 +311,7 @@ test("abre un diálogo accesible para descargar la remisión al llegar al paso 4
   assert.match(source, /state\.element\.inert = state\.inert/);
   assert.match(source, /Antes de continuar/);
   assert.match(source, /Descargue e imprima la remisión del cliente\./);
-  assert.match(source, /El cliente debe firmar como en la cédula\./);
+  assert.match(source, /Firma y huella del cliente\./);
   assert.match(source, /Descargar remisión/);
   assert.match(source, /Generando remisión…/);
   assert.match(source, /Remisión descargada/);

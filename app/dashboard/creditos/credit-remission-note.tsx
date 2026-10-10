@@ -528,9 +528,9 @@ export default function CreditRemissionNote({
             <Printer />
           </span>
           <div>
-            <h4 id="remission-note-title">Imprime la remisión</h4>
+            <h4 id="remission-note-title">1. Remisión</h4>
             <p className={styles.launcherDescription}>
-              El cliente debe firmar como en la cédula.
+              Firma y huella del cliente.
             </p>
           </div>
         </div>
@@ -554,7 +554,7 @@ export default function CreditRemissionNote({
             ) : (
               <Printer className="h-4 w-4" aria-hidden="true" />
             )}
-            {generating ? "GENERANDO REMISIÓN…" : "IMPRIMIR REMISIÓN"}
+            {generating ? "Generando remisión…" : "Imprimir remisión"}
           </Button>
         </div>
       </section>

@@ -475,6 +475,30 @@ export async function getLatestFirmaSeguroProcessByDraft(draftId: number) {
   return rows[0] || null;
 }
 
+export async function hasFirmaSeguroDraftWorkflowStarted(draftId: number) {
+  await ensureFirmaSeguroSchema();
+  // Corrections archive the previous process before its replacement is sent.
+  // An archived signature or an uncertain dispatch must not unlock manual close.
+  const history = await prisma.$queryRawUnsafe<Array<{
+    started: boolean;
+    dispatchTablePresent: boolean;
+  }>>(
+    `SELECT
+      EXISTS (SELECT 1 FROM "FirmaSeguroProcess" WHERE "draftId" = $1) AS "started",
+      to_regclass('public."FirmaSeguroDraftDispatch"') IS NOT NULL AS "dispatchTablePresent"`,
+    draftId
+  );
+  if (history[0]?.started) return true;
+  if (!history[0]?.dispatchTablePresent) return false;
+  const dispatches = await prisma.$queryRawUnsafe<Array<{ started: boolean }>>(
+    `SELECT EXISTS (
+      SELECT 1 FROM "FirmaSeguroDraftDispatch" WHERE "draftId" = $1
+    ) AS "started"`,
+    draftId
+  );
+  return dispatches[0]?.started === true;
+}
+
 async function tryAcquireSolicitudSessionLock(
   draftId: number,
   namespace: number

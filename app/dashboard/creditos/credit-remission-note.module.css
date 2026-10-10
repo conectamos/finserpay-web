@@ -1,45 +1,44 @@
 .launcher {
   display: flex;
-  min-height: 13.5rem;
+  min-height: 200px;
   height: 100%;
   flex-direction: column;
   gap: 1rem;
-  border: 1px solid color-mix(in srgb, var(--fp-lime-strong) 55%, white);
-  border-radius: var(--fp-radius-lg);
-  background: linear-gradient(180deg, #ffffff 0%, var(--fp-lime-soft) 160%);
-  padding: 1.15rem;
-  box-shadow: 0 2px 7px rgba(17, 19, 18, 0.035);
+  border: 1px solid var(--fp-border);
+  border-radius: var(--fp-radius-md);
+  background: var(--fp-surface);
+  padding: 34px 24px 18px;
 }
 
 .launcherContent {
   display: flex;
   min-width: 0;
   align-items: flex-start;
-  gap: 0.85rem;
+  gap: 20px;
 }
 
 .launcherIcon {
   display: inline-flex;
-  height: 2.85rem;
-  width: 2.85rem;
+  height: 66px;
+  width: 66px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: var(--fp-radius-md);
-  background: var(--fp-lime-soft);
+  border-radius: 50%;
+  background: #eef0f1;
   color: var(--fp-graphite);
 }
 
 .launcherIcon svg {
-  height: 1.3rem;
-  width: 1.3rem;
+  height: 32px;
+  width: 32px;
   stroke-width: 1.8;
 }
 
 .launcher h4 {
-  margin: 0;
+  margin: 12px 0 6px;
   color: var(--fp-graphite);
-  font-size: 1rem;
+  font-size: 18px;
   font-weight: 850;
   line-height: 1.35;
 }
@@ -47,7 +46,7 @@
 .launcherDescription {
   margin: 0.25rem 0 0;
   color: var(--fp-muted);
-  font-size: 0.82rem;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -74,10 +73,28 @@
   align-items: center;
   justify-content: center;
   gap: 0.55rem;
+  border: 1px solid var(--fp-graphite);
   border-radius: var(--fp-radius-md);
+  background: var(--fp-surface);
+  color: var(--fp-graphite);
+  font-size: 14px;
   white-space: nowrap;
 }
 
+
+@media (min-width: 761px) and (max-width: 1100px) {
+  .launcher { padding: 32px 16px 20px; }
+  .launcherContent { gap: 12px; }
+  .launcherIcon { width: 48px; height: 48px; }
+  .launcher h4 { margin-top: 6px; font-size: 16px; }
+}
+
+@media (max-width: 760px) {
+  .launcher { padding: 32px 20px 20px; }
+  .launcherIcon { width: 58px; height: 58px; }
+  .launcherContent { gap: 16px; }
+  .launcher h4 { margin-top: 10px; }
+}
 
 .dialogBackdrop {
   z-index: 100;

@@ -186,3 +186,18 @@ El boton solo se habilita con identificacion valida y autorizacion; durante el
 envio permanece bloqueado. Los errores conservan los datos para corregirlos.
 En movil se reduce la mascota sin cubrir controles. El recurso es estatico y
 la preferencia de movimiento reducido tambien detiene el indicador animado.
+
+
+## Nueva venta: enrolamiento y entrega
+
+El cierre reutiliza la cabecera blanca compacta de Nueva venta y conserva sus
+cuatro pasos. La informacion del caso se organiza dentro de una sola superficie:
+estados reales de contrato y enrolamiento, franja del equipo, cliente y solicitud,
+y tres acciones en orden: remision, enrolamiento y evidencias. Apple y Android
+reutilizan los SVG de plataforma. El detalle conserva cedula e IMEI completos.
+La remision se imprime bajo demanda y no registra una firma. Las cinco evidencias
+solo se habilitan al confirmar el enrolamiento y muestran su persistencia real.
+Las herramientas administrativas se agrupan en un desplegable exclusivo; cada
+formulario empieza cerrado y conserva sus validaciones y nueva firma obligatoria.
+El boton de cierre explica el requisito pendiente. En movil las acciones se apilan
+y los formularios mantienen sus controles sin desbordarse.
