@@ -343,7 +343,9 @@ test("presenta el agotamiento en el modal operativo y conserva el formulario", (
   assert.match(gateSource, /percentUsed=\{dailyQueryLimitReached\.percentUsed\}/);
   assert.match(gateSource, /resetsAt=\{dailyQueryLimitReached\.resetsAt\}/);
   assert.match(gateSource, /onSubmit=\{submitAssessment\}/);
-  assert.match(gateSource, /aria-disabled=\{[^}]*dailyQuotaBlocked/);
+  assert.match(gateSource, /const submitDisabled = [^;]*dailyQuotaBlocked/);
+  assert.match(gateSource, /disabled=\{submitDisabled\}/);
+  assert.match(gateSource, /aria-disabled=\{submitDisabled\}/);
   assert.match(gateSource, /\/dashboard\/solicitudes\?estado=PROCESO/);
   assert.match(gateSource, /\/dashboard\/creditos\?mode=simulator/);
   assert.doesNotMatch(gateSource, /if \(view === "daily-limit-reached"\)\s*\{\s*return/);

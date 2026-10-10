@@ -1141,7 +1141,19 @@ test("reserva espacio para los iconos de identificacion en la precalificacion", 
     ) || [];
 
   assert.equal(inputsWithLeadingIcon.length, 2);
-  assert.match(prequalificationCss, /\.input\s*{[^}]*padding-left:\s*52px !important/);
+  const desktop = prequalificationCss.split("@media")[0];
+  const mobile = prequalificationCss.match(/@media \(max-width: 640px\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(mobile, "Debe conservar espacio para iconos también en móvil");
+  for (const [layout, css] of [["desktop", desktop], ["mobile", mobile]]) {
+    const input = css.match(/\.input:not\(\[type="checkbox"\]\)\s*\{([^}]*)\}/)?.[1];
+    const icon = css.match(/\.inputIcon\s*\{([^}]*)\}/)?.[1];
+    assert.ok(input && icon, `${layout}: faltan reglas de campo o icono`);
+    const padding = input.match(/padding:\s*([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px/);
+    const iconLeft = Number(icon.match(/left:\s*([\d.]+)px/)?.[1]);
+    const iconWidth = Number(icon.match(/width:\s*([\d.]+)px/)?.[1]);
+    assert.ok(padding && Number(padding[4]) > iconLeft + iconWidth,
+      `${layout}: el texto debe comenzar después del icono, sin superponerse`);
+  }
 });
 
 test("oculta visualmente la fianza DataCredito para todos los perfiles", () => {

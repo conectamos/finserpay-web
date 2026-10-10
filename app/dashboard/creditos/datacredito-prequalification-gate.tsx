@@ -22,7 +22,6 @@ import {
   FileCheck2,
   IdCard,
   RotateCw,
-  ShieldCheck,
   Smartphone,
   UserRound,
 } from "lucide-react";
@@ -564,6 +563,7 @@ export default function DatacreditoPrequalificationGate({
   }));
   const [consentText, setConsentText] = useState(CONSENT_ATTESTATION);
   const [consentAccepted, setConsentAccepted] = useState(false);
+  const [consentExpanded, setConsentExpanded] = useState(false);
   const [financialReuseUnavailable, setFinancialReuseUnavailable] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [correlationId, setCorrelationId] = useState<string | null>(null);
@@ -1429,7 +1429,7 @@ export default function DatacreditoPrequalificationGate({
     );
   }
 
-  if (view === "technical-error") {
+  if (view === "technical-error" && (retryMode === "bootstrap" || consumedCreditId)) {
     return (
       <TechnicalErrorPanel
         correlationId={correlationId}
@@ -1556,43 +1556,50 @@ export default function DatacreditoPrequalificationGate({
 
   const isSubmitting = view === "submitting";
   const dailyQuotaBlocked = view === "daily-limit-reached" && dailyQueryLimitReached?.exhausted === true;
+  const normalizedFormSurname = firstSurname.trim().replace(/\s+/g, " ");
+  const validIdentity = /^\d{3,13}$/.test(documentNumber.trim()) &&
+    normalizedFormSurname.length <= 80 &&
+    /^[\p{L}\p{M}]+(?: [\p{L}\p{M}]+)*$/u.test(normalizedFormSurname);
+  const submitDisabled = !validIdentity || !consentAccepted || isSubmitting ||
+    checkingDailyQuota || dailyQuotaBlocked || (financialTermsRecovery && financialReuseUnavailable);
 
   return (
+    <div className={styles.workspace}>
     <Card
       className={styles.gateCard}
       aria-busy={isSubmitting}
     >
       <div className={styles.gateLayout}>
         <aside className={styles.mascotPanel} aria-hidden="true">
-          <div className={styles.mascotEntry}>
-            <Image
-              src="/assets/creditos/datacredito-client-check-mascot.png"
+          <Image
+              src="/assets/creditos/client-validation-peek-mascot.png"
               alt=""
-              width={1199}
-              height={1312}
+              width={1335}
+              height={1178}
               preload
-              sizes="(max-width: 959px) 260px, 390px"
+              sizes="(max-width: 640px) 150px, 250px"
               className={styles.mascot}
-            />
-          </div>
-          <span className={styles.mascotFloor} />
+          />
         </aside>
 
         <form className={styles.formPanel} noValidate onSubmit={submitAssessment}>
           <header className={styles.formHeader}>
             <div>
-              <p className={styles.kicker}>Paso 1 · Datos básicos</p>
+              <p className={styles.kicker}>EMPECEMOS</p>
               <h2>Validemos al cliente</h2>
               <p className={styles.description}>
-                Ingresa la cédula y el primer apellido para continuar.
+                Solo necesitas su cédula y primer apellido.
               </p>
             </div>
-            <span className={styles.requiredBadge}>
-              <span aria-hidden="true" />
-              2 datos requeridos
-            </span>
           </header>
 
+          {view === "technical-error" ? (
+            <div className={styles.errorNotice} role="alert">
+              <strong>No pudimos completar la evaluación.</strong>
+              <p>Conservamos los datos. Puedes corregirlos y volver a intentar.</p>
+              {correlationId ? <p>Referencia: <code>{correlationId}</code></p> : null}
+            </div>
+          ) : null}
           {financialTermsRecovery ? (
             <div className={styles.statusNotice} role="status">
               {financialReuseUnavailable
@@ -1643,10 +1650,9 @@ export default function DatacreditoPrequalificationGate({
                   inputMode="numeric"
                   autoComplete="off"
                   minLength={3}
-                  maxLength={13}
                   pattern="[0-9]{3,13}"
                   required
-                  placeholder="Ingresa el número de cédula"
+                  placeholder="Ingresa la cédula"
                   disabled={
                     isSubmitting ||
                     Boolean(initialSolicitudId && normalizedInitialDocument)
@@ -1660,7 +1666,7 @@ export default function DatacreditoPrequalificationGate({
                   }
                 />
               </div>
-              <p id="datacredito-document-number-help" className={styles.helpText}>
+              <p id="datacredito-document-number-help" className="sr-only">
                 Entre 3 y 13 dígitos, sin puntos ni espacios.
               </p>
               {formErrors.documentNumber ? (
@@ -1738,23 +1744,36 @@ export default function DatacreditoPrequalificationGate({
                   formErrors.consent ? "datacredito-consent-error" : undefined
                 }
               />
-              <span className={styles.consentIcon} aria-hidden="true">
-                <FileCheck2 className="h-6 w-6" />
-              </span>
               <span className={styles.consentText}>
-                {consentText}{" "}
+                Confirmo que el titular autorizó la consulta en DataCrédito.
+              </span>
+            </label>
+            <div className={styles.consentLinks}>
+              <button
+                type="button"
+                className={styles.privacyLink}
+                aria-expanded={consentExpanded}
+                aria-controls="datacredito-full-authorization"
+                onClick={() => setConsentExpanded((expanded) => !expanded)}
+              >
+                {consentExpanded ? "Ocultar autorización completa" : "Ver autorización completa"}
+              </button>
+              <span aria-hidden="true">|</span>
                 <Link
                   href="/politica-privacidad"
                   target="_blank"
                   rel="noopener noreferrer"
                   className={styles.privacyLink}
                 >
-                  Consultar política de privacidad
+                  Política de privacidad
                   <span className="sr-only"> (abre en una pestaña nueva)</span>
                 </Link>
-                .
-              </span>
-            </label>
+            </div>
+            {consentExpanded ? (
+              <div id="datacredito-full-authorization" className={styles.fullAuthorization}>
+                {consentText}
+              </div>
+            ) : null}
             {formErrors.consent ? (
               <p
                 id="datacredito-consent-error"
@@ -1767,6 +1786,30 @@ export default function DatacreditoPrequalificationGate({
           </div>
 
           <div className={styles.actions}>
+            <Button
+              type="submit"
+              id="datacredito-evaluate"
+              disabled={submitDisabled}
+              aria-disabled={submitDisabled}
+              aria-describedby={dailyQuotaBlocked ? "datacredito-quota-status" : undefined}
+              className={styles.submitButton}
+            >
+              {isSubmitting ? (
+                <>
+                  <RotateCw className="h-5 w-5 animate-spin" aria-hidden="true" />
+                  Evaluando…
+                </>
+              ) : (
+                <>
+                  {financialTermsRecovery
+                    ? "Renovar oferta sin nueva consulta"
+                    : identityMismatchRecovery
+                    ? "Recuperar consulta vigente"
+                    : "Evaluar solicitud"}
+                  <ArrowRight className="h-5 w-5" aria-hidden="true" />
+                </>
+              )}
+            </Button>
             <Link
               href="/dashboard/creditos?mode=create-client"
               className={styles.backLink}
@@ -1774,30 +1817,6 @@ export default function DatacreditoPrequalificationGate({
               <ArrowLeft aria-hidden="true" />
               Volver
             </Link>
-            <Button
-              type="submit"
-              id="datacredito-evaluate"
-              disabled={isSubmitting || checkingDailyQuota || (financialTermsRecovery && financialReuseUnavailable)}
-              aria-disabled={isSubmitting || checkingDailyQuota || dailyQuotaBlocked || (financialTermsRecovery && financialReuseUnavailable)}
-              aria-describedby={dailyQuotaBlocked ? "datacredito-quota-status" : undefined}
-              className={styles.submitButton}
-            >
-              {isSubmitting ? (
-                <>
-                  <RotateCw className="h-5 w-5 animate-spin" aria-hidden="true" />
-                  Evaluando...
-                </>
-              ) : (
-                <>
-                  <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-                  {financialTermsRecovery
-                    ? "Renovar oferta sin nueva consulta"
-                    : identityMismatchRecovery
-                    ? "Recuperar consulta vigente"
-                    : "Evaluar solicitud"}
-                </>
-              )}
-            </Button>
           </div>
         </form>
       </div>
@@ -1814,5 +1833,7 @@ export default function DatacreditoPrequalificationGate({
         />
       ) : null}
     </Card>
+    <p className={styles.tagline}>INNOVACIÓN FINANCIERA CON CONFIANZA</p>
+    </div>
   );
 }

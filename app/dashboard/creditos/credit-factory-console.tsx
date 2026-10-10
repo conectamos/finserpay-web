@@ -77,6 +77,8 @@ import FinserSupportLink from "@/app/_components/finser-support-link";
 import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
 } from "@/app/dashboard/creditos/datacredito-prequalification-gate";
+import ClientValidationHeader from "./client-validation-header";
+import clientValidationStyles from "./client-validation-shell.module.css";
 import {
   calculateAndroidSimulatorInitialPayment,
   calculateAndroidSimulatorInstallmentSuretyPercentage,
@@ -12739,6 +12741,7 @@ export default function CreditFactoryConsole({
               embeddedClientLookup ? "fp-client-lookup-embedded" : "min-h-screen px-4 py-6",
               clientLookupMode ? "fp-client-lookup" : "fp-seller-app",
               createClientMode || simulatorMode ? "fp-credit-factory" : "",
+              showDataCreditoGate ? clientValidationStyles.shell : "",
             ].join(" ")
       }
     >
@@ -12861,6 +12864,8 @@ export default function CreditFactoryConsole({
             className={
               clientLookupMode
                 ? "fp-client-lookup-hero"
+                : createClientMode && showDataCreditoGate
+                  ? "fp-new-sale-header"
                 : [
                     "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
                     simulatorMode ? "fp-tool-hero fp-simulator-hero" : deliveryMode ? "fp-tool-hero" : "",
@@ -12868,7 +12873,24 @@ export default function CreditFactoryConsole({
                   ].join(" ")
             }
           >
-            {createClientMode ? (
+            {createClientMode && showDataCreditoGate ? (
+              <ClientValidationHeader
+                nombre={initialSeller?.nombre || initialSession.nombre}
+                rol={initialSession.rolNombre}
+                canViewPayments={canViewSavedCredits}
+                canAssist={adminFactoryAssistAvailable}
+                assistOpen={showAdminAssist}
+                onToggleAssist={() => {
+                  setShowAdminAssist((value) => !value);
+                  if (showAdminAssist) {
+                    setDraftSearchResults([]);
+                    setCredits([]);
+                    setActiveSearch("");
+                    setSelectedId(null);
+                  }
+                }}
+              />
+            ) : createClientMode ? (
               <div className="fp-new-sale-header-inner">
                 <Link
                   href="/dashboard"
