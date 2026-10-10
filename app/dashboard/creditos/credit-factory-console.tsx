@@ -3472,6 +3472,17 @@ export default function CreditFactoryConsole({
   const firmaSeguroCorrectionReviewKeyRef = useRef<string | null>(null);
   const veriffRefreshGenerationRef = useRef(0);
   const firmaSeguroRefreshGenerationRef = useRef(0);
+  const firmaSeguroRefreshFlightRef = useRef<AbortController | null>(null);
+  const firmaSeguroRefreshBindingRef = useRef({ draftId, processUuid: firmaSeguroDraftProcess?.processUuid });
+  firmaSeguroRefreshBindingRef.current = { draftId, processUuid: firmaSeguroDraftProcess?.processUuid };
+  useEffect(() => {
+    setFirmaSeguroRefreshing(false);
+    return () => {
+      firmaSeguroRefreshGenerationRef.current += 1;
+      firmaSeguroRefreshFlightRef.current?.abort();
+      firmaSeguroRefreshFlightRef.current = null;
+    };
+  }, [draftId, firmaSeguroDraftProcess?.processUuid]);
   const signedTermsCorrectionRequestRef = useRef<{
     fingerprint: string;
     idempotencyKey: string;
@@ -10080,6 +10091,7 @@ export default function CreditFactoryConsole({
   };
 
   const refreshFirmaSeguroDraftProcess = async () => {
+    if (firmaSeguroRefreshFlightRef.current) return null;
     if (!draftId) {
       setNotice({
         text: "Guarda o envia primero el borrador a FirmaSeguro.",
@@ -10090,18 +10102,24 @@ export default function CreditFactoryConsole({
 
     const refreshGeneration = firmaSeguroRefreshGenerationRef.current + 1;
     firmaSeguroRefreshGenerationRef.current = refreshGeneration;
+    const controller = new AbortController();
+    firmaSeguroRefreshFlightRef.current = controller;
+    const expectedProcessUuid = firmaSeguroDraftProcess?.processUuid;
+    const isCurrentRefresh = () => !controller.signal.aborted &&
+      firmaSeguroRefreshGenerationRef.current === refreshGeneration &&
+      firmaSeguroRefreshBindingRef.current.draftId === draftId &&
+      firmaSeguroRefreshBindingRef.current.processUuid === expectedProcessUuid;
 
     try {
       setFirmaSeguroRefreshing(true);
       setNotice(null);
 
       const result = await requestJson<FirmaSeguroResponse>(
-        createClientMode
-          ? `/api/creditos/borradores/${draftId}/estado-proceso`
-          : `/api/creditos/borradores/${draftId}/firma-seguro?refresh=1`
+        `/api/creditos/borradores/${draftId}/firma-seguro?refresh=1`,
+        { method: "GET", signal: controller.signal },
       );
 
-      if (firmaSeguroRefreshGenerationRef.current !== refreshGeneration) {
+      if (!isCurrentRefresh()) {
         return null;
       }
 
@@ -10115,12 +10133,16 @@ export default function CreditFactoryConsole({
       }
 
       const process = result.data.process || null;
+      if (expectedProcessUuid && process?.processUuid !== expectedProcessUuid) {
+        processLiveStatus.retry();
+        throw new Error("La versión de firma cambió. Consulta nuevamente el estado de la solicitud actual.");
+      }
       const processUiState = resolveFirmaSeguroProcessUiState(process);
       const draftResult = await requestJson<CreditDraftSingleResponse>(
         `/api/creditos/borradores?id=${draftId}`,
-        { timeoutMs: 20_000 },
+        { timeoutMs: 20_000, signal: controller.signal },
       );
-      if (firmaSeguroRefreshGenerationRef.current !== refreshGeneration) {
+      if (!isCurrentRefresh()) {
         return null;
       }
       if (!draftResult.ok || !draftResult.data?.item) {
@@ -10133,6 +10155,7 @@ export default function CreditFactoryConsole({
       auditedIdentityCorrectionRef.current = hasAuditedCreditIdentityCorrection(currentPayload);
       setFirmaSeguroDraftProcess(process);
       setFirmaSeguroPendingDraftId((pending) => pending === draftId ? null : pending);
+      if (createClientMode) processLiveStatus.retry();
 
       if (identityCorrectionPending) {
         setWizardStep(4);
@@ -10163,7 +10186,7 @@ export default function CreditFactoryConsole({
 
       return process;
     } catch (error) {
-      if (firmaSeguroRefreshGenerationRef.current !== refreshGeneration) {
+      if (!isCurrentRefresh()) {
         return null;
       }
       setNotice({
@@ -10175,6 +10198,7 @@ export default function CreditFactoryConsole({
       });
       return null;
     } finally {
+      if (firmaSeguroRefreshFlightRef.current === controller) firmaSeguroRefreshFlightRef.current = null;
       if (firmaSeguroRefreshGenerationRef.current === refreshGeneration) {
         setFirmaSeguroRefreshing(false);
       }
@@ -16641,7 +16665,19 @@ export default function CreditFactoryConsole({
                                     ? "Expediente listo"
                                     : "Expediente incompleto"}
                           </span>
-
+                          {firmaSeguroProcessExists ? (
+                            <button
+                              type="button"
+                              className="fp-step3-firma-refresh"
+                              onClick={() => void refreshFirmaSeguroDraftProcess()}
+                              disabled={firmaSeguroRefreshing || firmaSeguroSubmitting || firmaSeguroImeiCorrecting || signedTermsCorrectionBusy}
+                              aria-label="Actualizar estado de firma"
+                              title="Actualizar estado de firma"
+                              aria-busy={firmaSeguroRefreshing}
+                            >
+                              <RefreshCw className={`h-[18px] w-[18px]${firmaSeguroRefreshing ? " animate-spin" : ""}`} aria-hidden="true" />
+                            </button>
+                          ) : null}
                         </div>
 
                         <button

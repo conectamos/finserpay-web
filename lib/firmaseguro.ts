@@ -683,6 +683,8 @@ export function extractFirmaSeguroUuid(payload: unknown) {
 
 export function extractFirmaSeguroStatus(payload: unknown) {
   const value = getNestedValue(payload, [
+    "status_process",
+    "statusProcess",
     "status",
     "state",
     "processStatus",

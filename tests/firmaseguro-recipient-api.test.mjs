@@ -9,7 +9,7 @@ const source = await readFile(new URL("../lib/firmaseguro.ts", import.meta.url),
 function fixture(reply = () => Response.json({ ok: true })) {
   const requests = [];
   const exports = runInNewContext(stripTypeScriptTypes(source.replace(/^export /gm, "")) +
-    "\n({ firmaSeguroEditSignature, firmaSeguroResendSignature, firmaSeguroGetSignaturesStatus, firmaSeguroGetProcessStatus, extractFirmaSeguroStatus });", {
+    "\n({ firmaSeguroEditSignature, firmaSeguroResendSignature, firmaSeguroGetSignaturesStatus, firmaSeguroGetProcessStatus, extractFirmaSeguroStatus, isFirmaSeguroCompletedStatus });", {
     Buffer, URL, AbortSignal,
     console: { error() {} },
     process: { env: { FIRMASEGURO_BASE_URL: "https://firmaseguro.example.test" } },
@@ -122,6 +122,42 @@ test("consulta firmantes solo en el UUID del proceso vigente", async () => {
   assert.equal(api.requests[0].url,
     `https://firmaseguro.example.test/api/v2/Signature/get-signatures-status/${contactEdit.uuid}`);
   assert.equal(api.requests[0].method, "GET");
+});
+
+test("lee status_process real y refresca la firma vigente sin enviar otro contrato", async () => {
+  const refreshSource = await readFile(new URL("../lib/firmaseguro-credit.ts", import.meta.url), "utf8");
+  const refreshCode = refreshSource.slice(refreshSource.indexOf("export async function refreshFirmaSeguroProcess("),
+    refreshSource.indexOf("export async function getLatestFirmaSeguroProcessForCredit("))
+    .replace(/^export /gm, "");
+  const signedPdf = Buffer.from("%PDF-1.7\nSigned test contract\n%%EOF").toString("base64");
+  for (const terminalSource of ["process", "signatures"]) {
+    const api = fixture(url => Response.json(url.includes("get-process-status")
+      ? { uuid: contactEdit.uuid, status_process: terminalSource === "process" ? "Firmado" : "En proceso", name: "Contrato" }
+      : { uuid: contactEdit.uuid, signatures: [{ id: 123, status: "Enviado" }],
+        status_process: terminalSource === "signatures" ? "Firmado" : "Enviado" }));
+    const updates = [];
+    const refresh = runInNewContext(stripTypeScriptTypes(refreshCode) + "\nrefreshFirmaSeguroProcess;", {
+      ...api, Buffer, Date,
+      runWithFirmaSeguroAuth: async callback => ({ result: await callback("fixture-token") }),
+      collectFirmaSeguroUuidCandidates: () => [],
+      firmaSeguroGetDocumentsByUuid: async uuid => { assert.equal(uuid, contactEdit.uuid); return { base64: signedPdf }; },
+      extractFirmaSeguroSignedDocument: payload => ({ base64: payload.base64, fileName: "signed.pdf", url: "" }),
+      summarizeFirmaSeguroDocumentPayload: () => ({}),
+      redactBase64Payload: payload => payload,
+      updateFirmaSeguroProcess: async (uuid, input) => { updates.push({ uuid, input }); return { ...process, ...input }; },
+    });
+    const process = { processUuid: contactEdit.uuid, draftId: 25, creditoId: null,
+      status: "Enviado", completedAt: null, signedDocumentBase64: null };
+    assert.equal(api.extractFirmaSeguroStatus({ status_process: "Firmado", status: "Enviado", name: "Contrato" }), "Firmado");
+    const result = await refresh(process);
+    assert.ok(result.completedAt);
+    assert.equal(result.signedDocumentBase64, signedPdf);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].uuid, contactEdit.uuid);
+    assert.equal(api.requests.length, 2);
+    assert.ok(api.requests.every(request => request.method === "GET" && request.url.endsWith(contactEdit.uuid)));
+    assert.equal(result.lastError, null);
+  }
 });
 
 const providerSource = await readFile(new URL("../lib/firmaseguro-recipient-provider.ts", import.meta.url), "utf8");
