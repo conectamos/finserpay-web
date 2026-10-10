@@ -124,7 +124,7 @@ function assertRegisteredConditions(body, expectedName = "luz hernandez") {
 }
 function assertRecovery(body, nextAction = "REVIEW", remainingAttempts = 0, code = "IDENTITY_NOT_CONFIRMED") {
   assert.deepEqual(body, { ok: true, verificado: false, condiciones: null, code, nextAction, remainingAttempts,
-    question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
+    question: nextAction === "ASK_NAME" ? "¿Me dice un nombre o un apellido, por favor?"
       : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa? Puede decirla seguida o en bloques." : "No pude confirmar sus datos. Un asesor revisará su caso.",
     mayEndCall: nextAction === "REVIEW" });
 }
@@ -459,36 +459,52 @@ test("concurrent identical recovery requests consume one attempt and rollback ca
   assertRecovery(results[0].body, "ASK_NAME", 2);
   assert.equal((await f.row()).identityAttempts, 1);
   assertRecoveryState(await f.row(), { askedName: true, askedDocument: false, reviewRequired: false });
-  assertRecovery((await f.post({ customer_name: "Ana García" })).body, "ASK_DOCUMENT", 1);
+  // The unused document clarification is available only when that document
+  // actually differs; a second name-only failure is terminal instead.
+  assertRecovery((await f.post({ customer_name: "Ana García", customer_document: "38144093" })).body, "ASK_DOCUMENT", 1);
   assertRegisteredConditions((await f.post()).body); assert.equal((await f.row()).identityAttempts, 3);
   assert.equal("lastFailure" in (await f.row()).identityRecovery, false);
 });
 
-test("a repeated tool request after the second distinct answer preserves its remaining attempt for a correct name", async t => {
-  const f = await fixture(t); await f.claim();
-  assertRecovery((await f.post({ customer_name: "Clara García." })).body, "ASK_NAME", 2);
-  const second = { customer_name: "Ana García.", customer_document: actualDocuments[0] };
+test("an exact document and a second distinct unaccepted name review without requesting the already-correct document", async t => {
+  const f = await fixture(t, { clienteNombre: "ANA PEREZ GOMEZ", clienteDocumento: "1002443110" }); await f.claim();
+  const first = { customer_name: "Clara García.", customer_document: "Uno doble cero dos cuatro cuarenta y tres uno diez." };
+  assertRecovery((await f.post(first)).body, "ASK_NAME", 2);
+  assertRecoveryState(await f.row(), { askedName: true, askedDocument: false, reviewRequired: false });
+  const second = { customer_name: "Marta Rivas.", customer_document: first.customer_document };
   const secondResponse = await f.post(second);
-  assertRecovery(secondResponse.body, "ASK_DOCUMENT", 1);
+  assertRecovery(secondResponse.body, "REVIEW", 0);
   const secondRow = await f.row(), writes = f.writes();
-  for (const customer_document of [actualDocuments[0], "38144092", "38.144.092", actualDocuments[1]]) {
-    const duplicate = await f.post({ customer_name: "  ANA,  GARCÍA.  ", customer_document });
+  for (const customer_document of [first.customer_document, "1002443110", "1.002.443.110", "1002443110, terminé."]) {
+    const duplicate = await f.post({ customer_name: "  MARTA,  RIVAS.  ", customer_document });
     assert.deepEqual(duplicate.body, secondResponse.body);
     assert.equal(duplicate.body.condiciones, null);
   }
-  // A,B,A must return the current guidance rather than reopening the first name question.
-  assert.deepEqual((await f.post({ customer_name: "Clara García." })).body, secondResponse.body);
+  // A,B,A replays the terminal decision; it cannot reopen the first name question.
+  assert.deepEqual((await f.post(first)).body, secondResponse.body);
   assert.equal((await f.row()).identityAttempts, 2); assert.equal((await f.row()).identityVerifiedAt, null);
   assert.equal(f.writes(), writes); assert.deepEqual((await f.row()).identityRecovery, secondRow.identityRecovery);
-  const cached = assertRecoveryState(secondRow, { askedName: true, askedDocument: true, reviewRequired: false });
-  assert.equal(cached.nextAction, "ASK_DOCUMENT"); assert.equal(cached.attempts, 2);
+  const cached = assertRecoveryState(secondRow, { askedName: true, askedDocument: false, reviewRequired: true });
+  assert.equal(cached.nextAction, "REVIEW"); assert.equal(cached.attempts, 2);
   assert.equal(secondRow.identityRecovery.failedInputHashes.length, 2);
   const persisted = JSON.stringify(secondRow.identityRecovery);
-  for (const forbidden of ["Ana", "ana", "Garcia", "garcia", "38144092", "document", "phone", "condiciones", "initialPayment"]) {
+  for (const forbidden of ["Clara", "clara", "Marta", "marta", "Rivas", "rivas", "1002443110", "document", "phone", "condiciones", "initialPayment"]) {
     assert.equal(persisted.includes(forbidden), false, forbidden);
   }
-  assertRegisteredConditions((await f.post({ customer_name: "Hernández" })).body);
-  assert.equal((await f.row()).identityAttempts, 3); assert.ok((await f.row()).identityVerifiedAt);
+  assertRecovery((await f.post({ customer_name: "Pérez", customer_document: "1002443110" })).body);
+  assert.equal((await f.row()).identityAttempts, 2); assert.equal((await f.row()).identityVerifiedAt, null);
+  assert.deepEqual((await f.row()).identityRecovery, secondRow.identityRecovery); assert.equal(f.writes(), writes);
+});
+
+test("a literal registered surname after the first name clarification continues with the same exact document", async t => {
+  const f = await fixture(t, { clienteNombre: "ANA PEREZ GOMEZ", clienteDocumento: "1002443110" }); await f.claim();
+  const customer_document = "Uno doble cero dos cuatro cuarenta y tres uno diez.";
+  assertRecovery((await f.post({ customer_name: "Clara García", customer_document })).body, "ASK_NAME", 2);
+  const corrected = await f.post({ customer_name: "Pérez.", customer_document });
+  assertRegisteredConditions(corrected.body, "ana perez gomez"); assert.equal(corrected.body.remainingAttempts, 1);
+  const verified = await f.row();
+  assert.equal(verified.identityAttempts, 2); assert.ok(verified.identityVerifiedAt);
+  assertRecoveryState(verified, { askedName: true, askedDocument: false, reviewRequired: false });
   assert.equal("lastFailure" in (await f.row()).identityRecovery, false);
   assert.equal("failedInputHashes" in (await f.row()).identityRecovery, false);
 });

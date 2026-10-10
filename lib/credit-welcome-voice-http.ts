@@ -140,7 +140,7 @@ export function createCreditWelcomeVoiceIdentityHandler(dependencies: {
         return response({ ok: true, verificado: false, condiciones: null,
           code: result.code === "DOCUMENT_NOT_UNDERSTOOD" ? result.code : "IDENTITY_NOT_CONFIRMED", nextAction,
           remainingAttempts: nextAction === "REVIEW" ? 0 : remainingAttempts,
-          question: nextAction === "ASK_NAME" ? "¿Me dice solo su primer nombre, por favor?"
+          question: nextAction === "ASK_NAME" ? "¿Me dice un nombre o un apellido, por favor?"
             : nextAction === "ASK_DOCUMENT" ? "¿Me repite su cédula completa? Puede decirla seguida o en bloques." : "No pude confirmar sus datos. Un asesor revisará su caso.",
           mayEndCall: nextAction === "REVIEW" });
       }
