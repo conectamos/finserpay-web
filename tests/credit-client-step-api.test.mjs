@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import * as validation from "../lib/credit-client-validation.ts";
+import { imeiConfirmation } from "./credit-imei-confirmation-fixture.mjs";
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 function load(source, dependencies = {}, globals = {}) {
@@ -30,7 +31,7 @@ const complete = {
 };
 function fixture({ storedStep = 1, signed = false, verifiedFullName, identityAvailable = true } = {}) {
   const saves = []; const recoveries = [];
-  const globals = { ...step, Buffer, console,
+  const globals = { ...step, ...imeiConfirmation, Buffer, console,
     NextResponse: { json: (body, init) => Response.json(body, init) },
     getAccess: async () => ({ central: true, user: { id: 7, sedeId: 3, aliadoId: 9 }, seller: null }),
     expireStaleSolicitudes: async () => {}, ensureVeriffSchema: async () => {}, ensureFirmaSeguroSchema: async () => {},

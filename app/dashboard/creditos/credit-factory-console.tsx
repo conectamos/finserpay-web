@@ -21444,25 +21444,6 @@ export default function CreditFactoryConsole({
                 ) : null}
 
                 <ConfirmDialog
-          open={customerExitIntent !== null}
-          title={customerExitIntent === "clear" ? "¿Limpiar esta venta?" : "¿Salir de esta venta?"}
-          description={customerExitIntent === "clear" ? "Se limpiará el formulario actual. El borrador guardado se conservará para recuperarlo." : "Guardaremos los datos ingresados como borrador antes de salir."}
-          confirmLabel={customerExitIntent === "clear" ? "Limpiar" : "Guardar y salir"}
-          busy={customerExitBusy}
-          onCancel={() => setCustomerExitIntent(null)}
-          onConfirm={() => {
-            if (customerExitBusy) return;
-            if (customerExitIntent === "clear") { resetForm(); setCustomerExitIntent(null); return; }
-            setCustomerExitBusy(true);
-            cancelPendingDraftAutosave();
-            void saveCurrentDraft(1).then(() => {
-              window.location.assign("/dashboard/creditos");
-            }).catch(error => {
-              setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar el borrador", tone: "red" });
-            }).finally(() => setCustomerExitBusy(false));
-          }}
-        />
-        <ConfirmDialog
                   open={showPaymentConfirmation}
                   title="Confirmar registro del pago"
                   description={`Se aplicaran ${paymentDisplayCurrency(displayAppliedPaymentAmount)} al credito de ${selectedCredit.clienteNombre} por ${paymentMethodLabel(paymentMethod)}. El comprobante se generara automaticamente.`}
@@ -21856,6 +21837,25 @@ export default function CreditFactoryConsole({
             </div>
           )}
         </section>
+        <ConfirmDialog
+          open={customerExitIntent !== null}
+          title={customerExitIntent === "clear" ? "¿Limpiar esta venta?" : "¿Salir de esta venta?"}
+          description={customerExitIntent === "clear" ? "Se limpiará el formulario actual. El borrador guardado se conservará para recuperarlo." : "Guardaremos los datos ingresados como borrador antes de salir."}
+          confirmLabel={customerExitIntent === "clear" ? "Limpiar" : "Guardar y salir"}
+          busy={customerExitBusy}
+          onCancel={() => setCustomerExitIntent(null)}
+          onConfirm={() => {
+            if (customerExitBusy) return;
+            if (customerExitIntent === "clear") { resetForm(); setCustomerExitIntent(null); return; }
+            setCustomerExitBusy(true);
+            cancelPendingDraftAutosave();
+            void saveCurrentDraft(1).then(() => {
+              window.location.assign("/dashboard/creditos");
+            }).catch(error => {
+              setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar el borrador", tone: "red" });
+            }).finally(() => setCustomerExitBusy(false));
+          }}
+        />
         <ImeiConfirmationDialog
           open={imeiConfirmationTargetStep !== null && wizardStep === 2}
           expectedImei={imeiDigits}

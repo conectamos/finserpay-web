@@ -1,6 +1,6 @@
 # Datos del cliente — Nueva venta
 
-Implementado sobre `origin/main` en `95c252180f01bbd9ee1ef494f159d13cfb3459e5`.
+Integrado con `origin/main` en `5f81e0b0700bd52825c654c5904db63e6c44673b`.
 
 El paso conserva el encabezado y la navegación existente. `CustomerDetailsForm`
 presenta los tres bloques en una sola superficie y usa los controles y tokens
@@ -33,6 +33,8 @@ en uso.
 - `npx tsc --noEmit`: aprobado.
 - 88 pruebas dirigidas: validación cliente, API de avance, teléfonos, identidad,
   auditoría concurrente, navegación y recuperación de solicitudes.
+- Regresión de Cancelar/Limpiar: diálogo accesible desde Nueva venta, confirmación,
+  guardado antes de salir y conservación de datos ante errores.
 - Navegador Chromium con el componente real y datos ficticios: progresión,
   foco, bloqueo, correcciones, borradores y anchos 1440, 390 y 320 px.
 
