@@ -181,6 +181,8 @@ function createGateHarness({ responses = [], overrides = {}, callbacks = ["check
   const state = {
     view: "ready", documentNumber: "123456789", firstSurname: "PRUEBA",
     consentAccepted: true, dailyQueryLimitReached: null, dailyQuotaModalOpen: false,
+    correlationId: null, conflictMessage: null, conflictCode: null,
+    conflictSolicitudId: null, consumedCreditId: null, retryMode: "form",
     ...overrides,
   };
   const context = {
@@ -765,12 +767,77 @@ test("the advisor can reopen the current pending draft's saved-result form witho
   assert.equal(JSON.parse(harness.requests[0].body).reuseOnly, true);
 });
 
-test("a technical failure cannot reopen a form that would send a fresh paid query", async () => {
-  const harness = createGateHarness({ responses: [{ status: 500, body: { ok: false, code: "EVALUATION_ERROR" } }],
-    callbacks: ["submitAssessment", "retryTechnicalFailure"],
+function renderTechnicalErrorState(harness) {
+  let expression;
+  const visit = (node) => {
+    if (ts.isIfStatement(node) && node.expression.getText(ast) === 'view === "technical-error"') {
+      const returned = node.thenStatement.statements?.find(ts.isReturnStatement);
+      expression = returned?.expression;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  assert.ok(expression, "Must render the actual technical-error branch and its props");
+  const ui = loadJsxModule(sharedUi);
+  const Panel = loadJsxModule(realDeclaration("TechnicalErrorPanel") + "\nmodule.exports = TechnicalErrorPanel;", {}, {
+    ...ui, ...icons, Link: ({ children, ...props }) => React.createElement("a", props, children),
   });
-  await harness.functions.submitAssessment({ preventDefault() {} });
-  harness.functions.retryTechnicalFailure();
-  assert.equal(harness.state.view, "technical-error");
-  assert.equal(harness.requests.length, 1);
+  const element = loadJsxModule(`module.exports = (${expression.getText(ast)});`, {}, {
+    ...harness.context,
+    TechnicalErrorPanel: Panel,
+    retryTechnicalFailure: harness.functions.retryTechnicalFailure,
+    solicitudWallHref: `/dashboard/solicitudes?q=${encodeURIComponent(harness.state.documentNumber)}`,
+  });
+  return renderToStaticMarkup(element);
+}
+
+test("a generic submission error offers manual correction with preserved data and no automatic request", async () => {
+  for (const response of [
+    { status: 400, body: { ok: false, code: "INVALID_SURNAME" } },
+    { status: 500, body: { ok: false, code: "EVALUATION_ERROR", correlationId: "tracking-error" } },
+    new Error("Network connection lost"),
+    { body: { ok: true, unexpected: true } },
+  ]) {
+    const harness = createGateHarness({ responses: [response],
+      callbacks: ["submitAssessment", "retryTechnicalFailure"],
+      overrides: { documentNumber: "00123456789", firstSurname: "PEÑA DEL RÍO" },
+    });
+    await harness.functions.submitAssessment({ preventDefault() {} });
+    assert.equal(harness.state.view, "technical-error");
+    assert.ok(renderTechnicalErrorState(harness).includes("Corregir datos"));
+    harness.functions.retryTechnicalFailure();
+    await new Promise(setImmediate);
+    assert.equal(harness.state.view, "ready");
+    assert.equal(harness.state.documentNumber, "00123456789");
+    assert.equal(harness.state.firstSurname, "PEÑA DEL RÍO");
+    assert.equal(harness.state.consentAccepted, true);
+    assert.equal(harness.state.correlationId, null);
+    assert.equal(harness.requests.length, 1, "Returning to edit must never call the server");
+    assert.equal(harness.requests[0].method, "POST");
+    assert.equal(harness.approvals.length, 0);
+  }
+});
+
+test("manual correction cannot reopen review, pending, consumed or identity-conflict queries", async () => {
+  for (const code of [
+    "ASSESSMENT_REQUIRES_REVIEW", "EVALUATION_IN_PROGRESS", "SOLICITUD_OPERATION_IN_PROGRESS",
+    "ASSESSMENT_ALREADY_CONSUMED", "ASSESSMENT_CONSUMED_ELSEWHERE",
+    "ASSESSMENT_IDENTITY_MISMATCH", "SOLICITUD_IDENTITY_MISMATCH", "ASSESSMENT_RECOVERY_NOT_ALLOWED",
+  ]) {
+    const harness = createGateHarness({ responses: [{ status: 409, body: { ok: false, code } }],
+      callbacks: ["submitAssessment", "retryTechnicalFailure"],
+    });
+    await harness.functions.submitAssessment({ preventDefault() {} });
+    assert.ok(!renderTechnicalErrorState(harness).includes("Corregir datos"), code);
+    harness.functions.retryTechnicalFailure();
+    assert.equal(harness.state.view, "technical-error", code);
+    assert.equal(harness.requests.length, 1, code);
+  }
+  const consumed = createGateHarness({ callbacks: ["retryTechnicalFailure"],
+    overrides: { view: "technical-error", retryMode: "form", consumedCreditId: 99, conflictCode: null },
+  });
+  assert.ok(!renderTechnicalErrorState(consumed).includes("Corregir datos"));
+  consumed.functions.retryTechnicalFailure();
+  assert.equal(consumed.state.view, "technical-error");
+  assert.equal(consumed.requests.length, 0);
 });

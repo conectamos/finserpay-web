@@ -449,6 +449,7 @@ function TechnicalErrorPanel({
   solicitudWallHref = "/dashboard/solicitudes",
   canReviewSavedResult = false,
   canRetryBootstrap = false,
+  canCorrectInput = false,
   correlationId,
   consumedCreditId,
   onRetry,
@@ -459,6 +460,7 @@ function TechnicalErrorPanel({
   solicitudWallHref?: string;
   canReviewSavedResult?: boolean;
   canRetryBootstrap?: boolean;
+  canCorrectInput?: boolean;
   correlationId: string | null;
   consumedCreditId: number | null;
   onRetry: () => void;
@@ -550,7 +552,12 @@ function TechnicalErrorPanel({
         </div>
       </div>
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        {continuationHref ? (
+        {canCorrectInput && !conflictCode ? (
+          <Button variant="secondary" onClick={onRetry}>
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            Corregir datos
+          </Button>
+        ) : continuationHref ? (
           <Link href={continuationHref} className="fp-ui-button is-secondary focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]">
             Continuar solicitud
           </Link>
@@ -1294,6 +1301,14 @@ export default function DatacreditoPrequalificationGate({
       return;
     }
 
+    if (!conflictCode && !consumedCreditId) {
+      // Returning to the form never sends a query. A later manual submission
+      // still passes the server's reuse, pending-review and duplicate guards.
+      setCorrelationId(null);
+      setView("ready");
+      return;
+    }
+
     if (!pendingAssessmentRecovery || conflictCode !== "EVALUATION_IN_PROGRESS" || conflictSolicitudId !== initialSolicitudId) return;
     setCorrelationId(null);
     setConflictMessage(null);
@@ -1533,6 +1548,7 @@ export default function DatacreditoPrequalificationGate({
         solicitudWallHref={solicitudWallHref}
         canReviewSavedResult={pendingAssessmentRecovery && conflictCode === "EVALUATION_IN_PROGRESS" && conflictSolicitudId === initialSolicitudId}
         canRetryBootstrap={retryMode === "bootstrap" && !conflictCode}
+        canCorrectInput={retryMode === "form" && !conflictCode && !consumedCreditId}
         correlationId={correlationId}
         consumedCreditId={consumedCreditId}
         onRetry={retryTechnicalFailure}
