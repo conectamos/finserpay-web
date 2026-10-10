@@ -134,12 +134,20 @@ test("la precalificacion bloquea el flujo normal pero no la inspeccion central",
 });
 
 test("una inspeccion administrativa no persiste un paso ficticio", () => {
-  const autosave = sourceBlock("const persistedWizardStep = canAdminMoveFreelyInFactory ? nextFactoryStep.id : wizardStep", "const handleDataCreditoBypass");
-
-  assert.match(
-    autosave,
-    /const persistedWizardStep = canAdminMoveFreelyInFactory\s*\? nextFactoryStep\.id\s*:\s*wizardStep/
-  );
+  const sourceFile = ts.createSourceFile("credit-factory-console.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const autosaveCallbacks = [];
+  const visitEffect = (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "useEffect") {
+      const callback = node.arguments[0];
+      if (callback && ts.isArrowFunction(callback) && callback.getText(sourceFile).includes("closureFingerprintAtSchedule")) {
+        autosaveCallbacks.push(callback);
+      }
+    }
+    ts.forEachChild(node, visitEffect);
+  };
+  visitEffect(sourceFile);
+  assert.equal(autosaveCallbacks.length, 1, "Debe encontrarse el efecto real de autoguardado");
+  const autosave = autosaveCallbacks[0].getText(sourceFile);
   assert.match(autosave, /currentStep: persistedWizardStep/);
   assert.match(autosave, /serializeCreditDraftSaveRequest\(\{ draftId, currentStep: persistedWizardStep/);
   assert.match(autosave, /body: requestBody/);
@@ -148,18 +156,40 @@ test("una inspeccion administrativa no persiste un paso ficticio", () => {
   runInNewContext(ts.transpileModule(serializer + "\nmodule.exports = serializeCreditDraftSaveRequest;", {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { module: loaded });
-  const persistedStepDeclaration = autosave.match(/const persistedWizardStep =[^;]+;/)?.[0];
-  assert.ok(persistedStepDeclaration);
-  for (const central of [true, false]) {
-    const persistedStep = runInNewContext(persistedStepDeclaration + "\npersistedWizardStep", {
-      canAdminMoveFreelyInFactory: central, nextFactoryStep: { id: 2 }, wizardStep: 5,
+  const persistedStepInitializers = [];
+  const visitDeclaration = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "persistedWizardStep" && node.initializer) {
+      persistedStepInitializers.push(node.initializer.getText(sourceFile));
+    }
+    ts.forEachChild(node, visitDeclaration);
+  };
+  visitDeclaration(autosaveCallbacks[0]);
+  assert.equal(persistedStepInitializers.length, 1);
+  const scenarios = [
+    { central: true, visible: 2, available: 4, expected: 2, label: "Equipo listo no avanza sin confirmar el IMEI" },
+    { central: true, visible: 2, available: 5, expected: 2, label: "Equipo no salta a entrega por autoguardado" },
+    { central: true, visible: 4, available: 5, expected: 4, label: "Firma no avanza a entrega por autoguardado" },
+    { central: true, visible: 5, available: 2, expected: 2, label: "Inspeccionar entrega no inventa progreso" },
+    { central: true, visible: 4, available: 2, expected: 2, label: "Inspeccionar firma conserva el progreso real" },
+    { central: true, visible: 5, available: 4, expected: 4, label: "Inspeccionar entrega conserva firma pendiente" },
+    { central: true, visible: 1, available: 1, expected: 1, label: "Cliente incompleto sigue en Cliente" },
+    { central: true, visible: 1, available: 4, expected: 2, label: "Volver a Cliente no restaura un paso posterior a Equipo" },
+    { central: false, visible: 1, available: 4, expected: 1, label: "Asesor conserva Cliente visible" },
+    { central: false, visible: 2, available: 4, expected: 2, label: "Asesor conserva Equipo visible" },
+    { central: false, visible: 4, available: 5, expected: 4, label: "Asesor conserva Firma visible" },
+    { central: false, visible: 5, available: 2, expected: 5, label: "Asesor conserva Entrega visible" },
+  ];
+  for (const { central, visible, available, expected, label } of scenarios) {
+    const persistedStep = runInNewContext(`(${persistedStepInitializers[0]})`, {
+      canAdminMoveFreelyInFactory: central, nextFactoryStep: { id: available }, wizardStep: visible,
     });
+    assert.equal(persistedStep, expected, label);
     const serialized = JSON.parse(loaded.exports({
-      draftId: 11, currentStep: persistedStep, payload: { wizardStep: 5, clienteDocumento: "123456789" },
+      draftId: 11, currentStep: persistedStep, payload: { wizardStep: visible, clienteDocumento: "123456789" },
     }));
     assert.equal(serialized.id, 11);
-    assert.equal(serialized.currentStep, central ? 2 : 5);
-    assert.equal(serialized.payload.wizardStep, central ? 2 : 5);
+    assert.equal(serialized.currentStep, expected, label);
+    assert.equal(serialized.payload.wizardStep, expected, label);
     assert.equal(serialized.payload.clienteDocumento, "123456789");
   }
 });

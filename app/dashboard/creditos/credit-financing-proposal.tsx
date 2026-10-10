@@ -49,8 +49,7 @@ export default function CreditFinancingProposal({
       <div className={`fp-step2-proposal-intro ${styles.proposalIntro}`}>
         <h4 id={titleId}>Tu propuesta</h4>
         <picture className={styles.proposalMascot}>
-          <source media="(prefers-reduced-motion: reduce)" srcSet="/assets/creditos/client-validation-peek-mascot.png" />
-          <img src="/assets/public-site/mascota-animada.webp" width={512} height={768} alt="" />
+          <img src="/assets/creditos/equipment-proposal-mascot.png" width={1230} height={1278} alt="" />
         </picture>
       </div>
       <div className={styles.proposalBody}>

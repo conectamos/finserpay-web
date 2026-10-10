@@ -8991,7 +8991,9 @@ export default function CreditFactoryConsole({
       setNotice({ text: "Espera a que termine la firma o la revisión del contrato antes de cambiar de paso.", tone: "amber" });
       return false;
     }
-    const persistedWizardStep = canAdminMoveFreelyInFactory ? nextFactoryStep.id : nextStep;
+    const persistedWizardStep = canAdminMoveFreelyInFactory
+      ? Math.min(nextFactoryStep.id, Math.max(2, nextStep))
+      : nextStep;
     wizardStepTransitionInFlightRef.current = true;
     setWizardStepTransitioning(true);
     cancelPendingDraftAutosave();
@@ -9867,7 +9869,7 @@ export default function CreditFactoryConsole({
 
   const saveCurrentDraft = async (
     currentStepOverride = canAdminMoveFreelyInFactory
-      ? nextFactoryStep.id
+      ? Math.min(nextFactoryStep.id, Math.max(2, wizardStep))
       : wizardStep,
     advanceClient = false
   ) => {
@@ -12156,7 +12158,10 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    const persistedWizardStep = canAdminMoveFreelyInFactory ? nextFactoryStep.id : wizardStep;
+    // Guardar datos no equivale a confirmar el IMEI ni a solicitar el avance.
+    const persistedWizardStep = canAdminMoveFreelyInFactory
+      ? Math.min(nextFactoryStep.id, Math.max(2, wizardStep))
+      : wizardStep;
     const requestBody = serializeCreditDraftSaveRequest({ draftId, currentStep: persistedWizardStep,
       payloadScope: firmaSeguroProcessSigned && persistedWizardStep >= 5 ? "DELIVERY_EVIDENCE" : "FULL", payload: factoryDraftPayload });
     if (draftSaveConflictFingerprintRef.current === requestBody) {
@@ -15401,13 +15406,18 @@ export default function CreditFactoryConsole({
                             <span>IMEI / deviceUId</span>
                             <input
                               id="step-two-imei"
+                              type="text"
                               value={imei}
                               onChange={(event) =>
                                 setImei(
-                                  event.target.value.replace(/\D/g, "")
+                                  event.target.value.replace(/\D/g, "").slice(0, 15)
                                 )
                               }
                               inputMode="numeric"
+                              autoComplete="off"
+                              minLength={15}
+                              maxLength={15}
+                              pattern="[0-9]{15}"
                               placeholder="15 números del IMEI"
                               disabled={firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending || signedContractEditLocked}
                               aria-invalid={Boolean(

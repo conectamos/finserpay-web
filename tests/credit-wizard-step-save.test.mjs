@@ -109,6 +109,60 @@ test("Equipo guarda sus datos sin avanzar y exige confirmación explícita del I
   }
 });
 
+test("el autosave central en Equipo completo no adelanta el paso ni exige confirmar sin pulsar Continuar", async () => {
+  const f = fixture({ canAdminMoveFreelyInFactory: true, wizardStep: 2, nextFactoryStep: { id: 4 } });
+  f.setTransport(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    return body.currentStep >= 3
+      ? { ok: false, status: 409, data: { code: "IMEI_CONFIRMATION_REQUIRED", error: "Confirma el IMEI" } }
+      : { ok: true, status: 200, data: { item: { id: 2887, payload: body.payload } } };
+  });
+  f.mountAutosave();
+  assert.equal(f.timers.size, 1);
+  const [timerId, timer] = [...f.timers][0]; f.timers.delete(timerId); timer.callback(); await flush();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].body.currentStep, 2);
+  assert.equal(f.requests[0].body.payload.wizardStep, 2);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.draftStatus, "saved");
+  assert.equal(f.context.draftErrorMessage, "");
+  assert.equal(f.context.imeiConfirmationTargetStep, null);
+
+  await Promise.all([f.functions.advanceToStep(4), f.functions.advanceToStep(4)]);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.imeiConfirmationTargetStep, 4);
+  assert.equal(f.requests.length, 2, "Explicit Continue saves Equipo once before opening confirmation");
+  assert.equal(f.requests[1].body.currentStep, 2);
+  f.setTransport(async (_url, options) => ({ ok: true, status: 200,
+    data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } }));
+  await Promise.all([
+    f.functions.confirmEquipmentImei("035809100123456"),
+    f.functions.confirmEquipmentImei("035809100123456"),
+  ]);
+  assert.equal(f.requests.filter(request => request.url.endsWith("/confirmar-imei")).length, 1);
+  assert.equal(f.requests.filter(request => request.body.currentStep === 4).length, 1);
+  assert.equal(f.context.wizardStep, 4);
+});
+
+test("el autosave de Equipo conserva un IMEI de 14 dígitos como borrador sin abrir la confirmación", async () => {
+  const f = fixture({ canAdminMoveFreelyInFactory: true, wizardStep: 2,
+    nextFactoryStep: { id: 2 }, stepEquipoReady: false });
+  f.context.factoryDraftPayload = { ...f.context.factoryDraftPayload,
+    imei: "03580910012345", deviceUid: "03580910012345" };
+  f.mountAutosave();
+  const [timerId, timer] = [...f.timers][0]; f.timers.delete(timerId); timer.callback(); await flush();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].body.currentStep, 2);
+  assert.equal(f.requests[0].body.payload.imei, "03580910012345");
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.draftStatus, "saved");
+  assert.equal(f.context.imeiConfirmationTargetStep, null);
+  await f.functions.advanceToStep(4);
+  assert.equal(f.requests.length, 1, "Incomplete Equipo still cannot advance");
+  assert.equal(f.context.imeiConfirmationTargetStep, null);
+  assert.equal(f.context.wizardStep, 2);
+});
+
 test("la corrección reconfirma el IMEI sin reconstruir términos históricos ni habilitar Entrega", async () => {
   const f = fixture({ wizardStep: 2, firmaSeguroDraftCorrectionPending: true, canAdminMoveFreelyInFactory: true, nextFactoryStep: { id: 5 }, stepTwoComplete: false, stepEquipoReady: false });
   assert.equal(await f.functions.persistWizardStep(5), false);

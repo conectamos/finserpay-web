@@ -149,6 +149,60 @@ test("confirmation HTTP endpoint authenticates, rejects unprivileged admins and 
   assert.equal(f.state.writes.length, 1);
 });
 
+test("draft POST rejects malformed forward IMEIs before fallback to a previously confirmed identifier", async () => {
+  const source = read("app/api/creditos/borradores/route.ts");
+  const ast = ts.createSourceFile("drafts.ts", source, ts.ScriptTarget.Latest, true);
+  const post = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "POST");
+  assert.ok(post);
+  const saves = [];
+  const context = {
+    ...core, console,
+    NextResponse: { json: (data, options = {}) => ({ data, status: options.status || 200 }) },
+    getAccess: async () => ({ central: true, user: { id: 12, sedeId: 3, aliadoId: 56 }, seller: null }),
+    expireStaleSolicitudes: async () => {}, ensureVeriffSchema: async () => {}, ensureFirmaSeguroSchema: async () => {},
+    normalizePayload: value => structuredClone(value || {}),
+    sanitizeText: value => String(value || "").trim(),
+    clampStep: value => Math.max(1, Math.min(5, Number(value) || 1)),
+    parsePositiveId: value => Number(value) || null,
+    extractDraftFields: payload => payload,
+    getActiveSolicitudCreditContext: async () => ({ id: 90, currentStep: 4, imei, payload: { imeiConfirmation: confirmation }, usuarioId: 12, vendedorId: 34, sedeId: 3 }),
+    canOperateSolicitud: () => true, assertDocumentNotBlacklisted: async () => {},
+    prisma: { $queryRawUnsafe: async () => [{ signed: true }] },
+    requiresCreditClientStepValidation: () => false,
+    saveSolicitudDraft: async input => { saves.push(input); return { id: 90 }; },
+    readDrafts: async () => [{ id: 90, payload: saves.at(-1).payload }], serializeDraft: row => row,
+    documentBlacklistErrorResponse: () => null,
+    module: { exports: {} }, exports: {},
+  };
+  runInNewContext(ts.transpileModule(post.getText(ast), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText, context);
+  const send = (payload, currentStep = 4, payloadScope = "FULL") => context.exports.POST({
+    json: async () => ({ id: 90, currentStep, payloadScope, payload }),
+  });
+  for (const field of ["imei", "deviceUid"]) {
+    for (const malformed of ["00123456789012", "0012345678901234", "001234567890123456789012", "X001234567890123", "00123456789012X", " 001234567890123", 123456789012345, null, ""]) {
+      for (const currentStep of [3, 4, 5]) {
+        const result = await send({ [field]: malformed }, currentStep);
+        assert.equal(result.status, 400, `${field}, step ${currentStep}, ${JSON.stringify(malformed)}`);
+        assert.equal(result.data.code, "IMEI_CONFIRMATION_INVALID");
+      }
+    }
+  }
+  assert.equal(saves.length, 0, "An old confirmation never authorizes a malformed submitted identifier");
+  const valid = await send({ imei, deviceUid: imei });
+  assert.equal(valid.status, 200);
+  assert.equal(saves[0].payload.imei, imei, "Leading zeros remain text");
+  for (const currentStep of [1, 2]) {
+    for (const partial of ["", "00123456789012", "0012345678901234"]) {
+      assert.equal((await send({ imei: partial, deviceUid: partial }, currentStep)).status, 200);
+      assert.equal(saves.at(-1).payload.imei, partial, "Partial input can still be saved without advancing");
+    }
+  }
+  assert.equal((await send({ fotoEntregaDataUrl: "existing" }, 5, "DELIVERY_EVIDENCE")).status, 200,
+    "A signed evidence-only autosave can omit equipment identifiers");
+});
+
 test("server guard blocks unconfirmed/new versions and allows an existing bound current contract", async () => {
   const f = fixture();
   await assert.rejects(f.functions.requireDraftImeiConfirmation(90, f.database), error => error.code === "IMEI_CONFIRMATION_REQUIRED");

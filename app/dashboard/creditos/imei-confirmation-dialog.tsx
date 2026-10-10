@@ -64,7 +64,8 @@ export default function ImeiConfirmationDialog({ open, expectedImei, busy, onCan
       <label htmlFor="confirm-equipment-imei">Confirmar IMEI</label>
       <input ref={inputRef} id="confirm-equipment-imei" name="confirm-equipment-imei" type="text"
         inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
-        value={value} onChange={(event) => { setValue(event.target.value); setError(""); }}
+        minLength={15} maxLength={15} pattern="[0-9]{15}"
+        value={value} onChange={(event) => { setValue(event.target.value.replace(/\D/g, "").slice(0, 15)); setError(""); }}
         disabled={busy} aria-invalid={Boolean(error)} aria-describedby={error ? "imei-confirmation-error" : undefined} />
       {error ? <p id="imei-confirmation-error" className={styles.dialogError} role="alert">{error}</p> : null}
       <div className={styles.dialogActions}>

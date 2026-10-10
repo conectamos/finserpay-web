@@ -21,7 +21,7 @@ import {
 import { SolicitudCanonicalMutationError } from "@/lib/solicitudes";
 import { ensureFirmaSeguroSchema } from "@/lib/firmaseguro-storage";
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
-import { hasCurrentContractImeiConfirmation, ImeiConfirmationError } from "@/lib/credit-imei-confirmation";
+import { hasCurrentContractImeiConfirmation, ImeiConfirmationError, validateCreditImeiConfirmation } from "@/lib/credit-imei-confirmation";
 import {
   ActiveSolicitudConflictError,
   desistSolicitud,
@@ -433,6 +433,15 @@ export async function POST(req: Request) {
       sanitizeText(body.payloadScope).toUpperCase() === "DELIVERY_EVIDENCE"
         ? "DELIVERY_EVIDENCE"
         : "FULL";
+    if (payloadScope === "FULL" && clampStep(body.currentStep) >= 3) {
+      // A malformed submitted identifier must not fall back to a previously
+      // confirmed IMEI. Partial drafts in Cliente/Equipo remain saveable.
+      for (const field of ["imei", "deviceUid"]) {
+        if (Object.prototype.hasOwnProperty.call(payload, field)) {
+          validateCreditImeiConfirmation(payload[field], payload[field]);
+        }
+      }
+    }
     let fields = extractDraftFields(payload);
     const draftId = parsePositiveId(body.id);
     const existingDraft = draftId
