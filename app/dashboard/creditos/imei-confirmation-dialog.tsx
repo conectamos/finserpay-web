@@ -58,7 +58,7 @@ export default function ImeiConfirmationDialog({ open, expectedImei, busy, onCan
     onCancel={(event) => { event.preventDefault(); if (!busy) onCancel(); }}>
     <button type="button" className={styles.dialogClose} onClick={onCancel} disabled={busy} aria-label="Cerrar confirmación de IMEI"><X aria-hidden="true" /></button>
     <span className={styles.dialogIcon}><Smartphone aria-hidden="true" /></span>
-    <h2 id="imei-confirmation-title">Confirma el IMEI del equipo</h2>
+    <h2 id="imei-confirmation-title">Confirma el IMEI</h2>
     <p id="imei-confirmation-description">Ingresa nuevamente los 15 dígitos del IMEI. Verifícalos directamente en el equipo.</p>
     <form onSubmit={(event) => { event.preventDefault(); void submit(); }} noValidate>
       <label htmlFor="confirm-equipment-imei">Confirmar IMEI</label>

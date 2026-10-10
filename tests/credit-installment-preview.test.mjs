@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 
+const require = createRequire(import.meta.url);
 const source = readFileSync(
   new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url),
   "utf8"
@@ -74,6 +75,7 @@ function evaluatePlan(overrides = {}) {
 async function navigate(handler, { plan = {}, central = false, target = 4 } = {}) {
   const notices = [];
   const visitedSteps = [];
+  const confirmationRequests = [];
   const readiness = evaluatePlan(plan);
   await execute(
     [
@@ -86,6 +88,10 @@ async function navigate(handler, { plan = {}, central = false, target = 4 } = {}
       ...readiness,
       targetStep: target,
       wizardStep: 2,
+      signedContractEditLocked: false,
+      advisorSignedContractStep: 5,
+      firmaSeguroDraftCorrectionPending: false,
+      simulatorMode: false,
       canSeeInternalPricing: central,
       createClientMode: true,
       dataCreditoVeriffDocumentRejected: false,
@@ -98,9 +104,11 @@ async function navigate(handler, { plan = {}, central = false, target = 4 } = {}
       clampWizardStep: (step) => step,
       setNotice: (notice) => notices.push(notice),
       setWizardStep: (step) => visitedSteps.push(step),
+      persistWizardStep: async (step) => visitedSteps.push(step),
+      requestEquipmentImeiConfirmation: async (step) => confirmationRequests.push(step),
     }
   );
-  return { notices, visitedSteps };
+  return { notices, visitedSteps, confirmationRequests };
 }
 
 test("la cuota se puede consultar con IMEI vacío o incompleto; el equipo sigue pendiente", () => {
@@ -152,6 +160,7 @@ test("ambas rutas de avance bloquean el paso 2 incompleto para vendedor y admini
         const result = await navigate(handler, { central, plan });
         const description = `${handler}, central=${central}, ${JSON.stringify(plan)}`;
         assert.deepEqual(result.visitedSteps, [], description);
+        assert.deepEqual(result.confirmationRequests, [], description);
         assert.equal(result.notices.length, 1, description);
         assert.ok(result.notices[0].text, description);
       }
@@ -159,14 +168,15 @@ test("ambas rutas de avance bloquean el paso 2 incompleto para vendedor y admini
   }
 });
 
-test("el paso 2 completo permite continuar en ambas rutas y perfiles", async () => {
+test("el paso 2 completo exige confirmar el IMEI antes de avanzar en ambas rutas y perfiles", async () => {
   for (const handler of ["goToStep", "advanceToStep"]) {
     for (const central of [false, true]) {
       const result = await navigate(handler, {
         central,
         plan: { imei: "350000000000001" },
       });
-      assert.deepEqual(result.visitedSteps, [4]);
+      assert.deepEqual(result.visitedSteps, []);
+      assert.deepEqual(result.confirmationRequests, [4]);
       assert.deepEqual(result.notices, []);
     }
   }
@@ -177,6 +187,7 @@ test("el usuario puede regresar al cliente aunque aún no tenga IMEI", async () 
     for (const central of [false, true]) {
       const result = await navigate(handler, { central, target: 1 });
       assert.deepEqual(result.visitedSteps, [1]);
+      assert.deepEqual(result.confirmationRequests, []);
       assert.deepEqual(result.notices, []);
     }
   }
@@ -188,34 +199,61 @@ test("el simulador conserva la consulta de la cuota sin exigir IMEI", () => {
   assert.equal(state.stepEquipoReady, true);
 });
 
+function loadProductionComponent(filename) {
+  const exports = {};
+  execute(readFileSync(new URL(`../app/dashboard/creditos/${filename}.tsx`, import.meta.url), "utf8"), {
+    exports,
+    require: (specifier) => {
+      if (specifier.endsWith(".module.css")) return { default: {} };
+      if (specifier === "./equipment-visual") return { default: loadProductionComponent("equipment-visual") };
+      return require(specifier);
+    },
+  });
+  return exports.default;
+}
+
+const CreditFinancingProposal = loadProductionComponent("credit-financing-proposal");
+
 function renderInstallment(overrides = {}) {
   const candidates = [];
   function visit(node) {
     if (
-      ts.isJsxElement(node) &&
-      node.openingElement.tagName.getText(parsed) === "div" &&
-      node.getText(parsed).includes("? currency(valorCuota) :")
+      ts.isJsxSelfClosingElement(node) &&
+      node.tagName.getText(parsed) === "CreditFinancingProposal"
     ) {
       candidates.push(node.getText(parsed));
     }
     ts.forEachChild(node, visit);
   }
   visit(parsed);
-  candidates.sort((left, right) => left.length - right.length);
-  assert.ok(candidates.length, "Expected the production installment card");
+  assert.equal(candidates.length, 1, "Expected the production shared financing proposal");
+  const readiness = evaluatePlan(overrides);
   const element = execute(
-    "const card = (" + candidates[0] + "); card;",
+    ["stepTwoPlanEquipmentReady", "stepTwoPolicyAvailable", "stepTwoPlanSelectionValid", "stepTwoProposalReady"].map(declaration).join("\n") + "\nconst card = (" + candidates[0] + "); card;",
     {
-      require: createRequire(import.meta.url),
+      require,
       exports: {},
-      ...evaluatePlan(overrides),
+      CreditFinancingProposal,
+      dataCreditoCreditCreationMode: true,
+      dataCreditoBypassed: false,
+      activeDataCreditoOffer: {},
+      simulatorMode: false,
+      simulationPolicyReady: true,
+      creditInstallmentOptions: ["24"],
+      plazoMeses: "24",
+      displayEquipmentName: "iPhone 13 Pro 256GB",
+      equipoMarca: "IPHONE",
+      equipoModelo: "iPhone 13 Pro 256GB",
+      currentDevicePlatform: "iphone",
+      valorTotalEquipoNumero: 2_500_000,
+      cuotaInicialValida: overrides.cuotaInicialValida ?? true,
+      cuotaInicialNumero: 500_000,
+      saldoBaseFinanciado: 2_000_000,
+      plazoMesesNumero: 24,
       frecuenciaPagoLabel: "Quincenal",
       valorCuota: 123_456,
-      currency: (value) => "COP " + value,
-      exactCurrency: (value) => "COP " + value,
-      canSeeInternalPricing: false,
-      amortizationPlan: { cuotaTotal: 123_455.5 },
-      cuotaInternaLabel: "Cuota exacta para recaudo",
+      ...overrides,
+      ...readiness,
     }
   );
   return renderToStaticMarkup(element);
@@ -224,15 +262,40 @@ function renderInstallment(overrides = {}) {
 test("la tarjeta real muestra la cuota mientras el IMEI está vacío o incompleto", () => {
   for (const imei of ["", "35000000000000", "350000000000001"]) {
     const markup = renderInstallment({ imei });
-    assert.match(markup, />COP 123456<\/strong>/);
-    assert.match(markup, /Cálculo actualizado/);
+    assert.match(markup, /data-ready="true"/);
+    assert.match(markup, />\$\s*123\.456<\/dd>/);
+    assert.match(markup, /Cuota quincenal/);
     assert.doesNotMatch(markup, /Cuota exacta/);
   }
 });
 
 test("la tarjeta real conserva el estado pendiente con datos financieros incompletos", () => {
   const markup = renderInstallment({ cuotaInicialValida: false });
-  assert.match(markup, />-<\/strong>/);
-  assert.doesNotMatch(markup, />COP 123456<\/strong>/);
-  assert.match(markup, /Completa los datos financieros para calcular/);
+  assert.match(markup, /data-ready="false"/);
+  assert.match(markup, /<dt>Cuota quincenal<\/dt><dd>—<\/dd>/);
+  assert.doesNotMatch(markup, /123\.456/);
+  assert.match(markup, /<dt>Inicial<\/dt><dd>—<\/dd>/);
+  assert.match(markup, /<dt>Financiado<\/dt><dd>—<\/dd>/);
+});
+
+test("la propuesta real retira la cuota anterior al invalidar el plan y se recupera sin exigir IMEI", () => {
+  for (const simulatorMode of [false, true]) {
+    const valid = { simulatorMode, imei: "" };
+    assert.match(renderInstallment(valid), />\$\s*123\.456<\/dd>/);
+    for (const invalid of [
+      { simulationPolicyReady: false },
+      { cuotaInicialValida: false },
+      { saldoFinanciado: 0 },
+      { plazoMesesNumero: 0 },
+      { iphoneInstallmentLimitExceeded: true },
+      { equipoMarca: "" },
+      { equipoModelo: "" },
+      { valorTotalEquipoNumero: 0 },
+    ]) {
+      const markup = renderInstallment({ ...valid, ...invalid });
+      assert.match(markup, /<dt>Cuota quincenal<\/dt><dd>—<\/dd>/, JSON.stringify(invalid));
+      assert.doesNotMatch(markup, /123\.456/, JSON.stringify(invalid));
+    }
+    assert.match(renderInstallment(valid), />\$\s*123\.456<\/dd>/);
+  }
 });

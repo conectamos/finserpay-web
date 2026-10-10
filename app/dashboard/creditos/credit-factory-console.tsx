@@ -82,6 +82,8 @@ import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
 } from "@/app/dashboard/creditos/datacredito-prequalification-gate";
 import ClientValidationHeader from "./client-validation-header";
+import CreditFinancingProposal from "./credit-financing-proposal";
+import EquipmentVisual from "./equipment-visual";
 import ImeiConfirmationDialog from "./imei-confirmation-dialog";
 import IdentitySignatureOverview from "./identity-signature-overview";
 import equipmentSignatureStyles from "./equipment-signature.module.css";
@@ -743,14 +745,6 @@ type CreditDraftItem = {
     id: number;
     nombre: string;
   };
-};
-
-type CreditDraftListResponse = {
-  ok?: boolean;
-  scope?: string;
-  search?: string;
-  items: CreditDraftItem[];
-  error?: string;
 };
 
 type CreditDraftSingleResponse = {
@@ -3102,14 +3096,8 @@ export default function CreditFactoryConsole({
   const clientLookupMode = lookupView && canViewSavedCredits;
   const embeddedClientLookup = clientLookupMode && embeddedLookup;
   const canAdminMoveFreelyInFactory = canSeeInternalPricing && createClientMode;
-  const adminFactoryAssistAvailable =
-    canSeeInternalPricing && createClientMode;
   const pathname = usePathname();
   const normalizedInitialSearch = initialSearch.trim();
-  const [showAdminAssist, setShowAdminAssist] = useState(
-    adminFactoryAssistAvailable &&
-      (Boolean(normalizedInitialSearch) || Boolean(initialDraftId))
-  );
   const [draftDevicePlatform, setDraftDevicePlatform] =
     useState<DevicePlatform | null>(devicePlatform);
   const currentDevicePlatform: DevicePlatform =
@@ -3153,8 +3141,6 @@ export default function CreditFactoryConsole({
   const [analystEvidenceRevision, setAnalystEvidenceRevision] = useState(0);
   const analystFinancialSnapshotRef = useRef<AnalystDraftCorrectionSnapshot | null>(null);
   const analystEvidenceSnapshotRef = useRef<AnalystDraftCorrectionSnapshot | null>(null);
-  const [draftSearchResults, setDraftSearchResults] = useState<CreditDraftItem[]>([]);
-  const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftStatus, setDraftStatus] = useState<
     "idle" | "loading" | "saving" | "saved" | "error"
   >(initialDraftId ? "loading" : "idle");
@@ -3197,9 +3183,8 @@ export default function CreditFactoryConsole({
   const deliveryWorkspace = createClientMode && wizardStep === 5;
   const equipmentSignatureWorkspace = createClientMode && !simulatorMode && (wizardStep === 2 || wizardStep === 4);
   const compactSaleWorkspace = deliveryWorkspace || equipmentSignatureWorkspace;
-  const adminFactoryAssistMode = adminFactoryAssistAvailable && (showAdminAssist || compactSaleWorkspace);
-  const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
-  const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
+  const canSearchCreditsInCurrentView = paymentsView || lookupMode;
+  const showSearchSection = paymentsView || lookupMode;
   const [clienteNombre, setClienteNombre] = useState("");
   const [clientePrimerNombre, setClientePrimerNombre] = useState("");
   const [clientePrimerApellido, setClientePrimerApellido] = useState("");
@@ -6563,11 +6548,7 @@ export default function CreditFactoryConsole({
     ? !selectedCredit || showPaymentResults
     : clientLookupMode
       ? false
-    : lookupMode
-      ? true
-      : adminFactoryAssistMode
-        ? Boolean(activeSearch) || loadingList
-        : false;
+    : lookupMode;
   const showCompactSearchSection = paymentsView ? showResultsPanel : showSearchSection;
   const legalDocumentationStepContent = (
     <>
@@ -7097,7 +7078,7 @@ export default function CreditFactoryConsole({
         return;
       }
 
-      if ((lookupMode || adminFactoryAssistMode) && !trimmedSearch) {
+      if (lookupMode && !trimmedSearch) {
         setActiveSearch("");
         setCredits([]);
         setSelectedId(null);
@@ -7150,8 +7131,6 @@ export default function CreditFactoryConsole({
           trimmedSearch && result.data.items.length === 1
             ? result.data.items[0]?.id || null
             : null;
-      } else if (createClientMode || adminFactoryAssistMode) {
-        nextSelectedId = null;
       } else if (lookupMode) {
         nextSelectedId =
           trimmedSearch && result.data.items.length === 1
@@ -7181,44 +7160,6 @@ export default function CreditFactoryConsole({
       });
     } finally {
       setLoadingList(false);
-    }
-  };
-
-  const loadDrafts = async (searchValue = activeSearch) => {
-    if (!adminFactoryAssistMode) {
-      setDraftSearchResults([]);
-      return;
-    }
-
-    const trimmedSearch = searchValue.trim();
-
-    if (!trimmedSearch) {
-      setDraftSearchResults([]);
-      return;
-    }
-
-    try {
-      setLoadingDrafts(true);
-      const params = new URLSearchParams({
-        take: "12",
-        search: trimmedSearch,
-      });
-      const result = await requestJson<CreditDraftListResponse>(
-        `/api/creditos/borradores?${params.toString()}`
-      );
-
-      if (!result.ok) {
-        throw new Error(result.data?.error || "No se pudieron cargar los borradores");
-      }
-
-      setDraftSearchResults(result.data.items || []);
-    } catch (error) {
-      setNotice({
-        text: error instanceof Error ? error.message : "No se pudieron cargar los borradores",
-        tone: "red",
-      });
-    } finally {
-      setLoadingDrafts(false);
     }
   };
 
@@ -7438,12 +7379,7 @@ export default function CreditFactoryConsole({
     }
 
     void loadCredits(Boolean(initialSelectedId), normalizedInitialSearch);
-
-    if (adminFactoryAssistMode) {
-      void loadDrafts(normalizedInitialSearch);
-    }
   }, [
-    adminFactoryAssistMode,
     canSearchCreditsInCurrentView,
     initialSelectedId,
     normalizedInitialSearch,
@@ -11558,15 +11494,11 @@ export default function CreditFactoryConsole({
       setShowSearchResults(true);
       setShowLookupDetail(false);
     }
-    await Promise.all([
-      loadCredits(false, searchTerm),
-      adminFactoryAssistMode ? loadDrafts(searchTerm) : Promise.resolve(),
-    ]);
+    await loadCredits(false, searchTerm);
   };
 
   const clearSearch = async () => {
     setSearchTerm("");
-    setDraftSearchResults([]);
     if (paymentsView) {
       setShowPaymentResults(true);
       setSelectedId(null);
@@ -11912,36 +11844,6 @@ export default function CreditFactoryConsole({
 
     window.sessionStorage.setItem("finserpay-client-prefill", JSON.stringify(credit));
     window.location.assign("/dashboard/creditos");
-  };
-
-  const openAdminAssistanceForCredit = (credit: CreditItem) => {
-    const params = new URLSearchParams();
-    const searchValue =
-      activeSearch ||
-      searchTerm.trim() ||
-      credit.clienteDocumento ||
-      credit.imei ||
-      credit.folio;
-
-    if (searchValue) {
-      params.set("search", searchValue);
-    }
-
-    params.set("selected", String(credit.id));
-    window.location.assign(`/dashboard/clientes?${params.toString()}`);
-  };
-
-  const openAdminAssistanceForDraft = (draft: CreditDraftItem) => {
-    const params = new URLSearchParams();
-
-    params.set("mode", "create-client");
-    params.set("draft", String(draft.id));
-
-    if (activeSearch || searchTerm.trim()) {
-      params.set("search", activeSearch || searchTerm.trim());
-    }
-
-    window.location.assign(`/dashboard/creditos?${params.toString()}`);
   };
 
   useEffect(() => {
@@ -12968,7 +12870,8 @@ export default function CreditFactoryConsole({
               createClientMode || simulatorMode ? "fp-credit-factory" : "",
               showDataCreditoGate ? clientValidationStyles.shell : "",
               deliveryWorkspace ? stepFourStyles.shell : "",
-              equipmentSignatureWorkspace ? equipmentSignatureStyles.shell : "",
+              equipmentSignatureWorkspace || simulatorMode ? equipmentSignatureStyles.shell : "",
+              simulatorMode ? equipmentSignatureStyles.simulatorShell : "",
               equipmentSignatureWorkspace && wizardStep === 4 ? equipmentSignatureStyles.signatureShell : "",
             ].join(" ")
       }
@@ -13077,7 +12980,7 @@ export default function CreditFactoryConsole({
               ? embeddedClientLookup
                 ? "w-full"
                 : "mx-auto max-w-[1180px]"
-              : createClientMode
+              : createClientMode || simulatorMode
                 ? "fp-credit-factory-frame mx-auto"
                 : "mx-auto max-w-7xl"
         }
@@ -13092,7 +12995,7 @@ export default function CreditFactoryConsole({
             className={
               clientLookupMode
                 ? "fp-client-lookup-hero"
-                : createClientMode && (showDataCreditoGate || compactSaleWorkspace)
+                : simulatorMode || (createClientMode && (showDataCreditoGate || compactSaleWorkspace))
                   ? "fp-new-sale-header"
                 : [
                     "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
@@ -13101,22 +13004,12 @@ export default function CreditFactoryConsole({
                   ].join(" ")
             }
           >
-            {createClientMode && (showDataCreditoGate || compactSaleWorkspace) ? (
+            {simulatorMode || (createClientMode && (showDataCreditoGate || compactSaleWorkspace)) ? (
               <ClientValidationHeader
                 nombre={initialSeller?.nombre || initialSession.nombre}
                 rol={initialSession.rolNombre}
                 canViewPayments={canViewSavedCredits}
-                canAssist={adminFactoryAssistAvailable && !compactSaleWorkspace}
-                assistOpen={showAdminAssist}
-                onToggleAssist={() => {
-                  setShowAdminAssist((value) => !value);
-                  if (showAdminAssist) {
-                    setDraftSearchResults([]);
-                    setCredits([]);
-                    setActiveSearch("");
-                    setSelectedId(null);
-                  }
-                }}
+                title={simulatorMode ? "Simulador de crédito" : "Nueva venta"}
               />
             ) : createClientMode ? (
               <div className="fp-new-sale-header-inner">
@@ -13155,23 +13048,6 @@ export default function CreditFactoryConsole({
                       <Link href="/dashboard">Dashboard</Link>
                       {canViewSavedCredits ? (
                         <Link href="/dashboard/abonos">Abonos</Link>
-                      ) : null}
-                      {adminFactoryAssistAvailable ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowAdminAssist((value) => !value);
-                            if (showAdminAssist) {
-                              setDraftSearchResults([]);
-                              setCredits([]);
-                              setActiveSearch("");
-                              setSelectedId(null);
-                            }
-                          }}
-                          aria-expanded={showAdminAssist}
-                        >
-                          {showAdminAssist ? "Cerrar asistencia" : "Asistencia"}
-                        </button>
                       ) : null}
                     </nav>
                   </details>
@@ -13329,29 +13205,6 @@ export default function CreditFactoryConsole({
                           {paymentsView ? "Crear cliente" : createClientMode ? "Abonos" : "Ir a abonos"}
                         </Link>
                     )}
-                    {adminFactoryAssistAvailable ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowAdminAssist((value) => !value);
-                          if (showAdminAssist) {
-                            setDraftSearchResults([]);
-                            setCredits([]);
-                            setActiveSearch("");
-                            setSelectedId(null);
-                          }
-                        }}
-                        aria-expanded={showAdminAssist}
-                        className={[
-                          "inline-flex min-w-[160px] justify-center rounded-[16px] border px-4 py-2.5 text-sm font-semibold transition",
-                          showAdminAssist
-                            ? "border-[#145a5a] bg-[#123f3e] text-white hover:bg-[#0f3433]"
-                            : "border-[#c7dbe0] bg-white text-[#145a5a] hover:bg-[#eef8f6]",
-                        ].join(" ")}
-                      >
-                        {showAdminAssist ? "Cerrar asistencia" : "Asistencia"}
-                      </button>
-                    ) : null}
                   </div>
 
                   {lookupMode ? (
@@ -13383,7 +13236,14 @@ export default function CreditFactoryConsole({
           </section>
         )}
 
-        {notice && !(compactSaleWorkspace && notice.text === "Identidad aprobada. Datos copiados.") && (
+        {simulatorMode ? (
+          <nav className={equipmentSignatureStyles.simulatorActions} aria-label="Navegación del simulador">
+            <Link href="/dashboard"><ArrowLeft aria-hidden="true" />Volver</Link>
+            <Link href="/dashboard/creditos?mode=simulator">Cambiar plataforma<ChevronDown aria-hidden="true" /></Link>
+          </nav>
+        ) : null}
+
+        {notice && !(createClientMode && notice.text === "Identidad aprobada. Datos copiados.") && (
           <div
             ref={noticeRef}
             tabIndex={-1}
@@ -13409,15 +13269,11 @@ export default function CreditFactoryConsole({
                 ? embeddedClientLookup
                   ? "fp-client-lookup-search fp-client-lookup-search-embedded"
                   : "fp-client-lookup-search"
-              : compactSaleWorkspace && adminFactoryAssistMode
-                ? equipmentSignatureWorkspace ? `${equipmentSignatureStyles.caseSearch} ${wizardStep === 4 ? equipmentSignatureStyles.signatureSearch : ""}` : stepFourStyles.caseSearch
-              : adminFactoryAssistMode
-                ? "fp-surface mt-4 rounded-[24px] p-4"
                 : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
           {clientLookupMode ? <h1 className="fp-client-page-title">Expediente del cliente</h1> : null}
-          {!clientLookupMode && !compactSaleWorkspace ? (
+          {!clientLookupMode ? (
             <div
               className={[
                 "inline-flex rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase",
@@ -13426,8 +13282,6 @@ export default function CreditFactoryConsole({
             >
               {deliveryMode
                 ? "Validar entrega"
-                : adminFactoryAssistMode
-                  ? "Asistencia admin"
                   : "Buscar cliente"}
             </div>
           ) : null}
@@ -13438,8 +13292,6 @@ export default function CreditFactoryConsole({
                 ? "mt-3 text-2xl"
                 : clientLookupMode
                   ? "text-sm uppercase tracking-[0.16em] text-[#8a6a24]"
-                  : adminFactoryAssistMode
-                    ? "mt-3 text-xl"
                     : "mt-4 text-3xl",
             ].join(" ")}
           >
@@ -13447,39 +13299,29 @@ export default function CreditFactoryConsole({
               ? "Buscar credito"
               : deliveryMode
                 ? "Busca el credito"
-                : paymentsView
-                  ? "mt-4 flex flex-col gap-2 lg:flex-row"
-                : adminFactoryAssistMode
-                  ? "Buscar caso"
                 : clientLookupMode
                   ? "Buscar expediente"
                 : "Encuentra al cliente y su credito"}
           </h2>
-          {adminFactoryAssistMode ? null : (
-            <p
-              className={[
-                "max-w-3xl text-sm leading-6 text-slate-600",
-                paymentsView || clientLookupMode ? "mt-1" : "mt-3",
-              ].join(" ")}
-            >
-              {paymentsView
-                ? "Cédula, teléfono, número de crédito o IMEI."
-                : deliveryMode
-                  ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
-                  : searchDescription}
-            </p>
-          )}
+          <p
+            className={[
+              "max-w-3xl text-sm leading-6 text-slate-600",
+              paymentsView || clientLookupMode ? "mt-1" : "mt-3",
+            ].join(" ")}
+          >
+            {paymentsView
+              ? "Cédula, teléfono, número de crédito o IMEI."
+              : deliveryMode
+                ? "Ingresa cedula o IMEI para saber si el equipo se puede entregar."
+                : searchDescription}
+          </p>
 
           <div
             className={
-              compactSaleWorkspace
-                ? equipmentSignatureWorkspace ? equipmentSignatureStyles.searchControls : stepFourStyles.searchControls
-              : deliveryMode
+              deliveryMode
                 ? "mt-5 flex flex-col gap-3 lg:flex-row"
                 : clientLookupMode
                   ? "fp-client-lookup-command mt-4 flex flex-col gap-2 lg:flex-row"
-                : adminFactoryAssistMode
-                  ? "mt-4 flex flex-col gap-3 lg:flex-row"
                   : "mt-6 flex flex-col gap-3 lg:flex-row"
             }
           >
@@ -13497,9 +13339,8 @@ export default function CreditFactoryConsole({
                   }
                 }}
                 aria-label="Buscar cliente o expediente"
-                title={compactSaleWorkspace ? accessScopeLabel : undefined}
                 placeholder={
-                  deliveryMode || adminFactoryAssistMode
+                  deliveryMode
                     ? "Cedula o IMEI"
                     : paymentsView
                       ? "Cédula, teléfono, número de crédito o IMEI"
@@ -13519,7 +13360,7 @@ export default function CreditFactoryConsole({
             <button
               type="button"
               onClick={() => void searchCredits()}
-              disabled={loadingList || loadingDrafts}
+              disabled={loadingList}
               className={
                 clientLookupMode || paymentsView
                   ? "inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#151a21] px-6 text-sm font-bold text-white transition hover:bg-[#272e38] disabled:opacity-70"
@@ -13527,21 +13368,19 @@ export default function CreditFactoryConsole({
               }
             >
               {clientLookupMode || paymentsView ? <Search className="h-4 w-4" strokeWidth={2} /> : null}
-              {loadingList || loadingDrafts
+              {loadingList
                 ? "Buscando..."
                 : deliveryMode
                   ? "Consultar"
-                  : adminFactoryAssistMode
-                    ? deliveryWorkspace ? "Buscar" : "Buscar caso"
-                    : paymentsView || clientLookupMode
-                      ? "Buscar"
-                      : "Buscar cliente"}
+                  : paymentsView || clientLookupMode
+                    ? "Buscar"
+                    : "Buscar cliente"}
             </button>
 
             <button
               type="button"
               onClick={() => void clearSearch()}
-              disabled={(loadingList || loadingDrafts) && !activeSearch}
+              disabled={loadingList && !activeSearch}
               className={
                 clientLookupMode || paymentsView
                   ? "inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-[#d0d5dd] bg-white px-5 text-sm font-semibold text-[#475467] transition hover:bg-[#f9fafb] disabled:opacity-70"
@@ -13551,7 +13390,6 @@ export default function CreditFactoryConsole({
               {clientLookupMode ? <RotateCcw className="h-4 w-4" strokeWidth={1.9} /> : null}
               {paymentsView ? "Nueva busqueda" : "Limpiar"}
             </button>
-            {deliveryWorkspace ? <span className={stepFourStyles.searchScope}><Building2 aria-hidden="true" />Todos los aliados</span> : null}
           </div>
 
           {clientLookupMode && !activeSearch && !selectedCredit ? (
@@ -13685,13 +13523,13 @@ export default function CreditFactoryConsole({
                 </div>
               )}
             </div>
-          ) : deliveryMode || clientLookupMode || (compactSaleWorkspace && !activeSearch && wizardStep !== 4) ? null : (
+          ) : deliveryMode || clientLookupMode ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                 Alcance: {accessScopeLabel}
               </span>
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
-                Resultados: {credits.length + (adminFactoryAssistMode ? draftSearchResults.length : 0)}
+                Resultados: {credits.length}
               </span>
               {activeSearch && (
                 <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
@@ -15297,10 +15135,10 @@ export default function CreditFactoryConsole({
                 <div className="fp-step2">
                   <header className="fp-step2-heading">
                     <div>
-                      <p>{simulatorMode ? "Simulador" : "Paso 2 · Equipo y plan"}</p>
+                      <p>{simulatorMode ? "Simular crédito" : "Paso 2"}</p>
                       <h3>
                         {simulatorMode
-                          ? "Configura la financiación"
+                          ? "Simulador de crédito"
                           : "Equipo y plan"}
                       </h3>
                       <span>
@@ -15541,10 +15379,10 @@ export default function CreditFactoryConsole({
                           </label>
                       </div>
 
-                      <div className="fp-step2-equipment-lower">
+                      {!simulatorMode ? <div className="fp-step2-equipment-lower">
                         <div className="fp-step2-device-preview" aria-live="polite">
                           <div className="fp-step2-device-illustration" aria-hidden="true">
-                            <NextImage src={iphoneFactory ? "/assets/dashboard/apple.svg" : "/assets/dashboard/android.svg"} width={44} height={44} alt="" />
+                            {firmaSeguroProcessExists || signedContractEditLocked ? <LockKeyhole aria-hidden="true" /> : <EquipmentVisual reference={displayEquipmentName} platform={currentDevicePlatform} />}
                           </div>
                           <strong>
                             {displayEquipmentName || "Sin equipo seleccionado"}
@@ -15587,17 +15425,14 @@ export default function CreditFactoryConsole({
                                   : ""
                               }
                             >
-                              {firmaSeguroProcessExists
-                                ? "El IMEI está protegido porque el contrato ya fue enviado a firma."
-                                : imeiDigits.length > 0
+                              {imeiDigits.length > 0 && !imeiValido
                                   ? imeiDigits.length + "/15 dígitos"
-                                  : "Puedes calcular el plan sin IMEI; ingresa sus 15 números antes de continuar."}
+                                  : ""}
                             </small>
                           </label>
-
-
+                          {(firmaSeguroProcessExists || signedContractEditLocked) ? <span className="fp-step2-imei-protection"><LockKeyhole aria-hidden="true" />Protegido por firma</span> : null}
                         </div>
-                      </div>
+                      </div> : null}
                     </section>
 
                    <section
@@ -15615,6 +15450,30 @@ export default function CreditFactoryConsole({
                           <h4 id="fp-step2-plan-title">Plan</h4>
                           <p>Define la cuota inicial, el plazo y revisa la propuesta.</p>
                         </div>
+                        <details className="fp-step2-conditions">
+                          <summary>Ver condiciones<ChevronRight aria-hidden="true" /></summary>
+                          <div>
+                            {!stepTwoPolicyAvailable ? <p>Las condiciones estarán disponibles cuando se cargue la política aplicable.</p> : null}
+                            {stepTwoPolicyAvailable && !simulatorMode ? (
+                              <div className="fp-step2-policy-note">
+                                <strong>{activeDataCreditoManualCreditLimit ? `Cupo manual · CC ***${activeDataCreditoManualCreditLimit.documentLast4}` : activeDataCreditoOffer ? creditSettingsScopeLabel : "Política general"}</strong>
+                                <span>Inicial mínima {formatPercent(initialPaymentPercentage)}
+                                  {activeDataCreditoOffer ? <> · Cupo aprobado {currency(dataCreditoEffectiveMaxFinancedAmount)}</> : null}
+                                  {" · "}Hasta {plazoMaximoCuotas} cuotas
+                                  {policySummaryMaxInstallmentValue > 0 ? " · Tope por cuota " + currency(policySummaryMaxInstallmentValue) : ""}
+                                </span>
+                              </div>
+                            ) : null}
+                            {simulatorMode && stepTwoPolicyAvailable ? <div className="fp-step2-policy-note">
+                              <strong>Condiciones de simulación</strong>
+                              <span>Inicial mínima {formatPercent(initialPaymentPercentage)}
+                                {dataCreditoEffectiveMaxFinancedAmount > 0 ? " · Monto máximo financiado " + currency(dataCreditoEffectiveMaxFinancedAmount) : ""}
+                                {" · "}Hasta {plazoMaximoCuotas} cuotas
+                                {policySummaryMaxInstallmentValue > 0 ? " · Tope por cuota " + currency(policySummaryMaxInstallmentValue) : ""}
+                              </span>
+                            </div> : null}
+                          </div>
+                        </details>
                       </div>
 
                       <div
@@ -15641,41 +15500,12 @@ export default function CreditFactoryConsole({
                           {!stepTwoPolicyAvailable
                             ? "Política no disponible"
                             : firmaSeguroProcessExists || signedContractEditLocked
-                              ? "Condiciones protegidas por el contrato enviado. Las correcciones requieren autorización y nueva firma."
+                              ? firmaSeguroProcessSigned ? "Contrato firmado · Edición restringida" : "Contrato enviado · Edición restringida"
                            : stepTwoPlanLocked
                               ? "Completa la marca, el modelo y el precio para configurar el plan."
                               : "Configura el plan; ingresa el IMEI antes de continuar."}
                         </span>
                       </div>
-
-                      {stepTwoPolicyAvailable && !simulatorMode ? (
-                        <div className="fp-step2-policy-note">
-                          <strong>
-                            {activeDataCreditoManualCreditLimit ? (
-                              <>
-                                Cupo manual · CC ***
-                                {activeDataCreditoManualCreditLimit.documentLast4}
-                              </>
-                            ) : activeDataCreditoOffer ? (
-                              creditSettingsScopeLabel
-                            ) : (
-                              "Política general"
-                            )}
-                          </strong>
-                          {activeDataCreditoOffer ? (
-                            <span>
-                              Inicial mínima {formatPercent(initialPaymentPercentage)}
-                              {" · "}Cupo aprobado{" "}
-                              {currency(dataCreditoEffectiveMaxFinancedAmount)}
-                              {" · "}Hasta {plazoMaximoCuotas} cuotas
-                              {policySummaryMaxInstallmentValue > 0
-                                ? " · Tope por cuota " +
-                                  currency(policySummaryMaxInstallmentValue)
-                                : ""}
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
 
                       <fieldset
                         disabled={stepTwoPlanLocked}
@@ -15732,7 +15562,7 @@ export default function CreditFactoryConsole({
                               className="fp-step2-control"
                             />
                           </label>
-                          <input
+                          {!stepTwoPlanLocked ? <><input
                             className="fp-step2-range"
                             type="range"
                             min={stepTwoInitialMinimum}
@@ -15757,9 +15587,7 @@ export default function CreditFactoryConsole({
                               Máximo: {currency(stepTwoInitialMaximum)}
                             </span>
                           </div>
-                          <p className="fp-step2-field-note">
-                            Puedes aumentarla para comparar una cuota menor.
-                          </p>
+                          </> : null}
                           {cuotaInicial && !cuotaInicialValida ? (
                             <p className="fp-step2-field-error" role="alert">
                               La inicial debe estar entre el mínimo autorizado y
@@ -15771,7 +15599,7 @@ export default function CreditFactoryConsole({
                         <div className="fp-step2-installments">
                           <span>Número de cuotas</span>
                           {creditInstallmentOptions.length > 0 ? (
-                            !equipmentSignatureWorkspace && creditInstallmentOptions.length <= 6 ? (
+                            !(equipmentSignatureWorkspace || simulatorMode) && creditInstallmentOptions.length <= 6 ? (
                               <div
                                 className="fp-step2-installment-chips"
                                 role="radiogroup"
@@ -15861,75 +15689,18 @@ export default function CreditFactoryConsole({
                     </section>
                   </div>
 
-                  <section
-                    className="fp-step2-proposal"
-                    aria-labelledby="fp-step2-proposal-title"
-                    aria-live="polite"
-                  >
-                    <div className="fp-step2-proposal-intro">
-                      <h4 id="fp-step2-proposal-title">Tu propuesta</h4>
-                      <p>Se actualizará automáticamente con los datos que ingreses.</p>
-                    </div>
-                    <div className={equipmentSignatureStyles.proposalBody}>
-                    <div className={equipmentSignatureStyles.proposalDevice}>
-                      <span><NextImage src={iphoneFactory ? "/assets/dashboard/apple.svg" : "/assets/dashboard/android.svg"} width={44} height={44} alt="" /></span>
-                      <div><strong>{displayEquipmentName || "Sin equipo seleccionado"}</strong><small>{equipoMarca.trim()}</small></div>
-                    </div>
-                    <dl className="fp-step2-proposal-metrics">
-                      <div>
-                        <dt>Equipo</dt>
-                        <dd>
-                          {equipoMarca.trim() && equipoModelo.trim()
-                            ? displayEquipmentName
-                            : "—"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Valor equipo</dt>
-                       <dd>
-                          {valorTotalEquipoNumero > 0
-                            ? currency(valorTotalEquipoNumero)
-                            : "—"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Inicial</dt>
-                        <dd>
-                          {cuotaInicialValida
-                            ? currency(cuotaInicialNumero)
-                            : "—"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Financiado</dt>
-                        <dd>
-                          {cuotaInicialValida && saldoBaseFinanciado > 0
-                            ? currency(saldoBaseFinanciado)
-                            : "—"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Plazo</dt>
-                        <dd>
-                          {stepTwoPlanEquipmentReady && stepTwoPlanSelectionValid
-                            ? plazoMesesNumero + " cuotas"
-                            : "—"}
-                        </dd>
-                      </div>
-                      <div className="fp-step2-proposal-installment">
-                        <dt>Cuota {frecuenciaPagoLabel.toLowerCase()}</dt>
-                        <dd>
-                          {stepTwoProposalReady ? currency(valorCuota) : "—"}
-                        </dd>
-                        <span>
-                          {stepTwoProposalReady
-                            ? "Cálculo actualizado"
-                            : "Completa los datos para calcular."}
-                        </span>
-                      </div>
-                    </dl>
-                    </div>
-                  </section>
+                  <CreditFinancingProposal
+                    deviceName={displayEquipmentName || "Sin equipo seleccionado"}
+                    deviceBrand={equipoMarca.trim()}
+                    platform={currentDevicePlatform}
+                    ready={stepTwoProposalReady}
+                    installmentLabel={`Cuota ${frecuenciaPagoLabel.toLowerCase()}`}
+                    installmentValue={valorCuota}
+                    price={valorTotalEquipoNumero}
+                    initial={cuotaInicialValida ? cuotaInicialNumero : null}
+                    financed={cuotaInicialValida && saldoBaseFinanciado > 0 ? saldoBaseFinanciado : null}
+                    term={stepTwoPlanEquipmentReady && stepTwoPlanSelectionValid ? plazoMesesNumero : null}
+                  />
 
                   {iphoneInstallmentLimitExceeded ? (
                     <div className="fp-step2-inline-alert" role="alert">
@@ -15938,8 +15709,8 @@ export default function CreditFactoryConsole({
                     </div>
                   ) : null}
 
-                  {canSeeInternalPricing && amortizationPlan ? (
-                    <CreditAmortizationTable plan={amortizationPlan} defaultOpen={!equipmentSignatureWorkspace} compact={equipmentSignatureWorkspace} />
+                  {canSeeInternalPricing && stepTwoProposalReady && amortizationPlan ? (
+                    <CreditAmortizationTable plan={amortizationPlan} defaultOpen={false} compact />
                   ) : null}
                 </div>
               )}
@@ -20702,10 +20473,6 @@ export default function CreditFactoryConsole({
                     ? "mt-6"
                     : "hidden"
                   : "mt-8"
-                : adminFactoryAssistMode && showResultsPanel
-                  ? "mt-6"
-                : createClientMode
-                ? "hidden"
                 : "hidden"
           }
         >
@@ -20718,8 +20485,6 @@ export default function CreditFactoryConsole({
                     ? "Seleccion de cliente"
                     : deliveryMode
                       ? "Estado de entrega"
-                      : adminFactoryAssistMode
-                        ? "Asistencia admin"
                       : "Clientes / creditos"}
                 </div>
                 <h2 className="mt-4 text-2xl font-black tracking-tight text-slate-950">
@@ -20727,8 +20492,6 @@ export default function CreditFactoryConsole({
                     ? "Credito encontrado"
                     : deliveryMode
                       ? "Resultado de la consulta"
-                      : adminFactoryAssistMode
-                        ? "Casos encontrados"
                       : "Resultados de busqueda"}
                 </h2>
               </div>
@@ -20737,14 +20500,11 @@ export default function CreditFactoryConsole({
                 type="button"
                 onClick={() => {
                   void loadCredits(true, activeSearch);
-                  if (adminFactoryAssistMode) {
-                    void loadDrafts(activeSearch);
-                  }
                 }}
-                disabled={loadingList || loadingDrafts}
+                disabled={loadingList}
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
               >
-                {loadingList || loadingDrafts ? "Actualizando..." : "Recargar"}
+                {loadingList ? "Actualizando..." : "Recargar"}
               </button>
             </div>
 
@@ -20755,9 +20515,7 @@ export default function CreditFactoryConsole({
                   : "Selecciona un cliente para abrir la vista de recaudo."
                 : activeSearch
                   ? `Mostrando coincidencias para "${activeSearch}".`
-                  : adminFactoryAssistMode
-                    ? "Busca por cedula o IMEI para abrir el expediente del caso."
-                    : lookupMode
+                  : lookupMode
                     ? deliveryMode
                       ? "Sin filtro activo. Ingresa cedula o IMEI para validar la entrega."
                       : "Sin filtro activo. La vista queda vacia hasta que busques un cliente o credito."
@@ -20765,74 +20523,19 @@ export default function CreditFactoryConsole({
             </p>
 
             <div className="mt-5 space-y-3">
-              {loadingDrafts && adminFactoryAssistMode ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
-                  Buscando borradores en proceso...
-                </div>
-              ) : null}
-
-              {!credits.length &&
-              !loadingList &&
-              !loadingDrafts &&
-              (!adminFactoryAssistMode || !draftSearchResults.length) ? (
+              {!credits.length && !loadingList ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                   {deliveryMode
                     ? "No encontramos un credito con esa cedula o IMEI."
-                    : adminFactoryAssistMode
-                      ? "No encontramos borradores ni creditos guardados con esa cedula o IMEI."
                     : "No encontramos clientes o creditos con ese criterio de busqueda."}
                 </div>
               ) : (
                 <>
-                {adminFactoryAssistMode
-                  ? draftSearchResults.map((draft) => (
-                      <button
-                        key={`draft-${draft.id}`}
-                        type="button"
-                        onClick={() => openAdminAssistanceForDraft(draft)}
-                        className="w-full rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-4 text-left text-emerald-950 transition hover:-translate-y-0.5 hover:shadow-sm"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                              Borrador #{draft.id} - paso {draft.currentStep}
-                            </p>
-                            <p className="mt-2 text-lg font-black tracking-tight">
-                              {draft.clienteNombre || "Cliente en captura"}
-                            </p>
-                            <p className="mt-1 text-sm text-emerald-800">
-                              {draft.clienteDocumento || draft.clienteTelefono || "Sin documento aun"}
-                            </p>
-                            <p className="mt-1 text-sm text-emerald-700">
-                              {draft.imei || "IMEI pendiente"} - {draft.sede.nombre}
-                            </p>
-                          </div>
-
-                          <div className="text-right">
-                            <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                              En proceso
-                            </span>
-                            <p className="mt-3 text-sm font-semibold text-emerald-800">
-                              {draft.vendedor?.nombre || draft.usuario.nombre}
-                            </p>
-                            <p className="mt-1 text-xs text-emerald-700">
-                              {draft.updatedAt ? dateTime(draft.updatedAt) : "Sin fecha"}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))
-                  : null}
-
                 {credits.map((credit) => (
                   <button
                     key={credit.id}
                     type="button"
                     onClick={() => {
-                      if (adminFactoryAssistMode) {
-                        openAdminAssistanceForCredit(credit);
-                        return;
-                      }
                       if (lookupMode) {
                         openLookupCredit(credit.id);
                         return;

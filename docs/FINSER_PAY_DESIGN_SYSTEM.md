@@ -184,6 +184,8 @@ La autorizacion comienza desmarcada y su texto vigente completo se despliega
 desde el enlace correspondiente. No se consulta DataCredito al abrir la vista.
 El boton solo se habilita con identificacion valida y autorizacion; durante el
 envio permanece bloqueado. Los errores conservan los datos para corregirlos.
+La fábrica no incluye el buscador de asistencia administrativa; los casos se
+retoman desde los módulos existentes y sus enlaces directos.
 En movil se reduce la mascota sin cubrir controles. El recurso es estatico y
 la preferencia de movimiento reducido tambien detiene el indicador animado.
 
@@ -211,6 +213,12 @@ pago conservan su cálculo automático. El catálogo se presenta sin repetir la
 marca; cuando no existe imagen del modelo se reutilizan los SVG de plataforma.
 La tabla de amortización comienza plegada. Los campos protegidos conservan el
 procedimiento de corrección y nueva firma.
+
+Equipo y plan y el Simulador de crédito comparten la propuesta grafito, la
+mascota animada independiente y el respaldo SVG del equipo. Las condiciones se
+consultan desde «Ver condiciones». La simulación conserva sus políticas y no
+presenta cupos como aprobados, pasos de venta ni estados de firma o borrador.
+La cuota y la amortización dejan de presentarse como vigentes con datos inválidos.
 
 Antes de avanzar se solicita la reescritura del IMEI en un diálogo accesible,
 con fondo desenfocado y sin revelar el valor anterior. La confirmación se vincula

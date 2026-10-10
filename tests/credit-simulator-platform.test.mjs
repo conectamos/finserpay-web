@@ -3,7 +3,9 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { createJiti } from "jiti";
+import ts from "typescript";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -47,6 +49,24 @@ const creditFactorySource = readFileSync(
   new URL("../lib/credit-factory.ts", import.meta.url),
   "utf8"
 );
+const consoleAst = ts.createSourceFile("credit-factory-console.tsx", consoleSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+function productionNode(predicate) {
+  const matches = [];
+  function visit(node) {
+    if (predicate(node)) matches.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(consoleAst);
+  assert.equal(matches.length, 1, "Expected one matching production node");
+  return matches[0];
+}
+
+function executeProduction(code, context) {
+  return runInNewContext(ts.transpileModule(code, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText, context, { timeout: 1000 });
+}
 
 test("el simulador exige escoger Android o iPhone antes de calcular", () => {
   assert.match(
@@ -135,7 +155,15 @@ test("el simulador permite consultar inicial del 20 o 30 por ciento", () => {
   );
   assert.match(consoleSource, /type="radio"/);
   assert.doesNotMatch(consoleSource, /readOnly=\{simulatorMode\}/);
-  assert.match(consoleSource, /Puedes aumentarla para comparar una cuota menor/);
+  const initialInput = productionNode(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(consoleAst) === "input" && node.attributes.properties.some(attribute => ts.isJsxAttribute(attribute) && attribute.name.getText(consoleAst) === "id" && attribute.initializer?.getText(consoleAst) === '"step-two-initial"'));
+  const changeHandler = initialInput.attributes.properties.find(attribute => ts.isJsxAttribute(attribute) && attribute.name.getText(consoleAst) === "onChange").initializer.expression;
+  const changedInitial = [];
+  for (const input of ["$ 400.000", ""]) {
+    executeProduction(`(${changeHandler.getText(consoleAst)})(event)`, {
+      event: { target: { value: input } }, setCuotaInicial: value => changedInitial.push(value),
+    });
+  }
+  assert.deepEqual(changedInitial, ["400000", ""]);
   assert.match(
     consoleSource,
     /setSimulatorInitialPaymentPercentage\(percentage\);\s*setCuotaInicial\(""\)/
@@ -253,15 +281,58 @@ test("el desglose interno solo se muestra al administrador central", () => {
     /const stepTwoProposalReady =[\s\S]{0,180}financialPreviewReady/
   );
   assert.match(
-    consoleSource,
-    /stepTwoProposalReady \? currency\(valorCuota\) : "—"/
+    productionNode(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(consoleAst) === "CreditFinancingProposal").getText(consoleAst),
+    /ready=\{stepTwoProposalReady\}[\s\S]*installmentValue=\{valorCuota\}/
   );
+  const amortization = productionNode(node => ts.isConditionalExpression(node) && node.whenTrue.getText(consoleAst).includes("<CreditAmortizationTable"));
   assert.match(
-    consoleSource,
-    /\{canSeeInternalPricing && amortizationPlan \? \(\s*<CreditAmortizationTable/
+    amortization.getText(consoleAst),
+    /canSeeInternalPricing && stepTwoProposalReady && amortizationPlan \? \(\s*<CreditAmortizationTable[^>]*defaultOpen=\{false\}/
   );
   assert.match(
     consoleSource,
     /const visibleIphoneInstallmentLimitMessage = canSeeInternalPricing/
   );
+});
+
+test("el simulador consulta solo la política local por GET y cancela el guardado de borradores", async () => {
+  const creationMode = productionNode(node => ts.isVariableDeclaration(node) && node.name.getText(consoleAst) === "dataCreditoCreditCreationMode");
+  assert.equal(executeProduction(`const ${creationMode.getText(consoleAst)}; dataCreditoCreditCreationMode;`, {
+    paymentsView: false, lookupMode: false, simulatorMode: true,
+  }), false);
+
+  const policyEffect = productionNode(node => ts.isCallExpression(node) && node.expression.getText(consoleAst) === "useEffect" && node.arguments[0]?.getText(consoleAst).includes("const loadDataCreditoSimulation ="));
+  const requests = [];
+  const statuses = [];
+  const cleanup = executeProduction(`(${policyEffect.arguments[0].getText(consoleAst)})()`, {
+    simulatorMode: true, dataCreditoPlatform: "IPHONE", AbortController, URLSearchParams,
+    setDataCreditoSimulation: () => {}, setDataCreditoSimulationMessage: () => {},
+    setDataCreditoSimulationStatus: (status) => statuses.push(status),
+    requestJson: async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, data: { simulation: { simulationOnly: true, platform: "IPHONE", decision: "APROBADO", offer: {} } } };
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(statuses, ["loading", "ready"]);
+  assert.equal(requests.length, 1);
+  const requested = new URL(requests[0].url, "https://local.invalid");
+  assert.equal(requested.pathname, "/api/creditos/datacredito/politica");
+  assert.equal(requested.searchParams.get("purpose"), "simulation");
+  assert.equal(requested.searchParams.get("platform"), "IPHONE");
+  assert.equal(requests[0].options.method ?? "GET", "GET");
+  cleanup();
+  assert.equal(requests[0].options.signal.aborted, true);
+
+  const autosaveEffect = productionNode(node => ts.isCallExpression(node) && node.expression.getText(consoleAst) === "useEffect" && node.arguments[0]?.getText(consoleAst).includes("const saveGeneration = draftSaveGenerationRef.current"));
+  let cancellations = 0;
+  executeProduction(`(${autosaveEffect.arguments[0].getText(consoleAst)})()`, {
+    wizardStepTransitionInFlightRef: { current: false }, draftResumeHydrationRef: { current: false },
+    createClientMode: true, simulatorMode: true, draftId: 42, draftHasMeaningfulData: true,
+    cancelPendingDraftAutosave: () => { cancellations += 1; },
+    serializeCreditDraftSaveRequest: () => assert.fail("The simulator must not prepare a draft save"),
+    requestJson: () => assert.fail("The simulator must not persist a draft"),
+    window: { setTimeout: () => assert.fail("The simulator must not schedule autosave") },
+  });
+  assert.equal(cancellations, 1);
 });

@@ -63,13 +63,31 @@ function presentation(amortizationPlan) {
 const currency = value => `$${Number(value).toLocaleString("es-CO", { maximumFractionDigits: 0 })}`;
 const exactCurrency = value => `$${Number(value).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+function loadProductionComponent(filename) {
+  const exports = {};
+  execute(readFileSync(new URL(`../app/dashboard/creditos/${filename}.tsx`, import.meta.url), "utf8"), {
+    exports,
+    require: (specifier) => {
+      if (specifier.endsWith(".module.css")) return { default: {} };
+      if (specifier === "./equipment-visual") return { default: loadProductionComponent("equipment-visual") };
+      return require(specifier);
+    },
+  });
+  return exports.default;
+}
+
+const CreditFinancingProposal = loadProductionComponent("credit-financing-proposal");
+
 function installmentCard(amortizationPlan, internal) {
-  const candidates = findNodes(node => ts.isJsxElement(node) && node.openingElement.tagName.getText(parsed) === "div" && node.getText(parsed).includes("? currency(valorCuota) :"));
-  candidates.sort((a, b) => a.getText(parsed).length - b.getText(parsed).length);
-  assert.ok(candidates.length);
+  const candidates = findNodes(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(parsed) === "CreditFinancingProposal");
+  assert.equal(candidates.length, 1, "The factory renders the shared financing proposal");
   return renderToStaticMarkup(execute(`(${candidates[0].getText(parsed)})`, {
     ...presentation(amortizationPlan), amortizationPlan, financialPreviewReady: true,
-    stepTwoProposalReady: true,
+    CreditFinancingProposal, stepTwoProposalReady: true,
+    displayEquipmentName: "iPhone 13 Pro 256GB", equipoMarca: "IPHONE", currentDevicePlatform: "iphone",
+    valorTotalEquipoNumero: 2_600_000, cuotaInicialNumero: 780_000, cuotaInicialValida: true,
+    saldoBaseFinanciado: amortizationPlan.valorFinanciado, plazoMesesNumero: 40,
+    stepTwoPlanEquipmentReady: true, stepTwoPlanSelectionValid: true,
     frecuenciaPagoLabel: "Quincenal", canSeeInternalPricing: internal, currency, exactCurrency,
   }));
 }
@@ -96,11 +114,13 @@ test("V1 conserva presentación comercial y obligación exacta histórica", () =
 
 test("la tarjeta de vendedor, supervisor y administrador muestra solo la cuota pactada", () => {
   const seller = installmentCard(plan(), false);
-  assert.match(seller, />\$90\.850<\/dd>/);
+  assert.match(seller, />\$\s*90\.850<\/dd>/);
   assert.doesNotMatch(seller, /90\.887|Referencia matemática|Cuota exacta|Fianza|Seguro/);
   const admin = installmentCard(plan(), true);
-  assert.match(admin, />\$90\.850<\/dd>/);
+  assert.match(admin, />\$\s*90\.850<\/dd>/);
   assert.doesNotMatch(admin, /90\.887|Referencia matemática|Cuota exacta|Fianza|Seguro/);
+  const legacy = installmentCard(plan("ARES_FRANCES_V1"), false);
+  assert.match(legacy, new RegExp(`>\\$\\s*${plan("ARES_FRANCES_V1").cuotaComercial.toLocaleString("es-CO").replaceAll(".", "\\.")}<\\/dd>`));
 });
 
 test("los contratos de la interfaz usan la cuota pactada; V1 conserva la exacta", () => {
@@ -144,5 +164,20 @@ test("el detalle de amortización distingue cuota pactada y descuento, protegido
   const legacy = renderToStaticMarkup(createElement(exports.default, { plan: plan("ARES_FRANCES_V1") }));
   assert.match(legacy, /Cuota exacta/);
   assert.doesNotMatch(legacy, /Descuento total por redondeo|Cuota pactada/);
-  assert.match(source, /canSeeInternalPricing && amortizationPlan \? \(\s*<CreditAmortizationTable/);
+  const gatedTables = findNodes(node => ts.isConditionalExpression(node) && node.whenTrue.getText(parsed).includes("<CreditAmortizationTable"));
+  assert.equal(gatedTables.length, 1);
+  for (const internal of [false, true]) {
+    for (const ready of [false, true]) {
+      const markup = renderToStaticMarkup(execute(`(${gatedTables[0].getText(parsed)})`, {
+        canSeeInternalPricing: internal, stepTwoProposalReady: ready,
+        amortizationPlan: plan(), CreditAmortizationTable: exports.default,
+      }));
+      if (internal && ready) {
+        assert.match(markup, /Tabla de amortización/);
+        assert.doesNotMatch(markup, /<details[^>]*\sopen(?:[\s=>])/);
+      } else {
+        assert.equal(markup, "", `Internal=${internal}, valid proposal=${ready}: no stale or unauthorized plan`);
+      }
+    }
+  }
 });

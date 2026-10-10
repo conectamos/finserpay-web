@@ -1,6 +1,7 @@
 "use client";
 
 import type { FrenchAmortizationResult } from "@/lib/credit-amortization";
+import { ChevronDown, Table2 } from "lucide-react";
 
 const exactCurrency = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -42,9 +43,10 @@ export default function CreditAmortizationTable({
       className="mt-6 overflow-hidden rounded-[24px] border border-slate-200 bg-white"
       open={defaultOpen}
     >
-      <summary className="cursor-pointer list-none px-5 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-900">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
+      <summary className="group cursor-pointer list-none px-5 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-900">
+        <div className={compact ? "flex items-center gap-4" : "flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"}>
+          {compact ? <Table2 aria-hidden="true" className="h-6 w-6 shrink-0" /> : null}
+          <div className={compact ? "min-w-0 flex-1" : undefined}>
             <p className={`${compact ? "hidden" : ""} text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500`}>
               Sistema frances · {plan.version}
             </p>
@@ -55,6 +57,7 @@ export default function CreditAmortizationTable({
           <span className="w-fit rounded-full bg-[var(--fp-lime)] px-3 py-1 text-xs font-black text-slate-950">
             {plan.numeroCuotas} cuotas
           </span>
+          {compact ? <ChevronDown aria-hidden="true" className="h-5 w-5 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none" /> : null}
         </div>
       </summary>
 

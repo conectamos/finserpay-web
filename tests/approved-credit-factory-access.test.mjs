@@ -31,10 +31,6 @@ test("solo central puede abrir un credito finalizado dentro de la fabrica", () =
     page,
     /hasSelectedCredit[\s\S]{0,220}redirect\("\/dashboard\/solicitudes"\)/
   );
-  assert.match(
-    factory,
-    /adminFactoryAssistAvailable\s*=\s*canSeeInternalPricing && createClientMode/
-  );
   assert.doesNotMatch(dashboard, /href: "\/dashboard\/creditos\?mode=delivery"/);
   assert.match(dashboard, /label: "Retomar solicitud"/);
 });
