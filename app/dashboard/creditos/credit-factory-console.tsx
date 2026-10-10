@@ -393,7 +393,8 @@ function veriffApprovalCanUnlockClient(
 ) {
   if (
     !validation?.approved ||
-    !validation.decidedAt
+    !validation.decidedAt ||
+    validation.trusted === false
   ) {
     return false;
   }
@@ -415,6 +416,7 @@ function veriffApprovalCanUnlockClient(
     ) {
       return false;
     }
+    return true;
   } else if (
     !veriffIdentityMatchesExpectedDocument(
       validation.identityData?.documentNumber,
@@ -3008,6 +3010,22 @@ function DataCreditoClientNameBar({ fullName, canEditComponents, editing, givenN
   );
 }
 
+function serializeCreditDraftSaveRequest(input: { draftId: number | null; currentStep: number; payload: CreditDraftPayload; payloadScope?: "FULL" | "DELIVERY_EVIDENCE" }) {
+  return JSON.stringify({ id: input.draftId, currentStep: input.currentStep,
+    payloadScope: input.payloadScope || "FULL", payload: { ...input.payload, wizardStep: input.currentStep } });
+}
+
+function VeriffDraftPreparationFailure({ message, onRetry, onBack }: { message: string; onRetry: () => void; onBack: () => void }) {
+  return <div className="fp-identity-modal-content is-result">
+    <p className="fp-identity-modal-kicker is-rejected">Solicitud pendiente de guardar</p>
+    <h2 id="fp-identity-modal-title">Guarda la solicitud para continuar</h2>
+    <p className="fp-identity-modal-lead" role="alert">{message}</p>
+    <p className="fp-identity-modal-result-copy">La validación de identidad todavía no se ha iniciado. Revisa la solicitud y vuelve a guardar.</p>
+    <button type="button" className="fp-identity-modal-primary" onClick={onRetry}>Reintentar guardado</button>
+    <button type="button" className="fp-identity-modal-cancel" onClick={onBack}>Volver al cliente</button>
+  </div>;
+}
+
 export default function CreditFactoryConsole({
   initialSession,
   initialSeller = null,
@@ -3115,6 +3133,7 @@ export default function CreditFactoryConsole({
     setDraftResumeHydrating(active);
   }, []);
   const [draftErrorMessage, setDraftErrorMessage] = useState("");
+  const draftSaveConflictFingerprintRef = useRef<string | null>(null);
   const [draftResumeLoadFailed, setDraftResumeLoadFailed] = useState(false);
   const [draftLoadRetryKey, setDraftLoadRetryKey] = useState(0);
   const [showPaymentResults, setShowPaymentResults] = useState(false);
@@ -3386,6 +3405,7 @@ export default function CreditFactoryConsole({
     useState(false);
   const [veriffQrDataUrl, setVeriffQrDataUrl] = useState("");
   const [veriffInlineMessage, setVeriffInlineMessage] = useState("");
+  const [veriffPreparationError, setVeriffPreparationError] = useState<string | null>(null);
   const [veriffRestoreFailure, setVeriffRestoreFailure] = useState<{
     validationId: number;
     draftId: number;
@@ -5116,6 +5136,7 @@ export default function CreditFactoryConsole({
     setIdentityClientDetailsOpen(false);
     setVeriffQrDataUrl("");
     setVeriffInlineMessage("");
+    setVeriffPreparationError(null);
     setVeriffMediaItems([]);
     setVeriffMediaError("");
     veriffAutoSessionRef.current = false;
@@ -5177,6 +5198,7 @@ export default function CreditFactoryConsole({
     setIdentityClientDetailsOpen(false);
     setVeriffQrDataUrl("");
     setVeriffInlineMessage("");
+    setVeriffPreparationError(null);
     setVeriffMediaItems([]);
     setVeriffMediaError("");
     veriffAutoSessionRef.current = false;
@@ -5214,6 +5236,7 @@ export default function CreditFactoryConsole({
       setIdentityClientDetailsOpen(false);
       setVeriffQrDataUrl('');
       setVeriffInlineMessage('');
+      setVeriffPreparationError(null);
       setVeriffMediaItems([]);
       setVeriffMediaError('');
       veriffAutoSessionRef.current = false;
@@ -5581,7 +5604,7 @@ export default function CreditFactoryConsole({
         : dataCreditoVeriffDocumentRejected ||
             veriffValidation?.status === "DECLINED"
           ? "rejected"
-          : veriffConnectionError
+          : veriffPreparationError || veriffConnectionError
             ? "error"
             : veriffRefreshing ||
                 veriffIdentityEvidencePending ||
@@ -5606,7 +5629,7 @@ export default function CreditFactoryConsole({
           : veriffVisualState === "rejected"
             ? "Rechazada"
             : veriffVisualState === "error"
-              ? "Error de conexion"
+              ? veriffPreparationError ? "Solicitud sin guardar" : "Error de conexion"
               : veriffVisualState === "processing"
                 ? "Validacion en proceso"
                 : veriffVisualState === "ready"
@@ -5637,7 +5660,8 @@ export default function CreditFactoryConsole({
       veriffValidation?.status === "DECLINED"
   );
   const identityValidationLocked =
-    wizardStep === 4 && !veriffApproved && !veriffHasFinalDecision;
+    wizardStep === 4 && !veriffApproved && !veriffHasFinalDecision &&
+    !veriffPreparationError && !veriffConnectionError;
   const veriffQrValidityLabel = veriffValidation?.createdAt
     ? `Generado ${dateTime(veriffValidation.createdAt)}. La vigencia se actualiza con el estado de Veriff.`
     : "La vigencia del codigo se controla con el estado real de Veriff.";
@@ -8306,6 +8330,8 @@ export default function CreditFactoryConsole({
     currentStepOverride = wizardStep,
     currentDraftId = draftId
   ) => {
+    cancelPendingDraftAutosave();
+    const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payload });
     const result = await requestJson<CreditDraftSingleResponse>(
       "/api/creditos/borradores",
       {
@@ -8313,14 +8339,7 @@ export default function CreditFactoryConsole({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          id: currentDraftId,
-          currentStep: currentStepOverride,
-          payload: {
-            ...payload,
-            wizardStep: currentStepOverride,
-          },
-        }),
+        body: requestBody,
       }
     );
 
@@ -8328,9 +8347,11 @@ export default function CreditFactoryConsole({
       throw new Error(ACTIVE_SOLICITUD_RESUME_MESSAGE);
     }
     if (!result.ok || !result.data?.item) {
+      if (result.status === 409) draftSaveConflictFingerprintRef.current = requestBody;
       throw new Error(result.data?.error || "No se pudo guardar el borrador");
     }
 
+    draftSaveConflictFingerprintRef.current = null;
     setDraftId(result.data.item.id);
     setDraftStatus("saved");
     replaceDraftInUrl(result.data.item.id);
@@ -8469,7 +8490,7 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
-          : validation?.approved && (!usableApproval || !filledClientData)
+          : validation?.approved && !usableApproval
             ? veriffMissingIdentityMessage
             : ""
       );
@@ -8497,7 +8518,7 @@ export default function CreditFactoryConsole({
             : usableApproval
             ? filledClientData
               ? "Identidad aprobada. Datos copiados."
-              : "Identidad aprobada sin datos."
+              : "Identidad aprobada."
             : validation?.approved
               ? "Identidad aprobada sin datos para autocompletar. Reintenta la validacion."
             : isTestApproval
@@ -8572,6 +8593,7 @@ export default function CreditFactoryConsole({
       return null;
     }
 
+    let preparingDraft = false;
     try {
       veriffRequestInFlightRef.current = true;
       veriffRefreshGenerationRef.current += 1;
@@ -8579,6 +8601,7 @@ export default function CreditFactoryConsole({
       setVeriffRefreshing(false);
       setVeriffSubmitting(true);
       setVeriffInlineMessage("");
+      setVeriffPreparationError(null);
       setVeriffMediaItems([]);
       setVeriffMediaError("");
       setNotice({
@@ -8590,11 +8613,13 @@ export default function CreditFactoryConsole({
       let identityDraftPayload: CreditDraftPayload = factoryDraftPayload;
       if (createClientMode && !simulatorMode && !deliveryMode) {
         setDraftStatus("saving");
+        preparingDraft = true;
         const savedDraft = await saveDraftPayloadForVeriff(
           factoryDraftPayload,
           wizardStep,
           currentDraftId
         );
+        preparingDraft = false;
         currentDraftId = savedDraft.id;
         identityDraftPayload = savedDraft.payload;
       }
@@ -8715,7 +8740,7 @@ export default function CreditFactoryConsole({
           ? documentRejectionMessage
           : validation?.status === "DECLINED"
           ? veriffRejectedMessage
-          : validation?.approved && (!usableApproval || !filledClientData)
+          : validation?.approved && !usableApproval
             ? veriffMissingIdentityMessage
             : ""
       );
@@ -8729,7 +8754,7 @@ export default function CreditFactoryConsole({
           : usableApproval
           ? filledClientData
             ? "Identidad aprobada. Datos copiados."
-            : "Identidad aprobada sin datos."
+            : "Identidad aprobada."
           : validation?.approved
             ? "Identidad aprobada sin datos para autocompletar. Reintenta la validacion."
           : "QR de validacion listo.",
@@ -8742,18 +8767,15 @@ export default function CreditFactoryConsole({
 
       return validation;
     } catch (error) {
-      setNotice({
-        text:
-          error instanceof Error
-            ? error.message
-            : "No se pudo validar identidad.",
-        tone: "red",
-      });
-      setVeriffInlineMessage(
-        error instanceof Error
-          ? error.message
-          : "No se pudo generar el QR de identidad."
-      );
+      const message = error instanceof Error ? error.message : "No se pudo validar identidad.";
+      setNotice({ text: message, tone: "red" });
+      if (preparingDraft) {
+        setDraftStatus("error");
+        setDraftErrorMessage(message);
+        setVeriffPreparationError(message);
+      } else {
+        setVeriffInlineMessage(message);
+      }
       return null;
     } finally {
       veriffRequestInFlightRef.current = false;
@@ -9724,6 +9746,7 @@ export default function CreditFactoryConsole({
     setIdentityClientDetailsOpen(false);
     setVeriffQrDataUrl("");
     setVeriffInlineMessage("");
+    setVeriffPreparationError(null);
     setVeriffMediaItems([]);
     setVeriffMediaError("");
     veriffAutoSessionRef.current = false;
@@ -9780,6 +9803,7 @@ export default function CreditFactoryConsole({
       throw new Error(result.data?.error || "No se pudo guardar el borrador");
     }
 
+    draftSaveConflictFingerprintRef.current = null;
     setDraftId(result.data.item.id);
     setDraftStatus("saved");
     setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
@@ -12085,6 +12109,14 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    const persistedWizardStep = canAdminMoveFreelyInFactory ? nextFactoryStep.id : wizardStep;
+    const requestBody = serializeCreditDraftSaveRequest({ draftId, currentStep: persistedWizardStep,
+      payloadScope: firmaSeguroProcessSigned && persistedWizardStep >= 5 ? "DELIVERY_EVIDENCE" : "FULL", payload: factoryDraftPayload });
+    if (draftSaveConflictFingerprintRef.current === requestBody) {
+      cancelPendingDraftAutosave();
+      return;
+    }
+
     cancelPendingDraftAutosave();
     setDraftStatus("idle");
     setDraftErrorMessage("");
@@ -12094,7 +12126,7 @@ export default function CreditFactoryConsole({
     const timerId = window.setTimeout(() => {
       draftSaveTimerRef.current = null;
       const canonicalDraftId = draftId;
-      if (!canonicalDraftId) {
+      if (!canonicalDraftId || draftSaveConflictFingerprintRef.current === requestBody) {
         return;
       }
       requestController = new AbortController();
@@ -12104,9 +12136,6 @@ export default function CreditFactoryConsole({
         try {
           setDraftStatus("saving");
           setDraftErrorMessage("");
-          const persistedWizardStep = canAdminMoveFreelyInFactory
-            ? nextFactoryStep.id
-            : wizardStep;
           const result = await requestJson<CreditDraftSingleResponse>(
             "/api/creditos/borradores",
             {
@@ -12115,18 +12144,7 @@ export default function CreditFactoryConsole({
                 "Content-Type": "application/json",
               },
               signal: requestController?.signal,
-              body: JSON.stringify({
-                id: canonicalDraftId,
-                currentStep: persistedWizardStep,
-                payloadScope:
-                  firmaSeguroProcessSigned && persistedWizardStep >= 5
-                    ? "DELIVERY_EVIDENCE"
-                    : "FULL",
-                payload: {
-                  ...factoryDraftPayload,
-                  wizardStep: persistedWizardStep,
-                },
-              }),
+              body: requestBody,
             }
           );
 
@@ -12141,6 +12159,7 @@ export default function CreditFactoryConsole({
             return;
           }
 
+          if (result.status === 409) draftSaveConflictFingerprintRef.current = requestBody;
           if (
             result.status === 409 &&
             result.data?.code === DRAFT_REQUIRES_DATACREDITO_CODE
@@ -12154,6 +12173,7 @@ export default function CreditFactoryConsole({
             throw new Error(result.data?.error || "No se pudo guardar el borrador");
           }
 
+          draftSaveConflictFingerprintRef.current = null;
           setDraftId(result.data.item.id);
           setDraftStatus("saved");
           setDraftErrorMessage("");
@@ -14240,6 +14260,10 @@ export default function CreditFactoryConsole({
                           Reintentar validación
                         </button>
                       </div>
+                    ) : veriffPreparationError ? (
+                      <VeriffDraftPreparationFailure message={veriffPreparationError}
+                        onRetry={() => void validateIdentityWithVeriff()}
+                        onBack={() => { setIdentityValidationModalOpen(false); setWizardStep(1); }} />
                     ) : veriffVisualState === "expired" ||
                       veriffVisualState === "error" ? (
                       <div className="fp-identity-modal-content is-result">

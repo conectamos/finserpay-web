@@ -246,7 +246,7 @@ test("el reenvio reutiliza un proceso activo antes de construir otro expediente"
   const dispatchLock = core.indexOf("tryAcquireFirmaSeguroDraftDispatchLock");
   const lockedLookup = core.indexOf("const lockedCurrent = await");
   const buildCredit = core.indexOf(
-    "await buildDraftCredit(lockedAuthorized.row)"
+    "await buildDraftCredit(lockedAuthorized.row,"
   );
   const reserve = core.indexOf("await reserveDraftDispatch(");
   const providerDispatch = core.indexOf("await dispatchReservedDraft(reserved.id)");

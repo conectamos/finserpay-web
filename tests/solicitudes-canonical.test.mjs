@@ -851,16 +851,18 @@ test("el autosave preconsulta responde como conflicto esperado y no como error t
     "} catch (error) {",
     "const forbidden"
   );
+  const serializationStart = factory.indexOf("const persistedWizardStep = canAdminMoveFreelyInFactory");
+  const autosaveStart = factory.lastIndexOf("useEffect(() => {", serializationStart);
   const hydrationGuard = factory.indexOf(
-    "if (draftResumeHydrationRef.current)"
+    "if (draftResumeHydrationRef.current)", autosaveStart
   );
-  const autosaveStart = factory.lastIndexOf("useEffect(() => {", hydrationGuard);
   const autosaveEnd = factory.indexOf(
     "const handleDataCreditoBypass",
     autosaveStart
   );
   assert.ok(hydrationGuard >= 0);
   assert.ok(autosaveStart >= 0);
+  assert.ok(hydrationGuard < serializationStart);
   assert.ok(autosaveEnd > autosaveStart);
   const autosave = factory.slice(autosaveStart, autosaveEnd);
 
@@ -875,8 +877,10 @@ test("el autosave preconsulta responde como conflicto esperado y no como error t
 
   assert.match(
     autosave,
-    /!draftId[\s\S]*const canonicalDraftId = draftId;[\s\S]*if \(!canonicalDraftId\) \{[\s\S]*return;[\s\S]*id: canonicalDraftId/
+    /!draftId[\s\S]*return;[\s\S]*const requestBody = serializeCreditDraftSaveRequest\(\{ draftId, currentStep: persistedWizardStep/
   );
+  assert.match(autosave, /const canonicalDraftId = draftId;\s*if \(!canonicalDraftId \|\| draftSaveConflictFingerprintRef\.current === requestBody\) \{\s*return;/);
+  assert.match(autosave, /method: "POST"[\s\S]*body: requestBody/);
   assert.match(
     autosave,
     /result\.status === 409 &&[\s\S]*result\.data\?\.code === DRAFT_REQUIRES_DATACREDITO_CODE[\s\S]*setDraftStatus\("idle"\);[\s\S]*setDraftErrorMessage\(""\);[\s\S]*return;/

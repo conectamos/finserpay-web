@@ -54,7 +54,12 @@ export async function enforceDataCreditoCustomerIdentity(payload: Record<string,
   if (!identity) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
   if (String(payload.clienteDocumento || "").replace(/\D/g, "") !== identity.queryDocumentNumber) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
   if (identity.original.nameMode === "FULL_NAME_ONLY") {
-    const effective = resolveDataCreditoIdentity(identity.effective, payload);
+    // Unsigned autosaves can come from legacy drafts or before display recovery
+    // finishes. Always persist the server's effective whole name in that path.
+    // Signing/creation still require the caller to submit that exact identity.
+    const effective = resolveDataCreditoIdentity(identity.effective, saveCorrection
+      ? { ...payload, clienteNombre: identity.effective.fullName }
+      : payload);
     payload.clienteNombre = effective.fullName;
     payload.clientePrimerNombre = effective.names;
     payload.clienteSegundoNombre = "";
