@@ -247,6 +247,16 @@
   .shell:global(.fp-credit-factory) :global(.fp-step2-action-buttons) { flex: 1; }
   .shell:global(.fp-credit-factory) :global(.fp-step2-actions button) { padding: 10px 16px; }
 }
+@media (max-width: 360px) {
+  .proposal:global(.fp-step2-proposal) { padding: 16px; }
+  .proposal .proposalIntro { padding-right: 56px; }
+  .proposal .proposalIntro h4 { font-size: 27px; white-space: nowrap; }
+  .proposalMascot { top: -22px; right: 8px; width: 62px; height: 94px; }
+  .proposalBody { margin-top: 20px; padding: 12px; }
+  .shell:global(.fp-credit-factory) .proposal :global(.fp-step2-proposal-metrics > div:not(.fp-step2-proposal-installment)) { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .proposal :global(.fp-step2-proposal-metrics dd) { font-size: 17px; text-align: left; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+  .proposal :global(.fp-step2-proposal-installment dd) { font-size: 30px; }
+}
 
 .signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header),
 .signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header) > div { min-height: 68px; }

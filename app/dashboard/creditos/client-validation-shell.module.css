@@ -58,3 +58,8 @@
   .shell :global(.fp-new-sale-stepper .fp-seller-step-button > span:first-child) { width: 28px; height: 28px; font-size: 12px; }
   .shell :global(.fp-new-sale-stepper .fp-seller-step-button)::after { top: 21px; left: calc(50% + 21px); width: calc(100% - 42px); }
 }
+
+@media (max-width: 360px) {
+  .headerInner { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding-block: 6px; }
+  .headerInner h1 { grid-column: 1 / -1; grid-row: 2; justify-self: center; font-size: 14px; white-space: normal; text-align: center; }
+}
