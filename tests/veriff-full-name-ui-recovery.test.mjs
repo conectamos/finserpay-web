@@ -43,6 +43,7 @@ const names = ["IdentityValidationDialog", "getDataCreditoClientDisplayName", "s
 const declarations = names.map(declaration).join("\n") + "\nconst applyProcessSnapshot = " + processSnapshotCallback() + ";";
 const autosaveEffect = effectContaining("closureFingerprintAtSchedule");
 const pollingEffect = effectContaining("attempts >= VERIFF_POLL_MAX_ATTEMPTS");
+const mediaEffect = effectContaining("void refreshVeriffMedia(veriffValidation)");
 const fullName = "María del Mar José De la Peña Muñoz del Río";
 const effective = { fullName, nameMode: "FULL_NAME_ONLY", names: "", firstSurname: "", secondSurname: "", documentNumber: "123456789", documentType: "CEDULA_DE_CIUDADANIA", missing: [] };
 const approval = { documentNumber: "123456789", identity: { original: effective, effective } };
@@ -71,6 +72,7 @@ function fixture() {
     ACTIVE_SOLICITUD_RESUME_MESSAGE: "Retomando solicitud", DRAFT_REQUIRES_DATACREDITO_CODE: "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO",
     draftResumeHydrationRef: { current: false }, dataCreditoFinancialTermsRecovery: false, draftResumeHydrating: false, draftResumeLoadFailed: false,
     firmaSeguroDraftCorrectionPending: false, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, draftHasMeaningfulData: true,
+    veriffMediaRequestedKeyRef: { current: "" },
     applyingDraftRef: { current: false }, nextFactoryStep: { id: 4 }, currentIphoneClosureFingerprint: "closure-fingerprint",
     veriffIdentityFlowEnabled: true, veriffHasFinalDecision: false, VERIFF_POLL_MAX_ATTEMPTS: 12, VERIFF_POLL_BACKOFF_MS: [4000, 6000],
     document: { hidden: false, body: { children: [], style: { overflow: "" } }, activeElement: null, addEventListener() {}, removeEventListener() {} },
@@ -114,6 +116,21 @@ test("una corrección mantiene bloqueada la firma anterior y el estado vigente c
   assert.equal(f.evaluate("firmaSeguroProcessSigned"), false);
   f.functions.applyProcessSnapshot({ draftId: 2883, validation: null, process: { processUuid: "current-version" }, imeiCorrectionPending: false, identityCorrectionPending: false, financialCorrectionPending: false });
   assert.equal(f.evaluate("firmaSeguroProcessSigned"), true);
+});
+
+test("actualizar estados locales no vuelve a consultar la evidencia biométrica al proveedor", () => {
+  const f = fixture(); const requested = [];
+  f.context.canAdminMoveFreelyInFactory = true;
+  f.context.veriffHasFinalDecision = true;
+  f.context.refreshVeriffMedia = validation => requested.push(validation.id);
+  for (let i = 0; i < 6; i++) {
+    f.context.veriffValidation = { ...pending, status: "APPROVED", approved: true, pending: false, updatedAt: String(i) };
+    f.mount(mediaEffect);
+  }
+  assert.deepEqual(requested, [42]);
+  f.context.veriffValidation = { ...f.context.veriffValidation, id: 43, veriffSessionId: "new-session" };
+  f.mount(mediaEffect);
+  assert.deepEqual(requested, [42, 43], "una validación nueva conserva el acceso a su propia evidencia");
 });
 
 test("full provider name saves before Veriff and polling preserves it without creating another session", async () => {

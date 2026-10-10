@@ -3465,6 +3465,7 @@ export default function CreditFactoryConsole({
   const [veriffRefreshing, setVeriffRefreshing] = useState(false);
   const [veriffMediaItems, setVeriffMediaItems] = useState<VeriffMediaState[]>([]);
   const [veriffMediaLoading, setVeriffMediaLoading] = useState(false);
+  const veriffMediaRequestedKeyRef = useRef("");
   const [veriffMediaError, setVeriffMediaError] = useState("");
   const [enrollingDelivery, setEnrollingDelivery] = useState(false);
   const [validatingDelivery, setValidatingDelivery] = useState(false);
@@ -8382,6 +8383,7 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (!canAdminMoveFreelyInFactory) {
+      veriffMediaRequestedKeyRef.current = "";
       setVeriffMediaItems([]);
       setVeriffMediaError("");
       return;
@@ -8395,6 +8397,9 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    const mediaKey = `${veriffValidation.id}:${veriffValidation.veriffSessionId}:${veriffValidation.status}`;
+    if (veriffMediaRequestedKeyRef.current === mediaKey) return;
+    veriffMediaRequestedKeyRef.current = mediaKey;
     void refreshVeriffMedia(veriffValidation);
   }, [
     canAdminMoveFreelyInFactory,
