@@ -172,3 +172,17 @@ Los resúmenes y comprobantes incluyen toda la liquidación. Al cerrar, el histo
 permanece montado y conserva filtros, tamaño de página, página, posición y foco.
 Los recaudos se consultan desde una franja compacta; sin registros asociados no
 se muestra una tabla vacía. Montos y porcentajes guardados conservan sus decimales.
+
+## Nueva venta: validacion inicial del cliente
+
+El paso inicial usa cabecera blanca compacta, marca oscura con PAY verde,
+usuario real y los cuatro pasos existentes. La tarjeta central presenta campos
+verticales y una mascota independiente transparente apoyada en la esquina
+superior derecha. Esta variante se limita a la evaluacion inicial; conserva los
+componentes y tokens compartidos sin alterar los pasos posteriores.
+La autorizacion comienza desmarcada y su texto vigente completo se despliega
+desde el enlace correspondiente. No se consulta DataCredito al abrir la vista.
+El boton solo se habilita con identificacion valida y autorizacion; durante el
+envio permanece bloqueado. Los errores conservan los datos para corregirlos.
+En movil se reduce la mascota sin cubrir controles. El recurso es estatico y
+la preferencia de movimiento reducido tambien detiene el indicador animado.
