@@ -134,7 +134,7 @@ test("la precalificacion bloquea el flujo normal pero no la inspeccion central",
 });
 
 test("una inspeccion administrativa no persiste un paso ficticio", () => {
-  const autosave = sourceBlock("const persistedWizardStep = canAdminMoveFreelyInFactory", "const handleDataCreditoBypass");
+  const autosave = sourceBlock("const persistedWizardStep = canAdminMoveFreelyInFactory ? nextFactoryStep.id : wizardStep", "const handleDataCreditoBypass");
 
   assert.match(
     autosave,

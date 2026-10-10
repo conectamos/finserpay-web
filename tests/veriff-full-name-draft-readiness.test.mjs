@@ -15,9 +15,11 @@ const routeSource = compile(readFileSync(new URL("../app/api/creditos/veriff/rou
 const assessmentId = "12345678-1234-4234-8234-123456789012";
 const fullName = "María del Mar  De la Peña Muñoz del Río";
 
-function fixture({ storedDocument = "123456789", requestedDocument = "123456789", storedName = fullName } = {}) {
-  const calls = { provider: 0, reservation: 0, assessment: [], release: 0, source: 0, audit: 0 };
-  const row = { id: assessmentId, status: "APROBADO", userId: 23, sellerId: 45, sedeId: 1, aliadoId: null };
+function fixture({ storedDocument = "123456789", requestedDocument = "123456789", storedName = fullName,
+  providerDocumentNumber = "123.456.789", providerDocumentType = "CC", storedType = "CEDULA_DE_CIUDADANIA", providerFullName = fullName,
+  newSession = false, assessmentAvailable = true, assessmentStatus = "APROBADO", assessmentSedeId = 1 } = {}) {
+  const calls = { provider: 0, reservation: 0, assessment: [], release: 0, source: 0, audit: 0, identities: [], sessionInputs: [], reservationInputs: [] };
+  const row = { id: assessmentId, status: assessmentStatus, userId: 23, sellerId: 45, sedeId: assessmentSedeId, aliadoId: null };
   const customer = { exports: {} };
   runInNewContext(customerSource, {
     module: customer, exports: customer.exports, Error, console,
@@ -32,7 +34,7 @@ function fixture({ storedDocument = "123456789", requestedDocument = "123456789"
       calls.source++;
       return { documentNumber: "123456789", firstSurname: "APELLIDO DIGITADO",
         providerPayload: { content: { respuesta: { validacion: { datosBasicos: {
-          conInformacion: true, nombreCompleto: fullName, tipoDocumento: "CC", numeroDocumento: "123.456.789",
+          conInformacion: true, nombreCompleto: providerFullName, tipoDocumento: providerDocumentType, numeroDocumento: providerDocumentNumber,
         } } } } } };
     },
   });
@@ -43,7 +45,7 @@ function fixture({ storedDocument = "123456789", requestedDocument = "123456789"
       valorEquipoTotal: 2000000, cuotaInicial: 400000, plazoMeses: 12,
       frecuenciaPago: "MENSUAL", fechaPrimerPago: "2026-11-09", clienteNombre: storedName,
       clientePrimerNombre: "NO VERIFICADO", clientePrimerApellido: "APELLIDO DIGITADO", clienteSegundoApellido: "NO VERIFICADO",
-      clienteDocumento: storedDocument, clienteTipoDocumento: "CEDULA_DE_CIUDADANIA", dataCreditoAssessmentId: assessmentId },
+      clienteDocumento: storedDocument, clienteTipoDocumento: storedType, dataCreditoAssessmentId: assessmentId },
   };
   const validation = { id: 38, draftId: draft.id, clienteDocumento: "123456789", clienteNombre: fullName, status: "CREATED", sessionUrl: "https://veriff.example/existing-session" };
   const loaded = { exports: {} };
@@ -64,14 +66,27 @@ function fixture({ storedDocument = "123456789", requestedDocument = "123456789"
     toNumber: value => Number(value) || 0,
     PAYMENT_FREQUENCY_OPTIONS: [{ value: "MENSUAL" }],
     getDataCreditoPublicConfig: () => ({ enabled: true, environment: "production" }),
-    enforceDataCreditoCustomerIdentity: customer.exports.enforceDataCreditoCustomerIdentity,
-    getApprovedDataCreditoAssessmentForCredit: async input => { calls.assessment.push(input); return row; },
+    enforceDataCreditoCustomerIdentityForVeriff: async (...args) => {
+      const recovered = await customer.exports.enforceDataCreditoCustomerIdentityForVeriff(...args);
+      calls.identities.push(recovered); return recovered;
+    },
+    getApprovedDataCreditoAssessmentForCredit: async input => { calls.assessment.push(input); return assessmentAvailable ? row : null; },
     getVeriffRetryPolicy: async () => ({ applicationRejected: false }),
-    getReusableVeriffValidationForDraft: async () => validation,
+    getReusableVeriffValidationForDraft: async () => newSession ? null : validation,
     serializeVeriffValidation: value => value,
     getVeriffPublicSummary: () => ({ configured: true }),
-    createVeriffValidation: async () => { calls.reservation++; throw new Error("Unexpected session reservation"); },
-    veriffCreateSession: async () => { calls.provider++; throw new Error("Unexpected provider call"); },
+    randomUUID: () => "12345678-1234-4234-8234-123456789012",
+    buildVeriffCompletionUrl: () => "https://finserpay.example/veriff/completado",
+    extractVeriffSessionId: value => value.id, extractVeriffSessionUrl: value => value.url,
+    updateVeriffValidation: async (id, input) => ({ ...validation, ...input }),
+    createVeriffValidation: async input => {
+      calls.reservation++; calls.reservationInputs.push(input);
+      return { created: true, row: { ...validation, sessionUrl: null } };
+    },
+    veriffCreateSession: async input => {
+      calls.provider++; calls.sessionInputs.push(input);
+      return { id: "mock-session", url: "https://veriff.example/mock-session" };
+    },
   });
   const request = () => new Request("https://finserpay.example/api/creditos/veriff", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -107,4 +122,47 @@ test("la consulta de configuración de Veriff no recupera identidad ni crea sesi
   const f = fixture();const response = await f.route.GET();
   assert.equal(response.status, 200);assert.equal((await response.json()).veriff.configured, true);
   assert.equal(f.calls.source, 0);assert.equal(f.calls.provider, 0);assert.equal(f.calls.reservation, 0);
+});
+
+test("campos documentales ausentes en DataCrédito no impiden reutilizar Veriff ni se marcan verificados", async () => {
+  for (const fields of [
+    { providerDocumentNumber: "", providerDocumentType: "", storedType: "" },
+    { providerDocumentNumber: "", providerDocumentType: "CC" },
+    { providerDocumentNumber: "123456789", providerDocumentType: "" },
+  ]) {
+    const f = fixture(fields);const response = await f.route.POST(f.request());
+    assert.equal(response.status, 200);assert.equal((await response.json()).reused, true);
+    const { original, effective } = f.calls.identities[0];
+    assert.equal(original.documentNumber, fields.providerDocumentNumber ? "123456789" : "");
+    assert.equal(original.documentType, fields.providerDocumentType ? "CEDULA_DE_CIUDADANIA" : "");
+    assert.deepEqual(Array.from(effective.missing), Array.from(original.missing));assert.ok(effective.missing.length > 0);
+    assert.equal(effective.documentNumber, original.documentNumber);assert.equal(effective.documentType, original.documentType);
+    assert.equal(effective.fullName, fullName);assert.equal(f.calls.assessment[0].documentNumber, "123456789");
+    assert.equal(f.calls.provider, 0);assert.equal(f.calls.reservation, 0);assert.equal(f.calls.audit, 0);
+  }
+});
+
+test("preparar sesión nueva mock con sólo nombre completo usa CC consultada y omite nombres inventados", async () => {
+  const f = fixture({ providerDocumentNumber: "", providerDocumentType: "", newSession: true });
+  const response = await f.route.POST(f.request());assert.equal(response.status, 200);
+  assert.equal(f.calls.provider, 1);assert.equal(f.calls.reservation, 1);
+  assert.equal(f.calls.sessionInputs[0].documentNumber, "123456789");
+  assert.equal(f.calls.sessionInputs[0].documentType, "CEDULA_DE_CIUDADANIA");
+  assert.equal(f.calls.sessionInputs[0].firstName, "");assert.equal(f.calls.sessionInputs[0].lastName, "");
+  assert.equal(f.calls.reservationInputs[0].clienteNombre, fullName);
+  assert.equal(f.calls.identities[0].effective.documentNumber, "");assert.equal(f.calls.identities[0].effective.documentType, "");
+  assert.equal(f.calls.audit, 0);assert.equal(f.calls.release, 1);
+});
+
+test("identidad parcial conserva guardas de CC, tipo, aprobación, vigencia y permisos antes de Veriff", async () => {
+  for (const input of [
+    { storedDocument: "987654321" }, { requestedDocument: "987654321" },
+    { providerDocumentNumber: "987654321" }, { providerDocumentType: "PASAPORTE" },
+    { storedType: "PASAPORTE" }, { storedName: "Nombre alterado" }, { providerFullName: "" },
+    { assessmentStatus: "RECHAZADO" }, { assessmentSedeId: 2 }, { assessmentAvailable: false },
+  ]) {
+    const f = fixture({ providerDocumentNumber: "", providerDocumentType: "", ...input });
+    const response = await f.route.POST(f.request());assert.equal(response.status, 409, JSON.stringify(input));
+    assert.equal(f.calls.provider, 0);assert.equal(f.calls.reservation, 0);assert.equal(f.calls.audit, 0);
+  }
 });

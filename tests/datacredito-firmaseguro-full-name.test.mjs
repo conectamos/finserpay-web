@@ -59,6 +59,7 @@ function fixture(overrides = {}) {
     "server-only": {}, "@/lib/prisma": { default: { $queryRawUnsafe: async (...args) => { reads.push(args); return [{ id: overrides.latestId ?? 42 }]; } } },
     "@/lib/veriff": { extractVeriffIdentityData }, "@/lib/veriff-identity": { compareStrictIdentityDocuments },
     "./firmaseguro-identity": pure,
+    "./firmaseguro-identity-review": { getStoredFirmaSeguroIdentityReview: async args => { reads.push({ reviewBinding: args });return overrides.review || null; }, FirmaSeguroIdentityReviewError: class extends Error {} },
     "@/lib/veriff-storage": { getVeriffValidationById: async id => { reads.push(id); return validation; },
       isVeriffApproved: row => row.status === "APPROVED" && overrides.trusted !== false,
       serializeVeriffValidation: () => ({ identityDocumentStatus: overrides.documentStatus || "match", identityDocumentNumber: input.documentNumber }) },
@@ -116,4 +117,19 @@ test("only server-built identity metadata is retained on the signing record", ()
   const guard = route.indexOf("delete firmaSeguroDraftPayload.firmaSeguroIdentity;");
   assert.ok(guard > 0); assert.ok(route.indexOf("payloadObject(credit.contratoSnapshot).firmaSeguroIdentity", guard) > guard);
   assert.ok(route.indexOf("await reserveDraftDispatch", guard) > guard);
+});
+
+
+test("CC-only aprobado usa exclusivamente metadata de revisión cargada por el servidor", async () => {
+  const review = pure.resolveReviewedFirmaSeguroFullNameIdentity({ fullName: canonical, documentNumber: input.documentNumber,
+    reviewedDocumentNumber: input.documentNumber, reviewId: "12345678-1234-4234-8234-123456789012", validationId: 42,
+    firstNames: "María del Mar", firstSurname: "De la Peña", secondSurname: "Muñoz" });
+  const f = fixture({ review, validation: { decisionPayload: { verification: { person: { idNumber: input.documentNumber } } } } });
+  const binding = { fullName: canonical, documentNumber: input.documentNumber, draftId: 530, validationId: 42 };
+  const result = await f.getFirmaSeguroFullNameIdentityForDraft(binding);
+  assert.equal(result.source, "AUTHORIZED_REVIEW");assert.equal(result.reviewId, review.reviewId);
+  assert.deepEqual(f.reads[2].reviewBinding, binding);assert.equal(result.firstLastName, "De la Peña");assert.equal(result.secondLastName, "Muñoz");
+  const resolve = adapter();const person = resolve({ clienteNombre: canonical, clienteDocumento: input.documentNumber,
+    contratoSnapshot: { dataCreditoIdentity: { effective: { nameMode: "FULL_NAME_ONLY", fullName: canonical } }, firmaSeguroIdentity: result } });
+  assert.equal(person.firstName, "María del Mar");assert.equal(person.firstLastName, "De la Peña");assert.equal(person.secondLastName, "Muñoz");
 });

@@ -34,8 +34,8 @@ información y código de transacción. No se cambia la petición paga.
 ## Evidencia disponible y límite de la integración
 
 La captura de producción reportada el 9 de octubre de 2026 muestra una
-evaluación aprobada con `nombreCompleto`, tipo y número de documento recuperados,
-pero con «Nombre(s)» y «Primer apellido» señalados como ausentes. Esta evidencia
+evaluación aprobada con `nombreCompleto` y documento mostrado en el formulario,
+pero con «Nombre(s)» y «Primer apellido» señalados como ausentes. La captura no permite distinguir qué campos documentales proceden de la respuesta y cuáles de la consulta. Esta evidencia
 motivó el modo de nombre completo solicitado posteriormente: no se divide el
 nombre para simular esos campos. Confirma que el extractor no encontró los componentes
 estructurados esperados para ese expediente. No confirma que estén ausentes en
@@ -86,10 +86,9 @@ original del proveedor. Una revisión antigua que sólo completó un primer
 apellido faltante no sustituye el nombre completo por ese apellido parcial.
 
 Si no hay nombre completo y faltan nombres, el asesor puede completarlos mediante la misma opción,
-quedando el registro correspondiente. Si faltan documento o primer apellido,
-la firma y la creación del crédito quedan bloqueadas hasta una revisión. Si hay
+quedando el registro correspondiente. Si falta el primer apellido sin un nombre completo confiable, la firma y la creación del crédito quedan bloqueadas hasta una revisión. Si hay
 nombre completo confiable, la ausencia de nombres o apellidos separados no se
-presenta como falta de identidad. La ausencia de documento o tipo sigue bloqueando.
+presenta como falta de identidad. Un borrador incompleto puede guardarse. En modo de nombre completo, el documento se vincula a la consulta cifrada y el tipo CC corresponde a la petición real del proveedor; si estos campos faltan en la respuesta, permanecen ausentes en la evidencia de DataCrédito. La aprobación documental de Veriff para esa misma cédula y solicitud se exige al continuar hacia la firma.
 
 Procedimiento administrativo para datos primarios ausentes:
 `PATCH /api/creditos/datacredito/evaluaciones/{id}` con exclusivamente los campos
@@ -130,8 +129,27 @@ modo de nombre completo se utilizan únicamente componentes estructurados de la
 última validación Veriff aprobada del mismo borrador y documento, si juntos
 coinciden con el nombre completo canónico. Se guardan en metadata separada con
 procedencia `VERIFF`; no se atribuyen a DataCrédito ni reemplazan el nombre de los
-documentos. Si falta esa evidencia o no coincide, se devuelve un bloqueo
-controlado antes del envío. No se inventan componentes para satisfacer la API.
+documentos. Si Veriff aprueba la misma cédula pero no entrega los componentes, la validación
+de identidad puede continuar. Antes del primer envío a FirmaSeguro, un administrador
+autorizado puede transcribir los componentes desde la cédula mediante una revisión
+nominal registrada. El nombre completo de DataCrédito permanece bloqueado y la
+concatenación íntegra debe coincidir con él; no hay separación automática ni
+reemplazo del primer apellido por el asesor. El segundo apellido puede quedar vacío.
+La revisión conserva usuario, fecha del servidor, motivo, atestación y vinculación
+a evaluación, solicitud y última validación Veriff. Su procedencia es
+`AUTHORIZED_REVIEW`, distinta de DataCrédito y Veriff. No habilita la firma por
+sí misma: la aprobación de Veriff para el mismo documento sigue siendo obligatoria.
+
+La [documentación oficial de FirmaSeguro V2](https://firmaseguro.atlassian.net/wiki/spaces/FIRMASEGUR/pages/353468417/Consumo+API+PROCESS+Crear+procesos+de+Firma+V2)
+exige `firstName` y `firstLastName` (2 a 100 caracteres), y permite
+`secondName` y `secondLastName` nulos. No documenta un campo único de nombre
+completo como sustituto. Por eso no se duplica el nombre ni se usa un apellido
+inventado para satisfacer la API. Una evidencia presente y contradictoria no
+se convierte en ausencia ni se reemplaza mediante la revisión nominal.
+Guardar la revisión es una operación local y no envía una firma ni consulta
+DataCrédito. Las revisiones vencidas por cambio de documento, nombre, evaluación
+o validación no se reutilizan. Un contrato enviado, incierto o firmado conserva
+su identidad y no admite este procedimiento previo al envío.
 El servidor exige guardar las correcciones antes de firmar o crear el crédito,
 y verifica documento y ámbito del asesor.
 
@@ -151,3 +169,54 @@ responsable sin una conexión externa ni consultas pagas.
 La publicación se prepara sobre la versión vigente de producción y verifica
 TypeScript y la compilación completa en una copia aislada. No se realizó una
 prueba visual con sesión real ni un envío real a FirmaSeguro.
+
+## Guardado automático y documento consultado
+
+Cada transición autorizada de paso confirma el guardado antes de navegar. El
+registro de borrador puede conservar información incompleta sin tratarla como
+identidad verificada. La firma y la creación mantienen sus controles de aprobación,
+propiedad, documento y solicitud; guardar no equivale a aprobar ni firmar.
+
+Para el modo de nombre completo, un número o tipo omitido por el proveedor no
+se inventa en `original`, `effective` ni se elimina de `missing`. La validación
+operativa del documento utiliza la cédula de la consulta cifrada y el tipo CC
+que realmente envía la integración (`tipoIdentificacion: "1"`). Un número o tipo
+presente y contradictorio se rechaza. Veriff valida esa misma cédula; sus datos
+siguen teniendo procedencia separada. La integración acepta campos documentales
+estructurados de cadena o números enteros seguros, sin convertir nombres ni
+admitir números que hayan perdido precisión.
+
+Los rechazos del guardado devuelven el motivo específico y registran únicamente
+el código técnico de identidad, sin nombres, cédulas ni contenido del proveedor.
+
+## Regresión de venta y revisión para firma
+
+`npm run test:credit-origination` ejecuta las suites de DataCrédito, solicitudes,
+FirmaSeguro y cierre. Incluye una solicitud persistida en PostgreSQL embebido
+que recorre el guardado de Cliente y Equipo, la recarga, una aprobación Veriff
+confiable, la preparación del PDF y del destinatario, el despacho simulado,
+la recepción autenticada de la firma, entrega y cierre transaccional del registro.
+Se comprueba que el nombre compuesto con tildes y ñ se conserva, que no se
+aceptan otra cédula o propietario y que los reintentos no duplican la firma ni
+el crédito. Autenticación de sesión, configuración financiera y red del proveedor
+se sustituyen por fixtures; no es una venta real ni una prueba de navegador.
+
+Las pruebas de revisión nominal comprueban por separado autorización, campos
+bloqueados, coincidencia del nombre íntegro, segundo apellido opcional, auditoría,
+idempotencia, inmutabilidad y rechazo de una validación o envío obsoletos.
+El endpoint es `GET/POST /api/creditos/borradores/{id}/identidad-firma`.
+La revisión se almacena fuera del payload editable del borrador, en
+`FirmaSeguroIdentityReview`; el servidor la recupera y valida antes de sellarla
+con el contrato. Un autosave no puede crearla, cambiarla ni borrarla.
+
+El workflow `Venta, identidad y firma` ejecuta esta regresión y `npm run build`
+en las solicitudes de cambio y en main que afecten el flujo. No necesita
+credenciales de proveedores ni acceso a producción. Sus resultados no sustituyen
+la confirmación del estado de un expediente real cuando éste presente otro error.
+
+El constructor de documentos trabaja sobre una copia del payload: recuperar
+la identidad no puede modificar el objeto que el ledger compara con la fila
+persistida al reservar el envío. El cierre conserva la escritura exacta del
+nombre firmado cuando el sello financiero sólo normalizó mayúsculas y espacios;
+el sello y su checksum permanecen intactos. Un nombre distinto, incluyendo otra
+acentuación o ñ, no obtiene esa equivalencia de formato.

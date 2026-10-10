@@ -162,7 +162,19 @@ export function buildSignedCreditClosePayload(
       SIGNED_SNAPSHOT_BODY_FIELDS
     )) {
       if (Object.prototype.hasOwnProperty.call(signedSnapshot, snapshotField)) {
-        canonicalPayload[bodyField] = signedSnapshot[snapshotField];
+        const signedName = signedPayload.clienteNombre;
+        const snapshotName = signedSnapshot.clienteNombre;
+        // The financial seal uppercases and compacts names for hashing. Keep
+        // the actual signed spelling when it represents that same sealed name;
+        // identity metadata is bound to the complete original string.
+        if (bodyField === "clienteNombre" && typeof signedName === "string" &&
+            typeof snapshotName === "string" && signedName.trim() &&
+            signedName.normalize("NFC").trim().replace(/\s+/g, " ").toUpperCase() ===
+              snapshotName.normalize("NFC").trim().replace(/\s+/g, " ").toUpperCase()) {
+          canonicalPayload.clienteNombre = signedName;
+        } else {
+          canonicalPayload[bodyField] = signedSnapshot[snapshotField];
+        }
       }
     }
     if (Object.prototype.hasOwnProperty.call(signedSnapshot, "imei")) {

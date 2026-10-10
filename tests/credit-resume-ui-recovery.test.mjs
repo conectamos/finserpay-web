@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
@@ -12,6 +14,14 @@ function sourceBlock(source, startMarker, endMarker) {
   const end = source.indexOf(endMarker, start + startMarker.length);
   assert.ok(start >= 0, `No se encontró ${startMarker}`);
   assert.ok(end > start, `No se encontró ${endMarker}`);
+  return source.slice(start, end);
+}
+
+function autosaveBlock(source) {
+  const fingerprint = source.indexOf("const closureFingerprintAtSchedule =");
+  const start = source.lastIndexOf("useEffect(() => {", fingerprint);
+  const end = source.indexOf("const handleDataCreditoBypass", fingerprint);
+  assert.ok(fingerprint >= 0 && start >= 0 && end > fingerprint);
   return source.slice(start, end);
 }
 
@@ -65,11 +75,7 @@ test("un error al cargar la solicitud reintenta el borrador y no DataCrédito", 
     "{dataCreditoDraftLoadFailed ? (",
     ") : dataCreditoDraftLoading ? ("
   );
-  const autosave = sourceBlock(
-    factory,
-    "if (draftResumeHydrationRef.current) {",
-    "const saveGeneration = draftSaveGenerationRef.current"
-  );
+  const autosave = autosaveBlock(factory);
 
   assert.match(loadDraft, /setDraftResumeLoadFailed\(false\)/);
   assert.match(loadDraft, /setDraftResumeLoadFailed\(true\)/);
@@ -233,7 +239,7 @@ test("el conflicto canónico recarga una sola vez la solicitud indicada por el s
   );
 });
 
-test("los tres POST de borrador entregan el conflicto al redirect canónico", async () => {
+test("Veriff y autosave entregan el conflicto al redirect canónico y el guardado manual comparte ese flujo", async () => {
   const factory = await readProjectFile(
     "app/dashboard/creditos/credit-factory-console.tsx"
   );
@@ -245,7 +251,7 @@ test("los tres POST de borrador entregan el conflicto al redirect canónico", as
   const currentSave = sourceBlock(
     factory,
     "const saveCurrentDraft = async (",
-    "const submitFirmaSeguroDraft = async ("
+    "const retryStepTwoDraftSave = async ("
   );
   const autosave = sourceBlock(
     factory,
@@ -254,7 +260,6 @@ test("los tres POST de borrador entregan el conflicto al redirect canónico", as
   );
   const expectedCalls = [
     [veriffSave, "currentDraftId"],
-    [currentSave, "draftId"],
     [autosave, "canonicalDraftId"],
   ];
 
@@ -281,11 +286,38 @@ test("los tres POST de borrador entregan el conflicto al redirect canónico", as
   assert.equal(
     (factory.match(/if \(resumeActiveSolicitudFromConflict\(result,/g) || [])
       .length,
-    3,
-    "solo los tres POST de guardado deben iniciar la retoma canónica"
+    2,
+    "solo el helper compartido y el autosave deben iniciar la retoma canónica"
   );
   assert.match(
     autosave,
     /resumeActiveSolicitudFromConflict\(result, canonicalDraftId\)[\s\S]{0,80}return;/
   );
+  assert.doesNotMatch(currentSave, /requestJson|resumeActiveSolicitudFromConflict/);
+  const calls = [];
+  const persisted = [];
+  let fail = false;
+  const loaded = { exports: {} };
+  const payload = { clienteDocumento: "123456789" };
+  runInNewContext(ts.transpileModule(currentSave + "\nmodule.exports = saveCurrentDraft;", {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, {
+    module: loaded, currentIphoneClosureFingerprint: "current-closure",
+    canAdminMoveFreelyInFactory: false, nextFactoryStep: { id: 2 }, wizardStep: 4,
+    factoryDraftPayload: payload, draftId: 91, firmaSeguroProcessSigned: true,
+    setPersistedIphoneClosureFingerprint: (value) => persisted.push(value),
+    saveDraftPayloadForVeriff: async (...args) => {
+      calls.push(args);
+      if (fail) throw new Error("ACTIVE_SOLICITUD_RESUME");
+      return { id: 91 };
+    },
+  });
+  assert.equal(await loaded.exports(5), 91);
+  assert.equal(calls[0][0], payload);
+  assert.deepEqual(calls[0].slice(1), [5, 91, "DELIVERY_EVIDENCE"]);
+  assert.deepEqual(persisted, ["current-closure"]);
+  fail = true;
+  await assert.rejects(loaded.exports(4), /ACTIVE_SOLICITUD_RESUME/);
+  assert.deepEqual(calls[1].slice(1), [4, 91, "FULL"]);
+  assert.equal(persisted.length, 1, "un conflicto no confirma que el cierre quedó guardado");
 });

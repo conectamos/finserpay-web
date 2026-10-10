@@ -424,3 +424,22 @@ test('legacy completed signature without financial seal preserves signed identit
  for(const [field,value] of Object.entries(signed))assert.equal(closed[field],value);
  assert.equal(closed.solicitudId,2876);assert.equal(closed.fotoEntregaDataUrl,'data:image/jpeg;base64,entrega');
 });
+
+
+test("el cierre conserva exactamente el nombre firmado cuando el sello sólo normalizó mayúsculas y espacios", () => {
+  const name = "María del Mar  De la Peña Muñoz del Río";
+  const signed = { clienteNombre: name, clienteDocumento: "123456789", firmaSeguroIdentity: {
+    canonicalFullName: name, source: "VERIFF", validationId: 42,
+  } };
+  const snapshot = { clienteNombre: "MARÍA DEL MAR DE LA PEÑA MUÑOZ DEL RÍO", documento: "123456789" };
+  const closed = buildSignedCreditClosePayload(signed, { clienteNombre: "Otra persona" }, snapshot);
+  assert.equal(closed.clienteNombre, name);
+  assert.equal(closed.clienteNombre, closed.firmaSeguroIdentity.canonicalFullName);
+  assert.equal(closed.clienteDocumento, "123456789");
+  assert.equal(snapshot.clienteNombre, "MARÍA DEL MAR DE LA PEÑA MUÑOZ DEL RÍO");
+  for (const different of ["MARIA DEL MAR DE LA PEÑA MUÑOZ DEL RÍO", "MARÍA DEL MAR DE LA PENA MUÑOZ DEL RÍO", "OTRA PERSONA"]) {
+    const mismatch = buildSignedCreditClosePayload(signed, {}, { ...snapshot, clienteNombre: different });
+    assert.equal(mismatch.clienteNombre, different, "un nombre distinto no puede saltarse el snapshot firmado");
+  }
+  assert.equal(buildSignedCreditClosePayload({}, { clienteNombre: "Inyectado" }, snapshot).clienteNombre, snapshot.clienteNombre);
+});

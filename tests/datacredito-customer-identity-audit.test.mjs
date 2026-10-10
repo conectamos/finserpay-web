@@ -1,10 +1,10 @@
 import {readFile, writeFile, mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import path from 'node:path';
 import {after, test} from 'node:test';import assert from 'node:assert/strict';import {PGlite} from '@electric-sql/pglite';import {createJiti} from 'jiti';
-const jiti=createJiti(import.meta.url);const {extractDataCreditoIdentity,resolveDataCreditoIdentity}=await jiti.import('../lib/datacredito/identity.ts');
+const jiti=createJiti(import.meta.url);const {assertDataCreditoQueryIdentity,extractDataCreditoIdentity,resolveDataCreditoIdentity,resolveDataCreditoIncompleteDraftIdentity}=await jiti.import('../lib/datacredito/identity.ts');
 const dir=await mkdtemp(path.join(tmpdir(),'finser-identity-audit-'));after(()=>rm(dir,{recursive:true,force:true}));
 const source=(await readFile(new URL('../lib/datacredito/customer-identity.ts',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
-await writeFile(path.join(dir,'identity.ts'),'const { prisma, extractDataCreditoIdentity, resolveDataCreditoIdentity, getDataCreditoAssessmentById, readDataCreditoIdentitySource, dataCreditoAssessmentMatchesScope } = globalThis.__finserIdentityTest;\n'+source);
+await writeFile(path.join(dir,'identity.ts'),'const { prisma, assertDataCreditoQueryIdentity, extractDataCreditoIdentity, resolveDataCreditoIdentity, resolveDataCreditoIncompleteDraftIdentity, getDataCreditoAssessmentById, readDataCreditoIdentitySource, dataCreditoAssessmentMatchesScope } = globalThis.__finserIdentityTest;\n'+source);
 const db = new PGlite();after(()=>db.close());
 await db.exec(`CREATE TABLE "DataCreditoAssessment" ("id" UUID PRIMARY KEY, "status" TEXT NOT NULL DEFAULT 'APROBADO', "consumedAt" TIMESTAMPTZ); INSERT INTO "DataCreditoAssessment" ("id") VALUES ('12345678-1234-4234-8234-123456789012')`);
 const rows=[];let authorized=true;
@@ -34,7 +34,7 @@ const prisma = {
  }),
 };
 const original={names:'María del Mar',firstSurname:'De la Peña',secondSurname:'Muñoz',documentType:'CEDULA_DE_CIUDADANIA',documentNumber:'1234567',fullName:'',missing:[]};
-globalThis.__finserIdentityTest={extractDataCreditoIdentity,resolveDataCreditoIdentity,
+globalThis.__finserIdentityTest={assertDataCreditoQueryIdentity,extractDataCreditoIdentity,resolveDataCreditoIdentity,resolveDataCreditoIncompleteDraftIdentity,
  prisma,
  getDataCreditoAssessmentById:async()=>({id:'12345678-1234-4234-8234-123456789012',status:'APROBADO'}),dataCreditoAssessmentMatchesScope:()=>authorized,
  readDataCreditoIdentitySource:async()=>({documentNumber:'1234567',firstSurname:'DIGITADO',providerPayload:{content:{respuesta:{validacion:{datosBasicos:{conInformacion:true,primerNombre:original.names,primerApellido:missingPrimary ? "" : original.firstSurname,segundoApellido:original.secondSurname,tipoDocumento:'CC',numeroDocumento:original.documentNumber,...providerIdentityOverride}}}}}})};
@@ -129,7 +129,61 @@ test('full provider name survives autosave, reload and signing without inferred 
   await assert.rejects(enforce({...data,clienteDocumento:'7654321'},scope),/DOCUMENT_MISMATCH/);
   await assert.rejects(enforce({...data,clienteTipoDocumento:'PASAPORTE'},scope),/LOCKED_FIELDS/);
   providerIdentityOverride={...fullNameOnlyFields,tipoDocumento:''};
-  await assert.rejects(enforce({...data,clienteTipoDocumento:''},scope),/INCOMPLETE/);
+  const missingType=await enforce({...data,clienteTipoDocumento:''},scope);
+  assert.equal(missingType.original.documentType,'');assert.equal(missingType.effective.documentType,'');assert.deepEqual(missingType.effective.missing,['Tipo de documento']);
+ } finally {providerIdentityOverride=null;}
+});
+
+test('encrypted query binds missing provider document metadata through save, reload and strict use without verification or audit',async()=>{
+ rows.length=0;await db.query('DELETE FROM "DataCreditoIdentityCorrection"');
+ providerIdentityOverride={...fullNameOnlyFields,tipoDocumento:'',numeroDocumento:''};
+ try {
+  const data={...payload,clienteNombre:'NOMBRE ANTIGUO'};
+  const saved=await enforce(data,scope);
+  assert.equal(data.clienteNombre,providerFullName);assert.equal(data.clienteDocumento,'1234567');
+  for(const value of [saved,await get({id:payload.dataCreditoAssessmentId}),await enforce({...data},scope,false)]) {
+   assert.equal(value.original.documentNumber,'');assert.equal(value.original.documentType,'');
+   assert.equal(value.effective.documentNumber,'');assert.equal(value.effective.documentType,'');
+   assert.deepEqual(value.effective.missing,['Número de documento','Tipo de documento']);
+   assert.equal(value.effective.fullName,providerFullName);
+  }
+  for(const saveCorrection of [true,false]) {
+   await assert.rejects(enforce({...data,clienteDocumento:'7654321'},scope,saveCorrection),/DOCUMENT_MISMATCH/);
+   await assert.rejects(enforce({...data,clienteTipoDocumento:'PASAPORTE'},scope,saveCorrection),/LOCKED_FIELDS/);
+  }
+  await assert.rejects(enforce({...data,clienteNombre:'Otra Persona'},scope,false),/LOCKED_FIELDS/);
+  assert.equal(rows.length,0);assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM "DataCreditoIdentityCorrection"')).rows[0].count,0);
+ } finally {providerIdentityOverride=null;}
+});
+
+test('an incomplete structured draft audits allowed name edits, retains them on reload and never invents its primary surname',async()=>{
+ rows.length=0;await db.query('DELETE FROM "DataCreditoIdentityCorrection"');missingPrimary=true;
+ try {
+  const data={...payload,clientePrimerApellido:'DIGITADO',clientePrimerNombre:'María José',clienteSegundoApellido:''};
+  const saved=await enforce(data,scope);
+  assert.equal(saved.effective.firstSurname,'');assert.equal(data.clientePrimerApellido,'');
+  assert.ok(saved.effective.missing.includes('Primer apellido'));
+  assert.equal(rows.length,1);assert.equal(rows[0].original.names,original.names);assert.equal(rows[0].userId,scope.userId);
+  assert.equal(saved.effective.names,'María José');assert.equal(saved.effective.secondSurname,'');
+  const reloaded=await get({id:payload.dataCreditoAssessmentId});
+  assert.equal(reloaded.effective.names,'María José');assert.equal(reloaded.effective.secondSurname,'');assert.equal(reloaded.effective.firstSurname,'');
+  await enforce({...data},scope);assert.equal(rows.length,1);
+  await assert.rejects(enforce({...data},scope,false),/INCOMPLETE/);
+  await assert.rejects(enforce({...data,clienteTipoDocumento:'PASAPORTE'},scope),/LOCKED_FIELDS/);
+  await assert.rejects(enforce({...data,clientePrimerNombre:'<script>'},scope),/INVALID_NAMES/);
+ } finally {missingPrimary=false;}
+});
+
+test('a structured draft with no names can autosave its empty incomplete state without auditing fabricated identity',async()=>{
+ rows.length=0;await db.query('DELETE FROM "DataCreditoIdentityCorrection"');
+ providerIdentityOverride={primerNombre:'',segundoNombre:'',primerApellido:'',segundoApellido:'',tipoDocumento:'',numeroDocumento:''};
+ try {
+  const data={...payload,clientePrimerNombre:'',clientePrimerApellido:'DIGITADO',clienteSegundoApellido:'',clienteTipoDocumento:''};
+  const saved=await enforce(data,scope);
+  assert.equal(saved.effective.names,'');assert.equal(saved.effective.firstSurname,'');assert.equal(saved.effective.fullName,'');
+  assert.deepEqual(saved.effective.missing,['Nombre(s)','Primer apellido','Número de documento','Tipo de documento']);
+  assert.equal(rows.length,0);
+  await assert.rejects(enforce({...data},scope,false),/INCOMPLETE/);
  } finally {providerIdentityOverride=null;}
 });
 

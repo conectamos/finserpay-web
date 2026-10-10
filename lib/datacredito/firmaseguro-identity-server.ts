@@ -1,3 +1,4 @@
+import { getStoredFirmaSeguroIdentityReview, FirmaSeguroIdentityReviewError } from "./firmaseguro-identity-review";
 import "server-only";
 import prisma from "@/lib/prisma";
 import { extractVeriffIdentityData } from "@/lib/veriff";
@@ -36,5 +37,16 @@ export async function getFirmaSeguroFullNameIdentityForDraft(input: {
     'SELECT "id" FROM "VeriffIdentityValidation" WHERE "draftId" = $1 AND "creditoId" IS NULL ORDER BY "id" DESC LIMIT 1', input.draftId
   );
   if (Number(latest[0]?.id) !== input.validationId) throw new FirmaSeguroFullNameIdentityError();
-  return firmaSeguroFullNameIdentityFromValidation({ ...input, validation, expectedDraftId: input.draftId });
+  try {
+    return firmaSeguroFullNameIdentityFromValidation({ ...input, validation, expectedDraftId: input.draftId });
+  } catch (error) {
+    if (!(error instanceof FirmaSeguroFullNameIdentityError)) throw error;
+    try {
+      const reviewed = await getStoredFirmaSeguroIdentityReview(input);
+      if (reviewed) return reviewed;
+    } catch (reviewError) {
+      if (!(reviewError instanceof FirmaSeguroIdentityReviewError)) throw reviewError;
+    }
+    throw error;
+  }
 }

@@ -229,7 +229,9 @@ export async function buildDraftCredit(
   row: DraftRow,
   options: { requireFirmaSeguroIdentity?: boolean } = {}
 ): Promise<BuiltDraftCredit> {
-  const payload = payloadObject(row.payload);
+  // Identity recovery may fill canonical fields. Keep the persisted source
+  // immutable: the dispatch ledger compares it with the locked database row.
+  const payload = { ...payloadObject(row.payload) };
   const dataCreditoIdentity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
   let firmaSeguroIdentity: Awaited<ReturnType<typeof getFirmaSeguroFullNameIdentityForDraft>> | null = null;
   if (options.requireFirmaSeguroIdentity && dataCreditoIdentity?.effective.nameMode === "FULL_NAME_ONLY") {
