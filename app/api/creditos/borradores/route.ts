@@ -504,7 +504,19 @@ export async function POST(req: Request) {
         { status: error.status }
       );
     }
-    if (error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_")) return NextResponse.json({ code: error.message, error: "Revisa los datos obtenidos de DataCrédito. Los datos primarios faltantes requieren revisión autorizada." }, { status: 409 });
+    if (error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_")) {
+      const messages: Record<string, string> = {
+        DATACREDITO_IDENTITY_UNAUTHORIZED: "La consulta de DataCrédito no está aprobada o no corresponde a esta solicitud. Retoma la solicitud vinculada a la consulta.",
+        DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE: "No se pudo recuperar la respuesta guardada de DataCrédito. Reintenta el guardado sin realizar otra consulta.",
+        DATACREDITO_IDENTITY_DOCUMENT_MISMATCH: "La cédula de la solicitud no coincide con la consulta de DataCrédito vinculada.",
+        DATACREDITO_IDENTITY_LOCKED_FIELDS: "La cédula, el tipo de documento o un dato de identidad bloqueado no coincide con la consulta vinculada.",
+        DATACREDITO_IDENTITY_INCOMPLETE: "Faltan datos de identidad para esta operación. Los datos ausentes requieren revisión autorizada.",
+        DATACREDITO_IDENTITY_INVALID_NAMES: "Revisa los nombres y el segundo apellido: contienen caracteres o una longitud no admitidos.",
+        DATACREDITO_IDENTITY_SAVE_CORRECTION_FIRST: "Guarda la corrección de identidad antes de continuar.",
+      };
+      console.warn("SOLICITUD_IDENTITY_SAVE_BLOCKED", { code: error.message });
+      return NextResponse.json({ code: error.message, error: messages[error.message] || "No se pudo validar la identidad vinculada a la solicitud." }, { status: 409 });
+    }
     console.error("ERROR GUARDANDO BORRADOR:", error);
     const forbidden = error instanceof Error && error.message === "SOLICITUD_NO_AUTORIZADA";
     return NextResponse.json(

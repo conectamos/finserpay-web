@@ -851,8 +851,9 @@ test("el autosave preconsulta responde como conflicto esperado y no como error t
     "} catch (error) {",
     "const forbidden"
   );
-  const serializationStart = factory.indexOf("const persistedWizardStep = canAdminMoveFreelyInFactory");
-  const autosaveStart = factory.lastIndexOf("useEffect(() => {", serializationStart);
+  const scheduledFingerprint = factory.indexOf("const closureFingerprintAtSchedule =");
+  const autosaveStart = factory.lastIndexOf("useEffect(() => {", scheduledFingerprint);
+  const serializationStart = factory.indexOf("const persistedWizardStep =", autosaveStart);
   const hydrationGuard = factory.indexOf(
     "if (draftResumeHydrationRef.current)", autosaveStart
   );
@@ -861,6 +862,7 @@ test("el autosave preconsulta responde como conflicto esperado y no como error t
     autosaveStart
   );
   assert.ok(hydrationGuard >= 0);
+  assert.ok(scheduledFingerprint >= 0);
   assert.ok(autosaveStart >= 0);
   assert.ok(hydrationGuard < serializationStart);
   assert.ok(autosaveEnd > autosaveStart);

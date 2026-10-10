@@ -1,6 +1,6 @@
 import "server-only";
 import prisma from "@/lib/prisma";
-import { extractDataCreditoIdentity, resolveDataCreditoIdentity } from "./identity";
+import { assertDataCreditoQueryIdentity, extractDataCreditoIdentity, resolveDataCreditoIdentity, resolveDataCreditoIncompleteDraftIdentity } from "./identity";
 import { getDataCreditoAssessmentById, readDataCreditoIdentitySource, dataCreditoAssessmentMatchesScope, type DataCreditoAssessmentScope, type DataCreditoAssessmentRow } from "./storage";
 let schema: Promise<unknown> | undefined;
 function ensureSchema() {
@@ -53,13 +53,17 @@ export async function enforceDataCreditoCustomerIdentity(payload: Record<string,
   const identity = await getDataCreditoCustomerIdentity(row);
   if (!identity) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
   if (String(payload.clienteDocumento || "").replace(/\D/g, "") !== identity.queryDocumentNumber) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
+  // The integration sends tipoIdentificacion=1 for every query. This trusted
+  // query binding permits absent provider metadata without marking it verified.
+  const queryIdentity = { documentNumber: identity.queryDocumentNumber, documentType: "CEDULA_DE_CIUDADANIA" as const };
+  assertDataCreditoQueryIdentity(identity.effective, payload, queryIdentity);
   if (identity.original.nameMode === "FULL_NAME_ONLY") {
     // Unsigned autosaves can come from legacy drafts or before display recovery
     // finishes. Always persist the server's effective whole name in that path.
     // Signing/creation still require the caller to submit that exact identity.
     const effective = resolveDataCreditoIdentity(identity.effective, saveCorrection
       ? { ...payload, clienteNombre: identity.effective.fullName }
-      : payload);
+      : payload, queryIdentity);
     payload.clienteNombre = effective.fullName;
     payload.clientePrimerNombre = effective.names;
     payload.clienteSegundoNombre = "";
@@ -68,22 +72,32 @@ export async function enforceDataCreditoCustomerIdentity(payload: Record<string,
     return { querySurname: identity.querySurname, original: identity.original, effective };
   }
   // Incomplete autosaved drafts may retain missing values, but cannot reach signing/creation.
-  const incomplete = identity.original.missing.length > 0;
-  if (saveCorrection && incomplete && !payload.clientePrimerNombre) {
-    payload.clientePrimerApellido = identity.effective.firstSurname;
-    payload.clienteNombre = "";
-    return identity;
+  const incomplete = identity.effective.missing.length > 0;
+  if (saveCorrection && incomplete && (!identity.effective.firstSurname || !payload.clientePrimerNombre)) {
+    const effective = resolveDataCreditoIncompleteDraftIdentity(identity.effective, payload, queryIdentity);
+    if (identity.effective.names !== effective.names || identity.effective.secondSurname !== effective.secondSurname) {
+      await prisma.$executeRawUnsafe('INSERT INTO "DataCreditoIdentityCorrection" ("assessmentId", "userId", "sellerId", "original", "previous", "effective") VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb)', id, actor.userId, actor.sellerId, JSON.stringify(identity.original), JSON.stringify(identity.effective), JSON.stringify(effective));
+    }
+    payload.clientePrimerNombre = effective.names;
+    payload.clientePrimerApellido = effective.firstSurname;
+    payload.clienteSegundoApellido = effective.secondSurname;
+    payload.clienteNombre = effective.fullName;
+    return { querySurname: identity.querySurname, original: identity.original, effective };
   }
   const effective = resolveDataCreditoIdentity({ ...identity.original,
     firstSurname: identity.effective.firstSurname, documentNumber: identity.effective.documentNumber,
     documentType: identity.effective.documentType, manuallyCompleted: identity.effective.manuallyCompleted,
-  }, payload);
+  }, payload, queryIdentity);
   if (saveCorrection && (identity.effective.names !== effective.names || identity.effective.secondSurname !== effective.secondSurname)) {
     await prisma.$executeRawUnsafe('INSERT INTO "DataCreditoIdentityCorrection" ("assessmentId", "userId", "sellerId", "original", "previous", "effective") VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb)', id, actor.userId, actor.sellerId, JSON.stringify(identity.original), JSON.stringify(identity.effective), JSON.stringify(effective));
   }
   if (!saveCorrection && (identity.effective.names !== effective.names || identity.effective.secondSurname !== effective.secondSurname)) throw new Error("DATACREDITO_IDENTITY_SAVE_CORRECTION_FIRST");
   payload.clienteNombre = effective.fullName;
   return { querySurname: identity.querySurname, original: identity.original, effective };
+}
+
+export async function enforceDataCreditoCustomerIdentityForVeriff(payload: Record<string, unknown>, scope: DataCreditoAssessmentScope) {
+  return enforceDataCreditoCustomerIdentity(payload, scope, false);
 }
 
 // Separate administrative procedure: only fills fields absent from the provider.

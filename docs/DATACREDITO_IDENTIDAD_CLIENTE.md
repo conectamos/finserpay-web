@@ -34,8 +34,8 @@ información y código de transacción. No se cambia la petición paga.
 ## Evidencia disponible y límite de la integración
 
 La captura de producción reportada el 9 de octubre de 2026 muestra una
-evaluación aprobada con `nombreCompleto`, tipo y número de documento recuperados,
-pero con «Nombre(s)» y «Primer apellido» señalados como ausentes. Esta evidencia
+evaluación aprobada con `nombreCompleto` y documento mostrado en el formulario,
+pero con «Nombre(s)» y «Primer apellido» señalados como ausentes. La captura no permite distinguir qué campos documentales proceden de la respuesta y cuáles de la consulta. Esta evidencia
 motivó el modo de nombre completo solicitado posteriormente: no se divide el
 nombre para simular esos campos. Confirma que el extractor no encontró los componentes
 estructurados esperados para ese expediente. No confirma que estén ausentes en
@@ -86,10 +86,9 @@ original del proveedor. Una revisión antigua que sólo completó un primer
 apellido faltante no sustituye el nombre completo por ese apellido parcial.
 
 Si no hay nombre completo y faltan nombres, el asesor puede completarlos mediante la misma opción,
-quedando el registro correspondiente. Si faltan documento o primer apellido,
-la firma y la creación del crédito quedan bloqueadas hasta una revisión. Si hay
+quedando el registro correspondiente. Si falta el primer apellido sin un nombre completo confiable, la firma y la creación del crédito quedan bloqueadas hasta una revisión. Si hay
 nombre completo confiable, la ausencia de nombres o apellidos separados no se
-presenta como falta de identidad. La ausencia de documento o tipo sigue bloqueando.
+presenta como falta de identidad. Un borrador incompleto puede guardarse. En modo de nombre completo, el documento se vincula a la consulta cifrada y el tipo CC corresponde a la petición real del proveedor; si estos campos faltan en la respuesta, permanecen ausentes en la evidencia de DataCrédito. La aprobación documental de Veriff para esa misma cédula y solicitud se exige al continuar hacia la firma.
 
 Procedimiento administrativo para datos primarios ausentes:
 `PATCH /api/creditos/datacredito/evaluaciones/{id}` con exclusivamente los campos
@@ -151,3 +150,22 @@ responsable sin una conexión externa ni consultas pagas.
 La publicación se prepara sobre la versión vigente de producción y verifica
 TypeScript y la compilación completa en una copia aislada. No se realizó una
 prueba visual con sesión real ni un envío real a FirmaSeguro.
+
+## Guardado automático y documento consultado
+
+Cada transición autorizada de paso confirma el guardado antes de navegar. El
+registro de borrador puede conservar información incompleta sin tratarla como
+identidad verificada. La firma y la creación mantienen sus controles de aprobación,
+propiedad, documento y solicitud; guardar no equivale a aprobar ni firmar.
+
+Para el modo de nombre completo, un número o tipo omitido por el proveedor no
+se inventa en `original`, `effective` ni se elimina de `missing`. La validación
+operativa del documento utiliza la cédula de la consulta cifrada y el tipo CC
+que realmente envía la integración (`tipoIdentificacion: "1"`). Un número o tipo
+presente y contradictorio se rechaza. Veriff valida esa misma cédula; sus datos
+siguen teniendo procedencia separada. La integración acepta campos documentales
+estructurados de cadena o números enteros seguros, sin convertir nombres ni
+admitir números que hayan perdido precisión.
+
+Los rechazos del guardado devuelven el motivo específico y registran únicamente
+el código técnico de identidad, sin nombres, cédulas ni contenido del proveedor.

@@ -28,7 +28,7 @@ function effectContaining(marker) {
   }
   visit(ast); assert.ok(result, marker); return result.getText(ast);
 }
-const names = ["IdentityValidationDialog", "getDataCreditoClientDisplayName", "serializeCreditDraftSaveRequest", "VeriffDraftPreparationFailure", "cancelPendingDraftAutosave", "saveDraftPayloadForVeriff", "validateIdentityWithVeriff", "refreshVeriffValidation", "applyVeriffIdentityData", "veriffApprovalCanUnlockClient", "veriffIdentityHasAutofillData", "getDataCreditoVeriffDocumentRejectionMessage"];
+const names = ["IdentityValidationDialog", "getDataCreditoClientDisplayName", "serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "VeriffDraftPreparationFailure", "cancelPendingDraftAutosave", "saveDraftPayloadForVeriff", "validateIdentityWithVeriff", "refreshVeriffValidation", "applyVeriffIdentityData", "veriffApprovalCanUnlockClient", "veriffIdentityHasAutofillData", "getDataCreditoVeriffDocumentRejectionMessage"];
 const declarations = names.map(declaration).join("\n");
 const autosaveEffect = effectContaining("closureFingerprintAtSchedule");
 const pollingEffect = effectContaining("attempts >= VERIFF_POLL_MAX_ATTEMPTS");
@@ -47,6 +47,7 @@ function fixture() {
     mobileCaptureSession: null, veriffConfig: { configured: true }, veriffValidation: null, veriffExpectedDraftId: 2883,
     veriffInlineMessage: "", veriffPreparationError: null, veriffSubmitting: false,
     veriffRequestInFlightRef: { current: false }, veriffRefreshGenerationRef: { current: 0 }, veriffRefreshFlightRef: { current: null },
+    wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false,
     draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
     analystDataSnapshotRef: { current: {} }, analystFinancialSnapshotRef: { current: { draftId: 2883 } }, analystEvidenceSnapshotRef: { current: {} },
     auditedIdentityCorrectionRef: { current: false }, applyingVeriffIdentityRef: { current: false },
@@ -109,8 +110,9 @@ test("a draft409 is a save failure with the actual message and no Veriff session
   f.setTransport(async () => ({ ok: false, status: 409, data: { code: "SOLICITUD_IDENTIDAD_INMUTABLE", error: message } }));
   await f.functions.validateIdentityWithVeriff();
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, "/api/creditos/borradores");
-  assert.equal(f.context.veriffPreparationError, message); assert.equal(f.context.veriffInlineMessage, "");
-  assert.equal(f.context.draftStatus, "error"); assert.equal(f.context.draftErrorMessage, message);
+  const expectedMessage = message + " Código: SOLICITUD_IDENTIDAD_INMUTABLE.";
+  assert.equal(f.context.veriffPreparationError, expectedMessage); assert.equal(f.context.veriffInlineMessage, "");
+  assert.equal(f.context.draftStatus, "error"); assert.equal(f.context.draftErrorMessage, expectedMessage);
   const html = renderToStaticMarkup(React.createElement(f.functions.VeriffDraftPreparationFailure, { message, onRetry() {}, onBack() {} }));
   assert.ok(html.includes(message)); assert.ok(html.includes("Reintentar guardado"));
   assert.ok(!html.includes("Conexion interrumpida")); assert.ok(!html.includes("Regenerar QR"));

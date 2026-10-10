@@ -122,7 +122,7 @@ test("el formulario, la creación final y FirmaSeguro comparten la misma regla",
   assert.doesNotMatch(otpBlock, /contactPhoneValidation/);
   assert.match(
     clientSource,
-    /disabled=\{\s*creating \|\|\s*veriffSubmitting \|\|\s*!stepClienteReady/
+    /disabled=\{\s*creating \|\|\s*veriffSubmitting \|\|\s*wizardStepTransitioning \|\|\s*!stepClienteReady/
   );
   assert.match(clientSource, /normalizeCreditContactPhoneInput/);
   assert.ok(

@@ -3184,7 +3184,10 @@ export async function POST(req: Request) {
       },
       dataCreditoIdentity: recoveredCustomerIdentity ? {
         ...recoveredCustomerIdentity,
-        effective: { ...recoveredCustomerIdentity.effective,
+        ...(dataCreditoFullNameOnly ? {
+          queryContext: { source: "DATACREDITO_QUERY", documentNumber: clienteDocumento, documentType: clienteTipoDocumento },
+        } : {}),
+        effective: dataCreditoFullNameOnly ? { ...recoveredCustomerIdentity.effective } : { ...recoveredCustomerIdentity.effective,
           names: clientePrimerNombre, firstSurname: clientePrimerApellido,
           secondSurname: clienteSegundoApellido, documentType: clienteTipoDocumento,
           documentNumber: clienteDocumento, fullName: clienteNombreFinal, missing: [],

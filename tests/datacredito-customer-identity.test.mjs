@@ -59,3 +59,42 @@ test('fixed-width CC padding is accepted only for the same numeric document',()=
  assert.throws(()=>extract(fixture({...basics,numeroDocumento:'0000007654321'}),'1234567'),/DOCUMENT_MISMATCH/);
  assert.throws(()=>extract(fixture({...basics,numeroDocumento:'0001234567X'}),'1234567'),/DOCUMENT_MISMATCH/);
 });
+
+test('numeric provider document and CC type preserve exact safe integers without coercing names',()=>{
+ const identity=extract(fixture({...basics,numeroDocumento:1110178524,tipoDocumento:1,primerNombre:123}),'1110178524');
+ assert.equal(identity.documentNumber,'1110178524');assert.equal(identity.documentType,'CEDULA_DE_CIUDADANIA');
+ assert.equal(identity.names,'José');assert.deepEqual(identity.missing,[]);
+ assert.throws(()=>extract(fixture({...basics,numeroDocumento:1110178525,tipoDocumento:1}),'1110178524'),/DOCUMENT_MISMATCH/);
+ for(const value of [Number.MAX_SAFE_INTEGER+1,1.5,true,false,NaN,Infinity]) {
+  const missing=extract(fixture({...basics,numeroDocumento:value,tipoDocumento:value}),'1234567');
+  assert.equal(missing.documentNumber,'');assert.equal(missing.documentType,'');
+  assert.deepEqual(missing.missing,['Número de documento','Tipo de documento']);
+ }
+});
+
+test('explicit CC document type recognizes case, accents and whitespace without changing names',()=>{
+ for(const tipoDocumento of ['CÉDULA DE CIUDADANÍA','cédula de ciudadanía','  Cédula   de   ciudadanía  ','cc',' c.c. ','cedula_de_ciudadania']) {
+  const identity=extract(fixture({...basics,tipoDocumento}),'1234567');
+  assert.equal(identity.documentType,'CEDULA_DE_CIUDADANIA');assert.equal(identity.firstSurname,'De la Peña');
+  assert.equal(identity.names,'María del Mar José');
+ }
+ assert.equal(extract(fixture({...basics,tipoDocumento:'PASAPORTE'}),'1234567').documentType,'PASAPORTE');
+});
+
+test('a trusted server query binds absent provider metadata without filling or verifying it',()=>{
+ const identity=extract(fixture({conInformacion:true,nombreCompleto:'José María De la Peña'}),'1234567');
+ const query={documentNumber:'1234567',documentType:'CEDULA_DE_CIUDADANIA'};
+ const resolved=resolve(identity,{...input,clienteNombre:identity.fullName},query);
+ assert.equal(resolved.documentNumber,'');assert.equal(resolved.documentType,'');
+ assert.deepEqual(resolved.missing,['Número de documento','Tipo de documento']);
+ assert.equal(resolved.fullName,identity.fullName);assert.equal(resolved.firstSurname,'');
+ assert.equal(resolve(identity,{...input,clienteNombre:identity.fullName,clienteTipoDocumento:''},query).documentType,'');
+ for(const [patch,code] of [
+  [{clienteDocumento:'7654321'},/DOCUMENT_MISMATCH/],
+  [{clienteTipoDocumento:'PASAPORTE'},/LOCKED_FIELDS/],
+  [{clienteNombre:'Otra Persona'},/LOCKED_FIELDS/],
+ ]) assert.throws(()=>resolve(identity,{...input,clienteNombre:identity.fullName,...patch},query),code);
+ assert.throws(()=>resolve({...identity,documentNumber:'7654321'},{...input,clienteNombre:identity.fullName},query),/DOCUMENT_MISMATCH/);
+ assert.throws(()=>resolve({...identity,documentType:'PASAPORTE'},{...input,clienteNombre:identity.fullName},query),/LOCKED_FIELDS/);
+ assert.throws(()=>resolve(identity,{...input,clienteNombre:identity.fullName},{...query,documentType:'PASAPORTE'}),/LOCKED_FIELDS/);
+});

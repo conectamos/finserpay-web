@@ -38,7 +38,7 @@ function fixture(identityError) {
     toNumber: value => Number(value) || 0,
     PAYMENT_FREQUENCY_OPTIONS: [{ value: "MENSUAL" }],
     getDataCreditoPublicConfig: () => ({ enabled: true, environment: "production" }),
-    enforceDataCreditoCustomerIdentity: async () => { calls.identity++; throw identityError; },
+    enforceDataCreditoCustomerIdentityForVeriff: async () => { calls.identity++; throw identityError; },
     getApprovedDataCreditoAssessmentForCredit: async () => { calls.assessment++; return null; },
     getReusableVeriffValidationForDraft: async () => { calls.reuse++; return null; },
     createVeriffValidation: async () => { calls.reserve++; throw new Error("Unexpected reservation"); },

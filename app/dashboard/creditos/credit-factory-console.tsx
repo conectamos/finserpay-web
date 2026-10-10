@@ -3015,6 +3015,35 @@ function serializeCreditDraftSaveRequest(input: { draftId: number | null; curren
     payloadScope: input.payloadScope || "FULL", payload: { ...input.payload, wizardStep: input.currentStep } });
 }
 
+function isDataCreditoClientIdentityReady(
+  approval: DataCreditoApprovedResult | null,
+  documentNumber: string,
+  documentType: string
+) {
+  if (!approval) return true;
+  const identity = approval.identity;
+  if (!identity) return false;
+  if (identity.effective.nameMode !== "FULL_NAME_ONLY") {
+    return Boolean(identity.effective.firstSurname && identity.effective.documentNumber && identity.effective.documentType);
+  }
+  const queryDocument = approval.documentNumber.replace(/[.\s]/g, "");
+  if (!getDataCreditoClientDisplayName(approval).trim() || !/^\d{5,15}$/.test(queryDocument) ||
+      documentNumber.replace(/[.\s]/g, "") !== queryDocument || documentType !== "CEDULA_DE_CIUDADANIA") return false;
+  return [identity.original, identity.effective].every((value) =>
+    (!value.documentNumber || value.documentNumber.replace(/[.\s]/g, "") === queryDocument) &&
+    (!value.documentType || value.documentType === "CEDULA_DE_CIUDADANIA")
+  );
+}
+
+function formatCreditDraftSaveError(
+  data: { error?: string; code?: string } | null | undefined,
+  fallback = "No se pudo guardar el borrador"
+) {
+  const message = typeof data?.error === "string" && data.error.trim() ? data.error.trim() : fallback;
+  const code = typeof data?.code === "string" && /^[A-Z][A-Z0-9_]{2,79}$/.test(data.code) ? data.code : null;
+  return code ? `${message} Código: ${code}.` : message;
+}
+
 function VeriffDraftPreparationFailure({ message, onRetry, onBack }: { message: string; onRetry: () => void; onBack: () => void }) {
   return <div className="fp-identity-modal-content is-result">
     <p className="fp-identity-modal-kicker is-rejected">Solicitud pendiente de guardar</p>
@@ -3134,6 +3163,8 @@ export default function CreditFactoryConsole({
   }, []);
   const [draftErrorMessage, setDraftErrorMessage] = useState("");
   const draftSaveConflictFingerprintRef = useRef<string | null>(null);
+  const wizardStepTransitionInFlightRef = useRef(false);
+  const [wizardStepTransitioning, setWizardStepTransitioning] = useState(false);
   const [draftResumeLoadFailed, setDraftResumeLoadFailed] = useState(false);
   const [draftLoadRetryKey, setDraftLoadRetryKey] = useState(0);
   const [showPaymentResults, setShowPaymentResults] = useState(false);
@@ -4612,6 +4643,7 @@ export default function CreditFactoryConsole({
   const draftHasMeaningfulData = useMemo(() => {
     return Boolean(
       clienteDocumento.trim() ||
+        clienteNombre.trim() ||
         clienteTelefono.trim() ||
         clientePrimerNombre.trim() ||
         clientePrimerApellido.trim() ||
@@ -4622,6 +4654,7 @@ export default function CreditFactoryConsole({
     );
   }, [
     clienteDocumento,
+    clienteNombre,
     clientePrimerApellido,
     clientePrimerNombre,
     clienteTelefono,
@@ -5433,7 +5466,7 @@ export default function CreditFactoryConsole({
   );
   const stepClienteReady =
     dataCreditoFlowReady &&
-    (!dataCreditoApproval || Boolean((dataCreditoFullNameOnly ? getDataCreditoClientDisplayName(dataCreditoApproval) : dataCreditoApproval.identity?.effective.firstSurname) && dataCreditoApproval.identity?.effective.documentNumber && dataCreditoApproval.identity?.effective.documentType)) &&
+    isDataCreditoClientIdentityReady(dataCreditoApproval, clienteDocumento, clienteTipoDocumento) &&
     clientFormValidation.complete &&
     contactPhoneValidation.ok;
   const markClientFieldTouched = useCallback((field: CreditClientField) => {
@@ -6436,6 +6469,8 @@ export default function CreditFactoryConsole({
   const draftStatusLabel =
     draftStatus === "loading"
       ? "Cargando solicitud"
+      : draftStatus === "saving"
+        ? "Guardando solicitud…"
       : draftStatus === "error"
         ? draftErrorMessage || "No se pudo guardar"
         : "Completa los pasos para finalizar la venta";
@@ -8328,10 +8363,12 @@ export default function CreditFactoryConsole({
   const saveDraftPayloadForVeriff = async (
     payload: CreditDraftPayload,
     currentStepOverride = wizardStep,
-    currentDraftId = draftId
+    currentDraftId = draftId,
+    payloadScope: "FULL" | "DELIVERY_EVIDENCE" = "FULL"
   ) => {
     cancelPendingDraftAutosave();
-    const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payload });
+    const saveGeneration = draftSaveGenerationRef.current;
+    const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payloadScope, payload });
     const result = await requestJson<CreditDraftSingleResponse>(
       "/api/creditos/borradores",
       {
@@ -8343,17 +8380,21 @@ export default function CreditFactoryConsole({
       }
     );
 
+    if (draftSaveGenerationRef.current !== saveGeneration) {
+      throw new Error("La solicitud cambió durante el guardado. Vuelve a intentarlo en la solicitud actual.");
+    }
     if (resumeActiveSolicitudFromConflict(result, currentDraftId)) {
       throw new Error(ACTIVE_SOLICITUD_RESUME_MESSAGE);
     }
     if (!result.ok || !result.data?.item) {
       if (result.status === 409) draftSaveConflictFingerprintRef.current = requestBody;
-      throw new Error(result.data?.error || "No se pudo guardar el borrador");
+      throw new Error(formatCreditDraftSaveError(result.data));
     }
 
     draftSaveConflictFingerprintRef.current = null;
     setDraftId(result.data.item.id);
     setDraftStatus("saved");
+    setDraftErrorMessage("");
     replaceDraftInUrl(result.data.item.id);
     if (!analystDataSnapshotRef.current) {
       analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.data.item.id, {});
@@ -8958,7 +8999,46 @@ export default function CreditFactoryConsole({
     }
   };
 
-  const goToStep = (targetStep: number) => {
+  const persistWizardStep = async (targetStep: number) => {
+    const nextStep = clampWizardStep(targetStep);
+    if (nextStep === wizardStep) return true;
+    if (wizardStepTransitionInFlightRef.current) return false;
+    if (!createClientMode || simulatorMode || deliveryMode) {
+      setWizardStep(nextStep);
+      return true;
+    }
+    if (draftResumeHydrationRef.current || draftResumeHydrating || draftResumeLoadFailed || applyingDraftRef.current) {
+      setNotice({ text: "Espera a que termine de cargar la solicitud antes de cambiar de paso.", tone: "amber" });
+      return false;
+    }
+    if (firmaSeguroDraftCorrectionPending || (firmaSeguroProcessSent && !firmaSeguroProcessSigned)) {
+      setNotice({ text: "Espera a que termine la firma o la revisión del contrato antes de cambiar de paso.", tone: "amber" });
+      return false;
+    }
+    const persistedWizardStep = canAdminMoveFreelyInFactory ? nextFactoryStep.id : nextStep;
+    wizardStepTransitionInFlightRef.current = true;
+    setWizardStepTransitioning(true);
+    cancelPendingDraftAutosave();
+    setDraftStatus("saving");
+    setDraftErrorMessage("");
+    try {
+      await saveCurrentDraft(persistedWizardStep);
+      setWizardStep(nextStep);
+      return true;
+    } catch (error) {
+      if (activeSolicitudRedirectingRef.current) return false;
+      const message = error instanceof Error ? error.message : "No se pudo guardar la solicitud antes de cambiar de paso.";
+      setDraftStatus("error");
+      setDraftErrorMessage(message);
+      setNotice({ text: message, tone: "red" });
+      return false;
+    } finally {
+      wizardStepTransitionInFlightRef.current = false;
+      setWizardStepTransitioning(false);
+    }
+  };
+
+  const goToStep = async (targetStep: number) => {
     if (
       signedContractEditLocked &&
       targetStep !== advisorSignedContractStep
@@ -8989,7 +9069,7 @@ export default function CreditFactoryConsole({
     }
 
     if (canAdminMoveFreelyInFactory) {
-      setWizardStep(clampWizardStep(targetStep));
+      await persistWizardStep(targetStep);
       return;
     }
 
@@ -9006,12 +9086,12 @@ export default function CreditFactoryConsole({
     }
 
     if (FLEXIBLE_WIZARD_FOR_TESTING) {
-      setWizardStep(clampWizardStep(targetStep));
+      await persistWizardStep(targetStep);
       return;
     }
 
     if (targetStep <= wizardStep) {
-      setWizardStep(clampWizardStep(targetStep));
+      await persistWizardStep(targetStep);
       return;
     }
 
@@ -9091,7 +9171,7 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    setWizardStep(clampWizardStep(targetStep));
+    await persistWizardStep(targetStep);
   };
 
   const advanceToStep = async (targetStep: number) => {
@@ -9125,7 +9205,7 @@ export default function CreditFactoryConsole({
     }
 
     if (canAdminMoveFreelyInFactory) {
-      setWizardStep(clampWizardStep(targetStep));
+      await persistWizardStep(targetStep);
       return;
     }
 
@@ -9142,12 +9222,12 @@ export default function CreditFactoryConsole({
     }
 
     if (FLEXIBLE_WIZARD_FOR_TESTING) {
-      setWizardStep(clampWizardStep(targetStep));
+      await persistWizardStep(targetStep);
       return;
     }
 
     if (targetStep <= wizardStep) {
-      setWizardStep(clampWizardStep(targetStep));
+      await persistWizardStep(targetStep);
       return;
     }
 
@@ -9205,7 +9285,7 @@ export default function CreditFactoryConsole({
         return;
       }
 
-      setWizardStep(clampWizardStep(targetStep));
+      await persistWizardStep(targetStep);
       return;
     }
 
@@ -9240,31 +9320,7 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    const nextStep = clampWizardStep(targetStep);
-    if (iphoneFactory && nextStep === 5 && draftId) {
-      try {
-        cancelPendingDraftAutosave();
-        setDraftStatus("saving");
-        setDraftErrorMessage("");
-        await saveDraftPayloadForVeriff(
-          factoryDraftPayload,
-          nextStep,
-          draftId
-        );
-        setWizardStep(nextStep);
-        return;
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "No se pudo dejar la solicitud lista para enrolamiento.";
-        setDraftStatus("error");
-        setDraftErrorMessage(message);
-        setNotice({ text: message, tone: "red" });
-        return;
-      }
-    }
-    setWizardStep(nextStep);
+    await persistWizardStep(targetStep);
   };
 
   const handleStepTwoContinue = async () => {
@@ -9778,45 +9834,14 @@ export default function CreditFactoryConsole({
       : wizardStep
   ) => {
     const closureFingerprintAtSave = currentIphoneClosureFingerprint;
-    const result = await requestJson<CreditDraftSingleResponse>(
-      "/api/creditos/borradores",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: draftId,
-          currentStep: currentStepOverride,
-          payload: {
-            ...factoryDraftPayload,
-            wizardStep: currentStepOverride,
-          },
-        }),
-      }
+    const item = await saveDraftPayloadForVeriff(
+      factoryDraftPayload,
+      currentStepOverride,
+      draftId,
+      firmaSeguroProcessSigned && currentStepOverride >= 5 ? "DELIVERY_EVIDENCE" : "FULL"
     );
-
-    if (resumeActiveSolicitudFromConflict(result, draftId)) {
-      throw new Error(ACTIVE_SOLICITUD_RESUME_MESSAGE);
-    }
-    if (!result.ok || !result.data?.item) {
-      throw new Error(result.data?.error || "No se pudo guardar el borrador");
-    }
-
-    draftSaveConflictFingerprintRef.current = null;
-    setDraftId(result.data.item.id);
-    setDraftStatus("saved");
     setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
-    if (!analystDataSnapshotRef.current) {
-      analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.data.item.id, {});
-    }
-    if (!analystFinancialSnapshotRef.current || analystFinancialSnapshotRef.current.draftId !== result.data.item.id) {
-      analystFinancialSnapshotRef.current = readAnalystDraftFinancialSnapshot(result.data.item.id, {});
-      analystEvidenceSnapshotRef.current = readAnalystDraftEvidenceSnapshot(result.data.item.id, {});
-    }
-    synchronizeAnalystDraftData(result.data.item);
-
-    return result.data.item.id;
+    return item.id;
   };
 
   const retryStepTwoDraftSave = async () => {
@@ -12085,6 +12110,7 @@ export default function CreditFactoryConsole({
   }, [canSynchronizeAnalystData, draftId, synchronizeAnalystDraftData]);
 
   useEffect(() => {
+    if (wizardStepTransitionInFlightRef.current) return;
     if (draftResumeHydrationRef.current) {
       cancelPendingDraftAutosave();
       return;
@@ -12170,7 +12196,7 @@ export default function CreditFactoryConsole({
           }
 
           if (!result.ok || !result.data?.item) {
-            throw new Error(result.data?.error || "No se pudo guardar el borrador");
+            throw new Error(formatCreditDraftSaveError(result.data));
           }
 
           draftSaveConflictFingerprintRef.current = null;
@@ -12244,6 +12270,7 @@ export default function CreditFactoryConsole({
     simulatorMode,
     synchronizeAnalystDraftData,
     wizardStep,
+    wizardStepTransitioning,
   ]);
 
   useEffect(() => {
@@ -13663,9 +13690,9 @@ export default function CreditFactoryConsole({
                       onClick={() => {
                         void advanceToStep(step.id);
                       }}
-                      disabled={futureStepLocked}
+                      disabled={futureStepLocked || wizardStepTransitioning}
                       aria-current={active ? "step" : undefined}
-                      aria-disabled={futureStepLocked || undefined}
+                      aria-disabled={futureStepLocked || wizardStepTransitioning || undefined}
                       className={[
                         "fp-seller-step-button group mb-2 flex w-full items-center gap-3 rounded-[22px] border px-3 py-3 text-left transition last:mb-0 disabled:cursor-not-allowed disabled:opacity-55",
                         active
@@ -14263,7 +14290,7 @@ export default function CreditFactoryConsole({
                     ) : veriffPreparationError ? (
                       <VeriffDraftPreparationFailure message={veriffPreparationError}
                         onRetry={() => void validateIdentityWithVeriff()}
-                        onBack={() => { setIdentityValidationModalOpen(false); setWizardStep(1); }} />
+                        onBack={() => { setIdentityValidationModalOpen(false); void advanceToStep(1); }} />
                     ) : veriffVisualState === "expired" ||
                       veriffVisualState === "error" ? (
                       <div className="fp-identity-modal-content is-result">
@@ -14461,9 +14488,7 @@ export default function CreditFactoryConsole({
                           className="fp-identity-modal-cancel"
                           onClick={() => {
                             setIdentityValidationModalOpen(false);
-                            setWizardStep(
-                              previousVisibleWizardStep(wizardStep)
-                            );
+                            void advanceToStep(previousVisibleWizardStep(wizardStep));
                           }}
                         >
                           Cancelar y volver
@@ -14747,7 +14772,7 @@ export default function CreditFactoryConsole({
 
                     {dataCreditoApproval ? <div className="mt-4 text-sm">
                       <p className="font-semibold">Datos obtenidos de DataCrédito</p>
-                      {dataCreditoApproval.identity?.original.missing.length ? <p role="status">DataCrédito no entregó: {dataCreditoApproval.identity.original.missing.join(", ")}. Completa los nombres mediante la opción de edición. Para documento o primer apellido faltante, solicita revisión autorizada; no se permite firmar con identidad incompleta.</p> : null}
+                      {dataCreditoApproval.identity?.original.missing.length ? <p role="status">DataCrédito no entregó: {dataCreditoApproval.identity.original.missing.join(", ")}. {dataCreditoFullNameOnly ? "El número y tipo de documento corresponden a la consulta aprobada; estos datos no están verificados por DataCrédito. Veriff deberá validar la misma cédula antes de firmar." : "Completa los nombres mediante la opción de edición. Para documento o primer apellido faltante, solicita revisión autorizada; no se permite firmar con identidad incompleta."}</p> : null}
                       {!dataCreditoApproval.identity ? <p role="alert">La evaluación está guardada, pero no se pudo recuperar una identidad verificable. No repitas una consulta paga; solicita revisión autorizada del expediente.</p> : null}
                       {dataCreditoApproval.identity?.original.fullName && !dataCreditoFullNameOnly ? <p>Nombre completo informado (solo referencia, sin separar automáticamente): {dataCreditoApproval.identity.original.fullName}</p> : null}
                       {dataCreditoCanEditNameComponents && dataCreditoApproval.identity && (clientePrimerNombre !== dataCreditoApproval.identity.original.names || clienteSegundoApellido !== dataCreditoApproval.identity.original.secondSurname) ? <p>Datos corregidos por el asesor. Original DataCrédito: {dataCreditoApproval.identity.original.names || "Nombres no informados"} · {dataCreditoApproval.identity.original.secondSurname || "Segundo apellido no informado"}.</p> : null}
@@ -18799,7 +18824,7 @@ export default function CreditFactoryConsole({
                       <button
                         type="button"
                         onClick={() => resetForm()}
-                        disabled={creating || veriffSubmitting}
+                        disabled={creating || veriffSubmitting || wizardStepTransitioning}
                       >
                         Limpiar
                       </button>
@@ -18808,14 +18833,16 @@ export default function CreditFactoryConsole({
                         disabled={
                           creating ||
                           veriffSubmitting ||
+                          wizardStepTransitioning ||
                           !stepClienteReady
                         }
                         onClick={() => {
                           void advanceToStep(nextVisibleWizardStep(wizardStep));
                         }}
                         className="fp-identity-continue"
+                        aria-busy={wizardStepTransitioning}
                       >
-                        Continuar
+                        {wizardStepTransitioning ? "Guardando…" : "Continuar"}
                         <ArrowRight className="h-4 w-4" strokeWidth={2} />
                       </button>
                     </div>
@@ -18824,11 +18851,8 @@ export default function CreditFactoryConsole({
                   <>
                     <button
                       type="button"
-                      onClick={() =>
-                        setWizardStep((current) =>
-                          previousVisibleWizardStep(current)
-                        )
-                      }
+                      onClick={() => void advanceToStep(previousVisibleWizardStep(wizardStep))}
+                      disabled={wizardStepTransitioning}
                       className="fp-step2-back"
                     >
                       <ArrowLeft aria-hidden="true" />
@@ -18899,9 +18923,9 @@ export default function CreditFactoryConsole({
                 {wizardStep > 1 && !signedContractEditLocked && (
                   <button
                     type="button"
-                    onClick={() =>
-                      setWizardStep((current) => previousVisibleWizardStep(current))
-                    }
+                    onClick={() => void advanceToStep(previousVisibleWizardStep(wizardStep))}
+                    disabled={wizardStepTransitioning}
+                    aria-busy={wizardStepTransitioning}
                     className={wizardStep === 5 ? stepFourStyles.backButton : "rounded-2xl border border-[#cbdedc] bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#f4fbfa]"}
                   >
                     Anterior
@@ -18914,6 +18938,7 @@ export default function CreditFactoryConsole({
                     disabled={
                       creating ||
                       firmaSeguroSubmitting ||
+                      wizardStepTransitioning ||
                       (wizardStep === 4 && !stepIdentityContractReady)
                     }
                     onClick={() => {

@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url);
 const { validateCreditClientForm } = await jiti.import("../lib/credit-client-validation.ts");
 const source = await readFile(new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("factory.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const names = ["getDataCreditoClientDisplayName", "DataCreditoClientNameBar"];
+const names = ["getDataCreditoClientDisplayName", "DataCreditoClientNameBar", "isDataCreditoClientIdentityReady"];
 const declarations = names.map(name => ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast)).join("\n");
 const fullName = "María del Mar José De la Peña Muñoz del Río";
 const identity = { nameMode: "FULL_NAME_ONLY", names: "", firstSurname: "", secondSurname: "", fullName, documentNumber: "123456789", documentType: "CEDULA_DE_CIUDADANIA", missing: [] };
@@ -199,4 +199,28 @@ test("the actual edit flag permits completing missing given names with a verifie
   assert.equal(canEdit({ names: "María José", firstSurname: "", secondSurname: "" }), false);
   assert.equal(canEdit({ names: "", firstSurname: "De la Peña", nameMode: "FULL_NAME_ONLY", fullName }), false);
   assert.equal(canEdit({ names: "María José", firstSurname: "De la Peña", nameMode: "FULL_NAME_ONLY", fullName }), false);
+});
+
+test("full-name-only Cliente can continue with the approved query cedula when provider document fields are absent, retaining final Veriff validation", () => {
+  const stepReady = consoleCallback("stepClienteReady");
+  const missing = { ...identity, documentNumber: "", documentType: "", missing: ["Número de documento", "Tipo de documento"] };
+  const queryApproval = { ...approval, identity: { original: missing, effective: missing } };
+  function execute(overrides = {}) {
+    return load("module.exports.ready = (" + stepReady + ");", {
+      dataCreditoFlowReady: true, dataCreditoApproval: queryApproval, clienteDocumento: "123456789", clienteTipoDocumento: "CEDULA_DE_CIUDADANIA",
+      clientFormValidation: { complete: true }, contactPhoneValidation: { ok: true }, ...overrides,
+    }).ready;
+  }
+  assert.equal(execute(), true);
+  assert.deepEqual(queryApproval.identity.original.missing, ["Número de documento", "Tipo de documento"]);
+  assert.equal(queryApproval.identity.effective.documentNumber, ""); assert.equal(queryApproval.identity.effective.documentType, "");
+  assert.equal(execute({ clienteDocumento: "987654321" }), false);
+  assert.equal(execute({ clienteTipoDocumento: "CEDULA_DE_EXTRANJERIA" }), false);
+  assert.equal(execute({ clientFormValidation: { complete: false } }), false);
+  assert.equal(execute({ contactPhoneValidation: { ok: false } }), false);
+  for (const override of [ { documentNumber: "987654321" }, { documentType: "CEDULA_DE_EXTRANJERIA" }, { fullName: "" } ]) {
+    const invalid = { ...missing, ...override };
+    assert.equal(execute({ dataCreditoApproval: { ...queryApproval, identity: { original: invalid, effective: invalid } } }), false);
+  }
+  assert.ok(source.includes("estos datos no están verificados por DataCrédito. Veriff deberá validar la misma cédula antes de firmar."));
 });

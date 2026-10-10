@@ -92,7 +92,7 @@ test("el paso 2 no exige Veriff y el paso 3 exige Veriff más FirmaSeguro", asyn
     source,
     /Aprueba primero la identidad con Veriff antes de enviar el contrato a FirmaSeguro/
   );
-  assert.match(source, /disabled=\{futureStepLocked\}/);
+  assert.match(source, /disabled=\{futureStepLocked \|\| wizardStepTransitioning\}/);
   assert.match(
     source,
     /step\.id > nextVisibleWizardStep\(wizardStep\)/

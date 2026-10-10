@@ -1,4 +1,4 @@
-import { enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
+import { enforceDataCreditoCustomerIdentityForVeriff } from "@/lib/datacredito/customer-identity";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
@@ -146,7 +146,7 @@ async function validateDraftReadyForVeriff(
   if (!dataCreditoConfig.enabled) {
     return { ok: true as const };
   }
-  const identity = await enforceDataCreditoCustomerIdentity(payload, { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId }, false);
+  const identity = await enforceDataCreditoCustomerIdentityForVeriff(payload, { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId });
   const assessment = await getApprovedDataCreditoAssessmentForCredit({
     assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
     documentNumber: String(draft.clienteDocumento || "").replace(/\D/g, ""),
@@ -577,7 +577,8 @@ export async function POST(request: Request) {
       createPayload = await veriffCreateSession({
         callbackUrl: buildVeriffCompletionUrl(request),
         documentNumber: clienteDocumento,
-        documentType: fullNameIdentity?.documentType || sanitizeText(correctedIdentity
+        // Missing provider type remains missing in identity; capture uses the CC query context.
+        documentType: fullNameIdentity ? (fullNameIdentity.documentType || "CEDULA_DE_CIUDADANIA") : sanitizeText(correctedIdentity
           ? draftPayload.clienteTipoDocumento : body.clienteTipoDocumento),
         endUserId,
         firstName: clientePrimerNombre,
