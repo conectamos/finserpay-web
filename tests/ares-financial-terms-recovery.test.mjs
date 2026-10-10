@@ -58,7 +58,8 @@ function routeFixture(overrides = {}) {
       serializeDataCreditoAssessment: value => ({ assessmentId: value.id, decision: value.status, offer: value.offer }),
       DataCreditoStorageConfigurationError: StubError,
     },
-    "@/lib/datacredito/resume-gate": { canRecoverAssessmentIdentityMismatch: () => false },
+    "@/lib/datacredito/resume-gate": { canRecoverAssessmentIdentityMismatch: () => false, canRecoverPendingAssessment: () => false },
+    "@/lib/datacredito/customer-identity": { getDataCreditoCustomerIdentityForDisplay: async () => null },
     "@/lib/datacredito/secure-record": { DataCreditoSecureRecordConfigurationError: StubError, DataCreditoSecureRecordValidationError: StubError },
     "@/lib/firmaseguro-storage": {
       getLatestFirmaSeguroProcessByDraft: async () => { signatureReads++; return overrides.signatureAfterLock && signatureReads > 1 ? overrides.signatureAfterLock : overrides.signature || null; },
@@ -155,11 +156,11 @@ test("gate de recuperación no carga ni reacepta el GET de una oferta antigua", 
   const noop = () => {};
   const context = { useCallback: fn => fn, financialTermsRecovery: true, initialAssessmentId: "old", initialSolicitudId: 392,
     normalizedInitialDocument: "12345678", normalizedInitialSurname: "PEREZ", normalizedInitialErrorCode: code,
-    identityMismatchRecovery: false, newQueryRetryRecovery: false, platform: "IPHONE",
+    identityMismatchRecovery: false, newQueryRetryRecovery: false, pendingAssessmentRecovery: false, platform: "IPHONE",
     fetch: async url => { calls.push(url); return { ok: true, json: async () => ({ ok: true, enabled: true, configured: true, hasPolicy: true, policy: { version: 8 } }) }; },
     readJson: response => response.json(), readString: value => typeof value === "string" ? value : null,
     CONSENT_ATTESTATION: "consent", setView: value => views.push(value), setCorrelationId: noop, setConsumedCreditId: noop,
-    setConflictMessage: noop, setDailyQueryLimitReached: noop, setRetryMode: noop, setConsentText: noop,
+    setConflictMessage: noop, setConflictCode: noop, setConflictSolicitudId: noop, setDailyQueryLimitReached: noop, setRetryMode: noop, setConsentText: noop,
     setDailyQuotaModalOpen: noop, setDailyQuotaCheckError: noop, setCheckingDailyQuota: noop,
     quotaRefreshAbortRef: { current: null },
     setApprovedResult: noop, setConsentAccepted: noop, setFormErrors: noop, finishBypass: () => assert.fail("No bypass"),
@@ -178,7 +179,7 @@ test("UI recovery conserva validación/equipo y recupera exactamente la cuota el
   assert.doesNotMatch(recovery, /setVeriffValidation|setEquipo|setCuotaInicial|setPlazoMeses|setDataCreditoApproval\(null\)|resetForm/);
   assert.match(consoleSource, /deliveryMode \|\|\s*dataCreditoFinancialTermsRecovery \|\|\s*draftResumeHydrating/);
   assert.match(consoleSource, /sameAssessment \|\| refreshingFinancialTerms\s*\? parseCreditInstallmentSelection\(plazoMeses/);
-  assert.match(gateSource, /reuseOnly: identityMismatchRecovery \|\| financialTermsRecovery,\s*refreshFinancialTerms: financialTermsRecovery/);
+  assert.match(gateSource, /reuseOnly: identityMismatchRecovery \|\| financialTermsRecovery \|\| pendingAssessmentRecovery,\s*refreshFinancialTerms: financialTermsRecovery/);
   assert.match(gateSource, /if \(financialTermsRecovery && financialReuseUnavailable\) return/);
   assert.match(gateSource, /Renovar oferta sin nueva consulta/);
   assert.match(gateSource, /esta pantalla no la realizará automáticamente/);

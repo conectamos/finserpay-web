@@ -1,6 +1,7 @@
 export type DataCreditoIdentity = {
   names: string; firstSurname: string; secondSurname: string;
   documentType: string; documentNumber: string; fullName: string; missing: string[];
+  nameMode?: "FULL_NAME_ONLY";
   manuallyCompleted?: string[];
 };
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -20,11 +21,24 @@ export function extractDataCreditoIdentity(payload: unknown, queriedDocument: st
   const names = available ? [text(basics.primerNombre), text(basics.segundoNombre)].filter(Boolean).join(" ") : "";
   const firstSurname = available ? text(basics.primerApellido) : "";
   const secondSurname = available ? text(basics.segundoApellido) : "";
+  const fullName = available && typeof basics.nombreCompleto === "string"
+    ? basics.nombreCompleto.normalize("NFC").trim()
+    : "";
+  const fullNameOnly = Boolean(fullName) && (!names || !firstSurname);
   return { names, firstSurname, secondSurname, documentNumber, documentType,
-    fullName: available ? text(basics.nombreCompleto) : "",
-    missing: [!names && "Nombre(s)", !firstSurname && "Primer apellido", !documentNumber && "Número de documento", !documentType && "Tipo de documento"].filter(Boolean) as string[] };
+    fullName,
+    ...(fullNameOnly ? { nameMode: "FULL_NAME_ONLY" as const } : {}),
+    missing: [!fullNameOnly && !names && "Nombre(s)", !fullNameOnly && !firstSurname && "Primer apellido", !documentNumber && "Número de documento", !documentType && "Tipo de documento"].filter(Boolean) as string[] };
 }
 export function resolveDataCreditoIdentity(original: DataCreditoIdentity, input: Record<string, unknown>) {
+  if (original.nameMode === "FULL_NAME_ONLY") {
+    if (original.documentNumber !== text(input.clienteDocumento).replace(/[.\s]/g, "") || original.documentType !== text(input.clienteTipoDocumento)) throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");
+    if (!original.fullName || !original.documentNumber || !original.documentType) throw new Error("DATACREDITO_IDENTITY_INCOMPLETE");
+    if (input.clienteNombre && text(input.clienteNombre) !== text(original.fullName)) throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");
+    // An unstructured legal name is authoritative as a whole. Never infer its
+    // components from spaces or from the surname used to request the query.
+    return { ...original, missing: [] };
+  }
   if (original.firstSurname !== text(input.clientePrimerApellido) || original.documentNumber !== text(input.clienteDocumento).replace(/[.\s]/g, "") || original.documentType !== text(input.clienteTipoDocumento)) throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");
   if (!original.firstSurname || !original.documentNumber || !original.documentType) throw new Error("DATACREDITO_IDENTITY_INCOMPLETE");
   const names = text(input.clientePrimerNombre);

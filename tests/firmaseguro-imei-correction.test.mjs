@@ -454,9 +454,9 @@ test("el autosave no cambia el contrato ni restaura la remisión antigua durante
       { code: "SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE" });
   }
   assert.match(solicitudesSource,
-    /const persistedStep = financialCorrectionPending \|\| identityCorrectionPending \|\| imeiCorrectionPending \|\| imeiReissueAwaitingSignature\s*\? 4/);
+    /const persistedStep = (?:clientCorrectionPending \|\| )?financialCorrectionPending \|\| identityCorrectionPending \|\| imeiCorrectionPending \|\| imeiReissueAwaitingSignature\s*\? 4/);
   assert.match(solicitudesSource,
-    /payloadJson,\s*financialCorrectionPending \|\| identityCorrectionPending \|\| imeiCorrectionPending \|\| imeiReissueAwaitingSignature/);
+    /payloadJson,\s*(?:clientCorrectionPending \|\| )?financialCorrectionPending \|\| identityCorrectionPending \|\| imeiCorrectionPending \|\| imeiReissueAwaitingSignature/);
 });
 
 test("el callback puede seguir archivando el estado remoto del proceso historico", () => {

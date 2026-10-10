@@ -1,3 +1,5 @@
+import { getFirmaSeguroFullNameIdentityForDraft } from "@/lib/datacredito/firmaseguro-identity-server";
+import { FirmaSeguroFullNameIdentityError } from "@/lib/datacredito/firmaseguro-identity";
 import { enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import "server-only";
 
@@ -226,6 +228,19 @@ export async function getDraftDataCreditoOffer(
 export async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
   const payload = payloadObject(row.payload);
   const dataCreditoIdentity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
+  let firmaSeguroIdentity: Awaited<ReturnType<typeof getFirmaSeguroFullNameIdentityForDraft>> | null = null;
+  if (dataCreditoIdentity?.effective.nameMode === "FULL_NAME_ONLY") {
+    try {
+      firmaSeguroIdentity = await getFirmaSeguroFullNameIdentityForDraft({
+        fullName: dataCreditoIdentity.effective.fullName,
+        documentNumber: sanitizeText(payload.clienteDocumento),
+        validationId: Number(payload.veriffValidationId), draftId: row.id,
+      });
+    } catch (error) {
+      if (error instanceof FirmaSeguroFullNameIdentityError) throw new CreditValidationError(error.message, error.status, error.code);
+      throw error;
+    }
+  }
   const clientePrimerNombre = sanitizeText(payload.clientePrimerNombre);
   const clientePrimerApellido = sanitizeText(payload.clientePrimerApellido);
   const clienteNombre =
@@ -458,6 +473,7 @@ export async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit>
       borradorId: row.id,
       origen: "BORRADOR_FIRMASEGURO",
       dataCreditoIdentity,
+      ...(firmaSeguroIdentity ? { firmaSeguroIdentity } : {}),
       ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
         ? {
             financiero: {

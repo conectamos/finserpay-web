@@ -168,7 +168,7 @@ async function validateDraftReadyForVeriff(
     };
   }
 
-  return { ok: true as const };
+  return { ok: true as const, identity };
 }
 
 function buildVendorData(params: {
@@ -345,12 +345,14 @@ export async function POST(request: Request) {
     // An advisor tab can still hold the name preceding an analyst correction.
     // The shared operation lock above makes this authoritative payload read safe.
     const draftPayload = payloadObject(draft.payload);
+    const fullNameIdentity = "identity" in readiness && readiness.identity?.effective.nameMode === "FULL_NAME_ONLY"
+      ? readiness.identity.effective : null;
     const correctedIdentity = Number(draftPayload.analystDataRevision) > 0;
-    const clientePrimerNombre = sanitizeText(correctedIdentity
+    const clientePrimerNombre = fullNameIdentity ? fullNameIdentity.names : sanitizeText(correctedIdentity
       ? draftPayload.clientePrimerNombre : body.clientePrimerNombre);
-    const clientePrimerApellido = sanitizeText(correctedIdentity
+    const clientePrimerApellido = fullNameIdentity ? fullNameIdentity.firstSurname : sanitizeText(correctedIdentity
       ? draftPayload.clientePrimerApellido : body.clientePrimerApellido);
-    const clienteNombre = [clientePrimerNombre, clientePrimerApellido]
+    const clienteNombre = fullNameIdentity?.fullName || [clientePrimerNombre, clientePrimerApellido]
       .filter(Boolean)
       .join(" ");
     const retryPolicy = await getVeriffRetryPolicy(draftId);
@@ -575,7 +577,7 @@ export async function POST(request: Request) {
       createPayload = await veriffCreateSession({
         callbackUrl: buildVeriffCompletionUrl(request),
         documentNumber: clienteDocumento,
-        documentType: sanitizeText(correctedIdentity
+        documentType: fullNameIdentity?.documentType || sanitizeText(correctedIdentity
           ? draftPayload.clienteTipoDocumento : body.clienteTipoDocumento),
         endUserId,
         firstName: clientePrimerNombre,
@@ -635,6 +637,16 @@ export async function POST(request: Request) {
       veriff: getVeriffPublicSummary(),
     });
   } catch (error) {
+    if (error instanceof Error && /^DATACREDITO_IDENTITY_[A-Z_]+$/.test(error.message)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: error.message,
+          error: "Guarda y verifica la identidad de DataCrédito antes de iniciar Veriff.",
+        },
+        { status: 409 }
+      );
+    }
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
     return veriffErrorResponse(error);

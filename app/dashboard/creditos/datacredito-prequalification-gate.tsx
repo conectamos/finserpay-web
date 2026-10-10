@@ -221,6 +221,31 @@ function getResponseCode(payload: unknown) {
   ).toUpperCase();
 }
 
+function getResponseSolicitudId(payload: JsonRecord) {
+  const solicitudId = readNumber(payload.solicitudId);
+  return solicitudId !== null && Number.isSafeInteger(solicitudId) && solicitudId > 0
+    ? solicitudId
+    : null;
+}
+
+function getAssessmentConflictMessage(payload: JsonRecord, response: Response) {
+  if (response.status !== 409) return null;
+  const messages: Record<string, string> = {
+    ASSESSMENT_REQUIRES_REVIEW: "La cédula tiene una consulta pendiente de revisión. Solicita la revisión administrativa antes de consultar nuevamente.",
+    ASSESSMENT_IDENTITY_MISMATCH: "El primer apellido no coincide con la consulta vigente de esta cédula. Revisa el apellido antes de continuar.",
+    SOLICITUD_IDENTITY_MISMATCH: "El documento o el primer apellido no coincide con la identidad de la solicitud. Retoma la solicitud correspondiente.",
+    ASSESSMENT_ALREADY_CONSUMED: "La consulta vigente ya se utilizó en otro crédito. Retoma el crédito existente antes de continuar.",
+    ASSESSMENT_CONSUMED_ELSEWHERE: "La consulta vigente ya se utilizó en otro crédito. Retoma el crédito existente antes de continuar.",
+    ASSESSMENT_REUSE_NOT_FOUND: "No se encontró una consulta vigente para reutilizar. No se realizó una nueva consulta a DataCrédito.",
+    ASSESSMENT_RECOVERY_NOT_ALLOWED: "Esta solicitud no admite una nueva evaluación en su estado actual. Retoma la solicitud existente.",
+    EVALUATION_IN_PROGRESS: "Ya existe una evaluación en proceso para esta cédula. Espera su resultado antes de continuar.",
+    SOLICITUD_OPERATION_IN_PROGRESS: "La solicitud tiene una operación en proceso. Espera a que termine antes de continuar.",
+    SOLICITUD_PLATAFORMA_DIFERENTE: "La solicitud corresponde a otra plataforma. Retómala desde su plataforma original.",
+  };
+  const fallback = messages[getResponseCode(payload)];
+  return fallback ? readString(payload.error) || fallback : null;
+}
+
 async function readJson(response: Response): Promise<JsonRecord> {
   const payload = (await response.json().catch(() => null)) as unknown;
   return isRecord(payload) ? payload : {};
@@ -418,14 +443,29 @@ function formatMoney(value: number) {
 }
 
 function TechnicalErrorPanel({
+  conflictMessage,
+  conflictCode,
+  continuationHref,
+  solicitudWallHref = "/dashboard/solicitudes",
+  canReviewSavedResult = false,
+  canRetryBootstrap = false,
   correlationId,
   consumedCreditId,
   onRetry,
 }: {
+  conflictMessage: string | null;
+  conflictCode: string | null;
+  continuationHref: string | null;
+  solicitudWallHref?: string;
+  canReviewSavedResult?: boolean;
+  canRetryBootstrap?: boolean;
   correlationId: string | null;
   consumedCreditId: number | null;
   onRetry: () => void;
 }) {
+  const requiresReview = conflictCode === "ASSESSMENT_REQUIRES_REVIEW";
+  const evaluationInProgress = conflictCode === "EVALUATION_IN_PROGRESS";
+  const operationInProgress = conflictCode === "SOLICITUD_OPERATION_IN_PROGRESS";
   if (consumedCreditId) {
     return (
       <Card
@@ -481,12 +521,27 @@ function TechnicalErrorPanel({
             id="datacredito-technical-error-title"
             className="text-xl font-black text-[var(--fp-graphite)]"
           >
-            No se pudo evaluar
+            {requiresReview ? "Consulta pendiente de revisión" : evaluationInProgress ? "Consulta en proceso" : operationInProgress ? "Solicitud en proceso" : conflictMessage ? "La consulta requiere atención" : "No se pudo evaluar"}
           </h2>
           <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
-            Ocurrió un inconveniente técnico. Esta situación no significa que la
-            solicitud haya sido rechazada.
+            {conflictMessage || "Ocurrió un inconveniente técnico. Esta situación no significa que la solicitud haya sido rechazada."}
           </p>
+          {evaluationInProgress ? (
+            <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
+              Desistir la solicitud no cancela una consulta ya enviada a DataCrédito.
+              Solicita revisión administrativa; no repitas la consulta.
+            </p>
+          ) : null}
+          {requiresReview ? (
+            <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
+              Solicita la revisión administrativa de la consulta existente antes de continuar.
+            </p>
+          ) : null}
+          {conflictCode ? (
+            <p className="mt-3 break-all text-xs text-[var(--fp-muted)]">
+              Motivo: <code>{conflictCode}</code>
+            </p>
+          ) : null}
           {correlationId ? (
             <p className="mt-3 break-all text-xs text-[var(--fp-muted)]">
               Código de seguimiento: <code>{correlationId}</code>
@@ -495,12 +550,27 @@ function TechnicalErrorPanel({
         </div>
       </div>
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        <Button variant="secondary" onClick={onRetry}>
-          <RotateCw className="h-4 w-4" aria-hidden="true" />
-          Intentar de nuevo
-        </Button>
+        {continuationHref ? (
+          <Link href={continuationHref} className="fp-ui-button is-secondary focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]">
+            Continuar solicitud
+          </Link>
+        ) : canReviewSavedResult ? (
+          <Button variant="secondary" onClick={onRetry}>
+            <RotateCw className="h-4 w-4" aria-hidden="true" />
+            Revisar resultado guardado
+          </Button>
+        ) : canRetryBootstrap ? (
+          <Button variant="secondary" onClick={onRetry}>
+            <RotateCw className="h-4 w-4" aria-hidden="true" />
+            Revisar disponibilidad
+          </Button>
+        ) : (
+          <Link href={solicitudWallHref} className="fp-ui-button is-secondary focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]">
+            Volver a solicitudes
+          </Link>
+        )}
         <Link
-          href="/dashboard/creditos?mode=create-client"
+          href="/dashboard/creditos"
           className="fp-ui-button is-ghost focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
@@ -538,6 +608,13 @@ export default function DatacreditoPrequalificationGate({
       normalizedInitialDocument &&
       normalizedInitialErrorCode === "ASSESSMENT_IDENTITY_MISMATCH"
   );
+  const pendingAssessmentRecovery = Boolean(
+    initialSolicitudId &&
+      !initialAssessmentId &&
+      normalizedInitialDocument &&
+      normalizedInitialSurname &&
+      normalizedInitialErrorCode === "EVALUATION_IN_PROGRESS"
+  );
   const financialTermsRecovery = normalizedInitialErrorCode === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE;
   const newQueryRetryRecovery = Boolean(
     initialSolicitudId &&
@@ -568,6 +645,8 @@ export default function DatacreditoPrequalificationGate({
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+  const [conflictCode, setConflictCode] = useState<string | null>(null);
+  const [conflictSolicitudId, setConflictSolicitudId] = useState<number | null>(null);
   const [consumedCreditId, setConsumedCreditId] = useState<number | null>(null);
   const [dailyQueryLimitReached, setDailyQueryLimitReached] =
     useState<DailyQueryLimitReached | null>(null);
@@ -735,6 +814,9 @@ export default function DatacreditoPrequalificationGate({
     async (signal?: AbortSignal) => {
       setView("loading");
       setCorrelationId(null);
+      setConflictMessage(null);
+      setConflictCode(null);
+      setConflictSolicitudId(null);
       setConsumedCreditId(null);
       setDailyQueryLimitReached(null);
       setDailyQuotaModalOpen(false);
@@ -819,7 +901,7 @@ export default function DatacreditoPrequalificationGate({
               return;
             }
           }
-          if (identityMismatchRecovery || newQueryRetryRecovery) {
+          if (identityMismatchRecovery || newQueryRetryRecovery || pendingAssessmentRecovery) {
             setConsentAccepted(false);
             setFormErrors({});
             setRetryMode("form");
@@ -891,6 +973,9 @@ export default function DatacreditoPrequalificationGate({
             return;
           }
 
+          setConflictMessage(getAssessmentConflictMessage(assessmentPayload, assessmentResponse));
+          setConflictCode(getAssessmentConflictMessage(assessmentPayload, assessmentResponse) ? getResponseCode(assessmentPayload) : null);
+          setConflictSolicitudId(getResponseSolicitudId(assessmentPayload) ?? initialSolicitudId);
           setCorrelationId(
             getCorrelationId(assessmentPayload, assessmentResponse)
           );
@@ -960,6 +1045,7 @@ export default function DatacreditoPrequalificationGate({
       identityMismatchRecovery,
       financialTermsRecovery,
       newQueryRetryRecovery,
+      pendingAssessmentRecovery,
       normalizedInitialDocument,
       normalizedInitialSurname,
       normalizedInitialErrorCode,
@@ -1088,6 +1174,8 @@ export default function DatacreditoPrequalificationGate({
     setCorrelationId(null);
     setDailyQueryLimitReached(null);
     setConflictMessage(null);
+    setConflictCode(null);
+    setConflictSolicitudId(null);
     setRetryMode("form");
 
     try {
@@ -1106,7 +1194,7 @@ export default function DatacreditoPrequalificationGate({
             firstSurname: validation.firstSurname,
             platform,
             consentAccepted: true,
-            reuseOnly: identityMismatchRecovery || financialTermsRecovery,
+            reuseOnly: identityMismatchRecovery || financialTermsRecovery || pendingAssessmentRecovery,
             refreshFinancialTerms: financialTermsRecovery,
           }),
         }
@@ -1159,6 +1247,9 @@ export default function DatacreditoPrequalificationGate({
           setView("seller-session-required");
           return;
         }
+        setConflictMessage(getAssessmentConflictMessage(payload, response));
+        setConflictCode(getAssessmentConflictMessage(payload, response) ? getResponseCode(payload) : null);
+        setConflictSolicitudId(getResponseSolicitudId(payload) ?? initialSolicitudId);
         setCorrelationId(getCorrelationId(payload, response));
         setView("technical-error");
         return;
@@ -1203,7 +1294,11 @@ export default function DatacreditoPrequalificationGate({
       return;
     }
 
+    if (!pendingAssessmentRecovery || conflictCode !== "EVALUATION_IN_PROGRESS" || conflictSolicitudId !== initialSolicitudId) return;
     setCorrelationId(null);
+    setConflictMessage(null);
+    setConflictCode(null);
+    setConflictSolicitudId(null);
     setView("ready");
   };
 
@@ -1429,9 +1524,15 @@ export default function DatacreditoPrequalificationGate({
     );
   }
 
-  if (view === "technical-error" && (retryMode === "bootstrap" || consumedCreditId)) {
+  if (view === "technical-error") {
     return (
       <TechnicalErrorPanel
+        conflictMessage={conflictMessage}
+        conflictCode={conflictCode}
+        continuationHref={conflictSolicitudId && conflictSolicitudId !== initialSolicitudId ? `/dashboard/creditos?mode=create-client&platform=${platform.toLowerCase()}&draft=${conflictSolicitudId}` : null}
+        solicitudWallHref={solicitudWallHref}
+        canReviewSavedResult={pendingAssessmentRecovery && conflictCode === "EVALUATION_IN_PROGRESS" && conflictSolicitudId === initialSolicitudId}
+        canRetryBootstrap={retryMode === "bootstrap" && !conflictCode}
         correlationId={correlationId}
         consumedCreditId={consumedCreditId}
         onRetry={retryTechnicalFailure}
@@ -1593,13 +1694,6 @@ export default function DatacreditoPrequalificationGate({
             </div>
           </header>
 
-          {view === "technical-error" ? (
-            <div className={styles.errorNotice} role="alert">
-              <strong>No pudimos completar la evaluación.</strong>
-              <p>Conservamos los datos. Puedes corregirlos y volver a intentar.</p>
-              {correlationId ? <p>Referencia: <code>{correlationId}</code></p> : null}
-            </div>
-          ) : null}
           {financialTermsRecovery ? (
             <div className={styles.statusNotice} role="status">
               {financialReuseUnavailable
@@ -1619,6 +1713,13 @@ export default function DatacreditoPrequalificationGate({
                 <Link className="fp-ui-button is-secondary" href="/dashboard/creditos?mode=simulator">Ir al simulador</Link>
               </div>
               {dailyQuotaCheckError ? <p className="mt-3" role="alert">{dailyQuotaCheckError}</p> : null}
+            </div>
+          ) : null}
+          {pendingAssessmentRecovery ? (
+            <div className={styles.statusNotice} role="status">
+              Esta solicitud está pendiente de recuperar una consulta existente.
+              Revisa el resultado guardado con la misma cédula y primer apellido;
+              esta acción no envía una nueva consulta a DataCrédito.
             </div>
           ) : null}
           {identityMismatchRecovery ? (
@@ -1803,6 +1904,8 @@ export default function DatacreditoPrequalificationGate({
                 <>
                   {financialTermsRecovery
                     ? "Renovar oferta sin nueva consulta"
+                    : pendingAssessmentRecovery
+                    ? "Revisar resultado guardado"
                     : identityMismatchRecovery
                     ? "Recuperar consulta vigente"
                     : "Evaluar solicitud"}

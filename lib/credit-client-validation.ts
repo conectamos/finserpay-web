@@ -109,7 +109,8 @@ function hasErrors(
 
 export function validateCreditClientForm(
   values: CreditClientFormValues,
-  now = new Date()
+  now = new Date(),
+  options: { verifiedFullName?: string } = {}
 ): CreditClientValidationResult {
   const errors: Partial<Record<CreditClientField, string>> = {};
   const required = (field: CreditClientField, label: string) => {
@@ -118,8 +119,14 @@ export function validateCreditClientForm(
     }
   };
 
-  required("clientePrimerNombre", "El primer nombre");
-  required("clientePrimerApellido", "El primer apellido");
+  // Only a caller that has recovered authoritative identity may supply this option.
+  // A full name does not imply any particular separation into names and surnames.
+  const fullName = normalizeText(options.verifiedFullName);
+  const hasVerifiedFullName = fullName.length >= 2 && fullName.length <= 270 && /^[\p{L}\p{M} '’.-]+$/u.test(fullName);
+  if (!hasVerifiedFullName) {
+    required("clientePrimerNombre", "El primer nombre");
+    required("clientePrimerApellido", "El primer apellido");
+  }
   required("clienteTipoDocumento", "El tipo de documento");
   required("clienteDocumento", "El numero de documento");
   required("clienteFechaExpedicion", "La fecha de expedicion");
@@ -140,14 +147,14 @@ export function validateCreditClientForm(
   required("referenciaFamiliar2Telefono", "El telefono de la referencia 2");
 
   if (
-    !errors.clientePrimerNombre &&
+    !hasVerifiedFullName && !errors.clientePrimerNombre &&
     normalizeText(values.clientePrimerNombre).length < 2
   ) {
     errors.clientePrimerNombre = "Ingresa un primer nombre valido.";
   }
 
   if (
-    !errors.clientePrimerApellido &&
+    !hasVerifiedFullName && !errors.clientePrimerApellido &&
     normalizeText(values.clientePrimerApellido).length < 2
   ) {
     errors.clientePrimerApellido = "Ingresa un primer apellido valido.";
