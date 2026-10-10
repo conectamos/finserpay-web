@@ -112,10 +112,10 @@ test("rechaza telefonos repetidos entre cliente y referencias", () => {
     new Date("2026-08-25T12:00:00.000Z")
   );
 
-  assert.match(result.errors.clienteTelefono, /diferente/i);
+  assert.equal(result.errors.clienteTelefono, undefined);
   assert.match(result.errors.referenciaFamiliar1Telefono, /diferente/i);
   assert.match(result.errors.referenciaFamiliar2Telefono, /diferente/i);
-  assert.equal(result.contactComplete, false);
+  assert.equal(result.contactComplete, true);
   assert.equal(result.referencesComplete, false);
   assert.equal(result.complete, false);
 });

@@ -1,0 +1,32 @@
+import React, {useState} from 'react';
+import {ArrowLeft,ArrowRight} from 'lucide-react';
+import {createRoot} from 'react-dom/client';
+import CustomerDetailsForm from '@/app/dashboard/creditos/customer-details-form';
+import {validateCreditClientForm} from '@/lib/credit-client-validation';
+import styles from '@/app/dashboard/creditos/customer-details-form.module.css';
+import {DataCreditoClientNameBar} from './name-bar';
+const empty={clientePrimerNombre:'ANA MARIA',clientePrimerApellido:'PRUEBA',clienteTipoDocumento:'CEDULA_DE_CIUDADANIA',clienteDocumento:'12345678',clienteFechaExpedicion:'',clienteFechaNacimiento:'',clienteTelefono:'',clienteCorreo:'',clienteDepartamento:'',clienteCiudad:'',clienteGenero:'',clienteEstadoCivil:'',clienteEstrato:'',clienteDireccion:'',referenciaFamiliar1Nombre:'',referenciaFamiliar1Parentesco:'',referenciaFamiliar1Telefono:'',referenciaFamiliar2Nombre:'',referenciaFamiliar2Parentesco:'',referenciaFamiliar2Telefono:''};
+const valid={...empty,clienteFechaExpedicion:'2015-01-01',clienteFechaNacimiento:'1990-01-01',clienteTelefono:'3100000000',clienteCorreo:'qa@example.test',clienteDepartamento:'Tolima',clienteCiudad:'Ibagué',clienteGenero:'FEMENINO',clienteEstadoCivil:'SOLTERO',clienteEstrato:'3',clienteDireccion:'Calle de pruebas 123',referenciaFamiliar1Nombre:'Referencia QA uno',referenciaFamiliar1Parentesco:'Madre',referenciaFamiliar1Telefono:'3110000000',referenciaFamiliar2Nombre:'Referencia QA dos',referenciaFamiliar2Parentesco:'Padre',referenciaFamiliar2Telefono:'3120000000'};
+const option=(value:string)=>({value,label:value});
+function Harness(){
+ const mode=new URLSearchParams(location.search).get('mode');
+ const [values,setValues]=useState(mode==='contact'?{...valid,clienteCorreo:''}:mode==='references'?{...valid,referenciaFamiliar2Telefono:''}:mode==='complete'?valid:empty);
+ const [editing,setEditing]=useState(false),[second,setSecond]=useState('ENSAYO'),[touched,setTouched]=useState({});
+ const validation=validateCreditClientForm(values);
+ const error=(field:string)=>touched[field]?validation.errors[field]||'':'';
+ const fieldProps=(field:string)=>({id:field,onBlur:()=>setTouched({...touched,[field]:true}),'aria-invalid':Boolean(error(field)),'aria-describedby':error(field)?field+'-error':undefined});
+ const onChange=(field:string,value:string)=>setValues(current=>({...current,[field]:value,...field==='clienteDepartamento'?{clienteCiudad:''}:{}}));
+ const approval={identity:{effective:{}},offer:{initialPaymentPercentage:20,maxFinancedAmount:2000000,installmentCount:12,maxInstallmentAmount:250000,suretyPercentage:4}};
+ window.qaValues=values;
+ return <main className="fp-credit-factory"><div className="fp-credit-factory-frame"><div style={{maxWidth:1200,margin:'70px auto 0',padding:'0 16px'}}>
+ <div className={styles.stage}>
+ <CustomerDetailsForm values={values} validation={validation} approval={approval} canEdit editing={editing} onEdit={()=>setEditing(!editing)} onChange={onChange} fieldProps={fieldProps} fieldError={error}
+ documentOptions={[{value:'CEDULA_DE_CIUDADANIA',label:'Cédula de ciudadanía'}]} departmentOptions={['Tolima','Bogotá'].map(option)} genderOptions={['FEMENINO','MASCULINO'].map(option)} maritalOptions={['SOLTERO','CASADO'].map(option)} strata={['1','2','3','4','5','6']} cities={['Ibagué','Espinal']}
+ nameFields={<DataCreditoClientNameBar fullName={[values.clientePrimerNombre,values.clientePrimerApellido,second].join(' ')} canEditComponents editing={editing} givenNames={values.clientePrimerNombre} secondSurname={second} onGivenNamesChange={value=>onChange('clientePrimerNombre',value)} onSecondSurnameChange={setSecond} givenNamesInputProps={fieldProps('clientePrimerNombre')} givenNamesError={error('clientePrimerNombre')}/>}/>
+ </div>
+ <div className={styles.actions}>
+ <button className={styles.cancel}><ArrowLeft aria-hidden="true" width={16} height={16}/>Cancelar</button>
+ <div className={styles.actionButtons}><button>Limpiar</button><button className={styles.continue} disabled={!validation.complete}>Continuar<ArrowRight aria-hidden="true" width={16} height={16}/></button></div></div>
+ </div></div></main>;
+}
+createRoot(document.getElementById('root')).render(<Harness/>);

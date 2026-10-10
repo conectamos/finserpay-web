@@ -212,3 +212,18 @@ test('legacy audited name corrections remain effective after switching to full p
   assert.equal(data.clienteNombre,corrected.fullName);assert.equal(data.clientePrimerNombre,'María José');assert.equal(data.clientePrimerApellido,'De la Peña');assert.equal(data.clienteSegundoApellido,'');assert.equal(rows.length,0);
  } finally {providerIdentityOverride=null;}
 });
+
+test('simultaneous duplicate name autosaves create one audit with the original actor and preserve contact data',async()=>{
+ rows.length=0;await db.query('DELETE FROM "DataCreditoIdentityCorrection"');
+ const values={...payload,clienteCorreo:'cliente@example.invalid',referenciaFamiliar1Telefono:'3011234567'};
+ const results=await Promise.all([enforce({...values},scope),enforce({...values},scope)]);
+ assert.equal(rows.length,1);assert.equal(results[0].effective.names,'María José');assert.equal(results[1].effective.names,'María José');
+ const audit=await db.query('SELECT "previous","effective","userId","sellerId","createdAt" FROM "DataCreditoIdentityCorrection"');
+ assert.equal(audit.rows.length,1);assert.equal(audit.rows[0].previous.names,original.names);
+ assert.equal(audit.rows[0].userId,scope.userId);assert.equal(audit.rows[0].sellerId,scope.sellerId);assert.ok(audit.rows[0].createdAt);
+ const partial={...values};delete partial.clientePrimerNombre;delete partial.clienteSegundoApellido;
+ await enforce(partial,scope);
+ assert.equal(partial.clientePrimerNombre,'María José');assert.equal(partial.clienteSegundoApellido,'');
+ assert.equal(partial.clienteCorreo,values.clienteCorreo);assert.equal(partial.referenciaFamiliar1Telefono,values.referenciaFamiliar1Telefono);
+ assert.equal(rows.length,1);
+});

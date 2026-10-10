@@ -212,7 +212,9 @@ export function validateCreditClientForm(
     }
   }
 
-  for (const field of phoneFields) {
+  // The conflict belongs to the references block. Invalidating the customer's
+  // otherwise valid number would lock the very block needed to fix it.
+  for (const field of phoneFields.slice(1)) {
     const normalizedPhone = digits(values[field]);
     if (errors[field] || normalizedPhone.length !== 10) {
       continue;

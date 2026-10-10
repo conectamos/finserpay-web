@@ -94,10 +94,7 @@ test("el formulario, la creación final y FirmaSeguro comparten la misma regla",
     clientSource.indexOf("const stepClienteReady"),
     clientSource.indexOf("const otpReady")
   );
-  const pasteHandlerBlock = clientSource.slice(
-    clientSource.indexOf("const pasteCreditContactPhone"),
-    clientSource.indexOf("const stepClienteReady")
-  );
+  const formSource = readFileSync(new URL("../app/dashboard/creditos/customer-details-form.tsx", import.meta.url), "utf8");
   const otpBlock = clientSource.slice(
     clientSource.indexOf("const createWhatsAppOtp"),
     clientSource.indexOf("const verifyOtp")
@@ -112,23 +109,20 @@ test("el formulario, la creación final y FirmaSeguro comparten la misma regla",
   );
 
   assert.match(stepClienteReadyBlock, /contactPhoneValidation\.ok/);
-  assert.match(pasteHandlerBlock, /event\.preventDefault\(\)/);
-  assert.match(pasteHandlerBlock, /event\.clipboardData\.getData\("text"\)/);
-  assert.equal(
-    (clientSource.match(/pasteCreditContactPhone\(\s*event,/g) || []).length,
-    3
-  );
+  assert.match(formSource, /event\.preventDefault\(\)/);
+  assert.match(formSource, /event\.clipboardData\.getData\("text"\)/);
+  assert.match(formSource, /normalizeCreditContactPhoneInput/);
+  assert.match(formSource, /field\("clienteTelefono"/);
+  assert.match(formSource, /referenciaFamiliar\$\{number\}Telefono/);
+  assert.match(formSource, /\[1, 2\] as const/);
   assert.match(otpBlock, /if \(!clienteTelefonoValido\)/);
   assert.doesNotMatch(otpBlock, /contactPhoneValidation/);
   assert.match(
     clientSource,
     /disabled=\{\s*creating \|\|\s*veriffSubmitting \|\|\s*wizardStepTransitioning \|\|\s*!stepClienteReady/
   );
-  assert.match(clientSource, /normalizeCreditContactPhoneInput/);
-  assert.ok(
-    (clientSource.match(/maxLength=\{CREDIT_CONTACT_PHONE_LENGTH\}/g) || []).length >= 3
-  );
-  assert.ok((clientSource.match(/inputMode="numeric"/g) || []).length >= 3);
+  assert.match(formSource, /maxLength=\{phone \? 10/);
+  assert.match(formSource, /inputMode=\{phone \? "numeric"/);
   assert.match(createRoutePhoneBlock, /validateCreditContactPhones\(\{/);
   assert.match(createRoutePhoneBlock, /code: contactPhoneValidation\.code/);
   assert.match(createRoutePhoneBlock, /\{ status: 400 \}/);
