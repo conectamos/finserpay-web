@@ -42,6 +42,7 @@ function processSnapshotCallback() {
 const names = ["IdentityValidationDialog", "getDataCreditoClientDisplayName", "serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "VeriffDraftPreparationFailure", "cancelPendingDraftAutosave", "updateEquipmentImeiConfirmation", "synchronizeEquipmentImeiConfirmation", "resolvePersistedDraftStep", "recoverEquipmentImeiConfirmation", "saveDraftPayloadForVeriff", "validateIdentityWithVeriff", "refreshVeriffValidation", "applyVeriffIdentityData", "veriffApprovalCanUnlockClient", "veriffIdentityHasAutofillData", "getDataCreditoVeriffDocumentRejectionMessage"];
 const declarations = names.map(declaration).join("\n") + "\nconst applyProcessSnapshot = " + processSnapshotCallback() + ";";
 const autosaveEffect = effectContaining("closureFingerprintAtSchedule");
+const draftUnmountEffect = effectContaining("() => cancelPendingDraftAutosave(true)");
 const pollingEffect = effectContaining("attempts >= VERIFF_POLL_MAX_ATTEMPTS");
 const mediaEffect = effectContaining("void refreshVeriffMedia(veriffValidation)");
 const fullName = "María del Mar José De la Peña Muñoz del Río";
@@ -60,11 +61,12 @@ function fixture() {
     equipmentImeiConfirmation: { draftId: 2883, imei: "035809100123456" },
     equipmentImeiConfirmationRef: { current: { draftId: 2883, imei: "035809100123456" } },
     currentEquipmentDraftIdRef: { current: 2883 }, currentEquipmentImeiRef: { current: "035809100123456" },
+    currentDraftDocumentRef: { current: JSON.stringify(["CEDULA_DE_CIUDADANIA", "123456789"]) },
     mobileCaptureSession: null, veriffConfig: { configured: true }, veriffValidation: null, veriffExpectedDraftId: 2883,
     veriffInlineMessage: "", veriffPreparationError: null, veriffSubmitting: false,
     veriffRequestInFlightRef: { current: false }, veriffRefreshGenerationRef: { current: 0 }, veriffRefreshFlightRef: { current: null },
     wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false,
-    draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
+    draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftExplicitSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
     analystDataSnapshotRef: { current: {} }, analystFinancialSnapshotRef: { current: { draftId: 2883 } }, analystEvidenceSnapshotRef: { current: {} },
     auditedIdentityCorrectionRef: { current: false }, applyingVeriffIdentityRef: { current: false },
     resumeActiveSolicitudFromConflict: () => false, replaceDraftInUrl() {}, synchronizeAnalystDraftData() {},
@@ -163,6 +165,56 @@ test("full provider name saves before Veriff and polling preserves it without cr
   assert.equal(f.requests.some(item => item.url.includes("datacredito")), false);
   assert.equal(f.timers.size, 0, "la aprobación terminal detiene las consultas");
   poller.dispose();
+});
+
+test("la aprobación de identidad puede reprogramar el autosave mientras se guarda su validación", async () => {
+  const f = fixture(); let finishValidationSave; let draftSaves = 0;
+  const approved = { ...pending, status: "APPROVED", approved: true, pending: false,
+    trusted: true, decidedAt: "2026-10-10T00:00:00Z", identityDocumentStatus: "match",
+    identityDocumentNumber: "123456789", identityDataAvailable: true,
+    identityData: { firstName: "María", lastName: "De la Peña", documentNumber: "123456789" } };
+  f.setTransport(async (url, options) => {
+    if (url === "/api/creditos/veriff") return { ok: true, status: 200, data: { validation: approved } };
+    assert.equal(url, "/api/creditos/borradores");
+    const item = { id: 2883, payload: JSON.parse(options.body).payload };
+    if (++draftSaves === 1) return { ok: true, status: 200, data: { item } };
+    return new Promise(resolve => { finishValidationSave = () => resolve({ ok: true, status: 200, data: { item } }); });
+  });
+  const cleanup = f.mount(autosaveEffect);
+  const validating = f.functions.validateIdentityWithVeriff();
+  await flush();
+  assert.equal(f.context.veriffValidation.approved, true, "la respuesta de identidad ya actualizó el estado");
+  assert.equal(typeof finishValidationSave, "function");
+  const generationDuringSave = f.context.draftSaveGenerationRef.current;
+  cleanup();
+  f.context.factoryDraftPayload = { ...f.context.factoryDraftPayload, veriffValidationId: approved.id };
+  f.mount(autosaveEffect);
+  assert.ok(f.context.draftSaveGenerationRef.current > generationDuringSave,
+    "se ejecutó la cancelación real del autosave al cambiar la validación");
+  finishValidationSave();
+  const validation = await validating;
+  assert.equal(validation?.id, approved.id);
+  assert.equal(f.context.veriffInlineMessage, "");
+  assert.equal(f.context.veriffPreparationError, null);
+  assert.equal(f.context.draftStatus, "saved");
+  assert.equal(f.context.draftErrorMessage, "");
+  assert.equal(f.context.notice.tone, "emerald");
+  assert.equal(f.requests.filter(request => request.url === "/api/creditos/veriff").length, 1);
+  assert.equal(f.requests.some(request => request.url.includes("datacredito")), false);
+});
+
+test("salir del formulario invalida un guardado pendiente aunque no cambie la solicitud", async () => {
+  const f = fixture(); let finish;
+  f.setTransport((_url, options) => new Promise(resolve => {
+    finish = () => resolve({ ok: true, status: 200,
+      data: { item: { id: 2883, payload: JSON.parse(options.body).payload } } });
+  }));
+  const unmount = f.mount(draftUnmountEffect);
+  const saving = f.functions.saveDraftPayloadForVeriff(f.context.factoryDraftPayload, 4, 2883);
+  const rejected = assert.rejects(saving, /solicitud cambió/);
+  unmount(); finish(); await rejected;
+  assert.notEqual(f.context.draftStatus, "saved");
+  assert.equal(f.context.draftId, 2883);
 });
 
 test("restaurar identidad consulta sólo el estado local y conserva el nombre completo del proveedor", async () => {

@@ -12,7 +12,7 @@ import { compareStrictIdentityDocuments } from "@/lib/veriff-identity";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import { getApprovedDataCreditoAssessmentForCredit } from "./storage";
 import { enforceDataCreditoCustomerIdentity } from "./customer-identity";
-import { resolveReviewedFirmaSeguroFullNameIdentity } from "./firmaseguro-identity";
+import { FirmaSeguroFullNameIdentityError, resolveFirmaSeguroFullNameIdentityFromEvidence, resolveReviewedFirmaSeguroFullNameIdentity } from "./firmaseguro-identity";
 
 type Database = Pick<Prisma.TransactionClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 type Draft = { id: number; estado: string; creditoId: number | null; usuarioId: number; vendedorId: number | null;
@@ -59,7 +59,15 @@ async function readDraft(db: Database, draftId: number, lock = false) {
 function mayReview(actor: FirmaSeguroIdentityReviewActor, draft: Draft) {
   return actor.admin && (actor.central || (actor.aliadoId !== null && actor.aliadoId === draft.aliadoId));
 }
-async function context(db: Database, draft: Draft, mutation = false) {
+function assertManualReviewEvidence(evidence: ReturnType<typeof extractVeriffIdentityData>[], canonicalFullName: string) {
+  for (const identity of evidence) {
+    if (identity && (text(identity.firstName) || text(identity.lastName) ||
+      (text(identity.fullName) && comparable(identity.fullName) !== comparable(canonicalFullName)))) {
+      fail("FIRMASEGURO_REVIEW_PROVIDER_COMPONENTS", "Veriff entregó componentes o identidad contradictoria. Requiere revisar esa evidencia; esta opción no la reemplaza.");
+    }
+  }
+}
+async function context(db: Database, draft: Draft, mutation = false, manualReview = true) {
   if (draft.estado !== "ABIERTO" || draft.creditoId ||
     new Date(draft.expiresAt || new Date(new Date(draft.createdAt).getTime() + 15 * 86400000)).getTime() <= Date.now()) {
     fail("FIRMASEGURO_REVIEW_DRAFT_CLOSED", "La solicitud ya no está abierta para esta revisión.");
@@ -90,13 +98,12 @@ async function context(db: Database, draft: Draft, mutation = false) {
     serialized?.identityDocumentStatus !== "match" || !compareStrictIdentityDocuments(serialized.identityDocumentNumber, documentNumber).ok) {
     fail("FIRMASEGURO_REVIEW_VERIFF_REQUIRED", "Se requiere la última aprobación Veriff confiable para esta misma cédula y solicitud.");
   }
-  for (const evidence of [extractVeriffIdentityData(validation.decisionPayload), extractVeriffIdentityData(validation.webhookPayload)]) {
-    if (evidence && (text(evidence.firstName) || text(evidence.lastName) ||
-      (text(evidence.fullName) && comparable(evidence.fullName) !== comparable(identity.effective.fullName)))) {
-      fail("FIRMASEGURO_REVIEW_PROVIDER_COMPONENTS", "Veriff entregó componentes o identidad contradictoria. Requiere revisar esa evidencia; esta opción no la reemplaza.");
-    }
-  }
-  return { draft, assessmentId, identity, validation, documentNumber, documentHash: hash(documentNumber), canonicalFullName: identity.effective.fullName };
+  const providerIdentities = [extractVeriffIdentityData(validation.decisionPayload, { inferFullName: false }),
+    extractVeriffIdentityData(validation.webhookPayload, { inferFullName: false })]
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+  if (manualReview) assertManualReviewEvidence(providerIdentities, identity.effective.fullName);
+  return { draft, assessmentId, identity, validation, documentNumber, documentHash: hash(documentNumber),
+    canonicalFullName: identity.effective.fullName, providerIdentities, serialized };
 }
 async function latestReview(db: Database, draftId: number, assessmentId: string) {
   const rows = await db.$queryRawUnsafe<Review[]>(`SELECT * FROM "FirmaSeguroIdentityReview"
@@ -129,20 +136,36 @@ export async function getFirmaSeguroIdentityReviewDetail(draftId: number, actor:
   if (!draft) fail("FIRMASEGURO_REVIEW_NOT_FOUND", "Solicitud no encontrada.", 404);
   const canReview = mayReview(actor, draft);
   try {
-    const ctx = await context(prisma, draft);
-    const review = await latestReview(prisma, draftId, ctx.assessmentId);
+    const ctx = await context(prisma, draft, false, false);
+    let providerReady = false;
+    try {
+      resolveFirmaSeguroFullNameIdentityFromEvidence({ fullName: ctx.canonicalFullName, documentNumber: ctx.documentNumber,
+        validationId: ctx.validation.id, veriffDocumentNumber: ctx.serialized?.identityDocumentNumber,
+        identities: ctx.providerIdentities });
+      providerReady = true;
+    } catch (error) { if (!(error instanceof FirmaSeguroFullNameIdentityError)) throw error; }
+    let eligible = true;let providerReason: string | null = null;
+    try { assertManualReviewEvidence(ctx.providerIdentities, ctx.canonicalFullName); }
+    catch (error) {
+      if (!(error instanceof FirmaSeguroIdentityReviewError)) throw error;
+      eligible = false;providerReason = error.message;
+    }
+    const review = eligible ? await latestReview(prisma, draftId, ctx.assessmentId) : null;
     const current = review && metadata(ctx, review) ? review : null;
     let idle = true;let reason: string | null = null;
     try { await assertUnsignedIdle(prisma, draftId); } catch (error) { idle = false;reason = error instanceof FirmaSeguroIdentityReviewError ? error.message : "Revisa el envío vigente."; }
-    return { draftId, canReview, canSave: canReview && idle && !current, eligible: true,
+    return { draftId, canReview, canSave: canReview && eligible && idle && !current, eligible,
+      signingReady: providerReady || Boolean(current), signingSource: providerReady ? "VERIFF" as const : current ? "AUTHORIZED_REVIEW" as const : null,
       canonicalFullName: ctx.canonicalFullName, documentNumber: ctx.documentNumber,
       validationId: ctx.validation.id, assessmentId: ctx.assessmentId,
       providerComponents: { names: ctx.identity.effective.names, firstSurname: ctx.identity.effective.firstSurname, secondSurname: ctx.identity.effective.secondSurname },
       lockedFirstSurname: review?.firstSurname || ctx.identity.effective.firstSurname || "", review: publicReview(current),
-      reason: current ? "Los componentes ya quedaron registrados y no pueden reemplazarse." : reason };
+      reason: providerReady ? "Veriff ya entregó los componentes válidos del firmante; no requieren revisión manual."
+        : providerReason || (current ? "Los componentes ya quedaron registrados y no pueden reemplazarse." : reason) };
   } catch (error) {
     if (!(error instanceof FirmaSeguroIdentityReviewError)) throw error;
-    return { draftId, canReview, canSave: false, eligible: false, canonicalFullName: "", documentNumber: text(draft.clienteDocumento),
+    return { draftId, canReview, canSave: false, eligible: false, signingReady: false, signingSource: null,
+      canonicalFullName: "", documentNumber: text(draft.clienteDocumento),
       validationId: null, assessmentId: draft.dataCreditoAssessmentId,
       providerComponents: { names: "", firstSurname: "", secondSurname: "" }, lockedFirstSurname: "", review: null, reason: error.message };
   }

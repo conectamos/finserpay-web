@@ -89,6 +89,7 @@ import IdentitySignatureOverview from "./identity-signature-overview";
 import VeriffIdentityDialog from "./veriff-identity-dialog";
 import equipmentSignatureStyles from "./equipment-signature.module.css";
 import { useCreditProcessLiveStatus } from "./use-credit-process-live-status";
+import { useFirmaSeguroIdentityReadiness } from "./use-firma-seguro-identity-readiness";
 import FirmaSeguroIdentityReview from "./firma-seguro-identity-review";
 import clientValidationStyles from "./client-validation-shell.module.css";
 import {
@@ -3300,6 +3301,7 @@ export default function CreditFactoryConsole({
   const equipmentImeiConfirmationRef = useRef<{ draftId: number; imei: string } | null>(null);
   const currentEquipmentDraftIdRef = useRef<number | null>(null);
   const currentEquipmentImeiRef = useRef("");
+  const currentDraftDocumentRef = useRef("");
   const [stepTwoContinuing, setStepTwoContinuing] = useState(false);
   const [simulatorInitialPaymentPercentage, setSimulatorInitialPaymentPercentage] =
     useState<SimulatorInitialPaymentPercentage>(
@@ -3488,6 +3490,7 @@ export default function CreditFactoryConsole({
   });
   const draftSaveTimerRef = useRef<number | null>(null);
   const draftSaveGenerationRef = useRef(0);
+  const draftExplicitSaveGenerationRef = useRef(0);
   const draftSaveAbortControllerRef = useRef<AbortController | null>(null);
   const stepTwoContinueInFlightRef = useRef(false);
   const activeSolicitudRedirectingRef = useRef(false);
@@ -3512,16 +3515,18 @@ export default function CreditFactoryConsole({
   } | null>(null);
   const creditSettingsRequestGenerationRef = useRef(0);
   const applyingDraftRef = useRef(false);
-  const cancelPendingDraftAutosave = useCallback(() => {
+  const cancelPendingDraftAutosave = useCallback((invalidateExplicitSaves = false) => {
     if (draftSaveTimerRef.current) {
       window.clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
     }
 
     draftSaveGenerationRef.current += 1;
+    if (invalidateExplicitSaves) draftExplicitSaveGenerationRef.current += 1;
     draftSaveAbortControllerRef.current?.abort();
     draftSaveAbortControllerRef.current = null;
   }, []);
+  useEffect(() => () => cancelPendingDraftAutosave(true), [cancelPendingDraftAutosave]);
   const deliveryEvidenceDeviceIdentityRef = useRef(
     deliveryEvidenceDeviceIdentity({
       platform: currentDevicePlatform,
@@ -4358,6 +4363,7 @@ export default function CreditFactoryConsole({
   const imeiDigits = imei.replace(/\D/g, "");
   currentEquipmentImeiRef.current = imeiDigits;
   currentEquipmentDraftIdRef.current = draftId;
+  currentDraftDocumentRef.current = JSON.stringify([clienteTipoDocumento, clienteDocumento]);
   const equipmentImeiConfirmed = equipmentImeiConfirmation?.draftId === draftId &&
     equipmentImeiConfirmation.imei === imeiDigits && /^\d{15}$/.test(imeiDigits);
   const updateEquipmentImeiConfirmation = useCallback((binding: { draftId: number; imei: string } | null) => {
@@ -4377,7 +4383,7 @@ export default function CreditFactoryConsole({
   };
   const recoverEquipmentImeiConfirmation = (currentDraftId: number | null) => {
     if (currentDraftId !== currentEquipmentDraftIdRef.current) return;
-    cancelPendingDraftAutosave();
+    cancelPendingDraftAutosave(true);
     updateEquipmentImeiConfirmation(null);
     draftSaveConflictFingerprintRef.current = null;
     setDraftStatus("idle");
@@ -4557,7 +4563,7 @@ export default function CreditFactoryConsole({
       ? resolveAnalystDraftEvidenceUpdate(evidencePrevious, draft.id, payload,
         Object.prototype.hasOwnProperty.call(payload, "wizardStep") || payload.__analystEvidenceLoaded === true) : null;
     if (!update && !financialUpdate && !evidenceUpdate) return;
-    cancelPendingDraftAutosave();
+    cancelPendingDraftAutosave(true);
     if (hasAuditedCreditIdentityCorrection(payload)) auditedIdentityCorrectionRef.current = true;
     if (update) {
       analystDataSnapshotRef.current = update.snapshot;
@@ -4761,7 +4767,7 @@ export default function CreditFactoryConsole({
       if (activeSolicitudRedirectingRef.current) return true;
 
       activeSolicitudRedirectingRef.current = true;
-      cancelPendingDraftAutosave();
+      cancelPendingDraftAutosave(true);
       setDraftStatus("loading");
       setDraftErrorMessage("");
       setNotice({
@@ -6004,6 +6010,14 @@ export default function CreditFactoryConsole({
   const firmaSeguroProcessSent =
     !firmaSeguroRequiresFirstPaymentDateReissue &&
     (firmaSeguroProcessUiState === "waiting" || firmaSeguroProcessSigned);
+  const firmaSeguroIdentityReadiness = useFirmaSeguroIdentityReadiness({
+    draftId, validationId: veriffValidation?.id || null, assessmentId: dataCreditoAssessmentId,
+    fullName: getDataCreditoClientDisplayName(dataCreditoApproval), documentNumber: clienteDocumento,
+    enabled: dataCreditoFullNameOnly && identitySignatureManagementReady && wizardStep === 4 &&
+      !firmaSeguroProcessSent && !draftResumeHydrating && !draftResumeLoadFailed,
+  });
+  const firmaSeguroSigningIdentityReady = !dataCreditoFullNameOnly || firmaSeguroProcessSent ||
+    firmaSeguroIdentityReadiness.status === "ready";
   const firmaSeguroProcessIssue = firmaSeguroProcessFailed
     ? formatFirmaSeguroProcessIssue(firmaSeguroDraftProcess)
     : "";
@@ -6908,7 +6922,7 @@ export default function CreditFactoryConsole({
     } | null
   ) => {
     if (preservedTerms?.restoringDraft) {
-      cancelPendingDraftAutosave();
+      cancelPendingDraftAutosave(true);
       applyingDraftRef.current = true;
     }
 
@@ -7551,7 +7565,7 @@ export default function CreditFactoryConsole({
     }
 
     deliveryEvidenceDeviceIdentityRef.current = nextIdentity;
-    cancelPendingDraftAutosave();
+    cancelPendingDraftAutosave(true);
 
     if (applyingDraftRef.current) {
       return;
@@ -8368,7 +8382,21 @@ export default function CreditFactoryConsole({
       throw Object.assign(new Error("Revisa el IMEI en Equipo y plan y pulsa Continuar para confirmarlo."), { code: "IMEI_CONFIRMATION_REQUIRED" });
     }
     cancelPendingDraftAutosave();
-    const saveGeneration = draftSaveGenerationRef.current;
+    // Identity progress can re-render and reschedule autosave without changing
+    // this request. Bind explicit saves to the case and authoritative revisions,
+    // independently of the background timer's generation.
+    const saveGeneration = ++draftExplicitSaveGenerationRef.current;
+    const saveBinding = {
+      draftId: currentEquipmentDraftIdRef.current,
+      document: currentDraftDocumentRef.current,
+      imei: currentEquipmentImeiRef.current,
+      analystDataRevision: analystDataSnapshotRef.current?.revision,
+      analystFinancialRevision: analystFinancialSnapshotRef.current?.revision,
+      analystEvidenceRevision: analystEvidenceSnapshotRef.current?.revision,
+    };
+    if (saveBinding.draftId !== currentDraftId) {
+      throw new Error("La solicitud cambió durante el guardado. Vuelve a intentarlo en la solicitud actual.");
+    }
     const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payloadScope, payload, action });
     const result = await requestJson<CreditDraftSingleResponse>(
       "/api/creditos/borradores",
@@ -8381,7 +8409,16 @@ export default function CreditFactoryConsole({
       }
     );
 
-    if (draftSaveGenerationRef.current !== saveGeneration) {
+    if (
+      draftExplicitSaveGenerationRef.current !== saveGeneration ||
+      currentEquipmentDraftIdRef.current !== saveBinding.draftId ||
+      currentDraftDocumentRef.current !== saveBinding.document ||
+      currentEquipmentImeiRef.current !== saveBinding.imei ||
+      analystDataSnapshotRef.current?.revision !== saveBinding.analystDataRevision ||
+      analystFinancialSnapshotRef.current?.revision !== saveBinding.analystFinancialRevision ||
+      analystEvidenceSnapshotRef.current?.revision !== saveBinding.analystEvidenceRevision ||
+      (currentDraftId !== null && result.data?.item && result.data.item.id !== currentDraftId)
+    ) {
       throw new Error("La solicitud cambió durante el guardado. Vuelve a intentarlo en la solicitud actual.");
     }
     if (resumeActiveSolicitudFromConflict(result, currentDraftId)) {
@@ -8397,6 +8434,7 @@ export default function CreditFactoryConsole({
     }
 
     draftSaveConflictFingerprintRef.current = null;
+    currentEquipmentDraftIdRef.current = result.data.item.id;
     setDraftId(result.data.item.id);
     synchronizeEquipmentImeiConfirmation(result.data.item);
     setDraftStatus("saved");
@@ -9819,7 +9857,7 @@ export default function CreditFactoryConsole({
     setCustomerFormRevision(value => value + 1);
     setClientTouchedFields({});
     setClientValidationAttempted(false);
-    cancelPendingDraftAutosave();
+    cancelPendingDraftAutosave(true);
     applyingDraftRef.current = false;
     deliveryEvidenceDeviceIdentityRef.current = deliveryEvidenceDeviceIdentity({
       platform: devicePlatform || "android",
@@ -10217,7 +10255,7 @@ export default function CreditFactoryConsole({
 
     factoryClosingOperationInFlightRef.current = true;
     try {
-      cancelPendingDraftAutosave();
+      cancelPendingDraftAutosave(true);
       firmaSeguroRefreshGenerationRef.current += 1;
       setFirmaSeguroRefreshing(false);
       setFirmaSeguroImeiCorrecting(true);
@@ -10430,7 +10468,7 @@ export default function CreditFactoryConsole({
 
     factoryClosingOperationInFlightRef.current = true;
     try {
-      cancelPendingDraftAutosave();
+      cancelPendingDraftAutosave(true);
       firmaSeguroRefreshGenerationRef.current += 1;
       setFirmaSeguroRefreshing(false);
       setSignedTermsCorrectionBusy(true);
@@ -10845,6 +10883,10 @@ export default function CreditFactoryConsole({
     if (firmaSeguroRequestInFlightRef.current || firmaSeguroProcessSent) {
       return;
     }
+    if (!firmaSeguroSigningIdentityReady) {
+      setNotice({ text: firmaSeguroIdentityReadiness.message || "Completa la comprobación de los datos del cliente para firma.", tone: "amber" });
+      return;
+    }
 
     const preflightNotice = iphoneInstallmentLimitExceeded
       ? { text: visibleIphoneInstallmentLimitMessage, tone: "red" as const }
@@ -10957,6 +10999,11 @@ export default function CreditFactoryConsole({
       });
     } catch (error) {
       if ((error as { code?: string } | null)?.code === "IMEI_CONFIRMATION_REQUIRED") return;
+      if ((error as { code?: string } | null)?.code === "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED") {
+        firmaSeguroIdentityReadiness.retry();
+        setNotice({ text: "Revisa los nombres y apellidos del cliente para preparar la firma.", tone: "amber" });
+        return;
+      }
       setNotice({
         text:
           preflightNotice && error instanceof Error &&
@@ -11667,7 +11714,7 @@ export default function CreditFactoryConsole({
     setCustomerFormRevision(value => value + 1);
     setClientTouchedFields({});
     setClientValidationAttempted(false);
-    cancelPendingDraftAutosave();
+    cancelPendingDraftAutosave(true);
     updateDraftResumeHydration(true);
     setFirmaSeguroPendingDraftId(draft.id);
     setDraftResumeLoadFailed(false);
@@ -12010,7 +12057,7 @@ export default function CreditFactoryConsole({
         }
 
         if (result.status === 404) {
-          cancelPendingDraftAutosave();
+          cancelPendingDraftAutosave(true);
           setDraftId(null);
           analystDataSnapshotRef.current = null;
           setAnalystDataRevision(0);
@@ -12439,7 +12486,7 @@ export default function CreditFactoryConsole({
   const handleDataCreditoFinancialTermsOutdated = () => {
     const signatureState = resolveFirmaSeguroProcessUiState(firmaSeguroDraftProcess);
     if (signatureState === "waiting" || signatureState === "signed") return false;
-    cancelPendingDraftAutosave();
+    cancelPendingDraftAutosave(true);
     setDataCreditoResumeErrorCode(CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE);
     setDataCreditoBypassed(false);
     updateDraftResumeHydration(false);
@@ -12468,10 +12515,10 @@ export default function CreditFactoryConsole({
     );
 
     if (restoringDraftAssessment) {
-      cancelPendingDraftAutosave();
+      cancelPendingDraftAutosave(true);
       applyingDraftRef.current = true;
     } else if (result.solicitudId) {
-      cancelPendingDraftAutosave();
+      cancelPendingDraftAutosave(true);
       if (analystDataSnapshotRef.current?.draftId !== result.solicitudId) {
         analystDataSnapshotRef.current = readAnalystDraftDataSnapshot(result.solicitudId, {});
         setAnalystDataRevision(0);
@@ -16566,7 +16613,7 @@ export default function CreditFactoryConsole({
                                 className="h-[18px] w-[18px]"
                                 strokeWidth={2}
                               />
-                            ) : firmaSeguroProcessSent ? (
+                            ) : firmaSeguroProcessSent || !firmaSeguroSigningIdentityReady ? (
                               <Clock3
                                 className="h-[18px] w-[18px]"
                                 strokeWidth={2}
@@ -16585,6 +16632,10 @@ export default function CreditFactoryConsole({
                                 ? "Error de firma"
                                 : firmaSeguroProcessSent
                                   ? "Cliente firmando"
+                                  : !firmaSeguroSigningIdentityReady
+                                    ? firmaSeguroIdentityReadiness.status === "loading" || firmaSeguroIdentityReadiness.status === "idle"
+                                      ? "Comprobando datos para firma"
+                                      : "Datos para firma pendientes"
                                   : contratoListo && firmaSeguroDocumentsReady
                                     ? "Expediente listo"
                                     : "Expediente incompleto"}
@@ -16602,6 +16653,7 @@ export default function CreditFactoryConsole({
                             creating ||
                             firmaSeguroSubmitting ||
                             firmaSeguroProcessSent ||
+                            !firmaSeguroSigningIdentityReady ||
                             firmaSeguroImeiCorrecting
                           }
                           aria-busy={creating || firmaSeguroSubmitting}
@@ -16633,7 +16685,24 @@ export default function CreditFactoryConsole({
                         </button>
                       </div>
 
-                      {dataCreditoFullNameOnly && draftId && firmaSeguroIdentityReviewDraftId === draftId ? <FirmaSeguroIdentityReview key={`${draftId}:${dataCreditoAssessmentId}:${veriffValidation?.id}`} canAdmin={canAdmin} draftId={draftId} fullName={getDataCreditoClientDisplayName(dataCreditoApproval)} documentNumber={clienteDocumento} validationId={veriffValidation?.id || 0} veriffApproved={veriffApproved} onSaved={(message) => setNotice({ text: message, tone: "emerald" })} /> : null}
+                      {dataCreditoFullNameOnly && draftId && !firmaSeguroSigningIdentityReady &&
+                      (firmaSeguroIdentityReadiness.status === "review" || firmaSeguroIdentityReviewDraftId === draftId) ? (
+                        <FirmaSeguroIdentityReview key={`${draftId}:${dataCreditoAssessmentId}:${veriffValidation?.id}`}
+                          canAdmin={canAdmin} draftId={draftId} fullName={getDataCreditoClientDisplayName(dataCreditoApproval)}
+                          documentNumber={clienteDocumento} validationId={veriffValidation?.id || 0} veriffApproved={veriffApproved}
+                          onSaved={(message) => {
+                            setFirmaSeguroIdentityReviewDraftId(null);
+                            setNotice({ text: message, tone: "emerald" });
+                            firmaSeguroIdentityReadiness.retry();
+                          }} />
+                      ) : dataCreditoFullNameOnly && !firmaSeguroSigningIdentityReady ? (
+                        <div className="fp-step3-firma-message is-pending" role="status">
+                          <p>{firmaSeguroIdentityReadiness.message || "Comprobando los nombres y apellidos para firma…"}</p>
+                          {firmaSeguroIdentityReadiness.status === "error" || firmaSeguroIdentityReadiness.status === "blocked" ? (
+                            <Button type="button" variant="secondary" onClick={firmaSeguroIdentityReadiness.retry}>Reintentar comprobación</Button>
+                          ) : null}
+                        </div>
+                      ) : null}
 
                       {firmaSeguroRequiresFirstPaymentDateReissue ? (
                         <p

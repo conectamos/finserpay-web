@@ -41,7 +41,7 @@ function fixture(overrides = {}) {
   const context = {
     Error, AbortController, JSON, draftId: 2887, wizardStep: 1, createClientMode: true, simulatorMode: false, deliveryMode: false,
     factoryDraftPayload: payload, currentIphoneClosureFingerprint: "closure", canAdminMoveFreelyInFactory: false, nextFactoryStep: { id: 2 },
-    draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
+    draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftExplicitSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
     wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false, activeSolicitudRedirectingRef: { current: false },
     draftResumeHydrationRef: { current: false }, draftResumeHydrating: false, draftResumeLoadFailed: false, applyingDraftRef: { current: false },
     firmaSeguroDraftCorrectionPending: false, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, signedContractEditLocked: false, advisorSignedContractStep: 5,
@@ -56,6 +56,7 @@ function fixture(overrides = {}) {
     dataCreditoFinancialTermsRecovery: false, draftHasMeaningfulData: true,
     stepTwoComplete: true, imeiConfirmationOpeningRef: { current: false }, imeiConfirmationInFlightRef: { current: false },
     currentEquipmentDraftIdRef: { current: 2887 }, currentEquipmentImeiRef: { current: "035809100123456" }, imeiConfirmationTargetStep: null,
+    currentDraftDocumentRef: { current: JSON.stringify(["CEDULA_DE_CIUDADANIA", "1110477922"]) },
     imeiDigits: "035809100123456", equipmentImeiConfirmation: { draftId: 2887, imei: "035809100123456" },
     equipmentImeiConfirmationRef: { current: { draftId: 2887, imei: "035809100123456" } },
     window: { setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; }, clearTimeout(id) { timers.delete(id); } },
@@ -359,10 +360,63 @@ test("una respuesta anterior no cambia de solicitud o paso después de invalidar
   const f = fixture(); let finish;
   f.setTransport((_url, options) => new Promise(resolve => { finish = () => resolve({ ok: true, status: 200, data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } }); }));
   const pending = f.functions.advanceToStep(2);
-  f.functions.cancelPendingDraftAutosave(); f.context.draftId = 9999;
+  f.functions.cancelPendingDraftAutosave(true); f.context.draftId = 9999;
+  f.context.currentEquipmentDraftIdRef.current = 9999;
   finish(); await pending;
   assert.equal(f.context.draftId, 9999); assert.equal(f.context.wizardStep, 1);
   assert.match(f.context.draftErrorMessage, /solicitud cambió/);
+});
+
+test("un guardado pendiente conserva el aislamiento de solicitud, documento, IMEI y correcciones", async () => {
+  const changes = [
+    ["solicitud", context => { context.currentEquipmentDraftIdRef.current = 9999; context.draftId = 9999; }],
+    ["documento", context => { context.currentDraftDocumentRef.current = JSON.stringify(["CEDULA_DE_CIUDADANIA", "99990000"]); }],
+    ["IMEI", context => { context.currentEquipmentImeiRef.current = "035809100123457"; }],
+    ["datos del analista", context => { context.analystDataSnapshotRef.current = { draftId: 2887, revision: 1 }; }],
+    ["plan del analista", context => { context.analystFinancialSnapshotRef.current = { draftId: 2887, revision: 1 }; }],
+    ["evidencias del analista", context => { context.analystEvidenceSnapshotRef.current = { draftId: 2887, revision: 1 }; }],
+  ];
+  for (const [label, change] of changes) {
+    const f = fixture(); let finish;
+    f.setTransport((_url, options) => new Promise(resolve => {
+      finish = () => resolve({ ok: true, status: 200, data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } });
+    }));
+    const saving = f.functions.saveDraftPayloadForVeriff(f.context.factoryDraftPayload, 1, 2887);
+    const rejected = assert.rejects(saving, /solicitud cambió/, label);
+    change(f.context);
+    finish(); await rejected;
+    assert.notEqual(f.context.draftStatus, "saved", label);
+    assert.equal(f.context.draftId, label === "solicitud" ? 9999 : 2887, label);
+    assert.equal(f.requests.length, 1, label);
+  }
+});
+
+test("un guardado anterior no reemplaza otro guardado explícito ni acepta un ID de respuesta distinto", async () => {
+  const f = fixture(); const completions = [];
+  f.setTransport((_url, options) => new Promise(resolve => {
+    completions.push(() => resolve({ ok: true, status: 200, data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } }));
+  }));
+  const previous = f.functions.saveDraftPayloadForVeriff(f.context.factoryDraftPayload, 1, 2887);
+  const rejected = assert.rejects(previous, /solicitud cambió/);
+  const current = f.functions.saveDraftPayloadForVeriff({ ...f.context.factoryDraftPayload, clienteTelefono: "3011234567" }, 1, 2887);
+  completions[1]();
+  assert.equal((await current).payload.clienteTelefono, "3011234567");
+  completions[0](); await rejected;
+  assert.equal(f.context.draftStatus, "saved");
+  f.setTransport(async () => ({ ok: true, status: 200, data: { item: { id: 9999, payload: f.context.factoryDraftPayload } } }));
+  await assert.rejects(f.functions.saveDraftPayloadForVeriff(f.context.factoryDraftPayload, 1, 2887), /solicitud cambió/);
+  assert.equal(f.context.draftId, 2887);
+});
+
+test("crear un borrador mantiene su vinculación antes de un segundo guardado explícito", async () => {
+  const f = fixture({ draftId: null, currentEquipmentDraftIdRef: { current: null } });
+  const created = await f.functions.saveDraftPayloadForVeriff(f.context.factoryDraftPayload, 1, null);
+  assert.equal(created.id, 2887);
+  assert.equal(f.context.currentEquipmentDraftIdRef.current, 2887);
+  const saved = await f.functions.saveDraftPayloadForVeriff({ ...created.payload, clienteTelefono: "3011234567" }, 2, created.id);
+  assert.equal(saved.id, created.id);
+  assert.equal(f.requests[0].body.id, null);
+  assert.equal(f.requests[1].body.id, 2887);
 });
 
 test("los cambios de cliente durante el guardado se guardan al terminar sin abortar la transición", async () => {

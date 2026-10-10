@@ -61,9 +61,13 @@ const binding = { draftId: 530, validationId: 42, documentNumber: "123456789", f
 test("revisión ADMIN persiste actor/fecha/original, recarga y metadata sin simular fuente del proveedor", async () => {
   await reset();const values = input();
   const before = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);assert.equal(before.canSave, true);
+  assert.equal(before.signingReady, false);assert.equal(before.signingSource, null);
   assert.equal(await lib.getStoredFirmaSeguroIdentityReview(binding), null, "autosave forged metadata has no authority");
   const saved = await lib.saveFirmaSeguroIdentityReview(530, values, actor);
   assert.equal(saved.canSave, false);assert.equal(saved.review.source, "AUTHORIZED_REVIEW");assert.equal(saved.review.actorName, actor.nombre);assert.ok(saved.review.createdAt);
+  assert.equal(saved.signingReady, true);assert.equal(saved.signingSource, "AUTHORIZED_REVIEW");
+  assert.equal(saved.canonicalFullName, canonical);assert.equal(saved.documentNumber, "123456789");
+  assert.equal(saved.validationId, 42);assert.equal(saved.assessmentId, assessmentId);
   const metadata = await lib.getStoredFirmaSeguroIdentityReview(binding);
   assert.equal(metadata.source, "AUTHORIZED_REVIEW");assert.equal(metadata.reviewId, values.idempotencyKey);
   assert.equal(metadata.firstName, "María del Mar");assert.equal(metadata.firstLastName, "De la Peña");assert.equal(metadata.secondLastName, "Muñoz");assert.equal(metadata.canonicalFullName, canonical);
@@ -74,6 +78,59 @@ test("revisión ADMIN persiste actor/fecha/original, recarga y metadata sin simu
   assert.deepEqual(audit[0].original.original.missing, original.missing);assert.ok(locks >= 2);
   await assert.rejects(db.query('UPDATE "FirmaSeguroIdentityReview" SET "firstSurname"=$1', ["Otro"]), /immutable/);
   await assert.rejects(db.query('DELETE FROM "FirmaSeguroIdentityReview"'), /immutable/);
+});
+
+test("GET exposes authoritative readiness from complete Veriff evidence without allowing manual replacement", async () => {
+  await reset();
+  await db.query('UPDATE "VeriffIdentityValidation" SET "webhookPayload"=$1::jsonb', [JSON.stringify({ verification: { person: {
+    firstName: "María del Mar", lastName: "De la Peña Muñoz", idNumber: "123456789",
+  } } })]);
+  for (const reader of [actor, { ...actor, admin: false }]) {
+    const detail = await lib.getFirmaSeguroIdentityReviewDetail(530, reader);
+    assert.equal(detail.signingReady, true);assert.equal(detail.signingSource, "VERIFF");
+    assert.equal(detail.eligible, false);assert.equal(detail.canSave, false);assert.equal(detail.canReview, reader.admin);
+    assert.equal(detail.canonicalFullName, canonical);assert.equal(detail.documentNumber, "123456789");
+    assert.equal(detail.validationId, 42);assert.equal(detail.assessmentId, assessmentId);assert.equal(detail.review, null);
+  }
+  assert.equal((await db.query('SELECT * FROM "FirmaSeguroIdentityReview"')).rows.length, 0);
+  assert.equal(locks, 0, "reading readiness does not reserve a mutation or send a contract");
+  await assert.rejects(lib.saveFirmaSeguroIdentityReview(530, input(), actor), /componentes o identidad contradictoria/);
+});
+
+test("GET accepts corroborating partial names but rejects contradictions and separate incomplete names", async () => {
+  const payload = person => JSON.stringify({ verification: { person: { idNumber: "123456789", ...person } } });
+  const complete = { firstName: "María del Mar", lastName: "De la Peña Muñoz" };
+  const cases = [
+    [{ firstName: "María del Mar" }, complete, true],
+    [{ lastName: "De la Peña Muñoz" }, complete, true],
+    [{ fullName: canonical }, complete, true],
+    [complete, { firstName: "María del Mar" }, true],
+    [{ firstName: "María del Mar", fullName: "Otro Nombre" }, complete, false],
+    [complete, { firstName: "Otro Nombre" }, false],
+    [{ firstName: "María del Mar" }, { lastName: "De la Peña Muñoz" }, false],
+  ];
+  for (const [decision, webhook, ready] of cases) {
+    await reset();await db.query('UPDATE "VeriffIdentityValidation" SET "decisionPayload"=$1::jsonb,"webhookPayload"=$2::jsonb', [payload(decision), payload(webhook)]);
+    const detail = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
+    assert.equal(detail.signingReady, ready);assert.equal(detail.signingSource, ready ? "VERIFF" : null);
+    assert.equal(detail.eligible, false);assert.equal(detail.canSave, false);
+  }
+});
+
+test("GET fails closed for stale or untrusted approval, changed CC and expired DataCrédito assessment", async () => {
+  for (const scenario of ["untrusted", "documentConflict", "changedCC", "oldValidation", "assessmentExpired", "notApproved"]) {
+    await reset();
+    if (scenario === "untrusted") trusted = false;
+    if (scenario === "documentConflict") documentStatus = "conflict";
+    if (scenario === "changedCC") await db.exec('UPDATE "VeriffIdentityValidation" SET "clienteDocumento"=\'987654321\'');
+    if (scenario === "oldValidation") await db.exec('UPDATE "VeriffIdentityValidation" SET "id"=43');
+    if (scenario === "assessmentExpired") approved = false;
+    if (scenario === "notApproved") await db.exec('UPDATE "VeriffIdentityValidation" SET "status"=\'DECLINED\'');
+    const detail = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
+    assert.equal(detail.signingReady, false, scenario);assert.equal(detail.signingSource, null, scenario);
+    assert.equal(detail.eligible, false);assert.equal(detail.canSave, false);assert.ok(detail.reason);
+    assert.equal((await db.query('SELECT * FROM "FirmaSeguroIdentityReview"')).rows.length, 0);
+  }
 });
 
 test("segundo apellido vacío es válido sin dividir nombre completo ni eliminar tildes", async () => {
@@ -139,6 +196,8 @@ test("cambiar validación, canónico, documento o vigencia invalida el metadata 
   await db.exec('UPDATE "VeriffIdentityValidation" SET "id"=43');
   await db.exec('UPDATE "CreditoBorrador" SET "payload"=jsonb_set("payload",\'{veriffValidationId}\',\'43\')');
   assert.equal(await lib.getStoredFirmaSeguroIdentityReview({ ...binding, validationId: 43 }), null);
+  const detail = await lib.getFirmaSeguroIdentityReviewDetail(530, actor);
+  assert.equal(detail.signingReady, false);assert.equal(detail.signingSource, null);
   approved = false;await assert.rejects(lib.getStoredFirmaSeguroIdentityReview({ ...binding, validationId: 43 }), /no está vigente/);
 });
 

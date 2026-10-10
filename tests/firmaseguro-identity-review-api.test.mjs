@@ -18,7 +18,8 @@ const routeSource = readFileSync(new URL("../app/api/creditos/borradores/[id]/id
 const compiled = ts.transpileModule(routeSource.replace(/^import\b[^;]*;\r?\n/gm, ""), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 function fixture(options = {}) {
   const loaded = { exports: {} };const calls = [];
-  const item = { draftId: 530, canonicalFullName: canonical, canReview: true, canSave: true, validationId: 42, eligible: true };
+  const item = { draftId: 530, canonicalFullName: canonical, documentNumber: "123456789", assessmentId: "12345678-1234-4234-8234-123456789012",
+    canReview: true, canSave: true, validationId: 42, eligible: true, signingReady: true, signingSource: "VERIFF" };
   runInNewContext(compiled, { module: loaded, exports: loaded.exports, Error, NextResponse: { json: (body, init) => Response.json(body, init) },
     getSessionUser: async () => options.session === undefined ? user : options.session,
     getSellerSessionUser: async () => options.seller || null,
@@ -44,6 +45,9 @@ test("asesor propietario puede consultar estado y no puede registrar componentes
   const f = fixture({ session: { ...user, rolNombre: "ASESOR" }, seller: { id: 8, tipoPerfil: "VENDEDOR" } });
   const response = await f.GET(new Request("https://local.invalid"), context());
   const body = await response.json();assert.equal(response.status, 200);assert.equal(body.item.canReview, false);assert.equal(body.item.canSave, false);
+  assert.equal(body.item.signingReady, true);assert.equal(body.item.signingSource, "VERIFF");
+  assert.equal(body.item.canonicalFullName, canonical);assert.equal(body.item.documentNumber, "123456789");assert.equal(body.item.validationId, 42);
+  assert.equal(body.item.assessmentId, "12345678-1234-4234-8234-123456789012");
   const denied = await f.POST(request({}), context());assert.equal(denied.status, 403);assert.equal(f.calls.some(call => call[0] === "save"), false);
   const other = fixture({ session: { ...user, rolNombre: "ASESOR" }, seller: { id: 9, tipoPerfil: "VENDEDOR" } });
   assert.equal((await other.GET(new Request("https://local.invalid"), context())).status, 404);

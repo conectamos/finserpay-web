@@ -21,6 +21,13 @@ test("Veriff preserves the document firstName instead of stripping additional gi
   assert.equal(result.fullName, "María del Mar De la Peña Muñoz");
   assert.equal(pure.resolveFirmaSeguroFullNameIdentity({ ...input, firstName: result.firstName, lastName: result.lastName }).firstName, "María del Mar");
 });
+test("identity evidence distinguishes an explicit full name from a derived partial name", () => {
+  const payload = { verification: { person: { firstName: "María del Mar", idNumber: input.documentNumber } } };
+  assert.equal(extractVeriffIdentityData(payload).fullName, "María del Mar");
+  assert.equal(extractVeriffIdentityData(payload, { inferFullName: false }).fullName, null);
+  payload.verification.person.fullName = "Otro Nombre";
+  assert.equal(extractVeriffIdentityData(payload, { inferFullName: false }).fullName, "Otro Nombre");
+});
 test("FirmaSeguro gets complete Veriff components without splitting the canonical DataCrédito name", () => {
   const result = pure.resolveFirmaSeguroFullNameIdentity(input);
   assert.equal(result.canonicalFullName, canonical);
@@ -73,6 +80,34 @@ test("the bridge reuses the latest trusted approval for the same draft and docum
   const result = await f.getFirmaSeguroFullNameIdentityForDraft({ fullName: canonical, documentNumber: input.documentNumber, draftId: 530, validationId: 42 });
   assert.equal(result.firstName, "María del Mar"); assert.equal(result.firstLastName, "De la Peña Muñoz");
   assert.equal(f.reads.length, 2); assert.equal(f.reads[0], 42); assert.match(f.reads[1][0], /^SELECT /);
+});
+
+test("a document-only or compatible partial payload cannot hide the other payload's complete Veriff name", async () => {
+  const payload = person => ({ verification: { person: { idNumber: input.documentNumber, ...person } } });
+  const complete = payload({ firstName: "María del Mar", lastName: "De la Peña Muñoz" });
+  for (const partial of [{}, { fullName: canonical }, { firstName: "María del Mar" }, { lastName: "De la Peña Muñoz" }]) {
+    for (const [decisionPayload, webhookPayload] of [[payload(partial), complete], [complete, payload(partial)]]) {
+      const f = fixture({ validation: { decisionPayload, webhookPayload } });
+      const result = await f.getFirmaSeguroFullNameIdentityForDraft({ fullName: canonical, documentNumber: input.documentNumber, draftId: 530, validationId: 42 });
+      assert.equal(result.source, "VERIFF");assert.equal(result.firstName, "María del Mar");assert.equal(result.firstLastName, "De la Peña Muñoz");
+      assert.equal(f.reads.length, 2, "valid provider evidence does not require manual review or a provider call");
+    }
+  }
+});
+
+test("signing evidence never merges separate partial payloads or ignores explicit contradictory names", async () => {
+  const payload = person => ({ verification: { person: { idNumber: input.documentNumber, ...person } } });
+  const complete = payload({ firstName: "María del Mar", lastName: "De la Peña Muñoz" });
+  for (const [decisionPayload, webhookPayload] of [
+    [payload({ firstName: "María del Mar" }), payload({ lastName: "De la Peña Muñoz" })],
+    [payload({ firstName: "Otro" }), complete],
+    [payload({ lastName: "Otro" }), complete],
+    [payload({ firstName: "María del Mar", fullName: "Otro Nombre" }), complete],
+    [complete, payload({ fullName: "Otro Nombre" })],
+  ]) {
+    const f = fixture({ validation: { decisionPayload, webhookPayload } });
+    await assert.rejects(f.getFirmaSeguroFullNameIdentityForDraft({ fullName: canonical, documentNumber: input.documentNumber, draftId: 530, validationId: 42 }), /FirmaSeguro requiere/);
+  }
 });
 
 test("the bridge rejects stale, foreign, untrusted or conflicting decision/webhook identity before any dispatch", async () => {

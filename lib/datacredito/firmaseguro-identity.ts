@@ -60,6 +60,16 @@ export function resolveFirmaSeguroFullNameIdentity(input: {
     canonicalFullName: input.fullName, firstName, firstLastName, secondName: null, secondLastName: null };
 }
 
+/** Select a complete pair from one payload; partial evidence corroborates but never supplies another field. */
+export function resolveFirmaSeguroFullNameIdentityFromEvidence(input: {
+  fullName: string; documentNumber: string; validationId: number;
+  veriffDocumentNumber: unknown; identities: readonly NameEvidence[];
+}): FirmaSeguroFullNameIdentity {
+  const complete = input.identities.find(identity => nameText(identity.firstName) && nameText(identity.lastName));
+  return resolveFirmaSeguroFullNameIdentity({ ...input, firstName: complete?.firstName,
+    lastName: complete?.lastName, additionalIdentities: input.identities });
+}
+
 // Metadata is created on the server and sealed with the PDF snapshot. Validate
 // its binding again before adapting either FirmaSeguro create endpoint.
 export function readFirmaSeguroFullNameIdentity(metadata: unknown, expected: { fullName: string; documentNumber: string }) {

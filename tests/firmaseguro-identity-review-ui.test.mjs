@@ -170,11 +170,19 @@ test("el envío conserva revisión y sólo el flujo legado avanza automáticamen
   const ast = ts.createSourceFile("console.tsx", consoleSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let submit; let handler;
   function visit(node) { if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "submitFirmaSeguroDraft") submit = node.initializer; if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "handleFirmaSeguroStepReady") handler = node.initializer; ts.forEachChild(node, visit); } visit(ast);
-  const seen = []; const context = { Error, Object, setFirmaSeguroIdentityReviewDraftId: value => seen.push(value),
+  const seen = []; const context = { Error, Object, resolvePersistedDraftStep: step => step,
+    recoverEquipmentImeiConfirmation() { assert.fail("IMEI confirmado no requiere recuperación"); },
+    setFirmaSeguroIdentityReviewDraftId: value => seen.push(value),
     CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE: "OUTDATED", formatFirmaSeguroApiFailure: value => value.error,
     requestJson: async () => ({ ok: false, data: { ok: false, code: "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED", error: "Requiere revisión." } }) };
   const send = runInNewContext(ts.transpileModule("(" + submit.getText(ast) + ")", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   await assert.rejects(() => send(2887), failure => failure.code === "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED" && failure.message.includes("Código: FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED.")); assert.deepEqual(seen, [2887]);
+  const recovered = [];
+  const blockedSend = runInNewContext(ts.transpileModule("(" + submit.getText(ast) + ")", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
+    { ...context, resolvePersistedDraftStep: () => 2, recoverEquipmentImeiConfirmation: id => recovered.push(id),
+      requestJson() { assert.fail("Sin confirmación IMEI no puede intentar enviar FirmaSeguro"); } });
+  await assert.rejects(() => blockedSend(2887), failure => failure.code === "IMEI_CONFIRMATION_REQUIRED");
+  assert.deepEqual(recovered, [2887]);
   let branch;
   function findSigned(node) { if (ts.isIfStatement(node) && node.expression.getText(ast) === "signed && !createClientMode") branch = node; ts.forEachChild(node, findSigned); } findSigned(handler);
   assert.ok(branch, "Nueva venta debe esperar la continuación explícita del usuario");

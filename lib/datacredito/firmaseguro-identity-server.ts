@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { extractVeriffIdentityData } from "@/lib/veriff";
 import { getVeriffValidationById, isVeriffApproved, serializeVeriffValidation, type VeriffValidationRow } from "@/lib/veriff-storage";
 import { compareStrictIdentityDocuments } from "@/lib/veriff-identity";
-import { FirmaSeguroFullNameIdentityError, resolveFirmaSeguroFullNameIdentity } from "./firmaseguro-identity";
+import { FirmaSeguroFullNameIdentityError, resolveFirmaSeguroFullNameIdentityFromEvidence } from "./firmaseguro-identity";
 
 export function firmaSeguroFullNameIdentityFromValidation(input: {
   fullName: string;
@@ -19,13 +19,11 @@ export function firmaSeguroFullNameIdentityFromValidation(input: {
   }
   const serialized = serializeVeriffValidation(validation);
   if (!serialized || serialized.identityDocumentStatus !== "match") throw new FirmaSeguroFullNameIdentityError();
-  const decisionIdentity = extractVeriffIdentityData(validation.decisionPayload);
-  const webhookIdentity = extractVeriffIdentityData(validation.webhookPayload);
-  const identity = decisionIdentity || webhookIdentity;
-  return resolveFirmaSeguroFullNameIdentity({ fullName: input.fullName, documentNumber: input.documentNumber,
+  const decisionIdentity = extractVeriffIdentityData(validation.decisionPayload, { inferFullName: false });
+  const webhookIdentity = extractVeriffIdentityData(validation.webhookPayload, { inferFullName: false });
+  return resolveFirmaSeguroFullNameIdentityFromEvidence({ fullName: input.fullName, documentNumber: input.documentNumber,
     validationId: validation.id, veriffDocumentNumber: serialized.identityDocumentNumber,
-    firstName: identity?.firstName, lastName: identity?.lastName,
-    additionalIdentities: [decisionIdentity, webhookIdentity].filter((value): value is NonNullable<typeof value> => Boolean(value)) });
+    identities: [decisionIdentity, webhookIdentity].filter((value): value is NonNullable<typeof value> => Boolean(value)) });
 }
 
 export async function getFirmaSeguroFullNameIdentityForDraft(input: {

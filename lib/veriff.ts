@@ -1032,7 +1032,9 @@ export function extractVeriffSessionUrl(payload: unknown) {
   return url;
 }
 
-export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData | null {
+// Signing evidence can opt out of derived names so an incomplete payload is not
+// mistaken for an explicit fullName that contradicts another provider payload.
+export function extractVeriffIdentityData(payload: unknown, options: { inferFullName?: boolean } = {}): VeriffIdentityData | null {
   const { data, root, verification } = rootAndVerification(payload);
   const person =
     verification.person && typeof verification.person === "object"
@@ -1067,7 +1069,7 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
     cleanText(person.firstName) || cleanText(nameComponents.firstNameOnly);
   const lastName = cleanText(person.lastName);
   const fullName =
-    cleanText(person.fullName) || [firstName, lastName].filter(Boolean).join(" ");
+    cleanText(person.fullName) || (options.inferFullName === false ? "" : [firstName, lastName].filter(Boolean).join(" "));
   const documentNumber =
     cleanText(person.idNumber || person.idCode || person.documentNumber) ||
     cleanText(document.number || document.documentNumber);
