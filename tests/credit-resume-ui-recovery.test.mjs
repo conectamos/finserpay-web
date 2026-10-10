@@ -314,10 +314,134 @@ test("Veriff y autosave entregan el conflicto al redirect canónico y el guardad
   });
   assert.equal(await loaded.exports(5), 91);
   assert.equal(calls[0][0], payload);
-  assert.deepEqual(calls[0].slice(1), [5, 91, "DELIVERY_EVIDENCE"]);
+  assert.deepEqual(calls[0].slice(1), [5, 91, "DELIVERY_EVIDENCE", undefined]);
   assert.deepEqual(persisted, ["current-closure"]);
   fail = true;
   await assert.rejects(loaded.exports(4), /ACTIVE_SOLICITUD_RESUME/);
-  assert.deepEqual(calls[1].slice(1), [4, 91, "FULL"]);
+  assert.deepEqual(calls[1].slice(1), [4, 91, "FULL", undefined]);
   assert.equal(persisted.length, 1, "un conflicto no confirma que el cierre quedó guardado");
+  fail = false;
+  assert.equal(await loaded.exports(2, true), 91);
+  assert.equal(calls[2][0], payload);
+  assert.deepEqual(calls[2].slice(1), [2, 91, "FULL", "ADVANCE_CLIENT"]);
+  assert.deepEqual(persisted, ["current-closure", "current-closure"]);
+});
+
+
+async function customerExitDialog() {
+  const source = await readProjectFile("app/dashboard/creditos/credit-factory-console.tsx");
+  const ast = ts.createSourceFile("factory.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const dialogs = [];
+  function visit(node) {
+    if (ts.isJsxSelfClosingElement(node)) dialogs.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  const attributeExpression = (node, name) => node.attributes.properties.find(
+    attribute => ts.isJsxAttribute(attribute) && attribute.name.getText(ast) === name,
+  )?.initializer?.expression;
+  const exit = dialogs.find(node => node.tagName.getText(ast) === "ConfirmDialog" &&
+    attributeExpression(node, "open")?.getText(ast).includes("customerExitIntent"));
+  const imei = dialogs.find(node => node.tagName.getText(ast) === "ImeiConfirmationDialog");
+  const clearEquipment = dialogs.find(node => node.tagName.getText(ast) === "ConfirmDialog" &&
+    attributeExpression(node, "open")?.getText(ast) === "stepTwoClearConfirmOpen");
+  assert.ok(exit, "Cancelar/Limpiar debe tener un diálogo de confirmación");
+  assert.ok(imei);
+  assert.ok(clearEquipment);
+  return { ast, exit, imei, clearEquipment, attributeExpression };
+}
+
+async function customerExitFixture(intent = "cancel") {
+  const { ast, exit, attributeExpression } = await customerExitDialog();
+  const calls = { reset: 0, cancelAutosave: 0, save: [], busy: [], intents: [], notices: [], navigation: [] };
+  let finishSave;
+  let failSave;
+  const saved = new Promise((resolve, reject) => { finishSave = resolve; failSave = reject; });
+  const context = {
+    Error,
+    customerExitIntent: intent,
+    customerExitBusy: false,
+    module: { exports: {} },
+    resetForm: () => { calls.reset += 1; },
+    cancelPendingDraftAutosave: () => { calls.cancelAutosave += 1; },
+    saveCurrentDraft: (...args) => { calls.save.push(args); return saved; },
+    setCustomerExitBusy: value => { context.customerExitBusy = value; calls.busy.push(value); },
+    setCustomerExitIntent: value => { context.customerExitIntent = value; calls.intents.push(value); },
+    setNotice: value => calls.notices.push(value),
+    window: { location: { assign: href => calls.navigation.push(href) } },
+  };
+  const callbackSource = ["onCancel", "onConfirm"].map(name => {
+    const expression = attributeExpression(exit, name);
+    assert.ok(expression, name);
+    return name + ": " + expression.getText(ast);
+  }).join(",\n");
+  runInNewContext(ts.transpileModule("module.exports = {" + callbackSource + "};", {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, context);
+  return { callbacks: context.module.exports, calls, context, finishSave, failSave };
+}
+
+const flushCustomerExit = async () => {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
+};
+
+test("Cancelar y Limpiar se confirman desde Nueva venta fuera de la vista de pagos", async () => {
+  const { exit, imei, clearEquipment, ast } = await customerExitDialog();
+  assert.ok(ts.isJsxElement(exit.parent), "El diálogo debe montarse en el contenedor global");
+  assert.equal(exit.parent, imei.parent, "Debe compartir contenedor con el diálogo global de IMEI");
+  assert.equal(exit.parent, clearEquipment.parent, "Debe compartir contenedor con la limpieza global del equipo");
+  for (let ancestor = exit.parent; ancestor; ancestor = ancestor.parent) {
+    if (ts.isBinaryExpression(ancestor) && ancestor.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+      assert.doesNotMatch(ancestor.left.getText(ast), /paymentsView|selectedCredit/,
+        "El diálogo de Nueva venta no debe depender de un crédito seleccionado o de la vista de pagos");
+    }
+  }
+});
+
+test("descartar la confirmación conserva los datos y Limpiar sólo reinicia tras confirmar", async () => {
+  const dismissed = await customerExitFixture("clear");
+  dismissed.callbacks.onCancel();
+  assert.deepEqual(dismissed.calls.intents, [null]);
+  assert.equal(dismissed.calls.reset, 0);
+  assert.equal(dismissed.calls.save.length, 0);
+  assert.equal(dismissed.calls.navigation.length, 0);
+
+  const confirmed = await customerExitFixture("clear");
+  assert.equal(confirmed.calls.reset, 0);
+  confirmed.callbacks.onConfirm();
+  assert.equal(confirmed.calls.reset, 1);
+  assert.deepEqual(confirmed.calls.intents, [null]);
+  assert.equal(confirmed.calls.save.length, 0);
+  assert.equal(confirmed.calls.navigation.length, 0);
+});
+
+test("Cancelar espera al borrador antes de navegar y evita envíos duplicados mientras guarda", async () => {
+  const fixture = await customerExitFixture();
+  fixture.callbacks.onConfirm();
+  assert.equal(fixture.calls.cancelAutosave, 1);
+  assert.deepEqual(fixture.calls.save, [[1]]);
+  assert.deepEqual(fixture.calls.busy, [true]);
+  assert.equal(fixture.calls.navigation.length, 0, "No debe salir con el guardado aún pendiente");
+  fixture.callbacks.onConfirm();
+  assert.equal(fixture.calls.save.length, 1);
+  fixture.finishSave(91);
+  await flushCustomerExit();
+  assert.deepEqual(fixture.calls.navigation, ["/dashboard/creditos"]);
+  assert.deepEqual(fixture.calls.busy, [true, false]);
+  assert.equal(fixture.calls.reset, 0);
+});
+
+test("si falla Guardar y salir se conservan los datos, no se navega y se habilita reintentar", async () => {
+  const fixture = await customerExitFixture();
+  fixture.callbacks.onConfirm();
+  fixture.failSave(new Error("No se pudo guardar la solicitud"));
+  await flushCustomerExit();
+  assert.equal(fixture.calls.navigation.length, 0);
+  assert.equal(fixture.calls.reset, 0);
+  assert.equal(fixture.context.customerExitIntent, "cancel");
+  assert.deepEqual(fixture.calls.busy, [true, false]);
+  assert.equal(fixture.context.customerExitBusy, false);
+  assert.equal(fixture.calls.notices.length, 1);
+  assert.equal(fixture.calls.notices[0].text, "No se pudo guardar la solicitud");
+  assert.equal(fixture.calls.notices[0].tone, "red");
 });

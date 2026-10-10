@@ -4,6 +4,9 @@ import { creditReportSadmin, creditReportDocument } from "@/lib/credit-report-id
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
+import CustomerDetailsForm from "./customer-details-form";
+import { Input } from "@/app/_components/finser-ui";
+import customerDetailsStyles from "./customer-details-form.module.css";
 import NextImage from "next/image";
 import { usePathname } from "next/navigation";
 import QRCode from "qrcode";
@@ -56,7 +59,6 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type ClipboardEvent,
   type PointerEvent,
   type ReactNode,
 } from "react";
@@ -176,9 +178,7 @@ import {
   isCreditCreationNetworkError,
 } from "@/lib/credit-create-recovery";
 import {
-  CREDIT_CONTACT_PHONE_LENGTH,
   isValidCreditContactPhone,
-  normalizeCreditContactPhoneInput,
   validateCreditContactPhones,
 } from "@/lib/credit-contact-phones";
 import { buildCreditPaymentHref } from "@/lib/credit-payment-navigation";
@@ -2998,7 +2998,7 @@ function DataCreditoClientNameBar({ fullName, canEditComponents, editing, givenN
 }) {
   return (
     <div className="md:col-span-2">
-      <label htmlFor="clienteNombre" className="mb-2 block text-sm font-semibold text-slate-700">NOMBRES Y APELLIDOS</label>
+      <label htmlFor="clienteNombre" className="mb-2 block text-sm font-semibold text-slate-700">Nombres y apellidos</label>
       <input id="clienteNombre" value={fullName} readOnly autoComplete="off" className="w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-base text-[var(--fp-graphite)] outline-none focus:border-[var(--fp-graphite)] focus:ring-2 focus:ring-[var(--fp-lime-soft)]" />
       {canEditComponents && editing ? (
         <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -3017,8 +3017,9 @@ function DataCreditoClientNameBar({ fullName, canEditComponents, editing, givenN
   );
 }
 
-function serializeCreditDraftSaveRequest(input: { draftId: number | null; currentStep: number; payload: CreditDraftPayload; payloadScope?: "FULL" | "DELIVERY_EVIDENCE" }) {
+function serializeCreditDraftSaveRequest(input: { draftId: number | null; currentStep: number; payload: CreditDraftPayload; payloadScope?: "FULL" | "DELIVERY_EVIDENCE"; action?: "ADVANCE_CLIENT" }) {
   return JSON.stringify({ id: input.draftId, currentStep: input.currentStep,
+    ...(input.action ? { action: input.action } : {}),
     payloadScope: input.payloadScope || "FULL", payload: { ...input.payload, wizardStep: input.currentStep } });
 }
 
@@ -3252,14 +3253,12 @@ export default function CreditFactoryConsole({
   const [referenciaFamiliar2Telefono, setReferenciaFamiliar2Telefono] =
     useState("");
   const [clientValidationAttempted, setClientValidationAttempted] = useState(false);
+  const [customerFormRevision, setCustomerFormRevision] = useState(0);
+  const [customerExitIntent, setCustomerExitIntent] = useState<"cancel" | "clear" | null>(null);
+  const [customerExitBusy, setCustomerExitBusy] = useState(false);
   const [clientTouchedFields, setClientTouchedFields] = useState<
     Partial<Record<CreditClientField, boolean>>
   >({});
-  const clientContactBlockRef = useRef<HTMLElement | null>(null);
-  const clientReferencesBlockRef = useRef<HTMLElement | null>(null);
-  const clientValidationInitializedRef = useRef(false);
-  const previousPersonalCompleteRef = useRef(false);
-  const previousContactCompleteRef = useRef(false);
   const [equipoMarca, setEquipoMarca] = useState("");
   const [equipoModelo, setEquipoModelo] = useState("");
   const [restoredEquipmentCatalogId, setRestoredEquipmentCatalogId] = useState<
@@ -5447,13 +5446,6 @@ export default function CreditFactoryConsole({
     referenciaFamiliar2TelefonoValido &&
     (referenciaFamiliar2Telefono === clienteTelefono ||
       referenciaFamiliar2Telefono === referenciaFamiliar1Telefono);
-  const pasteCreditContactPhone = (
-    event: ClipboardEvent<HTMLInputElement>,
-    setValue: (value: string) => void
-  ) => {
-    event.preventDefault();
-    setValue(normalizeCreditContactPhoneInput(event.clipboardData.getData("text")));
-  };
   const clientFormValidation = useMemo(
     () =>
       validateCreditClientForm({
@@ -5530,6 +5522,7 @@ export default function CreditFactoryConsole({
   );
   const focusFirstInvalidClientField = useCallback(() => {
     setClientValidationAttempted(true);
+    setCustomerFormRevision(value => value + 1);
     const field = clientFormValidation.firstInvalidField;
 
     if (!field) {
@@ -5545,47 +5538,6 @@ export default function CreditFactoryConsole({
     });
   }, [clientFormValidation.firstInvalidField]);
 
-  useEffect(() => {
-    if (!clientValidationInitializedRef.current) {
-      clientValidationInitializedRef.current = true;
-      previousPersonalCompleteRef.current = clientFormValidation.personalComplete;
-      previousContactCompleteRef.current = clientFormValidation.contactComplete;
-      return;
-    }
-
-    if (
-      clientFormValidation.personalComplete &&
-      !previousPersonalCompleteRef.current &&
-      !clientFormValidation.contactComplete
-    ) {
-      window.requestAnimationFrame(() => {
-        clientContactBlockRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-      });
-    }
-
-    if (
-      clientFormValidation.contactComplete &&
-      !previousContactCompleteRef.current &&
-      !clientFormValidation.referencesComplete
-    ) {
-      window.requestAnimationFrame(() => {
-        clientReferencesBlockRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-      });
-    }
-
-    previousPersonalCompleteRef.current = clientFormValidation.personalComplete;
-    previousContactCompleteRef.current = clientFormValidation.contactComplete;
-  }, [
-    clientFormValidation.contactComplete,
-    clientFormValidation.personalComplete,
-    clientFormValidation.referencesComplete,
-  ]);
   const otpReady = Boolean(otpVerifiedAt);
   const identityEvidenceReady =
     Boolean(contratoFotoDataUrl) &&
@@ -8412,11 +8364,12 @@ export default function CreditFactoryConsole({
     payload: CreditDraftPayload,
     currentStepOverride = wizardStep,
     currentDraftId = draftId,
-    payloadScope: "FULL" | "DELIVERY_EVIDENCE" = "FULL"
+    payloadScope: "FULL" | "DELIVERY_EVIDENCE" = "FULL",
+    action?: "ADVANCE_CLIENT"
   ) => {
     cancelPendingDraftAutosave();
     const saveGeneration = draftSaveGenerationRef.current;
-    const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payloadScope, payload });
+    const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payloadScope, payload, action });
     const result = await requestJson<CreditDraftSingleResponse>(
       "/api/creditos/borradores",
       {
@@ -9109,7 +9062,7 @@ export default function CreditFactoryConsole({
     setDraftStatus("saving");
     setDraftErrorMessage("");
     try {
-      await saveCurrentDraft(persistedWizardStep);
+      await saveCurrentDraft(persistedWizardStep, wizardStep === 1 && nextStep > 1 && stepClienteReady);
       setWizardStep(nextStep);
       return true;
     } catch (error) {
@@ -9267,6 +9220,11 @@ export default function CreditFactoryConsole({
   };
 
   const advanceToStep = async (targetStep: number) => {
+    if (wizardStep === 1 && targetStep > 1 && !stepClienteReady && !canAdminMoveFreelyInFactory) {
+      focusFirstInvalidClientField();
+      setNotice({ text: "Completa los datos del cliente antes de avanzar al equipo.", tone: "amber" });
+      return;
+    }
     if (
       signedContractEditLocked &&
       targetStep !== advisorSignedContractStep
@@ -9821,6 +9779,9 @@ export default function CreditFactoryConsole({
   };
 
   const resetForm = () => {
+    setCustomerFormRevision(value => value + 1);
+    setClientTouchedFields({});
+    setClientValidationAttempted(false);
     cancelPendingDraftAutosave();
     applyingDraftRef.current = false;
     deliveryEvidenceDeviceIdentityRef.current = deliveryEvidenceDeviceIdentity({
@@ -9971,14 +9932,16 @@ export default function CreditFactoryConsole({
   const saveCurrentDraft = async (
     currentStepOverride = canAdminMoveFreelyInFactory
       ? nextFactoryStep.id
-      : wizardStep
+      : wizardStep,
+    advanceClient = false
   ) => {
     const closureFingerprintAtSave = currentIphoneClosureFingerprint;
     const item = await saveDraftPayloadForVeriff(
       factoryDraftPayload,
       currentStepOverride,
       draftId,
-      firmaSeguroProcessSigned && currentStepOverride >= 5 ? "DELIVERY_EVIDENCE" : "FULL"
+      firmaSeguroProcessSigned && currentStepOverride >= 5 ? "DELIVERY_EVIDENCE" : "FULL",
+      advanceClient ? "ADVANCE_CLIENT" : undefined
     );
     setPersistedIphoneClosureFingerprint(closureFingerprintAtSave);
     return item.id;
@@ -11659,6 +11622,9 @@ export default function CreditFactoryConsole({
   };
 
   const applyDraftPayload = (draft: CreditDraftItem) => {
+    setCustomerFormRevision(value => value + 1);
+    setClientTouchedFields({});
+    setClientValidationAttempted(false);
     cancelPendingDraftAutosave();
     updateDraftResumeHydration(true);
     setFirmaSeguroPendingDraftId(draft.id);
@@ -13968,9 +13934,9 @@ export default function CreditFactoryConsole({
 
             <div
               className={[
-                "fp-step-stage fp-form-redesign fp-seller-form-card rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
+                createClientMode && wizardStep === 1 && !showDataCreditoGate ? customerDetailsStyles.stage : "fp-step-stage fp-form-redesign fp-seller-form-card rounded-[24px] border border-[#d6e4e1] bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]",
                 simulatorMode ? "fp-simulator-stage" : "",
-                createClientMode && wizardStep === 1 ? "fp-identity-workspace" : "",
+                createClientMode && wizardStep === 1 && showDataCreditoGate ? "fp-identity-workspace" : "",
                 createClientMode && wizardStep === 2 ? "fp-step2-stage" : "",
                 showDataCreditoGate ? "fp-prequalification-stage" : "",
               ].join(" ")}
@@ -14080,7 +14046,7 @@ export default function CreditFactoryConsole({
                       </div>
                     </div>
                   ) : null}
-                  {dataCreditoApproval ? (
+                  {dataCreditoApproval && wizardStep !== 1 ? (
                     <div
                       className="mb-5 flex flex-col gap-3 rounded-[22px] border border-[#c9df91] bg-[#f4f9e8] px-4 py-4 text-slate-900 sm:flex-row sm:items-center sm:justify-between"
                       role="status"
@@ -14890,656 +14856,38 @@ export default function CreditFactoryConsole({
                   )}
 
                   {showIdentityClientForm ? (
-                  <div
-                    id="fp-identity-client-details"
-                    className="fp-identity-client-form mt-5 space-y-3"
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                      }
-                    }}
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="px-1">
-                        <p className="text-base font-black tracking-tight text-slate-950">
-                          Información del cliente
-                        </p>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Revisa los datos recuperados de DataCrédito y completa
-                          la información faltante para preparar el
-                          contrato y el pagaré.
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="rounded-full border border-[#dfe7cf] bg-[#f6faed] px-3 py-1 text-xs font-bold text-[#557812]">
-                          {clientFormValidation.referencesComplete
-                            ? 3
-                            : clientFormValidation.personalComplete
-                              ? clientFormValidation.contactComplete
-                                ? 3
-                                : 2
-                              : 1}{" "}
-                          de 3
-                        </span>
-                        {!canAdmin && initialSeller && (
-                          <div className="rounded-[8px] border border-[#dfe3e5] bg-white px-4 py-2 text-sm text-slate-600">
-                            <p className="font-semibold text-slate-950">Vendedor activo</p>
-                            <p className="mt-1">{initialSeller.nombre}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {dataCreditoApproval ? <div className="mt-4 text-sm">
-                      <p className="font-semibold">Datos obtenidos de DataCrédito</p>
-                      {dataCreditoApproval.identity?.original.missing.length ? <p role="status">DataCrédito no entregó: {dataCreditoApproval.identity.original.missing.join(", ")}. {dataCreditoFullNameOnly ? "El número y tipo de documento corresponden a la consulta aprobada; estos datos no están verificados por DataCrédito. Veriff deberá validar la misma cédula antes de firmar." : "Completa los nombres mediante la opción de edición. Para documento o primer apellido faltante, solicita revisión autorizada; no se permite firmar con identidad incompleta."}</p> : null}
-                      {!dataCreditoApproval.identity ? <p role="alert">La evaluación está guardada, pero no se pudo recuperar una identidad verificable. No repitas una consulta paga; solicita revisión autorizada del expediente.</p> : null}
-                      {dataCreditoApproval.identity?.original.fullName && !dataCreditoFullNameOnly ? <p>Nombre completo informado (solo referencia, sin separar automáticamente): {dataCreditoApproval.identity.original.fullName}</p> : null}
-                      {dataCreditoCanEditNameComponents && dataCreditoApproval.identity && (clientePrimerNombre !== dataCreditoApproval.identity.original.names || clienteSegundoApellido !== dataCreditoApproval.identity.original.secondSurname) ? <p>Datos corregidos por el asesor. Original DataCrédito: {dataCreditoApproval.identity.original.names || "Nombres no informados"} · {dataCreditoApproval.identity.original.secondSurname || "Segundo apellido no informado"}.</p> : null}
-                      {dataCreditoApproval.identity?.effective.manuallyCompleted?.length ? <p>Identidad completada mediante revisión autorizada; los campos faltantes no están verificados por DataCrédito.</p> : null}
-                      {dataCreditoFullNameOnly ? <p>DataCrédito entregó los nombres y apellidos completos en un solo campo. Se conserva íntegro, sin dividirlo ni permitir cambios al primer apellido.</p> : null}
-                      {dataCreditoCanEditNameComponents ? <Button type="button" variant="secondary" onClick={() => setEditingDataCreditoNames(!editingDataCreditoNames)}>{editingDataCreditoNames ? "Bloquear nombres y segundo apellido" : "Editar nombres y segundo apellido"}</Button> : null}
-                      {dataCreditoCanEditNameComponents && editingDataCreditoNames ? <p>La corrección se guardará con el asesor responsable y la fecha. El segundo apellido puede quedar vacío.</p> : null}
-                    </div> : null}
-                    <section className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
-                      <div className="mb-5 flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f2f7e8] text-[#6f9d17]">
-                            <UserRound className="h-5 w-5" strokeWidth={1.8} />
-                          </span>
-                          <div>
-                            <h4 className="text-sm font-black text-[#171b1c]">1. Datos personales</h4>
-                            <p className="mt-1 text-xs text-slate-500">Información básica del cliente consultado.</p>
-                          </div>
-                        </div>
-                        {clientFormValidation.personalComplete ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5f8d10]">
-                            <Check className="h-4 w-4" strokeWidth={2.2} /> Completo
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="grid gap-4 md:grid-cols-2">
-                      {dataCreditoApproval ? (
+                    <CustomerDetailsForm
+                      key={customerFormRevision}
+                      values={factoryDraftPayload}
+                      validation={clientFormValidation}
+                      approval={dataCreditoApproval}
+                      canEdit={dataCreditoCanEditNameComponents}
+                      editing={editingDataCreditoNames}
+                      onEdit={() => setEditingDataCreditoNames(value => !value)}
+                      fieldProps={clientFieldInputProps}
+                      fieldError={clientFieldError}
+                      documentOptions={DOCUMENT_TYPE_OPTIONS}
+                      departmentOptions={COLOMBIA_DEPARTMENT_OPTIONS}
+                      genderOptions={GENDER_OPTIONS}
+                      maritalOptions={MARITAL_STATUS_OPTIONS}
+                      strata={SOCIOECONOMIC_STRATUM_OPTIONS}
+                      cities={cityOptions}
+                      onChange={(field, value) => {
+                        const setters = { clientePrimerNombre: setClientePrimerNombre, clientePrimerApellido: setClientePrimerApellido, clienteTipoDocumento: setClienteTipoDocumento, clienteDocumento: setClienteDocumento, clienteFechaExpedicion: setClienteFechaExpedicion, clienteFechaNacimiento: setClienteFechaNacimiento, clienteTelefono: setClienteTelefono, clienteCorreo: setClienteCorreo, clienteDepartamento: setClienteDepartamento, clienteCiudad: setClienteCiudad, clienteGenero: setClienteGenero, clienteEstadoCivil: setClienteEstadoCivil, clienteEstrato: setClienteEstrato, clienteDireccion: setClienteDireccion, referenciaFamiliar1Nombre: setReferenciaFamiliar1Nombre, referenciaFamiliar1Parentesco: setReferenciaFamiliar1Parentesco, referenciaFamiliar1Telefono: setReferenciaFamiliar1Telefono, referenciaFamiliar2Nombre: setReferenciaFamiliar2Nombre, referenciaFamiliar2Parentesco: setReferenciaFamiliar2Parentesco, referenciaFamiliar2Telefono: setReferenciaFamiliar2Telefono };
+                        setters[field](field === "clienteDocumento" ? value.replace(/\D/g, "") : value);
+                        if (field === "clienteDepartamento" && value !== clienteDepartamento) setClienteCiudad("");
+                      }}
+                      nameFields={dataCreditoApproval ? (
                         <DataCreditoClientNameBar fullName={getDataCreditoClientDisplayName(dataCreditoApproval, clienteNombre)} canEditComponents={dataCreditoCanEditNameComponents} editing={editingDataCreditoNames} givenNames={clientePrimerNombre} secondSurname={clienteSegundoApellido} onGivenNamesChange={setClientePrimerNombre} onSecondSurnameChange={setClienteSegundoApellido} givenNamesInputProps={clientFieldInputProps("clientePrimerNombre")} givenNamesError={renderClientFieldError("clientePrimerNombre")} />
-                      ) : (<>
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Nombre(s)
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clientePrimerNombre")}
-                          value={clientePrimerNombre}
-                          readOnly={Boolean(dataCreditoApproval) && !editingDataCreditoNames}
-                          onChange={(event) => setClientePrimerNombre(event.target.value)}
-                          placeholder="Ejemplo: Carlos"
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        />
-                        {renderClientFieldError("clientePrimerNombre")}
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Primer apellido
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clientePrimerApellido")}
-                          value={clientePrimerApellido}
-                          readOnly={Boolean(dataCreditoApproval)}
-                          onChange={(event) => setClientePrimerApellido(event.target.value)}
-                          placeholder="Ejemplo: Ochoa"
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        />
-                        {renderClientFieldError("clientePrimerApellido")}
-                      </div>
-
-                      <div>
-                        <label htmlFor="clienteSegundoApellido" className="mb-2 block text-sm font-semibold text-slate-700">
-                          Segundo apellido (si aplica)
-                        </label>
-                        <input
-                          id="clienteSegundoApellido"
-                          value={clienteSegundoApellido}
-                          readOnly={Boolean(dataCreditoApproval) && !editingDataCreditoNames}
-                          onChange={(event) => setClienteSegundoApellido(event.target.value)}
-                          placeholder="Segundo apellido"
-                          maxLength={90}
-                          autoComplete="family-name"
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-950 focus:ring-2 focus:ring-lime-200"
-                        />
-                      </div>
-
-                      </>)}
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Tipo de documento
-                        </label>
-                        <select
-                          {...clientFieldInputProps("clienteTipoDocumento")}
-                          value={clienteTipoDocumento}
-                          disabled={Boolean(dataCreditoApproval)}
-                          onChange={(event) => setClienteTipoDocumento(event.target.value)}
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        >
-                          {DOCUMENT_TYPE_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        {renderClientFieldError("clienteTipoDocumento")}
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Numero de documento
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clienteDocumento")}
-                          value={clienteDocumento}
-                          readOnly={Boolean(dataCreditoApproval)}
-                          onChange={(event) =>
-                            setClienteDocumento(event.target.value.replace(/\D/g, ""))
-                          }
-                          placeholder="Ejemplo: 1234567890"
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        />
-                        {renderClientFieldError("clienteDocumento")}
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Fecha de expedicion del documento
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clienteFechaExpedicion")}
-                          type="date"
-                          value={clienteFechaExpedicion}
-                          onChange={(event) => setClienteFechaExpedicion(event.target.value)}
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        />
-                        {renderClientFieldError("clienteFechaExpedicion")}
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Fecha de nacimiento
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clienteFechaNacimiento")}
-                          type="date"
-                          value={clienteFechaNacimiento}
-                          onChange={(event) => setClienteFechaNacimiento(event.target.value)}
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        />
-                        {renderClientFieldError("clienteFechaNacimiento")}
-                      </div>
-                      </div>
-                    </section>
-                    {clientFormValidation.personalComplete ? (
-                      <section ref={clientContactBlockRef} className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
-                        <div className="mb-5 flex items-start justify-between gap-4">
-                          <div className="flex items-start gap-3">
-                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f2f7e8] text-[#6f9d17]">
-                              <Building2 className="h-5 w-5" strokeWidth={1.8} />
-                            </span>
-                            <div>
-                              <h4 className="text-sm font-black text-[#171b1c]">2. Contacto y ubicacion</h4>
-                              <p className="mt-1 text-xs text-slate-500">Medios de contacto y ubicacion del cliente.</p>
-                            </div>
-                          </div>
-                          {clientFormValidation.contactComplete ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5f8d10]">
-                              <Check className="h-4 w-4" strokeWidth={2.2} /> Completo
-                            </span>
-                          ) : null}
+                      ) : (
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <div><label htmlFor="clientePrimerNombre">Nombre(s)</label><Input {...clientFieldInputProps("clientePrimerNombre")} value={clientePrimerNombre} onChange={event => setClientePrimerNombre(event.target.value)} />{renderClientFieldError("clientePrimerNombre")}</div>
+                          <div><label htmlFor="clientePrimerApellido">Primer apellido</label><Input {...clientFieldInputProps("clientePrimerApellido")} value={clientePrimerApellido} onChange={event => setClientePrimerApellido(event.target.value)} />{renderClientFieldError("clientePrimerApellido")}</div>
+                          <div><label htmlFor="clienteSegundoApellido">Segundo apellido (si aplica)</label><Input id="clienteSegundoApellido" value={clienteSegundoApellido} maxLength={90} onChange={event => setClienteSegundoApellido(event.target.value)} /></div>
                         </div>
-                        <div className="grid gap-4 md:grid-cols-2">
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Numero de celular con WhatsApp
-                        </label>
-                        <div
-                          className={[
-                            "flex items-center overflow-hidden rounded-2xl border bg-white transition",
-                            clienteTelefono &&
-                            (!clienteTelefonoValido || clienteTelefonoRepetido)
-                              ? "border-red-300 focus-within:border-red-500 focus-within:ring-2 focus-within:ring-red-100"
-                              : "border-[#c3d8dc] focus-within:border-[#145a5a] focus-within:ring-2 focus-within:ring-[#d6eef2]",
-                          ].join(" ")}
-                        >
-                          <span className="border-r border-[#d9e7ea] px-4 py-3 text-base font-semibold text-slate-600">
-                            +57
-                          </span>
-                          <input
-                            {...clientFieldInputProps("clienteTelefono")}
-                            type="tel"
-                            inputMode="numeric"
-                            maxLength={CREDIT_CONTACT_PHONE_LENGTH}
-                            autoComplete="tel-national"
-                            value={clienteTelefono}
-                            onChange={(event) =>
-                              setClienteTelefono(
-                                normalizeCreditContactPhoneInput(event.target.value)
-                              )
-                            }
-                            onPaste={(event) =>
-                              pasteCreditContactPhone(event, setClienteTelefono)
-                            }
-                            placeholder="3001234567"
-                            aria-invalid={
-                              Boolean(clientFieldError("clienteTelefono")) ||
-                              (Boolean(clienteTelefono) &&
-                                (!clienteTelefonoValido ||
-                                  clienteTelefonoRepetido))
-                            }
-                            aria-describedby="cliente-telefono-help"
-                            className="flex-1 px-4 py-3 text-base text-slate-900 outline-none"
-                          />
-                        </div>
-                        <p
-                          id="cliente-telefono-help"
-                          className={[
-                            "mt-2 text-xs",
-                            clientFieldError("clienteTelefono") ||
-                            (clienteTelefono &&
-                              (!clienteTelefonoValido || clienteTelefonoRepetido))
-                              ? "font-semibold text-red-600"
-                              : "text-slate-500",
-                          ].join(" ")}
-                        >
-                          {clientFieldError("clienteTelefono") ||
-                            (clienteTelefonoRepetido
-                              ? "Este número ya está usado en una referencia."
-                              : clienteTelefono && !clienteTelefonoValido
-                                ? "Debe tener exactamente 10 dígitos (" +
-                                  clienteTelefono.length +
-                                  "/10)."
-                                : "10 dígitos. Debe ser diferente a los teléfonos de las referencias.")}
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Correo electronico
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clienteCorreo")}
-                          type="email"
-                          value={clienteCorreo}
-                          onChange={(event) => setClienteCorreo(event.target.value)}
-                          placeholder="Ejemplo: cliente@gmail.com"
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        />
-                        {renderClientFieldError("clienteCorreo")}
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          En qué departamento vive el cliente
-                        </label>
-                        <select
-                          {...clientFieldInputProps("clienteDepartamento")}
-                          value={clienteDepartamento}
-                          onChange={(event) => {
-                            setClienteDepartamento(event.target.value);
-                            setClienteCiudad("");
-                          }}
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        >
-                          <option value="">Selecciona</option>
-                          {COLOMBIA_DEPARTMENT_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        {renderClientFieldError("clienteDepartamento")}
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          En qué ciudad vive el cliente
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clienteCiudad")}
-                          type="text"
-                          list="cliente-ciudad-options"
-                          value={clienteCiudad}
-                          onChange={(event) => setClienteCiudad(event.target.value)}
-                          disabled={!clienteDepartamento}
-                          autoComplete="address-level2"
-                          placeholder={
-                            clienteDepartamento
-                              ? "Escribe o selecciona la ciudad"
-                              : "Selecciona primero el departamento"
-                          }
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2] disabled:bg-slate-50 disabled:text-slate-400"
-                        />
-                        <datalist id="cliente-ciudad-options">
-                          {cityOptions.map((city) => (
-                            <option key={city} value={city}>
-                            </option>
-                          ))}
-                        </datalist>
-                        {clienteDepartamento ? (
-                          <p className="mt-2 text-xs text-slate-500">
-                            Puedes seleccionar una sugerencia o escribir cualquier municipio.
-                          </p>
-                        ) : null}
-                        {renderClientFieldError("clienteCiudad")}
-                      </div>
-
-                      <div className="grid gap-4 md:col-span-2 md:grid-cols-3">
-                        <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-700">
-                            Genero
-                          </label>
-                          <select
-                            {...clientFieldInputProps("clienteGenero")}
-                            value={clienteGenero}
-                            onChange={(event) => setClienteGenero(event.target.value)}
-                            className="w-full rounded-2xl border border-[#cbd2d7] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#789d17] focus:ring-2 focus:ring-[#e9f4cb]"
-                          >
-                            <option value="">Selecciona</option>
-                            {GENDER_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          {renderClientFieldError("clienteGenero")}
-                        </div>
-
-                        <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-700">
-                            Estado civil
-                          </label>
-                          <select
-                            {...clientFieldInputProps("clienteEstadoCivil")}
-                            value={clienteEstadoCivil}
-                            onChange={(event) =>
-                              setClienteEstadoCivil(event.target.value)
-                            }
-                            className="w-full rounded-2xl border border-[#cbd2d7] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#789d17] focus:ring-2 focus:ring-[#e9f4cb]"
-                          >
-                            <option value="">Selecciona</option>
-                            {MARITAL_STATUS_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          {renderClientFieldError("clienteEstadoCivil")}
-                        </div>
-
-                        <div>
-                          <label className="mb-2 block text-sm font-semibold text-slate-700">
-                            Estrato
-                          </label>
-                          <select
-                            {...clientFieldInputProps("clienteEstrato")}
-                            value={clienteEstrato}
-                            onChange={(event) => setClienteEstrato(event.target.value)}
-                            className="w-full rounded-2xl border border-[#cbd2d7] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#789d17] focus:ring-2 focus:ring-[#e9f4cb]"
-                          >
-                            <option value="">Selecciona</option>
-                            {SOCIOECONOMIC_STRATUM_OPTIONS.map((option) => (
-                              <option key={option} value={option}>
-                                Estrato {option}
-                              </option>
-                            ))}
-                          </select>
-                          {renderClientFieldError("clienteEstrato")}
-                        </div>
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <label className="mb-2 block text-sm font-semibold text-slate-700">
-                          Direccion completa
-                        </label>
-                        <input
-                          {...clientFieldInputProps("clienteDireccion")}
-                          value={clienteDireccion}
-                          onChange={(event) => setClienteDireccion(event.target.value)}
-                          placeholder="Barrio, carrera, calle, numero y complemento"
-                          className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                        />
-                        {renderClientFieldError("clienteDireccion")}
-                        </div>
-                        </div>
-                      </section>
-                    ) : (
-                      <section className="flex min-h-24 items-center gap-4 rounded-[8px] border border-dashed border-[#d7dcde] bg-[#f4f5f3] px-5 py-4 opacity-70">
-                        <LockKeyhole className="h-5 w-5 shrink-0 text-slate-500" strokeWidth={1.8} />
-                        <div>
-                          <h4 className="text-sm font-bold text-slate-700">2. Contacto y ubicacion</h4>
-                          <p className="mt-1 text-xs text-slate-500">Complete el bloque anterior para continuar.</p>
-                        </div>
-                      </section>
-                    )}
-
-                    {clientFormValidation.contactComplete ? (
-                      <section ref={clientReferencesBlockRef} className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
-                        <div className="mb-5 flex items-start justify-between gap-4">
-                          <div className="flex items-start gap-3">
-                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f2f7e8] text-[#6f9d17]">
-                              <UserRound className="h-5 w-5" strokeWidth={1.8} />
-                            </span>
-                            <div>
-                              <h4 className="text-sm font-black text-[#171b1c]">3. Referencias familiares obligatorias</h4>
-                              <p className="mt-1 text-xs text-slate-500">Dos contactos requeridos para completar la validacion comercial.</p>
-                            </div>
-                          </div>
-                          {clientFormValidation.referencesComplete ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5f8d10]">
-                              <Check className="h-4 w-4" strokeWidth={2.2} /> Completo
-                            </span>
-                          ) : null}
-                        </div>
-
-                      <div className="md:col-span-2">
-                        <div className="rounded-[24px] border border-[#c3d8dc] bg-white/80 p-4">
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <p className="text-sm font-black tracking-tight text-slate-950">
-                                Referencias familiares obligatorias
-                              </p>
-                              <p className="text-sm leading-6 text-slate-600">
-                                Solicita dos referencias para dejar completo el contrato y la validacion comercial.
-                              </p>
-                            </div>
-                            <span className="inline-flex rounded-full border border-[#d8e7ea] bg-[#f7fcff] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                              2 requeridas
-                            </span>
-                          </div>
-
-                          <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                            <div className="rounded-[22px] border border-[#d9e7ea] bg-[#fbfeff] p-4">
-                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                Referencia familiar 1
-                              </p>
-                              <div className="mt-3 grid gap-3">
-                                <input
-                                  {...clientFieldInputProps("referenciaFamiliar1Nombre")}
-                                  value={referenciaFamiliar1Nombre}
-                                  onChange={(event) =>
-                                    setReferenciaFamiliar1Nombre(event.target.value)
-                                  }
-                                  placeholder="Nombre completo"
-                                  className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                                />
-                                {renderClientFieldError("referenciaFamiliar1Nombre")}
-                                <input
-                                  {...clientFieldInputProps("referenciaFamiliar1Parentesco")}
-                                  value={referenciaFamiliar1Parentesco}
-                                  onChange={(event) =>
-                                    setReferenciaFamiliar1Parentesco(event.target.value)
-                                  }
-                                  placeholder="Parentesco"
-                                  className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                                />
-                                {renderClientFieldError("referenciaFamiliar1Parentesco")}
-                                <input
-                                  {...clientFieldInputProps("referenciaFamiliar1Telefono")}
-                                  type="tel"
-                                  inputMode="numeric"
-                                  maxLength={CREDIT_CONTACT_PHONE_LENGTH}
-                                  value={referenciaFamiliar1Telefono}
-                                  onChange={(event) =>
-                                    setReferenciaFamiliar1Telefono(
-                                      normalizeCreditContactPhoneInput(event.target.value)
-                                    )
-                                  }
-                                  onPaste={(event) =>
-                                    pasteCreditContactPhone(
-                                      event,
-                                      setReferenciaFamiliar1Telefono
-                                    )
-                                  }
-                                  placeholder="Teléfono de 10 dígitos"
-                                  aria-invalid={
-                                    Boolean(clientFieldError("referenciaFamiliar1Telefono")) ||
-                                    (Boolean(referenciaFamiliar1Telefono) &&
-                                      (!referenciaFamiliar1TelefonoValido ||
-                                        referenciaFamiliar1TelefonoRepetido))
-                                  }
-                                  aria-describedby="referencia-1-telefono-help"
-                                  className={[
-                                    "w-full rounded-2xl border bg-white px-4 py-3 text-base text-slate-900 outline-none transition",
-                                    referenciaFamiliar1Telefono &&
-                                    (!referenciaFamiliar1TelefonoValido ||
-                                      referenciaFamiliar1TelefonoRepetido)
-                                      ? "border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100"
-                                      : "border-[#c3d8dc] focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]",
-                                  ].join(" ")}
-                                />
-                                <p
-                                  id="referencia-1-telefono-help"
-                                  className={[
-                                    "text-xs",
-                                    clientFieldError("referenciaFamiliar1Telefono") ||
-                                    (referenciaFamiliar1Telefono &&
-                                      (!referenciaFamiliar1TelefonoValido ||
-                                        referenciaFamiliar1TelefonoRepetido))
-                                      ? "font-semibold text-red-600"
-                                      : "text-slate-500",
-                                  ].join(" ")}
-                                >
-                                  {clientFieldError("referenciaFamiliar1Telefono") ||
-                                    (referenciaFamiliar1TelefonoRepetido
-                                      ? "Este número ya está usado en otro campo."
-                                      : referenciaFamiliar1Telefono &&
-                                          !referenciaFamiliar1TelefonoValido
-                                        ? "Debe tener exactamente 10 dígitos (" +
-                                          referenciaFamiliar1Telefono.length +
-                                          "/10)."
-                                        : "10 dígitos y diferente a los otros dos números.")}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="rounded-[22px] border border-[#d9e7ea] bg-[#fbfeff] p-4">
-                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                Referencia familiar 2
-                              </p>
-                              <div className="mt-3 grid gap-3">
-                                <input
-                                  {...clientFieldInputProps("referenciaFamiliar2Nombre")}
-                                  value={referenciaFamiliar2Nombre}
-                                  onChange={(event) =>
-                                    setReferenciaFamiliar2Nombre(event.target.value)
-                                  }
-                                  placeholder="Nombre completo"
-                                  className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                                />
-                                {renderClientFieldError("referenciaFamiliar2Nombre")}
-                                <input
-                                  {...clientFieldInputProps("referenciaFamiliar2Parentesco")}
-                                  value={referenciaFamiliar2Parentesco}
-                                  onChange={(event) =>
-                                    setReferenciaFamiliar2Parentesco(event.target.value)
-                                  }
-                                  placeholder="Parentesco"
-                                  className="w-full rounded-2xl border border-[#c3d8dc] bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]"
-                                />
-                                {renderClientFieldError("referenciaFamiliar2Parentesco")}
-                                <input
-                                  {...clientFieldInputProps("referenciaFamiliar2Telefono")}
-                                  type="tel"
-                                  inputMode="numeric"
-                                  maxLength={CREDIT_CONTACT_PHONE_LENGTH}
-                                  value={referenciaFamiliar2Telefono}
-                                  onChange={(event) =>
-                                    setReferenciaFamiliar2Telefono(
-                                      normalizeCreditContactPhoneInput(event.target.value)
-                                    )
-                                  }
-                                  onPaste={(event) =>
-                                    pasteCreditContactPhone(
-                                      event,
-                                      setReferenciaFamiliar2Telefono
-                                    )
-                                  }
-                                  placeholder="Teléfono de 10 dígitos"
-                                  aria-invalid={
-                                    Boolean(clientFieldError("referenciaFamiliar2Telefono")) ||
-                                    (Boolean(referenciaFamiliar2Telefono) &&
-                                      (!referenciaFamiliar2TelefonoValido ||
-                                        referenciaFamiliar2TelefonoRepetido))
-                                  }
-                                  aria-describedby="referencia-2-telefono-help"
-                                  className={[
-                                    "w-full rounded-2xl border bg-white px-4 py-3 text-base text-slate-900 outline-none transition",
-                                    referenciaFamiliar2Telefono &&
-                                    (!referenciaFamiliar2TelefonoValido ||
-                                      referenciaFamiliar2TelefonoRepetido)
-                                      ? "border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100"
-                                      : "border-[#c3d8dc] focus:border-[#145a5a] focus:ring-2 focus:ring-[#d6eef2]",
-                                  ].join(" ")}
-                                />
-                                <p
-                                  id="referencia-2-telefono-help"
-                                  className={[
-                                    "text-xs",
-                                    clientFieldError("referenciaFamiliar2Telefono") ||
-                                    (referenciaFamiliar2Telefono &&
-                                      (!referenciaFamiliar2TelefonoValido ||
-                                        referenciaFamiliar2TelefonoRepetido))
-                                      ? "font-semibold text-red-600"
-                                      : "text-slate-500",
-                                  ].join(" ")}
-                                >
-                                  {clientFieldError("referenciaFamiliar2Telefono") ||
-                                    (referenciaFamiliar2TelefonoRepetido
-                                      ? "Este número ya está usado en otro campo."
-                                      : referenciaFamiliar2Telefono &&
-                                          !referenciaFamiliar2TelefonoValido
-                                        ? "Debe tener exactamente 10 dígitos (" +
-                                          referenciaFamiliar2Telefono.length +
-                                          "/10)."
-                                        : "10 dígitos y diferente a los otros dos números.")}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </section>
-                    ) : (
-                      <section className="flex min-h-24 items-center gap-4 rounded-[8px] border border-dashed border-[#d7dcde] bg-[#f4f5f3] px-5 py-4 opacity-70">
-                        <LockKeyhole className="h-5 w-5 shrink-0 text-slate-500" strokeWidth={1.8} />
-                        <div>
-                          <h4 className="text-sm font-bold text-slate-700">3. Referencias familiares obligatorias</h4>
-                          <p className="mt-1 text-xs text-slate-500">Complete el bloque anterior para continuar.</p>
-                        </div>
-                      </section>
-                    )}
-                  </div>
-                  ) : (
-                    null
-                  )}
+                      )}
+                    />
+                  ) : null}
                 </div>
               )}
 
@@ -18952,19 +18300,19 @@ export default function CreditFactoryConsole({
             {!simulatorMode && !showDataCreditoGate && (
               <div
                 className={[
-                  wizardStep === 5
+                  createClientMode && wizardStep === 1 ? customerDetailsStyles.actions : wizardStep === 5
                     ? stepFourStyles.footer
                     : "fp-flow-actions sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 py-4 shadow-[0_10px_28px_rgba(15,23,42,0.09)] backdrop-blur",
-                  createClientMode && wizardStep === 1 ? "fp-identity-actions" : "",
+
                   createClientMode && wizardStep === 2 ? "fp-step2-actions" : "",
                 ].join(" ")}
               >
                 {createClientMode && wizardStep === 1 ? (
                   <>
-                    <Link href="/dashboard/creditos" className="fp-identity-cancel">
+                    <button type="button" className={customerDetailsStyles.cancel} onClick={() => setCustomerExitIntent("cancel")} disabled={wizardStepTransitioning || customerExitBusy}>
                       <ArrowLeft className="h-4 w-4" strokeWidth={1.9} />
-                      Cancelar venta
-                    </Link>
+                      Cancelar
+                    </button>
 
                     {draftStatus === "error" || draftStatus === "loading" ? (
                       <span
@@ -18979,10 +18327,10 @@ export default function CreditFactoryConsole({
                       </span>
                     ) : null}
 
-                    <div className="fp-identity-action-buttons">
+                    <div className={customerDetailsStyles.actionButtons}>
                       <button
                         type="button"
-                        onClick={() => resetForm()}
+                        onClick={() => setCustomerExitIntent("clear")}
                         disabled={creating || veriffSubmitting || wizardStepTransitioning}
                       >
                         Limpiar
@@ -18998,7 +18346,7 @@ export default function CreditFactoryConsole({
                         onClick={() => {
                           void advanceToStep(nextVisibleWizardStep(wizardStep));
                         }}
-                        className="fp-identity-continue"
+                        className={customerDetailsStyles.continue}
                         aria-busy={wizardStepTransitioning}
                       >
                         {wizardStepTransitioning ? "Guardando…" : "Continuar"}
@@ -22489,6 +21837,25 @@ export default function CreditFactoryConsole({
             </div>
           )}
         </section>
+        <ConfirmDialog
+          open={customerExitIntent !== null}
+          title={customerExitIntent === "clear" ? "¿Limpiar esta venta?" : "¿Salir de esta venta?"}
+          description={customerExitIntent === "clear" ? "Se limpiará el formulario actual. El borrador guardado se conservará para recuperarlo." : "Guardaremos los datos ingresados como borrador antes de salir."}
+          confirmLabel={customerExitIntent === "clear" ? "Limpiar" : "Guardar y salir"}
+          busy={customerExitBusy}
+          onCancel={() => setCustomerExitIntent(null)}
+          onConfirm={() => {
+            if (customerExitBusy) return;
+            if (customerExitIntent === "clear") { resetForm(); setCustomerExitIntent(null); return; }
+            setCustomerExitBusy(true);
+            cancelPendingDraftAutosave();
+            void saveCurrentDraft(1).then(() => {
+              window.location.assign("/dashboard/creditos");
+            }).catch(error => {
+              setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar el borrador", tone: "red" });
+            }).finally(() => setCustomerExitBusy(false));
+          }}
+        />
         <ImeiConfirmationDialog
           open={imeiConfirmationTargetStep !== null && wizardStep === 2}
           expectedImei={imeiDigits}

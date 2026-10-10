@@ -6,6 +6,11 @@ import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
 import { composeCreditClientName } from "@/lib/credit-client-name";
+import {
+  assertCompleteCreditClientStep,
+  CreditClientStepValidationError,
+  requiresCreditClientStepValidation,
+} from "@/lib/credit-client-step";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
@@ -456,9 +461,29 @@ export async function POST(req: Request) {
       sedeId: access.user.sedeId,
     };
     const signed = draftId ? await prisma.$queryRawUnsafe<Array<{ signed: boolean }>>('SELECT EXISTS (SELECT 1 FROM "FirmaSeguroProcess" WHERE "draftId" = $1 AND "completedAt" IS NOT NULL) AS "signed"', draftId) : [];
-    const recoveredIdentity = payloadScope === "FULL" && !signed[0]?.signed
+    // The linked assessment belongs to the draft, including older browser
+    // snapshots that omit its ID. A delivery scope is not a signing authority.
+    if (!payload.dataCreditoAssessmentId && existingDraft?.dataCreditoAssessmentId) {
+      payload.dataCreditoAssessmentId = existingDraft.dataCreditoAssessmentId;
+    }
+    const recoveredIdentity = !signed[0]?.signed
       ? await enforceDataCreditoCustomerIdentity(payload, { userId: owner.usuarioId, sellerId: owner.vendedorId, sedeId: owner.sedeId, aliadoId: existingDraft?.aliadoId ?? access.user.aliadoId ?? null }, true, { userId: access.user.id, sellerId: access.seller?.id || null })
       : null;
+    if (requiresCreditClientStepValidation({
+      action: body.action,
+      currentStep: clampStep(body.currentStep),
+      storedStep: existingDraft?.currentStep,
+      payload,
+      payloadScope: signed[0]?.signed ? payloadScope : "FULL",
+    })) {
+      if (!signed[0]?.signed && !recoveredIdentity) {
+        throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
+      }
+      assertCompleteCreditClientStep(payload,
+        recoveredIdentity?.effective.nameMode === "FULL_NAME_ONLY"
+          ? recoveredIdentity.effective.fullName
+          : undefined);
+    }
     fields = extractDraftFields(payload);
     const saved = await saveSolicitudDraft({
       verifiedDataCreditoFirstSurname: recoveredIdentity?.effective.firstSurname,
@@ -483,6 +508,14 @@ export async function POST(req: Request) {
     if (error instanceof ImeiConfirmationError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status });
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
+    if (error instanceof CreditClientStepValidationError) {
+      return NextResponse.json({
+        code: error.code,
+        error: error.message,
+        errors: error.errors,
+        firstInvalidField: error.firstInvalidField,
+      }, { status: error.status });
+    }
     if (
       error instanceof Error &&
       error.message === DRAFT_REQUIRES_DATACREDITO_CODE

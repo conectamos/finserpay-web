@@ -42,18 +42,20 @@ test("la fábrica presenta cuatro pasos sin migrar la numeración histórica", a
 });
 
 test("DataCrédito aprobado despliega los datos del cliente en el mismo paso 1", async () => {
-  const [factory, gate] = await Promise.all([
+  const [factory, gate, customerForm] = await Promise.all([
     readProjectFile("app/dashboard/creditos/credit-factory-console.tsx"),
     readProjectFile(
       "app/dashboard/creditos/datacredito-prequalification-gate.tsx"
     ),
+    readProjectFile("app/dashboard/creditos/customer-details-form.tsx"),
   ]);
 
   assert.match(factory, /const clienteFormUnlocked = dataCreditoFlowReady;/);
   assert.match(factory, /const showIdentityClientForm = clienteFormUnlocked;/);
-  assert.match(factory, />\s*Información del cliente\s*</);
-  assert.match(factory, /Datos obtenidos de DataCrédito/);
-  assert.match(factory, /NOMBRES Y APELLIDOS/);
+  assert.match(factory, /showIdentityClientForm \? \(\s*<CustomerDetailsForm/);
+  assert.match(customerForm, />\s*Datos del cliente\s*</);
+  assert.match(customerForm, /index === 0 && approval[^\n]*>DataCrédito</);
+  assert.match(factory, />\s*Nombres y apellidos\s*</);
   assert.match(gate, />\s*Consulta aprobada\s*</);
   assert.match(gate, /Continuar con los datos/);
   assert.doesNotMatch(gate, /Continuar a validación/);

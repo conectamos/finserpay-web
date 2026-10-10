@@ -19,16 +19,48 @@ const fullName = "María del Mar  De la Peña Muñoz del Río";
 function fixture({ storedDocument = "123456789", requestedDocument = "123456789", storedName = fullName,
   providerDocumentNumber = "123.456.789", providerDocumentType = "CC", storedType = "CEDULA_DE_CIUDADANIA", providerFullName = fullName,
   newSession = false, assessmentAvailable = true, assessmentStatus = "APROBADO", assessmentSedeId = 1 } = {}) {
-  const calls = { provider: 0, reservation: 0, assessment: [], release: 0, source: 0, audit: 0, identities: [], sessionInputs: [], reservationInputs: [] };
+  const calls = { provider: 0, reservation: 0, assessment: [], release: 0, source: 0, audit: 0, identityTransactions: 0, identities: [], sessionInputs: [], reservationInputs: [] };
   const row = { id: assessmentId, status: assessmentStatus, userId: 23, sellerId: 45, sedeId: assessmentSedeId, aliadoId: null };
+  let identityTransactionActive = false;
+  const identityQuery = async (sql, args, transactional) => {
+    assert.equal(args[0], assessmentId);
+    if (sql.includes('FROM "DataCreditoAssessment"')) {
+      assert.equal(transactional, true, "The mutable assessment must be read under the identity transaction");
+      assert.match(sql, /FOR UPDATE/);
+      return [row];
+    }
+    assert.match(sql, /FROM "DataCreditoIdentityCorrection"/);
+    return [];
+  };
+  const identityExecute = async sql => { if (sql.startsWith("INSERT")) calls.audit++; };
+  const identityPrisma = {
+    $executeRawUnsafe: async (...args) => {
+      assert.equal(identityTransactionActive, false, "Schema setup must not use the global client inside the transaction");
+      return identityExecute(...args);
+    },
+    $queryRawUnsafe: async (sql, ...args) => {
+      assert.equal(identityTransactionActive, false, "Identity reads must use the active transaction client");
+      return identityQuery(sql, args, false);
+    },
+    $transaction: async callback => {
+      assert.equal(identityTransactionActive, false);
+      calls.identityTransactions++;
+      identityTransactionActive = true;
+      try {
+        return await callback({
+          $queryRawUnsafe: (sql, ...args) => identityQuery(sql, args, true),
+          $executeRawUnsafe: identityExecute,
+        });
+      } finally {
+        identityTransactionActive = false;
+      }
+    },
+  };
   const customer = { exports: {} };
   runInNewContext(customerSource, {
     module: customer, exports: customer.exports, Error, console,
     ...identityHelpers,
-    prisma: {
-      $executeRawUnsafe: async sql => { if (sql.startsWith("INSERT")) calls.audit++; },
-      $queryRawUnsafe: async () => [],
-    },
+    prisma: identityPrisma,
     getDataCreditoAssessmentById: async id => id === assessmentId ? row : null,
     dataCreditoAssessmentMatchesScope: (assessment, scope) => assessment.userId === scope.userId && assessment.sellerId === scope.sellerId && assessment.sedeId === scope.sedeId && assessment.aliadoId === scope.aliadoId,
     readDataCreditoIdentitySource: async () => {
@@ -169,5 +201,9 @@ test("identidad parcial conserva guardas de CC, tipo, aprobación, vigencia y pe
     const f = fixture({ providerDocumentNumber: "", providerDocumentType: "", ...input });
     const response = await f.route.POST(f.request());assert.equal(response.status, 409, JSON.stringify(input));
     assert.equal(f.calls.provider, 0);assert.equal(f.calls.reservation, 0);assert.equal(f.calls.audit, 0);
+    if (input.providerFullName === "") {
+      assert.equal(f.calls.identityTransactions, 1);
+      assert.equal((await response.json()).code, "DATACREDITO_IDENTITY_LOCKED_FIELDS");
+    }
   }
 });

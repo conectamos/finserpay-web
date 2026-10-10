@@ -58,3 +58,6 @@ next-env.d.ts
 
 # generated PDF.js worker and assets
 /public/pdfjs/
+
+# Customer form browser verification artifacts
+/output/customer-details/

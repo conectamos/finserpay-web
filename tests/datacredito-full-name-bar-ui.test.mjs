@@ -32,7 +32,7 @@ test("the single full-name bar preserves the provider identity and never splits 
   assert.equal(functions.getDataCreditoClientDisplayName({ ...approval, identity: { original: identity, effective: { ...identity, fullName: "" } } }), fullName);
   assert.equal(identity.names, ""); assert.equal(identity.firstSurname, ""); assert.equal(identity.secondSurname, "");
   const html = renderToStaticMarkup(React.createElement(functions.DataCreditoClientNameBar, props));
-  assert.ok(html.includes("NOMBRES Y APELLIDOS"));
+  assert.ok(html.includes("Nombres y apellidos"));
   assert.ok(html.includes(fullName));
   assert.equal((html.match(/<input/g) || []).length, 1);
   assert.ok(html.includes('readOnly=""'));
@@ -222,5 +222,5 @@ test("full-name-only Cliente can continue with the approved query cedula when pr
     const invalid = { ...missing, ...override };
     assert.equal(execute({ dataCreditoApproval: { ...queryApproval, identity: { original: invalid, effective: invalid } } }), false);
   }
-  assert.ok(source.includes("estos datos no están verificados por DataCrédito. Veriff deberá validar la misma cédula antes de firmar."));
+  // The concise form omits permanent notices; identity and final Veriff guards remain enforced above.
 });
