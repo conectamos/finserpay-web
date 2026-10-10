@@ -86,6 +86,7 @@ import CreditFinancingProposal from "./credit-financing-proposal";
 import EquipmentVisual from "./equipment-visual";
 import ImeiConfirmationDialog from "./imei-confirmation-dialog";
 import IdentitySignatureOverview from "./identity-signature-overview";
+import VeriffIdentityDialog from "./veriff-identity-dialog";
 import equipmentSignatureStyles from "./equipment-signature.module.css";
 import { useCreditProcessLiveStatus } from "./use-credit-process-live-status";
 import FirmaSeguroIdentityReview from "./firma-seguro-identity-review";
@@ -3041,6 +3042,7 @@ function formatCreditDraftSaveError(
   data: { error?: string; code?: string } | null | undefined,
   fallback = "No se pudo guardar el borrador"
 ) {
+  if (data?.code === "IMEI_CONFIRMATION_REQUIRED") return "Revisa el IMEI en Equipo y plan y pulsa Continuar para confirmarlo.";
   const message = typeof data?.error === "string" && data.error.trim() ? data.error.trim() : fallback;
   const code = typeof data?.code === "string" && /^[A-Z][A-Z0-9_]{2,79}$/.test(data.code) ? data.code : null;
   return code ? `${message} Código: ${code}.` : message;
@@ -3294,6 +3296,8 @@ export default function CreditFactoryConsole({
   const [imeiConfirmationBusy, setImeiConfirmationBusy] = useState(false);
   const imeiConfirmationInFlightRef = useRef(false);
   const imeiConfirmationOpeningRef = useRef(false);
+  const [equipmentImeiConfirmation, setEquipmentImeiConfirmation] = useState<{ draftId: number; imei: string } | null>(null);
+  const equipmentImeiConfirmationRef = useRef<{ draftId: number; imei: string } | null>(null);
   const currentEquipmentDraftIdRef = useRef<number | null>(null);
   const currentEquipmentImeiRef = useRef("");
   const [stepTwoContinuing, setStepTwoContinuing] = useState(false);
@@ -3430,6 +3434,10 @@ export default function CreditFactoryConsole({
     useState<VeriffRetryPolicyState>(EMPTY_VERIFF_RETRY_POLICY);
   const [identityValidationModalOpen, setIdentityValidationModalOpen] =
     useState(false);
+  const [identityValidationQrVisible, setIdentityValidationQrVisible] = useState(false);
+  const [identityValidationHandoffRequired, setIdentityValidationHandoffRequired] = useState(false);
+  const identityValidationEntryRef = useRef<string | null>(null);
+  const signatureManagementRef = useRef<HTMLElement | null>(null);
   const [veriffRegenerationConfirmOpen, setVeriffRegenerationConfirmOpen] =
     useState(false);
   const [veriffRegenerationValidationId, setVeriffRegenerationValidationId] =
@@ -4350,7 +4358,40 @@ export default function CreditFactoryConsole({
   const imeiDigits = imei.replace(/\D/g, "");
   currentEquipmentImeiRef.current = imeiDigits;
   currentEquipmentDraftIdRef.current = draftId;
-  useEffect(() => { setImeiConfirmationTargetStep(null); }, [imeiDigits, draftId]);
+  const equipmentImeiConfirmed = equipmentImeiConfirmation?.draftId === draftId &&
+    equipmentImeiConfirmation.imei === imeiDigits && /^\d{15}$/.test(imeiDigits);
+  const updateEquipmentImeiConfirmation = useCallback((binding: { draftId: number; imei: string } | null) => {
+    equipmentImeiConfirmationRef.current = binding;
+    setEquipmentImeiConfirmation((current) => current?.draftId === binding?.draftId && current?.imei === binding?.imei ? current : binding);
+  }, []);
+  const synchronizeEquipmentImeiConfirmation = useCallback((draft: Pick<CreditDraftItem, "id" | "imei" | "payload">) => {
+    const required = draft.payload?.imeiConfirmationRequired;
+    if (typeof required !== "boolean") return;
+    const savedImei = draft.imei || (typeof draft.payload.imei === "string" ? draft.payload.imei : "");
+    updateEquipmentImeiConfirmation(!required && /^\d{15}$/.test(savedImei) ? { draftId: draft.id, imei: savedImei } : null);
+  }, [updateEquipmentImeiConfirmation]);
+  const resolvePersistedDraftStep = (requestedStep: number) => {
+    const binding = equipmentImeiConfirmationRef.current;
+    return binding?.draftId === draftId && binding.imei === imeiDigits && /^\d{15}$/.test(imeiDigits)
+      ? requestedStep : Math.min(requestedStep, 2);
+  };
+  const recoverEquipmentImeiConfirmation = (currentDraftId: number | null) => {
+    if (currentDraftId !== currentEquipmentDraftIdRef.current) return;
+    cancelPendingDraftAutosave();
+    updateEquipmentImeiConfirmation(null);
+    draftSaveConflictFingerprintRef.current = null;
+    setDraftStatus("idle");
+    setDraftErrorMessage("");
+    setImeiConfirmationTargetStep(null);
+    setIdentityValidationModalOpen(false);
+    setWizardStep(2);
+    setNotice({ text: "Revisa el IMEI en Equipo y plan y pulsa Continuar para confirmarlo.", tone: "amber" });
+  };
+  useEffect(() => {
+    setImeiConfirmationTargetStep(null);
+    const binding = equipmentImeiConfirmationRef.current;
+    if (binding && (binding.draftId !== draftId || binding.imei !== imeiDigits)) updateEquipmentImeiConfirmation(null);
+  }, [imeiDigits, draftId, updateEquipmentImeiConfirmation]);
   const factoryDraftPayload = useMemo(
     () => ({
       wizardStep,
@@ -5654,9 +5695,6 @@ export default function CreditFactoryConsole({
       veriffValidation?.status === "APPROVED" ||
       veriffValidation?.status === "DECLINED"
   );
-  const identityValidationLocked =
-    wizardStep === 4 && !veriffApproved && !veriffHasFinalDecision &&
-    !veriffPreparationError && !veriffConnectionError;
   const veriffQrValidityLabel = veriffValidation?.createdAt
     ? `Generado ${dateTime(veriffValidation.createdAt)}. La vigencia se actualiza con el estado de Veriff.`
     : "La vigencia del codigo se controla con el estado real de Veriff.";
@@ -5681,6 +5719,7 @@ export default function CreditFactoryConsole({
     if (veriffApproved) {
       setVeriffRegenerationConfirmOpen(false);
       setVeriffRegenerationValidationId(null);
+      if (createClientMode) return;
       const reduceMotion = window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches;
@@ -5692,7 +5731,28 @@ export default function CreditFactoryConsole({
     }
 
     setIdentityClientDetailsOpen(false);
-  }, [veriffApproved]);
+  }, [createClientMode, veriffApproved]);
+
+  useEffect(() => {
+    if (!createClientMode) return;
+    if (wizardStep !== 4 || simulatorMode || deliveryMode) {
+      identityValidationEntryRef.current = null;
+      setIdentityValidationModalOpen(false);
+      setIdentityValidationQrVisible(false);
+      setIdentityValidationHandoffRequired(false);
+      return;
+    }
+    if (draftResumeHydrating || draftResumeLoadFailed || !veriffConfigLoaded || !draftId || !equipmentImeiConfirmed) return;
+    const entryKey = String(draftId);
+    if (identityValidationEntryRef.current === entryKey) return;
+    identityValidationEntryRef.current = entryKey;
+    setIdentityValidationQrVisible(false);
+    setIdentityValidationHandoffRequired(veriffIdentityFlowEnabled && !veriffApproved);
+    setIdentityValidationModalOpen(veriffIdentityFlowEnabled && !veriffApproved);
+  }, [createClientMode, deliveryMode, draftId, draftResumeHydrating, draftResumeLoadFailed,
+    equipmentImeiConfirmed, simulatorMode, veriffApproved, veriffConfigLoaded, veriffIdentityFlowEnabled, wizardStep]);
+
+  const identitySignatureManagementReady = veriffApproved && (!createClientMode || (equipmentImeiConfirmed && !identityValidationHandoffRequired));
 
   useEffect(() => {
     if (
@@ -8303,6 +8363,10 @@ export default function CreditFactoryConsole({
     payloadScope: "FULL" | "DELIVERY_EVIDENCE" = "FULL",
     action?: "ADVANCE_CLIENT"
   ) => {
+    if (currentStepOverride >= 3 && resolvePersistedDraftStep(currentStepOverride) < 3) {
+      recoverEquipmentImeiConfirmation(currentDraftId);
+      throw Object.assign(new Error("Revisa el IMEI en Equipo y plan y pulsa Continuar para confirmarlo."), { code: "IMEI_CONFIRMATION_REQUIRED" });
+    }
     cancelPendingDraftAutosave();
     const saveGeneration = draftSaveGenerationRef.current;
     const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payloadScope, payload, action });
@@ -8324,12 +8388,17 @@ export default function CreditFactoryConsole({
       throw new Error(ACTIVE_SOLICITUD_RESUME_MESSAGE);
     }
     if (!result.ok || !result.data?.item) {
+      if (result.data?.code === "IMEI_CONFIRMATION_REQUIRED") {
+        recoverEquipmentImeiConfirmation(currentDraftId);
+        throw Object.assign(new Error(formatCreditDraftSaveError(result.data)), { code: result.data.code });
+      }
       if (result.status === 409) draftSaveConflictFingerprintRef.current = requestBody;
       throw new Error(formatCreditDraftSaveError(result.data));
     }
 
     draftSaveConflictFingerprintRef.current = null;
     setDraftId(result.data.item.id);
+    synchronizeEquipmentImeiConfirmation(result.data.item);
     setDraftStatus("saved");
     setDraftErrorMessage("");
     replaceDraftInUrl(result.data.item.id);
@@ -8748,6 +8817,7 @@ export default function CreditFactoryConsole({
 
       return validation;
     } catch (error) {
+      if ((error as { code?: string } | null)?.code === "IMEI_CONFIRMATION_REQUIRED") return null;
       const message = error instanceof Error ? error.message : "No se pudo validar identidad.";
       setNotice({ text: message, tone: "red" });
       if (preparingDraft) {
@@ -8770,7 +8840,7 @@ export default function CreditFactoryConsole({
     }
 
     setVeriffRegenerationValidationId(veriffValidation.id);
-    setIdentityValidationModalOpen(false);
+    if (!createClientMode) setIdentityValidationModalOpen(false);
     setVeriffRegenerationConfirmOpen(true);
   };
 
@@ -8787,11 +8857,36 @@ export default function CreditFactoryConsole({
 
     setVeriffRegenerationConfirmOpen(false);
     setIdentityValidationModalOpen(true);
+    setIdentityValidationQrVisible(true);
     veriffAutoSessionRef.current = true;
     void validateIdentityWithVeriff({
       regenerate: true,
       expectedValidationId,
     });
+  };
+
+  const openIdentityValidationQr = () => {
+    if (veriffApproved || veriffSubmitting) return;
+    setIdentityValidationQrVisible(true);
+    if (veriffValidation?.sessionUrl && !veriffHasFinalDecision) return;
+    if (!veriffCanGenerateNewQr) return;
+    veriffAutoSessionRef.current = true;
+    void validateIdentityWithVeriff();
+  };
+
+  const resumeIdentityValidation = () => {
+    if (createClientMode && !equipmentImeiConfirmed) {
+      void advanceToStep(2);
+      return;
+    }
+    setIdentityValidationModalOpen(true);
+  };
+
+  const continueIdentityToSignature = () => {
+    if (!veriffApproved) return;
+    setIdentityValidationHandoffRequired(false);
+    setIdentityValidationModalOpen(false);
+    window.requestAnimationFrame(() => signatureManagementRef.current?.focus());
   };
 
   const refreshVeriffValidationRef = useRef(refreshVeriffValidation);
@@ -8991,9 +9086,9 @@ export default function CreditFactoryConsole({
       setNotice({ text: "Espera a que termine la firma o la revisión del contrato antes de cambiar de paso.", tone: "amber" });
       return false;
     }
-    const persistedWizardStep = canAdminMoveFreelyInFactory
+    const persistedWizardStep = resolvePersistedDraftStep(canAdminMoveFreelyInFactory
       ? Math.min(nextFactoryStep.id, Math.max(2, nextStep))
-      : nextStep;
+      : nextStep);
     wizardStepTransitionInFlightRef.current = true;
     setWizardStepTransitioning(true);
     cancelPendingDraftAutosave();
@@ -9005,6 +9100,7 @@ export default function CreditFactoryConsole({
       return true;
     } catch (error) {
       if (activeSolicitudRedirectingRef.current) return false;
+      if ((error as { code?: string } | null)?.code === "IMEI_CONFIRMATION_REQUIRED") return false;
       const message = error instanceof Error ? error.message : "No se pudo guardar la solicitud antes de cambiar de paso.";
       setDraftStatus("error");
       setDraftErrorMessage(message);
@@ -9347,6 +9443,9 @@ export default function CreditFactoryConsole({
         throw new Error(result.data?.error || "No se pudo confirmar el IMEI vigente. Revisa el equipo e inténtalo nuevamente.");
       }
       if (currentEquipmentDraftIdRef.current !== currentDraftId || currentEquipmentImeiRef.current !== confirmedImei) throw new Error("La solicitud o el IMEI cambió. Revisa el equipo y confirma nuevamente.");
+      updateEquipmentImeiConfirmation({ draftId: currentDraftId, imei: confirmedImei });
+      setDraftErrorMessage("");
+      setNotice((current) => current?.text.includes("IMEI_CONFIRMATION_REQUIRED") || current?.text === "Revisa el IMEI en Equipo y plan y pulsa Continuar para confirmarlo." ? null : current);
       if (firmaSeguroDraftCorrectionPending) {
         // El borrador de corrección ya pertenece a Identidad y firma; sólo
         // faltaba la confirmación del identificador, persistida por este POST.
@@ -9868,9 +9967,9 @@ export default function CreditFactoryConsole({
   };
 
   const saveCurrentDraft = async (
-    currentStepOverride = canAdminMoveFreelyInFactory
+    currentStepOverride = resolvePersistedDraftStep(canAdminMoveFreelyInFactory
       ? Math.min(nextFactoryStep.id, Math.max(2, wizardStep))
-      : wizardStep,
+      : wizardStep),
     advanceClient = false
   ) => {
     const closureFingerprintAtSave = currentIphoneClosureFingerprint;
@@ -9908,6 +10007,10 @@ export default function CreditFactoryConsole({
   };
 
   const submitFirmaSeguroDraft = async (currentDraftId: number) => {
+    if (resolvePersistedDraftStep(4) < 3) {
+      recoverEquipmentImeiConfirmation(currentDraftId);
+      throw Object.assign(new Error("Revisa el IMEI en Equipo y plan y pulsa Continuar para confirmarlo."), { code: "IMEI_CONFIRMATION_REQUIRED" });
+    }
     const result = await requestJson<FirmaSeguroResponse>(
       `/api/creditos/borradores/${currentDraftId}/firma-seguro`,
       {
@@ -9917,6 +10020,10 @@ export default function CreditFactoryConsole({
 
     if (!result.ok || !result.data?.ok) {
       const code = result.data?.code;
+      if (code === "IMEI_CONFIRMATION_REQUIRED") {
+        recoverEquipmentImeiConfirmation(currentDraftId);
+        throw Object.assign(new Error(formatCreditDraftSaveError(result.data)), { code });
+      }
       setFirmaSeguroIdentityReviewDraftId(code === "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED" ? currentDraftId : null);
       if (code === CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE) {
         handleDataCreditoFinancialTermsOutdated();
@@ -10849,6 +10956,7 @@ export default function CreditFactoryConsole({
         tone: failed ? "red" : signed ? "emerald" : "amber",
       });
     } catch (error) {
+      if ((error as { code?: string } | null)?.code === "IMEI_CONFIRMATION_REQUIRED") return;
       setNotice({
         text:
           preflightNotice && error instanceof Error &&
@@ -11565,6 +11673,7 @@ export default function CreditFactoryConsole({
     setDraftResumeLoadFailed(false);
     setVeriffRestoreFailure(null);
     const payload = draft.payload || {};
+    synchronizeEquipmentImeiConfirmation(draft);
     const analystDataSnapshot = readAnalystDraftDataSnapshot(draft.id, payload);
     analystDataSnapshotRef.current = analystDataSnapshot;
     setAnalystDataRevision(analystDataSnapshot.revision);
@@ -11952,6 +12061,7 @@ export default function CreditFactoryConsole({
             }
             if (cancelled) return;
             const reconciledPayload = reconciledDraft.data.item.payload || {};
+            synchronizeEquipmentImeiConfirmation(reconciledDraft.data.item);
             const identityCorrectionPending =
               reconciledPayload.firmaSeguroIdentityCorrectionPending === true;
             setFirmaSeguroIdentityCorrectionPending(identityCorrectionPending);
@@ -12159,9 +12269,9 @@ export default function CreditFactoryConsole({
     }
 
     // Guardar datos no equivale a confirmar el IMEI ni a solicitar el avance.
-    const persistedWizardStep = canAdminMoveFreelyInFactory
+    const persistedWizardStep = resolvePersistedDraftStep(canAdminMoveFreelyInFactory
       ? Math.min(nextFactoryStep.id, Math.max(2, wizardStep))
-      : wizardStep;
+      : wizardStep);
     const requestBody = serializeCreditDraftSaveRequest({ draftId, currentStep: persistedWizardStep,
       payloadScope: firmaSeguroProcessSigned && persistedWizardStep >= 5 ? "DELIVERY_EVIDENCE" : "FULL", payload: factoryDraftPayload });
     if (draftSaveConflictFingerprintRef.current === requestBody) {
@@ -12211,6 +12321,11 @@ export default function CreditFactoryConsole({
             return;
           }
 
+          if (result.data?.code === "IMEI_CONFIRMATION_REQUIRED") {
+            recoverEquipmentImeiConfirmation(canonicalDraftId);
+            return;
+          }
+
           if (result.status === 409) draftSaveConflictFingerprintRef.current = requestBody;
           if (
             result.status === 409 &&
@@ -12227,6 +12342,7 @@ export default function CreditFactoryConsole({
 
           draftSaveConflictFingerprintRef.current = null;
           setDraftId(result.data.item.id);
+          synchronizeEquipmentImeiConfirmation(result.data.item);
           setDraftStatus("saved");
           setDraftErrorMessage("");
           setPersistedIphoneClosureFingerprint(closureFingerprintAtSchedule);
@@ -12279,6 +12395,7 @@ export default function CreditFactoryConsole({
   }, [
     cancelPendingDraftAutosave,
     canAdminMoveFreelyInFactory,
+    equipmentImeiConfirmed,
     createClientMode,
     deliveryMode,
     dataCreditoFinancialTermsRecovery,
@@ -14079,9 +14196,9 @@ export default function CreditFactoryConsole({
                   ))}
 
                   <IdentityValidationDialog
-                    open={identityValidationModalOpen}
+                    open={!createClientMode && identityValidationModalOpen}
                     onClose={() => setIdentityValidationModalOpen(false)}
-                    dismissible={!identityValidationLocked}
+                    dismissible={true}
                   >
                     {veriffApproved ? (
                       <div className="fp-identity-modal-content is-approved-transition">
@@ -16311,65 +16428,19 @@ export default function CreditFactoryConsole({
                     {processLiveStatus.error ? <span>{processLiveStatus.error}</span> : null}
                   </div>
 
-                  <IdentitySignatureOverview identityApproved={veriffApproved} identityRejected={veriffRejected || dataCreditoVeriffDocumentRejected}
+                  {veriffApproved ? <IdentitySignatureOverview identityApproved={veriffApproved} identityRejected={veriffRejected || dataCreditoVeriffDocumentRejected}
                     identityLabel={veriffVisualLabel} signed={firmaSeguroProcessSigned} sent={firmaSeguroProcessSent}
                     failed={firmaSeguroProcessFailed} reissueRequired={firmaSeguroRequiresFirstPaymentDateReissue || firmaSeguroDraftCorrectionPending || firmaSeguroIdentityCorrectionPending || firmaSeguroFinancialCorrectionPending}
-                    ready={stepIdentityContractReady} />
+                    ready={stepIdentityContractReady} /> : null}
 
-                  {!veriffApproved ? (
-                    <section
-                      className="fp-step3-identity-pending"
-                      aria-labelledby="fp-step3-veriff-title"
-                    >
-                      <div className="fp-step3-identity-copy">
-                        <span className="fp-step3-identity-icon" aria-hidden="true">
-                          <ShieldCheck className="h-[19px] w-[19px]" strokeWidth={1.9} />
-                        </span>
-                        <div>
-                          <p>Validación de identidad</p>
-                          <h4 id="fp-step3-veriff-title">Identidad con Veriff</h4>
-                          <span>
-                            El cliente debe escanear el código QR desde su celular.
-                          </span>
-                        </div>
-                      </div>
-                      <span
-                        className={[
-                          "fp-step3-veriff-status",
-                          veriffRejected || dataCreditoVeriffDocumentRejected
-                            ? "is-error"
-                            : "is-pending",
-                        ].join(" ")}
-                        role={veriffRejected ? "alert" : "status"}
-                      >
-                        {veriffSubmitting || veriffRefreshing ? (
-                          <LoaderCircle
-                            className="h-[18px] w-[18px] animate-spin"
-                            strokeWidth={2}
-                          />
-                        ) : veriffRejected || dataCreditoVeriffDocumentRejected ? (
-                          <XCircle className="h-[18px] w-[18px]" strokeWidth={2} />
-                        ) : (
-                          <Clock3 className="h-[18px] w-[18px]" strokeWidth={2} />
-                        )}
-                        {veriffVisualLabel}
-                      </span>
-                      <div className="fp-step3-identity-action">
-                        <button
-                          type="button"
-                          onClick={() => setIdentityValidationModalOpen(true)}
-                          disabled={!veriffConfig.configured}
-                          aria-haspopup="dialog"
-                        >
-                          <QrCode className="h-[18px] w-[18px]" strokeWidth={2} />
-                          Ver validación de identidad
-                        </button>
-                        <p>
-                          FirmaSeguro permanecerá oculto hasta recibir la aprobación
-                          de Veriff.
-                        </p>
-                      </div>
-                    </section>
+                  {!identitySignatureManagementReady ? (
+                    <div className={equipmentSignatureStyles.identityResume}>
+                      <p>{createClientMode && !equipmentImeiConfirmed ? "Completa Equipo y plan para continuar." : veriffApproved ? "Identidad aprobada. Continúa a la gestión de firma." : "La validación de identidad está pendiente."}</p>
+                      <button type="button" onClick={resumeIdentityValidation} aria-haspopup={equipmentImeiConfirmed ? "dialog" : undefined}>
+                        <QrCode className="h-[18px] w-[18px]" aria-hidden="true" />
+                        {createClientMode && !equipmentImeiConfirmed ? "Revisar equipo" : "Continuar validación"}
+                      </button>
+                    </div>
                   ) : !equipmentSignatureWorkspace ? (
                     <section
                       className="fp-step3-identity-approved"
@@ -16459,10 +16530,12 @@ export default function CreditFactoryConsole({
 
                   {stepIdentityContractReady ? <div className={equipmentSignatureStyles.signatureNext}><span aria-hidden="true"><ArrowRight /></span><p><strong>Siguiente paso:</strong> enrolamiento y entrega</p></div> : null}
 
-                  {veriffApproved && !stepIdentityContractReady ? (
+                  {identitySignatureManagementReady && !stepIdentityContractReady ? (
                     <section
                       className="fp-step3-firma"
                       aria-label="FirmaSeguro"
+                      ref={signatureManagementRef}
+                      tabIndex={-1}
                     >
                       <div className="fp-step3-firma-compact">
                         <div className="fp-step3-firma-heading-actions">
@@ -21583,8 +21656,65 @@ export default function CreditFactoryConsole({
           onCancel={() => setStepTwoClearConfirmOpen(false)}
           onConfirm={clearStepTwoFields}
         />
+        <VeriffIdentityDialog
+          open={createClientMode && identityValidationModalOpen && wizardStep === 4 && equipmentImeiConfirmed && !draftResumeHydrating && !draftResumeLoadFailed}
+          status={veriffUnavailableForDataCredito ? "unavailable" : veriffApproved ? "approved" :
+            veriffRejected || dataCreditoVeriffDocumentRejected || veriffRetryPolicy.applicationRejected ?
+              veriffVisualState === "expired" ? "expired" : veriffVisualState === "error" ? "error" : "rejected" :
+              veriffPreparationError || veriffTechnicalRetryRequired ? "error" :
+                veriffVisualState === "generating" || veriffVisualState === "processing" ? "processing" : "pending"}
+          statusLabel={veriffApproved ? "Identidad aprobada" : veriffVisualLabel}
+          message={veriffUnavailableForDataCredito ? "La validación de identidad no está disponible. Reintenta la conexión." :
+            dataCreditoVeriffDocumentRejectionMessage ||
+            (veriffRetryPolicy.applicationRejected ? "La solicitud fue rechazada y no permite nuevos intentos de validación." : "") ||
+            (veriffIdentityEvidenceConflict ? VERIFF_IDENTITY_CONFLICT_MESSAGE : veriffIdentityEvidenceMissing ? VERIFF_IDENTITY_MISSING_MESSAGE : "") ||
+            veriffPreparationError || veriffInlineMessage || null}
+          busy={veriffSubmitting}
+          dismissible={true}
+          qrVisible={identityValidationQrVisible}
+          qrDataUrl={veriffQrDataUrl}
+          canOpenQr={!veriffRegenerationConfirmOpen && !veriffHasFinalDecision && !veriffUnavailableForDataCredito &&
+            !veriffConnectionError && (Boolean(veriffValidation?.sessionUrl) || veriffCanGenerateNewQr)}
+          canRetry={!veriffRegenerationConfirmOpen && !veriffApproved && !dataCreditoVeriffDocumentRejected &&
+            !veriffRetryPolicy.applicationRejected && (Boolean(veriffRestoreFailure) || veriffUnavailableForDataCredito ||
+              veriffTechnicalRetryRequired || veriffRejected || Boolean(veriffPreparationError) || veriffConnectionError) &&
+            (Boolean(veriffRestoreFailure) || veriffUnavailableForDataCredito || veriffCanRegenerateQr || veriffCanGenerateNewQr)}
+          retryLabel={veriffUnavailableForDataCredito ? "Reintentar conexión" : veriffTechnicalRetryRequired ? "Repetir validación" : "Reintentar validación"}
+          canContinue={veriffApproved}
+          connectionLabel={processLiveStatus.connection === "reconnecting" ? "Reconectando…" :
+            processLiveStatus.connection === "connected" ? "Actualización automática" : "Verificando estado…"}
+          connectionError={processLiveStatus.connection === "reconnecting" ? processLiveStatus.error || "Reconectando…" : processLiveStatus.error}
+          onRetryConnection={processLiveStatus.connection === "reconnecting" ? processLiveStatus.retry : undefined}
+          onOpenQr={openIdentityValidationQr}
+          onClose={() => setIdentityValidationModalOpen(false)}
+          onContinue={continueIdentityToSignature}
+          onRetry={() => {
+            if (veriffSubmitting) return;
+            if (veriffUnavailableForDataCredito) { void loadVeriffConfig(); return; }
+            if (veriffRestoreFailure) { void retryRestoredVeriffValidation(); return; }
+            if (veriffTechnicalRetryRequired && veriffCanGenerateNewQr) {
+              setIdentityValidationQrVisible(true);
+              veriffAutoSessionRef.current = true;
+              void validateIdentityWithVeriff();
+              return;
+            }
+            if (veriffCanRegenerateQr) { requestVeriffQrRegeneration(); return; }
+            if (veriffCanGenerateNewQr) openIdentityValidationQr();
+          }}
+        >
+          {veriffRegenerationConfirmOpen ? (
+            <section aria-labelledby="veriff-inline-regeneration-title">
+              <h3 id="veriff-inline-regeneration-title">Regenerar código QR</h3>
+              <p>El código actual dejará de ser el vigente. La validación seguirá asociada a esta misma solicitud y no se realizará otra consulta a DataCrédito.</p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button variant="secondary" disabled={veriffSubmitting} onClick={cancelVeriffQrRegeneration}>Cancelar</Button>
+                <Button disabled={veriffSubmitting} onClick={confirmVeriffQrRegeneration}>Regenerar QR</Button>
+              </div>
+            </section>
+          ) : null}
+        </VeriffIdentityDialog>
         <ConfirmDialog
-          open={veriffRegenerationConfirmOpen}
+          open={!createClientMode && veriffRegenerationConfirmOpen}
           title="Regenerar código QR"
           description="El código actual dejará de ser el vigente. La validación seguirá asociada a esta misma solicitud y no se realizará otra consulta a DataCrédito."
           confirmLabel="Regenerar QR"

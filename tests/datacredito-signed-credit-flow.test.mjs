@@ -277,12 +277,18 @@ async function fixture(t, providerType) {
 
 function wizard(f, payload, step = 1) {
   const names = ["serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "cancelPendingDraftAutosave",
+    "updateEquipmentImeiConfirmation", "synchronizeEquipmentImeiConfirmation", "resolvePersistedDraftStep", "recoverEquipmentImeiConfirmation",
     "saveDraftPayloadForVeriff", "saveCurrentDraft", "clampWizardStep", "persistWizardStep", "goToStep", "advanceToStep"];
   const code = declarations("app/dashboard/creditos/credit-factory-console.tsx", names);
   const requests = [];
+  const savedConfirmation = imeiConfirmation.readCreditImeiConfirmation(payload, imei);
+  const confirmedBinding = savedConfirmation ? { draftId, imei: savedConfirmation.imei } : null;
   const context = {
     Error, AbortController, JSON, draftId, wizardStep: step, createClientMode: true, simulatorMode: false, deliveryMode: false,
     factoryDraftPayload: payload, currentIphoneClosureFingerprint: "closure", canAdminMoveFreelyInFactory: false,
+    imeiDigits: imei, equipmentImeiConfirmation: confirmedBinding,
+    equipmentImeiConfirmationRef: { current: confirmedBinding },
+    currentEquipmentDraftIdRef: { current: draftId }, currentEquipmentImeiRef: { current: imei },
     nextFactoryStep: { id: 2 }, draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null },
     draftSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
     wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false, activeSolicitudRedirectingRef: { current: false },
@@ -300,6 +306,7 @@ function wizard(f, payload, step = 1) {
     requestEquipmentImeiConfirmation: async target => {
       const result = await f.confirmImei();
       assert.equal(result.confirmation.imei, imei);
+      context.module.exports.updateEquipmentImeiConfirmation({ draftId, imei: result.confirmation.imei });
       // The browser modal's human reentry is simulated here; the production
       // confirmation storage and guarded draft persistence still run in SQL.
       return context.module.exports.persistWizardStep(target);

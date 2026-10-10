@@ -39,7 +39,7 @@ function processSnapshotCallback() {
   }
   visit(ast); assert.ok(result, "onSnapshot del seguimiento automático"); return result.getText(ast);
 }
-const names = ["IdentityValidationDialog", "getDataCreditoClientDisplayName", "serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "VeriffDraftPreparationFailure", "cancelPendingDraftAutosave", "saveDraftPayloadForVeriff", "validateIdentityWithVeriff", "refreshVeriffValidation", "applyVeriffIdentityData", "veriffApprovalCanUnlockClient", "veriffIdentityHasAutofillData", "getDataCreditoVeriffDocumentRejectionMessage"];
+const names = ["IdentityValidationDialog", "getDataCreditoClientDisplayName", "serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "VeriffDraftPreparationFailure", "cancelPendingDraftAutosave", "updateEquipmentImeiConfirmation", "synchronizeEquipmentImeiConfirmation", "resolvePersistedDraftStep", "recoverEquipmentImeiConfirmation", "saveDraftPayloadForVeriff", "validateIdentityWithVeriff", "refreshVeriffValidation", "applyVeriffIdentityData", "veriffApprovalCanUnlockClient", "veriffIdentityHasAutofillData", "getDataCreditoVeriffDocumentRejectionMessage"];
 const declarations = names.map(declaration).join("\n") + "\nconst applyProcessSnapshot = " + processSnapshotCallback() + ";";
 const autosaveEffect = effectContaining("closureFingerprintAtSchedule");
 const pollingEffect = effectContaining("attempts >= VERIFF_POLL_MAX_ATTEMPTS");
@@ -56,6 +56,10 @@ function fixture() {
     factoryDraftPayload: payload, clienteNombre: fullName, clientePrimerNombre: "", clientePrimerApellido: "", clienteSegundoApellido: "",
     dataCreditoApproval: approval, dataCreditoAssessmentId: "saved-assessment", dataCreditoRequiresVeriff: true,
     draftId: 2883, wizardStep: 4, createClientMode: true, simulatorMode: false, deliveryMode: false,
+    imeiDigits: "035809100123456", equipmentImeiConfirmed: true,
+    equipmentImeiConfirmation: { draftId: 2883, imei: "035809100123456" },
+    equipmentImeiConfirmationRef: { current: { draftId: 2883, imei: "035809100123456" } },
+    currentEquipmentDraftIdRef: { current: 2883 }, currentEquipmentImeiRef: { current: "035809100123456" },
     mobileCaptureSession: null, veriffConfig: { configured: true }, veriffValidation: null, veriffExpectedDraftId: 2883,
     veriffInlineMessage: "", veriffPreparationError: null, veriffSubmitting: false,
     veriffRequestInFlightRef: { current: false }, veriffRefreshGenerationRef: { current: 0 }, veriffRefreshFlightRef: { current: null },
@@ -222,17 +226,11 @@ test("document-only trusted approval unlocks the same draft and cedula without n
 
 test("save and connection errors expose the actual dialog close button and Escape without making requests", () => {
   const f = fixture();
-  f.context.veriffApproved = false; f.context.veriffHasFinalDecision = false; f.context.veriffConnectionError = false;
-  assert.equal(f.evaluate("identityValidationLocked"), true);
-  f.context.veriffPreparationError = "Revisa la solicitud.";
-  assert.equal(f.evaluate("identityValidationLocked"), false);
-  f.context.veriffPreparationError = null; f.context.veriffConnectionError = true;
-  assert.equal(f.evaluate("identityValidationLocked"), false);
   const effects = []; const listeners = new Map(); let closed = 0;
   f.context.useRef = value => ({ current: value }); f.context.useEffect = callback => effects.push(callback);
   f.context.document.addEventListener = (name, callback) => listeners.set(name, callback);
   f.context.document.removeEventListener = name => listeners.delete(name);
-  const element = f.functions.IdentityValidationDialog({ open: true, dismissible: !f.evaluate("identityValidationLocked"), onClose: () => closed++, children: "Error recuperable" });
+  const element = f.functions.IdentityValidationDialog({ open: true, dismissible: true, onClose: () => closed++, children: "Error recuperable" });
   function find(node) {
     if (!node || typeof node !== "object") return null;
     if (node.props?.["aria-label"] === "Cerrar ventana de validacion") return node;

@@ -157,14 +157,18 @@ test("una inspeccion administrativa no persiste un paso ficticio", () => {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { module: loaded });
   const persistedStepInitializers = [];
+  let resolvePersistedDraftStep;
   const visitDeclaration = (node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "persistedWizardStep" && node.initializer) {
       persistedStepInitializers.push(node.initializer.getText(sourceFile));
     }
+    if (ts.isVariableDeclaration(node) && node.name.getText(sourceFile) === "resolvePersistedDraftStep") resolvePersistedDraftStep = node.initializer?.getText(sourceFile);
     ts.forEachChild(node, visitDeclaration);
   };
   visitDeclaration(autosaveCallbacks[0]);
   assert.equal(persistedStepInitializers.length, 1);
+  visitDeclaration(sourceFile);
+  assert.ok(resolvePersistedDraftStep);
   const scenarios = [
     { central: true, visible: 2, available: 4, expected: 2, label: "Equipo listo no avanza sin confirmar el IMEI" },
     { central: true, visible: 2, available: 5, expected: 2, label: "Equipo no salta a entrega por autoguardado" },
@@ -178,10 +182,17 @@ test("una inspeccion administrativa no persiste un paso ficticio", () => {
     { central: false, visible: 2, available: 4, expected: 2, label: "Asesor conserva Equipo visible" },
     { central: false, visible: 4, available: 5, expected: 4, label: "Asesor conserva Firma visible" },
     { central: false, visible: 5, available: 2, expected: 5, label: "Asesor conserva Entrega visible" },
+    { central: true, visible: 4, available: 4, confirmed: false, expected: 2, label: "Inspeccionar Identidad no confirma el IMEI" },
+    { central: false, visible: 4, available: 4, confirmed: false, expected: 2, label: "Identidad restaurada sin confirmación no persiste un avance" },
   ];
-  for (const { central, visible, available, expected, label } of scenarios) {
-    const persistedStep = runInNewContext(`(${persistedStepInitializers[0]})`, {
+  for (const { central, visible, available, confirmed = true, expected, label } of scenarios) {
+    const evaluated = ts.transpileModule(`const resolvePersistedDraftStep = ${resolvePersistedDraftStep};\n(${persistedStepInitializers[0]})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const persistedStep = runInNewContext(evaluated, {
       canAdminMoveFreelyInFactory: central, nextFactoryStep: { id: available }, wizardStep: visible,
+      draftId: 2887, imeiDigits: "035809100123456",
+      equipmentImeiConfirmationRef: { current: confirmed ? { draftId: 2887, imei: "035809100123456" } : null },
     });
     assert.equal(persistedStep, expected, label);
     const serialized = JSON.parse(loaded.exports({

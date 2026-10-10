@@ -1,0 +1,135 @@
+.dialog {
+  width: min(1320px, calc(100vw - 64px));
+  max-width: none;
+  max-height: calc(100dvh - 64px);
+  margin: auto;
+  padding: 32px 36px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--fp-border);
+  border-radius: calc(var(--fp-radius-lg) + 8px);
+  background: var(--fp-surface);
+  color: var(--fp-graphite);
+  box-shadow: var(--fp-shadow-md);
+  font-family: Arial, Helvetica, sans-serif;
+}
+.dialog::backdrop { background: rgb(21 26 33 / 24%); backdrop-filter: blur(8px); }
+.header { display: flex; align-items: center; gap: 20px; }
+.brand { margin-right: auto; }
+.brand p { margin: 0; color: var(--fp-graphite); font-size: 28px; font-weight: 900; letter-spacing: -.035em; line-height: 1.2; }
+.brand p span { color: var(--fp-client-action); }
+.step { color: var(--fp-muted); font-size: 20px; white-space: nowrap; }
+.close { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-surface); color: var(--fp-muted); cursor: pointer; }
+.close svg { width: 20px; height: 20px; }
+.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: center; gap: 40px; margin-top: 28px; }
+.illustration { display: grid; align-self: center; place-items: center; }
+.illustration img { display: block; width: 100%; max-height: 288px; height: auto; object-fit: contain; }
+.content { min-width: 0; }
+.headingRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 28px; align-items: center; }
+.copy h2 { margin: 0; font-size: clamp(30px, 3.15vw, 44px); font-weight: 800; letter-spacing: -.035em; line-height: 1.16; }
+.copy > p { margin: 12px 0 0; color: var(--fp-muted); font-size: 20px; line-height: 1.5; }
+.statuses { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 22px; }
+.provider, .status { display: inline-flex; min-height: 48px; align-items: center; justify-content: center; gap: 10px; border: 1px solid var(--fp-border); border-radius: 999px; padding: 9px 18px; font-size: 21px; font-weight: 700; line-height: 1.2; }
+.provider { background: var(--fp-bg); }
+.status svg { width: 24px; height: 24px; flex: 0 0 auto; }
+.pending { border-color: color-mix(in srgb, var(--fp-amber) 28%, var(--fp-surface)); background: var(--fp-amber-soft); color: var(--fp-amber); }
+.approved { border-color: color-mix(in srgb, var(--fp-client-green) 24%, var(--fp-surface)); background: var(--fp-client-soft); color: var(--fp-client-green); }
+.failure { border-color: color-mix(in srgb, var(--fp-danger) 24%, var(--fp-surface)); background: var(--fp-danger-soft); color: var(--fp-danger); }
+.action { min-width: 0; }
+.dialog .primary { width: 100%; min-height: 94px; gap: 16px; padding: 20px; border-color: var(--fp-graphite); border-radius: var(--fp-radius-lg); background: var(--fp-graphite); color: white; font-size: 25px; font-weight: 700; line-height: 1.3; }
+.dialog .primary svg { width: 34px; height: 34px; flex: 0 0 auto; color: var(--fp-lime); }
+.dialog .primary:disabled { cursor: not-allowed; opacity: .55; }
+.details { display: grid; gap: 12px; margin-top: 20px; }
+.details > :last-child { margin-bottom: 0; }
+.message, .error { margin: 0; font-size: 15px; line-height: 1.6; }
+.message { color: var(--fp-muted); }
+.error { color: var(--fp-danger); }
+.connection { display: flex; align-items: center; gap: 8px; color: var(--fp-muted); font-size: 14px; }
+.connection > span { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--fp-client-action); }
+.connection p { margin: 0; flex: 1; }
+.connectionFailed { color: var(--fp-danger); }
+.connectionFailed > span { background: var(--fp-amber); }
+.dialog .connection button { min-height: 40px; padding: 8px; font-size: 14px; }
+.qr { display: grid; justify-items: center; gap: 12px; margin-top: 24px; padding: 20px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: var(--fp-bg); text-align: center; }
+.qr img { display: block; width: min(256px, 100%); height: auto; border: 8px solid white; border-radius: var(--fp-radius-sm); background: white; }
+.qr > p { margin: 0; color: var(--fp-muted); font-size: 15px; line-height: 1.5; }
+.qrLoading { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 12px; color: var(--fp-muted); font-size: 16px; }
+.qrLoading svg { width: 28px; height: 28px; flex: 0 0 auto; }
+.progress { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 30px 0 0; padding: 22px 0 0; border-top: 1px solid var(--fp-border); list-style: none; }
+.progress li { position: relative; display: flex; align-items: center; gap: 14px; min-width: 0; }
+.progress li:not(:last-child)::after { position: absolute; top: 23px; right: -16px; width: 24px; height: 1px; background: var(--fp-border); content: ''; }
+.progress li > span { display: grid; width: 46px; height: 46px; flex: 0 0 auto; place-items: center; border: 1px solid var(--fp-border); border-radius: 50%; background: var(--fp-surface); }
+.progress svg { width: 22px; height: 22px; }
+.progress strong { font-size: 16px; font-weight: 400; line-height: 1.4; }
+.currentStep { color: var(--fp-graphite); }
+.currentStep > span { border-color: var(--fp-client-action) !important; }
+.currentStep i { width: 21px; height: 21px; border-radius: 50%; background: var(--fp-client-action); }
+.completeStep { color: var(--fp-client-green); }
+.completeStep > span { border-color: var(--fp-client-action) !important; background: var(--fp-client-soft) !important; }
+.lockedStep { color: var(--fp-muted); }
+.dialog :is(button, a):focus-visible { outline: 3px solid var(--fp-lime); outline-offset: 4px; }
+.copy h2:focus { outline: none; }
+.spinner { animation: rotate 1s linear infinite; }
+@keyframes rotate { to { transform: rotate(360deg); } }
+@media (max-width: 1100px) {
+  .dialog { padding: 28px; }
+  .layout { grid-template-columns: 190px minmax(0, 1fr); gap: 28px; }
+  .headingRow { grid-template-columns: minmax(0, 1fr) 250px; gap: 20px; }
+  .copy h2 { font-size: 34px; }
+  .copy > p { font-size: 17px; }
+  .provider, .status { min-height: 44px; padding: 9px 14px; font-size: 18px; }
+  .dialog .primary { min-height: 82px; gap: 12px; padding: 16px; font-size: 20px; }
+  .dialog .primary svg { width: 28px; height: 28px; }
+  .progress { gap: 20px; }
+  .progress li { gap: 8px; }
+  .progress li > span { width: 36px; height: 36px; }
+  .progress li:not(:last-child)::after { top: 18px; right: -14px; width: 16px; }
+  .progress strong { font-size: 13px; }
+}
+@media (max-width: 900px) {
+  .headingRow { grid-template-columns: minmax(0, 1fr); }
+  .action { max-width: 340px; }
+  .statuses { margin-top: 16px; }
+}
+@media (max-width: 640px) {
+  .dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 18px; }
+  .header { gap: 12px; }
+  .brand p { font-size: 21px; }
+  .step { font-size: 13px; }
+  .close { width: 36px; height: 36px; }
+  .layout { display: block; margin-top: 12px; }
+  .illustration { width: 100px; margin: 0 auto 16px; }
+  .illustration img { max-height: 132px; }
+  .headingRow { gap: 20px; }
+  .copy { text-align: center; }
+  .copy h2 { font-size: 28px; }
+  .copy > p { margin-top: 8px; font-size: 16px; }
+  .statuses { justify-content: center; gap: 10px; margin-top: 16px; }
+  .provider, .status { min-height: 40px; padding: 8px 12px; font-size: 16px; }
+  .status svg { width: 19px; height: 19px; }
+  .action { max-width: none; }
+  .dialog .primary { min-height: 60px; padding: 14px; font-size: 18px; }
+  .dialog .primary svg { width: 25px; height: 25px; }
+  .details { margin-top: 16px; }
+  .connection { flex-wrap: wrap; }
+  .connection p { flex-basis: calc(100% - 20px); }
+  .dialog .connection button { margin-left: 16px; }
+  .qr { margin-top: 20px; padding: 12px; }
+  .qrLoading { flex-direction: column; }
+  .progress { gap: 12px; margin-top: 24px; padding-top: 20px; }
+  .progress li { flex-direction: column; gap: 8px; text-align: center; }
+  .progress li > span { width: 34px; height: 34px; }
+  .progress li:not(:last-child)::after { top: 17px; right: -18px; width: 24px; }
+  .progress strong { font-size: 12px; }
+  .progress svg { width: 19px; height: 19px; }
+  .currentStep i { width: 16px; height: 16px; }
+}
+@media (max-width: 360px) {
+  .dialog { padding: 16px 14px; }
+  .header { gap: 8px; }
+  .brand p { font-size: 19px; }
+  .step { font-size: 12px; }
+  .copy h2 { font-size: 26px; }
+  .dialog .primary { gap: 10px; font-size: 17px; }
+}
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

@@ -132,6 +132,10 @@
 .connection button { min-height: 40px; margin-left: auto; padding: 8px 14px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); background: white; color: var(--fp-graphite); font-weight: 700; }
 .signature :global(.fp-step3-identity-pending), .signature :global(.fp-step3-identity-approved), .signature :global(.fp-step3-firma) { border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); padding: 24px; background: white; }
 .signature :global(.fp-step3-identity-approved) { background: #f9fcf6; }
+.identityResume { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 24px 0; }
+.identityResume p { margin: 0; color: var(--fp-muted); font-size: 15px; }
+.identityResume button { display: inline-flex; min-height: 44px; align-items: center; gap: 10px; padding: 12px 20px; border: 1px solid var(--fp-graphite); border-radius: var(--fp-radius-md); background: var(--fp-graphite); color: white; font-weight: 700; }
+.identityResume button:focus-visible { outline: 3px solid var(--fp-lime); outline-offset: 3px; }
 .signature :global(.fp-step3-identity-action p) { font-size: 13px; }
 .signature :global(.fp-step3-progress) { border: 0; border-top: 1px solid var(--fp-border); border-bottom: 1px solid var(--fp-border); border-radius: 0; background: transparent; margin: 24px 0; }
 .signature :global(.fp-step3-firma-primary) { min-height: 44px; border-radius: var(--fp-radius-sm); background: var(--fp-graphite); color: white; letter-spacing: 0; }

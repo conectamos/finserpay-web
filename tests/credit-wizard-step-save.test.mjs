@@ -18,13 +18,23 @@ function declaration(name) {
   return "const " + name + " = " + (ts.isCallExpression(value) && value.expression.getText(ast) === "useCallback" ? value.arguments[0] : value).getText(ast) + ";";
 }
 let autosaveEffect;
+let imeiInvalidationEffect;
+let signatureFailureBoundary;
 function findAutosave(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0]?.getText(ast).includes("closureFingerprintAtSchedule")) autosaveEffect = node.arguments[0].getText(ast);
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect" && node.arguments[0]?.getText(ast).includes("binding.draftId !== draftId || binding.imei !== imeiDigits")) imeiInvalidationEffect = node.arguments[0].getText(ast);
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "handleFirmaSeguroStepReady") {
+    const boundary = node.initializer.body.statements.find(ts.isTryStatement);
+    assert.ok(boundary?.catchClause && boundary.finallyBlock);
+    signatureFailureBoundary = `async () => { try { await submitFirmaSeguroDraft(2887); } ${boundary.catchClause.getText(ast)} finally ${boundary.finallyBlock.getText(ast)} }`;
+  }
   ts.forEachChild(node, findAutosave);
 }
 findAutosave(ast); assert.ok(autosaveEffect);
-const names = ["serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "cancelPendingDraftAutosave", "saveDraftPayloadForVeriff", "saveCurrentDraft", "clampWizardStep", "persistWizardStep", "goToStep", "advanceToStep", "requestEquipmentImeiConfirmation", "confirmEquipmentImei"];
-const code = names.map(declaration).join("\n") + "\nmodule.exports = { " + names.join(", ") + " };";
+assert.ok(imeiInvalidationEffect);
+assert.ok(signatureFailureBoundary);
+const names = ["serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "cancelPendingDraftAutosave", "updateEquipmentImeiConfirmation", "synchronizeEquipmentImeiConfirmation", "resolvePersistedDraftStep", "recoverEquipmentImeiConfirmation", "saveDraftPayloadForVeriff", "saveCurrentDraft", "clampWizardStep", "persistWizardStep", "goToStep", "advanceToStep", "requestEquipmentImeiConfirmation", "confirmEquipmentImei", "submitFirmaSeguroDraft"];
+const code = names.map(declaration).join("\n") + "\nconst submitWithActualSignatureFailureBoundary = " + signatureFailureBoundary + ";\nmodule.exports = { " + names.join(", ") + ", submitWithActualSignatureFailureBoundary };";
 function fixture(overrides = {}) {
   const requests = []; const timers = new Map(); let nextTimer = 0;
   const payload = { clienteNombre: "WILMER GIOVANNY DÍAZ RUBIO", clientePrimerNombre: "", clientePrimerApellido: "", clienteSegundoApellido: "", clienteDocumento: "1110477922", clienteTipoDocumento: "CEDULA_DE_CIUDADANIA", clienteTelefono: "3001234567", clienteCorreo: "cliente@example.invalid", dataCreditoAssessmentId: "approved-test", wizardStep: 1 };
@@ -35,6 +45,7 @@ function fixture(overrides = {}) {
     wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false, activeSolicitudRedirectingRef: { current: false },
     draftResumeHydrationRef: { current: false }, draftResumeHydrating: false, draftResumeLoadFailed: false, applyingDraftRef: { current: false },
     firmaSeguroDraftCorrectionPending: false, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, signedContractEditLocked: false, advisorSignedContractStep: 5,
+    preflightNotice: null, firmaSeguroRequestInFlightRef: { current: false }, firmaSeguroSubmitting: false,
     analystDataSnapshotRef: { current: {} }, analystFinancialSnapshotRef: { current: { draftId: 2887 } }, analystEvidenceSnapshotRef: { current: {} },
     replaceDraftInUrl() {}, synchronizeAnalystDraftData() {}, resumeActiveSolicitudFromConflict: () => false,
     ACTIVE_SOLICITUD_RESUME_MESSAGE: "Retomando solicitud", DRAFT_REQUIRES_DATACREDITO_CODE: "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO",
@@ -45,13 +56,16 @@ function fixture(overrides = {}) {
     dataCreditoFinancialTermsRecovery: false, draftHasMeaningfulData: true,
     stepTwoComplete: true, imeiConfirmationOpeningRef: { current: false }, imeiConfirmationInFlightRef: { current: false },
     currentEquipmentDraftIdRef: { current: 2887 }, currentEquipmentImeiRef: { current: "035809100123456" }, imeiConfirmationTargetStep: null,
+    imeiDigits: "035809100123456", equipmentImeiConfirmation: { draftId: 2887, imei: "035809100123456" },
+    equipmentImeiConfirmationRef: { current: { draftId: 2887, imei: "035809100123456" } },
     window: { setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; }, clearTimeout(id) { timers.delete(id); } },
     ...overrides,
   };
   let transport = async (_url, options) => ({ ok: true, status: 200, data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } });
   context.requestJson = async (url, options) => {
-    requests.push({ url, body: JSON.parse(options.body), signal: options.signal });
+    requests.push({ url, body: options.body ? JSON.parse(options.body) : null, signal: options.signal });
     if (url === "/api/creditos/borradores/2887/confirmar-imei") return { ok: true, data: { ok: true, confirmation: { imei: JSON.parse(options.body).imei } } };
+    if (url === "/api/creditos/borradores/2887/firma-seguro") return transport(url, options);
     assert.equal(url, "/api/creditos/borradores", "Navigation only saves the draft or its explicit IMEI confirmation");
     return transport(url, options);
   };
@@ -62,6 +76,8 @@ function fixture(overrides = {}) {
   runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, context);
   return { context, requests, timers, functions: context.module.exports, setTransport(value) { transport = value; }, mountAutosave() {
     return runInNewContext(ts.transpileModule("(" + autosaveEffect + ")()", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  }, invalidateImei() {
+    return runInNewContext(ts.transpileModule("(" + imeiInvalidationEffect + ")()", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   } };
 }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
@@ -110,7 +126,7 @@ test("Equipo guarda sus datos sin avanzar y exige confirmación explícita del I
 });
 
 test("el autosave central en Equipo completo no adelanta el paso ni exige confirmar sin pulsar Continuar", async () => {
-  const f = fixture({ canAdminMoveFreelyInFactory: true, wizardStep: 2, nextFactoryStep: { id: 4 } });
+  const f = fixture({ canAdminMoveFreelyInFactory: true, wizardStep: 2, nextFactoryStep: { id: 4 }, equipmentImeiConfirmationRef: { current: null } });
   f.setTransport(async (_url, options) => {
     const body = JSON.parse(options.body);
     return body.currentStep >= 3
@@ -142,6 +158,136 @@ test("el autosave central en Equipo completo no adelanta el paso ni exige confir
   assert.equal(f.requests.filter(request => request.url.endsWith("/confirmar-imei")).length, 1);
   assert.equal(f.requests.filter(request => request.body.currentStep === 4).length, 1);
   assert.equal(f.context.wizardStep, 4);
+});
+
+test("inspeccionar Identidad sin IMEI confirmado guarda Equipo y no genera avisos ni consultas externas", async () => {
+  const f = fixture({ canAdminMoveFreelyInFactory: true, wizardStep: 4, nextFactoryStep: { id: 4 },
+    equipmentImeiConfirmationRef: { current: null }, equipmentImeiConfirmation: null });
+  f.functions.synchronizeEquipmentImeiConfirmation({ id: 2887, imei: "035809100123456",
+    payload: { imeiConfirmationRequired: true } });
+  f.setTransport(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(body.currentStep, 2, "Inspection cannot persist an unconfirmed identity step");
+    return { ok: true, status: 200, data: { item: { id: 2887, imei: "035809100123456",
+      payload: { ...body.payload, imeiConfirmationRequired: true } } } };
+  });
+  f.mountAutosave();
+  const [timerId, timer] = [...f.timers][0]; f.timers.delete(timerId); timer.callback(); await flush();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.context.draftStatus, "saved");
+  assert.equal(f.context.draftErrorMessage, "");
+  assert.equal(f.context.notice, undefined);
+  assert.equal(f.context.imeiConfirmationTargetStep, null);
+  await f.functions.saveCurrentDraft();
+  assert.equal(f.requests[1].body.currentStep, 2);
+  await assert.rejects(f.functions.saveDraftPayloadForVeriff(f.context.factoryDraftPayload, 4),
+    error => error.code === "IMEI_CONFIRMATION_REQUIRED" && !error.message.includes("IMEI_CONFIRMATION_REQUIRED"));
+  assert.equal(f.requests.length, 2, "Identity cannot attempt a provider call or forward save without confirmation");
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.draftErrorMessage, "");
+  assert.doesNotMatch(f.context.notice.text, /IMEI_CONFIRMATION_REQUIRED|Código:/);
+});
+
+test("un rechazo autoritativo de confirmación vuelve a Equipo sin repetir consultas ni perder datos", async () => {
+  const f = fixture({ wizardStep: 4, canAdminMoveFreelyInFactory: true, nextFactoryStep: { id: 4 },
+    identityValidationModalOpen: true });
+  const originalPayload = JSON.stringify(f.context.factoryDraftPayload);
+  f.setTransport(async () => ({ ok: false, status: 409,
+    data: { code: "IMEI_CONFIRMATION_REQUIRED", error: "Confirma nuevamente los 15 dígitos del IMEI en Equipo y plan antes de continuar." } }));
+  f.mountAutosave();
+  const [timerId, timer] = [...f.timers][0]; f.timers.delete(timerId); timer.callback(); await flush();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].body.currentStep, 4);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.identityValidationModalOpen, false);
+  assert.equal(f.context.equipmentImeiConfirmationRef.current, null);
+  assert.equal(f.context.draftErrorMessage, "");
+  assert.equal(f.context.draftStatus, "idle");
+  assert.equal(f.context.notice.tone, "amber");
+  assert.match(f.context.notice.text, /Equipo y plan.*Continuar/);
+  assert.doesNotMatch(f.context.notice.text, /IMEI_CONFIRMATION_REQUIRED|Código:/);
+  assert.equal(JSON.stringify(f.context.factoryDraftPayload), originalPayload);
+  assert.equal(f.context.imeiConfirmationTargetStep, null);
+  f.setTransport(async (_url, options) => ({ ok: true, status: 200,
+    data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } }));
+  await f.functions.advanceToStep(4);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.imeiConfirmationTargetStep, 4);
+  assert.equal(f.requests.filter(request => request.url.endsWith("/confirmar-imei")).length, 0);
+  await f.functions.confirmEquipmentImei("035809100123456");
+  assert.equal(f.context.wizardStep, 4);
+  assert.equal(f.context.notice, null);
+  assert.equal(f.requests.filter(request => request.url.endsWith("/confirmar-imei")).length, 1);
+});
+
+test("la confirmación restaurada sólo habilita guardar la solicitud y el IMEI a los que pertenece", async () => {
+  const f = fixture({ wizardStep: 4 });
+  for (const saved of [
+    { id: 9999, imei: "035809100123456", payload: { imeiConfirmationRequired: false } },
+    { id: 2887, imei: "035809100123457", payload: { imeiConfirmationRequired: false } },
+    { id: 2887, imei: "035809100123456", payload: { imeiConfirmationRequired: true } },
+  ]) {
+    f.functions.synchronizeEquipmentImeiConfirmation(saved);
+    await f.functions.saveCurrentDraft();
+    assert.equal(f.requests.at(-1).body.currentStep, 2);
+  }
+  f.functions.synchronizeEquipmentImeiConfirmation({ id: 2887, imei: "035809100123456",
+    payload: { imeiConfirmationRequired: false } });
+  await f.functions.saveCurrentDraft();
+  assert.equal(f.requests.at(-1).body.currentStep, 4);
+  assert.equal(f.requests.filter(request => request.url.endsWith("/confirmar-imei")).length, 0);
+});
+
+test("cambiar el IMEI invalida la confirmación incluso si luego se vuelve a escribir el número anterior", () => {
+  const f = fixture();
+  assert.equal(f.functions.resolvePersistedDraftStep(4), 4);
+  f.context.imeiDigits = "035809100123457";
+  f.invalidateImei();
+  assert.equal(f.context.equipmentImeiConfirmationRef.current, null);
+  assert.equal(f.functions.resolvePersistedDraftStep(4), 2);
+  f.context.imeiDigits = "035809100123456";
+  f.invalidateImei();
+  assert.equal(f.functions.resolvePersistedDraftStep(4), 2);
+  assert.equal(f.requests.length, 0);
+});
+
+test("FirmaSeguro conserva el guard IMEI y devuelve a Equipo sin exponer códigos internos", async () => {
+  const f = fixture({ wizardStep: 4, equipmentImeiConfirmationRef: { current: null } });
+  const required = error => error.code === "IMEI_CONFIRMATION_REQUIRED" && !error.message.includes("IMEI_CONFIRMATION_REQUIRED");
+  await assert.rejects(f.functions.submitFirmaSeguroDraft(2887), required);
+  assert.equal(f.requests.length, 0, "No signature dispatch without the explicit IMEI confirmation");
+  assert.equal(f.context.wizardStep, 2);
+  f.context.wizardStep = 4;
+  f.functions.updateEquipmentImeiConfirmation({ draftId: 2887, imei: "035809100123456" });
+  f.setTransport(async () => ({ ok: false, status: 409,
+    data: { code: "IMEI_CONFIRMATION_REQUIRED", error: "Confirma el IMEI" } }));
+  await assert.rejects(f.functions.submitFirmaSeguroDraft(2887), required);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.draftErrorMessage, "");
+  assert.doesNotMatch(f.context.notice.text, /IMEI_CONFIRMATION_REQUIRED|Código:/);
+});
+
+test("el catch real de envío conserva la recuperación IMEI y siempre libera el bloqueo en finally", async () => {
+  for (const confirmed of [false, true]) {
+    const f = fixture({ wizardStep: 4, firmaSeguroSubmitting: true,
+      firmaSeguroRequestInFlightRef: { current: true },
+      equipmentImeiConfirmationRef: { current: confirmed ? { draftId: 2887, imei: "035809100123456" } : null } });
+    f.setTransport(async () => ({ ok: false, status: 409,
+      data: { code: "IMEI_CONFIRMATION_REQUIRED", error: "Confirma el IMEI" } }));
+    // Execute the production submit handler inside its actual outer catch and
+    // finally, isolating unrelated signature preflight and success rendering.
+    await f.functions.submitWithActualSignatureFailureBoundary();
+    assert.equal(f.requests.length, confirmed ? 1 : 0);
+    assert.equal(f.context.wizardStep, 2);
+    assert.equal(f.context.draftStatus, "idle");
+    assert.equal(f.context.draftErrorMessage, "");
+    assert.equal(f.context.notice.tone, "amber");
+    assert.match(f.context.notice.text, /Equipo y plan.*Continuar/);
+    assert.doesNotMatch(f.context.notice.text, /No se pudo enviar|IMEI_CONFIRMATION_REQUIRED|Código:/);
+    assert.equal(f.context.firmaSeguroRequestInFlightRef.current, false);
+    assert.equal(f.context.firmaSeguroSubmitting, false);
+  }
 });
 
 test("el autosave de Equipo conserva un IMEI de 14 dígitos como borrador sin abrir la confirmación", async () => {

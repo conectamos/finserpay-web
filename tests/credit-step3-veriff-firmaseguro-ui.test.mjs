@@ -19,65 +19,32 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test("el modal QR bloquea el fondo, conserva el foco y usa estados reales", async () => {
-  const source = await readProjectFile(
-    "app/dashboard/creditos/credit-factory-console.tsx"
-  );
-  const dialog = sourceBetween(
-    source,
-    "function IdentityValidationDialog",
-    "export default function CreditFactoryConsole"
-  );
-  const modal = sourceBetween(
-    source,
-    "<IdentityValidationDialog",
-    "{false && ("
-  );
-
-  assert.match(dialog, /role="dialog"/);
+test("el modal QR mantiene una sola ventana accesible y sólo muestra progreso confirmado", async () => {
+  const source = await readProjectFile("app/dashboard/creditos/credit-factory-console.tsx");
+  const dialog = await readProjectFile("app/dashboard/creditos/veriff-identity-dialog.tsx");
+  const css = await readProjectFile("app/dashboard/creditos/veriff-identity-dialog.module.css");
+  const modal = sourceBetween(source, "<VeriffIdentityDialog", "<CameraCaptureModal");
+  assert.match(dialog, /<dialog/);
+  assert.match(dialog, /dialog\.showModal\(\)/);
   assert.match(dialog, /aria-modal="true"/);
-  assert.match(dialog, /aria-describedby="fp-identity-modal-description"/);
-  assert.match(dialog, /dismissible = true/);
-  assert.match(dialog, /tabIndex={-1}/);
-  assert.match(dialog, /element\.setAttribute\("inert", ""\)/);
-  assert.match(dialog, /previousActiveElement\?\.focus\(\)/);
+  assert.match(dialog, /previousFocus\?\.isConnected/);
+  assert.match(dialog, /previousFocus\.focus\(\)/);
   assert.match(dialog, /event\.key !== "Tab"/);
-  assert.match(dialog, /if \(dismissible\) \{/);
-  assert.match(dialog, /dismissible && event\.target === event\.currentTarget/);
-  assert.match(modal, /dismissible={!identityValidationLocked}/);
-  assert.match(modal, /VALIDACIÓN DE IDENTIDAD/);
-  assert.match(modal, /Valida la identidad del cliente/);
-  assert.match(
-    modal,
-    /Genera el código QR y solicita al cliente escanearlo desde\s+su celular\./
-  );
-  assert.match(modal, /GENERAR CÓDIGO QR/);
-  assert.match(modal, /Generando QR…/);
-  assert.match(modal, /Esperando validación/);
-  assert.match(
-    modal,
-    /La firma del contrato se habilitará cuando la identidad\s+sea aprobada\./
-  );
-  assert.match(modal, /Cancelar y volver/);
-  assert.match(modal, /disabled={!veriffCanGenerateNewQr \|\| veriffQrGenerated}/);
-  assert.match(modal, /QR generado/);
-  assert.match(modal, /Cliente valida/);
-  assert.match(modal, /Aprobación/);
-  assert.match(modal, /Regenerar QR/);
-  assert.match(
-    source,
-    /wizardStep !== 4 \|\|[\s\S]*setIdentityValidationModalOpen\(true\)/
-  );
-  assert.match(source, /const veriffQrGenerated = Boolean\(veriffValidation\?\.sessionUrl\)/);
-  assert.match(source, /veriffRequestInFlightRef\.current/);
-  assert.match(source, /title="Regenerar código QR"/);
+  assert.match(dialog, /onCancel=/);
+  assert.match(dialog, /Cerrar verificación de identidad/);
+  assert.match(dialog, /Abrir código QR/);
+  assert.match(dialog, /Código QR para validar la identidad del cliente/);
+  assert.match(dialog, /Continuar a firma/);
+  assert.match(css, /::backdrop[\s\S]*backdrop-filter: blur\(8px\)/);
+  assert.match(modal, /onContinue=\{continueIdentityToSignature\}/);
+  assert.match(modal, /onOpenQr=\{openIdentityValidationQr\}/);
+  assert.match(modal, /canContinue=\{veriffApproved\}/);
+  assert.match(modal, /veriffRegenerationConfirmOpen \? \(/);
+  assert.match(modal, /open=\{!createClientMode && veriffRegenerationConfirmOpen\}/);
+  assert.doesNotMatch(dialog, /fetch\(|requestJson|window\.open|<ConfirmDialog/);
   assert.match(source, /currentValidationId: options\.expectedValidationId \|\| null/);
   assert.match(source, /regenerate: options\.regenerate === true/);
-  assert.match(source, /const responseValidation = result\.data\?\.validation \|\| null/);
-  assert.match(source, /if \(!result\.ok && responseValidation\.id && currentDraftId\)/);
-  assert.match(source, /veriffValidationId: responseValidation\.id/);
 });
-
 test("la aprobacion real muestra el resumen y habilita el envio compacto a FirmaSeguro", async () => {
   const source = await readProjectFile(
     "app/dashboard/creditos/credit-factory-console.tsx"
@@ -93,10 +60,10 @@ test("la aprobacion real muestra el resumen y habilita el envio compacto a Firma
     "<div className=\"hidden\">"
   );
 
-  assert.match(step, /\{!veriffApproved \? \(/);
-  assert.match(step, /className="fp-step3-identity-pending"/);
-  assert.match(step, /FirmaSeguro permanecerá oculto/);
-  assert.match(step, /\{veriffApproved \? \([\s\S]*className="fp-step3-firma"/);
+  assert.match(step, /\{!identitySignatureManagementReady \? \(/);
+  assert.match(step, /onClick=\{resumeIdentityValidation\}/);
+  assert.match(step, /Continuar validación/);
+  assert.match(step, /\{identitySignatureManagementReady && !stepIdentityContractReady \? \([\s\S]*className="fp-step3-firma"/);
   assert.match(step, /className="fp-step3-identity-approved"/);
   assert.match(step, /La identidad fue aprobada\. Envía el contrato para continuar\./);
   assert.match(step, /IDENTIDAD APROBADA/);
