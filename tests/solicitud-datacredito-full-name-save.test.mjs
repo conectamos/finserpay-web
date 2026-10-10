@@ -9,6 +9,7 @@ import * as canonical from "../lib/solicitudes.ts";
 import * as clientName from "../lib/credit-client-name.ts";
 import * as phones from "../lib/credit-contact-phones.ts";
 import * as deliveryEvidence from "../lib/delivery-evidence-draft.ts";
+import { imeiConfirmation, loadImeiConfirmationStorage } from "./credit-imei-confirmation-fixture.mjs";
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 const storage = read("lib/solicitudes-storage.ts");
@@ -41,6 +42,7 @@ const document = "123456789";
 const assessmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const fullName = "María del Mar  De la Peña Muñoz";
 const scope = { userId: 4, sellerId: 8, sedeId: 3, aliadoId: 7 };
+const imei = "012345678901234";
 
 async function fixture(t) {
   const db = new PGlite();
@@ -48,12 +50,14 @@ async function fixture(t) {
   await db.exec(`
     CREATE TABLE "DataCreditoAssessment" ("id" UUID PRIMARY KEY, "status" TEXT);
     INSERT INTO "DataCreditoAssessment" VALUES ('${assessmentId}', 'APROBADO');
+    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY, "aliadoId" INTEGER);
+    INSERT INTO "Sede" VALUES (3,7);
     CREATE TABLE "CreditoBorrador" (
       "id" INTEGER PRIMARY KEY, "usuarioId" INTEGER, "vendedorId" INTEGER,
       "sedeId" INTEGER, "currentStep" INTEGER DEFAULT 3, "clienteNombre" TEXT,
       "clienteDocumento" TEXT, "clienteTelefono" TEXT, "imei" TEXT,
       "plataforma" TEXT DEFAULT 'IPHONE', "dataCreditoAssessmentId" UUID,
-      "payload" JSONB, "estado" TEXT DEFAULT 'ABIERTO',
+      "payload" JSONB, "estado" TEXT DEFAULT 'ABIERTO', "creditoId" INTEGER,
       "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       "expiresAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP + INTERVAL '15 days'
@@ -71,11 +75,12 @@ async function fixture(t) {
     clienteNombre: "PATINO", clientePrimerNombre: "", clientePrimerApellido: "PATINO",
     clienteSegundoApellido: "", clienteTelefono: "3001234567",
     referenciaFamiliar1Nombre: "Ana", referenciaFamiliar1Telefono: "3011234567",
+    imei,
   };
   await db.query(`INSERT INTO "CreditoBorrador" (
     "id", "usuarioId", "vendedorId", "sedeId", "clienteDocumento",
-    "dataCreditoAssessmentId", "clienteNombre", "payload"
-  ) VALUES (11,4,8,3,$1,$2,'PATINO',$3::jsonb)`, [document, assessmentId, JSON.stringify(storedPayload)]);
+    "dataCreditoAssessmentId", "clienteNombre", "payload", "imei"
+  ) VALUES (11,4,8,3,$1,$2,'PATINO',$3::jsonb,$4)`, [document, assessmentId, JSON.stringify(storedPayload), imei]);
   const sqlAdapter = (connection) => ({
     $queryRawUnsafe: async (sql, ...values) => (await connection.query(sql, values)).rows,
     $executeRawUnsafe: async (sql, ...values) => (await connection.query(sql, values)).affectedRows,
@@ -84,6 +89,12 @@ async function fixture(t) {
     ...sqlAdapter(db),
     $transaction: (callback) => db.transaction((connection) => callback(sqlAdapter(connection))),
   };
+  // The identity test starts after an actual server acknowledgement, not by
+  // trusting an acknowledgement included in the autosave/browser payload.
+  await loadImeiConfirmationStorage(prisma).confirmDraftImei({
+    draftId: 11, enteredImei: imei, userId: 4, central: false,
+    viewerAllyId: 7, seller: { id: 8, tipoPerfil: "VENDEDOR" },
+  });
   const providerPayload = { content: { respuesta: { validacion: { datosBasicos: {
     conInformacion: true, nombreCompleto: fullName, tipoDocumento: "CC",
     numeroDocumento: document,
@@ -101,7 +112,7 @@ async function fixture(t) {
     section("function firmaSeguroTermsAreLocked(", "type BlockingSolicitudIdentityRow") + "\n" +
     section("export async function saveSolicitudDraft(", "export class SolicitudDataCreditoLinkError");
   const { saveSolicitudDraft: save } = load(productionSave, {}, {
-    prisma, ...canonical, ...blacklistLocks, ...dataCorrections, ...deliveryEvidence,
+    prisma, ...canonical, ...blacklistLocks, ...dataCorrections, ...deliveryEvidence, ...imeiConfirmation,
     normalizeDigits: (value) => String(value || "").replace(/\D/g, ""),
     normalizePlatform: (value) => value || null,
     normalizeDraftStep: (value, fallback = 1) => value == null ? fallback : Math.max(1, Math.min(5, Number(value))),
@@ -114,6 +125,7 @@ async function fixture(t) {
     supersedeLowerPrioritySameOwnerDrafts: async () => 0,
     findActiveByIdentity: async () => null,
     // These unrelated correction paths are absent from this unsigned fixture.
+    assertImeiNotReservedByActiveDeviceReplacement: async () => {},
     preserveAnalystFinancialCorrectionAutosave: (_stored, payload) => payload,
     preserveAnalystEvidenceCorrectionAutosave: (_stored, payload) => payload,
     imeiReissueSignedAt: () => null,
@@ -124,7 +136,7 @@ async function fixture(t) {
   const input = (payload, verifiedDataCreditoFirstSurname) => ({
     id: 11, usuarioId: 4, vendedorId: 8, sedeId: 3, currentStep: 4,
     clienteNombre: payload.clienteNombre, clienteDocumento: payload.clienteDocumento,
-    clienteTelefono: payload.clienteTelefono, imei: null, plataforma: "IPHONE",
+    clienteTelefono: payload.clienteTelefono, imei, plataforma: "IPHONE",
     dataCreditoAssessmentId: assessmentId, payload, verifiedDataCreditoFirstSurname,
   });
   return { db, customer, save, row, input, storedPayload };

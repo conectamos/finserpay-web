@@ -4,6 +4,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { createJiti } from "jiti";
+import { imeiConfirmation, loadImeiConfirmationStorage, persistedImeiConfirmation } from "./credit-imei-confirmation-fixture.mjs";
 
 const jiti = createJiti(import.meta.url);
 const identityHelpers = await jiti.import("../lib/datacredito/identity.ts");
@@ -40,13 +41,15 @@ function fixture({ storedDocument = "123456789", requestedDocument = "123456789"
   });
   const draft = {
     id: 2876, estado: "ABIERTO", usuarioId: 23, vendedorId: 45, sedeId: 1, aliadoId: null,
-    clienteDocumento: "123456789", currentStep: 4, plataforma: "IPHONE",
+    clienteDocumento: "123456789", currentStep: 4, plataforma: "IPHONE", imei: "123456789012345",
     payload: { equipoMarca: "Apple", equipoModelo: "iPhone 15", imei: "123456789012345",
       valorEquipoTotal: 2000000, cuotaInicial: 400000, plazoMeses: 12,
       frecuenciaPago: "MENSUAL", fechaPrimerPago: "2026-11-09", clienteNombre: storedName,
       clientePrimerNombre: "NO VERIFICADO", clientePrimerApellido: "APELLIDO DIGITADO", clienteSegundoApellido: "NO VERIFICADO",
-      clienteDocumento: storedDocument, clienteTipoDocumento: storedType, dataCreditoAssessmentId: assessmentId },
+      clienteDocumento: storedDocument, clienteTipoDocumento: storedType, dataCreditoAssessmentId: assessmentId,
+      imeiConfirmation: persistedImeiConfirmation("123456789012345", 23, 45) },
   };
+  const prisma = { $queryRawUnsafe: async () => [draft] };
   const validation = { id: 38, draftId: draft.id, clienteDocumento: "123456789", clienteNombre: fullName, status: "CREATED", sessionUrl: "https://veriff.example/existing-session" };
   const loaded = { exports: {} };
   runInNewContext(routeSource, {
@@ -57,7 +60,9 @@ function fixture({ storedDocument = "123456789", requestedDocument = "123456789"
     isVeriffConfigured: () => true,
     getSellerSessionUser: async () => ({ id: 45 }),
     expireStaleSolicitudes: async () => {},
-    prisma: { $queryRawUnsafe: async () => [draft] },
+    prisma,
+    ...imeiConfirmation,
+    ...loadImeiConfirmationStorage(prisma),
     canOperateVeriffDraft: () => true,
     tryAcquireSolicitudOperationLock: async () => ({ release: async () => { calls.release++; } }),
     assertDocumentNotBlacklisted: async () => {},

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { imeiConfirmation, loadImeiConfirmationStorage, persistedImeiConfirmation } from "./credit-imei-confirmation-fixture.mjs";
 
 const source = readFileSync(new URL("../app/api/creditos/veriff/route.ts", import.meta.url), "utf8")
   .replace(/^import\b[^;]*;\r?\n/gm, "");
@@ -14,12 +15,14 @@ function fixture(identityError) {
   const calls = { identity: 0, provider: 0, reserve: 0, release: 0, assessment: 0, reuse: 0 };
   const draft = {
     id: 2876, estado: "ABIERTO", usuarioId: 23, vendedorId: 45, sedeId: 1, aliadoId: null,
-    clienteDocumento: "123456789", currentStep: 4, plataforma: "IPHONE",
+    clienteDocumento: "123456789", currentStep: 4, plataforma: "IPHONE", imei: "123456789012345",
     payload: { equipoMarca: "Apple", equipoModelo: "iPhone 15", imei: "123456789012345",
       valorEquipoTotal: 2000000, cuotaInicial: 400000, plazoMeses: 12,
       frecuenciaPago: "MENSUAL", fechaPrimerPago: "2026-11-09",
-      clienteDocumento: "123456789", dataCreditoAssessmentId: "12345678-1234-4234-8234-123456789012" },
+      clienteDocumento: "123456789", dataCreditoAssessmentId: "12345678-1234-4234-8234-123456789012",
+      imeiConfirmation: persistedImeiConfirmation("123456789012345", 23, 45) },
   };
+  const prisma = { $queryRawUnsafe: async () => [draft] };
   const loaded = { exports: {} };
   runInNewContext(compiled, {
     module: loaded, exports: loaded.exports, Error,
@@ -29,7 +32,9 @@ function fixture(identityError) {
     isVeriffConfigured: () => true,
     getSellerSessionUser: async () => ({ id: 45 }),
     expireStaleSolicitudes: async () => {},
-    prisma: { $queryRawUnsafe: async () => [draft] },
+    prisma,
+    ...imeiConfirmation,
+    ...loadImeiConfirmationStorage(prisma),
     canOperateVeriffDraft: () => true,
     tryAcquireSolicitudOperationLock: async () => ({ release: async () => { calls.release++; } }),
     assertDocumentNotBlacklisted: async () => {},

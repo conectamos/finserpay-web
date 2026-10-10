@@ -68,6 +68,7 @@ function callbackFixture({ receipt = true, authorized = true } = {}) {
     finalizeDraftDispatch: async (id) => { assert.equal(id, "dispatch"); calls.push("finalize"); current = { processUuid: "provider-process" }; },
     updateFirmaSeguroProcess: async () => { calls.push("update"); return current; },
     refreshFirmaSeguroProcess: async (process) => { calls.push("refresh"); return process; },
+    recordVerifiedDraftCorrectionReissues: async () => {},
     serializeFirmaSeguroProcess: (process) => process,
   });
   return { calls, invoke: () => handler(new Request("https://example.test/api/firma-seguro/callback", {

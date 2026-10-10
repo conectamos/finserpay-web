@@ -1,0 +1,229 @@
+.shell:global(.fp-credit-factory) { padding: 0 !important; background: var(--fp-client-bg); color: var(--fp-graphite); font-family: Arial, Helvetica, sans-serif; }
+.shell:global(.fp-credit-factory) :is(h1,h2,h3,h4,button,input,select,label,strong,dd,dt) { font-family: Arial, Helvetica, sans-serif !important; }
+.shell:global(.fp-credit-factory) :global(.fp-credit-factory-frame) { width: 100%; max-width: none !important; padding: 0 !important; }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-header) { min-height: 62px; border: 0 !important; border-bottom: 1px solid var(--fp-border) !important; border-radius: 0 !important; background: white !important; padding: 0 24px !important; box-shadow: none !important; }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-header) > div { max-width: 1320px; min-height: 62px; }
+.shell:global(.fp-credit-factory) :global(.fp-credit-factory-panel) { width: min(calc(100% - 48px),1380px); max-width: 1380px !important; margin: 18px auto 0; border: 0; border-radius: 0; padding: 0; background: transparent; box-shadow: none; }
+.shell:global(.fp-credit-factory) :global(.fp-credit-factory-panel)::before, .shell:global(.fp-credit-factory) :global(.fp-credit-factory-panel)::after { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-seller-workbench) { width: min(calc(100% - 48px),1380px); margin: 12px auto 0; }
+.shell:global(.fp-credit-factory) :global(.fp-seller-panel) { max-width: none !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; }
+.shell:global(.fp-credit-factory) :global(.fp-seller-panel)::before, .shell:global(.fp-credit-factory) :global(.fp-seller-panel)::after { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-credit-factory-layout) { display: block; margin-top: 0; }
+.shell:global(.fp-credit-factory) :global(.fp-step-stage) { padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper) { top: 0; display: grid; width: 100%; margin: 0 0 15px; padding: 0 100px !important; grid-template-columns: repeat(4,minmax(0,1fr)); overflow: visible; }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button) { min-height: 62px; gap: 14px; padding: 0 8px !important; justify-content: flex-start; }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button)::after { top: 30px; left: 60px; width: calc(100% - 60px); }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button > span:first-child) { width: 40px; height: 40px; border-radius: 50%; }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button > span:last-child) { flex: 0 1 auto; }
+.shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button > span:last-child > span:first-child) { position: relative; padding-right: 8px; background: var(--fp-client-bg); font-size: 14px; line-height: 1.35; letter-spacing: 0; }
+.caseSearch { display: grid; width: min(calc(100% - 48px),1320px); margin: 16px auto 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.caseSearch > h2 { display: none; }
+.caseSearch > div:not(.searchControls) { grid-column: 1 / -1; }
+.searchControls { display: flex; min-width: 0; gap: 12px; }
+.searchControls input, .searchControls > button { min-height: 46px; height: 46px; border-radius: var(--fp-radius-sm); font-size: 14px; }
+.searchControls input { border-color: var(--fp-border); background: white; }
+.searchControls > button:first-of-type { padding: 0 30px; background: var(--fp-graphite) !important; box-shadow: none !important; }
+.searchControls > button:last-of-type { padding: 0 24px; background: white; border-color: var(--fp-border); }
+.shell:global(.fp-credit-factory) :global(.fp-step2) { display: grid; grid-template-columns: minmax(0,1fr) 398px; gap: 12px; padding: 0; align-items: stretch; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-heading) { grid-area: 1 / 1; display: flex; align-items: center; margin: 0; padding: 24px 30px 20px; border: 1px solid var(--fp-border); border-bottom: 0; border-radius: var(--fp-radius-lg) var(--fp-radius-lg) 0 0; background: white; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-heading h3) { margin: 4px 0; font-size: 36px; font-weight: 800; line-height: 1.15; letter-spacing: -.025em; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-heading p) { color: var(--fp-client-green); font-size: 12px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-heading > div:first-child > span) { margin: 0; font-size: 14px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-status) { min-height: 36px; font-size: 13px; white-space: nowrap; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-card) { grid-area: 2 / 1; display: grid; grid-template-columns: 1fr; gap: 0; margin-top: -12px; padding: 0 16px 12px; border: 1px solid var(--fp-border); border-top: 0; border-radius: 0 0 var(--fp-radius-lg) var(--fp-radius-lg); background: white; box-shadow: var(--fp-shadow-sm); }
+.shell:global(.fp-credit-factory) :global(.fp-step2-pane) { display: block; padding: 16px; border: 1px solid var(--fp-border); border-bottom: 0; border-radius: var(--fp-radius-md) var(--fp-radius-md) 0 0; background: white; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan) { border-top: 0; border-bottom: 1px solid var(--fp-border); border-radius: 0 0 var(--fp-radius-md) var(--fp-radius-md); padding-top: 20px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-equipment)::after { display: block; height: 1px; margin-top: 16px; background: var(--fp-border); content: ''; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-section-heading) { min-height: 44px; margin-bottom: 0; gap: 16px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-section-number) { width: 44px; height: 44px; border: 0; border-radius: 50%; color: var(--fp-graphite); background: #f1f2f2; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-section-heading h4) { font-size: 21px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-section-heading p), .shell:global(.fp-credit-factory) :global(.fp-step2-counter), .shell:global(.fp-credit-factory) :global(.fp-step2-device-preview > strong), .shell:global(.fp-credit-factory) :global(.fp-step2-device-preview > p) { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-equipment-fields) { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr) minmax(0,1fr); align-items: start; gap: 16px; margin-top: 8px; padding-left: 60px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-control) { height: 42px !important; min-height: 42px !important; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); padding: 8px 14px; font-size: 14px; background: white; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-control:disabled) { background: #f2f3f4; color: #687481; }
+.shell:global(.fp-credit-factory) :global(.fp-step2 label) { min-width: 0; }
+.shell:global(.fp-credit-factory) :global(.fp-step2 label > span), .shell:global(.fp-credit-factory) :global(.fp-step2-installments > span) { color: var(--fp-muted); font-size: 13px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-equipment-lower) { display: grid; grid-template-columns: 88px minmax(0,1fr); align-items: start; gap: 28px; margin-top: 14px; padding-left: 60px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-device-preview) { align-self: start; min-height: 0; height: 88px; padding: 0; border: 0; background: transparent; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-device-illustration) { width: 88px; height: 88px; border: 0; border-radius: var(--fp-radius-md); background: #f1f2f3; box-shadow: none; transform: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-device-illustration)::before, .shell:global(.fp-credit-factory) :global(.fp-step2-device-illustration)::after { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-device-illustration img), .proposalDevice img { width: 42px; height: 42px; border: 0; object-fit: contain; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-equipment-details) { display: block; max-width: 420px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-availability) { margin: 0 0 12px 60px; min-height: 0; border: 0; background: transparent; padding: 0; font-size: 13px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-availability.is-ready) { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-policy-note) { display: block; margin: -58px 0 18px 176px; padding: 10px 16px; border: 0; border-radius: var(--fp-radius-sm); background: var(--fp-lime-soft); }
+.shell:global(.fp-credit-factory) :global(.fp-step2-policy-note strong) { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-policy-note span) { color: #345617; font-size: 12px; font-weight: 700; line-height: 1.5; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-fields) { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px 26px; margin: 0; padding-left: 60px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-initial) { grid-area: 1 / 1 / span 2; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-installments) { grid-area: 1 / 2; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-meta) { grid-area: 2 / 2; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; margin-top: 0; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-meta > div) { display: block; padding: 0; border: 0; background: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-meta > div > svg) { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-meta small) { color: var(--fp-muted); margin-bottom: 8px; font-size: 13px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-plan-meta strong) { min-height: 38px; padding: 9px 12px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); background: white; font-size: 13px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-range) { min-height: 18px !important; height: 18px !important; padding: 0 !important; margin-top: 10px; border: 0 !important; background: transparent !important; accent-color: var(--fp-client-action); }
+.shell:global(.fp-credit-factory) :global(.fp-step2-installments > small) { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal) { grid-area: 1 / 2 / span 2; display: block; align-self: stretch; margin: 0; padding: 28px; border: 1px solid #343a3d; border-radius: var(--fp-radius-lg); background: var(--fp-graphite); color: white; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-intro) { display: block; padding: 0; border: 0; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-intro h4) { color: white !important; font-size: 25px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-intro p) { color: #e2e5e8; font-size: 14px; line-height: 1.6; }
+.proposalBody { margin-top: 24px; padding: 22px; border: 1px solid #41494d; border-radius: var(--fp-radius-lg); }
+.proposalDevice { display: flex; align-items: center; gap: 18px; padding-bottom: 18px; border-bottom: 1px solid #566065; }
+.proposalDevice > span { display: grid; width: 80px; height: 80px; flex: 0 0 auto; place-items: center; border-radius: var(--fp-radius-md); background: #f2f3f4; }
+.proposalDevice strong { display: block; font-size: 17px; line-height: 1.35; }
+.proposalDevice small { display: block; margin-top: 6px; color: #d9e0e5; font-size: 12px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-metrics) { display: flex; flex-direction: column; gap: 0; margin-top: 0; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-metrics > div) { display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; min-height: 46px; border: 0; border-bottom: 1px solid #41494d; padding: 10px 0; background: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-metrics > div:first-child) { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-metrics dt) { color: white; font-size: 14px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-metrics dd) { margin: 0; color: white; font-size: 16px; line-height: 1.4; text-align: right; overflow-wrap: anywhere; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-metrics > .fp-step2-proposal-installment) { order: -1; display: block; min-height: 106px; margin-bottom: 12px; padding: 18px 0 22px; border-bottom: 1px solid #566065; background: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-installment)::before, .shell:global(.fp-credit-factory) :global(.fp-step2-proposal-installment > span) { display: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-proposal-installment dd) { margin-top: 4px; font-size: 40px; line-height: 1.1; text-align: left; letter-spacing: -.025em; }
+.shell:global(.fp-credit-factory) :global(.fp-step2 > details), .shell:global(.fp-credit-factory) :global(.fp-step2 > .fp-step2-inline-alert) { grid-column: 1 / -1; margin-top: 0; }
+.shell:global(.fp-credit-factory) :global(.fp-step2 > details) { border-radius: var(--fp-radius-sm); }
+.shell:global(.fp-credit-factory) :global(.fp-flow-actions) { position: static !important; margin: 10px 0 24px; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-actions) { max-width: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-actions button) { border-radius: var(--fp-radius-sm); min-height: 44px; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-continue) { background: var(--fp-graphite); color: white; box-shadow: none; }
+.shell:global(.fp-credit-factory) :global(.fp-step2-save-status.is-saved) { color: var(--fp-client-green); }
+.signature { position: relative; padding: 28px 32px !important; border: 1px solid var(--fp-border) !important; border-radius: var(--fp-radius-lg) !important; background: white !important; box-shadow: var(--fp-shadow-sm) !important; }
+.signature :global(.fp-stage-heading) { margin-bottom: 26px; padding-right: 100px; }
+.signature :global(.fp-stage-heading h3) { font-size: 32px; }
+.signature :global(.fp-stage-heading p) { font-size: 15px; }
+.signature :global(.fp-step3-header-status) { font-size: 12px; letter-spacing: 0; text-transform: none; }
+.shell:global(.fp-credit-factory) .mascot { position: absolute; right: 24px; top: 18px; width: 90px; height: 100px; object-fit: contain; border: 0 !important; }
+.connection { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 0; margin-bottom: 18px; color: var(--fp-muted); font-size: 13px; border-bottom: 1px solid var(--fp-border); }
+.connection > span:first-child { width: 8px; height: 8px; border-radius: 50%; background: #96a0a6; }
+.connection[data-state="connected"] > span:first-child { background: var(--fp-client-action); }
+.connection[data-state="reconnecting"] { color: #9b3d20; }
+.connection button { min-height: 40px; margin-left: auto; padding: 8px 14px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); background: white; color: var(--fp-graphite); font-weight: 700; }
+.signature :global(.fp-step3-identity-pending), .signature :global(.fp-step3-identity-approved), .signature :global(.fp-step3-firma) { border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); padding: 24px; background: white; }
+.signature :global(.fp-step3-identity-approved) { background: #f9fcf6; }
+.signature :global(.fp-step3-identity-action p) { font-size: 13px; }
+.signature :global(.fp-step3-progress) { border: 0; border-top: 1px solid var(--fp-border); border-bottom: 1px solid var(--fp-border); border-radius: 0; background: transparent; margin: 24px 0; }
+.signature :global(.fp-step3-firma-primary) { min-height: 44px; border-radius: var(--fp-radius-sm); background: var(--fp-graphite); color: white; letter-spacing: 0; }
+.signature :global(.fp-step3-firma-status) { text-transform: none; letter-spacing: 0; font-size: 14px; }
+.signature :global(.fp-step3-firma-message) { margin: 16px 0 0; }
+.signatureActions { display: flex; justify-content: space-between; gap: 12px; width: 100%; }
+.signatureActions button { display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 12px 24px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); background: white; font-size: 14px; font-weight: 700; }
+.signatureActions button:last-child { margin-left: auto; background: var(--fp-graphite); color: white; }
+.signatureActions button:disabled { cursor: not-allowed; opacity: .5; }
+.signatureActions svg { width: 18px; height: 18px; }
+.imeiDialog { width: min(540px,calc(100% - 32px)); max-height: calc(100dvh - 32px); margin: auto; overflow-y: auto; border: 1px solid var(--fp-border); border-radius: 20px; padding: 32px; background: white; color: var(--fp-graphite); box-shadow: var(--fp-shadow-md); font-family: Arial,Helvetica,sans-serif; }
+.imeiDialog::backdrop { background: #11171966; backdrop-filter: blur(6px); }
+.imeiDialog h2 { margin: 18px 0 10px; font-family: inherit; font-size: 26px; line-height: 1.2; font-weight: 800; }
+.imeiDialog p { margin: 0; color: var(--fp-muted); font-size: 15px; line-height: 1.5; }
+.dialogClose { position: absolute; right: 16px; top: 16px; display: grid; width: 40px; height: 40px; place-items: center; border: 0; background: transparent; border-radius: 50%; color: var(--fp-muted); }
+.dialogIcon { display: grid; width: 56px; height: 56px; place-items: center; border-radius: 50%; background: var(--fp-lime-soft); color: var(--fp-client-green); }
+.dialogIcon svg { width: 28px; height: 28px; }
+.imeiDialog form { margin-top: 24px; }
+.imeiDialog label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 700; }
+.imeiDialog input { width: 100%; min-height: 50px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); padding: 12px 16px; font-size: 19px; font-variant-numeric: tabular-nums; color: var(--fp-graphite); background: white; }
+.imeiDialog input[aria-invalid="true"] { border-color: var(--fp-danger); }
+.imeiDialog .dialogError { margin-top: 10px; color: var(--fp-danger); font-size: 14px; }
+.dialogActions { display: flex; gap: 12px; margin-top: 28px; }
+.dialogActions button { display: flex; min-height: 46px; justify-content: center; align-items: center; gap: 8px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-sm); padding: 12px 16px; background: white; font-size: 14px; font-weight: 700; }
+.dialogActions button:last-child { flex: 1; background: var(--fp-client-action); color: #173300; border-color: var(--fp-client-action); }
+.dialogActions button:disabled { opacity: .55; cursor: wait; }
+.dialogActions svg { width: 18px; height: 18px; }
+.imeiDialog :is(input,button):focus-visible { outline: 3px solid var(--fp-lime); outline-offset: 3px; }
+.spinner { animation: rotate 1s linear infinite; }
+@keyframes rotate { to { transform: rotate(360deg); } }
+@media (min-width: 1101px) { .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-fields > label:last-child) { position: relative; } .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-fields > label:last-child > small:not(.is-error)) { position: absolute; top: 100%; left: 0; right: 0; } }
+@media (min-width: 1101px) { .shell:global(.fp-credit-factory) :global(.fp-step2-equipment) { padding-bottom: 0; } .shell:global(.fp-credit-factory) :global(.fp-step2-plan) { display: grid; grid-template-columns: 176px minmax(0,1fr); row-gap: 12px; padding-top: 16px; } .shell:global(.fp-credit-factory) :global(.fp-step2-plan .fp-step2-section-heading) { grid-area: 1 / 1; } .shell:global(.fp-credit-factory) :global(.fp-step2-policy-note) { grid-area: 1 / 2; align-self: center; margin: 0; } .shell:global(.fp-credit-factory) :global(.fp-step2-plan-fields), .shell:global(.fp-credit-factory) :global(.fp-step2-plan-availability) { grid-column: 1 / -1; } .shell:global(.fp-credit-factory) :global(.fp-step2 > details summary) { padding-top: 8px; padding-bottom: 8px; } }
+@media (max-width: 1450px) { .shell:global(.fp-credit-factory) :global(.fp-credit-factory-panel) { width: calc(100% - 48px); } .shell:global(.fp-credit-factory) :global(.fp-step2) { grid-template-columns: minmax(0,1fr) 350px; } .shell:global(.fp-credit-factory) :global(.fp-step2-policy-note) { margin-left: 150px; } .shell:global(.fp-credit-factory) :global(.fp-step2-proposal) { padding: 24px; } .proposalBody { padding: 16px; } }
+@media (max-width: 1100px) { .shell:global(.fp-credit-factory) :global(.fp-step2) { grid-template-columns: minmax(0,1fr) 300px; } .shell:global(.fp-credit-factory) :global(.fp-step2-heading) { padding: 20px; } .shell:global(.fp-credit-factory) :global(.fp-step2-heading h3) { font-size: 29px; } .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-fields) { padding-left: 0; grid-template-columns: repeat(2,minmax(0,1fr)); } .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-lower), .shell:global(.fp-credit-factory) :global(.fp-step2-plan-fields) { padding-left: 0; } .shell:global(.fp-credit-factory) :global(.fp-step2-policy-note) { margin: 0 0 18px; } .shell:global(.fp-credit-factory) :global(.fp-step2-plan-availability) { margin-left: 0; } .shell:global(.fp-credit-factory) :global(.fp-step2-proposal) { padding: 20px; } .proposalDevice { gap: 12px; } .proposalDevice > span { width: 56px; height: 64px; } .shell:global(.fp-credit-factory) :global(.fp-step2-proposal-installment dd) { font-size: 32px; } .shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper) { padding: 0 !important; } }
+@media (max-width: 760px) { .shell:global(.fp-credit-factory) :global(.fp-credit-factory-panel) { width: calc(100% - 32px); margin-top: 16px; } .caseSearch { width: calc(100% - 32px); } .searchControls { flex-wrap: wrap; } .searchControls > div { flex-basis: 100%; } .searchControls > button { flex: 1; } .shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper) { margin-bottom: 20px; } .shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button) { min-height: 80px; flex-direction: column; gap: 8px; padding: 0 2px !important; text-align: center; } .shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button > span:first-child) { width: 32px; height: 32px; } .shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button)::after { top: 16px; left: 55%; width: 90%; } .shell:global(.fp-credit-factory) :global(.fp-new-sale-stepper .fp-seller-step-button > span:last-child > span:first-child) { padding: 0; font-size: 10px; } .shell:global(.fp-credit-factory) :global(.fp-step2) { grid-template-columns: minmax(0,1fr); gap: 12px; } .shell:global(.fp-credit-factory) :global(.fp-step2-heading) { grid-area: 1 / 1; padding: 20px 16px; align-items: flex-start; flex-wrap: wrap; } .shell:global(.fp-credit-factory) :global(.fp-step2-heading h3) { font-size: 29px; } .shell:global(.fp-credit-factory) :global(.fp-step2-card) { grid-area: 2 / 1; padding: 0 10px 12px; } .shell:global(.fp-credit-factory) :global(.fp-step2-proposal) { grid-area: 3 / 1; } .shell:global(.fp-credit-factory) :global(.fp-step2-pane) { padding: 14px; } .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-fields) { grid-template-columns: 1fr; gap: 14px; } .shell:global(.fp-credit-factory) :global(.fp-step2-equipment-lower) { grid-template-columns: 56px minmax(0,1fr); gap: 14px; } .shell:global(.fp-credit-factory) :global(.fp-step2-device-illustration) { width: 56px; height: 66px; } .shell:global(.fp-credit-factory) :global(.fp-step2-plan-fields) { grid-template-columns: 1fr; gap: 18px; } .shell:global(.fp-credit-factory) :global(.fp-step2-initial), .shell:global(.fp-credit-factory) :global(.fp-step2-installments), .shell:global(.fp-credit-factory) :global(.fp-step2-plan-meta) { grid-area: auto; } .shell:global(.fp-credit-factory) :global(.fp-step2-plan-meta) { gap: 12px; } .shell:global(.fp-credit-factory) :global(.fp-step2-policy-note) { padding: 12px; } .shell:global(.fp-credit-factory) :global(.fp-step2-proposal-installment dd) { font-size: 38px; } .shell:global(.fp-credit-factory) :global(.fp-step2-actions) { flex-wrap: wrap; gap: 12px; } .shell:global(.fp-credit-factory) :global(.fp-step2-save-status) { order: 3; width: 100%; justify-content: center; } .shell:global(.fp-credit-factory) :global(.fp-step2-action-buttons) { flex: 1; } .shell:global(.fp-credit-factory) :global(.fp-step2-actions button) { padding: 10px 16px; } .signature { padding: 20px 16px !important; } .signature :global(.fp-stage-heading) { padding-right: 60px; } .signature :global(.fp-stage-heading h3) { font-size: 27px; } .mascot { width: 60px; height: 76px; top: 14px; right: 10px; } .signature :global(.fp-step3-identity-approved), .signature :global(.fp-step3-identity-pending), .signature :global(.fp-step3-firma) { padding: 16px; } .signature :global(.fp-step3-firma-compact) { flex-wrap: wrap; gap: 16px; } .signature :global(.fp-step3-progress) { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; } .signatureActions { flex-wrap: wrap; } .signatureActions button { justify-content: center; padding: 12px 16px; } .imeiDialog { padding: 26px 20px; } .imeiDialog h2 { font-size: 24px; } .dialogActions { flex-direction: column; } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+@media (max-width: 760px) { .shell:global(.fp-credit-factory) :global(.fp-seller-workbench) { width: calc(100% - 32px); } .shell:global(.fp-credit-factory) .mascot { width: 60px; height: 76px; top: 14px; right: 10px; } }
+
+.signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header),
+.signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header) > div { min-height: 68px; }
+.signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header) > div { max-width: 1320px; grid-template-columns: 1fr auto auto; }
+.signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header h1) { padding-right: 32px; border-right: 1px solid var(--fp-border); color: #236648; font-size: 20px; }
+.signatureShell:global(.fp-credit-factory) :global(.fp-seller-workbench) { max-width: 1352px; margin-top: 24px; }
+.signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-stepper) { min-height: 72px; margin-bottom: 0; padding: 0 112px !important; }
+.signatureSearch { width: min(calc(100% - 48px),1352px); margin: 22px auto 0; padding: 18px 22px 12px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: white; box-shadow: var(--fp-shadow-sm); }
+.signatureSearch > h2 { display: block; margin: 0 0 10px; font-size: 22px; line-height: 1.2; }
+.signatureSearch .searchControls > button:first-of-type { background: #236648 !important; }
+.signatureSearch .searchControls > button:last-of-type { border-color: transparent; }
+.signatureSearch > div:last-child:not(.searchControls) { margin-top: 14px; }
+.signatureSearch > div:last-child:not(.searchControls) > span { color: var(--fp-muted); border-color: var(--fp-border); letter-spacing: 0; }
+.signatureShell .signature { padding: 30px 32px 26px !important; }
+.signatureShell .signature :global(.fp-stage-heading) { margin: 0; padding-right: 280px; padding-bottom: 0; border: 0; }
+.signatureShell .signature :global(.fp-stage-heading h3) { margin: 0; font-size: 32px; line-height: 1.2; }
+.signatureShell .signature :global(.fp-stage-heading p),
+.signatureShell .signature :global(.fp-step3-header-status) { display: none; }
+.signatureShell .connection { margin: 8px 0 32px; padding: 0; border: 0; font-size: 14px; min-height: 20px; }
+.signatureShell:global(.fp-credit-factory) .mascot { z-index: 1; right: 30px; top: 0; width: 260px; height: 174px; object-fit: contain; pointer-events: none; }
+.signatureOverview { overflow: hidden; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: #f8faf8; }
+.signatureOverview[data-ready="true"] { background: #f7fbf7; }
+.signatureOutcome { display: flex; align-items: center; gap: 30px; padding: 24px 36px; min-height: 122px; }
+.outcomeIcon { display: grid; width: 76px; height: 76px; flex: 0 0 auto; place-items: center; border: 3px solid var(--fp-client-action); border-radius: 50%; background: white; color: var(--fp-client-action); }
+.outcomeIcon svg { width: 40px; height: 40px; stroke-width: 2.4; }
+.outcomeIcon[data-error="true"] { border-color: var(--fp-danger); color: var(--fp-danger); }
+.signatureOutcome h4 { margin: 0; color: var(--fp-graphite); font-size: 28px; line-height: 1.2; font-weight: 800; letter-spacing: -.025em; }
+.signatureOutcome p { margin: 7px 0 0; color: var(--fp-muted); font-size: 18px; line-height: 1.5; }
+.signatureStates { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); min-height: 100px; padding: 18px 0; border-top: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: white; }
+.signatureStates > div { display: flex; align-items: center; min-width: 0; gap: 34px; padding: 0 42px; }
+.signatureStates > div + div { border-left: 1px solid var(--fp-border); }
+.stateIcon { display: grid; width: 66px; height: 66px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #edf5ed; color: #236648; }
+.stateIcon svg { width: 32px; height: 32px; stroke-width: 1.8; }
+.signatureStates h5 { margin: 0; color: var(--fp-graphite); font-size: 18px; font-weight: 700; }
+.signatureStates p { display: flex; align-items: center; gap: 9px; margin: 8px 0 0; color: var(--fp-muted); font-size: 16px; font-weight: 600; }
+.signatureStates p > svg { width: 21px; height: 21px; flex: 0 0 auto; padding: 3px; border-radius: 50%; background: #eef0f2; color: var(--fp-muted); }
+.signatureStates p[data-confirmed="true"] > svg { color: white; background: var(--fp-client-action); }
+.signatureShell .signature :global(.fp-step3-progress) { gap: 0; margin: 24px 0; padding: 0; border: 0; }
+.signatureShell .signature :global(.fp-step3-progress-item) { flex-direction: column; gap: 8px; text-align: center; }
+.signatureShell .signature :global(.fp-step3-progress-item)::before { position: absolute; top: 18px; left: 0; width: 100%; height: 2px; background: var(--fp-border); content: ''; }
+.signatureShell .signature :global(.fp-step3-progress-item)::after { display: none; }
+.signatureShell .signature :global(.fp-step3-progress-item > span) { position: relative; z-index: 1; width: 36px; height: 36px; outline: 10px solid white; }
+.signatureShell .signature :global(.fp-step3-progress-item.is-complete > span) { border-color: var(--fp-client-action); background: var(--fp-client-action); color: white; }
+.signatureShell .signature :global(.fp-step3-progress-item strong) { color: var(--fp-graphite); font-size: 14px; line-height: 1.4; }
+.signatureNext { display: flex; align-items: center; gap: 20px; min-height: 72px; padding: 14px 16px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: #f5f6f7; }
+.signatureNext > span { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #4a940f; background: #e0f0c6; }
+.signatureNext p { margin: 0; color: var(--fp-graphite); font-size: 17px; line-height: 1.4; }
+.signatureShell .signatureActions { padding: 12px 22px; margin-top: 12px; min-height: 76px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: white; box-shadow: var(--fp-shadow-sm); }
+.signatureShell .signatureActions button { min-height: 50px; font-size: 16px; }
+.signatureShell .signatureActions button:last-child { min-width: 320px; justify-content: center; gap: 30px; }
+.signatureShell .signatureActions button:last-child svg { color: var(--fp-client-action); width: 24px; height: 24px; }
+@media (max-width: 1100px) {
+  .signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-stepper) { padding: 0 !important; }
+  .signatureStates > div { padding: 0 24px; gap: 20px; }
+}
+@media (min-width: 1101px) {
+  .shell:global(.fp-credit-factory) :global(.fp-step2-policy-note) { margin: 0; }
+}
+@media (max-width: 760px) {
+  .signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header h1) { padding-right: 0; border: 0; font-size: 16px; }
+  .signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-header) > div { grid-template-columns: 1fr auto auto; gap: 12px; }
+  .signatureSearch { width: calc(100% - 32px); margin-top: 16px; padding: 16px; }
+  .signatureSearch > h2 { font-size: 20px; }
+  .signatureShell:global(.fp-credit-factory) :global(.fp-seller-workbench) { margin-top: 16px; }
+  .signatureShell:global(.fp-credit-factory) :global(.fp-new-sale-stepper) { margin-bottom: 12px; }
+  .signatureShell .signature { padding: 22px 16px 16px !important; }
+  .signatureShell .signature :global(.fp-stage-heading) { padding-right: 100px; }
+  .signatureShell .signature :global(.fp-stage-heading h3) { font-size: 24px; }
+  .signatureShell .connection { margin-bottom: 28px; max-width: calc(100% - 80px); font-size: 12px; }
+  .signatureShell:global(.fp-credit-factory) .mascot { right: 8px; top: 8px; width: 112px; height: 86px; }
+  .signatureOutcome { align-items: flex-start; min-height: 0; gap: 14px; padding: 20px 14px; }
+  .outcomeIcon { width: 46px; height: 46px; border-width: 2px; }
+  .outcomeIcon svg { width: 28px; height: 28px; }
+  .signatureOutcome h4 { font-size: 22px; }
+  .signatureOutcome p { font-size: 14px; }
+  .signatureStates { grid-template-columns: 1fr; padding: 0; }
+  .signatureStates > div { padding: 16px; gap: 16px; }
+  .signatureStates > div + div { border-left: 0; border-top: 1px solid var(--fp-border); }
+  .stateIcon { width: 46px; height: 46px; }
+  .stateIcon svg { width: 26px; height: 26px; }
+  .signatureStates h5 { font-size: 16px; }
+  .signatureStates p { font-size: 14px; margin-top: 6px; }
+  .signatureShell .signature :global(.fp-step3-progress) { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px 0; }
+  .signatureShell .signature :global(.fp-step3-progress-item strong) { font-size: 12px; }
+  .signatureNext { gap: 12px; padding: 12px; }
+  .signatureNext p { font-size: 14px; }
+  .signatureShell .signatureActions { padding: 12px; gap: 12px; margin-top: 8px; }
+  .signatureShell .signatureActions button { width: 100%; min-width: 0 !important; }
+}

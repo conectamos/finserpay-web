@@ -68,6 +68,8 @@ import {
   isVeriffApproved,
 } from "@/lib/veriff-storage";
 import { isVeriffRequired } from "@/lib/veriff";
+import { requireDraftImeiConfirmation } from "@/lib/credit-imei-confirmation-storage";
+import { ImeiConfirmationError } from "@/lib/credit-imei-confirmation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -282,6 +284,7 @@ async function recordDraftCorrectionReissue(
 }
 
 function firmaSeguroErrorResponse(error: unknown) {
+  if (error instanceof ImeiConfirmationError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status });
   if (error instanceof DraftDispatchError) {
     return NextResponse.json({ ok: false, code: error.code, stage: "provider_dispatch",
       error: error.message }, { status: error.status });
@@ -706,6 +709,7 @@ async function requestDraftSignatureCore(
         });
       }
 
+      await requireDraftImeiConfirmation(draftId);
       await requireApprovedVeriffBeforeFirmaSeguro(lockedAuthorized.row);
       const sourcePayload = payloadObject(lockedAuthorized.row.payload);
       const imeiRetryProcess = isVerifiedTerminalDraftImeiRetry(sourcePayload, lockedCurrent);

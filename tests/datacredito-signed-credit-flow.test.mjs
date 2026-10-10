@@ -29,12 +29,12 @@ const unexpectedNetwork = () => assert.fail("This regression test must never acc
 const load = (file, dependencies, globals) => loadReissueModule(file, dependencies,
   { Error, fetch: unexpectedNetwork, ...globals });
 function evaluate(source, globals = {}) {
-  const module = { exports: {} };
+  const testModule = { exports: {} };
   runInNewContext(ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { module, exports: module.exports, Error, Buffer, Date, AbortController,
+  }).outputText, { module: testModule, exports: testModule.exports, Error, Buffer, Date, AbortController,
     ...globals, require: name => assert.fail(`Unexpected dependency: ${name}`) });
-  return module.exports;
+  return testModule.exports;
 }
 function section(source, start, end) {
   const from = source.indexOf(start), to = source.indexOf(end, from + start.length);
@@ -60,6 +60,8 @@ const dataCorrections = load("lib/approval-request-correction-core.ts", {
   "./credit-contact-phones": phones,
 });
 const statuses = load("lib/firmaseguro-status.ts");
+const imeiConfirmation = load("lib/credit-imei-confirmation.ts");
+const solicitudOperationAccess = load("lib/solicitud-operation-access.ts");
 const blacklistLocks = load("lib/solicitud-blacklist-locks.ts", {
   "@/lib/document-blacklist-core": load("lib/document-blacklist-core.ts"),
 });
@@ -148,7 +150,7 @@ async function fixture(t, providerType) {
     section(storageSource, "export async function saveSolicitudDraft(", "export class SolicitudDataCreditoLinkError") + "\n" +
     section(storageSource, "export async function completeSolicitudForCredit(", "function addWhere(");
   const requestsStorage = evaluate(selectedStorage, {
-    prisma, ...canonical, ...dataCorrections, ...blacklistLocks, ...evidence,
+    prisma, ...canonical, ...dataCorrections, ...blacklistLocks, ...evidence, ...imeiConfirmation,
     normalizeDigits: value => String(value || "").replace(/\D/g, ""),
     normalizePlatform: value => value || null,
     normalizeDraftStep: (value, fallback = 1) => value == null ? fallback : Math.max(1, Math.min(5, Number(value))),
@@ -164,6 +166,14 @@ async function fixture(t, providerType) {
     imeiReissueSignedAt: () => null, isFirmaSeguroSuccessfulStatus: statuses.isFirmaSeguroSuccessfulStatus,
     isFirmaSeguroFailedStatus: statuses.isFirmaSeguroFailedStatus,
   });
+  const imeiConfirmationStorage = load("lib/credit-imei-confirmation-storage.ts", {
+    "@/lib/prisma": { default: prisma }, "@/lib/firmaseguro-storage": firmaStorage,
+    "@/lib/credit-imei-confirmation": imeiConfirmation,
+    "@/lib/solicitud-operation-access": solicitudOperationAccess,
+  });
+  const confirmImei = () => imeiConfirmationStorage.confirmDraftImei({ draftId, enteredImei: imei,
+    userId: scope.userId, central: false, viewerAllyId: scope.aliadoId,
+    seller: { id: scope.sellerId, tipoPerfil: "VENDEDOR" } });
   const row = async () => ({ ...(await db.query('SELECT * FROM "CreditoBorrador" WHERE "id"=$1', [draftId])).rows[0], sedeAliadoId: scope.aliadoId });
   const storedPayload = {
     solicitudOrigen: "DATACREDITO", dataCreditoAssessmentId: assessmentId,
@@ -249,13 +259,18 @@ async function fixture(t, providerType) {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/firmaseguro": firmaProvider, "@/lib/firmaseguro-credit": firmaCredit,
     "@/lib/firmaseguro-storage": firmaStorage, "@/lib/firmaseguro-draft-dispatch-ledger": ledger,
+    "@/lib/firmaseguro-draft-correction-complete": load("lib/firmaseguro-draft-correction-complete.ts", {
+      "@/lib/firmaseguro-imei-correction": { recordFirmaSeguroImeiCorrectionReissue: unexpectedNetwork },
+      "@/lib/firmaseguro-financial-correction": { recordFirmaSeguroFinancialCorrectionReissue: unexpectedNetwork },
+      "@/lib/firmaseguro-draft-identity-correction": { recordSignedDraftIdentityCorrectionReissue: unexpectedNetwork },
+    }),
   });
   const guardCode = declarations("app/api/creditos/borradores/[id]/firma-seguro/route.ts", ["payloadObject", "requireApprovedVeriffBeforeFirmaSeguro"]);
   const guard = evaluate(guardCode + "\nmodule.exports = requireApprovedVeriffBeforeFirmaSeguro;", {
     ...factory, ...veriffCore, ...veriffIdentity, ...veriff, ...builder, prisma,
     getDataCreditoPublicConfig: () => ({ enabled: true }),
   });
-  return { db, prisma, row, save, requestsStorage, storedPayload, customer, veriff, bridge, builder,
+  return { db, prisma, row, save, confirmImei, requestsStorage, storedPayload, customer, veriff, bridge, builder,
     firmaStorage, firmaCredit, ledger, callback, guard, signedPdf, processUuid, sentPayloads,
     sourceReads: () => sourceReads, sends: () => sends, trustVeriff: value => { trustedVeriff = value; } };
 }
@@ -282,6 +297,13 @@ function wizard(f, payload, step = 1) {
     hideIdentityWizardStep: true, stepContratoReady: true, stepIdentityContractReady: true, identityStepReady: true,
     veriffRequired: true, veriffApproved: true, contractEvidenceReady: true, pagareAceptado: true,
     nextVisibleWizardStep: value => ({ 1: 2, 2: 4, 4: 5, 5: 5 }[value]), focusFirstInvalidClientField() {},
+    requestEquipmentImeiConfirmation: async target => {
+      const result = await f.confirmImei();
+      assert.equal(result.confirmation.imei, imei);
+      // The browser modal's human reentry is simulated here; the production
+      // confirmation storage and guarded draft persistence still run in SQL.
+      return context.module.exports.persistWizardStep(target);
+    },
     window: { clearTimeout() {} },
     requestJson: async (url, options) => {
       assert.equal(url, "/api/creditos/borradores");

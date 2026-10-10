@@ -11,6 +11,7 @@ import {
   markFirmaSeguroDraftProcessesSuperseded,
 } from "@/lib/firmaseguro-storage";
 import { ensureSolicitudSchema } from "@/lib/solicitudes-storage";
+import { isCurrentDraftCorrectionProcess } from "@/lib/firmaseguro-draft-correction-version";
 import {
   isVeriffApproved,
   serializeVeriffValidation,
@@ -354,6 +355,7 @@ export async function recordSignedDraftIdentityCorrectionReissue(
   await ensureSignedDraftIdentityCorrectionSchema();
   return prisma.$transaction(async (db) => {
     await lockSolicitudOperationMutation(db, draftId);
+    if (!await isCurrentDraftCorrectionProcess(db, draftId, process.processUuid)) return false;
     const row = await draft(db, draftId, true);
     if (!row) return false;
     const payload = record(row.payload);

@@ -27,8 +27,12 @@ function dueDate(value: string) {
 
 export default function CreditAmortizationTable({
   plan,
+  defaultOpen = true,
+  compact = false,
 }: {
   plan: FrenchAmortizationResult;
+  defaultOpen?: boolean;
+  compact?: boolean;
 }) {
   if (!plan.cuotas.length) return null;
   const comercialEsCuotaPactada = plan.version === "ARES_FRANCES_V2";
@@ -36,16 +40,16 @@ export default function CreditAmortizationTable({
   return (
     <details
       className="mt-6 overflow-hidden rounded-[24px] border border-slate-200 bg-white"
-      open
+      open={defaultOpen}
     >
       <summary className="cursor-pointer list-none px-5 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-900">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+            <p className={`${compact ? "hidden" : ""} text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500`}>
               Sistema frances · {plan.version}
             </p>
             <h4 className="mt-1 text-lg font-black text-slate-950">
-              Tabla de amortizacion completa
+              {compact ? "Tabla de amortización" : "Tabla de amortizacion completa"}
             </h4>
           </div>
           <span className="w-fit rounded-full bg-[var(--fp-lime)] px-3 py-1 text-xs font-black text-slate-950">

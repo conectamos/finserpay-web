@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { isFirmaSeguroFailedStatus } from "@/lib/firmaseguro-status";
 import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import { ensureIphoneEnrollmentSchema } from "@/lib/iphone-enrollment-storage";
+import { isCurrentDraftCorrectionProcess } from "@/lib/firmaseguro-draft-correction-version";
 import {
   ensureFirmaSeguroSchema,
   lockSolicitudOperationMutation,
@@ -479,6 +480,7 @@ export async function correctFirmaSeguroDraftImei(input: {
       firmaSeguroCorrectionPending: true,
       firmaSeguroCorrectionId: correlationId,
     };
+    delete nextPayload.imeiConfirmation;
     delete nextPayload.firmaSeguroDraftFolio;
     delete nextPayload.financialTermsSeal;
     for (const field of EQUIPMENT_DEPENDENT_PAYLOAD_FIELDS) {
@@ -600,6 +602,8 @@ export async function recordFirmaSeguroImeiCorrectionReissue(
 
   await ensureFirmaSeguroSchema();
   return prisma.$transaction(async (transaction) => {
+    await lockSolicitudOperationMutation(transaction, draftId);
+    if (!await isCurrentDraftCorrectionProcess(transaction, draftId, process.processUuid)) return false;
     const pendingRows = await transaction.$queryRawUnsafe<CorrectionAuditRow[]>(
       `
         SELECT corrected."correlationId"::text, corrected."draftId",

@@ -896,9 +896,10 @@ test("retomar una solicitud usa el paso canonico y no retrocede por un payload o
     /const restoredWizardStep\s*=\s*clampWizardStep\(([\s\S]{0,220}?)\);/
   );
   const serverCanonicalizesPayload =
-    /const canonicalStep\s*=\s*Math\.max\([\s\S]{0,180}row\.currentStep[\s\S]{0,180}payloadStep[\s\S]{0,400}wizardStep:\s*canonicalStep/.test(
-      draftRoute
-    );
+    /const canonicalStep\s*=\s*Math\.max\([\s\S]{0,180}row\.currentStep[\s\S]{0,180}payloadStep/.test(draftRoute) &&
+    (/wizardStep:\s*canonicalStep/.test(draftRoute) ||
+      (/const confirmedStep = imeiConfirmationReady \? canonicalStep : Math\.min\(canonicalStep, 2\)/.test(draftRoute) &&
+       /wizardStep:\s*confirmedStep/.test(draftRoute)));
   const clientPrefersCanonicalColumn = Boolean(
     restoredStep &&
       restoredStep[1].indexOf("draft.currentStep") >= 0 &&

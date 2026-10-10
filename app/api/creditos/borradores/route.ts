@@ -14,9 +14,9 @@ import {
   isDirectSalesProfile,
 } from "@/lib/solicitud-operation-access";
 import { SolicitudCanonicalMutationError } from "@/lib/solicitudes";
-import { isFirmaSeguroSuccessfulStatus } from "@/lib/firmaseguro-status";
 import { ensureFirmaSeguroSchema } from "@/lib/firmaseguro-storage";
 import { ensureVeriffSchema } from "@/lib/veriff-storage";
+import { hasCurrentContractImeiConfirmation, ImeiConfirmationError } from "@/lib/credit-imei-confirmation";
 import {
   ActiveSolicitudConflictError,
   desistSolicitud,
@@ -67,6 +67,7 @@ type DraftRow = {
   veriffDecision: string | null;
   firmaStatus: string | null;
   firmaProcessUuid: string | null;
+  firmaDraftPayload: unknown;
   payload: unknown;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -158,15 +159,19 @@ function serializeDraft(row: DraftRow) {
   const canonicalPlatform = String(row.plataforma || "").trim().toUpperCase();
   const canonicalVeriffValidationId = Number(row.veriffValidationId || 0);
   const payloadStep = clampStep(payload.wizardStep);
-  const firmaStep = row.firmaProcessUuid
-    ? isFirmaSeguroSuccessfulStatus(row.firmaStatus)
-      ? 5
-      : 4
-    : 1;
+  // Signing enables the next button. Only an explicit saved navigation enters
+  // delivery; a webhook must not move the advisor away from identity/signature.
+  const firmaStep = row.firmaProcessUuid ? 4 : 1;
   const canonicalStep = Math.max(clampStep(row.currentStep), payloadStep, firmaStep);
+  const imeiConfirmationReady = hasCurrentContractImeiConfirmation({
+    imei: row.imei, payload,
+    currentProcess: row.firmaProcessUuid ? { processUuid: row.firmaProcessUuid, draftPayload: row.firmaDraftPayload } : null,
+  });
+  const confirmedStep = imeiConfirmationReady ? canonicalStep : Math.min(canonicalStep, 2);
   const serializedPayload: DraftPayload = {
     ...payload,
-    wizardStep: canonicalStep,
+    wizardStep: confirmedStep,
+    imeiConfirmationRequired: !imeiConfirmationReady,
     ...(canonicalAssessmentId
       ? { dataCreditoAssessmentId: canonicalAssessmentId }
       : {}),
@@ -182,7 +187,7 @@ function serializeDraft(row: DraftRow) {
   return {
     id: row.id,
     estado: row.estado,
-    currentStep: canonicalStep,
+    currentStep: confirmedStep,
     clienteNombre: row.clienteNombre,
     clienteDocumento: row.clienteDocumento,
     clienteTelefono: row.clienteTelefono,
@@ -260,6 +265,7 @@ async function readDrafts(
         latest_veriff."decision" AS "veriffDecision",
         latest_firma."status" AS "firmaStatus",
         latest_firma."processUuid" AS "firmaProcessUuid",
+        latest_firma."draftPayload" AS "firmaDraftPayload",
         ${payload} AS "payload",
         d."createdAt", d."updatedAt", d."closedAt",
         u."nombre" AS "usuarioNombre", u."usuario" AS "usuarioLogin",
@@ -277,7 +283,7 @@ async function readDrafts(
         LIMIT 1
       ) latest_veriff ON TRUE
       LEFT JOIN LATERAL (
-        SELECT process."status", process."processUuid"
+        SELECT process."status", process."processUuid", process."draftPayload"
         FROM "FirmaSeguroProcess" process
         WHERE process."draftId" = d."id"
           AND process."supersededAt" IS NULL
@@ -390,6 +396,7 @@ export async function GET(req: Request) {
       items: rows.map(serializeDraft),
     });
   } catch (error) {
+    if (error instanceof ImeiConfirmationError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status });
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
     console.error("ERROR LISTANDO BORRADORES:", error);
@@ -473,6 +480,7 @@ export async function POST(req: Request) {
     if (!rows[0]) throw new Error("No se pudo leer el borrador guardado");
     return NextResponse.json({ ok: true, item: serializeDraft(rows[0]) });
   } catch (error) {
+    if (error instanceof ImeiConfirmationError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status });
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
     if (

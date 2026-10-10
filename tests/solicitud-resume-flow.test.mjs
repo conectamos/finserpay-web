@@ -484,7 +484,7 @@ test("el autoguardado persiste y bloquea identidades solo con IMEI completo", as
   );
   const canonicalImei = storage.slice(
     storage.indexOf("const canonicalImei ="),
-    storage.indexOf("if (canonicalImei)", storage.indexOf("const canonicalImei ="))
+    storage.indexOf(";", storage.indexOf("const canonicalImei ="))
   );
   assert.match(
     canonicalImei,

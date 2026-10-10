@@ -46,7 +46,8 @@
     "cron:postulaciones": "node scripts/retry-merchant-applications.mjs",
     "test:commissions": "node --test tests/commissions*.test.mjs",
     "db:setup-commissions": "node scripts/ensure-commissions-schema.mjs",
-    "test:credit-origination": "npm run test:datacredito && npm run test:solicitudes && npm run test:firmaseguro && npm run test:credit-close"
+    "test:credit-origination": "npm run test:datacredito && npm run test:solicitudes && npm run test:firmaseguro && npm run test:credit-close && npm run test:credit-equipment-signature",
+    "test:credit-equipment-signature": "node --experimental-strip-types --test tests/credit-imei-confirmation.test.mjs tests/credit-process-live-status.test.mjs tests/firmaseguro-draft-correction-callback.test.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.7.0",

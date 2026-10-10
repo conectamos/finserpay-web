@@ -25,6 +25,7 @@ import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-led
 import { preserveAnalystDataCorrectionAutosave } from "@/lib/approval-request-correction-core";
 import { preserveAnalystFinancialCorrectionAutosave } from "@/lib/approval-request-financial-correction-core";
 import { preserveAnalystEvidenceCorrectionAutosave } from "@/lib/approval-request-evidence-correction-core";
+import { hasCurrentContractImeiConfirmation, ImeiConfirmationError, preserveCreditImeiConfirmation } from "@/lib/credit-imei-confirmation";
 import {
   SOLICITUD_FILTER_STATES,
   SOLICITUD_STATE_LABELS,
@@ -1596,6 +1597,14 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
       (signatureStarted ? storedIdentityImei : "") ||
       incomingCompleteImei ||
       storedIdentityImei;
+    canonicalPayload = preserveCreditImeiConfirmation(targetRow?.payload, canonicalPayload, canonicalImei);
+    const imeiConfirmationReady = hasCurrentContractImeiConfirmation({
+      imei: canonicalImei, payload: canonicalPayload, currentProcess: firmaSeguroTerms,
+    });
+    if (incomingStep >= 3 && !imeiConfirmationReady) {
+      throw new ImeiConfirmationError("IMEI_CONFIRMATION_REQUIRED", "Confirma nuevamente los 15 dígitos del IMEI en Equipo y plan antes de continuar.");
+    }
+    const imeiVerifiedStep = imeiConfirmationReady ? persistedStep : Math.min(persistedStep, 2);
     if (canonicalImei) {
       if (canonicalImei !== imei) {
         await lockIdentity(transaction, "imei", canonicalImei);
@@ -1607,7 +1616,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     }
     const persistedPayload: Record<string, unknown> = preserveAnalystCorrections({
       ...canonicalPayload,
-      wizardStep: persistedStep,
+      wizardStep: imeiVerifiedStep,
       veriffValidationId: canonicalVeriffValidationId,
       ...(canonicalImei
         ? { imei: canonicalImei, deviceUid: canonicalImei }
@@ -1626,6 +1635,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         `
           UPDATE "CreditoBorrador"
           SET "currentStep" = CASE
+                WHEN $11::boolean THEN $2
                 WHEN $10::boolean THEN 4
                 ELSE GREATEST("currentStep", $2)
               END,
@@ -1648,7 +1658,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           RETURNING "id"
         `,
         targetId,
-        persistedStep,
+        imeiVerifiedStep,
         String(persistedPayload.clienteNombre || input.clienteNombre || "").trim() ||
           null,
         canonical.clienteDocumento,
@@ -1658,7 +1668,8 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
         normalizePlatform(input.plataforma),
         canonical.dataCreditoAssessmentId,
         payloadJson,
-        clientCorrectionPending || financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature
+        clientCorrectionPending || financialCorrectionPending || identityCorrectionPending || imeiCorrectionPending || imeiReissueAwaitingSignature,
+        !imeiConfirmationReady,
       );
       if (!updated[0]) throw new Error("SOLICITUD_NO_DISPONIBLE");
       return { id: updated[0].id, created: false };
