@@ -47,7 +47,7 @@ test("la fabrica expone la correccion de IMEI solo en el control central", async
   assert.match(control, /Corregir y exigir nueva firma/);
 });
 
-test("la correccion envia IMEI y motivo y vuelve al paso de contratos", async () => {
+test("la correccion envia IMEI y motivo y exige reconfirmar antes del nuevo contrato", async () => {
   const source = await readFile(factoryUrl, "utf8");
   const handlerStart = source.indexOf("const correctFirmaSeguroImei");
   const handlerEnd = source.indexOf("const handleFirmaSeguroStepReady", handlerStart);
@@ -80,9 +80,9 @@ test("la correccion envia IMEI y motivo y vuelve al paso de contratos", async ()
   assert.match(handler, /setIphoneEnrollmentVerified\(false\)/);
   assert.match(handler, /setFotoEntregaDataUrl\(""\)/);
   assert.match(handler, /setFotoRemisionDataUrl\(""\)/);
-  assert.match(handler, /setWizardStep\(4\)/);
-  assert.match(handler, /expediente anterior quedo como historico/);
-  assert.match(handler, /firma, el enrolamiento y las fotos de entrega y remision del equipo anterior quedaron como historicos/);
+  assert.match(handler, /setWizardStep\(2\)/);
+  assert.match(handler, /Confirma nuevamente sus 15 dígitos antes de enviar la nueva firma/);
+  assert.match(handler, /firma, el enrolamiento y las fotos anteriores se conservan como históricos/);
   assert.match(handler, /authoritativeImei === correctedImei/);
   assert.match(handler, /confirmamos que el IMEI si fue corregido/);
   assert.match(
@@ -111,7 +111,7 @@ test("un proceso ya firmado no ofrece un reenvio silencioso", async () => {
 
 test("el IMEI normal queda bloqueado cuando existe un proceso de firma", async () => {
   const source = await readFile(factoryUrl, "utf8");
-  const inputs = source.match(/disabled=\{firmaSeguroProcessExists\}/g) || [];
+  const inputs = source.match(/disabled=\{firmaSeguroProcessExists(?: \|\| firmaSeguroDraftCorrectionPending)?(?: \|\| signedContractEditLocked)?\}/g) || [];
 
   assert.ok(inputs.length >= 2);
   assert.match(source, /El IMEI está protegido por el proceso de firma/);

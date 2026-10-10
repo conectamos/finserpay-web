@@ -95,7 +95,9 @@ test("selector y avance usan el mismo rango y no cambian plazos enviados o firma
   assert.match(source, /const firmaSeguroProcessResolutionPending =\s*draftResumeHydrating \|\|\s*Boolean\(draftId && firmaSeguroPendingDraftId === draftId\)/);
   assert.match(source, /const iphoneFactorySignaturePending = dataCreditoCreditCreationMode && iphoneFactory && \(\s*firmaSeguroProcessResolutionPending/);
   assert.match(source, /setFirmaSeguroPendingDraftId\(draft.id\)/);
-  assert.match(source, /else if \(!cancelled\) \{[\s\S]{0,250}setFirmaSeguroPendingDraftId/);
+  const restoredSignature = source.slice(source.indexOf("} else if (!cancelled) {"), source.indexOf("} catch (firmaSeguroError)", source.indexOf("} else if (!cancelled) {")));
+  assert.match(restoredSignature, /reconciledDraft\.ok/);
+  assert.match(restoredSignature, /setFirmaSeguroPendingDraftId\(\(pending\) =>\s*pending === restoredDraftId \? null : pending/);
   assert.match(source, /plazoMesesNumero > 0 &&\s*!iphoneFactorySignaturePending/);
   const publicMessage = source.slice(source.indexOf("const visibleIphoneInstallmentLimitMessage"), source.indexOf("const frecuenciaPagoLabel"));
   assert.match(publicMessage, /: iphoneFactoryRangeActive\s*\? `Elige un plazo cuya cuota/);

@@ -1,5 +1,7 @@
 import type { DataCreditoIdentity } from "@/lib/datacredito/identity";
 import { FirmaSeguroFullNameIdentityError, readFirmaSeguroFullNameIdentity } from "@/lib/datacredito/firmaseguro-identity";
+import { requireDraftImeiConfirmation } from "@/lib/credit-imei-confirmation-storage";
+import { ImeiConfirmationError } from "@/lib/credit-imei-confirmation";
 import { firmaSeguroFullNameIdentityFromValidation } from "@/lib/datacredito/firmaseguro-identity-server";
 import { getScopedDataCreditoQueryIdentity, getDataCreditoCustomerIdentityForDisplay, enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import { createHash } from "node:crypto";
@@ -1576,6 +1578,7 @@ export async function POST(req: Request) {
         );
       }
 
+      await requireDraftImeiConfirmation(requestedSolicitudId);
       const currentFirmaSeguroProcess =
         await getLatestFirmaSeguroProcessByDraft(requestedSolicitudId);
       const firmaSeguroWorkflowStarted = Boolean(
@@ -2542,6 +2545,7 @@ export async function POST(req: Request) {
         );
       }
     }
+    await requireDraftImeiConfirmation(solicitudReservation.id);
     const iphoneAnalystEnrollmentReview = isIphoneCredit
       ? await getIphoneEnrollmentReviewForSolicitud({
           solicitudId: solicitudReservation.id,
@@ -3982,6 +3986,7 @@ export async function POST(req: Request) {
         : null,
     });
   } catch (error) {
+    if (error instanceof ImeiConfirmationError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status });
     if (error instanceof FirmaSeguroFullNameIdentityError) return NextResponse.json({ code: error.code, error: error.message }, { status: error.status });
     if (error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_")) return NextResponse.json({ code: error.message, error: "Guarda y verifica la identidad de DataCrédito antes de continuar." }, { status: 409 });
     const blacklistResponse = documentBlacklistErrorResponse(error);

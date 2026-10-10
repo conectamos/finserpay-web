@@ -17,6 +17,7 @@ import {
   type FirmaSeguroProcessRow,
 } from "@/lib/firmaseguro-storage";
 import prisma from "@/lib/prisma";
+import { isCurrentDraftCorrectionProcess } from "@/lib/firmaseguro-draft-correction-version";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -608,6 +609,7 @@ export async function recordFirmaSeguroFinancialCorrectionReissue(
   await ensureFirmaSeguroFinancialCorrectionSchema();
   return prisma.$transaction(async (database) => {
     await lockSolicitudOperationMutation(database, draftId);
+    if (!await isCurrentDraftCorrectionProcess(database, draftId, process.processUuid)) return false;
     const pendingRows = await database.$queryRawUnsafe<CorrectionAuditRow[]>(
       `SELECT corrected."correlationId"::text,corrected."draftId",corrected."reason",
         corrected."actorUserId",corrected."actorName",corrected."previousProcessUuid",

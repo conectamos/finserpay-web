@@ -166,7 +166,7 @@ test("una red colgada agota 20 segundos, desbloquea cierre y permite reintento m
   assert.equal(unmounted.requests[0].signal.aborted, true); assert.equal(unmounted.pendingTimers(), 0);
 });
 
-test("el envío conserva el código que habilita revisión y usa alcance de entrega si la respuesta confirma firma", async () => {
+test("el envío conserva revisión y sólo el flujo legado avanza automáticamente tras firma", async () => {
   const ast = ts.createSourceFile("console.tsx", consoleSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let submit; let handler;
   function visit(node) { if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "submitFirmaSeguroDraft") submit = node.initializer; if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "handleFirmaSeguroStepReady") handler = node.initializer; ts.forEachChild(node, visit); } visit(ast);
@@ -176,11 +176,17 @@ test("el envío conserva el código que habilita revisión y usa alcance de entr
   const send = runInNewContext(ts.transpileModule("(" + submit.getText(ast) + ")", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   await assert.rejects(() => send(2887), failure => failure.code === "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED" && failure.message.includes("Código: FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED.")); assert.deepEqual(seen, [2887]);
   let branch;
-  function findSigned(node) { if (ts.isIfStatement(node) && node.expression.getText(ast) === "signed") branch = node.thenStatement; ts.forEachChild(node, findSigned); } findSigned(handler);
+  function findSigned(node) { if (ts.isIfStatement(node) && node.expression.getText(ast) === "signed && !createClientMode") branch = node; ts.forEachChild(node, findSigned); } findSigned(handler);
+  assert.ok(branch, "Nueva venta debe esperar la continuación explícita del usuario");
   const calls = [];
-  await runInNewContext(ts.transpileModule("(async () => " + branch.getText(ast) + ")()", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
+  const contextForSigned = (createClientMode) => ({
+    signed: true, createClientMode,
     correctionDraft: null, factoryDraftPayload: { clienteNombre: fullName }, currentDraftId: 2887, cancelPendingDraftAutosave() {}, setWizardStep: value => calls.push(value),
     saveDraftPayloadForVeriff: async (...args) => calls.push(args),
   });
+  const signedBranch = ts.transpileModule("(async () => {" + branch.getText(ast) + "})()", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  await runInNewContext(signedBranch, contextForSigned(true));
+  assert.equal(calls.length, 0, "Una firma confirmada no debe cambiar de pantalla en Nueva venta");
+  await runInNewContext(signedBranch, contextForSigned(false));
   assert.equal(calls[0][0].clienteNombre, fullName); assert.equal(calls[0][3], "DELIVERY_EVIDENCE"); assert.equal(calls[1], 5);
 });

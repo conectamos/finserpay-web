@@ -23,7 +23,7 @@ function findAutosave(node) {
   ts.forEachChild(node, findAutosave);
 }
 findAutosave(ast); assert.ok(autosaveEffect);
-const names = ["serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "cancelPendingDraftAutosave", "saveDraftPayloadForVeriff", "saveCurrentDraft", "clampWizardStep", "persistWizardStep", "goToStep", "advanceToStep"];
+const names = ["serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "cancelPendingDraftAutosave", "saveDraftPayloadForVeriff", "saveCurrentDraft", "clampWizardStep", "persistWizardStep", "goToStep", "advanceToStep", "requestEquipmentImeiConfirmation", "confirmEquipmentImei"];
 const code = names.map(declaration).join("\n") + "\nmodule.exports = { " + names.join(", ") + " };";
 function fixture(overrides = {}) {
   const requests = []; const timers = new Map(); let nextTimer = 0;
@@ -43,13 +43,16 @@ function fixture(overrides = {}) {
     identityStepReady: true, veriffRequired: true, veriffApproved: true, contractEvidenceReady: true, pagareAceptado: true,
     nextVisibleWizardStep: step => ({ 1: 2, 2: 4, 4: 5, 5: 5 }[step]), focusFirstInvalidClientField() {},
     dataCreditoFinancialTermsRecovery: false, draftHasMeaningfulData: true,
+    stepTwoComplete: true, imeiConfirmationOpeningRef: { current: false }, imeiConfirmationInFlightRef: { current: false },
+    currentEquipmentDraftIdRef: { current: 2887 }, currentEquipmentImeiRef: { current: "035809100123456" }, imeiConfirmationTargetStep: null,
     window: { setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; }, clearTimeout(id) { timers.delete(id); } },
     ...overrides,
   };
   let transport = async (_url, options) => ({ ok: true, status: 200, data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } });
   context.requestJson = async (url, options) => {
-    assert.equal(url, "/api/creditos/borradores", "Step navigation must only save the draft");
     requests.push({ url, body: JSON.parse(options.body), signal: options.signal });
+    if (url === "/api/creditos/borradores/2887/confirmar-imei") return { ok: true, data: { ok: true, confirmation: { imei: JSON.parse(options.body).imei } } };
+    assert.equal(url, "/api/creditos/borradores", "Navigation only saves the draft or its explicit IMEI confirmation");
     return transport(url, options);
   };
   for (const name of new Set((code + autosaveEffect).match(/\bset[A-Z]\w+/g) || [])) context[name] = value => {
@@ -80,7 +83,7 @@ test("Cliente completo guarda el nombre íntegro y espera al servidor antes de p
 });
 
 test("cada avance, retroceso y navegación del stepper persiste su paso antes de mostrarlo", async () => {
-  for (const [from, to, action] of [[2, 1, "advanceToStep"], [2, 4, "advanceToStep"], [4, 2, "goToStep"], [4, 5, "advanceToStep"]]) {
+  for (const [from, to, action] of [[2, 1, "advanceToStep"], [4, 2, "goToStep"], [4, 5, "advanceToStep"]]) {
     const f = fixture({ wizardStep: from, firmaSeguroProcessSigned: from === 4 && to === 5 });
     await f.functions[action](to);
     assert.equal(f.requests.length, 1); assert.equal(f.requests[0].body.currentStep, to); assert.equal(f.requests[0].body.payload.wizardStep, to);
@@ -88,6 +91,37 @@ test("cada avance, retroceso y navegación del stepper persiste su paso antes de
     assert.equal(f.context.wizardStep, to);
   }
   assert.match(source, /onClick=\{\(\) => void advanceToStep\(previousVisibleWizardStep\(wizardStep\)\)\}/);
+});
+
+test("Equipo guarda sus datos sin avanzar y exige confirmación explícita del IMEI", async () => {
+  for (const action of ["advanceToStep", "goToStep"]) {
+    const f = fixture({ wizardStep: 2 });
+    await f.functions[action](4);
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.requests[0].body.currentStep, 2);
+    assert.equal(f.context.wizardStep, 2);
+    assert.equal(f.context.imeiConfirmationTargetStep, 4);
+    await f.functions.confirmEquipmentImei("035809100123456");
+    assert.equal(f.requests[1].url, "/api/creditos/borradores/2887/confirmar-imei");
+    assert.equal(f.requests[1].body.imei, "035809100123456");
+    assert.equal(f.requests[2].body.currentStep, 4);
+    assert.equal(f.context.wizardStep, 4);
+  }
+});
+
+test("la corrección reconfirma el IMEI sin reconstruir términos históricos ni habilitar Entrega", async () => {
+  const f = fixture({ wizardStep: 2, firmaSeguroDraftCorrectionPending: true, canAdminMoveFreelyInFactory: true, nextFactoryStep: { id: 5 }, stepTwoComplete: false, stepEquipoReady: false });
+  assert.equal(await f.functions.persistWizardStep(5), false);
+  assert.equal(f.requests.length, 0);
+  await f.functions.advanceToStep(4);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.imeiConfirmationTargetStep, 4);
+  assert.equal(f.requests.length, 0, "no aplica política actual al contrato congelado");
+  await f.functions.confirmEquipmentImei("035809100123456");
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, "/api/creditos/borradores/2887/confirmar-imei");
+  assert.equal(f.context.wizardStep, 4);
+  assert.equal(await f.functions.persistWizardStep(5), false);
 });
 
 test("la inspección central guarda el avance real y conserva el paso inspeccionado sólo en pantalla", async () => {

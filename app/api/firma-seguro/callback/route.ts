@@ -10,6 +10,7 @@ import {
   serializeFirmaSeguroProcess,
 } from "@/lib/firmaseguro-credit";
 import { updateFirmaSeguroProcess } from "@/lib/firmaseguro-storage";
+import { recordVerifiedDraftCorrectionReissues } from "@/lib/firmaseguro-draft-correction-complete";
 import {
   finalizeDraftDispatch,
   getDraftDispatchReceiptByProcessUuid,
@@ -82,7 +83,7 @@ export async function POST(request: Request) {
     const refreshed = updated
       ? await refreshFirmaSeguroProcess(updated)
       : await refreshFirmaSeguroProcess(current);
-
+    await recordVerifiedDraftCorrectionReissues(refreshed);
 
     return NextResponse.json({
       ok: true,

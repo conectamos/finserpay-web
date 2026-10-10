@@ -21,6 +21,8 @@ import { getSellerSessionUser } from "@/lib/seller-auth";
 import { canOperateVeriffDraft } from "@/lib/veriff-access";
 import { expireStaleSolicitudes } from "@/lib/solicitudes-storage";
 import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
+import { requireDraftImeiConfirmation } from "@/lib/credit-imei-confirmation-storage";
+import { ImeiConfirmationError } from "@/lib/credit-imei-confirmation";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import { getApprovedDataCreditoAssessmentForCredit } from "@/lib/datacredito/storage";
 import {
@@ -318,6 +320,7 @@ export async function POST(request: Request) {
       );
     }
     const lockedPlatform = String(draft.plataforma || "").trim().toUpperCase();
+    await requireDraftImeiConfirmation(draftId);
     await assertDocumentNotBlacklisted(clienteDocumento);
     if (!["ANDROID", "IPHONE"].includes(lockedPlatform)) {
       return NextResponse.json(
@@ -638,6 +641,7 @@ export async function POST(request: Request) {
       veriff: getVeriffPublicSummary(),
     });
   } catch (error) {
+    if (error instanceof ImeiConfirmationError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status });
     if (error instanceof Error && /^DATACREDITO_IDENTITY_[A-Z_]+$/.test(error.message)) {
       return NextResponse.json(
         {

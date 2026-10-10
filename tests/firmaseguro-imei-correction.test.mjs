@@ -223,13 +223,13 @@ test("dos reintentos de IMEI avanzan el proceso vigente sin duplicar la auditorÃ
     },
   };
   const record = new Function("prisma", "ensureFirmaSeguroSchema", "normalizeImei",
-    "normalizeCorrectionId", "payloadObject", "randomUUID",
+    "normalizeCorrectionId", "payloadObject", "randomUUID", "lockSolicitudOperationMutation", "isCurrentDraftCorrectionProcess",
     `${executable}\nreturn recordFirmaSeguroImeiCorrectionReissue;`)(
     { $transaction: async callback => callback(db) }, async () => {},
     value => String(value || "").replace(/\D/g, ""),
     value => String(value || "").trim(),
     value => value && typeof value === "object" ? value : {},
-    () => "20000000-0000-4000-8000-000000000002"
+    () => "20000000-0000-4000-8000-000000000002", async () => {}, async () => true,
   );
   let previousProcessUuid = null;
   for (const processUuid of ["process-2", "process-3", "process-4"]) {

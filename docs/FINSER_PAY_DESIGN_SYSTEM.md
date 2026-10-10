@@ -201,3 +201,27 @@ Las herramientas administrativas se agrupan en un desplegable exclusivo; cada
 formulario empieza cerrado y conserva sus validaciones y nueva firma obligatoria.
 El boton de cierre explica el requisito pendiente. En movil las acciones se apilan
 y los formularios mantienen sus controles sin desbordarse.
+
+## Nueva venta: equipo, plan, identidad y firma
+
+Los pasos 2 y 3 reutilizan la cabecera blanca compacta y los cuatro pasos de
+Nueva venta. Equipo y Plan forman una tarjeta con separadores; la propuesta usa
+grafito, importes completos y las fórmulas existentes. La frecuencia y el primer
+pago conservan su cálculo automático. El catálogo se presenta sin repetir la
+marca; cuando no existe imagen del modelo se reutilizan los SVG de plataforma.
+La tabla de amortización comienza plegada. Los campos protegidos conservan el
+procedimiento de corrección y nueva firma.
+
+Antes de avanzar se solicita la reescritura del IMEI en un diálogo accesible,
+con fondo desenfocado y sin revelar el valor anterior. La confirmación se vincula
+en el servidor al IMEI vigente, solicitud, usuario y fecha; cualquier cambio la
+invalida y conserva su historial.
+
+Identidad y firma presentan una franja con estados independientes confirmados por
+el servidor, mascota con documento y acciones disponibles según permisos. Al
+confirmarse la versión vigente se destaca Contrato firmado, los cuatro hitos y
+el siguiente paso; las correcciones pendientes requieren nueva firma. Mientras haya un proceso
+pendiente se consulta exclusivamente el estado local cada cinco segundos; los
+webhooks conservan la actualización del proveedor. Al desconectarse se informa
+Reconectando y se ofrece Reintentar. La firma no avanza automáticamente a entrega.
+En móvil las secciones se apilan y todos los campos y acciones quedan accesibles.

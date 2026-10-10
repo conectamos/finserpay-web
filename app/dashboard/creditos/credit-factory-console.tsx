@@ -82,6 +82,10 @@ import DatacreditoPrequalificationGate, {
   type DataCreditoApprovedResult,
 } from "@/app/dashboard/creditos/datacredito-prequalification-gate";
 import ClientValidationHeader from "./client-validation-header";
+import ImeiConfirmationDialog from "./imei-confirmation-dialog";
+import IdentitySignatureOverview from "./identity-signature-overview";
+import equipmentSignatureStyles from "./equipment-signature.module.css";
+import { useCreditProcessLiveStatus } from "./use-credit-process-live-status";
 import FirmaSeguroIdentityReview from "./firma-seguro-identity-review";
 import clientValidationStyles from "./client-validation-shell.module.css";
 import {
@@ -3191,7 +3195,9 @@ export default function CreditFactoryConsole({
   const factoryClosingOperationInFlightRef = useRef(false);
   const [wizardStep, setWizardStep] = useState(simulatorMode ? 2 : 1);
   const deliveryWorkspace = createClientMode && wizardStep === 5;
-  const adminFactoryAssistMode = adminFactoryAssistAvailable && (showAdminAssist || deliveryWorkspace);
+  const equipmentSignatureWorkspace = createClientMode && !simulatorMode && (wizardStep === 2 || wizardStep === 4);
+  const compactSaleWorkspace = deliveryWorkspace || equipmentSignatureWorkspace;
+  const adminFactoryAssistMode = adminFactoryAssistAvailable && (showAdminAssist || compactSaleWorkspace);
   const canSearchCreditsInCurrentView = paymentsView || lookupMode || adminFactoryAssistMode;
   const showSearchSection = paymentsView || lookupMode || adminFactoryAssistMode;
   const [clienteNombre, setClienteNombre] = useState("");
@@ -3299,6 +3305,12 @@ export default function CreditFactoryConsole({
   const [valorEquipoTotal, setValorEquipoTotal] = useState("");
   const [cuotaInicial, setCuotaInicial] = useState("");
   const [stepTwoClearConfirmOpen, setStepTwoClearConfirmOpen] = useState(false);
+  const [imeiConfirmationTargetStep, setImeiConfirmationTargetStep] = useState<number | null>(null);
+  const [imeiConfirmationBusy, setImeiConfirmationBusy] = useState(false);
+  const imeiConfirmationInFlightRef = useRef(false);
+  const imeiConfirmationOpeningRef = useRef(false);
+  const currentEquipmentDraftIdRef = useRef<number | null>(null);
+  const currentEquipmentImeiRef = useRef("");
   const [stepTwoContinuing, setStepTwoContinuing] = useState(false);
   const [simulatorInitialPaymentPercentage, setSimulatorInitialPaymentPercentage] =
     useState<SimulatorInitialPaymentPercentage>(
@@ -3452,6 +3464,7 @@ export default function CreditFactoryConsole({
   const [veriffRefreshing, setVeriffRefreshing] = useState(false);
   const [veriffMediaItems, setVeriffMediaItems] = useState<VeriffMediaState[]>([]);
   const [veriffMediaLoading, setVeriffMediaLoading] = useState(false);
+  const veriffMediaRequestedKeyRef = useRef("");
   const [veriffMediaError, setVeriffMediaError] = useState("");
   const [enrollingDelivery, setEnrollingDelivery] = useState(false);
   const [validatingDelivery, setValidatingDelivery] = useState(false);
@@ -4346,7 +4359,13 @@ export default function CreditFactoryConsole({
   const referenciaEquipo = [equipoMarca.trim(), equipoModelo.trim()]
     .filter(Boolean)
     .join(" ");
+  const displayEquipmentName = equipoModelo.trim().toLocaleLowerCase().startsWith(equipoMarca.trim().toLocaleLowerCase())
+    ? equipoModelo.trim() || equipoMarca.trim()
+    : referenciaEquipo;
   const imeiDigits = imei.replace(/\D/g, "");
+  currentEquipmentImeiRef.current = imeiDigits;
+  currentEquipmentDraftIdRef.current = draftId;
+  useEffect(() => { setImeiConfirmationTargetStep(null); }, [imeiDigits, draftId]);
   const factoryDraftPayload = useMemo(
     () => ({
       wizardStep,
@@ -5692,6 +5711,7 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (
+      createClientMode ||
       wizardStep !== 4 ||
       veriffApproved ||
       veriffRegenerationConfirmOpen ||
@@ -5703,6 +5723,7 @@ export default function CreditFactoryConsole({
 
     setIdentityValidationModalOpen(true);
   }, [
+    createClientMode,
     draftResumeHydrating,
     veriffApproved,
     veriffConfigLoaded,
@@ -5758,7 +5779,7 @@ export default function CreditFactoryConsole({
   const stepTwoPlanLocked =
     !stepTwoPlanEquipmentReady ||
     !stepTwoPolicyAvailable ||
-    signedContractEditLocked;
+    signedContractEditLocked || firmaSeguroDraftCorrectionPending || Boolean(firmaSeguroDraftProcess?.processUuid);
   const stepTwoInitialMinimum = Math.max(
     0,
     Math.round(cuotaInicialMinimaNumero)
@@ -5791,7 +5812,7 @@ export default function CreditFactoryConsole({
     draftStatus === "saving" ||
     stepTwoContinuing;
   const stepTwoContinueDisabled =
-    !stepTwoComplete || stepTwoOperationPending;
+    (firmaSeguroDraftCorrectionPending ? !/^\d{15}$/.test(imeiDigits) : !stepTwoComplete) || stepTwoOperationPending;
   const stepTwoProposalReady =
     stepTwoPlanEquipmentReady && stepTwoPolicyAvailable && financialPreviewReady;
   const contratoListo = stepClienteReady && stepContratoReady && stepEquipoReady;
@@ -5825,6 +5846,8 @@ export default function CreditFactoryConsole({
   );
   const firmaSeguroProcessSigned =
     firmaSeguroProcessUiState === "signed" &&
+    !firmaSeguroDraftCorrectionPending &&
+    !firmaSeguroFinancialCorrectionPending &&
     !firmaSeguroIdentityCorrectionPending &&
     !firmaSeguroRequiresFirstPaymentDateReissue;
   const signedCorrectionAwaitingSignature =
@@ -8312,6 +8335,7 @@ export default function CreditFactoryConsole({
 
   useEffect(() => {
     if (!canAdminMoveFreelyInFactory) {
+      veriffMediaRequestedKeyRef.current = "";
       setVeriffMediaItems([]);
       setVeriffMediaError("");
       return;
@@ -8325,6 +8349,9 @@ export default function CreditFactoryConsole({
       return;
     }
 
+    const mediaKey = `${veriffValidation.id}:${veriffValidation.veriffSessionId}:${veriffValidation.status}`;
+    if (veriffMediaRequestedKeyRef.current === mediaKey) return;
+    veriffMediaRequestedKeyRef.current = mediaKey;
     void refreshVeriffMedia(veriffValidation);
   }, [
     canAdminMoveFreelyInFactory,
@@ -8412,7 +8439,9 @@ export default function CreditFactoryConsole({
       try {
       setVeriffRefreshing(true);
       const result = await requestJson<VeriffResponse>(
-        `/api/creditos/veriff/${validationId}`,
+        createClientMode && (options.expectedDraftId || draftId)
+          ? `/api/creditos/borradores/${options.expectedDraftId || draftId}/estado-proceso`
+          : `/api/creditos/veriff/${validationId}`,
         { timeoutMs: VERIFF_REQUEST_TIMEOUT_MS }
       );
 
@@ -8452,6 +8481,7 @@ export default function CreditFactoryConsole({
           : null
       );
       if (validation) {
+        setVeriffInlineMessage("");
         setVeriffRestoreFailure(null);
       }
       const expectedDraftId =
@@ -8830,12 +8860,47 @@ export default function CreditFactoryConsole({
 
   const refreshVeriffValidationRef = useRef(refreshVeriffValidation);
 
+  const processLiveStatus = useCreditProcessLiveStatus<VeriffValidationState, FirmaSeguroProcess>({
+    draftId,
+    validationId: veriffValidation?.id,
+    processUuid: firmaSeguroDraftProcess?.processUuid,
+    enabled: createClientMode && !simulatorMode && wizardStep === 4 && Boolean(draftId) &&
+      !draftResumeHydrating && !draftResumeLoadFailed && !veriffSubmitting && !firmaSeguroSubmitting &&
+      !firmaSeguroImeiCorrecting && !signedTermsCorrectionBusy,
+    pending: Boolean((veriffValidation?.id && !veriffHasFinalDecision) ||
+      (firmaSeguroProcessSent && !firmaSeguroProcessSigned && !firmaSeguroProcessFailed)),
+    onSnapshot: (snapshot) => {
+      const validation = snapshot.validation;
+      setVeriffValidation((current) => validation ? {
+        ...validation,
+        sessionUrl: validation.sessionUrl || (current?.id === validation.id ? current.sessionUrl : null),
+        veriffSessionId: validation.veriffSessionId || (current?.id === validation.id ? current.veriffSessionId : null),
+      } : null);
+      if (snapshot.retryPolicy) setVeriffRetryPolicy(snapshot.retryPolicy);
+      if (validation) {
+        setVeriffInlineMessage("");
+        applyVeriffIdentityData(validation, snapshot.draftId, {
+          expectedDocumentNumber: dataCreditoApproval?.documentNumber || clienteDocumento,
+          lockDataCreditoIdentity: true,
+        });
+        setVeriffRestoreFailure(null);
+        if (validation.approved) setNotice((current) => current?.text === "La validación facial guardada aún no está aprobada. Complétala en el paso 3 antes de firmar." ? null : current);
+      }
+      setFirmaSeguroDraftProcess(snapshot.process);
+      setFirmaSeguroDraftCorrectionPending(snapshot.imeiCorrectionPending);
+      setFirmaSeguroIdentityCorrectionPending(snapshot.identityCorrectionPending);
+      setFirmaSeguroFinancialCorrectionPending(snapshot.financialCorrectionPending);
+      setFirmaSeguroPendingDraftId((current) => current === snapshot.draftId ? null : current);
+    },
+  });
+
   useEffect(() => {
     refreshVeriffValidationRef.current = refreshVeriffValidation;
   });
 
   useEffect(() => {
     if (
+      createClientMode ||
       !veriffIdentityFlowEnabled ||
       !veriffValidation?.id ||
       veriffHasFinalDecision
@@ -8912,6 +8977,7 @@ export default function CreditFactoryConsole({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [
+    createClientMode,
     veriffHasFinalDecision,
     veriffIdentityFlowEnabled,
     veriffValidation?.id,
@@ -9032,13 +9098,18 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (targetStep > wizardStep && wizardStep === 2 && !stepEquipoReady) {
+    if (targetStep > wizardStep && wizardStep === 2 && !stepEquipoReady && !firmaSeguroDraftCorrectionPending) {
       setNotice({
         text: iphoneInstallmentLimitExceeded
           ? visibleIphoneInstallmentLimitMessage
           : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de continuar.",
         tone: "amber",
       });
+      return;
+    }
+
+    if (createClientMode && !simulatorMode && wizardStep === 2 && targetStep > 2) {
+      await requestEquipmentImeiConfirmation(targetStep);
       return;
     }
 
@@ -9173,13 +9244,18 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (targetStep > wizardStep && wizardStep === 2 && !stepEquipoReady) {
+    if (targetStep > wizardStep && wizardStep === 2 && !stepEquipoReady && !firmaSeguroDraftCorrectionPending) {
       setNotice({
         text: iphoneInstallmentLimitExceeded
           ? visibleIphoneInstallmentLimitMessage
           : "Completa el equipo, usa un IMEI de 15 numeros y revisa el plan financiero antes de continuar.",
         tone: "amber",
       });
+      return;
+    }
+
+    if (createClientMode && !simulatorMode && wizardStep === 2 && targetStep > 2) {
+      await requestEquipmentImeiConfirmation(targetStep);
       return;
     }
 
@@ -9300,6 +9376,49 @@ export default function CreditFactoryConsole({
     }
 
     await persistWizardStep(targetStep);
+  };
+
+  const requestEquipmentImeiConfirmation = async (targetStep: number) => {
+    if ((!stepTwoComplete && !firmaSeguroDraftCorrectionPending) || imeiConfirmationInFlightRef.current || imeiConfirmationOpeningRef.current) return;
+    imeiConfirmationOpeningRef.current = true;
+    cancelPendingDraftAutosave();
+    try {
+      // La corrección ya fue guardada y congelada por el servidor. Reconfirmar
+      // su IMEI no reconstruye los términos firmados con la política actual.
+      if (!firmaSeguroDraftCorrectionPending) await saveCurrentDraft(2);
+      setImeiConfirmationTargetStep(Math.min(targetStep, nextVisibleWizardStep(2)));
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar el equipo. Reintenta.", tone: "red" });
+    } finally {
+      imeiConfirmationOpeningRef.current = false;
+    }
+  };
+
+  const confirmEquipmentImei = async (confirmedImei: string) => {
+    if (!draftId || imeiConfirmationTargetStep === null || imeiConfirmationInFlightRef.current) return;
+    imeiConfirmationInFlightRef.current = true;
+    setImeiConfirmationBusy(true);
+    const targetStep = imeiConfirmationTargetStep;
+    const currentDraftId = draftId;
+    try {
+      const result = await requestJson<{ok: boolean; error?: string; confirmation?: {imei: string}}>(
+        `/api/creditos/borradores/${currentDraftId}/confirmar-imei`,
+        { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({imei: confirmedImei}) },
+      );
+      if (!result.ok || !result.data?.ok || result.data.confirmation?.imei !== confirmedImei) {
+        throw new Error(result.data?.error || "No se pudo confirmar el IMEI vigente. Revisa el equipo e inténtalo nuevamente.");
+      }
+      if (currentEquipmentDraftIdRef.current !== currentDraftId || currentEquipmentImeiRef.current !== confirmedImei) throw new Error("La solicitud o el IMEI cambió. Revisa el equipo y confirma nuevamente.");
+      if (firmaSeguroDraftCorrectionPending) {
+        // El borrador de corrección ya pertenece a Identidad y firma; sólo
+        // faltaba la confirmación del identificador, persistida por este POST.
+        setWizardStep(4);
+      } else if (!await persistWizardStep(targetStep)) throw new Error("El IMEI fue confirmado, pero no se pudo guardar el avance. Reintenta.");
+      setImeiConfirmationTargetStep(null);
+    } finally {
+      imeiConfirmationInFlightRef.current = false;
+      setImeiConfirmationBusy(false);
+    }
   };
 
   const handleStepTwoContinue = async () => {
@@ -9631,7 +9750,7 @@ export default function CreditFactoryConsole({
   ]);
 
   const clearStepTwoFields = () => {
-    if (firmaSeguroProcessExists) {
+    if (firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending) {
       setStepTwoClearConfirmOpen(false);
       setNotice({
         text: "El equipo está protegido porque el contrato ya fue enviado a firma.",
@@ -9893,7 +10012,9 @@ export default function CreditFactoryConsole({
       setNotice(null);
 
       const result = await requestJson<FirmaSeguroResponse>(
-        `/api/creditos/borradores/${draftId}/firma-seguro?refresh=1`
+        createClientMode
+          ? `/api/creditos/borradores/${draftId}/estado-proceso`
+          : `/api/creditos/borradores/${draftId}/firma-seguro?refresh=1`
       );
 
       if (firmaSeguroRefreshGenerationRef.current !== refreshGeneration) {
@@ -9936,7 +10057,6 @@ export default function CreditFactoryConsole({
           tone: "amber",
         });
       } else if (processUiState === "signed") {
-        setWizardStep(5);
         setNotice({
           text: iphoneFactory
             ? "FirmaSeguro reporto firma exitosa. Espera la aprobacion del analista de enrolamiento para finalizar el credito."
@@ -10085,6 +10205,7 @@ export default function CreditFactoryConsole({
       setImei(correctedImei);
       setFirmaSeguroImeiCorrectionValue(correctedImei);
       setFirmaSeguroImeiCorrectionReason("");
+      setFirmaSeguroSignedCorrectionFrequency(signedCreditRemission?.frecuenciaPago || frecuenciaPagoCredito);
       setFirmaSeguroDraftCorrectionPending(true);
       setFirmaSeguroFinancialCorrectionPending(false);
       setFirmaSeguroDraftProcess(null);
@@ -10100,12 +10221,12 @@ export default function CreditFactoryConsole({
       setFotoEntregaAudit(null);
       setFotoRemisionDataUrl("");
       setFotoRemisionAudit(null);
-      setWizardStep(4);
+      setWizardStep(2);
       setDraftStatus("saved");
       setNotice({
         text: enrollmentWasSuperseded
-          ? "IMEI corregido. La firma, el enrolamiento y las fotos de entrega y remision del equipo anterior quedaron como historicos. Envia el expediente nuevo a FirmaSeguro y solicita un nuevo enrolamiento cuando quede firmado."
-          : "IMEI corregido. El expediente anterior quedo como historico; envia uno nuevo a FirmaSeguro y espera la nueva firma antes de enrolar.",
+          ? "IMEI corregido. Confirma nuevamente sus 15 dígitos para preparar la nueva firma. La firma, el enrolamiento y las fotos anteriores se conservan como históricos; el equipo requiere un nuevo enrolamiento después de firmar."
+          : "IMEI corregido. Confirma nuevamente sus 15 dígitos antes de enviar la nueva firma. El expediente anterior se conserva como histórico.",
         tone: "amber",
       });
     } catch (error) {
@@ -10758,7 +10879,7 @@ export default function CreditFactoryConsole({
       const signed = processUiState === "signed";
       const failed = processUiState === "error";
 
-      if (signed) {
+      if (signed && !createClientMode) {
         cancelPendingDraftAutosave();
         if (!correctionDraft) {
           await saveDraftPayloadForVeriff(
@@ -11943,7 +12064,7 @@ export default function CreditFactoryConsole({
               resolveFirmaSeguroProcessUiState(process) === "signed" &&
               !process?.requiresFirstPaymentDateReissue
             ) {
-              setWizardStep(5);
+              if (Number(reconciledDraft.data.item.currentStep || reconciledPayload.wizardStep || 2) >= 5) setWizardStep(5);
             }
             if (resolveFirmaSeguroProcessUiState(process) === "error") {
               firmaSeguroLoadIssue = formatFirmaSeguroProcessIssue(process);
@@ -12847,6 +12968,8 @@ export default function CreditFactoryConsole({
               createClientMode || simulatorMode ? "fp-credit-factory" : "",
               showDataCreditoGate ? clientValidationStyles.shell : "",
               deliveryWorkspace ? stepFourStyles.shell : "",
+              equipmentSignatureWorkspace ? equipmentSignatureStyles.shell : "",
+              equipmentSignatureWorkspace && wizardStep === 4 ? equipmentSignatureStyles.signatureShell : "",
             ].join(" ")
       }
     >
@@ -12969,7 +13092,7 @@ export default function CreditFactoryConsole({
             className={
               clientLookupMode
                 ? "fp-client-lookup-hero"
-                : createClientMode && (showDataCreditoGate || deliveryWorkspace)
+                : createClientMode && (showDataCreditoGate || compactSaleWorkspace)
                   ? "fp-new-sale-header"
                 : [
                     "fp-seller-hero rounded-[24px] border border-[#d9e6ea] bg-white px-5 py-5 shadow-sm sm:px-6",
@@ -12978,12 +13101,12 @@ export default function CreditFactoryConsole({
                   ].join(" ")
             }
           >
-            {createClientMode && (showDataCreditoGate || deliveryWorkspace) ? (
+            {createClientMode && (showDataCreditoGate || compactSaleWorkspace) ? (
               <ClientValidationHeader
                 nombre={initialSeller?.nombre || initialSession.nombre}
                 rol={initialSession.rolNombre}
                 canViewPayments={canViewSavedCredits}
-                canAssist={adminFactoryAssistAvailable && !deliveryWorkspace}
+                canAssist={adminFactoryAssistAvailable && !compactSaleWorkspace}
                 assistOpen={showAdminAssist}
                 onToggleAssist={() => {
                   setShowAdminAssist((value) => !value);
@@ -13260,7 +13383,7 @@ export default function CreditFactoryConsole({
           </section>
         )}
 
-        {notice && !(deliveryWorkspace && notice.text === "Identidad aprobada. Datos copiados.") && (
+        {notice && !(compactSaleWorkspace && notice.text === "Identidad aprobada. Datos copiados.") && (
           <div
             ref={noticeRef}
             tabIndex={-1}
@@ -13286,15 +13409,15 @@ export default function CreditFactoryConsole({
                 ? embeddedClientLookup
                   ? "fp-client-lookup-search fp-client-lookup-search-embedded"
                   : "fp-client-lookup-search"
-              : deliveryWorkspace && adminFactoryAssistMode
-                ? stepFourStyles.caseSearch
+              : compactSaleWorkspace && adminFactoryAssistMode
+                ? equipmentSignatureWorkspace ? `${equipmentSignatureStyles.caseSearch} ${wizardStep === 4 ? equipmentSignatureStyles.signatureSearch : ""}` : stepFourStyles.caseSearch
               : adminFactoryAssistMode
                 ? "fp-surface mt-4 rounded-[24px] p-4"
                 : "fp-surface mt-6 rounded-[28px] p-6"
           }
         >
           {clientLookupMode ? <h1 className="fp-client-page-title">Expediente del cliente</h1> : null}
-          {!clientLookupMode && !deliveryWorkspace ? (
+          {!clientLookupMode && !compactSaleWorkspace ? (
             <div
               className={[
                 "inline-flex rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase",
@@ -13349,8 +13472,8 @@ export default function CreditFactoryConsole({
 
           <div
             className={
-              deliveryWorkspace
-                ? stepFourStyles.searchControls
+              compactSaleWorkspace
+                ? equipmentSignatureWorkspace ? equipmentSignatureStyles.searchControls : stepFourStyles.searchControls
               : deliveryMode
                 ? "mt-5 flex flex-col gap-3 lg:flex-row"
                 : clientLookupMode
@@ -13374,7 +13497,7 @@ export default function CreditFactoryConsole({
                   }
                 }}
                 aria-label="Buscar cliente o expediente"
-                title={deliveryWorkspace ? accessScopeLabel : undefined}
+                title={compactSaleWorkspace ? accessScopeLabel : undefined}
                 placeholder={
                   deliveryMode || adminFactoryAssistMode
                     ? "Cedula o IMEI"
@@ -13562,7 +13685,7 @@ export default function CreditFactoryConsole({
                 </div>
               )}
             </div>
-          ) : deliveryMode || clientLookupMode || (deliveryWorkspace && !activeSearch) ? null : (
+          ) : deliveryMode || clientLookupMode || (compactSaleWorkspace && !activeSearch && wizardStep !== 4) ? null : (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-[#c7dbe0] bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d5b63]">
                 Alcance: {accessScopeLabel}
@@ -14700,14 +14823,12 @@ export default function CreditFactoryConsole({
                           <CircleHelp className="h-4 w-4" strokeWidth={1.9} />
                           Problemas con la validacion
                         </FinserSupportLink>
-                        {veriffValidation?.id && !veriffHasFinalDecision ? (
+                        {processLiveStatus.connection === "reconnecting" ? (
                           <button
                             type="button"
-                            onClick={() => void refreshVeriffValidation()}
-                            disabled={veriffRefreshing}
+                            onClick={processLiveStatus.retry}
                           >
-                            <RefreshCw className={`h-4 w-4 ${veriffRefreshing ? "animate-spin" : ""}`} strokeWidth={1.9} />
-                            Actualizar estado
+                            Reintentar conexión
                           </button>
                         ) : null}
                       </div>
@@ -15180,7 +15301,7 @@ export default function CreditFactoryConsole({
                       <h3>
                         {simulatorMode
                           ? "Configura la financiación"
-                          : "Arma el plan del cliente"}
+                          : "Equipo y plan"}
                       </h3>
                       <span>
                         {simulatorMode
@@ -15236,11 +15357,7 @@ export default function CreditFactoryConsole({
                     >
                       <div className="fp-step2-section-heading">
                         <span className="fp-step2-section-number" aria-hidden="true">
-                          {stepTwoEquipmentReady ? (
-                            <Check strokeWidth={2.5} />
-                          ) : (
-                            "1"
-                          )}
+                          <Smartphone strokeWidth={2} />
                         </span>
                         <div>
                           <h4 id="fp-step2-equipment-title">Equipo</h4>
@@ -15272,7 +15389,7 @@ export default function CreditFactoryConsole({
                                 setEquipoMarca(event.target.value);
                                 setEquipoModelo("");
                               }}
-                              disabled={!equipmentBrandOptions.length}
+                              disabled={firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending || signedContractEditLocked || !equipmentBrandOptions.length}
                               aria-invalid={Boolean(
                                 !equipoMarca.trim() &&
                                   (equipoModelo.trim() ||
@@ -15297,6 +15414,7 @@ export default function CreditFactoryConsole({
                           ) : (
                             <input
                               id="step-two-brand"
+                              disabled={firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending || signedContractEditLocked}
                               value={equipoMarca}
                               onChange={(event) => {
                                 setRestoredEquipmentCatalogId(null);
@@ -15340,7 +15458,7 @@ export default function CreditFactoryConsole({
                                   setEquipoModelo("");
                                 }
                               }}
-                              disabled={!equipoMarca || !equipmentModelOptions.length}
+                              disabled={firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending || signedContractEditLocked || !equipoMarca || !equipmentModelOptions.length}
                               aria-invalid={Boolean(
                                 equipoMarca.trim() && !equipoModelo.trim()
                               )}
@@ -15355,17 +15473,14 @@ export default function CreditFactoryConsole({
                               </option>
                               {equipmentModelOptions.map((item) => (
                                 <option key={item.id} value={item.id}>
-                                  {canSeeInternalPricing
-                                    ? item.modelo +
-                                      " · base " +
-                                      currency(item.precioBaseVenta)
-                                    : item.modelo}
+                                  {item.modelo}
                                 </option>
                               ))}
                             </select>
                           ) : (
                             <input
                               id="step-two-model"
+                              disabled={firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending || signedContractEditLocked}
                               value={equipoModelo}
                               onChange={(event) => {
                                 setRestoredEquipmentCatalogId(null);
@@ -15384,68 +15499,11 @@ export default function CreditFactoryConsole({
                             </small>
                           ) : null}
                         </label>
-                      </div>
-
-                      <div className="fp-step2-equipment-lower">
-                        <div className="fp-step2-device-preview" aria-live="polite">
-                          <div className="fp-step2-device-illustration" aria-hidden="true">
-                            <Smartphone strokeWidth={1.55} />
-                            <span />
-                          </div>
-                          <strong>
-                            {referenciaEquipo || "Sin equipo seleccionado"}
-                          </strong>
-                          <p>
-                            {referenciaEquipo
-                              ? "Equipo seleccionado para esta propuesta."
-                              : "Selecciona una marca y modelo para ver los detalles del equipo."}
-                          </p>
-                        </div>
-
-                        <div className="fp-step2-equipment-details">
-                          <label
-                            htmlFor="step-two-imei"
-                            className={simulatorMode ? "hidden" : ""}
-                          >
-                            <span>IMEI / deviceUId</span>
-                            <input
-                              id="step-two-imei"
-                              value={imei}
-                              onChange={(event) =>
-                                setImei(
-                                  event.target.value.replace(/\D/g, "").slice(0, 15)
-                                )
-                              }
-                              inputMode="numeric"
-                              maxLength={15}
-                              placeholder="15 números del IMEI"
-                              disabled={firmaSeguroProcessExists}
-                              aria-invalid={Boolean(
-                                imeiDigits.length > 0 && !imeiValido
-                              )}
-                              aria-describedby="step-two-imei-help"
-                              className="fp-step2-control"
-                            />
-                            <small
-                             id="step-two-imei-help"
-                              className={
-                                imeiDigits.length > 0 && !imeiValido
-                                  ? "is-error"
-                                  : ""
-                              }
-                            >
-                              {firmaSeguroProcessExists
-                                ? "El IMEI está protegido porque el contrato ya fue enviado a firma."
-                                : imeiDigits.length > 0
-                                  ? imeiDigits.length + "/15 dígitos"
-                                  : "Puedes calcular el plan sin IMEI; ingresa sus 15 números antes de continuar."}
-                            </small>
-                          </label>
-
                           <label htmlFor="step-two-price">
                             <span>Precio del equipo</span>
                             <input
                               id="step-two-price"
+                              disabled={firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending || signedContractEditLocked}
                               value={currencyInputValue(valorEquipoTotal)}
                               onChange={(event) =>
                                 setValorEquipoTotal(
@@ -15470,7 +15528,7 @@ export default function CreditFactoryConsole({
                                 ? "El precio debe ser mayor que cero."
                                 : canSeeInternalPricing &&
                               precioBaseVentaCatalogo > 0
-                                ? "Base del modelo: " +
+                                ? "Precio base: " +
                                   currency(precioBaseVentaCatalogo) +
                                   "." +
                                   (excedentePrecioBase > 0
@@ -15481,6 +15539,63 @@ export default function CreditFactoryConsole({
                                 : "Ingresa el valor de venta acordado con el cliente."}
                             </small>
                           </label>
+                      </div>
+
+                      <div className="fp-step2-equipment-lower">
+                        <div className="fp-step2-device-preview" aria-live="polite">
+                          <div className="fp-step2-device-illustration" aria-hidden="true">
+                            <NextImage src={iphoneFactory ? "/assets/dashboard/apple.svg" : "/assets/dashboard/android.svg"} width={44} height={44} alt="" />
+                          </div>
+                          <strong>
+                            {displayEquipmentName || "Sin equipo seleccionado"}
+                          </strong>
+                          <p>
+                            {referenciaEquipo
+                              ? "Equipo seleccionado para esta propuesta."
+                              : "Selecciona una marca y modelo para ver los detalles del equipo."}
+                          </p>
+                        </div>
+
+                        <div className="fp-step2-equipment-details">
+                          <label
+                            htmlFor="step-two-imei"
+                            className={simulatorMode ? "hidden" : ""}
+                          >
+                            <span>IMEI / deviceUId</span>
+                            <input
+                              id="step-two-imei"
+                              value={imei}
+                              onChange={(event) =>
+                                setImei(
+                                  event.target.value.replace(/\D/g, "")
+                                )
+                              }
+                              inputMode="numeric"
+                              placeholder="15 números del IMEI"
+                              disabled={firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending || signedContractEditLocked}
+                              aria-invalid={Boolean(
+                                imeiDigits.length > 0 && !imeiValido
+                              )}
+                              aria-describedby="step-two-imei-help"
+                              className="fp-step2-control"
+                            />
+                            <small
+                             id="step-two-imei-help"
+                              className={
+                                imeiDigits.length > 0 && !imeiValido
+                                  ? "is-error"
+                                  : ""
+                              }
+                            >
+                              {firmaSeguroProcessExists
+                                ? "El IMEI está protegido porque el contrato ya fue enviado a firma."
+                                : imeiDigits.length > 0
+                                  ? imeiDigits.length + "/15 dígitos"
+                                  : "Puedes calcular el plan sin IMEI; ingresa sus 15 números antes de continuar."}
+                            </small>
+                          </label>
+
+
                         </div>
                       </div>
                     </section>
@@ -15494,11 +15609,7 @@ export default function CreditFactoryConsole({
                     >
                       <div className="fp-step2-section-heading">
                         <span className="fp-step2-section-number" aria-hidden="true">
-                          {stepTwoComplete ? (
-                            <Check strokeWidth={2.5} />
-                          ) : (
-                            "2"
-                          )}
+                          <FileText strokeWidth={2} />
                         </span>
                         <div>
                           <h4 id="fp-step2-plan-title">Plan</h4>
@@ -15512,7 +15623,7 @@ export default function CreditFactoryConsole({
                           "fp-step2-plan-availability",
                           !stepTwoPolicyAvailable
                             ? "is-unavailable"
-                            : stepTwoPlanLocked
+                           : stepTwoPlanLocked
                               ? "is-locked"
                               : "is-ready",
                         ].join(" ")}
@@ -15529,6 +15640,8 @@ export default function CreditFactoryConsole({
                         <span>
                           {!stepTwoPolicyAvailable
                             ? "Política no disponible"
+                            : firmaSeguroProcessExists || signedContractEditLocked
+                              ? "Condiciones protegidas por el contrato enviado. Las correcciones requieren autorización y nueva firma."
                            : stepTwoPlanLocked
                               ? "Completa la marca, el modelo y el precio para configurar el plan."
                               : "Configura el plan; ingresa el IMEI antes de continuar."}
@@ -15658,7 +15771,7 @@ export default function CreditFactoryConsole({
                         <div className="fp-step2-installments">
                           <span>Número de cuotas</span>
                           {creditInstallmentOptions.length > 0 ? (
-                            creditInstallmentOptions.length <= 6 ? (
+                            !equipmentSignatureWorkspace && creditInstallmentOptions.length <= 6 ? (
                               <div
                                 className="fp-step2-installment-chips"
                                 role="radiogroup"
@@ -15757,17 +15870,22 @@ export default function CreditFactoryConsole({
                       <h4 id="fp-step2-proposal-title">Tu propuesta</h4>
                       <p>Se actualizará automáticamente con los datos que ingreses.</p>
                     </div>
+                    <div className={equipmentSignatureStyles.proposalBody}>
+                    <div className={equipmentSignatureStyles.proposalDevice}>
+                      <span><NextImage src={iphoneFactory ? "/assets/dashboard/apple.svg" : "/assets/dashboard/android.svg"} width={44} height={44} alt="" /></span>
+                      <div><strong>{displayEquipmentName || "Sin equipo seleccionado"}</strong><small>{equipoMarca.trim()}</small></div>
+                    </div>
                     <dl className="fp-step2-proposal-metrics">
                       <div>
                         <dt>Equipo</dt>
                         <dd>
                           {equipoMarca.trim() && equipoModelo.trim()
-                            ? referenciaEquipo
+                            ? displayEquipmentName
                             : "—"}
                         </dd>
                       </div>
                       <div>
-                        <dt>Valor</dt>
+                        <dt>Valor equipo</dt>
                        <dd>
                           {valorTotalEquipoNumero > 0
                             ? currency(valorTotalEquipoNumero)
@@ -15810,6 +15928,7 @@ export default function CreditFactoryConsole({
                         </span>
                       </div>
                     </dl>
+                    </div>
                   </section>
 
                   {iphoneInstallmentLimitExceeded ? (
@@ -15820,7 +15939,7 @@ export default function CreditFactoryConsole({
                   ) : null}
 
                   {canSeeInternalPricing && amortizationPlan ? (
-                    <CreditAmortizationTable plan={amortizationPlan} />
+                    <CreditAmortizationTable plan={amortizationPlan} defaultOpen={!equipmentSignatureWorkspace} compact={equipmentSignatureWorkspace} />
                   ) : null}
                 </div>
               )}
@@ -16352,7 +16471,8 @@ export default function CreditFactoryConsole({
               )}
 
               {wizardStep === 4 && (
-                <div className="fp-factory-stage fp-firma-stage">
+                <div className={`fp-factory-stage fp-firma-stage ${equipmentSignatureStyles.signature}`}>
+                  <NextImage className={equipmentSignatureStyles.mascot} src={stepIdentityContractReady ? "/assets/creditos/identity-signature-confirmed-mascot.png" : "/assets/creditos/client-validation-peek-mascot.png"} width={260} height={190} alt="" />
                   <div className="fp-stage-heading flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h3 className="text-2xl font-black tracking-tight text-slate-950">
@@ -16360,7 +16480,7 @@ export default function CreditFactoryConsole({
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {veriffApproved
-                          ? "La identidad fue aprobada. Envía el contrato para continuar."
+                          ? firmaSeguroProcessSigned ? "Contrato firmado. Revisa los estados y continúa a entrega." : "La identidad fue aprobada. Envía el contrato para continuar."
                           : "Valida la identidad del cliente para continuar con la firma."}
                       </p>
                     </div>
@@ -16403,6 +16523,18 @@ export default function CreditFactoryConsole({
                             : "IDENTIDAD PENDIENTE"}
                     </div>
                   </div>
+
+                  <div className={equipmentSignatureStyles.connection} data-state={processLiveStatus.connection} role="status" aria-live="polite">
+                    <span aria-hidden="true" />
+                    <span>{processLiveStatus.connection === "reconnecting" ? "Reconectando…" : processLiveStatus.connection === "connected" ? "Actualización automática" : "Verificando estado…"}</span>
+                    {processLiveStatus.connection === "reconnecting" ? <button type="button" onClick={processLiveStatus.retry}>Reintentar</button> : null}
+                    {processLiveStatus.error ? <span>{processLiveStatus.error}</span> : null}
+                  </div>
+
+                  <IdentitySignatureOverview identityApproved={veriffApproved} identityRejected={veriffRejected || dataCreditoVeriffDocumentRejected}
+                    identityLabel={veriffVisualLabel} signed={firmaSeguroProcessSigned} sent={firmaSeguroProcessSent}
+                    failed={firmaSeguroProcessFailed} reissueRequired={firmaSeguroRequiresFirstPaymentDateReissue || firmaSeguroDraftCorrectionPending || firmaSeguroIdentityCorrectionPending || firmaSeguroFinancialCorrectionPending}
+                    ready={stepIdentityContractReady} />
 
                   {!veriffApproved ? (
                     <section
@@ -16458,7 +16590,7 @@ export default function CreditFactoryConsole({
                         </p>
                       </div>
                     </section>
-                  ) : (
+                  ) : !equipmentSignatureWorkspace ? (
                     <section
                       className="fp-step3-identity-approved"
                       aria-labelledby="fp-step3-approved-title"
@@ -16487,7 +16619,7 @@ export default function CreditFactoryConsole({
                         )}
                       </div>
                     </section>
-                  )}
+                  ) : null}
 
                   <div
                     className="fp-step3-progress"
@@ -16503,7 +16635,7 @@ export default function CreditFactoryConsole({
                       },
                       {
                         number: 2,
-                        label: "Preparar expediente",
+                        label: "Expediente preparado",
                         active: veriffApproved && !firmaSeguroProcessSent,
                         complete: firmaSeguroProcessSent,
                       },
@@ -16545,7 +16677,9 @@ export default function CreditFactoryConsole({
                     ))}
                   </div>
 
-                  {veriffApproved ? (
+                  {stepIdentityContractReady ? <div className={equipmentSignatureStyles.signatureNext}><span aria-hidden="true"><ArrowRight /></span><p><strong>Siguiente paso:</strong> enrolamiento y entrega</p></div> : null}
+
+                  {veriffApproved && !stepIdentityContractReady ? (
                     <section
                       className="fp-step3-firma"
                       aria-label="FirmaSeguro"
@@ -16593,7 +16727,7 @@ export default function CreditFactoryConsole({
                             {firmaSeguroRequiresFirstPaymentDateReissue
                               ? "Nueva firma requerida"
                               : firmaSeguroProcessSigned
-                                ? "Firma confirmada"
+                                ? "Contrato firmado"
                                 : firmaSeguroProcessFailed
                                 ? "Error de firma"
                                 : firmaSeguroProcessSent
@@ -16602,30 +16736,7 @@ export default function CreditFactoryConsole({
                                     ? "Expediente listo"
                                     : "Expediente incompleto"}
                           </span>
-                          {firmaSeguroProcessExists ? (
-                            <button
-                              type="button"
-                              className="fp-step3-firma-refresh"
-                              onClick={() =>
-                                void refreshFirmaSeguroDraftProcess()
-                              }
-                              disabled={
-                                firmaSeguroRefreshing ||
-                                firmaSeguroSubmitting ||
-                                firmaSeguroImeiCorrecting
-                              }
-                              aria-label="Actualizar estado de FirmaSeguro"
-                              title="Actualizar estado"
-                            >
-                              <RefreshCw
-                                className={[
-                                  "h-[18px] w-[18px]",
-                                  firmaSeguroRefreshing ? "animate-spin" : "",
-                                ].join(" ")}
-                                strokeWidth={2}
-                              />
-                            </button>
-                          ) : null}
+
                         </div>
 
                         <button
@@ -18289,7 +18400,7 @@ export default function CreditFactoryConsole({
                       <button
                         type="button"
                         onClick={() => setStepTwoClearConfirmOpen(true)}
-                        disabled={stepTwoOperationPending || firmaSeguroProcessExists}
+                        disabled={stepTwoOperationPending || firmaSeguroProcessExists || firmaSeguroDraftCorrectionPending}
                         className="fp-step2-clear"
                       >
                         <RotateCcw aria-hidden="true" />
@@ -18314,6 +18425,13 @@ export default function CreditFactoryConsole({
                       </button>
                     </div>
                   </>
+                ) : wizardStep === 4 && equipmentSignatureWorkspace ? (
+                  <div className={equipmentSignatureStyles.signatureActions}>
+                    <button type="button" onClick={() => void advanceToStep(previousVisibleWizardStep(wizardStep))} disabled={signedContractEditLocked || wizardStepTransitioning || firmaSeguroSubmitting} title={signedContractEditLocked ? "El contrato firmado requiere una corrección autorizada para volver a editar." : undefined}><ArrowLeft aria-hidden="true" />Anterior</button>
+                    <button type="button" onClick={() => void advanceToStep(5)}
+                      disabled={wizardStepTransitioning || !stepIdentityContractReady || processLiveStatus.connection !== "connected"}
+                      aria-busy={wizardStepTransitioning}>{wizardStepTransitioning ? "Guardando…" : "Continuar a entrega"}<ArrowRight aria-hidden="true" /></button>
+                  </div>
                 ) : (
                   <>
                 {wizardStep > 1 && !signedContractEditLocked && (
@@ -21738,6 +21856,13 @@ export default function CreditFactoryConsole({
             </div>
           )}
         </section>
+        <ImeiConfirmationDialog
+          open={imeiConfirmationTargetStep !== null && wizardStep === 2}
+          expectedImei={imeiDigits}
+          busy={imeiConfirmationBusy}
+          onCancel={() => { if (!imeiConfirmationBusy) setImeiConfirmationTargetStep(null); }}
+          onConfirm={confirmEquipmentImei}
+        />
         <ConfirmDialog
           open={stepTwoClearConfirmOpen}
           title="Limpiar equipo y plan"

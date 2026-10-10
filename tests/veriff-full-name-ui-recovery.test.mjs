@@ -6,6 +6,7 @@ import * as React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { createCreditProcessStatusPoller } from "../lib/credit-process-status-polling.ts";
 
 const source = await readFile(new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("factory.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -28,10 +29,21 @@ function effectContaining(marker) {
   }
   visit(ast); assert.ok(result, marker); return result.getText(ast);
 }
+function processSnapshotCallback() {
+  let result;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(ast) === "useCreditProcessLiveStatus") {
+      result = node.arguments[0].properties.find(property => property.name?.getText(ast) === "onSnapshot")?.initializer;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast); assert.ok(result, "onSnapshot del seguimiento automático"); return result.getText(ast);
+}
 const names = ["IdentityValidationDialog", "getDataCreditoClientDisplayName", "serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "VeriffDraftPreparationFailure", "cancelPendingDraftAutosave", "saveDraftPayloadForVeriff", "validateIdentityWithVeriff", "refreshVeriffValidation", "applyVeriffIdentityData", "veriffApprovalCanUnlockClient", "veriffIdentityHasAutofillData", "getDataCreditoVeriffDocumentRejectionMessage"];
-const declarations = names.map(declaration).join("\n");
+const declarations = names.map(declaration).join("\n") + "\nconst applyProcessSnapshot = " + processSnapshotCallback() + ";";
 const autosaveEffect = effectContaining("closureFingerprintAtSchedule");
 const pollingEffect = effectContaining("attempts >= VERIFF_POLL_MAX_ATTEMPTS");
+const mediaEffect = effectContaining("void refreshVeriffMedia(veriffValidation)");
 const fullName = "María del Mar José De la Peña Muñoz del Río";
 const effective = { fullName, nameMode: "FULL_NAME_ONLY", names: "", firstSurname: "", secondSurname: "", documentNumber: "123456789", documentType: "CEDULA_DE_CIUDADANIA", missing: [] };
 const approval = { documentNumber: "123456789", identity: { original: effective, effective } };
@@ -60,19 +72,23 @@ function fixture() {
     ACTIVE_SOLICITUD_RESUME_MESSAGE: "Retomando solicitud", DRAFT_REQUIRES_DATACREDITO_CODE: "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO",
     draftResumeHydrationRef: { current: false }, dataCreditoFinancialTermsRecovery: false, draftResumeHydrating: false, draftResumeLoadFailed: false,
     firmaSeguroDraftCorrectionPending: false, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, draftHasMeaningfulData: true,
+    veriffMediaRequestedKeyRef: { current: "" },
     applyingDraftRef: { current: false }, nextFactoryStep: { id: 4 }, currentIphoneClosureFingerprint: "closure-fingerprint",
     veriffIdentityFlowEnabled: true, veriffHasFinalDecision: false, VERIFF_POLL_MAX_ATTEMPTS: 12, VERIFF_POLL_BACKOFF_MS: [4000, 6000],
     document: { hidden: false, body: { children: [], style: { overflow: "" } }, activeElement: null, addEventListener() {}, removeEventListener() {} },
     window: { setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { callback, delay }); return id; }, clearTimeout(id) { timers.delete(id); }, requestAnimationFrame() { return 1; }, cancelAnimationFrame() {} },
   };
-  const code = declarations + "\nmodule.exports = { " + names.join(", ") + " };";
+  const code = declarations + "\nmodule.exports = { " + [...names, "applyProcessSnapshot"].join(", ") + " };";
   for (const name of new Set((code + autosaveEffect).match(/\bset[A-Z]\w+/g) || [])) {
     context[name] = value => { const key = name[3].toLowerCase() + name.slice(4); context[key] = typeof value === "function" ? value(context[key]) : value; };
   }
   let transport = async (url, options) => {
     if (url === "/api/creditos/borradores") return { ok: true, status: 200, data: { item: { id: 2883, payload: JSON.parse(options.body).payload } } };
     if (url === "/api/creditos/veriff") return { ok: true, status: 200, data: { validation: pending } };
-    if (url === "/api/creditos/veriff/42") return { ok: true, status: 200, data: { validation: { ...pending, status: "APPROVED", approved: true, pending: false, decidedAt: "2026-10-10T00:00:00Z", identityDocumentStatus: "match", identityDocumentNumber: "123456789", identityDataAvailable: true, identityData: { firstName: "Otro nombre", lastName: "Otro apellido", documentNumber: "123456789" } } } };
+    if (url === "/api/creditos/borradores/2883/estado-proceso") return { ok: true, status: 200, data: { ok: true, draftId: 2883,
+      revision: { draftUpdatedAt: "2026-10-10T00:00:00Z", processId: null, processUpdatedAt: null, validationId: 42, validationUpdatedAt: "2026-10-10T00:00:00Z" },
+      process: null, pending: false, identityCorrectionPending: false, imeiCorrectionPending: false, financialCorrectionPending: false,
+      validation: { ...pending, status: "APPROVED", approved: true, pending: false, decidedAt: "2026-10-10T00:00:00Z", identityDocumentStatus: "match", identityDocumentNumber: "123456789", identityDataAvailable: true, identityData: { firstName: "Otro nombre", lastName: "Otro apellido", documentNumber: "123456789" } } } };
     assert.fail("Unexpected request: " + url);
   };
   context.requestJson = async (url, options = {}) => { requests.push({ url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null }); return transport(url, options); };
@@ -87,6 +103,36 @@ function fixture() {
 }
 async function flush() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
 
+test("una corrección mantiene bloqueada la firma anterior y el estado vigente confirmado la habilita", () => {
+  const f = fixture();
+  f.context.firmaSeguroProcessUiState = "signed";
+  f.context.firmaSeguroRequiresFirstPaymentDateReissue = false;
+  f.context.firmaSeguroIdentityCorrectionPending = false;
+  f.context.firmaSeguroFinancialCorrectionPending = false;
+  f.context.firmaSeguroDraftCorrectionPending = true;
+  assert.equal(f.evaluate("firmaSeguroProcessSigned"), false);
+  f.functions.applyProcessSnapshot({ draftId: 2883, validation: null, process: { processUuid: "current-version" }, imeiCorrectionPending: false, identityCorrectionPending: false, financialCorrectionPending: true });
+  assert.equal(f.context.firmaSeguroDraftCorrectionPending, false);
+  assert.equal(f.evaluate("firmaSeguroProcessSigned"), false);
+  f.functions.applyProcessSnapshot({ draftId: 2883, validation: null, process: { processUuid: "current-version" }, imeiCorrectionPending: false, identityCorrectionPending: false, financialCorrectionPending: false });
+  assert.equal(f.evaluate("firmaSeguroProcessSigned"), true);
+});
+
+test("actualizar estados locales no vuelve a consultar la evidencia biométrica al proveedor", () => {
+  const f = fixture(); const requested = [];
+  f.context.canAdminMoveFreelyInFactory = true;
+  f.context.veriffHasFinalDecision = true;
+  f.context.refreshVeriffMedia = validation => requested.push(validation.id);
+  for (let i = 0; i < 6; i++) {
+    f.context.veriffValidation = { ...pending, status: "APPROVED", approved: true, pending: false, updatedAt: String(i) };
+    f.mount(mediaEffect);
+  }
+  assert.deepEqual(requested, [42]);
+  f.context.veriffValidation = { ...f.context.veriffValidation, id: 43, veriffSessionId: "new-session" };
+  f.mount(mediaEffect);
+  assert.deepEqual(requested, [42, 43], "una validación nueva conserva el acceso a su propia evidencia");
+});
+
 test("full provider name saves before Veriff and polling preserves it without creating another session", async () => {
   const f = fixture();
   await f.functions.validateIdentityWithVeriff();
@@ -95,14 +141,37 @@ test("full provider name saves before Veriff and polling preserves it without cr
   assert.equal(f.requests[0].body.payload.clientePrimerNombre, ""); assert.equal(f.requests[0].body.payload.clientePrimerApellido, "");
   assert.equal(f.requests[1].body.draftId, 2883); assert.equal(f.requests[2].body.payload.veriffValidationId, 42);
   assert.equal(f.context.veriffPreparationError, null);
-  const cleanup = f.mount(pollingEffect);
-  const [timer, poll] = [...f.timers][0]; f.timers.delete(timer); await poll.callback();
-  assert.equal(f.requests.at(-1).url, "/api/creditos/veriff/42");
+  assert.equal(f.mount(pollingEffect), undefined, "Nueva venta desactiva el polling antiguo que consultaba al proveedor");
+  assert.equal(f.timers.size, 0);
+  const poller = createCreditProcessStatusPoller({
+    binding: { draftId: 2883, validationId: 42 }, canRead: () => true, isPending: () => true,
+    read: async () => (await f.context.requestJson("/api/creditos/borradores/2883/estado-proceso")).data,
+    onSnapshot: f.functions.applyProcessSnapshot, onConnection() {},
+    schedule: (callback, delay) => f.context.window.setTimeout(callback, delay),
+    cancel: timer => f.context.window.clearTimeout(timer),
+  });
+  await poller.start();
+  assert.equal(f.requests.at(-1).url, "/api/creditos/borradores/2883/estado-proceso");
   assert.equal(f.context.veriffValidation.approved, true);
   assert.equal(f.context.clienteNombre, fullName); assert.equal(f.context.clientePrimerNombre, ""); assert.equal(f.context.clientePrimerApellido, "");
   assert.equal(f.requests.filter(item => item.url === "/api/creditos/veriff").length, 1);
+  assert.equal(f.requests.some(item => item.url === "/api/creditos/veriff/42"), false);
   assert.equal(f.requests.some(item => item.url.includes("datacredito")), false);
-  cleanup(); assert.equal(f.timers.size, 0);
+  assert.equal(f.timers.size, 0, "la aprobación terminal detiene las consultas");
+  poller.dispose();
+});
+
+test("restaurar identidad consulta sólo el estado local y conserva el nombre completo del proveedor", async () => {
+  const f = fixture();
+  f.context.veriffValidation = pending;
+  const validation = await f.functions.refreshVeriffValidation(42, { expectedDraftId: 2883, silent: true });
+  assert.equal(validation.approved, true);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, "/api/creditos/borradores/2883/estado-proceso");
+  assert.equal(f.requests[0].method, "GET");
+  assert.equal(f.context.clienteNombre, fullName);
+  assert.equal(f.context.clientePrimerNombre, "");
+  assert.equal(f.context.clientePrimerApellido, "");
 });
 
 test("a draft409 is a save failure with the actual message and no Veriff session or query", async () => {
