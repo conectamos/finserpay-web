@@ -3172,7 +3172,7 @@ export default function CreditFactoryConsole({
     DataCreditoApprovedResult | null
   >(null);
   const dataCreditoFullNameOnly = dataCreditoApproval?.identity?.effective.nameMode === "FULL_NAME_ONLY";
-  const dataCreditoCanEditNameComponents = Boolean(dataCreditoApproval?.identity?.effective.names && dataCreditoApproval.identity.effective.firstSurname && !dataCreditoFullNameOnly);
+  const dataCreditoCanEditNameComponents = Boolean(dataCreditoApproval?.identity?.effective.firstSurname && !dataCreditoFullNameOnly);
   const [dataCreditoSimulation, setDataCreditoSimulation] =
     useState<DataCreditoPolicySimulation | null>(null);
   const [dataCreditoSimulationStatus, setDataCreditoSimulationStatus] =

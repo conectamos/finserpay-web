@@ -116,7 +116,7 @@ humana y no demuestra que ese componente venga de DataCrédito.
 El borrador y la solicitud guardan el nombre completo efectivo y los componentes
 disponibles. En modo `FULL_NAME_ONLY` los componentes ausentes permanecen vacíos.
 El registro del
-cliente en `Credito` conserva todos los nombres en `clientePrimerNombre` y el
+cliente en `Credito` conserva los nombres estructurados disponibles en `clientePrimerNombre` y el
 nombre completo efectivo en `clienteNombre`; el segundo apellido estructurado y
 la procedencia se conservan también en `contratoSnapshot.dataCreditoIdentity`.
 El snapshot del contrato incluye `cliente.segundoApellido`.

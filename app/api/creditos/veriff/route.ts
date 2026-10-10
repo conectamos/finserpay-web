@@ -637,6 +637,16 @@ export async function POST(request: Request) {
       veriff: getVeriffPublicSummary(),
     });
   } catch (error) {
+    if (error instanceof Error && /^DATACREDITO_IDENTITY_[A-Z_]+$/.test(error.message)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: error.message,
+          error: "Guarda y verifica la identidad de DataCrédito antes de iniciar Veriff.",
+        },
+        { status: 409 }
+      );
+    }
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;
     return veriffErrorResponse(error);

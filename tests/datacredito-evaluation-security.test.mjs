@@ -333,7 +333,7 @@ function evaluationFixture(options = {}) {
       assertDataCreditoSecureRecordConfigured() {}, encryptDataCreditoSecureRecord: () => "encrypted-test-envelope",
     },
     "@/lib/datacredito/storage": storageMocks,
-    "@/lib/datacredito/resume-gate": { canRecoverAssessmentIdentityMismatch: () => false },
+    "@/lib/datacredito/resume-gate": { canRecoverAssessmentIdentityMismatch: () => false, canRecoverPendingAssessment: () => false },
     "@/lib/firmaseguro-storage": {
       getLatestFirmaSeguroProcessByDraft: async () => null,
       tryAcquireSolicitudOperationLock: async () => {
@@ -364,7 +364,7 @@ function evaluationFixture(options = {}) {
   const loaded = { exports: {} };
   runInNewContext(compiledEvaluationRoute, {
     module: loaded, exports: loaded.exports, Date, process: { env: { NODE_ENV: "production" } },
-    console: { error: (...args) => record("log", args) },
+    console: { warn() {}, error: (...args) => record("log", args) },
     require(name) { assert.ok(name in dependencies, `Unexpected endpoint dependency: ${name}`); return dependencies[name]; },
   });
   return {

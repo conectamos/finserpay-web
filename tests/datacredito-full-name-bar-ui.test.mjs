@@ -183,3 +183,20 @@ test("creating Veriff from a full-name-only form saves the canonical draft and d
   assert.equal(requests[0].body.clienteDocumento, "123456789");
   assert.equal(requestInFlight.current, false);
 });
+test("the actual edit flag permits completing missing given names with a verified first surname, but never full-name-only identity", () => {
+  let flag;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "dataCreditoCanEditNameComponents") flag = node.initializer;
+    ts.forEachChild(node, visit);
+  }
+  visit(ast); assert.ok(flag);
+  function canEdit(effective) {
+    return load("module.exports.result = (" + flag.getText(ast) + ");", {
+      dataCreditoApproval: { identity: { effective } }, dataCreditoFullNameOnly: effective.nameMode === "FULL_NAME_ONLY",
+    }).result;
+  }
+  assert.equal(canEdit({ names: "", firstSurname: "De la Peña", secondSurname: "" }), true);
+  assert.equal(canEdit({ names: "María José", firstSurname: "", secondSurname: "" }), false);
+  assert.equal(canEdit({ names: "", firstSurname: "De la Peña", nameMode: "FULL_NAME_ONLY", fullName }), false);
+  assert.equal(canEdit({ names: "María José", firstSurname: "De la Peña", nameMode: "FULL_NAME_ONLY", fullName }), false);
+});
