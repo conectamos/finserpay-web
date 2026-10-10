@@ -66,7 +66,6 @@ import {
   Button,
   Card,
   LoadingState,
-  Input,
   ProgressBar,
   StatusPill,
   Tabs,
@@ -595,6 +594,8 @@ type CreditItem = {
   clienteNombre: string;
   clientePrimerNombre?: string | null;
   clientePrimerApellido?: string | null;
+  clienteSegundoApellido?: string | null;
+  dataCreditoIdentityNameMode?: "FULL_NAME_ONLY" | null;
   clienteTipoDocumento?: string | null;
   clienteDireccion: string | null;
   clienteDocumento: string | null;
@@ -2966,94 +2967,41 @@ function IdentityValidationDialog({
   );
 }
 
-function canCompleteMissingDataCreditoSurname(canAdmin: boolean, approval: DataCreditoApprovedResult | null) {
+function getDataCreditoClientDisplayName(approval: DataCreditoApprovedResult | null, currentFullName = "") {
   const identity = approval?.identity;
-  return Boolean(canAdmin && identity && identity.original.missing.includes("Primer apellido") &&
-    !identity.original.firstSurname && !identity.effective.firstSurname);
+  const recovered = identity?.effective.fullName || identity?.original.fullName || "";
+  return identity?.effective.nameMode === "FULL_NAME_ONLY" ? recovered : currentFullName || recovered;
 }
 
-async function reviewMissingDataCreditoSurname(input: {
-  canAdmin: boolean;
-  approval: DataCreditoApprovedResult;
-  firstSurname: string;
-  signal?: AbortSignal;
+function DataCreditoClientNameBar({ fullName, canEditComponents, editing, givenNames, secondSurname,
+  onGivenNamesChange, onSecondSurnameChange, givenNamesInputProps, givenNamesError }: {
+  fullName: string;
+  canEditComponents: boolean;
+  editing: boolean;
+  givenNames: string;
+  secondSurname: string;
+  onGivenNamesChange: (value: string) => void;
+  onSecondSurnameChange: (value: string) => void;
+  givenNamesInputProps: { id: string; onBlur?: () => void; "aria-invalid"?: boolean; "aria-describedby"?: string };
+  givenNamesError: ReactNode;
 }) {
-  if (!canCompleteMissingDataCreditoSurname(input.canAdmin, input.approval)) {
-    throw new Error("Solo un administrador autorizado puede completar un primer apellido ausente.");
-  }
-  const firstSurname = input.firstSurname.normalize("NFC").replace(/\s+/g, " ").trim();
-  if (!firstSurname || firstSurname.length > 90 || !/^[\p{L}\p{M} '’-]+$/u.test(firstSurname)) {
-    throw new Error("Ingresa el primer apellido completo, tal como aparece en el documento del cliente.");
-  }
-  const response = await fetch(
-    `/api/creditos/datacredito/evaluaciones/${encodeURIComponent(input.approval.assessmentId)}`,
-    { method: "PATCH", headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ firstSurname }), signal: input.signal }
-  );
-  const payload = await response.json().catch(() => null) as {
-    ok?: boolean; error?: string; identity?: NonNullable<DataCreditoApprovedResult["identity"]>;
-  } | null;
-  if (!response.ok || payload?.ok !== true) {
-    throw new Error(payload?.error || "No se pudo guardar la revisión autorizada. Los datos anteriores se conservan.");
-  }
-  const identity = payload.identity;
-  if (!identity || identity.original.firstSurname || identity.effective.firstSurname !== firstSurname ||
-      !identity.effective.manuallyCompleted?.includes("firstSurname") ||
-      identity.effective.documentNumber !== input.approval.documentNumber.replace(/\D/g, "")) {
-    throw new Error("La revisión no devolvió una identidad válida para el documento de esta solicitud.");
-  }
-  return identity;
-}
-
-function DataCreditoMissingSurnameReview({ canAdmin, approval, onCompleted }: {
-  canAdmin: boolean;
-  approval: DataCreditoApprovedResult;
-  onCompleted: (identity: NonNullable<DataCreditoApprovedResult["identity"]>) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [firstSurname, setFirstSurname] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const requestRef = useRef<AbortController | null>(null);
-  useEffect(() => () => requestRef.current?.abort(), []);
-  if (!canCompleteMissingDataCreditoSurname(canAdmin, approval)) return null;
-  const saveReview = async () => {
-    if (requestRef.current) return;
-    const controller = new AbortController();
-    requestRef.current = controller;
-    setSaving(true); setError("");
-    try {
-      const identity = await reviewMissingDataCreditoSurname({ canAdmin, approval, firstSurname, signal: controller.signal });
-      if (controller.signal.aborted) return;
-      onCompleted(identity);
-      setOpen(false); setFirstSurname("");
-    } catch (failure) {
-      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "No se pudo completar la revisión.");
-    } finally {
-      if (requestRef.current === controller) requestRef.current = null;
-      if (!controller.signal.aborted) setSaving(false);
-    }
-  };
   return (
-    <div className="mt-3 space-y-3">
-      {!open ? (
-        <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
-          Completar datos faltantes con revisión autorizada
-        </Button>
-      ) : (
-        <div className="space-y-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4">
-          <p className="font-semibold">Revisión autorizada del primer apellido</p>
-          <p>Ingresa manualmente el primer apellido que consta en el documento del cliente. Este dato quedará registrado con el administrador responsable y la fecha; no se marcará como verificado por DataCrédito.</p>
-          <label className="block font-semibold" htmlFor="datacredito-reviewed-first-surname">Primer apellido faltante</label>
-          <Input id="datacredito-reviewed-first-surname" value={firstSurname} onChange={(event) => setFirstSurname(event.target.value)} maxLength={90} autoComplete="off" disabled={saving} aria-describedby="datacredito-reviewed-first-surname-help" aria-invalid={Boolean(error)} />
-          <p id="datacredito-reviewed-first-surname-help">No se deduce del nombre completo ni se copia del apellido digitado para consultar.</p>
-          {error ? <p role="alert" className="text-[var(--fp-danger)]">{error}</p> : null}
-          <div className="flex flex-wrap gap-3">
-            <Button type="button" disabled={saving} onClick={() => void saveReview()}>{saving ? "Guardando revisión..." : "Guardar revisión autorizada"}</Button>
-            <Button type="button" variant="secondary" disabled={saving} onClick={() => { setOpen(false); setFirstSurname(""); setError(""); }}>Cancelar</Button>
+    <div className="md:col-span-2">
+      <label htmlFor="clienteNombre" className="mb-2 block text-sm font-semibold text-slate-700">NOMBRES Y APELLIDOS</label>
+      <input id="clienteNombre" value={fullName} readOnly autoComplete="off" className="w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-base text-[var(--fp-graphite)] outline-none focus:border-[var(--fp-graphite)] focus:ring-2 focus:ring-[var(--fp-lime-soft)]" />
+      {canEditComponents && editing ? (
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <label htmlFor={givenNamesInputProps.id} className="mb-2 block text-sm font-semibold text-slate-700">Nombre(s)</label>
+            <input {...givenNamesInputProps} value={givenNames} onChange={(event) => onGivenNamesChange(event.target.value)} className="w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-base text-[var(--fp-graphite)] outline-none focus:border-[var(--fp-graphite)] focus:ring-2 focus:ring-[var(--fp-lime-soft)]" />
+            {givenNamesError}
+          </div>
+          <div>
+            <label htmlFor="clienteSegundoApellido" className="mb-2 block text-sm font-semibold text-slate-700">Segundo apellido (si aplica)</label>
+            <input id="clienteSegundoApellido" value={secondSurname} onChange={(event) => onSecondSurnameChange(event.target.value)} maxLength={90} className="w-full rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] px-4 py-3 text-base text-[var(--fp-graphite)] outline-none focus:border-[var(--fp-graphite)] focus:ring-2 focus:ring-[var(--fp-lime-soft)]" />
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -3221,6 +3169,8 @@ export default function CreditFactoryConsole({
   const [dataCreditoApproval, setDataCreditoApproval] = useState<
     DataCreditoApprovedResult | null
   >(null);
+  const dataCreditoFullNameOnly = dataCreditoApproval?.identity?.effective.nameMode === "FULL_NAME_ONLY";
+  const dataCreditoCanEditNameComponents = Boolean(dataCreditoApproval?.identity?.effective.names && dataCreditoApproval.identity.effective.firstSurname && !dataCreditoFullNameOnly);
   const [dataCreditoSimulation, setDataCreditoSimulation] =
     useState<DataCreditoPolicySimulation | null>(null);
   const [dataCreditoSimulationStatus, setDataCreditoSimulationStatus] =
@@ -5444,12 +5394,13 @@ export default function CreditFactoryConsole({
         referenciaFamiliar2Nombre,
         referenciaFamiliar2Parentesco,
         referenciaFamiliar2Telefono,
-      }),
+      }, undefined, { verifiedFullName: dataCreditoFullNameOnly ? getDataCreditoClientDisplayName(dataCreditoApproval, clienteNombre) : undefined }),
     [
       clienteCiudad, clienteCorreo, clienteDepartamento, clienteDireccion,
       clienteDocumento, clienteEstadoCivil, clienteEstrato, clienteFechaExpedicion,
       clienteFechaNacimiento, clienteGenero, clientePrimerApellido,
       clientePrimerNombre, clienteTelefono, clienteTipoDocumento,
+      clienteNombre, dataCreditoApproval, dataCreditoFullNameOnly,
       referenciaFamiliar1Nombre, referenciaFamiliar1Parentesco,
       referenciaFamiliar1Telefono, referenciaFamiliar2Nombre,
       referenciaFamiliar2Parentesco, referenciaFamiliar2Telefono,
@@ -5457,7 +5408,7 @@ export default function CreditFactoryConsole({
   );
   const stepClienteReady =
     dataCreditoFlowReady &&
-    (!dataCreditoApproval || Boolean(dataCreditoApproval.identity?.effective.firstSurname && dataCreditoApproval.identity?.effective.documentNumber && dataCreditoApproval.identity?.effective.documentType)) &&
+    (!dataCreditoApproval || Boolean((dataCreditoFullNameOnly ? getDataCreditoClientDisplayName(dataCreditoApproval) : dataCreditoApproval.identity?.effective.firstSurname) && dataCreditoApproval.identity?.effective.documentNumber && dataCreditoApproval.identity?.effective.documentType)) &&
     clientFormValidation.complete &&
     contactPhoneValidation.ok;
   const markClientFieldTouched = useCallback((field: CreditClientField) => {
@@ -6480,8 +6431,10 @@ export default function CreditFactoryConsole({
     Array<{ label: string; ready: boolean }>
   > = {
     1: [
-      { label: "Nombre", ready: Boolean(clientePrimerNombre.trim()) },
-      { label: "Apellido", ready: Boolean(clientePrimerApellido.trim()) },
+      ...(dataCreditoApproval ? [{ label: "Nombres y apellidos", ready: Boolean(getDataCreditoClientDisplayName(dataCreditoApproval, clienteNombre).trim()) }] : [
+        { label: "Nombre", ready: Boolean(clientePrimerNombre.trim()) },
+        { label: "Apellido", ready: Boolean(clientePrimerApellido.trim()) },
+      ]),
       { label: "Documento", ready: Boolean(clienteDocumento.trim()) },
       {
         label: "Celular (10 digitos)",
@@ -7461,6 +7414,10 @@ export default function CreditFactoryConsole({
   }, [clientLookupMode, selectedCredit?.id]);
 
   useEffect(() => {
+    if (dataCreditoFullNameOnly) {
+      setClienteNombre(getDataCreditoClientDisplayName(dataCreditoApproval));
+      return;
+    }
     const preserved = preservedCanonicalClientNameRef.current;
     if (
       preserved &&
@@ -7479,7 +7436,7 @@ export default function CreditFactoryConsole({
     });
 
     setClienteNombre(nextFullName);
-  }, [clientePrimerNombre, clientePrimerApellido, clienteSegundoApellido]);
+  }, [clientePrimerNombre, clientePrimerApellido, clienteSegundoApellido, dataCreditoApproval, dataCreditoFullNameOnly]);
 
   useEffect(() => {
     setCuotaInicial((currentValue) => {
@@ -8195,20 +8152,26 @@ export default function CreditFactoryConsole({
       Boolean(dataCreditoApproval) ||
       Boolean(dataCreditoAssessmentId);
 
-    const fullNameParts = String(identity.fullName || "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .split(" ")
-      .filter(Boolean);
-    const firstName = String(identity.firstName || fullNameParts[0] || "")
-      .replace(/\s+/g, " ")
-      .trim();
-    const lastName = String(
-      identity.lastName ||
-        (fullNameParts.length > 1 ? fullNameParts[fullNameParts.length - 1] : "")
-    )
-      .replace(/\s+/g, " ")
-      .trim();
+    const fullNameParts = dataCreditoIdentityLocked
+      ? []
+      : String(identity.fullName || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .split(" ")
+          .filter(Boolean);
+    const firstName = dataCreditoIdentityLocked
+      ? ""
+      : String(identity.firstName || fullNameParts[0] || "")
+          .replace(/\s+/g, " ")
+          .trim();
+    const lastName = dataCreditoIdentityLocked
+      ? ""
+      : String(
+          identity.lastName ||
+            (fullNameParts.length > 1 ? fullNameParts[fullNameParts.length - 1] : "")
+        )
+          .replace(/\s+/g, " ")
+          .trim();
     const documentNumber = String(identity.documentNumber || "").replace(/\D/g, "");
     const birthDate = dateOnly(identity.dateOfBirth);
     const gender = normalizeVeriffGender(identity.gender);
@@ -11450,13 +11413,15 @@ export default function CreditFactoryConsole({
   };
 
   const applyClientDataFromCredit = (credit: CreditItem) => {
-    const parsedName = splitStoredCreditClientName({
-      fullName: credit.clienteNombre,
-      firstSurname: credit.clientePrimerApellido,
-    });
+    const parsedName = credit.dataCreditoIdentityNameMode === "FULL_NAME_ONLY"
+      ? null
+      : splitStoredCreditClientName({
+          fullName: credit.clienteNombre,
+          firstSurname: credit.clientePrimerApellido,
+        });
     const firstNames = parsedName?.firstNames || credit.clientePrimerNombre || "";
     const firstSurname = credit.clientePrimerApellido || "";
-    const secondSurname = parsedName?.secondSurname || "";
+    const secondSurname = credit.clienteSegundoApellido ?? parsedName?.secondSurname ?? "";
     const canonicalName = credit.clienteNombre || "";
     preservedCanonicalClientNameRef.current =
       canonicalName &&
@@ -12409,6 +12374,7 @@ export default function CreditFactoryConsole({
     setClienteTipoDocumento("CEDULA_DE_CIUDADANIA");
     setClienteDocumento(result.documentNumber);
     const recoveredIdentity = result.identity?.effective;
+    if (recoveredIdentity?.nameMode === "FULL_NAME_ONLY") setClienteNombre(getDataCreditoClientDisplayName(result));
     setClientePrimerApellido(recoveredIdentity?.firstSurname || "");
     if (!auditedIdentityCorrectionRef.current && (!sameAssessment || !editingDataCreditoNames)) {
       preservedCanonicalClientNameRef.current = null;
@@ -14735,18 +14701,14 @@ export default function CreditFactoryConsole({
 
                     {dataCreditoApproval ? <div className="mt-4 text-sm">
                       <p className="font-semibold">Datos obtenidos de DataCrédito</p>
-                      {dataCreditoApproval.identity?.original.missing.length ? <p role="status">DataCrédito no entregó originalmente: {dataCreditoApproval.identity.original.missing.join(", ")}. Completa los nombres mediante la opción de edición. Los demás datos ausentes requieren revisión autorizada; no se permite firmar con identidad incompleta.</p> : null}
+                      {dataCreditoApproval.identity?.original.missing.length ? <p role="status">DataCrédito no entregó: {dataCreditoApproval.identity.original.missing.join(", ")}. Completa los nombres mediante la opción de edición. Para documento o primer apellido faltante, solicita revisión autorizada; no se permite firmar con identidad incompleta.</p> : null}
                       {!dataCreditoApproval.identity ? <p role="alert">La evaluación está guardada, pero no se pudo recuperar una identidad verificable. No repitas una consulta paga; solicita revisión autorizada del expediente.</p> : null}
-                      {dataCreditoApproval.identity?.original.fullName ? <p>Nombre completo informado (solo referencia, sin separar automáticamente): {dataCreditoApproval.identity.original.fullName}</p> : null}
-                      {dataCreditoApproval.identity && (clientePrimerNombre !== dataCreditoApproval.identity.original.names || clienteSegundoApellido !== dataCreditoApproval.identity.original.secondSurname) ? <p>Datos corregidos por el asesor. Original DataCrédito: {dataCreditoApproval.identity.original.names || "Nombres no informados"} · {dataCreditoApproval.identity.original.secondSurname || "Segundo apellido no informado"}.</p> : null}
+                      {dataCreditoApproval.identity?.original.fullName && !dataCreditoFullNameOnly ? <p>Nombre completo informado (solo referencia, sin separar automáticamente): {dataCreditoApproval.identity.original.fullName}</p> : null}
+                      {dataCreditoCanEditNameComponents && dataCreditoApproval.identity && (clientePrimerNombre !== dataCreditoApproval.identity.original.names || clienteSegundoApellido !== dataCreditoApproval.identity.original.secondSurname) ? <p>Datos corregidos por el asesor. Original DataCrédito: {dataCreditoApproval.identity.original.names || "Nombres no informados"} · {dataCreditoApproval.identity.original.secondSurname || "Segundo apellido no informado"}.</p> : null}
                       {dataCreditoApproval.identity?.effective.manuallyCompleted?.length ? <p>Identidad completada mediante revisión autorizada; los campos faltantes no están verificados por DataCrédito.</p> : null}
-                      <DataCreditoMissingSurnameReview key={dataCreditoApproval.assessmentId} canAdmin={canAdmin} approval={dataCreditoApproval} onCompleted={(identity) => {
-                        setDataCreditoApproval((current) => current?.assessmentId === dataCreditoApproval.assessmentId
-                          ? { ...current, identity: { ...current.identity, ...identity } } : current);
-                        setClientePrimerApellido(identity.effective.firstSurname);
-                      }} />
-                      <Button type="button" variant="secondary" onClick={() => setEditingDataCreditoNames(!editingDataCreditoNames)}>{editingDataCreditoNames ? "Bloquear nombres y segundo apellido" : "Editar nombres y segundo apellido"}</Button>
-                      {editingDataCreditoNames ? <p>La corrección se guardará con el asesor responsable y la fecha. El segundo apellido puede quedar vacío.</p> : null}
+                      {dataCreditoFullNameOnly ? <p>DataCrédito entregó los nombres y apellidos completos en un solo campo. Se conserva íntegro, sin dividirlo ni permitir cambios al primer apellido.</p> : null}
+                      {dataCreditoCanEditNameComponents ? <Button type="button" variant="secondary" onClick={() => setEditingDataCreditoNames(!editingDataCreditoNames)}>{editingDataCreditoNames ? "Bloquear nombres y segundo apellido" : "Editar nombres y segundo apellido"}</Button> : null}
+                      {dataCreditoCanEditNameComponents && editingDataCreditoNames ? <p>La corrección se guardará con el asesor responsable y la fecha. El segundo apellido puede quedar vacío.</p> : null}
                     </div> : null}
                     <section className="rounded-[8px] border border-[#dfe3e5] bg-white p-5 shadow-[0_10px_28px_rgba(13,17,18,0.04)]">
                       <div className="mb-5 flex items-start justify-between gap-4">
@@ -14766,6 +14728,9 @@ export default function CreditFactoryConsole({
                         ) : null}
                       </div>
                       <div className="grid gap-4 md:grid-cols-2">
+                      {dataCreditoApproval ? (
+                        <DataCreditoClientNameBar fullName={getDataCreditoClientDisplayName(dataCreditoApproval, clienteNombre)} canEditComponents={dataCreditoCanEditNameComponents} editing={editingDataCreditoNames} givenNames={clientePrimerNombre} secondSurname={clienteSegundoApellido} onGivenNamesChange={setClientePrimerNombre} onSecondSurnameChange={setClienteSegundoApellido} givenNamesInputProps={clientFieldInputProps("clientePrimerNombre")} givenNamesError={renderClientFieldError("clientePrimerNombre")} />
+                      ) : (<>
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">
                           Nombre(s)
@@ -14811,6 +14776,8 @@ export default function CreditFactoryConsole({
                           className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-950 focus:ring-2 focus:ring-lime-200"
                         />
                       </div>
+
+                      </>)}
 
                       <div>
                         <label className="mb-2 block text-sm font-semibold text-slate-700">

@@ -1,4 +1,6 @@
 import type { DataCreditoIdentity } from "@/lib/datacredito/identity";
+import { FirmaSeguroFullNameIdentityError, readFirmaSeguroFullNameIdentity } from "@/lib/datacredito/firmaseguro-identity";
+import { firmaSeguroFullNameIdentityFromValidation } from "@/lib/datacredito/firmaseguro-identity-server";
 import { getScopedDataCreditoQueryIdentity, getDataCreditoCustomerIdentityForDisplay, enforceDataCreditoCustomerIdentity } from "@/lib/datacredito/customer-identity";
 import { createHash } from "node:crypto";
 import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
@@ -603,6 +605,12 @@ function serializeCredit(
   );
 
   const massComponents = readMassCreditComponents(item.contratoSnapshot, item);
+  const identitySnapshot = item.contratoSnapshot && typeof item.contratoSnapshot === "object" && !Array.isArray(item.contratoSnapshot)
+    ? item.contratoSnapshot as { dataCreditoIdentity?: { effective?: Partial<DataCreditoIdentity> }; cliente?: { segundoApellido?: unknown } }
+    : null;
+  const savedIdentity = identitySnapshot?.dataCreditoIdentity?.effective;
+  const savedSecondSurname = savedIdentity?.secondSurname ?? identitySnapshot?.cliente?.segundoApellido;
+
 
   return {
     ...(massComponents ? { valorSeguro: massComponents.seguro, seguroCuotaPorcentaje: massComponents.seguroCuotaPorcentaje } : {}),
@@ -611,6 +619,8 @@ function serializeCredit(
     clienteNombre: item.clienteNombre,
     clientePrimerNombre: item.clientePrimerNombre,
     clientePrimerApellido: item.clientePrimerApellido,
+    clienteSegundoApellido: typeof savedSecondSurname === "string" ? savedSecondSurname : null,
+    dataCreditoIdentityNameMode: savedIdentity?.nameMode === "FULL_NAME_ONLY" ? "FULL_NAME_ONLY" : null,
     clienteTipoDocumento: item.clienteTipoDocumento,
     clienteDireccion: item.clienteDireccion,
     clienteDocumento: item.clienteDocumento,
@@ -1203,9 +1213,9 @@ export async function POST(req: Request) {
       }
     }
 
-    const clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
-    const clientePrimerApellido = sanitizeText(body.clientePrimerApellido);
-    const clienteSegundoApellido = sanitizeText(body.clienteSegundoApellido);
+    let clientePrimerNombre = sanitizeText(body.clientePrimerNombre);
+    let clientePrimerApellido = sanitizeText(body.clientePrimerApellido);
+    let clienteSegundoApellido = sanitizeText(body.clienteSegundoApellido);
     const clienteTipoDocumento = sanitizeText(body.clienteTipoDocumento);
     const clienteDireccion = sanitizeText(body.clienteDireccion);
     const clienteNombre = sanitizeText(body.clienteNombre);
@@ -1369,51 +1379,6 @@ export async function POST(req: Request) {
       body.referenciaFamiliar2Parentesco
     );
     const referenciaFamiliar2Telefono = sanitizeText(body.referenciaFamiliar2Telefono);
-    const clientValidation = validateCreditClientForm({
-      clientePrimerNombre,
-      clientePrimerApellido,
-      clienteTipoDocumento,
-      clienteDocumento,
-      clienteFechaExpedicion: clienteFechaExpedicionValue,
-      clienteFechaNacimiento: clienteFechaNacimientoValue,
-      clienteTelefono,
-      clienteCorreo,
-      clienteDepartamento,
-      clienteCiudad,
-      clienteGenero,
-      clienteEstadoCivil,
-      clienteEstrato,
-      clienteDireccion,
-      referenciaFamiliar1Nombre,
-      referenciaFamiliar1Parentesco,
-      referenciaFamiliar1Telefono,
-      referenciaFamiliar2Nombre,
-      referenciaFamiliar2Parentesco,
-      referenciaFamiliar2Telefono,
-    });
-
-    if (!clientValidation.complete) {
-      const firstError = clientValidation.firstInvalidField
-        ? clientValidation.errors[clientValidation.firstInvalidField]
-        : null;
-
-      return NextResponse.json(
-        {
-          code: "CLIENTE_INCOMPLETO",
-          error: firstError || "Completa todos los datos obligatorios del cliente.",
-          fieldErrors: clientValidation.errors,
-        },
-        { status: 400 }
-      );
-    }
-    const clienteNombreDesdePartes = composeCreditClientName({
-      firstNames: clientePrimerNombre,
-      firstSurname: clientePrimerApellido,
-      secondSurname: clienteSegundoApellido,
-    });
-    const clienteNombreFinal = hasAuthoritativeSignedIdentity || authoritativeSignedTerms
-      ? clienteNombre || clienteNombreDesdePartes
-      : clienteNombreDesdePartes || clienteNombre;
     const equipoMarca = sanitizeText(body.equipoMarca);
     const equipoModelo = sanitizeText(body.equipoModelo);
     const referenciaEquipo = sanitizeText(
@@ -1691,6 +1656,11 @@ export async function POST(req: Request) {
       } else {
         recoveredCustomerIdentity = await enforceDataCreditoCustomerIdentity(body as unknown as Record<string, unknown>, identityScope, false);
         querySurname = recoveredCustomerIdentity?.querySurname || "";
+        if (recoveredCustomerIdentity?.effective.nameMode === "FULL_NAME_ONLY") {
+          clientePrimerNombre = recoveredCustomerIdentity.effective.names;
+          clientePrimerApellido = recoveredCustomerIdentity.effective.firstSurname;
+          clienteSegundoApellido = recoveredCustomerIdentity.effective.secondSurname;
+        }
       }
       dataCreditoAssessmentMatch = {
         assessmentId,
@@ -1743,6 +1713,57 @@ export async function POST(req: Request) {
       }
     }
 
+    const dataCreditoFullNameOnly = recoveredCustomerIdentity?.effective.nameMode === "FULL_NAME_ONLY";
+    const verifiedFullName = hasAuthoritativeSignedIdentity && (!clientePrimerNombre || !clientePrimerApellido)
+      ? clienteNombre
+      : dataCreditoFullNameOnly ? recoveredCustomerIdentity!.effective.fullName : undefined;
+    const clientValidation = validateCreditClientForm({
+      clientePrimerNombre,
+      clientePrimerApellido,
+      clienteTipoDocumento,
+      clienteDocumento,
+      clienteFechaExpedicion: clienteFechaExpedicionValue,
+      clienteFechaNacimiento: clienteFechaNacimientoValue,
+      clienteTelefono,
+      clienteCorreo,
+      clienteDepartamento,
+      clienteCiudad,
+      clienteGenero,
+      clienteEstadoCivil,
+      clienteEstrato,
+      clienteDireccion,
+      referenciaFamiliar1Nombre,
+      referenciaFamiliar1Parentesco,
+      referenciaFamiliar1Telefono,
+      referenciaFamiliar2Nombre,
+      referenciaFamiliar2Parentesco,
+      referenciaFamiliar2Telefono,
+    }, new Date(), { verifiedFullName });
+
+    if (!clientValidation.complete) {
+      const firstError = clientValidation.firstInvalidField
+        ? clientValidation.errors[clientValidation.firstInvalidField]
+        : null;
+
+      return NextResponse.json(
+        {
+          code: "CLIENTE_INCOMPLETO",
+          error: firstError || "Completa todos los datos obligatorios del cliente.",
+          fieldErrors: clientValidation.errors,
+        },
+        { status: 400 }
+      );
+    }
+    const clienteNombreDesdePartes = composeCreditClientName({
+      firstNames: clientePrimerNombre,
+      firstSurname: clientePrimerApellido,
+      secondSurname: clienteSegundoApellido,
+    });
+    const clienteNombreFinal = hasAuthoritativeSignedIdentity || authoritativeSignedTerms
+      ? clienteNombre || clienteNombreDesdePartes
+      : dataCreditoFullNameOnly
+        ? recoveredCustomerIdentity!.effective.fullName
+        : clienteNombreDesdePartes || clienteNombre;
     const signedTermsSnapshot = authoritativeSignedTerms?.snapshot || null;
     const valorEquipoTotalInput = signedTermsSnapshot
       ? Number(signedTermsSnapshot.valorVenta)
@@ -2266,14 +2287,14 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!clientePrimerNombre) {
+    if (!clientePrimerNombre && !verifiedFullName) {
       return NextResponse.json(
         { error: "Debes ingresar el primer nombre del cliente" },
         { status: 400 }
       );
     }
 
-    if (!clientePrimerApellido) {
+    if (!clientePrimerApellido && !verifiedFullName) {
       return NextResponse.json(
         { error: "Debes ingresar el primer apellido del cliente" },
         { status: 400 }
@@ -3131,7 +3152,21 @@ export async function POST(req: Request) {
           deviceUid,
         }
       : null;
+    const signedIdentityPayload = firmaSeguroProcess?.draftPayload &&
+      typeof firmaSeguroProcess.draftPayload === "object" && !Array.isArray(firmaSeguroProcess.draftPayload)
+        ? firmaSeguroProcess.draftPayload as Record<string, unknown> : null;
+    // Reuse the identity metadata bound to the completed signature. Legacy signed
+    // documents remain deliverable without introducing a new names prerequisite.
+    const firmaSeguroIdentity = dataCreditoFullNameOnly && signedIdentityPayload?.firmaSeguroIdentity
+      ? readFirmaSeguroFullNameIdentity(signedIdentityPayload.firmaSeguroIdentity,
+          { fullName: clienteNombreFinal, documentNumber: clienteDocumento })
+      : dataCreditoFullNameOnly && !hasAuthoritativeSignedIdentity && veriffValidation
+        ? firmaSeguroFullNameIdentityFromValidation({ fullName: clienteNombreFinal,
+            documentNumber: clienteDocumento, validation: veriffValidation,
+            expectedDraftId: solicitudReservation.id })
+        : null;
     const contratoSnapshot = {
+      firmaSeguroIdentity,
       // Provenance is set by the server; test provider credits earn no commission.
       comisiones: {
         version: 1,
@@ -3919,6 +3954,7 @@ export async function POST(req: Request) {
         : null,
     });
   } catch (error) {
+    if (error instanceof FirmaSeguroFullNameIdentityError) return NextResponse.json({ code: error.code, error: error.message }, { status: error.status });
     if (error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_")) return NextResponse.json({ code: error.message, error: "Guarda y verifica la identidad de DataCrédito antes de continuar." }, { status: 409 });
     const blacklistResponse = documentBlacklistErrorResponse(error);
     if (blacklistResponse) return blacklistResponse;

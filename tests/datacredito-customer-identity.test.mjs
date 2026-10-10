@@ -12,7 +12,26 @@ test('structured provider identity preserves all names, compounds, accents and u
 });
 test('full name alone never splits names or trusts typed surname',()=>{
  const identity=extract(fixture({conInformacion:true,nombreCompleto:'María del Mar De la Peña'}),'1234567');
- assert.equal(identity.names,''); assert.equal(identity.firstSurname,'');assert.equal(identity.fullName,'María del Mar De la Peña');assert.ok(identity.missing.includes('Primer apellido'));
+ assert.equal(identity.names,''); assert.equal(identity.firstSurname,'');assert.equal(identity.fullName,'María del Mar De la Peña');assert.equal(identity.nameMode,'FULL_NAME_ONLY');
+ assert.deepEqual(identity.missing,['Número de documento','Tipo de documento']);
+});
+test('complete unstructured identity is canonical without inferred components',()=>{
+ const fullName='María del Mar  De la Peña Muñoz del Río';
+ const identity=extract(fixture({conInformacion:true,nombreCompleto:` ${fullName} `,tipoDocumento:'CC',numeroDocumento:'1.234.567'}),'1234567');
+ assert.equal(identity.fullName,fullName);assert.deepEqual(identity.missing,[]);
+ const resolved=resolve(identity,{...input,clienteNombre:fullName,clientePrimerNombre:'Inventado',clientePrimerApellido:'Inventado',clienteSegundoApellido:'Inventado'});
+ assert.equal(resolved.fullName,fullName);assert.equal(resolved.names,'');assert.equal(resolved.firstSurname,'');assert.equal(resolved.secondSurname,'');
+ for(const [key,value] of [['clienteNombre','Otra Persona'],['clienteDocumento','7654321'],['clienteTipoDocumento','PASAPORTE']]) assert.throws(()=>resolve(identity,{...input,clienteNombre:fullName,[key]:value}),/LOCKED_FIELDS/);
+ assert.equal(resolve(identity,{...input,clienteNombre:undefined}).fullName,fullName);
+});
+test('partial structured fields are preserved alongside full name without supplying the missing component',()=>{
+ const identity=extract(fixture({conInformacion:true,nombreCompleto:'José María De la Peña',primerNombre:'José María',tipoDocumento:'CC',numeroDocumento:'1234567'}),'1234567');
+ assert.equal(identity.nameMode,'FULL_NAME_ONLY');assert.equal(identity.names,'José María');assert.equal(identity.firstSurname,'');assert.deepEqual(identity.missing,[]);
+ assert.equal(resolve(identity,input).firstSurname,'');
+});
+test('unstructured identity still requires provider document and type before use',()=>{
+ const identity=extract(fixture({conInformacion:true,nombreCompleto:'José María De la Peña'}),'1234567');
+ assert.throws(()=>resolve(identity,{clienteDocumento:'',clienteTipoDocumento:''}),/INCOMPLETE/);
 });
 test('a different document fails closed',()=>assert.throws(()=>extract(fixture({...basics,numeroDocumento:'7654321'}),'1234567'),/DOCUMENT_MISMATCH/));
 test('no information does not verify echoed fields',()=>{const identity=extract(fixture({...basics,conInformacion:false}),'1234567');assert.equal(identity.names,'');assert.equal(identity.firstSurname,'');assert.equal(identity.documentNumber,'');});

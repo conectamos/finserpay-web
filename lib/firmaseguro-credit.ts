@@ -1,3 +1,4 @@
+import { readFirmaSeguroFullNameIdentity } from "@/lib/datacredito/firmaseguro-identity";
 import { dataCreditoIdentityToFirmaSeguroNames, type DataCreditoIdentity } from "@/lib/datacredito/identity";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getSessionUser } from "@/lib/auth";
@@ -269,7 +270,20 @@ function normalizePhone(value: string | null | undefined) {
 }
 
 function splitClientName(credito: FirmaSeguroCredit): PersonPayload {
-  const snapshot = credito.contratoSnapshot as { dataCreditoIdentity?: { effective?: DataCreditoIdentity } } | null;
+  const snapshot = credito.contratoSnapshot as { dataCreditoIdentity?: { effective?: DataCreditoIdentity }; firmaSeguroIdentity?: unknown } | null;
+  if (snapshot?.dataCreditoIdentity?.effective?.nameMode === "FULL_NAME_ONLY") {
+    const identity = snapshot.dataCreditoIdentity.effective;
+    try {
+      if (credito.clienteNombre !== identity.fullName) throw new Error("Canonical name changed");
+      return {
+        ...readFirmaSeguroFullNameIdentity(snapshot.firmaSeguroIdentity, { fullName: identity.fullName, documentNumber: cleanText(credito.clienteDocumento) }),
+        document: cleanText(credito.clienteDocumento),
+        email: normalizeEmail(credito.clienteCorreo), phone: normalizePhone(credito.clienteTelefono),
+      };
+    } catch {
+      throw new FirmaSeguroApiError("Los componentes verificados del firmante no coinciden con el nombre completo de DataCrédito. Revisa la validación Veriff existente antes de enviar a FirmaSeguro.", 409, null);
+    }
+  }
   if (snapshot?.dataCreditoIdentity?.effective) {
     return {
       ...dataCreditoIdentityToFirmaSeguroNames(snapshot.dataCreditoIdentity.effective),
@@ -880,7 +894,9 @@ function buildCreateFullPayload(
           ...(delivery.signerEmail ? { email: delivery.signerEmail } : {}),
           person: {
             firstName: person.firstName,
+            secondName: optionalText(person.secondName),
             firstLastName: person.firstLastName,
+            secondLastName: optionalText(person.secondLastName),
             identification: person.document,
             identificationTypeId: config.identificationTypeId,
             typePersonId: config.typePersonId,

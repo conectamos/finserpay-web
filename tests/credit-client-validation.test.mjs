@@ -119,3 +119,19 @@ test("rechaza telefonos repetidos entre cliente y referencias", () => {
   assert.equal(result.referencesComplete, false);
   assert.equal(result.complete, false);
 });
+
+test("authoritative full name permits the single name field without inventing components", () => {
+  const client = { ...completeClient, clientePrimerNombre: "", clientePrimerApellido: "" };
+  const now = new Date("2026-10-09T12:00:00Z");
+  assert.equal(validateCreditClientForm(client, now).personalComplete, false);
+  const result = validateCreditClientForm(client, now, { verifiedFullName: "María del Mar De la Peña Muñoz" });
+  assert.equal(result.complete, true);
+  assert.equal(client.clientePrimerNombre, "");
+  assert.equal(client.clientePrimerApellido, "");
+  for (const verifiedFullName of ["", "<script>", "12345"]) {
+    assert.equal(validateCreditClientForm(client, now, { verifiedFullName }).personalComplete, false);
+  }
+  assert.equal(validateCreditClientForm({ ...client, clienteDocumento: "" }, now, { verifiedFullName: "María del Mar De la Peña Muñoz" }).personalComplete, false);
+  assert.equal(validateCreditClientForm({ ...client, clienteTelefono: "" }, now, { verifiedFullName: "María del Mar De la Peña Muñoz" }).contactComplete, false);
+  assert.equal(validateCreditClientForm({ ...client, referenciaFamiliar2Telefono: "" }, now, { verifiedFullName: "María del Mar De la Peña Muñoz" }).referencesComplete, false);
+});

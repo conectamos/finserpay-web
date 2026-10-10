@@ -1064,7 +1064,7 @@ export function extractVeriffIdentityData(payload: unknown): VeriffIdentityData 
       ? (person.nameComponents as Record<string, unknown>)
       : {};
   const firstName =
-    cleanText(nameComponents.firstNameOnly) || cleanText(person.firstName);
+    cleanText(person.firstName) || cleanText(nameComponents.firstNameOnly);
   const lastName = cleanText(person.lastName);
   const fullName =
     cleanText(person.fullName) || [firstName, lastName].filter(Boolean).join(" ");
