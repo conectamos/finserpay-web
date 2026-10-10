@@ -225,11 +225,14 @@ export async function getDraftDataCreditoOffer(
   };
 }
 
-export async function buildDraftCredit(row: DraftRow): Promise<BuiltDraftCredit> {
+export async function buildDraftCredit(
+  row: DraftRow,
+  options: { requireFirmaSeguroIdentity?: boolean } = {}
+): Promise<BuiltDraftCredit> {
   const payload = payloadObject(row.payload);
   const dataCreditoIdentity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
   let firmaSeguroIdentity: Awaited<ReturnType<typeof getFirmaSeguroFullNameIdentityForDraft>> | null = null;
-  if (dataCreditoIdentity?.effective.nameMode === "FULL_NAME_ONLY") {
+  if (options.requireFirmaSeguroIdentity && dataCreditoIdentity?.effective.nameMode === "FULL_NAME_ONLY") {
     try {
       firmaSeguroIdentity = await getFirmaSeguroFullNameIdentityForDraft({
         fullName: dataCreditoIdentity.effective.fullName,

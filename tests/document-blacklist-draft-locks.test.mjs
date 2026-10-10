@@ -99,8 +99,10 @@ function fixture({ preliminary = baseRow, row = baseRow, blocked = false, synchr
     normalizePlatform: (value) => value || null,
     normalizeDraftStep: (value, fallback = 1) => value == null ? fallback : Math.max(1, Math.min(5, Number(value))),
     isUuid: (value) => typeof value === "string" && /^[a-f0-9-]{36}$/i.test(value),
+    isCompleteImei: (value) => /^\d{15}$/.test(String(value || "")),
     ensureSolicitudSchema: async () => undefined,
     ensureFirmaSeguroSchema: async () => undefined,
+    getUnresolvedDraftDispatch: async () => null,
     expireStaleWith: async () => undefined,
     assertDocumentNotBlacklisted: async (document, tx) => {
       await acquire(tx, `blacklist:${document}`);
@@ -112,6 +114,11 @@ function fixture({ preliminary = baseRow, row = baseRow, blocked = false, synchr
     resolveSolicitudDraftCanonicalIdentity: canonical.resolveSolicitudDraftCanonicalIdentity,
     findActiveByIdentity: async (tx) => { await acquire(tx, `row:${row.id}`); return row; },
     firmaSeguroTermsAreLocked: () => false,
+    preserveAnalystDataCorrectionAutosave: (_stored, payload) => payload,
+    preserveAnalystFinancialCorrectionAutosave: (_stored, payload) => payload,
+    preserveAnalystEvidenceCorrectionAutosave: (_stored, payload) => payload,
+    imeiReissueSignedAt: () => null,
+    isSolicitudImeiChangeBlocked: canonical.isSolicitudImeiChangeBlocked,
     ActiveSolicitudConflictError: Error,
     SolicitudCanonicalMutationError: canonical.SolicitudCanonicalMutationError,
   });

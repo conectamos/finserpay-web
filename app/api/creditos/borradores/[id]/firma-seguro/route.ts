@@ -783,7 +783,7 @@ async function requestDraftSignatureCore(
             error instanceof Error ? error.message : "FIRMASEGURO_SIGNED_SOURCE_UNAVAILABLE");
         }
       } else {
-        const built = await buildDraftCredit(lockedAuthorized.row);
+        const built = await buildDraftCredit(lockedAuthorized.row, { requireFirmaSeguroIdentity: true });
         credit = built.credit;
         firstPaymentDateKey = built.firstPaymentDateKey;
         credit.folio = dispatchFolio;

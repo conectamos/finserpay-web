@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 const source = readFileSync(
   new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url),
@@ -133,14 +134,34 @@ test("la precalificacion bloquea el flujo normal pero no la inspeccion central",
 });
 
 test("una inspeccion administrativa no persiste un paso ficticio", () => {
-  const autosave = sourceBlock("const saveDraft = async", "const handleDataCreditoBypass");
+  const autosave = sourceBlock("const persistedWizardStep = canAdminMoveFreelyInFactory", "const handleDataCreditoBypass");
 
   assert.match(
     autosave,
     /const persistedWizardStep = canAdminMoveFreelyInFactory\s*\? nextFactoryStep\.id\s*:\s*wizardStep/
   );
   assert.match(autosave, /currentStep: persistedWizardStep/);
-  assert.match(autosave, /wizardStep: persistedWizardStep/);
+  assert.match(autosave, /serializeCreditDraftSaveRequest\(\{ draftId, currentStep: persistedWizardStep/);
+  assert.match(autosave, /body: requestBody/);
+  const serializer = sourceBlock("function serializeCreditDraftSaveRequest(", "function VeriffDraftPreparationFailure(");
+  const loaded = { exports: {} };
+  runInNewContext(ts.transpileModule(serializer + "\nmodule.exports = serializeCreditDraftSaveRequest;", {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, { module: loaded });
+  const persistedStepDeclaration = autosave.match(/const persistedWizardStep =[^;]+;/)?.[0];
+  assert.ok(persistedStepDeclaration);
+  for (const central of [true, false]) {
+    const persistedStep = runInNewContext(persistedStepDeclaration + "\npersistedWizardStep", {
+      canAdminMoveFreelyInFactory: central, nextFactoryStep: { id: 2 }, wizardStep: 5,
+    });
+    const serialized = JSON.parse(loaded.exports({
+      draftId: 11, currentStep: persistedStep, payload: { wizardStep: 5, clienteDocumento: "123456789" },
+    }));
+    assert.equal(serialized.id, 11);
+    assert.equal(serialized.currentStep, central ? 2 : 5);
+    assert.equal(serialized.payload.wizardStep, central ? 2 : 5);
+    assert.equal(serialized.payload.clienteDocumento, "123456789");
+  }
 });
 
 test("el permiso de inspeccion no participa en las validaciones de cierre", () => {

@@ -1276,7 +1276,9 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
           storedDocument: targetRow.clienteDocumento,
           storedPayloadDocument: targetRow.payload?.clienteDocumento,
           storedPayloadFirstSurname:
-            input.verifiedDataCreditoFirstSurname || targetRow.payload?.clientePrimerApellido,
+            // An explicitly empty provider component must clear the surname
+            // used to request the query; it is not a verified identity field.
+            input.verifiedDataCreditoFirstSurname ?? targetRow.payload?.clientePrimerApellido,
           storedAssessmentId: targetRow.dataCreditoAssessmentId,
           storedPayloadAssessmentId: targetRow.payload?.dataCreditoAssessmentId,
           incomingDocument: input.clienteDocumento,

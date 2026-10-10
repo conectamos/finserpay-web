@@ -52,7 +52,8 @@ test("DataCrédito aprobado despliega los datos del cliente en el mismo paso 1",
   assert.match(factory, /const clienteFormUnlocked = dataCreditoFlowReady;/);
   assert.match(factory, /const showIdentityClientForm = clienteFormUnlocked;/);
   assert.match(factory, />\s*Información del cliente\s*</);
-  assert.match(factory, /La cédula y el primer apellido corresponden a la consulta[\s\S]*DataCrédito/);
+  assert.match(factory, /Datos obtenidos de DataCrédito/);
+  assert.match(factory, /NOMBRES Y APELLIDOS/);
   assert.match(gate, />\s*Consulta aprobada\s*</);
   assert.match(gate, /Continuar con los datos/);
   assert.doesNotMatch(gate, /Continuar a validación/);
@@ -153,7 +154,7 @@ test("FirmaSeguro exige la última aprobación Veriff de la misma solicitud", as
   const guard = route.indexOf(
     "await requireApprovedVeriffBeforeFirmaSeguro(lockedAuthorized.row)"
   );
-  const build = route.indexOf("const built = await buildDraftCredit(lockedAuthorized.row)");
+  const build = route.indexOf("const built = await buildDraftCredit(lockedAuthorized.row,");
 
   assert.match(route, /getVeriffValidationById\(validationId\)/);
   assert.match(

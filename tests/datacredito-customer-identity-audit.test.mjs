@@ -125,7 +125,7 @@ test('full provider name survives autosave, reload and signing without inferred 
   const signed=await enforce({...data},scope,false);assert.equal(signed.effective.fullName,providerFullName);
   assert.equal((await get({id:payload.dataCreditoAssessmentId})).effective.fullName,providerFullName);
   assert.equal(rows.length,0);assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM "DataCreditoIdentityCorrection"')).rows[0].count,0);
-  await assert.rejects(enforce({...data,clienteNombre:'Otra Persona'},scope),/LOCKED_FIELDS/);
+  await assert.rejects(enforce({...data,clienteNombre:'Otra Persona'},scope,false),/LOCKED_FIELDS/);
   await assert.rejects(enforce({...data,clienteDocumento:'7654321'},scope),/DOCUMENT_MISMATCH/);
   await assert.rejects(enforce({...data,clienteTipoDocumento:'PASAPORTE'},scope),/LOCKED_FIELDS/);
   providerIdentityOverride={...fullNameOnlyFields,tipoDocumento:''};
