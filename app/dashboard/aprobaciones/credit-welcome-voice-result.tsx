@@ -347,7 +347,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
         </> : selectedCall ? <div className={styles.detail}>
           {currentOverlay.fromHistory ? <Button variant="ghost" onClick={() => setOverlay({ creditId, view: "history", page: history.page })}><ArrowLeft size={16} aria-hidden="true" />Volver al historial</Button> : null}
           <Badge tone={welcomeVoicePresentation(selectedCall).tone}>{welcomeVoicePresentation(selectedCall).label}</Badge>
-          {selectedCall.resultCode && outcomes[selectedCall.resultCode] ? <p className="text-sm font-medium">{outcomes[selectedCall.resultCode]}</p> : null}
+          {selectedCall.resultCode && outcomes[selectedCall.resultCode] && outcomes[selectedCall.resultCode] !== welcomeVoicePresentation(selectedCall).label ? <p className="text-sm font-medium">{outcomes[selectedCall.resultCode]}</p> : null}
           <dl className={styles.detailData}>
             <div><dt>Destino</dt><dd>{selectedCall.destinationPhone || "Sin registro"}</dd></div>
             <div><dt>Fecha</dt><dd>{dateLabel(selectedCall.dispatchedAt || selectedCall.createdAt)}</dd></div>

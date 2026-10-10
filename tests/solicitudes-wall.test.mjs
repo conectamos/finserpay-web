@@ -809,7 +809,7 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   );
   assert.match(
     factory,
-    /if \(restoringDraftAssessment\) \{[\s\S]{0,180}cancelPendingDraftAutosave\(\);[\s\S]{0,140}applyingDraftRef\.current = true;[\s\S]{0,140}\} else if \(result\.solicitudId\)/
+    /if \(restoringDraftAssessment\) \{[\s\S]{0,180}cancelPendingDraftAutosave\(true\);[\s\S]{0,140}applyingDraftRef\.current = true;[\s\S]{0,140}\} else if \(result\.solicitudId\)/
   );
   assert.match(
     factory,
@@ -832,7 +832,7 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   );
   assert.match(
     factory,
-    /preservedTerms\?\.restoringDraft[\s\S]{0,160}cancelPendingDraftAutosave\(\);[\s\S]{0,120}applyingDraftRef\.current = true;/
+    /preservedTerms\?\.restoringDraft[\s\S]{0,160}cancelPendingDraftAutosave\(true\);[\s\S]{0,120}applyingDraftRef\.current = true;/
   );
   assert.doesNotMatch(
     factory,
@@ -1225,7 +1225,7 @@ test("un borrador obsoleto se libera antes de iniciar otra validacion", async ()
   assert.ok(notFoundBranch > cancelledGuard);
   assert.match(
     loadDraft,
-    /if\s*\(result\.status\s*===\s*404\)\s*\{[\s\S]*cancelPendingDraftAutosave\(\);[\s\S]*setDraftId\(null\);[\s\S]*setDraftStatus\("idle"\);[\s\S]*setDraftErrorMessage\(""\);[\s\S]*replaceDraftInUrl\(null\);[\s\S]*updateDraftResumeHydration\(false\);[\s\S]*return;/
+    /if\s*\(result\.status\s*===\s*404\)\s*\{[\s\S]*cancelPendingDraftAutosave\(true\);[\s\S]*setDraftId\(null\);[\s\S]*setDraftStatus\("idle"\);[\s\S]*setDraftErrorMessage\(""\);[\s\S]*replaceDraftInUrl\(null\);[\s\S]*updateDraftResumeHydration\(false\);[\s\S]*return;/
   );
   assert.match(
     loadDraft,

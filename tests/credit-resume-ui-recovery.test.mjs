@@ -229,7 +229,7 @@ test("el conflicto canónico recarga una sola vez la solicitud indicada por el s
     redirect,
     /if \(activeSolicitudRedirectingRef\.current\) return true;[\s\S]*activeSolicitudRedirectingRef\.current = true;/
   );
-  assert.match(redirect, /cancelPendingDraftAutosave\(\)/);
+  assert.match(redirect, /cancelPendingDraftAutosave\(true\)/);
   assert.match(redirect, /params\.set\("draft", String\(resumeSolicitudId\)\)/);
   assert.match(redirect, /window\.location\.replace\(/);
   assert.equal(
@@ -237,6 +237,49 @@ test("el conflicto canónico recarga una sola vez la solicitud indicada por el s
     1,
     "el helper debe ordenar una sola navegación aunque coincidan varios guardados"
   );
+
+  const cancelAutosave = sourceBlock(factory,
+    "const cancelPendingDraftAutosave = useCallback(",
+    "useEffect(() => () => cancelPendingDraftAutosave(true)");
+  const calls = { clearedTimers: [], aborts: 0, navigation: [] };
+  const context = {
+    module: { exports: {} }, URLSearchParams,
+    useCallback: callback => callback,
+    ACTIVE_SOLICITUD_CONFLICT_CODE: "ACTIVE_SOLICITUD_EXISTS",
+    ACTIVE_SOLICITUD_RESUME_MESSAGE: "Retomando solicitud",
+    activeSolicitudRedirectingRef: { current: false },
+    draftSaveTimerRef: { current: 5 },
+    draftSaveGenerationRef: { current: 8 },
+    draftExplicitSaveGenerationRef: { current: 11 },
+    draftSaveAbortControllerRef: { current: { abort: () => { calls.aborts += 1; } } },
+    setDraftStatus: () => {}, setDraftErrorMessage: () => {}, setNotice: () => {},
+    window: {
+      clearTimeout: id => calls.clearedTimers.push(id),
+      location: { search: "?mode=create-client&platform=iphone&draft=91", pathname: "/dashboard/creditos", hash: "#firma",
+        replace: href => calls.navigation.push(href) },
+    },
+  };
+  runInNewContext(ts.transpileModule(cancelAutosave + redirect + "\nmodule.exports = resumeActiveSolicitudFromConflict;", {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, context);
+  const resume = context.module.exports;
+  for (const result of [{ status: 200 }, { status: 409, data: { code: "OTHER", resumeSolicitudId: 92 } },
+    { status: 409, data: { code: context.ACTIVE_SOLICITUD_CONFLICT_CODE, resumeSolicitudId: 0 } },
+    { status: 409, data: { code: context.ACTIVE_SOLICITUD_CONFLICT_CODE, resumeSolicitudId: 91 } }]) {
+    assert.equal(resume(result, 91), false);
+  }
+  assert.equal(context.draftExplicitSaveGenerationRef.current, 11);
+  const conflict = { status: 409, data: { code: context.ACTIVE_SOLICITUD_CONFLICT_CODE, resumeSolicitudId: 92 } };
+  assert.equal(resume(conflict, 91), true);
+  assert.equal(resume(conflict, 91), true);
+  assert.deepEqual(calls.clearedTimers, [5]);
+  assert.equal(calls.aborts, 1);
+  assert.equal(context.draftSaveTimerRef.current, null);
+  assert.equal(context.draftSaveGenerationRef.current, 9);
+  assert.equal(context.draftExplicitSaveGenerationRef.current, 12,
+    "la retoma también invalida respuestas de guardados explícitos de la solicitud anterior");
+  assert.equal(context.draftSaveAbortControllerRef.current, null);
+  assert.deepEqual(calls.navigation, ["/dashboard/creditos?mode=create-client&platform=iphone&draft=92#firma"]);
 });
 
 test("Veriff y autosave entregan el conflicto al redirect canónico y el guardado manual comparte ese flujo", async () => {

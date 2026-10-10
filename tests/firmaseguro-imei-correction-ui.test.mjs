@@ -127,8 +127,12 @@ test("la correccion invalida refrescos obsoletos y no trunca un IMEI pegado", as
   const correctionControl = source.slice(correctionControlStart, correctionControlStart + 6_000);
 
   assert.ok(refreshStart > 0);
-  assert.match(refresh, /firmaSeguroRefreshGenerationRef/);
-  assert.match(refresh, /!== refreshGeneration/);
+  assert.match(refresh, /const isCurrentRefresh = \(\) => !controller\.signal\.aborted &&\s*firmaSeguroRefreshGenerationRef\.current === refreshGeneration &&\s*firmaSeguroRefreshBindingRef\.current\.draftId === draftId &&\s*firmaSeguroRefreshBindingRef\.current\.processUuid === expectedProcessUuid/);
+  assert.equal((refresh.match(/if \(!isCurrentRefresh\(\)\) \{\s*return null;/g) || []).length, 3,
+    "el refresco descarta respuestas de ambas lecturas y errores de otra solicitud, versión o generación");
+  const correction = source.slice(correctionStart, source.indexOf("const handleFirmaSeguroStepReady", correctionStart));
+  assert.match(correction, /firmaSeguroRefreshGenerationRef\.current \+= 1/,
+    "corregir el IMEI debe invalidar cualquier refresco previo");
   assert.match(correctionControl, /setFirmaSeguroImeiCorrectionValue\(event\.target\.value\)/);
   assert.doesNotMatch(correctionControl, /\.slice\(0, 15\)/);
 });
