@@ -9,4 +9,6 @@ export async function register() {
 
   const { startInternalCron } = await import("./lib/internal-cron");
   startInternalCron();
+  const { startSolicitudExportWorker } = await import("./lib/solicitudes-export-jobs");
+  startSolicitudExportWorker();
 }

@@ -1,0 +1,8 @@
+[
+  "CREATE TABLE IF NOT EXISTS \"SolicitudExportJob\" (\n    \"id\" uuid PRIMARY KEY, \"userId\" integer NOT NULL, \"viewerKind\" text NOT NULL,\n    \"aliadoId\" integer, \"filters\" jsonb NOT NULL, \"status\" text NOT NULL DEFAULT 'PENDING',\n    \"count\" integer NOT NULL, \"processed\" integer NOT NULL DEFAULT 0,\n    \"filename\" text NOT NULL, \"error\" text, \"bytes\" bigint, \"chunks\" integer,\n    \"createdAt\" timestamptz NOT NULL DEFAULT NOW(), \"updatedAt\" timestamptz NOT NULL DEFAULT NOW(),\n    \"expiresAt\" timestamptz NOT NULL DEFAULT (NOW() + INTERVAL '24 hours')\n  )",
+  "CREATE INDEX IF NOT EXISTS \"SolicitudExportJob_pending_idx\" ON \"SolicitudExportJob\" (\"status\", \"createdAt\")",
+  "CREATE INDEX IF NOT EXISTS \"SolicitudExportJob_user_idx\" ON \"SolicitudExportJob\" (\"userId\", \"expiresAt\")",
+  "CREATE TABLE IF NOT EXISTS \"SolicitudExportChunk\" (\n    \"jobId\" uuid NOT NULL REFERENCES \"SolicitudExportJob\"(\"id\") ON DELETE CASCADE,\n    \"sequence\" integer NOT NULL, \"data\" bytea NOT NULL, PRIMARY KEY (\"jobId\", \"sequence\")\n  )",
+  "CREATE TABLE IF NOT EXISTS \"SolicitudExportMember\" (\n    \"jobId\" uuid NOT NULL REFERENCES \"SolicitudExportJob\"(\"id\") ON DELETE CASCADE,\n    \"source\" text NOT NULL, \"entityId\" integer NOT NULL, PRIMARY KEY (\"jobId\", \"source\", \"entityId\")\n  )",
+  "CREATE TABLE IF NOT EXISTS \"SolicitudExportAudit\" (\n    \"id\" bigserial PRIMARY KEY, \"jobId\" uuid NOT NULL, \"userId\" integer NOT NULL,\n    \"event\" text NOT NULL, \"filters\" jsonb NOT NULL, \"count\" integer NOT NULL,\n    \"createdAt\" timestamptz NOT NULL DEFAULT NOW()\n  )"
+]

@@ -6,6 +6,7 @@ await import("./ensure-datacredito-schema.mjs");
 await import("./ensure-credit-amortization-schema.mjs");
 await import("./ensure-credit-principal-payment-schema.mjs");
 await import("./ensure-solicitudes-schema.mjs");
+await import("./ensure-solicitudes-export-schema.mjs");
 await import("./ensure-iphone-enrollment-schema.mjs");
 await import("./ensure-credit-device-replacement-schema.mjs");
 await import("./ensure-credit-device-replacement-remission-schema.mjs");

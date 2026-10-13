@@ -3,6 +3,7 @@ import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
 import SolicitudesListView from "./solicitudes-list-view";
+import SolicitudesExport from "./solicitudes-export";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeft,
@@ -510,6 +511,9 @@ export default function SolicitudesWallClient({
     : 1;
   const options = list?.options || {};
   const hasFilters = FILTER_KEYS.some((key) => Boolean(searchParams.get(key)));
+  const exportAction = viewerRole === "ADMIN" ? (
+    <SolicitudesExport appliedFilters={readFilters(new URLSearchParams(paramsKey))} plataformas={options.plataformas} />
+  ) : null;
 
   return (
     <>
@@ -524,6 +528,7 @@ export default function SolicitudesWallClient({
         factoryHref={item => factoryHref(item, viewerRole, wallReturnHref)}
         replacementHref={item => replacementHref(item, wallReturnHref)}
         displayNumber={solicitudDisplayNumber}
+        exportAction={exportAction}
         requestHref={viewerRole === "ANALYST" ? item => analystRequestHref(item, wallReturnHref) : undefined}
       /> : <>
       <PageHeader
@@ -535,6 +540,7 @@ export default function SolicitudesWallClient({
             <Badge tone="neutral">
               {loading && !list ? "Consultando" : `${list?.total || 0} solicitudes`}
             </Badge>
+            {exportAction}
             <Button
               variant="secondary"
               onClick={() => setReloadToken((value) => value + 1)}
