@@ -4,7 +4,7 @@ La plantilla aprobada de WhatsApp `1_dia_falta` (`519fa7a9-65ba-40a3-b114-56573f
 
 La plantilla aprobada `hoyvence` (`456571d6-c63e-4f7b-91f6-5b15b9e6e9f5`) recuerda el vencimiento de hoy, ofrece el portal y Efecty y tiene botones **PAGAR** y **YA REALICE EL PAGO**. Usa las mismas variables `contact_name` y `company_name`.
 
-La nueva campaña de dos días usa la plantilla `2dias` (`c2094fc8-9435-42f1-9360-524cc2d3ad83`), categoría `UTILITY`, idioma `es`, encabezado `IMAGE` y una sola variable: `contact_name` en la posición 1. **Estado verificado el 13 de octubre de 2026: Meta pendiente, Dapta ACTIVE y sendable=false. La nueva campaña permanece desactivada hasta que la plantilla esté aprobada y disponible para enviar.** El flujo `AaoWO`, «Recordatorio 2 días antes de la cuota», ya se creó y verificó con el nodo nativo WhatsApp v2, su canal, la imagen original y sólo esa variable. Esta preparación no confirma envíos reales ni la publicación del nuevo backend.
+La nueva campaña de dos días usa la plantilla `2dias` (`c2094fc8-9435-42f1-9360-524cc2d3ad83`), categoría `UTILITY`, idioma `es`, encabezado `IMAGE` y una sola variable: `contact_name` en la posición 1. **Estado verificado el 13 de octubre de 2026 a las 12:26 Colombia: Meta aprobada, Dapta ACTIVE y sendable=true.** El flujo `AaoWO`, «Recordatorio 2 días antes de la cuota», ya se creó y verificó con el nodo nativo WhatsApp v2, su canal, la imagen original y sólo esa variable. La aprobación y la configuración no acreditan entrega de mensajes reales.
 
 El programador interno de `finserpay-web` conserva las campañas de víspera y Hoyvence a las **10:00 a. m., America/Bogota**, en paralelo con Datos. La nueva tarea de dos días se programa a la **1:00 p. m. (13:00), America/Bogota**, con ventana independiente 13:00–13:59. Si el servicio se reinicia, puede recuperar las campañas de las 10 hasta las 10:59 y la de las 13 hasta las 13:59; fuera de cada ventana no envía. Cada petición vuelve a comprobar su horario. La selección consulta directamente los créditos, sin descargar ni importar el Excel.
 
@@ -16,7 +16,7 @@ La campaña `two_days_before_due` selecciona **AD = -2** y una próxima cuota pe
 
 ## Activación
 
-La integración comienza apagada. Solo después de confirmar el flujo en Dapta y su número emisor, configurar estas variables privadas en `finserpay-web`:
+Solo después de confirmar la aprobación de la plantilla, el flujo en Dapta y su número emisor, configurar estas variables privadas en `finserpay-web`:
 
 ```text
 DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL=<webhook privado del flujo de recordatorio>
@@ -24,10 +24,10 @@ DAPTA_RECORDATORIO_1_DIA_ENABLED=true
 DAPTA_HOYVENCE_WEBHOOK_URL=<webhook privado del flujo Hoyvence>
 DAPTA_HOYVENCE_ENABLED=true
 DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL=<webhook privado del flujo 2 días>
-DAPTA_RECORDATORIO_2_DIAS_ENABLED=false
+DAPTA_RECORDATORIO_2_DIAS_ENABLED=true
 ```
 
-La configuración privada del nuevo flujo ya se guardó con `DAPTA_RECORDATORIO_2_DIAS_ENABLED=false`. Cambiarla a `true` sólo después de verificar la aprobación de Meta y `sendable=true`; ningún otro valor activa el worker. Las campañas existentes conservan su configuración y horario.
+La configuración privada del nuevo flujo se habilita con `DAPTA_RECORDATORIO_2_DIAS_ENABLED=true` después de verificar la aprobación de Meta y `sendable=true`; ningún otro valor activa el worker. Las campañas existentes conservan su configuración y horario.
 
 Las URLs deben ser HTTPS de `api.dapta.ai`. Cada campaña tiene su propio webhook y activación, sin reutilizar los de otra campaña cuando falta configuración. Nunca usar variables `NEXT_PUBLIC_` ni escribir las URLs en registros. Cada flujo recibe `credito_id`, `telefono`, `nombre`, `cuota_numero` y `fecha_vencimiento`. Usa el nodo nativo de su plantilla con `channel_id` de Diana, el teléfono como `+{{normalizar_contacto.telefono}}` y las variables como pares `{key,value}`. `2dias` sólo recibe `contact_name`; no se le añade `company_name`. Conservar los atributos nativos y el encabezado de imagen, que generan el cuerpo de la solicitud.
 
