@@ -37,12 +37,14 @@ export async function overdueDataFixture(t, options = {}) {
   let clock = new Date(options.now || "2026-10-07T15:00:00.000Z");
   let failTransactionOnce = Boolean(options.failTransactionOnce);
   let failFinalizeOnce = Boolean(options.failFinalizeOnce);
-  let afterClaimRead = false;
   const setClock = value => { clock = new Date(value); };
+  const insertCredit = async credit => database.query(
+    'INSERT INTO "Credito" ("id","data") VALUES ($1,$2::jsonb)', [credit.id, JSON.stringify(credit)],
+  );
   const updateCredit = async (id, overrides) => database.query(
     'UPDATE "Credito" SET "data"="data" || $2::jsonb WHERE "id"=$1', [id, JSON.stringify(overrides)],
   );
-  const hookArguments = () => ({ database, setClock, updateCredit });
+  const hookArguments = () => ({ database, setClock, updateCredit, insertCredit });
 
   function adapter(connection, inTransaction = false, transactionState = {}) {
     return {
@@ -77,10 +79,6 @@ export async function overdueDataFixture(t, options = {}) {
         },
         findUnique: async input => {
           counts.reads += 1;
-          if (!inTransaction && afterClaimRead) {
-            afterClaimRead = false;
-            await options.afterClaim?.(hookArguments());
-          }
           return (await connection.query('SELECT "data" FROM "Credito" WHERE "id"=$1', [input.where.id])).rows[0]?.data || null;
         },
       },
@@ -96,14 +94,14 @@ export async function overdueDataFixture(t, options = {}) {
         const outcome = await work(adapter(connection, true, transactionState));
         if (failTransactionOnce) {
           failTransactionOnce = false;
-          // A real PostgreSQL error proves the claim and cooldown both roll back.
+          // A real PostgreSQL error proves the claim and all credit coverages roll back.
           await connection.query("SELECT 'injected transaction failure'::integer");
         }
         return outcome;
       });
       if (transactionState.createdClaim) {
-        afterClaimRead = true;
         await options.afterClaimTransaction?.(hookArguments());
+        await options.afterClaim?.(hookArguments());
       }
       return result;
     },
@@ -138,18 +136,23 @@ export async function overdueDataFixture(t, options = {}) {
   const run = core.createCreditOverdueDataRunner(runnerDependencies);
   const rows = async () => (await database.query('SELECT * FROM "CreditOverdueDataAttempt" ORDER BY "campaignDate","creditoId"')).rows;
   const recipients = async () => (await database.query('SELECT * FROM "CreditOverdueDataRecipient" ORDER BY "recipientKey"')).rows;
+  const coverages = async () => (await database.query('SELECT * FROM "CreditOverdueDataCoverage" ORDER BY "creditoId"')).rows;
   const seedClaim = async (overrides = {}) => {
     const seed = { id: randomUUID(), recipientKey: overdueDataRecipientKey(), creditoId: 1, campaignDate: "2026-10-07",
       daysPastDue: 20, status: "CLAIMED", claimedAt: "2026-10-07T15:00:00Z", claimExpiresAt: "2026-10-07T15:01:30Z",
       nextEligibleDate: "2026-10-10", ...overrides };
-    await database.query('INSERT INTO "CreditOverdueDataRecipient" ("recipientKey","nextEligibleDate") VALUES ($1,$2::date)',
+    await database.query('INSERT INTO "CreditOverdueDataRecipient" ("recipientKey","nextEligibleDate") VALUES ($1,$2::date) ON CONFLICT DO NOTHING',
       [seed.recipientKey, seed.nextEligibleDate]);
     await database.query(`INSERT INTO "CreditOverdueDataAttempt"
       ("id","recipientKey","creditoId","campaignDate","daysPastDue","status","claimedAt","claimExpiresAt")
       VALUES ($1::uuid,$2,$3,$4::date,$5,$6,$7,$8)`,
       [seed.id, seed.recipientKey, seed.creditoId, seed.campaignDate, seed.daysPastDue, seed.status, seed.claimedAt, seed.claimExpiresAt]);
+    if (overrides.withCoverage !== false) {
+      await database.query('INSERT INTO "CreditOverdueDataCoverage" ("creditoId","attemptId") VALUES ($1,$2::uuid)',
+        [seed.creditoId, seed.id]);
+    }
     return seed;
   };
-  return { run, core, database, client, counts, rows, recipients, payloads, webhooks, requests, setClock, updateCredit, seedClaim,
+  return { run, core, database, client, counts, rows, recipients, coverages, payloads, webhooks, requests, setClock, updateCredit, insertCredit, seedClaim,
     restart: () => core.createCreditOverdueDataRunner(runnerDependencies) };
 }

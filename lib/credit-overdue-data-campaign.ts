@@ -8,6 +8,7 @@ import {
   type CreditOverdueDataCandidate,
 } from "@/lib/credit-overdue-data-policy";
 
+// Retained as the historical audit identifier; delivery is now once per credit.
 export const CREDIT_OVERDUE_DATA_TEMPLATE_KEY = "datos_mora_20_cada_3_dias";
 const PAGE_SIZE = 250;
 const CLAIM_LIFETIME_MS = 90_000;
@@ -29,19 +30,10 @@ export type CreditOverdueDataReport = {
     waiting: number; ready: number; claimed: number; accepted: number; failed: number;
     unknown: number; duplicates: number; staleClaims: number; revalidatedOut: number };
 };
-type Recipient = { nextEligibleDate: Date | string | null };
 type DispatchResult = { status: "ACCEPTED" | "FAILED" | "UNKNOWN"; code: string; httpStatus: number | null };
 
 function recipientKey(phone: string) {
   return createHash("sha256").update("finserpay-datos:" + phone).digest("hex");
-}
-function dateKey(value: Date | string) {
-  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
-}
-function nextCampaignDate(today: string) {
-  const date = new Date(today + "T00:00:00.000Z");
-  date.setUTCDate(date.getUTCDate() + 3);
-  return date.toISOString().slice(0, 10);
 }
 function validStartDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -100,18 +92,17 @@ export function createCreditOverdueDataRunner(deps: {
     const webhook = configuredWebhook(deps.webhookUrl ? deps.webhookUrl() : process.env.DAPTA_DATOS_WEBHOOK_URL);
     const startDate = String(process.env.DAPTA_DATOS_START_DATE || "").trim();
     const initialDate = String(process.env.DAPTA_DATOS_INITIAL_BATCH_DATE || "").trim();
-    const validStart = (!startDate || validStartDate(startDate)) && (!initialDate || validStartDate(initialDate));
-    // A server-side date, set only for the explicitly authorized first batch,
-    // lets that batch finish today even if deployment crosses the daily window.
-    // The exception expires at Bogotá midnight and never bypasses recipient cadence.
+    const validStart = !startDate || validStartDate(startDate);
+    // The old first-batch date is informational only. New day-20 notices must
+    // respect the normal window, even when that legacy setting remains present.
     const isSendingAllowed = (date: Date) => validStart && (!startDate || colombiaDateKey(date) >= startDate)
-      && (isCreditOverdueDataWindow(date) || (Boolean(initialDate) && colombiaDateKey(date) === initialDate));
+      && isCreditOverdueDataWindow(date);
     const report: CreditOverdueDataReport = {
       campaign: "datos", templateKey: CREDIT_OVERDUE_DATA_TEMPLATE_KEY, ok: true, dryRun,
       enabled, configured: Boolean(webhook) && validStart,
       inWindow: isSendingAllowed(liveNow),
       startsOn: startDate && validStart ? startDate : null,
-      initialBatchDate: initialDate && validStart ? initialDate : null,
+      initialBatchDate: initialDate && validStartDate(initialDate) ? initialDate : null,
       generatedAt: liveNow.toISOString(), today: todayKey,
       summary: { scanned: 0, eligibleCredits: 0, eligibleClients: 0, excluded: 0,
         waiting: 0, ready: 0, claimed: 0, accepted: 0, failed: 0, unknown: 0,
@@ -144,39 +135,52 @@ export function createCreditOverdueDataRunner(deps: {
       }
     }
     report.summary.eligibleClients = groups.size;
+    const blockedCredits = async (client: Pick<typeof database, "$queryRawUnsafe">, ids: number[], ownAttemptId: string | null = null) => {
+      if (!ids.length) return new Set<number>();
+      // Legacy attempts recorded only the selected credit. Coverage records all
+      // credits represented by a new grouped message, including failed/unknown sends.
+      const rows = await client.$queryRawUnsafe<Array<{ creditoId: number }>>(
+        `SELECT "creditoId" FROM "CreditOverdueDataCoverage"
+         WHERE "creditoId"=ANY($1::int[]) AND ($2::uuid IS NULL OR "attemptId"<>$2::uuid)
+         UNION SELECT "creditoId" FROM "CreditOverdueDataAttempt"
+         WHERE "creditoId"=ANY($1::int[]) AND ($2::uuid IS NULL OR "id"<>$2::uuid)`, ids, ownAttemptId,
+      );
+      return new Set(rows.map(row => row.creditoId));
+    };
     for (const [phone, candidates] of groups) {
       const key = recipientKey(phone);
-      const [recipient] = await database.$queryRawUnsafe<Recipient[]>(
-        `SELECT "nextEligibleDate" FROM "CreditOverdueDataRecipient" WHERE "recipientKey"=$1`, key,
-      );
-      if (recipient?.nextEligibleDate && dateKey(recipient.nextEligibleDate) > todayKey) {
+      const previouslyCovered = await blockedCredits(database, candidates.map(candidate => candidate.creditId));
+      const ids = candidates.filter(candidate => !previouslyCovered.has(candidate.creditId))
+        .map(candidate => candidate.creditId).sort((a, b) => a - b);
+      if (!ids.length) {
         report.summary.waiting += 1;
         continue;
       }
       report.summary.ready += 1;
       if (dryRun) continue;
       const claimId = randomUUID();
-      const ids = candidates.map(candidate => candidate.creditId).sort((a, b) => a - b);
       const claim = await database.$transaction(async tx => {
         await tx.$executeRawUnsafe(
           `INSERT INTO "CreditOverdueDataRecipient" ("recipientKey") VALUES ($1) ON CONFLICT DO NOTHING`, key,
         );
-        const [currentRecipient] = await tx.$queryRawUnsafe<Recipient[]>(
-          `SELECT "nextEligibleDate" FROM "CreditOverdueDataRecipient" WHERE "recipientKey"=$1 FOR UPDATE`, key,
+        await tx.$queryRawUnsafe(
+          `SELECT "recipientKey" FROM "CreditOverdueDataRecipient" WHERE "recipientKey"=$1 FOR UPDATE`, key,
         );
         const claimedAt = now();
         const claimDate = colombiaDateKey(claimedAt);
         if (!isSendingAllowed(claimedAt) || claimDate !== todayKey) return { status: "ineligible" as const };
-        if (currentRecipient?.nextEligibleDate && dateKey(currentRecipient.nextEligibleDate) > claimDate) return { status: "duplicate" as const };
+        // Credit locks make coverage a cross-phone guard when a contact changes.
+        for (const id of ids) await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, id);
+        const covered = await blockedCredits(tx, ids);
         const currentCandidates: CreditOverdueDataCandidate[] = [];
         for (const id of ids) {
-          await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, id);
+          if (covered.has(id)) continue;
           const current = await tx.credito.findUnique({ where: { id }, select: creditSelect });
           const candidate = current && getCreditOverdueDataCandidate(current, claimedAt);
           if (candidate && candidate.phone === phone) currentCandidates.push(candidate);
         }
         const candidate = groupCreditOverdueDataCandidates(currentCandidates)[0];
-        if (!candidate) return { status: "ineligible" as const };
+        if (!candidate) return { status: covered.size === ids.length ? "duplicate" as const : "ineligible" as const };
         const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
           `INSERT INTO "CreditOverdueDataAttempt"
            ("id","recipientKey","creditoId","campaignDate","daysPastDue","status","claimedAt","claimExpiresAt")
@@ -186,28 +190,26 @@ export function createCreditOverdueDataRunner(deps: {
           claimedAt, new Date(claimedAt.getTime() + CLAIM_LIFETIME_MS),
         );
         if (!rows.length) return { status: "duplicate" as const };
-        const nextDate = nextCampaignDate(claimDate);
         await tx.$executeRawUnsafe(
-          `UPDATE "CreditOverdueDataRecipient" SET "nextEligibleDate"=$2::date,"updatedAt"=$3 WHERE "recipientKey"=$1`,
-          key, nextDate, claimedAt,
+          `INSERT INTO "CreditOverdueDataCoverage" ("creditoId","attemptId","createdAt")
+           SELECT id,$1::uuid,$3 FROM unnest($2::int[]) AS id`,
+          claimId, currentCandidates.map(item => item.creditId), claimedAt,
         );
-        return { status: "claimed" as const, nextDate,
-          previousDate: currentRecipient?.nextEligibleDate ? dateKey(currentRecipient.nextEligibleDate) : null };
-      });
+        return { status: "claimed" as const };
+      }, { timeout: 30_000 });
       if (claim.status === "ineligible") { report.summary.revalidatedOut += 1; continue; }
       if (claim.status === "duplicate") { report.summary.duplicates += 1; continue; }
       report.summary.claimed += 1;
       const releaseKnownUnsent = () => database.$transaction(async tx => {
         await tx.$queryRawUnsafe(`SELECT "recipientKey" FROM "CreditOverdueDataRecipient" WHERE "recipientKey"=$1 FOR UPDATE`, key);
-        const removed = await tx.$executeRawUnsafe(
-          `DELETE FROM "CreditOverdueDataAttempt" WHERE "id"=$1::uuid AND "status"='CLAIMED'`, claimId,
+        const [owned] = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT "id" FROM "CreditOverdueDataAttempt"
+           WHERE "id"=$1::uuid AND "recipientKey"=$2 AND "status"='CLAIMED' FOR UPDATE`, claimId, key,
         );
-        if (removed) await tx.$executeRawUnsafe(
-          `UPDATE "CreditOverdueDataRecipient" SET "nextEligibleDate"=$2::date,"updatedAt"=$3
-           WHERE "recipientKey"=$1 AND "nextEligibleDate"=$4::date`, key, claim.previousDate, now(), claim.nextDate,
-        );
-        return removed;
-      });
+        if (!owned) return 0;
+        await tx.$executeRawUnsafe(`DELETE FROM "CreditOverdueDataCoverage" WHERE "attemptId"=$1::uuid`, claimId);
+        return tx.$executeRawUnsafe(`DELETE FROM "CreditOverdueDataAttempt" WHERE "id"=$1::uuid AND "status"='CLAIMED'`, claimId);
+      }, { timeout: 30_000 });
       const [active] = await database.$queryRawUnsafe<Array<{ claimExpiresAt: Date | string }>>(
         `SELECT "claimExpiresAt" FROM "CreditOverdueDataAttempt" WHERE "id"=$1::uuid AND "status"='CLAIMED' AND "claimExpiresAt">$2`,
         claimId, now(),
@@ -221,34 +223,55 @@ export function createCreditOverdueDataRunner(deps: {
         continue;
       }
       else {
-        const currentCandidates: CreditOverdueDataCandidate[] = [];
-        for (const id of ids) {
-          const current = await database.credito.findUnique({ where: { id }, select: creditSelect });
-          const candidate = current && getCreditOverdueDataCandidate(current, now());
-          if (candidate && candidate.phone === phone) currentCandidates.push(candidate);
-        }
-        const candidate = groupCreditOverdueDataCandidates(currentCandidates)[0];
+        const prepared = await database.$transaction(async tx => {
+          await tx.$queryRawUnsafe(`SELECT "recipientKey" FROM "CreditOverdueDataRecipient" WHERE "recipientKey"=$1 FOR UPDATE`, key);
+          const [owned] = await tx.$queryRawUnsafe<Array<{ claimExpiresAt: Date | string }>>(
+            `SELECT "claimExpiresAt" FROM "CreditOverdueDataAttempt"
+             WHERE "id"=$1::uuid AND "recipientKey"=$2 AND "status"='CLAIMED' FOR UPDATE`, claimId, key,
+          );
+          if (!owned) return null;
+          const coverage = await tx.$queryRawUnsafe<Array<{ creditoId: number }>>(
+            `SELECT "creditoId" FROM "CreditOverdueDataCoverage" WHERE "attemptId"=$1::uuid ORDER BY "creditoId"`, claimId,
+          );
+          const coveredIds = coverage.map(row => row.creditoId);
+          for (const id of coveredIds) await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, id);
+          const blocked = await blockedCredits(tx, coveredIds, claimId);
+          const currentCandidates: CreditOverdueDataCandidate[] = [];
+          for (const id of coveredIds) {
+            if (blocked.has(id)) continue;
+            const current = await tx.credito.findUnique({ where: { id }, select: creditSelect });
+            const candidate = current && getCreditOverdueDataCandidate(current, now());
+            if (candidate && candidate.phone === phone) currentCandidates.push(candidate);
+          }
+          const candidate = groupCreditOverdueDataCandidates(currentCandidates)[0];
+          const dispatchAt = now();
+          if (!candidate || !isSendingAllowed(dispatchAt) || colombiaDateKey(dispatchAt) !== todayKey
+            || new Date(owned.claimExpiresAt).getTime() <= dispatchAt.getTime()) return null;
+          // Only a still-valid credit already covered by this exact claim may
+          // become the representative; never switch to a previously notified credit.
+          const updated = await tx.$executeRawUnsafe(
+            `UPDATE "CreditOverdueDataAttempt" SET "creditoId"=$2,"daysPastDue"=$3
+             WHERE "id"=$1::uuid AND "status"='CLAIMED' AND "claimExpiresAt">$4`,
+            claimId, candidate.creditId, candidate.daysPastDue, dispatchAt,
+          );
+          if (!updated) return null;
+          // These credits received no HTTP and are no longer covered by this
+          // phone's notice. Keep the remaining valid grouped coverage intact.
+          await tx.$executeRawUnsafe(
+            `DELETE FROM "CreditOverdueDataCoverage" WHERE "attemptId"=$1::uuid AND NOT ("creditoId"=ANY($2::int[]))`,
+            claimId, currentCandidates.map(item => item.creditId),
+          );
+          return { candidate, claimExpiresAt: owned.claimExpiresAt };
+        }, { timeout: 30_000 });
         const dispatchAt = now();
-        if (!candidate || !isSendingAllowed(dispatchAt) || colombiaDateKey(dispatchAt) !== todayKey
-          || new Date(active.claimExpiresAt).getTime() <= dispatchAt.getTime()) {
+        if (!prepared || !isSendingAllowed(dispatchAt) || colombiaDateKey(dispatchAt) !== todayKey
+          || new Date(prepared.claimExpiresAt).getTime() <= dispatchAt.getTime()) {
           report.summary.revalidatedOut += 1;
-          // Only this owner can prove no HTTP started. Release its claim and cooldown together.
+          // Only this owner can prove no HTTP started. UNKNOWN is never released.
           if (!await releaseKnownUnsent()) report.summary.unknown += 1;
           continue;
         }
-        // A payment may change which of this client's credits has the highest
-        // mora. Keep the audit identity aligned with the fresh outgoing payload.
-        const updated = await database.$executeRawUnsafe(
-          `UPDATE "CreditOverdueDataAttempt" SET "creditoId"=$2,"daysPastDue"=$3
-           WHERE "id"=$1::uuid AND "status"='CLAIMED' AND "claimExpiresAt">$4`,
-          claimId, candidate.creditId, candidate.daysPastDue, dispatchAt,
-        );
-        if (!updated || !isSendingAllowed(now()) || new Date(active.claimExpiresAt).getTime() <= now().getTime()) {
-          report.summary.revalidatedOut += 1;
-          if (!await releaseKnownUnsent()) report.summary.unknown += 1;
-          continue;
-        }
-        result = await dispatch(webhook!, candidate, deps.fetcher ?? fetch);
+        result = await dispatch(webhook!, prepared.candidate, deps.fetcher ?? fetch);
       }
       const finalized = await database.$executeRawUnsafe(
         `UPDATE "CreditOverdueDataAttempt" SET "status"=$2,"resultCode"=$3,"httpStatus"=$4,"finishedAt"=$5

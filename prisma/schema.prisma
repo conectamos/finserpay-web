@@ -419,6 +419,7 @@ model Credito {
   eventosSadmin                  CreditSadminEvent[]
   recordatoriosCuota             CreditDueReminder[]
   intentosCampanaDatos           CreditOverdueDataAttempt[]
+  coberturaCampanaDatos          CreditOverdueDataCoverage?
   llamadasBienvenidaVoz          CreditWelcomeVoiceEvent[]
   campanasRevisionVoz            VoiceReviewCampaignMember[]
   createdAt                     DateTime             @default(now())
@@ -485,9 +486,21 @@ model CreditOverdueDataAttempt {
   httpStatus Int?
   recipient CreditOverdueDataRecipient @relation(fields: [recipientKey], references: [recipientKey], onDelete: Restrict, onUpdate: NoAction)
   credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  coverages CreditOverdueDataCoverage[]
 
   @@unique([recipientKey, campaignDate], map: "CreditOverdueDataAttempt_recipient_date_key")
   @@index([status, claimExpiresAt], map: "CreditOverdueDataAttempt_status_expires_idx")
+  @@index([creditoId], map: "CreditOverdueDataAttempt_creditoId_idx")
+}
+
+model CreditOverdueDataCoverage {
+  creditoId Int @id
+  attemptId String @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  credito Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  attempt CreditOverdueDataAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([attemptId], map: "CreditOverdueDataCoverage_attemptId_idx")
 }
 
 model CreditApprovalAccessLink {

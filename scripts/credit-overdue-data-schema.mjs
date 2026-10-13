@@ -20,6 +20,15 @@ export const creditOverdueDataSchemaStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS "CreditOverdueDataAttempt_status_expires_idx"
     ON public."CreditOverdueDataAttempt" ("status", "claimExpiresAt")`,
+  `CREATE INDEX IF NOT EXISTS "CreditOverdueDataAttempt_creditoId_idx"
+    ON public."CreditOverdueDataAttempt" ("creditoId")`,
+  `CREATE TABLE IF NOT EXISTS public."CreditOverdueDataCoverage" (
+    "creditoId" INTEGER PRIMARY KEY REFERENCES public."Credito"("id") ON DELETE RESTRICT,
+    "attemptId" UUID NOT NULL REFERENCES public."CreditOverdueDataAttempt"("id") ON DELETE RESTRICT,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS "CreditOverdueDataCoverage_attemptId_idx"
+    ON public."CreditOverdueDataCoverage" ("attemptId")`,
 ];
 
 export async function installCreditOverdueDataSchema(client) {
