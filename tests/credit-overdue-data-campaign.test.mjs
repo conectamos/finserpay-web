@@ -7,24 +7,26 @@ const live = { dryRun: false };
 
 // PGlite serializes transactions. The overlap tests exercise production SQL
 // locks and constraints through that scheduler, not separate database servers.
-test("preview scans 501 credits, excludes invalid and under-20-day rows, and exposes no PII or writes", async t => {
+test("preview scans 501 credits, excludes invalid and non-exact-20-day rows, and exposes no PII or writes", async t => {
   const credits = Array.from({ length: 501 }, (_, index) => sampleOverdueDataCredit(index + 1));
   credits[0].clienteTelefono = "1111";
   credits[1].estado = "ANULADO";
   credits[2].fechaPrimerPago = "2026-09-18";
+  credits[3].fechaPrimerPago = "2026-09-16";
   const f = await overdueDataFixture(t, { credits, enabled: false });
   const report = await f.run();
   assert.equal(report.dryRun, true);
   assert.equal(report.summary.scanned, 501);
-  assert.equal(report.summary.eligibleCredits, 498);
+  assert.equal(report.summary.eligibleCredits, 497);
   assert.equal(report.summary.eligibleClients, 1);
-  assert.equal(report.summary.excluded, 3);
+  assert.equal(report.summary.excluded, 4);
   assert.equal(report.summary.ready, 1);
   assert.equal(f.counts.pages, 4);
   assert.equal(f.counts.writes, 0);
   assert.equal(f.counts.sends, 0);
   assert.equal((await f.rows()).length, 0);
   assert.equal((await f.recipients()).length, 0);
+  assert.equal((await f.coverages()).length, 0);
   assert.doesNotMatch(JSON.stringify(report), /CLIENTE PRUEBA|3000000001|telefono|nombre|https:\/\//);
 });
 
@@ -63,7 +65,7 @@ test("live delivery requires exact true, exact HTTPS Dapta host, Bogotá hour an
   assert.equal(beforeStart.inWindow, false);
   assert.equal(beforeStart.summary.scanned, 0);
   const preview = await f.run({ dryRun: true, previewDate: "2026-10-08" });
-  assert.equal(preview.summary.eligibleClients, 1);
+  assert.equal(preview.summary.eligibleClients, 0);
   env.DAPTA_DATOS_START_DATE = "2026-02-30";
   assert.equal((await f.run(live)).configured, false);
   assert.equal((await f.run()).summary.eligibleClients, 1);
@@ -71,61 +73,137 @@ test("live delivery requires exact true, exact HTTPS Dapta host, Bogotá hour an
   assert.equal(f.counts.sends, 0);
   env.DAPTA_DATOS_START_DATE = "2026-10-08";
   f.setClock("2026-10-08T15:00:00Z");
+  await f.updateCredit(1, { fechaPrimerPago: "2026-09-18" });
   const started = await f.run(live);
   assert.equal(started.summary.accepted, 1);
   assert.deepEqual(f.webhooks, [validUrl]);
 });
 
-test("multiple eligible credits on one mobile choose maximum mora and send one client message", async t => {
+test("one mobile receives one message and every exact-20-day credit in its group is covered", async t => {
   const f = await overdueDataFixture(t, { credits: [
-    sampleOverdueDataCredit(1), sampleOverdueDataCredit(2, { fechaPrimerPago: "2026-09-01" }),
+    sampleOverdueDataCredit(1), sampleOverdueDataCredit(2),
     sampleOverdueDataCredit(3, { fechaPrimerPago: "2026-09-18" }),
     sampleOverdueDataCredit(4, { clienteTelefono: "3000000004" }),
+    sampleOverdueDataCredit(5, { fechaPrimerPago: "2026-09-01" }),
   ] });
   const report = await f.run(live);
   assert.equal(report.summary.eligibleCredits, 3);
   assert.equal(report.summary.eligibleClients, 2);
-  assert.equal(report.summary.excluded, 1);
+  assert.equal(report.summary.excluded, 2);
   assert.equal(report.summary.accepted, 2);
   assert.equal(f.counts.sends, 2);
   assert.deepEqual(f.payloads, [
-    { credito_id: "2", telefono: "573000000001", nombre: "CLIENTE PRUEBA", dias_mora: "36" },
+    { credito_id: "1", telefono: "573000000001", nombre: "CLIENTE PRUEBA", dias_mora: "20" },
     { credito_id: "4", telefono: "573000000004", nombre: "CLIENTE PRUEBA", dias_mora: "20" },
   ]);
   assert.deepEqual((await f.rows()).map(row => [row.creditoId, row.daysPastDue, row.status]), [
-    [2, 36, "ACCEPTED"], [4, 20, "ACCEPTED"],
+    [1, 20, "ACCEPTED"], [4, 20, "ACCEPTED"],
   ]);
-  const serialized = JSON.stringify({ report, recipients: await f.recipients(), attempts: await f.rows() });
+  const coverage = await f.coverages();
+  assert.deepEqual(coverage.map(row => row.creditoId), [1, 2, 4]);
+  assert.equal(coverage[0].attemptId, coverage[1].attemptId);
+  const serialized = JSON.stringify({ report, recipients: await f.recipients(), attempts: await f.rows(), coverage });
   assert.doesNotMatch(serialized, /CLIENTE PRUEBA|573000000001|telefono|nombre/);
 });
 
-test("three-day cooldown is a Bogotá calendar date: October 7 at 10:30 permits October 10 at 10:00", async t => {
+test("a credit is notified once even if it later returns to exactly 20 days or changes mobile", async t => {
   const f = await overdueDataFixture(t, { now: "2026-10-07T15:30:00Z" });
   assert.equal((await f.run(live)).summary.accepted, 1);
-  assert.equal(day((await f.recipients())[0].nextEligibleDate), "2026-10-10");
+  assert.equal((await f.coverages()).length, 1);
+  await f.updateCredit(1, { clienteTelefono: "3000000002" });
+  assert.equal((await f.run(live)).summary.waiting, 1);
   for (const date of ["2026-10-08", "2026-10-09"]) {
     f.setClock(date + "T15:00:00Z");
-    assert.equal((await f.run(live)).summary.waiting, 1);
+    const report = await f.run(live);
+    assert.equal(report.summary.eligibleCredits, 0);
     assert.equal(f.counts.sends, 1);
   }
   f.setClock("2026-10-10T14:59:59.999Z");
   assert.equal((await f.run(live)).inWindow, false);
   assert.equal(f.counts.sends, 1);
   f.setClock("2026-10-10T15:00:00Z");
-  assert.equal((await f.run(live)).summary.accepted, 1);
-  assert.equal(f.counts.sends, 2);
-  assert.deepEqual((await f.rows()).map(row => day(row.campaignDate)), ["2026-10-07", "2026-10-10"]);
-  assert.equal(day((await f.recipients())[0].nextEligibleDate), "2026-10-13");
+  await f.updateCredit(1, { fechaPrimerPago: "2026-09-20" });
+  assert.equal((await f.run(live)).summary.waiting, 1);
+  assert.equal(f.counts.sends, 1);
+  assert.deepEqual((await f.rows()).map(row => day(row.campaignDate)), ["2026-10-07"]);
 });
 
-test("the explicit initial batch date allows one late first batch, then normal window and cooldown apply", async t => {
+test("a new credit on the same mobile has no three-day cooldown, while old coverage remains permanent", async t => {
+  const f = await overdueDataFixture(t, { credits: [sampleOverdueDataCredit(1),
+    sampleOverdueDataCredit(2, { fechaPrimerPago: "2026-09-18" })] });
+  assert.equal((await f.run(live)).summary.accepted, 1);
+  await f.database.query('UPDATE "CreditOverdueDataRecipient" SET "nextEligibleDate"=$1::date', ["2026-10-10"]);
+  f.setClock("2026-10-08T15:00:00Z");
+  assert.equal((await f.run(live)).summary.accepted, 1);
+  assert.deepEqual(f.payloads.map(payload => payload.credito_id), ["1", "2"]);
+  assert.deepEqual((await f.coverages()).map(row => row.creditoId), [1, 2]);
+  assert.equal((await f.recipients()).length, 1);
+  assert.equal((await f.run(live)).summary.waiting, 1);
+  assert.equal(f.counts.sends, 2);
+});
+
+test("a legacy attempt without Coverage blocks the same credit in every status but not tomorrow's new credit", async t => {
+  for (const status of ["ACCEPTED", "FAILED", "UNKNOWN", "CLAIMED"]) {
+    await t.test(status, async legacy => {
+      const f = await overdueDataFixture(legacy, { credits: [sampleOverdueDataCredit(1),
+        sampleOverdueDataCredit(2, { fechaPrimerPago: "2026-09-18" })] });
+      await f.seedClaim({ status, withCoverage: false, daysPastDue: 36, nextEligibleDate: "2026-10-10" });
+      assert.equal((await f.run(live)).summary.waiting, 1);
+      assert.equal(f.counts.sends, 0);
+      assert.deepEqual(await f.coverages(), []);
+      await f.updateCredit(1, { clienteTelefono: "3000000003" });
+      const before = { ...f.counts };
+      const preview = await f.run();
+      assert.equal(preview.summary.waiting, 1);
+      assert.equal(preview.summary.ready, 0);
+      assert.equal(f.counts.writes, before.writes);
+      assert.equal(f.counts.sends, 0);
+      assert.equal((await f.run(live)).summary.waiting, 1);
+      f.setClock("2026-10-08T15:00:00Z");
+      assert.equal((await f.run(live)).summary.accepted, 1);
+      assert.deepEqual(f.payloads.map(payload => [payload.credito_id, payload.telefono]), [["2", "573000000001"]]);
+      assert.deepEqual((await f.coverages()).map(row => row.creditoId), [2]);
+      assert.equal(f.counts.sends, 1);
+      assert.equal((await f.rows()).length, 2);
+    });
+  }
+});
+
+test("a credit first seen at 21-plus days never creates a catch-up notice", async t => {
+  const f = await overdueDataFixture(t, { credits: [sampleOverdueDataCredit(1, { fechaPrimerPago: "2026-09-16" }),
+    sampleOverdueDataCredit(2, { fechaPrimerPago: "2026-08-01" })] });
+  const report = await f.run(live);
+  assert.equal(report.summary.scanned, 2);
+  assert.equal(report.summary.eligibleCredits, 0);
+  assert.equal(report.summary.excluded, 2);
+  assert.equal(f.counts.sends, 0);
+  assert.deepEqual(await f.rows(), []);
+  assert.deepEqual(await f.coverages(), []);
+});
+
+test("a newly added credit cannot cause a second message to the same mobile on the same Bogotá date", async t => {
+  const f = await overdueDataFixture(t);
+  assert.equal((await f.run(live)).summary.accepted, 1);
+  await f.insertCredit(sampleOverdueDataCredit(2));
+  const replay = await f.run(live);
+  assert.equal(replay.summary.accepted, 0);
+  assert.equal(replay.summary.waiting + replay.summary.duplicates, 1);
+  assert.equal(f.counts.sends, 1);
+  assert.deepEqual((await f.coverages()).map(row => row.creditoId), [1]);
+  f.setClock("2026-10-08T15:00:00Z");
+  assert.equal((await f.run(live)).summary.eligibleCredits, 0);
+  assert.equal(f.counts.sends, 1);
+});
+
+test("the legacy initial batch date is informational and never bypasses the Bogotá sending hour", async t => {
   const env = {
     DAPTA_DATOS_ENABLED: "true", DAPTA_DATOS_WEBHOOK_URL: "https://api.dapta.ai/api/test-only-datos",
     DAPTA_DATOS_START_DATE: "2026-10-07", DAPTA_DATOS_INITIAL_BATCH_DATE: "2026-02-30",
   };
   const f = await overdueDataFixture(t, { useEnvironmentConfig: true, env, now: "2026-10-07T17:30:00Z" });
-  const invalid = await f.run(live);
-  assert.equal(invalid.configured, false);
+  const invalidLegacyDate = await f.run(live);
+  assert.equal(invalidLegacyDate.configured, true);
+  assert.equal(invalidLegacyDate.inWindow, false);
   assert.equal(f.counts.pages, 0);
   assert.equal(f.counts.writes, 0);
   assert.equal(f.counts.sends, 0);
@@ -137,15 +215,14 @@ test("the explicit initial batch date allows one late first batch, then normal w
   assert.equal(f.counts.writes, 0);
 
   env.DAPTA_DATOS_INITIAL_BATCH_DATE = "2026-10-07";
-  const first = await f.run(live);
-  assert.equal(first.initialBatchDate, "2026-10-07");
-  assert.equal(first.inWindow, true);
-  assert.equal(first.summary.accepted, 1);
-  assert.equal(f.counts.sends, 1);
-  assert.equal(day((await f.recipients())[0].nextEligibleDate), "2026-10-10");
-  const replay = await f.run(live);
-  assert.equal(replay.summary.waiting, 1);
-  assert.equal(f.counts.sends, 1);
+  const late = await f.run(live);
+  assert.equal(late.initialBatchDate, "2026-10-07");
+  assert.equal(late.inWindow, false);
+  assert.equal(late.summary.accepted, 0);
+  assert.equal(f.counts.sends, 0);
+
+  f.setClock("2026-10-07T15:00:00Z");
+  assert.equal((await f.run(live)).summary.accepted, 1);
 
   f.setClock("2026-10-08T17:30:00Z");
   const before = { ...f.counts };
@@ -158,9 +235,10 @@ test("the explicit initial batch date allows one late first batch, then normal w
   f.setClock("2026-10-10T15:00:00Z");
   const regular = await f.run(live);
   assert.equal(regular.inWindow, true);
-  assert.equal(regular.summary.accepted, 1);
-  assert.equal(f.counts.sends, 2);
-  assert.deepEqual((await f.rows()).map(row => day(row.campaignDate)), ["2026-10-07", "2026-10-10"]);
+  assert.equal(regular.summary.eligibleCredits, 0);
+  assert.equal(regular.summary.accepted, 0);
+  assert.equal(f.counts.sends, 1);
+  assert.deepEqual((await f.rows()).map(row => day(row.campaignDate)), ["2026-10-07"]);
 });
 
 test("an overlapping HTTP dispatch and same-day replay cannot reserve or send twice", async t => {
@@ -181,12 +259,13 @@ test("an overlapping HTTP dispatch and same-day replay cannot reserve or send tw
   assert.equal((await f.rows()).length, 1);
 });
 
-test("transaction failure rolls back both claim and cooldown, permitting a later retry", async t => {
+test("transaction failure rolls back the claim and all credit coverage, permitting a later retry", async t => {
   const f = await overdueDataFixture(t, { failTransactionOnce: true });
   await assert.rejects(f.run(live));
   assert.equal(f.counts.sends, 0);
   assert.equal((await f.rows()).length, 0);
   assert.equal((await f.recipients()).length, 0);
+  assert.equal((await f.coverages()).length, 0);
   assert.equal((await f.run(live)).summary.accepted, 1);
   assert.equal(f.counts.sends, 1);
 });
@@ -205,7 +284,7 @@ test("a payment between scan and claim excludes the client before a reservation"
   assert.equal((await f.rows()).length, 0);
 });
 
-test("payment after claiming releases a known-unsent claim and its cooldown", async t => {
+test("payment after claiming releases a known-unsent claim and its credit coverage", async t => {
   let changed = false;
   const f = await overdueDataFixture(t, { afterClaim: async ({ updateCredit }) => {
     if (changed) return;
@@ -217,6 +296,7 @@ test("payment after claiming releases a known-unsent claim and its cooldown", as
   assert.equal(report.summary.unknown, 0);
   assert.equal(f.counts.sends, 0);
   assert.equal((await f.rows()).length, 0);
+  assert.equal((await f.coverages()).length, 0);
   assert.equal((await f.recipients())[0].nextEligibleDate, null);
   await f.updateCredit(1, { abonos: [] });
   assert.equal((await f.run(live)).summary.accepted, 1);
@@ -238,6 +318,49 @@ test("dropping below 20 days after claim suppresses HTTP and allows later re-ent
   assert.equal(f.counts.sends, 1);
 });
 
+test("moving above 20 days after claim suppresses HTTP and releases only a known-unsent reservation", async t => {
+  let changed = false;
+  const f = await overdueDataFixture(t, { afterClaim: async ({ updateCredit }) => {
+    if (changed) return;
+    changed = true;
+    await updateCredit(1, { fechaPrimerPago: "2026-09-16" });
+  } });
+  assert.equal((await f.run(live)).summary.revalidatedOut, 1);
+  assert.equal(f.counts.sends, 0);
+  assert.deepEqual(await f.rows(), []);
+  assert.deepEqual(await f.coverages(), []);
+  await f.updateCredit(1, { fechaPrimerPago: "2026-09-17" });
+  assert.equal((await f.run(live)).summary.accepted, 1);
+});
+
+test("a phone change after reservation releases unsent coverage and revalidates the new destination", async t => {
+  let changed = false;
+  const f = await overdueDataFixture(t, { afterClaim: async ({ updateCredit }) => {
+    if (changed) return;
+    changed = true;
+    await updateCredit(1, { clienteTelefono: "3000000002" });
+  } });
+  assert.equal((await f.run(live)).summary.revalidatedOut, 1);
+  assert.equal(f.counts.sends, 0);
+  assert.deepEqual(await f.rows(), []);
+  assert.deepEqual(await f.coverages(), []);
+  assert.equal((await f.run(live)).summary.accepted, 1);
+  assert.deepEqual(f.payloads.map(payload => payload.telefono), ["573000000002"]);
+});
+
+test("a competing UNKNOWN transition is never erased by known-unsent cleanup", async t => {
+  const f = await overdueDataFixture(t, { afterActiveClaim: async ({ database }) => {
+    await database.query('UPDATE "CreditOverdueDataAttempt" SET "status"=\'UNKNOWN\',"resultCode"=\'CLAIM_EXPIRED\' WHERE "status"=\'CLAIMED\'');
+  } });
+  const report = await f.run(live);
+  assert.equal(report.summary.accepted, 0);
+  assert.equal(f.counts.sends, 0);
+  assert.equal((await f.rows())[0].status, "UNKNOWN");
+  assert.equal((await f.coverages()).length, 1);
+  assert.equal((await f.run(live)).summary.waiting, 1);
+  assert.equal(f.counts.sends, 0);
+});
+
 test("an owner's claim expiring at 90 seconds before HTTP is released instead of becoming UNKNOWN", async t => {
   let changed = false;
   const f = await overdueDataFixture(t, { afterClaimTransaction: async ({ setClock }) => {
@@ -254,19 +377,20 @@ test("an owner's claim expiring at 90 seconds before HTTP is released instead of
   assert.equal((await f.run(live)).summary.accepted, 1);
 });
 
-test("a window closing during active-claim verification prevents HTTP and releases cooldown", async t => {
+test("a window closing during active-claim verification prevents HTTP and releases coverage", async t => {
   const f = await overdueDataFixture(t, { afterActiveClaim: async ({ setClock }) => setClock("2026-10-07T16:00:00Z") });
   const report = await f.run(live);
   assert.equal(report.summary.revalidatedOut, 1);
   assert.equal(report.summary.unknown, 0);
   assert.equal(f.counts.sends, 0);
   assert.equal((await f.rows()).length, 0);
+  assert.equal((await f.coverages()).length, 0);
   assert.equal((await f.recipients())[0].nextEligibleDate, null);
 });
 
-test("fresh winning credit and mora are persisted in the attempt before its HTTP payload", async t => {
+test("a paid representative is replaced only by its still-eligible covered credit before HTTP", async t => {
   const f = await overdueDataFixture(t, { credits: [
-    sampleOverdueDataCredit(1, { fechaPrimerPago: "2026-09-01" }), sampleOverdueDataCredit(2),
+    sampleOverdueDataCredit(1), sampleOverdueDataCredit(2),
   ], afterClaim: async ({ updateCredit }) => updateCredit(1, { abonos: [{ valor: 300 }] }) });
   assert.equal((await f.run(live)).summary.accepted, 1);
   assert.equal(f.counts.sends, 1);
@@ -275,21 +399,24 @@ test("fresh winning credit and mora are persisted in the attempt before its HTTP
   const [attempt] = await f.rows();
   assert.equal(attempt.creditoId, 2);
   assert.equal(attempt.daysPastDue, 20);
+  assert.deepEqual((await f.coverages()).map(row => row.creditoId), [2]);
 });
 
-test("cooldown follows the mobile even when its greatest-arrears credit is paid and another wins", async t => {
+test("non-representative covered credits cannot be sent again after the representative is paid", async t => {
   const f = await overdueDataFixture(t, { credits: [
-    sampleOverdueDataCredit(1, { fechaPrimerPago: "2026-09-01" }), sampleOverdueDataCredit(2),
+    sampleOverdueDataCredit(1), sampleOverdueDataCredit(2),
   ] });
   await f.run(live);
   await f.updateCredit(1, { abonos: [{ valor: 300 }] });
-  f.setClock("2026-10-08T15:00:00Z");
+  await f.updateCredit(2, { clienteTelefono: "3000000002" });
   assert.equal((await f.run(live)).summary.waiting, 1);
   assert.equal(f.counts.sends, 1);
   f.setClock("2026-10-10T15:00:00Z");
-  assert.equal((await f.run(live)).summary.accepted, 1);
-  assert.deepEqual(f.payloads.map(payload => payload.credito_id), ["1", "2"]);
+  await f.updateCredit(2, { fechaPrimerPago: "2026-09-20" });
+  assert.equal((await f.run(live)).summary.waiting, 1);
+  assert.deepEqual(f.payloads.map(payload => payload.credito_id), ["1"]);
   assert.equal((await f.recipients()).length, 1);
+  assert.deepEqual((await f.coverages()).map(row => row.creditoId), [1, 2]);
 });
 
 test("provider success needs explicit confirmation; node errors, non-ok HTTP and timeouts are recorded safely", async t => {
@@ -308,6 +435,7 @@ test("provider success needs explicit confirmation; node errors, non-ok HTTP and
     ["timeout", { onFetch: async () => { throw new DOMException("private timeout detail", "TimeoutError"); } }, "UNKNOWN", "NETWORK_OUTCOME_UNKNOWN"],
   ]) {
     await t.test(label, async () => {
+      await f.database.query('DELETE FROM "CreditOverdueDataCoverage"');
       await f.database.query('DELETE FROM "CreditOverdueDataAttempt"');
       await f.database.query('DELETE FROM "CreditOverdueDataRecipient"');
       for (const key of ["response", "rawResponse", "status", "onFetch"]) delete settings[key];
@@ -325,31 +453,35 @@ test("provider success needs explicit confirmation; node errors, non-ok HTTP and
   }
 });
 
-test("FAILED and UNKNOWN outcomes wait three calendar days and do not retry on their campaign day", async t => {
+test("FAILED and UNKNOWN outcomes permanently block the credit instead of retrying three days later", async t => {
   const settings = { providerError: true };
   const f = await overdueDataFixture(t, settings);
   for (const status of ["UNKNOWN", "FAILED"]) {
+    await f.database.query('DELETE FROM "CreditOverdueDataCoverage"');
     await f.database.query('DELETE FROM "CreditOverdueDataAttempt"');
     await f.database.query('DELETE FROM "CreditOverdueDataRecipient"');
     settings.providerError = status === "UNKNOWN";
     settings.status = status === "FAILED" ? 503 : 200;
     f.setClock("2026-10-07T15:00:00Z");
+    await f.updateCredit(1, { fechaPrimerPago: "2026-09-17" });
     const before = f.counts.sends;
     await f.run(live);
     assert.equal((await f.rows())[0].status, status);
     for (const date of ["2026-10-07", "2026-10-08", "2026-10-09"]) {
       f.setClock(date + "T15:00:00Z");
+      await f.updateCredit(1, { fechaPrimerPago: ({ "2026-10-07": "2026-09-17", "2026-10-08": "2026-09-18", "2026-10-09": "2026-09-19" })[date] });
       assert.equal((await f.run(live)).summary.waiting, 1);
       assert.equal(f.counts.sends, before + 1);
     }
     f.setClock("2026-10-10T15:00:00Z");
+    await f.updateCredit(1, { fechaPrimerPago: "2026-09-20" });
     await f.run(live);
-    assert.equal(f.counts.sends, before + 2);
-    assert.equal((await f.rows()).length, 2);
+    assert.equal(f.counts.sends, before + 1);
+    assert.equal((await f.rows()).length, 1);
   }
 });
 
-test("a process restart expires an ambiguous claim at 90 seconds and retains its three-day cooldown", async t => {
+test("a process restart expires an ambiguous claim at 90 seconds and retains permanent credit coverage", async t => {
   const f = await overdueDataFixture(t);
   await f.seedClaim();
   const restarted = f.restart();
@@ -364,8 +496,10 @@ test("a process restart expires an ambiguous claim at 90 seconds and retains its
   assert.equal((await f.rows())[0].resultCode, "CLAIM_EXPIRED");
   assert.equal(f.counts.sends, 0);
   f.setClock("2026-10-10T15:00:00Z");
-  assert.equal((await restarted(live)).summary.accepted, 1);
-  assert.equal(f.counts.sends, 1);
+  await f.updateCredit(1, { fechaPrimerPago: "2026-09-20" });
+  assert.equal((await restarted(live)).summary.waiting, 1);
+  assert.equal(f.counts.sends, 0);
+  assert.equal((await f.coverages()).length, 1);
 });
 
 test("an HTTP success followed by failed finalization remains ambiguous across restart", async t => {
@@ -379,6 +513,7 @@ test("an HTTP success followed by failed finalization remains ambiguous across r
   assert.equal((await f.rows())[0].status, "UNKNOWN");
   assert.equal(f.counts.sends, 1);
   f.setClock("2026-10-08T15:00:00Z");
+  await f.updateCredit(1, { fechaPrimerPago: "2026-09-18" });
   assert.equal((await restarted(live)).summary.waiting, 1);
   assert.equal(f.counts.sends, 1);
 });

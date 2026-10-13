@@ -64,7 +64,8 @@ export function getCreditOverdueDataCandidate(
     });
     if (plan.estadoPago === "PAGADO" || !(plan.saldoPendiente > 0) || !(plan.pendingCount > 0)) return null;
     const daysPastDue = resolveCarteraDaysPastDue(plan, today);
-    if (daysPastDue < OVERDUE_DATA_MIN_DAYS) return null;
+    // This notice has no overdue backlog: only the exact twentieth Bogotá day.
+    if (daysPastDue !== OVERDUE_DATA_MIN_DAYS) return null;
     const oldest = plan.installments
       .filter(installment => installment.estaEnMora && installment.saldoPendiente > 0)
       .reduce<typeof plan.nextInstallment>((previous, installment) =>
@@ -79,7 +80,7 @@ export function getCreditOverdueDataCandidate(
   }
 }
 
-/** One recipient per mobile; use greatest arrears, then the lowest credit id. */
+/** One recipient per mobile; exact-day candidates tie on mora, then lowest id wins. */
 export function groupCreditOverdueDataCandidates(
   candidates: ReadonlyArray<CreditOverdueDataCandidate>
 ): CreditOverdueDataCandidate[] {
@@ -94,7 +95,7 @@ export function groupCreditOverdueDataCandidates(
   return [...byPhone.values()].sort((left, right) => left.phone.localeCompare(right.phone));
 }
 
-/** Only the sending hour; the persistent worker owns the three-day cadence. */
+/** Only the sending hour; the persistent worker owns the one-time credit ledger. */
 export function isCreditOverdueDataWindow(now: Date): boolean {
   return isCreditDueReminderWindow(now);
 }

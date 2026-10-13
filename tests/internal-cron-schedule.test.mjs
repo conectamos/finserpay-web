@@ -63,6 +63,10 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
         return { enabled: true, configured: true, inWindow: true, selected: 2, accepted: 2, unknown: 0, skipped: 0 };
       },
     },
+    "@/lib/collection-voice-runtime": {
+      runCollectionVoice: async () => ({ enabled: false, ready: false, inWindow: false, eligible: 0, accepted: 0, unknown: 0, skipped: 0 }),
+      runCollectionMessages: async () => undefined,
+    },
     "@/lib/device-unlock-queue": {
       processPendingDeviceUnlockCommands: async options => { operationalCalls.push({ name: "unlock", options: plain(options) }); return { processed: 0 }; },
       recoverRecentApprovedWompiUnlockCommands: async options => { operationalCalls.push({ name: "recover-unlock", options: plain(options) }); return { recovered: 0 }; },

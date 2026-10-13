@@ -12,23 +12,26 @@ const credit = changes => ({ id: 42, clienteNombre: "  Ana   Prueba ", clienteTe
   fechaPrimerPago: "2026-09-17", fechaProximoPago: null, abonos: [], ...changes });
 const payment = (valor, changes = {}) => ({ valor, fechaAbono: new Date("2026-10-07T13:00:00Z"), estado: "APROBADO", ...changes });
 
-test("20 days is inclusive and 19 days is excluded using the oldest unpaid due date", () => {
+test("only exactly 20 days is eligible, with no 19-day early notice or 21-plus-day backlog", () => {
   assert.equal(getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-18" }), today), null);
   assert.deepEqual(getCreditOverdueDataCandidate(credit(), today), {
     creditId: 42, phone: "573000000042", name: "Ana Prueba", daysPastDue: 20,
     installmentNumber: 1, dueDate: "2026-09-17",
   });
-  assert.equal(getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-16" }), today)?.daysPastDue, 21);
+  for (const fechaPrimerPago of ["2026-09-16", "2026-09-01", "2026-08-01"]) {
+    assert.equal(getCreditOverdueDataCandidate(credit({ fechaPrimerPago }), today), null);
+  }
 });
 
 test("payments remove the oldest paid arrears while partial or voided payments do not", () => {
   assert.equal(getCreditOverdueDataCandidate(credit({ abonos: [payment(50)] }), today)?.daysPastDue, 20);
   assert.equal(getCreditOverdueDataCandidate(credit({ abonos: [payment(100)] }), today), null);
-  const second = getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-01", abonos: [payment(100)] }), today);
-  assert.equal(second?.daysPastDue, 22);
+  const second = getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-03", abonos: [payment(100)] }), today);
+  assert.equal(second?.daysPastDue, 20);
   assert.equal(second?.installmentNumber, 2);
-  assert.equal(second?.dueDate, "2026-09-15");
-  assert.equal(getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-01", abonos: [payment(200)] }), today), null);
+  assert.equal(second?.dueDate, "2026-09-17");
+  assert.equal(getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-03", abonos: [payment(200)] }), today), null);
+  assert.equal(getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-01", abonos: [payment(100)] }), today), null);
   assert.equal(getCreditOverdueDataCandidate(credit({ abonos: [payment(300, { estado: "ANULADO" })] }), today)?.daysPastDue, 20);
 });
 
@@ -56,10 +59,10 @@ test("missing or invalid dates cannot create guessed historical arrears", () => 
 });
 
 test("an administrative override applies only to the first unpaid installment and the oldest actual arrear wins", () => {
-  const candidate = getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-01", fechaProximoPago: "2026-10-20" }), today);
-  assert.equal(candidate?.daysPastDue, 22);
+  const candidate = getCreditOverdueDataCandidate(credit({ fechaPrimerPago: "2026-09-03", fechaProximoPago: "2026-10-20" }), today);
+  assert.equal(candidate?.daysPastDue, 20);
   assert.equal(candidate?.installmentNumber, 2);
-  assert.equal(candidate?.dueDate, "2026-09-15");
+  assert.equal(candidate?.dueDate, "2026-09-17");
   assert.equal(getCreditOverdueDataCandidate(credit({ fechaProximoPago: "2026-10-20" }), today), null);
 });
 
@@ -99,18 +102,18 @@ test("only the customer's valid mobile is used, names are normalized and Prisma 
   assert.equal(candidate?.daysPastDue, 20);
 });
 
-test("grouping sends once per normalized phone, choosing greatest arrears then lowest credit id", () => {
+test("grouping sends once per normalized phone, choosing the lowest exact-day credit id", () => {
   const candidates = [
     getCreditOverdueDataCandidate(credit({ id: 9, clienteTelefono: "3000000009" }), today),
     getCreditOverdueDataCandidate(credit({ id: 43 }), today),
-    getCreditOverdueDataCandidate(credit({ id: 44, fechaPrimerPago: "2026-09-01" }), today),
-    getCreditOverdueDataCandidate(credit({ id: 40, fechaPrimerPago: "2026-09-01", clienteTelefono: "+57 300 000 0042" }), today),
+    getCreditOverdueDataCandidate(credit({ id: 44 }), today),
+    getCreditOverdueDataCandidate(credit({ id: 40, clienteTelefono: "+57 300 000 0042" }), today),
   ];
   assert.ok(candidates.every(Boolean));
   const unchanged = structuredClone(candidates);
   const grouped = groupCreditOverdueDataCandidates(candidates);
   assert.deepEqual(grouped.map(item => [item.phone, item.creditId, item.daysPastDue]), [
-    ["573000000009", 9, 20], ["573000000042", 40, 36],
+    ["573000000009", 9, 20], ["573000000042", 40, 20],
   ]);
   assert.deepEqual(groupCreditOverdueDataCandidates([...candidates].reverse()), grouped);
   assert.deepEqual(candidates, unchanged);
@@ -124,6 +127,7 @@ test("20-day threshold and sending window follow Bogotá, independent of server 
       process.env.TZ = timezone;
       assert.equal(getCreditOverdueDataCandidate(credit(), new Date("2026-10-07T04:59:59.999Z")), null, timezone);
       assert.equal(getCreditOverdueDataCandidate(credit(), new Date("2026-10-07T05:00:00.000Z"))?.daysPastDue, 20, timezone);
+      assert.equal(getCreditOverdueDataCandidate(credit(), new Date("2026-10-08T05:00:00.000Z")), null, timezone);
       assert.equal(isCreditOverdueDataWindow(new Date("2026-10-07T14:59:59.999Z")), false, timezone);
       assert.equal(isCreditOverdueDataWindow(new Date("2026-10-07T15:00:00.000Z")), true, timezone);
       assert.equal(isCreditOverdueDataWindow(new Date("2026-10-07T15:59:59.999Z")), true, timezone);
