@@ -105,7 +105,7 @@ const DRAFT_PROCESS_STAGE = `CASE
 
 const EXPORT_CTE = `WITH requests AS (
   SELECT 'CREDIT'::text AS "source", c."id" AS "entityId", s."aliadoId", c."sedeId", c."vendedorId",
-    COALESCE(('SOL-' || LPAD(origin."id"::text, 6, '0')), c."folio") AS "solicitudNumero",
+    COALESCE(('SOL-' || LPAD(origin."id"::text, GREATEST(6, LENGTH(origin."id"::text)), '0')), c."folio") AS "solicitudNumero",
     COALESCE(origin."createdAt", c."createdAt" AT TIME ZONE 'UTC') AS "createdAt",
     CASE WHEN UPPER(c."estado") IN ('ANULADO','ANULADA','CANCELADO','CANCELADA') THEN 'CANCELADA' ELSE 'APROBADA' END AS "estado",
     NULL::text AS "processStage",
@@ -137,7 +137,7 @@ const EXPORT_CTE = `WITH requests AS (
   ) dc ON TRUE
   UNION ALL
   SELECT 'DRAFT'::text, d."id", s."aliadoId", d."sedeId", d."vendedorId",
-    'SOL-' || LPAD(d."id"::text, 6, '0'), d."createdAt", ${DRAFT_STATE}, ${DRAFT_PROCESS_STAGE}, NULL::text,
+    'SOL-' || LPAD(d."id"::text, GREATEST(6, LENGTH(d."id"::text)), '0'), d."createdAt", ${DRAFT_STATE}, ${DRAFT_PROCESS_STAGE}, NULL::text,
     NULL::text, NULL::text,
     COALESCE(NULLIF(d."clienteNombre", ''), ${draftText("clienteNombre")}, NULLIF(CONCAT_WS(' ', ${draftText("clientePrimerNombre")}, ${draftText("clientePrimerApellido")}, ${draftText("clienteSegundoApellido")}), '')),
     ${draftText("clienteTipoDocumento")}, d."clienteDocumento", d."clienteTelefono", ${draftText("clienteCorreo")},
