@@ -4,10 +4,11 @@ import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 const schedule = loadReissueModule("lib/internal-cron-schedule.ts");
 const campaigns = ["credit-due-reminders", "credit-due-today-reminders", "credit-overdue-data"];
+const twoDaysTask = "credit-due-two-days-reminders";
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, initialBatchDate,
+function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, failTwoDays = false, initialBatchDate,
   welcomeEnabled = false, holdWelcome = false, failWelcome = false, cronEnabled = true,
   reviewEnabled = false, holdReview = false, failReview = false } = {}) {
   let clock = new Date(now);
@@ -33,13 +34,15 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
   const runCampaign = async (name, options) => {
     calls.push({ name, options: plain(options) });
     if (name === "credit-overdue-data" && failData) throw new Error("private phone webhook credential");
+    if (name === twoDaysTask && failTwoDays) throw new Error("private phone webhook credential");
     if (paused) await new Promise(resolve => releases.push(resolve));
     return report;
   };
   const cron = loadReissueModule("lib/internal-cron.ts", {
     "@/lib/credit-mora-sync": { syncAllCreditMora: async () => ({ ok: true }) },
     "@/lib/credit-due-reminders": {
-      runCreditDueReminders: options => runCampaign(options.campaign === "due_today" ? "credit-due-today-reminders" : "credit-due-reminders", options),
+      runCreditDueReminders: options => runCampaign(options.campaign === "two_days_before_due" ? twoDaysTask
+        : options.campaign === "due_today" ? "credit-due-today-reminders" : "credit-due-reminders", options),
     },
     "@/lib/credit-overdue-data-campaign": {
       runCreditOverdueDataCampaign: options => runCampaign("credit-overdue-data", options),
@@ -98,13 +101,19 @@ test("Datos joins the existing campaigns only in the 10:00-10:59 Colombia window
     assert.deepEqual(plain(schedule.getDueInternalCronTasks(time).filter(schedule.isCreditCampaignTask)), campaigns);
     assert.deepEqual(plain(schedule.getStartupRecoveryTasks(time).filter(schedule.isCreditCampaignTask)), campaigns);
   }
-  for (const time of ["09:59", "11:00", "16:00", "23:40"]) {
+  for (const time of ["09:59", "11:00", "12:59", "14:00", "16:00", "23:40"]) {
     assert.deepEqual(plain(schedule.getDueInternalCronTasks(time).filter(schedule.isCreditCampaignTask)), []);
     assert.deepEqual(plain(schedule.getStartupRecoveryTasks(time).filter(schedule.isCreditCampaignTask)), []);
   }
   assert.deepEqual(plain(schedule.getStartupRecoveryTasks("23:40")), ["wompi", "efecty", "mora"]);
   assert.equal(schedule.isCreditReminderTask("credit-overdue-data"), false);
   assert.equal(schedule.isCreditCampaignTask("credit-overdue-data"), true);
+  for (const time of ["13:00", "13:01", "13:59"]) {
+    assert.deepEqual(plain(schedule.getDueInternalCronTasks(time).filter(schedule.isCreditCampaignTask)), [twoDaysTask]);
+    assert.deepEqual(plain(schedule.getStartupRecoveryTasks(time).filter(schedule.isCreditCampaignTask)), [twoDaysTask]);
+  }
+  assert.equal(schedule.isCreditReminderTask(twoDaysTask), true);
+  assert.equal(schedule.isCreditCampaignTask(twoDaysTask), true);
 });
 
 test("a live tick starts Datos and both reminders concurrently with independent daily keys", async () => {
@@ -129,10 +138,58 @@ test("a live tick starts Datos and both reminders concurrently with independent 
   f.tick();
   await nextTurn();
   assert.equal(f.calls.length, 3);
+  f.setClock("2026-10-08T18:00:00Z");
+  f.tick();
+  await nextTurn();
+  assert.deepEqual(f.calls[3], { name: twoDaysTask, options: { dryRun: false, campaign: "two_days_before_due" } });
+  assert.ok(f.state().completed.has(twoDaysTask + ":2026-10-08"));
+  f.tick();
+  await nextTurn();
+  assert.equal(f.calls.length, 4);
   f.setClock("2026-10-09T15:00:00Z");
   f.tick();
   await nextTurn();
-  assert.equal(f.calls.length, 6);
+  assert.equal(f.calls.length, 7);
+  f.setClock("2026-10-09T18:00:00Z");
+  f.tick();
+  await nextTurn();
+  assert.equal(f.calls.length, 8);
+  assert.ok(f.state().completed.has(twoDaysTask + ":2026-10-09"));
+});
+
+test("startup recovery at 13:59 runs only the two-days reminder and shares its daily timer key", async () => {
+  const f = cronFixture({ now: "2026-10-07T18:59:00Z", hold: true });
+  f.start();
+  await nextTurn();
+  assert.deepEqual(f.calls, [{ name: twoDaysTask, options: { dryRun: false, campaign: "two_days_before_due" } }]);
+  assert.equal(f.state().running.has(twoDaysTask), true);
+  f.tick();
+  await nextTurn();
+  assert.equal(f.calls.length, 1);
+  f.release();
+  await nextTurn();
+  assert.ok(f.state().completed.has(twoDaysTask + ":2026-10-07"));
+  for (const task of campaigns) assert.equal(f.state().completed.has(task + ":2026-10-07"), false);
+  f.setClock("2026-10-07T19:00:00Z");
+  f.tick();
+  await nextTurn();
+  assert.equal(f.calls.length, 1);
+});
+
+test("a two-days startup failure is sanitized and leaves its own 13-hour slot recoverable", async () => {
+  const f = cronFixture({ now: "2026-10-07T18:30:00Z", failTwoDays: true });
+  f.start();
+  await nextTurn();
+  assert.deepEqual(f.calls.map(call => call.name), [twoDaysTask]);
+  assert.equal(f.state().completed.has(twoDaysTask + ":2026-10-07"), false);
+  assert.equal(f.state().running.has(twoDaysTask), false);
+  assert.equal(f.errors.length, 1);
+  assert.doesNotMatch(JSON.stringify(f.errors), /private|phone|webhook|credential/);
+  f.tick();
+  await nextTurn();
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.state().running.has(twoDaysTask), false);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
 });
 
 test("startup recovery starts all campaigns together and shares daily dedupe with timer ticks", async () => {

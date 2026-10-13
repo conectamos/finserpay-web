@@ -11,6 +11,7 @@ import {
 // The ledger identifies an installment/template, never a recipient or webhook credential.
 export const CREDIT_DUE_REMINDER_TEMPLATE_KEY = "recordatorio_1_dia_falta_antescuota";
 export const CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY = "recordatorio_hoyvence_cuota";
+export const CREDIT_DUE_TWO_DAYS_REMINDER_TEMPLATE_KEY = "recordatorio_2_dias_antescuota";
 const campaignConfig = {
   before_due: {
     templateKey: CREDIT_DUE_REMINDER_TEMPLATE_KEY,
@@ -21,6 +22,11 @@ const campaignConfig = {
     templateKey: CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY,
     enabledEnv: "DAPTA_HOYVENCE_ENABLED",
     webhookEnv: "DAPTA_HOYVENCE_WEBHOOK_URL",
+  },
+  two_days_before_due: {
+    templateKey: CREDIT_DUE_TWO_DAYS_REMINDER_TEMPLATE_KEY,
+    enabledEnv: "DAPTA_RECORDATORIO_2_DIAS_ENABLED",
+    webhookEnv: "DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL",
   },
 } as const;
 const PAGE_SIZE = 250;
@@ -149,7 +155,7 @@ export function createCreditDueReminderRunner(deps: {
   const now = deps.now ?? (() => new Date());
   return async function run(options: CreditDueReminderOptions = {}): Promise<CreditDueReminderReport> {
     const campaign = options.campaign ?? "before_due";
-    if (campaign !== "before_due" && campaign !== "due_today") throw new Error("Invalid reminder campaign");
+    if (campaign !== "before_due" && campaign !== "due_today" && campaign !== "two_days_before_due") throw new Error("Invalid reminder campaign");
     const config = campaignConfig[campaign];
     const liveNow = now();
     const dryRun = options.dryRun !== false;
@@ -157,7 +163,7 @@ export function createCreditDueReminderRunner(deps: {
     const enabled = deps.enabled ? deps.enabled(campaign) : process.env[config.enabledEnv] === "true";
     const webhook = configuredWebhook(deps.webhookUrl ? deps.webhookUrl(campaign) : process.env[config.webhookEnv]);
     const report: CreditDueReminderReport = {
-      campaign, ok: true, dryRun, enabled, configured: Boolean(webhook), inWindow: isCreditDueReminderWindow(liveNow),
+      campaign, ok: true, dryRun, enabled, configured: Boolean(webhook), inWindow: isCreditDueReminderWindow(liveNow, campaign),
       generatedAt: liveNow.toISOString(), today: colombiaDateKey(today), templateKey: config.templateKey,
       summary: { scanned: 0, eligible: 0, invalidPhone: 0, excluded: 0, claimed: 0,
         accepted: 0, failed: 0, unknown: 0, duplicates: 0, staleClaims: 0, revalidatedOut: 0 },
@@ -200,7 +206,7 @@ export function createCreditDueReminderRunner(deps: {
           await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
           const current = await tx.credito.findUnique({ where: { id: credit.id }, select: creditSelect });
           const claimedAt = now();
-          const reminder = current && isCreditDueReminderWindow(claimedAt) ? getCreditDueReminder(current, claimedAt, campaign) : null;
+          const reminder = current && isCreditDueReminderWindow(claimedAt, campaign) ? getCreditDueReminder(current, claimedAt, campaign) : null;
           if (!reminder || reminder.installmentNumber !== candidate.installmentNumber || reminder.dueDate !== candidate.dueDate) return "ineligible";
           const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
             `INSERT INTO "CreditDueReminder" ("id","creditoId","numeroCuota","templateKey",
@@ -229,7 +235,7 @@ export function createCreditDueReminderRunner(deps: {
           const reminder = current ? getCreditDueReminder(current, validatedAt, campaign) : null;
           const dispatchAt = now();
           if (!reminder || reminder.installmentNumber !== candidate.installmentNumber || reminder.dueDate !== candidate.dueDate
-            || !isCreditDueReminderWindow(dispatchAt) || new Date(active[0].claimExpiresAt).getTime() <= dispatchAt.getTime()) {
+            || !isCreditDueReminderWindow(dispatchAt, campaign) || new Date(active[0].claimExpiresAt).getTime() <= dispatchAt.getTime()) {
             report.summary.revalidatedOut += 1;
             // This owner knows it never began HTTP. Release only its still-active
             // claim so a rescheduled/unpaid installment can qualify on its new eve.

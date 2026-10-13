@@ -103,7 +103,9 @@ test("the route requires an active central FINSERPAY administrator for global se
     const f = fixture();
     assert.equal((await route.GET(f.request("GET"))).status, status);
     assert.equal((await route.POST(f.request("POST", "", { dryRun: false }))).status, status);
-    assert.equal(calls.length, status === 200 ? 2 : 0);
+    assert.equal((await route.GET(f.request("GET", "", {}, "?campaign=two_days_before_due"))).status, status);
+    assert.equal((await route.POST(f.request("POST", "", { campaign: "two_days_before_due", dryRun: false }))).status, status);
+    assert.equal(calls.length, status === 200 ? 4 : 0);
   }
 });
 
@@ -120,17 +122,23 @@ test("campaign selection is whitelisted and defaults to before-due for GET and P
   await f.handlers.POST(f.request("POST", "cron-test-token", {}, "?campaign=due_today&dryRun=false"));
   assert.equal(f.calls[3].campaign, "before_due");
   assert.equal(f.calls[3].dryRun, true);
-  for (const campaign of ["", "invalid", "DUE_TODAY", null, 1, [], {}]) {
+  await f.handlers.GET(f.request("GET", "diana-preview-token", {}, "?campaign=two_days_before_due&dryRun=false&today=2026-10-06"));
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls[4])), { campaign: "two_days_before_due", dryRun: true, previewDate: "2026-10-06" });
+  await f.handlers.POST(f.request("POST", "cron-test-token", { campaign: "two_days_before_due", dryRun: false, today: "1900-01-01" }));
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls[5])), { campaign: "two_days_before_due", dryRun: false });
+  for (const campaign of ["", "invalid", "DUE_TODAY", "TWO_DAYS_BEFORE_DUE", null, 1, [], {}]) {
     assert.equal((await f.handlers.POST(f.request("POST", "cron-test-token", { campaign, dryRun: false }))).status, 400);
   }
-  for (const campaign of ["", "invalid", "DUE_TODAY"]) {
+  for (const campaign of ["", "invalid", "DUE_TODAY", "TWO_DAYS_BEFORE_DUE"]) {
     assert.equal((await f.handlers.GET(f.request("GET", "diana-preview-token", {}, "?campaign=" + campaign))).status, 400);
   }
-  assert.equal(f.calls.length, 4);
+  assert.equal(f.calls.length, 6);
 });
 
-test("Diana's preview credential cannot start due-today messages", async () => {
+test("Diana's preview credential cannot start due-today or two-days messages, even in POST preview", async () => {
   const f = fixture();
-  assert.equal((await f.handlers.POST(f.request("POST", "diana-preview-token", { campaign: "due_today", dryRun: false }))).status, 401);
+  for (const campaign of ["due_today", "two_days_before_due"]) for (const dryRun of [true, false]) {
+    assert.equal((await f.handlers.POST(f.request("POST", "diana-preview-token", { campaign, dryRun }))).status, 401);
+  }
   assert.equal(f.calls.length, 0);
 });

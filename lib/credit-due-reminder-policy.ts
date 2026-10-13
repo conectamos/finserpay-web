@@ -28,7 +28,7 @@ export type CreditDueReminder = {
   name: string;
 };
 
-export type CreditDueReminderCampaign = "before_due" | "due_today";
+export type CreditDueReminderCampaign = "before_due" | "due_today" | "two_days_before_due";
 
 const reminderHourFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: COLOMBIA_TIME_ZONE,
@@ -46,9 +46,10 @@ function isRegisteredCalendarDate(value: DateValue): boolean {
   return Number.isFinite(calendarDate.getTime()) && calendarDate.toISOString().slice(0, 10) === calendarDay;
 }
 
-/** Daily sending window: 10:00 inclusive to 11:00 exclusive in Colombia. */
-export function isCreditDueReminderWindow(now: Date): boolean {
-  return Number.isFinite(now.getTime()) && reminderHourFormatter.format(now) === "10";
+/** One Colombian hour: two days before at 13:00; existing campaigns at 10:00. */
+export function isCreditDueReminderWindow(now: Date, campaign: CreditDueReminderCampaign = "before_due"): boolean {
+  if (campaign !== "before_due" && campaign !== "due_today" && campaign !== "two_days_before_due") return false;
+  return Number.isFinite(now.getTime()) && reminderHourFormatter.format(now) === (campaign === "two_days_before_due" ? "13" : "10");
 }
 
 /** Select the campaign's signed Excel days, with contact and settled-credit guards. */
@@ -57,7 +58,7 @@ export function getCreditDueReminder(
   today: DateValue,
   campaign: CreditDueReminderCampaign = "before_due"
 ): CreditDueReminder | null {
-  if (campaign !== "before_due" && campaign !== "due_today") return null;
+  if (campaign !== "before_due" && campaign !== "due_today" && campaign !== "two_days_before_due") return null;
   const state = String(credit.estado || "").trim().toUpperCase();
   if (isExcludedCarteraCreditState(state) || state === "PAGADO" || state === "PAZ_Y_SALVO" ||
       credit.pazYSalvoEmitidoAt || !Number.isSafeInteger(credit.id) || credit.id < 1) return null;
@@ -87,12 +88,12 @@ export function getCreditDueReminder(
       settled: Boolean(credit.pazYSalvoEmitidoAt),
     });
     const next = plan.nextInstallment;
-    if (plan.estadoPago === "PAGADO" || !(plan.saldoPendiente > 0) ||
+    if (plan.estadoPago === "PAGADO" || !(plan.saldoPendiente > 0) || !(plan.pendingCount > 0) ||
         !next || !(next.saldoPendiente > 0)) return null;
     const daysPastDue = resolveCarteraDaysPastDue(plan, today);
     if (campaign === "due_today") {
-      if (daysPastDue !== 0 || !(plan.pendingCount > 0) || next.fechaVencimiento !== colombiaDateKey(today)) return null;
-    } else if (daysPastDue !== -1) return null;
+      if (daysPastDue !== 0 || next.fechaVencimiento !== colombiaDateKey(today)) return null;
+    } else if (daysPastDue !== (campaign === "two_days_before_due" ? -2 : -1)) return null;
     return { creditId: credit.id, installmentNumber: next.numero,
       dueDate: next.fechaVencimiento, phone, name };
   } catch {
