@@ -465,6 +465,9 @@ const creditListInclude = {
   amortizacion: {
     select: {
       cuotaComercial: true,
+      numeroCuotas: true,
+      frecuenciaPago: true,
+      totalPagar: true,
     },
   },
 } satisfies Prisma.CreditoInclude;
@@ -544,6 +547,13 @@ function readCommercialInstallmentFromSnapshot(snapshot: unknown) {
 }
 
 function resolveCommercialInstallment(item: CreditListItem) {
+  // Administrative revisions keep the signed amortization intact. The
+  // operational installment must reflect the revised term rather than it.
+  if (item.amortizacion && (
+    item.amortizacion.numeroCuotas !== item.plazoMeses ||
+    item.amortizacion.frecuenciaPago !== item.frecuenciaPago ||
+    Math.abs(Number(item.amortizacion.totalPagar) - Number(item.montoCredito)) > 0.01
+  )) return Number(item.valorCuota || 0);
   const persistedCommercialInstallment = Number(
     item.amortizacion?.cuotaComercial
   );

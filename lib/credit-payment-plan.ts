@@ -1,4 +1,5 @@
 import {
+  addPaymentFrequency,
   PAYMENT_FREQUENCY_OPTIONS,
   normalizePaymentFrequency,
 } from "@/lib/credit-factory";
@@ -114,7 +115,7 @@ function addCalendarPaymentFrequency(
   const date = toUtcCalendarDate(start);
 
   if (frequency === "MENSUAL") {
-    date.setUTCMonth(date.getUTCMonth() + steps);
+    return utcCalendarParts(addPaymentFrequency(date, frequency, steps));
   } else {
     const days =
       PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency)

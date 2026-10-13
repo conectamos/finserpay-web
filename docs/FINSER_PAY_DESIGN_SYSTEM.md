@@ -111,6 +111,12 @@ producto documentada.
 - Las acciones frecuentes se agrupan y las peligrosas viven en un menu separado.
 - Los identificadores sensibles, como IMEI, se enmascaran en vistas generales.
 
+El ajuste de un plan con amortización aprobada se habilita exclusivamente al
+administrador central de FINSER PAY. Dentro de Gestionar crédito se solicita el
+motivo antes de confirmar. La revisión conserva el contrato, la amortización
+original y los abonos; el expediente y el plan de pagos muestran los valores
+vigentes, y los recibos anteriores conservan las condiciones de su registro.
+
 ### Tablas y documentos
 
 - Las tablas priorizan lectura, alineacion numerica y estados escaneables.

@@ -297,6 +297,9 @@ export async function GET(req: Request) {
         const rates = resolveCarteraExportRates({
           tasaInteresEa: credito.tasaInteresEa,
           fianzaPorcentaje: credito.fianzaPorcentaje,
+          plazoMeses: credito.plazoMeses,
+          valorFianza: credito.valorFianza,
+          saldoBaseFinanciado: credito.saldoBaseFinanciado,
           contratoSnapshot: credito.contratoSnapshot,
           amortizacion: credito.amortizacion,
         });

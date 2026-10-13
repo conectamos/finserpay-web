@@ -3360,6 +3360,21 @@ export default function CreditFactoryConsole({
   const [planInstallments, setPlanInstallments] = useState("");
   const [planFrequency, setPlanFrequency] = useState(DEFAULT_PAYMENT_FREQUENCY);
   const [planFirstPaymentDate, setPlanFirstPaymentDate] = useState("");
+  const [planAdjustmentReason, setPlanAdjustmentReason] = useState("");
+  const planAdjustmentReasonControl = canSeeInternalPricing ? (
+    <label className="mt-3 grid gap-2 text-sm font-semibold text-[var(--fp-muted)]">
+      Motivo del ajuste (mínimo 10 caracteres)
+      <textarea
+        value={planAdjustmentReason}
+        onChange={(event) => setPlanAdjustmentReason(event.target.value)}
+        minLength={10}
+        maxLength={1000}
+        rows={3}
+        placeholder="Describe la corrección que necesita este crédito"
+        className="fp-ui-input min-h-20 resize-y py-3"
+      />
+    </label>
+  ) : null;
   const [updatingPlan, setUpdatingPlan] = useState(false);
   const [manualPushPreset, setManualPushPreset] =
     useState<ManualPushPreset>("internet");
@@ -7484,6 +7499,7 @@ export default function CreditFactoryConsole({
     }
 
     setNextDueDate(dateOnly(selectedCredit.fechaProximoPago));
+    setPlanAdjustmentReason("");
     setPlanInstallments(String(selectedCredit.plazoMeses || DEFAULT_CREDIT_INSTALLMENTS));
     setPlanFrequency(selectedCredit.frecuenciaPago || DEFAULT_PAYMENT_FREQUENCY);
     setPlanFirstPaymentDate(
@@ -11293,6 +11309,7 @@ export default function CreditFactoryConsole({
   };
 
   const updateCreditPlan = async () => {
+    if (updatingPlan || runningCommand !== null) return;
     if (!canAdmin) {
       setNotice({
         text: "Solo el administrador puede ajustar el plan de pagos.",
@@ -11316,6 +11333,11 @@ export default function CreditFactoryConsole({
         text: "Indica un numero de cuotas valido.",
         tone: "red",
       });
+      return;
+    }
+
+    if (canSeeInternalPricing && planAdjustmentReason.trim().length < 10) {
+      setNotice({ text: "Indica el motivo del ajuste del plan (mínimo 10 caracteres).", tone: "red" });
       return;
     }
 
@@ -11350,7 +11372,8 @@ export default function CreditFactoryConsole({
             plazoMeses: normalizedInstallments,
             frecuenciaPago: planFrequency,
             fechaPrimerPago: planFirstPaymentDate || null,
-            observacionAdmin: calendarOnly
+            expectedUpdatedAt: selectedCredit.updatedAt,
+            observacionAdmin: canSeeInternalPricing ? planAdjustmentReason.trim() : calendarOnly
               ? "Correccion de fecha del primer pago"
               : "Correccion de plazo/frecuencia",
           }),
@@ -11366,6 +11389,11 @@ export default function CreditFactoryConsole({
       }
 
       upsertCredit(result.data.item);
+      setPlanAdjustmentReason("");
+      setPlanInstallments(String(result.data.item.plazoMeses));
+      setPlanFrequency(result.data.item.frecuenciaPago || DEFAULT_PAYMENT_FREQUENCY);
+      setPlanFirstPaymentDate(dateOnly(result.data.item.fechaPrimerPago));
+      setNextDueDate(dateOnly(result.data.item.fechaProximoPago));
       await loadPayments(result.data.item.id);
       setNotice({
         text: result.data.message,
@@ -19650,10 +19678,11 @@ export default function CreditFactoryConsole({
                                     className="h-11 rounded-lg border border-[#ccd7dd] bg-white px-3 text-sm font-bold text-[#151a21] outline-none transition focus:border-[#a6d51f] focus:ring-4 focus:ring-[#a6d51f]/15"
                                   />
                                 </label>
+                                {planAdjustmentReasonControl}
                                 <button
                                   type="button"
                                   onClick={() => void updateCreditPlan()}
-                                  disabled={updatingPlan || runningCommand !== null}
+                                  disabled={updatingPlan || runningCommand !== null || (canSeeInternalPricing && planAdjustmentReason.trim().length < 10)}
                                   className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#5c7a13] bg-[#a6d51f] px-4 text-sm font-black text-[#111820] transition hover:bg-[#b8eb24] disabled:cursor-not-allowed disabled:border-[#d0d5dd] disabled:bg-[#e5e9ee] disabled:text-[#8a95a3]"
                                 >
                                   <CalendarDays className="h-4 w-4" strokeWidth={1.8} />
@@ -19989,11 +20018,12 @@ export default function CreditFactoryConsole({
                               className="h-11 rounded-[14px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-[#13bfa6] focus:ring-4 focus:ring-[#13bfa6]/10"
                             />
                           </label>
+                          {planAdjustmentReasonControl}
                           <button
                             type="button"
                             onClick={() => void updateCreditPlan()}
-                            disabled={updatingPlan || runningCommand !== null}
-                            className="h-11 rounded-[14px] border border-[#145a5a] bg-[#145a5a] px-4 text-sm font-black text-white transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                            disabled={updatingPlan || runningCommand !== null || (canSeeInternalPricing && planAdjustmentReason.trim().length < 10)}
+                            className="fp-ui-button is-primary"
                           >
                             {updatingPlan ? "Guardando..." : "Guardar plan"}
                           </button>
@@ -20397,11 +20427,12 @@ export default function CreditFactoryConsole({
                           />
                         </label>
 
+                        {planAdjustmentReasonControl}
                         <button
                           type="button"
                           onClick={() => void updateCreditPlan()}
-                          disabled={updatingPlan || runningCommand !== null}
-                          className="h-12 self-end rounded-2xl border border-[#145a5a] bg-[#145a5a] px-4 text-sm font-black text-white shadow-[0_14px_30px_rgba(20,90,90,0.18)] transition hover:bg-[#0f4a4a] disabled:opacity-70"
+                          disabled={updatingPlan || runningCommand !== null || (canSeeInternalPricing && planAdjustmentReason.trim().length < 10)}
+                          className="fp-ui-button is-primary self-end"
                         >
                           {updatingPlan ? "Guardando..." : "Guardar plan"}
                         </button>

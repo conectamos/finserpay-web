@@ -172,16 +172,18 @@ test("el API expone el resumen saneado y conserva la redaccion por permisos", ()
 
   assert.ok(serializedBlock, "debe existir el serializador de creditos");
   assert.ok(redactedBlock, "debe existir la redaccion para perfiles no admin");
+  const serializedPayload = serializedBlock.slice(serializedBlock.indexOf("\n  return {"));
+  assert.ok(serializedPayload.startsWith("\n  return {"), "debe localizarse el objeto de respuesta");
   assert.match(
     serializedBlock,
-    /extractCreditFactorySnapshotDetails\(\s*item\.contratoSnapshot\s*\)/
+    /extractCreditFactorySnapshotDetails\(\s*item\.contratoSnapshot,\s*\{ imei: item\.imei, deviceUid: item\.deviceUid \}\s*\)/
   );
   assert.match(serializedBlock, /clienteEstadoCivil:\s*factorySnapshotDetails\.clienteEstadoCivil/);
   assert.match(serializedBlock, /clienteEstrato:\s*factorySnapshotDetails\.clienteEstrato/);
   assert.match(serializedBlock, /plataformaDispositivo:\s*factorySnapshotDetails\.paso2\.plataformaDispositivo/);
   assert.match(serializedBlock, /resumenFabrica:\s*{\s*paso2:\s*factorySnapshotDetails\.paso2/);
   assert.doesNotMatch(
-    serializedBlock,
+    serializedPayload,
     /contratoSnapshot:\s*item\.contratoSnapshot/,
     "el endpoint no debe enviar el snapshot contractual completo"
   );

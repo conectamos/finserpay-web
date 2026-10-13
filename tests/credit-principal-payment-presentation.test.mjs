@@ -127,6 +127,7 @@ async function adminReceipt(paymentId, laterRevision = false, audited = false) {
     "@/lib/prisma": { default: prisma },
     "@/lib/credit-display-number-server": { getCreditDisplayNumbers: async () => new Map() },
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
+    "@/lib/credit-plan-revision": { getCreditPlanTermsAtDate: async () => null },
     "@/lib/credit-factory": { getPaymentFrequencyLabel: () => "Quincenal" },
     "@/lib/client-payment-receipt-pdf": { buildClientPaymentReceiptPdf },
     "@/lib/credit-audit-receipt": {

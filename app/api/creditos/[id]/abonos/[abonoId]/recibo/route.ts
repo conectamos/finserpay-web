@@ -17,6 +17,7 @@ import {
 } from "@/lib/credit-route-lookup";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { COLOMBIA_TIME_ZONE } from "@/lib/colombia-date";
+import { getCreditPlanTermsAtDate } from "@/lib/credit-plan-revision";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -194,6 +195,22 @@ export async function GET(
       return NextResponse.json({ error: "Abono no encontrado" }, { status: 404 });
     }
 
+    // Use registration time, not a backdated payment date, to find the plan
+    // that was effective when this receipt was created. Identity, payments and
+    // reconciled principal snapshots remain the original persisted records.
+    const historicalTerms = await getCreditPlanTermsAtDate(abono.creditoId, abono.createdAt);
+    const receiptCredit = historicalTerms ? {
+      ...abono.credito,
+      montoCredito: historicalTerms.montoCredito,
+      valorCuota: historicalTerms.valorCuota,
+      plazoMeses: historicalTerms.plazoMeses,
+      frecuenciaPago: historicalTerms.frecuenciaPago,
+      fechaPrimerPago: historicalTerms.fechaPrimerPago ? new Date(historicalTerms.fechaPrimerPago) : null,
+      // The revision's next-due override belongs to its later cut, not to this
+      // older receipt. Rebuild its own next unpaid date from the old calendar.
+      fechaProximoPago: null,
+    } : abono.credito;
+
     const activeAbonos = await prisma.creditoAbono.findMany({
       where: {
         creditoId: abono.creditoId,
@@ -230,7 +247,7 @@ export async function GET(
     const closesCurrentCredit = Boolean(
       abono.credito.pazYSalvoEmitidoAt &&
         paymentTotalInCents >=
-          Math.round(Number(abono.credito.montoCredito || 0) * 100)
+          Math.round(Number(receiptCredit.montoCredito || 0) * 100)
     );
     const currentSnapshot = parseCapitalPlanSnapshot(abono.credito.planCapitalVigente);
     const auditedReceipt = currentSnapshot
@@ -273,14 +290,14 @@ export async function GET(
     );
     // Never replay an earlier receipt against a later reamortization snapshot.
     const currentPlan = receiptSnapshot
-      ? buildPlan({ ...abono.credito, planCapitalVigente: receiptSnapshot,
-            fechaProximoPago: auditedPlanView ? null : abono.credito.fechaProximoPago },
+      ? buildPlan({ ...receiptCredit, planCapitalVigente: receiptSnapshot,
+            fechaProximoPago: auditedPlanView ? null : receiptCredit.fechaProximoPago },
           isPrincipalPayment || Boolean(auditedPlanView?.snapshot)
             ? [{ valor: receiptSnapshot.totalAbonadoAlCorte, fechaAbono: abono.fechaAbono }]
             : activeAbonos.filter((item) => item.id <= abono.id))
       : auditedPlanView || isPriorToPrincipalCut
         ? null
-        : buildPlan(abono.credito, activeUntilThisPayment, closesCurrentCredit);
+        : buildPlan(receiptCredit, activeUntilThisPayment, closesCurrentCredit);
     const isAnnulled = String(abono.estado || "").toUpperCase() === "ANULADO";
     const reciboNumero = `RP-${abono.credito.folio}-${abono.id}`;
     const numeroCreditoVisible = (await getCreditDisplayNumbers([abono.creditoId])).get(abono.creditoId) || abono.credito.folio;
@@ -294,7 +311,7 @@ export async function GET(
       abono.usuario.usuario;
     const totalInstallments = currentPlan
       ? currentPlan.installments.filter((item) => !item.eliminada).length
-      : Math.max(1, Math.trunc(Number(abono.credito.plazoMeses || 1)));
+      : Math.max(1, Math.trunc(Number(receiptCredit.plazoMeses || 1)));
     const nextInstallments = (currentPlan?.installments || [])
       .filter((item) => item.saldoPendiente > 0)
       .slice(0, 6);
@@ -341,7 +358,7 @@ export async function GET(
           { label: "Teléfono", value: textValue(abono.credito.clienteTelefono) },
           { label: "Equipo", value: textValue(equipo) },
           { label: "IMEI", value: textValue(abono.credito.imei) },
-          { label: "Frecuencia", value: getPaymentFrequencyLabel(abono.credito.frecuenciaPago) },
+          { label: "Frecuencia", value: getPaymentFrequencyLabel(receiptCredit.frecuenciaPago) },
           ...(currentPlan ? [{ label: "Cuotas pagadas", value: `${currentPlan.paidCount} DE ${totalInstallments}` }] : []),
         ],
         upcomingInstallments: nextInstallments.map((item) => ({

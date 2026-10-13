@@ -14,6 +14,7 @@ import {
   getDefaultFirstPaymentDateObject,
   getPaymentFrequencyLabel,
   MAX_CREDIT_INSTALLMENTS,
+  PAYMENT_FREQUENCY_OPTIONS,
   normalizeCreditInstallments,
   normalizePaymentFrequency,
   resolveCreditPaymentSummary,
@@ -36,7 +37,13 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { extractCreditFactorySnapshotDetails } from "@/lib/credit-factory-snapshot";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { buildMoraLockMessage } from "@/lib/credit-lock-message";
-import { hasCreditAmortization } from "@/lib/credit-amortization-storage";
+import { getCreditAmortizationByCreditId, hasCreditAmortization } from "@/lib/credit-amortization-storage";
+import {
+  createAdministrativeAmortization,
+  ensureCreditPlanRevisionSchema,
+  getLatestCreditPlanAmortization,
+  insertCreditPlanRevision,
+} from "@/lib/credit-plan-revision";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isMassImportedCredit } from "@/lib/credit-import-flags";
@@ -56,7 +63,12 @@ type CommandBody = {
   frecuenciaPago?: string;
   observacionAdmin?: string;
   plazoMeses?: number | string;
+  expectedUpdatedAt?: string;
 };
+
+class CreditPlanAdjustmentError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
 
 const SUPERVISOR_COMMANDS: CreditAdminCommand[] = [
   "consult-device",
@@ -363,6 +375,136 @@ async function loadPaymentSummary(creditId: number) {
   };
 }
 
+/** Administrative revisions never replace the signed amortization or its documents. */
+async function adjustCentralAmortizedPlan(
+  creditId: number,
+  body: CommandBody,
+  user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>
+) {
+  if (!Number.isSafeInteger(user.id) || user.id <= 0 || !String(user.nombre || "").trim()) {
+    throw new CreditPlanAdjustmentError(403, "No se pudo verificar el administrador responsable del ajuste.");
+  }
+  const installments = Number(body.plazoMeses);
+  const frequency = String(body.frecuenciaPago || "").trim().toUpperCase();
+  const firstPayment = String(body.fechaPrimerPago || "").trim();
+  const reason = String(body.observacionAdmin || "").trim();
+  const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(firstPayment)
+    ? new Date(`${firstPayment}T12:00:00.000Z`) : null;
+  if (!(typeof body.plazoMeses === "number" || (typeof body.plazoMeses === "string" && /^\d+$/.test(body.plazoMeses))) ||
+      !Number.isSafeInteger(installments) || installments < 1 || installments > MAX_CREDIT_INSTALLMENTS) {
+    throw new CreditPlanAdjustmentError(400, `Indica entre 1 y ${MAX_CREDIT_INSTALLMENTS} cuotas enteras.`);
+  }
+  if (!PAYMENT_FREQUENCY_OPTIONS.some(option => option.value === frequency)) {
+    throw new CreditPlanAdjustmentError(400, "Selecciona una frecuencia de pago válida.");
+  }
+  if (!parsedDate || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== firstPayment) {
+    throw new CreditPlanAdjustmentError(400, "Indica una fecha válida para el primer pago.");
+  }
+  if (reason.length < 10 || reason.length > 1000) {
+    throw new CreditPlanAdjustmentError(400, "Indica el motivo del ajuste del plan (10 a 1000 caracteres).");
+  }
+  if (!body.expectedUpdatedAt || !Number.isFinite(Date.parse(body.expectedUpdatedAt))) {
+    throw new CreditPlanAdjustmentError(409, "Consulta nuevamente el crédito antes de ajustar su plan.");
+  }
+
+  await ensureCreditPlanRevisionSchema();
+  await ensureCreditAbonoAuditColumns();
+  const updated = await prisma.$transaction(async tx => {
+    await tx.$queryRawUnsafe('SELECT "id" FROM public."Credito" WHERE "id" = $1 FOR UPDATE', creditId);
+    const current = await loadCredit(creditId, tx);
+    if (!current) throw new CreditPlanAdjustmentError(404, "Crédito no encontrado.");
+    if (current.updatedAt.toISOString() !== new Date(body.expectedUpdatedAt!).toISOString()) {
+      throw new CreditPlanAdjustmentError(409, "El crédito cambió. Actualiza el expediente y revisa el plan antes de confirmar nuevamente.");
+    }
+    if (current.planCapitalVigente) {
+      throw new CreditPlanAdjustmentError(409, "El plan reducido por abono a capital requiere una revisión financiera específica.");
+    }
+    if (current.pazYSalvoEmitidoAt || /ANUL|CANCEL/.test(current.estado)) {
+      throw new CreditPlanAdjustmentError(409, "Este crédito está cerrado o anulado y no admite ajustes de plan.");
+    }
+    const original = await getCreditAmortizationByCreditId(creditId, tx);
+    if (!original) throw new CreditPlanAdjustmentError(409, "No se encontró la amortización aprobada. Actualiza el expediente.");
+    const source = await getLatestCreditPlanAmortization(creditId, tx) || original;
+    const calendarOnly = installments === current.plazoMeses && frequency === current.frecuenciaPago;
+    let amortization;
+    try {
+      amortization = createAdministrativeAmortization(source, {
+        numeroCuotas: installments, frecuenciaPago: frequency, fechaPrimerPago: firstPayment,
+      });
+    } catch (error) {
+      throw new CreditPlanAdjustmentError(409, error instanceof Error ? error.message : "No se pudo verificar el plan financiero guardado.");
+    }
+    const abonos = await tx.creditoAbono.findMany({
+      where: { creditoId: creditId, estado: { not: "ANULADO" } },
+      select: { valor: true, fechaAbono: true }, orderBy: { fechaAbono: "asc" },
+    });
+    const currentPlan = buildCreditPaymentPlan({ ...current, abonos });
+    if (currentPlan.saldoPendiente <= 0) {
+      throw new CreditPlanAdjustmentError(409, "Este crédito ya está pagado y no admite ajustes de plan.");
+    }
+    const pendingPayment = await tx.wompiPaymentIntent.findFirst({
+      where: {
+        creditoId: creditId, processedAbonoId: null,
+        status: { in: ["APPROVED", "APPROVED_REVIEW_REQUIRED", "APPROVED_DUPLICATE_REVIEW_REQUIRED", "AMOUNT_MISMATCH", "CHECKOUT_FALLBACK", "CREATING_NEQUI", "PENDING", "PROCESSING_APPROVED"] },
+      }, select: { id: true },
+    });
+    if (pendingPayment) {
+      throw new CreditPlanAdjustmentError(409, "Hay un pago electrónico pendiente. Confirma su estado antes de modificar el plan.");
+    }
+    const amount = calendarOnly ? current.montoCredito : Number(amortization.totalPagar);
+    const quota = calendarOnly ? current.valorCuota : Number(
+      amortization.calculoVersion === "ARES_FRANCES_V2" ? amortization.cuotaComercial : amortization.cuotaTotalExacta
+    );
+    const totalPaid = abonos.reduce((sum, item) => sum + Number(item.valor || 0), 0);
+    if (totalPaid >= amount - 0.005) {
+      throw new CreditPlanAdjustmentError(409, "El plan propuesto no tiene saldo pendiente. Revisa los abonos y el plazo antes de ajustar.");
+    }
+    const plan = buildCreditPaymentPlan({
+      montoCredito: amount, valorCuota: quota, plazoMeses: installments,
+      frecuenciaPago: frequency, fechaPrimerPago: parsedDate, abonos,
+    });
+    const data = {
+      plazoMeses: installments, frecuenciaPago: frequency, fechaPrimerPago: parsedDate,
+      fechaProximoPago: plan.nextInstallment ? new Date(`${plan.nextInstallment.fechaVencimiento}T12:00:00.000Z`) : null,
+      ...(!calendarOnly ? {
+        montoCredito: amount, valorCuota: quota,
+        tasaInteresEa: Number(amortization.tasaInteresEaPorcentaje),
+        valorInteres: Number(amortization.totalInteres), valorFianza: Number(amortization.totalFianza),
+      } : {}),
+    };
+    const beforeSnapshot = {
+      plazoMeses: current.plazoMeses, frecuenciaPago: current.frecuenciaPago,
+      fechaPrimerPago: current.fechaPrimerPago?.toISOString() || null,
+      fechaProximoPago: current.fechaProximoPago?.toISOString() || null,
+      montoCredito: current.montoCredito, valorCuota: current.valorCuota,
+      valorInteres: current.valorInteres, valorFianza: current.valorFianza,
+      tasaInteresEa: current.tasaInteresEa, amortizationChecksum: source.checksum,
+      originalAmortizationChecksum: original.checksum,
+      abonos: abonos.map(item => ({ valor: item.valor, fechaAbono: item.fechaAbono.toISOString() })),
+    };
+    const revision = await insertCreditPlanRevision(tx, {
+      creditoId: creditId, usuarioId: user.id, nombreUsuario: user.nombre,
+      motivo: reason, beforeSnapshot, afterSnapshot: { ...beforeSnapshot, ...data },
+      amortizationSnapshot: amortization,
+    });
+    await tx.credito.update({
+      where: { id: creditId, updatedAt: current.updatedAt, planCapitalVigente: { equals: Prisma.DbNull } },
+      data: {
+        ...data,
+        observacionAdmin: [current.observacionAdmin,
+          `[${new Date().toISOString()}] AJUSTE PLAN CENTRAL #${revision.id}: ${user.nombre} (usuario ${user.id}). ${current.plazoMeses} ${getPaymentFrequencyLabel(current.frecuenciaPago)} -> ${installments} ${getPaymentFrequencyLabel(frequency)}. ${reason}`,
+        ].filter(Boolean).join("\n"),
+      },
+    });
+    return (await loadCredit(creditId, tx))!;
+  });
+  return NextResponse.json({
+    ok: true, remote: null,
+    message: "Plan ajustado por Administración Central. Se conservaron los abonos y el contrato original; el cambio quedó registrado.",
+    item: serializeCredit(updated, await loadPaymentSummary(creditId), true),
+  });
+}
+
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> }
@@ -524,6 +666,7 @@ export async function POST(
         }
 
         if (await hasCreditAmortization(current.id)) {
+          if (adminCentral) return await adjustCentralAmortizedPlan(current.id, body, user);
           return NextResponse.json(
             {
               error:
@@ -1001,6 +1144,9 @@ export async function POST(
         : null,
     });
   } catch (error) {
+    if (error instanceof CreditPlanAdjustmentError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
       return NextResponse.json({ error: "El crédito cambió durante la operación. Consulta nuevamente su plan vigente." }, { status: 409 });
     }

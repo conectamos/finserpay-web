@@ -389,4 +389,31 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
     }
     assert.doesNotMatch(moraHtml, /Sin fecha de fin|Vencida|Desactivada|Documento historico invalido/);
   });
+
+  await t.test("Excel usa el importe de fianza vigente de un plazo revisado y conserva las demás tasas", async () => {
+    const active = credits[0];
+    const before = { plazoMeses: active.plazoMeses, valorFianza: active.valorFianza, amortizacion: active.amortizacion };
+    try {
+      active.plazoMeses = 24;
+      active.valorFianza = 480_000;
+      active.amortizacion = {
+        numeroCuotas: 16, fianzaCuotaPorcentaje: 2,
+        tasaInteresEaPorcentaje: 29.24, seguroCuotaPorcentaje: 0.03,
+      };
+      const revisedResponse = await route.GET(new Request("https://finserpay.test/api/dashboard/cartera/export"));
+      const revisedRows = workbookRows(await revisedResponse.text());
+      const revisedRow = revisedRows.find(row => row.includes("CLIENTE_ACTIVO_EXPORTADO"));
+      assert.equal(revisedResponse.status, 200);
+      assert.match(revisedRow, />0\.021605<\/td>[\s\S]*>0\.48<\/td>[\s\S]*>0\.0003<\/td>/);
+
+      active.valorFianza = 600_000;
+      active.amortizacion.fianzaCuotaPorcentaje = 3.75;
+      const fixedTotalResponse = await route.GET(new Request("https://finserpay.test/api/dashboard/cartera/export"));
+      const fixedTotalRow = workbookRows(await fixedTotalResponse.text()).find(row => row.includes("CLIENTE_ACTIVO_EXPORTADO"));
+      assert.equal(fixedTotalResponse.status, 200);
+      assert.match(fixedTotalRow, />0\.021605<\/td>[\s\S]*>0\.6<\/td>[\s\S]*>0\.0003<\/td>/);
+    } finally {
+      Object.assign(active, before);
+    }
+  });
 });

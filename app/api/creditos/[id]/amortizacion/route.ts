@@ -11,12 +11,13 @@ import {
   parseCreditRouteLookup,
 } from "@/lib/credit-route-lookup";
 import { getCreditAmortizationByCreditId } from "@/lib/credit-amortization-storage";
+import { ensureCreditPlanRevisionSchema, getLatestCreditPlanAmortization } from "@/lib/credit-plan-revision";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -66,7 +67,12 @@ export async function GET(
       return NextResponse.json({ error: "Credito no encontrado" }, { status: 404 });
     }
 
-    const amortization = await getCreditAmortizationByCreditId(credit.id);
+    const originalAmortization = await getCreditAmortizationByCreditId(credit.id);
+    const showOriginal = new URL(req.url).searchParams.get("original") === "1";
+    if (originalAmortization && !showOriginal) await ensureCreditPlanRevisionSchema();
+    const revisedAmortization = originalAmortization && !showOriginal
+      ? await getLatestCreditPlanAmortization(credit.id) : null;
+    const amortization = revisedAmortization || originalAmortization;
 
     if (!amortization) {
       return NextResponse.json(
@@ -82,6 +88,8 @@ export async function GET(
       ok: true,
       credit: withCreditDisplayNumber(credit, await getCreditDisplayNumbers([credit.id])),
       amortization,
+      source: revisedAmortization ? "ADMINISTRATIVE_REVISION" : "ORIGINAL",
+      originalChecksum: originalAmortization?.checksum,
     });
   } catch (error) {
     console.error("ERROR CONSULTANDO AMORTIZACION:", error);

@@ -27,6 +27,7 @@ function fixture(options = {}) {
     credit: { id: 7, folio: "TEST", clienteNombre: "Cliente de prueba", sedeId: 1, estado: "GENERADO", pazYSalvoEmitidoAt: null, saldoBaseFinanciado: 3500000, montoCredito: 7185600, valorCuota: 149700, plazoMeses: 48, frecuenciaPago: "QUINCENAL", fechaPrimerPago: new Date("2026-09-17T12:00:00Z"), fechaProximoPago: new Date("2026-11-02T12:00:00Z"), planCapitalVigente: null },
     abonos: [{ id: 1, valor: 450000, fechaAbono: new Date("2026-09-26T12:00:00Z") }],
     revisions: [], caja: [], locks: 0, overdueCount: 0, pendingWompi: false, failPersistence: false,
+    amortizationReads: [], revisedAmortization: null,
     ...options,
   };
   const tx = {
@@ -64,6 +65,14 @@ function fixture(options = {}) {
     "@/lib/credit-route-lookup": { buildCreditAccessWhere: () => ({}) },
     "@/lib/prisma": { default: prisma },
     "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
+    "@/lib/credit-plan-revision": {
+      ensureCreditPlanRevisionSchema: async () => {},
+      getLatestCreditPlanAmortization: async (creditId, db) => {
+        state.amortizationReads.push({ creditId, transactional: db === tx, locks: state.locks });
+        if (state.revisionReadError) throw new Error("Administrative revision unavailable");
+        return state.revisedAmortization;
+      },
+    },
     "@/lib/credit-factory": {
       normalizePaymentMethod: realFactory.normalizePaymentMethod, sanitizeText: x => typeof x === "string" ? x.trim() : "",
       creditCajaConcept: () => "ABONO CREDITO EFECTIVO", creditCajaDescription: x => `Abono ${x.id}`,
@@ -296,7 +305,8 @@ test("existing destructive and calendar APIs guard the principal revision", () =
   const command = readFileSync(new URL("../app/api/creditos/[id]/command/route.ts", import.meta.url), "utf8");
   assert.equal((payments.match(/if \(abono.credito.planCapitalVigente\)/g) || []).length, 2);
   assert.match(command, /current.planCapitalVigente && \(command === "update-plan" \|\| command === "update-due-date" \|\| command === "annul-credit"\)/);
-  assert.equal((command.match(/planCapitalVigente: \{ equals: Prisma.DbNull \}/g) || []).length, 3);
+  assert.equal((command.match(/planCapitalVigente: \{ equals: Prisma.DbNull \}/g) || []).length, 4);
+  assert.match(command, /where: \{ id: creditId, updatedAt: current.updatedAt, planCapitalVigente: \{ equals: Prisma.DbNull \} \}/);
 });
 
 function nativeFixture(options = {}) {
@@ -324,6 +334,71 @@ test("native GET returns the UI context contract without exposing financial sour
   assert.equal(result.body.contratoSnapshot, undefined);
   assert.equal(f.state.locks, 0);
   assert.equal(f.state.revisions.length, 0);
+  assert.equal(f.state.caja.length, 0);
+});
+
+test("GET and locked principal preview resolve the scoped administrative amortization instead of original terms", async () => {
+  const f = nativeFixture({ signed: false });
+  f.state.revisedAmortization = structuredClone(f.state.credit.amortizacion);
+  // The operative credit matches the revision; the preserved original has an
+  // older term and must not silently become the source for the new operation.
+  f.state.credit.amortizacion.numeroCuotas = 39;
+  const original = structuredClone(f.state.credit.amortizacion);
+  const get = await f.get();
+  assert.equal(get.status, 200);
+  assert.equal(get.body.modoConciliacion, "AUTOMATICA");
+  assert.equal(f.state.amortizationReads[0].creditId, 7);
+  assert.equal(f.state.amortizationReads[0].transactional, false);
+  const preview = await f.preview();
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(f.state.amortizationReads[1].creditId, 7);
+  assert.equal(f.state.amortizationReads[1].transactional, true);
+  assert.equal(f.state.amortizationReads[1].locks, 1);
+  assert.equal((await f.confirm(preview.body.quoteHash)).status, 200);
+  assert.deepEqual(f.state.credit.amortizacion, original);
+  assert.equal(f.state.caja.length, 1);
+});
+
+test("a changed administrative revision invalidates a principal preview before any payment writes", async () => {
+  const f = nativeFixture({ signed: false });
+  f.state.revisedAmortization = structuredClone(f.state.credit.amortizacion);
+  const preview = await f.preview();
+  assert.equal(preview.status, 200);
+  f.state.revisedAmortization.checksum = "c".repeat(64);
+  const confirmed = await f.confirm(preview.body.quoteHash);
+  assert.equal(confirmed.status, 409);
+  assert.equal(f.state.caja.length, 0);
+  assert.equal(f.state.revisions.length, 0);
+  assert.equal(f.state.abonos.length, 1);
+});
+
+test("invalid administrative amortization cannot fall back to a valid original for automatic principal quotes", async () => {
+  const f = nativeFixture();
+  f.state.revisedAmortization = structuredClone(f.state.credit.amortizacion);
+  f.state.revisedAmortization.cuotas.pop();
+  const get = await f.get();
+  assert.equal(get.status, 200);
+  assert.equal(get.body.modoConciliacion, "MANUAL");
+  assert.equal(get.body.requiereConciliacion, true);
+  assert.equal((await f.preview()).status, 400);
+  assert.equal(f.state.caja.length, 0);
+});
+
+test("administrative revision lookup failure aborts GET and locked preview instead of using original terms", async () => {
+  const f = nativeFixture();
+  f.state.revisionReadError = true;
+  assert.equal((await f.get()).status, 500);
+  assert.equal((await f.preview()).status, 500);
+  assert.equal(f.state.caja.length, 0);
+  assert.equal(f.state.revisions.length, 0);
+});
+
+test("a current revision does not bypass a contradictory signed financial seal", async () => {
+  const f = nativeFixture();
+  f.state.revisedAmortization = structuredClone(f.state.credit.amortizacion);
+  f.state.credit.contratoSnapshot.financiero.selloFinanciero.checksum = "d".repeat(64);
+  assert.equal((await f.get()).body.modoConciliacion, "MANUAL");
+  assert.equal((await f.preview()).status, 400);
   assert.equal(f.state.caja.length, 0);
 });
 

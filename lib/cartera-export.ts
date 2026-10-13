@@ -19,6 +19,9 @@ type CreditAmortizationRates = {
 type CarteraExportRatesInput = {
   tasaInteresEa?: unknown;
   fianzaPorcentaje?: unknown;
+  plazoMeses?: unknown;
+  valorFianza?: unknown;
+  saldoBaseFinanciado?: unknown;
   contratoSnapshot?: unknown;
   amortizacion?: CreditAmortizationRates | null;
 };
@@ -96,7 +99,19 @@ export function resolveCarteraExportRates(input: CarteraExportRatesInput) {
     financiero?.tasaInteresEa,
     input.tasaInteresEa
   );
+  const currentInstallments = positiveNumber(input.plazoMeses);
+  const currentSurety = nonNegativeNumber(input.valorFianza);
+  const financedBase = positiveNumber(input.saldoBaseFinanciado);
+  // A central revision preserves the signed amortization and updates operational
+  // amounts. Its total surety must therefore follow the stored revised amount.
+  const revisedSuretyPercentage =
+    currentInstallments !== null && amortizacionCuotas !== null &&
+    Number.isSafeInteger(currentInstallments) && Number.isSafeInteger(amortizacionCuotas) &&
+    currentInstallments !== amortizacionCuotas && currentSurety !== null && financedBase !== null
+      ? (currentSurety / financedBase) * 100
+      : null;
   const fianzaTotalPorcentaje = firstNumber(
+    revisedSuretyPercentage,
     amortizacionCuotas !== null && amortizacionFianzaCuota !== null
       ? amortizacionCuotas * amortizacionFianzaCuota
       : null,

@@ -10,6 +10,7 @@ import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
 import { creditCajaConcept, creditCajaDescription, normalizePaymentMethod, sanitizeText } from "@/lib/credit-factory";
 import { CapitalPaymentValidationError, createPrincipalPaymentQuote } from "@/lib/credit-principal-payment";
 import { resolvePrincipalPaymentContext } from "@/lib/credit-principal-payment-context";
+import { ensureCreditPlanRevisionSchema, getLatestCreditPlanAmortization } from "@/lib/credit-plan-revision";
 import { findPrincipalPaymentRevision, hashPrincipalPayment, persistPrincipalPaymentRevision } from "@/lib/credit-principal-payment-storage";
 
 export const runtime = "nodejs";
@@ -54,8 +55,14 @@ async function requireAccess(context: Context) {
 }
 
 async function loadState(db: Prisma.TransactionClient | typeof prisma, where: Prisma.CreditoWhereInput) {
-  const credit = await db.credito.findFirst({ where, select: creditSelect });
-  if (!credit) throw new PrincipalPaymentError("Crédito no encontrado.", 404);
+  const storedCredit = await db.credito.findFirst({ where, select: creditSelect });
+  if (!storedCredit) throw new PrincipalPaymentError("Crédito no encontrado.", 404);
+  // Read the administrative revision from the same database/transaction as the
+  // scoped credit. A failed revision lookup must never fall back to old terms.
+  const revisedAmortization = await getLatestCreditPlanAmortization(storedCredit.id, db);
+  const credit = revisedAmortization
+    ? { ...storedCredit, amortizacion: revisedAmortization }
+    : storedCredit;
   const abonos = await db.creditoAbono.findMany({
     where: { creditoId: credit.id, estado: { not: "ANULADO" } },
     select: { id: true, valor: true, fechaAbono: true },
@@ -80,6 +87,7 @@ function handleError(error: unknown) {
 export async function GET(_req: Request, context: Context) {
   try {
     const access = await requireAccess(context);
+    await ensureCreditPlanRevisionSchema();
     const { credit, plan } = await loadState(prisma, access.where);
     const financialContext = resolvePrincipalPaymentContext({ credit, plan });
     return NextResponse.json({
@@ -115,6 +123,7 @@ export async function POST(req: Request, context: Context) {
     const requestValues = { valor: body.valor, conciliacion: body.conciliacion ?? null, metodoPago, observacion };
     const requestHash = hashPrincipalPayment({ ...requestValues, quoteHash: providedHash, usuarioId: access.user.id });
     await ensureCreditAbonoAuditColumns();
+    await ensureCreditPlanRevisionSchema();
 
     const result = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "Credito" WHERE "id"=${access.id} FOR UPDATE`;
