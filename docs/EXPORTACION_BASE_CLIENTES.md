@@ -85,14 +85,13 @@ de filtros, límites de Bogotá, duplicados, conteos, ceros iniciales, textos co
 aspecto de fórmula, históricos grandes, ausencia de resultados, cola, archivos
 incompletos y revocación de permisos. No consultan la base de producción.
 
-Verificación de implementación: 43 pruebas nuevas y 178 regresiones del muro
+Verificación de implementación: 44 pruebas nuevas y 178 regresiones del muro
 aprobadas; compilación integral, TypeScript y ESLint de los archivos nuevos sin
 errores. El componente real se revisó en navegador con API ficticia en escritorio
 y móvil, incluyendo filtros, vacío, progreso y reapertura del archivo listo.
 
 PGlite verifica SQL y transacciones locales, pero no reproduce concurrencia entre
-conexiones de PostgreSQL. El despliegue y la verificación contra producción están
-pendientes; las pruebas locales no los sustituyen.
+conexiones de PostgreSQL. El verificador siguiente comprueba el servicio desplegado.
 
 ## Verificación en el servicio desplegado
 

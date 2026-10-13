@@ -202,8 +202,8 @@ async function main() {
     const book = new ExcelJS.Workbook();
     await book.xlsx.load(buffer);
     const manifest = await sql(`SELECT m.source,m."entityId",s."aliadoId",
-      CASE WHEN m.source='CREDIT' THEN COALESCE('SOL-' || LPAD(origin.id::text,6,'0'),c.folio)
-        ELSE 'SOL-' || LPAD(d.id::text,6,'0') END AS request,
+      CASE WHEN m.source='CREDIT' THEN COALESCE('SOL-' || LPAD(origin.id::text,GREATEST(6,LENGTH(origin.id::text)),'0'),c.folio)
+        ELSE 'SOL-' || LPAD(d.id::text,GREATEST(6,LENGTH(d.id::text)),'0') END AS request,
       CASE WHEN m.source='CREDIT' THEN c.folio ELSE '' END AS credit
       FROM "SolicitudExportMember" m
       LEFT JOIN "Credito" c ON m.source='CREDIT' AND c.id=m."entityId"

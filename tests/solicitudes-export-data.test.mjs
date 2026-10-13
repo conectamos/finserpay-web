@@ -175,6 +175,28 @@ test("histórico grande continúa todos los lotes sin el límite de la página",
   }
 });
 
+test("números de solicitud con más de seis dígitos se conservan en borrador y crédito convertido", async () => {
+  await pg.exec(`
+    INSERT INTO "Credito" (id,"sedeId","vendedorId",folio,"createdAt",estado,"clienteNombre")
+    VALUES (9000001,10,100,'C-LONG-ID','2024-01-15','GENERADO','Identificador largo');
+    INSERT INTO "CreditoBorrador" (id,"sedeId","vendedorId","creditoId","createdAt",estado,"expiresAt","currentStep","dataCreditoAssessmentId") VALUES
+      (1000000,10,100,null,'2024-01-15','ABIERTO','2099-01-01',1,'00000000-0000-4000-8000-000000000001'),
+      (1000001,10,100,9000001,'2024-01-14','CERRADO','2099-01-01',5,null);
+  `);
+  try {
+    const selection = { period: "month", month: "2024-01" };
+    const rows = await exported(ally, selection, 1);
+    assert.equal(await countExportRows(ally, filters(selection), db), 2);
+    assert.deepEqual(rows.map(row => [row.source, row.entityId, row.solicitudNumero]), [
+      ["CREDIT", 9000001, "SOL-1000001"],
+      ["DRAFT", 1000000, "SOL-1000000"],
+    ]);
+    assert.equal(new Set(rows.map(row => row.solicitudNumero)).size, 2);
+  } finally {
+    await pg.exec(`DELETE FROM "CreditoBorrador" WHERE id IN (1000000,1000001); DELETE FROM "Credito" WHERE id = 9000001`);
+  }
+});
+
 test("instalaciones sin registro Sadmin mantienen el dato vacío", async () => {
   await pg.exec(`ALTER TABLE "CreditSadminRegistration" RENAME TO "SavedSadminRegistration"`);
   try {
