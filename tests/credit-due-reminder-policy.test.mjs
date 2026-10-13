@@ -41,6 +41,48 @@ test("before-due and due-today campaigns select different days for the same unpa
   assert.equal(getCreditDueReminder(record, "2026-10-07", "unknown"), null);
 });
 
+test("AD -2 selects only the installment due in two Bogotá calendar days", () => {
+  const record = credit({ fechaPrimerPago: "2026-10-09", fechaProximoPago: "2026-10-09" });
+  const plan = buildCreditPaymentPlan({ ...record, today });
+  assert.equal(resolveCarteraDaysPastDue(plan, today), -2);
+  assert.ok(plan.pendingCount > 0);
+  assert.deepEqual(getCreditDueReminder(record, today, "two_days_before_due"), {
+    creditId: 42, installmentNumber: 1, dueDate: "2026-10-09", phone: "573000000042", name: "Ana Prueba",
+  });
+  for (const date of ["2026-10-06", "2026-10-08", "2026-10-09", "2026-10-10"]) {
+    assert.equal(getCreditDueReminder(record, date, "two_days_before_due"), null, date);
+  }
+  assert.equal(getCreditDueReminder(record, today, "before_due"), null);
+  assert.equal(getCreditDueReminder(record, today, "due_today"), null);
+  assert.ok(getCreditDueReminder(record, "2026-10-08", "before_due"));
+  assert.ok(getCreditDueReminder(record, "2026-10-09", "due_today"));
+});
+
+test("two-days reminders retain payment, pending-count, contact, calendar and arrears guards", () => {
+  const record = credit({ fechaPrimerPago: "2026-10-09", fechaProximoPago: "2026-10-09" });
+  assert.ok(getCreditDueReminder({ ...record, abonos: [payment(50)] }, today, "two_days_before_due"));
+  for (const changes of [
+    { abonos: [payment(100)], fechaProximoPago: "2026-10-23" }, { abonos: [payment(300)] },
+    { estado: "PAGADO" }, { estado: "PAZ_Y_SALVO" }, { estado: "ANULADO" }, { estado: "CANCELADO" },
+    { pazYSalvoEmitidoAt: today }, { montoCredito: 0 }, { clienteNombre: " " }, { clienteTelefono: "123" },
+    { fechaPrimerPago: null, fechaProximoPago: null },
+    { fechaPrimerPago: "invalid", fechaProximoPago: new Date("invalid") },
+    { fechaPrimerPago: "2026-09-01" },
+  ]) assert.equal(getCreditDueReminder({ ...record, ...changes }, today, "two_days_before_due"), null);
+  assert.ok(getCreditDueReminder({ ...record, abonos: [payment(300, { estado: "ANULADO" })] }, today, "two_days_before_due"));
+  const second = getCreditDueReminder({ ...record, fechaPrimerPago: "2026-09-25", abonos: [payment(100)] }, today, "two_days_before_due");
+  assert.equal(second?.installmentNumber, 2);
+  assert.equal(second?.dueDate, "2026-10-09");
+});
+
+test("two-days eligibility changes at Bogotá midnight without requiring the sending hour", () => {
+  const record = credit({ fechaPrimerPago: "2026-10-09", fechaProximoPago: "2026-10-09" });
+  assert.equal(getCreditDueReminder(record, new Date("2026-10-07T04:59:59.999Z"), "two_days_before_due"), null);
+  assert.ok(getCreditDueReminder(record, new Date("2026-10-07T05:00:00.000Z"), "two_days_before_due"));
+  assert.ok(getCreditDueReminder(record, new Date("2026-10-08T04:59:59.999Z"), "two_days_before_due"));
+  assert.equal(getCreditDueReminder(record, new Date("2026-10-08T05:00:00.000Z"), "two_days_before_due"), null);
+});
+
 test("due-today selects partial balances with AD zero and positive pending installment count", () => {
   const record = credit({ fechaPrimerPago: "2026-10-07", fechaProximoPago: "2026-10-07", abonos: [payment(50)] });
   const plan = buildCreditPaymentPlan({ ...record, today });
@@ -179,8 +221,19 @@ test("the sending window is exactly 10:00 to 10:59 Colombia, independent of host
       assert.equal(isCreditDueReminderWindow(new Date("2026-10-07T15:00:00.000Z")), true, timezone);
       assert.equal(isCreditDueReminderWindow(new Date("2026-10-07T15:59:59.999Z")), true, timezone);
       assert.equal(isCreditDueReminderWindow(new Date("2026-10-07T16:00:00.000Z")), false, timezone);
+      assert.equal(isCreditDueReminderWindow(new Date("2026-10-07T15:00:00.000Z"), "due_today"), true, timezone);
+      assert.equal(isCreditDueReminderWindow(new Date("2026-10-07T15:00:00.000Z"), "two_days_before_due"), false, timezone);
+      for (const time of ["17:59:59.999", "19:00:00.000"]) {
+        assert.equal(isCreditDueReminderWindow(new Date(`2026-10-07T${time}Z`), "two_days_before_due"), false, timezone);
+      }
+      for (const time of ["18:00:00.000", "18:59:59.999"]) {
+        assert.equal(isCreditDueReminderWindow(new Date(`2026-10-07T${time}Z`), "two_days_before_due"), true, timezone);
+        assert.equal(isCreditDueReminderWindow(new Date(`2026-10-07T${time}Z`), "before_due"), false, timezone);
+        assert.equal(isCreditDueReminderWindow(new Date(`2026-10-07T${time}Z`), "due_today"), false, timezone);
+      }
     }
     assert.equal(isCreditDueReminderWindow(new Date("invalid")), false);
+    assert.equal(isCreditDueReminderWindow(new Date("invalid"), "two_days_before_due"), false);
   } finally {
     if (previousTimezone === undefined) delete process.env.TZ;
     else process.env.TZ = previousTimezone;

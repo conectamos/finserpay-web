@@ -16,6 +16,7 @@ import {
   getDueInternalCronTasks,
   getStartupRecoveryTasks,
   isCreditCampaignTask,
+  isCreditReminderTask,
   type InternalCronTask as ScheduledInternalCronTask,
 } from "@/lib/internal-cron-schedule";
 
@@ -162,10 +163,11 @@ async function runScheduledTask(
       return;
     }
 
-    if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
+    if (isCreditReminderTask(taskName)) {
       const result = await runCreditDueReminders({
         dryRun: false,
-        campaign: taskName === "credit-due-today-reminders" ? "due_today" : "before_due",
+        campaign: taskName === "credit-due-two-days-reminders" ? "two_days_before_due"
+          : taskName === "credit-due-today-reminders" ? "due_today" : "before_due",
       });
       completed = result.enabled && result.configured && result.inWindow;
       if (completed) {
@@ -232,7 +234,7 @@ async function runScheduledTask(
       console.error("[finserpay-cron] No se pudo procesar la cola de bienvenidas de voz.");
     } else if (taskName === "credit-overdue-data") {
       console.error("[finserpay-cron] No se pudo procesar la campana Datos de clientes en mora.");
-    } else if (taskName === "credit-due-reminders" || taskName === "credit-due-today-reminders") {
+    } else if (isCreditReminderTask(taskName)) {
       console.error("[finserpay-cron] No se pudo procesar la cola de recordatorios de cuotas.");
     } else if (taskName === "merchant-applications") {
       // Never expose provider/database errors containing merchant data or secrets.
@@ -278,8 +280,8 @@ async function tick() {
     `unlock:${dateKey}:${timeKey}:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`,
   );
 
-  // Start all campaigns together so a large batch cannot delay another
-  // campaign beyond the shared sending window.
+  // Start the due campaigns together so a large batch cannot delay another
+  // campaign beyond its own sending window.
   const campaigns = dueTasks.filter(isCreditCampaignTask);
   await Promise.all(campaigns.map(task => runScheduledTask(task, `${task}:${dateKey}`)));
   for (const taskName of dueTasks.filter(task => !isCreditCampaignTask(task))) {
@@ -355,7 +357,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, recordatorios de cuotas a las 10:00 y campana Datos de clientes en mora cada 3 dias tras el ultimo envio, con revision diaria a las 10:00 y recuperacion hasta las 11:00; el inicio respeta esas ventanas, hora Colombia.",
+    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, recordatorios de un dia y hoy vence a las 10:00 y de dos dias a las 13:00, campana Datos una vez por credito al llegar a 20 dias de mora a las 10:00; recuperacion durante la hora siguiente de cada campana, hora Colombia.",
   );
 
   void runStartupRecovery();

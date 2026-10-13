@@ -19,7 +19,7 @@ function validPreviewDate(value: string) {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 function validCampaign(value: unknown): value is CreditDueReminderCampaign {
-  return value === "before_due" || value === "due_today";
+  return value === "before_due" || value === "due_today" || value === "two_days_before_due";
 }
 
 export function createCreditDueReminderHandlers(deps: {

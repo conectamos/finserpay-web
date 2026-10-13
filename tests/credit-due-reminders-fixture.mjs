@@ -83,7 +83,7 @@ export async function reminderFixture(t, options = {}) {
     "@/lib/dapta-welcome": welcome,
     "@/lib/credit-due-reminder-policy": policy,
   }, { AbortSignal, fetch: () => assert.fail("Unexpected real network"), Error, process: { env: options.env || {} } });
-  const run = core.createCreditDueReminderRunner({
+  const runnerDependencies = {
     database: client, now: () => new Date(clock),
     ...(!options.useEnvironmentConfig ? {
       enabled: campaign => options.enabledByCampaign?.[campaign] ?? options.enabled !== false,
@@ -100,9 +100,11 @@ export async function reminderFixture(t, options = {}) {
         status: options.status || 200, headers: { "Content-Type": "application/json" },
       });
     },
-  });
+  };
+  const run = core.createCreditDueReminderRunner(runnerDependencies);
   const rows = async () => (await database.query('SELECT * FROM "CreditDueReminder" ORDER BY "creditoId"')).rows;
   return { run, database, client, counts, rows, core, payloads, webhooks,
+    restart: () => core.createCreditDueReminderRunner(runnerDependencies),
     setClock: value => { clock = new Date(value); },
     updateCredit: async (id, overrides) => database.query('UPDATE "Credito" SET "data"="data" || $2::jsonb WHERE "id"=$1', [id, JSON.stringify(overrides)]),
   };

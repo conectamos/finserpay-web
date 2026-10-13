@@ -194,8 +194,14 @@ test("a clock that closes during the active-claim query never dispatches HTTP", 
   assert.equal((await f.rows()).length, 0);
 });
 
-test("before-due and due-today independently dispatch once for the same installment", async t => {
-  const f = await reminderFixture(t);
+test("all three reminder campaigns independently dispatch once for the same installment", async t => {
+  const f = await reminderFixture(t, { now: "2026-10-06T18:00:00Z" });
+  const twoDays = await f.run({ campaign: "two_days_before_due", dryRun: false });
+  assert.equal(twoDays.campaign, "two_days_before_due");
+  assert.equal(twoDays.templateKey, "recordatorio_2_dias_antescuota");
+  assert.equal(twoDays.summary.accepted, 1);
+  assert.equal((await f.restart()({ campaign: "two_days_before_due", dryRun: false })).summary.duplicates, 1);
+  f.setClock("2026-10-07T15:00:00Z");
   const before = await f.run({ dryRun: false });
   assert.equal(before.campaign, "before_due");
   assert.equal(before.templateKey, f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY);
@@ -207,29 +213,41 @@ test("before-due and due-today independently dispatch once for the same installm
   assert.equal(due.templateKey, "recordatorio_hoyvence_cuota");
   assert.equal(due.summary.accepted, 1);
   assert.equal((await f.run({ campaign: "due_today", dryRun: false })).summary.duplicates, 1);
-  assert.equal(f.counts.sends, 2);
+  assert.equal(f.counts.sends, 3);
   const rows = await f.rows();
-  assert.deepEqual(rows.map(row => row.numeroCuota), [1, 1]);
+  assert.deepEqual(rows.map(row => row.numeroCuota), [1, 1, 1]);
   assert.deepEqual(new Set(rows.map(row => row.templateKey)), new Set([
     f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY, f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY,
+    f.core.CREDIT_DUE_TWO_DAYS_REMINDER_TEMPLATE_KEY,
   ]));
-  assert.deepEqual(f.webhooks, ["https://api.dapta.ai/api/test-only-before_due", "https://api.dapta.ai/api/test-only-due_today"]);
+  assert.deepEqual(f.webhooks, ["https://api.dapta.ai/api/test-only-two_days_before_due",
+    "https://api.dapta.ai/api/test-only-before_due", "https://api.dapta.ai/api/test-only-due_today"]);
 });
 
 test("overlapping campaigns select different mixed-date credits and never route to each other's webhook", async t => {
   const f = await reminderFixture(t, { now: "2026-10-08T15:00:00Z", credits: [
     sampleCredit(1), sampleCredit(2, { fechaPrimerPago: "2026-10-09", fechaProximoPago: "2026-10-09" }),
-  ], urls: { before_due: "https://api.dapta.ai/api/before-test-only", due_today: "https://api.dapta.ai/api/today-test-only" } });
+    sampleCredit(3, { fechaPrimerPago: "2026-10-10", fechaProximoPago: "2026-10-10" }),
+  ], urls: { before_due: "https://api.dapta.ai/api/before-test-only", due_today: "https://api.dapta.ai/api/today-test-only",
+    two_days_before_due: "https://api.dapta.ai/api/two-days-test-only" } });
   const reports = await Promise.all([
     f.run({ campaign: "before_due", dryRun: false }), f.run({ campaign: "due_today", dryRun: false }),
+    f.run({ campaign: "two_days_before_due", dryRun: false }),
   ]);
-  assert.deepEqual(reports.map(report => report.summary.eligible), [1, 1]);
-  assert.deepEqual(reports.map(report => report.summary.accepted), [1, 1]);
+  assert.deepEqual(reports.map(report => report.summary.eligible), [1, 1, 0]);
+  assert.deepEqual(reports.map(report => report.summary.accepted), [1, 1, 0]);
   const routed = Object.fromEntries(f.payloads.map((payload, index) => [payload.credito_id, f.webhooks[index]]));
   assert.deepEqual(routed, { 1: "https://api.dapta.ai/api/today-test-only", 2: "https://api.dapta.ai/api/before-test-only" });
   const rows = await f.rows();
   assert.equal(rows[0].templateKey, f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY);
   assert.equal(rows[1].templateKey, f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY);
+  f.setClock("2026-10-08T18:00:00Z");
+  const later = await Promise.all([f.run({ campaign: "before_due", dryRun: false }),
+    f.run({ campaign: "due_today", dryRun: false }), f.run({ campaign: "two_days_before_due", dryRun: false })]);
+  assert.deepEqual(later.map(report => report.summary.accepted), [0, 0, 1]);
+  assert.equal(f.payloads[2].credito_id, "3");
+  assert.equal(f.webhooks[2], "https://api.dapta.ai/api/two-days-test-only");
+  assert.equal((await f.rows())[2].templateKey, f.core.CREDIT_DUE_TWO_DAYS_REMINDER_TEMPLATE_KEY);
 });
 
 test("campaign environment flags and URLs never fall back to the other campaign", async t => {
@@ -247,29 +265,55 @@ test("campaign environment flags and URLs never fall back to the other campaign"
     ["due_today", "2026-10-08T15:00:00Z", {
       DAPTA_HOYVENCE_ENABLED: "true", DAPTA_HOYVENCE_WEBHOOK_URL: "https://api.dapta.ai/api/today-only",
     }, true],
+    ["two_days_before_due", "2026-10-06T18:00:00Z", {
+      DAPTA_RECORDATORIO_1_DIA_ENABLED: "true", DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL: "https://api.dapta.ai/api/before-only",
+      DAPTA_HOYVENCE_ENABLED: "true", DAPTA_HOYVENCE_WEBHOOK_URL: "https://api.dapta.ai/api/today-only",
+    }, false],
+    ["two_days_before_due", "2026-10-06T18:00:00Z", {
+      DAPTA_RECORDATORIO_2_DIAS_ENABLED: "TRUE", DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL: "https://api.dapta.ai/api/two-only",
+    }, false],
+    ["two_days_before_due", "2026-10-06T18:00:00Z", {
+      DAPTA_RECORDATORIO_2_DIAS_ENABLED: "true", DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL: "http://api.dapta.ai/api/two-invalid",
+    }, false],
+    ["before_due", "2026-10-07T15:00:00Z", {
+      DAPTA_RECORDATORIO_2_DIAS_ENABLED: "true", DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL: "https://api.dapta.ai/api/two-only",
+    }, false],
+    ["two_days_before_due", "2026-10-06T18:00:00Z", {
+      DAPTA_RECORDATORIO_2_DIAS_ENABLED: "true", DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL: "https://api.dapta.ai/api/two-only",
+    }, true],
   ]) {
     const f = await reminderFixture(t, { useEnvironmentConfig: true, campaign, now, env });
     const report = await f.run({ campaign, dryRun: false });
     assert.equal(report.summary.accepted, accepted ? 1 : 0);
     assert.equal(f.counts.sends, accepted ? 1 : 0);
-    if (accepted) assert.deepEqual(f.webhooks, [env.DAPTA_HOYVENCE_WEBHOOK_URL]);
+    if (accepted) assert.deepEqual(f.webhooks, [campaign === "two_days_before_due"
+      ? env.DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL : env.DAPTA_HOYVENCE_WEBHOOK_URL]);
     else assert.equal(f.counts.writes, 0);
   }
 });
 
 test("claim expiration touches only the selected campaign's template key", async t => {
-  const f = await reminderFixture(t);
+  const f = await reminderFixture(t, { now: "2026-10-06T18:00:00Z" });
   for (const [id, key] of [
     ["00000000-0000-4000-8000-000000000001", f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY],
     ["00000000-0000-4000-8000-000000000002", f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY],
+    ["00000000-0000-4000-8000-000000000003", f.core.CREDIT_DUE_TWO_DAYS_REMINDER_TEMPLATE_KEY],
   ]) {
     await f.database.query(`INSERT INTO "CreditDueReminder"
       ("id","creditoId","numeroCuota","templateKey","fechaVencimiento","status","claimedAt","claimExpiresAt")
-      VALUES ($1::uuid,1,1,$2,'2026-10-08','CLAIMED','2026-10-07T14:00:00Z','2026-10-07T14:01:30Z')`, [id, key]);
+      VALUES ($1::uuid,1,1,$2,'2026-10-08','CLAIMED','2026-10-05T14:00:00Z','2026-10-05T14:01:30Z')`, [id, key]);
   }
+  const twoDays = await f.run({ campaign: "two_days_before_due", dryRun: false });
+  assert.equal(twoDays.summary.staleClaims, 1);
+  assert.equal(twoDays.summary.duplicates, 1);
+  let statuses = Object.fromEntries((await f.rows()).map(row => [row.templateKey, row.status]));
+  assert.equal(statuses[f.core.CREDIT_DUE_TWO_DAYS_REMINDER_TEMPLATE_KEY], "UNKNOWN");
+  assert.equal(statuses[f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY], "CLAIMED");
+  assert.equal(statuses[f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY], "CLAIMED");
+  f.setClock("2026-10-07T15:00:00Z");
   const before = await f.run({ dryRun: false });
   assert.equal(before.summary.staleClaims, 1);
-  let statuses = Object.fromEntries((await f.rows()).map(row => [row.templateKey, row.status]));
+  statuses = Object.fromEntries((await f.rows()).map(row => [row.templateKey, row.status]));
   assert.equal(statuses[f.core.CREDIT_DUE_REMINDER_TEMPLATE_KEY], "UNKNOWN");
   assert.equal(statuses[f.core.CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY], "CLAIMED");
   f.setClock("2026-10-08T15:00:00Z");
@@ -288,6 +332,77 @@ test("due-today preview reports its own invalid contacts without writing or send
   assert.equal(report.summary.eligible, 0);
   assert.equal(f.counts.writes, 0);
   assert.equal(f.counts.sends, 0);
+  f.setClock("2026-10-06T18:00:00Z");
+  const twoDays = await f.run({ campaign: "two_days_before_due", dryRun: true });
+  assert.equal(twoDays.campaign, "two_days_before_due");
+  assert.equal(twoDays.summary.invalidPhone, 1);
+  assert.equal(twoDays.summary.eligible, 0);
+  assert.equal(f.counts.writes, 0);
+  assert.equal(f.counts.sends, 0);
+});
+
+test("two-days dispatch is gated to 13:00-13:59 and preview dates never override its live date", async t => {
+  const f = await reminderFixture(t, { now: "2026-10-06T15:00:00Z" });
+  for (const now of ["2026-10-06T15:00:00Z", "2026-10-06T17:59:59.999Z", "2026-10-06T19:00:00Z"]) {
+    f.setClock(now);
+    const report = await f.run({ campaign: "two_days_before_due", dryRun: false });
+    assert.equal(report.inWindow, false);
+    assert.equal(report.summary.scanned, 0);
+  }
+  assert.equal(f.counts.writes, 0);
+  assert.equal(f.counts.sends, 0);
+  f.setClock("2026-10-05T18:00:00Z");
+  const preview = await f.run({ campaign: "two_days_before_due", dryRun: true, previewDate: "2026-10-06" });
+  assert.equal(preview.summary.eligible, 1);
+  assert.equal(preview.templateKey, "recordatorio_2_dias_antescuota");
+  assert.doesNotMatch(JSON.stringify(preview), /CLIENTE|3000000001|telefono|nombre|webhook/);
+  assert.equal(f.counts.writes, 0);
+  const real = await f.run({ campaign: "two_days_before_due", dryRun: false, previewDate: "2026-10-06" });
+  assert.equal(real.summary.eligible, 0);
+  assert.deepEqual(await f.rows(), []);
+  assert.equal(f.counts.sends, 0);
+});
+
+test("two-days reminders revalidate payment, changed due date and the closing 13-hour window before HTTP", async t => {
+  for (const scenario of ["paid", "rescheduled", "window-closed"]) {
+    await t.test(scenario, async local => {
+      let changed = false;
+      const f = await reminderFixture(local, { now: "2026-10-06T18:00:00Z", afterClaim: async ({ database, setClock }) => {
+        if (changed) return;
+        changed = true;
+        if (scenario === "window-closed") setClock("2026-10-06T19:00:00Z");
+        else await database.query('UPDATE "Credito" SET "data"="data" || $1::jsonb WHERE "id"=1',
+          [JSON.stringify(scenario === "paid" ? { abonos: [{ valor: 300 }] } : { fechaProximoPago: "2026-10-09" })]);
+      } });
+      const report = await f.run({ campaign: "two_days_before_due", dryRun: false });
+      assert.equal(report.summary.revalidatedOut, 1);
+      assert.equal(f.counts.sends, 0);
+      assert.deepEqual(await f.rows(), []);
+      if (scenario === "rescheduled") {
+        f.setClock("2026-10-07T18:00:00Z");
+        assert.equal((await f.run({ campaign: "two_days_before_due", dryRun: false })).summary.accepted, 1);
+        assert.equal(f.payloads[0].fecha_vencimiento, "2026-10-09");
+        assert.equal((await f.rows())[0].templateKey, "recordatorio_2_dias_antescuota");
+      }
+    });
+  }
+});
+
+test("overlapping two-days requests reserve once and UNKNOWN survives a runner restart", async t => {
+  const f = await reminderFixture(t, { now: "2026-10-06T18:00:00Z", providerError: true });
+  const reports = await Promise.all([f.run({ campaign: "two_days_before_due", dryRun: false }),
+    f.run({ campaign: "two_days_before_due", dryRun: false })]);
+  assert.equal(f.counts.sends, 1);
+  assert.equal(reports.reduce((sum, report) => sum + report.summary.unknown, 0), 1);
+  assert.equal(reports.reduce((sum, report) => sum + report.summary.duplicates, 0), 1);
+  const replay = await f.restart()({ campaign: "two_days_before_due", dryRun: false });
+  assert.equal(replay.summary.duplicates, 1);
+  assert.equal(f.counts.sends, 1);
+  const [row] = await f.rows();
+  assert.equal(row.status, "UNKNOWN");
+  assert.equal(row.attempts, 1);
+  assert.equal(row.templateKey, "recordatorio_2_dias_antescuota");
+  assert.doesNotMatch(JSON.stringify(row), /private|credential|phone/);
 });
 
 test("an invalid internal campaign fails before database writes or dispatch", async t => {
