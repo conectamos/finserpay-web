@@ -5,7 +5,10 @@ import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { creditAllyPaymentExclusionSchemaStatements } from "../scripts/credit-ally-payment-exclusion-schema.mjs";
-import { resolveAllyPaymentPlatform } from "../lib/ally-payments-core.ts";
+import {
+  resolveAllyPaymentPlatform,
+  resolveColombiaPaymentPeriod,
+} from "../lib/ally-payments-core.ts";
 
 const imports = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -26,6 +29,8 @@ const collectionFunction = storage.slice(
 const loadCollections = runInNewContext(stripTypeScriptTypes("(" + collectionFunction + ")"), {
   ensureCreditAllyPaymentExclusionSchema: async () => {},
   ALIADO_FINSER_PAY: { codigo: "FINSERPAY" },
+  ALLY_PAYMENTS_AVAILABLE_FROM: "2026-09-01",
+  resolveColombiaPaymentPeriod,
   compactText: (value, fallback) => String(value || fallback),
   resolveAllyPaymentPlatform,
 });
@@ -72,7 +77,7 @@ test("el inicio comparte el lock de predeploy, coalesce llamadas y reintenta un 
 });
 
 const memoryPostgres = process.env.ALLY_PAYMENT_PGLITE_MODULE;
-test("PostgreSQL local: creditos y recaudos excluidos, insert directo, historial y limites del periodo", {
+test("PostgreSQL local: creditos excluidos y recaudos descontables, insert directo, historial y limites del periodo", {
   skip: memoryPostgres ? false : "Falta ALLY_PAYMENT_PGLITE_MODULE para PostgreSQL en memoria; no se usa produccion.",
 }, async (t) => {
   const { PGlite } = await import(pathToFileURL(memoryPostgres).href);
@@ -119,6 +124,8 @@ test("PostgreSQL local: creditos y recaudos excluidos, insert directo, historial
     INSERT INTO "CreditoAbono"
       SELECT id, id, 1, '2026-09-26T12:00:00'::timestamp, 'EFECTIVO', 100000, 'REGISTRADO', NULL
       FROM generate_series(1, 5) id;
+    INSERT INTO "CreditoAbono"
+      VALUES (6, 1, 1, '2026-08-31T12:00:00'::timestamp, 'EFECTIVO', 100000, 'REGISTRADO', NULL);
   `);
   for (const statement of creditAllyPaymentExclusionSchemaStatements) await db.exec(statement);
   // Re-running the initializer must preserve registered exclusions and histories.
@@ -145,32 +152,34 @@ test("PostgreSQL local: creditos y recaudos excluidos, insert directo, historial
       assert.deepEqual(await eligibleCredits({ ...period, endExclusive: new Date("2026-09-26T05:00:00Z") }), []);
     });
 
-    await t.test("los recaudos del credito excluido tampoco entran en pendientes ni periodo", async () => {
+    await t.test("los recaudos del credito excluido siguen entrando en pendientes y periodo", async () => {
       const ids = (rows) => JSON.parse(JSON.stringify(rows)).map((row) => row.creditoId);
       const pendingCollections = await loadCollections(collectionClient, { allyId: 2 });
-      assert.deepEqual(ids(pendingCollections), [1, 3, 4, 5]);
+      assert.deepEqual(ids(pendingCollections), [1, 2, 3, 4, 5]);
       assert.deepEqual(JSON.parse(JSON.stringify(pendingCollections[0].aliado)), { id: 2, nombre: "Aliado sintetico" });
       assert.equal(pendingCollections[0].plataforma, "IPHONE");
       assert.equal(pendingCollections[0].imei, "IMEI-1");
+      assert.equal(pendingCollections.some((row) => row.abonoId === 6), false, "No arrastra recaudos anteriores al inicio operativo.");
       assert.deepEqual(ids(await loadCollections(collectionClient, {
         allyId: 2, start: new Date("2026-09-26T05:00:00Z"), endExclusive: new Date("2026-09-27T05:00:00Z"), lock: true,
-      })), [1, 3, 4, 5]);
+      })), [1, 2, 3, 4, 5]);
       assert.deepEqual(ids(await loadCollections(collectionClient, { allyId: 3 })), []);
     });
 
-    await t.test("rechaza liquidacion directa y recaudo con ID falsificado", async () => {
+    await t.test("rechaza el credito excluido, admite su recaudo y bloquea IDs falsificados", async () => {
       await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoCredito" ("creditoId") VALUES (2)'), /ALLY_PAYMENT_CREDIT_EXCLUDED/);
-      await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoRecaudo" ("creditoId","abonoId") VALUES (2,2)'), /ALLY_PAYMENT_CREDIT_EXCLUDED/);
-      await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoRecaudo" ("creditoId","abonoId") VALUES (1,2)'), /ALLY_PAYMENT_CREDIT_EXCLUDED/);
+      await db.query('INSERT INTO "LiquidacionAliadoRecaudo" ("creditoId","abonoId") VALUES (2,2)');
+      await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoRecaudo" ("creditoId","abonoId") VALUES (1,3)'), /ALLY_PAYMENT_COLLECTION_CREDIT_MISMATCH/);
+      await assert.rejects(db.query('INSERT INTO "LiquidacionAliadoRecaudo" ("creditoId","abonoId") VALUES (1,999)'), /ALLY_PAYMENT_COLLECTION_CREDIT_MISMATCH/);
       await db.query('INSERT INTO "LiquidacionAliadoCredito" ("creditoId") VALUES (4)');
       await db.query('INSERT INTO "LiquidacionAliadoRecaudo" ("creditoId","abonoId") VALUES (5,5)');
       assert.deepEqual(await eligibleCredits({ allyId: 2 }), [1, 3, 5]);
     });
 
-    await t.test("no permite excluir un credito ni recaudo ya liquidado", async () => {
+    await t.test("impide excluir un credito ya pagado pero no uno con recaudo descontado", async () => {
       await assert.rejects(registerExclusion(4), /ALLY_PAYMENT_CREDIT_ALREADY_SETTLED/);
-      await assert.rejects(registerExclusion(5), /ALLY_PAYMENT_CREDIT_ALREADY_SETTLED/);
-      assert.deepEqual((await db.query('SELECT "creditoId" FROM "CreditAllyPaymentExclusion" ORDER BY "creditoId"')).rows, [{ creditoId: 2 }]);
+      await registerExclusion(5);
+      assert.deepEqual((await db.query('SELECT "creditoId" FROM "CreditAllyPaymentExclusion" ORDER BY "creditoId"')).rows, [{ creditoId: 2 }, { creditoId: 5 }]);
     });
 
     await t.test("la evidencia es inmutable y no cambia el snapshot contractual", async () => {

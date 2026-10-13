@@ -244,3 +244,26 @@ test("la confirmación persiste consignación del aliado o saldo cero según el 
     assert.equal(api.settlements[0].direccionSaldo, direction);
   }
 });
+
+test("una liquidación sin créditos conserva y descuenta el único recaudo pendiente", async () => {
+  const api = ledger({ rows: [], collectionValue: "110000" });
+  const preview = await api.preview();
+  assert.equal(preview.items.length, 0);
+  assert.equal(preview.recaudos.length, 1);
+  assert.equal(preview.totalRecaudosAliado, 110000);
+  assert.equal(preview.saldoNeto, -110000);
+  assert.equal(preview.direccionSaldo, "CONSIGNACION_ALIADO");
+
+  const result = await api.storage.createAllyPayment(api.confirmation(preview.token));
+  assert.equal(result.numeroCreditos, 0);
+  assert.equal(result.recaudos.length, 1);
+  assert.equal(result.recaudos[0].abonoId, 99);
+  assert.equal(result.totalPagarCreditos, 0);
+  assert.equal(result.totalRecaudosAliado, 110000);
+  assert.equal(result.saldoNeto, -110000);
+  assert.equal(result.valorConsignarAliado, 110000);
+
+  const persisted = api.calls.find(([kind]) => kind === "create")[1];
+  assert.equal(persisted.creditos, undefined);
+  assert.equal(persisted.recaudos.create[0].abonoId, 99);
+});

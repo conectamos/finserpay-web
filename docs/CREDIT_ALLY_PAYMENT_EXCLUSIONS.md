@@ -5,10 +5,14 @@ Un crédito se excluye únicamente cuando existe una fila para su ID en
 importados. La exclusión operativa no cambia el contrato ni las reglas de
 aprobación, los importes o el calendario del cliente.
 
-La exclusión impide incluir el crédito y sus recaudos en pendientes, vistas
-previas y nuevas liquidaciones a aliados. No modifica liquidaciones anteriores.
-Registrar una exclusión para un crédito o recaudo ya liquidado produce
-`ALLY_PAYMENT_CREDIT_ALREADY_SETTLED`.
+La exclusión impide incluir el crédito en pendientes, vistas previas y nuevas
+liquidaciones a aliados. No modifica liquidaciones anteriores. Los recaudos que
+el aliado reciba por ese crédito sí aparecen y se descuentan: son dinero en
+poder del aliado, aunque el crédito no deba pagarse de nuevo. Registrar una
+exclusión para un crédito ya pagado produce
+`ALLY_PAYMENT_CREDIT_ALREADY_SETTLED`; un recaudo descontado no impide registrar
+la exclusión del crédito. Solo se consideran recaudos recibidos desde el inicio
+operativo del módulo, el 1 de septiembre de 2026.
 
 La tabla conserva motivo, nombre y SHA-256 del archivo, hoja, fila, responsable
 administrativo y fecha UTC. Sus registros son inmutables. No existe una acción
@@ -26,10 +30,10 @@ Una carga administrativa debe registrar la exclusión y reasignar aliado/sede/
 vendedor dentro de la misma transacción, con la fila de `Credito` bloqueada.
 No puede utilizar una liquidación ficticia para representar la exclusión.
 
-Los triggers en `LiquidacionAliadoCredito` y `LiquidacionAliadoRecaudo`
-rechazan un crédito excluido incluso si la llamada usa una vista previa antigua
-o intenta insertar directamente en la base. El recaudo se verifica también
-contra el crédito real de `CreditoAbono`.
+El trigger en `LiquidacionAliadoCredito` rechaza un crédito excluido incluso si
+la llamada usa una vista previa antigua o intenta insertar directamente en la
+base. En `LiquidacionAliadoRecaudo`, el trigger permite el descuento y verifica
+que el crédito guardado coincida con el crédito real de `CreditoAbono`.
 
 ## Verificación
 
@@ -42,7 +46,7 @@ no requiere conexión a producción. Si la variable no está configurada, se omi
 ese caso y se informa en el resultado.
 
 Las pruebas verifican: exclusión puntual, conservación de otros importados,
-alcance de aliado/período, consultas de pendientes y bloqueadas, recaudos,
-inserciones directas, IDs de recaudo falsificados, historial ya liquidado,
-inmutabilidad y conservación del snapshot contractual.
+alcance de aliado/período, consultas de pendientes y bloqueadas, recaudos que
+siguen siendo descontables, inserciones directas, IDs de recaudo falsificados,
+historial ya liquidado, inmutabilidad y conservación del snapshot contractual.
 
