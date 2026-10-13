@@ -19,6 +19,7 @@ type Props = {
   openDetail: (item: SolicitudItem) => void; desist: (item: SolicitudItem) => void;
   factoryHref: (item: SolicitudItem) => string; replacementHref: (item: SolicitudItem) => string;
   displayNumber: (item: SolicitudItem) => string;
+  exportAction?: ReactNode;
   requestHref?: (item: SolicitudItem) => string;
 };
 const formatNumber = (value: number) => new Intl.NumberFormat("es-CO").format(value);
@@ -91,7 +92,7 @@ export default function SolicitudesListView(props: Props) {
   };
   return <div className={styles.panel}>
     <nav className={styles.breadcrumb} aria-label="Ruta actual"><Link href={props.requestHref ? "/dashboard/aprobaciones/centro" : "/dashboard"} aria-label="Inicio"><Home aria-hidden="true" /></Link><ChevronRight aria-hidden="true" /><span>{props.requestHref ? "Aprobaciones" : "Operación"}</span><ChevronRight aria-hidden="true" /><strong aria-current="page">Solicitudes</strong></nav>
-    <header className={styles.heading}><div><h1>Solicitudes</h1><p>{props.requestHref ? "Consulta y gestiona las solicitudes de crédito." : "Consulta y continúa tus ventas."}</p></div><div className={styles.headingActions}><span className={styles.total}>{loading && !list ? "Consultando…" : `${formatNumber(list?.total || 0)} solicitudes`}</span><button type="button" className={styles.secondary} disabled={loading} onClick={props.refresh}><RefreshCw className={loading ? styles.spin : undefined} aria-hidden="true" />Actualizar</button></div></header>
+    <header className={styles.heading}><div><h1>Solicitudes</h1><p>{props.requestHref ? "Consulta y gestiona las solicitudes de crédito." : "Consulta y continúa tus ventas."}</p></div><div className={styles.headingActions}><span className={styles.total}>{loading && !list ? "Consultando…" : `${formatNumber(list?.total || 0)} solicitudes`}</span>{props.exportAction}<button type="button" className={styles.secondary} disabled={loading} onClick={props.refresh}><RefreshCw className={loading ? styles.spin : undefined} aria-hidden="true" />Actualizar</button></div></header>
     {props.notice && <div className={styles.notice} role="status"><span>{props.notice}</span><button type="button" onClick={props.dismissNotice} aria-label="Cerrar mensaje"><X aria-hidden="true" /></button></div>}
     <nav className={styles.tabs} aria-label="Filtrar solicitudes por estado">{[["", "Todas"], ["PROCESO", "En proceso"], ["RECHAZADA", "Rechazadas"]].map(([value, label]) => <button key={label} type="button" aria-current={appliedFilters.estado === value ? "page" : undefined} className={appliedFilters.estado === value ? styles.selectedTab : undefined} onClick={() => props.quickFilter("estado", value)}>{label}</button>)}</nav>
     <form className={styles.filters} role="search" onSubmit={event => { event.preventDefault(); props.quickFilter("q", filters.q.trim()); }}>
