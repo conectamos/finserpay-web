@@ -85,8 +85,8 @@ de filtros, límites de Bogotá, duplicados, conteos, ceros iniciales, textos co
 aspecto de fórmula, históricos grandes, ausencia de resultados, cola, archivos
 incompletos y revocación de permisos. No consultan la base de producción.
 
-Verificación de implementación: 43 pruebas nuevas y 28 regresiones del muro
-aprobadas; TypeScript del backend nuevo y ESLint de los archivos nuevos sin
+Verificación de implementación: 43 pruebas nuevas y 178 regresiones del muro
+aprobadas; compilación integral, TypeScript y ESLint de los archivos nuevos sin
 errores. El componente real se revisó en navegador con API ficticia en escritorio
 y móvil, incluyendo filtros, vacío, progreso y reapertura del archivo listo.
 
@@ -111,15 +111,12 @@ XLSX se validan únicamente en memoria contra el manifiesto y la propiedad actua
 de las solicitudes. La salida contiene estados, identificadores y cantidades;
 no incluye datos de clientes, cookies, secretos ni cuerpos de respuesta.
 
-Con una CLI Railway ya autenticada y una identidad SSH registrada, el lanzador
-PowerShell envía el código comprimido como base64 y lo ejecuta en memoria dentro
-de `/app`. No necesita agregar el verificador al Dockerfile:
+Ejecutar con las variables del servicio disponibles únicamente en el entorno,
+después de confirmar que el despliegue deseado está activo:
 
-```powershell
-./scripts/verify-solicitudes-export-railway.ps1 -IdentityFile 'RUTA_DE_IDENTIDAD_SSH'
+```sh
+node scripts/verify-solicitudes-export-production.mjs
 ```
 
-El lanzador apunta al servicio y ambiente de producción de FINSER PAY. Se debe
-ejecutar después de confirmar que el despliegue deseado está activo. Comprueba
-también los rechazos por identificadores externos, otro rol y acceso a un trabajo
+Comprueba también los rechazos por identificadores externos, otro rol y acceso a un trabajo
 de otro usuario. Un error HTTP muestra el código de estado recibido, sin su cuerpo.
