@@ -32,7 +32,7 @@ import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors"
 import prisma from "@/lib/prisma";
 
 const PAYMENT_CALCULATION_VERSION =
-  "ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_V2";
+  "ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_ATTRIBUTION_V3";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH_PATTERN = /^[0-9a-f]{64}$/i;
@@ -389,21 +389,23 @@ async function loadEligibleCollections(
     ALLY_PAYMENTS_AVAILABLE_FROM,
     ALLY_PAYMENTS_AVAILABLE_FROM
   ).start;
-  const values: unknown[] = [ALIADO_FINSER_PAY.codigo, availableFrom];
+  const values: unknown[] = [availableFrom];
   const conditions = [
     `UPPER(BTRIM(COALESCE(payment."estado", ''))) NOT IN ('ANULADO', 'ANULADA', 'CANCELADO', 'CANCELADA')`,
     `payment."anuladoAt" IS NULL`,
     `payment."valor" > 0`,
     `snapshot."id" IS NULL`,
-    `payment."fechaAbono" >= $2`,
+    `payment."fechaAbono" >= $1`,
     // La exclusión evita pagar nuevamente el crédito, pero el efectivo que el
     // aliado recaude siempre debe descontarse de su siguiente liquidación.
-    `site."aliadoId" IS NOT NULL`,
-    `UPPER(BTRIM(COALESCE(ally."codigo", ''))) <> UPPER(BTRIM($1))`,
+    // La sede conserva la trazabilidad contable. La atribución histórica e
+    // inmutable decide si el recaudo pertenece a FINSER PAY o al aliado.
+    `attribution."titularTipo" = 'ALIADO'`,
+    `attribution."aliadoId" IS NOT NULL`,
   ];
   if (input.allyId !== null) {
     values.push(input.allyId);
-    conditions.push(`site."aliadoId" = $${values.length}`);
+    conditions.push(`attribution."aliadoId" = $${values.length}`);
   }
   if (input.start) {
     values.push(input.start);
@@ -435,7 +437,9 @@ async function loadEligibleCollections(
     FROM public."CreditoAbono" payment
     INNER JOIN public."Credito" credit ON credit."id" = payment."creditoId"
     INNER JOIN public."Sede" site ON site."id" = payment."sedeId"
-    INNER JOIN public."Aliado" ally ON ally."id" = site."aliadoId"
+    INNER JOIN public."CreditoAbonoAtribucionAliado" attribution
+      ON attribution."abonoId" = payment."id"
+    INNER JOIN public."Aliado" ally ON ally."id" = attribution."aliadoId"
     LEFT JOIN public."LiquidacionAliadoRecaudo" snapshot
       ON snapshot."abonoId" = payment."id"
     WHERE ${conditions.join("\n      AND ")}

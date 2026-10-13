@@ -1,4 +1,8 @@
 import pg from "pg";
+import {
+  creditAbonoAllyAttributionSchemaStatements,
+  creditAbonoAllyAttributionValidationStatements,
+} from "./credit-abono-ally-attribution-schema.mjs";
 import { creditAllyPaymentExclusionSchemaStatements } from "./credit-ally-payment-exclusion-schema.mjs";
 
 const { Client } = pg;
@@ -872,9 +876,19 @@ const statements = [
   'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoAjusteAnulacion_estado_createdAt_idx" ON public."LiquidacionAliadoAjusteAnulacion" ("estado", "createdAt")',
 ];
 
-statements.push(...creditAllyPaymentExclusionSchemaStatements);
+statements.push(
+  ...creditAbonoAllyAttributionSchemaStatements,
+  ...creditAllyPaymentExclusionSchemaStatements,
+  ...creditAbonoAllyAttributionValidationStatements
+);
 
 const expectedColumns = [
+  ["CreditoAbonoAtribucionAliado", "abonoId", "integer", "NO"],
+  ["CreditoAbonoAtribucionAliado", "titularTipo", "character varying", "NO", 16],
+  ["CreditoAbonoAtribucionAliado", "aliadoId", "integer", "YES"],
+  ["CreditoAbonoAtribucionAliado", "fuente", "character varying", "NO", 40],
+  ["CreditoAbonoAtribucionAliado", "actorAliadoIdSnapshot", "integer", "YES"],
+  ["CreditoAbonoAtribucionAliado", "createdAt", "timestamp without time zone", "NO"],
   ["CreditAllyPaymentExclusion", "creditoId", "integer", "NO"],
   ["CreditAllyPaymentExclusion", "reason", "text", "NO"],
   ["CreditAllyPaymentExclusion", "sourceFile", "text", "NO"],
@@ -970,6 +984,13 @@ const expectedColumns = [
 ];
 
 const expectedIndexes = [
+  ["CreditoAbonoAtribucionAliado", "CreditoAbonoAtribucionAliado_pkey", true, ["abonoId"]],
+  [
+    "CreditoAbonoAtribucionAliado",
+    "CreditoAbonoAtribucionAliado_titular_aliado_abono_idx",
+    false,
+    ["titularTipo", "aliadoId", "abonoId"],
+  ],
   ["CreditAllyPaymentExclusion", "CreditAllyPaymentExclusion_pkey", true, ["creditoId"]],
   ["LiquidacionAliado", "LiquidacionAliado_mutationId_key", true, ["mutationId"]],
   [
@@ -1041,6 +1062,10 @@ const expectedIndexes = [
 ];
 
 const expectedConstraints = [
+  ["CreditoAbonoAtribucionAliado", "CreditoAbonoAtribucionAliado_abonoId_fkey", "f"],
+  ["CreditoAbonoAtribucionAliado", "CreditoAbonoAtribucionAliado_aliadoId_fkey", "f"],
+  ["CreditoAbonoAtribucionAliado", "CreditoAbonoAtribucionAliado_titular_check", "c"],
+  ["CreditoAbonoAtribucionAliado", "CreditoAbonoAtribucionAliado_fuente_check", "c"],
   ["CreditAllyPaymentExclusion", "CreditAllyPaymentExclusion_creditoId_fkey", "f"],
   ["LiquidacionAliado", "LiquidacionAliado_aliadoId_fkey", "f"],
   [
@@ -1114,7 +1139,7 @@ async function assertCompatibleColumns() {
       WHERE table_schema = 'public'
         AND table_name = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditAllyPaymentExclusion"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
   );
   const columns = new Map(
     result.rows.map((row) => [
@@ -1174,7 +1199,7 @@ async function assertCompatibleIndexes() {
       GROUP BY table_class.relname, index_class.relname,
         index_definition.indisunique
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditAllyPaymentExclusion"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
   );
   const indexes = new Map(
     result.rows.map((row) => [
@@ -1219,7 +1244,7 @@ async function assertCompatibleConstraints() {
       WHERE namespace.nspname = 'public'
         AND table_class.relname = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditAllyPaymentExclusion"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
   );
   const constraints = new Map(
     result.rows.map((row) => [

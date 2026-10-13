@@ -91,6 +91,7 @@ model Aliado {
   dataCreditoDailyQuotaUsage      DataCreditoDailyQuotaUsage[]
   dataCreditoDailyQuotaAudit      DataCreditoDailyQuotaAudit[]
   liquidacionesAliado             LiquidacionAliado[]
+  atribucionesRecaudo             CreditoAbonoAtribucionAliado[]
   ajustesAnulacionCredito         AjusteAnulacionCreditoAliado[]
   sedes                           Sede[]
   createdAt                       DateTime                           @default(now())
@@ -1088,6 +1089,7 @@ model CreditoAbono {
   usuario             Usuario   @relation(fields: [usuarioId], references: [id])
   vendedor            Vendedor? @relation(fields: [vendedorId], references: [id])
   sede                Sede      @relation(fields: [sedeId], references: [id])
+  atribucionAliado    CreditoAbonoAtribucionAliado?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -1096,6 +1098,19 @@ model CreditoAbono {
   @@index([vendedorId, createdAt])
   @@index([sedeId, createdAt])
   @@index([estado, creditoId])
+}
+
+model CreditoAbonoAtribucionAliado {
+  abonoId               Int          @id
+  titularTipo           String       @db.VarChar(16)
+  aliadoId              Int?
+  fuente                String       @db.VarChar(40)
+  actorAliadoIdSnapshot Int?
+  createdAt             DateTime     @default(now())
+  abono                 CreditoAbono @relation(fields: [abonoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "CreditoAbonoAtribucionAliado_abonoId_fkey")
+  aliado                Aliado?      @relation(fields: [aliadoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "CreditoAbonoAtribucionAliado_aliadoId_fkey")
+
+  @@index([titularTipo, aliadoId, abonoId], map: "CreditoAbonoAtribucionAliado_titular_aliado_abono_idx")
 }
 
 model CreditPrincipalPaymentRevision {

@@ -165,10 +165,14 @@ test("pendientes entrega metadata de recaudos aunque el crédito ya no esté en 
   assert.equal(result.totalRecaudosAliado, 123.45);
   assert.equal(result.saldoNeto, 556.76);
   const collectionQuery = api.calls.find(([, sql]) => sql.includes('FROM public."CreditoAbono"'));
-  assert.deepEqual(collectionQuery[2], ["FINSERPAY", "2026-09-01T05:00:00.000Z", 7]);
+  assert.deepEqual(collectionQuery[2], ["2026-09-01T05:00:00.000Z", 7]);
   assert.match(collectionQuery[1], /snapshot\."id" IS NULL/);
   assert.match(collectionQuery[1], /payment\."anuladoAt" IS NULL/);
-  assert.match(collectionQuery[1], /payment\."fechaAbono" >= \$2/);
+  assert.match(collectionQuery[1], /payment\."fechaAbono" >= \$1/);
+  assert.match(collectionQuery[1], /CreditoAbonoAtribucionAliado" attribution/);
+  assert.match(collectionQuery[1], /attribution\."titularTipo" = 'ALIADO'/);
+  assert.match(collectionQuery[1], /ally\."id" = attribution\."aliadoId"/);
+  assert.doesNotMatch(collectionQuery[1], /collector|collector_site|collector_ally/);
   assert.doesNotMatch(
     collectionQuery[1],
     /CreditAllyPaymentExclusion/,
@@ -214,5 +218,5 @@ test("GET entrega todo el historial autorizado y rechaza un aliado fuera de alca
   assert.equal(result.pending.items[0].fechaLiquidacion, "2026-09-01");
   assert.equal(result.preview, null, "Los filtros cliente no ejecutan una previsualización ni escritura.");
   assert.equal(api.calls.find(([name]) => name === "history")[1].where.aliadoId, 7);
-  assert.deepEqual(api.calls.find(([, sql]) => typeof sql === "string" && sql.includes('FROM public."CreditoAbono"'))[2], ["FINSERPAY", "2026-09-01T05:00:00.000Z", 7]);
+  assert.deepEqual(api.calls.find(([, sql]) => typeof sql === "string" && sql.includes('FROM public."CreditoAbono"'))[2], ["2026-09-01T05:00:00.000Z", 7]);
 });
