@@ -91,7 +91,9 @@ model Aliado {
   dataCreditoDailyQuotaUsage      DataCreditoDailyQuotaUsage[]
   dataCreditoDailyQuotaAudit      DataCreditoDailyQuotaAudit[]
   liquidacionesAliado             LiquidacionAliado[]
+  atribucionesRecaudo             CreditoAbonoAtribucionAliado[]
   ajustesAnulacionCredito         AjusteAnulacionCreditoAliado[]
+  ajustesRecaudoCentral           AjusteRecaudoCentralAliado[]
   sedes                           Sede[]
   createdAt                       DateTime                           @default(now())
   updatedAt                       DateTime                           @updatedAt
@@ -217,6 +219,7 @@ model Usuario {
   arqueosDiarios  ArqueoDiario[]
   liquidacionesAliadoRegistradas LiquidacionAliado[]
   ajustesAnulacionCreditoCreados AjusteAnulacionCreditoAliado[] @relation("AjusteAnulacionCreditoCreadoPor")
+  ajustesRecaudoCentralOrigen AjusteRecaudoCentralAliado[] @relation("AjusteRecaudoCentralUsuarioRecaudo")
   reemisionesFirma CreditApprovalReissue[]
   approvalSharedGrantsIssued CreditApprovalSharedGrant[] @relation("ApprovalSharedIssuer")
   approvalSharedGrantsRevoked CreditApprovalSharedGrant[] @relation("ApprovalSharedRevoker")
@@ -405,6 +408,7 @@ model Credito {
   wompiPaymentIntents           WompiPaymentIntent[]
   liquidacionAliadoCredito      LiquidacionAliadoCredito?
   ajusteAnulacionAliado         AjusteAnulacionCreditoAliado?
+  ajustesRecaudoCentral         AjusteRecaudoCentralAliado[]
   exclusionLiquidacionAliado     CreditAllyPaymentExclusion?
   reemisionesFirma            CreditApprovalReissue[]
   revisionesEvidencia          CreditApprovalEvidenceRevision[]
@@ -887,6 +891,8 @@ model LiquidacionAliado {
   totalRecaudosAliado         Decimal?                    @db.Decimal(20, 2)
   numeroAjustesAnulacion      Int                         @default(0)
   totalAjustesAnulacion       Decimal                     @default(0) @db.Decimal(20, 2)
+  numeroAjustesRecaudoCentral Int                         @default(0)
+  totalAjustesRecaudoCentral  Decimal                     @default(0) @db.Decimal(20, 2)
   saldoNeto                   Decimal?                    @db.Decimal(20, 2)
   direccionSaldo              String?                     @db.VarChar(32)
   registradoPorUsuarioId      Int
@@ -900,6 +906,8 @@ model LiquidacionAliado {
   recaudos                    LiquidacionAliadoRecaudo[]
   ajustesAnulacion            LiquidacionAliadoAjusteAnulacion[]
   ajustesAnulacionOrigen      AjusteAnulacionCreditoAliado[] @relation("LiquidacionAliadoAjusteOrigen")
+  ajustesRecaudoCentral       LiquidacionAliadoAjusteRecaudoCentral[]
+  ajustesRecaudoCentralOrigen AjusteRecaudoCentralAliado[] @relation("LiquidacionAliadoAjusteRecaudoCentralOrigen")
 
   @@index([aliadoId, pagadoAt])
   @@index([periodoInicio, periodoFin])
@@ -923,6 +931,7 @@ model LiquidacionAliadoRecaudo {
   estado           String             @default("DESCONTADO") @db.VarChar(16)
   createdAt        DateTime           @default(now())
   liquidacion      LiquidacionAliado  @relation(fields: [liquidacionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ajusteRecaudoCentralOrigen AjusteRecaudoCentralAliado?
 
   @@index([liquidacionId, fechaAbono])
   @@index([sedeId, fechaAbono])
@@ -1003,6 +1012,55 @@ model LiquidacionAliadoAjusteAnulacion {
 
   @@index([liquidacionId, createdAt])
   @@index([estado, createdAt])
+}
+
+model AjusteRecaudoCentralAliado {
+  id                         Int @id @default(autoincrement())
+  abonoId                    Int @unique(map: "AjusteRecaudoCentralAliado_abonoId_key")
+  liquidacionRecaudoOrigenId Int @unique(map: "AjusteRecaudoCentral_origenRecaudo_key")
+  creditoId                  Int
+  aliadoId                   Int
+  aliadoNombre               String @db.VarChar(180)
+  fechaRecaudo               DateTime @db.Timestamp(3)
+  fechaAjuste                DateTime @db.Timestamp(3)
+  folio                      String @db.VarChar(80)
+  clienteNombre              String @db.VarChar(180)
+  clienteDocumento           String @db.VarChar(80)
+  sedeId                     Int
+  sedeNombre                 String @db.VarChar(180)
+  metodoPago                 String @db.VarChar(40)
+  liquidacionOrigenId        Int
+  valorAjuste                Decimal @db.Decimal(20, 2)
+  motivo                     String @db.VarChar(500)
+  fuente                     String @db.VarChar(40)
+  usuarioRecaudoId           Int
+  usuarioRecaudoNombre       String @db.VarChar(160)
+  usuarioRecaudoLogin        String @db.VarChar(160)
+  createdAt                  DateTime @default(now()) @db.Timestamp(3)
+  abono                      CreditoAbono @relation(fields: [abonoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AjusteRecaudoCentralAliado_abonoId_fkey")
+  liquidacionRecaudoOrigen   LiquidacionAliadoRecaudo @relation(fields: [liquidacionRecaudoOrigenId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AjusteRecaudoCentral_origenRecaudo_fkey")
+  credito                    Credito @relation(fields: [creditoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AjusteRecaudoCentralAliado_creditoId_fkey")
+  aliado                     Aliado @relation(fields: [aliadoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AjusteRecaudoCentralAliado_aliadoId_fkey")
+  liquidacionOrigen          LiquidacionAliado @relation("LiquidacionAliadoAjusteRecaudoCentralOrigen", fields: [liquidacionOrigenId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AjusteRecaudoCentral_origenLiquidacion_fkey")
+  usuarioRecaudo             Usuario @relation("AjusteRecaudoCentralUsuarioRecaudo", fields: [usuarioRecaudoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AjusteRecaudoCentral_usuarioRecaudo_fkey")
+  aplicacion                 LiquidacionAliadoAjusteRecaudoCentral?
+
+  @@index([aliadoId, fechaAjuste, id], map: "AjusteRecaudoCentral_aliado_fecha_idx")
+  @@index([liquidacionOrigenId], map: "AjusteRecaudoCentral_origenLiquidacion_idx")
+}
+
+model LiquidacionAliadoAjusteRecaudoCentral {
+  id            Int @id @default(autoincrement())
+  liquidacionId Int
+  ajusteId      Int @unique(map: "LiquidacionAliadoAjusteRecaudoCentral_ajusteId_key")
+  valorAjuste   Decimal @db.Decimal(20, 2)
+  estado        String @default("ACREDITADO") @db.VarChar(24)
+  createdAt     DateTime @default(now()) @db.Timestamp(3)
+  liquidacion   LiquidacionAliado @relation(fields: [liquidacionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "LiquidacionAjusteRecaudoCentral_liquidacion_fkey")
+  ajuste        AjusteRecaudoCentralAliado @relation(fields: [ajusteId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "LiquidacionAjusteRecaudoCentral_ajuste_fkey")
+
+  @@index([liquidacionId, createdAt], map: "LiquidacionAjusteRecaudoCentral_liquidacion_idx")
+  @@index([estado, createdAt], map: "LiquidacionAjusteRecaudoCentral_estado_idx")
 }
 
 model VoiceReviewCampaign {
@@ -1088,6 +1146,8 @@ model CreditoAbono {
   usuario             Usuario   @relation(fields: [usuarioId], references: [id])
   vendedor            Vendedor? @relation(fields: [vendedorId], references: [id])
   sede                Sede      @relation(fields: [sedeId], references: [id])
+  atribucionAliado    CreditoAbonoAtribucionAliado?
+  ajusteRecaudoCentral AjusteRecaudoCentralAliado?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -1096,6 +1156,19 @@ model CreditoAbono {
   @@index([vendedorId, createdAt])
   @@index([sedeId, createdAt])
   @@index([estado, creditoId])
+}
+
+model CreditoAbonoAtribucionAliado {
+  abonoId               Int          @id
+  titularTipo           String       @db.VarChar(16)
+  aliadoId              Int?
+  fuente                String       @db.VarChar(40)
+  actorAliadoIdSnapshot Int?
+  createdAt             DateTime     @default(now())
+  abono                 CreditoAbono @relation(fields: [abonoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "CreditoAbonoAtribucionAliado_abonoId_fkey")
+  aliado                Aliado?      @relation(fields: [aliadoId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "CreditoAbonoAtribucionAliado_aliadoId_fkey")
+
+  @@index([titularTipo, aliadoId, abonoId], map: "CreditoAbonoAtribucionAliado_titular_aliado_abono_idx")
 }
 
 model CreditPrincipalPaymentRevision {

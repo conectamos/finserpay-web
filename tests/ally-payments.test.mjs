@@ -29,6 +29,7 @@ const [
   pdfBuilderSource,
   eligibilitySource,
   historicalDetailSource,
+  attributionSchema,
 ] = await Promise.all([
   readProjectFile("lib/ally-payment-access.ts"),
   readProjectFile("app/api/pagos-aliados/route.ts"),
@@ -46,6 +47,7 @@ const [
   readProjectFile("lib/ally-payment-settlement-pdf.ts"),
   readProjectFile("lib/ally-payment-eligibility.ts"),
   readProjectFile("app/dashboard/pagos-aliados/historical-settlement-detail.tsx"),
+  readProjectFile("scripts/credit-abono-ally-attribution-schema.mjs"),
 ]);
 
 function sectionBetween(contents, startMarker, endMarker) {
@@ -458,7 +460,10 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
     assert.match(requestHash, new RegExp("\\b" + field + ":"));
   }
   assert.match(create, /requestHash,/);
-  assert.match(storage, /ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_V2/);
+  assert.match(
+    storage,
+    /ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_CENTRAL_ADJUSTMENTS_V4/
+  );
 });
 
 test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado", () => {
@@ -527,6 +532,7 @@ test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", 
   const header = modelBlock("LiquidacionAliado");
   const credit = modelBlock("LiquidacionAliadoCredito");
   const collection = modelBlock("LiquidacionAliadoRecaudo");
+  const attribution = modelBlock("CreditoAbonoAtribucionAliado");
   const create = sectionFrom(storage, "export async function createAllyPayment");
 
   assert.match(fieldLine(header, "mutationId"), /\bString\b.*@unique.*@db\.Uuid/);
@@ -536,6 +542,10 @@ test("aprobacion, mutationId y credito tienen defensa duplicada en app y base", 
   );
   assert.match(fieldLine(credit, "creditoId"), /\bInt\b.*@unique/);
   assert.match(fieldLine(collection, "abonoId"), /\bInt\b.*@unique/);
+  assert.match(fieldLine(attribution, "abonoId"), /\bInt\b.*@id/);
+  assert.match(fieldLine(attribution, "titularTipo"), /\bString\b.*@db\.VarChar\(16\)/);
+  assert.match(fieldLine(attribution, "aliadoId"), /\bInt\?/);
+  assert.match(attribution, /onDelete:\s*Restrict,\s*onUpdate:\s*Restrict/);
 
   assert.match(
     create,
@@ -571,23 +581,39 @@ test("los recaudos del aliado se filtran por sede, periodo y uso previo", () => 
     "async function loadEligibleCollections",
     "function totalCollections"
   );
-  assert.match(loader, /site\."aliadoId"\s*=\s*\$\$\{values\.length\}/);
+  assert.match(loader, /attribution\."aliadoId"\s*=\s*\$\$\{values\.length\}/);
+  assert.match(
+    loader,
+    /INNER JOIN public\."CreditoAbonoAtribucionAliado" attribution/
+  );
+  assert.match(
+    loader,
+    /INNER JOIN public\."Aliado" ally ON ally\."id" = attribution\."aliadoId"/
+  );
+  assert.match(loader, /attribution\."titularTipo" = 'ALIADO'/);
+  assert.doesNotMatch(loader, /JOIN public\."Usuario"|collector_site|collector_ally/);
   assert.match(loader, /payment\."fechaAbono"\s*>=/);
   assert.match(loader, /payment\."fechaAbono"\s*</);
   assert.match(loader, /snapshot\."id"\s+IS NULL/);
   assert.match(loader, /FOR UPDATE OF payment/);
   assert.match(
     storage,
-    /previewFingerprint\(\s*allyId,\s*period,\s*items,\s*recaudos,\s*ajustesAnulacion\s*\)/
+    /previewFingerprint\(\s*allyId,\s*period,\s*items,\s*recaudos,\s*ajustesAnulacion,\s*ajustesRecaudoCentral\s*\)/
   );
   assert.match(
     storage,
-    /if \(!items\.length && !recaudos\.length && !ajustesAnulacion\.length\)/
+    /if \(\s*!items\.length\s*&&\s*!recaudos\.length\s*&&\s*!ajustesAnulacion\.length\s*&&\s*!ajustesRecaudoCentral\.length\s*\)/
   );
   assert.match(storage, /totalRecaudosAliado:\s*moneyForDatabase/);
   assert.match(storage, /saldoNeto:\s*moneyForDatabase/);
   assert.match(storage, /create:\s*recaudos\.map/);
   assert.match(preflight, /LiquidacionAliadoRecaudo_immutable/);
+  assert.match(attributionSchema, /CreditoAbonoAtribucionAliado_immutable/);
+  assert.match(attributionSchema, /LiquidacionAliadoRecaudo_require_owned_attribution/);
+  assert.match(attributionSchema, /credit_abono_ally_attribution_guard_settlement/);
+  assert.match(attributionSchema, /CreditoAbonoAtribucionAliado_titular_check/);
+  assert.match(attributionSchema, /LEGACY_ADMIN_CANONICO/);
+  assert.match(attributionSchema, /ALLY_PAYMENT_PAID_ATTRIBUTION_MISMATCH/);
 });
 
 test("persiste y devuelve snapshots historicos sin recalcular el detalle", () => {
@@ -807,6 +833,10 @@ test("el preflight es idempotente, transaccional y valida el contrato instalado"
   assert.match(
     dockerfile,
     /COPY\s+--from=builder\s+\/app\/scripts\/ensure-ally-payments-schema\.mjs\s+\.\/scripts\/ensure-ally-payments-schema\.mjs/
+  );
+  assert.match(
+    dockerfile,
+    /COPY\s+--from=builder\s+\/app\/scripts\/credit-abono-ally-attribution-schema\.mjs\s+\.\/scripts\/credit-abono-ally-attribution-schema\.mjs/
   );
 });
 

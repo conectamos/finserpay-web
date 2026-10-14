@@ -105,7 +105,7 @@ function SavedCreditTable({ items }: { items: PaymentCreditItem[] }) {
   );
 }
 
-export default function HistoricalSettlementDetail({ settlement, summary, items, collectionCount, collectionDetail, annulmentCount, annulmentTotal, annulmentDetail, onPrint, onDownload, onClose }: {
+export default function HistoricalSettlementDetail({ settlement, summary, items, collectionCount, collectionDetail, annulmentCount, annulmentTotal, annulmentDetail, centralCollectionAdjustmentCount, centralCollectionAdjustmentTotal, centralCollectionAdjustmentDetail, onPrint, onDownload, onClose }: {
   settlement: Settlement;
   summary: PaymentSummary | null;
   items: PaymentCreditItem[];
@@ -114,6 +114,9 @@ export default function HistoricalSettlementDetail({ settlement, summary, items,
   annulmentCount: number;
   annulmentTotal: number;
   annulmentDetail: ReactNode;
+  centralCollectionAdjustmentCount: number;
+  centralCollectionAdjustmentTotal: number;
+  centralCollectionAdjustmentDetail: ReactNode;
   onPrint: () => void;
   onDownload: () => void;
   onClose: () => void;
@@ -130,6 +133,15 @@ export default function HistoricalSettlementDetail({ settlement, summary, items,
   const annulled = state.toUpperCase().includes("ANUL");
   const title = annulled ? "TOTAL ANULADO" : isZero ? "SALDO CONCILIADO" : isConsignment ? "TOTAL RECIBIDO DEL ALIADO" : "TOTAL PAGADO";
   const result = annulled ? "Liquidación anulada" : isZero ? "Sin saldo por transferir" : isConsignment ? "Consignación a FINSER PAY registrada" : "Pago al aliado registrado";
+  const activePlatforms = (["IPHONE", "ANDROID"] as const).filter((platform) =>
+    numberValue(summary?.[platform]?.numeroCreditos) > 0 ||
+    items.some((item) => String(item.plataforma || "").toUpperCase() === platform)
+  );
+  const summaryLayout = activePlatforms.length === 0
+    ? styles.summaryOnlyNet
+    : activePlatforms.length === 1
+      ? styles.summaryTwoColumns
+      : "";
   return (
     <div className={styles.detail}>
       <nav className={styles.breadcrumb} aria-label="Ruta de liquidación"><button type="button" onClick={onClose}>Pagos a aliados</button><span>/</span><button type="button" onClick={onClose}>Historial</button><span>/</span><strong>Detalle</strong></nav>
@@ -140,13 +152,15 @@ export default function HistoricalSettlementDetail({ settlement, summary, items,
       <Card className={styles.metadata}>
         <dl><div><dt>Aprobación bancaria</dt><dd>{settlement.numeroAprobacionBancaria || "—"}</dd></div><div><dt>Fecha de pago</dt><dd>{paymentTimestamp(settlement.pagadoAt || settlement.createdAt)}</dd></div><div><dt>Registrado por</dt><dd>{settlement.registradoPorNombre || "—"}</dd></div><div><dt>Estado</dt><dd><StatusPill tone={statusTone(state)}>{state}</StatusPill></dd></div></dl>
       </Card>
-      <section className={styles.summary} aria-label="Resumen de liquidación guardada">
-        <SavedProductSummary platform="IPHONE" bucket={summary?.IPHONE} />
-        <SavedProductSummary platform="ANDROID" bucket={summary?.ANDROID} />
-        <Card className={styles.netCard}><h2>{title}</h2><strong className={styles.netAmount}>{formatMoney(Math.abs(net))}</strong><div className={`${styles.result} ${annulled ? styles.annulled : ""}`}><CheckCircle2 size={32} aria-hidden="true" /><span>{result}</span></div><dl><div><dt>Valor por créditos</dt><dd>{formatMoney(creditsTotal)}</dd></div><div><dt>Recaudos del aliado</dt><dd>− {formatMoney(collectionsTotal)}</dd></div><div className={styles.annulmentBreakdown}><dt>Créditos anulados</dt><dd>− {formatMoney(annulmentTotal)}</dd></div></dl></Card>
+      <section className={`${styles.summary} ${summaryLayout}`} aria-label="Resumen de liquidación guardada">
+        {activePlatforms.map((platform) => (
+          <SavedProductSummary key={platform} platform={platform} bucket={summary?.[platform]} />
+        ))}
+        <Card className={styles.netCard}><h2>{title}</h2><strong className={styles.netAmount}>{formatMoney(Math.abs(net))}</strong><div className={`${styles.result} ${annulled ? styles.annulled : ""}`}><CheckCircle2 size={32} aria-hidden="true" /><span>{result}</span></div><dl><div><dt>Valor por créditos</dt><dd>{formatMoney(creditsTotal)}</dd></div><div><dt>Recaudos del aliado</dt><dd>− {formatMoney(collectionsTotal)}</dd></div><div className={styles.annulmentBreakdown}><dt>Créditos anulados</dt><dd>− {formatMoney(annulmentTotal)}</dd></div><div className={styles.centralAdjustmentBreakdown}><dt>Ajustes por recaudos FINSER PAY</dt><dd>+ {formatMoney(centralCollectionAdjustmentTotal)}</dd></div></dl></Card>
       </section>
-      <SavedCreditTable key={String(settlement.id)} items={items} />
+      {items.length > 0 ? <SavedCreditTable key={String(settlement.id)} items={items} /> : null}
       {annulmentCount > 0 ? annulmentDetail : null}
+      {centralCollectionAdjustmentCount > 0 ? centralCollectionAdjustmentDetail : null}
       {collectionCount ? <details className={styles.collections}>
         <summary><Database size={25} aria-hidden="true" /><strong>Recaudos del aliado</strong><span className={styles.countBadge}>{formatNumber(collectionCount)} recaudos</span><span className={styles.collectionValue}>{formatMoney(collectionsTotal)}</span><ChevronRight size={18} aria-hidden="true" /></summary>
         <div className={styles.collectionDetail}>{collectionDetail}</div>

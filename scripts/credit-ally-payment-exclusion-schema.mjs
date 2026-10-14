@@ -39,12 +39,29 @@ export const creditAllyPaymentExclusionSchemaStatements = [
     FOR EACH STATEMENT EXECUTE FUNCTION public.credit_ally_payment_exclusion_reject_mutation()`,
   `CREATE OR REPLACE FUNCTION public.credit_ally_payment_guard_exclusion()
     RETURNS trigger LANGUAGE plpgsql AS $$
-    DECLARE actual_credit_id INTEGER;
+    DECLARE
+      actual_credit_id INTEGER;
+      attribution_owner VARCHAR(16);
+      attribution_ally_id INTEGER;
+      settlement_ally_id INTEGER;
     BEGIN
       IF TG_TABLE_NAME = 'LiquidacionAliadoRecaudo' THEN
-        SELECT "creditoId" INTO actual_credit_id FROM public."CreditoAbono" WHERE "id" = NEW."abonoId";
+        SELECT payment."creditoId", attribution."titularTipo", attribution."aliadoId"
+        INTO actual_credit_id, attribution_owner, attribution_ally_id
+        FROM public."CreditoAbono" payment
+        LEFT JOIN public."CreditoAbonoAtribucionAliado" attribution
+          ON attribution."abonoId" = payment."id"
+        WHERE payment."id" = NEW."abonoId";
         IF actual_credit_id IS DISTINCT FROM NEW."creditoId" THEN
           RAISE EXCEPTION 'ALLY_PAYMENT_COLLECTION_CREDIT_MISMATCH' USING ERRCODE = '23514';
+        END IF;
+        IF attribution_owner IS DISTINCT FROM 'ALIADO' THEN
+          RAISE EXCEPTION 'ALLY_PAYMENT_COLLECTION_NOT_OWNED_BY_ALLY' USING ERRCODE = '23514';
+        END IF;
+        SELECT "aliadoId" INTO settlement_ally_id
+        FROM public."LiquidacionAliado" WHERE "id" = NEW."liquidacionId";
+        IF settlement_ally_id IS DISTINCT FROM attribution_ally_id THEN
+          RAISE EXCEPTION 'ALLY_PAYMENT_COLLECTION_ALLY_MISMATCH' USING ERRCODE = '23514';
         END IF;
         -- Una exclusión impide pagar el crédito, no descontar dinero que el
         -- aliado efectivamente recibió por él.

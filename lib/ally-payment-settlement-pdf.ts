@@ -27,17 +27,27 @@ export type AllyPaymentSettlementPdfAnnulmentAdjustment = {
   reason: string; status: string;
 };
 
+export type AllyPaymentSettlementPdfCentralCollectionAdjustment = {
+  adjustmentId: number; creditId: number; paymentDate: string; adjustmentDate: string;
+  folio: string; visibleCreditNumber?: string; clientName: string;
+  clientDocument: string; siteName: string; paymentMethod: string;
+  sourceSettlementId: number; registeredBy: string; registeredByUsername: string;
+  value: number; reason: string; status: string;
+};
+
 export type AllyPaymentSettlementPdfInput = {
   settlementId: number; allyName: string; periodStart: string; periodEnd: string;
   bankApprovalNumber: string; status: string; paidAt: Date; registeredBy: string;
   creditCount: number; totalSaleValue: number; totalInitialPayment: number;
   totalAuthorizedCredit: number; totalIntermediation: number; totalPayable: number;
   totalAllyCollections: number; totalAnnulmentAdjustments: number;
+  totalCentralCollectionAdjustments: number;
   netBalance: number; balanceDirection: string;
   platformSummary: { ANDROID: AllyPaymentSettlementPdfBucket; IPHONE: AllyPaymentSettlementPdfBucket };
   lines: AllyPaymentSettlementPdfLine[];
   collections: AllyPaymentSettlementPdfCollection[];
   annulmentAdjustments: AllyPaymentSettlementPdfAnnulmentAdjustment[];
+  centralCollectionAdjustments: AllyPaymentSettlementPdfCentralCollectionAdjustment[];
 };
 
 const PAGE_WIDTH = 842;
@@ -97,6 +107,18 @@ const ANNULMENT_COLUMNS = [
   { key: "status", label: "Estado", width: 64, align: "center" },
 ] as const;
 
+const CENTRAL_ADJUSTMENT_COLUMNS = [
+  { key: "date", label: "Fecha recaudo / ajuste", width: 72, align: "left" },
+  { key: "credit", label: "Crédito", width: 70, align: "left" },
+  { key: "client", label: "Cliente / cédula", width: 120, align: "left" },
+  { key: "site", label: "Sede / método", width: 92, align: "left" },
+  { key: "actor", label: "Registrado por", width: 95, align: "left" },
+  { key: "source", label: "Liq. original", width: 68, align: "left" },
+  { key: "reason", label: "Motivo", width: 105, align: "left" },
+  { key: "value", label: "Valor a favor", width: 82, align: "right" },
+  { key: "status", label: "Estado", width: 70, align: "center" },
+] as const;
+
 function toBuffer(doc: PDFKit.PDFDocument) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -146,10 +168,14 @@ function assertFinancialConsistency(input: AllyPaymentSettlementPdfInput) {
     (sum, item) => sum + item.discountValue,
     0
   );
+  const centralAdjustmentTotal = input.centralCollectionAdjustments.reduce(
+    (sum, item) => sum + item.value,
+    0
+  );
   const checks = [
     ["crédito autorizado", input.totalAuthorizedCredit, input.totalSaleValue - input.totalInitialPayment],
     ["valor por créditos", input.totalPayable, input.totalAuthorizedCredit - input.totalIntermediation],
-    ["saldo neto", input.netBalance, input.totalPayable - input.totalAllyCollections - input.totalAnnulmentAdjustments],
+    ["saldo neto", input.netBalance, input.totalPayable - input.totalAllyCollections - input.totalAnnulmentAdjustments + input.totalCentralCollectionAdjustments],
     ["ventas del detalle", input.totalSaleValue, lineTotal("saleValue")],
     ["iniciales del detalle", input.totalInitialPayment, lineTotal("initialPayment")],
     ["créditos del detalle", input.totalAuthorizedCredit, lineTotal("authorizedCredit")],
@@ -157,6 +183,7 @@ function assertFinancialConsistency(input: AllyPaymentSettlementPdfInput) {
     ["netos del detalle", input.totalPayable, lineTotal("payableValue")],
     ["recaudos del detalle", input.totalAllyCollections, collectionTotal],
     ["anulaciones del detalle", input.totalAnnulmentAdjustments, annulmentTotal],
+    ["ajustes a favor del detalle", input.totalCentralCollectionAdjustments, centralAdjustmentTotal],
   ] as const;
   if (input.creditCount !== input.lines.length) {
     throw new Error("El número de créditos de la liquidación no coincide con su detalle.");
@@ -176,18 +203,18 @@ function balanceCopy(input: AllyPaymentSettlementPdfInput) {
   if (input.netBalance < 0 || input.balanceDirection === "CONSIGNACION_ALIADO") {
     return {
       headline: "Total a consignar por el aliado", resultLabel: "Neto (consigna el aliado)",
-      description: "Diferencia a consignar a FINSER PAY después de aplicar recaudos y descuentos por créditos anulados.",
+      description: "Diferencia a consignar a FINSER PAY después de aplicar recaudos, anulaciones y ajustes a favor.",
     };
   }
   if (input.netBalance > 0 || input.balanceDirection === "PAGO_ALIADO") {
     return {
       headline: "Total pagado al aliado", resultLabel: "Neto (pagado al aliado)",
-      description: "Valor neto de las ventas del período, después de intermediación, recaudos y créditos anulados.",
+      description: "Valor neto después de intermediación, recaudos, créditos anulados y ajustes a favor.",
     };
   }
   return {
     headline: "Liquidación conciliada", resultLabel: "Neto conciliado",
-    description: "Ventas, recaudos y créditos anulados quedan compensados sin saldo pendiente entre las partes.",
+    description: "Ventas, recaudos, anulaciones y ajustes a favor quedan compensados sin saldo pendiente.",
   };
 }
 
@@ -261,21 +288,23 @@ function drawFirstPageOverview(doc: PDFKit.PDFDocument, input: AllyPaymentSettle
   const detailX = PAGE_MARGIN + totalWidth + gap;
   doc.roundedRect(detailX, cardY, detailWidth, cardHeight, 7).fillAndStroke(COLORS.white, COLORS.line);
   const intermediationLabel = commonIntermediationLabel(input);
-  const rows: Array<{ label: string; value: string; divider?: boolean; danger?: boolean }> = [
+  const rows: Array<{ label: string; value: string; divider?: boolean; danger?: boolean; positive?: boolean }> = [
     { label: "Valor venta", value: money(input.totalSaleValue) },
     { label: "Inicial", value: `-  ${money(input.totalInitialPayment)}` },
     { label: "Crédito autorizado", value: money(input.totalAuthorizedCredit), divider: true },
     { label: intermediationLabel ? `Intermediación (${intermediationLabel})` : "Intermediación", value: `-  ${money(input.totalIntermediation)}` },
     { label: "Recaudos aliado", value: `-  ${money(input.totalAllyCollections)}` },
     { label: "Créditos anulados", value: `-  ${money(input.totalAnnulmentAdjustments)}`, danger: true },
+    { label: "Ajuste recaudo FINSER PAY", value: `+  ${money(input.totalCentralCollectionAdjustments)}`, positive: true },
   ];
-  rows.forEach(({ label, value, divider, danger }, index) => {
-    const rowY = cardY + 13 + index * 20;
+  rows.forEach(({ label, value, divider, danger, positive }, index) => {
+    const rowY = cardY + 11 + index * 18;
     if (divider) doc.moveTo(detailX + 18, rowY - 5).lineTo(detailX + detailWidth - 18, rowY - 5)
       .lineWidth(0.5).strokeColor(COLORS.line).stroke();
-    doc.font("Helvetica").fontSize(8.8).fillColor(danger ? COLORS.danger : COLORS.muted)
+    const rowColor = danger ? COLORS.danger : positive ? COLORS.limeDark : COLORS.muted;
+    doc.font("Helvetica").fontSize(8.8).fillColor(rowColor)
       .text(label, detailX + 18, rowY, { width: detailWidth - 150 });
-    doc.font("Helvetica-Bold").fontSize(9.1).fillColor(danger ? COLORS.danger : COLORS.ink)
+    doc.font("Helvetica-Bold").fontSize(9.1).fillColor(danger ? COLORS.danger : positive ? COLORS.limeDark : COLORS.ink)
       .text(value, detailX + detailWidth - 140, rowY, { width: 122, align: "right" });
   });
   doc.roundedRect(detailX + 7, cardY + 143, detailWidth - 14, 26, 4).fill(COLORS.limePale);
@@ -513,6 +542,88 @@ function drawAnnulmentRow(
   return y + height;
 }
 
+function drawCentralAdjustmentHeader(doc: PDFKit.PDFDocument, y: number) {
+  doc.roundedRect(PAGE_MARGIN, y, CONTENT_WIDTH, TABLE_HEADER_HEIGHT, 4).fill(COLORS.limePale);
+  let x = PAGE_MARGIN;
+  CENTRAL_ADJUSTMENT_COLUMNS.forEach((column, index) => {
+    if (index > 0) doc.moveTo(x, y).lineTo(x, y + TABLE_HEADER_HEIGHT)
+      .lineWidth(0.35).strokeColor("#D8EDC2").stroke();
+    doc.font("Helvetica-Bold").fontSize(6.5).fillColor(COLORS.limeDark)
+      .text(column.label, x + 5, y + 10, { width: column.width - 10, height: 20, align: column.align });
+    x += column.width;
+  });
+  return y + TABLE_HEADER_HEIGHT;
+}
+
+function centralAdjustmentValues(
+  item: AllyPaymentSettlementPdfCentralCollectionAdjustment
+) {
+  return {
+    date: `${dateTimeLabel(new Date(item.paymentDate))}\nAjuste: ${dateLabel(item.adjustmentDate)}`,
+    credit: safeText(creditDisplayNumber({
+      numeroCreditoVisible: item.visibleCreditNumber,
+      folio: item.folio,
+    }), "-", 30),
+    client: `${safeText(item.clientName, "Cliente", 60)}\nCC ${safeText(item.clientDocument.replace(/[.\s]/g, ""), "-", 28)}`,
+    site: `${safeText(item.siteName, "Sede", 55)}\n${safeText(item.paymentMethod, "-", 28)}`,
+    actor: `${safeText(item.registeredBy, "Administrador", 48)}\n${safeText(item.registeredByUsername, "-", 30)}`,
+    source: `LA-${item.sourceSettlementId}`,
+    reason: safeText(item.reason, "Corrección de recaudo central", 90),
+    value: `+ ${money(item.value)}`,
+    status: safeText(item.status, "ACREDITADO", 24).replaceAll("_", " ").toUpperCase(),
+  };
+}
+
+function centralAdjustmentRowHeight(
+  doc: PDFKit.PDFDocument,
+  item: AllyPaymentSettlementPdfCentralCollectionAdjustment
+) {
+  const values = centralAdjustmentValues(item);
+  let height = MIN_ROW_HEIGHT;
+  for (const column of CENTRAL_ADJUSTMENT_COLUMNS) {
+    if (column.key === "status") continue;
+    doc.font(column.key === "value" ? "Helvetica-Bold" : "Helvetica").fontSize(6.9);
+    height = Math.max(height, doc.heightOfString(values[column.key], { width: column.width - 10 }) + 14);
+  }
+  return Math.min(Math.ceil(height), 72);
+}
+
+function drawCentralAdjustmentRow(
+  doc: PDFKit.PDFDocument,
+  item: AllyPaymentSettlementPdfCentralCollectionAdjustment,
+  y: number,
+  height: number,
+  index: number
+) {
+  doc.rect(PAGE_MARGIN, y, CONTENT_WIDTH, height)
+    .fill(index % 2 === 0 ? COLORS.white : COLORS.limePale);
+  const values = centralAdjustmentValues(item);
+  let x = PAGE_MARGIN;
+  CENTRAL_ADJUSTMENT_COLUMNS.forEach((column, columnIndex) => {
+    if (columnIndex > 0) doc.moveTo(x, y).lineTo(x, y + height)
+      .lineWidth(0.3).strokeColor("#D8EDC2").stroke();
+    if (column.key === "status") {
+      const pillX = x + 3;
+      const pillWidth = column.width - 6;
+      doc.roundedRect(pillX, y + (height - 22) / 2, pillWidth, 22, 9).fill(COLORS.limePale);
+      doc.font("Helvetica-Bold").fontSize(5.2).fillColor(COLORS.limeDark)
+        .text(values.status, pillX + 3, y + (height - 22) / 2 + 5,
+          { width: pillWidth - 6, height: 14, align: "center", ellipsis: true });
+    } else {
+      doc.font(column.key === "value" ? "Helvetica-Bold" : "Helvetica").fontSize(6.9)
+        .fillColor(column.key === "value" || column.key === "credit" || column.key === "source"
+          ? COLORS.limeDark
+          : COLORS.ink)
+        .text(values[column.key], x + 5, y + 8,
+          { width: column.width - 10, height: height - 13, align: column.align, ellipsis: true });
+    }
+    x += column.width;
+  });
+  doc.moveTo(PAGE_MARGIN, y + height).lineTo(PAGE_WIDTH - PAGE_MARGIN, y + height)
+    .lineWidth(0.4).strokeColor("#D8EDC2").stroke();
+  return y + height;
+}
+
 function drawFooter(doc: PDFKit.PDFDocument, page: number, totalPages: number) {
   doc.moveTo(PAGE_MARGIN, FOOTER_Y - 8).lineTo(PAGE_WIDTH - PAGE_MARGIN, FOOTER_Y - 8)
     .lineWidth(0.5).strokeColor(COLORS.line).stroke();
@@ -566,7 +677,34 @@ function addCollectionPage(doc: PDFKit.PDFDocument, input: AllyPaymentSettlement
   return drawCollectionHeader(doc, 108);
 }
 
+function addCentralAdjustmentPage(
+  doc: PDFKit.PDFDocument,
+  input: AllyPaymentSettlementPdfInput,
+  continuation: boolean
+) {
+  doc.addPage();
+  drawHeader(doc, input, true);
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(COLORS.limeDark)
+    .text(continuation
+      ? "Ajustes a favor por recaudos FINSER PAY · continuación"
+      : "Ajustes a favor por recaudos FINSER PAY", PAGE_MARGIN, 91);
+  if (!continuation) {
+    doc.font("Helvetica").fontSize(7.5).fillColor(COLORS.limeDark)
+      .text(`Total acreditado en esta liquidación: + ${money(input.totalCentralCollectionAdjustments)}`,
+        PAGE_MARGIN, 107);
+    return drawCentralAdjustmentHeader(doc, 124);
+  }
+  return drawCentralAdjustmentHeader(doc, 108);
+}
+
 export async function buildAllyPaymentSettlementPdf(input: AllyPaymentSettlementPdfInput) {
+  // Keep historical/test callers compatible while the new positive adjustment
+  // fields roll out; persisted settlements always pass an explicit snapshot.
+  input = {
+    ...input,
+    centralCollectionAdjustments: input.centralCollectionAdjustments || [],
+    totalCentralCollectionAdjustments: Number(input.totalCentralCollectionAdjustments || 0),
+  };
   assertFinancialConsistency(input);
   const doc = new PDFDocument({
     size: [PAGE_WIDTH, PAGE_HEIGHT], margin: 0, compress: true,
@@ -598,6 +736,14 @@ export async function buildAllyPaymentSettlementPdf(input: AllyPaymentSettlement
       const rowHeight = annulmentRowHeight(doc, item);
       if (y + rowHeight > FOOTER_Y - 14) y = addAnnulmentPage(doc, input, true);
       y = drawAnnulmentRow(doc, item, y, rowHeight, index);
+    });
+  }
+  if (input.centralCollectionAdjustments.length) {
+    y = addCentralAdjustmentPage(doc, input, false);
+    input.centralCollectionAdjustments.forEach((item, index) => {
+      const rowHeight = centralAdjustmentRowHeight(doc, item);
+      if (y + rowHeight > FOOTER_Y - 14) y = addCentralAdjustmentPage(doc, input, true);
+      y = drawCentralAdjustmentRow(doc, item, y, rowHeight, index);
     });
   }
   if (input.collections.length) {
