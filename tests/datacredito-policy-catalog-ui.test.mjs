@@ -97,13 +97,13 @@ test("guarda política y cupo diario por aliado con concurrencia optimista", () 
 });
 
 test("la consola conserva navegación accesible y estados responsivos", () => {
-  assert.match(consoleSource, /<Tabs aria-label="Gestión de políticas DataCrédito">/);
+  assert.match(consoleSource, /<Tabs\b[^>]*aria-label="Gestión de políticas DataCrédito"/);
   assert.match(consoleSource, /role="tab"/);
   assert.match(consoleSource, /role="tabpanel"/);
   assert.match(consoleSource, /aria-controls="datacredito-policies-panel"/);
   assert.match(consoleSource, /aria-controls="datacredito-assignments-panel"/);
   assert.match(consoleSource, /aria-controls="datacredito-document-limits-panel"/);
-  assert.match(consoleSource, /<DataTable className="mt-5">/);
+  assert.match(consoleSource, /<DataTable className=\{styles\.table\}>/);
   assert.match(consoleSource, /aria-label=\{`Política para \$\{ally\.name\}`\}/);
 });
 
@@ -183,7 +183,7 @@ test("bloquea duplicar un borrador y usa la fecha de la revisión publicada", ()
   );
   assert.match(
     consoleSource,
-    /!selectedProfile \|\| saving \|\| creating \|\| hasUnsavedChanges/
+    /!selectedProfile \|\| loading \|\| saving \|\| creating \|\| hasUnsavedChanges/
   );
   assert.match(consoleSource, /Publica los cambios o recarga para descartarlos/);
 });
@@ -246,16 +246,20 @@ test("configura cuatro umbrales de mora versionados antes de las bandas", () => 
   );
   assert.doesNotMatch(consoleSource, /onEnabledChange|PriorityRuleEnabled/);
 
-  const priorityCard = consoleSource.indexOf(
-    "Reglas prioritarias de rechazo por mora"
+  const priorityCard = consoleSource.indexOf("Reglas de evaluación");
+  const scoreDisclosure = consoleSource.indexOf(
+    '<ParameterDisclosure title="Bandas de puntaje"', priorityCard
   );
+  const androidBands = consoleSource.indexOf('platform="ANDROID"', scoreDisclosure);
+  const iphoneBands = consoleSource.indexOf('platform="IPHONE"', androidBands);
   const financialCard = consoleSource.indexOf(
-    "Parámetros financieros de la política"
+    '<ParameterDisclosure title="Parámetros financieros"', priorityCard
   );
-  const androidBands = consoleSource.indexOf('platform="ANDROID"', financialCard);
   assert.ok(priorityCard >= 0);
-  assert.ok(priorityCard < financialCard);
-  assert.ok(financialCard < androidBands);
+  assert.ok(priorityCard < scoreDisclosure);
+  assert.ok(scoreDisclosure < androidBands);
+  assert.ok(androidBands < iphoneBands);
+  assert.ok(iphoneBands < financialCard);
 });
 
 test("no activa la mora total en revisiones históricas y la versiona en ambos payloads", () => {

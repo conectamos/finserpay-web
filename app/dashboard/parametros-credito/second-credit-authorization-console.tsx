@@ -3,7 +3,9 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { RefreshCw, Search, ShieldCheck } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
-import { Button, Card, EmptyState, Input, LoadingState, StatusPill } from "@/app/_components/finser-ui";
+import { Button, EmptyState, Input, LoadingState, StatusPill } from "@/app/_components/finser-ui";
+import { ParameterDisclosure, ParameterHelp, ParameterSection } from "./credit-parameters-ui";
+import styles from "./credit-parameters.module.css";
 
 type Authorization = {
   id: string;
@@ -194,20 +196,16 @@ export default function SecondCreditAuthorizationConsole() {
   const reasonValid = reason.trim().length >= 5 && reason.trim().length <= 500;
 
   return (
-    <section className="space-y-5" aria-label="Autorizaciones para segundo crédito">
-      <div>
-        <h3 className="flex items-center gap-2 text-xl font-black">
-          <ShieldCheck className="h-5 w-5" aria-hidden="true" /> Segundo crédito
-        </h3>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+    <section className={styles.tabContent} aria-label="Autorizaciones para segundo crédito">
+      <ParameterSection title="Segundo crédito" action={
+        <ParameterHelp title="Condiciones de autorización">
           Con saldo pendiente no puede sacar otro crédito. Una autorización activa permite hasta dos
-          créditos vigentes. Se mantienen las evaluaciones y aprobaciones existentes.
-        </p>
-      </div>
-
-      <Card className="p-5 sm:p-6">
-        <form onSubmit={(event) => void search(event)} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="flex-1">
+          créditos vigentes. Se mantienen las evaluaciones y aprobaciones existentes. Solo el
+          administrador central puede registrar o revocar esta autorización.
+        </ParameterHelp>
+      }>
+        <form onSubmit={(event) => void search(event)} className={styles.lookup}>
+          <div className={styles.field}>
             <label htmlFor="second-credit-document" className="mb-2 block text-sm font-bold">Buscar cédula exacta</label>
             <Input id="second-credit-document" inputMode="numeric" autoComplete="off" maxLength={13}
               value={documentNumber} onChange={(event) => updateDocument(event.target.value)} disabled={busy}
@@ -217,13 +215,13 @@ export default function SecondCreditAuthorizationConsole() {
             <Search className="h-4 w-4" aria-hidden="true" /> {loading ? "Consultando..." : "Consultar cédula"}
           </Button>
         </form>
-        <p id="second-credit-search-help" className="mt-3 text-sm text-[var(--fp-muted)]">
-          La consulta y la autorización corresponden únicamente a la cédula ingresada.
+        <p id="second-credit-search-help" className={styles.muted}>
+          Consulta y autorización para esta cédula.
         </p>
-      </Card>
+      </ParameterSection>
 
-      {notice ? <div role="status" aria-live="polite" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)] px-4 py-3 text-sm">{notice}</div> : null}
-      {error ? <div role="alert" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm text-[var(--fp-danger)]">
+      {notice ? <div role="status" aria-live="polite" className={styles.notice}>{notice}</div> : null}
+      {error ? <div role="alert" className={styles.error}>
         <p>{error}</p>
         {!busy && pendingMutation ? <Button variant="secondary" className="mt-3" onClick={() => setConfirmOpen(true)}>
           <RefreshCw className="h-4 w-4" aria-hidden="true" /> Reintentar {pendingMutation.action === "AUTHORIZE" ? "autorización" : "revocación"}
@@ -233,46 +231,53 @@ export default function SecondCreditAuthorizationConsole() {
       </div> : null}
 
       {loading ? <LoadingState label="Consultando créditos vigentes y autorización..." /> : lookup ? (
-        <Card className="p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h4 className="text-lg font-black">Cédula terminada en {lookup.documento.slice(-4)}</h4>
-              <p className="mt-1 text-sm text-[var(--fp-muted)]">{lookup.activeCredits} crédito(s) vigente(s) con saldo pendiente</p>
-            </div>
+        <>
+          <ParameterSection title={`Cédula terminada en ${lookup.documento.slice(-4)}`} action={
             <StatusPill tone={authorization?.active ? "positive" : "neutral"}>
               {authorization?.active ? "Autorización activa · máximo 2" : "Sin autorización activa"}
             </StatusPill>
-          </div>
-          {lookup.activeFolios.length ? <p className="mt-3 break-words text-sm text-[var(--fp-muted)]">Créditos vigentes: {lookup.activeFolios.join(", ")}</p> : null}
-          <p className="mt-4 text-sm font-semibold">
-            {lookup.activeCredits >= 2 ? "Ya tiene dos o más créditos vigentes. No puede crear otro aunque la autorización esté activa."
-              : lookup.canCreate ? "Puede solicitar un nuevo crédito, sujeto a las evaluaciones y aprobaciones vigentes."
-                : "El crédito vigente bloquea una nueva solicitud. El administrador puede autorizar el segundo crédito."}
-          </p>
-          {authorization ? <div className="mt-4 border-t border-[var(--fp-border)] pt-4 text-sm text-[var(--fp-muted)]">
-            <p className="whitespace-pre-wrap break-words"><strong>Último motivo:</strong> {authorization.reason}</p>
-            <p className="mt-2">Última decisión: {formatDate(authorization.updatedAt)}{authorization.updatedByName ? ` · ${authorization.updatedByName}` : ""}</p>
-          </div> : null}
-          <div className="mt-5">
-            <label htmlFor="second-credit-reason" className="mb-2 block text-sm font-bold">Motivo de la decisión</label>
-            <textarea id="second-credit-reason" className="fp-ui-input min-h-24 w-full" rows={3} maxLength={500}
-              value={reason} disabled={busy} aria-describedby="second-credit-reason-help"
-              onChange={(event) => { setReason(event.target.value); setPendingMutation(null); setError(null); setNotice(null); }}
-              placeholder="Describe por qué autorizas o revocas el segundo crédito" />
-            <p id="second-credit-reason-help" className="mt-2 text-sm text-[var(--fp-muted)]">
-              Escribe entre 5 y 500 caracteres. El motivo, el administrador y la fecha quedan registrados.
+          }>
+            <dl className={styles.compactMetrics}>
+              <div><dt>Créditos vigentes</dt><dd>{lookup.activeCredits} crédito(s) vigente(s)</dd></div>
+              <div><dt>Límite con autorización</dt><dd>2 créditos vigentes</dd></div>
+              <div><dt>Nueva solicitud</dt><dd>{lookup.canCreate ? "Permitida" : "Bloqueada"}</dd></div>
+            </dl>
+            {lookup.activeFolios.length ? <p className={`${styles.muted} break-words`}>Créditos vigentes: {lookup.activeFolios.join(", ")}</p> : null}
+            <p className={lookup.activeCredits >= 2 || !lookup.canCreate ? styles.warning : styles.muted}>
+              {lookup.activeCredits >= 2 ? "Ya tiene dos o más créditos vigentes. No puede crear otro aunque la autorización esté activa."
+                : lookup.canCreate ? "Puede solicitar un nuevo crédito, sujeto a las evaluaciones y aprobaciones vigentes."
+                  : "El crédito vigente bloquea una nueva solicitud. El administrador puede autorizar el segundo crédito."}
             </p>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <Button variant={authorization?.active ? "danger" : "primary"}
-              disabled={busy || !reasonValid || Boolean(pendingMutation) || (!authorization?.active && lookup.activeCredits >= 2)}
-              onClick={() => prepareMutation(authorization?.active ? "REVOKE" : "AUTHORIZE")}>
-              {saving ? "Guardando..." : authorization?.active ? "Revocar autorización" : "Autorizar segundo crédito"}
-            </Button>
-          </div>
-        </Card>
+            {authorization ? <ParameterDisclosure title="Última decisión" badge={`Versión ${authorization.version}`}>
+              <dl className={styles.compactMetrics}>
+                <div><dt>Actualización</dt><dd>{formatDate(authorization.updatedAt)}</dd></div>
+                <div><dt>Responsable</dt><dd>{authorization.updatedByName || "Sin registro"}</dd></div>
+              </dl>
+              <p className="whitespace-pre-wrap break-words"><strong>Último motivo:</strong> {authorization.reason}</p>
+            </ParameterDisclosure> : null}
+          </ParameterSection>
+          <ParameterSection title="Gestionar autorización" action={<ShieldCheck className="h-5 w-5" aria-hidden="true" />}>
+            <div className={styles.field}>
+              <label htmlFor="second-credit-reason" className="mb-2 block text-sm font-bold">Motivo de la decisión</label>
+              <textarea id="second-credit-reason" className="fp-ui-input min-h-24 w-full" rows={3} maxLength={500}
+                value={reason} disabled={busy} aria-describedby="second-credit-reason-help"
+                onChange={(event) => { setReason(event.target.value); setPendingMutation(null); setError(null); setNotice(null); }}
+                placeholder="Describe por qué autorizas o revocas el segundo crédito" />
+              <p id="second-credit-reason-help" className={styles.muted}>
+                De 5 a 500 caracteres. Se registra motivo, responsable y fecha.
+              </p>
+            </div>
+            <div className={styles.actions}>
+              <Button variant={authorization?.active ? "danger" : "primary"}
+                disabled={busy || !reasonValid || Boolean(pendingMutation) || (!authorization?.active && lookup.activeCredits >= 2)}
+                onClick={() => prepareMutation(authorization?.active ? "REVOKE" : "AUTHORIZE")}>
+                {saving ? "Guardando..." : authorization?.active ? "Revocar autorización" : "Autorizar segundo crédito"}
+              </Button>
+            </div>
+          </ParameterSection>
+        </>
       ) : !error ? <EmptyState title="Consulta una cédula para autorizar un segundo crédito"
-        description="Solo el administrador central puede registrar o revocar esta autorización. La regla general sigue bloqueando un nuevo crédito cuando hay saldo pendiente." /> : null}
+        description="Solo el administrador central puede gestionar la autorización." className={styles.empty} /> : null}
 
       <ConfirmDialog open={confirmOpen && Boolean(pendingMutation)}
         title={authorizing ? "Autorizar segundo crédito" : "Revocar autorización"}

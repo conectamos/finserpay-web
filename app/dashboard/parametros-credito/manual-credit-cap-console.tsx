@@ -14,13 +14,11 @@ import {
   Plus,
   RefreshCw,
   Search,
-  ShieldCheck,
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
   Badge,
   Button,
-  Card,
   DataTable,
   EmptyState,
   Input,
@@ -29,6 +27,8 @@ import {
   StatusPill,
 } from "@/app/_components/finser-ui";
 import { DATACREDITO_MAX_FINANCED_AMOUNT_LIMIT } from "@/lib/datacredito/policy";
+import { ParameterHelp, ParameterSection } from "./credit-parameters-ui";
+import styles from "./credit-parameters.module.css";
 
 /**
  * Contrato del endpoint central:
@@ -198,8 +198,10 @@ export default function ManualCreditCapConsole() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const mutationBusyRef = useRef(false);
 
   const loadItems = useCallback(async () => {
     loadAbortRef.current?.abort();
@@ -305,6 +307,7 @@ export default function ManualCreditCapConsole() {
 
   const prepareSave = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (mutationBusyRef.current) return;
     const amount = parsedAmount;
     const reason = draft.reason.trim();
 
@@ -328,6 +331,7 @@ export default function ManualCreditCapConsole() {
     }
 
     setFormError(null);
+    setMutationError(null);
     setPendingMutation(
       editingItem
         ? {
@@ -348,6 +352,8 @@ export default function ManualCreditCapConsole() {
   };
 
   const prepareStatusChange = (item: ManualCreditCapItem) => {
+    if (mutationBusyRef.current) return;
+    setMutationError(null);
     setPendingMutation({
       kind: "STATUS",
       mutationId: newMutationId(),
@@ -357,10 +363,12 @@ export default function ManualCreditCapConsole() {
   };
 
   const executeMutation = async () => {
-    if (!pendingMutation) return;
+    if (!pendingMutation || mutationBusyRef.current) return;
+    mutationBusyRef.current = true;
     setSaving(true);
     setError(null);
     setNotice(null);
+    setMutationError(null);
     setCorrelationId(null);
 
     const method = pendingMutation.kind === "CREATE" ? "POST" : "PATCH";
@@ -398,7 +406,9 @@ export default function ManualCreditCapConsole() {
       const payload: unknown = await response.json().catch(() => null);
 
       if (!response.ok) {
-        setError(readError(payload, "No fue posible guardar el cupo manual."));
+        const mutationMessage = readError(payload, "No fue posible guardar el cupo manual.");
+        setError(mutationMessage);
+        setMutationError(mutationMessage);
         setCorrelationId(readCorrelationId(payload));
         return;
       }
@@ -418,7 +428,9 @@ export default function ManualCreditCapConsole() {
       await loadItems();
     } catch {
       setError("No fue posible comunicarse con el servidor. Intenta nuevamente.");
+      setMutationError("No fue posible comunicarse con el servidor. Intenta nuevamente.");
     } finally {
+      mutationBusyRef.current = false;
       setSaving(false);
     }
   };
@@ -465,29 +477,10 @@ export default function ManualCreditCapConsole() {
   }, [pendingMutation]);
 
   return (
-    <section className="space-y-6" aria-labelledby="manual-credit-cap-title">
-      <Card className="p-5 sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-[var(--fp-lime)]" aria-hidden="true" />
-              <h3 id="manual-credit-cap-title" className="text-xl font-black">
-                Cupos máximos por cédula
-              </h3>
-            </div>
-            <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
-              Define un máximo financiable especial para una cédula predeterminada.
-              La regla activa sustituye solo el cupo de la política; no aprueba una
-              evaluación rechazada ni omite DataCrédito o la validación facial.
-            </p>
-          </div>
-          <Badge tone="warning">Aplicación financiera inmediata</Badge>
-        </div>
-      </Card>
-
+    <section className={styles.tabContent} aria-label="Cupos máximos por cédula">
       {notice ? (
         <div
-          className="rounded-[var(--fp-radius-md)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)] px-4 py-3 text-sm font-bold text-[var(--fp-graphite)]"
+          className={styles.notice}
           role="status"
           aria-live="polite"
         >
@@ -497,7 +490,7 @@ export default function ManualCreditCapConsole() {
 
       {error ? (
         <div
-          className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm text-[var(--fp-danger)]"
+          className={styles.error}
           role="alert"
         >
           <div className="flex items-start gap-2">
@@ -514,144 +507,26 @@ export default function ManualCreditCapConsole() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(320px,0.78fr)_minmax(0,1.7fr)]">
-        <Card id="manual-credit-cap-form" className="scroll-mt-6 p-5 sm:p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--fp-muted)]">
-                {editingItem ? "Edición controlada" : "Nueva regla"}
-              </p>
-              <h4 className="mt-1 text-lg font-black">
-                {editingItem ? "Actualizar cupo" : "Asignar cupo manual"}
-              </h4>
-            </div>
-            {editingItem ? <StatusPill tone="warning">Editando</StatusPill> : null}
-          </div>
-
-          <form className="mt-5 grid gap-4" onSubmit={prepareSave} noValidate>
-            <label className="grid gap-2 text-sm font-bold" htmlFor="manual-cap-document">
-              Cédula
-              <Input
-                id="manual-cap-document"
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                maxLength={13}
-                value={draft.documentNumber}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    documentNumber: onlyDigits(event.target.value),
-                  }))
-                }
-                placeholder="Número de documento"
-                disabled={Boolean(editingItem) || saving}
-                required
-              />
-              <span className="text-xs font-normal leading-5 text-[var(--fp-muted)]">
-                {editingItem
-                  ? "La cédula permanece enmascarada y no se puede cambiar."
-                  : "Se usa solo para crear la regla y nunca se muestra completa en el listado."}
-              </span>
-            </label>
-
-            <label className="grid gap-2 text-sm font-bold" htmlFor="manual-cap-amount">
-              Cupo máximo financiable (COP)
-              <Input
-                id="manual-cap-amount"
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                value={draft.maxFinancedAmount}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    maxFinancedAmount: onlyDigits(event.target.value, 12),
-                  }))
-                }
-                placeholder="Ej. 1500000"
-                disabled={saving}
-                aria-describedby="manual-cap-amount-preview"
-                required
-              />
-              <span
-                id="manual-cap-amount-preview"
-                className="text-xs font-normal text-[var(--fp-muted)]"
-              >
-                Vista previa: {formatCop(parsedAmount)}
-              </span>
-            </label>
-
-            <label className="grid gap-2 text-sm font-bold" htmlFor="manual-cap-reason">
-              Razón del cupo
-              <textarea
-                id="manual-cap-reason"
-                className="fp-ui-input min-h-24 resize-y py-3"
-                value={draft.reason}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    reason: event.target.value.slice(0, 240),
-                  }))
-                }
-                placeholder="Motivo verificable de la asignación"
-                maxLength={240}
-                disabled={saving}
-                aria-describedby="manual-cap-reason-count"
-                required
-              />
-              <span
-                id="manual-cap-reason-count"
-                className="text-right text-xs font-normal text-[var(--fp-muted)]"
-              >
-                {draft.reason.length}/240
-              </span>
-            </label>
-
-            {formError ? (
-              <p
-                className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-3 py-2 text-sm font-semibold text-[var(--fp-danger)]"
-                role="alert"
-              >
-                {formError}
-              </p>
-            ) : null}
-
-            <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
-              {editingItem ? (
-                <Button type="button" variant="secondary" onClick={cancelEdit} disabled={saving}>
-                  Cancelar edición
-                </Button>
-              ) : null}
-              <Button type="submit" disabled={saving}>
-                {editingItem ? (
-                  <Pencil className="h-4 w-4" aria-hidden="true" />
-                ) : (
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                )}
-                {editingItem ? "Revisar actualización" : "Revisar asignación"}
-              </Button>
-            </div>
-          </form>
-        </Card>
-
-        <Card className="min-w-0 p-5 sm:p-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h4 className="text-lg font-black">Cédulas configuradas</h4>
-              <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                Busca siempre con la cédula completa. Los resultados muestran solo
-                los últimos cuatro dígitos.
-              </p>
-            </div>
+      <ParameterSection
+        title="Cupos por cédula"
+        action={
+          <div className={styles.actions}>
+            <ParameterHelp title="Consulta y aplicación del cupo">
+              Busca con la cédula completa. El listado protege el documento y muestra
+              solo sus últimos cuatro dígitos. Una regla activa sustituye solo el
+              cupo de la política; no aprueba una evaluación rechazada ni omite
+              DataCrédito o la validación facial.
+            </ParameterHelp>
             <Button variant="secondary" onClick={() => void loadItems()} disabled={loading || saving}>
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden="true" />
               Actualizar
             </Button>
           </div>
+        }
+      >
 
-          <form className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]" onSubmit={submitSearch}>
-            <label className="grid gap-2 text-sm font-bold" htmlFor="manual-cap-search">
+          <form className={styles.lookup} onSubmit={submitSearch}>
+            <label className={styles.field} htmlFor="manual-cap-search">
               Buscar cédula exacta
               <Input
                 id="manual-cap-search"
@@ -667,7 +542,7 @@ export default function ManualCreditCapConsole() {
                 aria-describedby={searchError ? "manual-cap-search-error" : undefined}
               />
             </label>
-            <label className="grid gap-2 text-sm font-bold" htmlFor="manual-cap-status">
+            <label className={styles.field} htmlFor="manual-cap-status">
               Estado
               <Select
                 id="manual-cap-status"
@@ -680,7 +555,7 @@ export default function ManualCreditCapConsole() {
                 <option value="INACTIVE">Inactivos</option>
               </Select>
             </label>
-            <div className="flex items-end gap-2">
+            <div className={styles.actions}>
               <Button type="submit" disabled={loading} className="flex-1 md:flex-none">
                 <Search className="h-4 w-4" aria-hidden="true" />
                 Buscar
@@ -694,15 +569,15 @@ export default function ManualCreditCapConsole() {
           </form>
 
           {searchError ? (
-            <p id="manual-cap-search-error" className="mt-3 text-sm font-semibold text-[var(--fp-danger)]" role="alert">
+            <p id="manual-cap-search-error" className={styles.error} role="alert">
               {searchError}
             </p>
           ) : null}
 
           {documentFilter ? (
-            <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className={styles.toolbar}>
               <Badge>Búsqueda exacta</Badge>
-              <span className="text-sm text-[var(--fp-muted)]">
+              <span className={styles.muted}>
                 Cédula terminada en {documentFilter.slice(-4)}
               </span>
             </div>
@@ -713,7 +588,7 @@ export default function ManualCreditCapConsole() {
               <LoadingState label="Cargando cupos manuales..." />
             </div>
           ) : items.length ? (
-            <DataTable className="mt-5">
+            <DataTable className={styles.table}>
               <table className="min-w-[900px]">
                 <thead>
                   <tr>
@@ -744,10 +619,10 @@ export default function ManualCreditCapConsole() {
                       </td>
                       <td>
                         <span className="block text-sm">{formatDate(item.updatedAt)}</span>
-                        <span className="mt-1 block text-xs text-[var(--fp-muted)]">v{item.version}</span>
+                        <span className="mt-1 block text-sm text-[var(--fp-muted)]">Versión {item.version}</span>
                       </td>
                       <td>
-                        <div className="flex justify-end gap-2">
+                        <div className={styles.actions}>
                           <Button
                             variant="secondary"
                             onClick={() => beginEdit(item)}
@@ -774,7 +649,7 @@ export default function ManualCreditCapConsole() {
             </DataTable>
           ) : (
             <EmptyState
-              className="mt-5"
+              className={styles.empty}
               title={documentFilter ? "La cédula no tiene un cupo manual" : "No hay cupos para mostrar"}
               description={
                 documentFilter
@@ -793,17 +668,131 @@ export default function ManualCreditCapConsole() {
               }
             />
           )}
-        </Card>
-      </div>
+      </ParameterSection>
+
+      <ParameterSection
+        id="manual-credit-cap-form"
+        title={editingItem ? "Actualizar cupo" : "Asignar cupo manual"}
+        action={
+          <div className={styles.actions}>
+            {editingItem ? <StatusPill tone="warning">Editando</StatusPill> : null}
+            <Badge tone="warning">Aplicación financiera inmediata</Badge>
+            <ParameterHelp title="Protección de la cédula">
+              La cédula se usa solo para crear la regla y nunca se muestra completa
+              en el listado. Al editar permanece enmascarada y no se puede cambiar.
+              Crear, actualizar, desactivar o reactivar requiere confirmación;
+              el registro y su auditoría se conservan.
+            </ParameterHelp>
+          </div>
+        }
+      >
+        <form className={styles.form} onSubmit={prepareSave} noValidate>
+          <div className={styles.formGrid}>
+            <label className={styles.field} htmlFor="manual-cap-document">
+              Cédula
+              <Input
+                id="manual-cap-document"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={13}
+                value={draft.documentNumber}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    documentNumber: onlyDigits(event.target.value),
+                  }))
+                }
+                placeholder="Número de documento"
+                disabled={Boolean(editingItem) || saving}
+                aria-describedby={editingItem ? "manual-cap-document-protected" : undefined}
+                required
+              />
+              {editingItem ? (
+                <span id="manual-cap-document-protected" className={styles.muted}>
+                  Cédula protegida. No se puede cambiar.
+                </span>
+              ) : null}
+            </label>
+            <label className={styles.field} htmlFor="manual-cap-amount">
+              Cupo máximo financiable (COP)
+              <Input
+                id="manual-cap-amount"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                value={draft.maxFinancedAmount}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    maxFinancedAmount: onlyDigits(event.target.value, 12),
+                  }))
+                }
+                placeholder="Valor en pesos"
+                disabled={saving}
+                aria-describedby="manual-cap-amount-preview"
+                required
+              />
+              <span id="manual-cap-amount-preview" className={styles.muted}>
+                {formatCop(parsedAmount)}
+              </span>
+            </label>
+          </div>
+          <label className={styles.field} htmlFor="manual-cap-reason">
+            Razón del cupo
+            <textarea
+              id="manual-cap-reason"
+              className="fp-ui-input min-h-24 resize-y py-3"
+              value={draft.reason}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  reason: event.target.value.slice(0, 240),
+                }))
+              }
+              placeholder="Motivo verificable de la asignación"
+              maxLength={240}
+              disabled={saving}
+              aria-describedby="manual-cap-reason-count"
+              required
+            />
+            <span id="manual-cap-reason-count" className={styles.muted}>
+              {draft.reason.length}/240
+            </span>
+          </label>
+          {formError ? <p className={styles.error} role="alert">{formError}</p> : null}
+          <div className={styles.actions}>
+            {editingItem ? (
+              <Button type="button" variant="secondary" onClick={cancelEdit} disabled={saving}>
+                Cancelar edición
+              </Button>
+            ) : null}
+            <Button type="submit" disabled={saving}>
+              {editingItem ? (
+                <Pencil className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Plus className="h-4 w-4" aria-hidden="true" />
+              )}
+              {editingItem ? "Revisar actualización" : "Revisar asignación"}
+            </Button>
+          </div>
+        </form>
+      </ParameterSection>
 
       <ConfirmDialog
         open={Boolean(pendingMutation && confirmation)}
         title={confirmation?.title || "Confirmar cupo manual"}
-        description={confirmation?.description || "Confirma la operación financiera."}
+        description={
+          mutationError
+            ? `${confirmation?.description || "Confirma la operación financiera."} ${mutationError}${correlationId ? ` Código de seguimiento: ${correlationId}.` : ""}`
+            : confirmation?.description || "Confirma la operación financiera."
+        }
         confirmLabel={confirmation?.label || "Confirmar"}
         danger={confirmation?.danger === true}
         busy={saving}
-        onCancel={() => setPendingMutation(null)}
+        onCancel={() => {
+          if (!mutationBusyRef.current) setPendingMutation(null);
+        }}
         onConfirm={() => void executeMutation()}
       />
     </section>

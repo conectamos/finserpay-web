@@ -11,8 +11,13 @@ const source = readFileSync(new URL("app/dashboard/parametros-credito/second-cre
 const compiled = ts.transpileModule(source, { compilerOptions: {
   target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
 } }).outputText;
-const jsx = (type, props) => ({ type, props });
+const jsx = (type, props) => typeof type === "function" ? type(props) : ({ type, props });
 const controls = new Proxy({}, { get: (_, key) => String(key) });
+const sharedLayout = {
+  ParameterSection: ({ title, action, children }) => jsx("section", { children: [jsx("h3", { children: title }), action, children] }),
+  ParameterHelp: ({ title, children }) => jsx("details", { children: [jsx("summary", { children: title }), children] }),
+  ParameterDisclosure: ({ title, badge, children }) => jsx("details", { children: [jsx("summary", { children: [title, badge] }), children] }),
+};
 const nodes = node => Array.isArray(node) ? node.flatMap(nodes) : node && typeof node === "object" ? [node, ...nodes(node.props?.children)] : [];
 const text = node => Array.isArray(node) ? node.map(text).join("") : typeof node === "string" || typeof node === "number" ? String(node) : text(node?.props?.children ?? node?.props?.title ?? "");
 const endpoint = "/api/creditos/autorizaciones-segundo-credito";
@@ -42,6 +47,8 @@ function mount(fetch) {
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "Fragment" };
       if (name === "lucide-react" || name === "@/app/_components/finser-ui") return controls;
+      if (name === "./credit-parameters-ui") return sharedLayout;
+      if (name === "./credit-parameters.module.css") return { default: controls };
       if (name === "@/app/_components/finser-confirm-dialog") return { default: "ConfirmDialog" };
       throw new Error(name);
     },

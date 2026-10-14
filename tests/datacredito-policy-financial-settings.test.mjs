@@ -200,14 +200,14 @@ test("retirar una politica es logico, bloqueado y conserva historia", async () =
   assert.match(adminStorage, /WHERE profile\."active" = true/);
   assert.match(ui, /Retirar política/);
   assert.match(ui, /Reasigna primero/);
-  assert.match(ui, /Parámetros financieros de la política/);
+  assert.match(ui, /<ParameterDisclosure title="Parámetros financieros"/);
   assert.match(ui, /Aval\/fianza total del crédito/);
   assert.match(ui, /Seguro por cuota/);
   assert.match(ui, /ARES_FRANCES_V1/);
   assert.match(ui, /Condiciones financieras de la nueva política/);
   assert.match(ui, /newPolicyFinancialSettings/);
   assert.match(ui, /Reglas prioritarias de la nueva política/);
-  assert.match(ui, /Reglas prioritarias de rechazo por mora/);
+  assert.match(ui, /Reglas de evaluación/);
   assert.match(ui, /newPolicyPriorityRules/);
   assert.match(
     ui,

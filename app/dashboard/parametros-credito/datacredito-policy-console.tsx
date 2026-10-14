@@ -1,8 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BadgeDollarSign,
+  Database,
+  FileText,
+  Link2,
+  Server,
   CircleAlert,
   Copy,
   Plus,
@@ -42,6 +45,9 @@ import {
   StatusPill,
   Tabs,
 } from "@/app/_components/finser-ui";
+
+import { ParameterDisclosure, ParameterHelp } from "./credit-parameters-ui";
+import styles from "./credit-parameters.module.css";
 
 export type DataCreditoPolicyPlatform = "ANDROID" | "IPHONE";
 export type DataCreditoPolicyDecision = "APROBADO" | "RECHAZADO";
@@ -1624,10 +1630,10 @@ function PlatformEditor({
             >
               Bandas {platformLabel(platform)}
             </h2>
-            <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
+            <ParameterHelp title="Cobertura de puntajes">
               Rangos inclusivos con cobertura continua de 0 a 950. Debe existir
               una regla adicional para Sin información.
-            </p>
+            </ParameterHelp>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1749,63 +1755,28 @@ function PriorityRuleEditor({
   ];
 
   return (
-    <div className="mt-5 space-y-4">
-      <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] px-4 py-4">
-        <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
-          Orden de evaluación
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <StatusPill tone="danger">1 · Mora TELCOS</StatusPill>
-          <span className="text-xs font-black text-[var(--fp-muted)]" aria-hidden="true">
-            →
-          </span>
-          <StatusPill tone="danger">2 · Mora total</StatusPill>
-          <span className="text-xs font-black text-[var(--fp-muted)]" aria-hidden="true">
-            →
-          </span>
-          <StatusPill tone="neutral">3 · Bandas de puntaje</StatusPill>
-        </div>
-        <p className="mt-3 text-xs leading-5 text-[var(--fp-muted)]">
-          Las dos reglas de mora se evalúan antes del puntaje y aplican el umbral
-          correspondiente a la plataforma consultada.
-        </p>
-      </div>
-
+    <div className={styles.ruleGrid}>
       {ruleDefinitions.map((definition) => {
         const rule = rules[definition.key];
         const ruleComplete = PLATFORMS.every((platform) => {
-          const threshold = parseInteger(
-            rule.rejectAboveCopByPlatform[platform]
-          );
-          return (
-            threshold !== null &&
-            threshold > 0 &&
-            threshold <= MAX_PRIORITY_REJECTION_AMOUNT_COP
-          );
+          const threshold = parseInteger(rule.rejectAboveCopByPlatform[platform]);
+          return threshold !== null && threshold > 0 && threshold <= MAX_PRIORITY_REJECTION_AMOUNT_COP;
         });
-
         return (
-          <fieldset
-            key={definition.key}
-            className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4 sm:p-5"
-          >
-            <legend className="sr-only">{definition.title}</legend>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="font-black text-[var(--fp-graphite)]">
-                  {definition.priority}. {definition.title}
-                </p>
-                <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--fp-muted)]">
-                  {definition.description}
-                </p>
-              </div>
-              <StatusPill tone={ruleComplete ? "danger" : "warning"}>
-                {ruleComplete
-                  ? `Prioridad ${definition.priority} · activa`
-                  : "Configuración pendiente"}
-              </StatusPill>
-            </div>
-
+          <ParameterDisclosure key={definition.key}
+            title={definition.key === "telcoDelinquency" ? "Mora TELCOS" : "Mora total"}
+            number={definition.priority === 1 ? "01" : "02"}
+            badge={<StatusPill tone={!rule.enabled ? "neutral" : ruleComplete ? "positive" : "warning"}>
+              {!rule.enabled ? "Inactiva" : ruleComplete ? "Activa" : "Configuración pendiente"}
+            </StatusPill>}>
+            <fieldset>
+              <legend className="sr-only">{definition.title}</legend>
+              <ParameterHelp title="Cómo se evalúa esta regla">
+                {definition.description} Las reglas de mora se evalúan antes del puntaje y usan el umbral de la plataforma consultada.
+                Solo rechaza cuando la mora es mayor; el valor exacto continúa a la siguiente regla.
+                <div className={styles.actions}><span>1 · Mora TELCOS</span><span>2 · Mora total</span><span>3 · Bandas de puntaje</span></div>
+                Rechaza únicamente la solicitud de la plataforma cuyo umbral fue superado. <StatusPill tone="danger">RECHAZADO</StatusPill>
+              </ParameterHelp>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               {PLATFORMS.map((platform) => {
                 const platformLabel =
@@ -1855,42 +1826,19 @@ function PriorityRuleEditor({
                       id={previewId}
                       className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
                     >
-                      Umbral {platformLabel}: {formatCop(parsedThreshold)}. Solo
-                      rechaza cuando la mora es mayor; el valor exacto continúa
-                      a la siguiente regla.
+                      Umbral {platformLabel}: {formatCop(parsedThreshold)}.
                     </span>
                   </label>
                 );
               })}
             </div>
-          </fieldset>
+            </fieldset>
+          </ParameterDisclosure>
         );
       })}
-
-      <div className="flex flex-col gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-[var(--fp-muted)]">
-            Decisión al superar cualquiera de los topes
-          </p>
-          <p className="mt-1 text-xs leading-5 text-[var(--fp-muted)]">
-            Rechaza únicamente la solicitud de la plataforma cuyo umbral fue
-            superado.
-          </p>
-        </div>
-        <StatusPill tone="danger">RECHAZADO</StatusPill>
-      </div>
-
-      {validation.issues.length ? (
-        <ul
-          id={errorId}
-          className="list-disc space-y-1 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-semibold text-[var(--fp-danger)]"
-          role="alert"
-        >
-          {validation.issues.map((issue) => (
-            <li key={issue}>{issue}</li>
-          ))}
-        </ul>
-      ) : null}
+      {validation.issues.length ? <ul id={errorId} className={styles.error} role="alert">
+        {validation.issues.map((issue) => <li key={issue}>{issue}</li>)}
+      </ul> : null}
     </div>
   );
 }
@@ -1926,6 +1874,12 @@ export default function DatacreditoPolicyConsole() {
     Record<string, string>
   >({});
   const [activeTab, setActiveTab] = useState<PolicyConsoleTab>("POLICIES");
+  const [visitedTabs, setVisitedTabs] = useState<PolicyConsoleTab[]>(["POLICIES"]);
+  const mutationBusyRef = useRef(false);
+  const switchTab = (tab: PolicyConsoleTab) => {
+    setVisitedTabs((current) => current.includes(tab) ? current : [...current, tab]);
+    setActiveTab(tab);
+  };
   const [assignmentQuery, setAssignmentQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2210,6 +2164,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const requestProfileSelection = (policyId: string) => {
+    if (loading) return;
     if (policyId === selectedPolicyId) return;
     if (hasUnsavedChanges) {
       setPendingPolicyId(policyId);
@@ -2221,6 +2176,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const requestReload = () => {
+    if (loading) return;
     if (hasPendingChanges) {
       setReloadConfirmOpen(true);
       return;
@@ -2372,6 +2328,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const savePolicy = async () => {
+    if (loading || mutationBusyRef.current) return;
     if (
       !validation.valid ||
       !financialValidation.valid ||
@@ -2385,6 +2342,7 @@ export default function DatacreditoPolicyConsole() {
       return;
     }
 
+    mutationBusyRef.current = true;
     setSaving(true);
     setError(null);
     setCorrelationId(null);
@@ -2450,6 +2408,7 @@ export default function DatacreditoPolicyConsole() {
           : null
       );
     } finally {
+      mutationBusyRef.current = false;
       setSaving(false);
     }
   };
@@ -2481,6 +2440,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const createPolicy = async () => {
+    if (loading || mutationBusyRef.current) return;
     if (!selectedProfile || creating) return;
     if (hasUnsavedChanges) {
       setError(
@@ -2509,6 +2469,7 @@ export default function DatacreditoPolicyConsole() {
       return;
     }
 
+    mutationBusyRef.current = true;
     setCreating(true);
     setError(null);
     setCorrelationId(null);
@@ -2573,11 +2534,13 @@ export default function DatacreditoPolicyConsole() {
           : null
       );
     } finally {
+      mutationBusyRef.current = false;
       setCreating(false);
     }
   };
 
   const retirePolicy = async () => {
+    if (loading || mutationBusyRef.current) return;
     if (
       !selectedProfile ||
       selectedProfile.id === defaultPolicyId ||
@@ -2587,6 +2550,7 @@ export default function DatacreditoPolicyConsole() {
     ) {
       return;
     }
+    mutationBusyRef.current = true;
     setDeleting(true);
     setError(null);
     setCorrelationId(null);
@@ -2634,11 +2598,13 @@ export default function DatacreditoPolicyConsole() {
           : null
       );
     } finally {
+      mutationBusyRef.current = false;
       setDeleting(false);
     }
   };
 
   const updateDailyQueryLimitDraft = (allyId: number, value: string) => {
+    if (loading) return;
     setNotice(null);
     setError(null);
     setDailyQueryLimitDrafts((current) => ({
@@ -2648,6 +2614,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const openAssignmentConfirmation = () => {
+    if (loading) return;
     setNotice(null);
     setError(null);
     if (!dailyQueryLimitsValid) {
@@ -2666,6 +2633,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const saveAssignments = async () => {
+    if (loading || mutationBusyRef.current) return;
     if (
       !assignmentChanges.length ||
       savingAssignments ||
@@ -2674,6 +2642,7 @@ export default function DatacreditoPolicyConsole() {
       return;
     }
 
+    mutationBusyRef.current = true;
     setSavingAssignments(true);
     setError(null);
     setCorrelationId(null);
@@ -2812,11 +2781,12 @@ export default function DatacreditoPolicyConsole() {
           : null
       );
     } finally {
+      mutationBusyRef.current = false;
       setSavingAssignments(false);
     }
   };
 
-  if (loading) {
+  if (loading && !profiles.length) {
     return (
       <Card className="p-5 sm:p-6" aria-busy="true">
         <LoadingState label="Cargando catálogo de políticas de DataCrédito..." />
@@ -2866,89 +2836,40 @@ export default function DatacreditoPolicyConsole() {
 
   return (
     <section
-      className="space-y-6 text-[var(--fp-graphite)]"
+      className={styles.console}
       aria-labelledby="datacredito-policy-title"
+      aria-busy={loading}
     >
-      <header className="flex flex-col gap-5 border-b border-[var(--fp-border)] pb-5 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wide text-[var(--fp-muted)]">
-            <Settings2 className="h-4 w-4" aria-hidden="true" />
-            Riesgo crediticio
-          </div>
-          <h1
-            id="datacredito-policy-title"
-            className="mt-2 text-3xl font-black tracking-tight sm:text-4xl"
-          >
-            Políticas DataCrédito
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-            Crea políticas independientes, publica nuevas revisiones y asigna
-            exactamente una a cada aliado. Los cambios solo afectan consultas
-            futuras; las evaluaciones y ofertas ya emitidas conservan sus
-            condiciones.
-          </p>
-        </div>
-        <Button
-          variant="secondary"
-          onClick={requestReload}
-          disabled={saving || savingAssignments || creating}
-        >
-          <RotateCw className="h-4 w-4" aria-hidden="true" />
-          Recargar
+      <header className={styles.pageHeader}>
+        <h1 id="datacredito-policy-title" className={styles.pageTitle}>Políticas DataCrédito</h1>
+        <div className={styles.headerActions}>
+          <ParameterHelp compact title="Versiones y asignaciones">
+            Crea políticas independientes, publica nuevas revisiones y asigna exactamente una a cada aliado.
+            Los cambios solo afectan consultas futuras; las evaluaciones y ofertas ya emitidas conservan sus condiciones.
+          </ParameterHelp>
+        <Button variant="secondary" className={styles.iconButton} onClick={requestReload}
+          disabled={loading || saving || savingAssignments || creating || deleting} aria-label="Actualizar políticas" title="Actualizar">
+          <RotateCw className="h-6 w-6" aria-hidden="true" />
         </Button>
-      </header>
-
-      <Card className="p-5 sm:p-6">
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-          <div>
-            <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-              Integración
-            </p>
-            <div className="mt-2">
-              <StatusPill tone={enabled ? "positive" : "warning"}>
-                {enabled ? "Habilitada" : "Deshabilitada"}
-              </StatusPill>
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-              Proveedor
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <StatusPill tone={configured ? "positive" : "warning"}>
-                {configured ? "Configurado" : "Sin configurar"}
-              </StatusPill>
-              {providerEnvironment ? <Badge>{providerEnvironment}</Badge> : null}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-              Catálogo
-            </p>
-            <p className="mt-2 text-lg font-black">
-              {profiles.length} {profiles.length === 1 ? "política" : "políticas"}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-              Aliados asignados
-            </p>
-            <p className="mt-2 text-lg font-black">{allies.length}</p>
-          </div>
         </div>
-
-        {!enabled || !productionReady ? (
-          <p className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-amber)]">
-            {!enabled
-              ? "La integración está deshabilitada. Puedes preparar políticas, pero no se usarán en ventas mientras continúe apagada."
-              : "El proveedor aún no está listo para producción. Revisa la configuración antes de iniciar consultas reales."}
-          </p>
-        ) : null}
-      </Card>
+      </header>
+      <div className={styles.statsBar} aria-label="Estado de DataCrédito">
+        <div className={styles.metric}><Link2 className={styles.metricIcon} size={30} aria-hidden="true" />
+          <div><p className={styles.metricLabel}>Integración</p><StatusPill tone={enabled ? "positive" : "warning"}>{enabled ? "Activa" : "Deshabilitada"}</StatusPill></div></div>
+        <div className={styles.metric}><Server className={styles.metricIcon} size={30} aria-hidden="true" />
+          <div><p className={styles.metricLabel}>Proveedor</p><span className={styles.providerTag}>{configured ? providerEnvironment?.toUpperCase() === "PRODUCTION" ? "Producción" : providerEnvironment?.toUpperCase() === "SANDBOX" ? "Pruebas" : providerEnvironment || "Configurado" : "Sin configurar"}</span></div></div>
+        <div className={styles.metric}><FileText className={styles.metricIcon} size={30} aria-hidden="true" />
+          <div><p className={styles.metricLabel}>Políticas</p><strong className={styles.metricValue}>{profiles.length}</strong></div></div>
+        <div className={styles.metric}><Users className={styles.metricIcon} size={30} aria-hidden="true" />
+          <div><p className={styles.metricLabel}>Aliados</p><strong className={styles.metricValue}>{allies.length}</strong></div></div>
+      </div>
+      {!enabled || !productionReady ? <p className={styles.warning} role="status">
+        {!enabled ? "La integración está deshabilitada. Puedes preparar políticas, pero no se usarán en ventas mientras continúe apagada." : "El proveedor aún no está listo para producción. Revisa la configuración antes de iniciar consultas reales."}
+      </p> : null}
 
       {notice ? (
         <div
-          className="rounded-[var(--fp-radius-md)] border border-[#c9df91] bg-[var(--fp-lime-soft)] px-4 py-3 text-sm font-bold text-[#4f6f0c]"
+          className={styles.notice}
           role="status"
           aria-live="polite"
         >
@@ -2958,7 +2879,7 @@ export default function DatacreditoPolicyConsole() {
 
       {error ? (
         <div
-          className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm text-[var(--fp-danger)]"
+          className={styles.error}
           role="alert"
         >
           <strong>{error}</strong>
@@ -2970,16 +2891,24 @@ export default function DatacreditoPolicyConsole() {
         </div>
       ) : null}
 
-      <Tabs aria-label="Gestión de políticas DataCrédito">
+      <Tabs className={styles.tabs} aria-label="Gestión de políticas DataCrédito" onKeyDown={event => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+        const current = tabs.indexOf(event.target as HTMLButtonElement);
+        if (current < 0) return;
+        const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault(); tabs[next]?.click(); tabs[next]?.focus();
+      }}>
         <button
           id="datacredito-policies-tab"
           type="button"
           role="tab"
           aria-selected={activeTab === "POLICIES"}
+          tabIndex={activeTab === "POLICIES" ? 0 : -1}
           aria-controls="datacredito-policies-panel"
-          onClick={() => setActiveTab("POLICIES")}
+          onClick={() => switchTab("POLICIES")}
         >
-          <Copy className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          <Copy className="h-5 w-5" aria-hidden="true" />
           Políticas
         </button>
         <button
@@ -2987,11 +2916,12 @@ export default function DatacreditoPolicyConsole() {
           type="button"
           role="tab"
           aria-selected={activeTab === "ASSIGNMENTS"}
+          tabIndex={activeTab === "ASSIGNMENTS" ? 0 : -1}
           aria-controls="datacredito-assignments-panel"
-          onClick={() => setActiveTab("ASSIGNMENTS")}
+          onClick={() => switchTab("ASSIGNMENTS")}
         >
-          <Users className="mr-2 inline h-4 w-4" aria-hidden="true" />
-          Asignación a aliados
+          <Users className="h-5 w-5" aria-hidden="true" />
+          Aliados
           {assignmentChanges.length ? (
             <Badge tone="warning" className="ml-2">
               {assignmentChanges.length}
@@ -3003,10 +2933,11 @@ export default function DatacreditoPolicyConsole() {
           type="button"
           role="tab"
           aria-selected={activeTab === "DOCUMENT_LIMITS"}
+          tabIndex={activeTab === "DOCUMENT_LIMITS" ? 0 : -1}
           aria-controls="datacredito-document-limits-panel"
-          onClick={() => setActiveTab("DOCUMENT_LIMITS")}
+          onClick={() => switchTab("DOCUMENT_LIMITS")}
         >
-          <BadgeDollarSign className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          <Database className="h-5 w-5" aria-hidden="true" />
           Cupos por cédula
         </button>
         <button
@@ -3014,162 +2945,57 @@ export default function DatacreditoPolicyConsole() {
           type="button"
           role="tab"
           aria-selected={activeTab === "SECOND_CREDIT"}
+          tabIndex={activeTab === "SECOND_CREDIT" ? 0 : -1}
           aria-controls="datacredito-second-credit-panel"
-          onClick={() => setActiveTab("SECOND_CREDIT")}
+          onClick={() => switchTab("SECOND_CREDIT")}
         >
-          <Users className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          <FileText className="h-5 w-5" aria-hidden="true" />
           Segundo crédito
         </button>
       </Tabs>
 
-      {activeTab === "POLICIES" ? (
+      {visitedTabs.includes("POLICIES") ? (
         <div
           id="datacredito-policies-panel"
+          hidden={activeTab !== "POLICIES"}
           role="tabpanel"
           aria-labelledby="datacredito-policies-tab"
-          className="space-y-6"
+          className={styles.tabContent}
         >
-          <Card className="p-5 sm:p-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-              <div className="min-w-0 flex-1">
-                <h3 className="text-xl font-black">Catálogo de políticas</h3>
-                <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                  Selecciona una política para revisar sus bandas o publicar una
-                  revisión inmutable.
-                </p>
-                {profiles.length ? (
-                  <label className="mt-4 grid max-w-2xl gap-2 text-sm font-bold">
-                    Política seleccionada
-                    <Select
-                      value={selectedPolicyId || ""}
-                      onChange={(event) =>
-                        requestProfileSelection(event.target.value)
-                      }
-                      disabled={saving || creating}
-                    >
-                      {profiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name} · v{profile.version} ·{" "}
-                          {profile.assignedAlliesCount}{" "}
-                          {profile.assignedAlliesCount === 1
-                            ? "aliado"
-                            : "aliados"}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                ) : null}
+          <Card className={styles.section}>
+            <div className={styles.catalogHeader}>
+              <div className={styles.catalogTitle}>
+                <h3 className={styles.heading}>{selectedProfile?.name || "Catálogo de políticas"}</h3>
+                {selectedProfile ? <div className={styles.actions}>
+                  <StatusPill tone={selectedProfile.active ? "positive" : "warning"}>{selectedProfile.active ? "Activa" : "Inactiva"}</StatusPill>
+                  {selectedProfile.id === defaultPolicyId ? <Badge>Predeterminada</Badge> : null}
+                  {selectedProfile.description ? <ParameterHelp title="Descripción de la política">{selectedProfile.description}</ParameterHelp> : null}
+                </div> : null}
               </div>
-              <div className="lg:max-w-xs">
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    onClick={openCreatePolicy}
-                    disabled={
-                      !selectedProfile || saving || creating || hasUnsavedChanges
-                    }
-                    aria-describedby={
-                      hasUnsavedChanges
-                        ? "datacredito-create-policy-help"
-                        : undefined
-                    }
-                  >
-                    <Plus className="h-4 w-4" aria-hidden="true" />
-                    Nueva política
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => setDeleteConfirmOpen(true)}
-                    disabled={
-                      !selectedProfile ||
-                      selectedProfile.id === defaultPolicyId ||
-                      selectedProfile.assignedAlliesCount > 0 ||
-                      !selectedProfile.active ||
-                      saving ||
-                      creating ||
-                      deleting ||
-                      hasUnsavedChanges
-                    }
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    Retirar política
-                  </Button>
-                </div>
-                {hasUnsavedChanges ? (
-                  <p
-                    id="datacredito-create-policy-help"
-                    className="mt-2 text-xs leading-5 text-[var(--fp-muted)]"
-                  >
-                    Publica los cambios o recarga para descartarlos antes de
-                    duplicar la última versión publicada.
-                  </p>
-                ) : null}
-                {selectedProfile?.assignedAlliesCount ? (
-                  <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
-                    Reasigna primero {selectedProfile.assignedAlliesCount}{" "}
-                    aliado(s) en “Asignación a aliados” para poder retirarla.
-                  </p>
-                ) : selectedProfile?.id === defaultPolicyId ? (
-                  <p className="mt-2 text-xs leading-5 text-[var(--fp-muted)]">
-                    La política predeterminada no se puede retirar.
-                  </p>
-                ) : null}
+              <div className={styles.actions}>
+                <Button className={styles.greenButton} onClick={openCreatePolicy}
+                  disabled={!selectedProfile || loading || saving || creating || hasUnsavedChanges}
+                  aria-describedby={hasUnsavedChanges ? "datacredito-create-policy-help" : undefined}>
+                  <Plus className="h-5 w-5" aria-hidden="true" />Nueva política
+                </Button>
+                <Button variant="secondary" className={styles.iconButton} onClick={() => setDeleteConfirmOpen(true)} aria-label="Retirar política" title="Retirar política"
+                  disabled={!selectedProfile || loading || selectedProfile.id === defaultPolicyId || selectedProfile.assignedAlliesCount > 0 || !selectedProfile.active || saving || creating || deleting || hasUnsavedChanges}>
+                  <Trash2 className="h-5 w-5" aria-hidden="true" />
+                </Button>
               </div>
             </div>
-
-            {selectedProfile ? (
-              <div className="mt-5 grid gap-4 border-t border-[var(--fp-border)] pt-5 sm:grid-cols-2 xl:grid-cols-4">
-                <div>
-                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Estado
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <StatusPill
-                      tone={selectedProfile.active ? "positive" : "warning"}
-                    >
-                      {selectedProfile.active ? "Activa" : "Inactiva"}
-                    </StatusPill>
-                    {selectedProfile.id === defaultPolicyId ? (
-                      <Badge>Predeterminada</Badge>
-                    ) : null}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Revisión vigente
-                  </p>
-                  <p className="mt-2 text-lg font-black">
-                    Versión {selectedProfileVersion}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Aliados
-                  </p>
-                  <p className="mt-2 text-lg font-black">
-                    {selectedProfile.assignedAlliesCount}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Última publicación
-                  </p>
-                  <p className="mt-2 text-sm font-semibold text-[var(--fp-muted)]">
-                    {formatDate(updatedAt)}
-                  </p>
-                </div>
-                {selectedProfile.description ? (
-                  <p className="text-sm leading-6 text-[var(--fp-muted)] sm:col-span-2 xl:col-span-4">
-                    {selectedProfile.description}
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              <EmptyState
-                className="mt-5"
-                title="No hay políticas publicadas"
-                description="El catálogo debe tener al menos una política antes de asignar aliados."
-              />
-            )}
+            {hasUnsavedChanges ? <p id="datacredito-create-policy-help" className={styles.muted}>Publica los cambios o recarga para descartarlos antes de duplicar la última versión publicada.</p> : null}
+            {selectedProfile?.assignedAlliesCount ? <p className={styles.muted}>Reasigna primero {selectedProfile.assignedAlliesCount} aliado(s) en “Aliados” para poder retirarla.</p> : selectedProfile?.id === defaultPolicyId ? <p className={styles.muted}>La política predeterminada no se puede retirar.</p> : null}
+            {selectedProfile ? <div className={styles.catalogRow}>
+              <label><span className="sr-only">Política seleccionada</span>
+                <Select value={selectedPolicyId || ""} onChange={(event) => requestProfileSelection(event.target.value)} disabled={loading || saving || creating}>
+                  {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                </Select>
+              </label>
+              <div>Versión {selectedProfileVersion}</div>
+              <div>{selectedProfile.assignedAlliesCount} {selectedProfile.assignedAlliesCount === 1 ? "aliado" : "aliados"}</div>
+              <div>{formatDate(updatedAt)}</div>
+            </div> : <EmptyState title="No hay políticas publicadas" description="El catálogo debe tener al menos una política antes de asignar aliados." />}
           </Card>
 
           {createOpen && selectedProfile ? (
@@ -3370,96 +3196,58 @@ export default function DatacreditoPolicyConsole() {
 
           {selectedProfile ? (
             <>
-              <Card
-                className="p-5 sm:p-6"
-                aria-labelledby="policy-priority-title"
-              >
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex items-start gap-3">
-                    <span
-                      className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-danger)] text-white"
-                      aria-hidden="true"
-                    >
-                      <CircleAlert className="h-5 w-5" />
-                    </span>
-                    <div>
-                      <h3 id="policy-priority-title" className="text-xl font-black">
-                        Reglas prioritarias de rechazo por mora
-                      </h3>
-                      <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                        Primero se evalúa la mora vigente agregada del sector
-                        TELCOS y después la mora vigente total. Ambas se comparan
-                        con el umbral de la plataforma antes de revisar el puntaje.
-                      </p>
-                    </div>
-                  </div>
-                  <StatusPill
-                    tone={
-                      priorityRules && priorityRulesValidation.valid
-                        ? "danger"
-                        : "warning"
-                    }
-                  >
-                    {priorityRules && priorityRulesValidation.valid
-                      ? "2 reglas configuradas"
-                      : priorityRules
-                        ? "Mora total pendiente"
-                        : "Sin reglas publicadas"}
-                  </StatusPill>
+              <Card className={styles.section} aria-labelledby="policy-priority-title">
+                <div className={styles.sectionHeader}>
+                  <h3 id="policy-priority-title" className={styles.heading}>Reglas de evaluación</h3>
+                  <Badge>3 etapas</Badge>
                 </div>
-
                 {priorityRules ? (
-                  <PriorityRuleEditor
-                    rules={priorityRules}
-                    validation={priorityRulesValidation}
-                    disabled={saving}
-                    idPrefix="policy-priority"
-                    onThresholdChange={updatePriorityRuleThreshold}
-                  />
+                  <PriorityRuleEditor rules={priorityRules} validation={priorityRulesValidation} disabled={loading || saving || savingAssignments || creating || deleting}
+                    idPrefix="policy-priority" onThresholdChange={updatePriorityRuleThreshold} />
                 ) : (
-                  <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] p-4 sm:p-5">
-                    <p className="font-black text-[var(--fp-graphite)]">
-                      Esta revisión no contiene reglas prioritarias de mora.
-                    </p>
-                    <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                      No se activarán de forma silenciosa. Prepara los umbrales
-                      TELCOS, completa expresamente los dos topes de mora total y
-                      publica una nueva revisión. Solo aplicará a consultas futuras.
-                    </p>
-                    <Button
-                      className="mt-4"
-                      variant="secondary"
-                      onClick={preparePriorityRules}
-                      disabled={saving}
-                    >
-                      <Plus className="h-4 w-4" aria-hidden="true" />
-                      Preparar regla TELCOS por
-                      {" "}{formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)}
-                    </Button>
-                  </div>
+                  <>
+                    <ParameterDisclosure title="Mora TELCOS" number="01" badge={<StatusPill tone="warning">Sin reglas publicadas</StatusPill>}>
+                      <p className={styles.warning}>Esta revisión no contiene reglas prioritarias de mora. No se activarán de forma silenciosa.</p>
+                      <ParameterHelp title="Preparar reglas de mora">Prepara los umbrales TELCOS, completa expresamente los dos topes de mora total y publica una nueva revisión. Solo aplicará a consultas futuras.</ParameterHelp>
+                      <Button variant="secondary" onClick={preparePriorityRules} disabled={loading || saving || savingAssignments || creating || deleting}>
+                        <Plus className="h-4 w-4" aria-hidden="true" />Preparar regla TELCOS por {formatCop(DEFAULT_PRIORITY_REJECTION_AMOUNT_COP)}
+                      </Button>
+                    </ParameterDisclosure>
+                    <ParameterDisclosure title="Mora total" number="02" badge={<StatusPill tone="warning">Sin reglas publicadas</StatusPill>}>
+                      <p className={styles.muted}>Prepara las reglas desde Mora TELCOS y define expresamente los topes de ambas plataformas.</p>
+                    </ParameterDisclosure>
+                  </>
                 )}
+                <ParameterDisclosure title="Bandas de puntaje" number="03" badge={<Badge>{bands.length} bandas</Badge>}>
+              <PlatformEditor
+                platform="ANDROID"
+                bands={androidBands}
+                errors={validation.platformErrors.ANDROID}
+                rowErrors={validation.rowErrors}
+                disabled={loading || saving || savingAssignments || creating || deleting}
+                onAdd={addBand}
+                onAddNoInformation={addNoInformationBand}
+                onChange={updateBand}
+                onRemove={removeBand}
+              />
+
+              <PlatformEditor
+                platform="IPHONE"
+                bands={iphoneBands}
+                errors={validation.platformErrors.IPHONE}
+                rowErrors={validation.rowErrors}
+                disabled={loading || saving || savingAssignments || creating || deleting}
+                onAdd={addBand}
+                onAddNoInformation={addNoInformationBand}
+                onChange={updateBand}
+                onRemove={removeBand}
+              />
+
+                </ParameterDisclosure>
               </Card>
-
-              <Card className="p-5 sm:p-6" aria-labelledby="policy-financial-title">
-                <div className="flex items-start gap-3">
-                  <span
-                    className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-navy)] text-white"
-                    aria-hidden="true"
-                  >
-                    <Settings2 className="h-5 w-5" />
-                  </span>
-                  <div>
-                    <h3 id="policy-financial-title" className="text-xl font-black">
-                      Parámetros financieros de la política
-                    </h3>
-                    <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                      Estos valores quedan congelados en cada evaluación y
-                      alimentan la cuota fija por sistema francés junto con las
-                      condiciones de la banda DataCrédito aplicable.
-                    </p>
-                  </div>
-                </div>
-
+              <Card className={styles.section}>
+                <ParameterDisclosure title="Parámetros financieros" badge={<Badge>ARES</Badge>}>
+                  <ParameterHelp title="Cálculo de la cuota">Estos valores quedan congelados en cada evaluación y alimentan la cuota fija por sistema francés junto con las condiciones de la banda DataCrédito aplicable.</ParameterHelp>
                 {selectedProfile.financialSettings?.calculoVersion !==
                 "ARES_FRANCES_V2" ? (
                   <div className="mt-4 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm font-semibold text-[var(--fp-graphite)]">
@@ -3492,7 +3280,7 @@ export default function DatacreditoPolicyConsole() {
                           event.target.value
                         )
                       }
-                      disabled={saving}
+                      disabled={loading || saving || savingAssignments || creating || deleting}
                     />
                   </label>
                   <label className="grid gap-2 text-sm font-bold">
@@ -3510,7 +3298,7 @@ export default function DatacreditoPolicyConsole() {
                           event.target.value
                         )
                       }
-                      disabled={saving}
+                      disabled={loading || saving || savingAssignments || creating || deleting}
                     />
                   </label>
                   <label className="grid gap-2 text-sm font-bold">
@@ -3528,7 +3316,7 @@ export default function DatacreditoPolicyConsole() {
                           event.target.value
                         )
                       }
-                      disabled={saving}
+                      disabled={loading || saving || savingAssignments || creating || deleting}
                     />
                   </label>
                   <label className="grid gap-2 text-sm font-bold">
@@ -3541,7 +3329,7 @@ export default function DatacreditoPolicyConsole() {
                           event.target.value
                         )
                       }
-                      disabled={saving}
+                      disabled={loading || saving || savingAssignments || creating || deleting}
                     >
                       <option value="SEMANAL">Semanal · 52 periodos/año</option>
                       <option value="QUINCENAL">Quincenal · 24 periodos/año</option>
@@ -3557,40 +3345,17 @@ export default function DatacreditoPolicyConsole() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-4 text-sm leading-6 text-[var(--fp-muted)]">
+                  <ParameterHelp title="Fianza y redondeo">
                     ARES divide este porcentaje total entre el número de cuotas.
                     La tasa periódica usa 6 decimales y la cuota comercial baja
                     al múltiplo de $50 inmediatamente anterior.
-                  </p>
+                  </ParameterHelp>
                 )}
+                </ParameterDisclosure>
               </Card>
 
-              <PlatformEditor
-                platform="ANDROID"
-                bands={androidBands}
-                errors={validation.platformErrors.ANDROID}
-                rowErrors={validation.rowErrors}
-                disabled={saving}
-                onAdd={addBand}
-                onAddNoInformation={addNoInformationBand}
-                onChange={updateBand}
-                onRemove={removeBand}
-              />
-
-              <PlatformEditor
-                platform="IPHONE"
-                bands={iphoneBands}
-                errors={validation.platformErrors.IPHONE}
-                rowErrors={validation.rowErrors}
-                disabled={saving}
-                onAdd={addBand}
-                onAddNoInformation={addNoInformationBand}
-                onChange={updateBand}
-                onRemove={removeBand}
-              />
-
-              <Card className="p-5 sm:p-6">
-                <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <Card className={styles.section}>
+                <div className={styles.saveBar}>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge
@@ -3649,25 +3414,27 @@ export default function DatacreditoPolicyConsole() {
             </>
           ) : null}
         </div>
-      ) : activeTab === "ASSIGNMENTS" ? (
+      ) : null}
+      {visitedTabs.includes("ASSIGNMENTS") ? (
         <div
           id="datacredito-assignments-panel"
+          hidden={activeTab !== "ASSIGNMENTS"}
           role="tabpanel"
           aria-labelledby="datacredito-assignments-tab"
-          className="space-y-6"
+          className={styles.tabContent}
         >
-          <Card className="p-5 sm:p-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <Card className={styles.section}>
+            <div className={styles.assignmentHeader}>
               <div>
-                <h3 className="text-xl font-black">
+                <h3 className={styles.heading}>
                   Políticas y cupos por aliado
                 </h3>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
+                <ParameterHelp title="Asignaciones y cupos diarios">
                   Cada aliado debe conservar exactamente una política. Una
                   reasignación o un cambio de cupo solo afecta las nuevas
                   consultas después de guardarlo. El uso diario se calcula con
                   hora de Bogotá.
-                </p>
+                </ParameterHelp>
               </div>
               <label className="grid w-full gap-2 text-sm font-bold lg:max-w-sm">
                 Buscar aliado
@@ -3681,7 +3448,7 @@ export default function DatacreditoPolicyConsole() {
             </div>
 
             {filteredAllies.length ? (
-              <DataTable className="mt-5">
+              <DataTable className={styles.table}>
                 <table className="min-w-[1180px]">
                   <thead>
                     <tr>
@@ -3737,13 +3504,14 @@ export default function DatacreditoPolicyConsole() {
                               aria-label={`Política para ${ally.name}`}
                               value={draftPolicyId}
                               onChange={(event) => {
+                                if (loading) return;
                                 setNotice(null);
                                 setAssignmentDrafts((current) => ({
                                   ...current,
                                   [allyDraftKey(ally.id)]: event.target.value,
                                 }));
                               }}
-                              disabled={savingAssignments}
+                              disabled={loading || savingAssignments}
                               className={
                                 changed
                                   ? "border-[var(--fp-lime)] bg-[var(--fp-lime-soft)]"
@@ -3763,7 +3531,7 @@ export default function DatacreditoPolicyConsole() {
                                 ))}
                             </Select>
                             {changed ? (
-                              <span className="mt-2 block text-xs font-bold text-[#4f6f0c]">
+                              <span className="mt-2 block text-xs font-bold text-[var(--fp-client-green)]">
                                 Cambio pendiente
                               </span>
                             ) : null}
@@ -3802,7 +3570,7 @@ export default function DatacreditoPolicyConsole() {
                                 )
                               }
                               placeholder="Sin límite"
-                              disabled={savingAssignments}
+                              disabled={loading || savingAssignments}
                               className={
                                 dailyQueryLimitChanged
                                   ? "border-[var(--fp-lime)] bg-[var(--fp-lime-soft)]"
@@ -3868,7 +3636,7 @@ export default function DatacreditoPolicyConsole() {
               />
             )}
 
-            <div className="mt-5 flex flex-col gap-4 border-t border-[var(--fp-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className={styles.saveBar}>
               <div>
                 <Badge
                   tone={
@@ -3895,6 +3663,7 @@ export default function DatacreditoPolicyConsole() {
               <Button
                 onClick={openAssignmentConfirmation}
                 disabled={
+                  loading ||
                   savingAssignments ||
                   !assignmentChanges.length ||
                   !dailyQueryLimitsValid
@@ -3911,23 +3680,29 @@ export default function DatacreditoPolicyConsole() {
             </div>
           </Card>
         </div>
-      ) : activeTab === "DOCUMENT_LIMITS" ? (
+      ) : null}
+      {visitedTabs.includes("DOCUMENT_LIMITS") ? (
         <div
           id="datacredito-document-limits-panel"
+          hidden={activeTab !== "DOCUMENT_LIMITS"}
           role="tabpanel"
           aria-labelledby="datacredito-document-limits-tab"
+          className={styles.tabContent}
         >
           <ManualCreditCapConsole />
         </div>
-      ) : (
+      ) : null}
+      {visitedTabs.includes("SECOND_CREDIT") ? (
         <div
           id="datacredito-second-credit-panel"
+          hidden={activeTab !== "SECOND_CREDIT"}
           role="tabpanel"
           aria-labelledby="datacredito-second-credit-tab"
+          className={styles.tabContent}
         >
           <SecondCreditAuthorizationConsole />
         </div>
-      )}
+      ) : null}
 
       <ConfirmDialog
         open={confirmOpen}

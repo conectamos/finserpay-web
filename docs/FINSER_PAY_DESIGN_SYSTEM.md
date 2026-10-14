@@ -179,6 +179,20 @@ permanece montado y conserva filtros, tamaño de página, página, posición y f
 Los recaudos se consultan desde una franja compacta; sin registros asociados no
 se muestra una tabla vacía. Montos y porcentajes guardados conservan sus decimales.
 
+## Parámetros de crédito
+
+Las cuatro pestañas de `/dashboard/parametros-credito` comparten cabecera blanca,
+tarjetas con borde fino y los controles de `finser-ui`. Los indicadores del
+catálogo forman una franja grafito y reflejan el estado real de la integración.
+Políticas presenta un selector y resumen compacto, con Mora TELCOS, Mora total
+y Bandas de puntaje inicialmente plegadas. Los parámetros financieros y las
+ayudas extensas permanecen disponibles en desplegables. Las advertencias de
+acciones deshabilitadas se mantienen visibles. Aliados conserva todas sus
+asignaciones y cupos diarios en una tabla desplazable. Cupos por cédula y Segundo
+crédito presentan consulta, estado y gestión con el mismo estilo. Cambiar de
+pestaña conserva los formularios iniciados; la presentación no altera revisiones,
+valores financieros, autorizaciones ni permisos.
+
 ## Nueva venta: validacion inicial del cliente
 
 El paso inicial usa cabecera blanca compacta, marca oscura con PAY verde,
