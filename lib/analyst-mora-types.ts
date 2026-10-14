@@ -1,6 +1,6 @@
 export const MORA_ACTIONS = ["LLAMADA", "MSJ_TEXTO"] as const;
 export const MORA_MANAGEMENT_STATES = ["CONTACTADO", "SIN_RESPUESTA", "ACUERDO_PAGO", "CERRADO", "SOLUCIONADO", "SEGUIMIENTO"] as const;
-export const MORA_RESULTS = ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA"] as const;
+export const MORA_RESULTS = ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA", "LLAMADA_INCOMPLETA"] as const;
 export type MoraManagementResult = typeof MORA_RESULTS[number];
 export const MORA_RESULT_LABELS: Record<MoraManagementResult, string> = {
   ACUERDO_PAGO: "Acuerdo de pago",
@@ -10,6 +10,7 @@ export const MORA_RESULT_LABELS: Record<MoraManagementResult, string> = {
   PRORROGA_APROBADA: "Prórroga aprobada 4 días",
   MEDIOS_PAGO: "Medios de pago",
   NUMERO_SIN_WHATSAPP: "Número sin WhatsApp",
+  LLAMADA_INCOMPLETA: "Llamada incompleta",
 };
 export function moraResultsForAction(action: typeof MORA_ACTIONS[number]): readonly MoraManagementResult[] {
   void action;

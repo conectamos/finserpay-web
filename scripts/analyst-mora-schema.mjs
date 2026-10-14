@@ -21,7 +21,7 @@ export function analystMoraSchemaStatements() {
     `ALTER TABLE "CreditMoraManagementEvent" DROP CONSTRAINT IF EXISTS "CreditMoraManagementEvent_result_details_check"`,
     `ALTER TABLE "CreditMoraManagementEvent" ADD CONSTRAINT "CreditMoraManagementEvent_result_details_check" CHECK (
       ("resultCode" IS NULL AND "agreementDate" IS NULL AND "agreementAmount" IS NULL)
-      OR ("resultCode" IS NOT NULL AND "resultCode" IN ('ACUERDO_PAGO','PAGO_REALIZADO','SIN_RESPUESTA','VISITA_PENDIENTE','PRORROGA_APROBADA','MEDIOS_PAGO','NUMERO_SIN_WHATSAPP')
+      OR ("resultCode" IS NOT NULL AND "resultCode" IN ('ACUERDO_PAGO','PAGO_REALIZADO','SIN_RESPUESTA','VISITA_PENDIENTE','PRORROGA_APROBADA','MEDIOS_PAGO','NUMERO_SIN_WHATSAPP','LLAMADA_INCOMPLETA')
         AND "action" IN ('LLAMADA','MSJ_TEXTO') AND "managementStatus" IN ('CONTACTADO','SIN_RESPUESTA','ACUERDO_PAGO','CERRADO','SOLUCIONADO','SEGUIMIENTO')
         AND (("resultCode"='ACUERDO_PAGO' AND "agreementDate" IS NOT NULL AND "agreementAmount" IS NOT NULL
           AND "agreementDate">=("actedAt" AT TIME ZONE 'America/Bogota')::date AND "agreementAmount">0 AND "agreementAmount"<=999999999999.99)
