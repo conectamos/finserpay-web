@@ -1127,6 +1127,20 @@ model CreditWelcomeVoiceEvent {
   @@index([status, createdAt, id], map: "CreditWelcomeVoiceEvent_pending_idx")
 }
 
+model CutCollectionProjection {
+  id           String   @id @db.Uuid
+  requestKey   String   @db.Uuid
+  createdBy    Int
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  cutDate      DateTime @db.Date
+  scopeSedeIds Int[]
+  snapshot     Json
+
+  @@unique([createdBy, requestKey], map: "CutCollectionProjection_request")
+  @@index([cutDate, createdAt(sort: Desc)], map: "CutCollectionProjection_cut_created")
+  @@index([scopeSedeIds], type: Gin, map: "CutCollectionProjection_scope")
+}
+
 model CreditoAbono {
   id                  Int       @id @default(autoincrement())
   creditoId           Int

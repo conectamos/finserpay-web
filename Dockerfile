@@ -55,6 +55,8 @@ COPY --from=builder \
   /app/scripts/credit-abono-ally-attribution-schema.mjs \
   /app/scripts/credit-ally-payment-exclusion-schema.mjs \
   /app/scripts/ally-payment-central-collection-adjustment-schema.mjs \
+  /app/scripts/setup-cut-collection.sql \
+  /app/scripts/ensure-cut-collection-schema.mjs \
   /app/scripts/railway-predeploy.mjs \
   /app/scripts/ensure-approval-operations-schema.mjs \
   /app/scripts/analyst-mora-schema.mjs \

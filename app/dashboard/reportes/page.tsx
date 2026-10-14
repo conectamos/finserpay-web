@@ -18,6 +18,7 @@ type ReportPermission = "all" | "admin" | "central";
 type ReportKind =
   | "credits"
   | "payments"
+  | "cut-collection"
   | "portfolio"
   | "stores"
   | "sellers"
@@ -51,6 +52,15 @@ const REPORTS: ReportDefinition[] = [
     kind: "payments",
     permission: "all",
     title: "Recaudos",
+  },
+  {
+    category: "Recaudos",
+    description: "Proyección y cumplimiento de las cuotas de cada corte.",
+    formats: ["Excel"],
+    href: "/dashboard/reportes/recaudo-por-corte",
+    kind: "cut-collection",
+    permission: "all",
+    title: "Recaudo por corte",
   },
   {
     category: "Riesgo",

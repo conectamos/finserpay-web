@@ -99,6 +99,8 @@ test("Cartera aparece en el menu de administradores centrales y aliados", () => 
     for (const submenu of submenus) {
       assert.match(submenu, /href="\/dashboard\/riesgo-referencia"/);
       assert.match(submenu, />Riesgo por referencia<\/span>/);
+      const hrefs = Array.from(submenu.matchAll(/href="([^"]+)"/g), match => match[1]);
+      assert.equal(hrefs.indexOf("/dashboard/reportes/recaudo-por-corte"), hrefs.indexOf("/dashboard/riesgo-referencia") + 1);
     }
     assert.equal((html.match(/href="\/dashboard\/riesgo-referencia"/g) || []).length, 2);
   }
@@ -119,6 +121,7 @@ test("Cartera no aparece en el menu de perfiles que no son administradores", () 
     );
     assert.doesNotMatch(html, /href="\/dashboard\/cartera\/detalle-mora"/);
     assert.doesNotMatch(html, /href="\/dashboard\/riesgo-referencia"/);
+    assert.doesNotMatch(html, /href="\/dashboard\/reportes\/recaudo-por-corte"/);
   }
 });
 
@@ -135,4 +138,13 @@ test("Detalle de mora permanece activo dentro del submenú Cartera en escritorio
   const html = renderSidebar({ adminCentral: false, rolUsuario: "ADMIN", activeHref: "/dashboard/cartera/detalle-mora" });
   assert.equal((html.match(/href="\/dashboard\/cartera\/detalle-mora" aria-current="page"/g) || []).length, 2);
   assert.equal((html.match(/<details open="" class="group\/cartera"/g) || []).length, 2);
+});
+
+test("Recaudo por corte abre Cartera y conserva el estilo del módulo para ambos administradores", () => {
+  for (const adminCentral of [true, false]) {
+    const html = renderSidebar({ adminCentral, rolUsuario: "ADMIN", activeHref: "/dashboard/reportes/recaudo-por-corte" });
+    assert.equal((html.match(/href="\/dashboard\/reportes\/recaudo-por-corte" aria-current="page"/g) || []).length, 2);
+    assert.equal((html.match(/<details open="" class="group\/cartera"/g) || []).length, 2);
+    assert.match(html, /^<aside class="bg-\[var\(--fp-graphite\)\]/);
+  }
 });

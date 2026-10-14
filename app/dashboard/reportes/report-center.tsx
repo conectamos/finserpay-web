@@ -3,9 +3,9 @@ import Link from "next/link";
 import {useEffect,useRef,useState} from "react";
 import {ArrowLeft,ArrowRight,CalendarDays,CircleDollarSign,CreditCard,FileSearch,FileSpreadsheet,Globe,Layers,MapPin,PieChart,Search,Store,UserRound,X} from "lucide-react";
 import styles from "./report-center.module.css";
-export type CenterReport={title:string;description:string;formats:string[];href:string;kind:"credits"|"payments"|"portfolio"|"stores"|"sellers"|"datacredito-sales"};
+export type CenterReport={title:string;description:string;formats:string[];href:string;kind:"credits"|"payments"|"cut-collection"|"portfolio"|"stores"|"sellers"|"datacredito-sales"};
 type Props={period:string;selectedSedeId:string;sedes:{id:number;nombre:string}[];admin:boolean;initialQuery:string;reports:CenterReport[];metrics:{activeCredits:string;collected:string;portfolioBalance:string;mora:string}};
-const icons={credits:CreditCard,payments:CircleDollarSign,portfolio:PieChart,stores:Store,sellers:UserRound,"datacredito-sales":FileSearch};
+const icons={credits:CreditCard,payments:CircleDollarSign,"cut-collection":CalendarDays,portfolio:PieChart,stores:Store,sellers:UserRound,"datacredito-sales":FileSearch};
 const normalize=(value:string)=>value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("es-CO");
 export default function ReportCenter(props:Props){
   const[search,setSearch]=useState(props.initialQuery),[formatsOpen,setFormatsOpen]=useState(false);

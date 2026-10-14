@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   BarChart3,
   Calculator,
+  CalendarDays,
   ChevronDown,
   CircleDollarSign,
   Coins,
@@ -132,7 +133,8 @@ export default function AdminSidebar({
   const analystNavigation = isApprovalAnalystRole(rolUsuario);
   const portfolioNavigation = activeHref === "/dashboard/cartera"
     || activeHref.startsWith("/dashboard/cartera/")
-    || activeHref === "/dashboard/riesgo-referencia";
+    || activeHref === "/dashboard/riesgo-referencia"
+    || activeHref === "/dashboard/reportes/recaudo-por-corte";
   const navGroups: NavGroup[] = analystNavigation ? [
     {
       label: "Aprobaciones",
@@ -190,6 +192,7 @@ export default function AdminSidebar({
               { href: "/dashboard/cartera", icon: PieChart, label: "Resumen" },
               { href: "/dashboard/cartera/detalle-mora", icon: BarChart3, label: "Detalle de mora" },
               { href: "/dashboard/riesgo-referencia", icon: BarChart3, label: "Riesgo por referencia" },
+              { href: "/dashboard/reportes/recaudo-por-corte", icon: CalendarDays, label: "Recaudo por corte" },
             ] }]
           : []),
         ...(adminCentral

@@ -14,7 +14,7 @@ function NavigationMenu({ label, items, active = false, icon: Icon }: { label: s
   </div>;
 }
 
-export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation"}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests"|"reports"|"settlement";activeSection?:"operation"|"administration"|"reports";}) {
+export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation"}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests"|"reports"|"settlement";activeSection?:"operation"|"administration"|"reports"|"portfolio";}) {
   const operation: Item[] = [
     ...(admin ? [[adminCentral ? "Aprobaciones" : "Pendientes", adminCentral ? "/dashboard/aprobaciones" : "/dashboard/pendientes"]] as Item[] : []),
     ["Nueva venta", "/dashboard/creditos"], ["Solicitudes", "/dashboard/solicitudes"], ["Simulador", "/dashboard/creditos?mode=simulator"],
@@ -27,7 +27,10 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
     ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"],
     ...(adminCentral ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"], ["Parámetros de crédito", "/dashboard/parametros-credito"]] as Item[] : []),
   ];
-  const portfolio: Item[] = [["Resumen", "/dashboard/cartera"], ["Detalle de mora", "/dashboard/cartera/detalle-mora"], ["Riesgo por referencia", "/dashboard/riesgo-referencia"]];
+  const portfolio: Item[] = [
+    ...(admin ? [["Resumen", "/dashboard/cartera"], ["Detalle de mora", "/dashboard/cartera/detalle-mora"], ["Riesgo por referencia", "/dashboard/riesgo-referencia"]] as Item[] : []),
+    ["Recaudo por corte", "/dashboard/reportes/recaudo-por-corte"],
+  ];
   const integrations: Item[] = [["Integraciones", "/dashboard/integraciones"], ["Enrolamiento iPhone", "/dashboard/integraciones/enrolamiento-iphone"], ["Historial DataCrédito", "/dashboard/datacredito"], ["Liberar consultas", "/dashboard/datacredito/liberaciones"], ["Equality Zero Touch", "/dashboard/equality"]];
 
   if (variant === "settlement") {
@@ -37,7 +40,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
       <nav className={styles.navigation} aria-label="Navegación principal">
         <Link href="/dashboard"><LayoutGrid aria-hidden="true" />Panel</Link>
         <NavigationMenu label="Operación" icon={Timer} items={operation.filter(([, href]) => href !== "/dashboard/pagos-aliados" && href !== "/dashboard/reportes")} />
-        {admin && <NavigationMenu label="Cartera" icon={WalletCards} items={portfolio} />}
+        {(admin || isSupervisor) && <NavigationMenu label="Cartera" icon={WalletCards} items={portfolio} active={activeSection === "portfolio"} />}
         {admin && <Link href="/dashboard/pagos-aliados" className={styles.active} aria-current="page"><Wallet aria-hidden="true" />Pagos</Link>}
         {admin && <Link href="/dashboard/reportes"><ChartNoAxesColumnIncreasing aria-hidden="true" />Reportes</Link>}
       </nav>
@@ -60,7 +63,7 @@ return (<header className={`${styles.topbar} ${variant === "requests" ? styles.r
       <nav className={styles.navigation} aria-label="Navegación principal">
         <Link href="/dashboard">{variant === "reports" ? "Panel central" : "Inicio"}</Link>
         <NavigationMenu label="Operación" items={operation} active={activeSection==="operation"} />
-        {admin && <NavigationMenu label="Cartera" items={portfolio} />}
+        {(admin || isSupervisor) && <NavigationMenu label="Cartera" items={portfolio} active={activeSection === "portfolio"} />}
         {variant === "reports" && admin && <Link href="/dashboard/reportes" className={styles.active} aria-current="location">Reportes</Link>}
         {admin && <NavigationMenu label="Administración" items={administration} active={activeSection==="administration"} />}
         {(variant === "requests" || variant === "reports") && adminCentral && <NavigationMenu label="Integraciones" items={integrations} />}
