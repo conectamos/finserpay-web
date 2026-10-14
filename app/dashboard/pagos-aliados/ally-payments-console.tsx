@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleMinus,
+  CirclePlus,
   Info,
   RefreshCw,
   RotateCcw,
@@ -41,10 +42,10 @@ import {
 import { PendingPaymentsView, PlatformIcon, ReceivedPaymentsView } from "./ally-payment-views";
 import styles from "./ally-payments-console.module.css";
 import HistoricalSettlementDetail from "./historical-settlement-detail";
-import type { AllyOption, PaymentAnnulmentAdjustmentItem, PaymentCreditItem, PaymentCollectionItem, PaymentSummaryBucket, PaymentSummary, Settlement, PaymentPreview, AllyPaymentsResponse } from "./ally-payment-types";
+import type { AllyOption, PaymentAnnulmentAdjustmentItem, PaymentCentralCollectionAdjustmentItem, PaymentCreditItem, PaymentCollectionItem, PaymentSummaryBucket, PaymentSummary, Settlement, PaymentPreview, AllyPaymentsResponse } from "./ally-payment-types";
 import { numberValue, formatMoney, formatNumber, formatPercent, formatDate, formatDateTime, statusTone, platformLabel } from "./ally-payment-format";
 import {
-  emptyAllyPaymentViewFilters, filterPendingAllyAnnulmentAdjustments, filterPendingAllyCollections, filterPendingAllyCredits,
+  emptyAllyPaymentViewFilters, filterPendingAllyAnnulmentAdjustments, filterPendingAllyCentralCollectionAdjustments, filterPendingAllyCollections, filterPendingAllyCredits,
   filterReceivedAllyPayments, type AllyPaymentViewFilters,
 } from "@/lib/ally-payment-view-filters";
 
@@ -206,6 +207,14 @@ function annulmentAdjustmentItems(
   return Array.isArray(source?.ajustesAnulacion) ? source.ajustesAnulacion : [];
 }
 
+function centralCollectionAdjustmentItems(
+  source: { ajustesRecaudoCentral?: PaymentCentralCollectionAdjustmentItem[] | null } | null
+) {
+  return Array.isArray(source?.ajustesRecaudoCentral)
+    ? source.ajustesRecaudoCentral
+    : [];
+}
+
 function totalAnnulmentAdjustments(source: {
   totalAjustesAnulacion?: number | null;
   ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[] | null;
@@ -221,15 +230,32 @@ function totalAnnulmentAdjustments(source: {
   );
 }
 
+function totalCentralCollectionAdjustments(source: {
+  totalAjustesRecaudoCentral?: number | null;
+  ajustesRecaudoCentral?: PaymentCentralCollectionAdjustmentItem[] | null;
+} | null) {
+  if (source?.totalAjustesRecaudoCentral != null) {
+    return Math.max(0, roundAllyPaymentMoney(source.totalAjustesRecaudoCentral));
+  }
+  return roundAllyPaymentMoney(
+    centralCollectionAdjustmentItems(source).reduce(
+      (total, item) => total + Math.max(0, numberValue(item.valorAjuste)),
+      0
+    )
+  );
+}
+
 function calculateDisplayedSettlementBalance(
   totalPagarCreditos: unknown,
   totalRecaudosAliado: unknown,
-  totalAjustesAnulacion: unknown
+  totalAjustesAnulacion: unknown,
+  totalAjustesRecaudoCentral: unknown
 ) {
   const saldoNeto = roundAllyPaymentMoney(
     Math.max(0, numberValue(totalPagarCreditos)) -
       Math.max(0, numberValue(totalRecaudosAliado)) -
-      Math.max(0, numberValue(totalAjustesAnulacion))
+      Math.max(0, numberValue(totalAjustesAnulacion)) +
+      Math.max(0, numberValue(totalAjustesRecaudoCentral))
   );
   return {
     saldoNeto,
@@ -257,6 +283,8 @@ function settlementSummary(settlement: Settlement | null) {
       totalPagar: settlement.totalPagar,
       numeroAjustesAnulacion: settlement.numeroAjustesAnulacion,
       totalAjustesAnulacion: settlement.totalAjustesAnulacion,
+      numeroAjustesRecaudoCentral: settlement.numeroAjustesRecaudoCentral,
+      totalAjustesRecaudoCentral: settlement.totalAjustesRecaudoCentral,
       porcentajeIntermediacion: null,
     },
   };
@@ -362,26 +390,37 @@ function SettlementSummary({
   totalPagarCreditos,
   totalRecaudosAliado,
   totalAjustesAnulacion,
+  totalAjustesRecaudoCentral,
 }: {
   summary: PaymentSummary | null;
   totalPagarCreditos: number;
   totalRecaudosAliado: number;
   totalAjustesAnulacion: number;
+  totalAjustesRecaudoCentral: number;
 }) {
   const balance = calculateDisplayedSettlementBalance(
     totalPagarCreditos,
     totalRecaudosAliado,
-    totalAjustesAnulacion
+    totalAjustesAnulacion,
+    totalAjustesRecaudoCentral
   );
   const direction = balance.saldoNeto < 0
     ? "El aliado paga a FINSER PAY"
     : balance.saldoNeto === 0
       ? "Sin saldo por transferir"
       : "FINSER PAY paga al aliado";
+  const activePlatforms = (["IPHONE", "ANDROID"] as const).filter(
+    (platform) => numberValue(summary?.[platform]?.numeroCreditos) > 0
+  );
+  const summaryLayout = activePlatforms.length === 0
+    ? styles.previewSummaryOnlyNet
+    : activePlatforms.length === 1
+      ? styles.previewSummaryTwoColumns
+      : "";
 
   return (
-    <section className={styles.previewSummary} aria-label="Resumen de liquidación">
-      {(["IPHONE", "ANDROID"] as const).map((platform) => {
+    <section className={`${styles.previewSummary} ${summaryLayout}`} aria-label="Resumen de liquidación">
+      {activePlatforms.map((platform) => {
         const bucket = summary?.[platform];
         const count = numberValue(bucket?.numeroCreditos);
         return (
@@ -415,6 +454,7 @@ function SettlementSummary({
           <div><dt>Valor por créditos</dt><dd>{formatMoney(totalPagarCreditos)}</dd></div>
           <div><dt>Recaudos del aliado</dt><dd>− {formatMoney(totalRecaudosAliado)}</dd></div>
           <div className={styles.annulmentBreakdown}><dt>Créditos anulados</dt><dd>− {formatMoney(totalAjustesAnulacion)}</dd></div>
+          <div className={styles.centralAdjustmentBreakdown}><dt>Ajuste a favor por recaudo FINSER PAY</dt><dd>+ {formatMoney(totalAjustesRecaudoCentral)}</dd></div>
         </dl>
       </Card>
     </section>
@@ -652,6 +692,86 @@ function AnnulmentAdjustmentItems({
   );
 }
 
+function CentralCollectionAdjustmentItems({
+  items,
+}: {
+  items: PaymentCentralCollectionAdjustmentItem[];
+}) {
+  if (!items.length) return null;
+
+  const total = items.reduce(
+    (sum, item) => sum + Math.max(0, numberValue(item.valorAjuste)),
+    0
+  );
+  const statusLabel = (value: string | null | undefined) =>
+    String(value || "PENDIENTE_APLICACION")
+      .trim()
+      .replaceAll("_", " ")
+      .toUpperCase();
+
+  return (
+    <section
+      className={styles.centralAdjustments}
+      aria-label="Ajustes a favor por recaudos FINSER PAY"
+    >
+      <header className={styles.centralAdjustmentHeading}>
+        <div>
+          <span className={styles.centralAdjustmentIcon}>
+            <CirclePlus aria-hidden="true" />
+          </span>
+          <div>
+            <h2>Ajustes a favor por recaudos FINSER PAY</h2>
+            <p>
+              Recaudos registrados por FINSER PAY que fueron descontados previamente al aliado. Se acreditan una sola vez.
+            </p>
+          </div>
+        </div>
+        <Badge tone="positive">{formatNumber(items.length)} {items.length === 1 ? "ajuste" : "ajustes"}</Badge>
+        <strong className={styles.centralAdjustmentTotal}>+ {formatMoney(total)}</strong>
+      </header>
+      <DataTable className={styles.centralAdjustmentTableWrap}>
+        <table className={styles.centralAdjustmentTable}>
+          <caption className="sr-only">
+            Relación de ajustes a favor por recaudos registrados por FINSER PAY
+          </caption>
+          <thead>
+            <tr>
+              <th>Fecha recaudo / ajuste</th><th>Crédito</th><th>Cliente / Cédula</th>
+              <th>Sede registrada</th><th>Método</th><th>Registrado por</th><th>Liquidación original</th>
+              <th>Motivo</th><th className={styles.moneyColumn}>Valor a favor</th><th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, index) => {
+              const normalizedStatus = String(item.estado || "PENDIENTE_APLICACION").toUpperCase();
+              return (
+                <tr key={String(item.ajusteId ?? item.id ?? item.abonoId ?? `${item.creditoId}-${index}`)}>
+                  <td className={styles.dateCell}>
+                    <strong>{formatDateTime(item.fechaAbono)}</strong>
+                    {item.fechaAjuste ? <small>Ajuste: {formatDate(item.fechaAjuste)}</small> : null}
+                  </td>
+                  <td className={styles.centralAdjustmentCredit}>{creditDisplayNumber(item)}</td>
+                  <td className={styles.clientCell}><strong>{item.clienteNombre || "Cliente sin nombre"}</strong><span>{item.clienteDocumento?.replace(/[.\s]/g, "") || "Sin documento"}</span></td>
+                  <td className={styles.siteCell}>{item.sedeNombre || "Sede sin nombre"}</td>
+                  <td>{item.metodoPago || "—"}</td>
+                  <td className={styles.centralAdjustmentActor}>
+                    <strong>{item.usuarioRecaudoNombre || "Usuario FINSER PAY"}</strong>
+                    <small>{item.usuarioRecaudoLogin || "—"}</small>
+                  </td>
+                  <td className={styles.centralOriginSettlement}>{item.liquidacionOrigenId == null ? "—" : `LA-${item.liquidacionOrigenId}`}</td>
+                  <td className={styles.centralAdjustmentReason}>{item.motivo || "Corrección de recaudo registrado por FINSER PAY"}</td>
+                  <td className={`${styles.moneyColumn} ${styles.centralAdjustmentAmount}`}>+ {formatMoney(item.valorAjuste)}</td>
+                  <td className={styles.statusCell}><StatusPill tone={normalizedStatus.includes("PEND") ? "warning" : "positive"}>{statusLabel(item.estado)}</StatusPill></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </DataTable>
+    </section>
+  );
+}
+
 function settlementPdfUrl(settlementId: Settlement["id"], download = false) {
   const base = `/api/pagos-aliados/${encodeURIComponent(String(settlementId))}/comprobante`;
   return download ? `${base}?download=1` : base;
@@ -741,6 +861,7 @@ export default function AllyPaymentsConsole({
     summary: null,
     recaudos: [],
     ajustesAnulacion: [],
+    ajustesRecaudoCentral: [],
   });
   const [receivedDraft, setReceivedDraft] = useState(emptyAllyPaymentViewFilters);
   const [receivedFilters, setReceivedFilters] = useState(emptyAllyPaymentViewFilters);
@@ -815,6 +936,14 @@ export default function AllyPaymentsConsole({
     () => totalAnnulmentAdjustments(preview),
     [preview]
   );
+  const previewCentralCollectionAdjustments = useMemo(
+    () => centralCollectionAdjustmentItems(preview),
+    [preview]
+  );
+  const previewCentralCollectionAdjustmentTotal = useMemo(
+    () => totalCentralCollectionAdjustments(preview),
+    [preview]
+  );
   const updateIntermediation = useCallback((creditId: number, value: string) => {
     setIntermediationValues((current) => ({ ...current, [String(creditId)]: value }));
     setPendingMutationId(null);
@@ -871,8 +1000,11 @@ export default function AllyPaymentsConsole({
         summary: payload.pending?.summary || null,
         recaudos: Array.isArray(payload.pending?.recaudos) ? payload.pending.recaudos : [],
         ajustesAnulacion: Array.isArray(payload.pending?.ajustesAnulacion) ? payload.pending.ajustesAnulacion : [],
+        ajustesRecaudoCentral: Array.isArray(payload.pending?.ajustesRecaudoCentral) ? payload.pending.ajustesRecaudoCentral : [],
         numeroAjustesAnulacion: payload.pending?.numeroAjustesAnulacion ?? 0,
         totalAjustesAnulacion: payload.pending?.totalAjustesAnulacion ?? 0,
+        numeroAjustesRecaudoCentral: payload.pending?.numeroAjustesRecaudoCentral ?? 0,
+        totalAjustesRecaudoCentral: payload.pending?.totalAjustesRecaudoCentral ?? 0,
       });
       return true;
     } catch (error) {
@@ -962,7 +1094,7 @@ export default function AllyPaymentsConsole({
       if (!raw?.preview) {
         setNotice({
           tone: "neutral",
-          text: "No hay créditos, recaudos ni anulaciones pendientes para el aliado y período seleccionados.",
+          text: "No hay créditos, recaudos, anulaciones ni ajustes a favor pendientes para el aliado y período seleccionados.",
         });
       }
     } catch (error) {
@@ -1111,7 +1243,8 @@ export default function AllyPaymentsConsole({
   const previewBalance = calculateDisplayedSettlementBalance(
     previewGrossTotal,
     previewCollectionsTotal,
-    previewAnnulmentTotal
+    previewAnnulmentTotal,
+    previewCentralCollectionAdjustmentTotal
   );
   const previewTotal = Math.abs(previewBalance.saldoNeto);
   const previewIsConsignment =
@@ -1145,6 +1278,20 @@ export default function AllyPaymentsConsole({
       0
     ),
     [filteredPendingAnnulments]
+  );
+  const filteredPendingCentralCollectionAdjustments = useMemo(
+    () => filterPendingAllyCentralCollectionAdjustments(
+      centralCollectionAdjustmentItems(pending),
+      pendingFilters
+    ),
+    [pending, pendingFilters]
+  );
+  const filteredPendingCentralCollectionAdjustmentTotal = useMemo(
+    () => filteredPendingCentralCollectionAdjustments.reduce(
+      (total, item) => total + Math.max(0, numberValue(item.valorAjuste)),
+      0
+    ),
+    [filteredPendingCentralCollectionAdjustments]
   );
   const applyViewFilters = (view: "recibidos" | "pendientes") => {
     const draft = view === "recibidos" ? receivedDraft : pendingDraft;
@@ -1325,6 +1472,11 @@ export default function AllyPaymentsConsole({
                       {formatNumber(previewAnnulmentAdjustments.length)} créditos anulados
                     </Badge>
                   ) : null}
+                  {previewCentralCollectionAdjustments.length > 0 ? (
+                    <Badge tone="positive">
+                      {formatNumber(previewCentralCollectionAdjustments.length)} {previewCentralCollectionAdjustments.length === 1 ? "ajuste" : "ajustes"} a favor
+                    </Badge>
+                  ) : null}
                   {Object.keys(intermediationValues).length > 0 ? (
                     <Button
                       variant="ghost"
@@ -1346,18 +1498,24 @@ export default function AllyPaymentsConsole({
                 totalPagarCreditos={previewGrossTotal}
                 totalRecaudosAliado={previewCollectionsTotal}
                 totalAjustesAnulacion={previewAnnulmentTotal}
+                totalAjustesRecaudoCentral={previewCentralCollectionAdjustmentTotal}
               />
-              <SettlementCreditItems
-                key={preview.previewToken || preview.token || "preview"}
-                items={adjustedPreviewItems}
-                intermediationEditor={intermediationEditor}
-              />
+              {adjustedPreviewItems.length > 0 ? (
+                <SettlementCreditItems
+                  key={preview.previewToken || preview.token || "preview"}
+                  items={adjustedPreviewItems}
+                  intermediationEditor={intermediationEditor}
+                />
+              ) : null}
               {previewAnnulmentAdjustments.length > 0 ? (
                 <AnnulmentAdjustmentItems
                   items={previewAnnulmentAdjustments}
                   emptyDescription="No se encontraron créditos pagados y anulados pendientes de descuento dentro del período."
                 />
               ) : null}
+              <CentralCollectionAdjustmentItems
+                items={previewCentralCollectionAdjustments}
+              />
               <details className={styles.previewCollections}>
                 <summary><WalletCards size={18} aria-hidden="true" />Recaudos del aliado <span className={styles.countBadge}>{formatNumber(previewCollections.length)}</span><span className={styles.collectionsTotal}>{formatMoney(previewCollectionsTotal)}</span><ChevronRight size={18} aria-hidden="true" /></summary>
                 <CollectionItems items={previewCollections} emptyDescription="No se encontraron recaudos recibidos por sedes de este aliado dentro del período." />
@@ -1421,7 +1579,7 @@ export default function AllyPaymentsConsole({
             <EmptyState
               className="mt-4"
                title="No hay movimientos para conciliar en este periodo"
-               description="Amplía el período o selecciona otro aliado. Los créditos, recaudos y anulaciones posteriores permanecerán pendientes automáticamente."
+               description="Amplía el período o selecciona otro aliado. Los créditos, recaudos, anulaciones y ajustes a favor posteriores permanecerán pendientes automáticamente."
             />
           ) : null}
         </div>
@@ -1450,11 +1608,16 @@ export default function AllyPaymentsConsole({
           <PendingPaymentsView items={filteredPendingItems} summary={filteredPendingSummary} platform={pendingFilters.platform} platformCounts={pendingCounts}
             annulmentCount={filteredPendingAnnulments.length}
             annulmentTotal={filteredPendingAnnulmentTotal}
+            centralCollectionAdjustmentCount={filteredPendingCentralCollectionAdjustments.length}
+            centralCollectionAdjustmentTotal={filteredPendingCentralCollectionAdjustmentTotal}
             onPlatformChange={platform => { const value = platform === "ANDROID" || platform === "IPHONE" ? platform : "ALL"; setPendingFilters(current => ({ ...current, platform: value })); setPendingDraft(current => ({ ...current, platform: value })); }}
             onReviewCollections={() => { setShowPendingCollections(true); requestAnimationFrame(() => collectionsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }} />
           <AnnulmentAdjustmentItems
             items={filteredPendingAnnulments}
             emptyDescription="No existen créditos anulados pendientes de descuento con los filtros aplicados."
+          />
+          <CentralCollectionAdjustmentItems
+            items={filteredPendingCentralCollectionAdjustments}
           />
           {showPendingCollections && <section className={styles.collections} ref={collectionsSectionRef} aria-label="Recaudos pendientes de liquidar">
             <div className={styles.collectionHeader}>
@@ -1478,6 +1641,9 @@ export default function AllyPaymentsConsole({
           annulmentCount={annulmentAdjustmentItems(selectedSettlement).length}
           annulmentTotal={totalAnnulmentAdjustments(selectedSettlement)}
           annulmentDetail={<AnnulmentAdjustmentItems items={annulmentAdjustmentItems(selectedSettlement)} emptyDescription="Sin créditos anulados asociados" />}
+          centralCollectionAdjustmentCount={centralCollectionAdjustmentItems(selectedSettlement).length}
+          centralCollectionAdjustmentTotal={totalCentralCollectionAdjustments(selectedSettlement)}
+          centralCollectionAdjustmentDetail={<CentralCollectionAdjustmentItems items={centralCollectionAdjustmentItems(selectedSettlement)} />}
           onPrint={() => openSettlementPdf(selectedSettlement.id)}
           onDownload={() => downloadSettlementPdf(selectedSettlement.id)}
           onClose={closeHistoricalDetail}
@@ -1488,7 +1654,7 @@ export default function AllyPaymentsConsole({
         title={previewIsConsignment ? "Confirmar consignacion del aliado" : "Confirmar liquidacion"}
         description={`Se registrara ${previewIsConsignment ? "una consignacion de" : previewIsZero ? "una conciliacion en cero para" : "un pago a"} ${effectiveAllyName}${previewIsZero ? "" : ` por ${formatMoney(previewTotal)}`}, correspondiente al periodo ${formatDate(fechaInicio)} al ${formatDate(
           fechaFin
-        )}. ${supportLabel}: ${approvalNumber.trim() || "-"}. Se conciliarán ${formatMoney(previewGrossTotal)} por créditos menos ${formatMoney(previewCollectionsTotal)} en recaudos y ${formatMoney(previewAnnulmentTotal)} por créditos anulados. ${
+        )}. ${supportLabel}: ${approvalNumber.trim() || "-"}. Se conciliarán ${formatMoney(previewGrossTotal)} por créditos, menos ${formatMoney(previewCollectionsTotal)} en recaudos, menos ${formatMoney(previewAnnulmentTotal)} por créditos anulados y más ${formatMoney(previewCentralCollectionAdjustmentTotal)} en ajustes a favor por recaudos FINSER PAY. ${
           adjustmentState.adjustments.length
             ? `${adjustmentState.adjustments.length} venta(s) con intermediacion ajustada.`
             : "Sin ajustes manuales de intermediacion."

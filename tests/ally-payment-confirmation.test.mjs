@@ -43,6 +43,10 @@ const annulments = {
     0
   ),
 };
+const centralCollectionAdjustments = load(
+  "lib/ally-payment-central-collection-adjustments.ts",
+  { "server-only": {} }
+);
 
 function credit(id, platform = "IPHONE") {
   return {
@@ -57,10 +61,38 @@ function credit(id, platform = "IPHONE") {
   };
 }
 
-function ledger({ rows = [credit(1)], collectionValue = "123.45" } = {}) {
+function centralAdjustment(id = 501, value = "110000.00") {
+  return {
+    id,
+    abonoId: 1574,
+    creditoId: 30_000_014,
+    aliadoId: 7,
+    aliadoNombre: "Aliado sintético",
+    fechaRecaudo: new Date("2026-10-08T12:00:00Z"),
+    fechaAjuste: new Date("2026-10-08T15:00:00Z"),
+    folio: "300000014",
+    clienteNombre: "MORENO MARIN LINA LUZ",
+    clienteDocumento: "53068434",
+    sedeId: 4,
+    sedeNombre: "Sede sintética",
+    metodoPago: "OTRO",
+    liquidacionOrigenId: 901,
+    valorAjuste: value,
+    motivo: "Reintegro de recaudo registrado por FINSER PAY",
+    usuarioRecaudoId: 1,
+    usuarioRecaudoNombre: "Administrador",
+    usuarioRecaudoLogin: "admin",
+  };
+}
+
+function ledger({
+  rows = [credit(1)],
+  collectionValue = "123.45",
+  centralAdjustmentRows = [],
+} = {}) {
   const calls = [];
   const settlements = [];
-  const collections = [{
+  const collections = collectionValue === null ? [] : [{
     id: 99, creditoId: 1, sedeId: 4, fechaAbono: new Date("2026-10-07T12:30:00Z"),
     folio: "0000-F-1", clienteNombre: "Cliente sintético 1", clienteDocumento: "001234567890",
     imei: "000012345678901", deviceUid: "unused-device", contratoSnapshot: { equipo: { plataforma: "IPHONE" } },
@@ -75,6 +107,13 @@ function ledger({ rows = [credit(1)], collectionValue = "123.45" } = {}) {
     },
     async $queryRawUnsafe(sql, ...values) {
       calls.push(["sql", sql, plain(values)]);
+      if (sql.includes('FROM public."AjusteRecaudoCentralAliado"')) {
+        return centralAdjustmentRows.filter(row =>
+          !settlements.some(item => item.ajustesRecaudoCentral.some(
+            saved => saved.ajuste.id === row.id
+          ))
+        );
+      }
       return sql.includes('FROM public."CreditoAbono"')
         ? collections.filter(row => !settlements.some(item => item.recaudos.some(saved => saved.abonoId === row.id)))
         : rows.filter(row => !settlements.some(item => item.creditos.some(saved => saved.creditoId === row.id)));
@@ -107,6 +146,12 @@ function ledger({ rows = [credit(1)], collectionValue = "123.45" } = {}) {
           })),
           recaudos: (data.recaudos?.create || []).map((item, index) => ({ ...item, id: index + 1 })),
           ajustesAnulacion: [],
+          ajustesRecaudoCentral: (data.ajustesRecaudoCentral?.create || []).map((item, index) => ({
+            id: index + 1,
+            valorAjuste: item.valorAjuste,
+            estado: item.estado,
+            ajuste: centralAdjustmentRows.find(row => row.id === item.ajuste.connect.id),
+          })),
         };
         settlements.push(result);
         return result;
@@ -121,6 +166,7 @@ function ledger({ rows = [credit(1)], collectionValue = "123.45" } = {}) {
     "server-only": {}, "node:crypto": crypto, "@/lib/aliados": allies, "@/lib/ally-payments-core": core,
     "@/lib/colombia-date": dates, "@/lib/ally-payment-eligibility": eligibility,
     "@/lib/ally-payment-annulments": annulments,
+    "@/lib/ally-payment-central-collection-adjustments": centralCollectionAdjustments,
     "@/lib/credit-ally-payment-exclusion-storage": { ensureCreditAllyPaymentExclusionSchema: async () => {} },
     "@/lib/datacredito/database-errors": { isDataCreditoUniqueViolation: () => false },
     "@/lib/prisma": { default: database },
@@ -132,7 +178,16 @@ function ledger({ rows = [credit(1)], collectionValue = "123.45" } = {}) {
     intermediationAdjustments: adjustments, registradoPorUsuarioId: 3,
     registradoPorNombre: "Administrador sintético", ...overrides,
   });
-  return { storage, rows, collections, calls, settlements, preview, confirmation };
+  return {
+    storage,
+    rows,
+    collections,
+    centralAdjustmentRows,
+    calls,
+    settlements,
+    preview,
+    confirmation,
+  };
 }
 
 test("confirmación guarda todos los ajustes y los dos productos; central y aliado leen el mismo snapshot", async () => {
@@ -266,4 +321,49 @@ test("una liquidación sin créditos conserva y descuenta el único recaudo pend
   const persisted = api.calls.find(([kind]) => kind === "create")[1];
   assert.equal(persisted.creditos, undefined);
   assert.equal(persisted.recaudos.create[0].abonoId, 99);
+});
+
+test("el reintegro central se acredita una vez, queda congelado y no reaparece", async () => {
+  const adjustment = centralAdjustment();
+  const api = ledger({
+    rows: [],
+    collectionValue: null,
+    centralAdjustmentRows: [adjustment],
+  });
+  const preview = await api.preview();
+
+  assert.equal(preview.items.length, 0);
+  assert.equal(preview.recaudos.length, 0);
+  assert.equal(preview.ajustesRecaudoCentral.length, 1);
+  assert.equal(preview.totalAjustesRecaudoCentral, 110000);
+  assert.equal(preview.saldoNeto, 110000);
+  assert.equal(preview.direccionSaldo, "PAGO_ALIADO");
+
+  const result = await api.storage.createAllyPayment(api.confirmation(preview.token));
+  assert.equal(result.numeroCreditos, 0);
+  assert.equal(result.numeroAjustesRecaudoCentral, 1);
+  assert.equal(result.totalAjustesRecaudoCentral, 110000);
+  assert.equal(result.saldoNeto, 110000);
+  assert.equal(result.valorPagarAliado, 110000);
+  assert.equal(result.ajustesRecaudoCentral[0].abonoId, 1574);
+  assert.equal(result.ajustesRecaudoCentral[0].usuarioRecaudoLogin, "admin");
+  assert.equal(result.ajustesRecaudoCentral[0].estado, "ACREDITADO");
+
+  const persisted = api.calls.find(([kind]) => kind === "create")[1];
+  assert.equal(persisted.totalAjustesRecaudoCentral, "110000.00");
+  assert.equal(persisted.saldoNeto, "110000.00");
+  assert.deepEqual(plain(persisted.ajustesRecaudoCentral.create[0]), {
+    valorAjuste: "110000.00",
+    estado: "ACREDITADO",
+    ajuste: { connect: { id: 501 } },
+  });
+
+  adjustment.valorAjuste = "999999.00";
+  const historical = await api.storage.getAllyPaymentDetail({ id: result.id, allyId: 7 });
+  assert.equal(historical.totalAjustesRecaudoCentral, 110000);
+  assert.equal(historical.ajustesRecaudoCentral[0].valorAjuste, 110000);
+
+  const after = await api.preview();
+  assert.equal(after.ajustesRecaudoCentral.length, 0);
+  assert.equal(after.totalAjustesRecaudoCentral, 0);
 });

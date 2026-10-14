@@ -61,6 +61,7 @@ export type AllySettlementBalance = {
   totalPagarCreditos: number;
   totalRecaudosAliado: number;
   totalAjustesAnulacion: number;
+  totalAjustesRecaudoCentral: number;
   saldoNeto: number;
   direccionSaldo: AllySettlementDirection;
   valorPagarAliado: number;
@@ -126,7 +127,8 @@ export function roundAllyPaymentMoney(value: unknown) {
 export function calculateAllySettlementBalance(
   totalPagarCreditos: unknown,
   totalRecaudosAliado: unknown,
-  totalAjustesAnulacion: unknown = 0
+  totalAjustesAnulacion: unknown = 0,
+  totalAjustesRecaudoCentral: unknown = 0
 ): AllySettlementBalance {
   const creditos = Math.max(0, roundAllyPaymentMoney(totalPagarCreditos));
   const recaudos = Math.max(0, roundAllyPaymentMoney(totalRecaudosAliado));
@@ -134,8 +136,12 @@ export function calculateAllySettlementBalance(
     0,
     roundAllyPaymentMoney(totalAjustesAnulacion)
   );
+  const ajustesRecaudoCentral = Math.max(
+    0,
+    roundAllyPaymentMoney(totalAjustesRecaudoCentral)
+  );
   const saldoNeto = roundAllyPaymentMoney(
-    creditos - recaudos - ajustesAnulacion
+    creditos - recaudos - ajustesAnulacion + ajustesRecaudoCentral
   );
   const direccionSaldo: AllySettlementDirection =
     saldoNeto > 0
@@ -148,6 +154,7 @@ export function calculateAllySettlementBalance(
     totalPagarCreditos: creditos,
     totalRecaudosAliado: recaudos,
     totalAjustesAnulacion: ajustesAnulacion,
+    totalAjustesRecaudoCentral: ajustesRecaudoCentral,
     saldoNeto,
     direccionSaldo,
     valorPagarAliado: Math.max(saldoNeto, 0),

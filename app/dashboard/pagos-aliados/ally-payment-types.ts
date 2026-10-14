@@ -75,6 +75,31 @@ export type PaymentAnnulmentAdjustmentItem = {
   aliado?: AllyOption | null;
 };
 
+export type PaymentCentralCollectionAdjustmentItem = {
+  ajusteId?: number | string;
+  id?: number | string;
+  abonoId?: number | string;
+  creditoId?: number | string;
+  fechaAbono?: string | null;
+  fechaAjuste?: string | null;
+  folio?: string | null;
+  numeroCreditoVisible?: string | null;
+  clienteNombre?: string | null;
+  clienteDocumento?: string | null;
+  sedeId?: number | string | null;
+  sedeNombre?: string | null;
+  metodoPago?: string | null;
+  liquidacionOrigenId?: number | string | null;
+  valorAjuste?: number | null;
+  motivo?: string | null;
+  estado?: string | null;
+  usuarioRecaudoId?: number | string | null;
+  usuarioRecaudoNombre?: string | null;
+  usuarioRecaudoLogin?: string | null;
+  aliadoId?: number | null;
+  aliado?: AllyOption | null;
+};
+
 export type PaymentSummaryBucket = {
   plataforma?: string | null;
   numeroCreditos?: number | null;
@@ -92,6 +117,8 @@ export type PaymentSummaryBucket = {
   numeroRecaudos?: number | null;
   numeroAjustesAnulacion?: number | null;
   totalAjustesAnulacion?: number | null;
+  numeroAjustesRecaudoCentral?: number | null;
+  totalAjustesRecaudoCentral?: number | null;
   porcentajeIntermediacion?: number | null;
   valorVenta?: number | null;
   creditoAutorizado?: number | null;
@@ -128,6 +155,8 @@ export type Settlement = {
   numeroRecaudos?: number | null;
   numeroAjustesAnulacion?: number | null;
   totalAjustesAnulacion?: number | null;
+  numeroAjustesRecaudoCentral?: number | null;
+  totalAjustesRecaudoCentral?: number | null;
   numeroAprobacionBancaria?: string | null;
   pagadoAt?: string | null;
   createdAt?: string | null;
@@ -140,6 +169,7 @@ export type Settlement = {
   detalles?: PaymentCreditItem[] | null;
   recaudos?: PaymentCollectionItem[] | null;
   ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[] | null;
+  ajustesRecaudoCentral?: PaymentCentralCollectionAdjustmentItem[] | null;
 };
 
 export type PaymentPreview = {
@@ -154,10 +184,13 @@ export type PaymentPreview = {
   creditos?: PaymentCreditItem[] | null;
   recaudos?: PaymentCollectionItem[] | null;
   ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[] | null;
+  ajustesRecaudoCentral?: PaymentCentralCollectionAdjustmentItem[] | null;
   totalPagarCreditos?: number | null;
   totalRecaudosAliado?: number | null;
   numeroAjustesAnulacion?: number | null;
   totalAjustesAnulacion?: number | null;
+  numeroAjustesRecaudoCentral?: number | null;
+  totalAjustesRecaudoCentral?: number | null;
   saldoNeto?: number | null;
   direccionSaldo?: string | null;
   valorPagarAliado?: number | null;
@@ -176,10 +209,13 @@ export type AllyPaymentsResponse = {
     summary?: PaymentSummary | null;
     recaudos?: PaymentCollectionItem[];
     ajustesAnulacion?: PaymentAnnulmentAdjustmentItem[];
+    ajustesRecaudoCentral?: PaymentCentralCollectionAdjustmentItem[];
     totalPagarCreditos?: number | null;
     totalRecaudosAliado?: number | null;
     numeroAjustesAnulacion?: number | null;
     totalAjustesAnulacion?: number | null;
+    numeroAjustesRecaudoCentral?: number | null;
+    totalAjustesRecaudoCentral?: number | null;
     saldoNeto?: number | null;
     direccionSaldo?: string | null;
   } | null;

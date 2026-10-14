@@ -5,6 +5,10 @@ import {
   creditAbonoAllyAttributionValidationStatements,
 } from "../scripts/credit-abono-ally-attribution-schema.mjs";
 import { creditAllyPaymentExclusionSchemaStatements } from "../scripts/credit-ally-payment-exclusion-schema.mjs";
+import {
+  allyPaymentCentralCollectionAdjustmentSchemaStatements,
+  allyPaymentCentralCollectionAdjustmentValidationStatements,
+} from "../scripts/ally-payment-central-collection-adjustment-schema.mjs";
 import prisma from "@/lib/prisma";
 
 let schemaReady: Promise<void> | null = null;
@@ -18,7 +22,9 @@ export function ensureCreditAllyPaymentExclusionSchema() {
       for (const statement of [
         ...creditAbonoAllyAttributionSchemaStatements,
         ...creditAllyPaymentExclusionSchemaStatements,
+        ...allyPaymentCentralCollectionAdjustmentSchemaStatements,
         ...creditAbonoAllyAttributionValidationStatements,
+        ...allyPaymentCentralCollectionAdjustmentValidationStatements,
       ]) {
         await tx.$executeRawUnsafe(statement);
       }

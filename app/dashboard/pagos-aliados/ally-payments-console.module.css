@@ -56,6 +56,8 @@
 .countBadge, .readyCount { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; border: 1px solid var(--fp-border); background: #f2f5f7; padding: 5px 14px; color: var(--fp-graphite); font-size: 12px; font-weight: 650; line-height: 18px; white-space: nowrap; }
 .readyCount { background: #e3f9e4; border-color: #caedce; color: #174b1d; }
 .previewSummary { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1.11fr); gap: 15px; }
+.previewSummary.previewSummaryTwoColumns { grid-template-columns: minmax(0,1fr) minmax(0,1.11fr); }
+.previewSummary.previewSummaryOnlyNet { grid-template-columns: minmax(0,1fr); }
 .productCard { display: flex; flex-direction: column; padding: 17px 24px 11px; border: 1px solid var(--fp-border); border-radius: 10px; background: white; box-shadow: 0 3px 12px rgb(21 26 33 / 3%); min-width: 0; }
 .productHeading { display: flex; align-items: center; gap: 15px; padding-bottom: 15px; border-bottom: 1px solid #e3e8ed; }
 .productHeading h2 { font-size: 18px; font-weight: 750; letter-spacing: -.02em; }
@@ -77,6 +79,8 @@
 .netBreakdown dd { margin-left: auto; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .netBreakdown .annulmentBreakdown { color: #ffd9d5; }
 .netBreakdown .annulmentBreakdown dd { color: #ffb4ad; }
+.netBreakdown .centralAdjustmentBreakdown { color: #d3f3bc; }
+.netBreakdown .centralAdjustmentBreakdown dd { color: #b9ec8e; }
 .creditDetail { min-width: 0; overflow: hidden; padding: 0; margin-top: 15px; border: 1px solid var(--fp-border); border-radius: 11px; background: white; box-shadow: 0 3px 12px rgb(21 26 33 / 3%); }
 .detailHeading { display: flex; align-items: center; gap: 12px; padding: 11px 16px; min-height: 59px; }
 .detailHeading h2 { margin-right: auto; font-size: 20px; font-weight: 800; letter-spacing: -.025em; }
@@ -147,6 +151,30 @@
 .annulmentReason { min-width: 180px; max-width: 300px; color: #69433f; }
 .annulmentAmount { color: var(--fp-danger); font-size: 14px; font-weight: 850; }
 .annulmentEmpty { margin-top: 15px; border-color: #f3b7b2; background: var(--fp-danger-soft); }
+.centralAdjustments { min-width: 0; overflow: hidden; margin-top: 15px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-surface); }
+.centralAdjustmentHeading { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: var(--fp-lime-soft); border-bottom: 1px solid var(--fp-border); }
+.centralAdjustmentHeading > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.centralAdjustmentHeading h2 { margin: 0; color: var(--fp-graphite); font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+.centralAdjustmentHeading p { margin: 3px 0 0; color: var(--fp-muted); font-size: 12px; line-height: 1.45; }
+.centralAdjustmentIcon { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: var(--fp-surface); color: #4f6f0c; border: 1px solid var(--fp-border); }
+.centralAdjustmentIcon svg { width: 20px; height: 20px; }
+.centralAdjustmentHeading > span { margin-left: auto; }
+.centralAdjustmentTotal { color: #4f6f0c; font-size: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.centralAdjustmentTableWrap { overflow-x: auto; border: 0; border-radius: 0; }
+.centralAdjustmentTable { width: 100%; min-width: 1510px; border-collapse: collapse; color: var(--fp-graphite); font-size: 13px; }
+.centralAdjustmentTable th { padding: 12px 14px; text-align: left; background: var(--fp-lime-soft); color: var(--fp-graphite); border-bottom: 1px solid var(--fp-border); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.centralAdjustmentTable td { padding: 12px 14px; vertical-align: middle; border-top: 1px solid var(--fp-border); }
+.centralAdjustmentTable tbody tr { background: var(--fp-surface); }
+.centralAdjustmentTable tbody tr:hover { background: var(--fp-lime-soft); }
+.centralAdjustmentTable .dateCell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.centralAdjustmentTable .dateCell strong, .centralAdjustmentTable .dateCell small { display: block; }
+.centralAdjustmentTable .dateCell small { margin-top: 3px; color: var(--fp-muted); font-size: 11px; }
+.centralAdjustmentCredit, .centralOriginSettlement { color: #4f6f0c; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.centralAdjustmentActor { min-width: 135px; }
+.centralAdjustmentActor strong, .centralAdjustmentActor small { display: block; }
+.centralAdjustmentActor small { margin-top: 3px; color: var(--fp-muted); font-size: 11px; }
+.centralAdjustmentReason { min-width: 210px; max-width: 320px; color: var(--fp-muted); }
+.centralAdjustmentAmount { color: #4f6f0c; font-size: 14px; font-weight: 850; }
 .registerCard { margin-top: 15px; }
 .registerRow { display: grid; grid-template-columns: minmax(250px,1fr) minmax(260px,.65fr); align-items: end; gap: 18px; }
 .registerRow input, .registerRow > button { min-height: 42px; height: 42px; font-size: 13px; }
@@ -207,6 +235,10 @@
   .annulmentHeading > div { width: 100%; }
   .annulmentHeading > span { margin-left: 0; }
   .annulmentTotal { margin-left: auto; font-size: 17px; }
+  .centralAdjustmentHeading { align-items: flex-start; flex-wrap: wrap; padding: 13px; }
+  .centralAdjustmentHeading > div { width: 100%; }
+  .centralAdjustmentHeading > span { margin-left: 0; }
+  .centralAdjustmentTotal { margin-left: auto; font-size: 17px; }
 }
 @media (prefers-reduced-motion: reduce) { .previewCollections > summary > svg:last-child { transition: none; } }
 @media (min-width: 1600px) { .main { padding-left: 46px; padding-right: 46px; } }

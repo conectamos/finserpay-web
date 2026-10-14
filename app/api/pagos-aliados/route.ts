@@ -200,7 +200,8 @@ export async function GET(request: Request) {
       previewResult &&
       (previewResult.items.length > 0 ||
         previewResult.recaudos.length > 0 ||
-        previewResult.ajustesAnulacion.length > 0)
+        previewResult.ajustesAnulacion.length > 0 ||
+        previewResult.ajustesRecaudoCentral.length > 0)
         ? previewResult
         : null;
 

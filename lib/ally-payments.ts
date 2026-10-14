@@ -27,12 +27,18 @@ import {
   totalAllyPaymentAnnulmentAdjustments,
   type AllyPaymentAnnulmentAdjustmentLine,
 } from "@/lib/ally-payment-annulments";
+import {
+  loadPendingAllyPaymentCentralCollectionAdjustments,
+  serializeStoredAllyPaymentCentralCollectionAdjustment,
+  totalAllyPaymentCentralCollectionAdjustments,
+  type AllyPaymentCentralCollectionAdjustmentLine,
+} from "@/lib/ally-payment-central-collection-adjustments";
 import { ensureCreditAllyPaymentExclusionSchema } from "@/lib/credit-ally-payment-exclusion-storage";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
 
 const PAYMENT_CALCULATION_VERSION =
-  "ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_ATTRIBUTION_V3";
+  "ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_CENTRAL_ADJUSTMENTS_V4";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH_PATTERN = /^[0-9a-f]{64}$/i;
@@ -133,6 +139,9 @@ export type AllyPaymentCollectionLine = {
 
 export type AllyPaymentAnnulmentAdjustment =
   AllyPaymentAnnulmentAdjustmentLine;
+
+export type AllyPaymentCentralCollectionAdjustment =
+  AllyPaymentCentralCollectionAdjustmentLine;
 
 export type AllyPaymentSummaryPayload = {
   ANDROID: ReturnType<typeof serializeSummaryBucket>;
@@ -500,6 +509,12 @@ const SETTLEMENT_INCLUDE = {
       ajuste: true,
     },
   },
+  ajustesRecaudoCentral: {
+    orderBy: [{ id: "asc" }],
+    include: {
+      ajuste: true,
+    },
+  },
 } satisfies Prisma.LiquidacionAliadoInclude;
 
 type StoredSettlement = Prisma.LiquidacionAliadoGetPayload<{
@@ -515,7 +530,8 @@ function previewFingerprint(
   period: ReturnType<typeof resolveColombiaPaymentPeriod>,
   lines: readonly AllyPaymentLine[],
   collections: readonly AllyPaymentCollectionLine[],
-  annulmentAdjustments: readonly AllyPaymentAnnulmentAdjustmentLine[]
+  annulmentAdjustments: readonly AllyPaymentAnnulmentAdjustmentLine[],
+  centralCollectionAdjustments: readonly AllyPaymentCentralCollectionAdjustmentLine[]
 ) {
   return sha256({
     version: PAYMENT_CALCULATION_VERSION,
@@ -555,6 +571,15 @@ function previewFingerprint(
       sedeId: item.sedeId,
       liquidacionOrigenId: item.liquidacionOrigenId,
       valorDescuento: item.valorDescuento,
+      motivo: item.motivo,
+    })),
+    ajustesRecaudoCentral: centralCollectionAdjustments.map((item) => ({
+      ajusteId: item.ajusteId,
+      abonoId: item.abonoId,
+      creditoId: item.creditoId,
+      fechaAjuste: item.fechaAjuste,
+      liquidacionOrigenId: item.liquidacionOrigenId,
+      valorAjuste: item.valorAjuste,
       motivo: item.motivo,
     })),
   });
@@ -632,6 +657,9 @@ function serializeSettlement(settlement: StoredSettlement) {
   const ajustesAnulacion = (settlement.ajustesAnulacion || []).map(
     serializeStoredAllyPaymentAnnulmentAdjustment
   );
+  const ajustesRecaudoCentral = (settlement.ajustesRecaudoCentral || []).map(
+    serializeStoredAllyPaymentCentralCollectionAdjustment
+  );
   const totalPagarCreditos = Number(settlement.totalPagar);
   const totalRecaudosAliado = settlement.totalRecaudosAliado == null
     ? 0
@@ -640,10 +668,15 @@ function serializeSettlement(settlement: StoredSettlement) {
     settlement.totalAjustesAnulacion ??
       totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
   );
+  const totalAjustesRecaudoCentral = Number(
+    settlement.totalAjustesRecaudoCentral ??
+      totalAllyPaymentCentralCollectionAdjustments(ajustesRecaudoCentral)
+  );
   const balance = calculateAllySettlementBalance(
     totalPagarCreditos,
     totalRecaudosAliado,
-    totalAjustesAnulacion
+    totalAjustesAnulacion,
+    totalAjustesRecaudoCentral
   );
   const saldoNeto = settlement.saldoNeto == null
     ? balance.saldoNeto
@@ -668,6 +701,8 @@ function serializeSettlement(settlement: StoredSettlement) {
     totalRecaudosAliado,
     numeroAjustesAnulacion: settlement.numeroAjustesAnulacion,
     totalAjustesAnulacion,
+    numeroAjustesRecaudoCentral: settlement.numeroAjustesRecaudoCentral,
+    totalAjustesRecaudoCentral,
     saldoNeto,
     direccionSaldo,
     valorPagarAliado: Math.max(saldoNeto, 0),
@@ -680,6 +715,7 @@ function serializeSettlement(settlement: StoredSettlement) {
     items,
     recaudos,
     ajustesAnulacion,
+    ajustesRecaudoCentral,
   };
 }
 
@@ -743,16 +779,18 @@ export async function listAllyPaymentPending(input: {
   allyId: number | null;
 }) {
   const allyId = input.allyId === null ? null : positiveId(input.allyId, "El aliado");
-  const [items, recaudos, ajustesAnulacion] = await Promise.all([
+  const [items, recaudos, ajustesAnulacion, ajustesRecaudoCentral] = await Promise.all([
     loadEligibleLines(prisma, { allyId }),
     loadEligibleCollections(prisma, { allyId }),
     loadPendingAllyPaymentAnnulmentAdjustments(prisma, { allyId }),
+    loadPendingAllyPaymentCentralCollectionAdjustments(prisma, { allyId }),
   ]);
   const summary = serializeSummary(summarizeAllyPayments(items));
   const balance = calculateAllySettlementBalance(
     summary.total.totalPagar,
     totalCollections(recaudos),
-    totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
+    totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion),
+    totalAllyPaymentCentralCollectionAdjustments(ajustesRecaudoCentral)
   );
 
   return {
@@ -760,6 +798,8 @@ export async function listAllyPaymentPending(input: {
     recaudos,
     ajustesAnulacion,
     numeroAjustesAnulacion: ajustesAnulacion.length,
+    ajustesRecaudoCentral,
+    numeroAjustesRecaudoCentral: ajustesRecaudoCentral.length,
     summary,
     ...balance,
   };
@@ -773,7 +813,7 @@ export async function getAllyPaymentPreview(input: {
   const allyId = positiveId(input.allyId, "El aliado");
   const period = parsePaymentPeriod(input.startDate, input.endDate);
   const ally = await requirePayableAlly(prisma, allyId);
-  const [items, recaudos, ajustesAnulacion] = await Promise.all([
+  const [items, recaudos, ajustesAnulacion, ajustesRecaudoCentral] = await Promise.all([
     loadEligibleLines(prisma, {
       allyId,
       start: period.start,
@@ -789,12 +829,17 @@ export async function getAllyPaymentPreview(input: {
       start: period.start,
       endExclusive: period.endExclusive,
     }),
+    loadPendingAllyPaymentCentralCollectionAdjustments(prisma, {
+      allyId,
+      endExclusive: period.endExclusive,
+    }),
   ]);
   const summary = serializeSummary(summarizeAllyPayments(items));
   const balance = calculateAllySettlementBalance(
     summary.total.totalPagar,
     totalCollections(recaudos),
-    totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
+    totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion),
+    totalAllyPaymentCentralCollectionAdjustments(ajustesRecaudoCentral)
   );
 
   return {
@@ -803,7 +848,8 @@ export async function getAllyPaymentPreview(input: {
       period,
       items,
       recaudos,
-      ajustesAnulacion
+      ajustesAnulacion,
+      ajustesRecaudoCentral
     ),
     aliado: {
       id: ally.id,
@@ -815,6 +861,8 @@ export async function getAllyPaymentPreview(input: {
     recaudos,
     ajustesAnulacion,
     numeroAjustesAnulacion: ajustesAnulacion.length,
+    ajustesRecaudoCentral,
+    numeroAjustesRecaudoCentral: ajustesRecaudoCentral.length,
     summary,
     ...balance,
   };
@@ -999,8 +1047,19 @@ export async function createAllyPayment(input: {
             endExclusive: period.endExclusive,
             lock: true,
           });
+        const ajustesRecaudoCentral =
+          await loadPendingAllyPaymentCentralCollectionAdjustments(tx, {
+            allyId,
+            endExclusive: period.endExclusive,
+            lock: true,
+          });
 
-        if (!items.length && !recaudos.length && !ajustesAnulacion.length) {
+        if (
+          !items.length &&
+          !recaudos.length &&
+          !ajustesAnulacion.length &&
+          !ajustesRecaudoCentral.length
+        ) {
           throw new AllyPaymentConflictError(
             "ALLY_PAYMENT_EMPTY",
             "Ya no hay creditos, recaudos ni ajustes pendientes para el aliado y periodo seleccionados."
@@ -1012,12 +1071,13 @@ export async function createAllyPayment(input: {
           period,
           items,
           recaudos,
-          ajustesAnulacion
+          ajustesAnulacion,
+          ajustesRecaudoCentral
         );
         if (currentPreviewToken !== previewToken) {
           throw new AllyPaymentConflictError(
             "ALLY_PAYMENT_PREVIEW_CHANGED",
-            "Los creditos, recaudos, ajustes por anulacion o porcentajes cambiaron. Actualiza la previsualizacion antes de registrar."
+            "Los creditos, recaudos, ajustes por anulacion, ajustes a favor o porcentajes cambiaron. Actualiza la previsualizacion antes de registrar."
           );
         }
 
@@ -1026,7 +1086,8 @@ export async function createAllyPayment(input: {
         const balance = calculateAllySettlementBalance(
           summary.total.valorPagar,
           totalCollections(recaudos),
-          totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion)
+          totalAllyPaymentAnnulmentAdjustments(ajustesAnulacion),
+          totalAllyPaymentCentralCollectionAdjustments(ajustesRecaudoCentral)
         );
         const created = await tx.liquidacionAliado.create({
           data: {
@@ -1051,6 +1112,10 @@ export async function createAllyPayment(input: {
             numeroAjustesAnulacion: ajustesAnulacion.length,
             totalAjustesAnulacion: moneyForDatabase(
               balance.totalAjustesAnulacion
+            ),
+            numeroAjustesRecaudoCentral: ajustesRecaudoCentral.length,
+            totalAjustesRecaudoCentral: moneyForDatabase(
+              balance.totalAjustesRecaudoCentral
             ),
             saldoNeto: moneyForDatabase(balance.saldoNeto),
             direccionSaldo: balance.direccionSaldo,
@@ -1102,6 +1167,13 @@ export async function createAllyPayment(input: {
                 ajuste: { connect: { id: item.ajusteId } },
               })),
             } } : {}),
+            ...(ajustesRecaudoCentral.length ? { ajustesRecaudoCentral: {
+              create: ajustesRecaudoCentral.map((item) => ({
+                valorAjuste: moneyForDatabase(item.valorAjuste),
+                estado: "ACREDITADO",
+                ajuste: { connect: { id: item.ajusteId } },
+              })),
+            } } : {}),
           },
           include: SETTLEMENT_INCLUDE,
         });
@@ -1128,7 +1200,7 @@ export async function createAllyPayment(input: {
     if (isDataCreditoUniqueViolation(error)) {
       throw new AllyPaymentConflictError(
         "ALLY_PAYMENT_DUPLICATE",
-        "La liquidacion, el soporte, alguno de sus creditos, recaudos o ajustes por anulacion ya fue registrado."
+        "La liquidacion, el soporte, alguno de sus creditos, recaudos o ajustes ya fue registrado."
       );
     }
 

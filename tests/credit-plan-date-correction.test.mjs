@@ -214,6 +214,7 @@ async function executePlan(current, body, {
     "@/lib/credit-amortization-storage": amortizationStorage,
     "@/lib/credit-plan-revision": revisionModule,
     "@/lib/ally-payment-annulments": {},
+    "@/lib/ally-payment-central-collection-adjustments": {},
     "@/lib/roles": { isAdminRole: (value) => value === "ADMIN" },
     "@/lib/aliados": { isFinserPayCentralAlly: (value) => value === "FINSERPAY" },
     "@/lib/equality-device-meta": {}, "@/lib/equality-zero-touch": { isEqualityApiError: () => false }, "@/lib/credit-lock-message": {},

@@ -73,9 +73,13 @@ export async function GET(
     const annulmentAdjustments = Array.isArray(settlement.ajustesAnulacion)
       ? settlement.ajustesAnulacion
       : [];
+    const centralCollectionAdjustments = Array.isArray(settlement.ajustesRecaudoCentral)
+      ? settlement.ajustesRecaudoCentral
+      : [];
     const visibleNumbers = await getCreditDisplayNumbers([
       ...settlement.recaudos.map(item => item.creditoId),
       ...annulmentAdjustments.map(item => item.creditoId),
+      ...centralCollectionAdjustments.map(item => item.creditoId),
     ]);
     const pdf = await buildAllyPaymentSettlementPdf({
       settlementId: settlement.id,
@@ -94,6 +98,7 @@ export async function GET(
       totalPayable: settlement.totalPagar,
       totalAllyCollections: settlement.totalRecaudosAliado,
       totalAnnulmentAdjustments: settlement.totalAjustesAnulacion,
+      totalCentralCollectionAdjustments: settlement.totalAjustesRecaudoCentral,
       netBalance: settlement.saldoNeto,
       balanceDirection: settlement.direccionSaldo,
       platformSummary: {
@@ -153,6 +158,24 @@ export async function GET(
         siteName: item.sedeNombre,
         sourceSettlementId: item.liquidacionOrigenId,
         discountValue: item.valorDescuento,
+        reason: item.motivo,
+        status: item.estado,
+      })),
+      centralCollectionAdjustments: centralCollectionAdjustments.map((item) => ({
+        adjustmentId: item.ajusteId ?? item.id,
+        creditId: item.creditoId,
+        paymentDate: item.fechaAbono,
+        adjustmentDate: item.fechaAjuste,
+        folio: item.folio,
+        visibleCreditNumber: visibleNumbers.get(item.creditoId) || item.folio,
+        clientName: item.clienteNombre,
+        clientDocument: item.clienteDocumento,
+        siteName: item.sedeNombre,
+        paymentMethod: item.metodoPago,
+        sourceSettlementId: item.liquidacionOrigenId,
+        registeredBy: item.usuarioRecaudoNombre,
+        registeredByUsername: item.usuarioRecaudoLogin,
+        value: item.valorAjuste,
         reason: item.motivo,
         status: item.estado,
       })),

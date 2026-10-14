@@ -4,6 +4,7 @@ import {
   allyPaymentColombiaDate,
   emptyAllyPaymentViewFilters,
   filterPendingAllyAnnulmentAdjustments,
+  filterPendingAllyCentralCollectionAdjustments,
   filterPendingAllyCollections,
   filterPendingAllyCredits,
   filterReceivedAllyPayments,
@@ -126,6 +127,36 @@ test("ajustes por anulacion se filtran por aliado, fecha, plataforma e identific
   assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ search: "000098765432102" }))), [2]);
   assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ search: "LA-41" }))), [1]);
   assert.deepEqual(ids(filterPendingAllyAnnulmentAdjustments(rows, filters({ platform: "ANDROID" }))), [2]);
+});
+
+test("ajustes por recaudo central se filtran por aliado, fecha, crédito y usuario", () => {
+  const rows = [
+    {
+      id: 1, aliadoId: 7, aliado: { id: 7, nombre: "Aliado QA" },
+      fechaAjuste: "2026-10-13T04:59:59Z", fechaAbono: "2026-10-08T12:00:00Z",
+      numeroCreditoVisible: "300000014", folio: "FOLIO-INTERNO-1",
+      clienteNombre: "MORENO MARIN LINA LUZ", clienteDocumento: "53068434",
+      sedeNombre: "JGPrincipal", metodoPago: "OTRO", liquidacionOrigenId: 901,
+      usuarioRecaudoNombre: "Administrador", usuarioRecaudoLogin: "admin",
+      motivo: "Reintegro de recaudo FINSER PAY",
+    },
+    {
+      id: 2, aliadoId: 8, aliado: { id: 8, nombre: "Otro aliado" },
+      fechaAjuste: "2026-10-13T05:00:00Z", numeroCreditoVisible: "300000015",
+      usuarioRecaudoNombre: "Otro usuario", usuarioRecaudoLogin: "otro.admin",
+    },
+    { id: 3, fechaAjuste: "2026-10-13T05:00:00Z", numeroCreditoVisible: "SIN-ALIADO" },
+  ];
+
+  assert.deepEqual(ids(filterPendingAllyCentralCollectionAdjustments(rows, filters({
+    allyId: "7", start: "2026-10-12", end: "2026-10-12",
+  }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyCentralCollectionAdjustments(rows, filters({ search: "300000014" }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyCentralCollectionAdjustments(rows, filters({ search: "53.068.434" }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyCentralCollectionAdjustments(rows, filters({ search: "JGPrincipal" }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyCentralCollectionAdjustments(rows, filters({ search: "admin" }))), [1, 2]);
+  assert.deepEqual(ids(filterPendingAllyCentralCollectionAdjustments(rows, filters({ search: "LA-901" }))), [1]);
+  assert.deepEqual(ids(filterPendingAllyCentralCollectionAdjustments(rows, filters({ allyId: "7" }))), [1]);
 });
 
 test("todos los resultados filtrados conservan cantidades y montos antes de la paginación, incluido cada tipo de equipo", () => {

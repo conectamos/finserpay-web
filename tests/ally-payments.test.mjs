@@ -460,7 +460,10 @@ test("la creacion es serializable e idempotente bajo locks de mutacion y aliado"
     assert.match(requestHash, new RegExp("\\b" + field + ":"));
   }
   assert.match(create, /requestHash,/);
-  assert.match(storage, /ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_ATTRIBUTION_V3/);
+  assert.match(
+    storage,
+    /ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_CENTRAL_ADJUSTMENTS_V4/
+  );
 });
 
 test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado", () => {
@@ -595,11 +598,11 @@ test("los recaudos del aliado se filtran por sede, periodo y uso previo", () => 
   assert.match(loader, /FOR UPDATE OF payment/);
   assert.match(
     storage,
-    /previewFingerprint\(\s*allyId,\s*period,\s*items,\s*recaudos,\s*ajustesAnulacion\s*\)/
+    /previewFingerprint\(\s*allyId,\s*period,\s*items,\s*recaudos,\s*ajustesAnulacion,\s*ajustesRecaudoCentral\s*\)/
   );
   assert.match(
     storage,
-    /if \(!items\.length && !recaudos\.length && !ajustesAnulacion\.length\)/
+    /if \(\s*!items\.length\s*&&\s*!recaudos\.length\s*&&\s*!ajustesAnulacion\.length\s*&&\s*!ajustesRecaudoCentral\.length\s*\)/
   );
   assert.match(storage, /totalRecaudosAliado:\s*moneyForDatabase/);
   assert.match(storage, /saldoNeto:\s*moneyForDatabase/);

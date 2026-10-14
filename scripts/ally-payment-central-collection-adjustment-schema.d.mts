@@ -1,0 +1,2 @@
+export const allyPaymentCentralCollectionAdjustmentSchemaStatements: readonly string[];
+export const allyPaymentCentralCollectionAdjustmentValidationStatements: readonly string[];

@@ -103,3 +103,49 @@ export function filterPendingAllyAnnulmentAdjustments<T extends PendingAnnulment
       && matchesDate(allyPaymentColombiaDate(item.fechaAnulacion), filters);
   });
 }
+
+type PendingCentralCollectionAdjustment = {
+  aliadoId?: number | null;
+  aliado?: Ally;
+  fechaAjuste?: string | null;
+  fechaAbono?: string | null;
+  numeroCreditoVisible?: string | null;
+  folio?: string | null;
+  clienteNombre?: string | null;
+  clienteDocumento?: string | null;
+  sedeNombre?: string | null;
+  metodoPago?: string | null;
+  usuarioRecaudoNombre?: string | null;
+  usuarioRecaudoLogin?: string | null;
+  motivo?: string | null;
+  liquidacionOrigenId?: number | string | null;
+};
+
+/**
+ * This only filters the already-loaded view. Eligibility carries forward on the
+ * server, so a visual date filter can never consume or strand an older adjustment.
+ */
+export function filterPendingAllyCentralCollectionAdjustments<
+  T extends PendingCentralCollectionAdjustment,
+>(items: T[], filters: AllyPaymentViewFilters): T[] {
+  return items.filter(item => {
+    const allyId = item.aliadoId ?? item.aliado?.id;
+    if (filters.allyId && String(allyId ?? "") !== filters.allyId) return false;
+    return matchesSearch(filters.search, [
+      item.numeroCreditoVisible,
+      item.folio,
+      item.clienteNombre,
+      item.clienteDocumento,
+      item.sedeNombre,
+      item.metodoPago,
+      item.usuarioRecaudoNombre,
+      item.usuarioRecaudoLogin,
+      item.motivo,
+      item.liquidacionOrigenId,
+      item.liquidacionOrigenId == null ? null : `LA-${item.liquidacionOrigenId}`,
+    ]) && matchesDate(
+      allyPaymentColombiaDate(item.fechaAjuste || item.fechaAbono),
+      filters
+    );
+  });
+}

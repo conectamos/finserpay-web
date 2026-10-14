@@ -10,6 +10,10 @@ import {
 } from "../scripts/credit-abono-ally-attribution-schema.mjs";
 import { creditAllyPaymentExclusionSchemaStatements } from "../scripts/credit-ally-payment-exclusion-schema.mjs";
 import {
+  allyPaymentCentralCollectionAdjustmentSchemaStatements,
+  allyPaymentCentralCollectionAdjustmentValidationStatements,
+} from "../scripts/ally-payment-central-collection-adjustment-schema.mjs";
+import {
   resolveAllyPaymentPlatform,
   resolveColombiaPaymentPeriod,
 } from "../lib/ally-payments-core.ts";
@@ -56,6 +60,8 @@ test("el inicio comparte el lock de predeploy, coalesce llamadas y reintenta un 
     creditAbonoAllyAttributionSchemaStatements,
     creditAbonoAllyAttributionValidationStatements,
     creditAllyPaymentExclusionSchemaStatements,
+    allyPaymentCentralCollectionAdjustmentSchemaStatements,
+    allyPaymentCentralCollectionAdjustmentValidationStatements,
     prisma: {
       async $transaction(run) {
         transactions += 1;
@@ -80,7 +86,9 @@ test("el inicio comparte el lock de predeploy, coalesce llamadas y reintenta un 
   assert.deepEqual(calls.slice(2), [
     ...creditAbonoAllyAttributionSchemaStatements,
     ...creditAllyPaymentExclusionSchemaStatements,
+    ...allyPaymentCentralCollectionAdjustmentSchemaStatements,
     ...creditAbonoAllyAttributionValidationStatements,
+    ...allyPaymentCentralCollectionAdjustmentValidationStatements,
   ]);
   await initializer();
   assert.equal(transactions, 2, "Un inicio ya confirmado no vuelve a instalar el esquema.");

@@ -33,10 +33,11 @@ function line(index, platform, percentage, overrides = {}) {
   };
 }
 
-function settlement({ id, allyName, lines, collections = [], annulmentAdjustments = [], approval }) {
+function settlement({ id, allyName, lines, collections = [], annulmentAdjustments = [], centralCollectionAdjustments = [], approval }) {
   const total = (key) => lines.reduce((sum, item) => sum + item[key], 0);
   const totalAllyCollections = collections.reduce((sum, item) => sum + item.value, 0);
   const totalAnnulmentAdjustments = annulmentAdjustments.reduce((sum, item) => sum + item.discountValue, 0);
+  const totalCentralCollectionAdjustments = centralCollectionAdjustments.reduce((sum, item) => sum + item.value, 0);
   const totalPayable = total("payableValue");
   const bucket = (platform) => {
     const items = lines.filter((item) => item.platform === platform);
@@ -64,12 +65,14 @@ function settlement({ id, allyName, lines, collections = [], annulmentAdjustment
     totalPayable,
     totalAllyCollections,
     totalAnnulmentAdjustments,
-    netBalance: totalPayable - totalAllyCollections - totalAnnulmentAdjustments,
-    balanceDirection: totalPayable >= totalAllyCollections + totalAnnulmentAdjustments ? "PAGO_ALIADO" : "CONSIGNACION_ALIADO",
+    totalCentralCollectionAdjustments,
+    netBalance: totalPayable - totalAllyCollections - totalAnnulmentAdjustments + totalCentralCollectionAdjustments,
+    balanceDirection: totalPayable + totalCentralCollectionAdjustments >= totalAllyCollections + totalAnnulmentAdjustments ? "PAGO_ALIADO" : "CONSIGNACION_ALIADO",
     platformSummary: { ANDROID: bucket("ANDROID"), IPHONE: bucket("IPHONE") },
     lines,
     collections,
     annulmentAdjustments,
+    centralCollectionAdjustments,
   };
 }
 
@@ -130,6 +133,24 @@ const annulmentAdjustments = [
     status: "DESCONTADO",
   },
 ];
+const centralCollectionAdjustments = [{
+  adjustmentId: 401,
+  creditId: 30_000_014,
+  paymentDate: "2026-10-08T12:00:00.000Z",
+  adjustmentDate: "2026-10-13T15:00:00.000Z",
+  folio: "FC-DEMO-RECAUDO",
+  visibleCreditNumber: "300000014",
+  clientName: "Cliente reintegro demostración",
+  clientDocument: "53068434",
+  siteName: "Sede registrada del aliado",
+  paymentMethod: "OTRO",
+  sourceSettlementId: 199,
+  registeredBy: "Administrador central FINSER PAY",
+  registeredByUsername: "admin",
+  value: 110_000,
+  reason: "Reintegro de recaudo registrado por la administración central",
+  status: "ACREDITADO",
+}];
 
 await mkdir(outputDir, { recursive: true });
 const outputs = [
@@ -139,7 +160,7 @@ const outputs = [
   ],
   [
     "comprobante-liquidacion-aliado-varios-creditos.pdf",
-    settlement({ id: 202, allyName: "Aliado demostración multipágina", lines: manyLines, collections, annulmentAdjustments, approval: "APR-DEMO-202" }),
+    settlement({ id: 202, allyName: "Aliado demostración multipágina", lines: manyLines, collections, annulmentAdjustments, centralCollectionAdjustments, approval: "APR-DEMO-202" }),
   ],
 ];
 

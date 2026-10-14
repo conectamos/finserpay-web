@@ -4,6 +4,10 @@ import {
   creditAbonoAllyAttributionValidationStatements,
 } from "./credit-abono-ally-attribution-schema.mjs";
 import { creditAllyPaymentExclusionSchemaStatements } from "./credit-ally-payment-exclusion-schema.mjs";
+import {
+  allyPaymentCentralCollectionAdjustmentSchemaStatements,
+  allyPaymentCentralCollectionAdjustmentValidationStatements,
+} from "./ally-payment-central-collection-adjustment-schema.mjs";
 
 const { Client } = pg;
 const connectionString = String(process.env.DATABASE_URL || "").trim();
@@ -879,7 +883,9 @@ const statements = [
 statements.push(
   ...creditAbonoAllyAttributionSchemaStatements,
   ...creditAllyPaymentExclusionSchemaStatements,
-  ...creditAbonoAllyAttributionValidationStatements
+  ...allyPaymentCentralCollectionAdjustmentSchemaStatements,
+  ...creditAbonoAllyAttributionValidationStatements,
+  ...allyPaymentCentralCollectionAdjustmentValidationStatements
 );
 
 const expectedColumns = [
@@ -915,6 +921,8 @@ const expectedColumns = [
   ["LiquidacionAliado", "totalRecaudosAliado", "numeric", "YES", null, 20, 2],
   ["LiquidacionAliado", "numeroAjustesAnulacion", "integer", "NO"],
   ["LiquidacionAliado", "totalAjustesAnulacion", "numeric", "NO", null, 20, 2],
+  ["LiquidacionAliado", "numeroAjustesRecaudoCentral", "integer", "NO"],
+  ["LiquidacionAliado", "totalAjustesRecaudoCentral", "numeric", "NO", null, 20, 2],
   ["LiquidacionAliado", "saldoNeto", "numeric", "YES", null, 20, 2],
   ["LiquidacionAliado", "direccionSaldo", "character varying", "YES", 32],
   ["LiquidacionAliado", "registradoPorUsuarioId", "integer", "NO"],
@@ -981,6 +989,34 @@ const expectedColumns = [
   ["LiquidacionAliadoAjusteAnulacion", "valorDescuento", "numeric", "NO", null, 20, 2],
   ["LiquidacionAliadoAjusteAnulacion", "estado", "character varying", "NO", 24],
   ["LiquidacionAliadoAjusteAnulacion", "createdAt", "timestamp without time zone", "NO"],
+  ["AjusteRecaudoCentralAliado", "id", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "abonoId", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "liquidacionRecaudoOrigenId", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "creditoId", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "aliadoId", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "aliadoNombre", "character varying", "NO", 180],
+  ["AjusteRecaudoCentralAliado", "fechaRecaudo", "timestamp without time zone", "NO"],
+  ["AjusteRecaudoCentralAliado", "fechaAjuste", "timestamp without time zone", "NO"],
+  ["AjusteRecaudoCentralAliado", "folio", "character varying", "NO", 80],
+  ["AjusteRecaudoCentralAliado", "clienteNombre", "character varying", "NO", 180],
+  ["AjusteRecaudoCentralAliado", "clienteDocumento", "character varying", "NO", 80],
+  ["AjusteRecaudoCentralAliado", "sedeId", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "sedeNombre", "character varying", "NO", 180],
+  ["AjusteRecaudoCentralAliado", "metodoPago", "character varying", "NO", 40],
+  ["AjusteRecaudoCentralAliado", "liquidacionOrigenId", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "valorAjuste", "numeric", "NO", null, 20, 2],
+  ["AjusteRecaudoCentralAliado", "motivo", "character varying", "NO", 500],
+  ["AjusteRecaudoCentralAliado", "fuente", "character varying", "NO", 40],
+  ["AjusteRecaudoCentralAliado", "usuarioRecaudoId", "integer", "NO"],
+  ["AjusteRecaudoCentralAliado", "usuarioRecaudoNombre", "character varying", "NO", 160],
+  ["AjusteRecaudoCentralAliado", "usuarioRecaudoLogin", "character varying", "NO", 160],
+  ["AjusteRecaudoCentralAliado", "createdAt", "timestamp without time zone", "NO"],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "id", "integer", "NO"],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "liquidacionId", "integer", "NO"],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "ajusteId", "integer", "NO"],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "valorAjuste", "numeric", "NO", null, 20, 2],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "estado", "character varying", "NO", 24],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "createdAt", "timestamp without time zone", "NO"],
 ];
 
 const expectedIndexes = [
@@ -1059,6 +1095,13 @@ const expectedIndexes = [
   ["LiquidacionAliadoAjusteAnulacion", "LiquidacionAliadoAjusteAnulacion_ajusteId_key", true, ["ajusteId"]],
   ["LiquidacionAliadoAjusteAnulacion", "LiquidacionAliadoAjusteAnulacion_liquidacionId_createdAt_idx", false, ["liquidacionId", "createdAt"]],
   ["LiquidacionAliadoAjusteAnulacion", "LiquidacionAliadoAjusteAnulacion_estado_createdAt_idx", false, ["estado", "createdAt"]],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentralAliado_abonoId_key", true, ["abonoId"]],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentral_origenRecaudo_key", true, ["liquidacionRecaudoOrigenId"]],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentral_aliado_fecha_idx", false, ["aliadoId", "fechaAjuste", "id"]],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentral_origenLiquidacion_idx", false, ["liquidacionOrigenId"]],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "LiquidacionAliadoAjusteRecaudoCentral_ajusteId_key", true, ["ajusteId"]],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "LiquidacionAjusteRecaudoCentral_liquidacion_idx", false, ["liquidacionId", "createdAt"]],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "LiquidacionAjusteRecaudoCentral_estado_idx", false, ["estado", "createdAt"]],
 ];
 
 const expectedConstraints = [
@@ -1128,6 +1171,16 @@ const expectedConstraints = [
   ["LiquidacionAliadoAjusteAnulacion", "LiquidacionAliadoAjusteAnulacion_liquidacionId_fkey", "f"],
   ["LiquidacionAliadoAjusteAnulacion", "LiquidacionAliadoAjusteAnulacion_ajusteId_fkey", "f"],
   ["LiquidacionAliadoAjusteAnulacion", "LiquidacionAliadoAjusteAnulacion_datos_check", "c"],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentralAliado_abonoId_fkey", "f"],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentral_origenRecaudo_fkey", "f"],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentralAliado_creditoId_fkey", "f"],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentralAliado_aliadoId_fkey", "f"],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentral_origenLiquidacion_fkey", "f"],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentral_usuarioRecaudo_fkey", "f"],
+  ["AjusteRecaudoCentralAliado", "AjusteRecaudoCentralAliado_datos_check", "c"],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "LiquidacionAjusteRecaudoCentral_liquidacion_fkey", "f"],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "LiquidacionAjusteRecaudoCentral_ajuste_fkey", "f"],
+  ["LiquidacionAliadoAjusteRecaudoCentral", "LiquidacionAjusteRecaudoCentral_datos_check", "c"],
 ];
 
 async function assertCompatibleColumns() {
@@ -1139,7 +1192,7 @@ async function assertCompatibleColumns() {
       WHERE table_schema = 'public'
         AND table_name = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "AjusteRecaudoCentralAliado", "LiquidacionAliadoAjusteRecaudoCentral", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
   );
   const columns = new Map(
     result.rows.map((row) => [
@@ -1199,7 +1252,7 @@ async function assertCompatibleIndexes() {
       GROUP BY table_class.relname, index_class.relname,
         index_definition.indisunique
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "AjusteRecaudoCentralAliado", "LiquidacionAliadoAjusteRecaudoCentral", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
   );
   const indexes = new Map(
     result.rows.map((row) => [
@@ -1244,7 +1297,7 @@ async function assertCompatibleConstraints() {
       WHERE namespace.nspname = 'public'
         AND table_class.relname = ANY($1::text[])
     `,
-    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
+    [["LiquidacionAliado", "LiquidacionAliadoCredito", "LiquidacionAliadoRecaudo", "AjusteAnulacionCreditoAliado", "LiquidacionAliadoAjusteAnulacion", "AjusteRecaudoCentralAliado", "LiquidacionAliadoAjusteRecaudoCentral", "CreditoAbonoAtribucionAliado", "CreditAllyPaymentExclusion"]]
   );
   const constraints = new Map(
     result.rows.map((row) => [

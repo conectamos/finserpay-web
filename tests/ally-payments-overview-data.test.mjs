@@ -35,6 +35,14 @@ const annulments = {
     0
   ),
 };
+const centralCollectionAdjustments = {
+  loadPendingAllyPaymentCentralCollectionAdjustments: async () => [],
+  serializeStoredAllyPaymentCentralCollectionAdjustment: item => item,
+  totalAllyPaymentCentralCollectionAdjustments: items => items.reduce(
+    (total, item) => Number((total + Number(item.valorAjuste || 0)).toFixed(2)),
+    0
+  ),
+};
 
 function settled(id, overrides = {}) {
   return {
@@ -96,6 +104,7 @@ function harness({ history = [], credits = [], collections = [] } = {}) {
     "server-only": {}, "node:crypto": crypto, "@/lib/aliados": allies, "@/lib/ally-payments-core": core,
     "@/lib/colombia-date": dates, "@/lib/ally-payment-eligibility": eligibility,
     "@/lib/ally-payment-annulments": annulments,
+    "@/lib/ally-payment-central-collection-adjustments": centralCollectionAdjustments,
     "@/lib/credit-ally-payment-exclusion-storage": { ensureCreditAllyPaymentExclusionSchema: async () => {} },
     "@/lib/datacredito/database-errors": { isDataCreditoUniqueViolation: () => false },
     "@/lib/prisma": { default: database },
