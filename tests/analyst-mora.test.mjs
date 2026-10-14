@@ -38,9 +38,9 @@ test("la gestión exige acción, responsable, resultado, comentario y seguimient
 });
 test("la nueva gestión separa los dos canales, sus resultados y los seis estados solicitados", () => {
   assert.deepEqual(Array.from(types.MORA_ACTIONS), ["LLAMADA", "MSJ_TEXTO"]);
-  assert.deepEqual(Array.from(types.MORA_RESULTS), ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA"]);
-  assert.deepEqual(Array.from(types.moraResultsForAction("LLAMADA")), ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA"]);
-  assert.deepEqual(Array.from(types.moraResultsForAction("MSJ_TEXTO")), ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA"]);
+  assert.deepEqual(Array.from(types.MORA_RESULTS), ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA", "LLAMADA_INCOMPLETA"]);
+  assert.deepEqual(Array.from(types.moraResultsForAction("LLAMADA")), Array.from(types.MORA_RESULTS));
+  assert.deepEqual(Array.from(types.moraResultsForAction("MSJ_TEXTO")), Array.from(types.MORA_RESULTS));
   assert.equal(types.moraResultLabel("SIN_RESPUESTA", "MSJ_TEXTO"), "No contesta");
   assert.equal(types.moraResultLabel("SIN_RESPUESTA", "LLAMADA"), "No contesta");
   assert.deepEqual(Array.from(types.MORA_MANAGEMENT_STATES), ["CONTACTADO", "SIN_RESPUESTA", "ACUERDO_PAGO", "CERRADO", "SOLUCIONADO", "SEGUIMIENTO"]);
@@ -369,7 +369,7 @@ test("la migración conserva gestiones históricas y PostgreSQL exige resultados
     assert.equal(outcome.item.agreementDate, null);
     assert.equal(outcome.item.agreementAmount, null);
   }
-  for (const action of types.MORA_ACTIONS) for (const result of ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA"]) {
+  for (const action of types.MORA_ACTIONS) for (const result of ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "LLAMADA_INCOMPLETA"]) {
     const outcome = await service.createMoraManagement(81, service.parseMoraManagement({ ...valid(), action, result }, now), actor);
     assert.equal(outcome.item.result, types.moraResultLabel(result, action));
     assert.equal(outcome.item.resultCode, result);

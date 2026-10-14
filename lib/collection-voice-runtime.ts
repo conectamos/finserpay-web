@@ -9,7 +9,7 @@ import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { collectionCallKey } from "@/lib/dapta-collections-http";
 import { collectionCallingAllowed, collectionSlot, colombiaClock, collectionSessionToken, verifyCollectionSessionToken, nextCollectionDate } from "@/lib/collection-voice-policy";
 
-type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;managementId:string|null;followupFor:string|null;testCall:boolean;optOut:boolean;outcome:Record<string,unknown>|null};
+type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;completedAt?:Date|null;managementId:string|null;followupFor:string|null;testCall:boolean;optOut:boolean;outcome:Record<string,unknown>|null};
 const secret=()=>process.env.FINSERPAY_COBRANZA_API_TOKEN||"";
 const agent=()=>process.env.FINSERPAY_COBRANZA_AGENT_ID||"";
 const actor=()=>Number(process.env.FINSERPAY_COBRANZA_ACTOR_ID);
@@ -61,15 +61,21 @@ async function financialContext(id:number,allowFollowup=false) {
   const due=allowFollowup&&latest?.managementStatus==="ACUERDO_PAGO"&&latest.agreementDate&&latest.agreementDate<=colombiaClock(new Date()).day&&Date.parse(latest.nextFollowUpAt)<=Date.now();
   return {...data,followupFor:due?latest.id:null,suspended:!data.credit.enMora||(latest?.managementStatus==="ACUERDO_PAGO"&&!due)||latest?.resultCode==="PAGO_REALIZADO"||["SOLUCIONADO","CERRADO"].includes(latest?.managementStatus||"")};
 }
-async function saveManagement(a:Attempt,result:"ACUERDO_PAGO"|"PAGO_REALIZADO"|"MEDIOS_PAGO"|"SIN_RESPUESTA",body:Record<string,unknown>) {
+async function saveManagement(a:Attempt,result:"ACUERDO_PAGO"|"PAGO_REALIZADO"|"MEDIOS_PAGO"|"SIN_RESPUESTA"|"LLAMADA_INCOMPLETA",body:Record<string,unknown>,occurredAt?:Date) {
   if(!Number.isSafeInteger(actor())||actor()<1||!agent()) throw new Error("Responsable sin configurar");
+  const key=collectionCallKey(agent(),a.id);
+  const existing=await prisma.$queryRawUnsafe<Array<{id:string}>>(`SELECT "id" FROM "CreditMoraManagementEvent" WHERE "idempotencyKey"=$1::uuid`,key);
+  if(existing[0]) {
+    await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "managementId"=$2::uuid WHERE "id"=$1::uuid`,a.id,existing[0].id);
+    return {item:existing[0]};
+  }
   const now=new Date();
   const agreement=result==="ACUERDO_PAGO";
   if(agreement&&(body.agreementConfirmed!=="true"||typeof body.agreementDate!=="string"||typeof body.agreementAmount!=="string")) throw new Error("Falta confirmación explícita del acuerdo");
   if(agreement&&!/^[1-9]\d{0,11}(?:\.\d{1,2})?$/.test(body.agreementAmount as string)) throw new Error("Valor del acuerdo ambiguo");
   const date=agreement?body.agreementDate as string:undefined;
-  const input=parseMoraManagement({action:"LLAMADA",actedAt:now.toISOString(),responsibleUserId:actor(),result,
-    managementStatus:agreement?"ACUERDO_PAGO":result==="SIN_RESPUESTA"?"SIN_RESPUESTA":result==="PAGO_REALIZADO"?"SEGUIMIENTO":"CONTACTADO",
+  const input=parseMoraManagement({action:"LLAMADA",actedAt:(occurredAt||now).toISOString(),responsibleUserId:actor(),result,
+    managementStatus:agreement?"ACUERDO_PAGO":result==="SIN_RESPUESTA"?"SIN_RESPUESTA":["PAGO_REALIZADO","LLAMADA_INCOMPLETA"].includes(result)?"SEGUIMIENTO":"CONTACTADO",
     comment:`[Dapta Valeria; sesión ${a.id}; llamada ${a.providerCallId||"en curso"}] ${String(body.comment||"Gestión de voz registrada.").slice(0,1200)}`,
     nextFollowUpAt:nextCollectionDate(now,date), idempotencyKey:collectionCallKey(agent(),a.id),
     ...(agreement?{agreementDate:date,agreementAmount:Number(body.agreementAmount)}:{})});
@@ -220,18 +226,30 @@ async function operation(body:Record<string,unknown>) {
     if(!updated.length) {
       const prior=await prisma.$queryRawUnsafe<Array<{callbackHash:string}>>(`SELECT "callbackHash" FROM "CollectionVoiceAttempt" WHERE "id"=$1::uuid`,id);
       if(prior[0]?.callbackHash!==hash) throw new Error("Evento de cierre en conflicto");
-      return {ok:true,processed:true,duplicate:true};
+      if(a.managementId||a.testCall) return {ok:true,processed:true,duplicate:true};
+      // Retry only the missing portfolio record from the identical authenticated
+      // closure. The call and message queue are not replayed.
     }
     let registered=!!a.managementId;
-    if(!a.testCall&&!a.managementId&&!a.optOut&&(noAnswer||(a.identityVerifiedAt&&analysis.resultado_gestion==="MEDIOS_PAGO"))) {
+    if(!a.testCall&&!a.managementId) {
       try{
-        await saveManagement(a,noAnswer?"SIN_RESPUESTA":"MEDIOS_PAGO",{comment:noAnswer?"El proveedor informó que no hubo respuesta.":String(analysis.observacion_gestion||"Se informaron medios de pago durante la llamada.")});
-        registered=true;
+        const result=noAnswer?"SIN_RESPUESTA":a.identityVerifiedAt&&analysis.resultado_gestion==="MEDIOS_PAGO"?"MEDIOS_PAGO":"LLAMADA_INCOMPLETA";
+        const reason=String(call.disconnection_reason||"sin motivo informado");
+        // A closure is an auditable attempt, even without verification or an
+        // agreement. Never infer a payment/commitment from post-call extraction.
+        // Do not replace a newer agreement or payment with a closure record.
+        const context=await financialContext(a.creditoId,!!a.followupFor);
+        const closureTime=a.completedAt?new Date(a.completedAt):new Date();
+        const newer=context.history[0]&&Date.parse(context.history[0].actedAt)>+closureTime;
+        if(!context.suspended&&!newer) {
+          await saveManagement(a,result,{comment:`Cierre del proveedor: ${reason}. ${String(analysis.observacion_gestion||"No se obtuvo un resultado de cobro confirmado.").slice(0,1000)}`},closureTime);
+          registered=true;
+        }
       }catch{/* Retained in call ledger for review; never claim a portfolio record. */}
     }
     // A template is sent only if the caller requested that information. Its
     // receipt is tracked independently from the portfolio record.
-    if(a.identityVerifiedAt&&analysis.whatsapp_solicitado===true&&!analysis.finalizar_solicitado) {
+      if(updated.length&&a.identityVerifiedAt&&analysis.whatsapp_solicitado===true&&!analysis.finalizar_solicitado) {
       await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "messageState"='PENDING' WHERE "id"=$1::uuid`,id);
     }
     return {ok:true,processed:true,registrado:registered};

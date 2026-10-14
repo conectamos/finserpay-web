@@ -16,6 +16,7 @@ function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=f
   const db={
     $executeRawUnsafe:async(sql,...args)=>{if(sql.includes('"identityVerifiedAt"=CURRENT_TIMESTAMP'))state.identityVerifiedAt=new Date();if(sql.includes('"managementId"=$2'))state.managementId=args[1];return 1;},
     $queryRawUnsafe:async(sql,...args)=>{
+      if(sql.includes('SELECT "id" FROM "CreditMoraManagementEvent"'))return writes.length?[{id:'00000000-0000-4000-8000-000000000082'}]:[];
       if(sql.includes('SELECT * FROM "CollectionVoiceAttempt"'))return [state];
       if(sql.includes('"callbackHash" IS NULL RETURNING')){
         if(state.callbackHash)return [];
@@ -105,4 +106,22 @@ test('la llamada al celular de pruebas jamás crea acuerdos en la cartera real',
   const s=setup({verified:true});s.state.testCall=true;
   const result=await(await s.call({action:'register',result:'ACUERDO_PAGO',agreementConfirmed:'true',agreementDate:'2026-10-20',agreementAmount:'50000'})).json();
   assert.equal(result.registrado,false);assert.equal(result.test,true);assert.equal(s.writes.length,0);
+});
+
+test('inactividad, número inválido y cuelgue dejan un intento auditable sin fabricar acuerdos',async()=>{
+  for(const reason of ['inactivity','invalid_destination','user_hangup']) {
+    const s=setup();
+    const call={call_id:'synthetic-call-81',dynamic_variables:{event_token:s.token},disconnection_reason:reason,call_analysis:{custom_analysis_data:{acuerdo_confirmado:true,fecha_acuerdo:'2026-10-20',valor_acuerdo:50000}}};
+    const response=await(await s.call({action:'postcall',call})).json();
+    assert.equal(response.registrado,true);assert.equal(s.writes.length,1);
+    assert.equal(s.writes[0].result,'LLAMADA_INCOMPLETA');assert.equal(s.writes[0].managementStatus,'SEGUIMIENTO');
+    assert.equal(s.writes[0].agreementDate,undefined);assert.ok(s.writes[0].comment.includes(reason));
+    // Simulate a crash after the portfolio insert but before attaching its ID.
+    s.state.managementId=null;
+    assert.equal((await(await s.call({action:'postcall',call})).json()).registrado,true);assert.equal(s.writes.length,1);
+    assert.equal((await(await s.call({action:'postcall',call})).json()).duplicate,true);assert.equal(s.writes.length,1);
+  }
+  const failed=setup({persistenceFails:true});
+  const response=await(await failed.call({action:'postcall',call:{call_id:'synthetic-call-81',dynamic_variables:{event_token:failed.token},disconnection_reason:'inactivity',call_analysis:{custom_analysis_data:{}}}})).json();
+  assert.equal(response.registrado,false);
 });
