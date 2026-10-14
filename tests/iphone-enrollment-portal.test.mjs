@@ -1,3 +1,4 @@
+import { runnerPackagesFile } from "./helpers/dockerfile-packaging.mjs";
 import assert from "node:assert/strict";
 import { after, before } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -1441,8 +1442,5 @@ test("Railway crea y verifica grants, revisiones y rate limit antes de iniciar",
     predeploySource,
     /import\("\.\/ensure-iphone-enrollment-schema\.mjs"\)/
   );
-  assert.match(
-    dockerfileSource,
-    /COPY --from=builder \/app\/scripts\/ensure-iphone-enrollment-schema\.mjs \.\/scripts\/ensure-iphone-enrollment-schema\.mjs/
-  );
+  assert.ok(runnerPackagesFile(dockerfileSource, "scripts/ensure-iphone-enrollment-schema.mjs"));
 });

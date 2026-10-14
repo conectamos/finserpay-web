@@ -1,3 +1,4 @@
+import { runnerPackagesFile } from "./helpers/dockerfile-packaging.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -213,14 +214,8 @@ test("Railway ejecuta el esquema despues de sus dependencias y Docker lo incluye
   assert.ok(replacementPosition > enrollmentPosition);
   assert.ok(approvalPosition > replacementPosition);
   assert.ok(repairPosition > approvalPosition);
-  assert.match(
-    dockerfile,
-    /COPY --from=builder \/app\/scripts\/ensure-credit-device-replacement-schema\.mjs \.\/scripts\/ensure-credit-device-replacement-schema\.mjs/
-  );
-  assert.match(
-    dockerfile,
-    /COPY --from=builder \/app\/scripts\/repair-credit-device-replacement-20260918\.mjs \.\/scripts\/repair-credit-device-replacement-20260918\.mjs/
-  );
+  assert.ok(runnerPackagesFile(dockerfile, "scripts/ensure-credit-device-replacement-schema.mjs"));
+  assert.ok(runnerPackagesFile(dockerfile, "scripts/repair-credit-device-replacement-20260918.mjs"));
   assert.match(schema, /SET LOCAL lock_timeout = '10s'/);
   assert.match(schema, /SET LOCAL statement_timeout = '120s'/);
 });

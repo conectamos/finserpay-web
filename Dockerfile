@@ -34,82 +34,76 @@ COPY --from=prisma-deps /app/node_modules/ ./node_modules/
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/app/generated/prisma ./app/generated/prisma
-COPY --from=builder /app/scripts/railway-cron.mjs ./scripts/railway-cron.mjs
-COPY --from=builder /app/scripts/setup-datacredito.sql ./scripts/setup-datacredito.sql
-COPY --from=builder /app/scripts/ensure-iphone-identity-evidence-column.mjs ./scripts/ensure-iphone-identity-evidence-column.mjs
-COPY --from=builder /app/scripts/ensure-datacredito-schema.mjs ./scripts/ensure-datacredito-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-amortization-schema.mjs ./scripts/ensure-credit-amortization-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-principal-payment-schema.mjs ./scripts/ensure-credit-principal-payment-schema.mjs
-COPY --from=builder /app/scripts/credit-principal-payment-schema.mjs ./scripts/credit-principal-payment-schema.mjs
-COPY --from=builder /app/scripts/ensure-solicitudes-schema.mjs ./scripts/ensure-solicitudes-schema.mjs
-COPY --from=builder /app/scripts/ensure-solicitudes-export-schema.mjs ./scripts/ensure-solicitudes-export-schema.mjs
+COPY --from=builder \
+  /app/scripts/railway-cron.mjs \
+  /app/scripts/setup-datacredito.sql \
+  /app/scripts/ensure-iphone-identity-evidence-column.mjs \
+  /app/scripts/ensure-datacredito-schema.mjs \
+  /app/scripts/ensure-credit-amortization-schema.mjs \
+  /app/scripts/ensure-credit-principal-payment-schema.mjs \
+  /app/scripts/credit-principal-payment-schema.mjs \
+  /app/scripts/ensure-solicitudes-schema.mjs \
+  /app/scripts/ensure-solicitudes-export-schema.mjs \
+  /app/scripts/ensure-iphone-enrollment-schema.mjs \
+  /app/scripts/ensure-credit-device-replacement-schema.mjs \
+  /app/scripts/ensure-credit-device-replacement-remission-schema.mjs \
+  /app/scripts/repair-credit-device-replacement-20260918.mjs \
+  /app/scripts/mass-first-payment-correction-core.mjs \
+  /app/scripts/correct-historic-mass-credit-first-payments-20260925.mjs \
+  /app/scripts/ensure-aliado-redescuento-schema.mjs \
+  /app/scripts/ensure-ally-payments-schema.mjs \
+  /app/scripts/credit-abono-ally-attribution-schema.mjs \
+  /app/scripts/credit-ally-payment-exclusion-schema.mjs \
+  /app/scripts/ally-payment-central-collection-adjustment-schema.mjs \
+  /app/scripts/railway-predeploy.mjs \
+  /app/scripts/ensure-approval-operations-schema.mjs \
+  /app/scripts/analyst-mora-schema.mjs \
+  /app/scripts/ensure-analyst-mora-schema.mjs \
+  /app/scripts/mora-exception-requests-schema.mjs \
+  /app/scripts/ensure-mora-exception-requests-schema.mjs \
+  /app/scripts/ensure-firmaseguro-draft-dispatch-schema.mjs \
+  /app/scripts/ensure-document-blacklist-schema.mjs \
+  /app/scripts/document-blacklist-schema.mjs \
+  /app/scripts/ensure-credit-approval-schema.mjs \
+  /app/scripts/credit-approval-schema.mjs \
+  /app/scripts/ensure-approval-access-schema.mjs \
+  /app/scripts/approval-access-schema.mjs \
+  /app/scripts/ensure-approval-analyst-account-audit-schema.mjs \
+  /app/scripts/approval-analyst-account-audit-schema.mjs \
+  /app/scripts/ensure-approval-evidence-schema.mjs \
+  /app/scripts/approval-evidence-schema.mjs \
+  /app/scripts/ensure-credit-approval-reissue-schema.mjs \
+  /app/scripts/credit-approval-reissue-schema.mjs \
+  /app/scripts/credit-approval-actor-schema.mjs \
+  /app/scripts/ensure-credit-approval-actor-schema.mjs \
+  /app/scripts/credit-approval-novelties-schema.mjs \
+  /app/scripts/ensure-credit-approval-novelties-schema.mjs \
+  /app/scripts/approval-shared-schema.mjs \
+  /app/scripts/ensure-approval-shared-schema.mjs \
+  /app/scripts/credit-approval-data-schema.mjs \
+  /app/scripts/ensure-credit-approval-data-schema.mjs \
+  /app/scripts/credit-approval-call-schema.mjs \
+  /app/scripts/ensure-credit-approval-call-schema.mjs \
+  /app/scripts/credit-sadmin-schema.mjs \
+  /app/scripts/ensure-credit-sadmin-schema.mjs \
+  /app/scripts/second-credit-authorization-schema.mjs \
+  /app/scripts/ensure-second-credit-authorization-schema.mjs \
+  /app/scripts/credit-mass-imei-correction-schema.mjs \
+  /app/scripts/ensure-credit-mass-imei-correction-schema.mjs \
+  /app/scripts/setup-merchant-applications.sql \
+  /app/scripts/ensure-merchant-applications-schema.mjs \
+  /app/scripts/retry-merchant-applications.mjs \
+  /app/scripts/check-merchant-application-delivery.mjs \
+  /app/scripts/setup-commissions.sql \
+  /app/scripts/ensure-commissions-schema.mjs \
+  /app/scripts/credit-due-reminders-schema.mjs \
+  /app/scripts/ensure-credit-due-reminders-schema.mjs \
+  /app/scripts/credit-overdue-data-schema.mjs \
+  /app/scripts/ensure-credit-overdue-data-schema.mjs \
+  /app/scripts/credit-welcome-voice-schema.mjs \
+  /app/scripts/ensure-credit-welcome-voice-schema.mjs \
+  ./scripts/
 COPY --from=builder /app/lib/solicitudes-export-schema-statements.json ./lib/solicitudes-export-schema-statements.json
-COPY --from=builder /app/scripts/ensure-iphone-enrollment-schema.mjs ./scripts/ensure-iphone-enrollment-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-device-replacement-schema.mjs ./scripts/ensure-credit-device-replacement-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-device-replacement-remission-schema.mjs ./scripts/ensure-credit-device-replacement-remission-schema.mjs
-COPY --from=builder /app/scripts/repair-credit-device-replacement-20260918.mjs ./scripts/repair-credit-device-replacement-20260918.mjs
-COPY --from=builder /app/scripts/mass-first-payment-correction-core.mjs ./scripts/mass-first-payment-correction-core.mjs
-COPY --from=builder /app/scripts/correct-historic-mass-credit-first-payments-20260925.mjs ./scripts/correct-historic-mass-credit-first-payments-20260925.mjs
-COPY --from=builder /app/scripts/ensure-aliado-redescuento-schema.mjs ./scripts/ensure-aliado-redescuento-schema.mjs
-COPY --from=builder /app/scripts/ensure-ally-payments-schema.mjs ./scripts/ensure-ally-payments-schema.mjs
-COPY --from=builder /app/scripts/credit-abono-ally-attribution-schema.mjs ./scripts/credit-abono-ally-attribution-schema.mjs
-COPY --from=builder /app/scripts/credit-ally-payment-exclusion-schema.mjs ./scripts/credit-ally-payment-exclusion-schema.mjs
-COPY --from=builder /app/scripts/ally-payment-central-collection-adjustment-schema.mjs ./scripts/ally-payment-central-collection-adjustment-schema.mjs
-COPY --from=builder /app/scripts/railway-predeploy.mjs ./scripts/railway-predeploy.mjs
-COPY --from=builder /app/scripts/ensure-approval-operations-schema.mjs ./scripts/ensure-approval-operations-schema.mjs
-COPY --from=builder /app/scripts/analyst-mora-schema.mjs ./scripts/analyst-mora-schema.mjs
-COPY --from=builder /app/scripts/ensure-analyst-mora-schema.mjs ./scripts/ensure-analyst-mora-schema.mjs
-COPY --from=builder /app/scripts/mora-exception-requests-schema.mjs ./scripts/mora-exception-requests-schema.mjs
-COPY --from=builder /app/scripts/ensure-mora-exception-requests-schema.mjs ./scripts/ensure-mora-exception-requests-schema.mjs
-COPY --from=builder /app/scripts/ensure-firmaseguro-draft-dispatch-schema.mjs ./scripts/ensure-firmaseguro-draft-dispatch-schema.mjs
-COPY --from=builder /app/scripts/ensure-document-blacklist-schema.mjs ./scripts/ensure-document-blacklist-schema.mjs
-COPY --from=builder /app/scripts/document-blacklist-schema.mjs ./scripts/document-blacklist-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-approval-schema.mjs ./scripts/ensure-credit-approval-schema.mjs
-COPY --from=builder /app/scripts/credit-approval-schema.mjs ./scripts/credit-approval-schema.mjs
-COPY --from=builder /app/scripts/ensure-approval-access-schema.mjs ./scripts/ensure-approval-access-schema.mjs
-COPY --from=builder /app/scripts/approval-access-schema.mjs ./scripts/approval-access-schema.mjs
-COPY --from=builder /app/scripts/ensure-approval-analyst-account-audit-schema.mjs ./scripts/ensure-approval-analyst-account-audit-schema.mjs
-COPY --from=builder /app/scripts/approval-analyst-account-audit-schema.mjs ./scripts/approval-analyst-account-audit-schema.mjs
- 
-COPY --from=builder /app/scripts/ensure-approval-evidence-schema.mjs ./scripts/ensure-approval-evidence-schema.mjs
-COPY --from=builder /app/scripts/approval-evidence-schema.mjs ./scripts/approval-evidence-schema.mjs
-
-COPY --from=builder /app/scripts/ensure-credit-approval-reissue-schema.mjs ./scripts/ensure-credit-approval-reissue-schema.mjs
-COPY --from=builder /app/scripts/credit-approval-reissue-schema.mjs ./scripts/credit-approval-reissue-schema.mjs
-
-COPY --from=builder /app/scripts/credit-approval-actor-schema.mjs ./scripts/credit-approval-actor-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-approval-actor-schema.mjs ./scripts/ensure-credit-approval-actor-schema.mjs
-COPY --from=builder /app/scripts/credit-approval-novelties-schema.mjs ./scripts/credit-approval-novelties-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-approval-novelties-schema.mjs ./scripts/ensure-credit-approval-novelties-schema.mjs
-COPY --from=builder /app/scripts/approval-shared-schema.mjs ./scripts/approval-shared-schema.mjs
-COPY --from=builder /app/scripts/ensure-approval-shared-schema.mjs ./scripts/ensure-approval-shared-schema.mjs
-
-COPY --from=builder /app/scripts/credit-approval-data-schema.mjs ./scripts/credit-approval-data-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-approval-data-schema.mjs ./scripts/ensure-credit-approval-data-schema.mjs
-
-COPY --from=builder /app/scripts/credit-approval-call-schema.mjs ./scripts/credit-approval-call-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-approval-call-schema.mjs ./scripts/ensure-credit-approval-call-schema.mjs
-
-COPY --from=builder /app/scripts/credit-sadmin-schema.mjs ./scripts/credit-sadmin-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-sadmin-schema.mjs ./scripts/ensure-credit-sadmin-schema.mjs
-COPY --from=builder /app/scripts/second-credit-authorization-schema.mjs ./scripts/second-credit-authorization-schema.mjs
-COPY --from=builder /app/scripts/ensure-second-credit-authorization-schema.mjs ./scripts/ensure-second-credit-authorization-schema.mjs
-COPY --from=builder /app/scripts/credit-mass-imei-correction-schema.mjs ./scripts/credit-mass-imei-correction-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-mass-imei-correction-schema.mjs ./scripts/ensure-credit-mass-imei-correction-schema.mjs
-
-COPY --from=builder /app/scripts/setup-merchant-applications.sql ./scripts/setup-merchant-applications.sql
-COPY --from=builder /app/scripts/ensure-merchant-applications-schema.mjs ./scripts/ensure-merchant-applications-schema.mjs
-COPY --from=builder /app/scripts/retry-merchant-applications.mjs ./scripts/retry-merchant-applications.mjs
-COPY --from=builder /app/scripts/check-merchant-application-delivery.mjs ./scripts/check-merchant-application-delivery.mjs
-
-COPY --from=builder /app/scripts/setup-commissions.sql ./scripts/setup-commissions.sql
-COPY --from=builder /app/scripts/ensure-commissions-schema.mjs ./scripts/ensure-commissions-schema.mjs
-COPY --from=builder /app/scripts/credit-due-reminders-schema.mjs ./scripts/credit-due-reminders-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-due-reminders-schema.mjs ./scripts/ensure-credit-due-reminders-schema.mjs
-COPY --from=builder /app/scripts/credit-overdue-data-schema.mjs ./scripts/credit-overdue-data-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-overdue-data-schema.mjs ./scripts/ensure-credit-overdue-data-schema.mjs
-COPY --from=builder /app/scripts/credit-welcome-voice-schema.mjs ./scripts/credit-welcome-voice-schema.mjs
-COPY --from=builder /app/scripts/ensure-credit-welcome-voice-schema.mjs ./scripts/ensure-credit-welcome-voice-schema.mjs
 
 EXPOSE 3000
 

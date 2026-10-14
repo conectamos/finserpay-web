@@ -39,6 +39,7 @@ jobs:
       - run: npm ci
       # All provider responses are local fixtures; no paid queries or signatures.
       - run: npm run test:credit-origination
+      - run: npm run test:pagos-aliados
       - run: npm run build
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public

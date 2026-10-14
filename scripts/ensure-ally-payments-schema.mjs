@@ -372,25 +372,6 @@ const statements = [
       CHECK ("numeroCreditos" >= 0);
   `,
   `
-    ALTER TABLE public."LiquidacionAliado"
-      DROP CONSTRAINT IF EXISTS "LiquidacionAliado_balance_check";
-    ALTER TABLE public."LiquidacionAliado"
-      ADD CONSTRAINT "LiquidacionAliado_balance_check"
-      CHECK (
-        ("totalRecaudosAliado" IS NULL AND "saldoNeto" IS NULL AND "direccionSaldo" IS NULL)
-        OR (
-          "totalRecaudosAliado" >= 0
-          AND "totalAjustesAnulacion" >= 0
-          AND "saldoNeto" = "totalPagar" - "totalRecaudosAliado" - "totalAjustesAnulacion"
-          AND "direccionSaldo" = CASE
-            WHEN "saldoNeto" > 0 THEN 'PAGO_ALIADO'
-            WHEN "saldoNeto" < 0 THEN 'CONSIGNACION_ALIADO'
-            ELSE 'SALDO_CERO'
-          END
-        )
-      )
-  `,
-  `
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -880,6 +861,9 @@ const statements = [
   'CREATE INDEX IF NOT EXISTS "LiquidacionAliadoAjusteAnulacion_estado_createdAt_idx" ON public."LiquidacionAliadoAjusteAnulacion" ("estado", "createdAt")',
 ];
 
+// Install the balance constraint once through the canonical central-adjustment
+// schema. Reinstating the older formula first would reject valid paid snapshots
+// with a positive central adjustment on a subsequent startup.
 statements.push(
   ...creditAbonoAllyAttributionSchemaStatements,
   ...creditAllyPaymentExclusionSchemaStatements,

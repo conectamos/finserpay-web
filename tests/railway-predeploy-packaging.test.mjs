@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import ts from "typescript";
+import { runnerBuilderCopies, runnerPackagesFile } from "./helpers/dockerfile-packaging.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -27,17 +28,6 @@ function localDependencies(file) {
 
 test("Railway runner packages predeploy and every transitive local import and SQL asset", () => {
   const dockerfile = readFileSync(new URL("Dockerfile", root), "utf8");
-  const runner = dockerfile.split(/^FROM .* AS runner\s*$/im)[1];
-  assert.ok(runner, "Dockerfile must define its production runner stage");
-  const copies = [...runner.matchAll(/^COPY\s+--from=builder\s+(\/app\/\S+)\s+(\S+)\s*$/gm)]
-    .map(([, source, destination]) => ({
-      source: path.posix.normalize(source.slice("/app/".length)),
-      destination: path.posix.normalize(destination.startsWith("/app/") ? destination.slice("/app/".length) : destination),
-    }));
-  const packaged = file => copies.some(({ source, destination }) =>
-    (file === source && file === destination) ||
-    (file.startsWith(source.replace(/\/$/, "") + "/") &&
-      path.posix.join(destination, path.posix.relative(source, file)) === file));
   const visited = new Set();
   const pending = ["scripts/railway-predeploy.mjs"];
   while (pending.length) {
@@ -46,6 +36,17 @@ test("Railway runner packages predeploy and every transitive local import and SQ
     visited.add(file);
     if (/\.[cm]?js$/.test(file)) pending.push(...localDependencies(file));
   }
-  const missing = [...visited].filter(file => !packaged(file));
+  const missing = [...visited].filter(file => !runnerPackagesFile(dockerfile, file));
   assert.deepEqual(missing, [], "Predeploy dependencies missing from the production Docker image: " + missing.join(", "));
+});
+
+test("packaging checks resolve multi-source COPY destinations without accepting the wrong folder", () => {
+  const docker = "FROM node AS runner\nCOPY --from=builder \\\n  /app/scripts/first.mjs \\\n  /app/scripts/second.sql \\\n  ./scripts/\n";
+  assert.equal(runnerBuilderCopies(docker).length, 2);
+  assert.equal(runnerPackagesFile(docker, "scripts/first.mjs"), true);
+  assert.equal(runnerPackagesFile(docker, "scripts/second.sql"), true);
+  assert.equal(runnerPackagesFile(docker, "scripts/missing.mjs"), false);
+  assert.equal(runnerPackagesFile(docker.replace("./scripts/", "./wrong/"), "scripts/first.mjs"), false);
+  assert.throws(() => runnerBuilderCopies(docker.replace("./scripts/", "./scripts")), /trailing-slash/);
+  assert.equal(runnerPackagesFile("FROM node AS runner\n# COPY --from=builder /app/scripts/first.mjs ./scripts/first.mjs\n", "scripts/first.mjs"), false);
 });

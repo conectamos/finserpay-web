@@ -1,3 +1,4 @@
+import { runnerPackagesFile } from "./helpers/dockerfile-packaging.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -53,7 +54,7 @@ test("predeploy matches both runtime schemas and packages their installers", () 
   const dockerfile = readProjectFile("Dockerfile");
   for (const name of ["ensure-approval-operations-schema.mjs", "ensure-firmaseguro-draft-dispatch-schema.mjs"]) {
     assert.ok(predeploy.includes(`await import("./${name}")`));
-    assert.ok(dockerfile.includes(`/app/scripts/${name} ./scripts/${name}`));
+    assert.ok(runnerPackagesFile(dockerfile, `scripts/${name}`));
     const installer = readProjectFile(`scripts/${name}`);
     assert.match(installer, /await client\.query\("BEGIN"\)/);
     assert.match(installer, /pg_advisory_xact_lock/);

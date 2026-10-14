@@ -1,3 +1,4 @@
+import { runnerPackagesFile } from "./helpers/dockerfile-packaging.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -229,10 +230,7 @@ test("incluye preflight idempotente antes de habilitar la integracion", () => {
     scripts["db:setup-datacredito"],
     "npx prisma db execute --file scripts/setup-datacredito.sql"
   );
-  assert.match(
-    dockerfile,
-    /COPY --from=builder \/app\/scripts\/setup-datacredito\.sql \.\/scripts\/setup-datacredito\.sql/
-  );
+  assert.ok(runnerPackagesFile(dockerfile, "scripts/setup-datacredito.sql"));
   assert.match(setupSql, /ALTER COLUMN "retainedUntil" SET NOT NULL/);
   assert.match(setupSql, /CREATE TABLE IF NOT EXISTS "DataCreditoDailyQuotaUsage"/);
   assert.match(setupSql, /CREATE TABLE IF NOT EXISTS "DataCreditoDailyQuotaAudit"/);

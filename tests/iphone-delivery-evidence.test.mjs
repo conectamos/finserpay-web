@@ -1,3 +1,4 @@
+import { runnerPackagesFile } from "./helpers/dockerfile-packaging.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -391,10 +392,7 @@ test("Railway prepara la columna iPhone antes de publicar la aplicacion", async 
   assert.match(schemaGuard, /data_type !== "text"/);
   assert.match(schemaGuard, /is_nullable !== "YES"/);
   assert.doesNotMatch(schemaGuard, /DROP\s+(COLUMN|TABLE)|DELETE\s+FROM|TRUNCATE/i);
-  assert.match(
-    dockerfile,
-    /COPY --from=builder \/app\/scripts\/ensure-iphone-identity-evidence-column\.mjs/
-  );
+  assert.ok(runnerPackagesFile(dockerfile, "scripts/ensure-iphone-identity-evidence-column.mjs"));
   assert.match(
     railwayConfig,
     /preDeployCommand = \[[\s\S]*"node scripts\/railway-predeploy\.mjs"[\s\S]*\]/

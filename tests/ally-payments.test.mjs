@@ -1,3 +1,4 @@
+import { runnerPackagesFile } from "./helpers/dockerfile-packaging.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -830,14 +831,8 @@ test("el preflight es idempotente, transaccional y valida el contrato instalado"
     railwayPredeploy,
     /import\(\s*"\.\/ensure-ally-payments-schema\.mjs"\s*\)/
   );
-  assert.match(
-    dockerfile,
-    /COPY\s+--from=builder\s+\/app\/scripts\/ensure-ally-payments-schema\.mjs\s+\.\/scripts\/ensure-ally-payments-schema\.mjs/
-  );
-  assert.match(
-    dockerfile,
-    /COPY\s+--from=builder\s+\/app\/scripts\/credit-abono-ally-attribution-schema\.mjs\s+\.\/scripts\/credit-abono-ally-attribution-schema\.mjs/
-  );
+  assert.ok(runnerPackagesFile(dockerfile, "scripts/ensure-ally-payments-schema.mjs"));
+  assert.ok(runnerPackagesFile(dockerfile, "scripts/credit-abono-ally-attribution-schema.mjs"));
 });
 
 test("el script npm ejecuta las pruebas de nucleo y contrato juntas", () => {
