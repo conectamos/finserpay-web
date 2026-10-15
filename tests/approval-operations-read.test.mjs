@@ -493,6 +493,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   const calls = [];
   let deliveryPending = false;
   let deliveryStatus = "RESEND_UNCERTAIN";
+  let deliveryContactSource;
   let confirmedContact = { phone: "3101234567", email: "nuevo@example.com" };
   let resentAt = "2026-10-09T16:05:00.000Z";
   let requestPayload = { endpoint: "create-full-by-company", payload: {
@@ -522,6 +523,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
         "un reenvío histórico incierto no bloquea otro proceso vigente");
       return deliveryPending && deliveryProcessUuid === params[1] ? [{ id: "60000000-0000-4000-8000-000000000006",
         status: deliveryStatus, processUuid: deliveryProcessUuid, afterContact: { phone: "3101234567", email: "nuevo@example.com" },
+        beforeContact: deliveryContactSource ? { source: deliveryContactSource } : {},
         reason: "El número original no tiene WhatsApp", actorName: "Analista nominal" }] : [];
     }
     if (sql.includes('SELECT delivery."afterContact"')) {
@@ -578,6 +580,20 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
     assert.equal(ongoing.capabilities.canRedirectPendingSignature, false, blocked);
     assert.equal(ongoing.pendingRecipientDelivery.retryable, false, blocked);
   }
+
+  for (const source of ["FROZEN_REQUEST", "ACKNOWLEDGED_EDIT"]) {
+    deliveryContactSource = source;
+    for (const status of ["EDITING", "EDIT_UNCERTAIN"]) {
+      deliveryStatus = status;
+      const unavailable = await read.getOperationalCase("DRAFT", "30", db);
+      assert.equal(unavailable.pendingRecipientDelivery.retryable, false);
+      assert.equal(unavailable.capabilities.canRedirectPendingSignature, false,
+        "un teléfono no confirmado exige revisión, incluso al recargar el expediente");
+    }
+  }
+  deliveryContactSource = "PROVIDER_READBACK";
+  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).pendingRecipientDelivery.retryable, true);
+  deliveryContactSource = undefined;
 
   deliveryStatus = "RESEND_UNCERTAIN";
   signed = true;

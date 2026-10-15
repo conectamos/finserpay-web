@@ -12,7 +12,8 @@ import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-led
 
 export type FirmaSeguroRecipientDeliveryStatus = "PREPARING" | "EDITING" | "RECIPIENT_UPDATED" | "RESENDING"
   | "RESENT" | "EDIT_UNCERTAIN" | "RESEND_FAILED" | "RESEND_UNCERTAIN" | "FAILED_SAFE";
-type Contact = { phone: string; email: string | null };
+type Contact = { phone: string; email: string | null;
+  source?: "FROZEN_REQUEST" | "ACKNOWLEDGED_EDIT" | "PROVIDER_READBACK" };
 export type FirmaSeguroRecipientDeliveryRow = {
   id: string; draftId: number; processUuid: string; signatureId: number;
   actorUserId: number; actorName: string; reason: string; intentSha256: string;
@@ -36,6 +37,18 @@ export async function getFirmaSeguroRecipientDelivery(id: string) {
     `SELECT * FROM "FirmaSeguroRecipientDelivery" WHERE "id"=$1::uuid`, id);
   return rows[0] || null;
 }
+async function latestAcknowledgedRecipient(draftId: number, processUuid: string) {
+  const rows = await prisma.$queryRawUnsafe<FirmaSeguroRecipientDeliveryRow[]>(
+    `SELECT * FROM "FirmaSeguroRecipientDelivery" WHERE "draftId"=$1 AND "processUuid"=$2
+      AND "editedAt" IS NOT NULL ORDER BY "editedAt" DESC,"createdAt" DESC,"id" DESC LIMIT 1`, draftId, processUuid);
+  return rows[0] ? acknowledgedRecipient(rows[0]) : undefined;
+}
+function acknowledgedRecipient(row: FirmaSeguroRecipientDeliveryRow) {
+  if (!row.editedAt) return undefined;
+  // This is the durable acknowledgement of our PUT, not a provider phone readback.
+  return { processUuid: row.processUuid, signatureId: row.signatureId,
+    phone: row.afterContact.phone, email: row.afterContact.email, confirmedAt: row.editedAt };
+}
 type Input = {
   id: string; draftId: number; processUuid: string; actor: { id: number; nombre: string }; reason: string;
   phone: string | null; email: string | null; hasPhone: boolean; hasEmail: boolean;
@@ -54,17 +67,22 @@ function assertReplay(row: FirmaSeguroRecipientDeliveryRow, input: Input) {
     throw new FirmaSeguroRecipientDeliveryError("IDEMPOTENCY_CONFLICT", "Esta confirmación pertenece a otro reenvío de firma.");
 }
 export function publicFirmaSeguroRecipientDelivery(row: FirmaSeguroRecipientDeliveryRow) {
-  const message = row.status === "RESENT" ? "El mismo documento fue reenviado al contacto actualizado. No se generó una nueva firma."
+  const metadataEditUncertain = ["EDIT_UNCERTAIN", "EDITING"].includes(row.status)
+    && row.beforeContact.source !== undefined && row.beforeContact.source !== "PROVIDER_READBACK";
+  const message = row.status === "RESENT" ? "FirmaSeguro aceptó el reenvío del mismo documento al contacto actualizado. No se generó una nueva firma."
     : row.status === "RESEND_FAILED" ? "El contacto quedó actualizado en FirmaSeguro. El reenvío fue rechazado; puedes reintentar este mismo documento."
     : row.status === "RESEND_UNCERTAIN" || row.status === "RESENDING"
       ? "El contacto está actualizado, pero FirmaSeguro no confirmó el reenvío. Consulta su estado antes de repetirlo."
     : row.status === "EDIT_UNCERTAIN" || row.status === "EDITING"
-      ? "FirmaSeguro no confirmó el cambio de contacto. Reintenta esta misma operación para verificarlo."
+      ? metadataEditUncertain
+        ? "FirmaSeguro no confirmó el cambio de contacto y su consulta no muestra el celular. Revisa este mismo proceso en FirmaSeguro antes de volver a enviarlo."
+        : "FirmaSeguro no confirmó el cambio de contacto. Reintenta esta misma operación para verificarlo."
     : row.status === "FAILED_SAFE" ? "FirmaSeguro rechazó el cambio de contacto. El documento original se conservó."
     : "El contacto está preparado para reenviar el mismo documento.";
   return { id: row.id, status: row.status, message, processUuid: row.processUuid,
     sentPhone: row.editedAt ? row.afterContact.phone : undefined, sentEmail: row.editedAt ? row.afterContact.email : undefined,
-    retryable: ["PREPARING", "RECIPIENT_UPDATED", "RESEND_FAILED", "EDIT_UNCERTAIN", "EDITING"].includes(row.status) };
+    retryable: !metadataEditUncertain
+      && ["PREPARING", "RECIPIENT_UPDATED", "RESEND_FAILED", "EDIT_UNCERTAIN", "EDITING"].includes(row.status) };
 }
 function definitiveRejection(error: unknown) {
   return error instanceof FirmaSeguroApiError && error.status >= 400 && error.status < 500 && error.status !== 408;
@@ -128,11 +146,25 @@ export async function deliverExistingFirmaSeguroSignature(input: Input) {
     }
     const process = await currentPendingProcess(input.draftId, input.processUuid);
     const { token } = await firmaSeguroSignIn();
-    let recipient = await inspectPendingFirmaSeguroRecipient(token, process);
+    const knownRecipient = await latestAcknowledgedRecipient(input.draftId, input.processUuid);
+    let recipient: Awaited<ReturnType<typeof inspectPendingFirmaSeguroRecipient>>;
+    try {
+      recipient = await inspectPendingFirmaSeguroRecipient(token, process, knownRecipient);
+    } catch (error) {
+      // An unacknowledged email change can no longer match the frozen address.
+      // That is not evidence of success, failure, or permission to repeat the PUT.
+      if (row && ["EDITING", "EDIT_UNCERTAIN"].includes(row.status)
+        && error instanceof FirmaSeguroRecipientProviderError && error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED") {
+        row = (await transition(row.id, ["EDITING", "EDIT_UNCERTAIN"], "EDIT_UNCERTAIN",
+          { error: "No se puede conciliar el contacto sin una respuesta verificable del proveedor" }))!;
+        return publicFirmaSeguroRecipientDelivery(row);
+      }
+      throw error;
+    }
     if (row && recipient.signatureId !== row.signatureId)
       throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El destinatario de FirmaSeguro cambió. Requiere revisión técnica.");
     if (!row) {
-      const beforeContact: Contact = { phone: recipient.phone, email: recipient.email };
+      const beforeContact: Contact = { phone: recipient.phone, email: recipient.email, source: recipient.contactSource };
       const afterContact: Contact = { phone: input.hasPhone ? input.phone! : recipient.phone,
         email: input.hasEmail ? input.email : recipient.email };
       row = await prisma.$transaction(async db => {
@@ -153,7 +185,12 @@ export async function deliverExistingFirmaSeguroSignature(input: Input) {
       });
     }
     if (row.status === "EDITING" || row.status === "EDIT_UNCERTAIN") {
-      // A lost PUT response is reconciled by reading the same provider signer.
+      // Only a complete provider contact readback can reconcile a lost PUT.
+      if (recipient.contactVerification === "BOUND_METADATA") {
+        row = (await transition(row.id, ["EDITING", "EDIT_UNCERTAIN"], "EDIT_UNCERTAIN",
+          { error: "FirmaSeguro no expone el celular para conciliar el PUT sin respuesta" }))!;
+        return publicFirmaSeguroRecipientDelivery(row);
+      }
       if (recipient.phone === row.afterContact.phone && (recipient.email || null) === row.afterContact.email)
         row = (await transition(row.id, ["EDITING", "EDIT_UNCERTAIN"], "RECIPIENT_UPDATED", { edited: true }))!;
       else if (recipient.phone === row.beforeContact.phone && (recipient.email || null) === row.beforeContact.email)
@@ -161,7 +198,8 @@ export async function deliverExistingFirmaSeguroSignature(input: Input) {
       else throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El contacto en FirmaSeguro cambió durante la operación. Requiere revisión técnica.");
     }
     if (row.status === "PREPARING") {
-      if (recipient.phone === row.afterContact.phone && (recipient.email || null) === row.afterContact.email) {
+      if (recipient.contactVerification === "PROVIDER_READBACK"
+        && recipient.phone === row.afterContact.phone && (recipient.email || null) === row.afterContact.email) {
         row = (await transition(row.id, ["PREPARING"], "RECIPIENT_UPDATED", { edited: true }))!;
       } else {
         row = (await transition(row.id, ["PREPARING"], "EDITING"))!;
@@ -179,9 +217,13 @@ export async function deliverExistingFirmaSeguroSignature(input: Input) {
       }
     }
     if (row.status === "RECIPIENT_UPDATED" || row.status === "RESEND_FAILED") {
-      // Never resend to an unverified contact or a signer who completed meanwhile.
-      recipient = await inspectPendingFirmaSeguroRecipient(token, await currentPendingProcess(input.draftId, input.processUuid));
-      if (recipient.signatureId !== row.signatureId || recipient.phone !== row.afterContact.phone
+      // Recheck the same pending signer. Metadata-only GETs cannot verify a phone;
+      // they may proceed only with this durable PUT acknowledgement and bound email.
+      recipient = await inspectPendingFirmaSeguroRecipient(token,
+        await currentPendingProcess(input.draftId, input.processUuid), acknowledgedRecipient(row));
+      if (recipient.signatureId !== row.signatureId
+        || (recipient.contactVerification === "PROVIDER_READBACK" && recipient.phone !== row.afterContact.phone)
+        || (recipient.contactVerification === "BOUND_METADATA" && !row.editedAt)
         || (recipient.email || null) !== row.afterContact.email)
         throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "FirmaSeguro no confirmó el nuevo contacto. Revisa el expediente antes de reenviar.");
       row = (await transition(row.id, ["RECIPIENT_UPDATED", "RESEND_FAILED"], "RESENDING"))!;

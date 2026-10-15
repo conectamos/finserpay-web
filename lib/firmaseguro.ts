@@ -1137,6 +1137,9 @@ function validateFirmaSeguroRecipientMutationResponse(payload: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return false;
     return Object.entries(value as Record<string, unknown>).some(([key, item]) =>
       (["success", "ok", "issuccess", "succeeded"].includes(key.toLowerCase()) && item === false) ||
+      (key.toLowerCase() === "status" && typeof item === "string" &&
+        ["ERROR", "FAILED", "FAILURE", "REJECTED", "DECLINED"].includes(item.trim().toUpperCase())) ||
+      (key.toLowerCase() === "statuscode" && typeof item === "number" && item >= 400) ||
       (["error", "errors"].includes(key.toLowerCase()) && item !== false && item != null &&
         item !== "" && (!Array.isArray(item) || item.length > 0)) ||
       (["data", "result"].includes(key.toLowerCase()) && explicitFailure(item, depth + 1))
