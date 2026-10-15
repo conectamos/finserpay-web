@@ -102,6 +102,7 @@ type PendingRecipientDeliveryRow = {
   status: string;
   processUuid: string;
   afterContact: unknown;
+  beforeContact: unknown;
   reason: string;
   actorName: string;
 };
@@ -707,17 +708,20 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
     }
     if (await relationExists(db, "FirmaSeguroRecipientDelivery")) {
       const pendingDeliveries = await optionalQuery<PendingRecipientDeliveryRow>(db,
-        `SELECT "id"::text,"status","processUuid","afterContact","reason","actorName"
+        `SELECT "id"::text,"status","processUuid","afterContact","reason","actorName","beforeContact"
          FROM "FirmaSeguroRecipientDelivery" WHERE "draftId"=$1 AND "processUuid"=$2
            AND "status" NOT IN ('RESENT','FAILED_SAFE')
          ORDER BY "createdAt" DESC,"id" DESC LIMIT 1`, id, signature.processUuid);
       if (pendingDeliveries[0]) {
         const pending = pendingDeliveries[0];
         const contact = record(pending.afterContact);
+        const contactSource = record(pending.beforeContact).source;
+        const unverifiedPhoneEdit = ["EDITING", "EDIT_UNCERTAIN"].includes(pending.status)
+          && contactSource !== undefined && contactSource !== "PROVIDER_READBACK";
         pendingRecipientDelivery = { id: pending.id, status: pending.status,
           processUuid: pending.processUuid, phone: clean(contact.phone), email: clean(contact.email),
           reason: pending.reason, actorName: pending.actorName,
-          retryable: pending.processUuid === signature.processUuid &&
+          retryable: !unverifiedPhoneEdit && pending.processUuid === signature.processUuid &&
             ["PREPARING", "EDITING", "RECIPIENT_UPDATED", "RESEND_FAILED", "EDIT_UNCERTAIN"].includes(pending.status) };
         // A notification with no delivery acknowledgement cannot invalidate a
         // completed signature or block a later authorized contract correction.

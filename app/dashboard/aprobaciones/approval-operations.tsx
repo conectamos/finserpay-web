@@ -1154,7 +1154,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         </div> : null}
         {redirectingSignature && canRedirectPendingSignature ? <div className={styles.signatureRedirection}>
           <p className={styles.redirectionWarning}><FileClock size={18} aria-hidden="true" /><span>
-            Se actualizará el destinatario en FirmaSeguro y se reenviará el mismo documento pendiente. El cambio quedará registrado en el historial.
+            Se actualizará el destinatario en FirmaSeguro y se reenviará el mismo documento pendiente. El cambio quedará registrado en el historial. Revisa el correo indicado para recibir la notificación de reenvío.
           </span></p>
           {pendingDelivery ? <p className={styles.muted}>Responsable: {pendingDelivery.actorName}. {pendingDelivery.retryable
             ? "Hay un reenvío pendiente de completar. Continúa con el contacto y el motivo registrados."

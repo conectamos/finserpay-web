@@ -105,7 +105,11 @@ test("el rechazo de modificación del proveedor se propaga sin crear un proceso 
 
 test("HTTP 200 con fallo explícito no confirma una edición ni un reenvío", async () => {
   for (const payload of [false, { success: false }, { Ok: false }, { error: "Rejected" },
-    { errors: ["Rejected"] }, { data: { success: false } }, { result: { error: "Rejected" } }]) {
+    { errors: ["Rejected"] }, { data: { success: false } }, { result: { error: "Rejected" } },
+    { status: "Error" }, { status: "FAILED" }, { status: "FAILURE" }, { status: "REJECTED" },
+    { status: "DECLINED" }, { statusCode: 400 }, { statusCode: 503 },
+    { data: { status: "Error" } }, { Result: { status: "DECLINED" } },
+    { Result: { data: { statusCode: 403 } } }]) {
     for (const method of ["firmaSeguroEditSignature", "firmaSeguroResendSignature"]) {
       const api = fixture(() => Response.json(payload));
       await assert.rejects(api[method]("fixture-token",
@@ -113,6 +117,16 @@ test("HTTP 200 con fallo explícito no confirma una edición ni un reenvío", as
       (error) => error.name === "FirmaSeguroApiError" && error.status === 502);
       assert.equal(api.requests.length, 1);
     }
+  }
+});
+
+test("HTTP 200 con estado OK y errores vacíos sí confirma la mutación", async () => {
+  const payload = { status: "OK", statusCode: 200, errors: [], data: null };
+  for (const method of ["firmaSeguroEditSignature", "firmaSeguroResendSignature"]) {
+    const api = fixture(() => Response.json(payload));
+    const result = await api[method]("fixture-token", method === "firmaSeguroEditSignature" ? contactEdit : 123);
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), payload);
+    assert.equal(api.requests.length, 1);
   }
 });
 
@@ -168,7 +182,7 @@ const pendingCheckSource = operationsSource.slice(pendingStart, pendingEnd).repl
 function inspector(api = fixture()) {
   const executable = providerSource.replace(/^import [\s\S]*?;\r?\n/gm, "").replace(/^export /gm, "");
   return runInNewContext(stripTypeScriptTypes(pendingCheckSource + executable) +
-    "\n({ parsePendingFirmaSeguroRecipient, inspectPendingFirmaSeguroRecipient });", { ...api });
+    "\n({ parsePendingFirmaSeguroRecipient, inspectPendingFirmaSeguroRecipient });", { ...api, Date });
 }
 function pendingProcess() {
   return {
@@ -198,9 +212,160 @@ test("inspecciona un único firmante con identidad verificable y conserva el pro
     assert.equal(result.signatureId, 123);
     assert.equal(result.phone, "3001234567");
     assert.equal(result.email, "cliente@example.test");
+    assert.equal(result.contactVerification, "PROVIDER_READBACK");
+    assert.equal(result.contactSource, "PROVIDER_READBACK");
     assert.deepEqual(JSON.parse(JSON.stringify(result.editPayload)), { ...contactEdit, template_rol: "Cliente" });
     assert.equal(JSON.stringify(process), snapshot);
   }
+});
+
+function productionStatus() {
+  return { processes: [{ uuid: contactEdit.uuid, status: "En proceso",
+    date_created: "2026-10-09T10:00:00Z", date_signed: null, date_declined: null, decline_reason: null }] };
+}
+function productionMetadata() {
+  return { uuid: contactEdit.uuid, status_process: "En proceso",
+    date_created_process: "2026-10-09T10:00:00Z", date_declined_process: "", date_signed_process: "",
+    decline_reason_process: "", message_process: "",
+    signatures: [{ id: 123, email: "anterior@example.test", status: "En proceso",
+      date_signed: "", code_message: 1, message: "" }] };
+}
+function acknowledgedRecipient(overrides = {}) {
+  return { processUuid: contactEdit.uuid, signatureId: 123, phone: "3002222222",
+    email: "actualizado@example.test", confirmedAt: new Date(Date.now() - 60_000), ...overrides };
+}
+
+test("acepta la respuesta real de estados sin inventar una lectura del contacto", () => {
+  const process = pendingProcess();
+  const snapshot = JSON.stringify(process);
+  const result = inspector().parsePendingFirmaSeguroRecipient(process, productionStatus(), productionMetadata());
+  assert.equal(result.signatureId, 123);
+  assert.equal(result.phone, "3001111111");
+  assert.equal(result.email, "anterior@example.test");
+  assert.equal(result.contactVerification, "BOUND_METADATA");
+  assert.equal(result.contactSource, "FROZEN_REQUEST");
+  assert.equal(result.editPayload.uuid, contactEdit.uuid);
+  assert.equal(result.editPayload.signature_id, 123);
+  assert.equal(result.editPayload.authentication_method_id, 4);
+  assert.equal(result.editPayload.contact_information.identification, "123456789");
+  assert.equal(result.editPayload.contact_information.first_name, "Cliente");
+  assert.equal(result.editPayload.contact_information.first_last_name, "Prueba");
+  assert.equal(result.editPayload.contact_information.mobile_number, "3001111111");
+  assert.equal(JSON.stringify(process), snapshot);
+});
+
+test("vincula un correo actualizado únicamente a un PUT confirmado del mismo firmante", () => {
+  const parse = inspector().parsePendingFirmaSeguroRecipient;
+  const payload = productionMetadata();
+  payload.signatures[0].email = "actualizado@example.test";
+  assert.throws(() => parse(pendingProcess(), productionStatus(), payload),
+    error => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
+  for (const confirmedAt of [new Date(Date.now() - 60_000), new Date(Date.now() - 60_000).toISOString()]) {
+    const result = parse(pendingProcess(), productionStatus(), payload, acknowledgedRecipient({ confirmedAt }));
+    assert.equal(result.phone, "3002222222");
+    assert.equal(result.email, "actualizado@example.test");
+    assert.equal(result.contactVerification, "BOUND_METADATA");
+    assert.equal(result.contactSource, "ACKNOWLEDGED_EDIT");
+  }
+});
+
+test("rechaza una constancia de edición ajena, inválida o futura", () => {
+  const parse = inspector().parsePendingFirmaSeguroRecipient;
+  const payload = productionMetadata();
+  payload.signatures[0].email = "actualizado@example.test";
+  for (const binding of [
+    acknowledgedRecipient({ processUuid: "otro-proceso" }), acknowledgedRecipient({ signatureId: 124 }),
+    acknowledgedRecipient({ phone: "123" }), acknowledgedRecipient({ email: null }),
+    acknowledgedRecipient({ email: "otro@example.test" }), acknowledgedRecipient({ confirmedAt: "inválida" }),
+    acknowledgedRecipient({ confirmedAt: null }), acknowledgedRecipient({ confirmedAt: new Date(NaN) }),
+    acknowledgedRecipient({ confirmedAt: new Date(Date.now() + 60_000) }),
+  ]) assert.throws(() => parse(pendingProcess(), productionStatus(), payload, binding),
+    error => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
+});
+
+test("no acepta metadata de otro proceso, correos ajenos, IDs ambiguos ni nuevos envoltorios", () => {
+  const parse = inspector().parsePendingFirmaSeguroRecipient;
+  const cases = [];
+  const change = mutate => { const payload = productionMetadata(); mutate(payload); cases.push(payload); };
+  change(payload => { delete payload.uuid; });
+  change(payload => { payload.uuid = "otro-proceso"; });
+  change(payload => { payload.process_uuid = "otro-proceso"; });
+  change(payload => { payload.signatures[0].email = "otro@example.test"; });
+  change(payload => { payload.signatures[0].id = "123"; });
+  change(payload => { payload.signatures[0].signature_id = 123; });
+  change(payload => { payload.signatures.push({ ...payload.signatures[0] }); });
+  change(payload => { payload.signatures[0].code_message = 0; });
+  change(payload => { delete payload.signatures[0].date_signed; });
+  change(payload => { payload.success = false; });
+  cases.push({ data: productionMetadata() }, productionMetadata().signatures);
+  for (const payload of cases) assert.throws(() => parse(pendingProcess(), productionStatus(), payload),
+    error => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
+  const foreignStatus = productionStatus();
+  foreignStatus.processes[0].uuid = "otro-proceso";
+  assert.throws(() => parse(pendingProcess(), foreignStatus, productionMetadata()),
+    error => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
+});
+
+test("no usa metadata como escape de un contacto parcial o contradictorio", () => {
+  const parse = inspector().parsePendingFirmaSeguroRecipient;
+  for (const extra of [{ contact_information: null }, { contactInformation: {} }, { phone: null },
+    { mobile_number: null }, { identification: "999999" }, { first_name: "Otra" },
+    { person: { identification: "999999" } }]) {
+    const payload = productionMetadata();
+    Object.assign(payload.signatures[0], extra);
+    assert.throws(() => parse(pendingProcess(), productionStatus(), payload),
+      error => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
+  }
+});
+
+test("la metadata necesita identidad, autenticación y contacto completos en el envío original", () => {
+  const parse = inspector().parsePendingFirmaSeguroRecipient;
+  for (const mutate of [
+    signer => { delete signer.authenticationMethodId; },
+    signer => { delete signer.contactInformation.person.identification; },
+    signer => { signer.contactInformation.person.firstName = ""; },
+    signer => { signer.contactInformation.phone.number = "123"; },
+    signer => { signer.contactInformation.phone.indicative = "1"; },
+    signer => { delete signer.contactInformation.email; },
+  ]) {
+    const process = pendingProcess();
+    mutate(process.requestPayload.payload.signatures[0]);
+    assert.throws(() => parse(process, productionStatus(), productionMetadata()),
+      error => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
+  }
+});
+
+test("bloquea fechas de firma o rechazo en el firmante y en ambos estados del proceso", () => {
+  const parse = inspector().parsePendingFirmaSeguroRecipient;
+  for (const key of ["date_signed", "dateSigned", "date_declined", "signed_at", "declined_at"]) {
+    const payload = productionMetadata();
+    payload.signatures[0][key] = "2026-10-09T10:00:00Z";
+    assert.throws(() => parse(pendingProcess(), productionStatus(), payload),
+      error => error.code === "FIRMASEGURO_SIGNATURE_NOT_PENDING");
+  }
+  for (const key of ["date_signed_process", "date_declined_process"]) {
+    const payload = productionMetadata();
+    payload[key] = "2026-10-09T10:00:00Z";
+    assert.throws(() => parse(pendingProcess(), productionStatus(), payload),
+      error => error.code === "FIRMASEGURO_SIGNATURE_NOT_PENDING");
+  }
+  for (const key of ["date_signed", "date_declined"]) {
+    const status = productionStatus();
+    status.processes[0][key] = "2026-10-09T10:00:00Z";
+    assert.throws(() => parse(pendingProcess(), status, productionMetadata()),
+      error => error.code === "FIRMASEGURO_SIGNATURE_NOT_PENDING");
+  }
+});
+
+test("reconsulta la metadata del mismo proceso con la constancia privada de edición", async () => {
+  const payload = productionMetadata();
+  payload.signatures[0].email = "actualizado@example.test";
+  const api = fixture(url => Response.json(url.includes("get-process-status") ? productionStatus() : payload));
+  const result = await inspector(api).inspectPendingFirmaSeguroRecipient("fixture-token", pendingProcess(), acknowledgedRecipient());
+  assert.equal(result.contactSource, "ACKNOWLEDGED_EDIT");
+  assert.equal(result.phone, "3002222222");
+  assert.equal(api.requests.length, 2);
+  assert.ok(api.requests.every(request => request.method === "GET"));
 });
 
 test("acepta el request original de create-full-by-company generado por el builder real", async () => {
@@ -227,6 +392,12 @@ test("acepta el request original de create-full-by-company generado por el build
   assert.equal(result.editPayload.contact_information.first_name, "Cliente");
   assert.equal(result.editPayload.authentication_method_id, 4);
   assert.equal(result.editPayload.signatory_type, "Firmante");
+  const metadataResult = inspector().parsePendingFirmaSeguroRecipient(process, productionStatus(), productionMetadata());
+  assert.equal(metadataResult.contactVerification, "BOUND_METADATA");
+  assert.equal(metadataResult.contactSource, "FROZEN_REQUEST");
+  assert.equal(metadataResult.editPayload.contact_information.mobile_number, "3001111111");
+  assert.equal(metadataResult.editPayload.contact_information.identification, "123456789");
+  assert.equal(metadataResult.editPayload.signatory_type, "Firmante");
 });
 
 test("no confunde un id anidado, un id de proceso ni un firmante ajeno con la firma vigente", () => {
@@ -253,6 +424,18 @@ test("no escribe ni permite reenviar ante múltiples firmantes, respuesta descon
     [{ ...pendingSigner(), contact_information: { ...contactEdit.contact_information, first_name: "Otra" } }]]) {
     assert.throws(() => parse(pendingProcess(), { status: "SENT" }, payload),
       (error) => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
+  }
+});
+
+test("rechaza UUID contradictorias tanto en el envoltorio como entre alias del firmante", () => {
+  const { parsePendingFirmaSeguroRecipient: parse } = inspector();
+  for (const payload of [
+    { uuid: "otro-proceso", signatures: [pendingSigner()] },
+    { uuid: contactEdit.uuid, process_uuid: "otro-proceso", signatures: [pendingSigner()] },
+    [{ ...pendingSigner(), process_uuid: "otro-proceso" }],
+  ]) {
+    assert.throws(() => parse(pendingProcess(), { status: "SENT" }, payload),
+      error => error.code === "FIRMASEGURO_RECIPIENT_UNVERIFIED");
   }
 });
 

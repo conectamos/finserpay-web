@@ -6,6 +6,9 @@ import { firmaSeguroRecipientDeliverySchemaStatements } from "../scripts/firmase
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 class ProviderError extends Error { constructor(status) { super("Provider request rejected"); this.status = status; } }
+class RecipientProviderError extends Error {
+  constructor(code) { super("Provider signer cannot be verified"); this.code = code; this.status = 409; }
+}
 async function fixture(t) {
   const database = new PGlite();
   t.after(() => database.close());
@@ -29,9 +32,10 @@ async function fixture(t) {
       $executeRawUnsafe: async (sql, ...values) => (await connection.query(sql, values)).affectedRows };
   }
   const prisma = { ...adapter(database), $transaction: work => database.transaction(connection => work(adapter(connection))) };
-  const calls = { edit: [], resend: [], inspect: 0, auth: 0 };
+  const calls = { edit: [], resend: [], inspect: 0, bindings: [], auth: 0 };
   const provider = { phone: "3000000001", email: "old@example.invalid", signatureId: 901, status: "PENDING", editError: null,
-    resendError: null, editAppliedBeforeFailure: false, lockBusy: false, unresolved: false };
+    resendError: null, editAppliedBeforeFailure: false, lockBusy: false, unresolved: false,
+    contactVerification: "PROVIDER_READBACK", afterEdit: null };
   const core = loadReissueModule("lib/approval-operations-core.ts");
   const ledger = loadReissueModule("lib/firmaseguro-recipient-delivery.ts", {
     "@/lib/prisma": { default: prisma },
@@ -43,13 +47,24 @@ async function fixture(t) {
       return { release: async () => { provider.lockBusy = false; } };
     } },
     "@/lib/firmaseguro-draft-dispatch-ledger": { getUnresolvedDraftDispatch: async () => provider.unresolved ? { id: "other" } : null },
-    "@/lib/firmaseguro-recipient-provider": { FirmaSeguroRecipientProviderError: class extends Error {}, inspectPendingFirmaSeguroRecipient: async (_token, process) => {
+    "@/lib/firmaseguro-recipient-provider": { FirmaSeguroRecipientProviderError: RecipientProviderError,
+      inspectPendingFirmaSeguroRecipient: async (_token, process, knownRecipient) => {
       calls.inspect += 1;
-      if (provider.status !== "PENDING") throw Object.assign(new Error("Not pending"), { code: "SIGNATURE_NOT_PENDING" });
-      return { signatureId: provider.signatureId, phone: provider.phone, email: provider.email,
+      calls.bindings.push(knownRecipient);
+      if (provider.status !== "PENDING") throw new RecipientProviderError("FIRMASEGURO_SIGNATURE_NOT_PENDING");
+      const metadataOnly = provider.contactVerification === "BOUND_METADATA";
+      const originalContact = requestPayload.signatures[0].contact_information;
+      if (metadataOnly && ((knownRecipient && (knownRecipient.processUuid !== process.processUuid
+        || knownRecipient.signatureId !== provider.signatureId || !knownRecipient.confirmedAt))
+        || provider.email !== (knownRecipient?.email ?? originalContact.email)))
+        throw new RecipientProviderError("FIRMASEGURO_RECIPIENT_UNVERIFIED");
+      const phone = metadataOnly ? knownRecipient?.phone ?? originalContact.mobile_number : provider.phone;
+      return { signatureId: provider.signatureId, phone, email: provider.email,
+        contactVerification: provider.contactVerification,
+        contactSource: metadataOnly ? knownRecipient ? "ACKNOWLEDGED_EDIT" : "FROZEN_REQUEST" : "PROVIDER_READBACK",
         editPayload: { uuid: process.processUuid, signature_id: provider.signatureId, authmethod: 1,
           contact_information: { ...requestPayload.signatures[0].contact_information,
-            mobile_number: provider.phone, email: provider.email } } };
+            mobile_number: phone, email: provider.email } } };
     } },
     "@/lib/firmaseguro": { FirmaSeguroApiError: ProviderError, isFirmaSeguroCompletedStatus: value => value === "COMPLETED",
       firmaSeguroSignIn: async () => { calls.auth += 1; return { token: "fixture-token" }; },
@@ -60,6 +75,7 @@ async function fixture(t) {
           provider.email = payload.contact_information.email;
         }
         if (provider.editError) throw provider.editError;
+        if (provider.afterEdit) await provider.afterEdit();
         return { success: true };
       },
       firmaSeguroResendSignature: async (_token, id) => {
@@ -206,4 +222,159 @@ test("el ledger conserva actor, fecha, motivo y contactos e impide alterar o bor
   await assert.rejects(f.database.query(`UPDATE "FirmaSeguroRecipientDelivery" SET "reason"='Otro motivo' WHERE "id"=$1`, [f.input.id]), /IMMUTABLE/);
   await assert.rejects(f.database.query(`DELETE FROM "FirmaSeguroRecipientDelivery" WHERE "id"=$1`, [f.input.id]), /IMMUTABLE/);
   await assert.rejects(f.database.exec(`TRUNCATE "FirmaSeguroRecipientDeliveryEvent"`), /IMMUTABLE/);
+});
+
+test("un GET de metadatos ligado al proceso permite editar y reenviar el mismo id tras el ACK del PUT", async t => {
+  const f = await fixture(t);
+  f.provider.contactVerification = "BOUND_METADATA";
+  const result = await f.run();
+  assert.equal(result.status, "RESENT");
+  assert.equal(f.calls.edit.length, 1);
+  assert.equal(f.calls.edit[0].uuid, f.input.processUuid);
+  assert.equal(f.calls.edit[0].signature_id, 901);
+  assert.deepEqual(f.calls.resend, [901]);
+  assert.equal(f.calls.bindings[0], undefined);
+  const binding = f.calls.bindings[1];
+  assert.equal(binding.processUuid, f.input.processUuid);
+  assert.equal(binding.signatureId, 901);
+  assert.equal(binding.phone, f.input.phone);
+  assert.equal(binding.email, "old@example.invalid");
+  assert.ok(binding.confirmedAt instanceof Date);
+  const row = await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id);
+  assert.equal(row.beforeContact.source, "FROZEN_REQUEST");
+  assert.ok(row.editedAt);
+  assert.equal(row.afterContact.phone, f.input.phone);
+  const process = (await f.database.query(`SELECT * FROM "FirmaSeguroProcess"`)).rows[0];
+  assert.deepEqual(process.requestPayload, f.requestPayload);
+  assert.deepEqual(process.draftPayload, f.sourcePayload);
+  assert.deepEqual((await f.database.query(`SELECT "payload" FROM "CreditoBorrador"`)).rows[0].payload, f.sourcePayload);
+});
+
+test("el celular congelado no demuestra coincidencia actual: con metadatos siempre se hace el PUT", async t => {
+  const f = await fixture(t);
+  f.provider.contactVerification = "BOUND_METADATA";
+  f.provider.phone = "3009999999";
+  assert.equal((await f.run({ phone: "3000000001" })).status, "RESENT");
+  assert.equal(f.calls.edit.length, 1);
+  assert.equal(f.calls.edit[0].contact_information.mobile_number, "3000000001");
+  assert.deepEqual(f.calls.resend, [901]);
+});
+
+test("el ACK durable permite posteriores correcciones de correo sin alterar el request original", async t => {
+  const f = await fixture(t);
+  f.provider.contactVerification = "BOUND_METADATA";
+  const firstInput = { email: "new@example.invalid", hasEmail: true };
+  assert.equal((await f.run(firstInput)).status, "RESENT");
+  const first = await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id);
+  assert.equal(f.calls.bindings[1].email, "new@example.invalid");
+  const secondId = randomUUID();
+  assert.equal((await f.run({ id: secondId, phone: "3122222222",
+    email: "next@example.invalid", hasEmail: true })).status, "RESENT");
+  const second = await f.ledger.getFirmaSeguroRecipientDelivery(secondId);
+  assert.equal(second.beforeContact.source, "ACKNOWLEDGED_EDIT");
+  assert.equal(second.beforeContact.phone, first.afterContact.phone);
+  assert.equal(second.beforeContact.email, first.afterContact.email);
+  assert.equal(f.calls.bindings[2].email, "new@example.invalid");
+  assert.equal(f.calls.bindings[2].signatureId, 901);
+  assert.equal(f.calls.edit.length, 2);
+  assert.deepEqual(f.calls.resend, [901, 901]);
+  const process = (await f.database.query(`SELECT "requestPayload" FROM "FirmaSeguroProcess"`)).rows[0];
+  assert.deepEqual(process.requestPayload, f.requestPayload);
+});
+
+for (const applied of [false, true]) {
+  test(`PUT sin ACK con GET de metadatos (${applied ? "aplicado" : "no aplicado"}) no se repite ni reenvía`, async t => {
+    const f = await fixture(t);
+    f.provider.contactVerification = "BOUND_METADATA";
+    f.provider.editError = new Error("lost response");
+    f.provider.editAppliedBeforeFailure = applied;
+    assert.equal((await f.run()).status, "EDIT_UNCERTAIN");
+    f.provider.editError = null;
+    const replay = await f.run();
+    assert.equal(replay.status, "EDIT_UNCERTAIN");
+    assert.equal(replay.retryable, false);
+    assert.match(replay.message, /consulta no muestra el celular/);
+    assert.equal(f.calls.edit.length, 1);
+    assert.equal(f.calls.resend.length, 0);
+    assert.equal((await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id)).editedAt, null);
+    await assert.rejects(f.run({ id: randomUUID() }), { code: "SIGNATURE_PENDING" });
+  });
+}
+
+test("correo aplicado sin ACK tampoco se concilia a partir de los metadatos", async t => {
+  const f = await fixture(t);
+  f.provider.contactVerification = "BOUND_METADATA";
+  f.provider.editError = new Error("lost response");
+  f.provider.editAppliedBeforeFailure = true;
+  const overrides = { email: "new@example.invalid", hasEmail: true };
+  assert.equal((await f.run(overrides)).status, "EDIT_UNCERTAIN");
+  f.provider.editError = null;
+  const replay = await f.run(overrides);
+  assert.equal(replay.status, "EDIT_UNCERTAIN");
+  assert.equal(replay.retryable, false);
+  assert.equal(f.calls.edit.length, 1);
+  assert.equal(f.calls.resend.length, 0);
+});
+
+test("el GET posterior debe conservar id y correo y seguir pendiente aun después del ACK", async t => {
+  for (const mutation of [() => ({ signatureId: 902 }), () => ({ email: "outside@example.invalid" }),
+    () => ({ status: "SIGNED" })]) {
+    const f = await fixture(t);
+    f.provider.contactVerification = "BOUND_METADATA";
+    f.provider.afterEdit = () => Object.assign(f.provider, mutation());
+    await assert.rejects(f.run(), error =>
+      ["FIRMASEGURO_RECIPIENT_UNVERIFIED", "FIRMASEGURO_SIGNATURE_NOT_PENDING"].includes(error.code));
+    assert.equal(f.calls.edit.length, 1);
+    assert.equal(f.calls.resend.length, 0);
+    const row = await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id);
+    assert.equal(row.status, "RECIPIENT_UPDATED");
+    assert.ok(row.editedAt);
+  }
+});
+
+test("un reenvío rechazado en modo metadatos conserva el ACK y no vuelve a editar", async t => {
+  const f = await fixture(t);
+  f.provider.contactVerification = "BOUND_METADATA";
+  f.provider.resendError = new ProviderError(400);
+  assert.equal((await f.run()).status, "RESEND_FAILED");
+  f.provider.resendError = null;
+  assert.equal((await f.run()).status, "RESENT");
+  assert.equal(f.calls.edit.length, 1);
+  assert.deepEqual(f.calls.resend, [901, 901]);
+  assert.ok(f.calls.bindings.slice(1).every(binding => binding.signatureId === 901 && binding.confirmedAt));
+});
+
+test("un GET de contacto completo todavía puede conciliar un PUT incierto que empezó con metadatos", async t => {
+  const f = await fixture(t);
+  f.provider.contactVerification = "BOUND_METADATA";
+  f.provider.editError = new Error("lost response");
+  f.provider.editAppliedBeforeFailure = true;
+  assert.equal((await f.run()).status, "EDIT_UNCERTAIN");
+  f.provider.editError = null;
+  f.provider.contactVerification = "PROVIDER_READBACK";
+  assert.equal((await f.run()).status, "RESENT");
+  assert.equal(f.calls.edit.length, 1);
+  assert.deepEqual(f.calls.resend, [901]);
+});
+
+test("otra operación concurrente no puede duplicar la edición ni el reenvío mientras llega el ACK", async t => {
+  const f = await fixture(t);
+  f.provider.contactVerification = "BOUND_METADATA";
+  let acknowledge;
+  let reachedEdit;
+  const waitingForAck = new Promise(resolve => { acknowledge = resolve; });
+  const edited = new Promise(resolve => { reachedEdit = resolve; });
+  f.provider.afterEdit = async () => { reachedEdit(); await waitingForAck; };
+  const first = f.run();
+  await edited;
+  try {
+    await assert.rejects(f.run({ id: randomUUID() }), { code: "SIGNATURE_BUSY" });
+    const row = await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id);
+    assert.equal(row.status, "EDITING");
+    assert.equal(row.editedAt, null);
+  } finally { acknowledge(); }
+  assert.equal((await first).status, "RESENT");
+  assert.equal((await f.run()).status, "RESENT");
+  assert.equal(f.calls.edit.length, 1);
+  assert.deepEqual(f.calls.resend, [901]);
 });
