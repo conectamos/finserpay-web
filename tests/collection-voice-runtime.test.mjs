@@ -76,7 +76,14 @@ test('PostgreSQL valida las consultas de auditoría y sus ventanas por canal',as
     INSERT INTO "CreditDueReminder" VALUES (81,'ACCEPTED',CURRENT_TIMESTAMP),(81,'ACCEPTED',CURRENT_TIMESTAMP-interval '8 days');
     INSERT INTO "CreditWelcomeVoiceEvent" VALUES (81,'COMPLETED',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);`);
   const counts=[];for(const q of s.auditQueries)counts.push((await db.query(q.sql,q.args)).rows.length);
-  assert.deepEqual(counts,[0,1,2]);
+  assert.deepEqual(counts,[0,1,1]);
+  const otherQuery=s.auditQueries.find(q=>q.sql.includes('collection-audit-other'));
+  await db.exec(`DELETE FROM "CreditWelcomeVoiceEvent";
+    INSERT INTO "CreditOverdueDataAttempt" VALUES (81,'ACCEPTED',CURRENT_TIMESTAMP);`);
+  assert.equal((await db.query(otherQuery.sql,otherQuery.args)).rows.length,0,'provider acceptance of either WhatsApp campaign is not human contact');
+  await db.exec(`INSERT INTO "CreditOverdueDataAttempt" VALUES (81,'UNKNOWN',CURRENT_TIMESTAMP);
+    INSERT INTO "CreditDueReminder" VALUES (81,'CLAIMED',CURRENT_TIMESTAMP);`);
+  assert.equal((await db.query(otherQuery.sql,otherQuery.args)).rows.length,2,'pending and uncertain sends retain their reconciliation hold');
 });
 test('la autorización y la firma de sesión son obligatorias',async()=>{
   const s=setup();assert.equal((await s.call({action:'identity'},'wrong')).status,401);
@@ -162,7 +169,7 @@ test('inactividad, número inválido y cuelgue dejan un intento auditable sin fa
     const call={call_id:'synthetic-call-81',dynamic_variables:{event_token:s.token},disconnection_reason:reason,call_analysis:{custom_analysis_data:{acuerdo_confirmado:true,fecha_acuerdo:'2026-10-20',valor_acuerdo:50000}}};
     const response=await(await s.call({action:'postcall',call})).json();
     assert.equal(response.registrado,true);assert.equal(s.writes.length,1);
-    assert.equal(s.writes[0].result,'LLAMADA_INCOMPLETA');assert.equal(s.writes[0].managementStatus,'SEGUIMIENTO');
+    assert.equal(s.writes[0].result,reason==='invalid_destination'?'SIN_RESPUESTA':'LLAMADA_INCOMPLETA');assert.equal(s.writes[0].managementStatus,reason==='invalid_destination'?'SIN_RESPUESTA':'SEGUIMIENTO');
     assert.equal(s.writes[0].agreementDate,undefined);assert.ok(s.writes[0].comment.includes(reason));
     // Simulate a crash after the portfolio insert but before attaching its ID.
     s.state.managementId=null;
