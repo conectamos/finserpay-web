@@ -212,8 +212,8 @@ async function auditCollectionVoice() {
         const today=attempts.filter(a=>colombiaClock(new Date(a.createdAt)).day===day);
         if(attempts.some(a=>a.optOut)) add("EXCLUSION_CONTACTO","Existe solicitud de finalizar/exclusión en el libro de llamadas.");
         for(const a of attempts.filter(a=>["DISPATCHING","DIALING","ACCEPTED","UNKNOWN"].includes(a.status))) add("LLAMADA_ACTIVA_O_INCIERTA",`${a.status}; llamada ${a.providerCallId||a.id}; creada ${new Date(a.createdAt).toISOString()}.`);
-        if(attempts.some(a=>a.outcome?.pago_informado===true)) add("PAGO_INFORMADO_EN_LLAMADA","Un evento de llamada informa pago; el bloqueo no se libera automáticamente.");
-        if(attempts.some(a=>!a.managementId&&a.outcome?.acuerdo_confirmado===true)) add("ACUERDO_SIN_REGISTRO","Hay confirmación de acuerdo sin gestión vinculada; requiere conciliación.");
+        if(attempts.some(a=>String(a.outcome?.pago_informado)==="true")) add("PAGO_INFORMADO_EN_LLAMADA","Un evento de llamada informa pago; el bloqueo no se libera automáticamente.");
+        if(attempts.some(a=>!a.managementId&&String(a.outcome?.acuerdo_confirmado)==="true")) add("ACUERDO_SIN_REGISTRO","Hay confirmación de acuerdo sin gestión vinculada; requiere conciliación.");
         if(attempts.some(a=>a.contactedAt&&colombiaClock(new Date(a.contactedAt)).day===day)) add("CONTACTO_MARCADO_HOY","El libro de llamadas tiene contacto marcado hoy para este titular.");
         if(today.length>=3) add("LIMITE_TRES_INTENTOS",`${today.length} intentos acumulados hoy por titular.`);
         if(slot&&attempts.some(a=>a.slot===slot)) add("YA_INTENTADO_EN_ESTE_LOTE","Ya existe intento en la ventana manual actual; la clave única impide duplicarlo.");
