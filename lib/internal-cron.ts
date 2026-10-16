@@ -357,7 +357,7 @@ export function startInternalCron() {
   state.timer.unref?.();
 
   logCron(
-    "Programacion interna activa: desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, recordatorios de un dia y hoy vence a las 10:00 y de dos dias a las 13:00, campana Datos una vez por credito al llegar a 20 dias de mora a las 10:00; recuperacion durante la hora siguiente de cada campana, hora Colombia.",
+    "Programacion interna activa: Valeria cobranza a las 10:00, 14:00 y 17:00 de lunes a viernes, sabados 10:00 y 14:00, sin domingos ni festivos; seguimiento en la fecha pactada y procesamiento continuo de cada lote; desbloqueos pendientes cada 30 segundos, Wompi y postulaciones con correo configurado cada 5 minutos, Efecty cada 10 minutos entre 23:10 y 01:50, mora cada 10 minutos entre 23:30 y 01:50, recordatorios de un dia y hoy vence a las 10:00 y de dos dias a las 13:00, campana Datos una vez por credito al llegar a 20 dias de mora a las 10:00; recuperacion durante la hora siguiente de cada campana, hora Colombia.",
   );
 
   void runStartupRecovery();

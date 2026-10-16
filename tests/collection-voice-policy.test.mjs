@@ -45,7 +45,7 @@ test('horarios colombianos, sábado, domingo y festivos',()=>{
 });
 test('tres ventanas y ejecución inmediata únicamente en horario hábil',()=>{
   assert.equal(p.collectionSlot(new Date('2026-10-09T19:04:00Z')),'2026-10-09T14');
-  assert.equal(p.collectionSlot(new Date('2026-10-09T19:11:00Z')),null);
+  assert.equal(p.collectionSlot(new Date('2026-10-09T19:11:00Z')),'2026-10-09T14');
   assert.equal(p.collectionSlot(new Date('2026-10-09T19:11:00Z'),true),'2026-10-09Tmanual');
   assert.equal(p.collectionSlot(new Date('2026-10-10T22:00:00Z'),true),null);
 });
@@ -63,4 +63,28 @@ test('el vínculo de sesión firmado no admite cambios ni otro secreto',()=>{
   assert.equal(p.verifyCollectionSessionToken(token,secret),id);
   assert.equal(p.verifyCollectionSessionToken(token+'x',secret),null);
   assert.equal(p.verifyCollectionSessionToken(token,secret+'other'),null);
+});
+
+test('lotes diarios se vacían sin cortar a los diez minutos ni duplicar la ventana',()=>{
+  const slot=iso=>p.collectionSlot(new Date(iso));
+  assert.equal(slot('2026-10-16T14:59:00Z'),null);
+  for(const iso of ['2026-10-16T15:00:00Z','2026-10-16T15:30:00Z','2026-10-16T18:59:00Z'])assert.equal(slot(iso),'2026-10-16T10');
+  assert.equal(slot('2026-10-16T19:00:00Z'),'2026-10-16T14');
+  assert.equal(slot('2026-10-16T22:00:00Z'),'2026-10-16T17');
+  assert.equal(slot('2026-10-17T13:00:00Z'),null);
+  assert.equal(slot('2026-10-17T15:00:00Z'),'2026-10-17T10');
+  assert.equal(slot('2026-10-17T19:00:00Z'),'2026-10-17T14');
+  assert.equal(slot('2026-10-17T22:00:00Z'),null);
+  assert.equal(slot('2026-10-18T15:00:00Z'),null);
+  assert.equal(slot('2026-11-02T15:00:00Z'),null);
+});
+
+test('seguimiento usa el día pactado aunque la fecha auxiliar sea de otro día',()=>{
+  const event={id:'promise',managementStatus:'ACUERDO_PAGO',agreementDate:'2026-10-16',nextFollowUpAt:'2026-11-02T17:41:00Z'};
+  assert.equal(p.collectionPortfolioEligibility(true,[event],new Date('2026-10-16T14:59:00Z'),true).suspended,true);
+  assert.equal(p.collectionPortfolioEligibility(true,[event],new Date('2026-10-16T15:00:00Z'),true).followupFor,'promise');
+  assert.equal(p.collectionPortfolioEligibility(true,[{...event,nextFollowUpAt:'2026-10-16T23:00:00Z'}],new Date('2026-10-16T22:00:00Z'),true).suspended,true);
+  const sunday={...event,agreementDate:'2026-10-18',nextFollowUpAt:'2026-10-18T15:00:00Z'};
+  assert.equal(p.collectionPortfolioEligibility(true,[sunday],new Date('2026-10-19T14:59:00Z'),true).suspended,true);
+  assert.equal(p.collectionPortfolioEligibility(true,[sunday],new Date('2026-10-19T15:00:00Z'),true).followupFor,'promise');
 });
