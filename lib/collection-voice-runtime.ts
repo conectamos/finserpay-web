@@ -9,7 +9,7 @@ import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { collectionCallKey } from "@/lib/dapta-collections-http";
 import { collectionCallingAllowed, collectionSlot, colombiaClock, collectionSessionToken, verifyCollectionSessionToken, nextCollectionDate, collectionPortfolioEligibility } from "@/lib/collection-voice-policy";
 
-type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;completedAt?:Date|null;managementId:string|null;followupFor:string|null;testCall:boolean;optOut:boolean;outcome:Record<string,unknown>|null};
+type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;completedAt?:Date|null;contactedAt?:Date|null;managementId:string|null;followupFor:string|null;testCall:boolean;optOut:boolean;outcome:Record<string,unknown>|null};
 const secret=()=>process.env.FINSERPAY_COBRANZA_API_TOKEN||"";
 const agent=()=>process.env.FINSERPAY_COBRANZA_AGENT_ID||"";
 const actor=()=>Number(process.env.FINSERPAY_COBRANZA_ACTOR_ID);
@@ -172,10 +172,76 @@ export async function runCollectionMessages() {
   }
 }
 
+/** Read-only explanation of the same manual-dispatch gates. No calls or ledger writes. */
+async function auditCollectionVoice() {
+  const now=new Date(),day=colombiaClock(now).day,slot=collectionSlot(now,true);
+  const items:Array<Record<string,unknown>>=[];
+  for(let page=1;page<=100;page++) {
+    const portfolio=await listMoraPortfolio(new URLSearchParams({page:String(page)}));
+    for(const item of portfolio.items) {
+      const context=await financialContext(item.id,true),c=context.credit;
+      const reasons:Array<{code:string;detail:string}>=[];
+      const reviews:string[]=[];
+      const add=(code:string,detail:string)=>reasons.push({code,detail});
+      if(!context.credit.enMora) add("SIN_MORA_ACTUAL","La consulta actual ya no tiene saldo en mora.");
+      else if(context.suspended) {
+        if(context.history[0]?.resultCode==="PAGO_REALIZADO") add("PAGO_INFORMADO","La última gestión informa pago pendiente de validación.");
+        else {
+          const a=context.history.find(h=>h.resultCode==="ACUERDO_PAGO"||h.managementStatus==="ACUERDO_PAGO");
+          add("ACUERDO_PROTEGIDO",a?`Acuerdo ${a.agreementDate||"sin fecha válida"}; próxima gestión ${a.nextFollowUpAt}.`:"Expediente suspendido para revisión.");
+        }
+      }
+      const doc=String(c.clienteDocumento||"").replace(/\D/g,"");
+      if(!/^\d{5,15}$/.test(doc)) add("DOCUMENTO_INVALIDO","No hay documento válido para coordinar intentos por titular.");
+      const phones=[c.clienteTelefono,...(process.env.DAPTA_COBRANZA_REFERENCES_OWNED==="true"?[c.referenciaFamiliar1Telefono,c.referenciaFamiliar2Telefono]:[])].map(normalizeColombianMobile).filter(Boolean);
+      if(!phones.length) add("SIN_TELEFONO_VALIDO","No hay celular válido entre los teléfonos autorizados disponibles.");
+      let attempts:Attempt[]=[];
+      let contacts:Array<{id:string;creditoId:number;action:string;actedAt:Date;resultCode:string|null;comment:string}>=[];
+      let other:Array<{source:string;status:string;at:Date}>=[];
+      if(/^\d{5,15}$/.test(doc)) {
+        attempts=await prisma.$queryRawUnsafe<Attempt[]>(`/* collection-audit-attempts */ SELECT * FROM "CollectionVoiceAttempt" WHERE "debtorKey"=$1 ORDER BY "createdAt" DESC`,digest(doc));
+        contacts=await prisma.$queryRawUnsafe<typeof contacts>(`/* collection-audit-contacts */ SELECT m."id",m."creditoId",m."action",m."actedAt",m."resultCode",m."comment" FROM "CreditMoraManagementEvent" m JOIN "Credito" c ON c."id"=m."creditoId"
+          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND m."actedAt">=date_trunc('week',CURRENT_TIMESTAMP AT TIME ZONE 'America/Bogota') AT TIME ZONE 'America/Bogota'
+          AND ((m."action"='MSJ_TEXTO' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA') OR (m."action"='LLAMADA' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA' AND (m."actedAt" AT TIME ZONE 'America/Bogota')::date=$2::date)) ORDER BY m."actedAt" DESC`,doc,day);
+        other=await prisma.$queryRawUnsafe<typeof other>(`/* collection-audit-other */ SELECT 'Recordatorio WhatsApp' AS source,r."status",r."claimedAt" AS at FROM "CreditDueReminder" r JOIN "Credito" c ON c."id"=r."creditoId"
+          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND r."status" IN ('CLAIMED','ACCEPTED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days'
+          UNION ALL SELECT 'Campaña Datos WhatsApp',r."status",r."claimedAt" FROM "CreditOverdueDataAttempt" r JOIN "Credito" c ON c."id"=r."creditoId"
+          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND r."status" IN ('CLAIMED','ACCEPTED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days'
+          UNION ALL SELECT 'Bienvenida voz',r."status",r."createdAt" FROM "CreditWelcomeVoiceEvent" r JOIN "Credito" c ON c."id"=r."creditoId"
+          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND (r."status" IN ('DISPATCHING','ACCEPTED','UNKNOWN') OR (r."identityVerifiedAt" AT TIME ZONE 'America/Bogota')::date=$2::date)`,doc,day);
+        const today=attempts.filter(a=>colombiaClock(new Date(a.createdAt)).day===day);
+        if(attempts.some(a=>a.optOut)) add("EXCLUSION_CONTACTO","Existe solicitud de finalizar/exclusión en el libro de llamadas.");
+        for(const a of attempts.filter(a=>["DISPATCHING","DIALING","ACCEPTED","UNKNOWN"].includes(a.status))) add("LLAMADA_ACTIVA_O_INCIERTA",`${a.status}; llamada ${a.providerCallId||a.id}; creada ${new Date(a.createdAt).toISOString()}.`);
+        if(attempts.some(a=>a.outcome?.pago_informado===true)) add("PAGO_INFORMADO_EN_LLAMADA","Un evento de llamada informa pago; el bloqueo no se libera automáticamente.");
+        if(attempts.some(a=>!a.managementId&&a.outcome?.acuerdo_confirmado===true)) add("ACUERDO_SIN_REGISTRO","Hay confirmación de acuerdo sin gestión vinculada; requiere conciliación.");
+        if(attempts.some(a=>a.contactedAt&&colombiaClock(new Date(a.contactedAt)).day===day)) add("CONTACTO_MARCADO_HOY","El libro de llamadas tiene contacto marcado hoy para este titular.");
+        if(today.length>=3) add("LIMITE_TRES_INTENTOS",`${today.length} intentos acumulados hoy por titular.`);
+        if(slot&&attempts.some(a=>a.slot===slot)) add("YA_INTENTADO_EN_ESTE_LOTE","Ya existe intento en la ventana manual actual; la clave única impide duplicarlo.");
+        for(const m of contacts) add(m.action==="MSJ_TEXTO"?"GESTION_TEXTO_SEMANA":"GESTION_LLAMADA_HOY",`${m.action}; ${m.resultCode||"resultado histórico"}; crédito ${m.creditoId}; ${new Date(m.actedAt).toISOString()}.`);
+        for(const o of other) add("OTRA_CAMPANA",`${o.source}; ${o.status}; ${new Date(o.at).toISOString()}.`);
+        if(other.some(o=>o.status==="ACCEPTED")) reviews.push("Otra campaña aceptada bloquea el selector; aceptación no demuestra entrega, lectura ni contacto humano.");
+        if(other.some(o=>o.status==="UNKNOWN")||attempts.some(a=>a.status==="UNKNOWN")) reviews.push("Existe un envío incierto: conciliar con el proveedor antes de repetir.");
+        if(contacts.some(m=>m.resultCode==="LLAMADA_INCOMPLETA"&&/inactivity|invalid_destination/.test(m.comment))) reviews.push("Una llamada incompleta por inactividad/destino inválido está contando como contacto de hoy; revisar esa clasificación.");
+        if(context.followupFor) {
+          const done=await prisma.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CollectionVoiceAttempt" WHERE "followupFor"=$1::uuid AND "contactedAt" IS NOT NULL`,context.followupFor);
+          if(done[0]?.n) add("SEGUIMIENTO_YA_CONTACTADO","El vínculo del acuerdo ya tiene contacto en el libro de seguimiento.");
+        }
+      }
+      if(!slot) add("FUERA_HORARIO","La ejecución manual está fuera del horario de contacto configurado.");
+      if(process.env.DAPTA_COBRANZA_ENABLED!=="true"||process.env.DAPTA_COBRANZA_LIVE_READY!=="true") add("AUTOMATIZACION_NO_ACTIVA","La automatización no está habilitada y lista.");
+      if(!agent()||!actor()||!webhook("DAPTA_COBRANZA_CALL_WEBHOOK_URL")) add("CONFIGURACION_INCOMPLETA","Falta agente, responsable o webhook válido para despachar.");
+      items.push({creditoId:item.id,numero:c.numeroCreditoVisible,cliente:c.clienteNombre,diasMora:c.diasMora,valorVencido:c.valorVencido,estado:context.history[0]?.managementStatus||"PENDIENTE",followupFor:context.followupFor,eligible:reasons.length===0,reasons,reviews,attemptsToday:attempts.filter(a=>colombiaClock(new Date(a.createdAt)).day===day).map(a=>({id:a.id,callId:a.providerCallId,status:a.status,at:a.createdAt,registered:!!a.managementId})),otherCampaigns:other});
+    }
+    if(!portfolio.hasMore) break;
+  }
+  return {ok:true,readOnly:true,asOf:now.toISOString(),scope:"Estado actual de los controles; no reconstruye decisiones pasadas sin instantánea histórica.",total:items.length,items};
+}
+
 async function operation(body:Record<string,unknown>) {
   if(body.action==="testcall") return runCollectionVoice({dryRun:body.dryRun!==false,immediate:true,limit:1,test:true});
   if(body.action==="dispatch") return runCollectionVoice({dryRun:body.dryRun!==false,immediate:body.immediate===true,limit:Math.min(5,Math.max(1,Number(body.limit)||3))});
   await ensureCollectionVoiceSchema();
+  if(body.action==="audit") return auditCollectionVoice();
   if(body.action==="authorize") {
     const a=await activeSession(body);
     const context=await financialContext(a.creditoId,!!a.followupFor);
