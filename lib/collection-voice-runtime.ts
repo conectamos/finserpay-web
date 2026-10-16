@@ -119,10 +119,10 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
         const contacts=await db.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CreditMoraManagementEvent" m JOIN "Credito" c ON c."id"=m."creditoId"
           WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND m."actedAt">=date_trunc('week',CURRENT_TIMESTAMP AT TIME ZONE 'America/Bogota') AT TIME ZONE 'America/Bogota'
           AND ((m."action"='MSJ_TEXTO' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA') OR (m."action"='LLAMADA' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA' AND (m."actedAt" AT TIME ZONE 'America/Bogota')::date=$2::date))`,doc,colombiaClock(now).day);
-        // Read the existing WhatsApp outboxes as well as manual portfolio records.
+        // Provider acceptance of a WhatsApp send does not establish human contact. Only unresolved sends retain a cross-campaign hold.
         const other=await db.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "Credito" c WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND (
-          EXISTS(SELECT 1 FROM "CreditDueReminder" r WHERE r."creditoId"=c."id" AND r."status" IN ('CLAIMED','ACCEPTED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days') OR
-          EXISTS(SELECT 1 FROM "CreditOverdueDataAttempt" r WHERE r."creditoId"=c."id" AND r."status" IN ('CLAIMED','ACCEPTED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days') OR
+          EXISTS(SELECT 1 FROM "CreditDueReminder" r WHERE r."creditoId"=c."id" AND r."status" IN ('CLAIMED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days') OR
+          EXISTS(SELECT 1 FROM "CreditOverdueDataAttempt" r WHERE r."creditoId"=c."id" AND r."status" IN ('CLAIMED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days') OR
           EXISTS(SELECT 1 FROM "CreditWelcomeVoiceEvent" r WHERE r."creditoId"=c."id" AND (r."status" IN ('DISPATCHING','ACCEPTED','UNKNOWN') OR (r."identityVerifiedAt" AT TIME ZONE 'America/Bogota')::date=$2::date)))`,doc,colombiaClock(now).day);
         const followed=context.followupFor?await db.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CollectionVoiceAttempt" WHERE "followupFor"=$1::uuid AND "contactedAt" IS NOT NULL`,context.followupFor):[];
         if(prior[0].blocked||prior[0].today>=3||(!options.test&&(contacts[0].n||other[0].n||followed[0]?.n))) return null;
@@ -204,9 +204,9 @@ async function auditCollectionVoice() {
           WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND m."actedAt">=date_trunc('week',CURRENT_TIMESTAMP AT TIME ZONE 'America/Bogota') AT TIME ZONE 'America/Bogota'
           AND ((m."action"='MSJ_TEXTO' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA') OR (m."action"='LLAMADA' AND m."resultCode" IS DISTINCT FROM 'SIN_RESPUESTA' AND (m."actedAt" AT TIME ZONE 'America/Bogota')::date=$2::date)) ORDER BY m."actedAt" DESC`,doc,day);
         other=await prisma.$queryRawUnsafe<typeof other>(`/* collection-audit-other */ SELECT 'Recordatorio WhatsApp' AS source,r."status",r."claimedAt" AS at FROM "CreditDueReminder" r JOIN "Credito" c ON c."id"=r."creditoId"
-          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND r."status" IN ('CLAIMED','ACCEPTED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days'
+          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND r."status" IN ('CLAIMED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days'
           UNION ALL SELECT 'Campaña Datos WhatsApp',r."status",r."claimedAt" FROM "CreditOverdueDataAttempt" r JOIN "Credito" c ON c."id"=r."creditoId"
-          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND r."status" IN ('CLAIMED','ACCEPTED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days'
+          WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND r."status" IN ('CLAIMED','UNKNOWN') AND r."claimedAt">=CURRENT_TIMESTAMP-interval '7 days'
           UNION ALL SELECT 'Bienvenida voz',r."status",r."createdAt" FROM "CreditWelcomeVoiceEvent" r JOIN "Credito" c ON c."id"=r."creditoId"
           WHERE regexp_replace(COALESCE(c."clienteDocumento",''),'[^0-9]','','g')=$1 AND (r."status" IN ('DISPATCHING','ACCEPTED','UNKNOWN') OR (r."identityVerifiedAt" AT TIME ZONE 'America/Bogota')::date=$2::date)`,doc,day);
         const today=attempts.filter(a=>colombiaClock(new Date(a.createdAt)).day===day);
@@ -293,7 +293,7 @@ async function operation(body:Record<string,unknown>) {
     const rows=await prisma.$queryRawUnsafe<Attempt[]>(`SELECT * FROM "CollectionVoiceAttempt" WHERE "id"=$1::uuid`,id);
     const a=rows[0];if(!a||(a.providerCallId&&a.providerCallId!==call.call_id)) throw new Error("Llamada no vinculada");
     const analysis=((call.call_analysis as Record<string,unknown>|undefined)?.custom_analysis_data||{}) as Record<string,unknown>;
-    const noAnswer=["dial_no_answer","dial_busy","dial_failed","voicemail_reached"].includes(String(call.disconnection_reason));
+    const noAnswer=["dial_no_answer","dial_busy","dial_failed","voicemail_reached","invalid_destination"].includes(String(call.disconnection_reason));
     const hash=digest(JSON.stringify(call));
     const updated=await prisma.$queryRawUnsafe<Array<{id:string}>>(`UPDATE "CollectionVoiceAttempt" SET "status"='COMPLETED',"completedAt"=CURRENT_TIMESTAMP,"providerCallId"=$2,"outcome"=$3::jsonb,"callbackHash"=$4,"optOut"="optOut" OR $5,"contactedAt"=CASE WHEN $6 THEN COALESCE("contactedAt",CURRENT_TIMESTAMP) ELSE "contactedAt" END WHERE "id"=$1::uuid AND "callbackHash" IS NULL RETURNING "id"`,id,call.call_id,JSON.stringify(analysis),hash,analysis.finalizar_solicitado===true,!noAnswer);
     if(!updated.length) {
