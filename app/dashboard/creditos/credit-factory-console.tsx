@@ -6030,6 +6030,13 @@ export default function CreditFactoryConsole({
     Number(signedTermsCorrectionSale || 0) -
       Number(signedTermsCorrectionInitial || 0)
   );
+  const canCorrectStepTwoInstallments =
+    createClientMode &&
+    !simulatorMode &&
+    canSeeInternalPricing &&
+    Boolean(draftId) &&
+    firmaSeguroProcessSigned &&
+    Boolean(signedCreditRemission);
   const firmaSeguroProcessFailed =
     firmaSeguroProcessUiState === "error" &&
     !firmaSeguroRequiresFirstPaymentDateReissue;
@@ -10416,7 +10423,9 @@ export default function CreditFactoryConsole({
     }
   };
 
-  const correctSignedFinancialTerms = async () => {
+  const correctSignedFinancialTerms = async (
+    options: { installmentsOnly?: boolean } = {}
+  ) => {
     if (factoryClosingOperationInFlightRef.current) return;
     const expectedProcessUuid = String(
       firmaSeguroDraftProcess?.processUuid || ""
@@ -10424,12 +10433,17 @@ export default function CreditFactoryConsole({
     const expectedFinancialTermsChecksum = String(
       firmaSeguroDraftProcess?.financialTermsChecksum || ""
     ).trim();
-    const valorEquipoTotal = Number(
-      signedTermsCorrectionSale.replace(/\D/g, "")
-    );
-    const cuotaInicial = Number(
-      signedTermsCorrectionInitial.replace(/\D/g, "")
-    );
+    const isCurrentCorrectionRequest = () =>
+      firmaSeguroRefreshBindingRef.current.draftId === draftId &&
+      firmaSeguroRefreshBindingRef.current.processUuid === expectedProcessUuid;
+    // A term-only correction must use the signed amounts, even if another
+    // administration form has unsubmitted changes to price or down payment.
+    const valorEquipoTotal = options.installmentsOnly
+      ? Number(signedCreditRemission?.valorVenta)
+      : Number(signedTermsCorrectionSale.replace(/\D/g, ""));
+    const cuotaInicial = options.installmentsOnly
+      ? Number(signedCreditRemission?.valorInicial)
+      : Number(signedTermsCorrectionInitial.replace(/\D/g, ""));
     const plazoMeses = Number(
       signedTermsCorrectionInstallments.replace(/\D/g, "")
     );
@@ -10439,6 +10453,16 @@ export default function CreditFactoryConsole({
       setNotice({
         text: "Solo el administrador central puede corregir valores después de la firma.",
         tone: "red",
+      });
+      return;
+    }
+    if (
+      options.installmentsOnly &&
+      (!canCorrectStepTwoInstallments || wizardStep !== 2)
+    ) {
+      setNotice({
+        text: "Actualiza el contrato firmado vigente antes de corregir las cuotas.",
+        tone: "amber",
       });
       return;
     }
@@ -10471,6 +10495,26 @@ export default function CreditFactoryConsole({
     if (reason.length < 5) {
       setNotice({
         text: "Escribe el motivo de la corrección de valores.",
+        tone: "amber",
+      });
+      return;
+    }
+    if (
+      options.installmentsOnly &&
+      !creditInstallmentOptions.includes(String(plazoMeses))
+    ) {
+      setNotice({
+        text: "Selecciona un número de cuotas dentro de las condiciones autorizadas.",
+        tone: "red",
+      });
+      return;
+    }
+    if (
+      options.installmentsOnly &&
+      plazoMeses === signedCreditRemission?.numeroCuotas
+    ) {
+      setNotice({
+        text: "Selecciona un número de cuotas diferente al del contrato actual.",
         tone: "amber",
       });
       return;
@@ -10530,6 +10574,7 @@ export default function CreditFactoryConsole({
           }),
         }
       );
+      if (!isCurrentCorrectionRequest()) return;
       if (!result.ok || !result.data?.ok) {
         throw new Error(
           result.data?.error || "No se pudieron corregir los valores firmados"
@@ -10554,6 +10599,7 @@ export default function CreditFactoryConsole({
         tone: "amber",
       });
     } catch (error) {
+      if (!isCurrentCorrectionRequest()) return;
       let correctionWasCommitted = false;
 
       try {
@@ -10565,18 +10611,21 @@ export default function CreditFactoryConsole({
         const authoritativeDraft = draftResult.data?.item || null;
         const authoritativePayload = authoritativeDraft?.payload || {};
 
+        if (!isCurrentCorrectionRequest()) return;
         if (
           draftResult.ok &&
           authoritativeDraft &&
+          authoritativeDraft.id === draftId &&
           authoritativePayload.firmaSeguroFinancialCorrectionPending === true &&
           String(
             authoritativePayload.firmaSeguroFinancialCorrectionId || ""
           ).trim() === idempotencyKey
         ) {
-          applyDraftPayload(authoritativeDraft);
           const processResult = await requestJson<FirmaSeguroResponse>(
             `/api/creditos/borradores/${draftId}/firma-seguro`
           );
+          if (!isCurrentCorrectionRequest()) return;
+          applyDraftPayload(authoritativeDraft);
           setFirmaSeguroDraftProcess(
             processResult.ok && processResult.data?.ok
               ? processResult.data.process || null
@@ -15912,6 +15961,61 @@ export default function CreditFactoryConsole({
                           </div>
                         </div>
                       </fieldset>
+                      {canCorrectStepTwoInstallments ? (
+                        <details
+                          className={`${stepFourStyles.adminOption} mt-4`}
+                          data-testid="step-two-signed-installment-correction"
+                        >
+                          <summary>
+                            <SquarePen aria-hidden="true" />
+                            <span><strong>Editar cuotas</strong><small>Solo administrador central · Requiere nueva firma</small></span>
+                            <ChevronRight className={stepFourStyles.disclosureArrow} aria-hidden="true" />
+                          </summary>
+                          <div className={stepFourStyles.correctionForm}>
+                            <p className={stepFourStyles.correctionNotice}>
+                              El contrato actual se conserva en el historial. Se mantienen el valor del equipo y la inicial; el cliente debe firmar la nueva versión y se deberá cargar nuevamente la foto de remisión.
+                            </p>
+                            <fieldset disabled={signedTermsCorrectionBusy || creating || firmaSeguroImeiCorrecting || firmaSeguroSubmitting || firmaSeguroRefreshing} className="grid min-w-0 gap-4 md:grid-cols-2">
+                              <label className="grid gap-2 text-sm font-semibold">
+                                <span>Nuevo número de cuotas</span>
+                                <select
+                                  id="step-two-corrected-installments"
+                                  value={signedTermsCorrectionInstallments}
+                                  onChange={(event) => setSignedTermsCorrectionInstallments(event.target.value)}
+                                  className="fp-step2-control"
+                                >
+                                  {signedTermsCorrectionInstallmentOptions.map((option) => (
+                                    <option key={option} value={option}>{option} cuotas</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="grid gap-2 text-sm font-semibold">
+                                <span>Motivo de la corrección de cuotas</span>
+                                <input
+                                  value={signedTermsCorrectionReason}
+                                  onChange={(event) => setSignedTermsCorrectionReason(event.target.value.slice(0, 500))}
+                                  minLength={5}
+                                  maxLength={500}
+                                  placeholder="Motivo del cambio de plazo"
+                                  className="fp-step2-control"
+                                />
+                              </label>
+                              <p className="text-sm text-[var(--fp-muted)] md:col-span-2">
+                                La cuota se recalcula con las reglas vigentes al confirmar. No se envía el contrato automáticamente.
+                              </p>
+                              <Button
+                                type="button"
+                                onClick={() => void correctSignedFinancialTerms({ installmentsOnly: true })}
+                                disabled={signedTermsCorrectionInstallments === String(signedCreditRemission?.numeroCuotas) || signedTermsCorrectionReason.trim().length < 5 || !creditInstallmentOptions.includes(signedTermsCorrectionInstallments)}
+                                className="md:col-span-2"
+                              >
+                                {signedTermsCorrectionBusy ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RotateCcw className="h-4 w-4" aria-hidden="true" />}
+                                {signedTermsCorrectionBusy ? "Corrigiendo..." : "Corregir y exigir nueva firma"}
+                              </Button>
+                            </fieldset>
+                          </div>
+                        </details>
+                      ) : null}
                     </section>
                   </div>
 

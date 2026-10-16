@@ -234,6 +234,13 @@ marca; cuando no existe imagen del modelo se reutilizan los SVG de plataforma.
 La tabla de amortización comienza plegada. Los campos protegidos conservan el
 procedimiento de corrección y nueva firma.
 
+En Equipo y plan, el administrador central dispone de «Editar cuotas» cuando
+existe un contrato firmado vigente. El desplegable pide el nuevo número de cuotas
+y el motivo, conserva venta e inicial del contrato sellado y reutiliza la
+corrección contractual auditada. Confirmar conserva el contrato anterior y vuelve
+a Identidad y firma; no envía automáticamente el nuevo contrato. Los campos
+protegidos siguen bloqueados para la edición ordinaria y los demás perfiles.
+
 Equipo y plan y el Simulador de crédito comparten la propuesta grafito, la
 mascota animada independiente y el respaldo SVG del equipo. Las condiciones se
 consultan desde «Ver condiciones». La simulación conserva sus políticas y no
