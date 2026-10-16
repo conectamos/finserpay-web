@@ -1,6 +1,23 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const DAY = 86400000;
+type CollectionManagement = {id:string;managementStatus:string;resultCode?:string|null;agreementDate?:string|null;nextFollowUpAt:string};
+/** Portfolio labels do not replace the actual payment/agreement facts. */
+export function collectionPortfolioEligibility(enMora:boolean,history:readonly CollectionManagement[],now=new Date(),allowFollowup=false,followupCompleted=false) {
+  if(!enMora||history[0]?.resultCode==="PAGO_REALIZADO") return {suspended:true,followupFor:null as string|null};
+  // Keep a promise protected even if a subsequent attempt/manual entry changes
+  // its display status to Seguimiento, Sin respuesta, etc.
+  const agreement=history.find(event=>event.resultCode==="ACUERDO_PAGO"||event.managementStatus==="ACUERDO_PAGO");
+  if(!agreement) return {suspended:false,followupFor:null as string|null};
+  const day=agreement.agreementDate;
+  if(!day||!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day+"T15:00:00Z"))||new Date(day+"T15:00:00Z").toISOString().slice(0,10)!==day)
+    return {suspended:true,followupFor:null as string|null};
+  const scheduled=Date.parse(agreement.nextFollowUpAt);
+  if(followupCompleted&&day<=colombiaClock(now).day&&Number.isFinite(scheduled)&&scheduled<=+now)
+    return {suspended:false,followupFor:null as string|null};
+  const due=allowFollowup&&day<=colombiaClock(now).day&&Number.isFinite(scheduled)&&scheduled<=+now;
+  return {suspended:!due,followupFor:due?agreement.id:null};
+}
 export function colombiaClock(now: Date) {
   const local = new Date(now.getTime() - 5 * 3600000);
   return { day: local.toISOString().slice(0, 10), weekday: local.getUTCDay(), hour: local.getUTCHours(), minute: local.getUTCMinutes() };
