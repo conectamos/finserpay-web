@@ -7,7 +7,7 @@ import { matchWelcomeVoiceIdentity } from "@/lib/credit-welcome-voice-core";
 import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-document";
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { collectionCallKey } from "@/lib/dapta-collections-http";
-import { collectionCallingAllowed, collectionSlot, colombiaClock, collectionSessionToken, verifyCollectionSessionToken, nextCollectionDate } from "@/lib/collection-voice-policy";
+import { collectionCallingAllowed, collectionSlot, colombiaClock, collectionSessionToken, verifyCollectionSessionToken, nextCollectionDate, collectionPortfolioEligibility } from "@/lib/collection-voice-policy";
 
 type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;completedAt?:Date|null;managementId:string|null;followupFor:string|null;testCall:boolean;optOut:boolean;outcome:Record<string,unknown>|null};
 const secret=()=>process.env.FINSERPAY_COBRANZA_API_TOKEN||"";
@@ -57,9 +57,16 @@ async function activeSession(body:Record<string,unknown>) {
   return a;
 }
 async function financialContext(id:number,allowFollowup=false) {
-  const data=await getMoraManagement(id), latest=data.history[0];
-  const due=allowFollowup&&latest?.managementStatus==="ACUERDO_PAGO"&&latest.agreementDate&&latest.agreementDate<=colombiaClock(new Date()).day&&Date.parse(latest.nextFollowUpAt)<=Date.now();
-  return {...data,followupFor:due?latest.id:null,suspended:!data.credit.enMora||(latest?.managementStatus==="ACUERDO_PAGO"&&!due)||latest?.resultCode==="PAGO_REALIZADO"||["SOLUCIONADO","CERRADO"].includes(latest?.managementStatus||"")};
+  const data=await getMoraManagement(id);
+  const now=new Date();
+  const due=collectionPortfolioEligibility(data.credit.enMora,data.history,now,true);
+  if(due.followupFor) {
+    const completed=await prisma.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CollectionVoiceAttempt" WHERE "followupFor"=$1::uuid AND "contactedAt" IS NOT NULL AND NOT "testCall"`,due.followupFor);
+    // A completed follow-up must not exclude a still-overdue credit forever.
+    // It returns to ordinary selection, retaining daily contact/opt-out limits.
+    if(completed[0]?.n) return {...data,...collectionPortfolioEligibility(data.credit.enMora,data.history,now,true,true)};
+  }
+  return {...data,...collectionPortfolioEligibility(data.credit.enMora,data.history,now,allowFollowup)};
 }
 async function saveManagement(a:Attempt,result:"ACUERDO_PAGO"|"PAGO_REALIZADO"|"MEDIOS_PAGO"|"SIN_RESPUESTA"|"LLAMADA_INCOMPLETA",body:Record<string,unknown>,occurredAt?:Date) {
   if(!Number.isSafeInteger(actor())||actor()<1||!agent()) throw new Error("Responsable sin configurar");
