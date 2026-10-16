@@ -12,7 +12,11 @@ export function collectionPortfolioEligibility(enMora:boolean,history:readonly C
   const day=agreement.agreementDate;
   if(!day||!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day+"T15:00:00Z"))||new Date(day+"T15:00:00Z").toISOString().slice(0,10)!==day)
     return {suspended:true,followupFor:null as string|null};
-  const scheduled=Date.parse(agreement.nextFollowUpAt);
+  // The agreed day is authoritative. An unrelated auxiliary date must not
+  // postpone its follow-up; retain an explicit valid time on that same day.
+  const requested=Date.parse(agreement.nextFollowUpAt);
+  const sameDay=Number.isFinite(requested)&&colombiaClock(new Date(requested)).day===day&&collectionCallingAllowed(new Date(requested));
+  const scheduled=sameDay?requested:Date.parse(nextCollectionDate(new Date(Date.parse(day+"T15:00:00Z")-DAY),day));
   if(followupCompleted&&day<=colombiaClock(now).day&&Number.isFinite(scheduled)&&scheduled<=+now)
     return {suspended:false,followupFor:null as string|null};
   const due=allowFollowup&&day<=colombiaClock(now).day&&Number.isFinite(scheduled)&&scheduled<=+now;
@@ -46,9 +50,12 @@ export function collectionCallingAllowed(now: Date) {
 }
 export function collectionSlot(now: Date, immediate=false) {
   if(!collectionCallingAllowed(now)) return null;
-  const c=colombiaClock(now), hours=c.weekday===6?[8,10,14]:[10,14,17];
+  const c=colombiaClock(now), hours=c.weekday===6?[10,14]:[10,14,17];
   if(immediate) return c.day+"Tmanual";
-  return hours.includes(c.hour) && c.minute<10 ? c.day+"T"+String(c.hour).padStart(2,"0") : null;
+  // Keep draining the current batch until the next scheduled hour or closing.
+  // The persistent debtor/slot reservation prevents a second call in the batch.
+  const hour=hours.filter(h=>h<=c.hour).at(-1);
+  return hour===undefined?null:c.day+"T"+String(hour).padStart(2,"0");
 }
 export function nextCollectionDate(now: Date, requestedDay?: string) {
   if(requestedDay && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDay)) throw new Error("Fecha inválida");
