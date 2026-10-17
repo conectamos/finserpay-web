@@ -7,6 +7,7 @@ import {
   isVerifiedPendingSignatureStatus,
   isVerifiedTerminalDraftImeiRetry,
   isVerifiedTerminalSignatureFailure,
+  supportsPendingSignatureRecipientDelivery,
 } from "../lib/approval-operations-core.ts";
 import {
   isFirmaSeguroFailedStatus,
@@ -38,6 +39,7 @@ runInNewContext(compiled, {
       isVerifiedPendingSignatureStatus,
       isVerifiedTerminalDraftImeiRetry,
       isVerifiedTerminalSignatureFailure,
+      supportsPendingSignatureRecipientDelivery,
     };
     throw new Error(`Unexpected import: ${name}`);
   },
@@ -414,23 +416,27 @@ test("una solicitud firmada en entrega se puede buscar para corregir identidad s
   assert.equal(detail.timeline.some(event => event.label === "Identidad corregida; nueva firma requerida"), true);
 });
 
-test("una única firma pendiente de borrador habilita redirección solo mientras el envío sigue seguro", async () => {
+test("una única firma pendiente iPhone o Android habilita solo redirección mientras el envío sigue seguro", async () => {
   let unresolved = false;
   let status = "CREATED";
   let hasSignedDocument = false;
   let completedAt = null;
   let duplicateActive = false;
+  let platform = "IPHONE";
+  let draftState = "ABIERTO";
+  let step = 4;
+  let recipientCount = 1;
   const process = () => ({
     id: 30, processUuid: "20000000-0000-4000-8000-000000000002", status,
     draftPayload: { financialTermsSeal: { snapshot: {} } },
-    requestPayload: { signers: [{ number: "3218928117", email: "cliente@example.com" }] },
+    requestPayload: { signers: Array.from({ length: recipientCount }, () => ({ number: "3218928117", email: "cliente@example.com" })) },
     lastError: null, hasSignedDocument, createdAt: stamp, completedAt, supersededAt: null,
   });
   const db = { $queryRawUnsafe: async (sql, ...params) => {
     if (sql.includes('FROM "CreditoBorrador" draft')) return [{
-      id: 30, estado: "ABIERTO", currentStep: 4, clienteNombre: "Cliente",
+      id: 30, estado: draftState, currentStep: step, clienteNombre: "Cliente",
       clienteDocumento: "1052962070", clienteTelefono: "3218928117", clienteCorreo: "cliente@example.com",
-      imei: "358015864286170", plataforma: "IPHONE",
+      imei: "358015864286170", plataforma: platform,
       payload: { referenciaEquipo: "iPhone" },
       createdAt: stamp, updatedAt: stamp, expiresAt: "2030-01-01T00:00:00.000Z",
     }];
@@ -444,10 +450,34 @@ test("una única firma pendiente de borrador habilita redirección solo mientras
     throw new Error(`Unexpected SQL: ${sql}`);
   } };
 
-  const ready = await read.getOperationalCase("DRAFT", "30", db);
-  assert.equal(ready.signature.status, "PENDING");
-  assert.equal(ready.capabilities.canRedirectPendingSignature, true);
-  assert.equal(ready.capabilities.pendingSignatureRedirectReason, null);
+  for (platform of ["IPHONE", "APPLE", "ANDROID", " android "]) {
+    const ready = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(ready.signature.status, "PENDING");
+    assert.equal(ready.capabilities.canRedirectPendingSignature, true, platform);
+    assert.equal(ready.capabilities.pendingSignatureRedirectReason, null);
+    assert.equal(ready.capabilities.signatureReason, null);
+    assert.equal(ready.capabilities.canChangeImei, false);
+    assert.equal(ready.capabilities.canUpdateContact, false);
+    assert.equal(ready.capabilities.canResendSignature, false);
+    assert.equal(ready.capabilities.canSendSignature, false);
+    assert.equal(ready.capabilities.canDispatchSignatureWithImei, false);
+  }
+  platform = "DESCONOCIDA";
+  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, false);
+  platform = "ANDROID";
+  for (draftState of ["CERRADO", "ANULADO"]) {
+    assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, false);
+  }
+  draftState = "ABIERTO";
+  for (step of [2, 5]) {
+    assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, false);
+  }
+  step = 4;
+  recipientCount = 2;
+  const multipleSigners = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(multipleSigners.capabilities.canRedirectPendingSignature, false);
+  assert.match(multipleSigners.capabilities.signatureReason, /único firmante/);
+  recipientCount = 1;
 
   unresolved = true;
   const dispatching = await read.getOperationalCase("DRAFT", "30", db);
@@ -461,6 +491,9 @@ test("una única firma pendiente de borrador habilita redirección solo mientras
   const signed = await read.getOperationalCase("DRAFT", "30", db);
   assert.equal(signed.signature.status, "SIGNED");
   assert.equal(signed.capabilities.canRedirectPendingSignature, false);
+  assert.equal(signed.capabilities.canChangeImei, false, "Android firmado no habilita la corrección de IMEI iPhone");
+  assert.equal(signed.capabilities.canUpdateContact, false, "la edición contractual sigue protegida");
+  assert.equal(signed.capabilities.canResendSignature, false, "no habilita crear otra versión de contrato Android");
 
   hasSignedDocument = false;
   completedAt = null;

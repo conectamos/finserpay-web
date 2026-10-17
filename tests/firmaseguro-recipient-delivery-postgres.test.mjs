@@ -9,7 +9,7 @@ class ProviderError extends Error { constructor(status) { super("Provider reques
 class RecipientProviderError extends Error {
   constructor(code) { super("Provider signer cannot be verified"); this.code = code; this.status = 409; }
 }
-async function fixture(t) {
+async function fixture(t, platform = "IPHONE") {
   const database = new PGlite();
   t.after(() => database.close());
   const processUuid = randomUUID();
@@ -25,6 +25,7 @@ async function fixture(t) {
       "createdAt" TIMESTAMP,"requestPayload" JSONB,"draftPayload" JSONB);
     INSERT INTO "CreditoBorrador" VALUES (22,'ABIERTO',NULL,4,'2100-01-01',CURRENT_TIMESTAMP,'IPHONE','{}');`);
   await database.query(`UPDATE "CreditoBorrador" SET "payload"=$1 WHERE "id"=22`, [sourcePayload]);
+  await database.query(`UPDATE "CreditoBorrador" SET "plataforma"=$1 WHERE "id"=22`, [platform]);
   await database.query(`INSERT INTO "FirmaSeguroProcess" VALUES (1,$1,22,NULL,'CREATED',NULL,NULL,NULL,NULL,CURRENT_TIMESTAMP,$2,$3)`,
     [processUuid, requestPayload, sourcePayload]);
   function adapter(connection) {
@@ -109,6 +110,61 @@ test("edita y reenvía el mismo firmante; conserva proceso, documento y todos lo
   assert.deepEqual((await f.database.query(`SELECT "payload" FROM "CreditoBorrador" WHERE "id"=22`)).rows[0].payload, f.sourcePayload);
   const events = (await f.database.query(`SELECT "status" FROM "FirmaSeguroRecipientDeliveryEvent" ORDER BY "id"`)).rows.map(x => x.status);
   assert.deepEqual(events, ["PREPARING", "EDITING", "RECIPIENT_UPDATED", "RESENDING", "RESENT"]);
+});
+
+test("Android cambia solo el destinatario y reenvía el documento pendiente con un único acuse durable", async t => {
+  const f = await fixture(t, " android ");
+  const beforeProcess = (await f.database.query('SELECT * FROM "FirmaSeguroProcess"')).rows;
+  const beforeDraft = (await f.database.query('SELECT * FROM "CreditoBorrador"')).rows;
+  const result = await f.run();
+  assert.equal(result.status, "RESENT");
+  assert.equal(result.processUuid, f.input.processUuid);
+  assert.equal(result.notificationChannel, "EMAIL");
+  assert.equal(result.deliveryStatus, "UNCONFIRMED");
+  assert.equal(result.sentPhone, f.input.phone);
+  assert.equal(f.calls.edit.length, 1);
+  assert.equal(f.calls.edit[0].uuid, f.input.processUuid);
+  assert.equal(f.calls.edit[0].signature_id, 901);
+  assert.deepEqual(f.calls.resend, [901]);
+  assert.deepEqual((await f.database.query('SELECT * FROM "FirmaSeguroProcess"')).rows, beforeProcess);
+  assert.deepEqual((await f.database.query('SELECT * FROM "CreditoBorrador"')).rows, beforeDraft);
+  assert.equal((await f.run()).status, "RESENT");
+  assert.equal(f.calls.edit.length, 1);
+  assert.deepEqual(f.calls.resend, [901]);
+  const row = await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id);
+  assert.equal(row.actorUserId, f.input.actor.id);
+  assert.equal(row.reason, f.input.reason);
+  assert.equal(row.processUuid, f.input.processUuid);
+  assert.equal(row.signatureId, 901);
+});
+
+test("Android rechaza firma completada, solicitud cerrada, proceso ambiguo y plataforma desconocida sin enviar", async t => {
+  const f = await fixture(t, "ANDROID");
+  await f.database.exec('UPDATE "FirmaSeguroProcess" SET "completedAt"=CURRENT_TIMESTAMP');
+  await assert.rejects(f.run(), { code: "SIGNATURE_ALREADY_COMPLETED" });
+  await f.database.exec('UPDATE "FirmaSeguroProcess" SET "completedAt"=NULL,"signedDocumentBase64"=\'JVBERi0=\'');
+  await assert.rejects(f.run(), { code: "SIGNATURE_ALREADY_COMPLETED" });
+  await f.database.exec('UPDATE "FirmaSeguroProcess" SET "signedDocumentBase64"=NULL,"status"=\'REJECTED\'');
+  await assert.rejects(f.run(), { code: "SIGNATURE_NOT_PENDING" });
+  await f.database.exec('UPDATE "FirmaSeguroProcess" SET "status"=\'CREATED\'');
+  await f.database.exec('UPDATE "CreditoBorrador" SET "estado"=\'CERRADO\'');
+  await assert.rejects(f.run(), { code: "DRAFT_NOT_AVAILABLE" });
+  await f.database.exec('UPDATE "CreditoBorrador" SET "estado"=\'ABIERTO\',"currentStep"=5');
+  await assert.rejects(f.run(), { code: "DRAFT_NOT_AVAILABLE" });
+  await f.database.exec('UPDATE "CreditoBorrador" SET "currentStep"=4,"creditoId"=101');
+  await assert.rejects(f.run(), { code: "DRAFT_NOT_AVAILABLE" });
+  await f.database.exec('UPDATE "CreditoBorrador" SET "creditoId"=NULL,"plataforma"=\'DESCONOCIDA\'');
+  await assert.rejects(f.run(), { code: "PLATFORM_NOT_SUPPORTED" });
+  await f.database.exec('UPDATE "CreditoBorrador" SET "plataforma"=\'ANDROID\'');
+  f.provider.unresolved = true;
+  await assert.rejects(f.run(), { code: "SIGNATURE_PENDING" });
+  f.provider.unresolved = false;
+  await f.database.query('INSERT INTO "FirmaSeguroProcess" ("id","processUuid","draftId","status","createdAt") VALUES (2,$1,22,\'CREATED\',CURRENT_TIMESTAMP)', [randomUUID()]);
+  await assert.rejects(f.run(), { code: "PROCESS_CHANGED" });
+  assert.equal(f.calls.edit.length, 0);
+  assert.equal(f.calls.resend.length, 0);
+  assert.equal(f.calls.auth, 0);
+  assert.equal((await f.database.query('SELECT COUNT(*)::int AS count FROM "FirmaSeguroRecipientDelivery"')).rows[0].count, 0);
 });
 
 test("el replay durable no vuelve a editar ni reenviar incluso si el cliente ya firmó", async t => {
