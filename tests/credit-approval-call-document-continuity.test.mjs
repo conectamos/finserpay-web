@@ -163,6 +163,64 @@ test("el primer PDF recuperado conserva el audio inmutable y su cadena válida d
     assert.equal(pending.review.status, "PENDING");
   });
 
+  await t.test("la primera lectura después de foto, PDF y dos invalidaciones por novedad recupera el audio", async () => {
+    const { id, processUuid } = await f.createCredit();
+    const uploaded = await f.upload(id);
+    const recordingId = uploaded.state.recording.id;
+    const original = await f.physical(recordingId);
+    await f.replacePhoto(id, "cédula-antes-del-PDF", "cedula-frente");
+    const corrected = await f.read(id);
+    assert.equal(corrected.review.revision, 3);
+    await f.recoverPdf(id, processUuid, { read: false });
+    const novelty = await f.reportNoveltyWithoutReading(id);
+    assert.equal(novelty.sourceRevision, 4);
+    assert.equal(novelty.currentRevision, 6);
+    assert.equal((await mappings(id)).length, 0, "ninguna lectura intermedia reparó la revisión del PDF");
+    const revisions = (await f.database.query(`SELECT "revision","reason" FROM "CreditApprovalEvent"
+      WHERE "creditoId"=$1 AND "revision">3 ORDER BY "revision"`, [id])).rows;
+    assert.deepEqual(revisions.map(({ revision, reason }) => [revision, reason]), [
+      [4, "SIGNED_DOCUMENT_CHANGED"], [5, "NOVELTY_CHANGED"], [6, "NOVELTY_CHANGED"],
+    ]);
+    const current = await f.read(id);
+    assertVisibleAudio(current, recordingId);
+    assert.equal(current.review.revision, 6);
+    assert.equal(current.review.status, "PENDING");
+    assert.equal(current.novelties.blocksApproval, true);
+    assert.equal(current.canApprove, false, "conservar la grabación no resuelve ni aprueba la novedad");
+    const [link] = await mappings(id);
+    assert.equal(link.sourceRevision, 3);
+    assert.equal(link.targetRevision, 4, "el vínculo describe la transición documental real y no inventa una revisión 5→6");
+    assert.equal(link.targetReviewHash, current.review.reviewHash);
+    assert.deepEqual(await f.physical(recordingId), original);
+    assertVisibleAudio(await f.read(id), recordingId);
+    assert.equal((await mappings(id)).length, 1, "las lecturas posteriores conservan el mismo vínculo histórico");
+  });
+
+  for (const [label, mutation] of [
+    ["valor financiero", id => f.database.query('UPDATE "Credito" SET "saldoBaseFinanciado"="saldoBaseFinanciado"+1000 WHERE "id"=$1', [id])],
+    ["contacto", id => f.database.query('UPDATE "Credito" SET "clienteTelefono"=$2 WHERE "id"=$1', [id, "3119876543"])],
+    ["evidencia sin corrección auditada", id => f.database.query('UPDATE "Credito" SET "fotoEntregaDataUrl"=$2 WHERE "id"=$1', [id,
+      "data:image/png;base64," + Buffer.from("imagen sintética diferente").toString("base64")])],
+    ["evaluación DataCrédito", id => f.database.query('UPDATE "DataCreditoAssessment" SET "score"=730,"updatedAt"=CURRENT_TIMESTAMP WHERE "creditId"=$1', [id])],
+    ["otra versión del PDF", async (id, processUuid) => f.recoverPdf(id, processUuid, { read: false,
+      pdf: Buffer.from(Buffer.from(pdf, "base64").toString() + "\n% different PDF after novelty tail").toString("base64") })],
+    ["fase de firma", id => f.database.query('UPDATE "FirmaSeguroProcess" SET "status"=\'PENDING\',"completedAt"=NULL WHERE "creditoId"=$1', [id])],
+  ]) await t.test(`una cola de novedades con cambio de ${label} no restaura audio previo`, async () => {
+    const { id, processUuid } = await f.createCredit();
+    const uploaded = await f.upload(id);
+    const original = await f.physical(uploaded.state.recording.id);
+    await f.replacePhoto(id, "cédula-antes-de-cola", "cedula-frente");
+    await f.recoverPdf(id, processUuid, { read: false });
+    await f.reportNoveltyWithoutReading(id);
+    assert.equal((await mappings(id)).length, 0);
+    await mutation(id, processUuid);
+    const changed = await f.read(id);
+    assert.equal(changed.callRecording.recording, null);
+    assert.equal((await mappings(id)).length, 0, "la cola dejó de ser una transición puramente administrativa");
+    assert.equal(changed.canApprove, false);
+    assert.deepEqual(await f.physical(uploaded.state.recording.id), original);
+  });
+
   await t.test("la última grabación B gana aunque A existiera al iniciar la descarga", async () => {
     const { id, processUuid } = await f.createCredit();
     const first = await f.upload(id, "A");
