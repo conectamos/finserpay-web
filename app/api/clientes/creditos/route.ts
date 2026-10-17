@@ -13,6 +13,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
+  const headers = { "Cache-Control": "private, no-store, max-age=0" };
   try {
     const { searchParams } = new URL(req.url);
     const documento = sanitizeSearch(searchParams.get("documento"));
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
     if (!documento || documento.length < 5) {
       return NextResponse.json(
         { error: "Ingresa un numero de cedula valido" },
-        { status: 400 }
+        { status: 400, headers }
       );
     }
 
@@ -161,11 +162,15 @@ export async function GET(req: Request) {
       };
     });
 
-    const hasMora = items.some((credit) => credit.estadoPago === "MORA");
-    const [activeMoraExemption, activeCreditExceptions] = hasMora
+    const eligibleCreditIds = new Set(items
+      .filter((credit) => credit.estadoPago !== "PAGADO"
+        && credit.saldoPendiente > 0
+        && !credit.pazYSalvoEmitidoAt)
+      .map((credit) => credit.id));
+    const [activeMoraExemption, activeCreditExceptions] = eligibleCreditIds.size
       ? await Promise.all([
           getActiveMoraBlockExemptionByDocument(documento),
-          getActiveMoraExceptionsByCreditIds(items.map(credit => credit.id)),
+          getActiveMoraExceptionsByCreditIds([...eligibleCreditIds]),
         ])
       : [null, new Map()];
 
@@ -175,7 +180,7 @@ export async function GET(req: Request) {
         withCreditDisplayNumber(
           {
             ...credit,
-            prorrogaMora: credit.estadoPago === "MORA"
+            prorrogaMora: eligibleCreditIds.has(credit.id)
               ? activeCreditExceptions.has(credit.id)
                 ? { hasta: activeCreditExceptions.get(credit.id)!.fechaFin?.toISOString() ?? null }
                 : activeMoraExemption
@@ -186,12 +191,12 @@ export async function GET(req: Request) {
           displayNumbers
         )
       ),
-    });
+    }, { headers });
   } catch (error) {
     console.error("ERROR CONSULTA CLIENTE CREDITOS:", error);
     return NextResponse.json(
       { error: "No se pudo consultar el estado del credito" },
-      { status: 500 }
+      { status: 500, headers }
     );
   }
 }

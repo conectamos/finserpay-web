@@ -156,7 +156,7 @@ export default function ClientActiveCreditDashboard({
         <p className={`${styles.status} ${overdue ? styles.statusOverdue : ""}`} role="status">
           <span aria-hidden="true" />{statusLabel}
         </p>
-        {overdue && extensionNotice ? (
+        {extensionNotice ? (
           <StatusPill tone="warning" className={styles.extensionNotice} role="status">
             {extensionNotice}
           </StatusPill>

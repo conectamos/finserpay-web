@@ -39,10 +39,10 @@ function credit(id) {
   };
 }
 
-function clientApi({ statuses, exemption, creditExceptions = new Map() }) {
+function clientApi({ statuses, exemption, creditExceptions = new Map(), balances = [], settledIds = [], queryError = null }) {
   const calls = { agreements: [], creditExceptions: [], creditQueries: [] };
   const NextResponse = {
-    json: (body, options = {}) => ({ body, status: options.status ?? 200 }),
+    json: (body, options = {}) => ({ body, status: options.status ?? 200, headers: new Headers(options.headers) }),
   };
   const { GET } = functionsFrom("app/api/clientes/creditos/route.ts", ["GET"], {
     NextResponse,
@@ -52,7 +52,11 @@ function clientApi({ statuses, exemption, creditExceptions = new Map() }) {
       credito: {
         findMany: async (query) => {
           calls.creditQueries.push(query);
-          return statuses.map((_, index) => credit(index + 1));
+          if (queryError) throw queryError;
+          return statuses.map((_, index) => ({
+            ...credit(index + 1),
+            pazYSalvoEmitidoAt: settledIds.includes(index + 1) ? new Date("2026-10-16T17:00:00.000Z") : null,
+          }));
         },
       },
     },
@@ -60,7 +64,7 @@ function clientApi({ statuses, exemption, creditExceptions = new Map() }) {
     withCreditDisplayNumber: (item) => ({ ...item, numeroCreditoVisible: item.folio }),
     buildCreditPaymentPlan: ({ montoCredito }) => ({
       estadoPago: statuses[montoCredito - 1],
-      saldoPendiente: montoCredito * 100,
+      saldoPendiente: balances[montoCredito - 1] ?? montoCredito * 100,
       totalPaid: 0,
       installments: [{ numero: 1, saldoPendiente: montoCredito * 100 }],
     }),
@@ -80,6 +84,7 @@ function clientApi({ statuses, exemption, creditExceptions = new Map() }) {
       calls.creditExceptions.push([...ids]);
       return creditExceptions;
     },
+    console: { error() {} },
   });
   return { GET, calls };
 }
@@ -87,7 +92,7 @@ function clientApi({ statuses, exemption, creditExceptions = new Map() }) {
 const request = () => new Request("https://example.test/api/clientes/creditos?documento=1234567890");
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-test("el cliente conserva la mora y muestra la fecha real solo en créditos vencidos con acuerdo", async () => {
+test("el acuerdo vigente se muestra con saldo pendiente tanto al día como en mora sin alterar saldos", async () => {
   const hasta = "2026-10-10T23:59:59.999Z";
   const { GET, calls } = clientApi({
     statuses: ["MORA", "AL_DIA", "PAGADO"],
@@ -97,10 +102,12 @@ test("el cliente conserva la mora y muestra la fecha real solo en créditos venc
   const items = plain(response.body.items);
 
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store, max-age=0");
   assert.deepEqual(calls.agreements, ["1234567890"]);
+  assert.deepEqual(calls.creditExceptions, [[1, 2]]);
   assert.deepEqual(items.map((item) => item.estadoPago), ["MORA", "AL_DIA", "PAGADO"]);
   assert.deepEqual(items.map((item) => item.saldoPendiente), [100, 200, 300]);
-  assert.deepEqual(items.map((item) => item.prorrogaMora), [{ hasta }, null, null]);
+  assert.deepEqual(items.map((item) => item.prorrogaMora), [{ hasta }, { hasta }, null]);
   assert.equal("motivo" in items[0], false);
   assert.equal("documento" in items[0].prorrogaMora, false);
 });
@@ -121,6 +128,54 @@ test("la excepción nueva se limita al crédito aprobado aunque comparta cédula
   assert.deepEqual(calls.creditExceptions, [[1, 2]]);
 });
 
+test("una excepción aprobada se consulta y publica aunque ningún crédito esté en mora", async () => {
+  const hasta = new Date("2026-10-21T23:59:59.999-05:00");
+  const { GET, calls } = clientApi({
+    statuses: ["AL_DIA", "AL_DIA"],
+    exemption: null,
+    creditExceptions: new Map([[2, { fechaFin: hasta, type: "EXCEPCION", motivo: "Privado" }]]),
+  });
+  const response = await GET(request());
+
+  assert.deepEqual(calls.creditExceptions, [[1, 2]]);
+  assert.deepEqual(calls.agreements, ["1234567890"]);
+  assert.deepEqual(plain(response.body.items.map((item) => item.prorrogaMora)), [null, { hasta: hasta.toISOString() }]);
+  assert.deepEqual(plain(response.body.items.map((item) => item.estadoPago)), ["AL_DIA", "AL_DIA"]);
+  assert.deepEqual(plain(response.body.items.map((item) => item.saldoPendiente)), [100, 200]);
+});
+
+test("no consulta ni publica acuerdos de créditos pagados, sin saldo o con paz y salvo", async () => {
+  const { GET, calls } = clientApi({
+    statuses: ["PAGADO", "AL_DIA", "MORA", "AL_DIA"],
+    balances: [100, 0, -1, 400],
+    settledIds: [4],
+    exemption: { fechaFin: null },
+    creditExceptions: new Map([1, 2, 3, 4].map((id) => [id, { fechaFin: null, type: "EXCEPCION" }])),
+  });
+  const response = await GET(request());
+
+  assert.deepEqual(calls.creditExceptions, []);
+  assert.deepEqual(calls.agreements, []);
+  assert.deepEqual(plain(response.body.items.map((item) => item.prorrogaMora)), [null, null, null, null]);
+});
+
+test("sólo consulta IDs elegibles y el acuerdo por crédito prevalece sobre el legado", async () => {
+  const hasta = new Date("2026-10-21T23:59:59.999-05:00");
+  const { GET, calls } = clientApi({
+    statuses: ["MORA", "AL_DIA", "PAGADO", "MORA", "AL_DIA"],
+    balances: [100, 200, 0, 0, 500],
+    settledIds: [5],
+    exemption: { fechaFin: hasta },
+    creditExceptions: new Map([2, 3, 4, 5].map((id) => [id, { fechaFin: null, type: "EXCEPCION" }])),
+  });
+  const response = await GET(request());
+
+  assert.deepEqual(calls.creditExceptions, [[1, 2]]);
+  assert.deepEqual(plain(response.body.items.map((item) => item.prorrogaMora)), [
+    { hasta: hasta.toISOString() }, { hasta: null }, null, null, null,
+  ]);
+});
+
 test("un acuerdo vigente sin fecha final conserva hasta nulo", async () => {
   const { GET } = clientApi({ statuses: ["MORA"], exemption: { fechaFin: null } });
   const response = await GET(request());
@@ -139,16 +194,30 @@ test("la excepción directa del administrador sin vencimiento conserva la mora y
   assert.deepEqual(plain(response.body.items.map(item => item.estadoPago)), ["MORA", "MORA"]);
 });
 
-test("sin acuerdo activo o sin mora no se anuncia prórroga", async () => {
+test("sin acuerdo activo no se anuncia prórroga en créditos al día ni en mora", async () => {
   const overdue = clientApi({ statuses: ["MORA"], exemption: null });
-  const current = clientApi({ statuses: ["AL_DIA"], exemption: { fechaFin: new Date("2026-10-10T23:59:59.999Z") } });
+  const current = clientApi({ statuses: ["AL_DIA"], exemption: null });
   const overdueResponse = await overdue.GET(request());
   const currentResponse = await current.GET(request());
 
   assert.equal(overdueResponse.body.items[0].prorrogaMora, null);
   assert.equal(currentResponse.body.items[0].prorrogaMora, null);
   assert.deepEqual(overdue.calls.agreements, ["1234567890"]);
-  assert.deepEqual(current.calls.agreements, []);
+  assert.deepEqual(current.calls.agreements, ["1234567890"]);
+});
+
+test("errores de validación y consulta también impiden almacenar perfiles en caché", async () => {
+  const invalid = clientApi({ statuses: [], exemption: null });
+  const invalidResponse = await invalid.GET(new Request("https://example.test/api/clientes/creditos?documento=1"));
+  const failed = clientApi({ statuses: [], exemption: null, queryError: new Error("Consulta fallida") });
+  const failedResponse = await failed.GET(request());
+
+  assert.equal(invalidResponse.status, 400);
+  assert.equal(failedResponse.status, 500);
+  assert.deepEqual(invalid.calls.creditQueries, []);
+  for (const response of [invalidResponse, failedResponse]) {
+    assert.equal(response.headers.get("Cache-Control"), "private, no-store, max-age=0");
+  }
 });
 
 test("la consulta compartida usa cédula normalizada y descarta acuerdos inactivos o vencidos", async () => {

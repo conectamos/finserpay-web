@@ -54,6 +54,7 @@ type PanelCredit = {
   estadoPago: "PAGADO" | "AL_DIA" | "MORA";
   saldoPendiente: number;
   totalPagado: number;
+  pazYSalvoEmitidoAt?: string | null;
   cuotas: PanelInstallment[];
   abonos: PanelPayment[];
   liquidacionAnticipada?: {
@@ -273,7 +274,8 @@ export default function ClientCreditPanel({
       <div className={styles.content}>
         <div className={styles.creditIdentity}>
           <p className="text-sm text-[var(--fp-muted)]">Crédito <strong className="text-[var(--fp-graphite)]">{creditDisplayNumber(credit)}</strong></p>
-          {credit.estadoPago === "MORA" && extensionNotice ? (
+          {credit.estadoPago !== "PAGADO" && !credit.pazYSalvoEmitidoAt &&
+            credit.saldoPendiente > 0 && extensionNotice ? (
             <StatusPill tone="warning" className={styles.extensionNotice} role="status">
               {extensionNotice}
             </StatusPill>

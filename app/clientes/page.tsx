@@ -141,7 +141,8 @@ const prorrogaDateFormatter = new Intl.DateTimeFormat("es-CO", {
 });
 
 function prorrogaMoraNotice(credit: ClientCredit | null) {
-  if (credit?.estadoPago !== "MORA" || !credit.prorrogaMora) return null;
+  if (!credit || credit.estadoPago === "PAGADO" || credit.pazYSalvoEmitidoAt ||
+    credit.saldoPendiente <= 0 || !credit.prorrogaMora) return null;
   if (!credit.prorrogaMora.hasta) return "Prórroga activa sin fecha límite";
 
   const until = parseColombiaDate(credit.prorrogaMora.hasta);

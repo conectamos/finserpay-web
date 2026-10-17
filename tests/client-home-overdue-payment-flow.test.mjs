@@ -268,7 +268,7 @@ test("la prórroga activa muestra mora y su fecha Colombia sin alterar el pago v
   assert.ok(textContent(flow.dialog()).includes(money(411_000)));
 });
 
-test("la prórroga sin fecha límite se muestra solo durante mora; sin prórroga sigue Pago pendiente", () => {
+test("la prórroga sin fecha límite se muestra también AL_DIA sin cambiar estado ni pago; sin autorización no aparece", () => {
   const withoutDate = harness({ ...fixture(), prorrogaMora: { hasta: null } });
   assert.equal(withoutDate.dashboard().extensionNotice, "Prórroga activa sin fecha límite");
   assert.match(textContent(renderHome(withoutDate.dashboard())), /Prórroga activa sin fecha límite/);
@@ -281,10 +281,33 @@ test("la prórroga sin fecha límite se muestra solo durante mora; sin prórroga
   withoutExtension.render();
   assert.doesNotMatch(textContent(renderPanel(withoutExtension.panel())), /Prórroga activa/);
 
-  const current = harness({ ...fixture({ today: "2026-08-17" }), prorrogaMora: { hasta: null } });
+  const currentCredit = fixture({ today: "2026-08-17" });
+  const current = harness({ ...currentCredit, prorrogaMora: { hasta: null } });
   assert.equal(current.dashboard().statusLabel, "Crédito al día");
-  assert.equal(current.dashboard().extensionNotice, null);
-  assert.doesNotMatch(textContent(renderHome(current.dashboard())), /Prórroga activa/);
+  assert.equal(current.dashboard().statusTone, "current");
+  assert.equal(current.dashboard().extensionNotice, "Prórroga activa sin fecha límite");
+  assert.equal(current.dashboard().nextInstallment.amount, 137_000);
+  assert.equal(current.dashboard().nextInstallment.dueDate, "2026-08-17");
+  assert.equal(current.dashboard().overduePayment, null);
+  assert.match(textContent(renderHome(current.dashboard())), /Prórroga activa sin fecha límite/);
+  current.dashboard().onOpenPlan();
+  current.render();
+  assert.equal(current.panel().credit.estadoPago, "AL_DIA");
+  assert.equal(current.panel().credit.saldoPendiente, currentCredit.saldoPendiente);
+  assert.deepEqual(current.panel().credit.cuotas, currentCredit.cuotas);
+  assert.match(textContent(renderPanel(current.panel())), /Prórroga activa sin fecha límite/);
+  current.dashboard().onPayInstallment();
+  current.render();
+  assert.equal(current.states.selectedLimit[currentCredit.id], 1);
+  assert.ok(textContent(current.dialog()).includes(money(137_000)));
+
+  const currentWithoutExtension = harness({ ...currentCredit, prorrogaMora: null });
+  assert.equal(currentWithoutExtension.dashboard().statusLabel, "Crédito al día");
+  assert.equal(currentWithoutExtension.dashboard().extensionNotice, null);
+  assert.doesNotMatch(textContent(renderHome(currentWithoutExtension.dashboard())), /Prórroga activa/);
+  currentWithoutExtension.dashboard().onOpenPlan();
+  currentWithoutExtension.render();
+  assert.doesNotMatch(textContent(renderPanel(currentWithoutExtension.panel())), /Prórroga activa/);
 
   const paid = harness({ ...fixture({ settled: true }), prorrogaMora: { hasta: null } });
   assert.equal(paid.dashboard(), undefined, "Un crédito pagado conserva su vista finalizada");
