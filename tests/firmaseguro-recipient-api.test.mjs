@@ -9,7 +9,7 @@ const source = await readFile(new URL("../lib/firmaseguro.ts", import.meta.url),
 function fixture(reply = () => Response.json({ ok: true })) {
   const requests = [];
   const exports = runInNewContext(stripTypeScriptTypes(source.replace(/^export /gm, "")) +
-    "\n({ firmaSeguroEditSignature, firmaSeguroResendSignature, firmaSeguroGetSignaturesStatus, firmaSeguroGetProcessStatus, extractFirmaSeguroStatus, isFirmaSeguroCompletedStatus });", {
+    "\n({ firmaSeguroEditSignature, firmaSeguroResendSignature, firmaSeguroGetSignaturesStatus, firmaSeguroGetProcessStatus, firmaSeguroGetDocumentsByUuid, firmaSeguroGetAuraQuanticDocumentByUuid, firmaSeguroGetDocumentByUuid, extractFirmaSeguroSignedDocument, extractFirmaSeguroStatus, isFirmaSeguroCompletedStatus });", {
     Buffer, URL, AbortSignal,
     console: { error() {} },
     process: { env: { FIRMASEGURO_BASE_URL: "https://firmaseguro.example.test" } },
@@ -136,6 +136,42 @@ test("consulta firmantes solo en el UUID del proceso vigente", async () => {
   assert.equal(api.requests[0].url,
     `https://firmaseguro.example.test/api/v2/Signature/get-signatures-status/${contactEdit.uuid}`);
   assert.equal(api.requests[0].method, "GET");
+});
+
+test("las descargas del mismo documento respetan el límite de consulta sin reenviar ni crear firma", async () => {
+  for (const [method, path] of [
+    ["firmaSeguroGetDocumentsByUuid", "ByUUID/"],
+    ["firmaSeguroGetAuraQuanticDocumentByUuid", "get-document-aura-quantic/"],
+    ["firmaSeguroGetDocumentByUuid", ""],
+  ]) {
+    const api = fixture();
+    await api[method](contactEdit.uuid, "fixture-token", { timeoutMs: 20_000 });
+    assert.equal(api.requests.length, 1);
+    const request = api.requests[0];
+    assert.equal(request.url, `https://firmaseguro.example.test/api/v2/Document/${path}${contactEdit.uuid}`);
+    assert.equal(request.method, "GET");
+    assert.equal(request.body, undefined);
+    assert.ok(request.signal instanceof AbortSignal);
+    assert.equal(request.headers.Authorization, "Bearer fixture-token");
+    assert.equal(request.cache, "no-store");
+  }
+});
+
+test("una descarga con HTTP 504 conserva el fallo y permite consultar después el mismo PDF", async () => {
+  const signedPdf = Buffer.from("%PDF-1.7\nExisting signed contract\n%%EOF").toString("base64");
+  let available = false;
+  const api = fixture(() => available
+    ? Response.json({ base64String: signedPdf, fileName: "signed.pdf" })
+    : Response.json({ error: "Gateway timeout" }, { status: 504 }));
+  await assert.rejects(api.firmaSeguroGetDocumentsByUuid(contactEdit.uuid, "fixture-token", { timeoutMs: 20_000 }),
+    error => error.name === "FirmaSeguroApiError" && error.status === 504);
+  assert.equal(api.requests.length, 1);
+  available = true;
+  const result = await api.firmaSeguroGetDocumentsByUuid(contactEdit.uuid, "fixture-token", { timeoutMs: 20_000 });
+  assert.equal(api.extractFirmaSeguroSignedDocument(result).base64, signedPdf);
+  assert.equal(api.requests.length, 2);
+  assert.equal(api.requests[0].url, api.requests[1].url);
+  assert.ok(api.requests.every(request => request.method === "GET" && !request.body));
 });
 
 test("lee status_process real y refresca la firma vigente sin enviar otro contrato", async () => {

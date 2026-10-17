@@ -342,12 +342,13 @@ function redactBase64Payload(value: unknown): unknown {
   );
 }
 
-async function downloadFirmaSeguroSignedDocument(url: string) {
+async function downloadFirmaSeguroSignedDocument(url: string, options: { timeoutMs?: number } = {}) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/pdf,application/json,text/plain,*/*",
     },
     cache: "no-store",
+    ...(options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
   });
   const buffer = Buffer.from(await response.arrayBuffer());
   const contentType = response.headers.get("content-type") || "";
@@ -1352,8 +1353,13 @@ export async function createFirmaSeguroProcessForDraft(
 
 export async function refreshFirmaSeguroProcess(
   process: FirmaSeguroProcessRow,
-  options: { credito?: FirmaSeguroCredit | null } = {}
+  options: { credito?: FirmaSeguroCredit | null; synchronizeContractState?: boolean; providerTimeoutMs?: number } = {}
 ) {
+  // A nominal status/PDF consultation must not mutate contractual snapshots or
+  // reacquire the caller's draft operation lock through completion workflows.
+  if (options.synchronizeContractState === false && process.supersededAt) return process;
+  const requestOptions = options.providerTimeoutMs && Number.isFinite(options.providerTimeoutMs) && options.providerTimeoutMs > 0
+    ? { timeoutMs: Math.min(30_000, Math.max(1, Math.trunc(options.providerTimeoutMs))) } : {};
   // Signed historical versions stay immutable. A superseded terminal failure
   // may still receive a late provider-confirmed PDF, recorded separately from
   // the current credit snapshot and without reactivating that old process.
@@ -1364,14 +1370,16 @@ export async function refreshFirmaSeguroProcess(
     async (token) => {
       const statusPayload = await firmaSeguroGetProcessStatus(
         token,
-        process.processUuid
+        process.processUuid,
+        requestOptions
       );
       let signaturesPayload: unknown = null;
 
       try {
         signaturesPayload = await firmaSeguroGetSignaturesStatus(
           token,
-          process.processUuid
+          process.processUuid,
+          requestOptions
         );
       } catch (error) {
         if (isFirmaSeguroUnauthorizedError(error)) {
@@ -1459,7 +1467,7 @@ export async function refreshFirmaSeguroProcess(
 
         documentResult = await trySignedDocumentPayload(
           `Document/ByUUID public (${label})`,
-          () => firmaSeguroGetDocumentsByUuid(documentUuid)
+          () => firmaSeguroGetDocumentsByUuid(documentUuid, undefined, requestOptions)
         );
         documentInfo = documentResult?.info || documentInfo;
 
@@ -1471,7 +1479,7 @@ export async function refreshFirmaSeguroProcess(
           `Document/ByUUID autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetDocumentsByUuid(documentUuid, token)
+              firmaSeguroGetDocumentsByUuid(documentUuid, token, requestOptions)
             );
             return result;
           }
@@ -1486,7 +1494,7 @@ export async function refreshFirmaSeguroProcess(
           `Document Aura Quantic autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetAuraQuanticDocumentByUuid(documentUuid, token)
+              firmaSeguroGetAuraQuanticDocumentByUuid(documentUuid, token, requestOptions)
             );
             return result;
           }
@@ -1499,7 +1507,7 @@ export async function refreshFirmaSeguroProcess(
 
         documentResult = await trySignedDocumentPayload(
           `Document individual public (${label})`,
-          () => firmaSeguroGetDocumentByUuid(documentUuid)
+          () => firmaSeguroGetDocumentByUuid(documentUuid, undefined, requestOptions)
         );
         documentInfo = documentResult?.info || documentInfo;
 
@@ -1511,7 +1519,7 @@ export async function refreshFirmaSeguroProcess(
           `Document individual autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetDocumentByUuid(documentUuid, token)
+              firmaSeguroGetDocumentByUuid(documentUuid, token, requestOptions)
             );
             return result;
           }
@@ -1528,7 +1536,8 @@ export async function refreshFirmaSeguroProcess(
 
       if (!documentInfo.base64 && documentInfo.url) {
         const downloadedDocument = await downloadFirmaSeguroSignedDocument(
-          documentInfo.url
+          documentInfo.url,
+          requestOptions
         );
         signedDocumentBase64 =
           downloadedDocument.base64 || signedDocumentBase64;
@@ -1587,6 +1596,8 @@ export async function refreshFirmaSeguroProcess(
     lastError: documentDownloadError,
     completedAt,
   });
+
+  if (options.synchronizeContractState === false) return updated;
 
   // ACK may archive the process while this refresh is downloading the PDF.
   // The ordinary updater intentionally discards signed bytes on archived

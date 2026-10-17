@@ -828,6 +828,7 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
     const label = event.eventType === "CONTACT_UPDATED" ? event.status === "DATA_CORRECTED" ? "Datos corregidos"
       : event.status === "FINANCIAL_CORRECTED" ? "Condiciones corregidas"
       : event.status === "EVIDENCE_CORRECTED" ? "Evidencia corregida" : "Contacto actualizado"
+      : event.eventType === "SIGNATURE_STATUS_CHECKED" ? "Consulta del estado de FirmaSeguro"
       : event.eventType === "SIGNATURE_REQUESTED" ? "Preparación de nueva firma"
       : event.eventType === "IMEI_APPLIED" ? "Cambio de IMEI aplicado"
       : event.eventType === "IMEI_CORRECTED" ? "IMEI corregido"
