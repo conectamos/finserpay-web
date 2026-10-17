@@ -17,13 +17,27 @@ export default function PwaRegister() {
       return;
     }
 
-    const hadControllerAtMount = Boolean(navigator.serviceWorker.controller);
+    let hasHadController = Boolean(navigator.serviceWorker.controller);
     let registration: ServiceWorkerRegistration | null = null;
     let updateInterval: number | undefined;
     let disposed = false;
     let reloading = false;
+    let updatePending = false;
+
+    const tryReload = () => {
+      if (
+        disposed || reloading || !updatePending ||
+        document.visibilityState !== "visible" ||
+        !/^\/clientes(?:\/|$)/.test(window.location.pathname) ||
+        !document.querySelector('#cliente-dashboard[data-client-update-safe="true"]')
+      ) return;
+
+      reloading = true;
+      window.location.reload();
+    };
 
     const updateWorker = () => {
+      tryReload();
       registration?.update().catch((error) => {
         console.warn("No se pudo actualizar la app de FINSER PAY:", error);
       });
@@ -31,15 +45,20 @@ export default function PwaRegister() {
 
     const handleControllerChange = () => {
       if (
-        !hadControllerAtMount ||
+        disposed ||
         reloading ||
         !navigator.serviceWorker.controller
       ) {
         return;
       }
 
-      reloading = true;
-      window.location.reload();
+      if (!hasHadController) {
+        hasHadController = true;
+        return;
+      }
+
+      updatePending = true;
+      tryReload();
     };
 
     const handleVisibilityChange = () => {
@@ -72,6 +91,8 @@ export default function PwaRegister() {
       handleControllerChange
     );
     window.addEventListener("focus", updateWorker);
+    window.addEventListener("pageshow", updateWorker);
+    window.addEventListener("finserpay:client-update-safe", tryReload);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     if (document.readyState === "complete") {
@@ -84,6 +105,8 @@ export default function PwaRegister() {
       disposed = true;
       window.removeEventListener("load", registerWorker);
       window.removeEventListener("focus", updateWorker);
+      window.removeEventListener("pageshow", updateWorker);
+      window.removeEventListener("finserpay:client-update-safe", tryReload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       navigator.serviceWorker.removeEventListener(
         "controllerchange",

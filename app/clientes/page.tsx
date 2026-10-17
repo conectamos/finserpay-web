@@ -404,7 +404,8 @@ export default function ClienteConsultaPage() {
 
     const refreshCredits = async () => {
       if (
-        document.visibilityState === "hidden" ||
+        disposed ||
+        document.visibilityState !== "visible" ||
         inFlight ||
         Date.now() - lastStartedAt < 2000
       ) return;
@@ -428,12 +429,18 @@ export default function ClienteConsultaPage() {
     const onResume = () => {
       void refreshCredits();
     };
+    const refreshInterval = window.setInterval(onResume, 60_000);
     window.addEventListener("focus", onResume);
+    window.addEventListener("pageshow", onResume);
+    window.addEventListener("online", onResume);
     document.addEventListener("visibilitychange", onResume);
 
     return () => {
       disposed = true;
+      window.clearInterval(refreshInterval);
       window.removeEventListener("focus", onResume);
+      window.removeEventListener("pageshow", onResume);
+      window.removeEventListener("online", onResume);
       document.removeEventListener("visibilitychange", onResume);
     };
   }, [activeDocumento]);
@@ -880,6 +887,15 @@ export default function ClienteConsultaPage() {
   const profileInitials = activeCredit
     ? clientInitials(activeCredit.clienteNombre)
     : "FP";
+  const clientUpdateSafe = Boolean(activeCredit) && !isPaidCredit && !loading && !refreshingPayment &&
+    activePanel === null && !confirmPaymentCreditId &&
+    !payingCreditId && !preparingEfectyPayoffCreditId && !efectyPayoff && !paymentReturn?.reference;
+
+  useEffect(() => {
+    if (clientUpdateSafe) {
+      window.dispatchEvent(new Event("finserpay:client-update-safe"));
+    }
+  }, [clientUpdateSafe]);
 
   if (!items.length) {
     return (
@@ -914,6 +930,7 @@ export default function ClienteConsultaPage() {
   return (
     <div
       id="cliente-dashboard"
+      data-client-update-safe={clientUpdateSafe ? "true" : "false"}
       className="min-h-[100svh] overflow-x-hidden bg-[var(--fp-client-bg)] text-[#111317]"
     >
       <div className="mx-auto min-h-[100svh] w-full max-w-[600px] bg-[var(--fp-client-bg)] pb-[calc(88px+env(safe-area-inset-bottom))]">

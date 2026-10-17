@@ -62,20 +62,29 @@ function harness({
   activeDocument = "12345678", visibility = "hidden",
   initialCredits = [credit(31), credit(32)],
   updatedCredits = [credit(31), credit(32, { hasta: "2026-10-05T04:59:59.999Z" })],
+  initialState = {},
 } = {}) {
   const states = {
     documento: activeDocument, activeDocumento: activeDocument,
     items: initialCredits, openCreditId: 32, activePanel: "pending",
     selectedLimit: { 31: 3, 32: 3 },
+    ...initialState,
   };
   const listeners = { window: new Map(), document: new Map() };
   const requests = [];
+  const dispatchedEvents = [];
+  const pendingFetches = [];
   const effects = [];
+  const intervals = new Map();
   const refs = [];
   let stateCursor = 0;
   let refCursor = 0;
-  let resolveFetch;
-  const pendingFetch = new Promise((resolve) => { resolveFetch = resolve; });
+  let effectCursor = 0;
+  let clockNow = new Date("2026-10-17T15:00:00Z").getTime();
+  let intervalId = 0;
+  class HarnessDate extends Date {
+    static now() { return clockNow; }
+  }
   const Empty = () => null;
   const Dashboard = () => null;
   const PaidDashboard = () => null;
@@ -97,8 +106,19 @@ function harness({
     location: { search: "" },
     addEventListener: (event, callback) => addListener("window", event, callback),
     removeEventListener: (event, callback) => removeListener("window", event, callback),
+    dispatchEvent(event) {
+      dispatchedEvents.push(event.type);
+      for (const callback of listeners.window.get(event.type) || []) callback(event);
+      return true;
+    },
     setTimeout: () => 0,
     clearTimeout: () => {},
+    setInterval(callback, delay) {
+      const id = ++intervalId;
+      intervals.set(id, { callback, delay, nextAt: clockNow + delay });
+      return id;
+    },
+    clearInterval: (id) => intervals.delete(id),
     FinserPayAndroid: { registerClient: () => {} },
   };
   const react = {
@@ -116,7 +136,13 @@ function harness({
       return refs[index];
     },
     useCallback: (callback) => callback,
-    useEffect: (effect) => effects.push(effect),
+    useEffect(effect, dependencies) {
+      const index = effectCursor++;
+      const prior = effects[index];
+      const changed = !prior || dependencies === undefined ||
+        dependencies.some((value, index) => !Object.is(value, prior.dependencies[index]));
+      effects[index] = { effect, dependencies, cleanup: prior?.cleanup, changed: changed || prior?.changed };
+    },
   };
   const dependencies = {
     react, "react/jsx-runtime": jsxRuntime,
@@ -137,33 +163,66 @@ function harness({
       assert.ok(name in dependencies, `Dependencia no simulada: ${name}`);
       return dependencies[name];
     },
-    Date, Intl, URLSearchParams, document, window,
+    Date: HarnessDate, Event, Intl, URLSearchParams, document, window,
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     fetch: (url, init) => {
       requests.push({ url, cache: init?.cache });
-      return pendingFetch;
+      return new Promise((resolve, reject) => pendingFetches.push({ resolve, reject }));
     },
   });
 
   function render() {
     stateCursor = 0;
     refCursor = 0;
+    effectCursor = 0;
     const tree = testModule.exports.default();
     assert.equal(stateCursor, hookNames.length);
     return tree;
   }
   const firstTree = render();
-  assert.ok(findNode(firstTree, (node) => node.type === Dashboard || node.type === PaidDashboard));
-  effects.forEach((effect) => effect());
+  assert.ok(findNode(firstTree, (node) => node.type === Dashboard || node.type === PaidDashboard || node.type === Login));
+  function commitEffects() {
+    for (const entry of effects) {
+      if (!entry.changed) continue;
+      if (typeof entry.cleanup === "function") entry.cleanup();
+      entry.cleanup = entry.effect();
+      entry.changed = false;
+    }
+  }
+  commitEffects();
 
   return {
-    states, requests, document,
+    states, requests, document, listeners, intervals, dispatchedEvents,
     dispatch(target, event) {
       for (const callback of listeners[target].get(event) || []) callback();
     },
-    finishRequest() {
-      resolveFetch({ ok: true, json: async () => ({ ok: true, items: updatedCredits }) });
+    finishRequest(nextCredits = updatedCredits) {
+      assert.ok(pendingFetches.length, "Hay una consulta pendiente para resolver");
+      pendingFetches.shift().resolve({ ok: true, json: async () => ({ ok: true, items: nextCredits }) });
     },
+    failRequest() {
+      assert.ok(pendingFetches.length, "Hay una consulta pendiente para rechazar");
+      pendingFetches.shift().reject(new Error("Sin conexión"));
+    },
+    advance(milliseconds) {
+      const target = clockNow + milliseconds;
+      while (true) {
+        const next = [...intervals.values()].sort((left, right) => left.nextAt - right.nextAt)[0];
+        if (!next || next.nextAt > target) break;
+        clockNow = next.nextAt;
+        next.nextAt += next.delay;
+        next.callback();
+      }
+      clockNow = target;
+    },
+    unmount() {
+      for (const entry of effects) {
+        if (typeof entry.cleanup === "function") entry.cleanup();
+        entry.cleanup = undefined;
+      }
+    },
+    commit() { render(); commitEffects(); },
+    root() { return findNode(render(), (node) => node.props?.id === "cliente-dashboard")?.props; },
     dashboard() { return findNode(render(), (node) => node.type === Dashboard)?.props; },
     paidDashboard() { return findNode(render(), (node) => node.type === PaidDashboard)?.props; },
     panel() { return findNode(render(), (node) => node.type === Panel)?.props; },
@@ -317,4 +376,175 @@ test("null del servidor por autorización caducada, cancelada o ausente retira e
   const panelHtml = renderToStaticMarkup(jsxRuntime.jsx(RealPanel, page.panel()));
   assert.doesNotMatch(dashboardHtml, /Prórroga activa/);
   assert.doesNotMatch(panelHtml, /Prórroga activa/);
+});
+
+test("el portal visible incorpora una autorización cada minuto sin foco ni perder selección o pago", async () => {
+  const initial = [credit(31), currentCredit(null)];
+  const updated = [credit(31), currentCredit()];
+  const page = harness({ visibility: "visible", initialCredits: initial, updatedCredits: updated });
+  page.states.activePanel = "payments";
+  page.states.confirmPaymentCreditId = 32;
+  page.states.confirmPaymentMode = "INSTALLMENTS";
+  page.states.nequiPhone = "3001234567";
+  page.states.acceptWompiTerms = true;
+  const paymentSelection = {
+    selectedLimit: page.states.selectedLimit,
+    confirmPaymentCreditId: page.states.confirmPaymentCreditId,
+    confirmPaymentMode: page.states.confirmPaymentMode,
+    nequiPhone: page.states.nequiPhone,
+    acceptWompiTerms: page.states.acceptWompiTerms,
+  };
+  assert.equal(page.dashboard().extensionNotice, null);
+  assert.deepEqual([...page.intervals.values()].map((timer) => timer.delay), [60_000]);
+  page.advance(59_999);
+  assert.equal(page.requests.length, 0);
+  page.advance(1);
+  assert.equal(page.requests.length, 1);
+  assert.equal(page.requests[0].cache, "no-store");
+  page.finishRequest();
+  await settle();
+
+  assert.equal(page.dashboard().extensionNotice, activeExtensionText);
+  assert.equal(page.panel().extensionNotice, activeExtensionText);
+  assert.equal(page.dashboard().statusLabel, "Crédito al día");
+  assert.equal(page.states.openCreditId, 32);
+  assert.equal(page.states.activePanel, "payments");
+  for (const [field, value] of Object.entries(paymentSelection)) assert.equal(page.states[field], value);
+  assert.deepEqual(page.panel().credit.cuotas, initial[1].cuotas);
+  page.unmount();
+});
+
+for (const reason of ["cancelada", "vencida"]) {
+  test(`el siguiente minuto retira una autorización ${reason} según la respuesta del servidor`, async () => {
+    const initial = currentCredit();
+    const page = harness({ visibility: "visible", initialCredits: [initial], updatedCredits: [currentCredit(null)] });
+    assert.equal(page.dashboard().extensionNotice, activeExtensionText);
+    page.advance(60_000);
+    assert.equal(page.requests.length, 1);
+    page.finishRequest();
+    await settle();
+    assert.equal(page.dashboard().extensionNotice, null);
+    assert.equal(page.panel().extensionNotice, null);
+    assert.equal(page.states.openCreditId, 32);
+    assert.equal(page.states.activePanel, "pending");
+    assert.equal(page.panel().credit.saldoPendiente, initial.saldoPendiente);
+    assert.deepEqual(page.panel().credit.cuotas, initial.cuotas);
+    page.unmount();
+  });
+}
+
+test("no consulta en segundo plano y deduplica intervalo, reconexión y retorno de página", async () => {
+  const page = harness();
+  page.advance(120_000);
+  for (const event of ["focus", "pageshow", "online"]) page.dispatch("window", event);
+  page.dispatch("document", "visibilitychange");
+  assert.equal(page.requests.length, 0);
+
+  page.document.visibilityState = "visible";
+  page.dispatch("window", "pageshow");
+  page.dispatch("window", "online");
+  page.advance(60_000);
+  assert.equal(page.requests.length, 1, "La consulta pendiente bloquea todos los disparadores");
+  page.finishRequest();
+  await settle();
+  page.dispatch("window", "online");
+  assert.equal(page.requests.length, 2, "Al recuperar conexión se consulta sin esperar otro minuto");
+  page.finishRequest();
+  await settle();
+  page.advance(1_999);
+  page.dispatch("window", "pageshow");
+  assert.equal(page.requests.length, 2, "No repite consultas con menos de dos segundos");
+  page.advance(1);
+  page.dispatch("window", "pageshow");
+  assert.equal(page.requests.length, 3);
+  page.finishRequest();
+  await settle();
+  page.unmount();
+});
+
+test("desmontar retira intervalo y listeners e ignora una respuesta ya pendiente", async () => {
+  const initial = [currentCredit(null)];
+  const page = harness({ visibility: "visible", initialCredits: initial, updatedCredits: [currentCredit()] });
+  const queuedCallback = [...page.intervals.values()][0].callback;
+  page.advance(60_000);
+  assert.equal(page.requests.length, 1);
+  page.unmount();
+  assert.equal(page.intervals.size, 0);
+  for (const [target, events] of Object.entries(page.listeners)) {
+    for (const [event, callbacks] of events) assert.equal(callbacks.size, 0, `${target}.${event} se elimina`);
+  }
+  page.finishRequest();
+  await settle();
+  assert.equal(page.states.items, initial, "La respuesta tardía no actualiza la página desmontada");
+  page.advance(120_000);
+  queuedCallback();
+  for (const event of ["focus", "pageshow", "online"]) page.dispatch("window", event);
+  page.dispatch("document", "visibilitychange");
+  assert.equal(page.requests.length, 1);
+});
+
+test("un fallo conserva los datos y permite reintentar en el siguiente minuto", async () => {
+  const initial = [currentCredit(null)];
+  const page = harness({ visibility: "visible", initialCredits: initial, updatedCredits: [currentCredit()] });
+  page.advance(60_000);
+  page.failRequest();
+  await settle();
+  assert.equal(page.states.items, initial);
+  assert.equal(page.states.openCreditId, 32);
+  assert.equal(page.states.activePanel, "pending");
+  page.advance(60_000);
+  assert.equal(page.requests.length, 2);
+  page.finishRequest();
+  await settle();
+  assert.equal(page.dashboard().extensionNotice, activeExtensionText);
+  page.unmount();
+});
+
+test("la actualización de la app sólo se habilita en Inicio sin paneles ni pago en curso", () => {
+  const page = harness({ initialState: { activePanel: null } });
+  assert.equal(page.root()["data-client-update-safe"], "true");
+  assert.deepEqual(page.dispatchedEvents, ["finserpay:client-update-safe"]);
+  page.commit();
+  assert.equal(page.dispatchedEvents.length, 1, "Un render sin cambio de seguridad no emite otra señal");
+
+  for (const unsafe of [
+    { activePanel: "pending" }, { activePanel: "payments" }, { activePanel: "history" },
+    { confirmPaymentCreditId: 32 }, { payingCreditId: 32 },
+    { preparingEfectyPayoffCreditId: 32 },
+    { efectyPayoff: { creditId: 32, expiresAt: "2030-01-01T00:00:00Z" } },
+    { paymentReturn: { reference: "PAGO_PENDIENTE", creditId: 32, checkedAt: null } },
+    { loading: true }, { refreshingPayment: true },
+  ]) {
+    const guarded = harness({ initialState: { activePanel: null, ...unsafe } });
+    assert.equal(guarded.root()["data-client-update-safe"], "false", `Protege ${Object.keys(unsafe)[0]}`);
+    assert.deepEqual(guarded.dispatchedEvents, []);
+    guarded.unmount();
+  }
+
+  page.states.activePanel = "pending";
+  page.commit();
+  assert.equal(page.root()["data-client-update-safe"], "false");
+  assert.equal(page.dispatchedEvents.length, 1);
+  page.states.activePanel = null;
+  page.commit();
+  assert.equal(page.root()["data-client-update-safe"], "true");
+  assert.equal(page.dispatchedEvents.length, 2, "Volver a Inicio permite reintentar una actualización pendiente");
+  page.unmount();
+});
+
+test("pasar de login a perfil listo emite seguridad después de montar el marcador", () => {
+  const page = harness({ activeDocument: "", initialCredits: [], initialState: { activePanel: null } });
+  assert.equal(page.root(), undefined);
+  assert.deepEqual(page.dispatchedEvents, []);
+  page.states.activeDocumento = "12345678";
+  page.states.items = [currentCredit()];
+  page.states.loading = true;
+  page.commit();
+  assert.equal(page.root()["data-client-update-safe"], "false");
+  assert.deepEqual(page.dispatchedEvents, []);
+  page.states.loading = false;
+  page.commit();
+  assert.equal(page.root()["data-client-update-safe"], "true");
+  assert.deepEqual(page.dispatchedEvents, ["finserpay:client-update-safe"]);
+  page.unmount();
 });
