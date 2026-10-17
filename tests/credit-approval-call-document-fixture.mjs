@@ -45,6 +45,7 @@ export const service = loadDocumentContinuityModule("lib/credit-approval.ts");
 export const callStore = loadDocumentContinuityModule("lib/credit-approval-call-store.ts");
 export const evidenceService = loadDocumentContinuityModule("lib/credit-approval-evidence.ts");
 export const noveltyService = loadDocumentContinuityModule("lib/credit-approval-novelties.ts");
+const noveltyCore = loadDocumentContinuityModule("lib/credit-approval-novelty-core.ts");
 export const actor = { id: 7, nombre: "Analista de prueba local" };
 export const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yFusAAAAASUVORK5CYII=";
 export const pdf = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF").toString("base64");
@@ -136,13 +137,13 @@ export async function createDocumentContinuityFixture(t) {
   }
   const physical = async recordingId => (await database.query('SELECT * FROM "CreditApprovalCallRecording" WHERE "id"=$1::uuid', [recordingId])).rows[0];
   const bytes = (id, recordingId) => callStore.readCreditApprovalCallBytes(db, id, recordingId);
-  async function replacePhoto(id, suffix = "replacement") {
+  async function replacePhoto(id, suffix = "replacement", key = "foto-remision") {
     const detail = await read(id);
     const correctedPhoto = "data:image/png;base64," + Buffer.concat([Buffer.from(png.split(",")[1], "base64"), Buffer.from(suffix)]).toString("base64");
     // Image decoding is independently tested. This regression executes the
     // authenticated replacement service, SQL guards and continuity seals.
     return transaction(tx => evidenceService.replaceApprovalEvidence(tx, id, {
-      key: "foto-remision", dataUrl: correctedPhoto, revision: detail.review.revision, reviewHash: detail.review.reviewHash,
+      key, dataUrl: correctedPhoto, revision: detail.review.revision, reviewHash: detail.review.reviewHash,
     }, actor));
   }
   async function reportNovelty(id) {
@@ -151,5 +152,25 @@ export async function createDocumentContinuityFixture(t) {
       revision: detail.review.revision, reviewHash: detail.review.reviewHash, idempotencyKey: randomUUID() });
     return transaction(tx => noveltyService.createCreditApprovalNovelty(tx, id, input, actor));
   }
-  return { database, db, queries, transaction, read, createCredit, upload, audit, recoverPdf, physical, bytes, replacePhoto, reportNovelty };
+  async function reportNoveltyWithoutReading(id) {
+    // Reproduce already persisted novelty writes without invoking the new reader
+    // before them. The production SQL triggers create both invalidations; no
+    // fabricated CreditApprovalEvent row or disabled trigger is involved.
+    const noveltyId = randomUUID(), itemId = randomUUID();
+    const reason = "Observación sintética pendiente de respuesta del aliado";
+    return transaction(async tx => {
+      const [review] = await tx.$queryRawUnsafe('SELECT "revision" FROM "CreditApprovalReview" WHERE "creditoId"=$1', id);
+      await tx.$executeRawUnsafe('INSERT INTO "CreditApprovalNovelty" ("id","creditoId") VALUES ($1::uuid,$2)', noveltyId, id);
+      await tx.$executeRawUnsafe('INSERT INTO "CreditApprovalNoveltyItem" ("id","noveltyId","key","reason") VALUES ($1::uuid,$2::uuid,\'GENERAL\',$3)', itemId, noveltyId, reason);
+      const changes = [{ itemId, key: "GENERAL", reason, previousReason: null, previousStatus: null,
+        previousResponse: null, previousPhotoHash: null }];
+      const noveltyEventId = await noveltyCore.appendNoveltyEvent(tx, {
+        noveltyId, type: "REPORTED", actor, payload: { changes, reviewRevision: review.revision },
+        requestKey: randomUUID(), requestHash: createHash("sha256").update(JSON.stringify({ id, changes })).digest("hex"),
+      });
+      const [current] = await tx.$queryRawUnsafe('SELECT "revision" FROM "CreditApprovalReview" WHERE "creditoId"=$1', id);
+      return { noveltyId, itemId, noveltyEventId, sourceRevision: review.revision, currentRevision: current.revision };
+    });
+  }
+  return { database, db, queries, transaction, read, createCredit, upload, audit, recoverPdf, physical, bytes, replacePhoto, reportNovelty, reportNoveltyWithoutReading };
 }

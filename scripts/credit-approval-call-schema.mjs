@@ -205,6 +205,26 @@ export const creditApprovalCallSchemaStatements = [
       )::text,'UTF8')),'hex') FROM active_process process
       WHERE (SELECT COUNT(*) FROM active_process)=1
     $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_novelty_transition_valid(
+      target_credit_id INTEGER,source_revision INTEGER,target_revision INTEGER)
+    RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+      SELECT target_revision>=source_revision AND (
+        SELECT COUNT(*)=(target_revision-source_revision)::bigint
+          AND COUNT(DISTINCT event."revision")=(target_revision-source_revision)::bigint
+          AND COUNT(*) FILTER (WHERE event."eventType"='INVALIDATED' AND event."reason"='NOVELTY_CHANGED')
+            =(target_revision-source_revision)::bigint
+        FROM public."CreditApprovalEvent" event WHERE event."creditoId"=target_credit_id
+          AND event."revision">source_revision AND event."revision"<=target_revision)
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_document_recovery_revision(
+      target_credit_id INTEGER,target_revision INTEGER)
+    RETURNS INTEGER LANGUAGE sql STABLE AS $$
+      SELECT event."revision" FROM public."CreditApprovalEvent" event
+      WHERE event."creditoId"=target_credit_id AND event."revision" BETWEEN 2 AND target_revision
+        AND event."eventType"='INVALIDATED' AND event."reason"='SIGNED_DOCUMENT_CHANGED'
+        AND public.credit_approval_call_novelty_transition_valid(target_credit_id,event."revision",target_revision)
+      ORDER BY event."revision" DESC LIMIT 1
+    $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_call_evidence_event_matches(evidence_revision_id UUID)
     RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
       SELECT COUNT(*)=1
@@ -302,7 +322,7 @@ export const creditApprovalCallSchemaStatements = [
         FROM public."CreditApprovalCallDocumentContinuation" continuation
         JOIN public."CreditApprovalCallRecording" recording ON recording."id"=continuation."recordingId"
         WHERE continuation."creditoId"=target_credit_id
-          AND continuation."targetRevision"=target_revision
+          AND public.credit_approval_call_novelty_transition_valid(target_credit_id,continuation."targetRevision",target_revision)
           AND continuation."targetReviewHash"=target_review_hash
           AND continuation."contextHash"=public.credit_approval_call_document_context_hash(target_credit_id)
           AND continuation."documentHash"=(SELECT public.credit_approval_call_signed_pdf_hash(process."signedDocumentBase64")
@@ -366,7 +386,8 @@ export const creditApprovalCallSchemaStatements = [
       PERFORM 1 FROM public."Credito" WHERE "id"=NEW."creditoId" FOR UPDATE;
       IF NOT FOUND THEN RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_INVALID' USING ERRCODE='23514'; END IF;
       SELECT * INTO current_review FROM public."CreditApprovalReview" WHERE "creditoId"=NEW."creditoId" FOR UPDATE;
-      IF NOT FOUND OR current_review."status"<>'PENDING' OR current_review."revision"<>NEW."targetRevision"
+      IF NOT FOUND OR current_review."status"<>'PENDING'
+        OR NOT public.credit_approval_call_novelty_transition_valid(NEW."creditoId",NEW."targetRevision",current_review."revision")
         OR NEW."targetRevision"<>NEW."sourceRevision"+1 THEN
         RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_INVALID' USING ERRCODE='23514';
       END IF;
@@ -449,7 +470,8 @@ export const creditApprovalCallSchemaStatements = [
   `CREATE OR REPLACE FUNCTION public.credit_approval_restore_document_call(
       target_credit_id INTEGER,target_revision INTEGER,target_review_hash TEXT,source_review_hash TEXT,process_uuid TEXT,
       evidence_source_hash TEXT DEFAULT NULL)
-    RETURNS UUID LANGUAGE plpgsql VOLATILE AS $$ DECLARE source_recording UUID; restored_recording UUID; BEGIN
+    RETURNS UUID LANGUAGE plpgsql VOLATILE AS $$
+    DECLARE source_recording UUID; restored_recording UUID; document_revision INTEGER; BEGIN
       -- A waiting row lock does not refresh a REPEATABLE READ snapshot after a
       -- concurrent upload. Only READ COMMITTED may associate the current audio.
       IF current_setting('transaction_isolation')<>'read committed' THEN RETURN NULL; END IF;
@@ -462,12 +484,14 @@ export const creditApprovalCallSchemaStatements = [
       PERFORM 1 FROM public."CreditApprovalReview" WHERE "creditoId"=target_credit_id
         AND "revision"=target_revision AND "status"='PENDING' FOR UPDATE;
       IF NOT FOUND THEN RETURN NULL; END IF;
+      SELECT public.credit_approval_call_document_recovery_revision(target_credit_id,target_revision) INTO document_revision;
+      IF document_revision IS NULL THEN RETURN NULL; END IF;
       SELECT public.credit_approval_effective_call_recording(
-        target_credit_id,target_revision-1,source_review_hash) INTO source_recording;
+        target_credit_id,document_revision-1,source_review_hash) INTO source_recording;
       IF source_recording IS NULL THEN RETURN NULL; END IF;
       INSERT INTO public."CreditApprovalCallDocumentContinuation"
         ("creditoId","recordingId","processUuid","sourceRevision","sourceReviewHash","targetRevision","targetReviewHash","evidenceSourceHash")
-        VALUES (target_credit_id,source_recording,process_uuid,target_revision-1,source_review_hash,target_revision,target_review_hash,evidence_source_hash)
+        VALUES (target_credit_id,source_recording,process_uuid,document_revision-1,source_review_hash,document_revision,target_review_hash,evidence_source_hash)
         ON CONFLICT ("creditoId","targetRevision","targetReviewHash") DO NOTHING;
       SELECT public.credit_approval_effective_call_recording(
         target_credit_id,target_revision,target_review_hash) INTO restored_recording;

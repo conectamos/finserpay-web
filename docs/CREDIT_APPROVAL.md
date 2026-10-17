@@ -154,6 +154,10 @@ La asociación queda registrada sin modificar el archivo ni atribuir una nueva
 carga a otro usuario. Esta comprobación se aplica al volver a abrir expedientes
 afectados antes de la corrección. No permite reutilizar una llamada si cambió el
 proceso, existía otro PDF o cambiaron los datos y condiciones del crédito.
+Si después de recuperar el PDF solo se registraron cambios de novedades, la
+comprobación puede reconstruir el enlace de aquella revisión y conservar el audio
+en la revisión actual. La cadena debe ser completa y mantener las mismas huellas;
+las novedades pendientes siguen impidiendo el OK hasta que se resuelvan.
 
 El servidor valida contenido y contenedor, permisos, origen, revisión y huella;
 la extensión por sí sola no es suficiente. En OGG acepta únicamente un flujo Opus

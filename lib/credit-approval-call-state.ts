@@ -38,6 +38,14 @@ export async function readCreditApprovalCallState(db: CallDatabase, creditId: nu
       LIMIT 1`, creditId, revision, reviewHash, approvedRecordingId ?? null);
     if (!rows[0] && approvedRecordingId === undefined && documentSource) {
       const source = documentSource();
+      const recovered = await db.$queryRawUnsafe<Array<{ revision: number | null }>>(
+        'SELECT public.credit_approval_call_document_recovery_revision($1,$2) AS "revision"', creditId, revision);
+      const documentRevision = recovered[0]?.revision;
+      if (!documentRevision || !Number.isSafeInteger(documentRevision) || documentRevision < 2 || documentRevision > revision) {
+        return { available: true, recording: null };
+      }
+      // Novedades do not change the reviewed credit/document hash. Their strict
+      // audit-only tail may follow the PDF before this first repair is read.
       // Evidence continuity alone does not bind the document hash. Reconstruct
       // the source tuple with the authorized previous photo AND no PDF, proving
       // that this audio predates the first PDF rather than a different PDF.
@@ -53,7 +61,7 @@ export async function readCreditApprovalCallState(db: CallDatabase, creditId: nu
           AND public.credit_approval_call_evidence_event_matches(evidence."id")
           AND public.credit_approval_call_evidence_hash($1,evidence."evidenceKey")=evidence."nextSha256"
           AND public.credit_approval_call_data_url_hash(evidence."previousDataUrl") IS NOT DISTINCT FROM evidence."previousSha256"
-        LIMIT 2`, creditId, revision, source.missingPdfReviewHash);
+        LIMIT 2`, creditId, documentRevision, source.missingPdfReviewHash);
       const evidenceSourceHash = evidence.length === 1 && source.hashWithPreviousEvidence(
         evidence[0].evidenceKey, evidence[0].previousDataUrl) === evidence[0].sourceReviewHash
         ? evidence[0].sourceReviewHash : null;
