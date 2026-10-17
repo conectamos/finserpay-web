@@ -15,9 +15,10 @@ class ApprovalOperationalError extends Error {
 }
 
 function fixture(options = {}) {
+  const savedProcessUuid = options.processUuid || processUuid;
   const calls = { provider: 0, audit: [], released: 0, queries: [], user: 0 };
   const state = { active: true, allowed: true, userActive: true, origin: true,
-    duplicate: false, available: true, process: { processUuid, creditoId: 50, draftId: 31,
+    duplicate: false, available: true, process: { processUuid: savedProcessUuid, creditoId: 50, draftId: 31,
       supersededAt: null, completedAt: new Date(), status: "EXITOSO", signedDocumentBase64: null } };
   function operationalDetail() {
     return { kind: "CREDIT", id: 50, signature: { processUuid: state.process.processUuid,
@@ -53,7 +54,7 @@ function fixture(options = {}) {
     "@/lib/firmaseguro-status": { isFirmaSeguroSuccessfulStatus: value => value === "EXITOSO" },
     "@/lib/firmaseguro-credit": { refreshFirmaSeguroProcess: async (process, settings) => {
       calls.provider++;
-      assert.equal(process.processUuid, processUuid);
+      assert.equal(process.processUuid, savedProcessUuid);
       assert.equal(settings.synchronizeContractState, false);
       assert.equal(settings.providerTimeoutMs, 20_000);
       if (options.providerError) throw new Error("Private provider error");
@@ -82,7 +83,7 @@ function fixture(options = {}) {
     "@/lib/approval-operational-signature-refresh": refresh,
     "@/lib/credit-approval-document-refresh-schema": { ensureCreditApprovalDocumentRefreshSchema: async () => {} },
   });
-  return { calls, state, invoke: (actor = sharedActor, expected = processUuid) =>
+  return { calls, state, invoke: (actor = sharedActor, expected = savedProcessUuid) =>
     adapter.refreshCreditApprovalDocument(50, { expectedProcessUuid: expected }, actor) };
 }
 
@@ -106,6 +107,34 @@ test("usuario nominal se valida en BD y el intento conserva su identidad real", 
   assert.ok(f.calls.user >= 3);
   assert.ok(f.calls.audit.every(row => row[3] === "USER" && row[4] === 7 && row[5] === "Verified current user"
     && row[6] === null && row[7] === null));
+});
+
+test("el documento de aprobaciones admite UUID compacto y GUID no RFC sin cambiar actor ni proceso", async () => {
+  for (const saved of ["a1b2c3d4e5f60718293a4b5c6d7e8f90", "00112233-4455-0677-0899-aabbccddeeff"])
+    for (const actor of [sharedActor, userActor]) {
+      const f = fixture({ processUuid: saved });
+      const result = await f.invoke(actor);
+      assert.equal(result.item.document.processUuid, saved);
+      assert.equal(result.item.document.available, true);
+      assert.equal(f.calls.provider, 1);
+      assert.ok(f.calls.audit.every(row => row[2] === saved));
+      assert.deepEqual(f.calls.audit.map(row => row[8]), ["REQUESTED", "RECOVERED"]);
+    }
+  const saved = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+  for (const expected of [saved.toUpperCase(), "b".repeat(32)]) {
+    const mismatch = fixture({ processUuid: saved });
+    await assert.rejects(mismatch.invoke(sharedActor, expected), { code: "PROCESS_CHANGED" });
+    assert.equal(mismatch.calls.provider, 0); assert.equal(mismatch.calls.audit.length, 0);
+  }
+  const foreignCredit = fixture({ processUuid: saved });
+  foreignCredit.state.process.creditoId = 51;
+  await assert.rejects(foreignCredit.invoke(), { code: "PROCESS_CHANGED" });
+  assert.equal(foreignCredit.calls.provider, 0);
+  for (const expected of [`../${saved}`, `${saved}?credit=51`, `${saved}\n`, `${saved}\u0000`, "a".repeat(129)]) {
+    const malformed = fixture({ processUuid: saved });
+    await assert.rejects(malformed.invoke(sharedActor, expected), { code: "INVALID_PROCESS" });
+    assert.equal(malformed.calls.provider, 0); assert.equal(malformed.calls.audit.length, 0);
+  }
 });
 
 test("firma completada sin PDF mantiene el documento bloqueado y registra indisponible", async () => {
