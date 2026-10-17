@@ -14,7 +14,10 @@ import { ensureFirmaSeguroSchema, tryAcquireSolicitudOperationLock,
   type FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 
 type Database = Prisma.TransactionClient;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// FirmaSeguro returns both compact hexadecimal identifiers and separated GUIDs.
+// Keep the provider's exact value: ownership is verified against the one active
+// stored process, not inferred from UUID version/variant bits.
+const providerProcessId = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const reason = "Consulta técnica del estado del mismo documento en FirmaSeguro.";
 
 async function currentProcess(db: Database, kind: OperationalCaseKind, id: number, expectedProcessUuid: string) {
@@ -84,7 +87,8 @@ export async function refreshSignatureWithAccess<Actor>(kindValue: unknown, idVa
     audit: (db: Database, kind: OperationalCaseKind, id: number, actor: Actor, status: string) => Promise<void>;
   }) {
   const { kind, id } = operationalCaseIdentity(kindValue, idValue);
-  if (id > 2_147_483_647 || typeof input.expectedProcessUuid !== "string" || !uuid.test(input.expectedProcessUuid))
+  if (id > 2_147_483_647 || typeof input.expectedProcessUuid !== "string" ||
+      ![32, 36].includes(input.expectedProcessUuid.length) || !providerProcessId.test(input.expectedProcessUuid))
     throw new ApprovalOperationalError("INVALID_PROCESS", "Actualiza la solicitud antes de consultar su firma.", 400);
   const expectedProcessUuid = input.expectedProcessUuid;
   await ensureFirmaSeguroSchema();

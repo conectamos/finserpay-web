@@ -39,9 +39,10 @@ const processUuid = "10000000-0000-4000-8000-000000000001";
 const actor = { id: 7, nombre: "Untrusted old name" };
 
 function fixture(options = {}) {
+  const savedProcessUuid = options.processUuid || processUuid;
   const calls = { provider: 0, lock: 0, released: 0, audits: [], role: 0, queries: [] };
   const state = { roleActive: true, available: true, duplicated: false,
-    process: { id: 21, draftId: 31, creditoId: null, processUuid, status: "CREATED",
+    process: { id: 21, draftId: 31, creditoId: null, processUuid: savedProcessUuid, status: "CREATED",
       lastError: "Transient download failure", signedDocumentBase64: null,
       completedAt: null, supersededAt: null, requestPayload: { secret: "must stay server-side" },
       statusPayload: { secret: "private provider payload" } }, ...options.state };
@@ -86,7 +87,7 @@ function fixture(options = {}) {
     "@/lib/firmaseguro-status": statuses,
     "@/lib/firmaseguro-credit": { refreshFirmaSeguroProcess: async (process, refreshOptions) => {
       calls.provider++;
-      assert.equal(process.processUuid, processUuid);
+      assert.equal(process.processUuid, savedProcessUuid);
       assert.equal(refreshOptions.synchronizeContractState, false);
       if (options.providerError) throw new Error("private upstream error detail");
       state.process.status = options.providerStatus || "PENDING";
@@ -106,7 +107,7 @@ function fixture(options = {}) {
         return options.busy ? null : { release: async () => { calls.released++; } };
       } },
   });
-  return { calls, state, invoke: (input = { expectedProcessUuid: processUuid }, user = actor,
+  return { calls, state, invoke: (input = { expectedProcessUuid: savedProcessUuid }, user = actor,
     kind = options.kind || "DRAFT", id = options.kind === "CREDIT" ? 50 : 31) =>
     backend.refreshOperationalSignature(kind, id, input, user) };
 }
@@ -163,12 +164,39 @@ test("bloquea usuario revocado, proceso distinto, duplicados, asociación equivo
 
 test("valida parámetros y límite del lock antes de consultar al proveedor", async () => {
   const f = fixture();
-  for (const value of [null, "not-a-uuid", 12])
+  for (const value of [null, "not-a-uuid", 12, "", "a".repeat(129), "a".repeat(31),
+    ` ${processUuid}`, `${processUuid} `, `${processUuid}\n`, `${processUuid}\u0000`,
+    `../${processUuid}`, `${processUuid}?document=other`, `${processUuid}#other`, "z".repeat(32)])
     await assert.rejects(f.invoke({ expectedProcessUuid: value }), { code: "INVALID_PROCESS" });
   await assert.rejects(f.invoke(undefined, { id: 0, nombre: "Analyst" }), { code: "UNAUTHORIZED" });
   await assert.rejects(f.invoke(undefined, actor, "DRAFT", 2_147_483_648));
   assert.equal(f.calls.provider, 0);
   assert.equal(f.calls.lock, 0);
+});
+
+test("consulta identificadores reales compactos o GUID sin exigir versión RFC y conserva su texto exacto", async () => {
+  for (const saved of ["a1b2c3d4e5f60718293a4b5c6d7e8f90", "00112233-4455-0677-0899-aabbccddeeff",
+    "AABBCCDD-EEFF-AABB-CCDD-001122334455"]) {
+    for (const kind of ["DRAFT", "CREDIT"]) {
+      const f = fixture({ kind, processUuid: saved });
+      const result = await f.invoke();
+      assert.equal(result.item.signature.processUuid, saved);
+      assert.equal(f.calls.provider, 1);
+      assert.equal(f.calls.released, 1);
+      assert.equal(f.calls.audits.length, 2);
+    }
+  }
+  const saved = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+  for (const expected of [saved.toUpperCase(), "b".repeat(32), "10000000-0000-4000-8000-000000000001"]) {
+    const f = fixture({ kind: "CREDIT", processUuid: saved });
+    await assert.rejects(f.invoke({ expectedProcessUuid: expected }), { code: "PROCESS_CHANGED" });
+    assert.equal(f.calls.provider, 0);
+    assert.equal(f.calls.audits.length, 0);
+  }
+  const foreignCredit = fixture({ kind: "CREDIT", processUuid: saved });
+  foreignCredit.state.process.creditoId = 51;
+  await assert.rejects(foreignCredit.invoke(), { code: "PROCESS_CHANGED" });
+  assert.equal(foreignCredit.calls.provider, 0);
 });
 
 test("un lock ocupado o error del proveedor no dispara otro envío ni falsifica un resultado", async () => {
