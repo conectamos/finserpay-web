@@ -128,7 +128,7 @@ test("abre la cola general autorizada y rechaza identificadores inválidos", asy
   assert.equal(api.transactions.length, 0);
 });
 
-test("detalle autorizado usa un snapshot transaccional y no entrega datos con caché", async () => {
+test("detalle autorizado usa ReadCommitted para asociar audio vigente y no entrega datos con caché", async () => {
   const fixture = approvalFixture();
   const detail = completeApprovalDetail(fixture);
   const api = apiHarness({ ...centralAnalyst, rolNombre: "ADMIN" }, { getCreditApprovalDetail: async (_db, id) => {
@@ -139,7 +139,7 @@ test("detalle autorizado usa un snapshot transaccional y no entrega datos con ca
   assert.equal(response.status, 200);
   privateResponse(response);
   assert.equal((await response.json()).item.id, 81);
-  assert.equal(api.transactions[0].isolationLevel, "RepeatableRead");
+  assert.equal(api.transactions[0].isolationLevel, "ReadCommitted");
 });
 
 test("POST transmite actor autenticado y revisión sin aceptar campos de crédito", async () => {

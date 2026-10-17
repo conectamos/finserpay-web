@@ -15,7 +15,7 @@ export async function GET(_request: Request, context: Context) {
     const item = await prisma.$transaction(async (db) => {
       await assertApprovalActorCreditReadAccess(db, id, actor);
       return getCreditApprovalDetail(db, id, actor);
-    }, { isolationLevel: "RepeatableRead", timeout: 20_000 });
+    }, { isolationLevel: "ReadCommitted", timeout: 20_000 });
     return NextResponse.json({ ok: true, item }, { headers: approvalPrivateHeaders });
   } catch (error) { return approvalErrorResponse(error); }
 }

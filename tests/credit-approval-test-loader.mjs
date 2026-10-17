@@ -124,6 +124,8 @@ export function approvalDatabase(overrides = {}) {
           !(credit.equalityService === "IMPORTACION_MASIVA" && credit.contratoSnapshot?.origen?.tipo === "IMPORTACION_MASIVA");
         return inScope ? [{ id: credit.id }] : [];
       }
+      if (sql.includes('FROM public."CreditApprovalCallEvidenceSeal"')) return [];
+      if (sql.includes('credit_approval_restore_document_call(')) return [];
       if (sql.includes('FROM "CreditApprovalCallRecording"')) {
         if (state.callRecordingError) throw new Error("Audio schema unavailable");
         if (state.callRecording === null) return [];

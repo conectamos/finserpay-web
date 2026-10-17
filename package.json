@@ -7,6 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:approval-call": "node --experimental-strip-types --test tests/credit-approval-call-*.test.mjs",
     "test:cut-collection": "node --test tests/cut-collection*.test.mjs",
     "db:setup-cut-collection": "node scripts/ensure-cut-collection-schema.mjs",
     "test:datacredito-informe": "node --experimental-strip-types --test tests/datacredito-query-sales-report.test.mjs tests/datacredito-query-report-details.test.mjs",
@@ -49,7 +50,7 @@
     "cron:postulaciones": "node scripts/retry-merchant-applications.mjs",
     "test:commissions": "node --test tests/commissions*.test.mjs",
     "db:setup-commissions": "node scripts/ensure-commissions-schema.mjs",
-    "test:credit-origination": "npm run test:datacredito && npm run test:solicitudes && npm run test:firmaseguro && npm run test:credit-close && npm run test:credit-equipment-signature && npm run test:credit-plan-management",
+    "test:credit-origination": "npm run test:datacredito && npm run test:solicitudes && npm run test:firmaseguro && npm run test:approval-call && npm run test:credit-close && npm run test:credit-equipment-signature && npm run test:credit-plan-management",
     "test:credit-plan-management": "node --experimental-strip-types --test tests/credit-plan-*.test.mjs tests/credit-principal-payment-api.test.mjs tests/payment-date-and-rounding.test.mjs tests/payment-next-date-after-payment.test.mjs",
     "test:credit-equipment-signature": "node --experimental-strip-types --test tests/credit-imei-confirmation.test.mjs tests/credit-process-live-status.test.mjs tests/veriff-identity-dialog-flow.test.mjs tests/firma-seguro-identity-readiness.test.mjs tests/firmaseguro-draft-correction-callback.test.mjs",
     "test:solicitudes-export": "node --test tests/solicitudes-export-*.test.mjs",
