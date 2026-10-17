@@ -14,6 +14,12 @@ for (const name of ["credit-welcome-voice-core", "credit-payment-plan", "credit-
   "credit-welcome-voice-speech", "credit-voice-review-campaign-core", "credit-welcome-voice-document", "credit-welcome-voice-followup-core"]) {
   dependencies["@/lib/" + name] = await jiti.import("../lib/" + name + ".ts");
 }
+dependencies["@/lib/credit-welcome-voice-recording"] = loadReissueModule("lib/credit-welcome-voice-recording.ts");
+const dispatcher = loadReissueModule("lib/credit-welcome-voice-dispatch.ts", {
+  "@/lib/credit-welcome-voice-core": dependencies["@/lib/credit-welcome-voice-core"],
+  "@/lib/credit-welcome-voice-speech": dependencies["@/lib/credit-welcome-voice-speech"],
+  "@/lib/credit-welcome-voice-store": {},
+}, { AbortSignal });
 const credit = id => ({ id, folio: `FC-FOLLOWUP-${id}`, clienteNombre: "ANA MARIA PRUEBA", clienteDocumento: "00123456",
   clienteTelefono: "3000000001", referenciaEquipo: null, equipoMarca: null, equipoModelo: null,
   estado: "ENTREGABLE", pazYSalvoEmitidoAt: null, cuotaInicial: 200, montoCredito: 300, valorCuota: 100,
@@ -56,9 +62,97 @@ async function fixture(t, { count = 1, enabled = true, env = {} } = {}) {
     providerCallId: "call-" + event.eventId, status: "COMPLETED", communicationOutcome: "NO_ANSWER", disconnectionReason: "dial_no_answer",
     completedAt: time.toISOString(), ...fields });
   const update = (id, fields) => db.query('UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1', [id, JSON.stringify(fields)]);
-  return { db, store, enqueue, events, followups, accepted, result, update, env, queries: () => queries,
+  const saveRecording = async (id = 1, revision = 1) => {
+    await db.exec('CREATE TABLE IF NOT EXISTS "CreditApprovalCallRecording" ("creditoId" integer,"revision" integer,"bytes" bytea)');
+    await db.query('INSERT INTO "CreditApprovalCallRecording" VALUES($1,$2,$3)', [id, revision, new Uint8Array([1, 2, 3])]);
+  };
+  return { db, store, enqueue, events, followups, accepted, result, update, saveRecording, env, queries: () => queries,
     now: () => time, time: value => { time = new Date(value); }, advance: ms => { time = new Date(time.getTime() + ms); }, rollback: () => { rollback = true; } };
 }
+
+test("saved recording from any approval revision prevents new initial queues and stops already pending automatic sources", async t => {
+  const f = await fixture(t, { count: 4 });
+  await f.enqueue(1, "NORMAL"); await f.enqueue(2, "INDIVIDUAL_IMPORT"); await f.enqueue(3);
+  await f.saveRecording(1, 1); await f.saveRecording(2, 1); await f.saveRecording(4, 1);
+  await f.db.exec('UPDATE "CreditApprovalReview" SET "revision"=9');
+  assert.equal(await f.enqueue(4), null);
+  assert.deepEqual(Array.from(await f.store.claimPendingCreditWelcomeVoice(), row => row.creditId), [3]);
+  assert.deepEqual((await f.followups()).slice(0, 2).map(row => [row.phase, row.reason, row.nextAttemptAt]), [
+    ["STOPPED", "CALL_RECORDING_SAVED", null], ["STOPPED", "CALL_RECORDING_SAVED", null],
+  ]);
+  assert.deepEqual((await f.events()).slice(0, 2).map(row => [row.status, row.resultCode]), [
+    ["CANCELLED", "CALL_RECORDING_SAVED"], ["CANCELLED", "CALL_RECORDING_SAVED"],
+  ]);
+  assert.equal((await f.events()).length, 3);
+});
+
+test("recording saved after a claim blocks the real dispatcher before HTTP and cancels only its known-unsent event", async t => {
+  const f = await fixture(t);
+  await f.enqueue(); const claims = await f.store.claimPendingCreditWelcomeVoice();
+  assert.equal(claims.length, 1); assert.equal((await f.events())[0].status, "DISPATCHING");
+  await f.saveRecording();
+  let requests = 0;
+  const report = await dispatcher.dispatchCreditWelcomeVoice({}, {
+    config: { webhookUrl: "https://api.dapta.ai/synthetic-recording-test", secret: "synthetic-recording-test-secret-at-least-32-characters",
+      agentId: "4b68b7b8-382f-4f9a-8e1f-8b88665acf38" },
+    ensureSchema: async () => {}, claim: async () => claims,
+    prepare: f.store.prepareCreditWelcomeVoiceDispatch,
+    accepted: () => assert.fail("A recorded credit must not be dispatched"),
+    unknown: () => assert.fail("No HTTP means no ambiguous provider result"),
+    failed: () => assert.fail("Recording suppression has its own persistent result"),
+    fetcher: async () => { requests++; assert.fail("Must not call Dapta"); },
+  });
+  assert.equal(report.skipped, 1); assert.equal(report.accepted, 0); assert.equal(requests, 0);
+  const [event] = await f.events(), [followup] = await f.followups();
+  assert.equal(event.status, "CANCELLED"); assert.equal(event.resultCode, "CALL_RECORDING_SAVED");
+  assert.equal(followup.phase, "STOPPED"); assert.equal(followup.reason, "CALL_RECORDING_SAVED");
+  assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(claims[0].eventId), null);
+});
+
+test("recording stops existing FAST and daily queues without rewriting completed call evidence", async t => {
+  const f = await fixture(t, { count: 2 });
+  await f.enqueue(1); await f.enqueue(2);
+  const initials = await f.store.claimPendingCreditWelcomeVoice();
+  for (const initial of initials) await f.result(initial);
+  const history = await f.events();
+  await f.db.exec(`UPDATE "CreditWelcomeVoiceFollowup" SET "phase"='PENDING',"fastAttempts"=5,
+    "nextAttemptAt"='2026-10-09T15:00:00Z' WHERE "creditoId"=2`);
+  await f.saveRecording(1); await f.saveRecording(2);
+  f.time("2026-10-09T15:00:00Z");
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.deepEqual(await f.events(), history);
+  assert.deepEqual((await f.followups()).map(row => [row.phase, row.reason]), [
+    ["STOPPED", "CALL_RECORDING_SAVED"], ["STOPPED", "CALL_RECORDING_SAVED"],
+  ]);
+  f.advance(24 * 60 * 60_000);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+});
+
+test("a deployment-gap historical initial with a saved recording is never adopted or retried", async t => {
+  const f = await fixture(t, { env: { DAPTA_WELCOME_VOICE_AUTOMATIC_START_AT: "2026-10-09T13:59:00.000Z" } });
+  await f.enqueue(); const [initial] = await f.store.claimPendingCreditWelcomeVoice();
+  await f.accepted(initial); await f.result(initial); const history = await f.events();
+  await f.db.exec('DELETE FROM "CreditWelcomeVoiceFollowup"');
+  await f.saveRecording(); f.advance(300_000);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.equal((await f.followups()).length, 0); assert.deepEqual(await f.events(), history);
+});
+
+test("recording saved after a retry claim cancels that retry while preserving its completed initial event", async t => {
+  const f = await fixture(t);
+  await f.enqueue(); const [initial] = await f.store.claimPendingCreditWelcomeVoice();
+  await f.result(initial, { recordingUrl: "https://app.dapta.ai/calls/synthetic-no-answer-recording" });
+  const original = (await f.events())[0]; f.advance(300_000);
+  assert.equal(original.recordingUrl, "https://app.dapta.ai/calls/synthetic-no-answer-recording");
+  // A private provider URL is not a manually saved approval audio file.
+  const [retry] = await f.store.claimPendingCreditWelcomeVoice(); assert.ok(retry);
+  await f.saveRecording();
+  assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(retry.eventId), null);
+  const events = await f.events(); assert.deepEqual(events[0], original);
+  assert.equal(events[1].source, "AUTOMATIC_RETRY"); assert.equal(events[1].status, "CANCELLED");
+  assert.equal(events[1].resultCode, "CALL_RECORDING_SAVED");
+  assert.equal((await f.followups())[0].reason, "CALL_RECORDING_SAVED");
+});
 
 test("five real attempts total wait five minutes after each no-answer, then use unique daily Colombia slots", async t => {
   const f = await fixture(t);

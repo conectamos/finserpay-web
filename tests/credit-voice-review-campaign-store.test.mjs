@@ -58,6 +58,7 @@ async function fixture(t, { count = 1, enabled = true } = {}) {
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,
     "@/lib/credit-welcome-voice-speech": speech, "@/lib/credit-voice-review-campaign-core": policy,
+    "@/lib/credit-welcome-voice-recording": loadReissueModule("lib/credit-welcome-voice-recording.ts"),
     "@/scripts/credit-welcome-voice-schema.mjs": { creditWelcomeVoiceSchemaStatements },
   }, { process: { env: {} } });
   const store = loaded.createCreditWelcomeVoiceStore({ database: client, enabled: () => enabled, now: () => time });
@@ -106,6 +107,36 @@ test("disabled campaign performs no database access, and only the current Colomb
   f.time("2026-10-10T13:10:00Z");
   assert.equal((await f.claim("2026-10-10T08:00")).length, 0);
   assert.equal((await f.rows()).length, 0);
+});
+
+test("saved approval audio stops campaign membership across revisions while unrecorded cohort members remain eligible", async t => {
+  const f = await fixture(t, { count: 2 }); await f.ensure();
+  await f.db.exec(`CREATE TABLE "CreditApprovalCallRecording" ("creditoId" integer,"revision" integer,"bytes" bytea);
+    INSERT INTO "CreditApprovalCallRecording" VALUES(1,0,'\\x010203');`);
+  const claims = await f.claim();
+  assert.deepEqual(Array.from(claims, row => row.creditId), [2]);
+  const [recorded, other] = await f.members();
+  assert.equal(recorded.state, "STOPPED"); assert.equal(recorded.stopReason, "CALL_RECORDING_SAVED");
+  assert.equal(recorded.reviewRevision, 1); assert.equal(other.state, "ACTIVE");
+  assert.deepEqual((await f.rows()).map(row => row.creditoId), [2]);
+  f.time("2026-10-09T15:00:00Z");
+  assert.equal((await f.claim("2026-10-09T10:00")).length, 0);
+  assert.equal((await f.members())[0].stopReason, "CALL_RECORDING_SAVED");
+});
+
+test("campaign recording added between claim and dispatch cancels only its unsent event and preserves prior history", async t => {
+  const f = await fixture(t); await f.ensure();
+  const [first] = await f.claim(); await f.save(first);
+  const original = (await f.rows())[0]; f.time("2026-10-09T15:00:00Z");
+  const [second] = await f.claim("2026-10-09T10:00"); assert.ok(second);
+  await f.db.exec(`CREATE TABLE "CreditApprovalCallRecording" ("creditoId" integer,"revision" integer);
+    INSERT INTO "CreditApprovalCallRecording" VALUES(1,1);`);
+  assert.equal(await f.store.prepareVoiceReviewCampaign(second.eventId), null);
+  const rows = await f.rows(); assert.deepEqual(rows[0], original);
+  assert.equal(rows[1].source, "SCHEDULED_CAMPAIGN"); assert.equal(rows[1].status, "CANCELLED");
+  assert.equal(rows[1].resultCode, "CALL_RECORDING_SAVED");
+  const [member] = await f.members();
+  assert.equal(member.state, "STOPPED"); assert.equal(member.stopReason, "CALL_RECORDING_SAVED");
 });
 
 test("claims use frozen pending members only, max attempt plus one, and one event per slot", async t => {

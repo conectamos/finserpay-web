@@ -61,6 +61,7 @@ async function fixture(t, { credits = [sample()], enabled = true, failTransactio
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,
     "@/lib/credit-welcome-voice-speech": speech,
+    "@/lib/credit-welcome-voice-recording": loadReissueModule("lib/credit-welcome-voice-recording.ts"),
     "@/lib/credit-welcome-voice-document": documentParser,
     "@/lib/credit-welcome-voice-followup-core": loadReissueModule("lib/credit-welcome-voice-followup-core.ts"),
     "@/lib/credit-voice-review-campaign-core": campaignPolicy,
@@ -447,6 +448,25 @@ test("controlled test works through an isolated factory while global creation st
   assert.equal(records[1].status, "DISPATCHING");
   assert.equal(records[1].source, "CONTROLLED_TEST");
   assert.equal(await f.enqueue(3), null);
+});
+
+test("a saved approval recording permits an isolated controlled test with the original snapshot and explicit destination guard", async t => {
+  const f = await fixture(t);
+  await f.db.exec(`CREATE TABLE "CreditApprovalCallRecording" ("creditoId" integer,"revision" integer,"bytes" bytea);
+    INSERT INTO "CreditApprovalCallRecording" VALUES(1,0,'\\x010203');`);
+  assert.equal(await f.enqueue(), null);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  const before = (await f.db.query('SELECT "data" FROM "Credito"')).rows;
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "3000000099" }),
+    error => error.code === "CONTROLLED_TEST_PHONE_MISMATCH");
+  const chosen = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "3000000001" });
+  assert.equal(chosen.creditId, 1); assert.equal(chosen.snapshot.phone, "573000000001");
+  assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(chosen.eventId));
+  const [event] = await f.rows();
+  assert.equal(event.source, "CONTROLLED_TEST"); assert.equal(event.status, "DISPATCHING");
+  assert.equal(event.resultCode, null);
+  assert.deepEqual((await f.db.query('SELECT "data" FROM "Credito"')).rows, before);
+  assert.equal((await f.db.query('SELECT count(*)::int AS count FROM "CreditWelcomeVoiceFollowup"')).rows[0].count, 0);
 });
 
 test("controlled test validates the expected number and eligible real credit before inserting anything", async t => {

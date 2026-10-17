@@ -57,6 +57,7 @@ async function fixture(t, { credits = [sample()], enabled = false } = {}) {
     "@/lib/prisma": { default: client }, "@/lib/credit-payment-plan": plan,
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera, "@/lib/dapta-welcome": phone,
     "@/lib/credit-welcome-voice-core": core, "@/lib/credit-welcome-voice-speech": speech,
+    "@/lib/credit-welcome-voice-recording": loadReissueModule("lib/credit-welcome-voice-recording.ts"),
     "@/lib/credit-welcome-voice-document": loadReissueModule("lib/credit-welcome-voice-document.ts"),
     "@/lib/credit-welcome-voice-followup-core": loadReissueModule("lib/credit-welcome-voice-followup-core.ts"),
     "@/lib/credit-voice-review-campaign-core": campaign,
@@ -99,6 +100,37 @@ test("explicit operator call works with automatic flag off, audits its separate 
   assert.equal((await f.store.listCreditWelcomeVoiceCallsForCredit(1))[0].communicationOutcome, "HUMAN_CONTACT");
   assert.equal((await f.db.query('SELECT count(*)::int AS count FROM "CreditWelcomeVoiceFollowup"')).rows[0].count, 0);
   f.setEnabled(true); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+});
+
+test("saved approval audio still permits an explicit operator request without reopening automatic followup or changing credit data", async t => {
+  const f = await fixture(t, { enabled: true });
+  await f.client.$transaction(tx => f.store.enqueueCreditWelcomeVoice(tx, { creditId: 1, source: "NORMAL" }));
+  await f.db.exec(`CREATE TABLE "CreditApprovalCallRecording" ("creditoId" integer,"revision" integer,"bytes" bytea);
+    INSERT INTO "CreditApprovalCallRecording" VALUES(1,0,'\\x010203');`);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  const stopped = (await f.db.query('SELECT * FROM "CreditWelcomeVoiceFollowup"')).rows;
+  assert.equal(stopped[0].phase, "STOPPED"); assert.equal(stopped[0].reason, "CALL_RECORDING_SAVED");
+  const original = (await f.events())[0], creditBefore = (await f.db.query('SELECT "data" FROM "Credito"')).rows;
+  const call = await f.store.prepareCreditWelcomeVoiceOperatorCall(input({ phone: "3000000002" }));
+  assert.equal(call.created, true); assert.equal(call.destinationPhone, "573000000002");
+  let requests = 0;
+  const report = await dispatcher.dispatchCreditWelcomeVoice({}, {
+    config: dispatchConfig, ensureSchema: async () => {}, claim: async () => [call],
+    prepare: f.store.prepareCreditWelcomeVoiceDispatch, accepted: f.store.markCreditWelcomeVoiceDispatchAccepted,
+    failed: () => assert.fail("Explicit request must remain eligible"), unknown: () => assert.fail("Synthetic request has a receipt"),
+    fetcher: async (_url, options) => {
+      requests++; const body = JSON.parse(options.body);
+      assert.equal(body.to_number, "+573000000002"); assert.equal(body.event_id, call.eventId);
+      return Response.json({ ok: true, call_id: "call-synthetic-recording-operator" });
+    },
+  });
+  assert.equal(report.accepted, 1); assert.equal(requests, 1);
+  assert.deepEqual((await f.events())[0], original);
+  assert.equal((await f.events())[1].source, "OPERATOR_REQUEST");
+  assert.deepEqual((await f.db.query('SELECT * FROM "CreditWelcomeVoiceFollowup"')).rows, stopped);
+  assert.deepEqual((await f.db.query('SELECT "data" FROM "Credito"')).rows, creditBefore);
+  const replay = await f.store.prepareCreditWelcomeVoiceOperatorCall(input({ phone: "+57 300 000 0002" }));
+  assert.equal(replay.created, false); assert.equal(replay.eventId, call.eventId);
 });
 
 test("concurrent same-key requests create one call; replays report current status and cannot change credit, actor, document or destination", async t => {
@@ -216,6 +248,13 @@ test("optout and operator exclusion prevent both a new manual request and its la
   assert.equal(availability.canCall, false); assert.equal(availability.reason, "Este crédito está excluido de las llamadas.");
   await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall(input({ requestId: "98a7dfb4-a20d-482c-9411-8bff948ab004" })), error => error.code === "OPERATOR_EXCLUDED");
   assert.equal((await f.events()).length, 3); assert.equal((await f.requests()).length, 3);
+  await f.db.exec(`CREATE TABLE "CreditApprovalCallRecording" ("creditoId" integer);
+    INSERT INTO "CreditApprovalCallRecording" VALUES(1);
+    UPDATE "VoiceReviewCampaignMember" SET "state"='HELD' WHERE "campaignId"='operator-exclusion-test';`);
+  await loadReissueModule("lib/credit-welcome-voice-recording.ts").stopAutomaticCreditWelcomeCallsForRecording(f.client, 1, now);
+  const excluded = (await f.db.query('SELECT "state","stopReason" FROM "VoiceReviewCampaignMember"')).rows[0];
+  assert.equal(excluded.state, "HELD"); assert.equal(excluded.stopReason, "OPERATOR_EXCLUDED");
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall(input({ requestId: "98a7dfb4-a20d-482c-9411-8bff948ab004" })), error => error.code === "OPERATOR_EXCLUDED");
 });
 
 test("paid credits and changes to the original phone or terms block the prepared call without moving its separate destination", async t => {

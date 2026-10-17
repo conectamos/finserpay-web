@@ -65,6 +65,7 @@ function fixture({ failFirstLock = false } = {}) {
     "@/lib/credit-factory-snapshot": {}, "@/lib/cartera-export": {}, "@/lib/dapta-welcome": {},
     "@/lib/credit-welcome-voice-core": {},
     "@/lib/credit-welcome-voice-speech": {},
+    "@/lib/credit-welcome-voice-recording": loadReissueModule("lib/credit-welcome-voice-recording.ts"),
     "@/lib/credit-welcome-voice-document": {},
     "@/lib/credit-welcome-voice-followup-core": loadReissueModule("lib/credit-welcome-voice-followup-core.ts"),
     "@/lib/credit-voice-review-campaign-core": campaignPolicy,

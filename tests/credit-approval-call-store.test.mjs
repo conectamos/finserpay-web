@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { loadCallModule, errors, actors, files, tone, stateModule, plain } from "./credit-approval-call-test-loader.mjs";
 
 function setup(overrides = {}) {
-  const state = { rows: [], queries: [], writes: [], revoked: false, writable: true,
+  const state = { rows: [], queries: [], writes: [], stops: [], revoked: false, writable: true,
     detail: { review: { revision: 1, reviewHash: "a".repeat(64), required: true, status: "PENDING" },
       capabilities: { canCorrectEvidence: true, correctionBlockedReason: null }, callRecording: { available: true, canUpload: true } },
     detailActors: [], ...overrides };
@@ -34,6 +34,12 @@ function setup(overrides = {}) {
       state.detailActors.push(currentActor); return state.detail;
     } },
     "@/lib/credit-approval-errors": errors, "@/lib/credit-approval-call-state": stateModule,
+    "@/lib/credit-welcome-voice-recording": { async stopAutomaticCreditWelcomeCallsForRecording(currentDb, creditId, now) {
+      assert.equal(currentDb, db);
+      assert.ok(now instanceof Date && Number.isFinite(now.getTime()));
+      assert.ok(state.rows.some(row => row.creditoId === creditId), "el audio debe existir antes de detener llamadas");
+      state.stops.push({ creditId, recordingCount: state.rows.length, writes: state.writes.length });
+    } },
     "@/lib/credit-approval-actor": { ...actors,
       async assertApprovalActorActive() { state.queries.push({ sql: "LOCK ACTOR" }); if (state.revoked) throw new actors.ApprovalActorAccessError(); },
       async assertApprovalActorCreditAccess() { if (!state.writable) throw new actors.ApprovalActorCreditAccessError(); },
@@ -61,6 +67,7 @@ test("call upload preserves bytes and actor, locks credit before review and only
   assert.match(state.queries[2].sql, /FROM "CreditApprovalReview".*FOR UPDATE/);
   assert.deepEqual(plain(state.detailActors), [actor]);
   assert.ok(state.rows[0].bytes.equals(file.bytes));
+  assert.deepEqual(state.stops, [{ creditId: 81, recordingCount: 1, writes: 1 }]);
 });
 test("call upload is idempotent and preserves original actor and bytes", async () => {
   const { state, db, service } = setup(); const file = await input();
@@ -68,9 +75,11 @@ test("call upload is idempotent and preserves original actor and bytes", async (
   const retry = await service.saveCreditApprovalCall(db, 81, file, actor);
   assert.equal(retry.unchanged, true); assert.equal(retry.state.recording.id, first.state.recording.id);
   assert.equal(state.rows.length, 1); assert.equal(state.writes.length, 1);
+  assert.equal(state.stops.length, 2, "un replay válido también limpia llamadas pendientes");
   await assert.rejects(service.saveCreditApprovalCall(db, 81, file, { id: 13, nombre: "Otro" }), e => e.code === "CALL_RECORDING_KEY_CONFLICT");
   await assert.rejects(service.saveCreditApprovalCall(db, 81, { ...file, fileName: "otra.wav" }, actor), e => e.code === "CALL_RECORDING_KEY_CONFLICT");
   await assert.rejects(service.saveCreditApprovalCall(db, 82, file, actor), e => e.code === "CALL_RECORDING_KEY_CONFLICT");
+  assert.equal(state.stops.length, 2, "los replays incompatibles no detienen llamadas");
 });
 test("replacement appends and keeps the previous recording accessible", async () => {
   const { state, db, service } = setup();
@@ -100,6 +109,7 @@ test("upload denies revoked/out of scope, changed review, approved, legacy and b
     Object.assign(state.detail.callRecording, patch.callRecording);
     await assert.rejects(service.saveCreditApprovalCall(db, 81, await input(), actor));
     assert.equal(state.writes.length, 0);
+    assert.equal(state.stops.length, 0);
   }
 });
 test("upload rejects the same actor-aware capability exposed by the detail DTO", async () => {
@@ -109,6 +119,7 @@ test("upload rejects the same actor-aware capability exposed by the detail DTO",
     { code: "CALL_RECORDING_NOT_ALLOWED", status: 409 });
   assert.deepEqual(plain(state.detailActors), [actor]);
   assert.equal(state.writes.length, 0);
+  assert.equal(state.stops.length, 0);
 });
 test("recording selection is scoped to revision/hash and preserves legacy null and fixed approved ID", async () => {
   const { db, service } = setup();
