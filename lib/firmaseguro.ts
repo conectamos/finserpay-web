@@ -1184,27 +1184,28 @@ export async function firmaSeguroResendSignature(token: string, signatureId: num
   return validateFirmaSeguroRecipientMutationResponse(response);
 }
 
-export async function firmaSeguroGetDocumentsByUuid(uuid: string, token?: string) {
+export async function firmaSeguroGetDocumentsByUuid(uuid: string, token?: string, options: { timeoutMs?: number } = {}) {
   return firmaSeguroRequest<unknown>(
     `/api/v2/Document/ByUUID/${encodeURIComponent(uuid)}`,
-    token ? { token } : {}
+    { token, timeoutMs: options.timeoutMs }
   );
 }
 
 export async function firmaSeguroGetAuraQuanticDocumentByUuid(
   uuid: string,
-  token?: string
+  token?: string,
+  options: { timeoutMs?: number } = {}
 ) {
   return firmaSeguroRequest<unknown>(
     `/api/v2/Document/get-document-aura-quantic/${encodeURIComponent(uuid)}`,
-    token ? { token } : {}
+    { token, timeoutMs: options.timeoutMs }
   );
 }
 
-export async function firmaSeguroGetDocumentByUuid(uuid: string, token?: string) {
+export async function firmaSeguroGetDocumentByUuid(uuid: string, token?: string, options: { timeoutMs?: number } = {}) {
   return firmaSeguroRequest<unknown>(
     `/api/v2/Document/${encodeURIComponent(uuid)}`,
-    token ? { token } : {}
+    { token, timeoutMs: options.timeoutMs }
   );
 }
 

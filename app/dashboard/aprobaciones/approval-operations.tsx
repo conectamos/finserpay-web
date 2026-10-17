@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, CalendarClock, CheckCircle2, FileClock, FilePenLine, Mail, Paperclip, Phone, Search, ShieldCheck, Smartphone, UserRound } from "lucide-react";
+import { ArrowRight, CalendarClock, CheckCircle2, FileClock, FilePenLine, Mail, Paperclip, Phone, RefreshCw, Search, ShieldCheck, Smartphone, UserRound } from "lucide-react";
 import { Badge, Button, Card, Input, LoadingState, PageHeader, Select, StatusPill } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import type { OperationalCaseDetail, OperationalCaseSummary } from "@/lib/approval-operations-types";
 import styles from "./approval-operations.module.css";
 import CreditWelcomeVoiceResult from "./credit-welcome-voice-result";
 
-type Operation = "imei" | "contact" | "signature" | "remission" | "identity";
+type Operation = "imei" | "contact" | "signature" | "signature-state" | "remission" | "identity";
 type ActivePanel = "imei" | "signature" | "identity" | null;
 type OperationMode = "all" | "imei" | "signature";
 type ApiResult = { ok: boolean; code?: string; error?: string; message?: string; operation?: {
@@ -253,6 +253,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   const [identityAttested, setIdentityAttested] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
+  const signatureStateController = useRef<AbortController | null>(null);
   const evidenceInput = useRef<HTMLInputElement | null>(null);
   const signatureReasonInput = useRef<HTMLInputElement | null>(null);
   const redirectPhoneInput = useRef<HTMLInputElement | null>(null);
@@ -266,6 +267,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   useEffect(() => () => {
     searchController.current?.abort();
     detailController.current?.abort();
+    signatureStateController.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -276,6 +278,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   // Contextual links select the exact request, even when the client has several credits.
   useEffect(() => {
     if (!initialCase || !active) return;
+    signatureStateController.current?.abort();
     const controller = new AbortController();
     detailController.current?.abort();
     detailController.current = controller;
@@ -366,7 +369,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
       try {
         const result = await jsonRequest<DetailResult>(casePath(target), { signal: controller.signal },
           "No fue posible actualizar el estado de la firma.");
-        if (closed) return;
+        if (closed || submitting.current) return;
         setDetail(current => current?.id === target.id && current.kind === target.kind ? result.item : current);
         if (result.item.signature.status === "SIGNED") {
           setNotice("Firma aprobada. El estado del expediente se actualizó.");
@@ -390,6 +393,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   }, [active, activePanel, detail?.id, detail?.kind, detail?.signature.status, selected]);
 
   async function loadDetail(item: OperationalCaseSummary) {
+    signatureStateController.current?.abort();
     detailController.current?.abort();
     const controller = new AbortController();
     detailController.current = controller;
@@ -439,6 +443,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   async function searchCases(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting.current) return;
+    signatureStateController.current?.abort();
     detailController.current?.abort();
     setLoadingDetail(false);
     const q = query.trim();
@@ -609,6 +614,47 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
       } catch {
         setActionError("No fue posible verificar el contacto actualizado. Busca nuevamente el crédito antes de enviar la firma.");
       }
+      submitting.current = false;
+      setBusy(null);
+    }
+  }
+
+  async function refreshSignatureState() {
+    if (!detail || busy || submitting.current || !detail.signature.processUuid ||
+        !["PENDING", "TECHNICAL_ERROR"].includes(detail.signature.status)) return;
+    const target = detail;
+    const expectedProcessUuid = target.signature.processUuid;
+    const controller = new AbortController();
+    signatureStateController.current?.abort();
+    signatureStateController.current = controller;
+    submitting.current = true;
+    setBusy("signature-state");
+    setActionError("");
+    setNotice("");
+    try {
+      const result = await jsonRequest<DetailResult>(casePath(target) + "/firma/actualizar", {
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        body: JSON.stringify({ expectedProcessUuid }),
+      }, "No fue posible consultar la firma en FirmaSeguro. El estado anterior se conserva.");
+      if (controller.signal.aborted) return;
+      if (result.item?.kind !== target.kind || result.item.id !== target.id ||
+          result.item.signature.processUuid !== expectedProcessUuid) {
+        throw new Error("La firma vigente cambió. Busca nuevamente el crédito antes de continuar.");
+      }
+      setDetail(current => current?.kind === target.kind && current.id === target.id &&
+        current.signature.processUuid === expectedProcessUuid ? result.item : current);
+      const message = result.message || (result.item.signature.status === "SIGNED"
+        ? "Firma confirmada en FirmaSeguro. El expediente se actualizó."
+        : result.item.signature.status === "PENDING"
+          ? "FirmaSeguro confirma que el documento sigue pendiente de firma."
+          : "La firma sigue requiriendo revisión técnica. El estado no se marcó como firmado.");
+      if (result.item.signature.status === "TECHNICAL_ERROR") setActionError(message);
+      else setNotice(message);
+    } catch (error) {
+      if (!controller.signal.aborted) setActionError(error instanceof Error ? error.message :
+        "No fue posible consultar la firma en FirmaSeguro. El estado anterior se conserva.");
+    } finally {
+      if (signatureStateController.current === controller) signatureStateController.current = null;
       submitting.current = false;
       setBusy(null);
     }
@@ -878,6 +924,8 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   const canSendSignature = Boolean(detail?.capabilities.canSendSignature);
   const canResendSignature = Boolean(detail?.capabilities.canResendSignature);
   const canManageSignature = canSendSignature || canResendSignature;
+  const canRefreshSignature = Boolean(signature?.processUuid &&
+    (signature.status === "PENDING" || signature.status === "TECHNICAL_ERROR"));
   const canRedirectPendingSignature = Boolean(detail?.capabilities.canRedirectPendingSignature);
   const pendingRedirectBlockReason = detail?.kind === "DRAFT" &&
     (signature?.status === "PENDING" || signature?.status === "TECHNICAL_ERROR") &&
@@ -1104,7 +1152,9 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         <div className={styles.signatureHead}>
           <span className={styles.sectionIcon}><FilePenLine size={23} aria-hidden="true" /></span>
           <div><div className={styles.signatureTitle}><h2>FirmaSeguro</h2><StatusPill tone={signatureTone}>{signatureLabel(signature!.status)}</StatusPill></div>
-            <p>{signature?.status === "TECHNICAL_ERROR" ? "El envío necesita revisión técnica antes de continuar." :
+            <p>{signature?.status === "TECHNICAL_ERROR" ? (canRefreshSignature
+              ? "Consulta el estado en FirmaSeguro para verificar si el documento ya fue firmado."
+              : "El envío necesita revisión técnica antes de continuar.") :
               signature?.status === "SIGNED" ? "Contrato firmado. El reenvío del mismo documento para firma solo está disponible mientras esté pendiente." :
               signature?.status === "PENDING" && canRedirectPendingSignature
                 ? "Solicitud enviada y aún sin firma. Puedes editar el destinatario en FirmaSeguro y reenviar el mismo documento."
@@ -1123,7 +1173,11 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
                 value={contactEmail} onChange={event => setContactEmail(event.target.value)}
                 readOnly={!editingContact} disabled={Boolean(busy)} /></div>
           </div>
-          {detail.capabilities.canUpdateContact || canManageSignature || canRedirectPendingSignature ? <div className={styles.signatureActions}>
+          {detail.capabilities.canUpdateContact || canManageSignature || canRedirectPendingSignature || canRefreshSignature ? <div className={styles.signatureActions}>
+            {canRefreshSignature ? <Button variant="secondary" onClick={() => void refreshSignatureState()}
+              disabled={Boolean(busy) || editingContact || preparingSignature || redirectingSignature} aria-busy={busy === "signature-state"}>
+              <RefreshCw size={17} aria-hidden="true" />{busy === "signature-state" ? "Consultando estado..." : "Consultar estado en FirmaSeguro"}
+            </Button> : null}
             {editingContact ? <>
               <Button variant="secondary" onClick={() => { setEditingContact(false); setContactReason(""); setContactPhone(signature?.sentPhone || detail.phone || ""); setContactEmail(signature?.sentEmail || detail.email || ""); }} disabled={Boolean(busy)}>Cancelar</Button>
               <Button variant="secondary" onClick={() => void updateContact()} disabled={Boolean(busy) || contactReason.trim().length < 5}>Guardar contacto</Button>

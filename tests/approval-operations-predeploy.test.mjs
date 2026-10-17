@@ -45,7 +45,7 @@ test("predeploy matches both runtime schemas and packages their installers", () 
     statementsInRuntime("lib/approval-operations-schema.ts", "ensureApprovalOperationalSchema"));
   assert.deepEqual(draft,
     statementsInRuntime("lib/firmaseguro-draft-dispatch-ledger.ts", "ensureDraftDispatchSchema"));
-  assert.equal(operational.length, 21);
+  assert.equal(operational.length, 22);
   assert.equal(draft.length, 17);
   for (const statement of [...operational, ...draft]) {
     assert.doesNotMatch(statement, /\b(?:DROP TABLE|TRUNCATE)\b/i);
@@ -93,6 +93,10 @@ test("operational and draft schemas install twice and preserve immutable history
     await database.query(`INSERT INTO "ApprovalOperationalAction"
       ("id","targetKind","targetId","creditId","eventType","actorUserId","actorName","reason","status")
       VALUES ('00000000-0000-4000-8000-000000000001','CREDIT',1,1,'IMEI_REQUESTED',1,'Analista','Cambio por garantía','PENDING')`);
+    await database.query(`INSERT INTO "ApprovalOperationalAction"
+      ("id","targetKind","targetId","eventType","actorUserId","actorName","reason","status")
+      VALUES ('00000000-0000-4000-8000-000000000004','DRAFT',1,'SIGNATURE_STATUS_CHECKED',1,'Analista',
+        'Consulta del estado del mismo documento','SIGNATURE_REFRESH_PENDING')`);
     await assert.rejects(database.query(`UPDATE "ApprovalOperationalAction" SET "status"='CHANGED'`),
       /OPERATIONAL_AUDIT_IMMUTABLE/);
     await database.query(`INSERT INTO "ApprovalOperationalContractVersion"

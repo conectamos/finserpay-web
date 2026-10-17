@@ -14,7 +14,7 @@ export function ensureApprovalOperationalSchema() {
         "targetId" INTEGER NOT NULL CHECK ("targetId">0),
         "creditId" INTEGER REFERENCES "Credito"("id") ON DELETE RESTRICT,
         "eventType" TEXT NOT NULL CHECK ("eventType" IN
-          ('IMEI_REQUESTED','IMEI_APPLIED','IMEI_CORRECTED','CONTACT_UPDATED','SIGNATURE_REQUESTED')),
+          ('IMEI_REQUESTED','IMEI_APPLIED','IMEI_CORRECTED','CONTACT_UPDATED','SIGNATURE_REQUESTED','SIGNATURE_STATUS_CHECKED')),
         "actorUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT,
         "actorName" TEXT NOT NULL,
         "previousImei" TEXT,
@@ -34,6 +34,10 @@ export function ensureApprovalOperationalSchema() {
           OR ("evidenceData" IS NOT NULL AND "evidenceMime" IS NOT NULL AND "evidenceName" IS NOT NULL
             AND "evidenceSha256" ~ '^[a-f0-9]{64}$' AND OCTET_LENGTH("evidenceData") <= 10485760))
       )`);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "ApprovalOperationalAction"
+        DROP CONSTRAINT IF EXISTS "ApprovalOperationalAction_eventType_check",
+        ADD CONSTRAINT "ApprovalOperationalAction_eventType_check" CHECK ("eventType" IN
+          ('IMEI_REQUESTED','IMEI_APPLIED','IMEI_CORRECTED','CONTACT_UPDATED','SIGNATURE_REQUESTED','SIGNATURE_STATUS_CHECKED'))`);
       await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ApprovalOperationalAction_target_created"
         ON "ApprovalOperationalAction"("targetKind","targetId","createdAt" DESC,"id" DESC)`);
       await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ApprovalOperationalContractVersion" (
