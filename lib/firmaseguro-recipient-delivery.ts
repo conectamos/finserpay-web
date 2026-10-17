@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { firmaSeguroRecipientDeliverySchemaStatements } from "@/scripts/firmaseguro-recipient-delivery-schema.mjs";
 import { FirmaSeguroApiError, firmaSeguroEditSignature, firmaSeguroResendSignature, firmaSeguroSignIn,
   isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
-import { isVerifiedPendingSignatureStatus } from "@/lib/approval-operations-core";
+import { isVerifiedPendingSignatureStatus, supportsPendingSignatureRecipientDelivery } from "@/lib/approval-operations-core";
 import { inspectPendingFirmaSeguroRecipient, FirmaSeguroRecipientProviderError } from "@/lib/firmaseguro-recipient-provider";
 import { tryAcquireSolicitudOperationLock, type FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
@@ -106,14 +106,14 @@ async function currentPendingProcess(draftId: number, processUuid: string) {
   const drafts = await prisma.$queryRawUnsafe<Array<{ id: number; estado: string; creditoId: number | null;
     currentStep: number; expiresAt: Date | null; createdAt: Date; platform: string }>>(
     `SELECT "id","estado","creditoId","currentStep","expiresAt","createdAt",
-      COALESCE(NULLIF("plataforma",''),"payload"->>'plataformaDispositivo','') AS "platform"
+      COALESCE(NULLIF(BTRIM("plataforma"),''),"payload"->>'plataformaDispositivo','') AS "platform"
       FROM "CreditoBorrador" WHERE "id"=$1`, draftId);
   const draft = drafts[0];
   if (!draft || draft.estado !== "ABIERTO" || draft.creditoId !== null || draft.currentStep < 3 || draft.currentStep > 4
     || (draft.expiresAt || new Date(new Date(draft.createdAt).getTime() + 15 * 86400000)) <= new Date())
     throw new FirmaSeguroRecipientDeliveryError("DRAFT_NOT_AVAILABLE", "La solicitud ya no está abierta para reenviar su firma.");
-  if (draft.platform.toUpperCase() !== "IPHONE")
-    throw new FirmaSeguroRecipientDeliveryError("IPHONE_REQUIRED", "Esta operación está disponible por ahora únicamente para iPhone.");
+  if (!supportsPendingSignatureRecipientDelivery(draft.platform))
+    throw new FirmaSeguroRecipientDeliveryError("PLATFORM_NOT_SUPPORTED", "La plataforma de esta solicitud no permite gestionar el destinatario de la firma.");
   if (await getUnresolvedDraftDispatch(draftId))
     throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_PENDING", "Hay un envío de firma en curso o pendiente de conciliación.");
   const rows = await prisma.$queryRawUnsafe<Array<FirmaSeguroProcessRow & { activeCount: number }>>(

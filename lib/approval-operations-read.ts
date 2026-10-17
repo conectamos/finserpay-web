@@ -4,7 +4,7 @@ import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getReplacementRemission } from "@/lib/credit-device-replacement-remission";
 import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
 import { isVerifiedPendingSignatureStatus, isVerifiedTerminalDraftImeiRetry,
-  isVerifiedTerminalSignatureFailure } from "@/lib/approval-operations-core";
+  isVerifiedTerminalSignatureFailure, supportsPendingSignatureRecipientDelivery } from "@/lib/approval-operations-core";
 import {
   isFirmaSeguroFailedStatus,
   isFirmaSeguroSuccessfulStatus,
@@ -478,11 +478,12 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     terminalFailedSource && frozenPendingSource && !unresolvedDispatch);
   const redirectableSignature = signature.status === "PENDING";
   const singleRecipient = Boolean(activeSignature && hasSingleSignatureRecipient(activeSignature));
-  const canRedirectPendingSignature = Boolean(open && supported && !unresolvedDispatch &&
+  const recipientDeliverySupported = supportsPendingSignatureRecipientDelivery(platform);
+  const canRedirectPendingSignature = Boolean(open && recipientDeliverySupported && !unresolvedDispatch &&
     redirectableSignature && signature.processUuid && activeSignatures.length === 1 && singleRecipient);
   const pendingSignatureRedirectReason = canRedirectPendingSignature ? null
     : !open ? "La solicitud ya no está abierta en Identidad y firma."
-    : !supported ? "La redirección de FirmaSeguro está disponible por ahora para iPhone."
+    : !recipientDeliverySupported ? "La plataforma de esta solicitud no permite gestionar el destinatario de la firma."
     : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
     : signature.status === "SIGNED" ? "El cliente ya firmó esta solicitud."
     : signature.status === "TECHNICAL_ERROR"
@@ -509,6 +510,8 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     canUpdateContact, canSendSignature: false, canResendSignature,
     canRedirectPendingSignature, pendingSignatureRedirectReason, reason,
     signatureReason: !open ? "La solicitud ya no está abierta en Identidad y firma."
+      : canRedirectPendingSignature ? null
+      : !supported && redirectableSignature ? pendingSignatureRedirectReason
       : !supported ? "Esta gestión de FirmaSeguro está disponible por ahora para iPhone."
       : unresolvedDispatch ? "Hay un envío de firma en curso o pendiente de conciliación."
       : correctionPending && !signedArchivedSource

@@ -16,6 +16,15 @@ Ambas mutaciones usan la autorización existente, tienen límite de espera y no 
 
 La [ayuda oficial](https://firmaseguro.co/soporte/) confirma el flujo del portal: editar destinatario en el mismo proceso y reenviar su aviso. No permite deducir contratos adicionales de API.
 
+## Disponibilidad en solicitudes
+
+Los analistas y administradores centrales pueden gestionar el destinatario del
+mismo documento pendiente tanto en iPhone como en Android. Se exige una solicitud
+abierta en los pasos 3 o 4, un único proceso vigente y un firmante verificable sin
+firma ni rechazo. El cambio conserva el documento, las condiciones, la identidad
+y el método de autenticación del envío original. Este permiso no habilita cambios
+de IMEI ni generación de otra versión del contrato para Android.
+
 ## Respuesta de producción y verificación del firmante
 
 El 15 de octubre de 2026 se verificó la estructura de una respuesta real mediante una consulta de solo lectura que devolvió exclusivamente nombres de campos, tipos, cantidades y comprobaciones booleanas. No se extrajeron contactos, identidades, UUID ni documentos de producción. La respuesta contiene `uuid`, `status_process` y un arreglo `signatures` con un único objeto: `id` numérico, `email`, `status`, `date_signed`, `code_message` y `message`. No devuelve nombre, identificación ni teléfono.
@@ -35,5 +44,11 @@ Un reenvío cuya notificación quedó incierta no se repite automáticamente: re
 El estado interno `RESENT` conserva el acuse de una solicitud de reenvío; no es un recibo de entrega ni de lectura. La pantalla identifica el reenvío por correo documentado por la API y mantiene explícitamente sin confirmar la entrega y la notificación por WhatsApp. El contacto y la fecha del último acuse se leen de la misma operación; una edición posterior no cambia el destinatario al que corresponde un acuse anterior.
 
 La solicitud inicial puede tener `isSendByWhatsApp: true` y autenticación OTP 4 sin que eso demuestre un nuevo WhatsApp del enlace de firma. La documentación oficial distingue la notificación inicial del OTP. No se deduce una URL de firma a partir del `hash`, ni se llama a una ruta de WhatsApp sin un contrato verificable del proveedor.
+
+Verificación del 17 de octubre de 2026: el [manual oficial para modificar y
+reenviar un proceso](https://firmaseguro.atlassian.net/wiki/spaces/FIRMASEGUR/pages/2785349),
+actualizado el 30 de diciembre de 2025, identifica la acción **Reenviar correo**.
+La habilitación de Android conserva esta distinción: editar el celular del
+firmante no acredita una nueva notificación del enlace por WhatsApp.
 
 Las respuestas de edición y reenvío deben contener un acuse positivo explícito. HTTP 200 con cuerpo vacío, estructura desconocida, error explícito o un código `code_message` sin semántica documentada queda incierto; no autoriza registrar un reenvío aceptado ni repetir la notificación automáticamente.

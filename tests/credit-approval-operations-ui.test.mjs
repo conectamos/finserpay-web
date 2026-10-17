@@ -4,8 +4,54 @@ import { setImmediate } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
+import * as operationGuards from "../lib/approval-operations-core.ts";
+import * as signatureStatus from "../lib/firmaseguro-status.ts";
 
 const read = path => readFileSync(new URL("../" + path, import.meta.url), "utf8");
+
+const operationalRead = { exports: {} };
+runInNewContext(ts.transpileModule(read("lib/approval-operations-read.ts"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, {
+  module: operationalRead, exports: operationalRead.exports, Date,
+  require(name) {
+    if (name === "server-only") return {};
+    if (name === "@/lib/prisma") return { default: {} };
+    if (name === "@/lib/approval-operations-core") return operationGuards;
+    if (name === "@/lib/firmaseguro-status") return signatureStatus;
+    if (name === "@/lib/credit-amortization-contract") return { readFinancingTermsSeal: () => null };
+    if (name === "@/lib/credit-device-replacement-remission") return { getReplacementRemission: async () => null };
+    if (name === "@/lib/ally-payments-core") return { resolveAllyPaymentPlatform: () => null };
+    throw new Error("Unexpected operational read dependency: " + name);
+  },
+});
+
+async function pendingCaseFromReader(platform) {
+  const stamp = "2026-10-05T20:27:00.000Z";
+  const row = {
+    id: 22, estado: "ABIERTO", currentStep: 4, clienteNombre: "Cliente pendiente",
+    clienteDocumento: "1052962070", clienteTelefono: "3218928117", clienteCorreo: "cliente@example.com",
+    imei: "111111111111111", plataforma: platform,
+    payload: { referenciaEquipo: platform === "ANDROID" ? "HONOR X7D" : "iPhone QA" },
+    createdAt: stamp, updatedAt: stamp, expiresAt: "2199-01-01T00:00:00.000Z",
+  };
+  const process = {
+    id: 30, processUuid: "20000000-0000-4000-8000-000000000002", status: "CREATED",
+    requestPayload: { signers: [{ number: "3218928117", email: "cliente@example.com" }] },
+    draftPayload: { clienteTelefono: "3218928117", clienteCorreo: "cliente@example.com" },
+    lastError: null, hasSignedDocument: false, createdAt: stamp, completedAt: null, supersededAt: null,
+  };
+  return operationalRead.exports.getOperationalCase("DRAFT", 22, {
+    $queryRawUnsafe: async sql => {
+      if (sql.includes('FROM "CreditoBorrador" draft')) return [row];
+      if (sql.includes('FROM "FirmaSeguroProcess"')) return [process];
+      if (sql.includes("to_regclass(")) return [{ present: false }];
+      if (sql.includes('FROM "IphoneEnrollmentReview"') || sql.includes('FROM "SolicitudImeiCorrectionAudit"') ||
+          sql.includes('FROM "ApprovalOperationalAction"')) return [];
+      throw new Error("Unexpected pending case query: " + sql);
+    },
+  });
+}
 
 for (const panel of ["imei", "signature"]) test(`el enlace contextual de ${panel} consulta el crédito sin abrir su formulario ni modificarlo`, async () => {
   const components = Object.fromEntries(["Badge", "Button", "Card", "Input", "LoadingState", "PageHeader", "Select", "StatusPill"]
@@ -494,8 +540,8 @@ test("FirmaSeguro permite corregir contacto y enviar una firma inicial sin antic
   assert.equal(caseDetail.signature.status, "PENDING", "el envío no se presenta como firma aprobada");
 });
 
-for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) test(
-  `el mismo documento pendiente se reenvía sin cambiar UUID ni contrato (${scenario})`, async () => {
+for (const platform of ["IPHONE", "ANDROID"]) for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) test(
+  `el mismo documento pendiente se reenvía sin cambiar UUID ni contrato (${platform}, ${scenario})`, async () => {
   const components = Object.fromEntries(["Badge", "Button", "Card", "Input", "LoadingState", "Select", "StatusPill"]
     .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
   const ConfirmDialog = () => null;
@@ -516,20 +562,16 @@ for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) t
   const nextPhone = scenario === "sameContact" ? "3218928117" : "3119876543";
   const nextEmail = scenario === "sameContact" ? "cliente@example.com" : "nuevo@example.com";
   const reason = scenario === "sameContact" ? "Recordatorio del documento pendiente" : "Número anterior sin WhatsApp";
-  const caseDetail = {
-    kind: "DRAFT", id: 22, number: "SOL-22", clientName: "Cliente pendiente", document: "1052962070",
-    phone: "3218928117", email: "cliente@example.com", status: "EN_FIRMA", equipment: "iPhone QA",
-    imei: "111111111111111", updatedAt: "2026-10-05T20:27:00Z", timeline: [],
-    signature: { status: "PENDING", rawStatus: "PENDING", processUuid: previousProcessUuid,
-      sentPhone: "3218928117", sentEmail: "cliente@example.com", sentAt: "2026-10-05T20:27:00Z", signedAt: null },
-    enrollmentReviewId: null, requiresEnrollmentReapproval: false, pendingVersion: null,
-    replacement: null, remission: null,
-    capabilities: { preSettlementApprovalCreditId: null, canChangeImei: false,
-      canDispatchSignatureWithImei: false, canFinalizeImei: false, canConfirmReplacement: false,
-      canUpdateContact: false, canSendSignature: false, canResendSignature: false,
-      canRedirectPendingSignature: true, pendingSignatureRedirectReason: null,
-      reason: null, signatureReason: null },
-  };
+  const caseDetail = await pendingCaseFromReader(platform);
+  assert.equal(caseDetail.signature.processUuid, previousProcessUuid);
+  assert.equal(caseDetail.signature.status, "PENDING");
+  assert.equal(caseDetail.capabilities.canRedirectPendingSignature, true,
+    "la capacidad procede del lector real y no de un permiso de UI inventado");
+  if (platform === "ANDROID") {
+    assert.equal(caseDetail.equipment, "HONOR X7D");
+    for (const capability of ["canChangeImei", "canDispatchSignatureWithImei", "canFinalizeImei", "canConfirmReplacement",
+      "canUpdateContact", "canSendSignature", "canResendSignature"]) assert.equal(caseDetail.capabilities[capability], false, capability);
+  }
   const pending = () => ({ id: operationId, status: "RESEND_FAILED", processUuid: previousProcessUuid,
     phone: nextPhone, email: nextEmail, reason, actorName: "Analista nominal", retryable: true });
   if (scenario === "durable") {
@@ -605,9 +647,14 @@ for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) t
   assert.equal(input(tree, "approval-signature-phone").props.readOnly, true);
   assert.equal(input(tree, "approval-signature-email").props.readOnly, true);
   assert.ok(button(tree, "Editar destinatario y reenviar"));
+  assert.equal(button(tree, "Enviar firma"), undefined, "redirigir no habilita una firma nueva");
+  assert.equal(button(tree, "Guardar cambio y enviar nueva firma"), undefined);
+  assert.equal(button(tree, "Actualizar contacto"), undefined, "el contacto contractual sigue protegido");
 
   button(tree, "Editar destinatario y reenviar").props.onClick();
   tree = render();
+  assert.match(textOf(tree), /correo/);
+  assert.match(textOf(tree), /no confirma un envío por WhatsApp/);
   assert.equal(input(tree, "approval-signature-redirect-phone").props.value,
     scenario === "durable" ? nextPhone : "3218928117", "el formulario parte del destinatario vigente");
   assert.equal(input(tree, "approval-signature-redirect-email").props.value,

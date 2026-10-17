@@ -33,6 +33,12 @@ export function exactImei(value: unknown): value is string {
   return typeof value === "string" && /^\d{15}$/.test(value);
 }
 
+/** Delivery-only edits reuse a pending document on either supported platform.
+ * This guard does not authorize IMEI changes or creating a new contract. */
+export function supportsPendingSignatureRecipientDelivery(platform: unknown) {
+  return ["IPHONE", "APPLE", "ANDROID"].includes(String(platform ?? "").trim().toUpperCase());
+}
+
 export function signedPdfBytes(value: string | null | undefined) {
   if (!value) return null;
   const bytes = Buffer.from(value, "base64");
