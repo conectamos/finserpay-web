@@ -33,7 +33,7 @@ type Props = {
   onRefresh: () => void; onMore: () => void; onBack: () => void; onRetryDetail: () => void;
   onUpdated: () => Promise<void>; onCorrectionBusy: (busy: boolean) => void;
   onOpenSadmin?: () => void; filtersPanel?: ReactNode; operationLinks?: ReactNode;
-  callPanel: ReactNode; noveltyPanel: ReactNode; signaturePanel: ReactNode; approvalPanel: ReactNode; confirmationDialog: ReactNode;
+  callPanel: ReactNode; noveltyPanel: ReactNode; signaturePanel: ReactNode; documentRecoveryPanel?: ReactNode; approvalPanel: ReactNode; confirmationDialog: ReactNode;
 };
 
 export default function SharedApprovalWorkspace(props: Props) {
@@ -120,7 +120,7 @@ export default function SharedApprovalWorkspace(props: Props) {
             setDocumentTab(tabs[index].id); document.getElementById(`document-tab-${tabs[index].id}`)?.focus();
           }}>{tab.label}</button>)}</Tabs>
           <div id="document-panel-evidence" role="tabpanel" aria-labelledby="document-tab-evidence" hidden={activeTab !== "evidence"} className={`${styles.documentBody} ${styles.evidencePanel}`}><SharedEvidenceGallery key={detail.id} detail={detail} compact readOnly={view === "approved"} disabled={props.correctionDisabled} onUpdated={props.onUpdated} onBusyChange={props.onCorrectionBusy} /></div>
-          <div id="document-panel-document" role="tabpanel" aria-labelledby="document-tab-document" hidden={activeTab !== "document"} className={styles.documentBody}><div className={styles.documentTitle}><FileText size={17} aria-hidden="true" /><h3>Documento firmado</h3></div>{detail.document.available ? <><p className={styles.documentName}>{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={creditDisplayNumber(detail)} compact /></> : <EmptyState title="Documento no disponible" description="La firma debe estar disponible antes del OK para liquidación." />}</div>
+          <div id="document-panel-document" role="tabpanel" aria-labelledby="document-tab-document" hidden={activeTab !== "document"} className={styles.documentBody}><div className={styles.documentTitle}><FileText size={17} aria-hidden="true" /><h3>Documento firmado</h3></div>{detail.document.available ? <><p className={styles.documentName}>{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={creditDisplayNumber(detail)} compact /></> : activeTab === "document" ? props.documentRecoveryPanel || <EmptyState title="Documento no disponible" description="La firma debe estar disponible antes del OK para liquidación." /> : null}</div>
           {showHistory ? <div id="document-panel-history" role="tabpanel" aria-labelledby="document-tab-history" hidden={activeTab !== "history"} className={styles.documentBody}>{activeTab === "history" ? <SharedNoveltyHistory key={`${detail.id}:${detail.review.reviewHash}:${historyVersion}`} creditId={detail.id} evidence={detail.evidence} /> : null}</div> : null}
         </Card> : <Card className={styles.placeholder}><FolderOpen size={36} aria-hidden="true" /><h2>Selecciona un expediente</h2><p>Abre un crédito de la lista para revisar sus documentos y continuar.</p></Card>}
       </div>

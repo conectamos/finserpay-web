@@ -11,6 +11,7 @@ import { PAYMENT_FREQUENCY_OPTIONS } from "@/lib/credit-factory";
 import LastPdfPagePreview from "./last-pdf-page-preview";
 import ApprovalEvidenceCorrection from "./approval-evidence-correction";
 import ApprovalSignatureReissue from "./approval-signature-reissue";
+import ApprovalSignedDocumentRecovery from "./approval-signed-document-recovery";
 import ApprovalCallRecording from "./approval-call-recording";
 import CreditWelcomeVoiceResult from "./credit-welcome-voice-result";
 import ApprovalNoveltyPanel from "./approval-novelty-panel";
@@ -105,13 +106,14 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
   const [saving, setSaving] = useState(false);
   const [correctionBusy, setCorrectionBusy] = useState(false);
   const [signatureBusy, setSignatureBusy] = useState(false);
+  const [documentBusy, setDocumentBusy] = useState(false);
   const [noveltyBusy, setNoveltyBusy] = useState(false);
   const [reviewChanged, setReviewChanged] = useState(false);
   const [rereviewed, setRereviewed] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const submitting = useRef(false);
-  const busy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || callBusy;
+  const busy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || callBusy;
 
   useEffect(() => () => {
     searchController.current?.abort();
@@ -384,7 +386,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
 
   if (modern) {
     const actionError = loadingDetail ? "Espera a que termine de cargar el expediente." : detailError || searchError || (searching ? "Actualizando la información del muro." : busy ? "Termina o cancela la acción en curso." : reviewChanged && !rereviewed ? "Confirma que revisaste nuevamente los documentos actualizados." : "");
-    const correctionDisabled = saving || Boolean(confirmation) || signatureBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError);
+    const correctionDisabled = saving || Boolean(confirmation) || signatureBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError);
     const workspaceProps = {
       view, counts, query, items, selectedId, selectedItem, detail, queueLoaded, searching, searchError, nextCursor,
       loadingDetail, detailError, busy, correctionDisabled, notice, onSelect: selectCredit, onView: changeView,
@@ -393,9 +395,11 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
       onBack: backToList,
       onRetryDetail: () => { if (selectedId && !busy) void loadDetail(selectedId); },
       onUpdated: reloadAfterCorrection, onCorrectionBusy: setCorrectionBusy, onOpenSadmin,
-      callPanel: detail ? <><ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />{!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}</> : null,
-      noveltyPanel: detail ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null,
-      signaturePanel: detail ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null,
+      documentRecoveryPanel: detail ? <ApprovalSignedDocumentRecovery key={`approval-document:${detail.id}:${detail.document.processUuid}`} detail={detail}
+        disabled={busy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setDocumentBusy} /> : null,
+      callPanel: detail ? <><ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />{!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}</> : null,
+      noveltyPanel: detail ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null,
+      signaturePanel: detail ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null,
       approvalPanel: detail && detail.review.required && detail.review.status === "PENDING" ? <Card data-approval-decision="true">
         <h2 className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} aria-hidden="true" />Liquidación</h2>
         {detail.blockingReasons.length ? <><p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.blockingReasons[0]}</p><details className="mt-3 text-sm"><summary className="min-h-10 cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]">Ver requisitos pendientes ({detail.blockingReasons.length})</summary><ul className="list-disc space-y-2 pb-2 pl-5 text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.canApprove ? recordingRequired ? "Confirma el OK después de revisar los datos, las evidencias, la firma y la llamada." : "Confirma el OK después de revisar los datos, las evidencias y la firma." : "Actualiza el expediente para verificar los requisitos de aprobación."}</p>}
@@ -500,20 +504,20 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Fotografías del expediente</h2><Badge>{detail.evidence.filter((item) => item.available).length} de {detail.evidence.length} disponibles</Badge></div>
             <p className="mb-4 text-sm text-[var(--fp-muted)]">Abre cada fotografía para revisarla en tamaño completo.</p>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{detail.evidence.map((item) => <EvidencePhoto key={`${detail.id}:${detail.review.reviewHash}:${item.key}`} item={item} clientName={detail.clienteNombre} />)}</div>
-            {view === "pending" ? <ApprovalEvidenceCorrection detail={detail} disabled={saving || Boolean(confirmation) || signatureBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} /> : null}
+            {view === "pending" ? <ApprovalEvidenceCorrection detail={detail} disabled={saving || Boolean(confirmation) || signatureBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} /> : null}
           </Card>
 
           <div className={`grid items-start gap-6 ${detail.review.required ? "xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]" : ""}`}>
             <Card role="region" aria-label="Documento firmado" className="min-w-0 p-4 sm:p-6">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold"><FileText className="h-5 w-5" aria-hidden="true" />Documento firmado</h2></div>
-              {detail.document.available ? <><p className="mb-3 break-words text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={creditDisplayNumber(detail)} /></> : <EmptyState title="Documento firmado no disponible" description="El expediente debe contar con el documento firmado para completar la aprobación." />}
+              {detail.document.available ? <><p className="mb-3 break-words text-sm text-[var(--fp-muted)]">{detail.document.fileName || "Documento de FirmaSeguro"}</p><LastPdfPagePreview key={`${detail.id}:${detail.review.reviewHash}`} href={detail.document.href} folio={creditDisplayNumber(detail)} /></> : <ApprovalSignedDocumentRecovery key={`approval-document:${detail.id}:${detail.document.processUuid}`} detail={detail} disabled={busy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setDocumentBusy} />}
             </Card>
 
             {detail.review.required ? <aside aria-label="Acciones de revisión" className="min-w-0 space-y-6">
               {!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}
-              <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />
-              {view === "pending" ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
-              {view === "pending" ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
+              <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />
+              {view === "pending" ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
+              {view === "pending" ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
             </aside> : null}
           </div>
 

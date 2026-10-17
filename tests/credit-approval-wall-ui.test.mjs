@@ -8,7 +8,7 @@ import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
 const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select", "Tabs"].map((name) => [name, placeholder(name)]));
-const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalNoveltyPanel", "PendingItemEditor", "PendingRemissions", "ApprovalCallRecording", "SharedApprovalWorkspace", "SharedEvidenceGallery", "SharedDataCorrection", "SharedNoveltyHistory"].map((name) => [name, placeholder(name)]));
+const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalSignedDocumentRecovery", "ApprovalNoveltyPanel", "PendingItemEditor", "PendingRemissions", "ApprovalCallRecording", "SharedApprovalWorkspace", "SharedEvidenceGallery", "SharedDataCorrection", "SharedNoveltyHistory", "CreditWelcomeVoiceResult"].map((name) => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 
 function load(path, dependencies, globals = {}) {
@@ -117,6 +117,8 @@ function wall(api = {}, props = {}) {
     "./last-pdf-page-preview": { default: parts.LastPdfPagePreview },
     "./approval-evidence-correction": { default: parts.ApprovalEvidenceCorrection },
     "./approval-signature-reissue": { default: parts.ApprovalSignatureReissue },
+    "./approval-signed-document-recovery": { default: parts.ApprovalSignedDocumentRecovery },
+    "./credit-welcome-voice-result": { default: parts.CreditWelcomeVoiceResult },
     "./approval-call-recording": { default: parts.ApprovalCallRecording },
     "./approval-novelty-panel": { default: parts.ApprovalNoveltyPanel },
     "@/app/revision-creditos/shared-approval-workspace": { default: parts.SharedApprovalWorkspace },
@@ -491,8 +493,60 @@ function sharedWorkspace(props) {
 }
 function actionPanels(h) {
   const children = h.find(node => node.type === "div" && node.props.className === "actionsScroll").props.children;
-  return Array.from(Array.isArray(children) ? children : [children]).filter(Boolean);
+  const types = [parts.ApprovalCallRecording, parts.ApprovalNoveltyPanel, parts.ApprovalSignatureReissue];
+  return Array.from(subtree(children).filter(node => types.includes(node.type)));
 }
+const callPanelProps = h => subtree(sharedProps(h).callPanel).find(node => node.type === parts.ApprovalCallRecording).props;
+
+for (const shared of [false, true]) test(`el contrato activa la recuperación solo al abrir su pestaña (${shared ? "acceso compartido" : "cuenta nominal"})`, async () => {
+  let observed = { ...detail(81), document: { ...detail(81).document, available: false } };
+  const parent = wall({ readApprovalQueue: async () => countedPage([row(81), row(82)]),
+    readApprovalCredit: async () => observed }, { shared, redesigned: true });
+  let workspace;
+  try {
+    await parent.flush(); sharedProps(parent).onSelect(81); await parent.flush();
+    workspace = sharedWorkspace(sharedProps(parent)); await workspace.flush();
+    assert.equal(workspace.all(node => node.type === parts.ApprovalSignedDocumentRecovery).length, 0,
+      "Evidencias no monta la consulta automática de contrato");
+    workspace.find(node => node.props?.id === "document-tab-document").props.onClick(); await workspace.flush();
+    const recovery = workspace.find(node => node.type === parts.ApprovalSignedDocumentRecovery);
+    assert.equal(recovery.props.detail.id, 81);
+    assert.equal(recovery.key, "approval-document:81:QA-process");
+    recovery.props.onBusyChange(true); await parent.flush();
+    assert.equal(sharedProps(parent).busy, true);
+    assert.equal(sharedProps(parent).signaturePanel.props.disabled, true);
+    assert.equal(sharedProps(parent).noveltyPanel.props.disabled, true);
+    assert.equal(callPanelProps(parent).disabled, true);
+    sharedProps(parent).onSelect(82); sharedProps(parent).onBack(); await parent.flush();
+    assert.equal(sharedProps(parent).selectedId, 81, "mantiene el expediente durante la consulta explícita");
+    observed = detail(81);
+    await recovery.props.onUpdated(); await parent.flush();
+    workspace.update(sharedProps(parent)); await workspace.flush();
+    assert.equal(workspace.all(node => node.type === parts.ApprovalSignedDocumentRecovery).length, 0);
+    assert.equal(workspace.all(node => node.type === parts.LastPdfPagePreview).length, 1,
+      "la ficha actualizada muestra el documento recuperado");
+    recovery.props.onBusyChange(false); await parent.flush();
+    assert.equal(sharedProps(parent).busy, false);
+  } finally { workspace?.unmount(); parent.unmount(); }
+});
+
+test("el muro clásico recupera desde la tarjeta visible y refresca su PDF", async () => {
+  let observed = { ...detail(81), document: { ...detail(81).document, available: false } };
+  const h = wall({ readApprovalCredit: async () => observed });
+  try {
+    await h.flush(); select(h, 81); await h.flush();
+    const recovery = h.find(node => node.type === parts.ApprovalSignedDocumentRecovery);
+    assert.equal(recovery.props.detail.document.available, false);
+    recovery.props.onBusyChange(true); await h.flush();
+    assert.equal(approveButton(h).props.disabled, true);
+    assert.equal(current(h).disabled, true);
+    observed = detail(81);
+    await recovery.props.onUpdated(); await h.flush();
+    assert.equal(h.all(node => node.type === parts.ApprovalSignedDocumentRecovery).length, 0);
+    assert.equal(h.all(node => node.type === parts.LastPdfPagePreview).length, 1);
+    recovery.props.onBusyChange(false); await h.flush();
+  } finally { h.unmount(); }
+});
 
 test("la composición real retira la corrección y conserva las identidades de los demás paneles durante una refirma", async () => {
   let observed = { ...detail(81), capabilities: { ...detail(81).capabilities, canEditData: true } };
@@ -569,8 +623,8 @@ test("el panel administrativo permite confirmar cuando el DTO exime la grabació
   }, { redesigned: true });
   try {
     await h.flush(); sharedProps(h).onSelect(81); await h.flush();
-    assert.equal(sharedProps(h).callPanel.props.detail.callRecording.canUpload, true);
-    assert.equal(sharedProps(h).callPanel.props.detail.callRecording.recording, null);
+    assert.equal(callPanelProps(h).detail.callRecording.canUpload, true);
+    assert.equal(callPanelProps(h).detail.callRecording.recording, null);
     const ok = subtree(sharedProps(h).approvalPanel).find(node => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
     assert.equal(ok.props.disabled, false);
     ok.props.onClick(); await h.flush();
@@ -613,11 +667,11 @@ test("una grabación o novedad pendiente impide cambiar selección, filtros y vo
   const h = wall({ readApprovalQueue: async () => countedPage([row(81), row(82)]) }, { shared: true });
   await h.flush(); sharedProps(h).onSelect(81); await h.flush();
   for (const panel of ["callPanel", "noveltyPanel"]) {
-    sharedProps(h)[panel].props.onBusyChange(true); await h.flush();
+    (panel === "callPanel" ? callPanelProps(h) : sharedProps(h)[panel].props).onBusyChange(true); await h.flush();
     assert.equal(sharedProps(h).busy, true);
     sharedProps(h).onSelect(82); sharedProps(h).onView("approved"); sharedProps(h).onSearch("Otro"); sharedProps(h).onBack(); await h.flush();
     assert.equal(sharedProps(h).selectedId, 81); assert.equal(sharedProps(h).view, "pending"); assert.equal(sharedProps(h).query, "");
-    sharedProps(h)[panel].props.onBusyChange(false); await h.flush();
+    (panel === "callPanel" ? callPanelProps(h) : sharedProps(h)[panel].props).onBusyChange(false); await h.flush();
   }
   h.unmount();
 });

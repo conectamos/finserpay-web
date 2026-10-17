@@ -495,6 +495,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   let deliveryStatus = "RESEND_UNCERTAIN";
   let deliveryContactSource;
   let confirmedContact = { phone: "3101234567", email: "nuevo@example.com" };
+  const acceptedResendContact = { phone: "3101234567", email: "nuevo@example.com" };
   let resentAt = "2026-10-09T16:05:00.000Z";
   let requestPayload = { endpoint: "create-full-by-company", payload: {
     signers: [{ number: "3218928117", email: "original@example.com" }],
@@ -529,8 +530,9 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
     if (sql.includes('SELECT delivery."afterContact"')) {
       assert.deepEqual(plain(params), [30, processUuid]);
       assert.match(sql, /"editedAt" IS NOT NULL/);
-      assert.match(sql, /MAX\(previous\."resentAt"\)/, "la última edición no borra la fecha del último reenvío confirmado");
-      return confirmedContact ? [{ afterContact: confirmedContact, resentAt }] : [];
+      assert.match(sql, /LEFT JOIN LATERAL/);
+      assert.match(sql, /previous\."status"='RESENT'/, "el acuse pertenece al reenvío aceptado, no a otra edición");
+      return confirmedContact ? [{ afterContact: confirmedContact, resentAt, resentContact: acceptedResendContact }] : [];
     }
     if (sql.includes('FROM "FirmaSeguroRecipientDeliveryEvent"')) return [{
       id: "delivery-event", status: deliveryPending ? "RESEND_UNCERTAIN" : "RESENT",
@@ -548,9 +550,18 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   assert.equal(ready.signature.sentEmail, "nuevo@example.com");
   assert.equal(ready.signature.sentAt, resentAt);
   assert.equal(ready.capabilities.canRedirectPendingSignature, true, "no se exige sello para reenviar el documento existente");
-  assert.ok(ready.timeline.some(event => event.label === "Mismo documento reenviado" &&
+  assert.deepEqual(plain(ready.signature.lastResend), { acceptedAt: resentAt, channel: "EMAIL",
+    email: "nuevo@example.com", deliveryStatus: "UNCONFIRMED" });
+  assert.ok(ready.timeline.some(event => event.label === "Reenvío por correo aceptado; entrega sin confirmar" &&
     event.actor === "Analista nominal" && event.detail.includes("3218928117 → 3101234567")));
   assert.ok(calls.every(call => !/\b(INSERT|UPDATE|DELETE)\b/.test(call.sql)), "la consulta no altera ningún registro");
+
+  confirmedContact = { phone: "3101234568", email: "otra-edicion@example.com" };
+  const newerEdit = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(newerEdit.signature.sentEmail, "otra-edicion@example.com");
+  assert.equal(newerEdit.signature.lastResend.email, "nuevo@example.com",
+    "una edición posterior no atribuye a su correo un reenvío aceptado para otro destinatario");
+  confirmedContact = { ...acceptedResendContact };
 
   correctionPending = true;
   assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, true,
@@ -559,6 +570,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   deliveryPending = true;
   resentAt = null;
   const uncertain = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(uncertain.signature.lastResend, undefined);
   assert.equal(uncertain.signature.sentPhone, "3101234567", "una edición confirmada persiste aunque el reenvío sea incierto");
   assert.equal(uncertain.signature.sentAt, stamp, "no se declara un envío nuevo sin confirmación");
   assert.equal(uncertain.capabilities.canRedirectPendingSignature, false);

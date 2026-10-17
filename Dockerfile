@@ -82,6 +82,8 @@ COPY --from=builder \
   /app/scripts/ensure-credit-approval-novelties-schema.mjs \
   /app/scripts/approval-shared-schema.mjs \
   /app/scripts/ensure-approval-shared-schema.mjs \
+  /app/scripts/credit-approval-document-refresh-schema.mjs \
+  /app/scripts/ensure-credit-approval-document-refresh-schema.mjs \
   /app/scripts/credit-approval-data-schema.mjs \
   /app/scripts/ensure-credit-approval-data-schema.mjs \
   /app/scripts/credit-approval-call-schema.mjs \

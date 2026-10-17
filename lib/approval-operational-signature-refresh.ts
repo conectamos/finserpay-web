@@ -67,18 +67,31 @@ async function audit(db: Database, kind: OperationalCaseKind, id: number, actor:
 /** Refreshes a known provider process; never creates, edits or resends a document. */
 export async function refreshOperationalSignature(kindValue: unknown, idValue: unknown,
   input: { expectedProcessUuid: unknown }, actor: OperationalActor) {
-  const { kind, id } = operationalCaseIdentity(kindValue, idValue);
   if (!Number.isSafeInteger(actor.id) || actor.id < 1 || typeof actor.nombre !== "string" || !actor.nombre.trim())
     throw new ApprovalOperationalError("UNAUTHORIZED", "Inicia sesión con tu cuenta de Aprobaciones.", 401);
+  await ensureApprovalOperationalSchema();
+  return refreshSignatureWithAccess(kindValue, idValue, input, {
+    assert: db => assertMoraActor(db, { ...actor, centralAdmin: false }),
+    audit,
+  });
+}
+
+/** Internal server primitive: callers must supply their current scoped access
+ * and immutable audit implementation. No request may supply these callbacks. */
+export async function refreshSignatureWithAccess<Actor>(kindValue: unknown, idValue: unknown,
+  input: { expectedProcessUuid: unknown }, access: {
+    assert: (db: Database) => Promise<Actor>;
+    audit: (db: Database, kind: OperationalCaseKind, id: number, actor: Actor, status: string) => Promise<void>;
+  }) {
+  const { kind, id } = operationalCaseIdentity(kindValue, idValue);
   if (id > 2_147_483_647 || typeof input.expectedProcessUuid !== "string" || !uuid.test(input.expectedProcessUuid))
     throw new ApprovalOperationalError("INVALID_PROCESS", "Actualiza la solicitud antes de consultar su firma.", 400);
   const expectedProcessUuid = input.expectedProcessUuid;
   await ensureFirmaSeguroSchema();
-  await ensureApprovalOperationalSchema();
   // Determine the origin on the server. Credit row locks are held only in these
   // short transactions: the provider updater acquires its own credit row lock.
   const origin = await prisma.$transaction(async db => {
-    await assertMoraActor(db, { ...actor, centralAdmin: false });
+    await access.assert(db);
     await getOperationalCase(kind, id, db);
     return currentProcess(db, kind, id, expectedProcessUuid);
   }, { timeout: 20_000 });
@@ -87,35 +100,35 @@ export async function refreshOperationalSignature(kindValue: unknown, idValue: u
     "Hay una gestión de esta solicitud en curso. Intenta nuevamente en unos momentos.");
   try {
     const prepared = await prisma.$transaction(async db => {
-      const verifiedActor = await assertMoraActor(db, { ...actor, centralAdmin: false });
+      const verifiedActor = await access.assert(db);
       const item = await getOperationalCase(kind, id, db);
       if (item.signature.processUuid !== expectedProcessUuid)
         throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma vigente cambió. Actualiza la solicitud.");
       const current = await currentProcess(db, kind, id, expectedProcessUuid);
       if (current.lockDraftId !== origin.lockDraftId)
         throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma vigente cambió. Actualiza la solicitud.");
-      await audit(db, kind, id, verifiedActor, "SIGNATURE_REFRESH_REQUESTED");
+      await access.audit(db, kind, id, verifiedActor, "SIGNATURE_REFRESH_REQUESTED");
       return current;
     }, { timeout: 20_000 });
     try {
       await refreshFirmaSeguroProcess(prepared.process, { synchronizeContractState: false, providerTimeoutMs: 20_000 });
     } catch {
       await prisma.$transaction(async db => {
-        const verifiedActor = await assertMoraActor(db, { ...actor, centralAdmin: false });
-        await audit(db, kind, id, verifiedActor, "SIGNATURE_REFRESH_UNAVAILABLE");
+        const verifiedActor = await access.assert(db);
+        await access.audit(db, kind, id, verifiedActor, "SIGNATURE_REFRESH_UNAVAILABLE");
       }, { timeout: 20_000 });
       throw new ApprovalOperationalError("SIGNATURE_PROVIDER_UNAVAILABLE",
         "No fue posible confirmar el estado con FirmaSeguro. No se creó ni se reenvió un documento. Intenta nuevamente en unos momentos.", 502);
     }
     return await prisma.$transaction(async db => {
-      const verifiedActor = await assertMoraActor(db, { ...actor, centralAdmin: false });
+      const verifiedActor = await access.assert(db);
       const current = await currentProcess(db, kind, id, expectedProcessUuid);
       if (current.lockDraftId !== origin.lockDraftId)
         throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma vigente cambió. Actualiza la solicitud.");
       const item = await getOperationalCase(kind, id, db);
       if (item.signature.processUuid !== expectedProcessUuid)
         throw new ApprovalOperationalError("PROCESS_CHANGED", "La firma vigente cambió. Actualiza la solicitud.");
-      await audit(db, kind, id, verifiedActor, `SIGNATURE_REFRESH_${item.signature.status}`);
+      await access.audit(db, kind, id, verifiedActor, `SIGNATURE_REFRESH_${item.signature.status}`);
       const message = item.signature.status === "SIGNED"
         ? "Firma verificada. El documento firmado ya está disponible."
         : item.signature.status === "PENDING"

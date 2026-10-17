@@ -761,7 +761,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           expectedProcessUuid: processUuid, confirmed: true }),
       }, "No fue posible cambiar el número y reenviar la firma.");
       const message = result.operation?.message || result.message ||
-        "FirmaSeguro confirmó el reenvío del mismo documento pendiente.";
+        "FirmaSeguro aceptó la solicitud de reenvío por correo. La entrega y el envío por WhatsApp no están confirmados.";
       failedSafely = result.operation?.status === "FAILED_SAFE";
       if (result.operation?.status !== "RESENT" || result.operation.processUuid !== processUuid) setActionError(message);
       else {
@@ -1164,15 +1164,21 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         </div>
         <div className={styles.signatureBottom}>
           <div className={styles.contacts}>
-            <div><label htmlFor="approval-signature-phone"><Phone size={16} aria-hidden="true" />Celular de envío</label>
+            <div><label htmlFor="approval-signature-phone"><Phone size={16} aria-hidden="true" />Celular del firmante</label>
               <Input id="approval-signature-phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={20}
                 value={contactPhone} onChange={event => setContactPhone(event.target.value)}
                 readOnly={!editingContact} disabled={Boolean(busy)} /></div>
-            <div><label htmlFor="approval-signature-email"><Mail size={16} aria-hidden="true" />Correo de envío</label>
+            <div><label htmlFor="approval-signature-email"><Mail size={16} aria-hidden="true" />Correo del firmante</label>
               <Input id="approval-signature-email" type="email" autoComplete="email" maxLength={254}
                 value={contactEmail} onChange={event => setContactEmail(event.target.value)}
                 readOnly={!editingContact} disabled={Boolean(busy)} /></div>
           </div>
+          {signature?.lastResend && signature.status === "PENDING" ? <p className={styles.redirectionWarning} role="status">
+            <FileClock size={18} aria-hidden="true" /><span>
+              Reenvío por correo aceptado: {signature.lastResend.email || "correo registrado"}. Entrega no confirmada.
+              {" "}No hay confirmación de envío por WhatsApp. {dateLabel(signature.lastResend.acceptedAt)}.
+            </span>
+          </p> : null}
           {detail.capabilities.canUpdateContact || canManageSignature || canRedirectPendingSignature || canRefreshSignature ? <div className={styles.signatureActions}>
             {canRefreshSignature ? <Button variant="secondary" onClick={() => void refreshSignatureState()}
               disabled={Boolean(busy) || editingContact || preparingSignature || redirectingSignature} aria-busy={busy === "signature-state"}>
@@ -1191,7 +1197,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
                 setRedirectPhone(pendingDelivery?.phone || signature?.sentPhone || detail.phone || "");
                 setRedirectEmail(pendingDelivery?.email || signature?.sentEmail || detail.email || "");
                 setRedirectReason(pendingDelivery?.reason || ""); setRedirectingSignature(true); }} disabled={Boolean(busy)}>
-              Editar destinatario y reenviar<ArrowRight size={18} aria-hidden="true" />
+              Editar destinatario y reenviar por correo<ArrowRight size={18} aria-hidden="true" />
             </Button> : null}
           </div> : null}
         </div>
@@ -1208,7 +1214,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         </div> : null}
         {redirectingSignature && canRedirectPendingSignature ? <div className={styles.signatureRedirection}>
           <p className={styles.redirectionWarning}><FileClock size={18} aria-hidden="true" /><span>
-            Se actualizará el destinatario en FirmaSeguro y se reenviará el mismo documento pendiente. El cambio quedará registrado en el historial. Revisa el correo indicado para recibir la notificación de reenvío.
+            Se actualizará el destinatario en FirmaSeguro y se solicitará el reenvío por correo del mismo documento pendiente. Esta operación no confirma un envío por WhatsApp. El cambio quedará registrado en el historial.
           </span></p>
           {pendingDelivery ? <p className={styles.muted}>Responsable: {pendingDelivery.actorName}. {pendingDelivery.retryable
             ? "Hay un reenvío pendiente de completar. Continúa con el contacto y el motivo registrados."
@@ -1230,7 +1236,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           <div className={styles.redirectionActions}>
             <Button variant="ghost" onClick={() => { setRedirectingSignature(false); setRedirectPhone(""); setRedirectEmail(""); setRedirectReason(""); }} disabled={Boolean(busy)}>Cancelar</Button>
             <Button onClick={() => { setActionError(""); setConfirmation("signature-redirection"); }} disabled={!canSubmitRedirection}>
-              {pendingDelivery ? "Completar reenvío" : "Editar destinatario y reenviar"}<ArrowRight size={18} aria-hidden="true" />
+              {pendingDelivery ? "Completar reenvío por correo" : "Editar destinatario y reenviar por correo"}<ArrowRight size={18} aria-hidden="true" />
             </Button>
           </div>
         </div> : null}
@@ -1249,7 +1255,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           <p className={styles.muted}>{pendingRedirectBlockReason || (detail.kind === "CREDIT" && signature?.status === "NOT_SENT"
             ? detail.capabilities.signatureReason || "No hay una firma verificable para este crédito. Solicita revisión del expediente antes de enviar."
             : detail.capabilities.signatureReason || "El envío de firma no está disponible para este caso.")}</p> : null}
-        {signature?.sentAt ? <p className={styles.sentAt}><CalendarClock size={15} aria-hidden="true" />Último envío: {dateLabel(signature.sentAt)}</p> : null}
+        {signature?.sentAt ? <p className={styles.sentAt}><CalendarClock size={15} aria-hidden="true" />{signature.lastResend ? "Último reenvío aceptado" : "Último envío registrado"}: {dateLabel(signature.sentAt)}</p> : null}
       </Card> : null}
         </section>
       </div>
@@ -1275,10 +1281,10 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         ". El estado solo cambiará a firmado tras la confirmación real de FirmaSeguro."}
       confirmLabel={signatureActionLabel} busy={busy === "signature"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void sendSignature()} />
-    <ConfirmDialog open={confirmation === "signature-redirection"} title="Editar destinatario y reenviar"
+    <ConfirmDialog open={confirmation === "signature-redirection"} title="Editar destinatario y reenviar por correo"
       description={"Se actualizará el destinatario del mismo documento pendiente en FirmaSeguro al celular " + visible(normalizedRedirectPhone) +
-        " y correo " + visible(redirectEmail) + ". Se conservarán la solicitud de firma y el documento existentes."}
-      confirmLabel="Confirmar reenvío" busy={busy === "signature"}
+        " y se solicitará el reenvío al correo " + visible(redirectEmail) + ". El envío por WhatsApp no está confirmado por esta operación. Se conservarán la solicitud de firma y el documento existentes."}
+      confirmLabel="Confirmar reenvío por correo" busy={busy === "signature"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void redirectPendingSignature()} />
     <ConfirmDialog open={confirmation === "remission-verify"} title="Verificar nueva remisión"
       description="Confirma que la foto muestra la nueva remisión firmada y corresponde al equipo de este crédito. Después de verificarla aún se requerirá aprobar el enrolamiento antes de aplicar el IMEI."

@@ -69,7 +69,7 @@ function assertReplay(row: FirmaSeguroRecipientDeliveryRow, input: Input) {
 export function publicFirmaSeguroRecipientDelivery(row: FirmaSeguroRecipientDeliveryRow) {
   const metadataEditUncertain = ["EDIT_UNCERTAIN", "EDITING"].includes(row.status)
     && row.beforeContact.source !== undefined && row.beforeContact.source !== "PROVIDER_READBACK";
-  const message = row.status === "RESENT" ? "FirmaSeguro aceptó el reenvío del mismo documento al contacto actualizado. No se generó una nueva firma."
+  const message = row.status === "RESENT" ? "FirmaSeguro aceptó la solicitud de reenvío por correo del mismo documento. La entrega al correo y el envío por WhatsApp no están confirmados."
     : row.status === "RESEND_FAILED" ? "El contacto quedó actualizado en FirmaSeguro. El reenvío fue rechazado; puedes reintentar este mismo documento."
     : row.status === "RESEND_UNCERTAIN" || row.status === "RESENDING"
       ? "El contacto está actualizado, pero FirmaSeguro no confirmó el reenvío. Consulta su estado antes de repetirlo."
@@ -80,6 +80,8 @@ export function publicFirmaSeguroRecipientDelivery(row: FirmaSeguroRecipientDeli
     : row.status === "FAILED_SAFE" ? "FirmaSeguro rechazó el cambio de contacto. El documento original se conservó."
     : "El contacto está preparado para reenviar el mismo documento.";
   return { id: row.id, status: row.status, message, processUuid: row.processUuid,
+    notificationChannel: row.status === "RESENT" ? "EMAIL" as const : null,
+    deliveryStatus: "UNCONFIRMED" as const,
     sentPhone: row.editedAt ? row.afterContact.phone : undefined, sentEmail: row.editedAt ? row.afterContact.email : undefined,
     retryable: !metadataEditUncertain
       && ["PREPARING", "RECIPIENT_UPDATED", "RESEND_FAILED", "EDIT_UNCERTAIN", "EDITING"].includes(row.status) };
