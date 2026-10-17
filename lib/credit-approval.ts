@@ -322,7 +322,9 @@ export function buildCreditApprovalDetail(credit: ApprovalCredit, review: Approv
 export async function getCreditApprovalDetail(db: ApprovalDatabase, id: number, actor?: ApprovalActor) {
   await requirePolicy(db);
   const canSkipCallRecording = actor ? await canApprovalActorSkipCall(db, actor) : false;
-  const credit = await readCredit(db, id);
+  // Audio uploads use the same Credit -> Review lock order. Acquire before
+  // reading review/hash inputs so a READ COMMITTED repair sees the latest audio.
+  const credit = await readCredit(db, id, true);
   const review = await readReview(db, id);
   const assessment = await readAssessment(db, credit);
   const document = await readDocument(db, id);
@@ -331,7 +333,18 @@ export async function getCreditApprovalDetail(db: ApprovalDatabase, id: number, 
   const reviewHashVersion = review?.reviewHashVersion === 1 ? 1 : 2;
   const reviewHash = creditApprovalReviewHash(credit, assessment, document, reviewHashVersion);
   const approved = isApprovedReview(review);
-  const callState = await readCreditApprovalCallState(db, id, review?.revision || 1, reviewHash, approved ? review.callRecordingId ?? null : undefined);
+  const callState = await readCreditApprovalCallState(db, id, review?.revision || 1, reviewHash,
+    approved ? review.callRecordingId ?? null : undefined,
+    !approved && document && approvalPdf(document.signedDocumentBase64) &&
+      (document.completedAt || isFirmaSeguroCompletedStatus(document.status))
+      ? () => ({ processUuid: document.processUuid,
+        missingPdfReviewHash: creditApprovalReviewHash(credit, assessment, { ...document, signedDocumentBase64: null }, reviewHashVersion),
+        hashWithPreviousEvidence: (key, previousDataUrl) => {
+          const evidence = APPROVAL_EVIDENCE.find((item) => item.key === key);
+          return evidence ? creditApprovalReviewHash({ ...credit, [evidence.field]: previousDataUrl }, assessment,
+            { ...document, signedDocumentBase64: null }, reviewHashVersion) : null;
+        } })
+      : undefined);
   return buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties, callState, reviewHash, canSkipCallRecording);
 }
 
@@ -350,7 +363,18 @@ export async function approveCredit(db: ApprovalDatabase, id: number, input: Ret
   const reviewHashVersion = review?.reviewHashVersion === 1 ? 1 : 2;
   const reviewHash = creditApprovalReviewHash(credit, assessment, document, reviewHashVersion);
   const approved = isApprovedReview(review);
-  const callState = await readCreditApprovalCallState(db, id, review?.revision || 1, reviewHash, approved ? review.callRecordingId ?? null : undefined);
+  const callState = await readCreditApprovalCallState(db, id, review?.revision || 1, reviewHash,
+    approved ? review.callRecordingId ?? null : undefined,
+    !approved && document && approvalPdf(document.signedDocumentBase64) &&
+      (document.completedAt || isFirmaSeguroCompletedStatus(document.status))
+      ? () => ({ processUuid: document.processUuid,
+        missingPdfReviewHash: creditApprovalReviewHash(credit, assessment, { ...document, signedDocumentBase64: null }, reviewHashVersion),
+        hashWithPreviousEvidence: (key, previousDataUrl) => {
+          const evidence = APPROVAL_EVIDENCE.find((item) => item.key === key);
+          return evidence ? creditApprovalReviewHash({ ...credit, [evidence.field]: previousDataUrl }, assessment,
+            { ...document, signedDocumentBase64: null }, reviewHashVersion) : null;
+        } })
+      : undefined);
   const item = buildCreditApprovalDetail(credit, review, assessment, document, reissue, novelties, callState, reviewHash, canSkipCallRecording);
   if (!novelties.available || novelties.blocksApproval) throw new CreditApprovalError("NOVELTY_PENDING", "Hay novedades que deben corregirse antes de confirmar el OK.", 409);
   if (reissue.blocked || !reissue.available) throw new CreditApprovalError("SIGNATURE_REISSUE_PENDING", "La nueva firma debe quedar completa antes de confirmar el OK.", 409);

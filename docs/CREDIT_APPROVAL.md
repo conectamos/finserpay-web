@@ -146,6 +146,15 @@ La recuperación de operaciones anteriores al enlace explícito solo se realiza 
 la auditoría identifica una única grabación fuente y conserva las mismas condiciones;
 ante ambigüedad no se reutiliza audio.
 
+La primera recuperación del PDF mediante **Consultar documento en FirmaSeguro**
+también conserva el audio efectivo del mismo proceso. El servidor verifica la
+consulta auditada, la revisión anterior y la huella del expediente con el PDF aún
+ausente; puede encadenar una corrección de evidencia que ya conservaba esa llamada.
+La asociación queda registrada sin modificar el archivo ni atribuir una nueva
+carga a otro usuario. Esta comprobación se aplica al volver a abrir expedientes
+afectados antes de la corrección. No permite reutilizar una llamada si cambió el
+proceso, existía otro PDF o cambiaron los datos y condiciones del crédito.
+
 El servidor valida contenido y contenedor, permisos, origen, revisión y huella;
 la extensión por sí sola no es suficiente. En OGG acepta únicamente un flujo Opus
 de audio, con páginas y sumas de verificación íntegras y sin video. El envío es

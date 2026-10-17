@@ -18,8 +18,8 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname));
   assert.equal(url.pathname, "/approval_gate_test");
   const db = new pg.Client({ connectionString }); await db.connect(); t.after(() => db.end());
-  const tables = ["CreditApprovalCallEvidenceSeal","CreditApprovalCallReissueSeal","CreditApprovalCallContinuation","CreditApprovalEvidenceRevision","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalEvent","CreditApprovalReview","CreditApprovalCallRecording","CreditApprovalSharedSession",
-    "CreditApprovalSharedGrant","CreditApprovalPolicy","CreditApprovalReissueEvent","CreditApprovalReissue","FirmaSeguroProcess","DataCreditoAssessment","LiquidacionAliadoCredito","Credito","Sede","Aliado","Usuario","Rol"];
+  const tables = ["CreditApprovalCallDocumentContinuation","CreditApprovalCallEvidenceSeal","CreditApprovalCallReissueSeal","CreditApprovalCallContinuation","CreditApprovalEvidenceRevision","CreditApprovalNoveltyEvent","CreditApprovalNoveltyItem","CreditApprovalNovelty","CreditApprovalEvent","CreditApprovalReview","CreditApprovalCallRecording","CreditApprovalSharedSession",
+    "CreditApprovalSharedGrant","CreditApprovalPolicy","CreditApprovalReissueEvent","CreditApprovalReissue","FirmaSeguroProcess","DataCreditoAssessment","LiquidacionAliadoCredito","CreditoAmortizacion","Credito","Sede","Aliado","Usuario","Rol"];
   const existing = await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
   assert.ok(existing.rows.every(({ tablename }) => tables.includes(tablename)), "No reiniciar tablas ajenas");
   for (const table of tables) await db.query(`DROP TABLE IF EXISTS public."${table}" CASCADE`);
@@ -39,6 +39,7 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
       "clienteNombre" TEXT DEFAULT 'Cliente sintético',"clienteDocumento" TEXT DEFAULT '12345',
       "clienteCorreo" TEXT,"clienteTelefono" TEXT,"clienteDepartamento" TEXT,"clienteCiudad" TEXT,
       "clienteDireccion" TEXT,"referenciaEquipo" TEXT,
+      "plazoMeses" INTEGER,"frecuenciaPago" TEXT,"valorCuota" FLOAT,"fechaPrimerPago" TIMESTAMP(3),
       "valorEquipoTotal" FLOAT DEFAULT 1000000,"cuotaInicial" FLOAT DEFAULT 200000,
       "saldoBaseFinanciado" FLOAT DEFAULT 800000,"montoCredito" FLOAT DEFAULT 800000,
       "imei" TEXT DEFAULT '111111111111111',"sedeId" INTEGER DEFAULT 10,
@@ -46,6 +47,7 @@ test("PostgreSQL: grabación obligatoria, concurrencia e historia preservada", {
       "equalityService" TEXT,"contratoSnapshot" JSONB DEFAULT '{"firma":{"hash":"original"}}',
       "contratoCedulaFrenteDataUrl" TEXT DEFAULT 'front',"contratoCedulaRespaldoDataUrl" TEXT DEFAULT 'back',
       "iphoneSelfieCedulaDataUrl" TEXT DEFAULT 'selfie',"fotoEntregaDataUrl" TEXT DEFAULT 'delivery',"fotoRemisionDataUrl" TEXT DEFAULT 'remission');
+    CREATE TABLE "CreditoAmortizacion" ("creditoId" INTEGER PRIMARY KEY REFERENCES "Credito"("id"),"cuotaComercial" NUMERIC(20,2));
     CREATE TABLE "LiquidacionAliadoCredito" ("id" SERIAL PRIMARY KEY,"creditoId" INTEGER UNIQUE REFERENCES "Credito"("id"),"snapshot" TEXT DEFAULT 'pago original');
     CREATE TABLE "DataCreditoAssessment" ("id" TEXT PRIMARY KEY,"creditId" INTEGER,"score" INTEGER,"offer" JSONB,
       "status" TEXT,"consumedAt" TIMESTAMP,"retainedUntil" TIMESTAMP,"updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP);

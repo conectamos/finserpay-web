@@ -78,6 +78,34 @@ export const creditApprovalCallSchemaStatements = [
   constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_hash_check", `CHECK ("sourceReviewHash" ~ '^[a-f0-9]{64}$' AND "contractHash" ~ '^[a-f0-9]{64}$')`),
   constraint("CreditApprovalCallReissueSeal", "CreditApprovalCallReissueSeal_kind_check", `CHECK ("captureKind" IN ('LIVE','MIGRATED'))`),
   `CREATE INDEX IF NOT EXISTS "CreditApprovalCallReissueSeal_recording_idx" ON public."CreditApprovalCallReissueSeal"("recordingId")`,
+  `CREATE TABLE IF NOT EXISTS public."CreditApprovalCallDocumentContinuation" (
+    "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "creditoId" INTEGER NOT NULL REFERENCES public."Credito"("id") ON DELETE RESTRICT,
+    "recordingId" UUID NOT NULL REFERENCES public."CreditApprovalCallRecording"("id") ON DELETE RESTRICT,
+    "processUuid" TEXT NOT NULL CHECK (LENGTH(BTRIM("processUuid")) BETWEEN 1 AND 128),
+    "sourceRevision" INTEGER NOT NULL CHECK ("sourceRevision">0),
+    "sourceReviewHash" VARCHAR(64) NOT NULL CHECK ("sourceReviewHash" ~ '^[a-f0-9]{64}$'),
+    "targetRevision" INTEGER NOT NULL CHECK ("targetRevision"="sourceRevision"+1),
+    "targetReviewHash" VARCHAR(64) NOT NULL CHECK ("targetReviewHash" ~ '^[a-f0-9]{64}$'),
+    "contextHash" VARCHAR(64) NOT NULL,"documentHash" VARCHAR(64) NOT NULL,
+    "evidenceSourceHash" VARCHAR(64) CHECK ("evidenceSourceHash" IS NULL OR "evidenceSourceHash" ~ '^[a-f0-9]{64}$'),
+    "requestEventId" UUID NOT NULL,"recoveryEventId" UUID NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'))`,
+  `ALTER TABLE public."CreditApprovalCallDocumentContinuation" ADD COLUMN IF NOT EXISTS "evidenceSourceHash" VARCHAR(64)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "CreditApprovalCallDocumentContinuation_target_key"
+    ON public."CreditApprovalCallDocumentContinuation"("creditoId","targetRevision","targetReviewHash")`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_signed_pdf_hash(value TEXT)
+    RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $$ DECLARE document_bytes BYTEA; normalized TEXT; BEGIN
+      IF value IS NULL OR value='' THEN RETURN NULL; END IF;
+      IF LENGTH(value)>46000000 THEN RETURN NULL; END IF;
+      normalized:=REGEXP_REPLACE(REGEXP_REPLACE(value,'^data:application/pdf;base64,','','i'),'[[:space:]]','','g');
+      IF normalized !~ '^[A-Za-z0-9+/]+={0,2}$' THEN RETURN NULL; END IF;
+      document_bytes:=decode(normalized,'base64');
+      IF octet_length(document_bytes)<5 OR octet_length(document_bytes)>33554432
+        OR encode(substring(document_bytes FROM 1 FOR 5),'hex')<>'255044462d' THEN RETURN NULL; END IF;
+      RETURN encode(sha256(document_bytes),'hex');
+    EXCEPTION WHEN invalid_parameter_value OR invalid_text_representation THEN RETURN NULL;
+    END $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_call_contract_hash(target_credit_id INTEGER)
     RETURNS TEXT LANGUAGE sql STABLE AS $$
       SELECT encode(sha256(convert_to(jsonb_build_object(
@@ -154,6 +182,28 @@ export const creditApprovalCallSchemaStatements = [
         FROM public."CreditApprovalEvent" event
         WHERE event."creditoId"=target_credit_id AND event."eventType"='INVALIDATED'
           AND event."revision">source_revision AND event."revision"<=target_revision)
+    $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_document_context_hash(target_credit_id INTEGER)
+    RETURNS TEXT LANGUAGE sql STABLE AS $$
+      WITH active_process AS (
+        SELECT process.* FROM public."FirmaSeguroProcess" process
+        WHERE process."creditoId"=target_credit_id AND process."supersededAt" IS NULL
+      )
+      SELECT encode(sha256(convert_to(jsonb_build_object(
+        'contract',public.credit_approval_call_contract_hash(target_credit_id),
+        'plan',(SELECT jsonb_build_array(credit."plazoMeses",credit."frecuenciaPago",credit."valorCuota",credit."fechaPrimerPago",
+          (SELECT amortization."cuotaComercial" FROM public."CreditoAmortizacion" amortization
+            WHERE amortization."creditoId"=credit."id")) FROM public."Credito" credit WHERE credit."id"=target_credit_id),
+        'evidence',jsonb_build_array(
+          public.credit_approval_call_evidence_hash(target_credit_id,'cedula-frente'),
+          public.credit_approval_call_evidence_hash(target_credit_id,'cedula-posterior'),
+          public.credit_approval_call_evidence_hash(target_credit_id,'selfie-cedula'),
+          public.credit_approval_call_evidence_hash(target_credit_id,'foto-entrega'),
+          public.credit_approval_call_evidence_hash(target_credit_id,'foto-remision')),
+        'process',jsonb_build_array(process."id",process."processUuid",process."status",process."completedAt"),
+        'document',public.credit_approval_call_signed_pdf_hash(process."signedDocumentBase64")
+      )::text,'UTF8')),'hex') FROM active_process process
+      WHERE (SELECT COUNT(*) FROM active_process)=1
     $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_call_evidence_event_matches(evidence_revision_id UUID)
     RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
@@ -249,6 +299,17 @@ export const creditApprovalCallSchemaStatements = [
           AND continuation."targetReviewHash"=target_review_hash
         UNION ALL
         SELECT recording."id",recording."createdAt"
+        FROM public."CreditApprovalCallDocumentContinuation" continuation
+        JOIN public."CreditApprovalCallRecording" recording ON recording."id"=continuation."recordingId"
+        WHERE continuation."creditoId"=target_credit_id
+          AND continuation."targetRevision"=target_revision
+          AND continuation."targetReviewHash"=target_review_hash
+          AND continuation."contextHash"=public.credit_approval_call_document_context_hash(target_credit_id)
+          AND continuation."documentHash"=(SELECT public.credit_approval_call_signed_pdf_hash(process."signedDocumentBase64")
+            FROM public."FirmaSeguroProcess" process WHERE process."creditoId"=target_credit_id
+              AND process."processUuid"=continuation."processUuid" AND process."supersededAt" IS NULL LIMIT 1)
+        UNION ALL
+        SELECT recording."id",recording."createdAt"
         FROM public."CreditApprovalEvent" approval_event
         JOIN public."CreditApprovalCallRecording" recording ON recording."id"=approval_event."callRecordingId"
         WHERE approval_event."creditoId"=target_credit_id
@@ -296,6 +357,123 @@ export const creditApprovalCallSchemaStatements = [
       )
       SELECT "id" FROM deduplicated ORDER BY "createdAt" DESC,"id" DESC LIMIT 1
     $$`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_call_document_continuation_insert()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE current_review RECORD; process RECORD; transition_time TIMESTAMP;
+      transition_count BIGINT; allowed_count BIGINT; expected_recording UUID;
+      request_id UUID; recovery_id UUID;
+    BEGIN
+      PERFORM 1 FROM public."Credito" WHERE "id"=NEW."creditoId" FOR UPDATE;
+      IF NOT FOUND THEN RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_INVALID' USING ERRCODE='23514'; END IF;
+      SELECT * INTO current_review FROM public."CreditApprovalReview" WHERE "creditoId"=NEW."creditoId" FOR UPDATE;
+      IF NOT FOUND OR current_review."status"<>'PENDING' OR current_review."revision"<>NEW."targetRevision"
+        OR NEW."targetRevision"<>NEW."sourceRevision"+1 THEN
+        RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_INVALID' USING ERRCODE='23514';
+      END IF;
+      IF (SELECT COUNT(*) FROM public."FirmaSeguroProcess" candidate
+        WHERE candidate."creditoId"=NEW."creditoId" AND candidate."supersededAt" IS NULL)<>1 THEN
+        RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_PROCESS_INVALID' USING ERRCODE='23514';
+      END IF;
+      SELECT * INTO process FROM public."FirmaSeguroProcess" candidate
+        WHERE candidate."creditoId"=NEW."creditoId" AND candidate."processUuid"=NEW."processUuid"
+          AND candidate."supersededAt" IS NULL;
+      IF NOT FOUND OR process."completedAt" IS NULL
+        OR public.credit_approval_call_signed_pdf_hash(process."signedDocumentBase64") IS NULL THEN
+        RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_PROCESS_INVALID' USING ERRCODE='23514';
+      END IF;
+      SELECT COUNT(*),COUNT(*) FILTER (WHERE event."eventType"='INVALIDATED' AND event."reason"='SIGNED_DOCUMENT_CHANGED'),
+        MIN(event."createdAt") INTO transition_count,allowed_count,transition_time
+      FROM public."CreditApprovalEvent" event WHERE event."creditoId"=NEW."creditoId"
+        AND event."revision">NEW."sourceRevision" AND event."revision"<=NEW."targetRevision";
+      IF transition_count<>1 OR allowed_count<>1 THEN
+        RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_TRANSITION_INVALID' USING ERRCODE='23514';
+      END IF;
+      IF to_regclass('public."CreditApprovalDocumentRefreshEvent"') IS NULL THEN
+        RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_AUDIT_INVALID' USING ERRCODE='23514';
+      END IF;
+      SELECT requested."id",recovered."id" INTO request_id,recovery_id
+      FROM public."CreditApprovalDocumentRefreshEvent" requested
+      JOIN public."CreditApprovalDocumentRefreshEvent" recovered ON recovered."creditoId"=requested."creditoId"
+        AND recovered."processUuid"=requested."processUuid" AND recovered."status"='RECOVERED'
+      WHERE requested."creditoId"=NEW."creditoId" AND requested."processUuid"=NEW."processUuid"
+        AND requested."status"='REQUESTED' AND requested."createdAt"<=transition_time
+        AND recovered."createdAt">=transition_time AND recovered."createdAt">=requested."createdAt"
+      ORDER BY recovered."createdAt" DESC,requested."createdAt" DESC LIMIT 1;
+      IF request_id IS NULL OR recovery_id IS NULL THEN
+        RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_AUDIT_INVALID' USING ERRCODE='23514';
+      END IF;
+      SELECT public.credit_approval_effective_call_recording(
+        NEW."creditoId",NEW."sourceRevision",NEW."sourceReviewHash") INTO expected_recording;
+      IF expected_recording IS DISTINCT FROM NEW."recordingId" THEN
+        RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_SOURCE_INVALID' USING ERRCODE='23514';
+      END IF;
+      -- The existing evidence resolver deliberately ignores its target hash.
+      -- Require an exact stored tuple or the server-reconstructed pre-photo,
+      -- missing-PDF source hash; otherwise PDF1 -> photo -> PDF2 could revive it.
+      IF NOT (
+        EXISTS (SELECT 1 FROM public."CreditApprovalCallRecording" recording
+          WHERE recording."id"=NEW."recordingId" AND recording."creditoId"=NEW."creditoId"
+            AND recording."revision"=NEW."sourceRevision" AND recording."reviewHash"=NEW."sourceReviewHash")
+        OR EXISTS (SELECT 1 FROM public."CreditApprovalCallContinuation" continuation
+          WHERE continuation."creditoId"=NEW."creditoId" AND continuation."recordingId"=NEW."recordingId"
+            AND continuation."targetRevision"=NEW."sourceRevision" AND continuation."targetReviewHash"=NEW."sourceReviewHash")
+        OR EXISTS (SELECT 1 FROM public."CreditApprovalEvent" event
+          WHERE event."creditoId"=NEW."creditoId" AND event."callRecordingId"=NEW."recordingId"
+            AND event."eventType"='APPROVED' AND event."revision"=NEW."sourceRevision" AND event."reviewHash"=NEW."sourceReviewHash")
+        OR EXISTS (SELECT 1 FROM public."CreditApprovalCallEvidenceSeal" seal
+          JOIN public."CreditApprovalEvidenceRevision" evidence ON evidence."id"=seal."evidenceRevisionId"
+          WHERE seal."creditoId"=NEW."creditoId" AND seal."recordingId"=NEW."recordingId"
+            AND seal."sourceRevision"=NEW."sourceRevision"-1 AND seal."sourceReviewHash"=NEW."evidenceSourceHash"
+            AND public.credit_approval_call_contract_hash(NEW."creditoId")=seal."contractHash"
+            AND public.credit_approval_call_evidence_transition_valid(NEW."creditoId",seal."sourceRevision",NEW."sourceRevision")
+            AND public.credit_approval_call_evidence_event_matches(evidence."id")
+            AND public.credit_approval_call_evidence_hash(NEW."creditoId",evidence."evidenceKey")=evidence."nextSha256"
+            AND public.credit_approval_call_data_url_hash(evidence."previousDataUrl") IS NOT DISTINCT FROM evidence."previousSha256")
+      ) THEN RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_SOURCE_HASH_INVALID' USING ERRCODE='23514'; END IF;
+      NEW."contextHash":=public.credit_approval_call_document_context_hash(NEW."creditoId");
+      NEW."documentHash":=public.credit_approval_call_signed_pdf_hash(process."signedDocumentBase64");
+      IF NEW."contextHash" IS NULL THEN RAISE EXCEPTION 'CALL_DOCUMENT_CONTINUATION_CONTEXT_INVALID' USING ERRCODE='23514'; END IF;
+      NEW."requestEventId":=request_id; NEW."recoveryEventId":=recovery_id;
+      NEW."createdAt":=CURRENT_TIMESTAMP AT TIME ZONE 'UTC';
+      RETURN NEW;
+    END $$`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallDocumentContinuation_insert_guard"
+    BEFORE INSERT ON public."CreditApprovalCallDocumentContinuation"
+    FOR EACH ROW EXECUTE FUNCTION public.credit_approval_call_document_continuation_insert()`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallDocumentContinuation_immutable"
+    BEFORE UPDATE OR DELETE ON public."CreditApprovalCallDocumentContinuation"
+    FOR EACH ROW EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
+  `CREATE OR REPLACE TRIGGER "CreditApprovalCallDocumentContinuation_no_truncate"
+    BEFORE TRUNCATE ON public."CreditApprovalCallDocumentContinuation"
+    FOR EACH STATEMENT EXECUTE FUNCTION public.credit_approval_reject_history_mutation()`,
+  `CREATE OR REPLACE FUNCTION public.credit_approval_restore_document_call(
+      target_credit_id INTEGER,target_revision INTEGER,target_review_hash TEXT,source_review_hash TEXT,process_uuid TEXT,
+      evidence_source_hash TEXT DEFAULT NULL)
+    RETURNS UUID LANGUAGE plpgsql VOLATILE AS $$ DECLARE source_recording UUID; restored_recording UUID; BEGIN
+      -- A waiting row lock does not refresh a REPEATABLE READ snapshot after a
+      -- concurrent upload. Only READ COMMITTED may associate the current audio.
+      IF current_setting('transaction_isolation')<>'read committed' THEN RETURN NULL; END IF;
+      IF target_revision<2 OR target_review_hash !~ '^[a-f0-9]{64}$' OR source_review_hash !~ '^[a-f0-9]{64}$'
+        OR process_uuid IS NULL OR LENGTH(BTRIM(process_uuid)) NOT BETWEEN 1 AND 128
+        OR to_regclass('public."CreditApprovalDocumentRefreshEvent"') IS NULL THEN RETURN NULL; END IF;
+      -- Re-evaluate the latest effective source under the same locks as audio uploads.
+      PERFORM 1 FROM public."Credito" WHERE "id"=target_credit_id FOR UPDATE;
+      IF NOT FOUND THEN RETURN NULL; END IF;
+      PERFORM 1 FROM public."CreditApprovalReview" WHERE "creditoId"=target_credit_id
+        AND "revision"=target_revision AND "status"='PENDING' FOR UPDATE;
+      IF NOT FOUND THEN RETURN NULL; END IF;
+      SELECT public.credit_approval_effective_call_recording(
+        target_credit_id,target_revision-1,source_review_hash) INTO source_recording;
+      IF source_recording IS NULL THEN RETURN NULL; END IF;
+      INSERT INTO public."CreditApprovalCallDocumentContinuation"
+        ("creditoId","recordingId","processUuid","sourceRevision","sourceReviewHash","targetRevision","targetReviewHash","evidenceSourceHash")
+        VALUES (target_credit_id,source_recording,process_uuid,target_revision-1,source_review_hash,target_revision,target_review_hash,evidence_source_hash)
+        ON CONFLICT ("creditoId","targetRevision","targetReviewHash") DO NOTHING;
+      SELECT public.credit_approval_effective_call_recording(
+        target_credit_id,target_revision,target_review_hash) INTO restored_recording;
+      RETURN restored_recording;
+    EXCEPTION WHEN check_violation OR foreign_key_violation OR unique_violation THEN RETURN NULL;
+    END $$`,
   `CREATE OR REPLACE FUNCTION public.credit_approval_call_evidence_seal_insert()
     RETURNS trigger LANGUAGE plpgsql AS $$
     DECLARE evidence public."CreditApprovalEvidenceRevision"%ROWTYPE;
