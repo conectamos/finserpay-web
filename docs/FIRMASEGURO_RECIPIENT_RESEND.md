@@ -29,3 +29,11 @@ Un PUT sin respuesta confirmada permanece incierto. La coincidencia del correo n
 Las pruebas reproducen esa estructura con valores ficticios y conservan los rechazos ante múltiples firmantes, UUID/identidad contradictorios o evidencias de firma. Los formatos desconocidos siguen produciendo `FIRMASEGURO_RECIPIENT_UNVERIFIED`; no se crean procesos alternativos ni se sustituye el PDF.
 
 Un reenvío cuya notificación quedó incierta no se repite automáticamente: requiere revisar su entrega en FirmaSeguro. El registro incierto se conserva en el historial. Si una corrección contractual autorizada sustituye ese proceso, la incertidumbre histórica no bloquea la gestión del proceso nuevo.
+
+## Acuse de reenvío y canal
+
+El estado interno `RESENT` conserva el acuse de una solicitud de reenvío; no es un recibo de entrega ni de lectura. La pantalla identifica el reenvío por correo documentado por la API y mantiene explícitamente sin confirmar la entrega y la notificación por WhatsApp. El contacto y la fecha del último acuse se leen de la misma operación; una edición posterior no cambia el destinatario al que corresponde un acuse anterior.
+
+La solicitud inicial puede tener `isSendByWhatsApp: true` y autenticación OTP 4 sin que eso demuestre un nuevo WhatsApp del enlace de firma. La documentación oficial distingue la notificación inicial del OTP. No se deduce una URL de firma a partir del `hash`, ni se llama a una ruta de WhatsApp sin un contrato verificable del proveedor.
+
+Las respuestas de edición y reenvío deben contener un acuse positivo explícito. HTTP 200 con cuerpo vacío, estructura desconocida, error explícito o un código `code_message` sin semántica documentada queda incierto; no autoriza registrar un reenvío aceptado ni repetir la notificación automáticamente.

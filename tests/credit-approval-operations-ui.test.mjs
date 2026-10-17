@@ -636,10 +636,12 @@ for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) t
   assert.equal(button(tree, submitLabel).props.disabled, false);
   button(tree, submitLabel).props.onClick();
   tree = render();
-  let confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar");
+  let confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar por correo");
   assert.ok(confirm.props.description.includes(nextPhone));
   assert.match(confirm.props.description, /mismo documento pendiente/);
   assert.match(confirm.props.description, /solicitud de firma y el documento existentes/);
+  assert.match(confirm.props.description, /reenvío al correo/);
+  assert.match(confirm.props.description, /envío por WhatsApp no está confirmado/);
   assert.doesNotMatch(confirm.props.description, /nueva solicitud|archivado|reemplazada/);
   confirm.props.onConfirm();
   confirm.props.onConfirm();
@@ -660,7 +662,7 @@ for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) t
       "una entrega parcial mantiene el intento registrado para continuar con la misma llave");
     button(tree, retryLabel).props.onClick();
     tree = render();
-    confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar");
+    confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar por correo");
     confirm.props.onConfirm();
     await setImmediate();
     await setImmediate();

@@ -92,6 +92,9 @@ test("edita y reenvía el mismo firmante; conserva proceso, documento y todos lo
   const f = await fixture(t);
   const result = await f.run();
   assert.equal(result.status, "RESENT");
+  assert.equal(result.notificationChannel, "EMAIL");
+  assert.equal(result.deliveryStatus, "UNCONFIRMED");
+  assert.match(result.message, /entrega al correo y el envío por WhatsApp no están confirmados/);
   assert.equal(result.processUuid, f.input.processUuid);
   assert.equal(result.sentPhone, "3119876543");
   assert.equal(f.calls.edit.length, 1);

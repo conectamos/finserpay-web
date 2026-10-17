@@ -109,12 +109,30 @@ test("HTTP 200 con fallo explícito no confirma una edición ni un reenvío", as
     { status: "Error" }, { status: "FAILED" }, { status: "FAILURE" }, { status: "REJECTED" },
     { status: "DECLINED" }, { statusCode: 400 }, { statusCode: 503 },
     { data: { status: "Error" } }, { Result: { status: "DECLINED" } },
-    { Result: { data: { statusCode: 403 } } }]) {
+    { Result: { data: { statusCode: 403 } } },
+    { status_code: 400 }, { code: 400 }, { success: "false" }, { ok: 0 },
+    { statusCode: 200, message: "No enviado" },
+    { status: "OK", statusCode: 200, message: "No se pudo enviar la notificación" },
+    { success: true, message: "No fue posible actualizar el firmante" },
+    { status: "OK", code_message: 1 }, { statusCode: 200, code_message: 0 },
+    { status: "OK", data: [{ success: false }] }, { result: [{ ok: false }] }]) {
     for (const method of ["firmaSeguroEditSignature", "firmaSeguroResendSignature"]) {
       const api = fixture(() => Response.json(payload));
       await assert.rejects(api[method]("fixture-token",
         method === "firmaSeguroEditSignature" ? contactEdit : 123),
       (error) => error.name === "FirmaSeguroApiError" && error.status === 502);
+      assert.equal(api.requests.length, 1);
+    }
+  }
+});
+
+test("respuestas vacías o sin acuse explícito quedan inciertas y no se reintentan", async () => {
+  for (const payload of [null, {}, [], "", "error", "not sent", { code_message: 0 }, { code_message: 1 },
+    { statusCode: 200 }, { status_code: 200, data: null }]) {
+    for (const method of ["firmaSeguroEditSignature", "firmaSeguroResendSignature"]) {
+      const api = fixture(() => Response.json(payload));
+      await assert.rejects(api[method]("fixture-token", method === "firmaSeguroEditSignature" ? contactEdit : 123),
+        error => error.name === "FirmaSeguroApiError" && error.status === 502);
       assert.equal(api.requests.length, 1);
     }
   }

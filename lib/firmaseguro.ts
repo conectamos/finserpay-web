@@ -1132,22 +1132,45 @@ function requireFirmaSeguroSignatureId(signatureId: number) {
 }
 
 function validateFirmaSeguroRecipientMutationResponse(payload: unknown) {
+  const normalizedKey = (key: string) => key.toLowerCase().replace(/[\s_-]/g, "");
+  const failureStatus = (value: unknown) => typeof value === "string" &&
+    ["ERROR", "FAILED", "FAILURE", "REJECTED", "DECLINED", "UNSUCCESSFUL"].includes(value.trim().toUpperCase());
+  const negativeFlag = (value: unknown) => value === false || value === 0 ||
+    (typeof value === "string" && ["false", "0"].includes(value.trim().toLowerCase()));
+  const negativeMessage = (value: unknown) => typeof value === "string" &&
+    /\b(?:error|failed|failure|rejected|declined|unsuccessful|could\s+not|unable\s+to|not\s+(?:sent|updated|successful)|no\s+(?:(?:se\s+)?pudo|fue\s+posible|se\s+logr[oó]|(?:se\s+)?(?:envi[oó]|enviado|actualiz[oó]|actualizado|exitoso)))\b/i.test(value);
   function explicitFailure(value: unknown, depth = 0): boolean {
     if (value === false) return true;
-    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return false;
+    if (typeof value === "string") return failureStatus(value) || negativeMessage(value);
+    if (!value || typeof value !== "object" || depth > 5) return false;
+    if (Array.isArray(value)) return value.some(item => explicitFailure(item, depth + 1));
     return Object.entries(value as Record<string, unknown>).some(([key, item]) =>
-      (["success", "ok", "issuccess", "succeeded"].includes(key.toLowerCase()) && item === false) ||
-      (key.toLowerCase() === "status" && typeof item === "string" &&
-        ["ERROR", "FAILED", "FAILURE", "REJECTED", "DECLINED"].includes(item.trim().toUpperCase())) ||
-      (key.toLowerCase() === "statuscode" && typeof item === "number" && item >= 400) ||
-      (["error", "errors"].includes(key.toLowerCase()) && item !== false && item != null &&
+      (["success", "ok", "issuccess", "succeeded"].includes(normalizedKey(key)) && negativeFlag(item)) ||
+      (["status", "state"].includes(normalizedKey(key)) && failureStatus(item)) ||
+      (["statuscode", "code"].includes(normalizedKey(key)) &&
+        /^\d{3}$/.test(String(item)) && Number(item) >= 400) ||
+      (["message", "errormessage"].includes(normalizedKey(key)) && negativeMessage(item)) ||
+      (normalizedKey(key) === "codemessage" && item != null) ||
+      (["error", "errors"].includes(normalizedKey(key)) && item !== false && item != null &&
         item !== "" && (!Array.isArray(item) || item.length > 0)) ||
-      (["data", "result"].includes(key.toLowerCase()) && explicitFailure(item, depth + 1))
+      (["data", "result"].includes(normalizedKey(key)) && explicitFailure(item, depth + 1))
     );
   }
-  if (explicitFailure(payload)) {
-    // HTTP 200 with an error body is not a confirmed mutation. Keep it uncertain
-    // so the caller reconciles provider state before attempting another write.
+  function explicitAcknowledgement(value: unknown, depth = 0): boolean {
+    if (value === true) return true;
+    if (typeof value === "string") return ["OK", "SUCCESS", "SUCCESSFUL"].includes(value.trim().toUpperCase());
+    if (!value || typeof value !== "object" || depth > 5) return false;
+    if (Array.isArray(value)) return value.some(item => explicitAcknowledgement(item, depth + 1));
+    return Object.entries(value as Record<string, unknown>).some(([key, item]) =>
+      (["success", "ok", "issuccess", "succeeded"].includes(normalizedKey(key)) && item === true) ||
+      (["status", "state"].includes(normalizedKey(key)) && typeof item === "string" &&
+        ["OK", "SUCCESS", "SUCCESSFUL", "ACCEPTED"].includes(item.trim().toUpperCase())) ||
+      (["data", "result"].includes(normalizedKey(key)) && explicitAcknowledgement(item, depth + 1))
+    );
+  }
+  if (explicitFailure(payload) || !explicitAcknowledgement(payload)) {
+    // HTTP 200 alone, an empty body or an unknown code is not a provider ACK.
+    // Preserve uncertainty and never automatically repeat a notification.
     throw new FirmaSeguroApiError(
       "FirmaSeguro no confirmó la actualización o el reenvío del firmante.", 502, null
     );

@@ -39,6 +39,7 @@ type Props = {
   callPanel: ReactNode;
   noveltyPanel: ReactNode;
   signaturePanel: ReactNode;
+  documentRecoveryPanel?: ReactNode;
   approvalPanel: ReactNode;
   confirmationDialog: ReactNode;
 };

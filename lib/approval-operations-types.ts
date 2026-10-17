@@ -22,6 +22,12 @@ export type OperationalSignature = {
   sentEmail: string | null;
   sentAt: string | null;
   signedAt: string | null;
+  lastResend?: {
+    acceptedAt: string;
+    channel: "EMAIL";
+    email: string | null;
+    deliveryStatus: "UNCONFIRMED";
+  } | null;
 };
 
 export type OperationalTimelineEvent = {

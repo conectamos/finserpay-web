@@ -96,6 +96,7 @@ type DraftImeiEventRow = {
 type RecipientDeliveryContactRow = {
   afterContact: unknown;
   resentAt: Date | string | null;
+  resentContact?: unknown;
 };
 type PendingRecipientDeliveryRow = {
   id: string;
@@ -729,10 +730,13 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
       }
       if (signature.processUuid) {
         const deliveries = await optionalQuery<RecipientDeliveryContactRow>(db,
-          `SELECT delivery."afterContact",(SELECT MAX(previous."resentAt")
-             FROM "FirmaSeguroRecipientDelivery" previous
-             WHERE previous."draftId"=$1 AND previous."processUuid"=$2) AS "resentAt"
+          `SELECT delivery."afterContact",receipt."resentAt",receipt."afterContact" AS "resentContact"
            FROM "FirmaSeguroRecipientDelivery" delivery
+           LEFT JOIN LATERAL (SELECT previous."resentAt",previous."afterContact"
+             FROM "FirmaSeguroRecipientDelivery" previous
+             WHERE previous."draftId"=$1 AND previous."processUuid"=$2
+               AND previous."status"='RESENT' AND previous."resentAt" IS NOT NULL
+             ORDER BY previous."resentAt" DESC,previous."id" DESC LIMIT 1) receipt ON TRUE
            WHERE delivery."draftId"=$1 AND delivery."processUuid"=$2 AND delivery."editedAt" IS NOT NULL
            ORDER BY delivery."editedAt" DESC,delivery."id" DESC LIMIT 1`, id, signature.processUuid);
         if (deliveries[0]) {
@@ -740,6 +744,11 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
           signature.sentPhone = clean(contact.phone) || signature.sentPhone;
           signature.sentEmail = clean(contact.email) || signature.sentEmail;
           signature.sentAt = iso(deliveries[0].resentAt) || signature.sentAt;
+          const acceptedAt = iso(deliveries[0].resentAt);
+          const resentContact = record(deliveries[0].resentContact);
+          if (acceptedAt && deliveries[0].resentContact) signature.lastResend = {
+            acceptedAt, channel: "EMAIL", email: clean(resentContact.email), deliveryStatus: "UNCONFIRMED",
+          };
         }
       }
       if (await relationExists(db, "FirmaSeguroRecipientDeliveryEvent")) {
@@ -754,7 +763,7 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
           EDITING: "Actualizando destinatario de FirmaSeguro",
           RECIPIENT_UPDATED: "Destinatario de FirmaSeguro actualizado",
           RESENDING: "Reenviando el mismo documento",
-          RESENT: "Mismo documento reenviado",
+          RESENT: "Reenvío por correo aceptado; entrega sin confirmar",
           EDIT_UNCERTAIN: "Cambio de destinatario pendiente de conciliación",
           RESEND_FAILED: "No se pudo reenviar el documento",
           RESEND_UNCERTAIN: "Reenvío pendiente de conciliación",
