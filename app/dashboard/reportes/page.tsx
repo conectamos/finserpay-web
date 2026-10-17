@@ -112,7 +112,7 @@ const PERIOD_OPTIONS: Array<{ label: string; value: PeriodKey }> = [
 const moneyFormatter = new Intl.NumberFormat("es-CO", {
   currency: "COP",
   minimumFractionDigits: 0,
-  maximumFractionDigits: 20,
+  maximumFractionDigits: 0,
   style: "currency",
 });
 
