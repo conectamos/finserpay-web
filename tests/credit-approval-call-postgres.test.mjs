@@ -48,6 +48,7 @@ test("call storage queries against isolated PostgreSQL TEMP tables", { skip: !co
     const store = loadCallModule("lib/credit-approval-call-store.ts", {
       "@/lib/credit-approval": { getCreditApprovalDetail: async () => detail },
       "@/lib/credit-approval-errors": errors, "@/lib/credit-approval-actor": actors, "@/lib/credit-approval-call-state": stateModule,
+      "@/lib/credit-welcome-voice-recording": loadCallModule("lib/credit-welcome-voice-recording.ts"),
     });
     const transact = async fn => { await client.query("BEGIN"); try { const result = await fn(); await client.query("COMMIT"); return result; } catch (error) { await client.query("ROLLBACK"); throw error; } };
     const input = { ...await files.prepareApprovalCallFile(tone(), "llamada.wav"), revision: 1, reviewHash: detail.review.reviewHash, idempotencyKey: randomUUID() };

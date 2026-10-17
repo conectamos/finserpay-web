@@ -46,6 +46,7 @@ const adapter = client => ({
 const store = loadCallModule("lib/credit-approval-call-store.ts", {
   "@/lib/credit-approval": core, "@/lib/credit-approval-errors": approvalErrors,
   "@/lib/credit-approval-actor": approvalActors, "@/lib/credit-approval-call-state": stateModule,
+  "@/lib/credit-welcome-voice-recording": loadCallModule("lib/credit-welcome-voice-recording.ts"),
 });
 const actor = { id: 7, nombre: "Analista de prueba" };
 async function transaction(client, work) {

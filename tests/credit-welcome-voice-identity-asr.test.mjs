@@ -77,6 +77,7 @@ async function fixture(t, creditOverrides = {}) {
     "@/lib/credit-factory-snapshot": snapshot, "@/lib/cartera-export": cartera,
     "@/lib/dapta-welcome": phone, "@/lib/credit-welcome-voice-core": core,
     "@/lib/credit-welcome-voice-speech": speech,
+    "@/lib/credit-welcome-voice-recording": loadReissueModule("lib/credit-welcome-voice-recording.ts"),
     "@/lib/credit-welcome-voice-document": documentParser,
     "@/lib/credit-welcome-voice-followup-core": loadReissueModule("lib/credit-welcome-voice-followup-core.ts"),
     "@/lib/credit-voice-review-campaign-core": campaignPolicy,

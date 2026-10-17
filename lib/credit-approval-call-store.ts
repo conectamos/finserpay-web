@@ -4,6 +4,7 @@ import { getCreditApprovalDetail, type ApprovalDatabase } from "@/lib/credit-app
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { approvalActorAudit, assertApprovalActorActive, assertApprovalActorCreditAccess, type ApprovalActor } from "@/lib/credit-approval-actor";
 import { readCreditApprovalCallState } from "@/lib/credit-approval-call-state";
+import { stopAutomaticCreditWelcomeCallsForRecording } from "@/lib/credit-welcome-voice-recording";
 import type { prepareApprovalCallFile } from "@/lib/credit-approval-call-file";
 
 type Upload = Awaited<ReturnType<typeof prepareApprovalCallFile>> & { revision: number; reviewHash: string; idempotencyKey: string };
@@ -31,6 +32,7 @@ export async function saveCreditApprovalCall(db: ApprovalDatabase, creditId: num
         saved.actorGrantId !== audit.actorGrantId || saved.actorSessionId !== audit.actorSessionId) {
       throw new CreditApprovalError("CALL_RECORDING_KEY_CONFLICT", "Esta confirmación corresponde a otra carga. Actualiza el expediente.", 409);
     }
+    await stopAutomaticCreditWelcomeCallsForRecording(db, creditId, new Date());
     return { state: await readCreditApprovalCallState(db, creditId, saved.revision, saved.reviewHash, saved.id), unchanged: true };
   }
   const detail = await getCreditApprovalDetail(db, creditId, actor);
@@ -48,6 +50,7 @@ export async function saveCreditApprovalCall(db: ApprovalDatabase, creditId: num
     VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::bytea,clock_timestamp() AT TIME ZONE 'UTC',$10,$11,$12,$13::uuid,$14::uuid,$15::uuid)`,
     id, creditId, input.revision, input.reviewHash, input.fileName, input.mimeType, input.sizeBytes, input.sha256, input.bytes,
     audit.actorUserId, audit.actorName, audit.actorKind, audit.actorGrantId, audit.actorSessionId, input.idempotencyKey);
+  await stopAutomaticCreditWelcomeCallsForRecording(db, creditId, new Date());
   return { state: await readCreditApprovalCallState(db, creditId, input.revision, input.reviewHash, id), unchanged: false };
 }
 

@@ -24,6 +24,8 @@ Antes de activar, comprobar la selección contra el muro de aprobaciones: `Credi
 
 Cada franja tiene como máximo un intento por crédito, con UUID y token nuevos. Las restricciones de base de datos y los bloqueos evitan que dos instancias reclamen el mismo contacto. Las pruebas `CONTROLLED_TEST` anteriores no cuentan como contacto de esta campaña.
 
+Si el crédito ya tiene una grabación manual guardada en `CreditApprovalCallRecording`, la campaña se detiene con motivo `CALL_RECORDING_SAVED`, incluso si el audio es de una revisión anterior. El guardado y la comprobación antes del despacho siguen la misma regla de [bienvenidas y reintentos](DAPTA_BIENVENIDA_CINCO_INTENTOS.md). No se interpreta una grabación de buzón ni un enlace al registro de Dapta como una llamada manual realizada.
+
 Solo se reintenta automáticamente una ausencia de respuesta confirmada: ocupado, sin contestar, fallo de marcación o buzón, sin evidencia contradictoria de una conversación. La identidad verificada por FINSERPAY o una conversación humana acreditada detienen las llamadas; una negativa o una solicitud de no volver a llamar también las detienen. Esto registra comunicación, no conformidad con el contrato.
 
 Los resultados ambiguos, callbacks ausentes y llamadas en curso permanecen retenidos. No se convierten en «sin contestar» por antigüedad o duración. Su resolución requiere el resultado autenticado de Dapta o revisión del operador. `TERMS_REVIEWED`, `COMPLETED` y `call_successful` por sí solos no acreditan comunicación.

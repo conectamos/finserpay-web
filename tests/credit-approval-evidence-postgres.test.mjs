@@ -16,6 +16,7 @@ import { history, photos, actor, service, correctionInput, loadApprovalModule, s
 const callStore = loadCallModule("lib/credit-approval-call-store.ts", {
   "@/lib/credit-approval": service, "@/lib/credit-approval-errors": service,
   "@/lib/credit-approval-actor": callActors, "@/lib/credit-approval-call-state": stateModule,
+  "@/lib/credit-welcome-voice-recording": loadCallModule("lib/credit-welcome-voice-recording.ts"),
 });
 const actorModule = loadApprovalModule("lib/credit-approval-actor.ts");
 const continuity = loadApprovalModule("lib/credit-approval-call-continuity.ts", {

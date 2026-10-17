@@ -13,6 +13,7 @@ import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } fr
 import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
 import { isWelcomeVoiceDocumentFragment, parseWelcomeVoiceDocumentDictation } from "@/lib/credit-welcome-voice-document";
 import { getCreditWelcomeVoicePendingSlot, planCreditWelcomeVoiceFollowup, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
+import { hasSavedCreditApprovalCallRecording, stopAutomaticCreditWelcomeCallsForRecording } from "@/lib/credit-welcome-voice-recording";
 
 export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN" | "AUTOMATIC_RETRY" | "OPERATOR_REQUEST";
 export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | "COMPLETED" |
@@ -298,6 +299,11 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   const now = deps.now ?? (() => new Date());
   const env = deps.env ?? process.env;
   const readCredit = (db: CreditReader, id: number) => db.credito.findUnique({ where: { id }, select: creditSelect });
+  async function stopForSavedRecording(db: WelcomeVoiceTransaction, creditId: number) {
+    if (!await hasSavedCreditApprovalCallRecording(db, creditId)) return false;
+    await stopAutomaticCreditWelcomeCallsForRecording(db, creditId, now());
+    return true;
+  }
   async function readEvent(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, id: string, lock = true) {
     const rows = await db.$queryRawUnsafe<EventRow[]>(`SELECT ${eventColumns} FROM "CreditWelcomeVoiceEvent" WHERE "id"=$1::uuid ${lock ? "FOR UPDATE" : ""}`, id);
     return rows[0] || null;
@@ -435,6 +441,8 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (!validCreditId(input.creditId) || !["NORMAL", "INDIVIDUAL_IMPORT"].includes(input.source)) {
       throw new CreditWelcomeVoiceStoreError("INVALID_EVENT", "Evento de bienvenida inválido.", 400);
     }
+    await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, input.creditId);
+    if (await stopForSavedRecording(db, input.creditId)) return null;
     const credit = await readCredit(db, input.creditId);
     if (!credit) throw new CreditWelcomeVoiceStoreError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
     const snapshot = buildCreditWelcomeVoiceSnapshot(credit);
@@ -482,11 +490,18 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return;
     const start = new Date(value);
     if (!Number.isFinite(start.getTime()) || start.toISOString().slice(0, 10) !== value.slice(0, 10)) return;
+    const [recordings] = await db.$queryRawUnsafe<Array<{ present: boolean }>>(
+      `SELECT to_regclass('public."CreditApprovalCallRecording"') IS NOT NULL AS "present"`,
+    );
+    // Do not resurrect a legacy initial event after its manual call was saved.
+    const recordingGuard = recordings?.present
+      ? `AND NOT EXISTS (SELECT 1 FROM "CreditApprovalCallRecording" r WHERE r."creditoId"=e."creditoId")` : "";
     await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceFollowup"
       ("creditoId","initialEventId","lastEventId","phase","fastAttempts","nextAttemptAt","createdAt","updatedAt")
       SELECT e."creditoId",e."id",e."id",'FAST',0,$2,$2,$2 FROM "CreditWelcomeVoiceEvent" e
       WHERE e."source" IN ('NORMAL','INDIVIDUAL_IMPORT') AND e."attemptNumber"=0 AND e."createdAt">=$1
       AND NOT EXISTS (SELECT 1 FROM "CreditWelcomeVoiceFollowup" f WHERE f."creditoId"=e."creditoId")
+      ${recordingGuard}
       ORDER BY e."createdAt",e."id" LIMIT 500 ON CONFLICT ("creditoId") DO NOTHING`, start, now());
   }
   async function claimPendingCreditWelcomeVoice(options: { limit?: number } = {}): Promise<VoiceDispatchClaim[]> {
@@ -504,6 +519,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       for (const followup of followups) {
         if (claims.length >= limit) break;
         await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, followup.creditoId);
+        if (await stopForSavedRecording(db, followup.creditoId)) continue;
         const initial = await readEvent(db, followup.initialEventId);
         const last = followup.lastEventId === followup.initialEventId ? initial : await readEvent(db, followup.lastEventId);
         if (!initial || initial.creditoId !== followup.creditoId || !["NORMAL", "INDIVIDUAL_IMPORT"].includes(initial.source) ||
@@ -597,6 +613,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         if (claims.length >= limit) break;
         await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1),$2)::text`, input.campaignId, member.creditoId);
         await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, member.creditoId);
+        if (await stopForSavedRecording(db, member.creditoId)) continue;
         if (!await checkCampaignReview(db, member)) continue;
         const globalBlock = await globalWelcomeBlock(db, member.creditoId);
         if (globalBlock) {
@@ -777,10 +794,26 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     return database.$transaction(async db => {
       const automatic = ["NORMAL", "INDIVIDUAL_IMPORT", "AUTOMATIC_RETRY"].includes(candidate.source);
       const operator = candidate.source === "OPERATOR_REQUEST";
+      // Match the claimers' queue-row -> credit -> event order. Upload cleanup
+      // skips locked queue rows instead of waiting while it holds the credit.
       const followup = automatic || operator ? await readFollowup(db, candidate.creditoId) : null;
-      if (followup || operator) await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, candidate.creditoId);
+      const campaignMember = candidate.source === "SCHEDULED_CAMPAIGN"
+        ? (await db.$queryRawUnsafe<CampaignMember[]>(`SELECT "campaignId","creditoId","state","lastEventId"::text,"reviewRevision","reviewHash"
+          FROM "VoiceReviewCampaignMember" WHERE "campaignId"=$1 AND "creditoId"=$2 FOR UPDATE`, candidate.campaignId, candidate.creditoId))[0]
+        : null;
+      if (automatic || operator || candidate.source === "SCHEDULED_CAMPAIGN") {
+        await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, candidate.creditoId);
+      }
       const event = await readEvent(db, eventId);
       if (!event || event.status !== "DISPATCHING") return null;
+      if (["NORMAL", "INDIVIDUAL_IMPORT", "AUTOMATIC_RETRY", "SCHEDULED_CAMPAIGN"].includes(event.source)
+        && await stopForSavedRecording(db, event.creditoId)) {
+        // This dispatch owner has not begun HTTP. The upload cleanup cannot
+        // make that assertion about another worker's DISPATCHING request.
+        await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='CANCELLED',
+          "resultCode"='CALL_RECORDING_SAVED',"updatedAt"=$2 WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, event.id, now());
+        return null;
+      }
       if (operator) {
         const request = await readOperatorRequest(db, "eventId", event.id);
         const blocked = await operatorCallBlock(db, event.creditoId, event.id);
@@ -824,9 +857,8 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         return { eventId, creditId: event.creditoId, snapshot: event.snapshot };
       }
       if (event.source === "SCHEDULED_CAMPAIGN") {
-        const member = (await db.$queryRawUnsafe<CampaignMember[]>(`SELECT "campaignId","creditoId","state","lastEventId"::text,"reviewRevision","reviewHash"
-          FROM "VoiceReviewCampaignMember" WHERE "campaignId"=$1 AND "creditoId"=$2 FOR UPDATE`, event.campaignId, event.creditoId))[0];
-        if (!member || member.state !== "ACTIVE" || member.lastEventId !== event.id) {
+        const member = campaignMember;
+        if (!member || member.campaignId !== event.campaignId || member.creditoId !== event.creditoId || member.state !== "ACTIVE" || member.lastEventId !== event.id) {
           await exclude(db, event, "CAMPAIGN_MEMBER_NOT_ACTIVE"); return null;
         }
         if (!await checkCampaignReview(db, member)) {

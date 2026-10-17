@@ -20,6 +20,12 @@ Después del quinto intento total, la fase pasa a PENDING. Sus horarios son 08:0
 
 ## Parada y conciliación
 
+Una grabación manual persistida en `CreditApprovalCallRecording` detiene las bienvenidas automáticas, sus reintentos y la campaña de solicitudes pendientes del mismo crédito, con motivo `CALL_RECORDING_SAVED`. Se comprueba cualquier grabación guardada, aunque pertenezca a una revisión anterior, al encolar, adoptar eventos antiguos, reclamar y preparar el despacho antes de contactar a Dapta. Un enlace `CreditWelcomeVoiceEvent.recordingUrl` no equivale a esa evidencia: puede corresponder a buzón o al registro del proveedor.
+
+El guardado válido del audio y su repetición idempotente detienen el seguimiento `FAST/PENDING/HELD`, los integrantes `ACTIVE/HELD` y los eventos automáticos todavía `PENDING` dentro de la misma transacción. La limpieza usa `SKIP LOCKED` para no invertir el orden de bloqueos de la cola; el propietario de una fila ocupada vuelve a comprobar la grabación antes del despacho. No se reescriben llamadas aceptadas, resultados inciertos ni historial. Sólo el propio preparador, antes de iniciar HTTP, puede cancelar su evento `DISPATCHING` al detectar el audio. Guardar audio no aprueba el crédito ni acredita identidad o conformidad con sus condiciones.
+
+El botón «Llamar ahora» y las pruebas controladas siguen siendo solicitudes explícitas independientes, sujetas a sus permisos y exclusiones. El bloqueo por audio se aplica a las fuentes automáticas `NORMAL`, `INDIVIDUAL_IMPORT`, `AUTOMATIC_RETRY` y `SCHEDULED_CAMPAIGN`.
+
 La identidad verificada por FINSERPAY o el resultado `HUMAN_CONTACT` dejan el contacto en CONTACTED. Una negativa explícita registrada por el backend lo deja en STOPPED y prevalece sobre contacto anterior. Estos estados no vuelven a programarse por un callback posterior de ausencia de respuesta.
 
 DISPATCHING y ACCEPTED mantienen su fase, sin otra llamada elegible. UNKNOWN queda retenido con motivo `UNKNOWN_CALL`; la antigüedad nunca lo convierte en ausencia de respuesta. Un callback tardío autenticado puede recuperar FAST o PENDING desde `retryPhase`; cuando una bienvenida inicial antigua no tiene ese campo, se infiere desde el contador real y `lastPendingSlot`. Las retenciones por cambio de contacto, condiciones o resultado terminal ambiguo permanecen retenidas y requieren revisión; no se levantan por un callback de ausencia de respuesta.
