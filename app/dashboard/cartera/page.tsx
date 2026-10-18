@@ -583,7 +583,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
       />
 
       <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
-        <header className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+        <header className="flex flex-col gap-5">
           <div>
             <p className="text-xs font-bold uppercase text-[#0d766f]">Control de cartera</p>
             <h1 className="mt-1 text-3xl font-black text-[#101828]">Cartera</h1>
@@ -592,7 +592,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+          <div className="flex flex-col gap-3">
             <form action="/dashboard/cartera" className="flex flex-col gap-2 sm:flex-row sm:items-end">
               {adminCentral ? (
                 <label className="grid gap-1">
@@ -659,10 +659,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                     icon={History}
                     label="Historial gastos"
                   />
-                  <CuotavencidaWhatsappButton />
                 </>
               ) : null}
             </div>
+            {adminCentral ? <CuotavencidaWhatsappButton /> : null}
           </div>
         </header>
 
