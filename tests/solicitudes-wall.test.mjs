@@ -699,7 +699,7 @@ test("consultar el muro nunca dispara una consulta a DataCredito", async () => {
   assert.doesNotMatch(wallSources, /providerPayload|secureRecord/);
 });
 
-test("el muro muestra y ordena por la fecha de creación original", async () => {
+test("el muro usa la fecha operativa y conserva el inicio original de la solicitud", async () => {
   const [storage, ui] = await Promise.all([
     readProjectFile("lib/solicitudes-storage.ts"),
     readProjectFile("app/dashboard/solicitudes/solicitudes-wall-client.tsx"),
@@ -710,18 +710,19 @@ test("el muro muestra y ordena por la fecha de creación original", async () => 
   );
 
   assert.equal(
-    [...listSection.matchAll(/Fecha de creación/g)].length,
-    2,
-    "debe rotular la fecha de creación en escritorio y celular"
+    [...listSection.matchAll(/Fecha de operación/g)].length,
+    1,
+    "debe rotular la fecha de operación en la tabla"
   );
-  assert.match(listSection, /item\.createdAt \|\| item\.fechaCreacion/);
+  assert.equal([...listSection.matchAll(/displayDate\(item\.operationAt\)/g)].length, 2);
+  assert.match(listSection, /item\.source === "CREDIT" \? "Fecha del crédito" : "Fecha de solicitud"/);
   assert.doesNotMatch(listSection, /item\.updatedAt \|\| item\.fechaActualizacion/);
   assert.match(ui, /Última actualización/);
 
-  assert.match(storage, /createdAtExpression: string/);
+  assert.match(storage, /operationAtExpression: string/);
   assert.match(
     storage,
-    /createdAtExpression: `d\."createdAt"`[\s\S]*createdAtExpression: createdAt/
+    /operationAtExpression: `d\."createdAt"`[\s\S]*operationAtExpression: operationAt/
   );
   assert.match(
     storage,
@@ -729,13 +730,14 @@ test("el muro muestra y ordena por la fecha de creación original", async () => 
   );
   assert.match(
     storage,
-    /String\(right\.(?:item\.)?createdAt \|\| ""\)\.localeCompare\(\s*String\(left\.(?:item\.)?createdAt \|\| ""\)\s*\)/
+    /String\(right\.(?:item\.)?operationAt \|\| ""\)\.localeCompare\(\s*String\(left\.(?:item\.)?operationAt \|\| ""\)\s*\)/
   );
   assert.doesNotMatch(
     storage,
     /\.sort\([\s\S]{0,180}String\(right\.updatedAt/
   );
-  assert.match(storage, /at: toIso\(row\.finalizedAt \|\| row\.createdAt\)/);
+  assert.match(storage, /at: toIso\(row\.finalizedAt\)/);
+  assert.match(storage, /createdAt: toIso\(row\.createdAt\)/);
 });
 
 test("alinea las acciones de escritorio en dos carriles y conserva el flujo movil", async () => {

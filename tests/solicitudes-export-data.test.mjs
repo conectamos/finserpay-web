@@ -48,6 +48,7 @@ test("central: histórico completo, una fila por solicitud y conteo idéntico", 
   const converted = rows.find(row => row.source === "CREDIT" && row.entityId === 1);
   assert.equal(converted.solicitudNumero, "SOL-000003");
   assert.equal(converted.createdAt.toISOString(), "2026-09-15T15:00:00.000Z");
+  assert.equal(converted.operationAt.toISOString(), "2026-10-02T15:00:00.000Z");
   assert.equal(converted.numeroCredito, "00001");
   assert.equal(converted.numeroSadmin, "000000123");
   assert.equal(converted.imei, "001234567890123");
@@ -67,16 +68,16 @@ test("central: histórico completo, una fila por solicitud y conteo idéntico", 
 test("filtros combinados por aliados, sedes, vendedores, mes y plataforma", async () => {
   const selection = { aliadoIds: [1], sedeIds: [10, 11], vendedorIds: [100, 101, 300], period: "month", month: "2026-10" };
   const rows = await exported(central, selection, 2);
-  assert.deepEqual(rows.map(row => `${row.source}-${row.entityId}`), ["CREDIT-2", "CREDIT-4", "DRAFT-1"]);
+  assert.deepEqual(rows.map(row => `${row.source}-${row.entityId}`), ["CREDIT-1", "CREDIT-2", "CREDIT-4", "DRAFT-1"]);
   assert.equal(await countExportRows(central, filters(selection), db), rows.length);
-  assert.deepEqual((await exported(central, { ...selection, plataforma: "ANDROID" })).map(row => row.entityId), [1]);
+  assert.deepEqual((await exported(central, { ...selection, plataforma: "ANDROID" })).map(row => `${row.source}-${row.entityId}`), ["CREDIT-1", "DRAFT-1"]);
   assert.equal((await exported(central, { aliadoIds: [1, 2] })).length, 8);
   assert.equal((await exported(central, { sedeIds: [11], vendedorIds: [100] })).length, 0);
 });
 
 test("rango inclusivo y ausencia de resultados", async () => {
   const rows = await exported(central, { period: "range", desde: "2026-10-01", hasta: "2026-10-31" });
-  assert.equal(rows.length, 5);
+  assert.equal(rows.length, 6);
   assert(rows.some(row => row.source === "CREDIT" && row.entityId === 4));
   assert(!rows.some(row => row.source === "CREDIT" && row.entityId === 5));
   const empty = { period: "month", month: "1999-01" };
@@ -162,7 +163,7 @@ test("esquema actual: resultados retenidos, estados comerciales y etapas sin per
 });
 
 test("histórico grande continúa todos los lotes sin el límite de la página", async () => {
-  await pg.exec(`INSERT INTO "Credito" (id,"sedeId","vendedorId",folio,"createdAt",estado,"clienteNombre") SELECT n,10,100,'L-' || n,'2025-01-15'::timestamp,'GENERADO','Lote' FROM generate_series(1000,3504) n`);
+  await pg.exec(`INSERT INTO "Credito" (id,"sedeId","vendedorId",folio,"createdAt","fechaCredito",estado,"clienteNombre") SELECT n,10,100,'L-' || n,'2025-01-15'::timestamp,'2025-01-15'::timestamp,'GENERADO','Lote' FROM generate_series(1000,3504) n`);
   try {
     const selection = { period: "month", month: "2025-01" };
     const rows = await exported(ally, selection, 128);
@@ -177,8 +178,8 @@ test("histórico grande continúa todos los lotes sin el límite de la página",
 
 test("números de solicitud con más de seis dígitos se conservan en borrador y crédito convertido", async () => {
   await pg.exec(`
-    INSERT INTO "Credito" (id,"sedeId","vendedorId",folio,"createdAt",estado,"clienteNombre")
-    VALUES (9000001,10,100,'C-LONG-ID','2024-01-15','GENERADO','Identificador largo');
+    INSERT INTO "Credito" (id,"sedeId","vendedorId",folio,"createdAt","fechaCredito",estado,"clienteNombre")
+    VALUES (9000001,10,100,'C-LONG-ID','2024-01-15','2024-01-15','GENERADO','Identificador largo');
     INSERT INTO "CreditoBorrador" (id,"sedeId","vendedorId","creditoId","createdAt",estado,"expiresAt","currentStep","dataCreditoAssessmentId") VALUES
       (1000000,10,100,null,'2024-01-15','ABIERTO','2099-01-01',1,'00000000-0000-4000-8000-000000000001'),
       (1000001,10,100,9000001,'2024-01-14','CERRADO','2099-01-01',5,null);

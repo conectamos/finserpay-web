@@ -5,7 +5,7 @@ export const EXPORT_FIXTURE_SQL = `
     CREATE TABLE "SedeVendedor" ("sedeId" integer, "vendedorId" integer, activo boolean);
     CREATE TABLE "Credito" (
       id integer PRIMARY KEY, "sedeId" integer, "vendedorId" integer,
-      folio text, "createdAt" timestamp, estado text, "fotoEntregaDataUrl" text,
+      folio text, "createdAt" timestamp, "fechaCredito" timestamp, estado text, "fotoEntregaDataUrl" text,
       "fotoRemisionDataUrl" text, "deliverableReady" boolean,
       "clienteNombre" text, "clienteTipoDocumento" text, "clienteDocumento" text,
       "clienteTelefono" text, "clienteCorreo" text, "clienteDepartamento" text,
@@ -53,6 +53,7 @@ export const EXPORT_FIXTURE_SQL = `
     INSERT INTO "VeriffIdentityValidation" VALUES (1,1,'PENDING','2026-10-01'),(2,1,'APPROVED','2026-10-02');
     INSERT INTO "FirmaSeguroProcess" VALUES (1,1,'PENDING',null,'2026-10-01'),(2,1,'SIGNED',null,'2026-10-02');
     INSERT INTO "CreditSadminRegistration" VALUES (1,'000000123',true),(2,'000000999',false);
+    UPDATE "Credito" SET "fechaCredito" = "createdAt";
 `;
 
 // Current production retains assessment outcomes after provider-record cleanup
