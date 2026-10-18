@@ -6315,6 +6315,8 @@ export default function CreditFactoryConsole({
     selectedInstallmentNumbers.length > 0
       ? Math.max(0, selectedInstallmentRoundedTotal - paymentAmountToApply)
       : 0;
+  const isPartialInstallmentPayment =
+    !isEarlyPayoffMode && paymentAmountToApply > 0 && selectedInstallmentCoverageShortfall > 0;
   const paymentOverCreditAmount =
     paymentAmountToApply > 0
       ? Math.max(0, paymentAmountToApply - paymentTargetRoundedTotal)
@@ -6341,7 +6343,6 @@ export default function CreditFactoryConsole({
     paymentAmountToApply <= 0 ||
     (isEarlyPayoffMode && !earlyPayoffAvailable) ||
     paymentShortfallAmount > 0 ||
-    selectedInstallmentCoverageShortfall > 0 ||
     paymentOverCreditAmount > 0;
   const selectedOverdueTotal = selectedInstallmentsData.reduce(
     (sum, item) =>
@@ -11198,17 +11199,6 @@ export default function CreditFactoryConsole({
       return;
     }
 
-    if (
-      selectedInstallmentNumbers.length > 0 &&
-      selectedInstallmentCoverageShortfall > 0
-    ) {
-      setNotice({
-        text: `El abono no alcanza para las cuotas seleccionadas. Faltan ${currency(selectedInstallmentCoverageShortfall)}.`,
-        tone: "red",
-      });
-      return;
-    }
-
     if (paymentOverCreditAmount > 0) {
       setNotice({
         text: `El abono supera el valor permitido. Ajusta el abono a ${currency(paymentTargetRoundedTotal)}.`,
@@ -11254,6 +11244,7 @@ export default function CreditFactoryConsole({
             liquidacionAnticipada: isEarlyPayoffMode,
             tipoAbono: isEarlyPayoffMode ? "LIQUIDACION_ANTICIPADA" : "CUOTAS",
             valor: valueToRegister,
+            totalAbonadoEsperado: Number(paymentOverview?.totalAbonado || 0),
             metodoPago: paymentMethod,
             observacion: [
               paymentObservation,
@@ -11267,6 +11258,14 @@ export default function CreditFactoryConsole({
       );
 
       if (!result.ok) {
+        if (result.status === 409 && result.data?.code === "PAYMENT_PLAN_CHANGED") {
+          await loadPayments(selectedCredit.id);
+          setSelectedInstallmentNumbers([]);
+          setPaymentValue("");
+          setReceivedPaymentValue("");
+          setPaymentObservation("");
+          throw new Error("Los pagos del crédito cambiaron. Se actualizó el plan; revisa el saldo antes de confirmar otro abono.");
+        }
         throw new Error(result.data?.error || "No se pudo registrar el abono");
       }
 
@@ -21182,8 +21181,10 @@ export default function CreditFactoryConsole({
 
                     <div className="fp-payment-cash-fields">
                       <div className="grid gap-4">
-                        <details className="fp-payment-adjust-amount"><summary>Ajustar total a aplicar</summary>
+                        <details className="fp-payment-adjust-amount"><summary>Abono parcial u otro valor</summary>
+                          <label htmlFor="payment-amount-to-apply" className="mb-2 block text-sm font-semibold text-slate-700">Monto a abonar</label>
                           <input
+                            id="payment-amount-to-apply"
                             value={currencyInputValue(paymentValue)}
                             onChange={(event) =>
                               setPaymentValue(String(event.target.value || "").replace(/\D/g, ""))
@@ -21218,10 +21219,11 @@ export default function CreditFactoryConsole({
                         <div
                           className={[
                             "mt-4 rounded-lg border px-4 py-3",
-                            selectedInstallmentCoverageShortfall > 0 ||
                             paymentOverCreditAmount > 0 ||
                             paymentShortfallAmount > 0
                               ? "border-red-200 bg-red-50 text-red-800"
+                              : isPartialInstallmentPayment
+                                ? "border-amber-200 bg-amber-50 text-amber-800"
                               : paymentChangeAmount > 0
                                 ? "border-[#c9df91] bg-[#f7fbe9] text-[#4f6f0c]"
                                 : paymentAdvanceAmount > 0
@@ -21234,10 +21236,10 @@ export default function CreditFactoryConsole({
                               ? "Liquidacion lista"
                               : paymentOverCreditAmount > 0
                               ? "Supera saldo pendiente"
-                              : selectedInstallmentCoverageShortfall > 0
-                                ? "Abono insuficiente"
-                                : paymentShortfallAmount > 0
+                              : paymentShortfallAmount > 0
                                 ? "Falta por recibir"
+                                : isPartialInstallmentPayment
+                                  ? "Saldo pendiente de la selección"
                                 : paymentChangeAmount > 0
                                   ? "Cambio para entregar"
                                   : paymentAdvanceAmount > 0
@@ -21249,16 +21251,21 @@ export default function CreditFactoryConsole({
                               ? paymentDisplayCurrency(earlyPayoffRoundedTotal)
                               : paymentOverCreditAmount > 0
                               ? paymentDisplayCurrency(paymentOverCreditAmount)
-                              : selectedInstallmentCoverageShortfall > 0
-                                ? paymentDisplayCurrency(selectedInstallmentCoverageShortfall)
-                                : paymentShortfallAmount > 0
+                              : paymentShortfallAmount > 0
                                   ? paymentDisplayCurrency(paymentShortfallAmount)
+                                  : isPartialInstallmentPayment
+                                    ? paymentDisplayCurrency(selectedInstallmentCoverageShortfall)
                                   : paymentChangeAmount > 0
                                     ? paymentDisplayCurrency(paymentChangeAmount)
                                     : paymentAdvanceAmount > 0
                                       ? paymentDisplayCurrency(paymentAdvanceAmount)
                                       : "$ 0"}
                           </p>
+                          {isPartialInstallmentPayment && paymentShortfallAmount <= 0 && paymentOverCreditAmount <= 0 ? (
+                            <p className="mt-1 text-xs font-semibold">
+                              Se registrará un abono parcial. El saldo pendiente conserva su vencimiento.
+                            </p>
+                          ) : null}
                           {paymentChangeAmount > 0 ? (
                             <p className="mt-1 text-xs font-semibold">
                               El cliente entrega {paymentDisplayCurrency(receivedPaymentAmount)} y el abono aplicado es {paymentDisplayCurrency(paymentAmountToApply)}.
@@ -21472,7 +21479,7 @@ export default function CreditFactoryConsole({
                 <ConfirmDialog
                   open={showPaymentConfirmation}
                   title="Confirmar registro del pago"
-                  description={`Se aplicaran ${paymentDisplayCurrency(displayAppliedPaymentAmount)} al credito de ${selectedCredit.clienteNombre} por ${paymentMethodLabel(paymentMethod)}. El comprobante se generara automaticamente.`}
+                  description={`Se aplicaran ${paymentDisplayCurrency(displayAppliedPaymentAmount)} al credito de ${selectedCredit.clienteNombre} por ${paymentMethodLabel(paymentMethod)}.${isPartialInstallmentPayment ? ` Quedarán ${paymentDisplayCurrency(selectedInstallmentCoverageShortfall)} pendientes en las cuotas seleccionadas, conservando su vencimiento.` : ""} El comprobante se generara automaticamente.`}
                   confirmLabel="Confirmar pago"
                   busy={registeringPayment}
                   onCancel={() => setShowPaymentConfirmation(false)}

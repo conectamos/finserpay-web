@@ -47,10 +47,18 @@ type CreditPaymentBody = {
   metodoPago?: string;
   observacion?: string;
   tipoAbono?: string;
+  totalAbonadoEsperado?: number | string;
   valor?: number | string;
 };
 
-class CreditPaymentConflictError extends Error {}
+class CreditPaymentConflictError extends Error {
+  code?: string;
+
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 const copCurrencyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -76,7 +84,7 @@ function parseMoneyValue(value: CreditPaymentBody["valor"]) {
   if (typeof value === "string") {
     const trimmed = value.trim();
 
-    if (!trimmed) {
+    if (!trimmed || trimmed.includes("-")) {
       return 0;
     }
 
@@ -617,6 +625,15 @@ export async function POST(
 
     const body = (await req.json()) as CreditPaymentBody;
     let valor = parseMoneyValue(body.valor);
+    const expectedTotalPaid = body.totalAbonadoEsperado == null
+      ? null
+      : Number(body.totalAbonadoEsperado);
+    if (expectedTotalPaid != null && (!Number.isFinite(expectedTotalPaid) || expectedTotalPaid < 0)) {
+      return NextResponse.json(
+        { error: "El resumen del credito no es valido. Consulta de nuevo antes de registrar el abono." },
+        { status: 400 }
+      );
+    }
     const metodoPago = normalizePaymentMethod(body.metodoPago);
     const observacion = sanitizeText(body.observacion);
     const earlyPayoffRequested =
@@ -706,19 +723,12 @@ export async function POST(
         );
       }
 
-      if (valor <= 0) {
+      if (body.valor === undefined) {
         valor = roundedSelectedTotal;
       }
 
-      if (Math.round(valor) < roundedSelectedTotal) {
-        return NextResponse.json(
-          {
-            error: `El abono no alcanza para las cuotas seleccionadas (${currency(roundedSelectedTotal)})`,
-          },
-          { status: 400 }
-        );
-      }
-
+      // Installments may receive partial payments. The payment plan applies
+      // the amount to the oldest outstanding balance and keeps any remainder.
       valor = resolveSelectedPaymentAmount(valor, selectedTotal);
     }
 
@@ -827,6 +837,15 @@ export async function POST(
         Math.round(lockedPlan.saldoPendiente * 100)
       );
 
+      // A retry from a stale payment screen must not register the same partial
+      // amount twice. Compare the confirmed balance under the credit row lock.
+      if (expectedTotalPaid != null && Math.round(expectedTotalPaid * 100) !== Math.round(lockedPlan.totalPaid * 100)) {
+        throw new CreditPaymentConflictError(
+          "Los abonos del credito cambiaron. Actualiza el plan y verifica el historial antes de registrar otro pago.",
+          "PAYMENT_PLAN_CHANGED"
+        );
+      }
+
       if (lockedBalanceInCents <= 0) {
         throw new CreditPaymentConflictError(
           "Este credito ya no tiene saldo pendiente."
@@ -898,7 +917,7 @@ export async function POST(
           selectedNumbers.length &&
           (lockedSelectedInstallments.length !== selectedNumbers.length ||
             selectedBalanceInCents <= 0 ||
-            Math.round(transactionValue * 100) < selectedBalanceInCents)
+            lockedSelectedInstallments.some((item) => item.saldoPendiente <= 0))
         ) {
           throw new CreditPaymentConflictError(
             "Las cuotas seleccionadas cambiaron. Consulta de nuevo el credito."
@@ -1176,7 +1195,7 @@ export async function POST(
     console.error("ERROR REGISTRANDO ABONO DE CREDITO:", error);
 
     if (error instanceof CreditPaymentConflictError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
+      return NextResponse.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status: 409 });
     }
 
     return NextResponse.json(
