@@ -131,6 +131,10 @@ function pushHarness({ user = allyAdmin, rows = [] } = {}) {
       sendFcmNotification: async () => ({ ok: true, error: null }),
     },
     "@/lib/prisma": { __esModule: true, default: database },
+    "@/lib/mora-message-protection": {
+      ensureMoraMessageProtection: async () => {}, getActiveMoraMessageProtectionIds: async () => new Set(),
+      hasActiveMoraMessageProtection: async () => false,
+    },
     "@/lib/roles": {
       isAdminRole: (role) => String(role || "").trim().toUpperCase() === "ADMIN",
     },

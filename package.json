@@ -7,6 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:cartera": "node --experimental-strip-types --test tests/cartera-*.test.mjs tests/ally-cartera-*.test.mjs tests/portfolio-profit*.test.mjs",
     "test:cuotavencida": "node --test tests/cuotavencida-whatsapp*.test.mjs tests/cartera-cuotavencida-ui.test.mjs tests/internal-cron-schedule.test.mjs",
     "test:approval-call": "node --experimental-strip-types --test tests/credit-approval-call-*.test.mjs",
     "test:cut-collection": "node --test tests/cut-collection*.test.mjs",

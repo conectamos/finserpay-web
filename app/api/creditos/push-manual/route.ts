@@ -13,6 +13,7 @@ import {
 } from "@/lib/fcm-notifications";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
+import { ensureMoraMessageProtection, getActiveMoraMessageProtectionIds, hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +49,7 @@ type PushCredit = {
 };
 
 type PushDispatchItem = {
-  action: "FAILED" | "NO_TOKEN" | "SENT" | "WOULD_SEND";
+  action: "FAILED" | "NO_TOKEN" | "SENT" | "WOULD_SEND" | "SKIPPED_ACTIVE_MORA_PROTECTION";
   clienteDocumento: string | null;
   clienteNombre: string;
   creditoId: number;
@@ -235,7 +236,8 @@ async function dispatchForCredit(
   credit: PushCredit,
   tokens: FcmDeviceTokenRow[],
   input: ManualPushBody,
-  dryRun: boolean
+  dryRun: boolean,
+  moraMessage: boolean,
 ) {
   if (!tokens.length) {
     return [baseItem(credit, "NO_TOKEN", null, "Cliente sin app registrada")];
@@ -250,7 +252,7 @@ async function dispatchForCredit(
       continue;
     }
 
-    const result = await sendFcmNotification(token.token, {
+    const send = () => sendFcmNotification(token.token, {
       body: message.body,
       data: {
         creditoId: credit.id,
@@ -262,6 +264,17 @@ async function dispatchForCredit(
       },
       title: message.title,
     });
+    const result = moraMessage ? await prisma.$transaction(async tx => {
+      const [current] = await tx.$queryRawUnsafe<Array<{ clienteDocumento: string | null }>>(
+        `SELECT "id","clienteDocumento" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id,
+      );
+      if (!current || await hasActiveMoraMessageProtection(credit.id, current.clienteDocumento, tx)) return null;
+      return send();
+    }, { timeout: 20_000 }) : await send();
+    if (!result) {
+      items.push(baseItem(credit, "SKIPPED_ACTIVE_MORA_PROTECTION", null, "Prórroga o excepción de mora vigente"));
+      break;
+    }
 
     await markFcmTokenSendResult(token.id, result);
     items.push(
@@ -278,7 +291,8 @@ async function dispatchForCredit(
 }
 
 function summarize(items: PushDispatchItem[]) {
-  const uniqueCreditIds = new Set(items.map((item) => item.creditoId));
+  const uniqueCreditIds = new Set(items.filter(item => item.action !== "SKIPPED_ACTIVE_MORA_PROTECTION").map((item) => item.creditoId));
+  const protectedCreditIds = new Set(items.filter(item => item.action === "SKIPPED_ACTIVE_MORA_PROTECTION").map(item => item.creditoId));
 
   return items.reduce(
     (acc, item) => {
@@ -291,6 +305,7 @@ function summarize(items: PushDispatchItem[]) {
     },
     {
       checked: 0,
+      excludedActiveMoraProtection: protectedCreditIds.size,
       failed: 0,
       noToken: 0,
       sent: 0,
@@ -432,15 +447,22 @@ export async function POST(req: Request) {
       ? credits.filter((credit) => matchesBulkFilter(credit, filter))
       : credits;
   const items: PushDispatchItem[] = [];
+  const moraMessage = input.preset === "mora" || (mode === "bulk" && filter === "MORA");
+  if (moraMessage) await ensureMoraMessageProtection();
+  const protectedIds = moraMessage ? await getActiveMoraMessageProtectionIds(targetCredits) : new Set<number>();
 
   for (const credit of targetCredits) {
+    if (protectedIds.has(credit.id)) {
+      items.push(baseItem(credit, "SKIPPED_ACTIVE_MORA_PROTECTION", null, "Prórroga o excepción de mora vigente"));
+      continue;
+    }
     if (!credit.clienteDocumento) {
       items.push(baseItem(credit, "NO_TOKEN", null, "Credito sin cedula"));
       continue;
     }
 
     const tokens = await listFcmTokensForDocument(credit.clienteDocumento);
-    items.push(...(await dispatchForCredit(credit, tokens, input, dryRun)));
+    items.push(...(await dispatchForCredit(credit, tokens, input, dryRun, moraMessage)));
   }
 
   return NextResponse.json({

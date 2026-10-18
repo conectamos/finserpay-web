@@ -14,6 +14,7 @@ type Batch = {
   unknown: number;
   skipped: number;
   dateKey?: string;
+  excludedActiveMoraProtection?: number;
 };
 type Result = { configured: boolean; batch: Batch | null };
 const endpoint = "/api/dashboard/cartera/cuotavencida";
@@ -27,6 +28,8 @@ function parseResult(value: unknown): Result | null {
   if (body.batch === null) return { configured: body.configured, batch: null };
   if (!body.batch || typeof body.batch !== "object" || Array.isArray(body.batch)) return null;
   const batch = body.batch as Record<string, unknown>;
+  const stats = batch.stats && typeof batch.stats === "object" && !Array.isArray(batch.stats)
+    ? batch.stats as Record<string, unknown> : null;
   if (typeof batch.id !== "string" || !batch.id || batch.id.length > 128
     || typeof batch.status !== "string" || !["QUEUED", "RUNNING", "COMPLETED"].includes(batch.status)) return null;
   const fields = ["total", "pending", "accepted", "failed", "unknown", "skipped"] as const;
@@ -36,6 +39,8 @@ function parseResult(value: unknown): Result | null {
     total: Number(batch.total), pending: Number(batch.pending), accepted: Number(batch.accepted),
     failed: Number(batch.failed), unknown: Number(batch.unknown), skipped: Number(batch.skipped),
     ...(typeof batch.dateKey === "string" && /^\d{4}-\d{2}-\d{2}$/.test(batch.dateKey) ? { dateKey: batch.dateKey } : {}),
+    ...(Number.isSafeInteger(stats?.excludedActiveMoraProtection) && Number(stats?.excludedActiveMoraProtection) >= 0
+      ? { excludedActiveMoraProtection: Number(stats?.excludedActiveMoraProtection) } : {}),
   } };
 }
 
@@ -146,6 +151,7 @@ export default function CuotavencidaWhatsappButton() {
         Enviar Cuotavencida por WhatsApp
       </Button>
       <p id={scopeId} className="text-xs leading-5 text-[var(--fp-muted)]">Clientes con 1 día de mora o más · todos los aliados y productos</p>
+      <p className="text-xs leading-5 text-[var(--fp-client-green)]">Excluye créditos con prórroga o excepción vigente.</p>
       <div role="status" aria-live="polite" aria-atomic="true" className="space-y-1">
         {reading && !batch ? <p className="text-[var(--fp-muted)]">Consultando estado…</p> : null}
         {sending ? <p>Solicitando el lote…</p> : null}
@@ -154,6 +160,8 @@ export default function CuotavencidaWhatsappButton() {
           {batch.status === "COMPLETED" && batch.total === 0
             ? <p>No hay clientes elegibles con mora de un día o más.</p>
             : <p className="text-[var(--fp-muted)]">Aceptados por WhatsApp: {count.format(batch.accepted)} · Pendientes: {count.format(batch.pending)} · Fallidos: {count.format(batch.failed)} · Sin confirmar: {count.format(batch.unknown)} · Omitidos: {count.format(batch.skipped)}.</p>}
+          {batch.excludedActiveMoraProtection !== undefined
+            ? <p className="text-[var(--fp-client-green)]">Excluidos por prórroga o excepción al crear el lote: {count.format(batch.excludedActiveMoraProtection)} créditos.</p> : null}
         </> : null}
         {result?.configured === false ? <p className="text-[var(--fp-muted)]">El envío por WhatsApp no está disponible en este momento.</p> : null}
       </div>

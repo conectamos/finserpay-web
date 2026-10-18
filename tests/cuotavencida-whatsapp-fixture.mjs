@@ -21,13 +21,15 @@ export const env = { DAPTA_CUOTAVENCIDA_ENABLED: "true", DAPTA_CUOTAVENCIDA_WEBH
 export async function fixture(t, { credits = [credit()], enabled = true } = {}) {
   const db = new PGlite(); t.after(() => db.close());
   await db.exec(`CREATE TABLE "Credito" ("id" integer PRIMARY KEY,"data" jsonb NOT NULL,
-    "clienteTelefono" text GENERATED ALWAYS AS ("data"->>'clienteTelefono') STORED)`);
+    "clienteTelefono" text GENERATED ALWAYS AS ("data"->>'clienteTelefono') STORED);
+    CREATE TABLE "CreditMoraExceptionRequest" ("creditoId" int,"type" text,"status" text,"expiresOn" date);
+    CREATE TABLE "ExcepcionBloqueoMora" ("documento" text,"activa" boolean,"fechaFin" timestamp);`);
   for (const sql of cuotaVencidaWhatsAppSchemaStatements) await db.exec(sql);
   if (credits.length) {
     const values = credits.flatMap(row => [row.id, JSON.stringify(row)]);
     await db.query('INSERT INTO "Credito" ("id","data") VALUES ' + credits.map((_, i) => `($${i * 2 + 1},$${i * 2 + 2}::jsonb)`).join(","), values);
   }
-  let at = new Date("2026-10-18T15:00:00.000Z"), rollback = false, writes = 0, queries = 0, onQuery = null, onRead = null;
+  let at = new Date("2026-10-18T15:00:00.000Z"), rollback = false, writes = 0, queries = 0, onQuery = null, onRead = null, transactionDepth = 0;
   const adapter = connection => ({
     $queryRawUnsafe: async (sql, ...values) => {
       queries++; const result = await connection.query(sql, values);
@@ -47,12 +49,24 @@ export async function fixture(t, { credits = [credit()], enabled = true } = {}) 
     },
   });
   const database = { ...adapter(db), $transaction: callback => db.transaction(async connection => {
-    const result = await callback(adapter(connection));
-    if (rollback) { rollback = false; throw new Error("Synthetic batch rollback"); }
-    return result;
+    transactionDepth++;
+    try {
+      const result = await callback(adapter(connection));
+      if (rollback) { rollback = false; throw new Error("Synthetic batch rollback"); }
+      return result;
+    } finally { transactionDepth--; }
   }) };
+  const exemptions = { normalizeMoraExemptionDocument: value => String(value ?? "").replace(/\D/g, ""), ensureMoraBlockExemptionTable: async () => {} };
+  const blockProtection = loadReissueModule("lib/mora-block-protection.ts", {
+    "@/lib/prisma": { default: database }, "@/lib/mora-block-exemptions": exemptions,
+    "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
+  });
+  const protection = loadReissueModule("lib/mora-message-protection.ts", {
+    "@/lib/prisma": { default: database }, "@/lib/mora-block-exemptions": exemptions, "@/lib/mora-block-protection": blockProtection,
+  });
   const loaded = loadReissueModule("lib/cuotavencida-whatsapp-store.ts", {
     "@/lib/prisma": { default: database }, "@/lib/colombia-date": dates, "@/lib/cuotavencida-whatsapp-policy": policy,
+    "@/lib/mora-message-protection": protection,
   });
   const store = loaded.createCuotaVencidaWhatsAppStore({ database, enabled: () => enabled, now: () => at });
   const dispatcher = loadReissueModule("lib/cuotavencida-whatsapp-dispatch.ts", { "@/lib/cuotavencida-whatsapp-store": loaded, "@/lib/colombia-date": dates }, { AbortSignal, Buffer, process: { env: {} } });
@@ -72,6 +86,6 @@ export async function fixture(t, { credits = [credit()], enabled = true } = {}) 
     return { sent, worker };
   };
   return { db, store, loaded, dispatcher, create, events, update, run, now: () => at, time: value => { at = new Date(value); },
-    advance: ms => { at = new Date(at.getTime() + ms); }, writes: () => writes, queries: () => queries,
+    advance: ms => { at = new Date(at.getTime() + ms); }, writes: () => writes, queries: () => queries, inTransaction: () => transactionDepth > 0,
     onQuery: callback => { onQuery = callback; }, onRead: callback => { onRead = callback; }, rollback: () => { rollback = true; } };
 }

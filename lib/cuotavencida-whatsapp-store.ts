@@ -2,6 +2,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { colombiaDateKey } from "@/lib/colombia-date";
+import { ensureMoraMessageProtection, getActiveMoraMessageProtectionIds, hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
 import { getCuotaVencidaWhatsAppCandidate, groupCuotaVencidaWhatsAppCandidates,
   type CuotaVencidaWhatsAppCandidate } from "@/lib/cuotavencida-whatsapp-policy";
 
@@ -17,7 +18,7 @@ const digest = (value: string) => createHash("sha256").update("finserpay-cuotave
 type RawReader = Pick<typeof prisma, "$queryRawUnsafe">;
 type EventRow = { id: string; batchId: string; campaignDate: string; debtorKey: string; recipientKey: string;
   phone: string; name: string; status: string; claimExpiresAt: Date | string | null };
-type Stats = { scanned: number; eligibleCredits: number; clients: number; excludedCredits: number; sharedPhoneCredits: number };
+type Stats = { scanned: number; eligibleCredits: number; clients: number; excludedCredits: number; sharedPhoneCredits: number; excludedActiveMoraProtection?: number };
 export type CuotaVencidaWhatsAppSummary = {
   id: string; campaignDate: string; dateKey: string; createdAt: string; status: "QUEUED" | "RUNNING" | "COMPLETED";
   stats: Stats; total: number; pending: number; processing: number; accepted: number; failed: number; unknown: number; skipped: number;
@@ -34,7 +35,10 @@ function safeStats(value: unknown): Stats {
   const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const number = (key: string) => Number.isSafeInteger(source[key]) && Number(source[key]) >= 0 ? Number(source[key]) : 0;
   return { scanned: number("scanned"), eligibleCredits: number("eligibleCredits"), clients: number("clients"),
-    excludedCredits: number("excludedCredits"), sharedPhoneCredits: number("sharedPhoneCredits") };
+    excludedCredits: number("excludedCredits"), sharedPhoneCredits: number("sharedPhoneCredits"),
+    ...(Number.isSafeInteger(source.excludedActiveMoraProtection) && Number(source.excludedActiveMoraProtection) >= 0
+      ? { excludedActiveMoraProtection: Number(source.excludedActiveMoraProtection) } : {}),
+  };
 }
 async function summary(db: RawReader, batchId: string | null): Promise<CuotaVencidaWhatsAppSummary | null> {
   const [row] = await db.$queryRawUnsafe<Array<{ id: string; campaignDate: string; createdAt: Date | string; stats: unknown;
@@ -62,21 +66,24 @@ export function createCuotaVencidaWhatsAppStore(deps: {
   const database = deps.database ?? prisma, now = deps.now ?? (() => new Date());
   const enabled = deps.enabled ?? (() => process.env.DAPTA_CUOTAVENCIDA_ENABLED === "true");
   async function scan() {
+    await ensureMoraMessageProtection();
     const at = now(), candidates: CuotaVencidaWhatsAppCandidate[] = [];
-    let cursor = 0, scanned = 0;
+    let cursor = 0, scanned = 0, excludedActiveMoraProtection = 0;
     for (;;) {
       const credits = await database.credito.findMany({ where: { id: { gt: cursor } }, orderBy: { id: "asc" }, take: PAGE_SIZE, select: creditSelect });
       if (!credits.length) break;
+      const protectedIds = await getActiveMoraMessageProtectionIds(credits, database);
       for (const credit of credits) {
         if (!Number.isSafeInteger(credit.id) || credit.id <= cursor) throw new CuotaVencidaWhatsAppError("INVALID_SCAN_CURSOR");
         cursor = credit.id; scanned++;
         const candidate = getCuotaVencidaWhatsAppCandidate(credit, at);
+        if (candidate && protectedIds.has(credit.id)) { excludedActiveMoraProtection++; continue; }
         if (candidate) candidates.push(candidate);
       }
     }
     const grouped = groupCuotaVencidaWhatsAppCandidates(candidates);
     const stats: Stats = { scanned, eligibleCredits: candidates.length, clients: grouped.groups.length,
-      excludedCredits: scanned - candidates.length, sharedPhoneCredits: grouped.sharedPhoneCredits };
+      excludedCredits: scanned - candidates.length, sharedPhoneCredits: grouped.sharedPhoneCredits, excludedActiveMoraProtection };
     return { ...grouped, stats, campaignDate: colombiaDateKey(at) };
   }
   async function previewCuotaVencidaWhatsApp() {
@@ -165,8 +172,11 @@ export function createCuotaVencidaWhatsAppStore(deps: {
       return claims;
     }, { timeout: 30_000 });
   }
-  async function prepareCuotaVencidaWhatsAppDispatch(eventId: string): Promise<CuotaVencidaWhatsAppPrepared | null> {
+  async function prepareCuotaVencidaWhatsAppDispatch(eventId: string,
+    dispatch?: (prepared: CuotaVencidaWhatsAppPrepared) => Promise<void>,
+  ): Promise<CuotaVencidaWhatsAppPrepared | null> {
     requireUuid(eventId); if (!enabled()) return null;
+    await ensureMoraMessageProtection();
     return database.$transaction(async tx => {
       const [event] = await tx.$queryRawUnsafe<EventRow[]>(`SELECT "id"::text,"batchId"::text,"campaignDate"::text,"debtorKey","recipientKey","phone","name","status","claimExpiresAt"
         FROM "CuotaVencidaWhatsAppEvent" WHERE "id"=$1::uuid FOR UPDATE`, eventId);
@@ -184,22 +194,31 @@ export function createCuotaVencidaWhatsAppStore(deps: {
       for (const id of lockIds) await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, id);
       const candidates: CuotaVencidaWhatsAppCandidate[] = [];
       const currentOwners = new Set<string>();
+      let protectedCoverage = false;
       for (const creditoId of lockIds) {
         const current = await tx.credito.findUnique({ where: { id: creditoId }, select: creditSelect });
         const candidate = current && getCuotaVencidaWhatsAppCandidate(current, now());
         if (candidate?.phone === event.phone && candidate.document) currentOwners.add(candidate.document);
+        if (candidate && coverageIds.has(creditoId) && await hasActiveMoraMessageProtection(creditoId, current!.clienteDocumento, tx)) {
+          protectedCoverage = true;
+          continue;
+        }
         if (candidate && coverageIds.has(creditoId)) candidates.push(candidate);
       }
       if (currentOwners.size > 1) return cancel("SHARED_PHONE");
       const group = groupCuotaVencidaWhatsAppCandidates(candidates).groups.find(item => digest(item.identityKey) === event.debtorKey && item.phone === event.phone);
-      if (!group) return cancel("NO_LONGER_ELIGIBLE");
+      if (!group) return cancel(protectedCoverage ? "ACTIVE_MORA_PROTECTION" : "NO_LONGER_ELIGIBLE");
       const at = now();
       if (event.campaignDate !== colombiaDateKey(at) || new Date(event.claimExpiresAt).getTime() <= at.getTime()) return cancel("CLAIM_NOT_CURRENT");
       const [blocked] = await tx.$queryRawUnsafe<Array<{ present: boolean }>>(`SELECT EXISTS(SELECT 1 FROM "CuotaVencidaWhatsAppEvent"
         WHERE "id"<>$1::uuid AND ("debtorKey"=$2 OR "recipientKey"=$3) AND "status" IN ('CLAIMED','UNKNOWN')) AS present`, eventId, event.debtorKey, event.recipientKey);
       if (blocked?.present) return cancel("PREVIOUS_OUTCOME_UNRESOLVED");
       await tx.$executeRawUnsafe(`UPDATE "CuotaVencidaWhatsAppEvent" SET "name"=$2,"representativeCreditoId"=$3,"updatedAt"=$4 WHERE "id"=$1::uuid AND "status"='CLAIMED'`, eventId, group.name, group.representativeCreditId, at);
-      return { eventId: event.id, batchId: event.batchId, phone: event.phone, name: group.name, campaignDate: event.campaignDate };
+      const prepared = { eventId: event.id, batchId: event.batchId, phone: event.phone, name: group.name, campaignDate: event.campaignDate };
+      // Approval and sending serialize on the same credit row. Never release its
+      // lock between checking a prórroga and starting the bounded HTTP request.
+      if (dispatch) await dispatch(prepared);
+      return prepared;
     }, { timeout: 30_000 });
   }
   async function releaseCuotaVencidaWhatsAppClaim(eventId: string) {

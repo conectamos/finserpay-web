@@ -63,8 +63,8 @@ test("overlapping worker instances reserve a recipient once and process-local ov
   } });
   const first = worker({ limit: 1 }); await started;
   assert.equal((await worker()).selected, 0);
-  const other = f.run(); assert.equal((await other.worker()).selected, 0);
-  release(); assert.equal((await first).accepted, 1); assert.equal(requests, 1);
+  const other = f.run(); const second = other.worker();
+  release(); assert.equal((await first).accepted, 1); assert.equal((await second).selected, 0); assert.equal(requests, 1);
 });
 
 test("worker stops before another eight-second request exceeds its 25-second budget and the next tick resumes", async t => {
@@ -81,8 +81,8 @@ test("worker stops before another eight-second request exceeds its 25-second bud
 
 test("budget closing during preparation releases only known-unsent work and never starts HTTP", async t => {
   const f = await fixture(t); await f.create();
-  const { worker, sent } = f.run({ prepare: async id => {
-    const prepared = await f.store.prepareCuotaVencidaWhatsAppDispatch(id); f.advance(25_000); return prepared;
+  const { worker, sent } = f.run({ prepare: async (id, dispatch) => {
+    return f.store.prepareCuotaVencidaWhatsAppDispatch(id, async prepared => { f.advance(25_000); await dispatch(prepared); });
   } });
   const result = await worker(); assert.equal(result.deferred, 1); assert.equal(sent.length, 0);
   assert.equal((await f.events())[0].status, "PENDING");
@@ -91,8 +91,8 @@ test("budget closing during preparation releases only known-unsent work and neve
 
 test("midnight crossed after preparation cannot send a prior-day batch or create a new daily batch", async t => {
   const f = await fixture(t); await f.create(); f.time("2026-10-19T04:59:59.900Z");
-  const { worker, sent } = f.run({ prepare: async id => {
-    const prepared = await f.store.prepareCuotaVencidaWhatsAppDispatch(id); f.advance(100); return prepared;
+  const { worker, sent } = f.run({ prepare: async (id, dispatch) => {
+    return f.store.prepareCuotaVencidaWhatsAppDispatch(id, async prepared => { f.advance(100); await dispatch(prepared); });
   } });
   assert.equal((await worker()).deferred, 1); assert.equal(sent.length, 0);
   assert.equal((await f.run().worker()).selected, 0);

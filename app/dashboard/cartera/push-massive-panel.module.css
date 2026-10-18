@@ -1,0 +1,33 @@
+.panel { min-width: 0; height: 100%; padding: 24px; color: var(--fp-graphite); }
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 24px; border-bottom: 1px solid var(--fp-border); }
+.heading { display: flex; align-items: center; gap: 12px; }
+.icon { display: grid; flex: 0 0 44px; height: 44px; place-items: center; border-radius: var(--fp-radius-md); background: var(--fp-lime-soft); color: var(--fp-client-green); }
+.heading p { font-size: 11px; font-weight: 700; letter-spacing: .065em; color: var(--fp-muted); }
+.heading h2 { margin-top: 4px; font-size: 23px; line-height: 1.2; letter-spacing: -.025em; font-weight: 800; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions button { min-height: 44px; font-size: 14px; padding: 10px 12px; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 16px; padding-top: 24px; }
+.fields label { display: grid; min-width: 0; gap: 8px; font-size: 14px; font-weight: 600; }
+.fields input, .fields select { min-width: 0; width: 100%; font-size: 14px; font-weight: 400; }
+.fields :disabled { background: var(--fp-bg); }
+.summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 24px; padding: 16px 0; border-top: 1px solid var(--fp-border); border-bottom: 1px solid var(--fp-border); gap: 12px; }
+.summary > div { min-width: 0; }
+.summary dt { color: var(--fp-muted); font-size: 12px; }
+.summary dd { margin-top: 6px; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.protection { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; font-size: 13px; line-height: 1.5; color: var(--fp-client-green); }
+.protection svg { flex-shrink: 0; margin-top: 1px; }
+.feedback { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-bg); font-size: 14px; line-height: 1.5; }
+.error { color: var(--fp-danger); border-color: var(--fp-danger); background: var(--fp-danger-soft); }
+.hint { margin-top: 20px; font-size: 13px; line-height: 1.5; color: var(--fp-muted); }
+@media(max-width:640px) {
+  .panel { padding: 20px; }
+  .header { align-items: stretch; gap: 16px; padding-bottom: 20px; }
+  .heading h2 { font-size: 22px; }
+  .actions { width: 100%; }
+  .actions button { flex: 1; }
+  .fields { gap: 16px; padding-top: 20px; }
+}
+@media(max-width:420px) {
+  .fields { grid-template-columns: minmax(0, 1fr); }
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+}

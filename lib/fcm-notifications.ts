@@ -253,7 +253,7 @@ export async function listFcmTokensForDocument(documento: string) {
   return rows;
 }
 
-async function getAccessToken() {
+async function getAccessToken(signal?: AbortSignal) {
   const now = Date.now();
   if (accessTokenCache && accessTokenCache.expiresAt - 60_000 > now) {
     return accessTokenCache.token;
@@ -291,6 +291,7 @@ async function getAccessToken() {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     method: "POST",
+    signal,
   });
   const data = (await response.json().catch(() => ({}))) as {
     access_token?: string;
@@ -336,7 +337,8 @@ export async function sendFcmNotification(
   }
 
   try {
-    const accessToken = await getAccessToken();
+    const signal = AbortSignal.timeout(8_000);
+    const accessToken = await getAccessToken(signal);
     const messageData = normalizeData({
       ...payload.data,
       body: payload.body,
@@ -361,6 +363,7 @@ export async function sendFcmNotification(
           "Content-Type": "application/json; UTF-8",
         },
         method: "POST",
+        signal,
       }
     );
     const data = (await response.json().catch(() => ({}))) as {

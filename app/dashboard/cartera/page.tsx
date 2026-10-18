@@ -34,10 +34,11 @@ import { splitOutstandingBalance } from "@/lib/credit-outstanding-balance";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { calculatePortfolioProfit, resolvePortfolioInvestment } from "@/lib/portfolio-profit";
 import PortfolioProfitBreakdown from "./portfolio-profit-breakdown";
-import { Select } from "@/app/_components/finser-ui";
-import AdminSidebar from "../_components/admin-sidebar";
+import { Button, Card, PageHeader, ProgressBar, Select } from "@/app/_components/finser-ui";
+import FinserNavigation from "../_components/finser-navigation";
 import PushMassivePanel from "./push-massive-panel";
 import CuotavencidaWhatsappButton from "./cuotavencida-whatsapp-button";
+import styles from "./cartera.module.css";
 
 export const metadata = {
   title: "Cartera | FINSER PAY",
@@ -561,7 +562,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
           : {
               label: "Riesgo alto",
               tone: "border-red-200 bg-red-50 text-red-900",
-              detail: "La mora avanzada ya pesa en el saldo. Prioriza recaudo y bloqueo por mora.",
+              detail: "Prioriza el seguimiento de los créditos vencidos y respeta sus autorizaciones vigentes.",
             };
 
   const riskRows = [...overdueCredits]
@@ -571,36 +572,40 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
     hour: "2-digit",
     minute: "2-digit",
     month: "short",
+    timeZone: "America/Bogota",
   }).format(today);
 
   return (
-    <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
-      <AdminSidebar
-        activeHref="/dashboard/cartera"
+    <div className={styles.page}>
+      <FinserNavigation
+        admin
+        variant="requests"
+        activeSection="portfolio"
         adminCentral={adminCentral}
         nombreUsuario={session.nombre}
         rolUsuario={session.rolNombre}
       />
 
-      <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 xl:px-8">
-        <header className="flex flex-col gap-5">
-          <div>
-            <p className="text-xs font-bold uppercase text-[#0d766f]">Control de cartera</p>
-            <h1 className="mt-1 text-3xl font-black text-[#101828]">Cartera</h1>
-            <p className="mt-1 text-sm text-[#667085]">
-              {selectedAliadoLabel} · {selectedPlatformLabel} · Actualizada {lastUpdatedLabel}
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <form action="/dashboard/cartera" className="flex flex-col gap-2 sm:flex-row sm:items-end">
+      <main className={styles.content}>
+        <PageHeader className={styles.heading} eyebrow="Control de cartera" title="Cartera"
+          description={<>{selectedAliadoLabel} · {selectedPlatformLabel} · Actualizada {lastUpdatedLabel}</>}
+          actions={<>
+            <ActionLink href={exportHref} icon={Download} label="Excel" primary />
+            <ActionLink href="/dashboard/reportes/creditos" icon={FileText} label="Créditos" />
+            {adminCentral ? <>
+              <ActionLink href="/dashboard/financiero/cartera" icon={ReceiptText} label="Registrar gasto" />
+              <ActionLink href="/dashboard/financiero/cartera/detalle" icon={History} label="Historial de gastos" />
+            </> : null}
+          </>} />
+        <Card className={styles.filters}>
+            <form action="/dashboard/cartera" className={styles.filterForm}>
               {adminCentral ? (
-                <label className="grid gap-1">
-                  <span className="text-xs font-bold text-[#475467]">Aliado</span>
+                <label>
+                  <span>Aliado</span>
                   <Select
                     name="aliadoId"
                     defaultValue={selectedAliadoId ? String(selectedAliadoId) : ""}
-                    className="h-11 w-full min-w-0 sm:min-w-[230px]"
+                    className={styles.allySelect}
                   >
                     <option value="">Todos los aliados</option>
                     {aliados.map((aliado) => (
@@ -611,12 +616,12 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   </Select>
                 </label>
               ) : null}
-              <label className="grid gap-1">
-                <span className="text-xs font-bold text-[#475467]">Producto</span>
+              <label>
+                <span>Producto</span>
                 <Select
                   name="plataforma"
                   defaultValue={selectedPlatform || ""}
-                  className="h-11 w-full min-w-0 sm:min-w-[190px]"
+                  className={styles.productSelect}
                 >
                   <option value="">Todos los productos</option>
                   <option value="IPHONE">iPhone</option>
@@ -624,60 +629,37 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                 </Select>
               </label>
               <div className="flex gap-2">
-                <button
-                  type="submit"
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#087a73] px-4 text-sm font-bold text-white transition hover:bg-[#06645f]"
-                >
-                  <Filter className="h-4 w-4" strokeWidth={2} />
+                <Button type="submit">
+                  <Filter className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
                   Aplicar
-                </button>
+                </Button>
                 {hasRemovableFilters ? (
                   <Link
                     href="/dashboard/cartera"
                     title="Quitar filtros"
                     aria-label="Quitar filtros"
-                    className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#d0d7e0] bg-white text-[#475467] transition hover:border-[#0d9488] hover:text-[#0d766f]"
+                    className="fp-ui-button is-secondary"
                   >
-                    <RotateCcw className="h-4 w-4" strokeWidth={2} />
+                    <RotateCcw className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+                    Limpiar
                   </Link>
                 ) : null}
               </div>
             </form>
 
-            <div className="flex flex-wrap gap-2">
-              <ActionLink href={exportHref} icon={Download} label="Excel" primary />
-              <ActionLink href="/dashboard/reportes/creditos" icon={FileText} label="Creditos" />
-              {adminCentral ? (
-                <>
-                  <ActionLink
-                    href="/dashboard/financiero/cartera"
-                    icon={ReceiptText}
-                    label="Registrar gasto"
-                  />
-                  <ActionLink
-                    href="/dashboard/financiero/cartera/detalle"
-                    icon={History}
-                    label="Historial gastos"
-                  />
-                </>
-              ) : null}
-            </div>
-            {adminCentral ? <CuotavencidaWhatsappButton /> : null}
-          </div>
-        </header>
+            {adminCentral ? <div className={styles.whatsapp}><CuotavencidaWhatsappButton /></div> : null}
+        </Card>
 
         <section
-          className={[
-            "mt-5 grid gap-3 sm:grid-cols-2",
-            adminCentral ? "xl:grid-cols-5" : "md:grid-cols-3",
-          ].join(" ")}
+          className={`${styles.metrics} ${adminCentral ? styles.centralMetrics : styles.allyMetrics}`}
+          aria-label="Resumen de cartera"
         >
           {adminCentral ? (
             <MetricCard
               detail={`${activeCredits.length} creditos con saldo`}
               icon={WalletCards}
               label="Saldo por cobrar"
-              tone="teal"
+              tone="neutral"
               value={money(totalPendiente)}
             />
           ) : null}
@@ -700,7 +682,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             detail={adminCentral ? money(totalPagado) : undefined}
             icon={TrendingUp}
             label="Recuperado"
-            tone="teal"
+            tone="neutral"
             value={percent(pctRecuperado)}
           />
           {adminCentral ? (
@@ -716,10 +698,8 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         </section>
 
         <section
-          className={[
-            "mt-3 grid gap-3 sm:grid-cols-2",
-            adminCentral ? "xl:grid-cols-3 2xl:grid-cols-5" : "lg:grid-cols-4",
-          ].join(" ")}
+          className={`${styles.secondaryMetrics} ${adminCentral ? styles.centralSecondary : styles.allySecondary}`}
+          aria-label="Indicadores complementarios"
         >
           <MiniMetric
             label="Inversión acumulada"
@@ -745,26 +725,23 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
         ) : null}
 
         <section
-          className={[
-            "mt-4 grid gap-4",
-            adminCentral ? "xl:grid-cols-[1.05fr_0.95fr]" : "",
-          ].join(" ")}
+          className={`${styles.workspaces} ${adminCentral ? styles.centralWorkspaces : ""}`}
         >
-          <section className="rounded-lg border border-[#d8dee6] bg-white p-5 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
+          <Card className={styles.riskPanel}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-bold uppercase text-[#0d766f]">Mora por edades</p>
-                <h2 className="mt-1 text-xl font-black text-[#101828]">Riesgo por dias</h2>
+                <p className={styles.eyebrow}>Mora por edades</p>
+                <h2 className={styles.sectionTitle}>Riesgo por días</h2>
               </div>
               <span className={["inline-flex rounded-full border px-3 py-1 text-xs font-bold", health.tone].join(" ")}>
                 {health.label}
               </span>
             </div>
-            <p className="mt-3 rounded-lg bg-[#f7f9fb] px-3 py-2.5 text-sm text-[#667085]">
+            <p className={styles.riskDescription}>
               {health.detail}
             </p>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className={styles.buckets}>
               <BucketCard
                 title="Temprana"
                 subtitle="1 a 15 dias"
@@ -790,16 +767,16 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                 tone="red"
               />
             </div>
-          </section>
+          </Card>
 
           {adminCentral ? <PushMassivePanel /> : null}
         </section>
 
-        <section className="mt-4 overflow-hidden rounded-lg border border-[#d8dee6] bg-white shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-          <div className="flex flex-col gap-2 border-b border-[#d8dee6] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <Card className={styles.priorities}>
+          <div className={styles.tableHeading}>
             <div>
-              <p className="text-xs font-bold uppercase text-[#0d766f]">Riesgos prioritarios</p>
-              <h2 className="mt-1 text-xl font-black text-[#101828]">Clientes que requieren gestion</h2>
+              <p className={styles.eyebrow}>Riesgos prioritarios</p>
+              <h2 className={styles.sectionTitle}>Clientes que requieren gestión</h2>
               <p className="mt-1 text-xs text-[#667085]">Ordenados por dias de mora y saldo pendiente.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -812,9 +789,9 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             </div>
           </div>
 
-          <div className="overflow-x-auto [scrollbar-color:#98a2b3_transparent] [scrollbar-width:thin]">
-            <table className="w-full min-w-[1590px] text-left text-sm">
-              <thead className="sticky top-0 z-10 bg-[#17202b] text-white">
+          <div className={styles.tableScroll} role="region" tabIndex={0} aria-label="Créditos en mora, desplaza para consultar todas las columnas">
+            <table className={styles.table}>
+              <thead>
                 <tr>
                   <th className="sticky left-0 z-20 w-[190px] bg-[#17202b] px-4 py-3 text-[10px] font-bold uppercase">Cliente</th>
                   <th className="w-[125px] px-4 py-3 text-[10px] font-bold uppercase">Documento</th>
@@ -840,7 +817,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                       <td className="px-4 py-3 align-top font-medium text-[#475467]">
                         {item.clienteDocumento || "Sin documento"}
                       </td>
-                      <td className="px-4 py-3 align-top font-semibold text-[#0d766f]">
+                      <td className="px-4 py-3 align-top font-semibold text-[var(--fp-graphite)]">
                         {item.clienteTelefono || "Sin celular"}
                       </td>
                       <td className="px-4 py-3 align-top font-medium text-[#475467]">
@@ -896,7 +873,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               </tbody>
             </table>
           </div>
-        </section>
+        </Card>
       </main>
     </div>
   );
@@ -913,18 +890,12 @@ function ActionLink({
   label: string;
   primary?: boolean;
 }) {
-  const classes = primary
-    ? "border-[#087a73] bg-[#087a73] text-white hover:bg-[#06645f]"
-    : "border-[#d0d7e0] bg-white text-[#344054] hover:border-[#0d9488] hover:text-[#0d766f]";
-  const className = [
-    "inline-flex h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition",
-    classes,
-  ].join(" ");
+  const className = `fp-ui-button ${primary ? "is-primary" : "is-secondary"}`;
 
   if (href.startsWith("/api/")) {
     return (
       <a href={href} className={className}>
-        <Icon className="h-4 w-4" strokeWidth={2} />
+        <Icon className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
         {label}
       </a>
     );
@@ -932,7 +903,7 @@ function ActionLink({
 
   return (
     <Link href={href} className={className}>
-      <Icon className="h-4 w-4" strokeWidth={2} />
+      <Icon className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
       {label}
     </Link>
   );
@@ -949,44 +920,27 @@ function MetricCard({
   detail?: string;
   icon: LucideIcon;
   label: string;
-  tone: "gold" | "green" | "red" | "teal";
+  tone: "gold" | "green" | "red" | "neutral";
   value: string;
   warning?: boolean;
 }) {
-  const toneMap = {
-    gold: {
-      icon: "bg-amber-50 text-amber-700",
-      value: "text-[#101828]",
-    },
-    green: {
-      icon: "bg-emerald-50 text-emerald-700",
-      value: "text-emerald-700",
-    },
-    red: {
-      icon: "bg-red-50 text-red-600",
-      value: "text-red-600",
-    },
-    teal: {
-      icon: "bg-teal-50 text-teal-700",
-      value: "text-[#101828]",
-    },
-  }[warning ? "red" : tone];
+  const toneClass = warning || tone === "red" ? styles.dangerMetric : tone === "green" ? styles.positiveMetric : "";
 
   return (
-    <article className="min-w-0 rounded-lg border border-[#d8dee6] bg-white p-4 shadow-[0_4px_14px_rgba(15,23,42,0.05)]">
-      <div className="flex items-center gap-3">
-        <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full", toneMap.icon].join(" ")}>
-          <Icon className="h-5 w-5" strokeWidth={1.8} />
+    <Card className={`${styles.metric} ${toneClass}`}>
+      <div className={styles.metricLabel}>
+        <span className={styles.metricIcon}>
+          <Icon size={21} strokeWidth={1.8} aria-hidden="true" />
         </span>
-        <p className="min-w-0 text-sm font-medium text-[#344054]">{label}</p>
+        <p>{label}</p>
       </div>
-      <p className={["mt-4 whitespace-nowrap text-[22px] font-black leading-none 2xl:text-2xl", toneMap.value].join(" ")}>
+      <p className={styles.metricValue}>
         {value}
       </p>
       {detail ? (
-        <p className="mt-3 text-xs font-medium leading-5 text-[#667085]">{detail}</p>
+        <p className={styles.metricDetail}>{detail}</p>
       ) : null}
-    </article>
+    </Card>
   );
 }
 
@@ -1000,13 +954,11 @@ function MiniMetric({
   detail: string;
 }) {
   return (
-    <div className="rounded-lg border border-[#d8dee6] bg-white px-4 py-3">
-      <p className="text-[10px] font-bold uppercase text-[#667085]">{label}</p>
-      <div className="mt-1 flex items-end justify-between gap-3">
-        <p className="text-lg font-black text-[#101828]">{value}</p>
-        <p className="text-right text-xs text-[#667085]">{detail}</p>
-      </div>
-    </div>
+    <Card className={styles.miniMetric}>
+      <p className={styles.miniLabel}>{label}</p>
+      <p className={styles.miniValue}>{value}</p>
+      <p className={styles.metricDetail}>{detail}</p>
+    </Card>
   );
 }
 
@@ -1025,40 +977,14 @@ function BucketCard({
   percentValue: number;
   tone: "amber" | "orange" | "red";
 }) {
-  const toneMap = {
-    amber: {
-      card: "border-amber-200 bg-amber-50",
-      text: "text-amber-800",
-      bar: "bg-amber-500",
-    },
-    orange: {
-      card: "border-orange-200 bg-orange-50",
-      text: "text-orange-800",
-      bar: "bg-orange-500",
-    },
-    red: {
-      card: "border-red-200 bg-red-50",
-      text: "text-red-800",
-      bar: "bg-red-600",
-    },
-  };
-  const selectedTone = toneMap[tone];
-
   return (
-    <div className={["rounded-lg border p-4", selectedTone.card].join(" ")}>
-      <p className={["text-[10px] font-bold uppercase", selectedTone.text].join(" ")}>
-        {title}
-      </p>
-      <p className="mt-1 text-xs text-[#667085]">{subtitle}</p>
-      <p className="mt-3 text-2xl font-black text-[#101828]">{clients}</p>
-      <p className="mt-1 text-sm font-semibold text-[#475467]">{money(value)}</p>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white">
-        <div
-          className={["h-full rounded-full", selectedTone.bar].join(" ")}
-          style={{ width: `${Math.min(100, Math.max(0, percentValue))}%` }}
-        />
-      </div>
-      <p className="mt-2 text-xs font-semibold text-[#667085]">{percent(percentValue)} del saldo</p>
+    <div className={`${styles.bucket} ${tone === "red" ? styles.dangerBucket : styles.warningBucket}`}>
+      <p className={styles.bucketTitle}>{title}</p>
+      <p className={styles.bucketDetail}>{subtitle}</p>
+      <p className={styles.bucketClients}>{clients}</p>
+      <p className={styles.bucketValue}>{money(value)}</p>
+      <ProgressBar value={percentValue} label={`${title}: ${percent(percentValue)} del saldo`} className={styles.bucketProgress} />
+      <p className={styles.bucketDetail}>{percent(percentValue)} del saldo</p>
     </div>
   );
 }

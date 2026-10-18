@@ -9,6 +9,7 @@ import {
   type FcmDeviceTokenRow,
 } from "@/lib/fcm-notifications";
 import prisma from "@/lib/prisma";
+import { ensureMoraMessageProtection, getActiveMoraMessageProtectionIds, hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
 
 const DEFAULT_PUSH_LIMIT = 300;
 
@@ -282,7 +283,7 @@ async function createNotificationLog(
 
 async function updateNotificationLog(
   id: number,
-  status: "FAILED" | "SENT",
+  status: "FAILED" | "SENT" | "SKIPPED",
   error: string | null,
   providerMessageId: string | null
 ) {
@@ -369,7 +370,7 @@ async function dispatchForToken(
     );
   }
 
-  const result = await sendFcmNotification(token.token, {
+  const send = () => sendFcmNotification(token.token, {
     body: reminder.body,
     data: {
       category: reminder.category,
@@ -382,6 +383,17 @@ async function dispatchForToken(
     },
     title: reminder.title,
   });
+  const result = reminder.category === "MORA" ? await prisma.$transaction(async tx => {
+    const [current] = await tx.$queryRawUnsafe<Array<{ clienteDocumento: string | null }>>(
+      `SELECT "id","clienteDocumento" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id,
+    );
+    if (!current || await hasActiveMoraMessageProtection(credit.id, current.clienteDocumento, tx)) return null;
+    return send();
+  }, { timeout: 20_000 }) : await send();
+  if (!result) {
+    await updateNotificationLog(logId, "SKIPPED", "ACTIVE_MORA_PROTECTION", null);
+    return buildBaseResult(credit, "SKIPPED", "Prórroga o excepción de mora vigente.", reminder, token.id);
+  }
 
   await updateNotificationLog(
     logId,
@@ -406,6 +418,7 @@ export async function dispatchCreditPushReminders(
 ): Promise<PushReminderReport> {
   await ensureCreditAbonoAuditColumns();
   await ensureNotificationLogTable();
+  await ensureMoraMessageProtection();
 
   const today = normalizeDateInput(options.today || null) || new Date();
   const limit = normalizeLimit(options.limit);
@@ -450,6 +463,7 @@ export async function dispatchCreditPushReminders(
     },
   });
   const items: PushReminderResult[] = [];
+  const protectedIds = await getActiveMoraMessageProtectionIds(credits);
 
   for (const credit of credits) {
     const plan = buildCreditPaymentPlan({
@@ -467,6 +481,11 @@ export async function dispatchCreditPushReminders(
       valorCuota: Number(credit.valorCuota || 0),
     });
     const reminder = buildMessage(credit, today, plan);
+
+    if (reminder?.category === "MORA" && protectedIds.has(credit.id)) {
+      items.push(buildBaseResult(credit, "SKIPPED", "Prórroga o excepción de mora vigente.", reminder));
+      continue;
+    }
 
     if (!reminder) {
       items.push(

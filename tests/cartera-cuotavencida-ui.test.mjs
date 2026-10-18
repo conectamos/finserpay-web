@@ -165,6 +165,16 @@ test("an empty completed batch is stated without inventing accepted or delivered
   assert.doesNotMatch(html, /Aceptados por WhatsApp|entregad/i);
 });
 
+test("reports only confirmed protection counts without inventing them for historical batches", async () => {
+  const protectedBatch = fixture(async () => response(result(batch({ stats: { excludedActiveMoraProtection: 12 } }))));
+  assert.match(await protectedBatch.mount(), /Excluidos por prórroga o excepción al crear el lote: 12 créditos/);
+  for (const stats of [undefined, { excludedActiveMoraProtection: -1 }, { excludedActiveMoraProtection: "12" }]) {
+    const historical = fixture(async () => response(result(batch({ stats }))));
+    assert.doesNotMatch(await historical.mount(), /Excluidos por prórroga o excepción al crear el lote:/);
+    assert.ok(historical.requests.every(item => item.options.method === "GET"));
+  }
+});
+
 test("unmount aborts an initial GET and ignores its late response", async () => {
   let finish;
   const f = fixture(async () => new Promise(resolve => { finish = resolve; }));

@@ -1,0 +1,92 @@
+.page { min-height: 100vh; background: var(--fp-bg); color: var(--fp-graphite); font-family: "Finser Sale", Arial, sans-serif; }
+.page button, .page input, .page select, .page textarea { font-family: inherit; }
+.content { width: min(100%, 1664px); margin-inline: auto; padding: 36px 40px 48px; min-width: 0; }
+.heading { padding-bottom: 24px; border-bottom: 0; align-items: center; }
+.heading h1 { font-size: clamp(30px, 3vw, 40px); font-weight: 800; letter-spacing: -.9px; }
+.heading p { font-size: 14px; line-height: 1.6; }
+.filters { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 20px 32px; padding: 20px 24px; }
+.filterForm { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; min-width: 0; }
+.filterForm label { display: grid; gap: 7px; color: var(--fp-graphite); font-size: 14px; font-weight: 600; min-width: 0; }
+.allySelect { min-width: 220px; max-width: 340px; }
+.productSelect { min-width: 190px; }
+.whatsapp { min-width: 0; max-width: 100%; }
+.metrics, .secondaryMetrics { display: grid; gap: 16px; margin-top: 20px; }
+.centralMetrics, .centralSecondary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.allyMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.allySecondary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metric { min-width: 0; padding: 22px; }
+.metricLabel { display: flex; align-items: center; gap: 12px; color: var(--fp-muted); font-size: 14px; line-height: 20px; }
+.metricIcon { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; color: var(--fp-graphite); background: var(--fp-bg); border-radius: 50%; }
+.metricValue { margin-top: 18px; color: var(--fp-graphite); font-size: clamp(24px, 1.7vw, 30px); line-height: 1.2; font-weight: 800; letter-spacing: -.6px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metricDetail { margin-top: 9px; font-size: 13px; line-height: 20px; color: var(--fp-muted); }
+.positiveMetric .metricIcon { background: var(--fp-lime-soft); color: var(--fp-client-green); }
+.positiveMetric .metricValue { color: var(--fp-client-green); }
+.dangerMetric .metricIcon { background: var(--fp-danger-soft); color: var(--fp-danger); }
+.dangerMetric .metricValue { color: var(--fp-danger); }
+.secondaryMetrics { gap: 12px; margin-top: 16px; }
+.miniMetric { min-width: 0; padding: 16px 20px; box-shadow: none; }
+.miniLabel { color: var(--fp-muted); font-size: 13px; line-height: 20px; }
+.miniValue { margin-top: 7px; font-size: 21px; line-height: 1.25; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.miniMetric .metricDetail { margin-top: 5px; font-size: 12px; }
+.workspaces { display: grid; gap: 20px; margin-top: 20px; }
+.centralWorkspaces { grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); }
+.riskPanel { min-width: 0; padding: 24px; }
+.eyebrow { color: var(--fp-client-green); font-size: 12px; font-weight: 700; line-height: 18px; letter-spacing: .5px; text-transform: uppercase; }
+.sectionTitle { margin-top: 4px; font-size: 23px; font-weight: 700; line-height: 1.3; letter-spacing: -.3px; }
+.riskDescription { margin-top: 14px; font-size: 14px; line-height: 21px; color: var(--fp-muted); }
+.buckets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }
+.bucket { min-width: 0; padding-top: 14px; border-top: 2px solid var(--fp-amber); }
+.bucketTitle { color: var(--fp-amber); font-size: 14px; font-weight: 600; }
+.bucketDetail { margin-top: 5px; color: var(--fp-muted); font-size: 12px; line-height: 18px; }
+.bucketClients { margin-top: 14px; font-size: 28px; line-height: 1.2; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bucketValue { margin-top: 6px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.bucketProgress { height: 5px; margin-top: 16px; background: var(--fp-bg); }
+.warningBucket .bucketProgress > span { background: var(--fp-amber); }
+.dangerBucket { border-color: var(--fp-danger); }
+.dangerBucket .bucketTitle { color: var(--fp-danger); }
+.dangerBucket .bucketProgress > span { background: var(--fp-danger); }
+.priorities { margin-top: 20px; min-width: 0; overflow: hidden; }
+.tableHeading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid var(--fp-border); padding: 22px 24px; }
+.tableScroll { overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--fp-muted) transparent; }
+.tableScroll:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: -3px; }
+.table { width: 100%; min-width: 1590px; border-collapse: collapse; text-align: left; font-size: 14px; }
+.table th { position: static; background: var(--fp-bg); color: var(--fp-muted); font-size: 12px; line-height: 18px; text-transform: uppercase; padding: 15px 18px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid var(--fp-border); }
+.table td { padding: 16px 18px; vertical-align: top; border-bottom: 1px solid var(--fp-border); font-size: 14px; line-height: 21px; }
+.table tbody tr:hover, .table tbody tr:hover td:first-child { background: var(--fp-bg); }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table td:first-child { min-width: 190px; border-right: 1px solid var(--fp-border); }
+.table td p + p { font-size: 12px; line-height: 18px; }
+@media (max-width: 1340px) {
+  .content { padding: 28px 28px 40px; }
+  .centralMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .centralSecondary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .metricValue { font-size: 28px; }
+  .centralWorkspaces { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .content { padding: 24px 18px 36px; }
+  .heading { align-items: flex-start; flex-direction: column; gap: 18px; }
+  .filters { padding: 18px; gap: 20px; align-items: stretch; }
+  .filterForm { flex: 1 1 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filterForm label select { width: 100%; min-width: 0; max-width: 100%; }
+  .whatsapp { flex: 1 1 100%; padding-top: 18px; border-top: 1px solid var(--fp-border); }
+  .centralMetrics, .allyMetrics, .centralSecondary, .allySecondary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric { padding: 18px; }
+  .metricValue { font-size: 25px; }
+  .riskPanel { padding: 20px; }
+  .tableHeading { padding: 20px; }
+}
+@media (max-width: 480px) {
+  .content { padding: 22px 14px 32px; }
+  .filterForm, .centralMetrics, .allyMetrics, .centralSecondary, .allySecondary { grid-template-columns: minmax(0, 1fr); }
+  .filterForm > div { margin-top: 4px; }
+  .metricValue { font-size: 30px; }
+  .miniMetric { padding: 16px 18px; }
+  .buckets { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .bucket { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; }
+  .bucketClients { grid-column: 2; grid-row: 1 / 3; align-self: center; margin: 0; }
+  .bucketDetail { margin-top: 0; }
+  .bucketValue, .bucketProgress, .bucket > p:last-child { grid-column: 1 / -1; }
+  .bucketValue { margin-top: 10px; }
+  .bucketProgress { margin-top: 10px; }
+}

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "app/dashboard/creditos/**"
+      - "app/dashboard/cartera/**"
       - "app/api/creditos/**"
       - "lib/**"
       - "tests/**"
@@ -13,6 +14,7 @@ on:
     branches: [main]
     paths:
       - "app/dashboard/creditos/**"
+      - "app/dashboard/cartera/**"
       - "app/api/creditos/**"
       - "lib/**"
       - "tests/**"
@@ -45,6 +47,7 @@ jobs:
       - run: npm run prisma:generate && npm run test:mora-analista
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public
+      - run: npm run test:cartera
       - run: npm run build
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public

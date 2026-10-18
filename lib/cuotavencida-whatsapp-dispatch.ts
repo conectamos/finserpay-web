@@ -70,25 +70,29 @@ export function createCuotaVencidaWhatsAppDispatcher(deps: Dependencies = {}) {
         const [claim] = await (deps.claim ?? claimCuotaVencidaWhatsApp)({ limit: 1 });
         if (!claim) break;
         report.selected++;
-        const prepared = await (deps.prepare ?? prepareCuotaVencidaWhatsAppDispatch)(claim.eventId);
+        let deferred = false;
+        const outcome: { result: ReturnType<typeof cuotaVencidaWhatsAppReceipt> } = { result: { status: "UNKNOWN" } };
+        const prepared = await (deps.prepare ?? prepareCuotaVencidaWhatsAppDispatch)(claim.eventId, async current => {
+          const remaining = deadline - now().getTime();
+          if (remaining <= 0 || colombiaDateKey(now()) !== current.campaignDate) { deferred = true; return; }
+          try {
+            const response = await (deps.fetcher ?? fetch)(config!.webhookUrl, {
+              method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", redirect: "error",
+              signal: AbortSignal.timeout(Math.max(1, Math.min(8_000, Math.floor(remaining)))),
+              body: JSON.stringify({ telefono: current.phone, nombre: current.name, event_id: current.eventId }),
+            });
+            // HTTP failure can still follow provider acceptance. Only the explicit correlated result settles it.
+            if (response.ok && Number(response.headers.get("content-length") || 0) <= 131072) {
+              const text = await response.text();
+              if (Buffer.byteLength(text, "utf8") <= 131072) outcome.result = cuotaVencidaWhatsAppReceipt(JSON.parse(text), claim.eventId);
+            }
+          } catch { /* Never retry an outcome after HTTP has begun. */ }
+        });
         if (!prepared) { report.skipped++; continue; }
-        const remaining = deadline - now().getTime();
-        if (remaining <= 0 || colombiaDateKey(now()) !== prepared.campaignDate) {
+        if (deferred) {
           await (deps.release ?? releaseCuotaVencidaWhatsAppClaim)(claim.eventId); report.deferred++; break;
         }
-        let result: ReturnType<typeof cuotaVencidaWhatsAppReceipt> = { status: "UNKNOWN" };
-        try {
-          const response = await (deps.fetcher ?? fetch)(config!.webhookUrl, {
-            method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", redirect: "error",
-            signal: AbortSignal.timeout(Math.max(1, Math.min(8_000, Math.floor(remaining)))),
-            body: JSON.stringify({ telefono: prepared.phone, nombre: prepared.name, event_id: prepared.eventId }),
-          });
-          // HTTP failure can still follow provider acceptance. Only the explicit correlated result settles it.
-          if (response.ok && Number(response.headers.get("content-length") || 0) <= 131072) {
-            const text = await response.text();
-            if (Buffer.byteLength(text, "utf8") <= 131072) result = cuotaVencidaWhatsAppReceipt(JSON.parse(text), claim.eventId);
-          }
-        } catch { /* Never retry an outcome after HTTP has begun. */ }
+        const result = outcome.result;
         let saved: number;
         if (result.status === "ACCEPTED") saved = await (deps.accepted ?? markCuotaVencidaWhatsAppAccepted)(claim.eventId, result.providerMessageId);
         else if (result.status === "FAILED") saved = await (deps.failed ?? markCuotaVencidaWhatsAppFailed)(claim.eventId);
