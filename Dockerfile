@@ -104,6 +104,8 @@ COPY --from=builder \
   /app/scripts/ensure-credit-due-reminders-schema.mjs \
   /app/scripts/credit-overdue-data-schema.mjs \
   /app/scripts/ensure-credit-overdue-data-schema.mjs \
+  /app/scripts/cuotavencida-whatsapp-schema.mjs \
+  /app/scripts/ensure-cuotavencida-whatsapp-schema.mjs \
   /app/scripts/credit-welcome-voice-schema.mjs \
   /app/scripts/ensure-credit-welcome-voice-schema.mjs \
   ./scripts/
