@@ -100,6 +100,7 @@ COPY --from=builder \
   /app/scripts/check-merchant-application-delivery.mjs \
   /app/scripts/setup-commissions.sql \
   /app/scripts/ensure-commissions-schema.mjs \
+  /app/scripts/commissions-schema-install.mjs \
   /app/scripts/credit-due-reminders-schema.mjs \
   /app/scripts/ensure-credit-due-reminders-schema.mjs \
   /app/scripts/credit-overdue-data-schema.mjs \
