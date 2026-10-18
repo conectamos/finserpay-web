@@ -13,12 +13,14 @@ const typeModule = { exports: {} };
 runInNewContext(compile("../lib/analyst-mora-types.ts"), { module: typeModule, exports: typeModule.exports });
 
 function harness({ firstReference = "3001112233", secondReference = "3014445566", currentUserId = 17,
-  creditOverrides = {}, detailOverrides = {}, deferSave = false } = {}) {
+  creditOverrides = {}, detailOverrides = {}, deferSave = false, listTotal = 1,
+  extensionActions = { canEdit: true, canCancel: true, centralAdmin: false, minExpiresOn: "2026-10-09", maxExpiresOn: "2026-10-10", editBlockedReason: null } } = {}) {
   const componentNames = ["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader", "Select", "StatusPill"];
   const components = Object.fromEntries(componentNames.map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
   const MoraSupports = () => null;
   const FinserSidePanel = Object.defineProperty(() => null, "name", { value: "FinserSidePanel" });
-  const stubComponents = new Set([...Object.values(components), MoraSupports, FinserSidePanel]);
+  const MoraPortfolioExtensionActions = Object.defineProperty(() => null, "name", { value: "MoraPortfolioExtensionActions" });
+  const stubComponents = new Set([...Object.values(components), MoraSupports, FinserSidePanel, MoraPortfolioExtensionActions]);
   const node = (type, props) => type === FinserSidePanel && !props.open ? null :
     typeof type === "function" && !stubComponents.has(type) ? type(props) : ({ type, props });
   const slots = [];
@@ -83,12 +85,17 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(requests.length + 1).padStart(12, "0")}` },
     fetch: async (url, options = {}) => {
       fetchRequests.push({ url, method: options.method || "GET", cache: options.cache });
-      if (url.startsWith("/api/aprobaciones/cartera-mora?")) return response({
-        ok: true, items: [{ ...credit }], total: 1, page: 1, pageSize: 20, hasMore: false,
-        allies: [{ id: 2, nombre: credit.aliadoNombre }], responsibles: [{ id: 17, nombre: "Marcos Gomez" }],
-      });
+      if (url.startsWith("/api/aprobaciones/cartera-mora?")) {
+        const query = new URLSearchParams(url.split("?")[1]);
+        const currentPage = Number(query.get("page") || 1);
+        return response({ ok: true, items: query.get("status") === "PRORROGA" && !credit.prorrogaActiva ? [] : [{ ...credit }],
+          total: listTotal, page: currentPage, pageSize: 20, hasMore: currentPage * 20 < listTotal,
+          allies: [{ id: 2, nombre: credit.aliadoNombre }], responsibles: [{ id: 17, nombre: "Marcos Gomez" }],
+        });
+      }
       if (url === "/api/aprobaciones/cartera-mora/44" && (!options.method || options.method === "GET")) return response({
         ok: true, credit: { ...detailCredit }, currentResponsible: { id: currentUserId, nombre: "Marcos Gomez" }, history: [...savedEvents, legacy],
+        extensionActions,
         responsibles: [{ id: 17, nombre: "Marcos Gomez" }, { id: 99, nombre: "Otro usuario" }],
       });
       if (url === "/api/aprobaciones/cartera-mora/44" && options.method === "POST") {
@@ -115,6 +122,7 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
       if (name === "@/app/_components/finser-side-panel") return { default: FinserSidePanel, FinserSidePanel };
       if (name === "@/lib/analyst-mora-types") return typeModule.exports;
       if (name === "../mora-supports") return { default: MoraSupports };
+      if (name === "./mora-portfolio-extension-actions") return { default: MoraPortfolioExtensionActions };
       if (name.endsWith(".module.css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
@@ -165,9 +173,11 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
   return { open, save, validManagement, field, labelField, filterField, filterForm, change, options, requests, fetchRequests,
     text: () => text(tree), nodeText: text, nodes, find, button, components, render, settle,
     setCredit: values => Object.assign(credit, values), setDetailCredit: values => Object.assign(detailCredit, values),
+    setListTotal: value => { listTotal = value; },
     releaseSaves: () => pendingSaves.splice(0).forEach(resolve => resolve()),
     row: () => find(item => item.type === "tr" && text(item).includes(credit.numeroCreditoVisible)),
     sidePanel: () => find(item => item.type === FinserSidePanel),
+    extensionActions: () => find(item => item.type === MoraPortfolioExtensionActions),
   };
 }
 
@@ -469,4 +479,75 @@ test("guardar el resultado Prórroga aprobada no crea una autorización inexiste
   assert.doesNotMatch(ui.nodeText(ui.sidePanel()), /Prórroga activa/);
   await ui.save();
   assert.equal(ui.requests.length, 1, "no se duplica la misma gestión después de guardar");
+});
+
+test("las acciones de prórroga están en el detalle seleccionado y reciben los permisos del servidor", async () => {
+  const ui = harness({ creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } });
+  ui.render(); await ui.settle();
+  assert.equal(ui.extensionActions(), undefined, "no hay formularios ni acciones de otro crédito antes de seleccionarlo");
+  await ui.open();
+  const action = ui.extensionActions();
+  assert.ok(action, "el panel operativo contiene las acciones sin navegar a otro módulo");
+  assert.equal(action.props.creditId, 44);
+  assert.equal(action.props.extension.id, activeExtension.id);
+  assert.equal(action.props.capabilities.canEdit, true);
+  assert.equal(action.props.capabilities.canCancel, true);
+  assert.equal(action.props.capabilities.centralAdmin, false, "el analista también puede gestionar una prórroga autorizada");
+});
+
+test("editar o cancelar una prórroga actualiza lista y detalle conservando la gestión manual en edición", async () => {
+  const ui = harness({ creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } });
+  await ui.open(); ui.validManagement("ACUERDO_PAGO");
+  ui.change(ui.field("mora-management-agreement-date"), "2026-10-12");
+  ui.change(ui.field("mora-management-agreement-amount"), "125000");
+  const comment = ui.labelField("Comentario").props.value;
+  const listLoads = ui.fetchRequests.filter(item => item.url.startsWith("/api/aprobaciones/cartera-mora?")).length;
+  const detailLoads = ui.fetchRequests.filter(item => item.url === "/api/aprobaciones/cartera-mora/44").length;
+  ui.setCredit({ prorrogaActiva: null, estadoGestion: "SEGUIMIENTO" });
+  ui.setDetailCredit({ prorrogaActiva: null, estadoGestion: "SEGUIMIENTO" });
+  await ui.extensionActions().props.onChanged({ item: { id: activeExtension.id, creditoId: 44, status: "CANCELLED", version: 2 }, message: "Prórroga cancelada.", warning: null });
+  await ui.settle();
+  assert.deepEqual(rowStatus(ui), ["Seguimiento"]);
+  assert.equal(ui.extensionActions(), undefined);
+  assert.equal(ui.field("mora-management-agreement-date").props.value, "2026-10-12");
+  assert.equal(ui.field("mora-management-agreement-amount").props.value, "125000");
+  assert.equal(ui.labelField("Comentario").props.value, comment);
+  assert.ok(ui.fetchRequests.filter(item => item.url.startsWith("/api/aprobaciones/cartera-mora?")).length > listLoads);
+  assert.ok(ui.fetchRequests.filter(item => item.url === "/api/aprobaciones/cartera-mora/44").length > detailLoads);
+  assert.equal(ui.requests.length, 0, "editar la prórroga no guarda ni altera la gestión manual");
+});
+
+test("guardar la prórroga bloquea el cierre, la navegación y el guardado simultáneo de gestión", async () => {
+  const ui = harness({ creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } });
+  await ui.open(); ui.validManagement();
+  ui.extensionActions().props.onBusyChange(true); ui.render();
+  assert.equal(ui.sidePanel().props.busy, true);
+  assert.equal(ui.button("Actualizar").props.disabled, true);
+  assert.equal(ui.button("Guardar gestión").props.disabled, true);
+  assert.equal(ui.field("mora-management-result").props.disabled, true);
+  ui.sidePanel().props.onClose(); ui.render(); assert.ok(ui.sidePanel(), "el panel no se cierra con un cambio en curso");
+  await ui.save(); assert.equal(ui.requests.length, 0, "el guardado manual no compite con la autorización");
+  ui.extensionActions().props.onBusyChange(false); ui.render();
+  assert.equal(ui.sidePanel().props.busy, false);
+  await ui.save(); assert.equal(ui.requests.length, 1, "después del cambio se permite guardar el borrador manual");
+});
+
+test("cancelar la última prórroga de una página filtrada regresa a una página válida y conserva el detalle", async () => {
+  const ui = harness({ listTotal: 21, creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } });
+  await ui.open();
+  ui.change(ui.filterField("Estado"), "PRORROGA"); ui.filterForm().props.onSubmit({ preventDefault() {} }); await ui.settle();
+  ui.button("Siguiente").props.onClick(); await ui.settle();
+  let latestList = ui.fetchRequests.filter(item => item.url.startsWith("/api/aprobaciones/cartera-mora?")).at(-1);
+  assert.equal(new URLSearchParams(latestList.url.split("?")[1]).get("page"), "2");
+  ui.validManagement(); const comment = ui.labelField("Comentario").props.value;
+  ui.setCredit({ prorrogaActiva: null, estadoGestion: "SEGUIMIENTO" });
+  ui.setDetailCredit({ prorrogaActiva: null, estadoGestion: "SEGUIMIENTO" }); ui.setListTotal(20);
+  await ui.extensionActions().props.onChanged({ item: { id: activeExtension.id, creditoId: 44, status: "CANCELLED", version: 2 }, message: "Prórroga cancelada.", warning: null });
+  await ui.settle();
+  latestList = ui.fetchRequests.filter(item => item.url.startsWith("/api/aprobaciones/cartera-mora?")).at(-1);
+  const query = new URLSearchParams(latestList.url.split("?")[1]);
+  assert.equal(query.get("status"), "PRORROGA"); assert.equal(query.get("page"), "1");
+  assert.equal(ui.row(), undefined, "la prórroga cancelada deja el filtro de vigentes");
+  assert.ok(ui.sidePanel(), "el detalle del crédito sigue abierto");
+  assert.equal(ui.labelField("Comentario").props.value, comment);
 });

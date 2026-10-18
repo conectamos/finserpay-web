@@ -104,6 +104,10 @@ async function fixture(t) {
   const service = load("lib/mora-exception-requests.ts", {
     "@/lib/prisma": { default: prisma }, "@/lib/analyst-mora-access": access,
     "@/lib/analyst-mora-management": { listMoraPortfolio: async () => ({ items: [], hasMore: false }) },
+    "@/lib/analyst-mora-extension": load("lib/analyst-mora-extension.ts", {
+      "@/lib/prisma": { default: prisma }, "@/lib/colombia-date": dates,
+      "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
+    }),
     "@/lib/analyst-mora-credit": { moraCreditSelect: {}, moraCreditSummary: credit => ({ ...credit,
       numeroCreditoVisible: displayNumbers.confirmedSadminNumber(credit.registroSadmin) || credit.folio }),
       readMoraCredit: async id => credits.get(id) || null,

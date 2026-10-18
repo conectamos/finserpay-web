@@ -38,6 +38,8 @@ import {
 import MoraSupports from "../mora-supports";
 import FinserSidePanel from "@/app/_components/finser-side-panel";
 import styles from "./mora-portfolio.module.css";
+import MoraPortfolioExtensionActions, { type ExtensionChange } from "./mora-portfolio-extension-actions";
+import type { MoraExtensionActions } from "@/lib/mora-exception-types";
 
 type NamedOption = { id: number; nombre: string };
 type PortfolioResponse = {
@@ -62,6 +64,7 @@ type DetailResponse = {
   currentResponsible: NamedOption;
   history: MoraManagementEvent[];
   responsibles: NamedOption[];
+  extensionActions: MoraExtensionActions;
 };
 type SaveResponse = { ok: true; item: MoraManagementEvent; unchanged: boolean };
 type Filters = {
@@ -231,6 +234,9 @@ export default function MoraPortfolioClient() {
   const [saveError, setSaveError] = useState("");
   const [notice, setNotice] = useState("");
   const [lastSavedFingerprint, setLastSavedFingerprint] = useState("");
+  const [extensionBusy, setExtensionBusy] = useState(false);
+  const [extensionNotice, setExtensionNotice] = useState<{ message: string; warning: string | null } | null>(null);
+  const extensionFlight = useRef(false);
   const detailController = useRef<AbortController | null>(null);
   const selectedCreditId = useRef<number | null>(null);
   const submitting = useRef(false);
@@ -252,7 +258,12 @@ export default function MoraPortfolioClient() {
     setLoading(true);
     setListError("");
     void requestJson<PortfolioResponse>(listUrl, { signal: controller.signal })
-      .then((result) => { if (!controller.signal.aborted) setPortfolio(result); })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setPortfolio(result);
+        const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
+        if (result.page > lastPage) setPage(lastPage);
+      })
       .catch((error) => {
         if (!controller.signal.aborted) setListError(error instanceof Error ? error.message : "No fue posible cargar la cartera en mora.");
       })
@@ -325,20 +336,21 @@ export default function MoraPortfolioClient() {
   }
 
   async function openCredit(item: MoraPortfolioItem) {
-    if (submitting.current) return;
+    if (submitting.current || extensionFlight.current) return;
     selectedCreditId.current = item.id;
     setSelectedId(item.id);
+    setExtensionNotice(null);
     await loadCredit(item.id);
   }
 
   function refreshPortfolio() {
-    if (submitting.current) return;
+    if (submitting.current || extensionFlight.current) return;
     setRefreshVersion((value) => value + 1);
     if (selectedCreditId.current) void loadCredit(selectedCreditId.current, true);
   }
 
   function closeDetail() {
-    if (submitting.current) return;
+    if (submitting.current || extensionFlight.current) return;
     detailController.current?.abort();
     selectedCreditId.current = null;
     setSelectedId(null);
@@ -346,11 +358,41 @@ export default function MoraPortfolioClient() {
     setDetailError("");
     setNotice("");
     setSaveError("");
+    setExtensionNotice(null);
+  }
+
+  function extensionBusyChanged(busy: boolean) {
+    extensionFlight.current = busy;
+    setExtensionBusy(busy);
+    if (busy) detailController.current?.abort();
+  }
+
+  async function extensionChanged(result: ExtensionChange) {
+    const id = selectedCreditId.current;
+    if (!id || result.item.creditoId !== id) return;
+    const item = result.item;
+    const active = item.status === "APPROVED" && item.conditionStatus !== "FULFILLED" ? {
+      id: item.id, expiresOn: item.expiresOn, reason: item.reason,
+      approvedAt: item.decidedAt, approvedByName: item.decidedByName,
+      installmentNumber: item.installmentNumber, installmentDueDate: item.installmentDueDate,
+    } : null;
+    setDetail(current => current?.credit.id === id ? { ...current, credit: { ...current.credit, prorrogaActiva: active,
+      estadoGestion: active ? "PRORROGA" : current.history[0]?.managementStatus || "PENDIENTE" } } : current);
+    setPortfolio(current => current ? { ...current,
+      ...(filters.status === "PRORROGA" && !active ? {
+        items: current.items.filter(credit => credit.id !== id),
+        total: Math.max(0, current.total - Number(current.items.some(credit => credit.id === id))),
+      } : { items: current.items.map(credit => credit.id === id ? { ...credit, prorrogaActiva: active,
+        estadoGestion: active ? "PRORROGA" : credit.ultimaGestion?.managementStatus || "PENDIENTE" } : credit) }),
+    } : current);
+    setExtensionNotice({ message: result.message, warning: result.warning });
+    setRefreshVersion(value => value + 1);
+    await loadCredit(id, true);
   }
 
   async function saveManagement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedId || !detail || submitting.current || managementFingerprint === lastSavedFingerprint) return;
+    if (!selectedId || !detail || submitting.current || extensionFlight.current || managementFingerprint === lastSavedFingerprint) return;
     const actedAt = bogotaIso(management.actedAt);
     const nextFollowUpAt = bogotaIso(management.nextFollowUpAt);
     const responsibleUserId = detail.currentResponsible.id;
@@ -430,12 +472,12 @@ export default function MoraPortfolioClient() {
           eyebrow="Aprobaciones"
           title="Cartera en mora"
           description="Organiza el seguimiento, consulta las prórrogas vigentes y conserva cada gestión."
-          actions={<Button variant="secondary" disabled={loading || saving} onClick={refreshPortfolio}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar</Button>}
+          actions={<Button variant="secondary" disabled={loading || saving || extensionBusy} onClick={refreshPortfolio}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar</Button>}
         />
 
         <nav className={styles.views} aria-label="Vistas de cartera">
-          <button type="button" aria-pressed={!filters.status} disabled={loading || saving} onClick={() => { setFormFilters(current => ({ ...current, status: "" })); setFilters(current => ({ ...current, status: "" })); setPage(1); }}>Toda la cartera</button>
-          <button type="button" aria-pressed={filters.status === "PRORROGA"} disabled={loading || saving} onClick={() => { setFormFilters(current => ({ ...current, status: "PRORROGA" })); setFilters(current => ({ ...current, status: "PRORROGA" })); setPage(1); }}><CalendarClock aria-hidden="true" />Prórrogas activas</button>
+          <button type="button" aria-pressed={!filters.status} disabled={loading || saving || extensionBusy} onClick={() => { setFormFilters(current => ({ ...current, status: "" })); setFilters(current => ({ ...current, status: "" })); setPage(1); }}>Toda la cartera</button>
+          <button type="button" aria-pressed={filters.status === "PRORROGA"} disabled={loading || saving || extensionBusy} onClick={() => { setFormFilters(current => ({ ...current, status: "PRORROGA" })); setFilters(current => ({ ...current, status: "PRORROGA" })); setPage(1); }}><CalendarClock aria-hidden="true" />Prórrogas activas</button>
         </nav>
 
         <Card className={styles.filters}>
@@ -444,7 +486,7 @@ export default function MoraPortfolioClient() {
               <label className={styles.search}><span>Buscar crédito o cliente</span><span className={styles.searchField}><Search aria-hidden="true" /><Input value={formFilters.q} onChange={(event) => updateFilter("q", event.target.value)} maxLength={100} placeholder="Número de crédito, nombre, cédula o IMEI" style={{ paddingLeft: "2.5rem" }} /></span></label>
               <label><span>Aliado</span><Select value={formFilters.ally} onChange={(event) => updateFilter("ally", event.target.value)}><option value="">Todos los aliados</option>{portfolio?.allies.map((ally) => <option key={ally.id} value={ally.id}>{ally.nombre}</option>)}</Select></label>
               <label><span>Estado</span><Select id="mora-portfolio-status" value={formFilters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="">Todos los estados</option>{MORA_PORTFOLIO_STATES.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</Select></label>
-              <Button type="submit" disabled={loading || saving}><Search aria-hidden="true" />Aplicar filtros</Button>
+              <Button type="submit" disabled={loading || saving || extensionBusy}><Search aria-hidden="true" />Aplicar filtros</Button>
             </div>
             <div className={styles.filterBottom}>
               <details className={styles.moreFilters}>
@@ -456,7 +498,7 @@ export default function MoraPortfolioClient() {
                   <label><span>Mora hasta</span><Input type="number" min={0} step={1} inputMode="numeric" value={formFilters.maxDays} onChange={(event) => updateFilter("maxDays", event.target.value)} placeholder="Días" /></label>
                 </div>
               </details>
-              <Button variant="ghost" disabled={loading || saving} onClick={clearFilters}>Limpiar filtros</Button>
+              <Button variant="ghost" disabled={loading || saving || extensionBusy} onClick={clearFilters}>Limpiar filtros</Button>
             </div>
           </form>
         </Card>
@@ -482,21 +524,26 @@ export default function MoraPortfolioClient() {
                     <td><div className={styles.cellStack}><strong className={styles.result}>{item.ultimaGestion?.result || "Sin gestión"}</strong><span>{item.ultimaGestion?.responsibleName || "Sin asignar"}</span><span>{displayDateTime(item.ultimaGestion?.actedAt)}</span></div></td>
                     <td><div className={styles.cellStack}><span className={styles.followUp}>{displayDateTime(item.ultimaGestion?.nextFollowUpAt)}</span></div></td>
                     <td><div className={styles.cellStack}><StatusPill tone={statusTone(managementStatus)}>{statusLabels[managementStatus] || managementStatus}</StatusPill>{item.prorrogaActiva ? <span className={styles.extensionUntil}>{item.prorrogaActiva.expiresOn ? `Hasta ${displayDay(item.prorrogaActiva.expiresOn)}` : "Sin fecha límite"}</span> : null}</div></td>
-                    <td><Button variant="secondary" disabled={saving} aria-pressed={selectedId === item.id} onClick={() => void openCredit(item)}>Gestionar<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></td>
+                    <td><Button variant="secondary" disabled={saving || extensionBusy} aria-pressed={selectedId === item.id} onClick={() => void openCredit(item)}>Gestionar<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></td>
                   </tr>;
                 })}</tbody>
               </table>
             </DataTable> : null}
-            {portfolio ? <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--fp-border)] px-2 py-4 text-sm text-[var(--fp-muted)]"><span>Página {portfolio.page} · {portfolio.items.length} de {portfolio.total.toLocaleString("es-CO")}</span><div className="flex gap-2"><Button variant="secondary" disabled={loading || saving || page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Anterior</Button><Button variant="secondary" disabled={loading || saving || !portfolio.hasMore} onClick={() => setPage((value) => value + 1)}>Siguiente<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></div></div> : null}
+            {portfolio ? <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--fp-border)] px-2 py-4 text-sm text-[var(--fp-muted)]"><span>Página {portfolio.page} · {portfolio.items.length} de {portfolio.total.toLocaleString("es-CO")}</span><div className="flex gap-2"><Button variant="secondary" disabled={loading || saving || extensionBusy || page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Anterior</Button><Button variant="secondary" disabled={loading || saving || extensionBusy || !portfolio.hasMore} onClick={() => setPage((value) => value + 1)}>Siguiente<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></div></div> : null}
           </section>
 
-          <FinserSidePanel open={Boolean(selectedId)} title="Gestión del crédito en mora" closeLabel="Cerrar gestión" busy={saving} onClose={closeDetail}>
+          <FinserSidePanel open={Boolean(selectedId)} title="Gestión del crédito en mora" closeLabel="Cerrar gestión" busy={saving || extensionBusy} onClose={closeDetail}>
             {loadingDetail ? <div className="p-5"><LoadingState label="Cargando crédito e historial..." /></div> : null}
             {detailError ? <div className="space-y-3 p-5"><p role="alert" className="text-sm text-[var(--fp-danger)]">{detailError}</p>{portfolio?.items.find((item) => item.id === selectedId) ? <Button variant="secondary" onClick={() => void openCredit(portfolio.items.find((item) => item.id === selectedId)!)}>Reintentar</Button> : null}</div> : null}
             {detail ? <>
               <section className={styles.detailSummary} aria-labelledby="mora-credit-summary">
                 <div className={styles.detailHeading}><div><p className={styles.creditNumber}>{detail.credit.numeroCreditoVisible}</p><h3 id="mora-credit-summary">{detail.credit.clienteNombre}</h3><p>{detail.credit.aliadoNombre}</p></div><StatusPill tone={statusTone(portfolioStatus(detail.credit))}>{statusLabels[portfolioStatus(detail.credit)] || portfolioStatus(detail.credit)}</StatusPill></div>
                 {detail.credit.prorrogaActiva ? <div className={styles.extensionBanner} role="status"><CalendarClock aria-hidden="true" /><div><strong>Prórroga activa</strong><p>{detail.credit.prorrogaActiva.expiresOn ? `Vigente hasta el ${displayDay(detail.credit.prorrogaActiva.expiresOn)}` : "Sin fecha límite"}</p>{detail.credit.prorrogaActiva.installmentNumber ? <p>Cuota {detail.credit.prorrogaActiva.installmentNumber}{detail.credit.prorrogaActiva.installmentDueDate ? ` · Fecha original: ${displayDay(detail.credit.prorrogaActiva.installmentDueDate)}` : ""}</p> : null}<p>{detail.credit.prorrogaActiva.reason}</p>{detail.credit.prorrogaActiva.approvedByName ? <small>Aprobada por {detail.credit.prorrogaActiva.approvedByName}{detail.credit.prorrogaActiva.approvedAt ? ` · ${displayDateTime(detail.credit.prorrogaActiva.approvedAt)}` : ""}</small> : null}</div></div> : null}
+                {extensionNotice ? <div role="status" className={styles.extensionNotice}><p>{extensionNotice.message}</p>{extensionNotice.warning ? <p className={styles.extensionWarning}>{extensionNotice.warning}</p> : null}</div> : null}
+                {detail.credit.prorrogaActiva && detail.extensionActions ? <MoraPortfolioExtensionActions
+                  key={`${detail.credit.id}:${detail.credit.prorrogaActiva.id}`} creditId={detail.credit.id}
+                  extension={detail.credit.prorrogaActiva} capabilities={detail.extensionActions} disabled={saving}
+                  onBusyChange={extensionBusyChanged} onChanged={extensionChanged} /> : null}
                 <dl className="grid grid-cols-2 gap-4">
                   <DetailValue label="Cédula" value={detail.credit.clienteDocumento || "No disponible"} />
                   <DetailValue label="Teléfono" value={detail.credit.clienteTelefono || "No disponible"} />
@@ -511,22 +558,22 @@ export default function MoraPortfolioClient() {
               </section>
 
               <form onSubmit={saveManagement} className="space-y-4 border-b border-[var(--fp-border)] p-5" aria-labelledby="mora-management-form"><div><h3 id="mora-management-form" className="flex items-center gap-2 font-black"><CircleDollarSign className="h-5 w-5" aria-hidden="true" />Nueva gestión</h3><p className="mt-1 text-sm text-[var(--fp-muted)]">Todos los campos son obligatorios. Cada registro se agrega al historial.</p></div>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Acción realizada</span><Select id="mora-management-action" required value={management.action} disabled={saving} onChange={(event) => updateManagement("action", event.target.value as ManagementForm["action"])}>{MORA_ACTIONS.map((action) => <option key={action} value={action}>{actionLabels[action]}</option>)}</Select></label>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Fecha y hora de gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.actedAt} disabled={saving} onChange={(event) => updateManagement("actedAt", event.target.value)} /></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Acción realizada</span><Select id="mora-management-action" required value={management.action} disabled={saving || extensionBusy} onChange={(event) => updateManagement("action", event.target.value as ManagementForm["action"])}>{MORA_ACTIONS.map((action) => <option key={action} value={action}>{actionLabels[action]}</option>)}</Select></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Fecha y hora de gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.actedAt} disabled={saving || extensionBusy} onChange={(event) => updateManagement("actedAt", event.target.value)} /></label>
                 <label className="block space-y-1.5"><span className="text-sm font-bold">Responsable</span><Input value={detail.currentResponsible.nombre} readOnly aria-readonly="true" /></label>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Resultado</span><Select id="mora-management-result" required value={management.result} disabled={saving} onChange={(event) => updateManagement("result", event.target.value as ManagementForm["result"])}>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Resultado</span><Select id="mora-management-result" required value={management.result} disabled={saving || extensionBusy} onChange={(event) => updateManagement("result", event.target.value as ManagementForm["result"])}>
                   <option value="">Selecciona el resultado</option>
                   {moraResultsForAction(management.action).map(result => <option key={result} value={result}>{moraResultLabel(result, management.action)}</option>)}
                 </Select></label>
                 {management.result === "ACUERDO_PAGO" && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <label className="block min-w-0 space-y-1.5"><span className="text-sm font-bold">Fecha de pago acordada</span><Input id="mora-management-agreement-date" required type="date" min={management.actedAt.slice(0, 10)} value={management.agreementDate} disabled={saving} onChange={event => updateManagement("agreementDate", event.target.value)} /></label>
-                  <label className="block min-w-0 space-y-1.5"><span className="text-sm font-bold">Valor acordado (COP)</span><Input id="mora-management-agreement-amount" required type="number" min="0.01" max="999999999999.99" step="0.01" inputMode="decimal" value={management.agreementAmount} disabled={saving} onChange={event => updateManagement("agreementAmount", event.target.value)} /></label>
+                  <label className="block min-w-0 space-y-1.5"><span className="text-sm font-bold">Fecha de pago acordada</span><Input id="mora-management-agreement-date" required type="date" min={management.actedAt.slice(0, 10)} value={management.agreementDate} disabled={saving || extensionBusy} onChange={event => updateManagement("agreementDate", event.target.value)} /></label>
+                  <label className="block min-w-0 space-y-1.5"><span className="text-sm font-bold">Valor acordado (COP)</span><Input id="mora-management-agreement-amount" required type="number" min="0.01" max="999999999999.99" step="0.01" inputMode="decimal" value={management.agreementAmount} disabled={saving || extensionBusy} onChange={event => updateManagement("agreementAmount", event.target.value)} /></label>
                 </div>}
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Comentario</span><textarea required minLength={5} maxLength={2000} rows={4} value={management.comment} disabled={saving} onChange={(event) => updateManagement("comment", event.target.value)} placeholder="Registra el contexto y los compromisos acordados" className="fp-ui-input min-h-28 w-full resize-y" /></label>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Próxima gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.nextFollowUpAt} disabled={saving} onChange={(event) => updateManagement("nextFollowUpAt", event.target.value)} /></label>
-                <label className="block space-y-1.5"><span className="text-sm font-bold">Estado de gestión</span><Select id="mora-management-status" required value={management.managementStatus} disabled={saving} onChange={(event) => updateManagement("managementStatus", event.target.value as ManagementForm["managementStatus"])}>{MORA_MANAGEMENT_STATES.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</Select></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Comentario</span><textarea required minLength={5} maxLength={2000} rows={4} value={management.comment} disabled={saving || extensionBusy} onChange={(event) => updateManagement("comment", event.target.value)} placeholder="Registra el contexto y los compromisos acordados" className="fp-ui-input min-h-28 w-full resize-y" /></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Próxima gestión <span className="font-normal text-[var(--fp-muted)]">(Bogotá)</span></span><Input required type="datetime-local" step={60} value={management.nextFollowUpAt} disabled={saving || extensionBusy} onChange={(event) => updateManagement("nextFollowUpAt", event.target.value)} /></label>
+                <label className="block space-y-1.5"><span className="text-sm font-bold">Estado de gestión</span><Select id="mora-management-status" required value={management.managementStatus} disabled={saving || extensionBusy} onChange={(event) => updateManagement("managementStatus", event.target.value as ManagementForm["managementStatus"])}>{MORA_MANAGEMENT_STATES.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</Select></label>
                 {saveError ? <p role="alert" className="rounded-[var(--fp-radius-sm)] bg-[var(--fp-danger-soft)] px-3 py-2 text-sm text-[var(--fp-danger)]">{saveError}</p> : null}{notice ? <p role="status" className="rounded-[var(--fp-radius-sm)] bg-[var(--fp-lime-soft)] px-3 py-2 text-sm">{notice}</p> : null}
-                <Button type="submit" className="w-full" disabled={saving || managementFingerprint === lastSavedFingerprint}>{saving ? "Guardando..." : managementFingerprint === lastSavedFingerprint ? "Gestión guardada" : "Guardar gestión"}</Button>
+                <Button type="submit" className="w-full" disabled={saving || extensionBusy || managementFingerprint === lastSavedFingerprint}>{saving ? "Guardando..." : managementFingerprint === lastSavedFingerprint ? "Gestión guardada" : "Guardar gestión"}</Button>
               </form>
 
               <section className="p-5" aria-labelledby="mora-history-title"><div className="flex items-center justify-between gap-3"><h3 id="mora-history-title" className="flex items-center gap-2 font-black"><History className="h-5 w-5" aria-hidden="true" />Línea de tiempo</h3><Badge>{detail.history.length}</Badge></div>{detail.history.length ? <ol className="mt-4 space-y-4 border-l-2 border-[var(--fp-border)] pl-4">{detail.history.map((item, index) => <li key={item.id} className="relative"><span className="absolute -left-[1.34rem] top-1 h-2.5 w-2.5 rounded-full bg-[var(--fp-lime-strong)] ring-4 ring-[var(--fp-surface)]" /><article className="space-y-2 rounded-[var(--fp-radius-sm)] bg-[var(--fp-bg)] p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><h4 className="font-bold">{actionLabels[item.action]}</h4><p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--fp-muted)]"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />{displayDateTime(item.actedAt)}</p></div><StatusPill tone={statusTone(item.managementStatus)}>{statusLabels[item.managementStatus]}</StatusPill></div><p className="flex items-center gap-1 text-sm"><UserRound className="h-4 w-4 text-[var(--fp-muted)]" aria-hidden="true" /><strong>{item.responsibleName}</strong></p><div><p className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">Resultado</p><p className="mt-1 break-words text-sm">{item.result}</p></div><div><p className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">Comentario</p><p className="mt-1 whitespace-pre-wrap break-words text-sm">{item.comment}</p></div><p className="flex items-center gap-1 text-xs text-[var(--fp-muted)]"><CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />Próxima gestión: {displayDateTime(item.nextFollowUpAt)}</p><p className="text-xs text-[var(--fp-muted)]">Registró {item.actorName} · {displayDateTime(item.createdAt)}</p><MoraSupports creditoId={detail.credit.id} subjectKind="GESTION" subjectId={item.id} defaultOpen={index === 0} /></article></li>)}</ol> : <EmptyState className="mt-4" title="Sin gestiones registradas" description="La primera gestión quedará visible aquí y no reemplazará registros anteriores." />}</section>

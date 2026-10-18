@@ -54,6 +54,10 @@ function service(prisma = {}, creditLookup = () => null, listMoraPortfolio = asy
     "@/lib/prisma": { default: prisma },
     "@/lib/analyst-mora-access": access,
     "@/lib/analyst-mora-management": { listMoraPortfolio },
+    "@/lib/analyst-mora-extension": load("lib/analyst-mora-extension.ts", {
+      "@/lib/prisma": { default: prisma }, "@/lib/colombia-date": dates,
+      "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
+    }),
     "@/lib/analyst-mora-credit": {
       moraCreditSelect: {}, moraCreditSummary: credit => credit,
       readMoraCreditProducts: async ids => new Map(ids.map(id => [id, creditLookup(id)?.producto ?? null])),
@@ -125,6 +129,161 @@ function amendmentInput(api, item, patch = {}) {
     expiresOn: item.expiresOn, reason: item.reason, observation: item.observation,
     idempotencyKey: randomUUID(), ...patch });
 }
+
+const extensionNow = new Date("2026-10-18T20:00:00Z");
+const extensionPlan = { estadoPago: "MORA", saldoPendiente: 900,
+  installments: [{ numero: 3, fechaVencimiento: "2026-10-17", saldoPendiente: 300, eliminada: false }] };
+async function approvedAnalystExtension(f) {
+  const created = await f.service.createMoraExceptionRequest(analystInput(f.service, {
+    type: "PRORROGA", expiresOn: "2026-10-20", promiseDate: "2026-10-20",
+  }), analyst, extensionNow);
+  return (await f.service.actOnMoraExceptionRequest(created.item.id, f.service.parseMoraExceptionDecision({
+    action: "APPROVE", version: created.item.version, reason: "Plazo autorizado por central", idempotencyKey: randomUUID(),
+  }), central, extensionNow)).item;
+}
+function analystAmendment(api, item, patch = {}) {
+  return api.parseAnalystMoraExtensionAmendment({ action: "EDIT", version: item.version, expiresOn: "2026-10-21",
+    reason: "Ajuste solicitado por el cliente", observation: "Seguimiento del compromiso", auditReason: "Fecha corregida por solicitud del cliente",
+    idempotencyKey: randomUUID(), ...patch });
+}
+
+test("analista edita y cancela la prórroga vigente con rol real, versión e historial sin tocar el crédito", async t => {
+  const f = await harness(t, { plan: extensionPlan });
+  const item = await approvedAnalystExtension(f);
+  const creditBefore = JSON.stringify(f.credits.get(77));
+  const capabilities = await f.service.getMoraExtensionActions(item.id, analyst, extensionNow);
+  assert.deepEqual(JSON.parse(JSON.stringify(capabilities)), { canEdit: true, canCancel: true, centralAdmin: false,
+    minExpiresOn: "2026-10-18", maxExpiresOn: "2026-10-21", editBlockedReason: null });
+  const input = analystAmendment(f.service, item, { promiseDate: "2026-10-21" });
+  const edited = await f.service.amendMoraExceptionRequest(item.id, input, analyst, extensionNow);
+  assert.equal(edited.item.expiresOn, "2026-10-21"); assert.equal(edited.item.promiseAmount, item.promiseAmount);
+  assert.equal(edited.item.promiseDate, "2026-10-21"); assert.equal(edited.item.status, "APPROVED");
+  assert.equal(edited.item.version, item.version + 1); assert.equal(edited.affectsMora, true);
+  const replay = await f.service.amendMoraExceptionRequest(item.id, input, analyst, extensionNow);
+  assert.equal(replay.unchanged, true);
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id, { ...input, idempotencyKey: randomUUID() }, analyst, extensionNow), { code: "MORA_REQUEST_CHANGED" });
+  const cancel = f.service.parseAnalystMoraExtensionAmendment({ action: "CANCEL", version: edited.item.version,
+    auditReason: "El cliente canceló su solicitud", idempotencyKey: randomUUID() });
+  const cancelled = await f.service.amendMoraExceptionRequest(item.id, cancel, analyst, extensionNow);
+  assert.equal(cancelled.item.status, "CANCELLED"); assert.equal(cancelled.affectsMora, true);
+  assert.equal((await f.service.amendMoraExceptionRequest(item.id, cancel, analyst, extensionNow)).unchanged, true);
+  const after = await f.service.getMoraExtensionActions(item.id, analyst, extensionNow);
+  assert.equal(after.canEdit, false); assert.equal(after.canCancel, false);
+  const events = (await f.database.query(`SELECT * FROM "CreditMoraExceptionEvent" WHERE "action" IN ('EDITED','CANCELLED') ORDER BY "version"`)).rows;
+  assert.equal(events.length, 2); assert.ok(events.every(event => event.actorUserId === 2 && event.actorName === "Analista vigente"));
+  assert.equal(events[0].payload.auditReason, input.auditReason);
+  assert.equal(events[0].payload.before.expiresOn, "2026-10-20"); assert.equal(events[0].payload.after.expiresOn, "2026-10-21");
+  assert.equal(JSON.stringify(f.credits.get(77)), creditBefore);
+  assert.ok(!f.queries.some(sql => /UPDATE\s+"Credito"/i.test(sql)));
+});
+
+test("las fechas analista están ligadas a la cuota regular y no reinician cuatro días desde la edición", async t => {
+  const f = await harness(t, { plan: extensionPlan });
+  const item = await approvedAnalystExtension(f);
+  for (const expiresOn of [null, "2026-10-17", "2026-10-22", "2030-10-21"])
+    await assert.rejects(f.service.amendMoraExceptionRequest(item.id,
+      amendmentInput(f.service, item, { expiresOn, auditReason: "Corrección requerida por cliente" }), analyst, extensionNow), { code: "EXTENSION_WINDOW_CLOSED" });
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id,
+    amendmentInput(f.service, item, { promiseAmount: 150, auditReason: "Corrección requerida por cliente" }), analyst, extensionNow), { code: "INVALID_MORA_EXCEPTION" });
+  await f.database.query(`UPDATE "CreditMoraExceptionRequest" SET "promiseDate"='2026-10-17' WHERE "id"=$1`, [item.id]);
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id,
+    analystAmendment(f.service, item), analyst, extensionNow), { code: "INVALID_MORA_EXCEPTION" });
+  await f.database.query(`UPDATE "CreditMoraExceptionRequest" SET "expiresOn"='2026-10-30',"promiseDate"='2026-10-30' WHERE "id"=$1`, [item.id]);
+  const outside = new Date("2026-10-22T18:00:00Z");
+  const caps = await f.service.getMoraExtensionActions(item.id, analyst, outside);
+  assert.equal(caps.canEdit, false); assert.equal(caps.canCancel, true); assert.equal(caps.maxExpiresOn, "2026-10-21");
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id, analystAmendment(f.service, item), analyst, outside), { code: "MORA_EXTENSION_NOT_EDITABLE" });
+  const centralCaps = await f.service.getMoraExtensionActions(item.id, central, outside);
+  assert.equal(centralCaps.canEdit, true); assert.equal(centralCaps.maxExpiresOn, null);
+  assert.equal((await f.service.amendMoraExceptionRequest(item.id,
+    amendmentInput(f.service, item, { expiresOn: "2035-12-31" }), central, outside)).item.expiresOn, "2035-12-31");
+});
+
+test("central directo deriva la cuota para edición analista y permite cancelación aun fuera de la ventana", async t => {
+  const f = await harness(t, { plan: extensionPlan });
+  const created = await f.service.createMoraExceptionRequest(centralInput(f.service, { type: "PRORROGA", expiresOn: null }), central, extensionNow);
+  const caps = await f.service.getMoraExtensionActions(created.item.id, analyst, extensionNow);
+  assert.equal(caps.canEdit, true); assert.equal(caps.canCancel, true); assert.equal(caps.maxExpiresOn, "2026-10-21");
+  const edited = await f.service.amendMoraExceptionRequest(created.item.id, analystAmendment(f.service, created.item), analyst, extensionNow);
+  assert.equal(edited.item.source, "CENTRAL_DIRECT"); assert.equal(edited.item.promiseAmount, null);
+  const centralEdit = await f.service.amendMoraExceptionRequest(created.item.id,
+    amendmentInput(f.service, edited.item, { expiresOn: null }), central, extensionNow);
+  const outside = new Date("2026-11-01T18:00:00Z");
+  const outsideCaps = await f.service.getMoraExtensionActions(created.item.id, analyst, outside);
+  assert.equal(outsideCaps.canEdit, false); assert.equal(outsideCaps.canCancel, true);
+  const cancelled = await f.service.amendMoraExceptionRequest(created.item.id, f.service.parseAnalystMoraExtensionAmendment({
+    action: "CANCEL", version: centralEdit.item.version, auditReason: "Autorización ya no requerida", idempotencyKey: randomUUID(),
+  }), analyst, outside);
+  assert.equal(cancelled.item.status, "CANCELLED");
+});
+
+test("analista no altera excepciones, pendientes, vencidas, promesas cumplidas ni solicitudes reemplazadas", async t => {
+  const f = await harness(t, { plan: extensionPlan });
+  const exception = await f.service.createMoraExceptionRequest(centralInput(f.service), central, extensionNow);
+  await assert.rejects(f.service.amendMoraExceptionRequest(exception.item.id,
+    analystAmendment(f.service, exception.item), analyst, extensionNow), { code: "FORBIDDEN" });
+  // Close the direct exception before creating a normal pending request.
+  await f.service.amendMoraExceptionRequest(exception.item.id, f.service.parseCentralMoraExceptionAmendment({
+    action: "CANCEL", version: exception.item.version, idempotencyKey: randomUUID(),
+  }), central, extensionNow);
+  const item = (await f.service.createMoraExceptionRequest(analystInput(f.service, {
+    type: "PRORROGA", expiresOn: "2026-10-20", promiseDate: "2026-10-20",
+  }), analyst, extensionNow)).item;
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id, analystAmendment(f.service, item), analyst, extensionNow), { code: "MORA_EXTENSION_NOT_EDITABLE" });
+  const approved = await f.service.actOnMoraExceptionRequest(item.id, f.service.parseMoraExceptionDecision({
+    action: "APPROVE", version: item.version, reason: "Plazo aprobado correctamente", idempotencyKey: randomUUID(),
+  }), central, extensionNow);
+  await f.database.query(`INSERT INTO "CreditoAbono" VALUES (77,200,'APROBADO',$1)`, [new Date()]);
+  // Tie payment to the actual decision timestamp; the eligibility clock is later.
+  const decided = (await f.database.query(`SELECT "decidedAt" FROM "CreditMoraExceptionRequest" WHERE "id"=$1`, [item.id])).rows[0].decidedAt;
+  await f.database.query(`UPDATE "CreditoAbono" SET "fechaAbono"=($1::timestamptz AT TIME ZONE 'UTC')`, [decided]);
+  const afterDecision = new Date(Math.max(extensionNow.getTime(), new Date(decided).getTime() + 1000));
+  const fulfilledCaps = await f.service.getMoraExtensionActions(item.id, analyst, afterDecision);
+  assert.equal(fulfilledCaps.canEdit, false); assert.equal(fulfilledCaps.canCancel, false);
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id, analystAmendment(f.service, approved.item), analyst, afterDecision), error => ["MORA_EXTENSION_NOT_EDITABLE","MORA_REQUEST_CHANGED"].includes(error.code));
+  await f.database.exec('DELETE FROM "CreditoAbono"');
+  for (const status of ["REPLACED", "CANCELLED", "EXPIRED"]) {
+    await f.database.query(`UPDATE "CreditMoraExceptionRequest" SET "status"=$2 WHERE "id"=$1`, [item.id, status]);
+    const caps = await f.service.getMoraExtensionActions(item.id, analyst, extensionNow);
+    assert.equal(caps.canEdit, false); assert.equal(caps.canCancel, false);
+    await assert.rejects(f.service.amendMoraExceptionRequest(item.id, analystAmendment(f.service, approved.item), analyst, extensionNow), { code: "MORA_REQUEST_TERMINAL" });
+  }
+  await f.database.query(`UPDATE "CreditMoraExceptionRequest" SET "status"='APPROVED',"expiresOn"='2026-10-17',"promiseDate"='2026-10-17' WHERE "id"=$1`, [item.id]);
+  assert.equal((await f.service.getMoraExtensionActions(item.id, analyst, extensionNow)).canCancel, false);
+});
+
+test("los permisos se recalculan contra el usuario activo y el parser analista rechaza finanzas y motivos vacíos", async t => {
+  const f = await harness(t, { plan: extensionPlan });
+  const item = await approvedAnalystExtension(f);
+  const centralFromDatabase = await f.service.getMoraExtensionActions(item.id, { ...central, centralAdmin: false }, extensionNow);
+  assert.equal(centralFromDatabase.centralAdmin, true); assert.equal(centralFromDatabase.maxExpiresOn, null);
+  for (const patch of [{ promiseAmount: 100 }, { creditoId: 8 }, { montoCredito: 100 }, { auditReason: "" },
+    { auditReason: undefined }, { expiresOn: null }, { promiseDate: null }, { status: "APPROVED" }])
+    assert.throws(() => analystAmendment(f.service, item, patch), { code: "INVALID_MORA_EXCEPTION" });
+  await f.database.exec(`UPDATE "Usuario" SET "activo"=FALSE WHERE "id"=2`);
+  await assert.rejects(f.service.getMoraExtensionActions(item.id, analyst, extensionNow), { code: "FORBIDDEN" });
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id, analystAmendment(f.service, item), analyst, extensionNow), { code: "FORBIDDEN" });
+  await assert.rejects(f.service.getMoraExtensionActions(item.id, { id: 3, nombre: "Ajeno", centralAdmin: true }, extensionNow), { code: "FORBIDDEN" });
+});
+
+test("cuota del 02 admite hasta el 06 y una cuota irregular no habilita edición analista", async t => {
+  const f = await harness(t);
+  const early = new Date("2026-10-03T19:00:00Z");
+  const item = (await f.service.createMoraExceptionRequest(centralInput(f.service, {
+    type: "PRORROGA", expiresOn: "2026-10-06",
+  }), central, early)).item;
+  const caps = await f.service.getMoraExtensionActions(item.id, analyst, early);
+  assert.equal(caps.canEdit, true); assert.equal(caps.maxExpiresOn, "2026-10-06");
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id,
+    analystAmendment(f.service, item, { expiresOn: "2026-10-07" }), analyst, early), { code: "EXTENSION_WINDOW_CLOSED" });
+  const edited = await f.service.amendMoraExceptionRequest(item.id,
+    analystAmendment(f.service, item, { expiresOn: "2026-10-06" }), analyst, early);
+  f.credits.get(77).plan = { ...overduePlan, installments: [{ ...overduePlan.installments[0], fechaVencimiento: "2026-10-01" }] };
+  const irregular = await f.service.getMoraExtensionActions(item.id, analyst, early);
+  assert.equal(irregular.canEdit, false); assert.equal(irregular.canCancel, true);
+  await assert.rejects(f.service.amendMoraExceptionRequest(item.id,
+    analystAmendment(f.service, edited.item, { expiresOn: "2026-10-04" }), analyst, early), { code: "MORA_EXTENSION_NOT_EDITABLE" });
+});
 
 test("central edita plazo, motivo y observación sin recrear la excepción ni alterar el crédito", async t => {
   const f = await harness(t, { plan: { estadoPago: "AL_DIA", saldoPendiente: 900, installments: [] } });

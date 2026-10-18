@@ -15,11 +15,11 @@ const dateKey = (value: Date | string | null) => value === null ? null
 
 /** Read current extensions in one batch. A management result mentioning a
  * prórroga or a legacy general exemption is not an approved extension. */
-export async function readActiveMoraExtensions(creditIds: number[], now = new Date()) {
+export async function readActiveMoraExtensions(creditIds: number[], now = new Date(), db: Pick<typeof prisma, "$queryRawUnsafe"> = prisma) {
   const ids = [...new Set(creditIds.filter(id => Number.isSafeInteger(id) && id > 0))];
   if (!ids.length) return new Map<number, MoraActiveExtension>();
   await ensureMoraExceptionRequestSchema();
-  const rows = await prisma.$queryRawUnsafe<StoredExtension[]>(`SELECT DISTINCT ON (request."creditoId")
+  const rows = await db.$queryRawUnsafe<StoredExtension[]>(`SELECT DISTINCT ON (request."creditoId")
     request."creditoId",request."id"::text,request."expiresOn",request."reason",
     request."decidedAt" AS "approvedAt",request."decidedByName" AS "approvedByName",
     request."installmentNumber",request."installmentDueDate"

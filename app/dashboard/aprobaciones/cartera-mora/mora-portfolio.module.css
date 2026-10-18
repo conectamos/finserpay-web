@@ -62,6 +62,25 @@
 .extensionBanner strong { display: block; font-size: 16px; font-weight: 700; }
 .extensionBanner p { margin: 6px 0 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .extensionBanner small { display: block; margin-top: 10px; font-size: 13px; line-height: 1.5; color: var(--fp-muted); }
+.extensionManager { min-width: 0; }
+.extensionButtons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.extensionButtons .cancelExtension { color: var(--fp-danger); }
+.extensionHelp { margin: 10px 0 0; color: var(--fp-muted); font-size: 13px; line-height: 1.5; }
+.extensionEditor { border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); padding: 16px; scroll-margin-top: 90px; }
+.extensionEditor:focus { outline: none; }
+.extensionEditor:focus-visible { outline: 2px solid var(--fp-lime); outline-offset: 3px; }
+.extensionEditor h4 { font-size: 17px; font-weight: 700; margin-bottom: 16px; }
+.extensionEditor fieldset { display: grid; gap: 16px; min-width: 0; border: 0; margin: 0; padding: 0; }
+.extensionEditor label { display: grid; gap: 8px; min-width: 0; font-size: 14px; font-weight: 600; }
+.extensionEditor textarea { resize: vertical; min-height: 80px; }
+.extensionEditor .extensionCheckbox { display: flex; flex-direction: row; align-items: center; gap: 10px; min-height: 40px; }
+.extensionCheckbox input { width: 18px; height: 18px; accent-color: var(--fp-graphite); }
+.extensionCommitment { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.extensionError { padding: 12px; margin-bottom: 16px; border-radius: var(--fp-radius-sm); background: var(--fp-danger-soft); color: var(--fp-danger); font-size: 14px; line-height: 1.5; }
+.extensionConfirmation { display: grid; gap: 14px; font-size: 14px; line-height: 1.6; }
+.extensionConfirmation > strong { font-size: 16px; }
+.extensionNotice { padding: 14px 16px; border-radius: var(--fp-radius-md); background: var(--fp-lime-soft); font-size: 14px; line-height: 1.5; }
+.extensionWarning { margin-top: 8px; padding: 10px; border-radius: var(--fp-radius-sm); background: var(--fp-amber-soft); }
 @media (max-width: 1100px) {
   .primaryFilters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .primaryFilters .search { grid-column: span 2; }
@@ -83,4 +102,6 @@
   .mobileExtension > span:last-child { font-weight: 600; }
   .detailHeading { flex-direction: column; }
   .detailHeading h3 { font-size: 20px; }
+  .extensionButtons > button { min-height: 44px; }
+  .extensionCommitment { grid-template-columns: minmax(0, 1fr); }
 }
