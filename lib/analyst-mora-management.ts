@@ -5,7 +5,7 @@ import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { assertMoraActor, type MoraActor } from "@/lib/analyst-mora-access";
 import { moraCreditSelect, moraCreditSummary, readMoraCredit } from "@/lib/analyst-mora-credit";
 import { ensureAnalystMoraSchema } from "@/lib/analyst-mora-schema";
-import { MORA_ACTIONS, MORA_MANAGEMENT_STATES, MORA_PORTFOLIO_STATES, moraResultsForAction, moraResultLabel, type MoraManagementEvent, type MoraManagementInput } from "@/lib/analyst-mora-types";
+import { CREDIT_MANAGEMENT_RESULTS, CREDIT_PORTFOLIO_STATES, MORA_ACTIONS, MORA_MANAGEMENT_STATES, MORA_PORTFOLIO_STATES, moraResultsForAction, moraResultLabel, type MoraManagementEvent, type MoraManagementInput } from "@/lib/analyst-mora-types";
 import { readActiveMoraExtensions } from "@/lib/analyst-mora-extension";
 import { colombiaDateKey } from "@/lib/colombia-date";
 
@@ -13,6 +13,12 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 const historicalManagementStates = ["PENDIENTE", "PROMESA_PAGO", "SOPORTE_RECIBIDO", "ESCALADO"];
 const maxAgreementAmount = 999999999999.99;
 export function parseMoraManagement(value: unknown, now = new Date()): MoraManagementInput {
+  return parseManagement(value, now, false);
+}
+export function parseCreditManagement(value: unknown, now = new Date()): MoraManagementInput {
+  return parseManagement(value, now, true);
+}
+function parseManagement(value: unknown, now: Date, allCredits: boolean): MoraManagementInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new CreditApprovalError("INVALID_REQUEST","Gestión inválida.");
   const body = value as Record<string,unknown>;
   const allowed = ["action","actedAt","responsibleUserId","result","agreementDate","agreementAmount","comment","nextFollowUpAt","managementStatus","idempotencyKey"];
@@ -28,7 +34,8 @@ export function parseMoraManagement(value: unknown, now = new Date()): MoraManag
     throw new CreditApprovalError("INVALID_DATE","Indica fecha y hora válidas; el seguimiento debe ser posterior a la gestión.");
   if (!MORA_ACTIONS.includes(body.action as MoraManagementInput["action"]) || !MORA_MANAGEMENT_STATES.includes(body.managementStatus as MoraManagementInput["managementStatus"]) || !Number.isSafeInteger(body.responsibleUserId) || Number(body.responsibleUserId)<1 || !uuid.test(String(body.idempotencyKey)))
     throw new CreditApprovalError("INVALID_REQUEST","Selecciona acción, estado y responsable válidos.");
-  if (!moraResultsForAction(body.action as MoraManagementInput["action"]).includes(body.result as MoraManagementInput["result"]))
+  const results = allCredits ? CREDIT_MANAGEMENT_RESULTS : moraResultsForAction(body.action as MoraManagementInput["action"]);
+  if (!results.includes(body.result as MoraManagementInput["result"]))
     throw new CreditApprovalError("INVALID_REQUEST", "Selecciona el resultado obtenido en la gestión.");
   let agreementDate: string | null = null;
   let agreementAmount: number | null = null;
@@ -70,15 +77,21 @@ export async function moraResponsibles() {
       AND UPPER(BTRIM(r."nombre")) IN ('ADMIN','ANALISTA_APROBACION') ORDER BY u."nombre",u."id"`);
 }
 export async function listMoraPortfolio(search: URLSearchParams, now = new Date()) {
+  return listPortfolio(search, now, false);
+}
+export async function listCreditPortfolio(search: URLSearchParams, now = new Date()) {
+  return listPortfolio(search, now, true);
+}
+async function listPortfolio(search: URLSearchParams, now: Date, allCredits: boolean) {
   await ensureAnalystMoraSchema();
   const q = (search.get("q") || "").trim();
   if (q.length > 100) throw new CreditApprovalError("INVALID_FILTER","Búsqueda demasiado extensa.");
-  const credits = await prisma.credito.findMany({ where: { estado: { notIn: ["ANULADO","ANULADA","CANCELADO","CANCELADA"] }, pazYSalvoEmitidoAt: null }, select: moraCreditSelect });
+  const credits = await prisma.credito.findMany({ where: allCredits ? {} : { estado: { notIn: ["ANULADO","ANULADA","CANCELADO","CANCELADA"] }, pazYSalvoEmitidoAt: null }, select: moraCreditSelect });
   const events = await prisma.$queryRawUnsafe<StoredEvent[]>(`SELECT DISTINCT ON ("creditoId") * FROM "CreditMoraManagementEvent" ORDER BY "creditoId","createdAt" DESC,"id" DESC`);
   const latest = new Map(events.map(event => [event.creditoId,eventDto(event)]));
-  const overdue = credits.map(credit => ({ ...moraCreditSummary(credit, now), ultimaGestion: latest.get(credit.id) || null })).filter(credit => credit.enMora);
-  const extensions = await readActiveMoraExtensions(overdue.map(credit => credit.id), now);
-  const summaries = overdue.map(credit => {
+  const portfolio = credits.map(credit => ({ ...moraCreditSummary(credit, now), ultimaGestion: latest.get(credit.id) || null })).filter(credit => allCredits || credit.enMora);
+  const extensions = await readActiveMoraExtensions(portfolio.filter(credit => credit.estadoCartera !== "ANULADO" && credit.estadoCartera !== "PAGADO").map(credit => credit.id), now);
+  const summaries = portfolio.map(credit => {
     const prorrogaActiva = extensions.get(credit.id) || null;
     return { ...credit, prorrogaActiva, estadoGestion: prorrogaActiva ? "PRORROGA" : credit.ultimaGestion?.managementStatus || "PENDIENTE" };
   });
@@ -94,27 +107,49 @@ export async function listMoraPortfolio(search: URLSearchParams, now = new Date(
   if (min !== null && max !== null && min > max) throw new CreditApprovalError("INVALID_FILTER", "El rango de días de mora es inválido.");
   const status = search.get("status") || "";
   if (status && !MORA_PORTFOLIO_STATES.includes(status as typeof MORA_PORTFOLIO_STATES[number]) && !historicalManagementStates.includes(status)) throw new CreditApprovalError("INVALID_FILTER","Estado inválido.");
+  const financialStatus = allCredits ? search.get("financialStatus") || "" : "";
+  if (financialStatus && !CREDIT_PORTFOLIO_STATES.includes(financialStatus as typeof CREDIT_PORTFOLIO_STATES[number])) throw new CreditApprovalError("INVALID_FILTER", "Estado de cartera inválido.");
   const follow = search.get("followUp") || "";
   if (follow && (!/^\d{4}-\d{2}-\d{2}$/.test(follow) || !Number.isFinite(Date.parse(follow+"T12:00:00Z")) || new Date(follow+"T12:00:00Z").toISOString().slice(0,10)!==follow)) throw new CreditApprovalError("INVALID_FILTER","Fecha inválida.");
-  const items = summaries.filter(credit => (!q || [credit.folio,credit.numeroCreditoVisible,credit.clienteNombre,credit.clienteDocumento,credit.imei].some(value=>value?.toLocaleLowerCase("es").includes(q.toLocaleLowerCase("es"))))
+  const filtered = summaries.filter(credit => (!q || [credit.folio,credit.numeroCreditoVisible,credit.clienteNombre,credit.clienteDocumento,credit.imei].some(value=>value?.toLocaleLowerCase("es").includes(q.toLocaleLowerCase("es"))))
     && (!ally || credit.aliadoId === ally) && (!responsible || credit.ultimaGestion?.responsibleUserId===responsible)
     && (min===null||credit.diasMora>=min) && (max===null||credit.diasMora<=max)
     && (!status || credit.estadoGestion===status)
-    && (!follow || (credit.ultimaGestion && colombiaDateKey(credit.ultimaGestion.nextFollowUpAt)===follow))).sort((a,b)=>b.diasMora-a.diasMora||a.id-b.id);
+    && (!follow || (credit.ultimaGestion && colombiaDateKey(credit.ultimaGestion.nextFollowUpAt)===follow)));
+  const counts = { total: filtered.length, enMora: 0, alDia: 0, pagados: 0, anulados: 0 };
+  for (const credit of filtered) {
+    if (credit.estadoCartera === "EN_MORA") counts.enMora++;
+    else if (credit.estadoCartera === "AL_DIA") counts.alDia++;
+    else if (credit.estadoCartera === "PAGADO") counts.pagados++;
+    else if (credit.estadoCartera === "ANULADO") counts.anulados++;
+  }
+  const items = filtered.filter(credit => !financialStatus || credit.estadoCartera === financialStatus).sort((a,b)=>b.diasMora-a.diasMora||a.id-b.id);
   const page = Number(search.get("page") || 1);
   if (!Number.isSafeInteger(page)||page<1) throw new CreditApprovalError("INVALID_FILTER","Página inválida.");
-  return { items: items.slice((page-1)*25,page*25), total: items.length, page, pageSize:25, hasMore:page*25<items.length,
+  return { items: items.slice((page-1)*25,page*25), total: items.length, page, pageSize:25, hasMore:page*25<items.length, ...(allCredits ? { counts } : {}),
     allies:[...new Map(summaries.map(item=>[item.aliadoId,{id:item.aliadoId,nombre:item.aliadoNombre}])).values()], responsibles:await moraResponsibles() };
 }
 export async function getMoraManagement(id: number, now = new Date()) {
+  return getManagement(id, now, false);
+}
+export async function getCreditManagement(id: number, now = new Date()) {
+  return getManagement(id, now, true);
+}
+async function getManagement(id: number, now: Date, allCredits: boolean) {
   await ensureAnalystMoraSchema();
-  const summary = moraCreditSummary(await readMoraCredit(id), now);
+  const summary = moraCreditSummary(await readMoraCredit(id, allCredits), now);
   const events = await prisma.$queryRawUnsafe<StoredEvent[]>(eventSql+` WHERE "creditoId"=$1 ORDER BY "createdAt" DESC,"id" DESC`,id);
-  const prorrogaActiva = (await readActiveMoraExtensions([id], now)).get(id) || null;
+  const prorrogaActiva = summary.estadoCartera === "PAGADO" || summary.estadoCartera === "ANULADO" ? null : (await readActiveMoraExtensions([id], now)).get(id) || null;
   const credit = { ...summary, prorrogaActiva, estadoGestion: prorrogaActiva ? "PRORROGA" : events[0]?.managementStatus || "PENDIENTE" };
   return { credit, history:events.map(eventDto), responsibles:await moraResponsibles() };
 }
 export async function createMoraManagement(id: number, input: MoraManagementInput, actor: MoraActor) {
+  return createManagement(id, input, actor, false);
+}
+export async function createCreditManagement(id: number, input: MoraManagementInput, actor: MoraActor) {
+  return createManagement(id, input, actor, true);
+}
+async function createManagement(id: number, input: MoraManagementInput, actor: MoraActor, allCredits: boolean) {
   if (!Number.isSafeInteger(id) || id < 1) throw new CreditApprovalError("INVALID_CREDIT", "Crédito inválido.");
   await ensureAnalystMoraSchema();
   const hash=createHash("sha256").update(JSON.stringify({id,input,actorId:actor.id})).digest("hex");
@@ -124,7 +159,8 @@ export async function createMoraManagement(id: number, input: MoraManagementInpu
     const prior=await db.$queryRawUnsafe<StoredEvent[]>(eventSql+` WHERE "idempotencyKey"=$1::uuid`,input.idempotencyKey);
     if(prior[0]) { if(prior[0].requestHash!==hash) throw new CreditApprovalError("IDEMPOTENCY_CONFLICT","Este envío ya se utilizó para otra gestión.",409); return {item:eventDto(prior[0]),unchanged:true}; }
     const credit=await db.credito.findUnique({where:{id},select:moraCreditSelect});
-    if(!credit||!moraCreditSummary(credit).enMora) throw new CreditApprovalError("NOT_OVERDUE","El crédito ya no tiene cuotas en mora.",409);
+    if (!credit) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+    if(!allCredits && !moraCreditSummary(credit).enMora) throw new CreditApprovalError("NOT_OVERDUE","El crédito ya no tiene cuotas en mora.",409);
     if (input.responsibleUserId !== verified.id) throw new CreditApprovalError("RESPONSIBLE_MISMATCH", "El responsable debe ser el usuario que inició sesión.", 403);
     const responsible=verified;
     const rows=await db.$queryRawUnsafe<StoredEvent[]>(`INSERT INTO "CreditMoraManagementEvent"

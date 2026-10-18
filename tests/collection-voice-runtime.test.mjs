@@ -10,10 +10,10 @@ const jiti=createJiti(import.meta.url);
 const policy=await jiti.import('../lib/collection-voice-policy.ts');
 const source=readFileSync(new URL('../lib/collection-voice-runtime.ts',import.meta.url),'utf8');
 const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=false,history=[],followupCompleted=false,portfolio=false,auditAttempts=[],auditContacts=[],auditOther=[]}={}) {
+function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=false,history=[],followupCompleted=false,portfolio=false,auditAttempts=[],auditContacts=[],auditOther=[],manualRequested=false,enMora=true,extension=false}={}) {
   const secret='synthetic-runtime-test-secret-00000000';
-  const state={id:'00000000-0000-4000-8000-000000000081',creditoId:81,phone:'573001234567',status:'ACCEPTED',createdAt:new Date(Date.now()-(expired?7200000:1000)),identityAttempts:0,identityVerifiedAt:verified?new Date():null,managementId:null,optOut:false};
-  const writes=[],sqlMutations=[],auditQueries=[];
+  const state={id:'00000000-0000-4000-8000-000000000081',creditoId:81,phone:'573001234567',status:'ACCEPTED',createdAt:new Date(Date.now()-(expired?7200000:1000)),identityAttempts:0,identityVerifiedAt:verified?new Date():null,managementId:null,optOut:false,manualRequested};
+  const writes=[],allCreditWrites=[],sqlMutations=[],auditQueries=[];
   const db={
     $executeRawUnsafe:async(sql,...args)=>{sqlMutations.push(sql);if(sql.includes('"identityVerifiedAt"=CURRENT_TIMESTAMP'))state.identityVerifiedAt=new Date();if(sql.includes('"managementId"=$2'))state.managementId=args[1];return 1;},
     $queryRawUnsafe:async(sql,...args)=>{
@@ -35,8 +35,10 @@ function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=f
   };
   const modules={
     'server-only':{},'node:crypto':crypto,'@/lib/prisma':{default:db},
-    '@/lib/analyst-mora-management':{getMoraManagement:async()=>({credit:{clienteNombre:'Cliente Sintetico',clienteDocumento:'100000001',clienteTelefono:ownedPhone?'573001234567':null,numeroCreditoVisible:'TEST-81',valorVencido:50000,valorUnaCuotaVencida:25000,diasMora:5,enMora:true},history}),
-      createMoraManagement:async(_id,input)=>{if(persistenceFails)throw new Error('simulated database failure');writes.push(input);return{item:{id:'00000000-0000-4000-8000-000000000082',...input}};},parseMoraManagement:v=>v,listMoraPortfolio:async()=>({items:portfolio?[{id:81}]:[],hasMore:false})},
+    '@/lib/analyst-mora-management':{getMoraManagement:async()=>({credit:{clienteNombre:'Cliente Sintetico',clienteDocumento:'100000001',clienteTelefono:ownedPhone?'573001234567':null,numeroCreditoVisible:'TEST-81',valorVencido:50000,valorUnaCuotaVencida:25000,diasMora:5,enMora,prorrogaActiva:extension?{id:'extension'}:null},history}),
+      createMoraManagement:async(_id,input)=>{if(persistenceFails)throw new Error('simulated database failure');writes.push(input);return{item:{id:'00000000-0000-4000-8000-000000000082',...input}};},
+      createCreditManagement:async(_id,input)=>{if(persistenceFails)throw new Error('simulated database failure');allCreditWrites.push(input);return{item:{id:'00000000-0000-4000-8000-000000000082',...input}};},
+      parseMoraManagement:v=>v,listMoraPortfolio:async()=>({items:portfolio?[{id:81}]:[],hasMore:false})},
     '@/lib/analyst-mora-schema':{ensureAnalystMoraSchema:async()=>{}},
     '@/lib/credit-welcome-voice-core':{matchWelcomeVoiceIdentity:(expected,provided)=>expected.document===provided.document&&expected.name===provided.name},
     '@/lib/credit-welcome-voice-document':{parseWelcomeVoiceSpokenDocument:v=>v},
@@ -45,8 +47,33 @@ function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=f
   const loaded={exports:{}};
   runInNewContext(code,{module:loaded,exports:loaded.exports,require:n=>{assert.ok(n in modules,n);return modules[n];},process:{env:{FINSERPAY_COBRANZA_API_TOKEN:secret,FINSERPAY_COBRANZA_AGENT_ID:'synthetic-agent',FINSERPAY_COBRANZA_ACTOR_ID:'51'}},Buffer,Uint8Array,URL,URLSearchParams,Date,Request,Response,AbortSignal,fetch:()=>{throw new Error('No external calls allowed in tests');}});
   const call=async(body,auth=secret)=>loaded.exports.collectionVoiceOperation(new Request('https://example.test',{method:'POST',headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:JSON.stringify({event_token:policy.collectionSessionToken(state.id,secret),...body})}));
-  return{call,state,writes,sqlMutations,auditQueries,token:policy.collectionSessionToken(state.id,secret)};
+  return{call,state,writes,allCreditWrites,sqlMutations,auditQueries,token:policy.collectionSessionToken(state.id,secret)};
 }
+
+test('cierre de llamada iniciada desde cartera conserva resultado si el crédito ya está al día',async()=>{
+  const s=setup({manualRequested:true,enMora:false});
+  const call={call_id:'synthetic-call-81',dynamic_variables:{event_token:s.token},disconnection_reason:'dial_no_answer',call_analysis:{custom_analysis_data:{}}};
+  const result=await(await s.call({action:'postcall',call})).json();
+  assert.equal(result.registrado,true);assert.equal(s.allCreditWrites.length,1);assert.equal(s.allCreditWrites[0].result,'SIN_RESPUESTA');assert.equal(s.writes.length,0);
+  const automatic=setup({enMora:false});
+  const unchanged=await(await automatic.call({action:'postcall',call:{...call,dynamic_variables:{event_token:automatic.token}}})).json();
+  assert.equal(unchanged.registrado,false);assert.equal(automatic.allCreditWrites.length,0);assert.equal(automatic.writes.length,0);
+});
+test('informe explícito de pago de una llamada manual ya iniciada se conserva aunque el abono ya figure',async()=>{
+  const s=setup({manualRequested:true,enMora:false,verified:true});
+  const result=await(await s.call({action:'register',result:'PAGO_REALIZADO',comment:'Cliente confirma que ya realizó el pago.'})).json();
+  assert.equal(result.registrado,true);assert.equal(s.allCreditWrites.length,1);assert.equal(s.allCreditWrites[0].result,'PAGO_REALIZADO');assert.equal(s.writes.length,0);
+  const agreement=setup({manualRequested:true,enMora:false,verified:true});
+  const stopped=await(await agreement.call({action:'register',result:'ACUERDO_PAGO',agreementConfirmed:'true',agreementDate:'2099-10-20',agreementAmount:'50000'})).json();
+  assert.equal(stopped.registrado,false);assert.equal(stopped.suspend,true);assert.equal(agreement.allCreditWrites.length,0);
+});
+test('una prórroga aprobada durante llamada manual suspende cobranza sin borrar el cierre',async()=>{
+  const s=setup({manualRequested:true,extension:true,ownedPhone:true});
+  const identity=await(await s.call({action:'identity',name:'Cliente Sintetico',holderConfirmed:'true'})).json();
+  assert.equal(identity.verified,true);assert.equal(identity.suspend,true);
+  const agreement=await(await s.call({action:'register',result:'ACUERDO_PAGO',agreementConfirmed:'true',agreementDate:'2099-10-20',agreementAmount:'50000'})).json();
+  assert.equal(agreement.registrado,false);assert.equal(agreement.suspend,true);assert.equal(s.allCreditWrites.length,0);
+});
 
 test('auditoría explica bloqueos sin llamadas, registros de cartera ni exponer documentos o sesiones',async()=>{
   const s=setup({portfolio:true,ownedPhone:true,auditAttempts:[{id:'held',createdAt:new Date(),status:'UNKNOWN',outcome:{pago_informado:true},managementId:null,optOut:false}],auditContacts:[{id:'contact',creditoId:81,action:'LLAMADA',actedAt:new Date(),resultCode:'LLAMADA_INCOMPLETA',comment:'Cierre del proveedor: inactivity.'}],auditOther:[{source:'Recordatorio WhatsApp',status:'ACCEPTED',at:new Date()}]});

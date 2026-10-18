@@ -12,7 +12,8 @@ function load(path, actor = deny) {
   const service = loadApprovalModule(path, {
     "next/server": { NextResponse: { json } },
     "@/lib/analyst-mora-access": { getMoraActor: actor },
-    "@/lib/analyst-mora-management": { listMoraPortfolio: hit, getMoraManagement: () => { calls++; return { credit: { prorrogaActiva: { id: "extension-current" } } }; }, createMoraManagement: hit, parseMoraManagement: hit },
+    "@/lib/analyst-mora-management": { listMoraPortfolio: hit, getMoraManagement: () => { calls++; return { credit: { prorrogaActiva: { id: "extension-current" } } }; }, createMoraManagement: hit, parseMoraManagement: hit,
+      listCreditPortfolio: hit, getCreditManagement: () => { calls++; return { credit: { prorrogaActiva: { id: "extension-current" } } }; }, createCreditManagement: hit, parseCreditManagement: hit },
     "@/lib/mora-exception-requests": { getMoraExtensionActions: async (id, currentActor) => {
       assert.equal(id, "extension-current"); assert.equal(currentActor.id, 7);
       return { canEdit: true, canCancel: true, centralAdmin: false, minExpiresOn: "2026-10-18", maxExpiresOn: "2026-10-21", editBlockedReason: null };
@@ -27,6 +28,8 @@ test("todas las rutas de cartera y soportes deniegan una sesión ajena antes de 
   const cases = [
     ["app/api/aprobaciones/cartera-mora/route.ts", ["GET"]],
     ["app/api/aprobaciones/cartera-mora/[id]/route.ts", ["GET", "POST"]],
+    ["app/api/aprobaciones/gestion-cartera/route.ts", ["GET"]],
+    ["app/api/aprobaciones/gestion-cartera/[id]/route.ts", ["GET", "POST"]],
     ["app/api/aprobaciones/soportes-mora/route.ts", ["GET", "POST"]],
     ["app/api/aprobaciones/soportes-mora/[id]/route.ts", ["GET"]],
   ];
@@ -41,20 +44,60 @@ test("todas las rutas de cartera y soportes deniegan una sesión ajena antes de 
   }
 });
 test("la cartera autenticada mantiene respuestas privadas", async () => {
-  const f = load("app/api/aprobaciones/cartera-mora/route.ts", async () => ({ id: 7, nombre: "Analista", centralAdmin: false }));
-  const response = await f.service.GET(new Request("https://finserpay.com/api/aprobaciones/cartera-mora"));
-  assert.equal(response.status, 200); assert.equal((await response.json()).ok, true); assert.equal(f.calls(), 1);
-  assert.match(response.headers.get("cache-control"), /no-store/);
+  for (const scope of ["cartera-mora", "gestion-cartera"]) {
+    const f = load(`app/api/aprobaciones/${scope}/route.ts`, async () => ({ id: 7, nombre: "Analista", centralAdmin: false }));
+    const response = await f.service.GET(new Request(`https://finserpay.com/api/aprobaciones/${scope}`));
+    assert.equal(response.status, 200); assert.equal((await response.json()).ok, true); assert.equal(f.calls(), 1);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+  }
 });
 
 test("el detalle identifica al responsable usando la sesión, nunca el último gestor", async () => {
   const actor={id:7,nombre:"Analista autenticado",centralAdmin:false};
-  const f=load("app/api/aprobaciones/cartera-mora/[id]/route.ts",async()=>actor);
-  const response=await f.service.GET(new Request("https://finserpay.com/api/aprobaciones/cartera-mora/81"),{params:Promise.resolve({id:"81"})});
-  assert.equal(response.status,200);
-  const result = await response.json();
-  assert.deepEqual(result.currentResponsible,{id:7,nombre:"Analista autenticado"});
-  assert.deepEqual(result.extensionActions,{canEdit:true,canCancel:true,centralAdmin:false,minExpiresOn:"2026-10-18",maxExpiresOn:"2026-10-21",editBlockedReason:null});
+  for (const scope of ["cartera-mora", "gestion-cartera"]) {
+    const f=load(`app/api/aprobaciones/${scope}/[id]/route.ts`,async()=>actor);
+    const response=await f.service.GET(new Request(`https://finserpay.com/api/aprobaciones/${scope}/81`),{params:Promise.resolve({id:"81"})});
+    assert.equal(response.status,200);
+    const result = await response.json();
+    assert.deepEqual(result.currentResponsible,{id:7,nombre:"Analista autenticado"});
+    assert.deepEqual(result.extensionActions,{canEdit:true,canCancel:true,centralAdmin:false,minExpiresOn:"2026-10-18",maxExpiresOn:"2026-10-21",editBlockedReason:null});
+  }
+});
+
+test("el módulo completo usa su parser y anexa el recordatorio mediante la sesión nominal sin aceptar cambios financieros", async () => {
+  const actor = { id: 7, nombre: "Analista autenticado", centralAdmin: false };
+  const now = new Date("2026-10-06T20:00:00Z");
+  const parser = loadApprovalModule("lib/analyst-mora-management.ts", {
+    "@/lib/prisma": { default: {} }, "@/lib/credit-approval-errors": approvalErrors,
+    "@/lib/analyst-mora-access": {}, "@/lib/analyst-mora-credit": {}, "@/lib/analyst-mora-schema": {},
+    "@/lib/analyst-mora-types": loadApprovalModule("lib/analyst-mora-types.ts"), "@/lib/analyst-mora-extension": {},
+    "@/lib/colombia-date": loadApprovalModule("lib/colombia-date.ts"),
+  });
+  const writes = [];
+  const route = loadApprovalModule("app/api/aprobaciones/gestion-cartera/[id]/route.ts", {
+    "next/server": { NextResponse: { json } }, "@/lib/analyst-mora-access": { getMoraActor: async () => actor },
+    "@/lib/mora-exception-requests": {},
+    "@/lib/analyst-mora-management": { parseCreditManagement: value => parser.parseCreditManagement(value, now),
+      createCreditManagement: async (id, input, realActor) => { writes.push({ id, input, realActor }); return { item: input, unchanged: false }; } },
+    "@/lib/credit-approval-http": { approvalPrivateHeaders: privateHeaders, readApprovalRequest: request => request.json(),
+      approvalErrorResponse: error => json({ ok: false, error: error.message }, { status: error.status || 400, headers: privateHeaders }) },
+  });
+  const body = { action: "MSJ_TEXTO", result: "RECORDATORIO_PAGO", managementStatus: "SEGUIMIENTO", responsibleUserId: 7,
+    actedAt: "2026-10-06T14:30:00-05:00", nextFollowUpAt: "2026-10-07T14:30:00-05:00",
+    comment: "Recordatorio enviado por el analista", idempotencyKey: randomUUID() };
+  const request = value => new Request("https://finserpay.com/api/aprobaciones/gestion-cartera/81", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value),
+  });
+  const context = { params: Promise.resolve({ id: "81" }) };
+  const invalid = await route.POST(request({ ...body, montoCredito: 1 }), context);
+  assert.equal(invalid.status, 400);
+  assert.equal(writes.length, 0);
+  const response = await route.POST(request(body), context);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("cache-control"), /private, no-store/);
+  assert.equal(writes[0].id, 81);
+  assert.equal(writes[0].input.result, "RECORDATORIO_PAGO");
+  assert.equal(writes[0].realActor, actor);
 });
 
 test("POST valida el resultado y los datos del acuerdo antes de escribir y conserva la respuesta privada", async () => {

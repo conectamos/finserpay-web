@@ -13,14 +13,15 @@ const typeModule = { exports: {} };
 runInNewContext(compile("../lib/analyst-mora-types.ts"), { module: typeModule, exports: typeModule.exports });
 
 function harness({ firstReference = "3001112233", secondReference = "3014445566", currentUserId = 17,
-  creditOverrides = {}, detailOverrides = {}, deferSave = false, listTotal = 1,
+  creditOverrides = {}, detailOverrides = {}, deferSave = false, listTotal = 1, scope = "overdue",
   extensionActions = { canEdit: true, canCancel: true, centralAdmin: false, minExpiresOn: "2026-10-09", maxExpiresOn: "2026-10-10", editBlockedReason: null } } = {}) {
   const componentNames = ["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader", "Select", "StatusPill"];
   const components = Object.fromEntries(componentNames.map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
   const MoraSupports = () => null;
   const FinserSidePanel = Object.defineProperty(() => null, "name", { value: "FinserSidePanel" });
   const MoraPortfolioExtensionActions = Object.defineProperty(() => null, "name", { value: "MoraPortfolioExtensionActions" });
-  const stubComponents = new Set([...Object.values(components), MoraSupports, FinserSidePanel, MoraPortfolioExtensionActions]);
+  const CreditCommunications = Object.defineProperty(() => null, "name", { value: "CreditCommunications" });
+  const stubComponents = new Set([...Object.values(components), MoraSupports, FinserSidePanel, MoraPortfolioExtensionActions, CreditCommunications]);
   const node = (type, props) => type === FinserSidePanel && !props.open ? null :
     typeof type === "function" && !stubComponents.has(type) ? type(props) : ({ type, props });
   const slots = [];
@@ -67,7 +68,8 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     equipo: "IPHONE 13 128GB", imei: "351168083278358", valorVencido: 150000, diasMora: 7,
     ultimoPago: "2026-09-17T15:00:00-05:00", fechaCredito: "2026-08-21", ultimaGestion: legacy,
     referenciaFamiliar1Telefono: firstReference, referenciaFamiliar2Telefono: secondReference, enMora: true,
-    prorrogaActiva: null, estadoGestion: "PROMESA_PAGO", ...creditOverrides,
+    prorrogaActiva: null, estadoGestion: "PROMESA_PAGO", estadoCartera: "EN_MORA", saldoPendiente: 1200000,
+    fechaProximoPago: "2026-10-17", ...creditOverrides,
   };
   const detailCredit = { ...credit, ...detailOverrides };
   const requests = [];
@@ -75,6 +77,7 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
   const fetchRequests = [];
   const pendingSaves = [];
   const response = payload => ({ ok: true, json: async () => payload });
+  const apiBase = scope === "all" ? "/api/aprobaciones/gestion-cartera" : "/api/aprobaciones/cartera-mora";
   const loaded = { exports: {} };
   class FixedDate extends Date {
     constructor(...values) { super(...(values.length ? values : ["2026-10-09T14:00:00Z"])); }
@@ -85,20 +88,25 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(requests.length + 1).padStart(12, "0")}` },
     fetch: async (url, options = {}) => {
       fetchRequests.push({ url, method: options.method || "GET", cache: options.cache });
-      if (url.startsWith("/api/aprobaciones/cartera-mora?")) {
+      if (url.startsWith(`${apiBase}?`)) {
         const query = new URLSearchParams(url.split("?")[1]);
         const currentPage = Number(query.get("page") || 1);
-        return response({ ok: true, items: query.get("status") === "PRORROGA" && !credit.prorrogaActiva ? [] : [{ ...credit }],
+        const excluded = (query.get("status") === "PRORROGA" && !credit.prorrogaActiva) ||
+          (query.get("financialStatus") && query.get("financialStatus") !== credit.estadoCartera);
+        return response({ ok: true, items: excluded ? [] : [{ ...credit }],
           total: listTotal, page: currentPage, pageSize: 20, hasMore: currentPage * 20 < listTotal,
+          counts: { total: listTotal, enMora: credit.estadoCartera === "EN_MORA" ? listTotal : 0,
+            alDia: credit.estadoCartera === "AL_DIA" ? listTotal : 0, pagados: credit.estadoCartera === "PAGADO" ? listTotal : 0,
+            anulados: credit.estadoCartera === "ANULADO" ? listTotal : 0 },
           allies: [{ id: 2, nombre: credit.aliadoNombre }], responsibles: [{ id: 17, nombre: "Marcos Gomez" }],
         });
       }
-      if (url === "/api/aprobaciones/cartera-mora/44" && (!options.method || options.method === "GET")) return response({
+      if (url === `${apiBase}/44` && (!options.method || options.method === "GET")) return response({
         ok: true, credit: { ...detailCredit }, currentResponsible: { id: currentUserId, nombre: "Marcos Gomez" }, history: [...savedEvents, legacy],
         extensionActions,
         responsibles: [{ id: 17, nombre: "Marcos Gomez" }, { id: 99, nombre: "Otro usuario" }],
       });
-      if (url === "/api/aprobaciones/cartera-mora/44" && options.method === "POST") {
+      if (url === `${apiBase}/44` && options.method === "POST") {
         const input = JSON.parse(options.body);
         requests.push(input);
         if (deferSave) await new Promise(resolve => pendingSaves.push(resolve));
@@ -123,6 +131,7 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
       if (name === "@/lib/analyst-mora-types") return typeModule.exports;
       if (name === "../mora-supports") return { default: MoraSupports };
       if (name === "./mora-portfolio-extension-actions") return { default: MoraPortfolioExtensionActions };
+      if (name === "../gestion-cartera/credit-communications") return { default: CreditCommunications };
       if (name.endsWith(".module.css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
@@ -134,7 +143,7 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
   const render = () => {
     let count = 0;
     do {
-      dirty = false; cursor = 0; tree = loaded.exports.default();
+      dirty = false; cursor = 0; tree = loaded.exports.default({ scope });
       effects.splice(0).forEach(callback => callback());
       if (++count > 20) throw new Error("Render did not settle");
     } while (dirty);
@@ -148,7 +157,8 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     const labelNode = nodes(form()).find(item => item.type === "label" && text(item.props.children).trim().startsWith(label));
     return nodes(labelNode).find(item => item.type === components.Input || item.type === components.Select || item.type === "textarea");
   };
-  const filterForm = () => find(item => item.type === "form" && item.props["aria-label"] === "Filtros de cartera en mora");
+  const filterForm = () => find(item => item.type === "form" && item.props["aria-label"] ===
+    (scope === "all" ? "Filtros de gestión de cartera" : "Filtros de cartera en mora"));
   const filterField = label => {
     const labelNode = nodes(filterForm()).find(item => item.type === "label" && text(item.props.children).trim().startsWith(label));
     return nodes(labelNode).find(item => item.type === components.Input || item.type === components.Select);
@@ -178,6 +188,7 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     row: () => find(item => item.type === "tr" && text(item).includes(credit.numeroCreditoVisible)),
     sidePanel: () => find(item => item.type === FinserSidePanel),
     extensionActions: () => find(item => item.type === MoraPortfolioExtensionActions),
+    communications: () => find(item => item.type === CreditCommunications),
   };
 }
 
@@ -550,4 +561,112 @@ test("cancelar la última prórroga de una página filtrada regresa a una págin
   assert.equal(ui.row(), undefined, "la prórroga cancelada deja el filtro de vigentes");
   assert.ok(ui.sidePanel(), "el detalle del crédito sigue abierto");
   assert.equal(ui.labelField("Comentario").props.value, comment);
+});
+
+const financialView = (ui, label) => ui.find(item => item.type === "button" && item.props.type === "button" &&
+  Object.hasOwn(item.props, "aria-pressed") && ui.nodeText(item).trim().startsWith(label));
+
+test("Gestión de cartera consulta todos los créditos y separa estado financiero de seguimiento", async () => {
+  const ui = harness({ scope: "all" }); ui.render(); await ui.settle();
+  assert.equal(ui.find(item => item.type === ui.components.PageHeader).props.title, "Gestión de cartera");
+  assert.ok(ui.fetchRequests.some(item => item.url === "/api/aprobaciones/gestion-cartera?page=1"));
+  assert.ok(ui.fetchRequests.every(item => !item.url.includes("/cartera-mora")), "el módulo completo no hereda el filtro de mora");
+  for (const label of ["Todos", "En mora", "Al día", "Pagados", "Anulados"]) assert.ok(financialView(ui, label), label);
+  const headings = ui.nodes(ui.find(item => item.type === "table")).filter(item => item.type === "th").map(ui.nodeText);
+  assert.ok(headings.includes("Estado de cartera")); assert.ok(headings.includes("Estado de gestión"));
+  assert.ok(ui.filterField("Estado de gestión"));
+  assert.equal(ui.communications(), undefined, "no se ofrecen envíos sin seleccionar un crédito");
+});
+
+test("pasar de mora a estar al día conserva la misma línea de tiempo y permite añadir seguimiento", async () => {
+  const ui = harness({ scope: "all" }); await ui.open();
+  const oldHistory = "Registro histórico que debe conservarse";
+  assert.match(ui.nodeText(ui.sidePanel()), new RegExp(oldHistory));
+  ui.validManagement("PAGO_REALIZADO"); await ui.save();
+  assert.equal(ui.requests.length, 1);
+  ui.setCredit({ estadoCartera: "AL_DIA", enMora: false, diasMora: 0, valorVencido: 0 });
+  ui.setDetailCredit({ estadoCartera: "AL_DIA", enMora: false, diasMora: 0, valorVencido: 0 });
+  ui.button("Actualizar").props.onClick(); await ui.settle();
+  assert.ok(ui.row(), "el crédito sigue en el listado cuando deja de estar en mora");
+  assert.match(ui.nodeText(ui.row()), /Al día/);
+  assert.doesNotMatch(ui.nodeText(ui.row()), /0 días en mora/);
+  assert.match(ui.nodeText(ui.sidePanel()), new RegExp(oldHistory));
+  assert.match(ui.nodeText(ui.sidePanel()), /Resultado guardado por el servidor/);
+  ui.validManagement("RECORDATORIO_PAGO");
+  ui.change(ui.field("mora-management-action"), "MSJ_TEXTO");
+  ui.change(ui.labelField("Comentario"), "Recordatorio de la próxima cuota, crédito ya al día");
+  await ui.save();
+  assert.equal(ui.requests.length, 2);
+  assert.equal(ui.requests[1].result, "RECORDATORIO_PAGO");
+  const history = ui.find(item => item.type === "section" && item.props["aria-labelledby"] === "mora-history-title");
+  const events = ui.nodes(history).filter(item => item.type === "li");
+  assert.equal(events.length, 3, "el registro histórico, el pago y el recordatorio permanecen juntos");
+  assert.equal(events.filter(item => ui.nodeText(item).includes(oldHistory)).length, 1);
+  assert.match(ui.nodeText(history), /Recordatorio de la próxima cuota, crédito ya al día/);
+  assert.ok(ui.fetchRequests.every(item => !item.url.includes("/cartera-mora")));
+});
+
+test("los créditos pagados y anulados siguen disponibles para consultar o registrar su historial", async () => {
+  for (const estadoCartera of ["PAGADO", "ANULADO"]) {
+    const ui = harness({ scope: "all", creditOverrides: { estadoCartera, enMora: false, diasMora: 0, valorVencido: 0, saldoPendiente: 0 } });
+    await ui.open();
+    assert.match(ui.nodeText(ui.row()), estadoCartera === "PAGADO" ? /Pagado/ : /Anulado/);
+    assert.match(ui.nodeText(ui.row()), /Historial disponible/);
+    assert.match(ui.nodeText(ui.sidePanel()), /Registro histórico que debe conservarse/);
+    ui.validManagement("PAGO_REALIZADO"); await ui.save();
+    assert.equal(ui.requests.length, 1);
+    assert.match(ui.nodeText(ui.sidePanel()), /Resultado guardado por el servidor/);
+    assert.match(ui.nodeText(ui.sidePanel()), /Registro histórico que debe conservarse/);
+  }
+});
+
+test("filtrar Al día no sustituye el estado de gestión y Todos recupera el alcance financiero", async () => {
+  const ui = harness({ scope: "all", creditOverrides: { estadoCartera: "AL_DIA", enMora: false, diasMora: 0, valorVencido: 0 } });
+  await ui.open();
+  ui.change(ui.filterField("Estado de gestión"), "SEGUIMIENTO");
+  ui.change(ui.filterField("Buscar"), "111222333");
+  ui.filterForm().props.onSubmit({ preventDefault() {} }); await ui.settle();
+  financialView(ui, "Al día").props.onClick(); await ui.settle();
+  let query = new URLSearchParams(ui.fetchRequests.filter(item => item.url.includes("gestion-cartera?")).at(-1).url.split("?")[1]);
+  assert.equal(query.get("financialStatus"), "AL_DIA"); assert.equal(query.get("status"), "SEGUIMIENTO");
+  assert.equal(query.get("q"), "111222333");
+  assert.equal(financialView(ui, "Al día").props["aria-pressed"], true);
+  financialView(ui, "Todos").props.onClick(); await ui.settle();
+  query = new URLSearchParams(ui.fetchRequests.filter(item => item.url.includes("gestion-cartera?")).at(-1).url.split("?")[1]);
+  assert.equal(query.has("financialStatus"), false);
+  assert.equal(query.get("status"), "SEGUIMIENTO");
+  assert.equal(financialView(ui, "Todos").props["aria-pressed"], true);
+});
+
+test("Recordatorio de pago está disponible en todos los créditos y conserva el contrato anterior de mora", async () => {
+  const all = harness({ scope: "all" }); await all.open();
+  assert.ok(all.options("mora-management-result").some(item => item.value === "RECORDATORIO_PAGO" && item.label === "Recordatorio de pago"));
+  all.validManagement("RECORDATORIO_PAGO"); await all.save();
+  assert.equal(all.requests[0].result, "RECORDATORIO_PAGO");
+  assert.equal(all.fetchRequests.filter(item => item.method === "POST").length, 1, "registrar una gestión no dispara una llamada ni un mensaje");
+  assert.match(all.nodeText(all.sidePanel()), /Guardar este formulario no envía una comunicación/);
+  const overdue = harness(); await overdue.open();
+  assert.equal(overdue.options("mora-management-result").some(item => item.value === "RECORDATORIO_PAGO"), false);
+  assert.equal(overdue.communications(), undefined);
+});
+
+test("iniciar comunicaciones usa el crédito seleccionado, bloquea operaciones simultáneas y conserva el borrador manual", async () => {
+  const ui = harness({ scope: "all", creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } }); await ui.open(); ui.validManagement();
+  const draft = ui.labelField("Comentario").props.value;
+  const communications = ui.communications();
+  assert.equal(communications.props.creditId, 44);
+  assert.equal(communications.props.phone, "3209998877");
+  communications.props.onBusyChange(true); ui.render();
+  assert.equal(ui.sidePanel().props.busy, true);
+  assert.equal(ui.extensionActions().props.disabled, true, "la comunicación impide editar la prórroga simultáneamente");
+  await ui.save(); assert.equal(ui.requests.length, 0);
+  ui.sidePanel().props.onClose(); ui.render(); assert.ok(ui.sidePanel());
+  ui.communications().props.onBusyChange(false); ui.render();
+  assert.equal(ui.extensionActions().props.disabled, false);
+  const loadsBefore = ui.fetchRequests.length;
+  ui.communications().props.onChanged(); await ui.settle();
+  assert.ok(ui.fetchRequests.length > loadsBefore);
+  assert.equal(ui.labelField("Comentario").props.value, draft);
+  assert.match(ui.nodeText(ui.sidePanel()), /Registro histórico que debe conservarse/);
+  assert.equal(ui.requests.length, 0, "la actualización del proveedor no guarda el borrador manual");
 });

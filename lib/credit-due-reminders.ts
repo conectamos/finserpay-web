@@ -95,6 +95,14 @@ function configuredWebhook(value: string | undefined) {
   } catch { return null; }
 }
 
+/** Shared, validated transport configuration for a selected-credit reminder. */
+export function creditDueReminderConfiguration(campaign: CreditDueReminderCampaign, env: NodeJS.ProcessEnv = process.env) {
+  const config = campaignConfig[campaign];
+  if (!config || env[config.enabledEnv] !== "true") return null;
+  const webhook = configuredWebhook(env[config.webhookEnv]);
+  return webhook ? { webhook, templateKey: config.templateKey } : null;
+}
+
 function hasDaptaExecutionError(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some(hasDaptaExecutionError);
@@ -105,7 +113,7 @@ function hasDaptaExecutionError(value: unknown): boolean {
   return Object.values(record).some(hasDaptaExecutionError);
 }
 
-async function sendOnce(
+export async function sendCreditDueReminderOnce(
   webhook: URL,
   reminder: NonNullable<ReturnType<typeof getCreditDueReminder>>,
   fetcher: typeof fetch,
@@ -246,7 +254,7 @@ export function createCreditDueReminderRunner(deps: {
             if (!released) report.summary.unknown += 1;
             continue;
           }
-          result = await sendOnce(webhook!, reminder, deps.fetcher ?? fetch);
+          result = await sendCreditDueReminderOnce(webhook!, reminder, deps.fetcher ?? fetch);
         }
         const finishedAt = now();
         // A competing restart may have expired the claim. Keep UNKNOWN conservative.

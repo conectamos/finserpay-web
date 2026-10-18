@@ -88,7 +88,7 @@ export default function AdminCentralDashboard({ adminCentral, aliadoNombre, data
         ][] : [])];
     return <div className={styles.dashboard}>
   <header className={styles.topbar}><Link href="/dashboard" aria-label="FINSER PAY, inicio" className={styles.brand}><FinserBrand dark accentPay wordmarkOnly showTagline={false}/></Link>
-   <nav aria-label="Navegación principal" className={styles.navigation}><Link className={styles.active} aria-current="page" href="/dashboard">Inicio</Link><Menu label="Operación" items={operation}/><Menu label="Cartera" items={[...(adminCentral ? [["Salud de cartera", carteraHref]] as [
+   <nav aria-label="Navegación principal" className={styles.navigation}><Link className={styles.active} aria-current="page" href="/dashboard">Inicio</Link><Menu label="Operación" items={operation}/><Menu label="Cartera" items={[...(adminCentral ? [["Salud de cartera", carteraHref], ["Gestión de cartera", "/dashboard/aprobaciones/gestion-cartera"]] as [
             string,
             string
         ][] : []), ["Detalle de mora", "/dashboard/cartera/detalle-mora"], ["Riesgo por referencia", "/dashboard/riesgo-referencia"], ["Recaudo por corte", "/dashboard/reportes/recaudo-por-corte"]]}/><Menu label="Administración" items={administration}/>{adminCentral && <Menu label="Integraciones" items={[["Integraciones", "/dashboard/integraciones"], ["Enrolamiento iPhone", "/dashboard/integraciones/enrolamiento-iphone"], ["Liberar consultas", "/dashboard/datacredito/liberaciones"], ["Historial DataCrédito", "/dashboard/datacredito"], ["Equality Zero Touch", "/dashboard/equality"]]}/>}</nav>

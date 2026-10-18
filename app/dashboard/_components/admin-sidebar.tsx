@@ -147,6 +147,7 @@ export default function AdminSidebar({
         { href: "/dashboard/aprobaciones/liberar-consulta", icon: RefreshCcw, label: "Liberar consulta" },
         { href: "/dashboard/aprobaciones/sadmin", icon: Files, label: "Creación Sadmin" },
         { href: "/dashboard/aprobaciones/excepciones-mora", icon: TriangleAlert, label: "Excepciones de mora" },
+        { href: "/dashboard/aprobaciones/gestion-cartera", icon: ClipboardList, label: "Gestión de cartera" },
         { href: "/dashboard/aprobaciones/cartera-mora", icon: PieChart, label: "Cartera en mora" },
       ],
     },
@@ -190,6 +191,7 @@ export default function AdminSidebar({
         ...(isAdminRole(rolUsuario)
           ? [{ href: "/dashboard/cartera", icon: PieChart, label: "Cartera", children: [
               { href: "/dashboard/cartera", icon: PieChart, label: "Resumen" },
+              ...(adminCentral ? [{ href: "/dashboard/aprobaciones/gestion-cartera", icon: ClipboardList, label: "Gestión de cartera" }] : []),
               { href: "/dashboard/cartera/detalle-mora", icon: BarChart3, label: "Detalle de mora" },
               { href: "/dashboard/riesgo-referencia", icon: BarChart3, label: "Riesgo por referencia" },
               { href: "/dashboard/reportes/recaudo-por-corte", icon: CalendarDays, label: "Recaudo por corte" },
