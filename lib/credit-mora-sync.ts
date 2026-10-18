@@ -27,6 +27,7 @@ import {
   getActiveMoraExceptionByCreditId,
   getActiveMoraExceptionsByCreditIds,
 } from "@/lib/mora-exception-requests";
+import { ensureMoraBlockProtectionTables, hasActiveMoraBlockProtection } from "@/lib/mora-block-protection";
 import prisma from "@/lib/prisma";
 
 const DEFAULT_SYNC_LIMIT = 500;
@@ -175,6 +176,8 @@ export type MoraSyncReport = {
 
 export type MoraSyncOptions = {
   dryRun?: boolean;
+  /** Exception management may remove a mora lock, never create one. */
+  preventNewMoraBlock?: boolean;
   exemptCreditIds?: ReadonlySet<number>;
   exemptDocuments?: ReadonlySet<string>;
   forceRemoteAudit?: boolean;
@@ -320,11 +323,25 @@ function buildUpdatedResult(
   };
 }
 
+function moraDecisionSnapshot(credit: MoraSyncCredit) {
+  return JSON.stringify(Object.keys(moraSyncCreditSelect).map(key => credit[key as keyof MoraSyncCredit]));
+}
+
+async function readCurrentMoraCredit(db: Prisma.TransactionClient, credit: MoraSyncCredit) {
+  await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
+  const latest = await db.credito.findUnique({ where: { id: credit.id }, select: moraSyncCreditSelect });
+  if (!latest) return { missing: true as const };
+  // Payments and administrative changes share this lock. Reevaluate a changed
+  // plan or device only after ending this transaction, never from a batch copy.
+  if (moraDecisionSnapshot(latest) !== moraDecisionSnapshot(credit)) return { retryCredit: latest };
+  return null;
+}
+
 export async function syncCreditMora(
   credit: MoraSyncCredit,
   options: MoraSyncOptions = {}
 ): Promise<MoraSyncResult> {
-  const today = normalizeDateInput(options.today || null);
+  const today = options.dryRun ? normalizeDateInput(options.today || null) : null;
   const plan = buildCreditPaymentPlan({
     planCapitalVigente: credit.planCapitalVigente,
     montoCredito: Number(credit.montoCredito || 0),
@@ -353,7 +370,10 @@ export async function syncCreditMora(
       ? options.exemptDocuments.has(normalizedDocument)
       : await isMoraBlockExempt(normalizedDocument, effectiveAt)
     : false;
-  const exemptFromMoraBlock = creditExempt || documentExempt;
+  if (!options.dryRun) await ensureMoraBlockProtectionTables();
+  const exemptFromMoraBlock = options.dryRun
+    ? creditExempt || documentExempt
+    : await hasActiveMoraBlockProtection(credit.id, normalizedDocument);
 
   if (credit.estado === "ANULADO") {
     return buildResult(credit, "SKIPPED", "Credito anulado.", plan);
@@ -427,20 +447,18 @@ export async function syncCreditMora(
     }
 
     try {
-      const remotePayload = await unlockEqualityDevice(credit.deviceUid);
-      const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(
-        () => null
-      );
-      const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
-      const deviceMeta = getEqualityDeviceMeta(payloadSource);
-      // The remote operation runs outside the lock. Before storing its result,
-      // recheck the exception under the same short credit lock used to cancel it.
+      let payloadSource: unknown = null;
       const updated = await prisma.$transaction(async db => {
-        await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
-        if (!documentExempt) {
-          const currentException = await getActiveMoraExceptionsByCreditIds([credit.id], effectiveAt, db);
-          if (!currentException.has(credit.id)) return null;
-        }
+        const changed = await readCurrentMoraCredit(db, credit);
+        if (changed) return changed;
+        if (!await hasActiveMoraBlockProtection(credit.id, normalizedDocument, db)) return null;
+        const operationSignal = AbortSignal.timeout(15_000);
+        const remotePayload = await unlockEqualityDevice(credit.deviceUid, { signal: operationSignal });
+        const remoteQuery = await queryEqualityDevices(credit.deviceUid, {
+          signal: AbortSignal.any([operationSignal, AbortSignal.timeout(3_000)]),
+        }).catch(() => null);
+        payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
+        const deviceMeta = getEqualityDeviceMeta(payloadSource);
         return db.credito.update({
         where: { id: credit.id },
         data: {
@@ -479,9 +497,11 @@ export async function syncCreditMora(
         });
       }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
 
-      // A cancellation or shortened expiry may have committed while Equality
-      // was responding. Reconcile from current authorizations instead of saving
-      // the stale unlocked state; this also repairs the completed remote unlock.
+      if (updated && "missing" in updated) return buildResult(credit, "SKIPPED", "Crédito no encontrado.", plan);
+      if (updated && "retryCredit" in updated) {
+        return syncCreditMora(updated.retryCredit, options);
+      }
+      // Approval, cancellation and device commands share the credit row lock.
       if (!updated) {
         return syncCreditMora(credit, { ...options, exemptCreditIds: new Set<number>(), forceRemoteAudit: true });
       }
@@ -495,16 +515,12 @@ export async function syncCreditMora(
         payloadSource
       );
     } catch (error) {
-      // A lost remote response can still mean the unlock reached the provider.
-      // If the authorization was revoked meanwhile, reconcile it as well.
-      if (!documentExempt) {
-        try {
-          const currentException = await getActiveMoraExceptionsByCreditIds([credit.id], effectiveAt);
-          if (!currentException.has(credit.id)) {
-            return syncCreditMora(credit, { ...options, exemptCreditIds: new Set<number>(), forceRemoteAudit: true });
-          }
-        } catch { /* Preserve a failed result for the automatic retry when storage is unavailable. */ }
-      }
+      // A lost provider response may still have applied the unlock.
+      try {
+        if (!await hasActiveMoraBlockProtection(credit.id, normalizedDocument)) {
+          return syncCreditMora(credit, { ...options, exemptCreditIds: new Set<number>(), forceRemoteAudit: true });
+        }
+      } catch { /* Leave a failed result for retry if storage is unavailable. */ }
       return buildResult(
         credit,
         "FAILED",
@@ -519,6 +535,10 @@ export async function syncCreditMora(
 
   if (!credit.deviceUid) {
     return buildResult(credit, "SKIPPED", "Credito sin deviceUid para bloquear.", plan);
+  }
+
+  if (isInMora && options.preventNewMoraBlock) {
+    return buildResult(credit, "SKIPPED", "La gestión no genera bloqueos. La sincronización de mora conserva sus reglas habituales.", plan);
   }
 
   if (isInMora && credit.bloqueoRobo) {
@@ -573,15 +593,19 @@ export async function syncCreditMora(
 
   const applyState = async (database: Pick<Prisma.TransactionClient, "credito">) => {
     try {
+      const operationSignal = AbortSignal.timeout(15_000);
       const remotePayload = isInMora
         ? await lockEqualityDevice(credit.deviceUid, {
+            signal: operationSignal,
             lockMsgTitle: "Pago vencido",
             lockMsgContent: buildMoraLockMessage(credit.clienteDocumento),
           })
         : credit.bloqueoRobo
           ? null
-          : await unlockEqualityDevice(credit.deviceUid);
-      const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(() => null);
+          : await unlockEqualityDevice(credit.deviceUid, { signal: operationSignal });
+      const remoteQuery = await queryEqualityDevices(credit.deviceUid, {
+        signal: AbortSignal.any([operationSignal, AbortSignal.timeout(3_000)]),
+      }).catch(() => null);
       const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
       const deviceMeta = getEqualityDeviceMeta(payloadSource);
       const updated = await database.credito.update({
@@ -644,22 +668,15 @@ export async function syncCreditMora(
     }
   };
 
-  if (!isInMora) {
-    try {
-      return await prisma.$transaction(db => applyState(db), { maxWait: 10_000, timeout: 30_000 });
-    } catch (error) {
-      return buildResult(credit, "FAILED", "No se pudo completar la sincronización de mora.", plan,
-        isEqualityApiError(error) ? error.payload : null);
-    }
-  }
-
   try {
     const serialized = await prisma.$transaction(async db => {
-      await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
-      const currentException = await getActiveMoraExceptionsByCreditIds([credit.id], effectiveAt, db);
-      if (currentException.has(credit.id)) return null;
+      const changed = await readCurrentMoraCredit(db, credit);
+      if (changed) return changed;
+      if (isInMora && await hasActiveMoraBlockProtection(credit.id, normalizedDocument, db)) return null;
       return applyState(db);
     }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+    if (serialized && "missing" in serialized) return buildResult(credit, "SKIPPED", "Crédito no encontrado.", plan);
+    if (serialized && "retryCredit" in serialized) return syncCreditMora(serialized.retryCredit, options);
     if (serialized) return serialized;
     return syncCreditMora(credit, { ...options, exemptCreditIds: new Set([credit.id]), forceRemoteAudit: true });
   } catch (error) {
@@ -682,7 +699,7 @@ export async function syncAllCreditMora(
   await ensureCreditAbonoAuditColumns();
 
   const limit = normalizeLimit(options.limit);
-  const today = normalizeDateInput(options.today || null) || new Date();
+  const today = (options.dryRun ? normalizeDateInput(options.today || null) : null) || new Date();
   const exemptDocuments = await getActiveMoraBlockExemptionDocuments(today);
   const credits = await prisma.credito.findMany({
     where: {
@@ -766,7 +783,7 @@ export async function syncCreditMoraByDocument(
     return [] as MoraSyncResult[];
   }
 
-  const today = normalizeDateInput(options.today || null) || new Date();
+  const today = (options.dryRun ? normalizeDateInput(options.today || null) : null) || new Date();
   const exemptDocuments = await getActiveMoraBlockExemptionDocuments(today);
   const credits = await prisma.credito.findMany({
     where: {

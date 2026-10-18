@@ -1,6 +1,7 @@
 export type MoraExceptionType = "EXCEPCION" | "PRORROGA";
 export type MoraExceptionStatus = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED" | "REPLACED" | "CANCELLED";
 export type MoraPromiseConditionStatus = "NOT_APPLICABLE" | "PENDING" | "FULFILLED" | "BREACHED";
+export type MoraCreditProduct = "ANDROID" | "IPHONE" | null;
 
 export type MoraExceptionRequestItem = {
   id: string;
@@ -29,7 +30,7 @@ export type MoraExceptionRequestItem = {
   createdAt: string;
   updatedAt: string;
   credit?: { folio: string; numeroSadmin: string | null; clienteNombre?: string; clienteDocumento?: string | null;
-    clienteTelefono?: string | null; equipo?: string; imei?: string | null; aliadoId?: number; aliadoNombre?: string };
+    clienteTelefono?: string | null; equipo?: string; producto?: MoraCreditProduct; imei?: string | null; aliadoId?: number; aliadoNombre?: string };
   paidTowardPromise: number;
   conditionStatus: MoraPromiseConditionStatus;
 };
@@ -45,6 +46,7 @@ export type MoraExceptionCreditSummary = {
   aliadoId: number;
   aliadoNombre: string;
   equipo: string;
+  producto: MoraCreditProduct;
   imei: string | null;
   valorVencido: number;
   diasMora: number;

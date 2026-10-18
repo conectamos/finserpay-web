@@ -29,14 +29,15 @@
 .typeFilter { width: 182px; min-height: 46px; font-size: 14px; }
 .refresh { min-height: 46px; width: 50px; padding: 10px; border-radius: 8px; }
 .tableScroll { position: relative; margin: 0; border: 0; border-radius: 10px 10px 0 0; }
-.table { width: 100%; min-width: 1110px; border-collapse: collapse; table-layout: fixed; text-align: left; }
+.table { width: 100%; min-width: 1240px; border-collapse: collapse; table-layout: fixed; text-align: left; }
 .table th { background: color-mix(in srgb, var(--fp-bg) 85%, var(--fp-surface)); color: var(--fp-muted); padding: 14px 18px; font-size: 12px; line-height: 16px; text-transform: uppercase; letter-spacing: .2px; font-weight: 700; border: 0; }
-.table th:nth-child(1) { width: 28.3%; }
-.table th:nth-child(2) { width: 13.2%; }
-.table th:nth-child(3) { width: 14.5%; }
-.table th:nth-child(4) { width: 13.8%; }
-.table th:nth-child(5) { width: 18.2%; }
-.table th:nth-child(6) { width: 12%; }
+.table th:nth-child(1) { width: 25%; }
+.table th:nth-child(2) { width: 11%; }
+.table th:nth-child(3) { width: 10%; }
+.table th:nth-child(4) { width: 13%; }
+.table th:nth-child(5) { width: 12%; }
+.table th:nth-child(6) { width: 17%; }
+.table th:nth-child(7) { width: 12%; }
 .table td { vertical-align: middle; padding: 6px 18px; font-size: 16px; line-height: 23px; border: 0; border-bottom: 1px solid var(--fp-border); overflow-wrap: anywhere; }
 .table th:last-child, .table td:last-child { padding-right: 15px; padding-left: 0; text-align: right; }
 .clientName { display: block; font-size: 16px; line-height: 23px; font-weight: 700; }
@@ -44,6 +45,9 @@
 .creditNumber { display: block; font-size: 14px; line-height: 21px; font-weight: 650; overflow-wrap: anywhere; }
 .pendingSadmin { display: block; width: fit-content; margin: 0; font-size: 11px; padding: 1px 8px; line-height: 18px; border-radius: 6px; }
 .folio { display: block; font-size: 13px; line-height: 20px; color: var(--fp-muted); overflow-wrap: anywhere; }
+.product { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; color: var(--fp-ink); font-size: 14px; line-height: 20px; font-weight: 600; }
+.product > img, .product > svg { flex-shrink: 0; width: 20px; height: 20px; object-fit: contain; }
+.productField { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-block: 4px; }
 .status { padding: 8px 16px; font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; }
 .status::before { content: ""; width: 9px; height: 9px; flex-shrink: 0; border-radius: 50%; background: currentColor; margin-right: 5px; }
 .detailButton { font-size: 14px; min-height: 46px; padding-inline: 15px; gap: 12px; white-space: nowrap; border-radius: 8px; }

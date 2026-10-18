@@ -14,9 +14,9 @@ function load(path, dependencies = {}) {
   const { outputText } = ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   });
-  const module = { exports: {} };
+  const loaded = { exports: {} };
   runInNewContext(outputText, {
-    exports: module.exports, module, Buffer, Date, Intl, Map, URLSearchParams,
+    exports: loaded.exports, module: loaded, Buffer, Date, Intl, Map, URLSearchParams,
     require(name) {
       if (name === "server-only") return {};
       if (name === "node:crypto") return { createHash, randomUUID };
@@ -24,10 +24,11 @@ function load(path, dependencies = {}) {
       return dependencies[name];
     },
   }, { filename: path });
-  return module.exports;
+  return loaded.exports;
 }
 const dates = load("lib/colombia-date.ts");
 const displayNumbers = load("lib/credit-display-number.ts");
+const products = load("lib/ally-payments-core.ts");
 const access = load("lib/analyst-mora-access.ts", {
   "@/lib/auth": {}, "@/lib/approval-shared-session": {}, "@/lib/roles": {},
   "@/lib/credit-approval-errors": { CreditApprovalError },
@@ -41,7 +42,8 @@ async function fixture(t) {
   const database = new PGlite();
   t.after(() => database.close());
   await database.exec(`
-    CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "folio" TEXT, "clienteNombre" TEXT, "clienteDocumento" TEXT);
+    CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "folio" TEXT, "clienteNombre" TEXT, "clienteDocumento" TEXT,
+      "equipoMarca" TEXT, "contratoSnapshot" JSONB);
     CREATE TABLE "CreditSadminRegistration" ("creditoId" INTEGER PRIMARY KEY REFERENCES "Credito"("id"),
       "numeroCredito" TEXT, "numeroCreditoConfirmado" BOOLEAN);
     CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY, "codigo" TEXT, "activo" BOOLEAN);
@@ -61,7 +63,9 @@ async function fixture(t) {
     const folio = `000-FC-${String(i).padStart(3, "0")}`;
     const document = i === 1 ? "00.123.456" : `000100${String(i).padStart(3, "0")}`;
     const name = i <= 3 ? `Cliente grupo ${i}` : `Persona ${i}`;
-    await database.query('INSERT INTO "Credito" VALUES ($1,$2,$3,$4)', [i, folio, name, document]);
+    const brand = i === 7 ? null : i % 2 ? "IPHONE" : "Samsung";
+    const snapshot = i === 1 ? { equipo: { plataforma: "ANDROID" }, cliente: { privado: "no exponer" } } : null;
+    await database.query('INSERT INTO "Credito" VALUES ($1,$2,$3,$4,$5,$6)', [i, folio, name, document, brand, snapshot]);
     const registration = i === 1 ? { numeroCredito: "000030000000000000000085", numeroCreditoConfirmado: true }
       : i === 2 ? { numeroCredito: "000999999", numeroCreditoConfirmado: false }
         : i === 3 ? { numeroCredito: "   ", numeroCreditoConfirmado: true } : null;
@@ -69,6 +73,7 @@ async function fixture(t) {
       [i, registration.numeroCredito, registration.numeroCreditoConfirmado]);
     credits.set(i, { id: i, folio, clienteNombre: name, clienteDocumento: document,
       clienteTelefono: "003005678901", equipo: "Equipo real", imei: "000123456789012",
+      producto: products.resolveAllyPaymentPlatform(snapshot, brand),
       aliadoId: 8, aliadoNombre: "Aliado real", registroSadmin: registration, abonos: [],
       valorCuota: 200, pazYSalvoEmitidoAt: null });
     const id = randomUUID(); ids.push(id);
@@ -101,12 +106,14 @@ async function fixture(t) {
     "@/lib/analyst-mora-management": { listMoraPortfolio: async () => ({ items: [], hasMore: false }) },
     "@/lib/analyst-mora-credit": { moraCreditSelect: {}, moraCreditSummary: credit => ({ ...credit,
       numeroCreditoVisible: displayNumbers.confirmedSadminNumber(credit.registroSadmin) || credit.folio }),
-      readMoraCredit: async id => credits.get(id) || null },
+      readMoraCredit: async id => credits.get(id) || null,
+      readMoraCreditProducts: async ids => new Map(ids.map(id => [id, credits.get(id)?.producto ?? null])) },
     "@/lib/analyst-mora-schema": { ensureAnalystMoraSchema: async () => {} },
     "@/lib/analyst-mora-support": { listMoraSupports: async input => {
       supportsReads++; return [{ id: "soporte-existente", creditoId: input.creditoId, originalName: "evidencia.pdf" }];
     } },
     "@/lib/colombia-date": dates, "@/lib/credit-display-number": displayNumbers,
+    "@/lib/ally-payments-core": products,
     "@/lib/credit-approval-errors": { CreditApprovalError },
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: () => ({ estadoPago: "MORA",
       installments: [{ numero: 1, fechaVencimiento: "2026-10-02", eliminada: false, saldoPendiente: 200 }] }) },
@@ -115,6 +122,29 @@ async function fixture(t) {
   const list = params => service.listMoraExceptionRequests(new URLSearchParams(params), analyst, now);
   return { database, credits, ids, queries, service, list, supportsReads: () => supportsReads };
 }
+
+test("cada excepción identifica el producto guardado sin exponer ni modificar el contrato", async t => {
+  const f = await fixture(t);
+  const before = (await f.database.query('SELECT * FROM "Credito" ORDER BY "id"')).rows;
+  const result = await f.list({ pageSize: "25" });
+  const byCredit = new Map(result.items.map(item => [item.creditoId, item.credit]));
+  assert.equal(byCredit.get(1).producto, "ANDROID", "la plataforma guardada prevalece sobre la marca");
+  assert.equal(byCredit.get(2).producto, "ANDROID");
+  assert.equal(byCredit.get(3).producto, "IPHONE");
+  assert.equal(byCredit.get(7).producto, null, "sin datos no se inventa producto");
+  for (const credit of byCredit.values()) {
+    assert.equal("contratoSnapshot" in credit, false);
+    assert.equal("equipoMarca" in credit, false);
+  }
+  const detail = await f.service.getMoraExceptionRequest(f.ids[0], analyst, now);
+  assert.equal(detail.credit.producto, "ANDROID");
+  assert.equal(detail.item.credit.producto, "ANDROID");
+  assert.deepEqual((await f.database.query('SELECT * FROM "Credito" ORDER BY "id"')).rows, before);
+  const listQueries = f.queries.filter(query => query.sql.includes('AS "plataforma"'));
+  assert.ok(listQueries.length > 0);
+  assert.ok(listQueries.every(query => query.sql.includes('"contratoSnapshot"->\'equipo\'->>\'plataforma\'')));
+  assert.ok(listQueries.every(query => !/credit\."contratoSnapshot"\s*[,\n]/.test(query.sql)));
+});
 
 test("búsqueda real textual por nombre, cédula, folio y Sadmin confirmado conserva ceros", async t => {
   const f = await fixture(t);

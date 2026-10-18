@@ -76,6 +76,7 @@ function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION",
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx: node, jsxs: node, Fragment: "fragment" };
       if (name === "next/link") return { default: props => node("a", props) };
+      if (name === "next/image") return { default: props => node("img", props) };
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
       if (name === "@/app/_components/finser-confirm-dialog") return { default: ConfirmDialog };

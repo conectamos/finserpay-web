@@ -34,6 +34,7 @@ function load(path, dependencies) {
 
 const dates = load("lib/colombia-date.ts", {});
 const displayNumbers = load("lib/credit-display-number.ts", {});
+const products = load("lib/ally-payments-core.ts", {});
 const access = load("lib/analyst-mora-access.ts", {
   "@/lib/auth": {},
   "@/lib/approval-shared-session": {},
@@ -55,6 +56,7 @@ function service(prisma = {}, creditLookup = () => null, listMoraPortfolio = asy
     "@/lib/analyst-mora-management": { listMoraPortfolio },
     "@/lib/analyst-mora-credit": {
       moraCreditSelect: {}, moraCreditSummary: credit => credit,
+      readMoraCreditProducts: async ids => new Map(ids.map(id => [id, creditLookup(id)?.producto ?? null])),
       readMoraCredit: async id => {
         const credit = creditLookup(id);
         if (!credit) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
@@ -65,6 +67,7 @@ function service(prisma = {}, creditLookup = () => null, listMoraPortfolio = asy
     "@/lib/analyst-mora-support": { listMoraSupports: async () => [] },
     "@/lib/colombia-date": dates,
     "@/lib/credit-display-number": displayNumbers,
+    "@/lib/ally-payments-core": products,
     "@/lib/credit-approval-errors": { CreditApprovalError },
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: credit => credit.plan || overduePlan },
     "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
@@ -75,7 +78,8 @@ async function harness(t, { plan = overduePlan, estado = "ACTIVO" } = {}) {
   const database = new PGlite();
   t.after(() => database.close());
   await database.exec(`
-    CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "folio" TEXT, "clienteNombre" TEXT, "clienteDocumento" TEXT);
+    CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "folio" TEXT, "clienteNombre" TEXT, "clienteDocumento" TEXT,
+      "equipoMarca" TEXT, "contratoSnapshot" JSONB);
     CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY, "codigo" TEXT, "activo" BOOLEAN);
     CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY, "aliadoId" INTEGER, "activa" BOOLEAN);
     CREATE TABLE "Rol" ("id" INTEGER PRIMARY KEY, "nombre" TEXT);
@@ -85,7 +89,7 @@ async function harness(t, { plan = overduePlan, estado = "ACTIVO" } = {}) {
     INSERT INTO "Sede" VALUES (1,1,TRUE),(2,2,TRUE);
     INSERT INTO "Rol" VALUES (1,'ADMIN'),(2,'ANALISTA_APROBACION');
     INSERT INTO "Usuario" VALUES (1,'Administrador vigente',1,1,TRUE),(2,'Analista vigente',2,1,TRUE),(3,'Administrador aliado',1,2,TRUE);
-    INSERT INTO "Credito" VALUES (77,'FC-77','Cliente prueba','100000077');
+    INSERT INTO "Credito" VALUES (77,'FC-77','Cliente prueba','100000077','IPHONE',NULL);
   `);
   await installMoraExceptionRequestSchema({ query: (sql, params = []) => database.query(sql, params) });
   const credits = new Map([[77, { id: 77, folio: "FC-77", clienteNombre: "Cliente prueba", clienteDocumento: "100000077",

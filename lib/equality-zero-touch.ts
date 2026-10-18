@@ -245,7 +245,24 @@ function parseTrustonicExpireTime(expireTime: unknown) {
   return Date.now() + TRUSTONIC_TOKEN_TTL_FALLBACK_MS;
 }
 
-async function getTrustonicAccessToken() {
+async function readResponseText(response: Response, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  if (!signal) return response.text();
+  // Keep the operation cancellable after headers arrive, including a stalled
+  // response body. The same signal also cancels the underlying fetch stream.
+  return new Promise<string>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    response.text().then(
+      value => { signal.removeEventListener("abort", abort); if (signal.aborted) reject(signal.reason); else resolve(value); },
+      error => { signal.removeEventListener("abort", abort); reject(error); },
+    );
+    if (signal.aborted) abort();
+  });
+}
+
+async function getTrustonicAccessToken(signal?: AbortSignal) {
+  signal?.throwIfAborted();
   if (trustonicTokenCache && trustonicTokenCache.expiresAt > Date.now()) {
     return trustonicTokenCache.token;
   }
@@ -257,9 +274,10 @@ async function getTrustonicAccessToken() {
       apiKey: getTrustonicApiKey(),
     },
     cache: "no-store",
+    signal,
   });
 
-  const text = await response.text();
+  const text = await readResponseText(response, signal);
   let parsed: unknown = null;
 
   try {
@@ -307,9 +325,11 @@ async function executeTrustonicRequest(
   options: {
     body?: Record<string, unknown>;
     method?: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
+    signal?: AbortSignal;
   } = {}
 ) {
-  const token = await getTrustonicAccessToken();
+  const token = await getTrustonicAccessToken(options.signal);
+  options.signal?.throwIfAborted();
   const tenantId = getTrustonicTenantId();
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -329,9 +349,10 @@ async function executeTrustonicRequest(
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
     cache: "no-store",
+    signal: options.signal,
   });
 
-  const text = await response.text();
+  const text = await readResponseText(response, options.signal);
   let parsed: unknown = null;
 
   try {
@@ -357,8 +378,10 @@ export async function executeEqualityService(
   options?: {
     parameters?: Record<string, unknown>;
     variant?: string;
+    signal?: AbortSignal;
   }
 ) {
+  options?.signal?.throwIfAborted();
   const payload = {
     service: {
       code,
@@ -377,9 +400,10 @@ export async function executeEqualityService(
     },
     body: JSON.stringify(payload),
     cache: "no-store",
+    signal: options?.signal,
   });
 
-  const text = await response.text();
+  const text = await readResponseText(response, options?.signal);
   let parsed: unknown = null;
 
   try {
@@ -399,9 +423,10 @@ export async function executeEqualityService(
   return parsed as EqualityServicePayload;
 }
 
-export async function queryEqualityDevices(deviceUid: string) {
+export async function queryEqualityDevices(deviceUid: string, options?: { signal?: AbortSignal }) {
   if (isTrustonicDirectConfigured()) {
     return executeTrustonicRequest("/api/v2/query/devices", {
+      signal: options?.signal,
       body: {
         deviceList: [
           {
@@ -418,7 +443,7 @@ export async function queryEqualityDevices(deviceUid: string) {
         deviceUid: normalizeEqualityDeviceUid(deviceUid),
       },
     ],
-  });
+  }, { signal: options?.signal });
 }
 
 export async function uploadEqualityInventoryDevice(deviceUid: string) {
@@ -493,10 +518,12 @@ export async function lockEqualityDevice(
     lockMsgContent?: string;
     lockMsgTitle?: string;
     lockType?: string;
+    signal?: AbortSignal;
   }
 ) {
   if (isTrustonicDirectConfigured()) {
     return executeTrustonicRequest("/api/v2/device/lock", {
+      signal: options?.signal,
       body: {
         lockList: [
           {
@@ -521,12 +548,13 @@ export async function lockEqualityDevice(
           options?.lockMsgContent || "Equipo bloqueado por falta de pago.",
       },
     ],
-  });
+  }, { signal: options?.signal });
 }
 
-export async function unlockEqualityDevice(deviceUid: string) {
+export async function unlockEqualityDevice(deviceUid: string, options?: { signal?: AbortSignal }) {
   if (isTrustonicDirectConfigured()) {
     return executeTrustonicRequest("/api/v2/device/unlock", {
+      signal: options?.signal,
       body: {
         unLockList: [
           {
@@ -543,7 +571,7 @@ export async function unlockEqualityDevice(deviceUid: string) {
         deviceUid: normalizeEqualityDeviceUid(deviceUid),
       },
     ],
-  });
+  }, { signal: options?.signal });
 }
 
 export async function releaseEqualityDevice(

@@ -167,9 +167,11 @@ test("cada escritura revalida el rol activo y el analista no puede aprobar una e
 
 const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("..", import.meta.url)) } });
 const paymentPlan = await jiti.import("../lib/credit-payment-plan.ts");
+const products = loadApprovalModule("lib/ally-payments-core.ts");
 const summary = loadApprovalModule("lib/analyst-mora-credit.ts", {
   "@/lib/prisma": { default: {} }, "@/lib/credit-payment-plan": paymentPlan, "@/lib/colombia-date": dates,
   "@/lib/credit-display-number": numbers, "@/lib/credit-approval-errors": approvalErrors,
+  "@/lib/ally-payments-core": products,
 });
 const credit = () => ({ id: 81, folio: "FC-81", clienteNombre: "Cliente", clienteDocumento: "123", clienteTelefono: "3001234567", estado: "ACTIVO",
   montoCredito: 1000000, valorCuota: 100000, plazoMeses: 10, frecuenciaPago: "QUINCENAL", fechaPrimerPago: new Date("2026-09-17T00:00:00Z"),
@@ -246,6 +248,7 @@ test("Prisma real consulta cartera y detalle con la relación SADMIN del esquema
   const creditService = loadApprovalModule("lib/analyst-mora-credit.ts", {
     "@/lib/prisma": { default: client }, "@/lib/credit-payment-plan": paymentPlan,
     "@/lib/colombia-date": dates, "@/lib/credit-display-number": numbers, "@/lib/credit-approval-errors": approvalErrors,
+    "@/lib/ally-payments-core": products,
   });
   const realSummary = value => creditService.moraCreditSummary(value, now);
   const service = management(client, { ...creditService, moraCreditSummary: realSummary });

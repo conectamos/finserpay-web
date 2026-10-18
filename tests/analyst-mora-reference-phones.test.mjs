@@ -4,6 +4,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { loadApprovalModule, approvalErrors } from "./credit-approval-test-loader.mjs";
 
 const now = new Date("2026-10-09T16:00:00Z");
+const products = loadApprovalModule("lib/ally-payments-core.ts");
 function fixture(contratoSnapshot) {
   return { id: 81, folio: "FC-81", clienteNombre: "Cliente sintético", clienteDocumento: "001234",
     clienteTelefono: "3001234567", contratoSnapshot, estado: "ACTIVO", fechaCredito: now,
@@ -20,6 +21,7 @@ function service(credit, drafts = [], draftQuery = null) {
     "@/lib/colombia-date": { colombiaDateKey: () => "2026-10-09" },
     "@/lib/credit-display-number": { confirmedSadminNumber: () => null },
     "@/lib/credit-approval-errors": approvalErrors,
+    "@/lib/ally-payments-core": products,
   }) };
 }
 
@@ -88,6 +90,37 @@ test("el listado no carga snapshots ni consulta referencias y sus cálculos se c
   assert.equal(summary.diasMora, 0);
   assert.equal(summary.enMora, false);
   assert.equal(queries.length, 0);
+});
+
+test("el detalle identifica producto canónico y la consulta por lote lee solo créditos autorizados", async t => {
+  const snapshot = { equipo: { plataforma: "ANDROID" }, cliente: { referenciasFamiliares: [
+    { telefono: "3001111111" }, { telefono: "3101111111" },
+  ] } };
+  const { api } = service({ ...fixture(snapshot), equipoMarca: "IPHONE" });
+  const detail = await api.readMoraCredit(81);
+  assert.equal(detail.producto, "ANDROID");
+  assert.equal(api.moraCreditSummary(detail, now).producto, "ANDROID");
+  assert.equal("contratoSnapshot" in detail, false);
+
+  const db = new PGlite();
+  t.after(() => db.close());
+  await db.exec(`CREATE TABLE "Credito" ("id" INT PRIMARY KEY, "contratoSnapshot" JSONB, "equipoMarca" TEXT);
+    INSERT INTO "Credito" VALUES
+      (81,'{"equipo":{"plataforma":"ANDROID"},"cliente":{"privado":"no incluir"}}','IPHONE'),
+      (82,NULL,'Apple'),(83,NULL,'Samsung'),(84,NULL,NULL),
+      (85,'{"equipo":{"plataforma":"IPHONE"}}','Samsung');`);
+  const queries = [];
+  const f = service(null, [], async (sql, params) => {
+    queries.push({ sql, params }); return (await db.query(sql, params)).rows;
+  });
+  assert.equal((await f.api.readMoraCreditProducts([])).size, 0);
+  const result = await f.api.readMoraCreditProducts([81, 82, 83, 84, 81, -1, 0, NaN, 1.5]);
+  assert.deepEqual(Array.from(result, ([id, product]) => [id, product]), [[81, "ANDROID"], [82, "IPHONE"], [83, "ANDROID"], [84, null]]);
+  assert.equal(result.has(85), false);
+  assert.equal(queries.length, 1);
+  assert.deepEqual(Array.from(queries[0].params[0]), [81, 82, 83, 84]);
+  assert.match(queries[0].sql, /WHERE "id"=ANY\(\$1::int\[\]\)/);
+  assert.doesNotMatch(queries[0].sql, /SELECT \*|"cliente"|"contratoSnapshot"\s*,/);
 });
 
 test("un crédito inválido, inexistente o anulado falla antes de consultar sus contactos", async () => {

@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     let moraSync: { ok: boolean; action: string; message: string } | null = null;
     if (result.item.status === "APPROVED") {
       try {
-        const synced = await syncCreditMoraById(result.item.creditoId, { forceRemoteAudit: true });
+        const synced = await syncCreditMoraById(result.item.creditoId, { forceRemoteAudit: true, preventNewMoraBlock: true });
         moraSync = { ok: synced.action !== "FAILED", action: synced.action, message: synced.message };
       } catch (error) {
         console.error("MORA_EXCEPTION_SYNC_FAILED", {

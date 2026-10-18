@@ -5,6 +5,8 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { confirmedSadminNumber } from "@/lib/credit-display-number";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
+import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
+import type { MoraCreditProduct } from "@/lib/mora-exception-types";
 
 export const moraCreditSelect = {
   id: true, folio: true, clienteNombre: true, clienteDocumento: true, clienteTelefono: true,
@@ -22,7 +24,9 @@ type MoraReferencePhones = {
   referenciaFamiliar2Telefono: string | null;
 };
 
-type MoraCreditSummarySource = Prisma.CreditoGetPayload<{ select: typeof moraCreditSelect }> & Partial<MoraReferencePhones>;
+type MoraCreditSummarySource = Prisma.CreditoGetPayload<{ select: typeof moraCreditSelect }> & Partial<MoraReferencePhones> & {
+  producto?: MoraCreditProduct;
+};
 export type MoraCredit = Awaited<ReturnType<typeof readMoraCredit>>;
 
 function referencePhone(value: unknown): string | null {
@@ -63,7 +67,19 @@ export async function readMoraCredit(id: number) {
   }
   const { contratoSnapshot: _snapshot, ...detail } = credit;
   void _snapshot;
-  return { ...detail, ...references };
+  return { ...detail, ...references, producto: resolveAllyPaymentPlatform(credit.contratoSnapshot, credit.equipoMarca) };
+}
+
+// Read only the product scalar for credits already authorized by the caller.
+// Search results must not load or expose signed documents or client snapshots.
+export async function readMoraCreditProducts(creditIds: number[]) {
+  const ids = [...new Set(creditIds.filter(id => Number.isSafeInteger(id) && id > 0))];
+  if (!ids.length) return new Map<number, MoraCreditProduct>();
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: number; plataforma: string | null; equipoMarca: string | null }>>(`SELECT
+    "id", "contratoSnapshot"->'equipo'->>'plataforma' AS "plataforma", "equipoMarca"
+    FROM "Credito" WHERE "id"=ANY($1::int[])`, ids);
+  return new Map(rows.map(row => [row.id,
+    resolveAllyPaymentPlatform({ equipo: { plataforma: row.plataforma } }, row.equipoMarca)]));
 }
 
 export function moraCreditSummary(credit: MoraCreditSummarySource, now = new Date()) {
@@ -80,6 +96,7 @@ export function moraCreditSummary(credit: MoraCreditSummarySource, now = new Dat
     referenciaFamiliar2Telefono: referencePhone(credit.referenciaFamiliar2Telefono),
     aliadoId: credit.sede.aliado?.id || 0, aliadoNombre: credit.sede.aliado?.nombre || "Sin aliado",
     equipo: credit.referenciaEquipo?.trim() || [credit.equipoMarca, credit.equipoModelo].filter(Boolean).join(" "),
+    producto: credit.producto === undefined ? resolveAllyPaymentPlatform(null, credit.equipoMarca) : credit.producto,
     imei: credit.imei || credit.deviceUid || null,
     valorVencido: Math.round(overdue.reduce((total, row) => total + row.saldoPendiente, 0)),
     valorUnaCuotaVencida: overdue[0] ? Math.round(overdue[0].saldoPendiente) : null,

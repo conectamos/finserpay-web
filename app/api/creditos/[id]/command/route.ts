@@ -607,33 +607,56 @@ export async function POST(
         adminMessage = "Referencia de pago actualizada";
         break;
       case "toggle-stolen-lock":
-        if (current.bloqueoRobo) {
-          remotePayload = await unlockEqualityDevice(current.deviceUid);
-          remoteQuery = await queryEqualityDevices(current.deviceUid);
-          adminMessage = "Bloqueo por robo retirado";
-        } else {
-          remotePayload = await lockEqualityDevice(current.deviceUid, {
-            lockMsgTitle: "Equipo protegido",
-            lockMsgContent: "Equipo bloqueado por reporte de robo.",
-          });
-          remoteQuery = await queryEqualityDevices(current.deviceUid);
-          adminMessage = "Bloqueo por robo aplicado";
-        }
-        break;
-      case "toggle-mora-lock":
-        if (current.bloqueoMora) {
-          remotePayload = await unlockEqualityDevice(current.deviceUid);
-          remoteQuery = await queryEqualityDevices(current.deviceUid);
-          adminMessage = "Bloqueo por mora retirado";
-        } else {
-          remotePayload = await lockEqualityDevice(current.deviceUid, {
-            lockMsgTitle: "Pago vencido",
-            lockMsgContent: buildMoraLockMessage(current.clienteDocumento),
-          });
-          remoteQuery = await queryEqualityDevices(current.deviceUid);
-          adminMessage = "Bloqueo por mora aplicado";
-        }
-        break;
+      case "toggle-mora-lock": {
+        const controlsMora = command === "toggle-mora-lock";
+        const { ensureMoraBlockProtectionTables, hasActiveMoraBlockProtection } = await import("@/lib/mora-block-protection");
+        await ensureMoraBlockProtectionTables();
+        const result = await prisma.$transaction(async db => {
+          await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, current.id);
+          const latest = await loadCredit(current.id, db);
+          if (!latest || latest.estado === "ANULADO") return { error: "Crédito no disponible para bloquear.", status: 409 as const };
+          if (controlsMora && latest.bloqueoRobo) return { error: "El bloqueo por robo se conserva. Gestiona ese bloqueo desde su acción correspondiente.", status: 409 as const };
+          if (controlsMora && !latest.bloqueoMora && await hasActiveMoraBlockProtection(latest.id, latest.clienteDocumento, db)) {
+            return { error: "El crédito tiene una excepción de mora o prórroga vigente. No se puede bloquear por mora.", status: 409 as const };
+          }
+          const blocking = controlsMora ? !latest.bloqueoMora : !latest.bloqueoRobo;
+          const nextMora = controlsMora ? blocking : latest.bloqueoMora;
+          const nextTheft = controlsMora ? latest.bloqueoRobo : blocking;
+          const operationSignal = AbortSignal.timeout(15_000);
+          const remote = blocking
+            ? await lockEqualityDevice(latest.deviceUid, { signal: operationSignal,
+                lockMsgTitle: controlsMora ? "Pago vencido" : "Equipo protegido",
+                lockMsgContent: controlsMora ? buildMoraLockMessage(latest.clienteDocumento) : "Equipo bloqueado por reporte de robo." })
+            : nextMora || nextTheft ? null : await unlockEqualityDevice(latest.deviceUid, { signal: operationSignal });
+          const query = await queryEqualityDevices(latest.deviceUid, {
+            signal: AbortSignal.any([operationSignal, AbortSignal.timeout(3_000)]),
+          }).catch(() => null);
+          const payload = query || remote || latest.equalityPayload;
+          const meta = getEqualityDeviceMeta(payload);
+          await db.credito.update({ where: { id: latest.id }, data: {
+            bloqueoMora: nextMora, bloqueoMoraAt: controlsMora ? (blocking ? new Date() : null) : latest.bloqueoMoraAt,
+            bloqueoRobo: nextTheft, bloqueoRoboAt: controlsMora ? latest.bloqueoRoboAt : (blocking ? new Date() : null),
+            estado: resolveCreditState({ bloqueoRobo: nextTheft, bloqueoMora: nextMora,
+              deliverable: meta.deliveryStatus || null, pazYSalvoEmitidoAt: latest.pazYSalvoEmitidoAt }),
+            deliverableLabel: meta.deliveryStatus?.label || latest.deliverableLabel,
+            deliverableReady: typeof meta.deliveryStatus?.ready === "boolean" ? meta.deliveryStatus.ready : latest.deliverableReady,
+            equalityState: meta.deviceState || latest.equalityState,
+            equalityService: meta.serviceDetails || latest.equalityService,
+            equalityPayload: payload && typeof payload === "object" ? payload as Prisma.InputJsonValue : undefined,
+            equalityLastCheckAt: payload ? new Date() : latest.equalityLastCheckAt,
+            observacionAdmin: observacionAdmin || latest.observacionAdmin,
+          } });
+          const updated = await loadCredit(latest.id, db);
+          return { updated, payload, blocking };
+        }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+        if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });
+        if (!result.updated) return NextResponse.json({ error: "No se pudo recargar el crédito." }, { status: 500 });
+        return NextResponse.json({ ok: true, message: controlsMora
+          ? result.blocking ? "Bloqueo por mora aplicado" : "Bloqueo por mora retirado"
+          : result.blocking ? "Bloqueo por robo aplicado" : "Bloqueo por robo retirado",
+          item: serializeCredit(result.updated, await loadPaymentSummary(current.id), admin),
+          remote: result.payload ? { payload: result.payload, ...getPayloadSummary(result.payload), ...getEqualityDeviceMeta(result.payload) } : null });
+      }
       case "update-due-date":
         if (!admin) {
           return NextResponse.json(
@@ -1046,18 +1069,9 @@ export async function POST(
       where: { id: reloaded.id },
       data: {
         estado: resolveCreditState({
-          bloqueoRobo:
-            command === "toggle-stolen-lock"
-              ? !current.bloqueoRobo
-              : command === "remove-lock"
-                ? false
-                : reloaded.bloqueoRobo,
+          bloqueoRobo: command === "remove-lock" ? false : reloaded.bloqueoRobo,
           bloqueoMora:
-            command === "toggle-mora-lock"
-              ? !current.bloqueoMora
-              : command === "remove-lock"
-                ? false
-                : reloaded.bloqueoMora,
+            command === "remove-lock" ? false : reloaded.bloqueoMora,
           deliverable: effectiveDeliveryStatus,
           pazYSalvoEmitidoAt: reloaded.pazYSalvoEmitidoAt,
         }),
@@ -1073,34 +1087,12 @@ export async function POST(
         equalityLastCheckAt: payloadSource
           ? new Date()
           : reloaded.equalityLastCheckAt,
-        bloqueoRobo:
-          command === "toggle-stolen-lock"
-            ? !current.bloqueoRobo
-            : command === "remove-lock"
-              ? false
-              : reloaded.bloqueoRobo,
-        bloqueoRoboAt:
-          command === "toggle-stolen-lock"
-            ? current.bloqueoRobo
-              ? null
-              : new Date()
-            : command === "remove-lock"
-              ? null
-              : reloaded.bloqueoRoboAt,
+        bloqueoRobo: command === "remove-lock" ? false : reloaded.bloqueoRobo,
+        bloqueoRoboAt: command === "remove-lock" ? null : reloaded.bloqueoRoboAt,
         bloqueoMora:
-          command === "toggle-mora-lock"
-            ? !current.bloqueoMora
-            : command === "remove-lock"
-              ? false
-              : reloaded.bloqueoMora,
+          command === "remove-lock" ? false : reloaded.bloqueoMora,
         bloqueoMoraAt:
-          command === "toggle-mora-lock"
-            ? current.bloqueoMora
-              ? null
-              : new Date()
-            : command === "remove-lock"
-              ? null
-              : reloaded.bloqueoMoraAt,
+          command === "remove-lock" ? null : reloaded.bloqueoMoraAt,
         observacionAdmin: observacionAdmin || reloaded.observacionAdmin,
       },
       omit: CREDIT_DELIVERY_PHOTO_OMIT,

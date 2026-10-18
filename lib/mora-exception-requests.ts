@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { assertMoraActor, type MoraActor } from "@/lib/analyst-mora-access";
-import { moraCreditSelect, moraCreditSummary, readMoraCredit } from "@/lib/analyst-mora-credit";
+import { moraCreditSelect, moraCreditSummary, readMoraCredit, readMoraCreditProducts } from "@/lib/analyst-mora-credit";
 import { ensureAnalystMoraSchema } from "@/lib/analyst-mora-schema";
 import { listMoraSupports } from "@/lib/analyst-mora-support";
 import { listMoraPortfolio } from "@/lib/analyst-mora-management";
@@ -11,6 +11,7 @@ import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureMoraExceptionRequestSchema } from "@/lib/mora-exception-schema";
 import { confirmedSadminNumber } from "@/lib/credit-display-number";
+import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import type { MoraExceptionStatus as ExceptionStatus, MoraExceptionType as ExceptionType } from "@/lib/mora-exception-types";
 
 export const MORA_EXCEPTION_TYPES = ["EXCEPCION", "PRORROGA"] as const;
@@ -85,6 +86,7 @@ type StoredRequest = {
   decisionReason: string | null; cooldownBypassed: boolean; cooldownBypassReason: string | null;
   createdAt: Date | string; updatedAt: Date | string;
   folio?: string; clienteNombre?: string; clienteDocumento?: string | null; numeroSadmin?: string | null;
+  plataforma?: string | null; equipoMarca?: string | null;
   paidTowardPromise?: number | string;
   createRequestHash?: string;
 };
@@ -296,8 +298,9 @@ const requestColumns = `r."id"::text,r."creditoId",r."type",r."status",r."versio
       AND r."decidedAt" IS NOT NULL AND payment."fechaAbono">=(r."decidedAt" AT TIME ZONE 'UTC')
       AND payment."fechaAbono"<((r."promiseDate"+1)::timestamp + interval '5 hours')),0)::double precision AS "paidTowardPromise"`;
 const requestFrom = ` FROM "CreditMoraExceptionRequest" r JOIN "Credito" credit ON credit."id"=r."creditoId"`;
-// Only the read views need the display number. Mutation/idempotency queries retain their original joins.
-const requestReadColumns = `${requestColumns},NULLIF(BTRIM(sadmin."numeroCredito"),'') AS "numeroSadmin"`;
+// Only read views need display fields. Do not fetch the full contract snapshot.
+const requestReadColumns = `${requestColumns},NULLIF(BTRIM(sadmin."numeroCredito"),'') AS "numeroSadmin",
+  credit."contratoSnapshot"->'equipo'->>'plataforma' AS "plataforma",credit."equipoMarca"`;
 const requestReadFrom = `${requestFrom} LEFT JOIN "CreditSadminRegistration" sadmin
   ON sadmin."creditoId"=credit."id" AND sadmin."numeroCreditoConfirmado"=TRUE`;
 function requestDto(row: StoredRequest, now = new Date()) {
@@ -318,6 +321,7 @@ function requestDto(row: StoredRequest, now = new Date()) {
     decisionReason: row.decisionReason, cooldownBypassed: row.cooldownBypassed,
     cooldownBypassReason: row.cooldownBypassReason, createdAt: toIso(row.createdAt), updatedAt: toIso(row.updatedAt),
     credit: row.folio ? { folio: row.folio, numeroSadmin: row.numeroSadmin || null,
+      producto: resolveAllyPaymentPlatform({ equipo: { plataforma: row.plataforma } }, row.equipoMarca),
       clienteNombre: row.clienteNombre, clienteDocumento: row.clienteDocumento } : undefined,
     paidTowardPromise: paid, conditionStatus,
   };
@@ -409,7 +413,8 @@ export async function searchMoraExceptionCredits(params: URLSearchParams, actor:
   const verified = await prisma.$transaction(db => assertMoraActor(db,actor));
   if (!verified.centralAdmin) {
     const portfolio = await listMoraPortfolio(new URLSearchParams({ q }));
-    return { items: portfolio.items, hasMore: portfolio.hasMore };
+    const products = await readMoraCreditProducts(portfolio.items.map(credit => credit.id));
+    return { items: portfolio.items.map(credit => ({ ...credit, producto: products.get(credit.id) ?? null })), hasMore: portfolio.hasMore };
   }
   if (!q) return { items: [], hasMore: false };
   const credits = await prisma.credito.findMany({
@@ -426,7 +431,9 @@ export async function searchMoraExceptionCredits(params: URLSearchParams, actor:
     },
     select: moraCreditSelect, orderBy: { createdAt: "desc" }, take: 26,
   });
-  return { items: credits.slice(0,25).map(credit => moraCreditSummary(credit,now)), hasMore: credits.length > 25 };
+  const visibleCredits = credits.slice(0,25);
+  const products = await readMoraCreditProducts(visibleCredits.map(credit => credit.id));
+  return { items: visibleCredits.map(credit => moraCreditSummary({ ...credit, producto: products.get(credit.id) ?? null },now)), hasMore: credits.length > 25 };
 }
 
 function parseCursor(value: string | null) {

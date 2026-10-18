@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import Link from "next/link";
-import { ArrowRight, ChevronLeft, ChevronRight, Plus, RefreshCw, Search } from "lucide-react";
+import Image from "next/image";
+import { ArrowRight, ChevronLeft, ChevronRight, Plus, RefreshCw, Search, Smartphone } from "lucide-react";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, Select, StatusPill } from "@/app/_components/finser-ui";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import FinserSidePanel from "@/app/_components/finser-side-panel";
@@ -26,6 +27,11 @@ function tone(status: MoraExceptionStatus) { return status === "APPROVED" ? "pos
 function expiry(value: string | null) { return value ? date(value) : "Sin vencimiento"; }
 function CreditNumber({ number }: { number?: string | null }) {
   return number ? <strong className={styles.creditNumber}>Sadmin: {number}</strong> : <Badge tone="warning" className={styles.pendingSadmin}>PENDIENTE SADMIN</Badge>;
+}
+function CreditProduct({ product }: { product?: MoraExceptionCreditSummary["producto"] }) {
+  const label = product === "IPHONE" ? "iPhone" : product === "ANDROID" ? "Android" : "Sin identificar";
+  const icon = product === "IPHONE" ? "/assets/dashboard/apple.svg" : product === "ANDROID" ? "/assets/dashboard/android.svg" : null;
+  return <span className={styles.product}>{icon ? <Image src={icon} width={20} height={20} alt="" aria-hidden="true" /> : <Smartphone size={20} aria-hidden="true" />}<span>{label}</span></span>;
 }
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...options });
@@ -260,9 +266,10 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
       </div>
       <section id="mora-results" role="tabpanel" aria-label={tabs.find(tab => tab.value === status)?.label || states[status as MoraExceptionStatus]} aria-busy={loading}>
         {loading ? <LoadingState label="Cargando solicitudes de excepción…" /> : listError ? <div className={styles.listError}><p role="alert">{listError}</p><Button variant="secondary" onClick={() => setReload(value => value + 1)}>Reintentar</Button></div> : !list?.items.length ? <EmptyState title="Sin solicitudes" description="No se encontraron solicitudes con estos filtros." /> :
-          <DataTable className={styles.tableScroll}><table className={styles.table}><thead><tr><th scope="col">Cliente / Crédito</th><th scope="col">Tipo</th><th scope="col">Estado</th><th scope="col">Vencimiento</th><th scope="col">Responsable</th><th scope="col"><span className="sr-only">Detalle</span></th></tr></thead>
+          <DataTable className={styles.tableScroll}><table className={styles.table}><thead><tr><th scope="col">Cliente / Crédito</th><th scope="col">Producto</th><th scope="col">Tipo</th><th scope="col">Estado</th><th scope="col">Vencimiento</th><th scope="col">Responsable</th><th scope="col"><span className="sr-only">Detalle</span></th></tr></thead>
             <tbody>{list.items.map(item => <tr key={item.id}>
               <td><strong className={styles.clientName}>{item.credit?.clienteNombre || "Sin nombre registrado"}</strong><span className={styles.document}>CC {identifier(item.credit?.clienteDocumento)}</span><CreditNumber number={item.credit?.numeroSadmin} /><span className={styles.folio}>Folio: {item.credit?.folio || "Sin registro"}</span></td>
+              <td><CreditProduct product={item.credit?.producto} /></td>
               <td>{item.type === "PRORROGA" ? "Prórroga" : "Excepción"}</td>
               <td><StatusPill tone={tone(item.status)} className={styles.status}>{states[item.status]}</StatusPill></td>
               <td>{expiry(item.expiresOn)}</td><td>{item.decidedByName || item.createdByName}</td>
@@ -285,9 +292,9 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
       <div className={styles.panelContent}>
         {error && <p role="alert" className={styles.error}>{error}</p>}
         <form onSubmit={loadCandidate} className={styles.candidateSearch}><Input aria-label={centralAdmin ? "Buscar crédito" : "Buscar crédito en mora"} placeholder="Cédula, crédito o IMEI" value={query} onChange={event => { setQuery(event.target.value); setCandidateSearched(false); }} maxLength={100} /><Button type="submit" variant="secondary" disabled={searching || saving || query.trim().length < 2} aria-label="Buscar crédito"><Search size={19} aria-hidden="true" /></Button></form>
-        {searching ? <LoadingState label="Buscando créditos…" /> : candidateSearched && !candidates.length ? <p role="status" className={styles.muted}>No se encontraron créditos.</p> : candidates.length > 0 && <div className={styles.candidates}>{candidates.map(item => <button key={item.id} type="button" onClick={() => { setCreditId(item.id); setError(""); }} disabled={saving} className={creditId === item.id ? styles.selectedCandidate : ""}><strong>{item.clienteNombre}</strong><span>CC {identifier(item.clienteDocumento)}</span><span>{item.numeroSadmin ? `Sadmin: ${item.numeroSadmin}` : "PENDIENTE SADMIN"}</span><span>Folio: {item.folio}</span></button>)}</div>}
+        {searching ? <LoadingState label="Buscando créditos…" /> : candidateSearched && !candidates.length ? <p role="status" className={styles.muted}>No se encontraron créditos.</p> : candidates.length > 0 && <div className={styles.candidates}>{candidates.map(item => <button key={item.id} type="button" onClick={() => { setCreditId(item.id); setError(""); }} disabled={saving} className={creditId === item.id ? styles.selectedCandidate : ""}><strong>{item.clienteNombre}</strong><CreditProduct product={item.producto} /><span>CC {identifier(item.clienteDocumento)}</span><span>{item.numeroSadmin ? `Sadmin: ${item.numeroSadmin}` : "PENDIENTE SADMIN"}</span><span>Folio: {item.folio}</span></button>)}</div>}
         {preflightLoading ? <LoadingState label={centralAdmin ? "Cargando crédito…" : "Verificando cuota y reglas…"} /> : preflight?.credit && selectedCreditLoaded && <>
-          <div className={styles.selectedCredit}><strong>{preflight.credit.clienteNombre}</strong><p>CC {identifier(preflight.credit.clienteDocumento)}</p><CreditNumber number={preflight.credit.numeroSadmin} /><p>Folio: {preflight.credit.folio}</p><p>{preflight.credit.aliadoNombre} · {preflight.credit.equipo}</p><p>IMEI: {identifier(preflight.credit.imei)}</p><p>Vencido: <strong>{money(preflight.credit.valorVencido)}</strong> · {preflight.credit.diasMora} días de mora</p></div>
+          <div className={styles.selectedCredit}><strong>{preflight.credit.clienteNombre}</strong><p>CC {identifier(preflight.credit.clienteDocumento)}</p><CreditNumber number={preflight.credit.numeroSadmin} /><p>Folio: {preflight.credit.folio}</p><div className={styles.productField}><span className={styles.muted}>Producto</span><CreditProduct product={preflight.credit.producto} /></div><p>{preflight.credit.aliadoNombre} · {preflight.credit.equipo}</p><p>IMEI: {identifier(preflight.credit.imei)}</p><p>Vencido: <strong>{money(preflight.credit.valorVencido)}</strong> · {preflight.credit.diasMora} días de mora</p></div>
           <form onSubmit={submit} className={styles.form}>
             <label>Tipo<Select value={kind} onChange={event => setKind(event.target.value as MoraExceptionType)} disabled={saving}><option value="EXCEPCION">Excepción de mora</option><option value="PRORROGA">Prórroga de pago</option></Select></label>
             {centralAdmin ? <>
@@ -319,7 +326,7 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
         {notice && <p role="status" className={styles.notice}>{notice}</p>}
         {detailLoading ? <LoadingState label="Cargando historial…" /> : detailError ? <div className={styles.listError}><p role="alert">{detailError}</p><Button variant="secondary" onClick={() => setReload(value => value + 1)}>Reintentar</Button></div> : detail && <>
           <StatusPill tone={tone(detail.item.status)}>{states[detail.item.status]}</StatusPill>
-          <section className={styles.detailIdentity}><h3>{detailCredit?.clienteNombre || "Sin nombre registrado"}</h3><p>CC {identifier(detailCredit?.clienteDocumento)}</p><p>Teléfono: {identifier(detailCredit?.clienteTelefono)}</p><CreditNumber number={detailCredit?.numeroSadmin} /><p>Folio: {detailCredit?.folio || "Sin registro"}</p><p>{detailCredit?.equipo || "Equipo sin registro"}</p><p>IMEI: {identifier(detailCredit?.imei)}</p><p>Aliado: {detailCredit?.aliadoNombre || "Sin registro"}</p></section>
+          <section className={styles.detailIdentity}><h3>{detailCredit?.clienteNombre || "Sin nombre registrado"}</h3><p>CC {identifier(detailCredit?.clienteDocumento)}</p><p>Teléfono: {identifier(detailCredit?.clienteTelefono)}</p><CreditNumber number={detailCredit?.numeroSadmin} /><p>Folio: {detailCredit?.folio || "Sin registro"}</p><div className={styles.productField}><span className={styles.muted}>Producto</span><CreditProduct product={detailCredit?.producto} /></div><p>{detailCredit?.equipo || "Equipo sin registro"}</p><p>IMEI: {identifier(detailCredit?.imei)}</p><p>Aliado: {detailCredit?.aliadoNombre || "Sin registro"}</p></section>
           <dl className={styles.details}><div><dt>Tipo</dt><dd>{detail.item.type === "PRORROGA" ? "Prórroga" : "Excepción"}</dd></div><div><dt>Vencimiento</dt><dd>{expiry(detail.item.expiresOn)}</dd></div>{detail.item.installmentNumber !== null && <div><dt>Cuota regular</dt><dd>{detail.item.installmentNumber} · {date(detail.item.installmentDueDate)}</dd></div>}{!detail.item.centralDirect && detail.item.promiseAmount !== null && <><div><dt>Compromiso</dt><dd>{money(detail.item.promiseAmount)} · {date(detail.item.promiseDate)}</dd></div><div><dt>Pago recibido</dt><dd>{money(detail.item.paidTowardPromise)}</dd></div></>}</dl>
           <section className={styles.reason}><h3>Motivo</h3><p>{detail.item.reason || "Sin nota registrada"}</p>{detail.item.observation && <><h3>Observación</h3><p>{detail.item.observation}</p></>}</section>
           <dl className={styles.details}><div><dt>Solicitada por</dt><dd>{detail.item.createdByName}</dd></div><div><dt>Solicitud</dt><dd>{date(detail.item.submittedAt || detail.item.createdAt, true)}</dd></div>{detail.item.decidedByName && <div><dt>Responsable de decisión</dt><dd>{detail.item.decidedByName}</dd></div>}{detail.item.decidedAt && <div><dt>Decisión</dt><dd>{date(detail.item.decidedAt, true)}</dd></div>}{detail.item.decisionReason && <div className={styles.fullWidth}><dt>Motivo de decisión</dt><dd>{detail.item.decisionReason}</dd></div>}</dl>

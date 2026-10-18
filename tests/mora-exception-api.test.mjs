@@ -80,7 +80,7 @@ test("APPROVE sincroniza solo el crédito después del commit y devuelve trazabi
   });
   const response = await route.PATCH({}, context);
   assert.deepEqual(events, ["commit", "sync"]);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ creditoId: 77, options: { forceRemoteAudit: true } }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ creditoId: 77, options: { forceRemoteAudit: true, preventNewMoraBlock: true } }]);
   assert.deepEqual(JSON.parse(JSON.stringify(response.body.moraSync)), { ok: true, action: "UNLOCKED", message: "Desbloqueo aplicado" });
 });
 
@@ -125,13 +125,13 @@ for (const action of ["EDIT", "CANCEL"]) {
     const events = [];
     const calls = [];
     const route = loadRoute({ action, events, affectsMora: true, syncImpl: async (creditoId, options) => {
-      events.push("sync"); calls.push({ creditoId, options }); return { action: "LOCKED", message: "Estado actualizado" };
+      events.push("sync"); calls.push({ creditoId, options }); return { action: "SKIPPED", message: "La gestión no genera bloqueos" };
     } });
     const response = await route.PATCH({}, context);
     assert.equal(response.status, 200);
     assert.equal(response.body.item.status, action === "CANCEL" ? "CANCELLED" : "APPROVED");
     assert.deepEqual(events, ["commit-amendment", "sync"]);
-    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ creditoId: 77, options: { forceRemoteAudit: true } }]);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ creditoId: 77, options: { forceRemoteAudit: true, preventNewMoraBlock: true } }]);
     assert.equal(response.body.moraSync.ok, true);
     assert.match(response.headers["Cache-Control"], /no-store/);
   });
@@ -164,7 +164,7 @@ test("CANCEL conserva la cancelación ante fallo remoto y el replay vuelve a sin
   const route = loadRoute({ action: "CANCEL", events, errors, affectsMora: true, unchanged: true, syncImpl: async () => {
     events.push("sync");
     if (++attempts === 1) throw new Error("TOKEN=secreto remoto");
-    return { action: "LOCKED", message: "Estado actualizado" };
+    return { action: "SKIPPED", message: "La gestión no genera bloqueos" };
   } });
   const first = await route.PATCH({}, context);
   assert.equal(first.status, 200);
@@ -230,7 +230,7 @@ test("POST central usa registro directo y sincroniza su crédito una vez confirm
   assert.equal(response.status, 201);
   assert.deepEqual(events, ["parse-central", "commit", "sync"]);
   assert.equal(response.body.item.status, "APPROVED");
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ creditoId: 77, options: { forceRemoteAudit: true } }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ creditoId: 77, options: { forceRemoteAudit: true, preventNewMoraBlock: true } }]);
   assert.equal(response.body.moraSync.ok, true);
   assert.match(response.headers["Cache-Control"], /no-store/);
 });

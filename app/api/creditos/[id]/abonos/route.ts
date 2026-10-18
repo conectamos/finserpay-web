@@ -25,15 +25,8 @@ import {
   getEqualityDeviceMeta,
   getPayloadSummary,
 } from "@/lib/equality-device-meta";
-import {
-  isEqualityApiError,
-  isEqualityConfigured,
-  lockEqualityDevice,
-  queryEqualityDevices,
-  unlockEqualityDevice,
-} from "@/lib/equality-zero-touch";
+import { isEqualityConfigured } from "@/lib/equality-zero-touch";
 import { ensureCreditAbonoAuditColumns } from "@/lib/credit-abono-audit";
-import { buildMoraLockMessage } from "@/lib/credit-lock-message";
 import { isAdminRole } from "@/lib/roles";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { buildCreditAccessWhere } from "@/lib/credit-route-lookup";
@@ -378,186 +371,41 @@ function serializePaymentCredit(credit: LoadedCredit) {
 }
 type PaymentPlan = NonNullable<Awaited<ReturnType<typeof loadPaymentPlan>>>;
 
-function safeEqualityPayload(payload: unknown) {
-  return payload && typeof payload === "object"
-    ? (payload as Prisma.InputJsonValue)
-    : undefined;
-}
-
 function serializeAutomationResult(result: {
   action: string;
   message: string;
   remote: unknown;
+  remoteSummary?: unknown;
 }) {
   return {
     action: result.action,
     message: result.message,
-    remote: result.remote
+    remote: result.remoteSummary ?? (result.remote
       ? {
           ...getPayloadSummary(result.remote),
           ...getEqualityDeviceMeta(result.remote),
         }
-      : null,
+      : null),
   };
 }
 
-async function syncMoraAutomation(credit: LoadedCredit, plan: PaymentPlan) {
-  const isInMora = plan.estadoPago === "MORA";
-
-  if (isAnnulledCreditState(credit.estado)) {
-    return {
-      action: "SKIPPED" as const,
-      credit,
-      message: "Credito anulado; no se sincroniza mora.",
-      remote: null as unknown,
-    };
-  }
-
-  if (credit.pazYSalvoEmitidoAt) {
-    return {
-      action: "SKIPPED" as const,
-      credit,
-      message: "Credito con paz y salvo emitido.",
-      remote: null as unknown,
-    };
-  }
-
-  if (isMassImportedCredit(credit)) {
-    return {
-      action: "SKIPPED" as const,
-      credit,
-      message: "Credito importado sin gestion de bloqueo; mora solo informativa.",
-      remote: null as unknown,
-    };
-  }
-
-  if (isInMora && credit.bloqueoRobo) {
-    return {
-      action: "SKIPPED" as const,
-      credit,
-      message: "El equipo tiene bloqueo manual por robo; no se modifica por mora.",
-      remote: null as unknown,
-    };
-  }
-
-  if (isInMora && credit.bloqueoMora) {
-    return {
-      action: "UNCHANGED" as const,
-      credit,
-      message: "El equipo ya esta bloqueado por mora.",
-      remote: null as unknown,
-    };
-  }
-
-  if (!isInMora && !credit.bloqueoMora) {
-    return {
-      action: "UNCHANGED" as const,
-      credit,
-      message: "El credito no tiene mora activa.",
-      remote: null as unknown,
-    };
-  }
-
-  if (!isEqualityConfigured()) {
-    return {
-      action: "SKIPPED" as const,
-      credit,
-      message: "Equality no esta configurado; no se pudo sincronizar el bloqueo.",
-      remote: null as unknown,
-    };
-  }
-
+async function syncMoraAutomation(credit: LoadedCredit) {
+  const skipReason = isAnnulledCreditState(credit.estado)
+    ? "Crédito anulado; no se sincroniza mora."
+    : credit.pazYSalvoEmitidoAt ? "Crédito con paz y salvo emitido."
+    : isMassImportedCredit(credit) ? "Crédito importado sin gestión de bloqueo; mora solo informativa."
+    : !isEqualityConfigured() ? "Equality no está configurado; no se pudo sincronizar el bloqueo." : null;
+  if (skipReason) return { action: "SKIPPED" as const, credit, message: skipReason, remote: null as unknown };
   try {
-    const remotePayload = isInMora
-      ? await lockEqualityDevice(credit.deviceUid, {
-          lockMsgTitle: "Pago vencido",
-          lockMsgContent: buildMoraLockMessage(credit.clienteDocumento),
-        })
-      : credit.bloqueoRobo
-        ? null
-        : await unlockEqualityDevice(credit.deviceUid);
-    const remoteQuery = await queryEqualityDevices(credit.deviceUid).catch(() => null);
-    const payloadSource = remoteQuery || remotePayload || credit.equalityPayload;
-    const deviceMeta = getEqualityDeviceMeta(payloadSource);
-
-    const updated = await prisma.credito.update({
-      where: { id: credit.id },
-      data: {
-        estado: resolveCreditState({
-          bloqueoRobo: credit.bloqueoRobo,
-          bloqueoMora: isInMora,
-          deliverable: deviceMeta.deliveryStatus || null,
-          pazYSalvoEmitidoAt: credit.pazYSalvoEmitidoAt,
-        }),
-        deliverableLabel:
-          deviceMeta.deliveryStatus?.label || credit.deliverableLabel,
-        deliverableReady:
-          typeof deviceMeta.deliveryStatus?.ready === "boolean"
-            ? deviceMeta.deliveryStatus.ready
-            : credit.deliverableReady,
-        equalityState: deviceMeta.deviceState || credit.equalityState,
-        equalityService: deviceMeta.serviceDetails || credit.equalityService,
-        equalityPayload: safeEqualityPayload(payloadSource),
-        equalityLastCheckAt: payloadSource ? new Date() : credit.equalityLastCheckAt,
-        bloqueoMora: isInMora,
-        bloqueoMoraAt: isInMora ? new Date() : null,
-      },
-      select: {
-        id: true,
-        folio: true,
-        clienteNombre: true,
-        clienteDocumento: true,
-        clienteTelefono: true,
-        contratoSnapshot: true,
-        saldoBaseFinanciado: true,
-        planCapitalVigente: true,
-        montoCredito: true,
-        cuotaInicial: true,
-        valorInteres: true,
-        valorFianza: true,
-        valorCuota: true,
-        plazoMeses: true,
-        frecuenciaPago: true,
-        fechaPrimerPago: true,
-        fechaProximoPago: true,
-        referenciaPago: true,
-        estado: true,
-        deviceUid: true,
-        deliverableLabel: true,
-        deliverableReady: true,
-        equalityState: true,
-        equalityService: true,
-        equalityPayload: true,
-        equalityLastCheckAt: true,
-        bloqueoRobo: true,
-        bloqueoRoboAt: true,
-        bloqueoMora: true,
-        bloqueoMoraAt: true,
-        pazYSalvoEmitidoAt: true,
-        observacionAdmin: true,
-        sedeId: true,
-      },
-    });
-
-    return {
-      action: isInMora ? ("LOCKED" as const) : ("UNLOCKED" as const),
-      credit: updated,
-      message: isInMora
-        ? "Bloqueo automatico por mora aplicado en Equality."
-        : "Mora pagada: desbloqueo automatico enviado a Equality.",
-      remote: payloadSource,
-    };
+    // Use the same protected, serialized path as the cron. A partial payment
+    // must not relock a credit covered by an exception or payment extension.
+    const { syncCreditMoraById } = await import("@/lib/credit-mora-sync");
+    const result = await syncCreditMoraById(credit.id);
+    return { action: result.action, credit: await loadCredit(credit.id, {}) || credit,
+      message: result.message, remote: null as unknown, remoteSummary: result.remote };
   } catch (error) {
     console.error("ERROR SINCRONIZANDO BLOQUEO POR MORA:", error);
-
-    return {
-      action: "FAILED" as const,
-      credit,
-      message: isEqualityApiError(error)
-        ? `Equality no confirmo el bloqueo automatico: ${error.message}`
-        : "No se pudo sincronizar el bloqueo automatico con Equality.",
-      remote: isEqualityApiError(error) ? error.payload : null,
-    };
+    return { action: "FAILED" as const, credit, message: "No se pudo sincronizar el estado del equipo.", remote: null as unknown };
   }
 }
 
@@ -662,7 +510,7 @@ export async function GET(
       abonos: [{ valor: plan?.totalPaid ?? summary.totalAbonado }],
     });
     const automation = plan
-      ? await syncMoraAutomation(credit, plan)
+      ? await syncMoraAutomation(credit)
       : {
           action: "UNCHANGED" as const,
           credit,
@@ -1295,7 +1143,7 @@ export async function POST(
           remote: null,
         }
       : updatedCredit && responsePlan
-        ? await syncMoraAutomation(updatedCredit, responsePlan)
+        ? await syncMoraAutomation(updatedCredit)
         : {
             action: "UNCHANGED" as const,
             credit: updatedCredit || credit,

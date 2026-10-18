@@ -6,8 +6,10 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import { installMoraExceptionRequestSchema } from "../scripts/mora-exception-requests-schema.mjs";
+import { loadApprovalModule } from "./credit-approval-test-loader.mjs";
 
 const servicePath = new URL("../lib/mora-exception-requests.ts", import.meta.url);
+const products = loadApprovalModule("lib/ally-payments-core.ts");
 
 class CreditApprovalError extends Error {
   constructor(code, message, status = 400) {
@@ -53,6 +55,7 @@ function loadService({ prisma = {}, plan, assertActor = async (_db, actor) => ac
         ? registration.numeroCredito?.trim() || null : null,
     },
     "@/lib/credit-approval-errors": { CreditApprovalError },
+    "@/lib/ally-payments-core": products,
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: () => plan },
     "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
   };
