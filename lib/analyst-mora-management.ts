@@ -5,7 +5,8 @@ import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { assertMoraActor, type MoraActor } from "@/lib/analyst-mora-access";
 import { moraCreditSelect, moraCreditSummary, readMoraCredit } from "@/lib/analyst-mora-credit";
 import { ensureAnalystMoraSchema } from "@/lib/analyst-mora-schema";
-import { MORA_ACTIONS, MORA_MANAGEMENT_STATES, moraResultsForAction, moraResultLabel, type MoraManagementEvent, type MoraManagementInput } from "@/lib/analyst-mora-types";
+import { MORA_ACTIONS, MORA_MANAGEMENT_STATES, MORA_PORTFOLIO_STATES, moraResultsForAction, moraResultLabel, type MoraManagementEvent, type MoraManagementInput } from "@/lib/analyst-mora-types";
+import { readActiveMoraExtensions } from "@/lib/analyst-mora-extension";
 import { colombiaDateKey } from "@/lib/colombia-date";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -68,14 +69,19 @@ export async function moraResponsibles() {
     WHERE u."activo"=TRUE AND s."activa"=TRUE AND a."activo"=TRUE AND UPPER(BTRIM(a."codigo"))='FINSERPAY'
       AND UPPER(BTRIM(r."nombre")) IN ('ADMIN','ANALISTA_APROBACION') ORDER BY u."nombre",u."id"`);
 }
-export async function listMoraPortfolio(search: URLSearchParams) {
+export async function listMoraPortfolio(search: URLSearchParams, now = new Date()) {
   await ensureAnalystMoraSchema();
   const q = (search.get("q") || "").trim();
   if (q.length > 100) throw new CreditApprovalError("INVALID_FILTER","Búsqueda demasiado extensa.");
   const credits = await prisma.credito.findMany({ where: { estado: { notIn: ["ANULADO","ANULADA","CANCELADO","CANCELADA"] }, pazYSalvoEmitidoAt: null }, select: moraCreditSelect });
   const events = await prisma.$queryRawUnsafe<StoredEvent[]>(`SELECT DISTINCT ON ("creditoId") * FROM "CreditMoraManagementEvent" ORDER BY "creditoId","createdAt" DESC,"id" DESC`);
   const latest = new Map(events.map(event => [event.creditoId,eventDto(event)]));
-  const summaries = credits.map(credit => ({ ...moraCreditSummary(credit), ultimaGestion: latest.get(credit.id) || null })).filter(credit => credit.enMora);
+  const overdue = credits.map(credit => ({ ...moraCreditSummary(credit, now), ultimaGestion: latest.get(credit.id) || null })).filter(credit => credit.enMora);
+  const extensions = await readActiveMoraExtensions(overdue.map(credit => credit.id), now);
+  const summaries = overdue.map(credit => {
+    const prorrogaActiva = extensions.get(credit.id) || null;
+    return { ...credit, prorrogaActiva, estadoGestion: prorrogaActiva ? "PRORROGA" : credit.ultimaGestion?.managementStatus || "PENDIENTE" };
+  });
   const idFilter = (key: string) => {
     const raw = search.get(key); if (!raw) return null;
     const result = Number(raw);
@@ -87,23 +93,25 @@ export async function listMoraPortfolio(search: URLSearchParams) {
   const min = days("minDays"), max = days("maxDays");
   if (min !== null && max !== null && min > max) throw new CreditApprovalError("INVALID_FILTER", "El rango de días de mora es inválido.");
   const status = search.get("status") || "";
-  if (status && !MORA_MANAGEMENT_STATES.includes(status as typeof MORA_MANAGEMENT_STATES[number]) && !historicalManagementStates.includes(status)) throw new CreditApprovalError("INVALID_FILTER","Estado inválido.");
+  if (status && !MORA_PORTFOLIO_STATES.includes(status as typeof MORA_PORTFOLIO_STATES[number]) && !historicalManagementStates.includes(status)) throw new CreditApprovalError("INVALID_FILTER","Estado inválido.");
   const follow = search.get("followUp") || "";
   if (follow && (!/^\d{4}-\d{2}-\d{2}$/.test(follow) || !Number.isFinite(Date.parse(follow+"T12:00:00Z")) || new Date(follow+"T12:00:00Z").toISOString().slice(0,10)!==follow)) throw new CreditApprovalError("INVALID_FILTER","Fecha inválida.");
   const items = summaries.filter(credit => (!q || [credit.folio,credit.numeroCreditoVisible,credit.clienteNombre,credit.clienteDocumento,credit.imei].some(value=>value?.toLocaleLowerCase("es").includes(q.toLocaleLowerCase("es"))))
     && (!ally || credit.aliadoId === ally) && (!responsible || credit.ultimaGestion?.responsibleUserId===responsible)
     && (min===null||credit.diasMora>=min) && (max===null||credit.diasMora<=max)
-    && (!status || (credit.ultimaGestion?.managementStatus||"PENDIENTE")===status)
+    && (!status || credit.estadoGestion===status)
     && (!follow || (credit.ultimaGestion && colombiaDateKey(credit.ultimaGestion.nextFollowUpAt)===follow))).sort((a,b)=>b.diasMora-a.diasMora||a.id-b.id);
   const page = Number(search.get("page") || 1);
   if (!Number.isSafeInteger(page)||page<1) throw new CreditApprovalError("INVALID_FILTER","Página inválida.");
   return { items: items.slice((page-1)*25,page*25), total: items.length, page, pageSize:25, hasMore:page*25<items.length,
     allies:[...new Map(summaries.map(item=>[item.aliadoId,{id:item.aliadoId,nombre:item.aliadoNombre}])).values()], responsibles:await moraResponsibles() };
 }
-export async function getMoraManagement(id: number) {
+export async function getMoraManagement(id: number, now = new Date()) {
   await ensureAnalystMoraSchema();
-  const credit = moraCreditSummary(await readMoraCredit(id));
+  const summary = moraCreditSummary(await readMoraCredit(id), now);
   const events = await prisma.$queryRawUnsafe<StoredEvent[]>(eventSql+` WHERE "creditoId"=$1 ORDER BY "createdAt" DESC,"id" DESC`,id);
+  const prorrogaActiva = (await readActiveMoraExtensions([id], now)).get(id) || null;
+  const credit = { ...summary, prorrogaActiva, estadoGestion: prorrogaActiva ? "PRORROGA" : events[0]?.managementStatus || "PENDIENTE" };
   return { credit, history:events.map(eventDto), responsibles:await moraResponsibles() };
 }
 export async function createMoraManagement(id: number, input: MoraManagementInput, actor: MoraActor) {

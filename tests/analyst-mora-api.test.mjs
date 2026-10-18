@@ -58,6 +58,7 @@ test("POST valida el resultado y los datos del acuerdo antes de escribir y conse
     "@/lib/prisma": { default: {} }, "@/lib/credit-approval-errors": approvalErrors,
     "@/lib/analyst-mora-access": {}, "@/lib/analyst-mora-credit": {}, "@/lib/analyst-mora-schema": {},
     "@/lib/analyst-mora-types": loadApprovalModule("lib/analyst-mora-types.ts"),
+    "@/lib/analyst-mora-extension": {},
     "@/lib/colombia-date": loadApprovalModule("lib/colombia-date.ts"),
   });
   const writes = [];

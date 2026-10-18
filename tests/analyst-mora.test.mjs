@@ -24,6 +24,7 @@ function management(prisma = {}, credit = {}) {
     "@/lib/analyst-mora-credit": { moraCreditSelect: {}, moraCreditSummary: value => value, ...credit },
     "@/lib/analyst-mora-schema": { ensureAnalystMoraSchema: async () => {} },
     "@/lib/analyst-mora-types": types, "@/lib/colombia-date": dates,
+    "@/lib/analyst-mora-extension": { readActiveMoraExtensions: async () => new Map() },
   });
 }
 test("la gestión exige acción, responsable, resultado, comentario y seguimiento posterior con zona horaria", () => {

@@ -11,15 +11,19 @@ test("Cartera en mora usa el guard compartido y permanece bajo Aprobaciones", ()
   assert.match(page, /<MoraPortfolioClient \/>/);
 });
 
-test("la cartera envía todos los filtros y muestra todas las columnas operativas", () => {
+test("la cartera conserva filtros y datos operativos dentro de la vista agrupada", () => {
   const source = read("app/dashboard/aprobaciones/cartera-mora/mora-portfolio-client.tsx");
   for (const filter of ["q", "ally", "responsible", "minDays", "maxDays", "status", "followUp"]) {
     assert.match(source, new RegExp(`${filter}: ""`));
   }
   assert.match(source, /\/api\/aprobaciones\/cartera-mora\?\$\{params\.toString\(\)\}/);
-  for (const column of ["Número", "Cliente", "Cédula", "Aliado", "Equipo", "IMEI", "Valor vencido", "Días en mora", "Último pago", "Última gestión", "Responsable", "Resultado", "Próxima gestión", "Estado", "Acciones"]) {
-    assert.match(source, new RegExp(`>${column}<`));
+  for (const label of ["Cliente", "Cédula", "Aliado", "Equipo", "IMEI", "Valor vencido", "Último pago", "Última gestión", "Responsable", "Resultado", "Próxima gestión", "Estado"]) {
+    assert.ok(source.toLowerCase().includes(label.toLowerCase()), `falta ${label}`);
   }
+  assert.match(source, /FinserSidePanel/);
+  assert.doesNotMatch(source, /min-w-\[126rem\]/, "el detalle no debe reducir una tabla de quince columnas dentro de la página");
+  assert.match(source, /MORA_PORTFOLIO_STATES/);
+  assert.match(source, /prorrogaActiva/);
 });
 
 test("la gestión exige datos completos y agrega eventos sin reemplazar el historial", () => {
