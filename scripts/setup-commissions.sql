@@ -2,6 +2,23 @@
 -- Additive commission tables; no credit/customer/payment rows are modified.
 BEGIN;
 SELECT pg_advisory_xact_lock(721041, 0);
+-- Reserve every relation touched by the trigger/index refresh before its DDL.
+-- Live credit writes take Credito before CommissionCreditSource; the UI may read
+-- CommissionPayment before Credito. NOWAIT aborts rather than waiting while
+-- holding half that lock set. The installer rolls back and retries contention.
+LOCK TABLE "Credito" IN ACCESS EXCLUSIVE MODE NOWAIT;
+DO $commission_schema_locks$
+DECLARE commission_relation text;
+BEGIN
+  FOREACH commission_relation IN ARRAY ARRAY[
+    'CommissionPeriod','CommissionRequest','CommissionPayment','CommissionAudit','CommissionCreditSource'
+  ] LOOP
+    IF to_regclass(format('public.%I', commission_relation)) IS NOT NULL THEN
+      EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE NOWAIT', commission_relation);
+    END IF;
+  END LOOP;
+END;
+$commission_schema_locks$;
 CREATE TABLE IF NOT EXISTS "CommissionPeriod" (
   "sellerId" integer NOT NULL REFERENCES "Vendedor"(id),
   "period" varchar(7) NOT NULL CHECK ("period" ~ '^20[0-9]{2}-(0[1-9]|1[0-2])$' AND "period" >= '2026-10'),
