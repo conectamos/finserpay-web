@@ -194,9 +194,9 @@ test("si cambia el conteo antes de generar se informa fallo y nunca se publican 
 test("la auditoría conserva filtros y cantidad, redacta búsquedas de clientes y errores internos", async (t) => {
   const f = await fixture(t);
   const selected = { period: "month", month: "2026-10", q: "001.234.567", aliadoIds: [1], sedeIds: [10, 11] };
-  const job = await f.ready(central, selected, 2);
+  const job = await f.ready(central, selected, 3);
   const logs = (await f.pg.query(`SELECT * FROM "SolicitudExportAudit" WHERE "jobId"=$1::uuid`, [job.id])).rows;
-  assert.ok(logs.every(log => log.filters.searchApplied === true && log.count === 2));
+  assert.ok(logs.every(log => log.filters.searchApplied === true && log.count === 3));
   assert.ok(logs.every(log => log.filters.month === "2026-10" && log.filters.sedeIds.join() === "10,11"));
   assert.doesNotMatch(JSON.stringify(logs), /001\.234\.567|Ana Cliente|uno@example/);
   const failure = await f.store.create(central, all, 8);
@@ -239,8 +239,8 @@ test("un archivo próximo a vencer conserva los fragmentos durante la descarga y
 
 test("exportación grande recorre lotes completos y el periodo vacío sigue generando un Excel válido", async (t) => {
   const f = await fixture(t);
-  await f.pg.exec(`INSERT INTO "Credito" (id,"sedeId","vendedorId",folio,"createdAt",estado,"clienteNombre","clienteDocumento")
-    SELECT n,10,100,'L-' || n,'2025-01-15'::timestamp,'GENERADO','Lote','000001' FROM generate_series(1000,4004) n`);
+  await f.pg.exec(`INSERT INTO "Credito" (id,"sedeId","vendedorId",folio,"createdAt","fechaCredito",estado,"clienteNombre","clienteDocumento")
+    SELECT n,10,100,'L-' || n,'2025-01-15'::timestamp,'2025-01-15'::timestamp,'GENERADO','Lote','000001' FROM generate_series(1000,4004) n`);
   const large = await f.ready(ally, { period: "month", month: "2025-01" }, 3005);
   assert.equal(large.processed, 3005);
   const workbook = await readWorkbook(await f.store.download(ally, large.id));

@@ -10,7 +10,7 @@ const jiti = createJiti(import.meta.url);
 const { writeSolicitudExportWorkbook } = await jiti.import("../lib/solicitudes-export-excel.ts");
 
 const sample = {
-  solicitudNumero: "SOL-001", createdAt: "2026-10-13T02:30:00.000Z", estado: "En estudio",
+  solicitudNumero: "SOL-001", createdAt: "2026-10-13T15:30:00.000Z", operationAt: "2026-10-17T14:30:00.000Z", estado: "En estudio",
   numeroCredito: "0000000123456789012345", numeroSadmin: "00000098765",
   nombreCompleto: "María Pérez & Hijos", tipoDocumento: "CC", numeroDocumento: "00.123.456",
   celular: "003001234567", correo: "correo@example.test", departamento: "Antioquia", ciudad: "Medellín",
@@ -48,7 +48,7 @@ test("exporta las 26 columnas permitidas, identificadores literales, COP numéri
   assert.equal(sheet.rowCount, 2);
   assert.equal(sheet.columnCount, 26);
   assert.deepEqual(sheet.getRow(1).values.slice(1), [
-    "Número de solicitud", "Fecha de creación (Bogotá)", "Estado", "Número de crédito", "Número de Sadmin",
+    "Número de solicitud", "Fecha de operación (Bogotá)", "Estado", "Número de crédito", "Número de Sadmin",
     "Nombres y apellidos completos", "Tipo de documento", "Número de documento", "Celular", "Correo",
     "Departamento", "Ciudad", "Dirección", "Aliado", "Sede", "Vendedor", "Marca del equipo", "Referencia del equipo",
     "IMEI", "Valor del equipo", "Inicial", "Valor financiado", "Número de cuotas", "Valor de cuota", "Frecuencia", "Primer pago",
@@ -73,7 +73,7 @@ test("exporta las 26 columnas permitidas, identificadores literales, COP numéri
   assert.equal(sheet.getCell("W2").value, 12);
   assert.equal(sheet.getCell("W2").type, ExcelJS.ValueType.Number);
   assert.equal(sheet.getCell("B2").type, ExcelJS.ValueType.Date);
-  assert.equal(sheet.getCell("B2").value.toISOString(), "2026-10-12T21:30:00.000Z");
+  assert.equal(sheet.getCell("B2").value.toISOString(), "2026-10-17T09:30:00.000Z");
   assert.equal(sheet.getCell("Z2").value.toISOString(), "2026-11-15T00:00:00.000Z");
   assert.equal(sheet.autoFilter, "A1:Z2");
   assert.equal(sheet.views[0].state, "frozen");
@@ -87,7 +87,7 @@ test("exporta las 26 columnas permitidas, identificadores literales, COP numéri
 
 test("los textos con prefijos de fórmula y vínculos permanecen literales sin ejecutarse", async (t) => {
   const textKeys = Object.keys(sample).filter((key) => ![
-    "createdAt", "primerPago", "valorEquipo", "inicial", "valorFinanciado", "numeroCuotas", "valorCuota",
+    "createdAt", "operationAt", "primerPago", "valorEquipo", "inicial", "valorFinanciado", "numeroCuotas", "valorCuota",
   ].includes(key));
   const strings = ["=1+1", "+573001234567", "-00123", "@SUM(A1:A2)", "\t=SUM(1,2)", '=HYPERLINK("https://example.test", "Click")'];
   const rows = strings.map((value) => ({ ...sample, ...Object.fromEntries(textKeys.map((key) => [key, value])) }));
@@ -107,8 +107,8 @@ test("los textos con prefijos de fórmula y vínculos permanecen literales sin e
 
 test("conserva datos faltantes vacíos, cero válido, Sadmin pendiente y solicitudes distintas de la misma cédula", async (t) => {
   const rows = [
-    { solicitudNumero: "SOL-A", numeroDocumento: "0001", numeroSadmin: " ", inicial: 0 },
-    { solicitudNumero: "SOL-B", numeroDocumento: "0001", createdAt: "invalid", primerPago: "invalid", valorEquipo: Number.NaN },
+    { solicitudNumero: "SOL-A", numeroDocumento: "0001", numeroSadmin: " ", inicial: 0, createdAt: sample.createdAt },
+    { solicitudNumero: "SOL-B", numeroDocumento: "0001", createdAt: sample.createdAt, operationAt: "invalid", primerPago: "invalid", valorEquipo: Number.NaN },
   ];
   const { workbook, result } = await roundTrip(t, rows);
   const sheet = workbook.getWorksheet("Solicitudes");
@@ -122,6 +122,17 @@ test("conserva datos faltantes vacíos, cero válido, Sadmin pendiente y solicit
   assert.equal(sheet.getCell("U2").value, 0);
   for (const address of ["B2", "B3", "T2", "T3", "Z2", "Z3", "W2"]) assert.equal(sheet.getCell(address).value, null);
   for (const address of ["D2", "F2", "I2", "N2"]) assert.equal(sheet.getCell(address).text, "");
+});
+
+test("la fecha de operación distingue un crédito finalizado del borrador original sin alterar las fechas recibidas", async (t) => {
+  const credit = { ...sample };
+  const draft = { ...sample, solicitudNumero: "SOL-002", numeroCredito: null, operationAt: sample.createdAt };
+  const { workbook } = await roundTrip(t, [credit, draft]);
+  const sheet = workbook.getWorksheet("Solicitudes");
+  assert.equal(sheet.getCell("B2").value.toISOString(), "2026-10-17T09:30:00.000Z");
+  assert.equal(sheet.getCell("B3").value.toISOString(), "2026-10-13T10:30:00.000Z");
+  assert.equal(credit.createdAt, "2026-10-13T15:30:00.000Z");
+  assert.equal(draft.createdAt, credit.createdAt);
 });
 
 test("un periodo sin resultados genera solo los encabezados y conteo cero", async (t) => {

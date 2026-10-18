@@ -8,6 +8,7 @@ import { setImmediate as yieldToIO } from "node:timers/promises";
 /** Explicit allowlist: never hand client, assessment or evidence objects to ExcelJS. */
 export type SolicitudExportRow = {
   solicitudNumero?: string | null;
+  operationAt?: Date | string | null;
   createdAt?: Date | string | null;
   estado?: string | null;
   numeroCredito?: string | null;
@@ -49,7 +50,7 @@ function dateValue(value: Date | string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function creationDate(value: SolicitudExportRow["createdAt"]) {
+function operationDate(value: SolicitudExportRow["operationAt"]) {
   const parsed = dateValue(value);
   if (!parsed) return null;
   // Excel stores wall-clock values without a timezone. Encode the Bogotá time
@@ -86,7 +87,7 @@ function numberValue(value: number | null | undefined) {
 
 const columns = [
   { header: "Número de solicitud", width: 25 },
-  { header: "Fecha de creación (Bogotá)", width: 25 },
+  { header: "Fecha de operación (Bogotá)", width: 25 },
   { header: "Estado", width: 23 },
   { header: "Número de crédito", width: 28 },
   { header: "Número de Sadmin", width: 25 },
@@ -142,7 +143,7 @@ function addSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, index: number) {
 
 function values(row: SolicitudExportRow) {
   return [
-    textValue(row.solicitudNumero), creationDate(row.createdAt), textValue(row.estado),
+    textValue(row.solicitudNumero), operationDate(row.operationAt), textValue(row.estado),
     textValue(row.numeroCredito), row.numeroSadmin?.trim() ? textValue(row.numeroSadmin) : "PENDIENTE SADMIN",
     textValue(row.nombreCompleto), textValue(row.tipoDocumento), textValue(row.numeroDocumento).replace(/\./g, ""),
     textValue(row.celular), textValue(row.correo), textValue(row.departamento), textValue(row.ciudad),

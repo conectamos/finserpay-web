@@ -64,6 +64,7 @@ export type SolicitudItem = {
   aliado: NamedEntity | null;
   sede: NamedEntity | null;
   asesor: NamedEntity | null;
+  operationAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   expiresAt?: string | null;
@@ -775,7 +776,7 @@ export default function SolicitudesWallClient({
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Organización</th>
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Responsable</th>
                       <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Equipo</th>
-                      <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Fecha de creación</th>
+                      <th className="px-4 py-3 text-xs font-bold uppercase tracking-wide">Fecha de operación</th>
                       <th className="w-[21rem] px-4 py-3 text-right text-xs font-bold uppercase tracking-wide">Acciones</th>
                     </tr>
                   </thead>
@@ -801,7 +802,7 @@ export default function SolicitudesWallClient({
                           <span className="mt-1 block font-mono text-xs text-[var(--fp-muted)]">{item.imei || "IMEI no disponible"}</span>
                         </td>
                         <td className="px-4 py-4 text-xs text-[var(--fp-muted)]">
-                          <span className="block">{displayDate(item.createdAt || item.fechaCreacion)}</span>
+                          <span className="block" title={item.source === "CREDIT" ? "Fecha del crédito" : "Fecha de solicitud"}>{displayDate(item.operationAt)}</span>
                         </td>
                         <td className="w-[21rem] px-4 py-4">
                           <div className="grid grid-cols-[184px_112px] justify-end gap-2">
@@ -886,8 +887,8 @@ export default function SolicitudesWallClient({
                       <dd className="mt-1 font-semibold">{item.plataforma || "—"} · <span className="font-mono text-xs">{item.imei || "—"}</span></dd>
                     </div>
                     <div>
-                      <dt className="text-xs font-bold text-[var(--fp-muted)]">Fecha de creación</dt>
-                      <dd className="mt-1 font-semibold">{displayDate(item.createdAt || item.fechaCreacion)}</dd>
+                      <dt className="text-xs font-bold text-[var(--fp-muted)]">{item.source === "CREDIT" ? "Fecha del crédito" : "Fecha de solicitud"}</dt>
+                      <dd className="mt-1 font-semibold">{displayDate(item.operationAt)}</dd>
                     </div>
                   </dl>
                   <div className="mt-3 flex flex-wrap justify-end gap-2">
@@ -1050,7 +1051,8 @@ export default function SolicitudesWallClient({
                       <h3 id="detail-dates-title" className="text-sm font-black">Trazabilidad</h3>
                     </div>
                     <dl className="mt-2">
-                      <DetailLine label="Creada" value={displayDate(detail.createdAt || detail.fechaCreacion)} />
+                      <DetailLine label={detail.source === "CREDIT" ? "Fecha del crédito" : "Fecha de solicitud"} value={displayDate(detail.operationAt)} />
+                      {detail.source === "CREDIT" ? <DetailLine label="Fecha de solicitud" value={displayDate(detail.createdAt || detail.fechaCreacion)} /> : null}
                       <DetailLine label="Última actualización" value={displayDate(detail.updatedAt || detail.fechaActualizacion)} />
                       {detail.expiresAt || detail.fechaVencimiento ? (
                         <DetailLine label="Desistimiento automático" value={displayDate(detail.expiresAt || detail.fechaVencimiento)} />

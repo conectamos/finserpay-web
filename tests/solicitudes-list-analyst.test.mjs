@@ -50,3 +50,27 @@ test("el visor comercial conserva Continuar hacia la fábrica", () => {
   assert.ok(html.includes("Continuar"));
   assert.ok(html.includes("Desistir"));
 });
+
+test("el listado usa la fecha del crédito finalizado y la fecha de solicitud del borrador en escritorio y móvil", () => {
+  const originalDate = "2026-10-13T15:30:00.000Z";
+  const items = [
+    { ...props.list.items[0], id: "C-7", source: "CREDIT", createdAt: originalDate, operationAt: "2026-10-17T14:30:00.000Z", updatedAt: "2026-10-18T15:00:00Z" },
+    { ...props.list.items[0], id: "D-8", createdAt: originalDate, operationAt: originalDate },
+  ];
+  const html = renderToStaticMarkup(React.createElement(View, { ...props, list: { ...props.list, items, total: 2 } }));
+  const creditDate = html.match(/<td data-label="Fecha del crédito">(.*?)<\/td>/)?.[1];
+  const draftDate = html.match(/<td data-label="Fecha de solicitud">(.*?)<\/td>/)?.[1];
+  assert.match(html, /<th[^>]*>Fecha de operación<\/th>/);
+  assert.match(creditDate, /17 oct 2026/);
+  assert.match(creditDate, /9:30/);
+  assert.doesNotMatch(creditDate, /13 oct|18 oct/);
+  assert.match(draftDate, /13 oct 2026/);
+  assert.match(draftDate, /10:30/);
+});
+
+test("una fecha de crédito ausente no se sustituye por la consulta original ni por una actualización", () => {
+  const items = [{ ...props.list.items[0], source: "CREDIT", createdAt: "2026-10-13T15:30:00Z", updatedAt: "2026-10-17T14:30:00Z", operationAt: null }];
+  const html = renderToStaticMarkup(React.createElement(View, { ...props, list: { ...props.list, items } }));
+  assert.match(html, /<td data-label="Fecha del crédito"><span>Sin registro<\/span>/);
+  assert.doesNotMatch(html, /13 oct 2026|17 oct 2026/);
+});

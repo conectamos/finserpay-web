@@ -104,8 +104,8 @@ export default function SolicitudesListView(props: Props) {
     <section aria-label="Listado de solicitudes" aria-busy={loading}>
       {loading && !list ? <div className={styles.feedback} role="status"><RefreshCw className={styles.spin} aria-hidden="true" />Cargando solicitudes…</div> : error ? <div className={styles.feedback} role="alert"><h2>No se pudieron cargar las solicitudes</h2><p>{error}</p><button className={styles.secondary} type="button" onClick={props.refresh}>Reintentar</button></div> : !list?.items.length ? <div className={styles.feedback}><h2>Sin resultados</h2><p>No hay solicitudes para estos filtros.</p><button type="button" className={styles.secondary} onClick={props.clearFilters}>Limpiar filtros</button></div> : <>
         {loading && <p className={styles.refreshing} role="status">Actualizando solicitudes…</p>}
-        <table className={styles.table}><colgroup><col style={{width:"16.5%"}}/><col style={{width:"12%"}}/><col style={{width:"14.8%"}}/><col style={{width:"11.4%"}}/><col style={{width:"19.1%"}}/><col style={{width:"10%"}}/><col style={{width:"16.2%"}}/></colgroup><thead><tr>{["Cliente / Solicitud", "Estado", "Aliado / Sede", "Asesor", "Equipo", "Creación", "Acciones"].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{list.items.map(item => {
-          const [date, time] = dateParts(item.createdAt || item.fechaCreacion);
+        <table className={styles.table}><colgroup><col style={{width:"16.5%"}}/><col style={{width:"12%"}}/><col style={{width:"14.8%"}}/><col style={{width:"11.4%"}}/><col style={{width:"19.1%"}}/><col style={{width:"10%"}}/><col style={{width:"16.2%"}}/></colgroup><thead><tr>{["Cliente / Solicitud", "Estado", "Aliado / Sede", "Asesor", "Equipo", "Fecha de operación", "Acciones"].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{list.items.map(item => {
+          const [date, time] = dateParts(item.operationAt);
           const platform = String(item.plataforma || "").toUpperCase();
           const creatorDistinct = item.creadoPor && item.creadoPor.trim().toLocaleLowerCase() !== item.asesor?.nombre.trim().toLocaleLowerCase();
           return <tr key={item.id}>
@@ -114,7 +114,7 @@ export default function SolicitudesListView(props: Props) {
             <td data-label="Aliado / Sede"><strong>{item.aliado?.nombre || "Sin aliado"}</strong><small>{item.sede?.nombre || "Sin sede"}</small></td>
             <td data-label="Asesor"><span>{item.asesor?.nombre || item.creadoPor || "Sin asignar"}</span>{creatorDistinct && <small>Creó: {item.creadoPor}</small>}</td>
             <td data-label="Equipo"><div className={styles.equipment}>{["IPHONE", "ANDROID"].includes(platform) && <span aria-hidden="true" className={`${styles.platformIcon} ${platform === "ANDROID" ? styles.android : ""}`} style={{maskImage:`url(/assets/dashboard/${platform === "IPHONE" ? "apple" : "android"}.svg)`}}/>}<div><strong>{platform === "IPHONE" ? "iPhone" : platform === "ANDROID" ? "Android" : item.plataforma || "Sin plataforma"}</strong><small>{item.imei ? `IMEI ${item.imei}` : "IMEI pendiente"}</small></div></div></td>
-            <td data-label="Creación"><span>{date}</span><small>{time}</small></td>
+            <td data-label={item.source === "CREDIT" ? "Fecha del crédito" : "Fecha de solicitud"}><span>{date}</span><small>{time}</small></td>
             <td data-label="Acciones">{actions(item)}</td>
           </tr>;
         })}</tbody></table>

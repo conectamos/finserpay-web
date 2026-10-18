@@ -261,7 +261,7 @@ export default function SolicitudesExport({ appliedFilters, plataformas = [] }: 
                   <label className={styles.field}><span>Desde</span><Input type="date" value={filters.desde} max={filters.hasta || undefined} onChange={event => setField("desde", event.target.value)} /></label>
                   <label className={styles.field}><span>Hasta</span><Input type="date" value={filters.hasta} min={filters.desde || undefined} onChange={event => setField("hasta", event.target.value)} /></label>
                 </>}
-                <p className={`${styles.hint} ${styles.full}`}>El periodo se aplica a la fecha de creación de la solicitud en America/Bogota e incluye completos los días inicial y final.{filters.period === "range" && " Puedes dejar un extremo vacío para no limitarlo."}</p>
+                <p className={`${styles.hint} ${styles.full}`}>El periodo se aplica a la fecha del crédito finalizado o a la fecha de solicitud si aún es un borrador, en hora de Bogotá. Incluye completos los días inicial y final.{filters.period === "range" && " Puedes dejar un extremo vacío para no limitarlo."}</p>
                 {configuration.scope === "CENTRAL_ADMIN" && <MultipleSelection label="Aliados" allLabel="Todos los aliados autorizados" options={configuration.options.aliados} selected={filters.aliadoIds} onChange={ids => updateFilters(changeExportSelection(filters, configuration.options, "aliadoIds", ids))} />}
                 <MultipleSelection label="Sedes" allLabel="Todas las sedes autorizadas" options={visible!.sedes} selected={filters.sedeIds} context={id => {
                   const sede = configuration.options.sedes.find(option => option.id === id);
