@@ -5,6 +5,7 @@ import {
   amendMoraExceptionRequest,
   getMoraExceptionRequest,
   parseCentralMoraExceptionAmendment,
+  parseAnalystMoraExtensionAmendment,
   parseMoraExceptionDecision,
   parseCentralMoraExceptionDecision,
 } from "@/lib/mora-exception-requests";
@@ -34,7 +35,7 @@ export async function PATCH(request: Request, context: Context) {
     const action = body && typeof body === "object" && "action" in body ? body.action : null;
     const isAmendment = action === "EDIT" || action === "CANCEL";
     const result = isAmendment
-      ? await amendMoraExceptionRequest(id, parseCentralMoraExceptionAmendment(body), actor)
+      ? await amendMoraExceptionRequest(id, actor.centralAdmin ? parseCentralMoraExceptionAmendment(body) : parseAnalystMoraExtensionAmendment(body), actor)
       : await actOnMoraExceptionRequest(id, actor.centralAdmin ? parseCentralMoraExceptionDecision(body) : parseMoraExceptionDecision(body), actor);
     let moraSync: { ok: boolean; action: string; message: string } | null = null;
     if ((action === "APPROVE" && result.item.status === "APPROVED") || ("affectsMora" in result && result.affectsMora)) {

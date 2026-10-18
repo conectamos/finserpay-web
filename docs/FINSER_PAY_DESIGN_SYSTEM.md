@@ -223,6 +223,15 @@ solicitud de prórroga y conserva el historial de gestión anterior; una gestió
 que mencione una prórroga no equivale a una autorización. Al actualizar se
 consultan listado y detalle sin borrar el formulario que se esté completando.
 
+El panel permite editar o cancelar la prórroga vigente sin navegar a otro
+módulo. Se consulta de nuevo la autorización y su versión antes de mostrar el
+formulario. El analista conserva los límites de cuatro días y las fechas 06/21;
+el administrador central mantiene sus permisos de corrección. La cancelación
+exige revisión explícita y conserva el historial. La confirmación se presenta
+dentro del panel nativo para mantenerla visible y accesible en su misma capa.
+Los cambios actualizan la cartera y el detalle conservando el borrador de gestión;
+un conflicto de versión exige consultar la autorización antes de reintentar.
+
 ## Nueva venta: enrolamiento y entrega
 
 El cierre reutiliza la cabecera blanca compacta de Nueva venta y conserva sus

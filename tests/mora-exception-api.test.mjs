@@ -17,10 +17,11 @@ function loadRoute({ action, syncImpl, events, errors = [], centralAdmin = true,
     "@/lib/analyst-mora-access": { getMoraActor: async () => ({ id: centralAdmin ? 1 : 2, nombre: centralAdmin ? "Central" : "Analista", centralAdmin }) },
     "@/lib/mora-exception-requests": {
       parseCentralMoraExceptionAmendment: () => ({ action, version: 1, auditReason: "Corrección autorizada", idempotencyKey: "50000000-0000-4000-8000-000000000001" }),
+      parseAnalystMoraExtensionAmendment: () => ({ action, version: 1, auditReason: "Corrección autorizada", idempotencyKey: "50000000-0000-4000-8000-000000000001" }),
       amendMoraExceptionRequest: async (_id, input, actor) => {
         assert.equal(input.action, action);
         if (amendmentError) throw amendmentError;
-        assert.equal(actor.centralAdmin, true);
+        assert.equal(actor.centralAdmin, centralAdmin);
         events.push("commit-amendment");
         return { item: { id: "request", creditoId: 77, status: action === "CANCEL" ? "CANCELLED" : affectsMora ? "APPROVED" : "PENDING" }, unchanged, affectsMora };
       },
@@ -121,6 +122,15 @@ test("OBSERVE no ejecuta sincronización operativa", async () => {
 });
 
 for (const action of ["EDIT", "CANCEL"]) {
+  test(`${action} autorizado de analista usa la misma ruta auditada y sincroniza después del commit`, async () => {
+    const events = [];
+    const route = loadRoute({ action, centralAdmin: false, events, affectsMora: true, syncImpl: async () => {
+      events.push("sync"); return { action: "SKIPPED", message: "Sin cambios de bloqueo" };
+    } });
+    const response = await route.PATCH({}, context);
+    assert.equal(response.status, 200); assert.deepEqual(events, ["commit-amendment", "sync"]);
+    assert.equal(response.body.item.status, action === "CANCEL" ? "CANCELLED" : "APPROVED");
+  });
   test(`${action} de excepción aprobada sincroniza su crédito solo después de guardar`, async () => {
     const events = [];
     const calls = [];

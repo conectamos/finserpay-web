@@ -1,4 +1,12 @@
 export type MoraExceptionType = "EXCEPCION" | "PRORROGA";
+export type MoraExtensionActions = {
+  canEdit: boolean;
+  canCancel: boolean;
+  centralAdmin: boolean;
+  minExpiresOn: string | null;
+  maxExpiresOn: string | null;
+  editBlockedReason: string | null;
+};
 export type MoraExceptionStatus = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED" | "REPLACED" | "CANCELLED";
 export type MoraPromiseConditionStatus = "NOT_APPLICABLE" | "PENDING" | "FULFILLED" | "BREACHED";
 export type MoraCreditProduct = "ANDROID" | "IPHONE" | null;

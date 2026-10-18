@@ -12,7 +12,11 @@ function load(path, actor = deny) {
   const service = loadApprovalModule(path, {
     "next/server": { NextResponse: { json } },
     "@/lib/analyst-mora-access": { getMoraActor: actor },
-    "@/lib/analyst-mora-management": { listMoraPortfolio: hit, getMoraManagement: hit, createMoraManagement: hit, parseMoraManagement: hit },
+    "@/lib/analyst-mora-management": { listMoraPortfolio: hit, getMoraManagement: () => { calls++; return { credit: { prorrogaActiva: { id: "extension-current" } } }; }, createMoraManagement: hit, parseMoraManagement: hit },
+    "@/lib/mora-exception-requests": { getMoraExtensionActions: async (id, currentActor) => {
+      assert.equal(id, "extension-current"); assert.equal(currentActor.id, 7);
+      return { canEdit: true, canCancel: true, centralAdmin: false, minExpiresOn: "2026-10-18", maxExpiresOn: "2026-10-21", editBlockedReason: null };
+    } },
     "@/lib/analyst-mora-support": { listMoraSupports: hit, saveMoraSupport: hit, downloadMoraSupport: hit, parseMoraSupportSubject: hit },
     "@/lib/credit-approval-http": { approvalPrivateHeaders: privateHeaders, readApprovalRequest: hit,
       approvalErrorResponse: error => json({ ok: false, error: error.message }, { status: error.status || 503, headers: privateHeaders }) },
@@ -48,7 +52,9 @@ test("el detalle identifica al responsable usando la sesión, nunca el último g
   const f=load("app/api/aprobaciones/cartera-mora/[id]/route.ts",async()=>actor);
   const response=await f.service.GET(new Request("https://finserpay.com/api/aprobaciones/cartera-mora/81"),{params:Promise.resolve({id:"81"})});
   assert.equal(response.status,200);
-  assert.deepEqual((await response.json()).currentResponsible,{id:7,nombre:"Analista autenticado"});
+  const result = await response.json();
+  assert.deepEqual(result.currentResponsible,{id:7,nombre:"Analista autenticado"});
+  assert.deepEqual(result.extensionActions,{canEdit:true,canCancel:true,centralAdmin:false,minExpiresOn:"2026-10-18",maxExpiresOn:"2026-10-21",editBlockedReason:null});
 });
 
 test("POST valida el resultado y los datos del acuerdo antes de escribir y conserva la respuesta privada", async () => {
@@ -65,6 +71,7 @@ test("POST valida el resultado y los datos del acuerdo antes de escribir y conse
   const route = loadApprovalModule("app/api/aprobaciones/cartera-mora/[id]/route.ts", {
     "next/server": { NextResponse: { json } },
     "@/lib/analyst-mora-access": { getMoraActor: async () => actor },
+    "@/lib/mora-exception-requests": {},
     "@/lib/analyst-mora-management": {
       parseMoraManagement: input => parser.parseMoraManagement(input, now),
       createMoraManagement: async (id, input, responsible) => { writes.push({ id, input, responsible }); return { item: input, unchanged: false }; },

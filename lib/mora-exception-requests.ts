@@ -12,7 +12,8 @@ import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { ensureMoraExceptionRequestSchema } from "@/lib/mora-exception-schema";
 import { confirmedSadminNumber } from "@/lib/credit-display-number";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
-import type { MoraExceptionStatus as ExceptionStatus, MoraExceptionType as ExceptionType } from "@/lib/mora-exception-types";
+import { readActiveMoraExtensions } from "@/lib/analyst-mora-extension";
+import type { MoraExceptionStatus as ExceptionStatus, MoraExceptionType as ExceptionType, MoraExtensionActions } from "@/lib/mora-exception-types";
 
 export const MORA_EXCEPTION_TYPES = ["EXCEPCION", "PRORROGA"] as const;
 export const MORA_EXCEPTION_STATUSES = ["PENDING", "APPROVED", "REJECTED", "EXPIRED", "REPLACED", "CANCELLED"] as const;
@@ -251,6 +252,64 @@ export function parseCentralMoraExceptionAmendment(value: unknown): AmendmentInp
   if (Object.hasOwn(body, "promiseDate")) input.promiseDate = body.promiseDate === null || body.promiseDate === ""
     ? null : exactDate(body.promiseDate, "Selecciona una fecha válida para el compromiso de pago.");
   return input;
+}
+
+/** Analyst amendments are limited to the existing extension, never a decision or financial change. */
+export function parseAnalystMoraExtensionAmendment(value: unknown): AmendmentInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const body = value as Record<string, unknown>;
+  if (Object.hasOwn(body, "promiseAmount")) throw invalid("El valor del compromiso no se modifica desde esta gestión.");
+  const auditReason = normalizedText(body.auditReason, 5, 1000, "Explica el motivo del cambio (5 a 1000 caracteres).");
+  const input = parseCentralMoraExceptionAmendment({ ...body, auditReason });
+  if (input.action === "EDIT") {
+    input.expiresOn = exactDate(body.expiresOn);
+    input.reason = normalizedText(body.reason, 5, 500, "Describe el motivo (5 a 500 caracteres).");
+    input.observation = normalizedText(body.observation, 0, 2000, "La observación admite hasta 2000 caracteres.");
+    if (Object.hasOwn(body, "promiseDate") && input.promiseDate === null)
+      throw invalid("Conserva la fecha del compromiso de pago.");
+  }
+  return input;
+}
+
+function analystExtensionWindow(row: StoredRequest, credit: RuleCredit, now: Date) {
+  const today = colombiaDateKey(now);
+  const plan = buildCreditPaymentPlan({ ...credit, fechaProximoPago: null, today, settled: Boolean(credit.pazYSalvoEmitidoAt) });
+  // A central direct extension may not have a bound installment. In that case
+  // derive the same earliest unpaid regular installment as the creation rule.
+  const installment = row.installmentNumber === null && row.installmentDueDate === null
+    ? plan.installments.find(item => !item.eliminada && item.saldoPendiente > 0)
+    : plan.installments.find(item => !item.eliminada && item.saldoPendiente > 0
+      && item.numero === row.installmentNumber && item.fechaVencimiento === nullableDateKey(row.installmentDueDate));
+  const dueDate = installment?.fechaVencimiento || null;
+  const maxExpiresOn = dueDate ? addCalendarDays(dueDate, 4) : null;
+  const allowed = Boolean(installment && plan.estadoPago === "MORA" && dueDate && [2, 17].includes(Number(dueDate.slice(8, 10)))
+    && today > dueDate && maxExpiresOn && today <= maxExpiresOn);
+  return { minExpiresOn: today, maxExpiresOn, allowed,
+    reason: allowed ? null : "La prórroga solo se puede editar después del vencimiento 02/17 y hasta el día 06/21." };
+}
+
+async function extensionActions(db: Pick<typeof prisma, "$queryRawUnsafe" | "credito">, row: StoredRequest | null, actor: MoraActor, now: Date): Promise<MoraExtensionActions> {
+  const blocked: MoraExtensionActions = { canEdit: false, canCancel: false, centralAdmin: actor.centralAdmin,
+    minExpiresOn: null, maxExpiresOn: null, editBlockedReason: "La prórroga ya no está activa. Actualiza la cartera." };
+  if (!row || row.type !== "PRORROGA" || row.status !== "APPROVED"
+    || (await readActiveMoraExtensions([row.creditoId], now, db)).get(row.creditoId)?.id !== row.id) return blocked;
+  if (actor.centralAdmin) return { ...blocked, canEdit: true, canCancel: true, editBlockedReason: null };
+  const credit = await db.credito.findUnique({ where: { id: row.creditoId }, select: moraCreditSelect });
+  if (!credit || ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase())) return blocked;
+  const window = analystExtensionWindow(row, credit, now);
+  return { ...blocked, canEdit: window.allowed, canCancel: true, minExpiresOn: window.minExpiresOn,
+    maxExpiresOn: window.maxExpiresOn, editBlockedReason: window.reason };
+}
+
+/** The portfolio exposes actions from the current database role and effective extension. */
+export async function getMoraExtensionActions(id: string | null, actor: MoraActor, now = new Date()): Promise<MoraExtensionActions> {
+  await ensureSchemas();
+  return prisma.$transaction(async db => {
+    const verified = await assertMoraActor(db, actor);
+    const rows = id && uuid.test(id) ? await db.$queryRawUnsafe<StoredRequest[]>(
+      `SELECT * FROM "CreditMoraExceptionRequest" WHERE "id"=$1::uuid`, id) : [];
+    return extensionActions(db, rows[0] || null, verified, now);
+  });
 }
 
 export function evaluateMoraExceptionRule(credit: RuleCredit, input: Pick<CreateInput, "type" | "expiresOn" | "promiseAmount" | "promiseDate">, now = new Date()) {
@@ -502,11 +561,12 @@ export async function getMoraExceptionRequest(id: string, actor: MoraActor, now 
   });
   if(!rows[0])throw new CreditApprovalError("MORA_EXCEPTION_NOT_FOUND","Solicitud no encontrada.",404);
   const item=requestDto(rows[0],now);
-  const [supports,preflight]=await Promise.all([
+  const [supports,preflight,amendmentActions]=await Promise.all([
     listMoraSupports({creditoId:item.creditoId,subjectKind:"EXCEPCION",subjectId:id}),
     getMoraExceptionPreflight(item.creditoId,actor,now),
+    getMoraExtensionActions(id,actor,now),
   ]);
-  return {item:{...item,credit:{...preflight.credit,...item.credit}},history:history.map(eventDto),supports,...preflight};
+  return {item:{...item,credit:{...preflight.credit,...item.credit}},history:history.map(eventDto),supports,...preflight,amendmentActions};
 }
 
 export async function createMoraExceptionRequest(input: CreateInput | CentralCreateInput, actor: MoraActor, now = new Date()) {
@@ -664,10 +724,12 @@ export async function amendMoraExceptionRequest(id: string, input: AmendmentInpu
   await ensureSchemas();
   const requestHash = createHash("sha256").update(JSON.stringify({ id, input, actorId: actor.id })).digest("hex");
   return prisma.$transaction(async db => {
-    const verified = await assertMoraActor(db, actor, true);
-    const identity = await db.$queryRawUnsafe<Array<{ creditoId: number }>>(
-      `SELECT "creditoId" FROM "CreditMoraExceptionRequest" WHERE "id"=$1::uuid`, id);
+    const verified = await assertMoraActor(db, actor);
+    const identity = await db.$queryRawUnsafe<Array<{ creditoId: number; type: ExceptionType }>>(
+      `SELECT "creditoId","type" FROM "CreditMoraExceptionRequest" WHERE "id"=$1::uuid`, id);
     if (!identity[0]) throw new CreditApprovalError("MORA_EXCEPTION_NOT_FOUND", "Solicitud no encontrada.", 404);
+    if (!verified.centralAdmin && identity[0].type !== "PRORROGA")
+      throw new CreditApprovalError("FORBIDDEN", "Solo puedes modificar una prórroga activa; las excepciones requieren al administrador central.", 403);
     // All changes to a credit's effective exception serialize on the credit row.
     await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, identity[0].creditoId);
     const prior = await db.$queryRawUnsafe<StoredEvent[]>(
@@ -688,6 +750,23 @@ export async function amendMoraExceptionRequest(id: string, input: AmendmentInpu
       throw new CreditApprovalError("MORA_REQUEST_CHANGED", "La solicitud cambió. Actualiza antes de continuar.", 409);
     if (!["PENDING", "APPROVED"].includes(current.status))
       throw new CreditApprovalError("MORA_REQUEST_TERMINAL", "La solicitud ya fue cerrada. Su historial se conserva; registra una nueva excepción si es necesario.", 409);
+    if (!verified.centralAdmin) {
+      const allowed = await extensionActions(db, current, verified, now);
+      if (!(input.action === "EDIT" ? allowed.canEdit : allowed.canCancel))
+        throw new CreditApprovalError("MORA_EXTENSION_NOT_EDITABLE", allowed.editBlockedReason || "La prórroga ya no está activa.", 409);
+      // These bounds are computed again while holding the credit lock. Client
+      // capabilities and the submitted actor flag never authorize the write.
+      normalizedText(input.auditReason, 5, 1000, "Explica el motivo del cambio (5 a 1000 caracteres).");
+      if (input.action === "EDIT") {
+        if (input.promiseAmount !== undefined)
+          throw invalid("El valor del compromiso no se modifica desde esta gestión.");
+        if (input.expiresOn === null || input.expiresOn < allowed.minExpiresOn! || input.expiresOn > allowed.maxExpiresOn!)
+          throw new CreditApprovalError("EXTENSION_WINDOW_CLOSED", "El vencimiento debe estar entre hoy y el máximo de cuatro días desde la cuota regular.", 409);
+        const effectivePromiseDate = input.promiseDate === undefined ? nullableDateKey(current.promiseDate) : input.promiseDate;
+        if (current.source !== "CENTRAL_DIRECT" && (effectivePromiseDate === null || effectivePromiseDate < colombiaDateKey(now)))
+          throw invalid("El compromiso de pago debe tener una fecha vigente.");
+      }
+    }
     const before = amendmentSnapshot(current);
     const nextVersion = current.version + 1;
     let nextStatus: ExceptionStatus = current.status;

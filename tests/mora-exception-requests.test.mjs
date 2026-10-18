@@ -41,6 +41,7 @@ function loadService({ prisma = {}, plan, assertActor = async (_db, actor) => ac
     "node:crypto": { createHash, randomUUID },
     "@/lib/prisma": { default: prisma },
     "@/lib/analyst-mora-access": { assertMoraActor: assertActor },
+    "@/lib/analyst-mora-extension": {},
     "@/lib/analyst-mora-credit": {
       moraCreditSelect: {},
       moraCreditSummary: (credit) => credit,
