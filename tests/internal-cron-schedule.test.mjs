@@ -10,15 +10,18 @@ const plain = value => JSON.parse(JSON.stringify(value));
 
 function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, failTwoDays = false, initialBatchDate,
   welcomeEnabled = false, holdWelcome = false, failWelcome = false, cronEnabled = true,
-  reviewEnabled = false, holdReview = false, failReview = false } = {}) {
+  reviewEnabled = false, holdReview = false, failReview = false, holdCuota = false, failCuota = false } = {}) {
   let clock = new Date(now);
   let timerCallback;
   let paused = hold;
   let welcomePaused = holdWelcome;
   let reviewPaused = holdReview;
+  let cuotaPaused = holdCuota;
   const calls = [];
   const welcomeCalls = [];
   const reviewCalls = [];
+  const cuotaCalls = [];
+  const cuotaReleases = [];
   const operationalCalls = [];
   const releases = [];
   const welcomeReleases = [];
@@ -70,6 +73,14 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
       runCollectionVoice: async () => ({ enabled: false, ready: false, inWindow: false, eligible: 0, accepted: 0, unknown: 0, skipped: 0 }),
       runCollectionMessages: async () => undefined,
     },
+    "@/lib/cuotavencida-whatsapp-dispatch": {
+      runCuotaVencidaWhatsApp: async options => {
+        cuotaCalls.push(plain(options));
+        if (failCuota) throw new Error("private phone webhook credential");
+        if (cuotaPaused) await new Promise(resolve => cuotaReleases.push(resolve));
+        return { configured: true, selected: 0, accepted: 0, failed: 0, unknown: 0, skipped: 0 };
+      },
+    },
     "@/lib/device-unlock-queue": {
       processPendingDeviceUnlockCommands: async options => { operationalCalls.push({ name: "unlock", options: plain(options) }); return { processed: 0 }; },
       recoverRecentApprovedWompiUnlockCommands: async options => { operationalCalls.push({ name: "recover-unlock", options: plain(options) }); return { recovered: 0 }; },
@@ -92,9 +103,40 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     release: () => { paused = false; releases.splice(0).forEach(resolve => resolve()); },
     releaseWelcome: () => { welcomePaused = false; welcomeReleases.splice(0).forEach(resolve => resolve()); },
     releaseReview: () => { reviewPaused = false; reviewReleases.splice(0).forEach(resolve => resolve()); },
-    calls, welcomeCalls, reviewCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
+    releaseCuota: () => { cuotaPaused = false; cuotaReleases.splice(0).forEach(resolve => resolve()); },
+    calls, welcomeCalls, reviewCalls, cuotaCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
   };
 }
+
+test("a manually queued WhatsApp batch drains independently without creating a scheduled campaign", async () => {
+  const f = cronFixture({ now: "2026-10-18T05:00:00Z", holdCuota: true });
+  f.start();
+  await nextTurn();
+  assert.equal(f.cuotaCalls.length, 1);
+  assert.deepEqual(f.cuotaCalls[0], { limit: 10 });
+  f.tick();
+  await nextTurn();
+  assert.equal(f.cuotaCalls.length, 1);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+  assert.equal(f.calls.length, 0);
+  f.releaseCuota();
+  await nextTurn();
+  f.setClock("2026-10-18T05:00:30Z");
+  f.tick();
+  await nextTurn();
+  assert.equal(f.cuotaCalls.length, 2);
+  assert.equal(f.calls.length, 0);
+});
+
+test("WhatsApp batch errors are sanitized and never prevent payment/unlock workers", async () => {
+  const f = cronFixture({ failCuota: true });
+  f.start();
+  await nextTurn();
+  assert.equal(f.cuotaCalls.length, 1);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+  assert.equal(f.state().running.has("cuotavencida-whatsapp"), false);
+  assert.doesNotMatch(f.errors.flat().map(String).join(" "), /private phone|webhook credential/);
+});
 
 test("Datos joins the existing campaigns only in the 10:00-10:59 Colombia window", () => {
   for (const time of ["10:00", "10:01", "10:59"]) {

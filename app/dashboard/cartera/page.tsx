@@ -37,6 +37,7 @@ import PortfolioProfitBreakdown from "./portfolio-profit-breakdown";
 import { Select } from "@/app/_components/finser-ui";
 import AdminSidebar from "../_components/admin-sidebar";
 import PushMassivePanel from "./push-massive-panel";
+import CuotavencidaWhatsappButton from "./cuotavencida-whatsapp-button";
 
 export const metadata = {
   title: "Cartera | FINSER PAY",
@@ -658,6 +659,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                     icon={History}
                     label="Historial gastos"
                   />
+                  <CuotavencidaWhatsappButton />
                 </>
               ) : null}
             </div>

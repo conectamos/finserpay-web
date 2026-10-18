@@ -35,5 +35,6 @@ await import("./ensure-analyst-mora-schema.mjs");
 await import("./ensure-mora-exception-requests-schema.mjs");
 await import("./ensure-credit-due-reminders-schema.mjs");
 await import("./ensure-credit-overdue-data-schema.mjs");
+await import("./ensure-cuotavencida-whatsapp-schema.mjs");
 await import("./ensure-credit-welcome-voice-schema.mjs");
 await import("./ensure-cut-collection-schema.mjs");
