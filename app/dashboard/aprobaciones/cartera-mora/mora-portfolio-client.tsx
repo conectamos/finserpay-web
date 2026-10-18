@@ -10,8 +10,8 @@ import {
   History,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   UserRound,
-  X,
 } from "lucide-react";
 import {
   Badge,
@@ -28,6 +28,7 @@ import {
 import {
   MORA_ACTIONS,
   MORA_MANAGEMENT_STATES,
+  MORA_PORTFOLIO_STATES,
   moraResultsForAction,
   moraResultLabel,
   type MoraManagementEvent,
@@ -35,6 +36,8 @@ import {
   type MoraPortfolioItem,
 } from "@/lib/analyst-mora-types";
 import MoraSupports from "../mora-supports";
+import FinserSidePanel from "@/app/_components/finser-side-panel";
+import styles from "./mora-portfolio.module.css";
 
 type NamedOption = { id: number; nombre: string };
 type PortfolioResponse = {
@@ -115,6 +118,7 @@ const statusLabels: Record<string, string> = {
   CERRADO: "Cerrado",
   SOLUCIONADO: "Solucionado",
   SEGUIMIENTO: "Seguimiento",
+  PRORROGA: "Prórroga",
 };
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -128,6 +132,24 @@ const bogotaDateTime = new Intl.DateTimeFormat("es-CO", {
   timeStyle: "short",
   timeZone: "America/Bogota",
 });
+
+const bogotaDate = new Intl.DateTimeFormat("es-CO", {
+  day: "2-digit", month: "short", year: "numeric", timeZone: "America/Bogota",
+});
+
+function displayDay(value: string | null | undefined) {
+  if (!value) return "Sin fecha límite";
+  const date = new Date(`${value.slice(0, 10)}T12:00:00-05:00`);
+  return Number.isFinite(date.getTime()) ? bogotaDate.format(date) : "Fecha no disponible";
+}
+
+function portfolioStatus(credit: Pick<MoraPortfolioItem, "estadoGestion" | "prorrogaActiva"> & {
+  ultimaGestion?: MoraManagementEvent | null;
+}) {
+  if (credit.prorrogaActiva) return "PRORROGA";
+  return (credit.estadoGestion !== "PRORROGA" && credit.estadoGestion) ||
+    credit.ultimaGestion?.managementStatus || "PENDIENTE";
+}
 
 const bogotaInputParts = new Intl.DateTimeFormat("en-CA", {
   year: "numeric",
@@ -175,7 +197,7 @@ function freshManagement(responsibleUserId = ""): ManagementForm {
 function statusTone(status: string | undefined) {
   if (status === "CERRADO" || status === "SOLUCIONADO") return "positive" as const;
   if (status === "ESCALADO" || status === "SIN_RESPUESTA") return "danger" as const;
-  if (status === "PROMESA_PAGO" || status === "ACUERDO_PAGO" || status === "SOPORTE_RECIBIDO") return "warning" as const;
+  if (status === "PRORROGA" || status === "PROMESA_PAGO" || status === "ACUERDO_PAGO" || status === "SOPORTE_RECIBIDO") return "warning" as const;
   return "neutral" as const;
 }
 
@@ -210,6 +232,8 @@ export default function MoraPortfolioClient() {
   const [notice, setNotice] = useState("");
   const [lastSavedFingerprint, setLastSavedFingerprint] = useState("");
   const detailController = useRef<AbortController | null>(null);
+  const selectedCreditId = useRef<number | null>(null);
+  const submitting = useRef(false);
   const idempotencyKey = useRef<string | null>(null);
 
   const listUrl = useMemo(() => {
@@ -228,7 +252,7 @@ export default function MoraPortfolioClient() {
     setLoading(true);
     setListError("");
     void requestJson<PortfolioResponse>(listUrl, { signal: controller.signal })
-      .then((result) => setPortfolio(result))
+      .then((result) => { if (!controller.signal.aborted) setPortfolio(result); })
       .catch((error) => {
         if (!controller.signal.aborted) setListError(error instanceof Error ? error.message : "No fue posible cargar la cartera en mora.");
       })
@@ -271,25 +295,28 @@ export default function MoraPortfolioClient() {
     setNotice("");
   }
 
-  async function openCredit(item: MoraPortfolioItem) {
-    if (saving) return;
+  async function loadCredit(id: number, preserveForm = false) {
     detailController.current?.abort();
     const controller = new AbortController();
     detailController.current = controller;
-    setSelectedId(item.id);
-    setDetail(null);
-    setLoadingDetail(true);
+    if (!preserveForm) {
+      setDetail(null);
+      setLoadingDetail(true);
+      setSaveError("");
+      setNotice("");
+      setLastSavedFingerprint("");
+      idempotencyKey.current = null;
+    }
     setDetailError("");
-    setSaveError("");
-    setNotice("");
-    setLastSavedFingerprint("");
-    idempotencyKey.current = null;
     try {
-      const result = await requestJson<DetailResponse>(`/api/aprobaciones/cartera-mora/${item.id}`, { signal: controller.signal });
-      if (controller.signal.aborted) return;
+      const result = await requestJson<DetailResponse>(`/api/aprobaciones/cartera-mora/${id}`, { signal: controller.signal });
+      if (controller.signal.aborted || selectedCreditId.current !== id) return;
+      if (result.credit.id !== id) throw new Error("La respuesta no corresponde al crédito seleccionado. Actualiza la consulta.");
       setDetail(result);
-      const preferredResponsible = result.currentResponsible.id;
-      setManagement(freshManagement(preferredResponsible ? String(preferredResponsible) : ""));
+      if (!preserveForm) {
+        const preferredResponsible = result.currentResponsible.id;
+        setManagement(freshManagement(preferredResponsible ? String(preferredResponsible) : ""));
+      }
     } catch (error) {
       if (!controller.signal.aborted) setDetailError(error instanceof Error ? error.message : "No fue posible abrir el crédito.");
     } finally {
@@ -297,9 +324,23 @@ export default function MoraPortfolioClient() {
     }
   }
 
+  async function openCredit(item: MoraPortfolioItem) {
+    if (submitting.current) return;
+    selectedCreditId.current = item.id;
+    setSelectedId(item.id);
+    await loadCredit(item.id);
+  }
+
+  function refreshPortfolio() {
+    if (submitting.current) return;
+    setRefreshVersion((value) => value + 1);
+    if (selectedCreditId.current) void loadCredit(selectedCreditId.current, true);
+  }
+
   function closeDetail() {
-    if (saving) return;
+    if (submitting.current) return;
     detailController.current?.abort();
+    selectedCreditId.current = null;
     setSelectedId(null);
     setDetail(null);
     setDetailError("");
@@ -309,7 +350,7 @@ export default function MoraPortfolioClient() {
 
   async function saveManagement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedId || !detail || saving || managementFingerprint === lastSavedFingerprint) return;
+    if (!selectedId || !detail || submitting.current || managementFingerprint === lastSavedFingerprint) return;
     const actedAt = bogotaIso(management.actedAt);
     const nextFollowUpAt = bogotaIso(management.nextFollowUpAt);
     const responsibleUserId = detail.currentResponsible.id;
@@ -348,6 +389,8 @@ export default function MoraPortfolioClient() {
       managementStatus: management.managementStatus,
       idempotencyKey: key,
     };
+    submitting.current = true;
+    detailController.current?.abort();
     setSaving(true);
     setSaveError("");
     setNotice("");
@@ -359,59 +402,87 @@ export default function MoraPortfolioClient() {
       });
       setDetail((current) => current ? {
         ...current,
+        credit: { ...current.credit, estadoGestion: current.credit.prorrogaActiva ? "PRORROGA" : result.item.managementStatus },
         history: [result.item, ...current.history.filter((item) => item.id !== result.item.id)],
       } : current);
       setPortfolio((current) => current ? {
         ...current,
-        items: current.items.map((item) => item.id === selectedId ? { ...item, ultimaGestion: result.item } : item),
+        items: current.items.map((item) => item.id === selectedId ? { ...item, ultimaGestion: result.item,
+          estadoGestion: item.prorrogaActiva ? "PRORROGA" : result.item.managementStatus } : item),
       } : current);
       setLastSavedFingerprint(managementFingerprint);
       idempotencyKey.current = null;
       setNotice(result.unchanged ? "La gestión ya estaba guardada y se recuperó sin duplicarla." : "Gestión guardada. El historial anterior se conserva.");
+      setRefreshVersion((value) => value + 1);
+      void loadCredit(selectedId, true);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "No fue posible guardar la gestión.");
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   }
 
   return (
-    <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
-      <div className="mx-auto max-w-[1920px] space-y-5">
+    <main className={styles.workspace}>
+      <div className={styles.content}>
         <PageHeader
           eyebrow="Aprobaciones"
           title="Cartera en mora"
-          description="Consulta los créditos vencidos, filtra la cartera y registra cada seguimiento sin perder el historial."
-          actions={<Button variant="secondary" disabled={loading || saving} onClick={() => setRefreshVersion((value) => value + 1)}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar</Button>}
+          description="Organiza el seguimiento, consulta las prórrogas vigentes y conserva cada gestión."
+          actions={<Button variant="secondary" disabled={loading || saving} onClick={refreshPortfolio}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar</Button>}
         />
 
-        <Card className="p-4 sm:p-5">
-          <form onSubmit={applyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7" aria-label="Filtros de cartera en mora">
-            <label className="space-y-1.5 xl:col-span-2"><span className="text-sm font-bold">Buscar</span><span className="relative block"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--fp-muted)]" aria-hidden="true" /><Input value={formFilters.q} onChange={(event) => updateFilter("q", event.target.value)} maxLength={100} placeholder="Crédito, cliente, cédula o IMEI" style={{ paddingLeft: "2.25rem" }} /></span></label>
-            <label className="space-y-1.5"><span className="text-sm font-bold">Aliado</span><Select value={formFilters.ally} onChange={(event) => updateFilter("ally", event.target.value)}><option value="">Todos</option>{portfolio?.allies.map((ally) => <option key={ally.id} value={ally.id}>{ally.nombre}</option>)}</Select></label>
-            <label className="space-y-1.5"><span className="text-sm font-bold">Responsable</span><Select value={formFilters.responsible} onChange={(event) => updateFilter("responsible", event.target.value)}><option value="">Todos</option>{portfolio?.responsibles.map((responsible) => <option key={responsible.id} value={responsible.id}>{responsible.nombre}</option>)}</Select></label>
-            <label className="space-y-1.5"><span className="text-sm font-bold">Estado</span><Select value={formFilters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="">Todos</option>{MORA_MANAGEMENT_STATES.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</Select></label>
-            <label className="space-y-1.5"><span className="text-sm font-bold">Próxima gestión</span><Input type="date" value={formFilters.followUp} onChange={(event) => updateFilter("followUp", event.target.value)} /></label>
-            <div className="grid grid-cols-2 gap-2"><label className="space-y-1.5"><span className="text-sm font-bold">Mora desde</span><Input type="number" min={0} step={1} inputMode="numeric" value={formFilters.minDays} onChange={(event) => updateFilter("minDays", event.target.value)} placeholder="Días" /></label><label className="space-y-1.5"><span className="text-sm font-bold">Mora hasta</span><Input type="number" min={0} step={1} inputMode="numeric" value={formFilters.maxDays} onChange={(event) => updateFilter("maxDays", event.target.value)} placeholder="Días" /></label></div>
-            <div className="flex flex-wrap items-end gap-2 md:col-span-2 xl:col-span-4 2xl:col-span-7"><Button type="submit" disabled={loading || saving}>Aplicar filtros</Button><Button variant="ghost" disabled={loading || saving} onClick={clearFilters}>Limpiar</Button><span aria-live="polite" className="ml-auto text-sm text-[var(--fp-muted)]">{loading ? "Consultando cartera" : portfolio ? `${portfolio.total.toLocaleString("es-CO")} créditos encontrados` : "Consulta no disponible"}</span></div>
+        <nav className={styles.views} aria-label="Vistas de cartera">
+          <button type="button" aria-pressed={!filters.status} disabled={loading || saving} onClick={() => { setFormFilters(current => ({ ...current, status: "" })); setFilters(current => ({ ...current, status: "" })); setPage(1); }}>Toda la cartera</button>
+          <button type="button" aria-pressed={filters.status === "PRORROGA"} disabled={loading || saving} onClick={() => { setFormFilters(current => ({ ...current, status: "PRORROGA" })); setFilters(current => ({ ...current, status: "PRORROGA" })); setPage(1); }}><CalendarClock aria-hidden="true" />Prórrogas activas</button>
+        </nav>
+
+        <Card className={styles.filters}>
+          <form onSubmit={applyFilters} aria-label="Filtros de cartera en mora">
+            <div className={styles.primaryFilters}>
+              <label className={styles.search}><span>Buscar crédito o cliente</span><span className={styles.searchField}><Search aria-hidden="true" /><Input value={formFilters.q} onChange={(event) => updateFilter("q", event.target.value)} maxLength={100} placeholder="Número de crédito, nombre, cédula o IMEI" style={{ paddingLeft: "2.5rem" }} /></span></label>
+              <label><span>Aliado</span><Select value={formFilters.ally} onChange={(event) => updateFilter("ally", event.target.value)}><option value="">Todos los aliados</option>{portfolio?.allies.map((ally) => <option key={ally.id} value={ally.id}>{ally.nombre}</option>)}</Select></label>
+              <label><span>Estado</span><Select id="mora-portfolio-status" value={formFilters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="">Todos los estados</option>{MORA_PORTFOLIO_STATES.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</Select></label>
+              <Button type="submit" disabled={loading || saving}><Search aria-hidden="true" />Aplicar filtros</Button>
+            </div>
+            <div className={styles.filterBottom}>
+              <details className={styles.moreFilters}>
+                <summary><SlidersHorizontal aria-hidden="true" />Más filtros{[formFilters.responsible, formFilters.followUp, formFilters.minDays, formFilters.maxDays].filter(Boolean).length ? <Badge>{[formFilters.responsible, formFilters.followUp, formFilters.minDays, formFilters.maxDays].filter(Boolean).length}</Badge> : null}</summary>
+                <div className={styles.secondaryFilters}>
+                  <label><span>Responsable</span><Select value={formFilters.responsible} onChange={(event) => updateFilter("responsible", event.target.value)}><option value="">Todos</option>{portfolio?.responsibles.map((responsible) => <option key={responsible.id} value={responsible.id}>{responsible.nombre}</option>)}</Select></label>
+                  <label><span>Próxima gestión</span><Input type="date" value={formFilters.followUp} onChange={(event) => updateFilter("followUp", event.target.value)} /></label>
+                  <label><span>Mora desde</span><Input type="number" min={0} step={1} inputMode="numeric" value={formFilters.minDays} onChange={(event) => updateFilter("minDays", event.target.value)} placeholder="Días" /></label>
+                  <label><span>Mora hasta</span><Input type="number" min={0} step={1} inputMode="numeric" value={formFilters.maxDays} onChange={(event) => updateFilter("maxDays", event.target.value)} placeholder="Días" /></label>
+                </div>
+              </details>
+              <Button variant="ghost" disabled={loading || saving} onClick={clearFilters}>Limpiar filtros</Button>
+            </div>
           </form>
         </Card>
 
         {listError ? <div role="alert" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm">{listError}</div> : null}
         {loading && !portfolio ? <LoadingState label="Cargando cartera en mora..." /> : null}
 
-        <div className={`grid min-w-0 gap-5 ${selectedId ? "2xl:grid-cols-[minmax(0,1fr)_28rem]" : ""}`}>
-          <section className="min-w-0" aria-label="Créditos en mora">
+        <div className={styles.results}>
+          <section className={styles.portfolio} aria-label="Créditos en mora" aria-busy={loading}>
+            <header className={styles.listHeader}><div><h2>{filters.status === "PRORROGA" ? "Prórrogas activas" : "Créditos en mora"}</h2><p>{filters.status === "PRORROGA" ? "Créditos con una prórroga aprobada y vigente." : "Revisa el estado vigente y abre un crédito para registrar su seguimiento."}</p></div><span aria-live="polite">{loading ? "Consultando cartera…" : portfolio ? `${portfolio.total.toLocaleString("es-CO")} créditos encontrados` : "Consulta no disponible"}</span></header>
             {portfolio && !portfolio.items.length && !loading ? <Card><EmptyState title="No hay créditos para estos filtros" description="Ajusta los filtros o actualiza la consulta para revisar la cartera disponible." /></Card> : null}
-            {portfolio?.items.length ? <DataTable className="max-w-full">
-              <table className="w-full min-w-[126rem] border-collapse text-left text-sm">
-                <thead className="bg-[var(--fp-bg)] text-xs text-[var(--fp-muted)]"><tr>
-                  <th scope="col" className="px-4 py-3 font-bold">Número</th><th scope="col" className="px-4 py-3 font-bold">Cliente</th><th scope="col" className="px-4 py-3 font-bold">Cédula</th><th scope="col" className="px-4 py-3 font-bold">Aliado</th><th scope="col" className="px-4 py-3 font-bold">Equipo</th><th scope="col" className="px-4 py-3 font-bold">IMEI</th><th scope="col" className="px-4 py-3 text-right font-bold">Valor vencido</th><th scope="col" className="px-4 py-3 text-right font-bold">Días en mora</th><th scope="col" className="px-4 py-3 font-bold">Último pago</th><th scope="col" className="px-4 py-3 font-bold">Última gestión</th><th scope="col" className="px-4 py-3 font-bold">Responsable</th><th scope="col" className="px-4 py-3 font-bold">Resultado</th><th scope="col" className="px-4 py-3 font-bold">Próxima gestión</th><th scope="col" className="px-4 py-3 font-bold">Estado</th><th scope="col" className="px-4 py-3 text-center font-bold">Acciones</th>
+            {portfolio?.items.length ? <DataTable className={styles.tableScroll}>
+              <table className={styles.table}>
+                <thead><tr>
+                  <th scope="col">Crédito y cliente</th><th scope="col">Aliado y equipo</th><th scope="col">Valor vencido</th><th scope="col">Última gestión</th><th scope="col">Próxima gestión</th><th scope="col">Estado</th><th scope="col">Acciones</th>
                 </tr></thead>
                 <tbody>{portfolio.items.map((item) => {
-                  const managementStatus = item.ultimaGestion?.managementStatus || "PENDIENTE";
-                  return <tr key={item.id} className={`border-t border-[var(--fp-border)] ${selectedId === item.id ? "bg-[var(--fp-lime-soft)] shadow-[inset_3px_0_0_var(--fp-lime)]" : "bg-[var(--fp-surface)] hover:bg-[var(--fp-bg)]"}`}>
-                    <td className="px-4 py-4 font-bold tabular-nums">{item.numeroCreditoVisible}</td><td className="px-4 py-4 font-semibold">{item.clienteNombre}</td><td className="px-4 py-4 tabular-nums text-[var(--fp-muted)]">{item.clienteDocumento || "No disponible"}</td><td className="px-4 py-4">{item.aliadoNombre}</td><td className="px-4 py-4">{item.equipo || "No disponible"}</td><td className="px-4 py-4 tabular-nums">{item.imei || "No disponible"}</td><td className="px-4 py-4 text-right font-bold tabular-nums">{money.format(item.valorVencido)}</td><td className="px-4 py-4 text-right font-black tabular-nums text-[var(--fp-danger)]">{item.diasMora}</td><td className="whitespace-nowrap px-4 py-4">{displayDateTime(item.ultimoPago)}</td><td className="whitespace-nowrap px-4 py-4">{displayDateTime(item.ultimaGestion?.actedAt)}</td><td className="px-4 py-4">{item.ultimaGestion?.responsibleName || "Sin asignar"}</td><td className="max-w-56 px-4 py-4"><span className="line-clamp-2">{item.ultimaGestion?.result || "Sin gestión"}</span></td><td className="whitespace-nowrap px-4 py-4">{displayDateTime(item.ultimaGestion?.nextFollowUpAt)}</td><td className="px-4 py-4"><StatusPill tone={statusTone(managementStatus)}>{statusLabels[managementStatus]}</StatusPill></td><td className="px-4 py-4 text-center"><Button variant="secondary" disabled={saving} aria-pressed={selectedId === item.id} onClick={() => void openCredit(item)}>Gestionar</Button></td>
+                  const managementStatus = portfolioStatus(item);
+                  return <tr key={item.id} data-selected={selectedId === item.id || undefined} data-extension={Boolean(item.prorrogaActiva) || undefined}>
+                    <td><div className={styles.cellStack}><strong>{item.clienteNombre}</strong><span className={styles.creditNumber}>{item.numeroCreditoVisible}</span><span>Cédula: {item.clienteDocumento || "No disponible"}</span>{item.prorrogaActiva ? <div className={styles.mobileExtension}><StatusPill tone="warning">Prórroga</StatusPill><span>{item.prorrogaActiva.expiresOn ? `Hasta ${displayDay(item.prorrogaActiva.expiresOn)}` : "Sin fecha límite"}</span></div> : null}</div></td>
+                    <td><div className={styles.cellStack}><strong>{item.aliadoNombre}</strong><span className={styles.equipment}>{item.equipo || "Equipo no disponible"}</span><span className={styles.imei}>IMEI: {item.imei || "No disponible"}</span></div></td>
+                    <td><div className={styles.cellStack}><strong className={styles.amount}>{money.format(item.valorVencido)}</strong><span className={styles.overdue}>{item.diasMora} {item.diasMora === 1 ? "día" : "días"} en mora</span></div></td>
+                    <td><div className={styles.cellStack}><strong className={styles.result}>{item.ultimaGestion?.result || "Sin gestión"}</strong><span>{item.ultimaGestion?.responsibleName || "Sin asignar"}</span><span>{displayDateTime(item.ultimaGestion?.actedAt)}</span></div></td>
+                    <td><div className={styles.cellStack}><span className={styles.followUp}>{displayDateTime(item.ultimaGestion?.nextFollowUpAt)}</span></div></td>
+                    <td><div className={styles.cellStack}><StatusPill tone={statusTone(managementStatus)}>{statusLabels[managementStatus] || managementStatus}</StatusPill>{item.prorrogaActiva ? <span className={styles.extensionUntil}>{item.prorrogaActiva.expiresOn ? `Hasta ${displayDay(item.prorrogaActiva.expiresOn)}` : "Sin fecha límite"}</span> : null}</div></td>
+                    <td><Button variant="secondary" disabled={saving} aria-pressed={selectedId === item.id} onClick={() => void openCredit(item)}>Gestionar<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></td>
                   </tr>;
                 })}</tbody>
               </table>
@@ -419,13 +490,13 @@ export default function MoraPortfolioClient() {
             {portfolio ? <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--fp-border)] px-2 py-4 text-sm text-[var(--fp-muted)]"><span>Página {portfolio.page} · {portfolio.items.length} de {portfolio.total.toLocaleString("es-CO")}</span><div className="flex gap-2"><Button variant="secondary" disabled={loading || saving || page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Anterior</Button><Button variant="secondary" disabled={loading || saving || !portfolio.hasMore} onClick={() => setPage((value) => value + 1)}>Siguiente<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></div></div> : null}
           </section>
 
-          {selectedId ? <aside className="min-w-0 self-start border border-[var(--fp-border)] bg-[var(--fp-surface)] shadow-[var(--fp-shadow-sm)] 2xl:sticky 2xl:top-4 2xl:max-h-[calc(100vh-2rem)] 2xl:overflow-y-auto" aria-label="Gestión del crédito en mora">
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--fp-border)] p-5"><div><p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--fp-muted)]">Gestión de cartera</p><h2 className="mt-1 text-xl font-black">{detail?.credit.numeroCreditoVisible || `Crédito ${selectedId}`}</h2></div><Button variant="ghost" disabled={saving} onClick={closeDetail} aria-label="Cerrar gestión"><X className="h-5 w-5" aria-hidden="true" /></Button></div>
+          <FinserSidePanel open={Boolean(selectedId)} title="Gestión del crédito en mora" closeLabel="Cerrar gestión" busy={saving} onClose={closeDetail}>
             {loadingDetail ? <div className="p-5"><LoadingState label="Cargando crédito e historial..." /></div> : null}
             {detailError ? <div className="space-y-3 p-5"><p role="alert" className="text-sm text-[var(--fp-danger)]">{detailError}</p>{portfolio?.items.find((item) => item.id === selectedId) ? <Button variant="secondary" onClick={() => void openCredit(portfolio.items.find((item) => item.id === selectedId)!)}>Reintentar</Button> : null}</div> : null}
             {detail ? <>
-              <section className="space-y-4 border-b border-[var(--fp-border)] p-5" aria-labelledby="mora-credit-summary">
-                <div className="flex items-start justify-between gap-3"><div><h3 id="mora-credit-summary" className="font-black">{detail.credit.clienteNombre}</h3><p className="mt-1 text-sm text-[var(--fp-muted)]">{detail.credit.aliadoNombre}</p></div><Badge tone="danger">{detail.credit.diasMora} días</Badge></div>
+              <section className={styles.detailSummary} aria-labelledby="mora-credit-summary">
+                <div className={styles.detailHeading}><div><p className={styles.creditNumber}>{detail.credit.numeroCreditoVisible}</p><h3 id="mora-credit-summary">{detail.credit.clienteNombre}</h3><p>{detail.credit.aliadoNombre}</p></div><StatusPill tone={statusTone(portfolioStatus(detail.credit))}>{statusLabels[portfolioStatus(detail.credit)] || portfolioStatus(detail.credit)}</StatusPill></div>
+                {detail.credit.prorrogaActiva ? <div className={styles.extensionBanner} role="status"><CalendarClock aria-hidden="true" /><div><strong>Prórroga activa</strong><p>{detail.credit.prorrogaActiva.expiresOn ? `Vigente hasta el ${displayDay(detail.credit.prorrogaActiva.expiresOn)}` : "Sin fecha límite"}</p>{detail.credit.prorrogaActiva.installmentNumber ? <p>Cuota {detail.credit.prorrogaActiva.installmentNumber}{detail.credit.prorrogaActiva.installmentDueDate ? ` · Fecha original: ${displayDay(detail.credit.prorrogaActiva.installmentDueDate)}` : ""}</p> : null}<p>{detail.credit.prorrogaActiva.reason}</p>{detail.credit.prorrogaActiva.approvedByName ? <small>Aprobada por {detail.credit.prorrogaActiva.approvedByName}{detail.credit.prorrogaActiva.approvedAt ? ` · ${displayDateTime(detail.credit.prorrogaActiva.approvedAt)}` : ""}</small> : null}</div></div> : null}
                 <dl className="grid grid-cols-2 gap-4">
                   <DetailValue label="Cédula" value={detail.credit.clienteDocumento || "No disponible"} />
                   <DetailValue label="Teléfono" value={detail.credit.clienteTelefono || "No disponible"} />
@@ -434,6 +505,7 @@ export default function MoraPortfolioClient() {
                   <DetailValue label="Equipo" value={detail.credit.equipo || "No disponible"} />
                   <DetailValue label="IMEI" value={detail.credit.imei || "No disponible"} />
                   <DetailValue label="Valor vencido" value={money.format(detail.credit.valorVencido)} />
+                  <DetailValue label="Días en mora" value={String(detail.credit.diasMora)} />
                   <DetailValue label="Último pago" value={displayDateTime(detail.credit.ultimoPago)} />
                 </dl>
               </section>
@@ -459,7 +531,7 @@ export default function MoraPortfolioClient() {
 
               <section className="p-5" aria-labelledby="mora-history-title"><div className="flex items-center justify-between gap-3"><h3 id="mora-history-title" className="flex items-center gap-2 font-black"><History className="h-5 w-5" aria-hidden="true" />Línea de tiempo</h3><Badge>{detail.history.length}</Badge></div>{detail.history.length ? <ol className="mt-4 space-y-4 border-l-2 border-[var(--fp-border)] pl-4">{detail.history.map((item, index) => <li key={item.id} className="relative"><span className="absolute -left-[1.34rem] top-1 h-2.5 w-2.5 rounded-full bg-[var(--fp-lime-strong)] ring-4 ring-[var(--fp-surface)]" /><article className="space-y-2 rounded-[var(--fp-radius-sm)] bg-[var(--fp-bg)] p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><h4 className="font-bold">{actionLabels[item.action]}</h4><p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--fp-muted)]"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />{displayDateTime(item.actedAt)}</p></div><StatusPill tone={statusTone(item.managementStatus)}>{statusLabels[item.managementStatus]}</StatusPill></div><p className="flex items-center gap-1 text-sm"><UserRound className="h-4 w-4 text-[var(--fp-muted)]" aria-hidden="true" /><strong>{item.responsibleName}</strong></p><div><p className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">Resultado</p><p className="mt-1 break-words text-sm">{item.result}</p></div><div><p className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--fp-muted)]">Comentario</p><p className="mt-1 whitespace-pre-wrap break-words text-sm">{item.comment}</p></div><p className="flex items-center gap-1 text-xs text-[var(--fp-muted)]"><CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />Próxima gestión: {displayDateTime(item.nextFollowUpAt)}</p><p className="text-xs text-[var(--fp-muted)]">Registró {item.actorName} · {displayDateTime(item.createdAt)}</p><MoraSupports creditoId={detail.credit.id} subjectKind="GESTION" subjectId={item.id} defaultOpen={index === 0} /></article></li>)}</ol> : <EmptyState className="mt-4" title="Sin gestiones registradas" description="La primera gestión quedará visible aquí y no reemplazará registros anteriores." />}</section>
             </> : null}
-          </aside> : null}
+          </FinserSidePanel>
         </div>
       </div>
     </main>

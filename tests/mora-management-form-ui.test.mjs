@@ -12,12 +12,15 @@ const compiled = compile("../app/dashboard/aprobaciones/cartera-mora/mora-portfo
 const typeModule = { exports: {} };
 runInNewContext(compile("../lib/analyst-mora-types.ts"), { module: typeModule, exports: typeModule.exports });
 
-function harness({ firstReference = "3001112233", secondReference = "3014445566", currentUserId = 17 } = {}) {
+function harness({ firstReference = "3001112233", secondReference = "3014445566", currentUserId = 17,
+  creditOverrides = {}, detailOverrides = {}, deferSave = false } = {}) {
   const componentNames = ["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader", "Select", "StatusPill"];
   const components = Object.fromEntries(componentNames.map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
   const MoraSupports = () => null;
-  const stubComponents = new Set([...Object.values(components), MoraSupports]);
-  const node = (type, props) => typeof type === "function" && !stubComponents.has(type) ? type(props) : ({ type, props });
+  const FinserSidePanel = Object.defineProperty(() => null, "name", { value: "FinserSidePanel" });
+  const stubComponents = new Set([...Object.values(components), MoraSupports, FinserSidePanel]);
+  const node = (type, props) => type === FinserSidePanel && !props.open ? null :
+    typeof type === "function" && !stubComponents.has(type) ? type(props) : ({ type, props });
   const slots = [];
   let cursor = 0, tree, dirty = false;
   const effects = [];
@@ -62,8 +65,13 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     equipo: "IPHONE 13 128GB", imei: "351168083278358", valorVencido: 150000, diasMora: 7,
     ultimoPago: "2026-09-17T15:00:00-05:00", fechaCredito: "2026-08-21", ultimaGestion: legacy,
     referenciaFamiliar1Telefono: firstReference, referenciaFamiliar2Telefono: secondReference, enMora: true,
+    prorrogaActiva: null, estadoGestion: "PROMESA_PAGO", ...creditOverrides,
   };
+  const detailCredit = { ...credit, ...detailOverrides };
   const requests = [];
+  const savedEvents = [];
+  const fetchRequests = [];
+  const pendingSaves = [];
   const response = payload => ({ ok: true, json: async () => payload });
   const loaded = { exports: {} };
   class FixedDate extends Date {
@@ -74,22 +82,28 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     module: loaded, exports: loaded.exports, AbortController, URLSearchParams, Intl, Date: FixedDate,
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(requests.length + 1).padStart(12, "0")}` },
     fetch: async (url, options = {}) => {
+      fetchRequests.push({ url, method: options.method || "GET", cache: options.cache });
       if (url.startsWith("/api/aprobaciones/cartera-mora?")) return response({
-        ok: true, items: [credit], total: 1, page: 1, pageSize: 20, hasMore: false,
+        ok: true, items: [{ ...credit }], total: 1, page: 1, pageSize: 20, hasMore: false,
         allies: [{ id: 2, nombre: credit.aliadoNombre }], responsibles: [{ id: 17, nombre: "Marcos Gomez" }],
       });
       if (url === "/api/aprobaciones/cartera-mora/44" && (!options.method || options.method === "GET")) return response({
-        ok: true, credit, currentResponsible: { id: currentUserId, nombre: "Marcos Gomez" }, history: [legacy],
+        ok: true, credit: { ...detailCredit }, currentResponsible: { id: currentUserId, nombre: "Marcos Gomez" }, history: [...savedEvents, legacy],
         responsibles: [{ id: 17, nombre: "Marcos Gomez" }, { id: 99, nombre: "Otro usuario" }],
       });
       if (url === "/api/aprobaciones/cartera-mora/44" && options.method === "POST") {
         const input = JSON.parse(options.body);
         requests.push(input);
-        return response({ ok: true, unchanged: false, item: {
+        if (deferSave) await new Promise(resolve => pendingSaves.push(resolve));
+        const item = {
           ...input, id: `new-${requests.length}`, creditoId: 44, responsibleName: "Marcos Gomez",
           actorUserId: 17, actorName: "Marcos Gomez", createdAt: "2026-10-09T14:00:00Z",
           resultCode: input.result, result: "Resultado guardado por el servidor",
-        } });
+        };
+        savedEvents.unshift(item);
+        Object.assign(credit, { ultimaGestion: item, estadoGestion: credit.prorrogaActiva ? "PRORROGA" : item.managementStatus });
+        Object.assign(detailCredit, { estadoGestion: detailCredit.prorrogaActiva ? "PRORROGA" : item.managementStatus });
+        return response({ ok: true, unchanged: false, item });
       }
       throw new Error("Unexpected request: " + url);
     },
@@ -98,13 +112,15 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
       if (name === "react/jsx-runtime") return { jsx: node, jsxs: node, Fragment: "fragment" };
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
+      if (name === "@/app/_components/finser-side-panel") return { default: FinserSidePanel, FinserSidePanel };
       if (name === "@/lib/analyst-mora-types") return typeModule.exports;
       if (name === "../mora-supports") return { default: MoraSupports };
+      if (name.endsWith(".module.css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
   });
   const nodes = value => Array.isArray(value) ? value.flatMap(nodes) : !value || typeof value !== "object" ? [] :
-    [value, ...nodes(value.props?.children)];
+    [value, ...nodes(value.props?.children), ...nodes(value.props?.actions)];
   const text = value => Array.isArray(value) ? value.map(text).join(" ") : typeof value === "string" ? value :
     value && typeof value === "object" ? text(value.props?.children) : "";
   const render = () => {
@@ -117,11 +133,17 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     return tree;
   };
   const find = predicate => nodes(tree).find(predicate);
+  const button = label => find(item => item.type === components.Button && text(item.props.children).trim() === label);
   const field = id => find(item => item.props?.id === id);
   const form = () => find(item => item.type === "form" && item.props["aria-labelledby"] === "mora-management-form");
   const labelField = label => {
     const labelNode = nodes(form()).find(item => item.type === "label" && text(item.props.children).trim().startsWith(label));
     return nodes(labelNode).find(item => item.type === components.Input || item.type === components.Select || item.type === "textarea");
+  };
+  const filterForm = () => find(item => item.type === "form" && item.props["aria-label"] === "Filtros de cartera en mora");
+  const filterField = label => {
+    const labelNode = nodes(filterForm()).find(item => item.type === "label" && text(item.props.children).trim().startsWith(label));
+    return nodes(labelNode).find(item => item.type === components.Input || item.type === components.Select);
   };
   const change = (control, value) => { assert.ok(control, "el control debe estar visible"); control.props.onChange({ target: { value } }); render(); };
   async function settle() { for (let index = 0; index < 3; index++) { await setImmediate(); render(); } }
@@ -140,10 +162,16 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
   }
   const options = id => JSON.parse(JSON.stringify(nodes(field(id)?.props.children).filter(item => item.type === "option")
     .map(item => ({ value: item.props.value, label: text(item.props.children).trim() }))));
-  return { open, save, validManagement, field, labelField, change, options, requests, text: () => text(tree), find, components };
+  return { open, save, validManagement, field, labelField, filterField, filterForm, change, options, requests, fetchRequests,
+    text: () => text(tree), nodeText: text, nodes, find, button, components, render, settle,
+    setCredit: values => Object.assign(credit, values), setDetailCredit: values => Object.assign(detailCredit, values),
+    releaseSaves: () => pendingSaves.splice(0).forEach(resolve => resolve()),
+    row: () => find(item => item.type === "tr" && text(item).includes(credit.numeroCreditoVisible)),
+    sidePanel: () => find(item => item.type === FinserSidePanel),
+  };
 }
 
-test("la nueva gestión separa los dos medios de contacto, siete resultados y seis estados", async () => {
+test("la nueva gestión conserva los dos medios de contacto, los resultados actuales y seis estados", async () => {
   const ui = harness(); await ui.open();
   assert.deepEqual(ui.options("mora-management-action"), [
     { value: "LLAMADA", label: "Llamada" }, { value: "MSJ_TEXTO", label: "Msj de texto" },
@@ -156,6 +184,7 @@ test("la nueva gestión separa los dos medios de contacto, siete resultados y se
     { value: "PAGO_REALIZADO", label: "Ya realizó el pago" },
     { value: "VISITA_PENDIENTE", label: "Visita pendiente" },
     { value: "PRORROGA_APROBADA", label: "Prórroga aprobada 4 días" },
+    { value: "LLAMADA_INCOMPLETA", label: "Llamada incompleta" },
   ]);
   assert.deepEqual(ui.options("mora-management-status"), [
     { value: "CONTACTADO", label: "Contactado" }, { value: "SIN_RESPUESTA", label: "Sin respuesta" },
@@ -164,7 +193,7 @@ test("la nueva gestión separa los dos medios de contacto, siete resultados y se
   ]);
 });
 
-test("ambos medios muestran los mismos siete resultados en el orden solicitado y No contesta", async () => {
+test("ambos medios conservan los mismos resultados en el orden actual y No contesta", async () => {
   const ui = harness(); await ui.open();
   const callResults = ui.options("mora-management-result").filter(item => item.value);
   ui.change(ui.field("mora-management-action"), "MSJ_TEXTO");
@@ -177,6 +206,7 @@ test("ambos medios muestran los mismos siete resultados en el orden solicitado y
     { value: "PAGO_REALIZADO", label: "Ya realizó el pago" },
     { value: "VISITA_PENDIENTE", label: "Visita pendiente" },
     { value: "PRORROGA_APROBADA", label: "Prórroga aprobada 4 días" },
+    { value: "LLAMADA_INCOMPLETA", label: "Llamada incompleta" },
   ]);
 });
 
@@ -329,4 +359,114 @@ test("no se registra una gestión sin un responsable nominal válido", async () 
   const ui = harness({ currentUserId: 0 }); await ui.open(); ui.validManagement();
   await ui.save(); assert.equal(ui.requests.length, 0);
   assert.match(ui.text(), /responsable/);
+});
+
+const activeExtension = {
+  id: "extension-active-44", expiresOn: "2026-10-10", reason: "Compromiso autorizado hasta el sábado",
+  approvedAt: "2026-10-09T08:30:00-05:00", approvedByName: "Responsable autorizado",
+  installmentNumber: 3, installmentDueDate: "2026-10-06",
+};
+
+const rowStatus = ui => [...new Set(ui.nodes(ui.row()).filter(item => item.type === ui.components.StatusPill)
+  .map(item => ui.nodeText(item).trim()))];
+
+test("la mesa agrupa la información sin abrir formularios antes de seleccionar un crédito", async () => {
+  const ui = harness(); ui.render(); await ui.settle();
+  assert.equal(ui.sidePanel(), undefined);
+  assert.equal(ui.field("mora-management-action"), undefined);
+  const headings = ui.nodes(ui.find(item => item.type === "table")).filter(item => item.type === "th");
+  assert.equal(headings.length, 7, "la mesa presenta columnas agrupadas y abre el resto del detalle bajo demanda");
+  for (const value of ["0100000044", "Cliente de prueba", "111222333", "Aliado de prueba", "IPHONE 13 128GB", "351168083278358", "Analista anterior"]) {
+    assert.ok(ui.nodeText(ui.row()).includes(value), `el listado conserva ${value}`);
+  }
+});
+
+test("una prórroga vigente muestra Prórroga y su vencimiento en la fila y el panel", async () => {
+  const ui = harness({ creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } });
+  await ui.open();
+  assert.deepEqual(rowStatus(ui), ["Prórroga"]);
+  assert.match(ui.nodeText(ui.row()), /10.*2026/, "el vencimiento debe verse sin abrir el crédito");
+  assert.ok(ui.sidePanel(), "el detalle se abre en el panel compartido");
+  const panelText = ui.nodeText(ui.sidePanel());
+  assert.match(panelText, /Prórroga activa/);
+  assert.match(panelText, /10.*2026/);
+  assert.match(panelText, /Compromiso autorizado hasta el sábado/);
+  assert.match(panelText, /Responsable autorizado/);
+  assert.doesNotMatch(ui.options("mora-management-status").map(item => item.value).join(" "), /PRORROGA/,
+    "Prórroga es el estado derivado de una autorización vigente y no un estado manual de gestión");
+});
+
+test("sin autorización vigente el resultado histórico no se presenta como Prórroga", async () => {
+    const ui = harness({ creditOverrides: {
+      prorrogaActiva: null, estadoGestion: "SEGUIMIENTO",
+      ultimaGestion: { managementStatus: "SEGUIMIENTO", result: "Prórroga aprobada 4 días", resultCode: "PRORROGA_APROBADA" },
+    } });
+    await ui.open();
+    assert.deepEqual(rowStatus(ui), ["Seguimiento"]);
+    assert.doesNotMatch(ui.nodeText(ui.sidePanel()), /Prórroga activa/);
+    assert.match(ui.nodeText(ui.row()), /Prórroga aprobada 4 días/, "se conserva el resultado histórico sin inventar una prórroga vigente");
+});
+
+test("un estado Prórroga obsoleto sin autorización vuelve al estado real de la gestión", async () => {
+  const ui = harness({ creditOverrides: { prorrogaActiva: null, estadoGestion: "PRORROGA",
+    ultimaGestion: { managementStatus: "SIN_RESPUESTA", result: "No contesta" } } });
+  await ui.open();
+  assert.deepEqual(rowStatus(ui), ["Sin respuesta"]);
+  assert.doesNotMatch(ui.nodeText(ui.sidePanel()), /Prórroga activa/);
+});
+
+test("la autorización central sin vencimiento muestra Sin fecha límite sin inventar una fecha", async () => {
+  const ui = harness({ creditOverrides: { prorrogaActiva: { ...activeExtension, expiresOn: null }, estadoGestion: "PRORROGA" } });
+  await ui.open();
+  assert.deepEqual(rowStatus(ui), ["Prórroga"]);
+  assert.match(ui.nodeText(ui.row()), /Sin fecha límite/);
+  assert.match(ui.nodeText(ui.sidePanel()), /Sin fecha límite/);
+  assert.doesNotMatch(ui.nodeText(ui.sidePanel()), /1970|Invalid Date/);
+});
+
+test("el filtro Prórroga envía PRORROGA al servidor y conserva los otros filtros operativos", async () => {
+  const ui = harness(); await ui.open();
+  const statusOptions = ui.nodes(ui.filterField("Estado")).filter(item => item.type === "option");
+  assert.ok(statusOptions.some(item => item.props.value === "PRORROGA" && ui.nodeText(item) === "Prórroga"));
+  for (const [label, value] of Object.entries({ Buscar: "111222333", Aliado: "2", Responsable: "17", Estado: "PRORROGA", "Próxima gestión": "2026-10-10", "Mora desde": "5", "Mora hasta": "20" })) {
+    ui.change(ui.filterField(label), value);
+  }
+  ui.filterForm().props.onSubmit({ preventDefault() {} }); await ui.settle();
+  const listRequests = ui.fetchRequests.filter(item => item.url.startsWith("/api/aprobaciones/cartera-mora?"));
+  const query = new URLSearchParams(listRequests.at(-1).url.split("?")[1]);
+  assert.equal(query.get("status"), "PRORROGA");
+  assert.equal(query.get("q"), "111222333"); assert.equal(query.get("ally"), "2");
+  assert.equal(query.get("responsible"), "17"); assert.equal(query.get("followUp"), "2026-10-10");
+  assert.equal(query.get("minDays"), "5"); assert.equal(query.get("maxDays"), "20");
+  assert.equal(listRequests.at(-1).cache, "no-store");
+});
+
+test("Actualizar retira la prórroga cancelada de lista y detalle sin borrar una gestión en edición", async () => {
+  const ui = harness({ creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } });
+  await ui.open(); ui.validManagement();
+  const comment = ui.labelField("Comentario").props.value;
+  ui.setCredit({ prorrogaActiva: null, estadoGestion: "SEGUIMIENTO" });
+  ui.setDetailCredit({ prorrogaActiva: null, estadoGestion: "SEGUIMIENTO" });
+  const beforeDetailLoads = ui.fetchRequests.filter(item => item.url === "/api/aprobaciones/cartera-mora/44").length;
+  ui.button("Actualizar").props.onClick(); await ui.settle();
+  assert.deepEqual(rowStatus(ui), ["Seguimiento"]);
+  assert.doesNotMatch(ui.nodeText(ui.sidePanel()), /Prórroga activa/);
+  assert.equal(ui.labelField("Comentario").props.value, comment);
+  const detailLoads = ui.fetchRequests.filter(item => item.url === "/api/aprobaciones/cartera-mora/44");
+  assert.ok(detailLoads.length > beforeDetailLoads, "la actualización consulta también la autorización del detalle abierto");
+  assert.ok(detailLoads.every(item => item.cache === "no-store"));
+});
+
+test("guardar el resultado Prórroga aprobada no crea una autorización inexistente ni duplica la gestión", async () => {
+  const ui = harness({ deferSave: true }); await ui.open(); ui.validManagement("PRORROGA_APROBADA");
+  const firstSave = ui.save(); ui.render();
+  assert.equal(ui.requests.length, 1);
+  await ui.save();
+  assert.equal(ui.requests.length, 1, "no hay una segunda solicitud mientras se guarda");
+  ui.releaseSaves(); await firstSave;
+  assert.equal(ui.requests.length, 1);
+  assert.ok(!rowStatus(ui).includes("Prórroga"), "solo la autorización vigente puede convertir el estado en Prórroga");
+  assert.doesNotMatch(ui.nodeText(ui.sidePanel()), /Prórroga activa/);
+  await ui.save();
+  assert.equal(ui.requests.length, 1, "no se duplica la misma gestión después de guardar");
 });

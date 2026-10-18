@@ -1,5 +1,8 @@
 export const MORA_ACTIONS = ["LLAMADA", "MSJ_TEXTO"] as const;
 export const MORA_MANAGEMENT_STATES = ["CONTACTADO", "SIN_RESPUESTA", "ACUERDO_PAGO", "CERRADO", "SOLUCIONADO", "SEGUIMIENTO"] as const;
+// Prórroga is derived from an approved, current request; it is never a manual
+// management choice and does not overwrite the recorded follow-up history.
+export const MORA_PORTFOLIO_STATES = [...MORA_MANAGEMENT_STATES, "PRORROGA"] as const;
 export const MORA_RESULTS = ["MEDIOS_PAGO", "NUMERO_SIN_WHATSAPP", "SIN_RESPUESTA", "ACUERDO_PAGO", "PAGO_REALIZADO", "VISITA_PENDIENTE", "PRORROGA_APROBADA", "LLAMADA_INCOMPLETA"] as const;
 export type MoraManagementResult = typeof MORA_RESULTS[number];
 export const MORA_RESULT_LABELS: Record<MoraManagementResult, string> = {
@@ -49,4 +52,13 @@ export type MoraManagementEvent = Omit<MoraManagementInput, "action" | "manageme
   actorName: string;
   createdAt: string;
 };
-export type MoraPortfolioItem = { id: number; folio: string; numeroCreditoVisible: string; clienteNombre: string; clienteDocumento: string | null; aliadoId: number; aliadoNombre: string; equipo: string; imei: string | null; valorVencido: number; diasMora: number; ultimoPago: string | null; fechaCredito: string; ultimaGestion: MoraManagementEvent | null };
+export type MoraActiveExtension = {
+  id: string;
+  expiresOn: string | null;
+  reason: string;
+  approvedAt: string | null;
+  approvedByName: string | null;
+  installmentNumber: number | null;
+  installmentDueDate: string | null;
+};
+export type MoraPortfolioItem = { id: number; folio: string; numeroCreditoVisible: string; clienteNombre: string; clienteDocumento: string | null; aliadoId: number; aliadoNombre: string; equipo: string; imei: string | null; valorVencido: number; diasMora: number; ultimoPago: string | null; fechaCredito: string; ultimaGestion: MoraManagementEvent | null; prorrogaActiva: MoraActiveExtension | null; estadoGestion: string };

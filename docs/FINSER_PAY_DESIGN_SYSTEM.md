@@ -210,6 +210,19 @@ En movil se reduce la mascota sin cubrir controles. El recurso es estatico y
 la preferencia de movimiento reducido tambien detiene el indicador animado.
 
 
+## Cartera en mora del analista
+
+La vista operativa conserva la cabecera del Centro del analista y las superficies
+compartidas. La tabla agrupa crédito y cliente, aliado y equipo, importe vencido,
+última gestión, seguimiento y estado; el detalle usa `FinserSidePanel` para no
+comprimir la tabla. Los filtros principales son búsqueda, aliado y estado; los
+adicionales se despliegan desde Más filtros. Las prórrogas aprobadas vigentes usan
+el estado Prórroga, acento ámbar y vencimiento visible, también junto al cliente
+en móvil. El detalle informa motivo y autorización. Este estado proviene de la
+solicitud de prórroga y conserva el historial de gestión anterior; una gestión
+que mencione una prórroga no equivale a una autorización. Al actualizar se
+consultan listado y detalle sin borrar el formulario que se esté completando.
+
 ## Nueva venta: enrolamiento y entrega
 
 El cierre reutiliza la cabecera blanca compacta de Nueva venta y conserva sus
