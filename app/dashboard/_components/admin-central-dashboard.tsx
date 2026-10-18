@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { isAdminRole } from "@/lib/roles";
-import { ArrowRight, Bell, CalendarDays, Calculator, ChevronDown, ChevronRight, CircleAlert, CreditCard, FilePlus2, FileText, Layers, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowRight, Bell, CalendarDays, Calculator, ChevronDown, ChevronRight, CircleAlert, CreditCard, FilePlus2, FileText, Layers, Smartphone, TriangleAlert, UserRound } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card } from "@/app/_components/finser-ui";
 import FinserBrand from "@/app/_components/finser-brand";
@@ -82,7 +82,7 @@ export default function AdminCentralDashboard({ adminCentral, aliadoNombre, data
     ][] = [...(adminCentral && isAdminRole(rolUsuario) ? [["Comisiones", "/dashboard/comisiones"], ["Aliados", "/dashboard/aliados"], ["Lista negra", "/dashboard/lista-negra"]] as [
             string,
             string
-        ][] : []), ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"], ...(adminCentral ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"], ["Parámetros de crédito", "/dashboard/parametros-credito"]] as [
+        ][] : []), ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"], ...(isAdminRole(rolUsuario) ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"]] as [string, string][] : []), ...(adminCentral ? [["Parámetros de crédito", "/dashboard/parametros-credito"]] as [
             string,
             string
         ][] : [])];
@@ -102,7 +102,7 @@ export default function AdminCentralDashboard({ adminCentral, aliadoNombre, data
    </Card></div>
    <div className={styles.bottom}><section className={styles.attention}><h2>Por atender</h2>{[{ label: "Vencen hoy", count: data.dueToday, icon: CalendarDays, tone: "positive" }, { label: "Mora temprana", count: data.earlyClients, icon: TriangleAlert, tone: "warning" }, { label: "Prioridad", count: data.criticalCredits, icon: CircleAlert, tone: "danger" }].map(({ label, count, icon: Icon, tone }) => <Link key={label} href={resumenHref} className={styles.alert}><span className={`${styles.alertIcon} ${styles[tone]}`}><Icon aria-hidden="true"/></span><b>{count}</b><span>{label}</span><ChevronRight aria-hidden="true"/></Link>)}</section>
    <section className={styles.allies}><div className={styles.sectionHeading}><h2>{selectedAlly || !adminCentral ? "Sedes" : "Aliados"}</h2><span>Colocado · Créditos</span></div>{data.creditPerformance.length ? data.creditPerformance.slice(0, 4).map(a => <div className={styles.ally} key={a.name}><span>{a.name}</span><span>{money(a.value)}<i>·</i>{a.units}</span></div>) : <p className={styles.empty}>Sin colocaciones en este periodo.</p>}</section>
-   <section className={styles.actions}><h2>Acciones</h2><div><Action href="/dashboard/creditos" icon={FilePlus2} label="Nuevo crédito"/>{adminCentral && <Action href="/dashboard/creditos?mode=simulator" icon={Calculator} label="Simular"/>}<Action href="/dashboard/abonos" icon={CreditCard} label="Recibir abono"/><Action href="/dashboard/clientes" icon={UserRound} label="Buscar usuario"/>{adminCentral ? <><Action href="/dashboard/creditos-masivos" icon={Layers} label="Créditos masivos"/><Action href="/dashboard/excepciones-mora" icon={FileText} label="Excepciones"/></> : <Action href="/dashboard/reportes" icon={FileText} label="Ver reportes"/>}</div></section></div>
+   <section className={styles.actions}><h2>Acciones</h2><div><Action href="/dashboard/creditos" icon={FilePlus2} label="Nuevo crédito"/>{adminCentral && <Action href="/dashboard/creditos?mode=simulator" icon={Calculator} label="Simular"/>}<Action href="/dashboard/abonos" icon={CreditCard} label="Recibir abono"/><Action href="/dashboard/clientes" icon={UserRound} label="Buscar usuario"/>{adminCentral ? <><Action href="/dashboard/creditos-masivos" icon={Layers} label="Créditos masivos"/><Action href="/dashboard/excepciones-mora" icon={FileText} label="Excepciones"/></> : <Action href="/dashboard/reportes" icon={FileText} label="Ver reportes"/>}{!adminCentral && isAdminRole(rolUsuario) && <Action href="/dashboard/catalogo-equipos" icon={Smartphone} label="Catálogo de equipos"/>}</div></section></div>
   </main>
  </div>;
 }

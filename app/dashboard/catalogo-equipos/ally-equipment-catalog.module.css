@@ -1,0 +1,44 @@
+.main { min-height: calc(100dvh - 72px); padding: 28px 32px 48px; background: var(--fp-bg); color: var(--fp-graphite); }
+.container { max-width: 1480px; margin: 0 auto; }
+.back { display: inline-flex; min-height: 40px; align-items: center; gap: 8px; margin-bottom: 16px; color: var(--fp-muted); font-size: 14px; }
+.back:hover { color: var(--fp-graphite); }
+.catalog { margin-top: 24px; overflow: hidden; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 24px 0; border-bottom: 1px solid var(--fp-border); }
+.productTabs { min-width: 0; }
+.productTabs > div { border-bottom: 0; gap: 12px; }
+.productTabs button { display: inline-flex; min-height: 64px; align-items: center; gap: 12px; font-size: 15px; }
+.tabIcon { width: 24px !important; height: 28px !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; }
+.tabIcon img { width: 22px !important; height: 24px !important; }
+.search { position: relative; flex: 0 1 360px; margin-bottom: 16px; }
+.search > svg { position: absolute; top: 50%; left: 14px; transform: translateY(-50%); color: var(--fp-muted); pointer-events: none; }
+.search input { padding-left: 44px; padding-right: 44px; }
+.search input::-webkit-search-cancel-button { appearance: none; }
+.search button { position: absolute; top: 0; right: 0; display: grid; width: 44px; height: 100%; place-items: center; color: var(--fp-muted); }
+.results { padding: 24px; }
+.count { margin-bottom: 20px; color: var(--fp-muted); font-size: 14px; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; list-style: none; padding: 0; }
+.equipment { min-width: 0; padding: 24px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: var(--fp-surface); }
+.identity { display: flex; align-items: center; gap: 16px; min-height: 72px; }
+.deviceIcon { width: 64px !important; height: 64px !important; flex-shrink: 0; }
+.identity > div { min-width: 0; }
+.brand { display: block; margin-bottom: 6px; color: var(--fp-muted); font-size: 12px; font-weight: 700; letter-spacing: .05em; }
+.identity h2 { font-size: 17px; font-weight: 750; line-height: 1.4; overflow-wrap: anywhere; }
+.price { display: flex; flex-direction: column; gap: 8px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--fp-border); }
+.price > span { color: var(--fp-muted); font-size: 13px; }
+.price strong { font-size: clamp(23px, 2vw, 28px); font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 20px; padding: 16px; border: 1px solid var(--fp-danger); border-radius: var(--fp-radius-md); background: var(--fp-danger-soft); color: var(--fp-danger); font-size: 14px; }
+.error > span { flex: 1; min-width: 160px; }
+.back:focus-visible, .search button:focus-visible, .results:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: 4px; }
+@media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .main { padding: 20px 16px 32px; }
+  .toolbar { gap: 12px; padding: 4px 16px 0; }
+  .productTabs { width: 100%; }
+  .productTabs > div { justify-content: space-between; gap: 8px; }
+  .productTabs button { gap: 8px; padding-left: 8px; padding-right: 8px; font-size: 14px; }
+  .search { flex-basis: 100%; }
+  .results { padding: 20px 16px; }
+  .grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .equipment { padding: 20px; }
+  .identity { min-height: 64px; }
+}

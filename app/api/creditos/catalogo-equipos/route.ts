@@ -9,6 +9,7 @@ import {
   updateEquipmentCatalogItem,
 } from "@/lib/equipment-catalog";
 import { isAdminRole } from "@/lib/roles";
+import { isFinserPayCentralAlly } from "@/lib/aliados";
 
 async function requireUser() {
   const user = await getSessionUser();
@@ -30,11 +31,14 @@ async function requireAdmin() {
     return session;
   }
 
-  if (!isAdminRole(session.user.rolNombre)) {
+  if (
+    !isAdminRole(session.user.rolNombre) ||
+    !isFinserPayCentralAlly(session.user.aliadoAccesoCodigo)
+  ) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { error: "Solo el administrador puede gestionar el catalogo de equipos" },
+        { error: "Solo el administrador central de FINSER PAY puede gestionar el catálogo de equipos" },
         { status: 403 }
       ),
     };
@@ -65,7 +69,8 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const includeInactive =
       searchParams.get("includeInactive") === "true" &&
-      isAdminRole(session.user.rolNombre);
+      isAdminRole(session.user.rolNombre) &&
+      isFinserPayCentralAlly(session.user.aliadoAccesoCodigo);
 
     return catalogResponse(includeInactive);
   } catch (error) {

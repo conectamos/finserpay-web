@@ -221,13 +221,17 @@ export default function AdminSidebar({
           : []),
         { href: "/dashboard/sedes", icon: MapPin, label: "Sedes" },
         { href: "/dashboard/usuarios", icon: UserRound, label: "Usuarios" },
-        ...(adminCentral
+        ...(isAdminRole(rolUsuario)
           ? [
               {
                 href: "/dashboard/catalogo-equipos",
                 icon: Smartphone,
-                label: "Catalogo de equipos",
+                label: "Catálogo de equipos",
               },
+            ]
+          : []),
+        ...(adminCentral
+          ? [
               {
                 href: "/dashboard/parametros-credito",
                 icon: Settings,

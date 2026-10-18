@@ -160,19 +160,37 @@ test("mantiene fallback manual pero una marca IPHONE no puede eludir su flujo", 
   }
 });
 
-test("las dos rutas resuelven equipoCatalogoId por ID con el mismo helper", async () => {
-  const [catalogSource, creditRoute, firmaSeguroRoute] = await Promise.all([
+test("creación y envío a firma resuelven el catálogo por ID y validan la misma plataforma, incluso mediante el builder", async () => {
+  const [catalogSource, creditRoute, firmaSeguroRoute, firmaSeguroBuilder] = await Promise.all([
     readProjectFile("lib/equipment-catalog.ts"),
     readProjectFile("app/api/creditos/route.ts"),
     readProjectFile("app/api/creditos/borradores/[id]/firma-seguro/route.ts"),
+    readProjectFile("lib/firmaseguro-draft-credit-builder.ts"),
   ]);
 
   assert.match(catalogSource, /export async function findEquipmentCatalogItemById/);
   assert.match(catalogSource, /WHERE id = \$1/);
 
-  for (const source of [creditRoute, firmaSeguroRoute]) {
+  assert.match(
+    firmaSeguroRoute,
+    /import\s*\{[^}]*\bbuildDraftCredit\b[^}]*\}\s*from\s*["']@\/lib\/firmaseguro-draft-credit-builder["']/
+  );
+  assert.match(
+    firmaSeguroRoute,
+    /await buildDraftCredit\(lockedAuthorized\.row,\s*\{\s*requireFirmaSeguroIdentity:\s*true\s*\}\)/
+  );
+  assert.match(firmaSeguroBuilder, /export async function buildDraftCredit\(/);
+
+  for (const source of [creditRoute, firmaSeguroBuilder]) {
     assert.match(source, /equipoCatalogoId/);
-    assert.match(source, /findEquipmentCatalogItemById/);
-    assert.match(source, /resolveCreditEquipmentPlatform/);
+    assert.match(
+      source,
+      /const catalogItem = equipoCatalogoId\s*\? await findEquipmentCatalogItemById\(equipoCatalogoId\)/
+    );
+    assert.match(
+      source,
+      /const platformResolution = resolveCreditEquipmentPlatform\(\{\s*requestedPlatform:\s*(?:body|payload)\.plataformaDispositivo,\s*equipoMarca,\s*equipoModelo,\s*catalogItemId:\s*equipoCatalogoId,\s*catalogItem,?\s*\}\)/
+    );
+    assert.match(source, /if \(!platformResolution\.ok\)/);
   }
 });
