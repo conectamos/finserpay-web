@@ -37,6 +37,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run test:cuotavencida
       # All provider responses are local fixtures; no paid queries or signatures.
       - run: npm run test:credit-origination
       - run: npm run test:pagos-aliados
