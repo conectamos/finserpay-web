@@ -14,6 +14,7 @@ const { isEquipmentCatalogItemAllowedForPlatform } = await jiti.import("../lib/c
 const components = Object.fromEntries([
   "Badge", "Button", "Card", "EmptyState", "Input", "LoadingState", "PageHeader", "Tabs",
 ].map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
+const ExportLink = () => null;
 const source = ts.transpileModule(readFileSync(path.join(projectRoot, "app/dashboard/catalogo-equipos/ally-equipment-catalog.tsx"), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
@@ -72,6 +73,7 @@ function mount({ send = async () => response(catalog) } = {}) {
       if (name === "lucide-react") return Object.fromEntries(["ArrowLeft", "CircleAlert", "RefreshCw", "Search", "X"].map(icon => [icon, () => null]));
       if (name === "@/app/_components/finser-ui") return components;
       if (name === "@/lib/credit-factory") return { isEquipmentCatalogItemAllowedForPlatform };
+      if (name === "./catalog-export-link") return { default: ExportLink };
       if (name === "next/link" || name === "@/app/dashboard/creditos/equipment-visual") return { default: () => null };
       if (name.endsWith(".module.css")) return { default: new Proxy({}, { get: (_target, key) => String(key) }) };
       throw new Error("Unexpected dependency: " + name);
@@ -152,6 +154,22 @@ test("ANDROID e IPHONE usan la clasificación vigente, conservan sus importes y 
     assert.equal(h.requests.length, 1, "cambiar de producto no consulta ni modifica el catálogo");
     const labels = h.all(node => node.type === "button" || node.type === components.Button).map(node => text(node).trim());
     assert.ok(labels.every(label => /^(Actualizar|ANDROID \d+|IPHONE \d+)$/.test(label)), labels.join(", "));
+    assertReadOnlyRequests(h);
+  } finally { h.unmount(); }
+});
+
+test("el administrador aliado puede exportar el producto y la búsqueda seleccionados sin escrituras", async () => {
+  const h = mount();
+  try {
+    await h.flush();
+    assert.equal(h.find(node => node.type === ExportLink).props.product, "ANDROID");
+    h.tab("IPHONE").props.onClick();
+    h.input().props.onChange({ target: { value: "14 128GB" } });
+    await h.flush();
+    const link = h.find(node => node.type === ExportLink);
+    assert.equal(link.props.product, "IPHONE");
+    assert.equal(link.props.query, "14 128GB");
+    assert.equal(link.props.status, undefined, "la consulta aliada utiliza únicamente activos");
     assertReadOnlyRequests(h);
   } finally { h.unmount(); }
 });

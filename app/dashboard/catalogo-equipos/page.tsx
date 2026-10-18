@@ -1,6 +1,3 @@
-import { AppShell } from "@/app/_components/finser-ui";
-import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
-import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
 import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { requireAdminDashboardAccess } from "@/lib/dashboard-access";
@@ -18,40 +15,17 @@ export default async function CatalogoEquiposPage() {
   const { session } = await requireAdminDashboardAccess();
   const adminCentral = isFinserPayCentralAlly(session.aliadoAccesoCodigo);
 
-  if (!adminCentral) {
-    return (
-      <div className="min-h-screen bg-[var(--fp-bg)]">
-        <FinserNavigation
-          admin
-          adminCentral={false}
-          nombreUsuario={session.nombre}
-          rolUsuario={session.rolNombre}
-          variant="requests"
-          activeSection="administration"
-        />
-        <AllyEquipmentCatalog />
-      </div>
-    );
-  }
-
   return (
-    <AppShell
-      sidebar={
-        <AdminSidebar
-          activeHref="/dashboard/catalogo-equipos"
-          adminCentral={adminCentral}
-          nombreUsuario={session.nombre}
-          rolUsuario={session.rolNombre}
-        />
-      }
-    >
-      <AdminWorkspaceTopbar
-        parent="Administracion"
-        current="Catalogo de equipos"
-        userName={session.nombre}
-        userRole={session.rolNombre}
+    <div className="min-h-screen bg-[var(--fp-bg)]">
+      <FinserNavigation
+        admin
+        adminCentral={adminCentral}
+        nombreUsuario={session.nombre}
+        rolUsuario={session.rolNombre}
+        variant="requests"
+        activeSection="administration"
       />
-      <EquipmentCatalogConsole />
-    </AppShell>
+      {adminCentral ? <EquipmentCatalogConsole /> : <AllyEquipmentCatalog />}
+    </div>
   );
 }

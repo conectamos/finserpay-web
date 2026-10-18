@@ -164,6 +164,7 @@ test("la ruta del administrador aliado muestra consulta sin herramientas de edic
   assert.match(html, /data-catalog-component="readonly"/);
   assert.match(html, /data-catalog-component="navigation"/);
   assert.doesNotMatch(html, /data-catalog-component="management"/);
+  assert.doesNotMatch(html, /data-catalog-component="(?:sidebar|topbar)"/);
   const navigation = tree.props.children[0];
   assert.equal(navigation.props.nombreUsuario, fixture.session.nombre);
   assert.equal(navigation.props.rolUsuario, fixture.session.rolNombre);
@@ -172,16 +173,22 @@ test("la ruta del administrador aliado muestra consulta sin herramientas de edic
   assert.equal(navigation.props.activeSection, "administration");
 });
 
-test("la ruta central conserva la consola de administración existente", async () => {
+test("la ruta central conserva la gestión dentro de la cabecera horizontal FINSER PAY", async () => {
   const fixture = catalogPage({ central: true });
   const tree = await fixture.Page();
   const html = renderToStaticMarkup(tree);
   assert.equal(fixture.checks(), 1);
   assert.match(html, /data-catalog-component="management"/);
+  assert.match(html, /data-catalog-component="navigation"/);
   assert.doesNotMatch(html, /data-catalog-component="readonly"/);
-  assert.equal(tree.props.sidebar.props.activeHref, catalogRoute);
-  assert.equal(tree.props.sidebar.props.adminCentral, true);
-  assert.equal(tree.props.sidebar.props.nombreUsuario, fixture.session.nombre);
+  assert.doesNotMatch(html, /data-catalog-component="(?:sidebar|topbar)"/);
+  assert.equal(tree.props.sidebar, undefined);
+  const navigation = tree.props.children[0];
+  assert.equal(navigation.props.nombreUsuario, fixture.session.nombre);
+  assert.equal(navigation.props.rolUsuario, fixture.session.rolNombre);
+  assert.equal(navigation.props.admin, true);
+  assert.equal(navigation.props.adminCentral, true);
+  assert.equal(navigation.props.activeSection, "administration");
 });
 
 test("la ruta exige acceso de administrador antes de mostrar cualquier catálogo", async () => {

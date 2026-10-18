@@ -7,6 +7,7 @@ import { Badge, Button, Card, EmptyState, Input, LoadingState, PageHeader, Tabs 
 import { isEquipmentCatalogItemAllowedForPlatform } from "@/lib/credit-factory";
 import type { EquipmentCatalogItem } from "@/lib/equipment-catalog";
 import EquipmentVisual from "@/app/dashboard/creditos/equipment-visual";
+import CatalogExportLink from "./catalog-export-link";
 import styles from "./ally-equipment-catalog.module.css";
 
 type Product = "ANDROID" | "IPHONE";
@@ -17,7 +18,7 @@ const priceFormatter = new Intl.NumberFormat("es-CO", {
 });
 
 function searchText(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-CO").trim();
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-CO").replace(/\s+/g, " ").trim();
 }
 
 export default function AllyEquipmentCatalog() {
@@ -73,10 +74,13 @@ export default function AllyEquipmentCatalog() {
           title="Catálogo de equipos"
           description="Consulta los equipos disponibles y su precio base de venta."
           actions={
-            <Button variant="secondary" onClick={() => void loadCatalog()} disabled={loading}>
-              <RefreshCw size={17} className={loading ? "animate-spin" : undefined} aria-hidden="true" />
-              {loading ? "Actualizando…" : "Actualizar"}
-            </Button>
+            <>
+              <CatalogExportLink product={product} query={query} />
+              <Button variant="secondary" onClick={() => void loadCatalog()} disabled={loading}>
+                <RefreshCw size={17} className={loading ? "animate-spin" : undefined} aria-hidden="true" />
+                {loading ? "Actualizando…" : "Actualizar"}
+              </Button>
+            </>
           }
         />
 
