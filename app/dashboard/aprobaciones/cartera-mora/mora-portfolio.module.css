@@ -1,7 +1,7 @@
 .workspace { min-width: 0; padding: 24px 32px 64px; }
 .content { max-width: 1920px; margin: 0 auto; display: grid; gap: 20px; }
-.views { display: flex; gap: 24px; border-bottom: 1px solid var(--fp-border); }
-.views button { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 8px 0 14px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--fp-muted); font-size: 14px; font-weight: 600; cursor: pointer; }
+.views { display: flex; gap: 24px; overflow-x: auto; border-bottom: 1px solid var(--fp-border); }
+.views button { display: inline-flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 48px; padding: 8px 0 14px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--fp-muted); font-size: 14px; font-weight: 600; cursor: pointer; }
 .views button[aria-pressed="true"] { border-bottom-color: var(--fp-lime); color: var(--fp-graphite); }
 .views button:disabled { cursor: wait; opacity: .65; }
 .views button:focus-visible, .moreFilters summary:focus-visible { outline: 2px solid var(--fp-graphite); outline-offset: 4px; }

@@ -1,0 +1,25 @@
+.section { min-width: 0; padding-block: 24px; border-bottom: 1px solid var(--fp-border); color: var(--fp-graphite); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.header h3, .history h3 { margin: 0; font-size: 17px; font-weight: 700; }
+.header p, .help, .action p, .empty { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--fp-muted); }
+.manual { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
+.manual a[aria-disabled="true"] { opacity: .5; cursor: default; }
+.manual a { text-decoration: none; }
+.automatic { margin-top: 20px; border-top: 1px solid var(--fp-border); padding-top: 12px; }
+.automatic summary { width: fit-content; min-height: 40px; padding-block: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.automatic summary:focus-visible { outline: 2px solid var(--fp-graphite); outline-offset: 4px; }
+.action { margin-block: 12px 20px; }
+.action button { max-width: 100%; white-space: normal; text-align: left; }
+.action svg { flex-shrink: 0; }
+.confirmation { margin-top: 16px; padding: 16px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-bg); }
+.confirmation h4 { margin: 0 0 12px; font-size: 15px; font-weight: 700; }
+.confirmation p { margin-top: 6px; font-size: 14px; line-height: 1.5; }
+.history { margin-top: 24px; }
+.history ol { margin: 16px 0 0; padding: 0; list-style: none; }
+.history li { position: relative; border-left: 2px solid var(--fp-border); padding: 0 0 20px 16px; overflow-wrap: anywhere; }
+.history li::before { content: ""; position: absolute; top: 5px; left: -4px; width: 6px; height: 6px; border-radius: 50%; background: var(--fp-graphite); }
+.eventHeading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.history li p { margin: 8px 0; font-size: 13px; line-height: 1.6; }
+.history small { display: block; font-size: 12px; line-height: 1.6; color: var(--fp-muted); }
+.error { margin-top: 12px; padding: 12px; border-radius: var(--fp-radius-md); background: var(--fp-danger-soft); color: var(--fp-danger); font-size: 13px; line-height: 1.6; }
+@media(max-width: 480px) { .manual a { flex: 1; } .eventHeading { align-items: flex-start; flex-direction: column; } }

@@ -16,7 +16,8 @@ test("la cartera conserva filtros y datos operativos dentro de la vista agrupada
   for (const filter of ["q", "ally", "responsible", "minDays", "maxDays", "status", "followUp"]) {
     assert.match(source, new RegExp(`${filter}: ""`));
   }
-  assert.match(source, /\/api\/aprobaciones\/cartera-mora\?\$\{params\.toString\(\)\}/);
+  assert.match(source, /const apiBase = allCredits \? "\/api\/aprobaciones\/gestion-cartera" : "\/api\/aprobaciones\/cartera-mora"/);
+  assert.match(source, /`\$\{apiBase\}\?\$\{params\.toString\(\)\}`/);
   for (const label of ["Cliente", "Cédula", "Aliado", "Equipo", "IMEI", "Valor vencido", "Último pago", "Última gestión", "Responsable", "Resultado", "Próxima gestión", "Estado"]) {
     assert.ok(source.toLowerCase().includes(label.toLowerCase()), `falta ${label}`);
   }

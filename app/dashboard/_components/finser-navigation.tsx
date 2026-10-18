@@ -30,6 +30,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
   ];
   const portfolio: Item[] = [
     ...(admin ? [["Resumen", "/dashboard/cartera"], ["Detalle de mora", "/dashboard/cartera/detalle-mora"], ["Riesgo por referencia", "/dashboard/riesgo-referencia"]] as Item[] : []),
+    ...(adminCentral ? [["Gestión de cartera", "/dashboard/aprobaciones/gestion-cartera"]] as Item[] : []),
     ["Recaudo por corte", "/dashboard/reportes/recaudo-por-corte"],
   ];
   const integrations: Item[] = [["Integraciones", "/dashboard/integraciones"], ["Enrolamiento iPhone", "/dashboard/integraciones/enrolamiento-iphone"], ["Historial DataCrédito", "/dashboard/datacredito"], ["Liberar consultas", "/dashboard/datacredito/liberaciones"], ["Equality Zero Touch", "/dashboard/equality"]];

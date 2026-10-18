@@ -7,6 +7,7 @@ import { confirmedSadminNumber } from "@/lib/credit-display-number";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import type { MoraCreditProduct } from "@/lib/mora-exception-types";
+import type { CreditPortfolioState } from "@/lib/analyst-mora-types";
 
 export const moraCreditSelect = {
   id: true, folio: true, clienteNombre: true, clienteDocumento: true, clienteTelefono: true,
@@ -47,12 +48,12 @@ function snapshotReferencePhones(snapshot: unknown): MoraReferencePhones {
   return { referenciaFamiliar1Telefono: at(0), referenciaFamiliar2Telefono: at(1) };
 }
 
-export async function readMoraCredit(id: number) {
+export async function readMoraCredit(id: number, includeInactive = false) {
   if (!Number.isSafeInteger(id) || id < 1) throw new CreditApprovalError("INVALID_CREDIT", "Crédito inválido.");
   // The portfolio does not load contract snapshots or reference contacts. Only
   // an authorized detail request reads the two references for this credit.
   const credit = await prisma.credito.findUnique({ where: { id }, select: { ...moraCreditSelect, contratoSnapshot: true } });
-  if (!credit || ["ANULADO","ANULADA","CANCELADO","CANCELADA"].includes(credit.estado.trim().toUpperCase()))
+  if (!credit || (!includeInactive && ["ANULADO","ANULADA","CANCELADO","CANCELADA"].includes(credit.estado.trim().toUpperCase())))
     throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
   const references = snapshotReferencePhones(credit.contratoSnapshot);
   if (!references.referenciaFamiliar1Telefono || !references.referenciaFamiliar2Telefono) {
@@ -85,7 +86,9 @@ export async function readMoraCreditProducts(creditIds: number[]) {
 export function moraCreditSummary(credit: MoraCreditSummarySource, now = new Date()) {
   const numeroSadmin = confirmedSadminNumber(credit.registroSadmin);
   const plan = buildCreditPaymentPlan({ ...credit, settled: Boolean(credit.pazYSalvoEmitidoAt), today: now });
-  const overdue = plan.installments.filter(row => row.estaEnMora);
+  const inactive = ["ANULADO","ANULADA","CANCELADO","CANCELADA"].includes(credit.estado.trim().toUpperCase());
+  const overdue = inactive ? [] : plan.installments.filter(row => row.estaEnMora);
+  const estadoCartera: CreditPortfolioState = inactive ? "ANULADO" : plan.saldoPendiente <= 0 ? "PAGADO" : overdue.length > 0 ? "EN_MORA" : "AL_DIA";
   const first = overdue.map(row => row.fechaVencimiento).sort()[0];
   const today = colombiaDateKey(now);
   return {
@@ -103,5 +106,7 @@ export function moraCreditSummary(credit: MoraCreditSummarySource, now = new Dat
     diasMora: first ? Math.max(0, Math.round((Date.parse(today+"T00:00:00Z")-Date.parse(first+"T00:00:00Z"))/86400000)) : 0,
     ultimoPago: credit.abonos.at(-1)?.fechaAbono.toISOString() || null,
     fechaCredito: credit.fechaCredito.toISOString(), enMora: overdue.length > 0,
+    estadoCartera, saldoPendiente: plan.saldoPendiente,
+    fechaProximoPago: !inactive && plan.saldoPendiente > 0 ? plan.nextInstallment?.fechaVencimiento || null : null,
   };
 }

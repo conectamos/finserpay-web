@@ -19,6 +19,7 @@ const operationModules = [
 const followUpModules = [
   { href: "/dashboard/aprobaciones/liberar-consulta", title: "Liberar consulta", icon: LockKeyholeOpen },
   { href: "/dashboard/aprobaciones/excepciones-mora", title: "Excepciones de mora", icon: Clock3 },
+  { href: "/dashboard/aprobaciones/gestion-cartera", title: "Gestión de cartera", icon: ClipboardList },
   { href: "/dashboard/aprobaciones/cartera-mora", title: "Cartera en mora", icon: Wallet },
   { href: "/dashboard/aprobaciones/centro/gestiones", title: "Mis gestiones", icon: History },
 ];

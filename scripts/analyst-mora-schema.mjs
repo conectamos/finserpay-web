@@ -21,7 +21,7 @@ export function analystMoraSchemaStatements() {
     `ALTER TABLE "CreditMoraManagementEvent" DROP CONSTRAINT IF EXISTS "CreditMoraManagementEvent_result_details_check"`,
     `ALTER TABLE "CreditMoraManagementEvent" ADD CONSTRAINT "CreditMoraManagementEvent_result_details_check" CHECK (
       ("resultCode" IS NULL AND "agreementDate" IS NULL AND "agreementAmount" IS NULL)
-      OR ("resultCode" IS NOT NULL AND "resultCode" IN ('ACUERDO_PAGO','PAGO_REALIZADO','SIN_RESPUESTA','VISITA_PENDIENTE','PRORROGA_APROBADA','MEDIOS_PAGO','NUMERO_SIN_WHATSAPP','LLAMADA_INCOMPLETA')
+      OR ("resultCode" IS NOT NULL AND "resultCode" IN ('ACUERDO_PAGO','PAGO_REALIZADO','SIN_RESPUESTA','VISITA_PENDIENTE','PRORROGA_APROBADA','MEDIOS_PAGO','NUMERO_SIN_WHATSAPP','LLAMADA_INCOMPLETA','RECORDATORIO_PAGO')
         AND "action" IN ('LLAMADA','MSJ_TEXTO') AND "managementStatus" IN ('CONTACTADO','SIN_RESPUESTA','ACUERDO_PAGO','CERRADO','SOLUCIONADO','SEGUIMIENTO')
         AND (("resultCode"='ACUERDO_PAGO' AND "agreementDate" IS NOT NULL AND "agreementAmount" IS NOT NULL
           AND "agreementDate">=("actedAt" AT TIME ZONE 'America/Bogota')::date AND "agreementAmount">0 AND "agreementAmount"<=999999999999.99)
@@ -36,12 +36,23 @@ export function analystMoraSchemaStatements() {
       "actorName" VARCHAR(180) NOT NULL, "idempotencyKey" UUID NOT NULL UNIQUE, "requestHash" CHAR(64) NOT NULL,
       "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE INDEX IF NOT EXISTS "CreditMoraSupport_subject" ON "CreditMoraSupport" ("subjectKind","subjectId","createdAt")`,
+    `CREATE TABLE IF NOT EXISTS "CreditCollectionCommunicationEvent" (
+      "id" UUID PRIMARY KEY, "requestId" UUID NOT NULL, "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
+      "action" VARCHAR(16) NOT NULL CHECK ("action" IN ('REMINDER','CALL')),
+      "stage" VARCHAR(16) NOT NULL CHECK ("stage" IN ('REQUESTED','ACCEPTED','FAILED','UNKNOWN','SKIPPED')),
+      "phone" VARCHAR(16) NOT NULL, "actorUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "actorName" VARCHAR(180) NOT NULL, "requestHash" CHAR(64) NOT NULL,
+      "message" VARCHAR(500) NOT NULL, "providerReference" VARCHAR(180),
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE("requestId","stage"))`,
+    `CREATE INDEX IF NOT EXISTS "CreditCollectionCommunicationEvent_credit" ON "CreditCollectionCommunicationEvent" ("creditoId","createdAt" DESC,"id" DESC)`,
     `CREATE OR REPLACE FUNCTION public.analyst_mora_history_immutable() RETURNS trigger AS $$
       BEGIN RAISE EXCEPTION 'El historial de mora es inmutable' USING ERRCODE='23514'; END; $$ LANGUAGE plpgsql`,
     `DROP TRIGGER IF EXISTS "CreditMoraManagementEvent_immutable" ON "CreditMoraManagementEvent"`,
     `CREATE TRIGGER "CreditMoraManagementEvent_immutable" BEFORE UPDATE OR DELETE OR TRUNCATE ON "CreditMoraManagementEvent" FOR EACH STATEMENT EXECUTE FUNCTION public.analyst_mora_history_immutable()`,
     `DROP TRIGGER IF EXISTS "CreditMoraSupport_immutable" ON "CreditMoraSupport"`,
     `CREATE TRIGGER "CreditMoraSupport_immutable" BEFORE UPDATE OR DELETE OR TRUNCATE ON "CreditMoraSupport" FOR EACH STATEMENT EXECUTE FUNCTION public.analyst_mora_history_immutable()`,
+    `DROP TRIGGER IF EXISTS "CreditCollectionCommunicationEvent_immutable" ON "CreditCollectionCommunicationEvent"`,
+    `CREATE TRIGGER "CreditCollectionCommunicationEvent_immutable" BEFORE UPDATE OR DELETE OR TRUNCATE ON "CreditCollectionCommunicationEvent" FOR EACH STATEMENT EXECUTE FUNCTION public.analyst_mora_history_immutable()`,
   ];
 }
 export async function installAnalystMoraSchema(client) {
