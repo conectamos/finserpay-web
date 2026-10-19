@@ -839,7 +839,10 @@ test("PostgreSQL aislado permite otra consulta tras anulación sin reutilizar la
 
   try {
     await database.exec(`
-      CREATE TEMP TABLE "Credito" ("id" integer PRIMARY KEY, "estado" text NOT NULL);
+      CREATE TEMP TABLE "Credito" ("id" integer PRIMARY KEY, "estado" text NOT NULL,
+        "montoCredito" double precision NOT NULL DEFAULT 1000000);
+      CREATE TEMP TABLE "CreditoAbono" ("creditoId" integer NOT NULL,
+        "valor" double precision NOT NULL, "estado" text NOT NULL);
       CREATE TEMP TABLE "DataCreditoAssessment" (
         "id" uuid PRIMARY KEY,
         "documentHash" text NOT NULL,

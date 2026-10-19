@@ -438,7 +438,7 @@ test("el muro elige una sola solicitud reciente por cedula sin agrupar documento
   );
 });
 
-test("un credito finalizado es siempre el canonico aunque exista un borrador mas reciente", () => {
+test("una renovación rechazada más reciente conserva su expediente visible frente al crédito histórico", () => {
   const selected = selectCanonicalSolicitudesByDocument([
     {
       source: "CREDIT",
@@ -459,7 +459,7 @@ test("un credito finalizado es siempre el canonico aunque exista un borrador mas
 
   assert.deepEqual(
     selected.map((item) => `${item.source}-${item.entityId}`),
-    ["CREDIT-801"]
+    ["DRAFT-802"]
   );
 });
 

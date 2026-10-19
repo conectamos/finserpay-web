@@ -484,17 +484,31 @@ BEGIN
           AND assessment."expiresAt" > CURRENT_TIMESTAMP
           AND (
             -- A historical offer is never reusable. A new paid inquiry is
-            -- allowed only after the credit that spent it was annulled.
+            -- allowed only after the credit that spent it was annulled or fully paid.
             (assessment."consumedAt" IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM "Credito" prior_credit
               WHERE prior_credit."id" = assessment."creditId"
-                AND prior_credit."estado" = 'ANULADO'
+                AND (
+                  prior_credit."estado" = 'ANULADO'
+                  OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                    SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                    WHERE prior_payment."creditoId" = prior_credit."id"
+                      AND prior_payment."estado" <> 'ANULADO'
+                  ), 0))
+                )
             ))
             OR (assessment."consumedAt" IS NULL AND NOT EXISTS (
               SELECT 1 FROM "DataCreditoAssessment" spent
               INNER JOIN "Credito" prior_credit
                 ON prior_credit."id" = spent."creditId"
-                AND prior_credit."estado" = 'ANULADO'
+                AND (
+                  prior_credit."estado" = 'ANULADO'
+                  OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                    SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                    WHERE prior_payment."creditoId" = prior_credit."id"
+                      AND prior_payment."estado" <> 'ANULADO'
+                  ), 0))
+                )
               WHERE COALESCE(spent."reusedFromAssessmentId", spent."id") =
                 COALESCE(assessment."reusedFromAssessmentId", assessment."id")
                 AND spent."consumedAt" IS NOT NULL
@@ -610,7 +624,14 @@ BEGIN
           OR NOT EXISTS (
             SELECT 1 FROM "Credito" prior_credit
             WHERE prior_credit."id" = other."creditId"
-              AND prior_credit."estado" = 'ANULADO'
+              AND (
+                prior_credit."estado" = 'ANULADO'
+                OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                  SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                  WHERE prior_payment."creditoId" = prior_credit."id"
+                    AND prior_payment."estado" <> 'ANULADO'
+                ), 0))
+              )
           )
         )
     ) OR EXISTS (
@@ -662,7 +683,14 @@ BEGIN
             OR NOT EXISTS (
               SELECT 1 FROM "Credito" prior_credit
               WHERE prior_credit."id" = other."creditId"
-                AND prior_credit."estado" = 'ANULADO'
+                AND (
+                  prior_credit."estado" = 'ANULADO'
+                  OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                    SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                    WHERE prior_payment."creditoId" = prior_credit."id"
+                      AND prior_payment."estado" <> 'ANULADO'
+                  ), 0))
+                )
             )
           )
       )

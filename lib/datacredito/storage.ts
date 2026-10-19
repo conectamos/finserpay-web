@@ -1666,7 +1666,14 @@ async function findReusableDataCreditoAssessment(
                 OR NOT EXISTS (
                   SELECT 1 FROM "Credito" prior_credit
                   WHERE prior_credit."id" = consumed."creditId"
-                    AND prior_credit."estado" = 'ANULADO'
+                    AND (
+                      prior_credit."estado" = 'ANULADO'
+                      OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                        SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                        WHERE prior_payment."creditoId" = prior_credit."id"
+                          AND prior_payment."estado" <> 'ANULADO'
+                      ), 0))
+                    )
                 )
               )
           )
@@ -1698,7 +1705,14 @@ async function findReusableDataCreditoAssessment(
               OR NOT EXISTS (
                 SELECT 1 FROM "Credito" prior_credit
                 WHERE prior_credit."id" = consumed."creditId"
-                  AND prior_credit."estado" = 'ANULADO'
+                  AND (
+                    prior_credit."estado" = 'ANULADO'
+                    OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id"
+                        AND prior_payment."estado" <> 'ANULADO'
+                    ), 0))
+                  )
               )
             )
         )
@@ -1743,12 +1757,19 @@ async function findRecentConsumedDataCreditoAssessment(
         AND assessment."status" IN ('APROBADO', 'RECHAZADO')
         AND assessment."expiresAt" > CURRENT_TIMESTAMP
         AND assessment."consumedAt" IS NOT NULL
-        -- A spent offer stays immutable. Only an annulled linked credit permits
+        -- A spent offer stays immutable. Only an annulled or fully paid linked credit permits
         -- a separate paid inquiry with a new consent and a new assessment id.
         AND NOT EXISTS (
           SELECT 1 FROM "Credito" prior_credit
           WHERE prior_credit."id" = assessment."creditId"
-            AND prior_credit."estado" = 'ANULADO'
+            AND (
+              prior_credit."estado" = 'ANULADO'
+              OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                WHERE prior_payment."creditoId" = prior_credit."id"
+                  AND prior_payment."estado" <> 'ANULADO'
+              ), 0))
+            )
         )
       ORDER BY assessment."consumedAt" DESC,
         assessment."expiresAt" DESC, assessment."createdAt" DESC,
@@ -2077,7 +2098,14 @@ async function cloneReusableDataCreditoAssessment(
               OR NOT EXISTS (
                 SELECT 1 FROM "Credito" prior_credit
                 WHERE prior_credit."id" = consumed."creditId"
-                  AND prior_credit."estado" = 'ANULADO'
+                  AND (
+                    prior_credit."estado" = 'ANULADO'
+                    OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id"
+                        AND prior_payment."estado" <> 'ANULADO'
+                    ), 0))
+                  )
               )
             )
         )
@@ -2807,7 +2835,14 @@ export async function getDataCreditoAssessmentDocumentState(
               OR NOT EXISTS (
                 SELECT 1 FROM "Credito" prior_credit
                 WHERE prior_credit."id" = consumed."creditId"
-                  AND prior_credit."estado" = 'ANULADO'
+                  AND (
+                    prior_credit."estado" = 'ANULADO'
+                    OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id"
+                        AND prior_payment."estado" <> 'ANULADO'
+                    ), 0))
+                  )
               )
             )
         ) AS "consumedElsewhere",
@@ -2952,7 +2987,14 @@ export async function classifyDataCreditoAssessmentForCredit(
               OR NOT EXISTS (
                 SELECT 1 FROM "Credito" prior_credit
                 WHERE prior_credit."id" = consumed."creditId"
-                  AND prior_credit."estado" = 'ANULADO'
+                  AND (
+                    prior_credit."estado" = 'ANULADO'
+                    OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id"
+                        AND prior_payment."estado" <> 'ANULADO'
+                    ), 0))
+                  )
               )
             )
         ) AS "globalConsumedElsewhere",
@@ -3055,7 +3097,14 @@ export async function getApprovedDataCreditoAssessmentForCredit(
               OR NOT EXISTS (
                 SELECT 1 FROM "Credito" prior_credit
                 WHERE prior_credit."id" = consumed."creditId"
-                  AND prior_credit."estado" = 'ANULADO'
+                  AND (
+                    prior_credit."estado" = 'ANULADO'
+                    OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id"
+                        AND prior_payment."estado" <> 'ANULADO'
+                    ), 0))
+                  )
               )
             )
         )
@@ -3153,7 +3202,14 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
                 OR NOT EXISTS (
                   SELECT 1 FROM "Credito" prior_credit
                   WHERE prior_credit."id" = consumed."creditId"
-                    AND prior_credit."estado" = 'ANULADO'
+                    AND (
+                      prior_credit."estado" = 'ANULADO'
+                      OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                        SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                        WHERE prior_payment."creditoId" = prior_credit."id"
+                          AND prior_payment."estado" <> 'ANULADO'
+                      ), 0))
+                    )
                 )
               )
           )
@@ -3231,7 +3287,14 @@ async function consumeDataCreditoAssessmentInTransaction(
               OR NOT EXISTS (
                 SELECT 1 FROM "Credito" prior_credit
                 WHERE prior_credit."id" = consumed."creditId"
-                  AND prior_credit."estado" = 'ANULADO'
+                  AND (
+                    prior_credit."estado" = 'ANULADO'
+                    OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id"
+                        AND prior_payment."estado" <> 'ANULADO'
+                    ), 0))
+                  )
               )
             )
         )

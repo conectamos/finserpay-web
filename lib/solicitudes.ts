@@ -213,6 +213,8 @@ export type SolicitudCanonicalCandidate = {
   clienteDocumento?: string | null;
   currentStep?: number | null;
   createdAt?: Date | string | null;
+  finalizedAt?: Date | string | null;
+  canonicalCreditCreatedAt?: Date | string | null;
   rawState?: string | null;
   closedReason?: string | null;
 };
@@ -231,32 +233,45 @@ export function compareActiveSolicitudDraftPriority(
   const rightStep = Math.max(1, Number(right.currentStep) || 1);
   if (leftStep !== rightStep) return leftStep - rightStep;
 
-  const timestampDifference =
-    canonicalCandidateTimestamp(left.createdAt) -
-    canonicalCandidateTimestamp(right.createdAt);
-  if (timestampDifference !== 0) return timestampDifference;
+  const leftTimestamp = canonicalCandidateTimestamp(left.createdAt);
+  const rightTimestamp = canonicalCandidateTimestamp(right.createdAt);
+  if (leftTimestamp !== rightTimestamp) return leftTimestamp > rightTimestamp ? 1 : -1;
   return left.entityId - right.entityId;
 }
 
-function canonicalCandidateRank(item: SolicitudCanonicalCandidate) {
+function canonicalCandidateRank(
+  item: SolicitudCanonicalCandidate,
+  latestCreditCreatedAt = Number.NEGATIVE_INFINITY
+) {
   if (item.source === "CREDIT") {
     return CANCELLED_CREDIT_STATES.has(normalized(item.rawState)) ? 1 : 3;
   }
-  return isSolicitudIdentityReleased({
+  // A later sale has its own request, even when the wall also contains a
+  // historical credit for the same customer. Never revive an older draft.
+  const createdAt = canonicalCandidateTimestamp(item.createdAt);
+  const released = isSolicitudIdentityReleased({
     source: item.source,
     draftState: item.rawState,
     closedReason: item.closedReason,
-  })
-    ? 1
-    : 2;
+  });
+  if (
+    !released &&
+    Number.isFinite(latestCreditCreatedAt) &&
+    Number.isFinite(createdAt) &&
+    createdAt > latestCreditCreatedAt
+  ) {
+    return 4;
+  }
+  return released ? 1 : 2;
 }
 
 function isNewerCanonicalCandidate(
   candidate: SolicitudCanonicalCandidate,
-  current: SolicitudCanonicalCandidate
+  current: SolicitudCanonicalCandidate,
+  latestCreditCreatedAt = Number.NEGATIVE_INFINITY
 ) {
-  const candidateRank = canonicalCandidateRank(candidate);
-  const currentRank = canonicalCandidateRank(current);
+  const candidateRank = canonicalCandidateRank(candidate, latestCreditCreatedAt);
+  const currentRank = canonicalCandidateRank(current, latestCreditCreatedAt);
   if (candidateRank !== currentRank) return candidateRank > currentRank;
   if (
     candidate.source === "DRAFT" &&
@@ -270,10 +285,9 @@ function isNewerCanonicalCandidate(
     );
     if (priorityDifference !== 0) return priorityDifference > 0;
   }
-  const timestampDifference =
-    canonicalCandidateTimestamp(candidate.createdAt) -
-    canonicalCandidateTimestamp(current.createdAt);
-  if (timestampDifference !== 0) return timestampDifference > 0;
+  const candidateTimestamp = canonicalCandidateTimestamp(candidate.createdAt);
+  const currentTimestamp = canonicalCandidateTimestamp(current.createdAt);
+  if (candidateTimestamp !== currentTimestamp) return candidateTimestamp > currentTimestamp;
   return candidate.entityId > current.entityId;
 }
 
@@ -281,12 +295,37 @@ export function selectCanonicalSolicitudesByDocument<
   T extends SolicitudCanonicalCandidate,
 >(items: readonly T[]) {
   const selected = new Map<string, T>();
+  const latestCreditByDocument = new Map<string, number>();
+  for (const item of items) {
+    if (
+      item.source !== "CREDIT" ||
+      CANCELLED_CREDIT_STATES.has(normalized(item.rawState))
+    ) continue;
+    const documentKey = canonicalSolicitudDocumentKey(item.clienteDocumento);
+    // The wall preserves the original request date and the commercial date.
+    // Neither is necessarily the instant when the resulting credit was saved.
+    const storedCreditTimestamp = canonicalCandidateTimestamp(item.canonicalCreditCreatedAt);
+    const timestamp = Number.isFinite(storedCreditTimestamp)
+      ? storedCreditTimestamp
+      : canonicalCandidateTimestamp(item.createdAt);
+    if (!documentKey || !Number.isFinite(timestamp)) continue;
+    latestCreditByDocument.set(
+      documentKey,
+      Math.max(
+        latestCreditByDocument.get(documentKey) ?? Number.NEGATIVE_INFINITY,
+        timestamp
+      )
+    );
+  }
 
   for (const item of items) {
     const documentKey = canonicalSolicitudDocumentKey(item.clienteDocumento);
     const key = documentKey || `${item.source}:${item.entityId}`;
     const current = selected.get(key);
-    if (!current || isNewerCanonicalCandidate(item, current)) {
+    if (
+      !current ||
+      isNewerCanonicalCandidate(item, current, latestCreditByDocument.get(documentKey))
+    ) {
       selected.set(key, item);
     }
   }

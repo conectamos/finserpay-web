@@ -67,6 +67,7 @@ type SolicitudRow = {
   imei: string | null;
   plataforma: string | null;
   createdAt: Date | string;
+  canonicalCreditCreatedAt?: Date | string | null;
   operationAt: Date | string;
   finalizedAt: Date | string | null;
   updatedAt: Date | string;
@@ -888,6 +889,18 @@ async function findBlockingSolicitudByDocument(
         FROM "Credito" credit
         WHERE regexp_replace(COALESCE(credit."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
           AND credit."estado" <> 'ANULADO'
+          AND (
+            credit."montoCredito" IS NULL
+            OR GREATEST(0::float8, credit."montoCredito") > GREATEST(
+              0::float8,
+              COALESCE((
+                SELECT SUM(payment."valor")
+                FROM "CreditoAbono" payment
+                WHERE payment."creditoId" = credit."id"
+                  AND payment."estado" <> 'ANULADO'
+              ), 0)
+            )
+          )
       ) candidate
       ORDER BY CASE WHEN candidate."source" = 'CREDIT' THEN 0 ELSE 1 END,
         candidate."createdAt" DESC,
@@ -903,7 +916,7 @@ async function findBlockingSolicitudByDocument(
 function solicitudConflictFromBlocker(blocker: BlockingSolicitudIdentityRow) {
   return new ActiveSolicitudConflictError(
     blocker.source === "CREDIT"
-      ? "Ya existe un crédito finalizado para esta cédula. No se puede iniciar otra solicitud."
+      ? "Ya existe un crédito con saldo pendiente para esta cédula."
       : blocker.rawState !== "ABIERTO"
         ? "Ya existe una solicitud para esta cédula. La solicitud anterior debe quedar desistida antes de iniciar otra."
         : undefined
@@ -2485,6 +2498,7 @@ async function readCreditRows(viewer: SolicitudViewer, filters: SolicitudFilters
         c."usuarioId", c."vendedorId", c."sedeId", s."aliadoId",
         c."clienteNombre", c."clienteDocumento", c."imei", ${platform} AS "plataforma",
         ${createdAt} AS "createdAt", ${operationAt} AS "operationAt", ${operationAt} AS "finalizedAt",
+        (c."createdAt" AT TIME ZONE 'UTC') AS "canonicalCreditCreatedAt",
         c."updatedAt", NULL::timestamptz AS "closedAt",
         NULL::timestamptz AS "expiresAt",
         u."nombre" AS "usuarioNombre", v."nombre" AS "vendedorNombre",

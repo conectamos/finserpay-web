@@ -35,8 +35,10 @@ test("desistimiento del analista: SQL real, expediente seleccionado y auditoría
     );
     CREATE TABLE "Credito" (
       "id" INTEGER PRIMARY KEY, "estado" TEXT NOT NULL,
-      "clienteDocumento" TEXT, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      "clienteDocumento" TEXT, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "montoCredito" FLOAT8
     );
+    CREATE TABLE "CreditoAbono" ("creditoId" INTEGER,"valor" FLOAT8,"estado" TEXT);
   `);
   const trace = [];
   let identityMutation = null;
