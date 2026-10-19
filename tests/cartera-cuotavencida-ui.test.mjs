@@ -28,14 +28,14 @@ function walk(node) {
   if (!node || typeof node !== "object") return [];
   return Array.isArray(node) ? node.flatMap(walk) : [node, ...walk(node.props?.children)];
 }
-function fixture(fetcher = async () => response(result())) {
+function fixture(fetcher = async () => response(result()), { campaign = "cuotavencida", uuid = requestId } = {}) {
   const states = [], refs = [], effects = [], pendingEffects = new Set(), timers = new Map(), requests = [];
   let stateIndex = 0, refIndex = 0, effectIndex = 0, timerId = 0, uuidCalls = 0;
   const hooks = {
     useState(initial) { const i = stateIndex++; if (!(i in states)) states[i] = initial;
       return [states[i], value => { states[i] = typeof value === "function" ? value(states[i]) : value; }]; },
     useRef(initial) { return refs[refIndex++] ??= { current: initial }; },
-    useId: () => "cuotavencida-scope",
+    useId: () => `${campaign}-scope`,
     useEffect(callback, dependencies) {
       const i = effectIndex++, old = effects[i];
       if (!old || dependencies.some((value, index) => value !== old.dependencies[index])) {
@@ -48,11 +48,15 @@ function fixture(fetcher = async () => response(result())) {
     "lucide-react": { LoaderCircle: () => null, Send: () => null },
   }, {
     fetch: async (url, options) => { requests.push({ url, options }); return fetcher(url, options); },
-    crypto: { randomUUID: () => { uuidCalls++; return requestId; } },
+    crypto: { randomUUID: () => { uuidCalls++; return uuid; } },
     setTimeout: (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; },
     clearTimeout: id => timers.delete(id),
   }).default;
-  const tree = () => { stateIndex = 0; refIndex = 0; effectIndex = 0; return Component(); };
+  const tree = () => {
+    stateIndex = 0; refIndex = 0; effectIndex = 0;
+    const instance = Component({ campaign });
+    return instance.type(instance.props);
+  };
   const render = () => renderToStaticMarkup(tree());
   const runEffects = () => { for (const i of pendingEffects) { const effect = effects[i]; effect.cleanup?.(); effect.cleanup = effect.callback(); } pendingEffects.clear(); };
   const settle = async () => { for (let i = 0; i < 3; i++) { tree(); runEffects(); await flush(); } return render(); };
@@ -62,7 +66,7 @@ function fixture(fetcher = async () => response(result())) {
   };
   return { states, requests, timers, render, settle, button,
     mount: settle,
-    click: (label = "Enviar Cuotavencida por WhatsApp") => button(label).onClick(),
+    click: (label = campaign === "bloqueo" ? "Enviar BLOQUEO por WhatsApp" : "Enviar Cuotavencida por WhatsApp") => button(label).onClick(),
     poll: async () => { const timer = [...timers].find(([, value]) => value.delay === 3_000); assert.ok(timer, "Expected GET polling timer");
       timers.delete(timer[0]); timer[1].callback(); return settle(); },
     unmount: () => { for (const effect of effects) effect.cleanup?.(); },
@@ -82,6 +86,76 @@ test("opening the action only reads state; its global scope does not inherit Car
   assert.equal(f.button("Enviar Cuotavencida por WhatsApp").disabled, false);
   assert.match(html, /Clientes con 1 día de mora o más · todos los aliados y productos/);
   assert.equal(f.uuidCalls, 0);
+});
+
+test("BLOQUEO reads and sends only its own endpoint with the unprotected global scope", async () => {
+  let current = null;
+  const f = fixture(async (_url, options) => {
+    if (options.method === "POST") current = batch();
+    return response(result(current));
+  }, { campaign: "bloqueo" });
+  assert.equal(f.requests.length, 0);
+  const html = await f.mount();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].options.method, "GET");
+  assert.match(html, /Enviar BLOQUEO por WhatsApp/);
+  assert.match(html, /Clientes en mora sin prórroga activa · todos los aliados y productos/);
+  assert.match(html, /Excluye créditos con prórroga o excepción vigente/);
+  assert.doesNotMatch(html, /Enviar Cuotavencida/);
+  f.click(); await f.settle();
+  assert.ok(f.requests.every(item => item.url === "/api/dashboard/cartera/bloqueo"));
+  const posts = f.requests.filter(item => item.options.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(posts[0].options.body), { requestId });
+  assert.equal(f.uuidCalls, 1);
+  f.unmount();
+});
+
+test("campaign instances keep running state and ambiguous request ids independent", async () => {
+  let finishCuotavencida;
+  const cuota = fixture(async (_url, options) => options.method === "POST"
+    ? new Promise(resolve => { finishCuotavencida = resolve; }) : response(result()));
+  const bloqueoId = "00000000-0000-4000-8000-000000000003";
+  let bloqueoAttempts = 0;
+  const bloqueo = fixture(async (_url, options) => {
+    if (options.method === "POST" && ++bloqueoAttempts === 1) throw new Error("Synthetic lost response");
+    return response(result(options.method === "POST" ? batch() : null));
+  }, { campaign: "bloqueo", uuid: bloqueoId });
+  await cuota.mount(); await bloqueo.mount();
+  cuota.click();
+  assert.equal(cuota.button("Enviar Cuotavencida por WhatsApp").disabled, true);
+  assert.equal(bloqueo.button("Enviar BLOQUEO por WhatsApp").disabled, false);
+  bloqueo.click();
+  assert.match(await bloqueo.settle(), /No se pudo confirmar la solicitud/);
+  assert.equal(cuota.requests.filter(item => item.options.method === "POST").length, 1);
+  bloqueo.click(); await bloqueo.settle();
+  const bloqueoPosts = bloqueo.requests.filter(item => item.options.method === "POST");
+  assert.equal(bloqueoPosts.length, 2);
+  assert.deepEqual(bloqueoPosts.map(item => JSON.parse(item.options.body)), [{ requestId: bloqueoId }, { requestId: bloqueoId }]);
+  assert.equal(bloqueo.uuidCalls, 1);
+  assert.equal(cuota.uuidCalls, 1);
+  assert.ok(cuota.requests.every(item => item.url === "/api/dashboard/cartera/cuotavencida"));
+  assert.ok(bloqueo.requests.every(item => item.url === "/api/dashboard/cartera/bloqueo"));
+  assert.equal(cuota.button("Enviar Cuotavencida por WhatsApp").disabled, true);
+  finishCuotavencida(response(result(batch())));
+  await cuota.settle();
+  assert.deepEqual(JSON.parse(cuota.requests.find(item => item.options.method === "POST").options.body), { requestId });
+  cuota.unmount(); bloqueo.unmount();
+});
+
+test("BLOQUEO configuration and empty result do not change the existing action", async () => {
+  const disabled = fixture(async () => response(result(null, false)), { campaign: "bloqueo" });
+  const cuota = fixture();
+  await disabled.mount(); await cuota.mount();
+  disabled.click();
+  assert.equal(disabled.button("Enviar BLOQUEO por WhatsApp").disabled, true);
+  assert.ok(disabled.requests.every(item => item.options.method === "GET"));
+  assert.equal(cuota.button("Enviar Cuotavencida por WhatsApp").disabled, false);
+  const empty = fixture(async () => response(result(batch({ total: 0, accepted: 0, failed: 0, unknown: 0 }))), { campaign: "bloqueo" });
+  const html = await empty.mount();
+  assert.match(html, /No hay clientes en mora elegibles sin prórroga activa/);
+  assert.doesNotMatch(html, /Aceptados por WhatsApp|entregad/i);
+  disabled.unmount(); cuota.unmount(); empty.unmount();
 });
 
 test("one click immediately posts once; a second click cannot duplicate an in-flight request", async () => {

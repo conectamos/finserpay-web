@@ -1,4 +1,7 @@
-export const cuotaVencidaWhatsAppSchemaStatements = [
+function campaignSchema(campaign) {
+  if (campaign !== "CUOTAVENCIDA" && campaign !== "BLOQUEO") throw new Error("Invalid portfolio campaign");
+  const prefix = campaign === "BLOQUEO" ? "BloqueoWhatsApp" : "CuotaVencidaWhatsApp";
+  return { prefix, statements: [
   `CREATE TABLE IF NOT EXISTS public."CuotaVencidaWhatsAppBatch" (
     "id" UUID PRIMARY KEY,"requestId" UUID NOT NULL UNIQUE,"actorId" INTEGER NOT NULL CHECK ("actorId">0),
     "campaignDate" DATE NOT NULL UNIQUE,"stats" JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -25,15 +28,20 @@ export const cuotaVencidaWhatsAppSchemaStatements = [
     "creditoId" INTEGER NOT NULL REFERENCES public."Credito"("id") ON DELETE RESTRICT,
     PRIMARY KEY ("eventId","creditoId")
   )`,
-];
+  ].map(sql => sql.replaceAll("CuotaVencidaWhatsApp", prefix)) };
+}
 
-export async function installCuotaVencidaWhatsAppSchema(client) {
+export const cuotaVencidaWhatsAppSchemaStatements = campaignSchema("CUOTAVENCIDA").statements;
+export const bloqueoWhatsAppSchemaStatements = campaignSchema("BLOQUEO").statements;
+
+export async function installCuotaVencidaWhatsAppSchema(client, campaign = "CUOTAVENCIDA") {
+  const { statements } = campaignSchema(campaign);
   await client.query("BEGIN");
   try {
     await client.query("SET LOCAL lock_timeout='10s'");
     await client.query("SET LOCAL statement_timeout='120s'");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext('finserpay-cuotavencida-whatsapp-schema'))");
-    for (const sql of cuotaVencidaWhatsAppSchemaStatements) await client.query(sql);
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["finserpay-" + campaign.toLowerCase() + "-whatsapp-schema"]);
+    for (const sql of statements) await client.query(sql);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
 }

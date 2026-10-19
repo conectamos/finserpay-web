@@ -10,18 +10,22 @@ const plain = value => JSON.parse(JSON.stringify(value));
 
 function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, failTwoDays = false, initialBatchDate,
   welcomeEnabled = false, holdWelcome = false, failWelcome = false, cronEnabled = true,
-  reviewEnabled = false, holdReview = false, failReview = false, holdCuota = false, failCuota = false } = {}) {
+  reviewEnabled = false, holdReview = false, failReview = false, holdCuota = false, failCuota = false,
+  holdBloqueo = false, failBloqueo = false } = {}) {
   let clock = new Date(now);
   let timerCallback;
   let paused = hold;
   let welcomePaused = holdWelcome;
   let reviewPaused = holdReview;
   let cuotaPaused = holdCuota;
+  let bloqueoPaused = holdBloqueo;
   const calls = [];
   const welcomeCalls = [];
   const reviewCalls = [];
   const cuotaCalls = [];
   const cuotaReleases = [];
+  const bloqueoCalls = [];
+  const bloqueoReleases = [];
   const operationalCalls = [];
   const releases = [];
   const welcomeReleases = [];
@@ -81,6 +85,14 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
         return { configured: true, selected: 0, accepted: 0, failed: 0, unknown: 0, skipped: 0 };
       },
     },
+    "@/lib/bloqueo-whatsapp-dispatch": {
+      runBloqueoWhatsApp: async options => {
+        bloqueoCalls.push(plain(options));
+        if (failBloqueo) throw new Error("private phone webhook credential");
+        if (bloqueoPaused) await new Promise(resolve => bloqueoReleases.push(resolve));
+        return { configured: true, selected: 0, accepted: 0, failed: 0, unknown: 0, skipped: 0 };
+      },
+    },
     "@/lib/device-unlock-queue": {
       processPendingDeviceUnlockCommands: async options => { operationalCalls.push({ name: "unlock", options: plain(options) }); return { processed: 0 }; },
       recoverRecentApprovedWompiUnlockCommands: async options => { operationalCalls.push({ name: "recover-unlock", options: plain(options) }); return { recovered: 0 }; },
@@ -104,7 +116,8 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     releaseWelcome: () => { welcomePaused = false; welcomeReleases.splice(0).forEach(resolve => resolve()); },
     releaseReview: () => { reviewPaused = false; reviewReleases.splice(0).forEach(resolve => resolve()); },
     releaseCuota: () => { cuotaPaused = false; cuotaReleases.splice(0).forEach(resolve => resolve()); },
-    calls, welcomeCalls, reviewCalls, cuotaCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
+    releaseBloqueo: () => { bloqueoPaused = false; bloqueoReleases.splice(0).forEach(resolve => resolve()); },
+    calls, welcomeCalls, reviewCalls, cuotaCalls, bloqueoCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
   };
 }
 
@@ -136,6 +149,82 @@ test("WhatsApp batch errors are sanitized and never prevent payment/unlock worke
   assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
   assert.equal(f.state().running.has("cuotavencida-whatsapp"), false);
   assert.doesNotMatch(f.errors.flat().map(String).join(" "), /private phone|webhook credential/);
+});
+
+test("manual WhatsApp queues have separate running locks and thirty-second keys", async () => {
+  const f = cronFixture({ now: "2026-10-19T15:00:00Z", holdCuota: true, holdBloqueo: true });
+  f.start(); await nextTurn();
+  assert.deepEqual(f.cuotaCalls, [{ limit: 10 }]);
+  assert.deepEqual(f.bloqueoCalls, [{ limit: 10 }]);
+  assert.equal(f.state().running.has("cuotavencida-whatsapp"), true);
+  assert.equal(f.state().running.has("bloqueo-whatsapp"), true);
+  assert.deepEqual(f.calls.map(call => call.name), campaigns);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+  assert.ok(f.operationalCalls.some(call => call.name === "wompi"));
+  f.tick(); f.tick(); await nextTurn();
+  assert.equal(f.cuotaCalls.length, 1);
+  assert.equal(f.bloqueoCalls.length, 1);
+  f.releaseCuota(); await nextTurn();
+  f.tick(); await nextTurn();
+  assert.equal(f.cuotaCalls.length, 2, "Cuotavencida can drain while BLOQUEO is still busy");
+  assert.equal(f.bloqueoCalls.length, 1);
+  assert.equal(f.state().running.has("cuotavencida-whatsapp"), false);
+  f.releaseBloqueo(); await nextTurn();
+  f.tick(); await nextTurn();
+  assert.equal(f.cuotaCalls.length, 2);
+  assert.equal(f.bloqueoCalls.length, 2, "BLOQUEO has its own completed slot");
+  const slot = Math.floor(new Date("2026-10-19T15:00:00Z").getTime() / 30_000);
+  assert.ok(f.state().completed.has(`cuotavencida-whatsapp:${slot}`));
+  assert.ok(f.state().completed.has(`bloqueo-whatsapp:${slot}`));
+  f.tick(); await nextTurn();
+  assert.equal(f.cuotaCalls.length, 2); assert.equal(f.bloqueoCalls.length, 2);
+  f.setClock("2026-10-19T15:00:30Z"); f.tick(); await nextTurn();
+  assert.equal(f.cuotaCalls.length, 3); assert.equal(f.bloqueoCalls.length, 3);
+  assert.equal(f.calls.length, campaigns.length, "Manual queue drainage does not create scheduled campaigns");
+});
+
+test("startup and a fresh process resume both manual queues without creating campaigns or duplicate timers", async () => {
+  for (let restart = 0; restart < 2; restart++) {
+    const f = cronFixture({ now: "2026-10-19T21:14:00Z" });
+    f.start(); f.start(); await nextTurn();
+    assert.deepEqual(f.cuotaCalls, [{ limit: 10 }]);
+    assert.deepEqual(f.bloqueoCalls, [{ limit: 10 }]);
+    assert.equal(f.calls.length, 0);
+    assert.ok(f.state().completed.has("cuotavencida-whatsapp:startup:2026-10-19:16:14"));
+    assert.ok(f.state().completed.has("bloqueo-whatsapp:startup:2026-10-19:16:14"));
+    f.tick(); await nextTurn();
+    assert.equal(f.cuotaCalls.length, 2); assert.equal(f.bloqueoCalls.length, 2);
+    f.tick(); await nextTurn();
+    assert.equal(f.cuotaCalls.length, 2); assert.equal(f.bloqueoCalls.length, 2);
+  }
+  const disabled = cronFixture({ cronEnabled: false });
+  disabled.start(); await nextTurn();
+  assert.deepEqual(disabled.cuotaCalls, []); assert.deepEqual(disabled.bloqueoCalls, []);
+});
+
+test("either manual WhatsApp worker may fail without blocking the other queue, payments or unlocks", async () => {
+  for (const [options, failedTask, callsKey, otherCallsKey, message] of [
+    [{ failBloqueo: true }, "bloqueo-whatsapp", "bloqueoCalls", "cuotaCalls", /lote manual de BLOQUEO/],
+    [{ failCuota: true }, "cuotavencida-whatsapp", "cuotaCalls", "bloqueoCalls", /lote manual de Cuotavencida/],
+  ]) {
+    const f = cronFixture({ now: "2026-10-19T15:00:00Z", ...options });
+    f.start(); await nextTurn();
+    assert.equal(f[callsKey].length, 1); assert.equal(f[otherCallsKey].length, 1);
+    assert.equal(f.state().running.has(failedTask), false);
+    assert.equal([...f.state().completed].some(key => key.startsWith(failedTask + ":")), false);
+    assert.equal(f.errors.length, 1);
+    assert.match(JSON.stringify(f.errors), message);
+    assert.doesNotMatch(JSON.stringify(f.errors), /private|phone|webhook|credential/);
+    assert.deepEqual(f.calls.map(call => call.name), campaigns);
+    assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+    assert.ok(f.operationalCalls.some(call => call.name === "wompi"));
+    for (const task of campaigns) assert.ok(f.state().completed.has(task + ":2026-10-19"));
+    f.tick(); await nextTurn();
+    assert.equal(f[callsKey].length, 2, "A failed drain is recoverable on the next tick");
+    assert.equal(f[otherCallsKey].length, 2);
+    assert.equal(f.state().running.has(failedTask), false);
+    assert.doesNotMatch(JSON.stringify(f.errors), /private|phone|webhook|credential/);
+  }
 });
 
 test("Datos joins the existing campaigns only in the 10:00-10:59 Colombia window", () => {

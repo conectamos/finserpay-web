@@ -38,6 +38,7 @@ async function readRequestId(request: Request) {
 
 /** Only the central account can create a global portfolio batch. GET never queues messages. */
 export function createCuotaVencidaWhatsAppHandlers<T>(deps: {
+  templateName?: "Cuotavencida" | "BLOQUEO";
   session: () => Promise<CentralSession>;
   sameOrigin: (request: Request) => boolean;
   configured: () => boolean;
@@ -68,7 +69,7 @@ export function createCuotaVencidaWhatsAppHandlers<T>(deps: {
         if (access.error) return access.error;
         const requestId = await readRequestId(request);
         if (!requestId) return json({ ok: false, error: "Solicitud de envío no válida." }, 400);
-        if (!deps.configured()) return json({ ok: false, configured: false, error: "El envío de Cuotavencida no está configurado." }, 503);
+        if (!deps.configured()) return json({ ok: false, configured: false, error: `El envío de ${deps.templateName ?? "Cuotavencida"} no está configurado.` }, 503);
         const result = await deps.create({ requestId, actorId: access.user!.id });
         // Queue processing survives the response and continues in the internal worker.
         deps.start();
