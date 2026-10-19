@@ -9,6 +9,8 @@ try {
   await client.connect();
   await installCuotaVencidaWhatsAppSchema(client);
   console.log("Esquema de Cuotavencida por WhatsApp preparado.");
+  await installCuotaVencidaWhatsAppSchema(client, "BLOQUEO");
+  console.log("Esquema de BLOQUEO por WhatsApp preparado.");
 } catch (error) {
   const code = String(error?.code || "").replace(/[^A-Z0-9_]/gi, "").slice(0, 24);
   throw new Error("No se pudo preparar el esquema de Cuotavencida" + (code ? " (" + code + ")" : "") + ".");

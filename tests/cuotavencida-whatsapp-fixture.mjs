@@ -3,12 +3,13 @@ import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
-import { cuotaVencidaWhatsAppSchemaStatements } from "../scripts/cuotavencida-whatsapp-schema.mjs";
+import { cuotaVencidaWhatsAppSchemaStatements, bloqueoWhatsAppSchemaStatements } from "../scripts/cuotavencida-whatsapp-schema.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 export const policy = await jiti.import("../lib/cuotavencida-whatsapp-policy.ts");
 const dates = await jiti.import("../lib/colombia-date.ts");
+const phone = await jiti.import("../lib/dapta-welcome.ts");
 export const requestId = "1df2ddc9-b0bb-4148-baa0-050000000001";
 export const requestId2 = "1df2ddc9-b0bb-4148-baa0-050000000002";
 export const credit = (id = 1, overrides = {}) => ({ id, clienteNombre: "CLIENTE SINTETICO " + id,
@@ -18,13 +19,14 @@ export const credit = (id = 1, overrides = {}) => ({ id, clienteNombre: "CLIENTE
   fechaProximoPago: "2026-10-17", abonos: [], ...overrides });
 export const env = { DAPTA_CUOTAVENCIDA_ENABLED: "true", DAPTA_CUOTAVENCIDA_WEBHOOK_URL: "https://api.dapta.ai/synthetic-cuotavencida-test" };
 
-export async function fixture(t, { credits = [credit()], enabled = true } = {}) {
+export async function fixture(t, { credits = [credit()], enabled = true, campaign = "CUOTAVENCIDA" } = {}) {
   const db = new PGlite(); t.after(() => db.close());
   await db.exec(`CREATE TABLE "Credito" ("id" integer PRIMARY KEY,"data" jsonb NOT NULL,
-    "clienteTelefono" text GENERATED ALWAYS AS ("data"->>'clienteTelefono') STORED);
+    "clienteTelefono" text GENERATED ALWAYS AS ("data"->>'clienteTelefono') STORED,
+    "clienteDocumento" text GENERATED ALWAYS AS ("data"->>'clienteDocumento') STORED);
     CREATE TABLE "CreditMoraExceptionRequest" ("creditoId" int,"type" text,"status" text,"expiresOn" date);
     CREATE TABLE "ExcepcionBloqueoMora" ("documento" text,"activa" boolean,"fechaFin" timestamp);`);
-  for (const sql of cuotaVencidaWhatsAppSchemaStatements) await db.exec(sql);
+  for (const sql of [...cuotaVencidaWhatsAppSchemaStatements, ...bloqueoWhatsAppSchemaStatements]) await db.exec(sql);
   if (credits.length) {
     const values = credits.flatMap(row => [row.id, JSON.stringify(row)]);
     await db.query('INSERT INTO "Credito" ("id","data") VALUES ' + credits.map((_, i) => `($${i * 2 + 1},$${i * 2 + 2}::jsonb)`).join(","), values);
@@ -66,16 +68,19 @@ export async function fixture(t, { credits = [credit()], enabled = true } = {}) 
   });
   const loaded = loadReissueModule("lib/cuotavencida-whatsapp-store.ts", {
     "@/lib/prisma": { default: database }, "@/lib/colombia-date": dates, "@/lib/cuotavencida-whatsapp-policy": policy,
-    "@/lib/mora-message-protection": protection,
+    "@/lib/mora-message-protection": protection, "@/lib/dapta-welcome": phone,
   });
-  const store = loaded.createCuotaVencidaWhatsAppStore({ database, enabled: () => enabled, now: () => at });
+  const storeFor = selectedCampaign => loaded.createCuotaVencidaWhatsAppStore({ database, enabled: () => enabled, now: () => at, campaign: selectedCampaign });
+  const store = storeFor(campaign);
   const dispatcher = loadReissueModule("lib/cuotavencida-whatsapp-dispatch.ts", { "@/lib/cuotavencida-whatsapp-store": loaded, "@/lib/colombia-date": dates }, { AbortSignal, Buffer, process: { env: {} } });
-  const events = () => db.query('SELECT * FROM "CuotaVencidaWhatsAppEvent" ORDER BY "createdAt","id"').then(result => result.rows);
+  const eventsFor = selectedCampaign => db.query(`SELECT * FROM "${selectedCampaign === "BLOQUEO" ? "Bloqueo" : "CuotaVencida"}WhatsAppEvent" ORDER BY "createdAt","id"`).then(result => result.rows);
+  const events = () => eventsFor(campaign);
   const update = (id, fields) => db.query('UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1', [id, JSON.stringify(fields)]);
   const create = (overrides = {}) => store.createCuotaVencidaWhatsAppBatch({ requestId, actorId: 51, ...overrides });
   const run = (overrides = {}) => {
     const sent = [];
-    const worker = dispatcher.createCuotaVencidaWhatsAppDispatcher({ env, now: () => at,
+    const selectedEnv = campaign === "BLOQUEO" ? { DAPTA_BLOQUEO_ENABLED: "true", DAPTA_BLOQUEO_WEBHOOK_URL: "https://api.dapta.ai/synthetic-bloqueo-test" } : env;
+    const worker = dispatcher.createCuotaVencidaWhatsAppDispatcher({ env: selectedEnv, campaign, now: () => at,
       claim: store.claimCuotaVencidaWhatsApp, prepare: store.prepareCuotaVencidaWhatsAppDispatch,
       release: store.releaseCuotaVencidaWhatsAppClaim, accepted: store.markCuotaVencidaWhatsAppAccepted,
       failed: store.markCuotaVencidaWhatsAppFailed, unknown: store.markCuotaVencidaWhatsAppUnknown,
@@ -85,7 +90,7 @@ export async function fixture(t, { credits = [credit()], enabled = true } = {}) 
       }, ...overrides });
     return { sent, worker };
   };
-  return { db, store, loaded, dispatcher, create, events, update, run, now: () => at, time: value => { at = new Date(value); },
+  return { db, store, storeFor, loaded, dispatcher, create, events, eventsFor, update, run, now: () => at, time: value => { at = new Date(value); },
     advance: ms => { at = new Date(at.getTime() + ms); }, writes: () => writes, queries: () => queries, inTransaction: () => transactionDepth > 0,
     onQuery: callback => { onQuery = callback; }, onRead: callback => { onRead = callback; }, rollback: () => { rollback = true; } };
 }

@@ -5,6 +5,7 @@ import { dispatchCreditWelcomeVoice } from "@/lib/credit-welcome-voice-dispatch"
 import { runVoiceReviewCampaign } from "@/lib/credit-voice-review-campaign";
 import { runCollectionVoice, runCollectionMessages } from "@/lib/collection-voice-runtime";
 import { runCuotaVencidaWhatsApp } from "@/lib/cuotavencida-whatsapp-dispatch";
+import { runBloqueoWhatsApp } from "@/lib/bloqueo-whatsapp-dispatch";
 import {
   processPendingDeviceUnlockCommands,
   recoverRecentApprovedWompiUnlockCommands,
@@ -24,7 +25,7 @@ import {
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
 const MERCHANT_APPLICATION_INTERVAL_MINUTES = 5;
-type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice" | "voice-review-campaign" | "collection-voice" | "cuotavencida-whatsapp";
+type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice" | "voice-review-campaign" | "collection-voice" | "cuotavencida-whatsapp" | "bloqueo-whatsapp";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -136,10 +137,10 @@ async function runScheduledTask(
   let completed = false;
 
   try {
-    if (taskName === "cuotavencida-whatsapp") {
+    if (taskName === "cuotavencida-whatsapp" || taskName === "bloqueo-whatsapp") {
       // This worker only drains a batch explicitly created by the Cartera button.
-      const summary = await runCuotaVencidaWhatsApp({ limit: 10 });
-      if (summary.selected > 0) logCron("Lote manual de Cuotavencida procesado.", summary);
+      const summary = await (taskName === "bloqueo-whatsapp" ? runBloqueoWhatsApp : runCuotaVencidaWhatsApp)({ limit: 10 });
+      if (summary.selected > 0) logCron(taskName === "bloqueo-whatsapp" ? "Lote manual de BLOQUEO procesado." : "Lote manual de Cuotavencida procesado.", summary);
       completed = true;
       return;
     }
@@ -236,8 +237,8 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    if (taskName === "cuotavencida-whatsapp") {
-      console.error("[finserpay-cron] No se pudo procesar el lote manual de Cuotavencida.");
+    if (taskName === "cuotavencida-whatsapp" || taskName === "bloqueo-whatsapp") {
+      console.error(taskName === "bloqueo-whatsapp" ? "[finserpay-cron] No se pudo procesar el lote manual de BLOQUEO." : "[finserpay-cron] No se pudo procesar el lote manual de Cuotavencida.");
     } else if (taskName === "voice-review-campaign") {
       console.error("[finserpay-cron] No se pudo procesar la campana de solicitudes pendientes.");
     } else if (taskName === "credit-welcome-voice") {
@@ -285,6 +286,7 @@ async function tick() {
   void runScheduledTask("voice-review-campaign", `voice-review-campaign:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
   void runScheduledTask("collection-voice", `collection-voice:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
   void runScheduledTask("cuotavencida-whatsapp", `cuotavencida-whatsapp:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
+  void runScheduledTask("bloqueo-whatsapp", `bloqueo-whatsapp:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
 
   await runScheduledTask(
     "unlock",
@@ -310,6 +312,7 @@ async function runStartupRecovery() {
   void runScheduledTask("credit-welcome-voice", `credit-welcome-voice:startup:${dateKey}:${timeKey}`);
   void runScheduledTask("voice-review-campaign", `voice-review-campaign:startup:${dateKey}:${timeKey}`);
   void runScheduledTask("cuotavencida-whatsapp", `cuotavencida-whatsapp:startup:${dateKey}:${timeKey}`);
+  void runScheduledTask("bloqueo-whatsapp", `bloqueo-whatsapp:startup:${dateKey}:${timeKey}`);
 
   try {
     const recovered = await recoverRecentApprovedWompiUnlockCommands({

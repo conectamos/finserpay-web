@@ -21,7 +21,7 @@ function registeredDate(value: DateValue): boolean {
   if (!day || !Number.isFinite(new Date(value).getTime())) return false;
   return new Date(day + "T00:00:00Z").toISOString().slice(0, 10) === day;
 }
-function documentKey(value: unknown): string | null {
+export function documentKey(value: unknown): string | null {
   if (typeof value !== "string" || !/^[\d\s.-]+$/.test(value)) return null;
   const digits = value.replace(/\D/g, "");
   return /^\d{5,15}$/.test(digits) ? digits : null;

@@ -647,7 +647,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               </div>
             </form>
 
-            {adminCentral ? <div className={styles.whatsapp}><CuotavencidaWhatsappButton /></div> : null}
+            {adminCentral ? <div className={`${styles.whatsapp} grid w-full gap-5 xl:grid-cols-2`}>
+              <CuotavencidaWhatsappButton />
+              <CuotavencidaWhatsappButton campaign="bloqueo" />
+            </div> : null}
         </Card>
 
         <section
