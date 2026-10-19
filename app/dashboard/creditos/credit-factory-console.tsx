@@ -3093,6 +3093,7 @@ export default function CreditFactoryConsole({
   const createClientMode = !paymentsView && !lookupView && entryMode === "create-client";
   const deliveryMode = !paymentsView && !lookupView && entryMode === "delivery";
   const simulatorMode = !paymentsView && !lookupView && entryMode === "simulator";
+  const canSeeEquipmentBasePrice = canSeeInternalPricing || (canAdmin && simulatorMode);
   const lookupMode = (lookupView && canViewSavedCredits) || deliveryMode;
   const dataCreditoCreditCreationMode =
     !paymentsView && !lookupMode && !simulatorMode;
@@ -7140,6 +7141,11 @@ export default function CreditFactoryConsole({
     setEquipoMarca(item.marca);
     setEquipoModelo(item.modelo);
     setRestoredEquipmentCatalogId(item.id);
+
+    if (simulatorMode && canAdmin) {
+      setValorEquipoTotal(item.precioBaseVenta > 0 ? String(Math.round(item.precioBaseVenta)) : "");
+      return;
+    }
 
     if (
       previousCatalogBase > 0 &&
@@ -15580,7 +15586,7 @@ export default function CreditFactoryConsole({
                               </option>
                               {equipmentModelOptions.map((item) => (
                                 <option key={item.id} value={item.id}>
-                                  {item.modelo}
+                                  {item.modelo}{canSeeEquipmentBasePrice && item.precioBaseVenta > 0 ? ` · ${currency(item.precioBaseVenta)}` : ""}
                                 </option>
                               ))}
                             </select>
@@ -15633,7 +15639,7 @@ export default function CreditFactoryConsole({
                             >
                               {valorEquipoTotal && valorTotalEquipoNumero <= 0
                                 ? "El precio debe ser mayor que cero."
-                                : canSeeInternalPricing &&
+                                : canSeeEquipmentBasePrice &&
                               precioBaseVentaCatalogo > 0
                                 ? "Precio base: " +
                                   currency(precioBaseVentaCatalogo) +
