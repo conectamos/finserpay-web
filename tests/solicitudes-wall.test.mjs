@@ -1332,7 +1332,9 @@ test("el perfil comercial retoma y desiste solo sus borradores por vendedor y al
   );
   assert.match(saveOwner, /const owner = existingDraft \|\|/);
   assert.match(saveOwner, /sedeId: owner\.sedeId/);
-  assert.match(desist, /sellerId: number;[\s\S]*aliadoId: number;/);
+  assert.match(desist, /sellerId: number \| null;[\s\S]*aliadoId: number;/);
+  assert.match(desist, /\$2::integer IS NULL AND draft\."vendedorId" IS NULL AND draft\."usuarioId" = \$4/);
+  assert.match(desist, /\$3::integer IS NULL AND draft\."vendedorId" IS NULL AND draft\."usuarioId" = \$2/);
   assert.match(
     desist,
     /INNER JOIN "Sede" sede[\s\S]*draft\."vendedorId" = \$2[\s\S]*sede\."aliadoId" = \$3/

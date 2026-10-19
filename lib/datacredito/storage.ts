@@ -2236,10 +2236,10 @@ async function countRecentDataCreditoAssessments(
 
 export async function getDataCreditoQuotaSolicitudOwner(solicitudId: number) {
   const rows = await prisma.$queryRawUnsafe<
-    Array<{ vendedorId: number | null; aliadoId: number | null }>
+    Array<{ usuarioId: number; vendedorId: number | null; sedeId: number; aliadoId: number | null }>
   >(
     `
-      SELECT d."vendedorId", s."aliadoId"
+      SELECT d."usuarioId", d."vendedorId", d."sedeId", s."aliadoId"
       FROM "CreditoBorrador" d
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
       WHERE d."id" = $1

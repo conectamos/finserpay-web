@@ -6,7 +6,7 @@ import { getCreditApprovalSessionUser, getSessionUser } from "@/lib/auth";
 import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { isDirectSalesProfile } from "@/lib/solicitud-operation-access";
+import { canActAsAllySalesAdmin, canOperateSolicitud, isDirectSalesProfile } from "@/lib/solicitud-operation-access";
 import prisma from "@/lib/prisma";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
 import {
@@ -183,11 +183,9 @@ async function readAuthorizedDraft(
     where.push(`s."aliadoId" = $${values.length}`);
   }
   if (options.operate && admin && !centralAdmin) {
-    return {
-      ok: false as const,
-      status: 403,
-      error: "Solo el administrador central puede operar esta solicitud",
-    };
+    values.push(user.id);
+    where.push(`d."usuarioId" = $${values.length}`);
+    where.push(`d."vendedorId" IS NULL`);
   }
 
   const rows = await prisma.$queryRawUnsafe<DraftRow[]>(
@@ -216,6 +214,13 @@ async function readAuthorizedDraft(
   const row = rows[0];
   if (!row) {
     return { ok: false as const, status: 404, error: "Borrador no encontrado" };
+  }
+  if (options.operate && !canOperateSolicitud({
+    central: centralAdmin, admin: canActAsAllySalesAdmin(user), userId: user.id,
+    seller: sellerSession, viewerAllyId: user.aliadoId,
+    owner: { ...row, aliadoId: row.sedeAliadoId },
+  })) {
+    return { ok: false as const, status: 403, error: "Solicitud no autorizada" };
   }
   await assertDocumentNotBlacklisted(row.clienteDocumento);
   await assertDocumentNotBlacklisted(payloadObject(row.payload).clienteDocumento);

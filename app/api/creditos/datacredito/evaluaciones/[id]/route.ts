@@ -22,6 +22,7 @@ import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import {
   canOperateSolicitud,
+  canActAsAllySalesAdmin,
   isDirectSalesProfile,
 } from "@/lib/solicitud-operation-access";
 
@@ -85,6 +86,8 @@ export async function GET(request: Request, context: RouteContext) {
     const authorizedDraft = Boolean(
       canOperateSolicitud({
         central,
+        admin: canActAsAllySalesAdmin(user),
+        userId: user.id,
         seller,
         viewerAllyId: user.aliadoId,
         owner: requestedDraft,

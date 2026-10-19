@@ -5,7 +5,7 @@ import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { isAdminRole } from "@/lib/roles";
-import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
+import { canActAsAllySalesAdmin, canOperateSolicitud } from "@/lib/solicitud-operation-access";
 import { getActiveSolicitudCreditContext } from "@/lib/solicitudes-storage";
 import {
   getVeriffValidationById,
@@ -38,12 +38,16 @@ async function canReadActiveValidation(input: {
   current: Awaited<ReturnType<typeof getVeriffValidationById>>;
   seller: Awaited<ReturnType<typeof getSellerSessionUser>>;
   viewerAllyId: number | null | undefined;
+  admin: boolean;
+  userId: number;
 }) {
   if (!input.current?.draftId || input.current.creditoId) return false;
 
   const draft = await getActiveSolicitudCreditContext(input.current.draftId);
   return canOperateSolicitud({
     central: false,
+    admin: input.admin,
+    userId: input.userId,
     seller: input.seller,
     viewerAllyId: input.viewerAllyId,
     owner: draft,
@@ -84,12 +88,15 @@ export async function GET(
     const centralAdmin =
       isAdminRole(user.rolNombre) &&
       isFinserPayCentralAlly(user.aliadoAccesoCodigo);
-    const sellerSession = centralAdmin ? null : await getSellerSessionUser(user);
+    const admin = isAdminRole(user.rolNombre);
+    const sellerSession = admin ? null : await getSellerSessionUser(user);
 
     if (
       !centralAdmin &&
       !(await canReadActiveValidation({
         current,
+        admin: canActAsAllySalesAdmin(user),
+        userId: user.id,
         seller: sellerSession,
         viewerAllyId: user.aliadoId,
       }))
@@ -162,6 +169,8 @@ export async function GET(
       !centralAdmin &&
       !(await canReadActiveValidation({
         current: row,
+        admin: canActAsAllySalesAdmin(user),
+        userId: user.id,
         seller: sellerSession,
         viewerAllyId: user.aliadoId,
       }))
@@ -209,6 +218,8 @@ export async function GET(
       !centralAdmin &&
       !(await canReadActiveValidation({
         current: row,
+        admin: canActAsAllySalesAdmin(user),
+        userId: user.id,
         seller: sellerSession,
         viewerAllyId: user.aliadoId,
       }))

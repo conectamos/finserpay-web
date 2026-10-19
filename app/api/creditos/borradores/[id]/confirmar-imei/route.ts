@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { isDirectSalesProfile } from "@/lib/solicitud-operation-access";
+import { canActAsAllySalesAdmin, canOriginateSolicitud } from "@/lib/solicitud-operation-access";
 import { ImeiConfirmationError } from "@/lib/credit-imei-confirmation";
 import { confirmDraftImei } from "@/lib/credit-imei-confirmation-storage";
 
@@ -17,14 +17,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const admin = isAdminRole(user.rolNombre);
     const central = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const seller = admin ? null : await getSellerSessionUser(user);
-    if (!central && !isDirectSalesProfile(seller?.tipoPerfil)) {
+    const allySalesAdmin = canActAsAllySalesAdmin(user);
+    if (!canOriginateSolicitud({ central, admin: allySalesAdmin, userId: user.id, seller, viewerAllyId: user.aliadoId })) {
       return NextResponse.json({ ok: false, error: "Acción no autorizada" }, { status: 403 });
     }
     const { id } = await context.params;
     const draftId = Number(id);
     if (!Number.isSafeInteger(draftId) || draftId <= 0 || draftId > 2_147_483_647) return NextResponse.json({ ok: false, error: "Solicitud inválida" }, { status: 400 });
     const body = await request.json().catch(() => ({}));
-    const result = await confirmDraftImei({ draftId, enteredImei: body?.imei, userId: user.id, central, seller, viewerAllyId: user.aliadoId });
+    const result = await confirmDraftImei({ draftId, enteredImei: body?.imei, userId: user.id, central, admin: allySalesAdmin, seller, viewerAllyId: user.aliadoId });
     return NextResponse.json({ ok: true, ...result }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (error instanceof ImeiConfirmationError) return NextResponse.json({ ok: false, code: error.code, error: error.message }, { status: error.status });

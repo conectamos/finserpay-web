@@ -571,9 +571,13 @@ export function getSolicitudActions(input: {
 
   const isOpen = normalized(input.draftState) === "ABIERTO";
   const isOwner = Boolean(
-    ["SELLER", "SUPERVISOR"].includes(input.viewer.kind) &&
+    (["SELLER", "SUPERVISOR"].includes(input.viewer.kind) &&
       input.viewer.vendedorId &&
-      input.viewer.vendedorId === input.ownership.vendedorId
+      input.viewer.vendedorId === input.ownership.vendedorId) ||
+    (input.viewer.kind === "ALLY_ADMIN" &&
+      input.viewer.userId > 0 &&
+      input.viewer.userId === input.ownership.usuarioId &&
+      input.ownership.vendedorId === null)
   );
   const canOpenFactory = input.viewer.kind === "CENTRAL_ADMIN" || isOwner;
   const isActive = isOpen && !["RECHAZADA", "CANCELADA"].includes(input.state);

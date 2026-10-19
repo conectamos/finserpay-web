@@ -7,6 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:ally-sales": "node --experimental-strip-types --test tests/ally-sales-*.test.mjs",
     "test:credit-payments": "node --experimental-strip-types --test tests/credit-partial-payment-*.test.mjs tests/register-payment-methods.test.mjs tests/payment-next-date-after-payment.test.mjs tests/payment-date-and-rounding.test.mjs tests/credit-payment-plan-settled.test.mjs",
     "test:cartera": "node --experimental-strip-types --test tests/cartera-*.test.mjs tests/ally-cartera-*.test.mjs tests/portfolio-profit*.test.mjs",
     "test:cuotavencida": "node --test tests/cuotavencida-whatsapp*.test.mjs tests/cartera-cuotavencida-ui.test.mjs tests/internal-cron-schedule.test.mjs",
@@ -54,7 +55,7 @@
     "cron:postulaciones": "node scripts/retry-merchant-applications.mjs",
     "test:commissions": "node --test tests/commissions*.test.mjs",
     "db:setup-commissions": "node scripts/ensure-commissions-schema.mjs",
-    "test:credit-origination": "npm run test:datacredito && npm run test:solicitudes && npm run test:firmaseguro && npm run test:approval-call && npm run test:credit-close && npm run test:credit-equipment-signature && npm run test:credit-plan-management && npm run test:equipment-catalog",
+    "test:credit-origination": "npm run test:datacredito && npm run test:solicitudes && npm run test:firmaseguro && npm run test:approval-call && npm run test:credit-close && npm run test:credit-equipment-signature && npm run test:credit-plan-management && npm run test:equipment-catalog && npm run test:ally-sales",
     "test:credit-plan-management": "node --experimental-strip-types --test tests/credit-plan-*.test.mjs tests/credit-principal-payment-api.test.mjs tests/payment-date-and-rounding.test.mjs tests/payment-next-date-after-payment.test.mjs",
     "test:credit-equipment-signature": "node --experimental-strip-types --test tests/credit-imei-confirmation.test.mjs tests/credit-process-live-status.test.mjs tests/veriff-identity-dialog-flow.test.mjs tests/firma-seguro-identity-readiness.test.mjs tests/firmaseguro-draft-correction-callback.test.mjs",
     "test:solicitudes-export": "node --test tests/solicitudes-export-*.test.mjs",

@@ -35,7 +35,7 @@ import {
 } from "@/lib/datacredito/storage";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { canOperateSolicitud, isDirectSalesProfile } from "@/lib/solicitud-operation-access";
+import { canActAsAllySalesAdmin, canOperateSolicitud, canOriginateSolicitud } from "@/lib/solicitud-operation-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -158,8 +158,10 @@ export async function GET(request: Request) {
           { status: 400 }
         );
       }
-      const seller = isAdminRole(user.rolNombre) ? null : await getSellerSessionUser(user);
-      if (!centralAdmin && !isDirectSalesProfile(seller?.tipoPerfil)) {
+      const admin = isAdminRole(user.rolNombre);
+      const seller = admin ? null : await getSellerSessionUser(user);
+      const allySalesAdmin = canActAsAllySalesAdmin(user);
+      if (!canOriginateSolicitud({ central: centralAdmin, admin: allySalesAdmin, userId: user.id, seller, viewerAllyId: user.aliadoId })) {
         return NextResponse.json(
           { ok: false, code: "SELLER_SESSION_REQUIRED", error: "Selecciona e ingresa con un perfil comercial antes de consultar" },
           { status: 403 }
@@ -168,6 +170,8 @@ export async function GET(request: Request) {
       const solicitudOwner = await getDataCreditoQuotaSolicitudOwner(requestedSolicitudId);
       if (!solicitudOwner || !canOperateSolicitud({
         central: centralAdmin,
+        admin: allySalesAdmin,
+        userId: user.id,
         seller,
         viewerAllyId: user.aliadoId,
         owner: solicitudOwner,

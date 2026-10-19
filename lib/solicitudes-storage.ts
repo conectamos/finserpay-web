@@ -1839,7 +1839,7 @@ export async function markSolicitudDataCreditoRecoverablePending(input: {
 export async function desistSolicitud(input: {
   solicitudId: number;
   userId: number;
-  sellerId: number;
+  sellerId: number | null;
   aliadoId: number;
 }) {
   await ensureSolicitudSchema();
@@ -1854,7 +1854,10 @@ export async function desistSolicitud(input: {
         INNER JOIN "Sede" sede ON sede."id" = draft."sedeId"
         WHERE draft."id" = $1
           AND draft."creditoId" IS NULL
-          AND draft."vendedorId" = $2
+          AND (
+            ($2::integer IS NOT NULL AND draft."vendedorId" = $2)
+            OR ($2::integer IS NULL AND draft."vendedorId" IS NULL AND draft."usuarioId" = $4)
+          )
           AND sede."aliadoId" = $3
           AND (
             draft."dataCreditoAssessmentId" IS NOT NULL
@@ -1872,7 +1875,8 @@ export async function desistSolicitud(input: {
       `,
       input.solicitudId,
       input.sellerId,
-      input.aliadoId
+      input.aliadoId,
+      input.userId
     );
     if (!target[0]) return { changed: false, identityReleased: false };
 
@@ -1885,7 +1889,10 @@ export async function desistSolicitud(input: {
         FROM "CreditoBorrador" draft
         INNER JOIN "Sede" sede ON sede."id" = draft."sedeId"
         WHERE draft."creditoId" IS NULL
-          AND draft."vendedorId" = $2
+          AND (
+            ($2::integer IS NOT NULL AND draft."vendedorId" = $2)
+            OR ($2::integer IS NULL AND draft."vendedorId" IS NULL AND draft."usuarioId" = $5)
+          )
           AND sede."aliadoId" = $3
           AND (
             ($4 <> '' AND regexp_replace(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') = $4)
@@ -1908,7 +1915,8 @@ export async function desistSolicitud(input: {
       input.solicitudId,
       input.sellerId,
       input.aliadoId,
-      document
+      document,
+      input.userId
     );
     await lockSolicitudOperationsInOrder(
       transaction,
@@ -1922,7 +1930,10 @@ export async function desistSolicitud(input: {
             "closedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP,
             "desistedByUserId" = $2, "desistedBySellerId" = $3
         WHERE draft."creditoId" IS NULL
-          AND draft."vendedorId" = $3
+          AND (
+            ($3::integer IS NOT NULL AND draft."vendedorId" = $3)
+            OR ($3::integer IS NULL AND draft."vendedorId" IS NULL AND draft."usuarioId" = $2)
+          )
           AND draft."sedeId" IN (
             SELECT sede."id" FROM "Sede" sede WHERE sede."aliadoId" = $4
           )
@@ -1932,7 +1943,10 @@ export async function desistSolicitud(input: {
             INNER JOIN "Sede" selected_sede ON selected_sede."id" = selected."sedeId"
             WHERE selected."id" = $1
               AND selected."creditoId" IS NULL
-              AND selected."vendedorId" = $3
+              AND (
+                ($3::integer IS NOT NULL AND selected."vendedorId" = $3)
+                OR ($3::integer IS NULL AND selected."vendedorId" IS NULL AND selected."usuarioId" = $2)
+              )
               AND selected_sede."aliadoId" = $4
               AND NOT (
                 selected."estado" = 'CERRADO'

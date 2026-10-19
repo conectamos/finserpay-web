@@ -169,7 +169,8 @@ import {
 } from "@/lib/credit-device-replacement-storage";
 import {
   canOperateSolicitud as canOperateSolicitudContext,
-  isDirectSalesProfile,
+  canActAsAllySalesAdmin,
+  canOriginateSolicitud,
 } from "@/lib/solicitud-operation-access";
 import { getIphoneEnrollmentReviewForSolicitud } from "@/lib/iphone-enrollment-storage";
 
@@ -1145,14 +1146,18 @@ export async function POST(req: Request) {
     const admin = isAdminRole(user.rolNombre);
     const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     canViewSensitiveCredit = adminCentral;
+    const allySalesAdmin = canActAsAllySalesAdmin(user);
     const sellerSession = admin ? null : await getSellerSessionUser(user);
 
-    if (!adminCentral && !isDirectSalesProfile(sellerSession?.tipoPerfil)) {
+    if (!canOriginateSolicitud({
+      central: adminCentral, admin: allySalesAdmin, userId: user.id,
+      viewerAllyId: user.aliadoId, seller: sellerSession,
+    })) {
       return NextResponse.json(
         {
           code: "CREDIT_CLOSE_NOT_AUTHORIZED",
           error:
-            "Solo el perfil comercial titular o un administrador central de FINSER PAY puede finalizar el crédito.",
+            "Solo el titular comercial de la solicitud o un administrador central de FINSER PAY puede finalizar el crédito.",
         },
         { status: 403 }
       );
@@ -1278,6 +1283,7 @@ export async function POST(req: Request) {
       if (finalizedSolicitud) {
         const canRecoverFinalizedSolicitud = canOperateSolicitudContext({
           central: adminCentral,
+          admin: allySalesAdmin, userId: user.id,
           seller: sellerSession,
           viewerAllyId: user.aliadoId,
           owner: finalizedSolicitud,
@@ -1332,6 +1338,7 @@ export async function POST(req: Request) {
       !solicitudContext ||
       canOperateSolicitudContext({
         central: adminCentral,
+        admin: allySalesAdmin, userId: user.id,
         seller: sellerSession,
         viewerAllyId: user.aliadoId,
         owner: solicitudContext,
@@ -1511,6 +1518,7 @@ export async function POST(req: Request) {
         !lockedSolicitud ||
         !canOperateSolicitudContext({
           central: adminCentral,
+          admin: allySalesAdmin, userId: user.id,
           seller: sellerSession,
           viewerAllyId: user.aliadoId,
           owner: lockedSolicitud,
@@ -2529,6 +2537,7 @@ export async function POST(req: Request) {
         !lockedReservation ||
         !canOperateSolicitudContext({
           central: adminCentral,
+          admin: allySalesAdmin, userId: user.id,
           seller: sellerSession,
           viewerAllyId: user.aliadoId,
           owner: lockedReservation,

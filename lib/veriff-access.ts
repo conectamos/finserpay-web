@@ -1,8 +1,12 @@
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
-import { canSellerOperateSolicitud } from "@/lib/solicitud-operation-access";
+import { canActAsAllySalesAdmin, canOperateSolicitud, canSellerOperateSolicitud } from "@/lib/solicitud-operation-access";
 
 type VeriffAccessUser = {
+  activo?: boolean;
+  sedeAccesoId?: number | null;
+  sedeAccesoActiva?: boolean;
+  aliadoAccesoActivo?: boolean;
   aliadoId?: number | null;
   aliadoAccesoCodigo?: string | null;
   aliadoAccesoId?: number | null;
@@ -60,10 +64,10 @@ export function canOperateVeriffDraft(
   ) {
     return false;
   }
-  const adminCentral =
-    isAdminRole(user.rolNombre) &&
-    isFinserPayCentralAlly(user.aliadoAccesoCodigo);
-  return (
-    adminCentral || canSellerOperateSolicitud(seller, user.aliadoId, row)
-  );
+  const admin = isAdminRole(user.rolNombre);
+  const adminCentral = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
+  return canOperateSolicitud({
+    central: adminCentral, admin: canActAsAllySalesAdmin(user), userId: user.id,
+    seller: admin ? null : seller, viewerAllyId: user.aliadoId, owner: row,
+  });
 }

@@ -152,6 +152,20 @@ test("solo un borrador abierto y dentro del alcance puede iniciar Veriff", () =>
   );
 });
 
+test("admin aliado inicia Veriff únicamente para su venta propia y activa, sin perfil vendedor", () => {
+  const user = { ...allyAdmin, aliadoId: 10, sedeAccesoId: 100,
+    activo: true, sedeAccesoActiva: true, aliadoAccesoActivo: true };
+  const own = { ...ownerRow, usuarioId: user.id, vendedorId: null };
+  assert.equal(canOperateVeriffDraft(user, own, null), true);
+  for (const denied of [{ usuarioId: 3 }, { vendedorId: owner.id }, { aliadoId: 11 }, { estado: "CERRADO" }]) {
+    assert.equal(canOperateVeriffDraft(user, { ...own, ...denied }, null), false);
+  }
+  for (const denied of [{ activo: false }, { sedeAccesoActiva: false }, { aliadoAccesoActivo: false },
+    { aliadoAccesoId: 11 }, { sedeAccesoId: 101 }]) {
+    assert.equal(canOperateVeriffDraft({ ...user, ...denied }, own, null), false);
+  }
+});
+
 test("POST autoriza el borrador y la cedula antes de reusar o llamar al proveedor", async () => {
   const route = await readProjectFile("app/api/creditos/veriff/route.ts");
   const access = route.indexOf(

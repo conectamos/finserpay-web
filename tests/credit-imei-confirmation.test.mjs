@@ -125,7 +125,23 @@ test("a different authorized confirmer records their own audit without duplicati
   assert.equal(f.state.payload.imeiConfirmationHistory[0].confirmedByUserId, 12);
 });
 
-test("confirmation HTTP endpoint authenticates, rejects unprivileged admins and returns validation errors", async () => {
+test("admin aliado confirma sólo el IMEI de su propia venta y registra al usuario sin vendedor ficticio", async () => {
+  const f = fixture();
+  f.state.usuarioId = 12;
+  f.state.vendedorId = null;
+  const input = { ...f.input, admin: true, seller: null };
+  const result = await f.functions.confirmDraftImei(input);
+  assert.equal(result.confirmation.confirmedByUserId, 12);
+  assert.equal(result.confirmation.confirmedBySellerId, null);
+  for (const changed of [{ userId: 13 }, { viewerAllyId: 57 }]) {
+    await assert.rejects(f.functions.confirmDraftImei({ ...input, ...changed }), /SOLICITUD_NO_AUTORIZADA/);
+  }
+  f.state.vendedorId = 34;
+  await assert.rejects(f.functions.confirmDraftImei(input), /SOLICITUD_NO_AUTORIZADA/);
+  assert.equal(f.state.writes.length, 1);
+});
+
+test("confirmation HTTP endpoint authenticates, rejects non-owner admins and returns validation errors", async () => {
   const f = fixture();
   let user = { id: 12, aliadoId: 56, rolNombre: "ASESOR", aliadoAccesoCodigo: "ALIADO" };
   const route = load("app/api/creditos/borradores/[id]/confirmar-imei/route.ts", {
@@ -156,7 +172,7 @@ test("draft POST rejects malformed forward IMEIs before fallback to a previously
   assert.ok(post);
   const saves = [];
   const context = {
-    ...core, console,
+    ...core, ...access, console,
     NextResponse: { json: (data, options = {}) => ({ data, status: options.status || 200 }) },
     getAccess: async () => ({ central: true, user: { id: 12, sedeId: 3, aliadoId: 56 }, seller: null }),
     expireStaleSolicitudes: async () => {}, ensureVeriffSchema: async () => {}, ensureFirmaSeguroSchema: async () => {},

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import { serializeDataCreditoDailyQuota } from "../lib/datacredito/daily-quota.ts";
-import { canOperateSolicitud, isDirectSalesProfile } from "../lib/solicitud-operation-access.ts";
+import { canActAsAllySalesAdmin, canOperateSolicitud, canOriginateSolicitud } from "../lib/solicitud-operation-access.ts";
 
 const [storage, evaluationRoute, policyRoute] = await Promise.all([
   readFile(new URL("../lib/datacredito/storage.ts", import.meta.url), "utf8"),
@@ -53,7 +53,7 @@ test("la lectura del propietario del cupo no vence solicitudes ni lee datos pers
     /export async function getDataCreditoQuotaSolicitudOwner[\s\S]*?(?=export async function getDataCreditoDailyQuotaSnapshot)/
   )?.[0];
   assert.ok(ownerSource);
-  assert.match(ownerSource, /SELECT d\."vendedorId", s\."aliadoId"/);
+  assert.match(ownerSource, /SELECT d\."usuarioId", d\."vendedorId", d\."sedeId", s\."aliadoId"/);
   assert.match(ownerSource, /WHERE d\."id" = \$1/);
   assert.match(ownerSource, /d\."estado" = 'ABIERTO'/);
   assert.match(ownerSource, /COALESCE\(d\."expiresAt", d\."createdAt" \+ INTERVAL '15 days'\) > CURRENT_TIMESTAMP/);
@@ -79,7 +79,8 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
     getSellerSessionUser: async () => seller,
     getDataCreditoQuotaSolicitudOwner: async (id) => { ownerReads.push(id); return owner; },
     canOperateSolicitud,
-    isDirectSalesProfile,
+    canOriginateSolicitud,
+    canActAsAllySalesAdmin,
     getAssignedDataCreditoPolicy: async (id) => {
       policyReads.push(id);
       return { kind: "READY", policy: { version: 1, revisionId: "test-policy" } };
@@ -140,6 +141,20 @@ test("GET cuota: autenticacion, propietario autorizado y aislamiento entre aliad
   assert.deepEqual(simulation.quotaReads, []);
   assert.deepEqual(simulation.ownerReads, []);
   assert.equal(simulation.body.dailyQuota, undefined);
+});
+
+test("GET cuota de una venta del admin aliado conserva el ámbito propio sin aceptar ventas ajenas", async () => {
+  const user = { id: 2, aliadoId: 2, aliadoAccesoId: 2, rolNombre: "ADMIN", aliadoAccesoCodigo: "ALLY-2",
+    sedeId: 20, sedeAccesoId: 20, activo: true, sedeAccesoActiva: true, aliadoAccesoActivo: true };
+  const owner = { usuarioId: 2, vendedorId: null, sedeId: 20, aliadoId: 2 };
+  const allowed = await requestQuotaPolicy({ user, owner, query: "?solicitudId=100&aliadoId=999" });
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(allowed.quotaReads, [2]);
+  for (const mismatch of [{ usuarioId: 3 }, { vendedorId: 7 }, { aliadoId: 3 }]) {
+    const denied = await requestQuotaPolicy({ user, owner: { ...owner, ...mismatch }, query: "?solicitudId=100" });
+    assert.equal(denied.status, 403);
+    assert.deepEqual(denied.quotaReads, []);
+  }
 });
 
 // Execute the production reservation/read functions with a PostgreSQL adapter.

@@ -3,6 +3,7 @@ import { getNominalApprovalAnalystSessionUser, getSessionUser } from "@/lib/auth
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
+import { canActAsAllySalesAdmin } from "@/lib/solicitud-operation-access";
 import { normalizeSolicitudFilters, type SolicitudViewer } from "@/lib/solicitudes";
 import {
   desistSolicitud,
@@ -135,9 +136,16 @@ export async function PATCH(req: Request) {
         sellerId: access.seller.id,
         aliadoId: access.user.aliadoId || -1,
       });
+    } else if (access.viewer.kind === "ALLY_ADMIN" && canActAsAllySalesAdmin(access.user)) {
+      result = await desistSolicitud({
+        solicitudId,
+        userId: access.user.id,
+        sellerId: null,
+        aliadoId: access.viewer.aliadoId || -1,
+      });
     } else {
       return response(
-        { error: "Solo el perfil comercial titular, el analista nominal o el administrador central pueden desistir esta solicitud" },
+        { error: "Solo el titular comercial, el analista nominal o el administrador central pueden desistir esta solicitud" },
         { status: 403 }
       );
     }

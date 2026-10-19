@@ -15,6 +15,7 @@ type ConfirmationDraft = {
   id: number;
   imei: string | null;
   payload: Record<string, unknown> | null;
+  usuarioId: number;
   vendedorId: number | null;
   aliadoId: number | null;
 };
@@ -42,6 +43,7 @@ export async function confirmDraftImei(input: {
   enteredImei: unknown;
   userId: number;
   central: boolean;
+  admin?: boolean;
   viewerAllyId: number | null | undefined;
   seller: { id: number; tipoPerfil?: string | null } | null;
 }) {
@@ -50,7 +52,7 @@ export async function confirmDraftImei(input: {
   return prisma.$transaction(async (transaction) => {
     await lockSolicitudOperationMutation(transaction, input.draftId);
     const rows = await transaction.$queryRawUnsafe<ConfirmationDraft[]>(
-      `SELECT d."id", d."imei", d."payload", d."vendedorId", s."aliadoId"
+      `SELECT d."id", d."imei", d."payload", d."usuarioId", d."vendedorId", s."aliadoId"
        FROM "CreditoBorrador" d LEFT JOIN "Sede" s ON s."id"=d."sedeId"
        WHERE d."id"=$1 AND d."estado"='ABIERTO' AND d."creditoId" IS NULL
          AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP

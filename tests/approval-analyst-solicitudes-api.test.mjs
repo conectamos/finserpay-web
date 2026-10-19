@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import * as operationAccess from "../lib/solicitud-operation-access.ts";
 
 function load(path, dependencies) {
   const loadedModule = { exports: {} };
@@ -45,6 +46,7 @@ function fixture({ nominal = analyst, user = null, changed = true } = {}) {
     "@/lib/aliados": { isFinserPayCentralAlly: code => code === "FINSERPAY" },
     "@/lib/roles": { isAdminRole: role => role === "ADMIN" },
     "@/lib/seller-auth": { getSellerSessionUser: async () => null },
+    "@/lib/solicitud-operation-access": operationAccess,
     "@/lib/solicitudes": {
       normalizeSolicitudFilters: params => ({ id: params.get("id") }),
     },

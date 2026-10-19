@@ -16,6 +16,8 @@ import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import {
   canOperateSolicitud,
+  canActAsAllySalesAdmin,
+  canOriginateSolicitud,
   isDirectSalesProfile,
 } from "@/lib/solicitud-operation-access";
 import { SolicitudCanonicalMutationError } from "@/lib/solicitudes";
@@ -416,9 +418,12 @@ export async function POST(req: Request) {
   try {
     const access = await getAccess();
     if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    if (!access.central && !isDirectSalesProfile(access.seller?.tipoPerfil)) {
+    if (!canOriginateSolicitud({
+      central: access.central, admin: canActAsAllySalesAdmin(access.user), userId: access.user.id,
+      viewerAllyId: access.user.aliadoId, seller: access.seller,
+    })) {
       return NextResponse.json(
-        { error: "Solo el perfil comercial titular o el administrador central puede guardar esta solicitud" },
+        { error: "Solo el titular comercial o el administrador central puede guardar esta solicitud" },
         { status: 403 }
       );
     }
@@ -451,6 +456,7 @@ export async function POST(req: Request) {
       !draftId ||
       canOperateSolicitud({
         central: access.central,
+        admin: canActAsAllySalesAdmin(access.user), userId: access.user.id,
         seller: access.seller,
         viewerAllyId: access.user.aliadoId,
         owner: existingDraft,
@@ -606,15 +612,17 @@ export async function PATCH(req: Request) {
         );
       }
       if (
-        !access.seller ||
-        !isDirectSalesProfile(access.seller.tipoPerfil)
+        !canOriginateSolicitud({
+          central: false, admin: canActAsAllySalesAdmin(access.user), userId: access.user.id,
+          viewerAllyId: access.user.aliadoId, seller: access.seller,
+        })
       ) {
         return NextResponse.json({ error: "Accion no autorizada" }, { status: 403 });
       }
       const result = await desistSolicitud({
         solicitudId: id,
         userId: access.user.id,
-        sellerId: access.seller.id,
+        sellerId: access.seller?.id || null,
         aliadoId: access.user.aliadoId || -1,
       });
       return NextResponse.json(

@@ -21,14 +21,14 @@ const solicitudStorageSource = readFileSync(
   "utf8"
 );
 
-test("el cierre permite al admin central o al perfil comercial titular de la solicitud", () => {
+test("el cierre permite al admin central o al actor comercial autorizado y exige solicitud fuera de central", () => {
   const postStart = routeSource.indexOf("export async function POST");
   const postSource = routeSource.slice(postStart);
 
   assert.ok(postStart >= 0);
   assert.match(
     postSource,
-    /!adminCentral\s*&&\s*!isDirectSalesProfile\(sellerSession\?\.tipoPerfil\)/
+    /!canOriginateSolicitud\(\{[\s\S]{0,160}central: adminCentral, admin: allySalesAdmin, userId: user\.id/
   );
   assert.match(postSource, /!adminCentral && !requestedSolicitudId/);
   assert.match(postSource, /code: "SOLICITUD_REQUERIDA"/);

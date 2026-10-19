@@ -16862,7 +16862,7 @@ export default function CreditFactoryConsole({
                       {dataCreditoFullNameOnly && draftId && !firmaSeguroSigningIdentityReady &&
                       (firmaSeguroIdentityReadiness.status === "review" || firmaSeguroIdentityReviewDraftId === draftId) ? (
                         <FirmaSeguroIdentityReview key={`${draftId}:${dataCreditoAssessmentId}:${veriffValidation?.id}`}
-                          canAdmin={canAdmin} draftId={draftId} fullName={getDataCreditoClientDisplayName(dataCreditoApproval)}
+                          canAdmin={canSeeInternalPricing} draftId={draftId} fullName={getDataCreditoClientDisplayName(dataCreditoApproval)}
                           documentNumber={clienteDocumento} validationId={veriffValidation?.id || 0} veriffApproved={veriffApproved}
                           onSaved={(message) => {
                             setFirmaSeguroIdentityReviewDraftId(null);

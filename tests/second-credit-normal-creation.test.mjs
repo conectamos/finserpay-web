@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
+import * as operationAccess from "../lib/solicitud-operation-access.ts";
 
 const source = readFileSync(new URL("../app/api/creditos/route.ts", import.meta.url), "utf8");
 const parsed = ts.createSourceFile("route.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -279,6 +280,7 @@ test("el reintento de una solicitud ya finalizada recupera el crédito aunque ya
   });
   const calls = [];
   const { POST } = evaluate(`${declarations.join("\n")}\nexports.POST = POST;`, {
+    ...operationAccess,
     Request, Response,
     NextResponse: { json: (body, init) => Response.json(body, init) },
     getSessionUser: async () => ({ id: 1, rolNombre: "ADMIN", aliadoId: 1, aliadoAccesoCodigo: "FINSER_PAY" }),

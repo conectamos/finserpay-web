@@ -294,19 +294,19 @@ test("un POST DataCredito retomado autoriza antes de reservar y reutiliza antes 
   assert.doesNotMatch(route, /const centralSolicitud =/);
 });
 
-test("central, vendedor o supervisor pueden consultar y la plataforma retomada no cambia", async () => {
+test("los actores de venta autorizados pueden consultar sin cambiar la plataforma retomada", async () => {
   const [route, storage] = await Promise.all([
     readProjectFile("app/api/creditos/datacredito/evaluaciones/route.ts"),
     readProjectFile("lib/solicitudes-storage.ts"),
   ]);
-  const roleGuard = route.search(
-    /if\s*\(\s*!central\s*&&\s*!isDirectSalesProfile\(\s*seller\?\.tipoPerfil\s*\)\s*\)/
-  );
+  const roleGuard = route.indexOf("if (!canOriginateSolicitud({");
   const platformGuard = route.indexOf('code: "SOLICITUD_PLATAFORMA_DIFERENTE"');
   const reservation = route.indexOf("reserveSolicitudForIdentity({");
   const provider = route.indexOf("queryDataCreditoNaturalPerson({");
 
-  assert.ok(roleGuard >= 0, "debe bloquear al admin de aliado y sesiones comerciales ausentes");
+  assert.ok(roleGuard >= 0, "debe validar el actor antes de reservar una consulta");
+  assert.match(route, /const allySalesAdmin = canActAsAllySalesAdmin\(user\)/);
+  assert.match(route, /canOriginateSolicitud\(\{[\s\S]{0,180}admin: allySalesAdmin, userId: user\.id/);
   assert.match(
     route,
     /const central =\s*admin && isFinserPayCentralAlly\(user\.aliadoAccesoCodigo\)/
@@ -592,7 +592,7 @@ test("el PATCH de borradores conserva DESISTIR pero no puede finalizar creditos"
   assert.doesNotMatch(patch, /parsePositiveId\(body\.creditoId\)/);
 });
 
-test("la fabrica directa permite perfiles comerciales y bloquea al admin aliado al guardar", async () => {
+test("la fabrica permite titulares comerciales y valida el administrador aliado activo al guardar", async () => {
   const route = await readProjectFile("app/api/creditos/borradores/route.ts");
   const getSource = route.slice(
     route.indexOf("export async function GET"),
@@ -610,11 +610,11 @@ test("la fabrica directa permite perfiles comerciales y bloquea al admin aliado 
   );
   assert.match(
     postSource,
-    /!access\.central\s*&&\s*!isDirectSalesProfile\(access\.seller\?\.tipoPerfil\)/
+    /!canOriginateSolicitud\(\{[\s\S]{0,180}central: access\.central, admin: canActAsAllySalesAdmin\(access\.user\)/
   );
   assert.match(
     patchSource,
-    /!access\.seller\s*\|\|\s*!isDirectSalesProfile\(access\.seller\.tipoPerfil\)/
+    /!canOriginateSolicitud\(\{[\s\S]{0,180}admin: canActAsAllySalesAdmin\(access\.user\)/
   );
   for (const source of [getSource, postSource, patchSource]) {
     assert.match(source, /expireStaleSolicitudes\(\)/);

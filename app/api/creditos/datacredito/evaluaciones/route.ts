@@ -63,7 +63,8 @@ import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import {
   canOperateSolicitud,
-  isDirectSalesProfile,
+  canActAsAllySalesAdmin,
+  canOriginateSolicitud,
 } from "@/lib/solicitud-operation-access";
 import {
   ActiveSolicitudConflictError,
@@ -258,7 +259,12 @@ export async function POST(request: Request) {
     const central =
       admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const seller = admin ? null : await getSellerSessionUser(user);
-    if (!central && !isDirectSalesProfile(seller?.tipoPerfil)) {
+    const allySalesAdmin = canActAsAllySalesAdmin(user);
+    if (admin && !central && !allySalesAdmin) {
+      return technicalResponse({ correlationId, code: "ALLY_SALES_ACCESS_INACTIVE",
+        error: "Tu aliado y sede deben estar activos para generar una venta", status: 403 });
+    }
+    if (!canOriginateSolicitud({ central, admin: allySalesAdmin, userId: user.id, seller, viewerAllyId: user.aliadoId })) {
       return technicalResponse({
         correlationId,
         code: "SELLER_SESSION_REQUIRED",
@@ -378,6 +384,8 @@ export async function POST(request: Request) {
       requestedSolicitudId &&
       !canOperateSolicitud({
         central,
+        admin: allySalesAdmin,
+        userId: user.id,
         seller,
         viewerAllyId: user.aliadoId,
         owner: solicitudContext,
@@ -559,6 +567,8 @@ export async function POST(request: Request) {
       !lockedOwnerMatches ||
       !canOperateSolicitud({
         central,
+        admin: allySalesAdmin,
+        userId: user.id,
         seller,
         viewerAllyId: user.aliadoId,
         owner: lockedSolicitudContext,

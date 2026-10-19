@@ -7,7 +7,7 @@ import {
 } from "@/lib/equality-device-meta";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
-import { canOperateSolicitud } from "@/lib/solicitud-operation-access";
+import { canActAsAllySalesAdmin, canOperateSolicitud } from "@/lib/solicitud-operation-access";
 import { getActiveSolicitudCreditContext } from "@/lib/solicitudes-storage";
 import { tryAcquireSolicitudOperationLock } from "@/lib/firmaseguro-storage";
 import {
@@ -209,7 +209,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const seller = centralAdmin ? null : await getSellerSessionUser(user);
+    const seller = admin ? null : await getSellerSessionUser(user);
     const draftId = parsePositiveId(body.draftId);
     const validateDraftAccess = async () => {
       const draft = draftId
@@ -220,6 +220,8 @@ export async function POST(req: Request) {
         (!centralAdmin &&
           !canOperateSolicitud({
             central: false,
+            admin: canActAsAllySalesAdmin(user),
+            userId: user.id,
             seller,
             viewerAllyId: user.aliadoId,
             owner: draft,

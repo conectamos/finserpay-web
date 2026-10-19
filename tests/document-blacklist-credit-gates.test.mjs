@@ -12,6 +12,8 @@ const read = async (file) => (await readFile(new URL(file, root), "utf8")).repla
 const evaluationSource = await read("app/api/creditos/datacredito/evaluaciones/route.ts");
 const finalizationSource = await read("app/api/creditos/route.ts");
 const assessmentSource = await read("app/api/creditos/datacredito/evaluaciones/[id]/route.ts");
+const operationAccess = moduleFromSource(await read("lib/solicitud-operation-access.ts"), {});
+const imeiConfirmation = moduleFromSource(await read("lib/credit-imei-confirmation.ts"), {});
 
 function moduleFromSource(source, mocks, globals = {}) {
   const code = ts.transpileModule(source, {
@@ -48,10 +50,13 @@ function fixtures({ central = false, allyId = 20, guard = async () => { throw bl
     "@/lib/aliados": { isFinserPayCentralAlly: () => central },
     "@/lib/roles": { isAdminRole: () => central },
     "@/lib/seller-auth": { getSellerSessionUser: async () => ({ id: 3, tipoPerfil: "VENDEDOR" }) },
-    "@/lib/solicitud-operation-access": { isDirectSalesProfile: () => true, canOperateSolicitud: () => true },
+    "@/lib/solicitud-operation-access": { ...operationAccess, canOperateSolicitud: () => true },
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async (...args) => { activity.guards += 1; return guard(...args); } },
     "@/lib/document-blacklist-response": { documentBlacklistErrorResponse: (error) => error === blockedError ? Response.json({ ok: false, code: error.code, error: error.message }, { status: error.status }) : null },
-    "@/lib/credit-factory": { sanitizeText: (value) => String(value || "").trim(), toNullableDate: () => null },
+    "@/lib/credit-factory": { sanitizeText: (value) => String(value || "").trim(), toNumber: (value) => Number(value) || 0, toNullableDate: () => null },
+    "@/lib/datacredito/customer-identity": { getDataCreditoCustomerIdentityForDisplay: async () => null },
+    "@/lib/credit-imei-confirmation": imeiConfirmation,
+    "@/lib/datacredito/firmaseguro-identity": { FirmaSeguroFullNameIdentityError: class extends Error {} },
     "@/lib/datacredito": {
       getDataCreditoPublicConfig: () => ({ enabled: true }),
       queryDataCreditoNaturalPerson: async () => { activity.provider += 1; throw new Error("Provider must not be reached"); },
@@ -128,6 +133,9 @@ test("el reintento de un crédito ya creado devuelve el resultado sin nuevas ven
   mocks["@/lib/credit-factory"].resolveCreditPaymentSummary = () => ({});
   mocks["@/lib/credit-payment-plan"] = { buildCreditPaymentPlan: () => ({}) };
   mocks["@/lib/credit-early-payoff"] = { calculateCreditEarlyPayoff: () => ({}) };
+  mocks["@/lib/credit-factory-snapshot"] = { extractCreditFactorySnapshotDetails: () => ({ paso2: {} }) };
+  mocks["@/lib/mass-credit-financial-components"] = { readMassCreditComponents: () => null };
+  mocks["@/lib/credit-assigned-seller"] = { resolveCreditSellerDisplay: () => ({ nombre: "Titular original" }) };
   const { POST } = moduleFromSource(finalizationSource, mocks);
   const response = await POST(new Request("https://fixture.test/api/creditos", {
     method: "POST", body: JSON.stringify({ solicitudId: 9, clienteDocumento: "1062402825" }),
@@ -261,6 +269,7 @@ test("el catch conserva el resultado de una consulta iniciada y responde el bloq
           const calls = [];
           const { run } = moduleFromSource(`exports.run = async function(error) { ${evaluationSource.slice(start, end)} };`, {}, {
             pendingAssessmentId, solicitudId: pendingAssessmentId ? 9 : null, providerStartedAt,
+            dailyQuotaReservation: null,
             correlationId: "fixture-correlation",
             ActiveSolicitudConflictError: class extends Error {},
             SolicitudDataCreditoLinkError: class extends Error {},

@@ -233,6 +233,11 @@ test("completion y failure guardan payload y estado en una sola transaccion", ()
 const compiledEvaluationRoute = ts.transpileModule(evaluationRoute, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const accessModule = { exports: {} };
+runInNewContext(ts.transpileModule(await source("lib/solicitud-operation-access.ts"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: accessModule, exports: accessModule.exports });
+const operationAccess = accessModule.exports;
 const storageAst = ts.createSourceFile("storage.ts", storage, ts.ScriptTarget.Latest, true);
 const realNormalizers = storageAst.statements.filter(node =>
   ts.isFunctionDeclaration(node) &&
@@ -257,9 +262,12 @@ function evaluationFixture(options = {}) {
   class SolicitudDataCreditoLinkError extends Error {}
   const calls = [];
   const state = { cached: options.cached || null, locked: false };
-  const user = { id: 4, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSER", aliadoId: 7, sedeId: 9 };
+  const user = { id: 4, rolNombre: options.central === false ? "ASESOR" : "ADMIN",
+    aliadoAccesoCodigo: options.central === false ? "ALLY-7" : "FINSERPAY",
+    aliadoId: 7, sedeId: 9, activo: true, aliadoAccesoId: 7, sedeAccesoId: 9,
+    sedeAccesoActiva: true, aliadoAccesoActivo: true, ...options.user };
   const owner = { id: 21, usuarioId: 4, vendedorId: null, sedeId: 9, aliadoId: 7,
-    clienteDocumento: "0001234567890", clientePrimerApellido: "DE LA PEÑA", plataforma: "IPHONE" };
+    clienteDocumento: "0001234567890", clientePrimerApellido: "DE LA PEÑA", plataforma: "IPHONE", ...options.owner };
   const pending = { id: "c23ad54f-3f60-42f6-9941-311c2db08a26", status: "PENDING" };
   const identity = { effective: { names: "María José", firstSurname: "De la Peña", secondSurname: "Muñoz" } };
   const record = (name, input) => calls.push({ name, input });
@@ -288,12 +296,12 @@ function evaluationFixture(options = {}) {
     "node:crypto": { randomUUID },
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/auth": { getSessionUser: async () => options.authenticated === false ? null : user },
-    "@/lib/roles": { isAdminRole: () => options.central !== false },
-    "@/lib/aliados": { isFinserPayCentralAlly: () => options.central !== false },
+    "@/lib/roles": { isAdminRole: value => value === "ADMIN" },
+    "@/lib/aliados": { isFinserPayCentralAlly: value => value === "FINSERPAY" },
     "@/lib/seller-auth": { getSellerSessionUser: async () => options.seller || null },
     "@/lib/solicitud-operation-access": {
-      isDirectSalesProfile: type => type === "ASESOR",
-      canOperateSolicitud: () => options.authorized !== false,
+      ...operationAccess,
+      canOperateSolicitud: input => options.authorized !== false && operationAccess.canOperateSolicitud(input),
     },
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async input => record("blacklist", input) },
     "@/lib/document-blacklist-response": { documentBlacklistErrorResponse: () => null },
@@ -410,6 +418,40 @@ test("el endpoint conserva ceros iniciales, tildes, ñ y apellidos compuestos al
   assert.equal(provider.firstSurname, "DE LA PEÑA");
   assert.ok(api.calls.find(call => call.name === "reserve").input.consentAt instanceof Date);
   assert.equal(api.state.locked, false);
+});
+
+test("admin aliado consulta con su usuario, sede y política sin inventar un vendedor", async () => {
+  const api = evaluationFixture({ central: false, user: { rolNombre: "ADMIN" } });
+  const response = await api.request({ usuarioId: 999, vendedorId: 999, sedeId: 999, aliadoId: 999 });
+  assert.equal(response.status, 200);
+  const reserved = api.calls.find(call => call.name === "solicitud").input;
+  assert.equal(reserved.usuarioId, 4);
+  assert.equal(reserved.vendedorId, null);
+  assert.equal(reserved.sedeId, 9);
+  const scope = api.calls.find(call => call.name === "reserve").input;
+  assert.equal(scope.userId, 4);
+  assert.equal(scope.sellerId, null);
+  assert.equal(scope.sedeId, 9);
+  assert.equal(scope.aliadoId, 7);
+  assert.equal(api.calls.filter(call => call.name === "provider").length, 1, "El proveedor es un doble aislado");
+});
+
+test("admin aliado no consulta una solicitud ajena ni con acceso comercial inactivo", async () => {
+  for (const owner of [{ usuarioId: 5 }, { vendedorId: 71 }, { aliadoId: 8 }]) {
+    const api = evaluationFixture({ central: false, user: { rolNombre: "ADMIN" }, owner });
+    const response = await api.request({ solicitudId: 21 });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, "SOLICITUD_NOT_AUTHORIZED");
+    assert.equal(api.calls.filter(call => ["provider", "reserve", "solicitud"].includes(call.name)).length, 0);
+  }
+  for (const user of [{ activo: false }, { sedeAccesoActiva: false }, { aliadoAccesoActivo: false },
+    { aliadoAccesoId: 8 }, { sedeAccesoId: 10 }, { aliadoId: null }]) {
+    const api = evaluationFixture({ central: false, user: { rolNombre: "ADMIN", ...user } });
+    const response = await api.request({});
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, "ALLY_SALES_ACCESS_INACTIVE");
+    assert.equal(api.calls.length, 0, "Sin reserva ni consulta pagada con acceso inactivo o inconsistente");
+  }
 });
 
 test("las credenciales y el alcance bloquean consultas sin permisos", async t => {
