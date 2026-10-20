@@ -207,3 +207,21 @@ test('inactividad, número inválido y cuelgue dejan un intento auditable sin fa
   const response=await(await failed.call({action:'postcall',call:{call_id:'synthetic-call-81',dynamic_variables:{event_token:failed.token},disconnection_reason:'inactivity',call_analysis:{custom_analysis_data:{}}}})).json();
   assert.equal(response.registrado,false);
 });
+
+test('prórroga vigente suspende el lote automático, la verificación y el registro, incluso con acuerdo vencido',async()=>{
+  const past={id:'expired-promise',managementStatus:'ACUERDO_PAGO',resultCode:'ACUERDO_PAGO',agreementDate:'2026-01-05',nextFollowUpAt:'2026-01-05T15:00:00Z'};
+  for(const history of [[],[past]]){
+    const s=setup({extension:true,portfolio:true,ownedPhone:true,history});
+    const audit=await(await s.call({action:'audit'})).json();
+    assert.equal(audit.items[0].eligible,false);
+    assert.ok(audit.items[0].reasons.some(r=>r.code==='PRORROGA_ACTIVA'));
+    assert.equal(audit.items[0].estado,'PRORROGA');
+    const identity=await(await s.call({action:'identity',name:'Cliente Sintetico',holderConfirmed:'true'})).json();
+    assert.equal(identity.suspend,true);assert.equal(identity.credito,undefined);
+    const verified=setup({extension:true,verified:true,ownedPhone:true,history});
+    const register=await(await verified.call({action:'register',result:'MEDIOS_PAGO'})).json();
+    assert.equal(register.suspend,true);assert.equal(register.registrado,false);assert.equal(verified.writes.length,0);
+  }
+  const expired=setup({extension:false,portfolio:true,ownedPhone:true});
+  assert.equal((await(await expired.call({action:'audit'})).json()).items[0].reasons.some(r=>r.code==='PRORROGA_ACTIVA'),false);
+});

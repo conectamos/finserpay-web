@@ -60,6 +60,9 @@ async function activeSession(body:Record<string,unknown>) {
 async function financialContext(id:number,allowFollowup=false) {
   const data=await getMoraManagement(id);
   const now=new Date();
+  // Approved current extensions take precedence over mora and expired agreements.
+  // Reuse the live FINSERPAY projection, which releases expired extensions.
+  if(data.credit.prorrogaActiva) return {...data,suspended:true,followupFor:null};
   const due=collectionPortfolioEligibility(data.credit.enMora,data.history,now,true);
   if(due.followupFor) {
     const completed=await prisma.$queryRawUnsafe<Array<{n:number}>>(`SELECT count(*)::int n FROM "CollectionVoiceAttempt" WHERE "followupFor"=$1::uuid AND "contactedAt" IS NOT NULL AND NOT "testCall"`,due.followupFor);
@@ -193,6 +196,7 @@ async function auditCollectionVoice() {
       const reviews:string[]=[];
       const add=(code:string,detail:string)=>reasons.push({code,detail});
       if(!context.credit.enMora) add("SIN_MORA_ACTUAL","La consulta actual ya no tiene saldo en mora.");
+      else if(context.credit.prorrogaActiva) add("PRORROGA_ACTIVA",`Prórroga aprobada vigente hasta ${context.credit.prorrogaActiva.expiresOn||"fecha no determinada"}; cobranza suspendida.`);
       else if(context.suspended) {
         if(context.history[0]?.resultCode==="PAGO_REALIZADO") add("PAGO_INFORMADO","La última gestión informa pago pendiente de validación.");
         else {
@@ -239,7 +243,7 @@ async function auditCollectionVoice() {
       if(!slot) add("FUERA_HORARIO","La ejecución manual está fuera del horario de contacto configurado.");
       if(process.env.DAPTA_COBRANZA_ENABLED!=="true"||process.env.DAPTA_COBRANZA_LIVE_READY!=="true") add("AUTOMATIZACION_NO_ACTIVA","La automatización no está habilitada y lista.");
       if(!agent()||!actor()||!webhook("DAPTA_COBRANZA_CALL_WEBHOOK_URL")) add("CONFIGURACION_INCOMPLETA","Falta agente, responsable o webhook válido para despachar.");
-      items.push({creditoId:item.id,numero:c.numeroCreditoVisible,cliente:c.clienteNombre,diasMora:c.diasMora,valorVencido:c.valorVencido,estado:context.history[0]?.managementStatus||"PENDIENTE",followupFor:context.followupFor,eligible:reasons.length===0,reasons,reviews,attemptsToday:attempts.filter(a=>colombiaClock(new Date(a.createdAt)).day===day).map(a=>({id:a.id,callId:a.providerCallId,status:a.status,at:a.createdAt,registered:!!a.managementId})),otherCampaigns:other});
+      items.push({creditoId:item.id,numero:c.numeroCreditoVisible,cliente:c.clienteNombre,diasMora:c.diasMora,valorVencido:c.valorVencido,estado:c.prorrogaActiva?"PRORROGA":context.history[0]?.managementStatus||"PENDIENTE",prorrogaActiva:c.prorrogaActiva?{expiresOn:c.prorrogaActiva.expiresOn}:null,followupFor:context.followupFor,eligible:reasons.length===0,reasons,reviews,attemptsToday:attempts.filter(a=>colombiaClock(new Date(a.createdAt)).day===day).map(a=>({id:a.id,callId:a.providerCallId,status:a.status,at:a.createdAt,registered:!!a.managementId})),otherCampaigns:other});
     }
     if(!portfolio.hasMore) break;
   }
