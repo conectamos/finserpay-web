@@ -126,7 +126,8 @@ test("saved approval audio stops campaign membership across revisions while unre
 
 test("campaign recording added between claim and dispatch cancels only its unsent event and preserves prior history", async t => {
   const f = await fixture(t); await f.ensure();
-  const [first] = await f.claim(); await f.save(first);
+  const first = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "3000000001" });
+  await f.save(first);
   const original = (await f.rows())[0]; f.time("2026-10-09T15:00:00Z");
   const [second] = await f.claim("2026-10-09T10:00"); assert.ok(second);
   await f.db.exec(`CREATE TABLE "CreditApprovalCallRecording" ("creditoId" integer,"revision" integer);
@@ -184,7 +185,7 @@ test("a non-test call already in flight blocks campaign redial", async t => {
   assert.equal((await f.rows()).length, 1);
 });
 
-test("real communication stops retries, opt-out takes priority over identity, uncertain terminal results hold", async t => {
+test("real communication and opt-outs stop retries, and uncertain terminal evidence never permits another automatic call", async t => {
   const f = await fixture(t, { count: 4 });
   await f.ensure();
   const events = await f.claim();
@@ -196,7 +197,8 @@ test("real communication stops retries, opt-out takes priority over identity, un
   await f.save(events[3], { communicationOutcome: "UNCERTAIN" });
   f.time("2026-10-09T15:00:00Z");
   assert.equal((await f.claim("2026-10-09T10:00")).length, 0);
-  assert.deepEqual((await f.members()).map(row => row.state), ["CONTACTED", "CONTACTED", "STOPPED", "HELD"]);
+  assert.deepEqual((await f.members()).map(row => row.state), ["CONTACTED", "CONTACTED", "STOPPED", "STOPPED"]);
+  assert.equal((await f.rows())[3].communicationOutcome, "UNCERTAIN");
 });
 
 test("review, contact, financial changes and paid credits are revalidated before the first dispatch", async t => {
@@ -209,7 +211,7 @@ test("review, contact, financial changes and paid credits are revalidated before
   await f.update(4, { estado: "PAGADO" });
   for (const event of events) assert.equal(await f.store.prepareVoiceReviewCampaign(event.eventId), null);
   assert.deepEqual((await f.members()).map(row => [row.state, row.stopReason]), [
-    ["HELD", "REVIEW_CHANGED"], ["HELD", "CONDITIONS_CHANGED"], ["HELD", "CONDITIONS_CHANGED"], ["STOPPED", "CREDIT_CLOSED"],
+    ["HELD", "REVIEW_CHANGED"], ["HELD", "CONTACT_CHANGED"], ["HELD", "CONDITIONS_CHANGED"], ["STOPPED", "CREDIT_CLOSED"],
   ]);
 });
 
