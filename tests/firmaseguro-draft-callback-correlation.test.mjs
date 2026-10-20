@@ -56,7 +56,9 @@ test("se conserva la autenticación global anterior y la ausencia de secreto fal
   assert.equal(authenticate(base, secret, { "x-firmaseguro-token": "wrong" }).authenticated, false);
   assert.equal(authenticate(base, null).authenticated, false);
   assert.equal(authenticate(base + "?token=" + secret + "&token=" + secret).authenticated, false);
-  assert.equal(buildDraftSignatureCallbackUrl(base, dispatchId, null), base);
+  for (const missing of [null, "", "   "]) {
+    assert.throws(() => buildDraftSignatureCallbackUrl(base, dispatchId, missing), /DRAFT_CALLBACK_AUTH_REQUIRED/);
+  }
 });
 
 test("los identificadores aceptan sólo las formas UUID documentadas y tienen longitud acotada", () => {
@@ -165,15 +167,15 @@ test("el preparador coloca el scope del despacho original y nunca realiza el env
   const source = readFileSync(new URL("../lib/firmaseguro-credit.ts", import.meta.url), "utf8");
   const start = source.indexOf("export async function prepareFirmaSeguroReissue(");
   const code = source.slice(start, source.indexOf("export async function createFirmaSeguroProcessForCredit(", start));
-  let callback; let sends = 0;
+  let callback; let sends = 0; let configuredSecret = secret; let signIns = 0;
   const prepare = runInNewContext(ts.transpileModule(code.replace("export async function", "async function") + "\nprepareFirmaSeguroReissue;", {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText, {
     Buffer, Error, buildDraftSignatureCallbackUrl, isFirmaSeguroConfigured: () => true,
     buildFirmaSeguroCallbackUrl: () => base + "?token=" + secret,
-    splitClientName: () => ({ document: "1000000001" }), getFirmaSeguroConfig: () => ({ callbackSecret: secret }),
+    splitClientName: () => ({ document: "1000000001" }), getFirmaSeguroConfig: () => ({ callbackSecret: configuredSecret }),
     getFirmaSeguroDelivery: () => ({ sendByEmail: true, signerEmail: "synthetic@example.invalid" }),
-    firmaSeguroSignIn: async () => ({ token: "synthetic-token" }), resolveFirmaSeguroDeliveryAuth: async (_token, value) => value,
+    firmaSeguroSignIn: async () => { signIns++; return { token: "synthetic-token" }; }, resolveFirmaSeguroDeliveryAuth: async (_token, value) => value,
     buildCreateFullPayload: (_credit, _person, _pdf, url) => { callback = url; return { tags: [] }; },
     redactBase64Payload: value => value,
     firmaSeguroCreateFull: async () => { sends++; throw new Error("not allowed"); },
@@ -181,6 +183,11 @@ test("el preparador coloca el scope del despacho original y nunca realiza el env
   await prepare({}, Buffer.from("%PDF-1.7 synthetic"), dispatchId, { callbackScope: "draft_dispatch" });
   assert.equal(sends, 0); assert.equal(authenticate(callback).dispatchId, dispatchId);
   assert.equal(callback.includes(secret), false);
+  configuredSecret = null;
+  const before = signIns;
+  await assert.rejects(prepare({}, Buffer.from("%PDF-1.7 synthetic"), dispatchId, { callbackScope: "draft_dispatch" }), /DRAFT_CALLBACK_AUTH_REQUIRED/);
+  assert.equal(signIns, before, "la configuración inválida falla antes de autenticar o enviar al proveedor");
+  assert.equal(sends, 0);
   await prepare({}, Buffer.from("%PDF-1.7 synthetic"), dispatchId);
   assert.equal(callback, base + "?token=" + secret, "las otras operaciones compartidas conservan su callback anterior");
 });

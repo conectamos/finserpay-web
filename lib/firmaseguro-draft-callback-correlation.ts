@@ -27,7 +27,7 @@ function signature(dispatchId: string, secret: string) {
 export function buildDraftSignatureCallbackUrl(callbackUrl: string, dispatchId: string, secret: string | null) {
   const id = readDraftCallbackDispatchId(dispatchId);
   if (!id) throw new Error("INVALID_DRAFT_CALLBACK_DISPATCH");
-  if (!secret) return callbackUrl;
+  if (!secret || !secret.trim()) throw new Error("DRAFT_CALLBACK_AUTH_REQUIRED");
   const url = new URL(callbackUrl);
   // New callbacks receive only their own scope, never the reusable global secret.
   url.searchParams.delete("token");
