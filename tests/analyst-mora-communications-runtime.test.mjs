@@ -11,7 +11,7 @@ class FixedDate extends Date {
 }
 function fixture(options = {}) {
   const sends = [], selected = [], attempts = [];
-  let extension = false, phone = "573009999999";
+  let extension = options.extension === true, phone = "573009999999";
   const db = {
     $executeRawUnsafe: async (sql, ...values) => {
       if (sql.includes('SET "status"=$2')) attempts.find(item => item.id === values[0]).status = values[1];
@@ -41,9 +41,9 @@ function fixture(options = {}) {
       getMoraManagement: async id => {
         selected.push(id);
         return { credit: { id, enMora: options.paidBeforeSend && selected.length > 1 ? false : true,
-          clienteDocumento: "100009999", clienteTelefono: phone, clienteNombre: "Cliente sintético", referenciaFamiliar1Telefono: "573008888888", prorrogaActiva: extension ? { id: "new-extension" } : null }, history: [] };
+          clienteDocumento: "100009999", clienteTelefono: phone, clienteNombre: "Cliente sintético", referenciaFamiliar1Telefono: "573008888888", prorrogaActiva: (extension || (options.extensionBeforeSend && selected.length > 1)) ? { id: "new-extension" } : null }, history: [] };
       },
-      listMoraPortfolio: async () => assert.fail("Selected-credit dispatch must never scan the portfolio"),
+      listMoraPortfolio: async () => options.automatic ? {items:[{id:9999}],hasMore:false} : assert.fail("Selected-credit dispatch must never scan the portfolio"),
       parseMoraManagement: input => input, createMoraManagement: async () => assert.fail("Dispatch is not a contact result"),
       createCreditManagement: async () => assert.fail("Dispatch is not a contact result"),
     },
@@ -90,4 +90,24 @@ test("provider authorization rechecks a newly approved extension and the current
   f.setPhone("573009999999");
   assert.equal((await (await f.authorize()).json()).allowed, true);
   assert.equal(f.sends.length, 1, "provider authorization never dispatches another call");
+});
+
+test("automatic collection excludes active extensions before claiming an attempt",async()=>{
+  const f=fixture({automatic:true,extension:true});
+  const result=await f.runCollectionVoice({limit:1});
+  assert.equal(result.eligible,0);assert.equal(f.attempts.length,0);assert.equal(f.sends.length,0);
+});
+
+test("automatic collection rechecks extensions immediately before the provider request",async()=>{
+  const f=fixture({automatic:true,extensionBeforeSend:true});
+  const result=await f.runCollectionVoice({limit:1});
+  assert.equal(result.accepted,0);assert.equal(f.sends.length,0);assert.equal(f.attempts[0].status,'SKIPPED');
+});
+
+test("automatic call already dispatched cannot authorize collection after a new extension",async()=>{
+  const f=fixture({automatic:true});
+  await f.runCollectionVoice({limit:1});
+  assert.equal(f.sends.length,1);assert.equal(f.attempts[0].manualRequested,false);
+  f.attempts[0].id=key;f.attempts[0].status='DISPATCHING';f.setExtension(true);
+  assert.equal((await(await f.authorize()).json()).allowed,false);
 });
