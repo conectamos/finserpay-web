@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
+import { readPendingDraftSignatureDispatch, pendingDraftSignatureMessage } from "../lib/firmaseguro-draft-submit.ts";
 
 const source = await readFile(new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url), "utf8");
 const start = source.indexOf("const refreshFirmaSeguroDraftProcess = async () => {");
@@ -37,6 +38,8 @@ function fixture(read) {
     formatFirmaSeguroApiFailure: result => result?.error || "Error de firma",
     formatFirmaSeguroProcessIssue: () => "Error de firma",
     hasAuditedCreditIdentityCorrection: () => false,
+    readFirmaSeguroDispatchState: async () => ({ ok: true, draftId: 25, signatureDispatch: null }),
+    readPendingDraftSignatureDispatch, pendingDraftSignatureMessage,
     setNotice: value => notices.push(value),
     setFirmaSeguroRefreshing: value => busy.push(value),
     setFirmaSeguroIdentityCorrectionPending() {},

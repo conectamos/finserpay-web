@@ -9,9 +9,11 @@ import {
 } from "@/lib/firmaseguro";
 import {
   DraftDispatchError,
+  DRAFT_RECOVERY_SYSTEM_ACTOR,
   finalizeDraftDispatch,
   getDraftDispatch,
   recordVerifiedDraftDispatchReceipt,
+  type DraftReconciliationActor,
 } from "@/lib/firmaseguro-draft-dispatch-ledger";
 import { isFirmaSeguroFailedStatus, isFirmaSeguroSuccessfulStatus } from "@/lib/firmaseguro-status";
 
@@ -21,6 +23,7 @@ type ReconciliationInput = {
   // The caller must authorize and resolve this actor on the server.
   actor: { id: number; nombre: string };
 };
+type InternalReconciliationInput = Omit<ReconciliationInput, "actor"> & { actor: DraftReconciliationActor };
 type QueryCategory = "process_status" | "signatures" | "documents";
 type RemoteRead = { category: QueryCategory; payload: unknown };
 type RemoteStatus = { value: string; priority: number };
@@ -179,12 +182,14 @@ function readRemoteEvidence(reads: RemoteRead[]) {
 }
 
 /** A dry run: reads only local state and authenticated provider GET responses. */
-export async function verifyDraftDispatchReconciliation(input: ReconciliationInput) {
+async function verifyReconciliation(input: InternalReconciliationInput) {
   const dispatchId = String(input.dispatchId || "").trim().toLowerCase();
   const processUuid = String(input.processUuid || "").trim().toLowerCase();
-  if (!UUID.test(dispatchId) || !PROVIDER_UUID.test(processUuid)
-    || !Number.isSafeInteger(input.actor?.id) || input.actor.id <= 0
-    || !input.actor.nombre?.trim()) {
+  const validActor = input.actor?.kind === "SYSTEM"
+    ? input.actor.nombre === DRAFT_RECOVERY_SYSTEM_ACTOR.nombre && !("id" in input.actor)
+    : input.actor && "id" in input.actor && Number.isSafeInteger(input.actor.id)
+      && input.actor.id > 0 && Boolean(input.actor.nombre?.trim());
+  if (!UUID.test(dispatchId) || !PROVIDER_UUID.test(processUuid) || !validActor) {
     fail("INVALID", "La solicitud de conciliación no es válida.", 400);
   }
   const row = await getDraftDispatch(dispatchId);
@@ -243,12 +248,18 @@ export async function verifyDraftDispatchReconciliation(input: ReconciliationInp
   };
   return {
     dispatchId,
-    processUuid,
+    processUuid: row.processUuid || processUuid,
     providerStatus,
-    actor: { id: input.actor.id, nombre: input.actor.nombre.trim() },
+    actor: input.actor.kind === "SYSTEM" ? DRAFT_RECOVERY_SYSTEM_ACTOR
+      : { id: input.actor.id, nombre: input.actor.nombre.trim() },
     createPayload: { source: "provider_reconciliation", evidenceKind: kind },
     evidence,
   };
+}
+
+/** Human API: the route must authorize and resolve this actor from its session. */
+export async function verifyDraftDispatchReconciliation(input: ReconciliationInput) {
+  return verifyReconciliation(input);
 }
 
 /** Never sends a signature request; materializes only a verified existing one. */
@@ -256,4 +267,33 @@ export async function reconcileDraftDispatchFromProvider(input: ReconciliationIn
   const verified = await verifyDraftDispatchReconciliation(input);
   await recordVerifiedDraftDispatchReceipt(verified);
   return finalizeDraftDispatch(verified.dispatchId);
+}
+
+/** Internal worker API. The recovery is attributed to SYSTEM, never to the send's initiator. */
+export async function reconcileDraftDispatchFromProviderAsSystem(input: Omit<ReconciliationInput, "actor">) {
+  const verified = await verifyReconciliation({ ...input, actor: DRAFT_RECOVERY_SYSTEM_ACTOR });
+  await recordVerifiedDraftDispatchReceipt(verified);
+  return finalizeDraftDispatch(verified.dispatchId);
+}
+
+/** Callback content supplies only a locator. Correlation comes from authenticated provider GETs. */
+export async function discoverDraftDispatchEvidenceFromProvider(processUuid: string): Promise<{
+  dispatchId: string | null; originalPdfHashes: string[];
+}> {
+  const uuid = String(processUuid || "").trim().toLowerCase();
+  if (!PROVIDER_UUID.test(uuid)) fail("INVALID", "El identificador del proveedor no es válido.", 400);
+  const auth = await boundedRead(() => firmaSeguroSignIn()).catch(() =>
+    fail("PROVIDER_UNAVAILABLE", "No se pudo consultar al proveedor."));
+  const results = await Promise.allSettled([
+    boundedRead(() => firmaSeguroGetProcessStatus(auth.token, uuid)),
+    boundedRead(() => firmaSeguroGetSignaturesStatus(auth.token, uuid)),
+    boundedRead(() => firmaSeguroGetDocumentsByUuid(uuid, auth.token)),
+  ]);
+  if (results[0].status !== "fulfilled") fail("PROVIDER_UNAVAILABLE", "No se pudo verificar el proceso.");
+  const evidence = readRemoteEvidence(results.flatMap((result, index) => result.status === "fulfilled"
+    ? [{ category: (["process_status", "signatures", "documents"] as const)[index], payload: result.value }] : []));
+  if (evidence.processIds.size > 1 || [...evidence.processIds].some((id) => id !== uuid)
+    || evidence.reissueIds.size > 1) fail("CONFLICT", "La correlación del proveedor es ambigua.");
+  const id = [...evidence.reissueIds][0]?.toLowerCase();
+  return { dispatchId: id && UUID.test(id) ? id : null, originalPdfHashes: [...evidence.pdfHashes] };
 }

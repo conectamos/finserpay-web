@@ -44,7 +44,7 @@ function fixture(overrides = {}) {
     draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftExplicitSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
     wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false, activeSolicitudRedirectingRef: { current: false },
     draftResumeHydrationRef: { current: false }, draftResumeHydrating: false, draftResumeLoadFailed: false, applyingDraftRef: { current: false },
-    firmaSeguroDraftCorrectionPending: false, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, signedContractEditLocked: false, advisorSignedContractStep: 5,
+    firmaSeguroDraftCorrectionPending: false, pendingFirmaSeguroDispatch: null, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, signedContractEditLocked: false, advisorSignedContractStep: 5,
     preflightNotice: null, firmaSeguroRequestInFlightRef: { current: false }, firmaSeguroSubmitting: false,
     analystDataSnapshotRef: { current: {} }, analystFinancialSnapshotRef: { current: { draftId: 2887 } }, analystEvidenceSnapshotRef: { current: {} },
     replaceDraftInUrl() {}, synchronizeAnalystDraftData() {}, resumeActiveSolicitudFromConflict: () => false,
@@ -82,6 +82,16 @@ function fixture(overrides = {}) {
   } };
 }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+test("una reserva o envío en curso pausa el autosave y al resolverse permite guardar nuevamente", async () => {
+  for (const state of [{ pendingFirmaSeguroDispatch: { status: "PREPARING" } },
+    { pendingFirmaSeguroDispatch: { status: "UNCERTAIN" } }, { firmaSeguroSubmitting: true }]) {
+    const f = fixture(state); f.mountAutosave();
+    assert.equal(f.timers.size, 0); assert.equal(f.requests.length, 0);
+    f.context.pendingFirmaSeguroDispatch = null; f.context.firmaSeguroSubmitting = false;
+    f.mountAutosave(); assert.equal(f.timers.size, 1);
+  }
+});
 
 test("Cliente completo guarda el nombre íntegro y espera al servidor antes de pasar a Equipo", async () => {
   const f = fixture(); let finish;

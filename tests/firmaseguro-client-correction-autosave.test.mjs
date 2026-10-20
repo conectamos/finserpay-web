@@ -14,6 +14,7 @@ const blacklistLocks = await jiti.import("../lib/solicitud-blacklist-locks.ts");
 const delivery = await jiti.import("../lib/delivery-evidence-draft.ts");
 const financial = await jiti.import("../lib/approval-request-financial-correction-core.ts");
 const evidence = await jiti.import("../lib/approval-request-evidence-correction-core.ts");
+const imeiConfirmation = await jiti.import("../lib/credit-imei-confirmation.ts");
 
 async function fixture(t) {
   const database = new PGlite(); t.after(() => database.close());
@@ -67,6 +68,7 @@ async function fixture(t) {
     "@/lib/approval-request-correction-core": core,
     "@/lib/approval-request-financial-correction-core": financial,
     "@/lib/approval-request-evidence-correction-core": evidence,
+    "@/lib/credit-imei-confirmation": imeiConfirmation,
     "@/lib/solicitudes": solicitudes,
   }, { process: { env: { NODE_ENV: "production" } } });
   const completion = load("lib/firmaseguro-client-correction-complete.ts", {
@@ -137,7 +139,12 @@ test("un autosave no modifica el snapshot durante el envío o conciliación pend
   const f = await fixture(t); const baseline = await f.read();
   for (const status of ["PREPARING", "DISPATCHING", "UNCERTAIN"]) {
     f.calls.unresolved = { status };
-    await assert.rejects(f.storage.saveSolicitudDraft(f.incoming()), { code: "SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE" });
+    await assert.rejects(f.storage.saveSolicitudDraft(f.incoming()), error => {
+      assert.equal(error.code, "SOLICITUD_ENVIO_FIRMA_PENDIENTE");
+      assert.match(error.message, /envío de firma pendiente de confirmación/);
+      assert.doesNotMatch(error.message, /datos incluidos en el contrato/);
+      return true;
+    });
     assert.deepEqual(await f.read(), baseline, status);
     assert.equal(f.calls.mutations, 0);
   }

@@ -4,8 +4,12 @@ import test from "node:test";
 import {
   firmaSeguroCorrectionReviewKey,
   hasFirmaSeguroCorrectionViewChanges,
-  resolveFirmaSeguroDraftForSubmission,
+  resolveFirmaSeguroDraftForSubmission as resolveSubmission,
 } from "../lib/firmaseguro-draft-submit.ts";
+
+const resolveFirmaSeguroDraftForSubmission = options => resolveSubmission({
+  loadSignatureState: async draftId => ({ ok: true, draftId, signatureDispatch: null }), ...options,
+});
 
 const [factory, storage] = await Promise.all([
   readFile(new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url), "utf8"),
@@ -154,11 +158,11 @@ test("la fábrica elige el borrador antes del POST y la inmutabilidad del servid
   const handler = factory.slice(start, end);
   const selector = handler.match(/await resolveFirmaSeguroDraftForSubmission(?:<[^>]+>)?\(/);
   assert.ok(selector, "El envío debe consultar el borrador autoritativo primero");
-  assert.match(handler, /await submitFirmaSeguroDraft\(currentDraftId\)/);
+  assert.match(handler, /await submitFirmaSeguroDraft\(currentDraftId, signatureDispatch\?\.id\)/);
   assert.ok(handler.indexOf(selector[0]) <
-    handler.indexOf("await submitFirmaSeguroDraft(currentDraftId)"));
+    handler.indexOf("await submitFirmaSeguroDraft(currentDraftId, signatureDispatch?.id)"));
   assert.match(handler,
-    /const reviewKey = firmaSeguroCorrectionReviewKey\(correctionDraft\);[\s\S]*?hasFirmaSeguroCorrectionViewChanges\([\s\S]*?firmaSeguroCorrectionReviewKeyRef\.current !== reviewKey\) \{[\s\S]*?firmaSeguroCorrectionReviewKeyRef\.current = reviewKey;[\s\S]*?applyDraftPayload\(correctionDraft\);[\s\S]*?return;[\s\S]*?\}\s*\}\s*const signature = await submitFirmaSeguroDraft\(currentDraftId\)/);
+    /const reviewKey = firmaSeguroCorrectionReviewKey\(correctionDraft\);[\s\S]*?hasFirmaSeguroCorrectionViewChanges\([\s\S]*?firmaSeguroCorrectionReviewKeyRef\.current !== reviewKey\) \{[\s\S]*?firmaSeguroCorrectionReviewKeyRef\.current = reviewKey;[\s\S]*?applyDraftPayload\(correctionDraft\);[\s\S]*?return;[\s\S]*?\}\s*\}\s*const signature = await submitFirmaSeguroDraft\(currentDraftId, signatureDispatch\?\.id\)/);
   assert.doesNotMatch(handler, /const currentDraftId = await saveCurrentDraft\(4\)/);
   assert.match(handler, /if \(!correctionDraft\) \{\s*await saveDraftPayloadForVeriff\(/);
   assert.match(storage, /function preservePendingImeiCorrectionAutosave\(/);

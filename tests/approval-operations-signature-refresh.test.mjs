@@ -249,6 +249,7 @@ test("la consulta limitada recupera el PDF sin sincronizar contratos ni volver a
     summarizeFirmaSeguroDocumentPayload: () => ({}),
   };
   const backend = load("lib/firmaseguro-credit.ts", {
+    "@/lib/firmaseguro-draft-callback-correlation": load("lib/firmaseguro-draft-callback-correlation.ts"),
     "@/lib/firmaseguro": provider,
     "@/lib/prisma": { default: { $transaction: async () => { calls.credit++; throw new Error("Unexpected contractual synchronization"); } } },
     "@/lib/firmaseguro-storage": { updateFirmaSeguroProcess: async (uuid, values) => {

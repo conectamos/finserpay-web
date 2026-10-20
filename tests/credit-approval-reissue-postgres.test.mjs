@@ -93,6 +93,7 @@ test("PostgreSQL aislado: reemisión persistente, conservación, callbacks y con
     "@/lib/credit-approval-data-core": dataCore,
   });
   const guarded = loadReissueModule("lib/firmaseguro-credit.ts", {
+    "@/lib/firmaseguro-draft-callback-correlation": loadReissueModule("lib/firmaseguro-draft-callback-correlation.ts"),
     "@/lib/auth":{}, "@/lib/aliados":{}, "@/lib/credit-route-lookup":{}, "@/lib/firmaseguro":{},
     "@/lib/firmaseguro-folio-pdf":{}, "@/lib/firmaseguro-storage":{}, "@/lib/prisma":{default:api},
     "@/lib/roles":{}, "@/lib/seller-auth":{},

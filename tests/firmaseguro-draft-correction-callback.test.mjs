@@ -7,6 +7,7 @@ import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 const read = file => readFileSync(new URL("../" + file, import.meta.url), "utf8");
 const version = loadReissueModule("lib/firmaseguro-draft-correction-version.ts");
+const callbackCorrelation = loadReissueModule("lib/firmaseguro-draft-callback-correlation.ts");
 const id = "10000000-0000-4000-8000-000000000001";
 const imei = "001234567890123";
 const pdf = Buffer.from("%PDF-1.4\nSIGNED TEST ONLY\n%%EOF").toString("base64");
@@ -46,11 +47,13 @@ test("the callback records only after authenticated provider refresh, ignoring i
       refreshFirmaSeguroProcess: async () => { calls.push(["refresh"]); return verified; }, serializeFirmaSeguroProcess: value => value },
     "@/lib/firmaseguro-storage": { updateFirmaSeguroProcess: async () => process },
     "@/lib/firmaseguro-draft-dispatch-ledger": {},
+    "@/lib/firmaseguro-draft-callback-correlation": callbackCorrelation,
+    "@/lib/firmaseguro-draft-recovery": { enqueueDraftSignatureRecovery: async () => { throw new Error("unexpected recovery"); } },
     "@/lib/firmaseguro-draft-correction-complete": { recordVerifiedDraftCorrectionReissues: record },
   });
   const send = token => callback.POST(new Request("https://example.invalid/callback", {
     method: "POST", headers: { "Content-Type": "application/json", "x-firmaseguro-token": token },
-    body: JSON.stringify({ uuid: "current", status: "COMPLETED" }),
+    body: JSON.stringify({ uuid: id, status: "COMPLETED" }),
   }));
   assert.equal((await send("wrong")).status, 401); assert.equal(calls.length, 0);
   assert.equal((await send("test-secret")).status, 200);

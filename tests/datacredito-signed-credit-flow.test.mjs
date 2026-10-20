@@ -61,6 +61,7 @@ const dataCorrections = load("lib/approval-request-correction-core.ts", {
   "./credit-contact-phones": phones,
 });
 const statuses = load("lib/firmaseguro-status.ts");
+const callbackCorrelation = load("lib/firmaseguro-draft-callback-correlation.ts");
 const imeiConfirmation = load("lib/credit-imei-confirmation.ts");
 const solicitudOperationAccess = load("lib/solicitud-operation-access.ts");
 const blacklistLocks = load("lib/solicitud-blacklist-locks.ts", {
@@ -235,6 +236,7 @@ async function fixture(t, providerType) {
     firmaSeguroGetDocumentByUuid: unexpectedNetwork, firmaSeguroGetAuraQuanticDocumentByUuid: unexpectedNetwork,
   };
   const firmaCredit = load("lib/firmaseguro-credit.ts", {
+    "@/lib/firmaseguro-draft-callback-correlation": callbackCorrelation,
     "@/lib/firmaseguro-contract-identity": contractIdentity,
     "@/lib/datacredito/firmaseguro-identity": firmaIdentity, "@/lib/datacredito/identity": identity,
     "@/lib/auth": {}, "@/lib/aliados": {}, "@/lib/credit-route-lookup": {},
@@ -258,6 +260,8 @@ async function fixture(t, providerType) {
   });
   await ledger.ensureDraftDispatchSchema();
   const callback = load("app/api/firma-seguro/callback/route.ts", {
+    "@/lib/firmaseguro-draft-callback-correlation": callbackCorrelation,
+    "@/lib/firmaseguro-draft-recovery": { enqueueDraftSignatureRecovery: unexpectedNetwork },
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/firmaseguro": firmaProvider, "@/lib/firmaseguro-credit": firmaCredit,
     "@/lib/firmaseguro-storage": firmaStorage, "@/lib/firmaseguro-draft-dispatch-ledger": ledger,

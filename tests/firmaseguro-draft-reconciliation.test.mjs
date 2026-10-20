@@ -19,6 +19,27 @@ const documentHash = createHash("sha256").update(originalPdf).digest("hex");
 const input = { dispatchId, processUuid, actor: { id: 7, nombre: "Analista" } };
 const compactProcessUuid = processUuid.replaceAll("-", "");
 
+test("automatic recovery verifies provider evidence and is explicitly attributed to SYSTEM", async () => {
+  const f = fixture({ status: { uuid: processUuid, status: "CREATED", tags: [{ reissue: dispatchId }] } });
+  await f.reconcileDraftDispatchFromProviderAsSystem({ dispatchId, processUuid });
+  const receipt = f.calls.find(call => call.category === "receipt_write").receipt;
+  assert.equal(receipt.actor.kind, "SYSTEM");
+  assert.equal(receipt.actor.nombre, "Sistema FINSER PAY (recuperación de firma)");
+  assert.equal("id" in receipt.actor, false);
+  assert.equal(f.calls.some(call => /create|send/i.test(call.category)), false);
+});
+
+test("legacy callback discovery accepts only provider-read correlation and original PDF hashes", async () => {
+  const f = fixture({ status: { uuid: processUuid, status: "CREATED", tags: [{ reissue: dispatchId }] },
+    documents: { document: { base64_string: originalPdf.toString("base64") } } });
+  const evidence = await f.discoverDraftDispatchEvidenceFromProvider(processUuid);
+  assert.equal(evidence.dispatchId, dispatchId);
+  assert.deepEqual(Array.from(evidence.originalPdfHashes), [documentHash]);
+  assert.equal(f.calls.some(call => call.category === "receipt_write"), false);
+  const conflict = fixture({ status: { uuid: otherUuid, status: "CREATED", tags: [{ reissue: dispatchId }] } });
+  await assert.rejects(conflict.discoverDraftDispatchEvidenceFromProvider(processUuid), error => error.code === "DRAFT_DISPATCH_RECONCILIATION_CONFLICT");
+});
+
 class DraftDispatchError extends Error {
   constructor(code, message, status = 409) {
     super(message);
@@ -46,9 +67,10 @@ function fixture(overrides = {}) {
     if (payload instanceof Error) throw payload;
     return payload;
   };
-  const loaded = runInNewContext(executable + "\n({ verifyDraftDispatchReconciliation, reconcileDraftDispatchFromProvider });", {
+  const loaded = runInNewContext(executable + "\n({ verifyDraftDispatchReconciliation, reconcileDraftDispatchFromProvider, reconcileDraftDispatchFromProviderAsSystem, discoverDraftDispatchEvidenceFromProvider });", {
     Buffer, createHash, setTimeout, clearTimeout, DraftDispatchError,
     isFirmaSeguroFailedStatus, isFirmaSeguroSuccessfulStatus,
+    DRAFT_RECOVERY_SYSTEM_ACTOR: { kind: "SYSTEM", nombre: "Sistema FINSER PAY (recuperación de firma)" },
     getDraftDispatch: async (id) => {
       calls.push({ category: "ledger_read", id });
       return overrides.missingRow ? null : row;

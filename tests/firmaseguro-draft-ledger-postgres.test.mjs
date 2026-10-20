@@ -235,6 +235,28 @@ async function redirectReservation(f, { id, phone, expectedProcessUuid = f.proce
   };
 }
 
+test("PostgreSQL: recuperación automática mantiene al iniciador y audita SYSTEM sin usuario suplantado", async t => {
+  const f = await fixture(t, { providerError: new Error("504 Gateway Time-out") });
+  await assert.rejects(f.ledger.dispatchReservedDraft(f.operationId), { code: "DRAFT_DISPATCH_UNCERTAIN" });
+  await f.verifiedReceipt({ actor: f.ledger.DRAFT_RECOVERY_SYSTEM_ACTOR });
+  const receipt = (await f.receipts())[0];
+  assert.equal(receipt.actorKind, "SYSTEM");
+  assert.equal(receipt.actorUserId, null);
+  assert.equal(receipt.actorName, "Sistema FINSER PAY (recuperación de firma)");
+  assert.equal(receipt.evidence.actorKind, "SYSTEM");
+  assert.equal((await f.row()).actorUserId, 7);
+  assert.equal((await f.ledger.finalizeDraftDispatch(f.operationId)).status, "AWAITING_SIGNATURE");
+  assert.equal(f.sends(), 1);
+  await assert.rejects(f.verifiedReceipt({ actor: { kind: "SYSTEM", id: 7, nombre: "Sistema FINSER PAY (recuperación de firma)" } }),
+    { code: "DRAFT_DISPATCH_VERIFICATION_REQUIRED" });
+  for (const [actorId, evidence] of [[7, { actorKind: "SYSTEM" }], [null, { version: 1 }]]) {
+    await assert.rejects(f.database.query(`INSERT INTO "FirmaSeguroDraftDispatchReconciliation"
+      ("dispatchId","processUuid","providerStatus","providerPayload","actorUserId","actorName","actorKind","evidence")
+      VALUES ($1,$2,'CREATED','{}'::jsonb,$3,'Sistema FINSER PAY (recuperación de firma)','SYSTEM',$4::jsonb)`,
+    [f.operationId, f.processUuid, actorId, JSON.stringify(evidence)]), /actor_check/);
+  }
+});
+
 test("PostgreSQL: reserva, ACK y repetición conservan un solo envío y sus datos JSONB", async (t) => {
   const f = await fixture(t);
   const completed = await f.ledger.dispatchReservedDraft(f.operationId);

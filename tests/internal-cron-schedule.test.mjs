@@ -99,6 +99,9 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     },
     "@/lib/efecty-recaudos": { syncEfectyRecaudosFromSftp: async () => { operationalCalls.push({ name: "efecty" }); return { ok: true }; } },
     "@/lib/wompi-reconciliation": { reconcilePendingWompiPayments: async () => { operationalCalls.push({ name: "wompi" }); return { ok: true }; } },
+    "@/lib/firmaseguro-draft-recovery": {
+      runDraftSignatureRecovery: async () => ({ selected: 0, recovered: 0, deferred: 0, needsReview: 0 }),
+    },
     "@/lib/merchant-applications": { getMerchantMailConfig: () => null },
     "@/lib/merchant-applications-storage": { retryMerchantApplications: async () => ({ selected: 0 }) },
     "@/lib/internal-cron-schedule": schedule,

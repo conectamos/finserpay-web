@@ -547,7 +547,7 @@ test("autosave, desistimiento y vencimiento comparten el lock de operacion", asy
   }
   assert.match(
     storage,
-    /if \(targetId\) \{\s*await lockSolicitudOperationMutation\(transaction, targetId\);\s*if \(await getUnresolvedDraftDispatch\(targetId, transaction\)\) \{\s*throw new SolicitudCanonicalMutationError\("SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE"\)/
+    /if \(targetId\) \{\s*await lockSolicitudOperationMutation\(transaction, targetId\);\s*if \(await getUnresolvedDraftDispatch\(targetId, transaction\)\) \{\s*throw new SolicitudCanonicalMutationError\("SOLICITUD_ENVIO_FIRMA_PENDIENTE"\)/
   );
   assert.match(storage, /pg_try_advisory_xact_lock/);
   assert.match(storage, /SOLICITUD_OPERATION_LOCK_NAMESPACE/);

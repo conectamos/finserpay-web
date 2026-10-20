@@ -99,10 +99,14 @@ test("la correccion envia IMEI y motivo y exige reconfirmar antes del nuevo cont
 
 test("un proceso ya firmado no ofrece un reenvio silencioso", async () => {
   const source = await readFile(factoryUrl, "utf8");
-  const buttonStart = source.indexOf("onClick={() => void handleFirmaSeguroStepReady()}");
-  const button = source.slice(buttonStart, buttonStart + 1_600);
+  const buttonStart = source.indexOf('className="fp-step3-firma-primary"');
+  const buttonEnd = source.indexOf("</button>", buttonStart);
+  const button = source.slice(buttonStart, buttonEnd);
 
   assert.ok(buttonStart > 0);
+  assert.ok(buttonEnd > buttonStart);
+  assert.match(button, /pendingFirmaSeguroDispatch && !pendingFirmaSeguroDispatch\.canResume \? refreshFirmaSeguroDraftProcess\(\) : handleFirmaSeguroStepReady\(\)/);
+  assert.match(button, /disabled=\{[\s\S]*firmaSeguroProcessSent/);
   assert.match(button, /firmaSeguroProcessSent/);
   assert.match(button, /firmaSeguroImeiCorrecting/);
   assert.match(button, /FIRMA CONFIRMADA/);

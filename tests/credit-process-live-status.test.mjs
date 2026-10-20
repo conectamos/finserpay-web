@@ -10,6 +10,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
+import { serializeDraftSignatureDispatch } from "../lib/firmaseguro-draft-dispatch-summary.ts";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("..", import.meta.url)) } });
 const { readFinancingTermsSeal } = await jiti.import("../lib/credit-amortization-contract.ts");
@@ -118,7 +119,8 @@ test("error de conexión retira conectado y reintenta sin enviar operaciones", a
 });
 
 test("ocultar o desconectar aborta la lectura y al volver consulta el servidor", async () => {
-  const f = fixture();
+  let serverPending = true;
+  const f = fixture(async () => snapshot({ pending: serverPending }));
   await f.poller.start();
   f.setAvailable(false);
   f.poller.pause();
@@ -129,6 +131,7 @@ test("ocultar o desconectar aborta la lectura y al volver consulta el servidor",
   f.setAvailable(true);
   await f.poller.retry();
   assert.equal(f.requests(), 2);
+  serverPending = false;
   f.setPending(false);
   await f.poller.retry();
   assert.equal(f.scheduled.size, 0);
@@ -166,6 +169,7 @@ function routeFixture({ user = { id: 10, rolNombre: "ADMIN", aliadoAccesoCodigo:
     redactVeriffValidationForOperator: value => value && { id: value.id, draftId: value.draftId, pending: value.pending },
     resolveFirmaSeguroProcessUiState: value => !value ? "pending" : value.status === "SIGNED" ? "signed" : "waiting",
     resolveStoredDraftCorrectionPending,
+    serializeDraftSignatureDispatch,
     prisma: { $queryRawUnsafe: async (sql, id) => { calls.push({ sql, id }); if (error) throw new Error("private database diagnostic"); return [fixtureRow]; } },
   });
   return { calls, invoke: (id = "25") => GET(new Request("https://example.test"), { params: Promise.resolve({ id }) }) };
@@ -187,6 +191,44 @@ test("lectura de estados usa una sola instantánea, firma vigente y validación 
   assert.match(f.calls[0].sql, /ORDER BY v\."id" DESC LIMIT 1/);
   assert.equal(response.headers.get("cache-control"), "no-store, private");
   assert.doesNotMatch(routeSource, /veriffGetDecision|veriffGetPerson|refreshFirmaSeguroProcess|finalizeDraftDispatch|\$executeRaw|UPDATE |INSERT |DELETE |ensure\w+Schema\(/);
+});
+
+test("un envío reservado sin proceso aparece pendiente y solo su preparación del mismo actor permite reanudar", async () => {
+  const id = "00000000-0000-4000-8000-000000003433";
+  for (const status of ["PREPARING", "DISPATCHING", "UNCERTAIN"]) {
+    const signatureDispatch = { id, status, actorUserId: 10,
+      reason: "Envío del contrato de la solicitud a FirmaSeguro", expectedProcessUuid: null,
+      createdAt: "2026-10-20T16:39:50.876Z", updatedAt: "2026-10-20T16:39:50.876Z",
+      hasReceipt: false, hasProviderLocator: false,
+      documentBase64: "PRIVATE-PDF", lastError: "PRIVATE-PROVIDER-ERROR" };
+    const f = routeFixture({ row: { validation: { pending: false }, process: null, signatureDispatch } });
+    const result = await (await f.invoke()).json();
+    assert.equal(result.pending, true, status);
+    assert.equal(result.process, null);
+    assert.equal(result.signatureDispatch.status, status);
+    assert.equal(result.signatureDispatch.canResume, status === "PREPARING");
+    assert.equal(result.revision.signatureDispatchId, id);
+    assert.equal(result.revision.signatureDispatchStatus, status);
+    assert.equal(result.revision.signatureDispatchHasReceipt, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|documentBase64|actorUserId|expectedProcessUuid|reason/);
+    assert.equal(f.calls.length, 1, "la consulta no finaliza ni reenvía un contrato");
+  }
+  const raw = { id, status: "PREPARING", actorUserId: 99,
+    reason: "Envío del contrato de la solicitud a FirmaSeguro", expectedProcessUuid: null,
+    hasReceipt: false, hasProviderLocator: false };
+  const central = await (await routeFixture({ row: { process: null, signatureDispatch: raw } }).invoke()).json();
+  assert.equal(central.signatureDispatch.canResume, false, "central no asume la identidad del asesor");
+  const withReceipt = await (await routeFixture({ row: { process: null, signatureDispatch: { ...raw, hasReceipt: true } } }).invoke()).json();
+  assert.equal(withReceipt.revision.signatureDispatchHasReceipt, true,
+    "un comprobante nuevo cambia la revisión incluso si no cambió la fecha del intento");
+});
+
+test("los permisos protegen también la existencia de un envío pendiente", async () => {
+  const f = routeFixture({ user: { rolNombre: "ADMIN", aliadoAccesoCodigo: "OTHER", aliadoAccesoId: 99 },
+    row: { signatureDispatch: { id: "00000000-0000-4000-8000-000000003433", status: "UNCERTAIN" } } });
+  const result = await f.invoke();
+  assert.equal(result.status, 404);
+  assert.doesNotMatch(JSON.stringify(await result.json()), /UNCERTAIN|3433|signatureDispatch/);
 });
 
 test("administrador de aliado y asesor sólo pueden leer su alcance", async () => {
@@ -238,6 +280,10 @@ test("consulta SQL real descarta la firma y el Veriff antiguos después de una n
         "draftFolio" text, "draftPayload" jsonb, "processUuid" text, "status" text,
         "signedDocumentFileName" text, "lastError" text, "createdAt" timestamptz,
         "updatedAt" timestamptz, "completedAt" timestamptz, "signedDocumentBase64" text, "supersededAt" timestamptz);
+      CREATE TABLE "FirmaSeguroDraftDispatch" ("id" uuid PRIMARY KEY, "draftId" integer, "status" text,
+        "createdAt" timestamptz, "updatedAt" timestamptz, "actorUserId" integer, "reason" text, "expectedProcessUuid" text,
+        "processUuid" text, "lastError" text);
+      CREATE TABLE "FirmaSeguroDraftDispatchReceipt" ("dispatchId" uuid PRIMARY KEY);
       INSERT INTO "Sede" VALUES (1,2);
       INSERT INTO "CreditoBorrador" VALUES (25,40,1,'ABIERTO',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,NULL,NULL,NULL,'{}','CLIENTE','00111','001234567890123');
       INSERT INTO "VeriffIdentityValidation" VALUES
@@ -265,6 +311,28 @@ test("consulta SQL real descarta la firma y el Veriff antiguos después de una n
     assert.equal(actualEvent.rows[0].process.signedDocumentBase64, "stored");
     assert.equal(actualEvent.rows[0].process.signedPdfVerified, true);
     assert.ok(actualEvent.rows[0].process.completedAt);
+    const dispatchId = "00000000-0000-4000-8000-000000003433";
+    await database.query(`INSERT INTO "FirmaSeguroDraftDispatch" VALUES
+      ($1,25,'UNCERTAIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,10,
+       'Envío del contrato de la solicitud a FirmaSeguro',NULL,'PRIVATE-PROVIDER-UUID','receipt_persistence [PRIVATE]: hidden details'),
+      ('00000000-0000-4000-8000-000000003434',26,'PREPARING',CURRENT_TIMESTAMP+INTERVAL '1 day',CURRENT_TIMESTAMP,10,
+       'Envío del contrato de la solicitud a FirmaSeguro',NULL,NULL,NULL)`, [dispatchId]);
+    const pending = (await database.query(f.calls[0].sql, [25])).rows[0].signatureDispatch;
+    assert.equal(pending.id, dispatchId);
+    assert.equal(pending.status, "UNCERTAIN");
+    assert.equal(pending.failureStage, "receipt_persistence");
+    assert.equal(pending.hasProviderLocator, true);
+    assert.equal(pending.hasReceipt, false);
+    assert.doesNotMatch(JSON.stringify(pending), /PRIVATE|lastError|processUuid/);
+    await database.query(`UPDATE "FirmaSeguroDraftDispatch" SET "lastError"='providerXdispatch [PRIVATE]: hidden' WHERE "id"=$1`, [dispatchId]);
+    assert.equal((await database.query(f.calls[0].sql, [25])).rows[0].signatureDispatch.failureStage, null,
+      "el diagnóstico exige el prefijo exacto y no interpreta los guiones bajos como comodines");
+    await database.query(`INSERT INTO "FirmaSeguroDraftDispatchReceipt" VALUES($1)`, [dispatchId]);
+    const acknowledged = (await database.query(f.calls[0].sql, [25])).rows[0].signatureDispatch;
+    assert.equal(acknowledged.hasReceipt, true);
+    assert.equal(acknowledged.updatedAt, pending.updatedAt);
+    await database.query(`UPDATE "FirmaSeguroDraftDispatch" SET "status"='AWAITING_SIGNATURE' WHERE "id"=$1`, [dispatchId]);
+    assert.equal((await database.query(f.calls[0].sql, [25])).rows[0].signatureDispatch, null);
   } finally {
     await database.close();
   }

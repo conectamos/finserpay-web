@@ -35,14 +35,21 @@ export type DraftDispatchRow = {
 export type DraftDispatchReceipt = {
   dispatchId: string; processUuid: string; providerStatus: string; createPayload: unknown;
   source: "send_response" | "provider_reconciliation";
-  actorUserId: number | null; actorName: string | null; evidence: unknown; createdAt: Date;
+  actorUserId: number | null; actorName: string | null; actorKind: "HUMAN" | "SYSTEM"; evidence: unknown; createdAt: Date;
 };
 
 export type DraftDispatchReconciliation = {
   id: bigint; dispatchId: string; processUuid: string; providerStatus: string;
-  providerPayload: unknown; actorUserId: number; actorName: string;
+  providerPayload: unknown; actorUserId: number | null; actorName: string; actorKind: "HUMAN" | "SYSTEM";
   evidence: unknown; createdAt: Date;
 };
+
+export type DraftReconciliationActor = { id: number; nombre: string; kind?: "HUMAN" }
+  | { kind: "SYSTEM"; nombre: "Sistema FINSER PAY (recuperación de firma)" };
+
+export const DRAFT_RECOVERY_SYSTEM_ACTOR = {
+  kind: "SYSTEM", nombre: "Sistema FINSER PAY (recuperación de firma)",
+} as const;
 
 type ProviderAcknowledgement = {
   processUuid: string; status: string; createPayload: unknown;
@@ -194,6 +201,28 @@ export function ensureDraftDispatchSchema() {
     )`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "FirmaSeguroDraftDispatchReconciliation_latest"
       ON "FirmaSeguroDraftDispatchReconciliation"("dispatchId","id" DESC)`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "FirmaSeguroDraftDispatchReceipt"
+      ADD COLUMN IF NOT EXISTS "actorKind" TEXT NOT NULL DEFAULT 'HUMAN'`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "FirmaSeguroDraftDispatchReconciliation"
+      ADD COLUMN IF NOT EXISTS "actorKind" TEXT NOT NULL DEFAULT 'HUMAN'`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "FirmaSeguroDraftDispatchReconciliation"
+      ALTER COLUMN "actorUserId" DROP NOT NULL`);
+    await prisma.$executeRawUnsafe(`DO $$ BEGIN
+      PERFORM pg_advisory_xact_lock(5843, 20261020);
+      ALTER TABLE "FirmaSeguroDraftDispatchReceipt" DROP CONSTRAINT IF EXISTS "FirmaSeguroDraftDispatchReceipt_evidence_check";
+      ALTER TABLE "FirmaSeguroDraftDispatchReceipt" ADD CONSTRAINT "FirmaSeguroDraftDispatchReceipt_evidence_check" CHECK
+        ("actorKind" IN ('HUMAN','SYSTEM') AND ("source" <> 'provider_reconciliation' OR
+          ("actorName" IS NOT NULL AND LENGTH(BTRIM("actorName")) > 0
+            AND jsonb_typeof("evidence")='object' AND "evidence" <> '{}'::jsonb
+            AND (("actorKind"='HUMAN' AND "actorUserId" IS NOT NULL)
+              OR ("actorKind"='SYSTEM' AND "actorUserId" IS NULL
+                AND "actorName"='Sistema FINSER PAY (recuperación de firma)' AND COALESCE("evidence"->>'actorKind','')='SYSTEM')))));
+      ALTER TABLE "FirmaSeguroDraftDispatchReconciliation" DROP CONSTRAINT IF EXISTS "FirmaSeguroDraftDispatchReconciliation_actor_check";
+      ALTER TABLE "FirmaSeguroDraftDispatchReconciliation" ADD CONSTRAINT "FirmaSeguroDraftDispatchReconciliation_actor_check" CHECK
+        (("actorKind"='HUMAN' AND "actorUserId" IS NOT NULL) OR
+          ("actorKind"='SYSTEM' AND "actorUserId" IS NULL
+            AND "actorName"='Sistema FINSER PAY (recuperación de firma)' AND COALESCE("evidence"->>'actorKind','')='SYSTEM'));
+    END $$`);
     await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_audit()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         IF TG_OP='INSERT' THEN
@@ -295,6 +324,42 @@ export function ensureDraftDispatchSchema() {
     await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchReconciliation_immutable"
       BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchReconciliation"
       FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_reconciliation_immutable()`);
+    await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "FirmaSeguroDraftRecovery" (
+      "id" UUID PRIMARY KEY, "dedupeKey" CHAR(64) NOT NULL UNIQUE,
+      "processUuid" TEXT NOT NULL, "dispatchId" UUID,
+      "payloadSha256" CHAR(64) NOT NULL CHECK ("payloadSha256" ~ '^[a-f0-9]{64}$'),
+      "lastDeliverySha256" CHAR(64) NOT NULL, "receiptObserved" BOOLEAN NOT NULL DEFAULT FALSE, "retryable" BOOLEAN NOT NULL DEFAULT TRUE,
+      "source" TEXT NOT NULL CHECK ("source" IN ('CALLBACK','LOCATOR','RECEIPT')),
+      "status" TEXT NOT NULL DEFAULT 'QUEUED' CHECK ("status" IN ('QUEUED','PROCESSING','RETRY','RECOVERED','NEEDS_REVIEW')),
+      "attempts" INTEGER NOT NULL DEFAULT 0, "nextAttemptAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "leaseToken" UUID, "leaseUntil" TIMESTAMPTZ, "lastErrorCode" TEXT, "resolvedDispatchId" UUID,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "FirmaSeguroDraftRecovery_due"
+      ON "FirmaSeguroDraftRecovery"("status","nextAttemptAt")`);
+    await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "FirmaSeguroDraftRecoveryEvent" (
+      "id" BIGSERIAL PRIMARY KEY, "recoveryId" UUID NOT NULL REFERENCES "FirmaSeguroDraftRecovery"("id") ON DELETE RESTRICT,
+      "eventType" TEXT NOT NULL, "errorCode" TEXT, "payloadSha256" CHAR(64),
+      "actorKind" TEXT NOT NULL DEFAULT 'SYSTEM' CHECK ("actorKind"='SYSTEM'),
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.firmaseguro_draft_recovery_preserve()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF TG_OP='DELETE' OR ROW(NEW."id",NEW."dedupeKey",NEW."processUuid",NEW."dispatchId",NEW."payloadSha256",NEW."source",NEW."createdAt")
+          IS DISTINCT FROM ROW(OLD."id",OLD."dedupeKey",OLD."processUuid",OLD."dispatchId",OLD."payloadSha256",OLD."source",OLD."createdAt")
+        THEN RAISE EXCEPTION 'DRAFT_RECOVERY_IMMUTABLE' USING ERRCODE='23514'; END IF;
+        RETURN NEW;
+      END $$`);
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "FirmaSeguroDraftRecovery_preserve"
+      BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftRecovery"
+      FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_recovery_preserve()`);
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.firmaseguro_draft_recovery_event_preserve()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        RAISE EXCEPTION 'DRAFT_RECOVERY_EVENT_IMMUTABLE' USING ERRCODE='23514';
+      END $$`);
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE TRIGGER "FirmaSeguroDraftRecoveryEvent_preserve"
+      BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftRecoveryEvent"
+      FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_recovery_event_preserve()`);
   })().catch((error) => { setup = null; throw error; });
   return setup;
 }
@@ -492,7 +557,7 @@ function verifiedProviderOutcome(status: unknown): "ACTIVE" | "TERMINAL_FAILURE"
 async function recordDispatchReceipt(input: {
   dispatchId: string; acknowledgement: ProviderAcknowledgement;
   source: DraftDispatchReceipt["source"];
-  actor?: { id: number; nombre: string }; evidence: Record<string, unknown>;
+  actor?: DraftReconciliationActor; evidence: Record<string, unknown>;
 }): Promise<DraftDispatchReceipt | DraftDispatchReconciliation> {
   const processUuid = input.acknowledgement.processUuid.trim();
   if (!UUID.test(input.dispatchId) || !processUuid || processUuid.length > 200
@@ -520,6 +585,9 @@ async function recordDispatchReceipt(input: {
     const providerStatus = String(input.acknowledgement.status || "CREATED");
     const providerPayload = sanitizedReceiptJson(input.acknowledgement.createPayload);
     const evidence = sanitizedReceiptJson(input.evidence);
+    const actorKind = input.actor?.kind === "SYSTEM" || !input.actor ? "SYSTEM" : "HUMAN";
+    const actorUserId = input.actor && "id" in input.actor ? input.actor.id : null;
+    const actorName = input.actor?.nombre.trim() ?? null;
     const existing = await db.$queryRawUnsafe<DraftDispatchReceipt[]>(
       `SELECT * FROM "FirmaSeguroDraftDispatchReceipt"
         WHERE "dispatchId"=$1::uuid OR "processUuid"=$2`, input.dispatchId, processUuid);
@@ -531,21 +599,21 @@ async function recordDispatchReceipt(input: {
       if (input.source === "provider_reconciliation") {
         const reconciliations = await db.$queryRawUnsafe<DraftDispatchReconciliation[]>(
           `INSERT INTO "FirmaSeguroDraftDispatchReconciliation"
-            ("dispatchId","processUuid","providerStatus","providerPayload","actorUserId","actorName","evidence")
-            VALUES ($1::uuid,$2,$3,$4::jsonb,$5::integer,$6,$7::jsonb) RETURNING *`,
-          input.dispatchId, processUuid, providerStatus, json(providerPayload), input.actor!.id,
-          input.actor!.nombre.trim(), json(evidence));
+            ("dispatchId","processUuid","providerStatus","providerPayload","actorUserId","actorName","actorKind","evidence")
+            VALUES ($1::uuid,$2,$3,$4::jsonb,$5::integer,$6,$7,$8::jsonb) RETURNING *`,
+          input.dispatchId, processUuid, providerStatus, json(providerPayload), actorUserId,
+          actorName, actorKind, json(evidence));
         return reconciliations[0];
       }
       return existing[0];
     }
     const receipts = await db.$queryRawUnsafe<DraftDispatchReceipt[]>(
       `INSERT INTO "FirmaSeguroDraftDispatchReceipt"
-        ("dispatchId","processUuid","providerStatus","createPayload","source","actorUserId","actorName","evidence")
-        VALUES ($1::uuid,$2,$3,$4::jsonb,$5,$6::integer,$7,$8::jsonb)
+        ("dispatchId","processUuid","providerStatus","createPayload","source","actorUserId","actorName","actorKind","evidence")
+        VALUES ($1::uuid,$2,$3,$4::jsonb,$5,$6::integer,$7,$8,$9::jsonb)
         ON CONFLICT DO NOTHING RETURNING *`,
       input.dispatchId, processUuid, providerStatus, json(providerPayload), input.source,
-      input.actor?.id ?? null, input.actor?.nombre.trim() ?? null, json(evidence));
+      actorUserId, actorName, actorKind, json(evidence));
     if (!receipts[0]) throw new DraftDispatchError("DRAFT_DISPATCH_RECEIPT_CONFLICT",
       "El proveedor ya está vinculado a otra confirmación.");
     return receipts[0];
@@ -557,17 +625,21 @@ async function recordDispatchReceipt(input: {
  * process-UUID mutation endpoint. Evidence records that completed verification. */
 export async function recordVerifiedDraftDispatchReceipt(input: {
   dispatchId: string; processUuid: string; providerStatus: string; createPayload: unknown;
-  actor: { id: number; nombre: string }; evidence: Record<string, unknown>;
+  actor: DraftReconciliationActor; evidence: Record<string, unknown>;
 }) {
-  if (!Number.isSafeInteger(input.actor?.id) || input.actor.id < 1
-    || !input.actor.nombre?.trim() || !input.evidence || typeof input.evidence !== "object"
+  const system = input.actor?.kind === "SYSTEM";
+  const validActor = system
+    ? input.actor.nombre === DRAFT_RECOVERY_SYSTEM_ACTOR.nombre && !("id" in input.actor)
+    : input.actor && "id" in input.actor && Number.isSafeInteger(input.actor.id) && input.actor.id > 0
+      && Boolean(input.actor.nombre?.trim());
+  if (!validActor || !input.evidence || typeof input.evidence !== "object"
     || Array.isArray(input.evidence) || Object.keys(input.evidence).length === 0) {
     throw new DraftDispatchError("DRAFT_DISPATCH_VERIFICATION_REQUIRED",
       "La conciliación requiere un responsable y evidencia verificada del proveedor.");
   }
   return recordDispatchReceipt({
     dispatchId: input.dispatchId, source: "provider_reconciliation", actor: input.actor,
-    evidence: input.evidence, acknowledgement: {
+    evidence: system ? { ...input.evidence, actorKind: "SYSTEM" } : input.evidence, acknowledgement: {
       processUuid: input.processUuid, status: input.providerStatus, createPayload: input.createPayload,
     },
   });
@@ -807,7 +879,7 @@ export async function dispatchReservedDraft(id: string) {
   if (frozenContactRedirect || frozenClientCorrection) await ensureApprovalOperationalSchema();
   let prepared: Awaited<ReturnType<typeof prepareFirmaSeguroReissue>>;
   try {
-    prepared = await prepareFirmaSeguroReissue(row.frozenCredit, document, id);
+    prepared = await prepareFirmaSeguroReissue(row.frozenCredit, document, id, { callbackScope: "draft_dispatch" });
   } catch (error) {
     await prisma.$executeRawUnsafe(`UPDATE "FirmaSeguroDraftDispatch"
       SET "status"='FAILED_SAFE',"lastError"=$2,"updatedAt"=CURRENT_TIMESTAMP

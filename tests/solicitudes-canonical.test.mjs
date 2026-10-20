@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import {
   SolicitudCanonicalMutationError,
   isSolicitudImeiChangeBlocked,
@@ -527,7 +528,44 @@ test("la aprobacion enlaza el id canonico antes del autosave", async () => {
 
   assert.match(gate, /solicitudId: number \| null/);
   assert.match(gate, /readNumber\(payload\.solicitudId\)/);
-  assert.match(factory, /deliveryMode \|\|[\s\S]{0,240}!draftId \|\|/);
+  const ast = ts.createSourceFile("credit-factory-console.tsx", factory, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let autosave;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect") {
+      const body = node.arguments[0]?.body;
+      if (body && ts.isBlock(body) && body.statements.some(statement => ts.isVariableStatement(statement) &&
+        statement.declarationList.declarations.some(declaration => declaration.name.getText(ast) === "closureFingerprintAtSchedule"))) {
+        assert.equal(autosave, undefined, "el autoguardado debe tener un único efecto");
+        autosave = body;
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(autosave, "se encontró el efecto que programa el autoguardado");
+  function disjunctionTerms(expression) {
+    if (ts.isParenthesizedExpression(expression)) return disjunctionTerms(expression.expression);
+    return ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.BarBarToken
+      ? [...disjunctionTerms(expression.left), ...disjunctionTerms(expression.right)]
+      : [expression.getText(ast)];
+  }
+  const guardIndex = autosave.statements.findIndex(statement => ts.isIfStatement(statement) &&
+    disjunctionTerms(statement.expression).includes("deliveryMode"));
+  assert.ok(guardIndex >= 0, "el guardado tiene un bloqueo explícito para el modo de entrega");
+  const guard = autosave.statements[guardIndex];
+  const terms = disjunctionTerms(guard.expression);
+  for (const term of ["!createClientMode", "deliveryMode", "!draftId", "firmaSeguroSubmitting", "pendingFirmaSeguroDispatch"]) {
+    assert.ok(terms.includes(term), `${term} debe impedir el autoguardado`);
+  }
+  assert.ok(ts.isBlock(guard.thenStatement));
+  const guardedStatements = guard.thenStatement.statements;
+  assert.ok(ts.isExpressionStatement(guardedStatements[0]) && ts.isCallExpression(guardedStatements[0].expression));
+  assert.equal(guardedStatements[0].expression.expression.getText(ast), "cancelPendingDraftAutosave");
+  assert.ok(ts.isReturnStatement(guardedStatements[1]), "el bloqueo cancela y termina antes de programar otro guardado");
+  const scheduleIndex = autosave.statements.findIndex(statement => ts.isVariableStatement(statement) &&
+    statement.declarationList.declarations.some(declaration => declaration.initializer && ts.isCallExpression(declaration.initializer) &&
+      declaration.initializer.expression.getText(ast) === "window.setTimeout"));
+  assert.ok(scheduleIndex > guardIndex, "el bloqueo se evalúa antes de programar el autoguardado");
   assert.match(factory, /setDraftId\(result\.solicitudId\)/);
   assert.match(factory, /replaceDraftInUrl\(result\.solicitudId\)/);
 });
