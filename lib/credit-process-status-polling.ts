@@ -1,3 +1,5 @@
+import type { DraftSignatureDispatchSummary } from "@/lib/firmaseguro-draft-dispatch-summary";
+
 export const CREDIT_PROCESS_STATUS_INTERVAL_MS = 5_000;
 
 export type CreditProcessStatusBinding = {
@@ -15,9 +17,14 @@ export type CreditProcessStatusSnapshot<Validation = unknown, Process = unknown>
     processUpdatedAt: string | null;
     validationId: number | null;
     validationUpdatedAt: string | null;
+    signatureDispatchId?: string | null;
+    signatureDispatchStatus?: DraftSignatureDispatchSummary["status"] | null;
+    signatureDispatchUpdatedAt?: string | null;
+    signatureDispatchHasReceipt?: boolean;
   };
   validation: Validation | null;
   process: Process | null;
+  signatureDispatch?: DraftSignatureDispatchSummary | null;
   retryPolicy: {
     applicationRejected: boolean;
     declinedAttempts: number;
@@ -52,6 +59,7 @@ export function createCreditProcessStatusPoller<Snapshot extends CreditProcessSt
   let flight: { controller: AbortController; generation: number } | null = null;
   let confirmed = false;
   let serverPending: boolean | null = null;
+  let localPendingObserved = options.isPending();
 
   const clearTimer = () => {
     if (timer !== null) cancel(timer);
@@ -59,12 +67,19 @@ export function createCreditProcessStatusPoller<Snapshot extends CreditProcessSt
   };
   const scheduleNext = () => {
     clearTimer();
-    if (disposed || !options.canRead() || !options.isPending() || serverPending === false) return;
+    const locallyPending = options.isPending();
+    if (locallyPending) localPendingObserved = true;
+    // The first server discovery can precede React's next render. Once the
+    // screen has actually observed a pending process, its later completion
+    // still stops polling even if an earlier request returned pending=true.
+    if (disposed || !options.canRead() || serverPending === false ||
+      (!locallyPending && (localPendingObserved || serverPending !== true))) return;
     timer = schedule(() => { timer = null; void read(); }, CREDIT_PROCESS_STATUS_INTERVAL_MS);
   };
   const read = async () => {
     clearTimer();
     if (disposed || flight) return;
+    if (options.isPending()) localPendingObserved = true;
     if (!options.canRead()) {
       options.onConnection("reconnecting", "No hay conexión. Reintentaremos cuando regreses.");
       return;
@@ -98,9 +113,17 @@ export function createCreditProcessStatusPoller<Snapshot extends CreditProcessSt
     if (!disposed) options.onConnection("idle", null);
   };
 
+  const readExplicitly = () => {
+    // A manual refresh or visibility resume begins a fresh discovery cycle.
+    // Timer reads keep the observation so a stale response cannot undo a
+    // completion already observed in the current cycle.
+    if (!disposed && !flight) localPendingObserved = options.isPending();
+    return read();
+  };
+
   return {
-    start: read,
-    retry: read,
+    start: readExplicitly,
+    retry: readExplicitly,
     pause,
     dispose() {
       disposed = true;

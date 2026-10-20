@@ -11,6 +11,7 @@ import { buildVeriffRetryPolicy } from "@/lib/veriff-retry-policy-core";
 import { resolveStoredDraftCorrectionPending, serializeStoredDraftSignature } from "@/lib/credit-process-status-summary";
 import type { FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 import { resolveFirmaSeguroProcessUiState } from "@/app/dashboard/creditos/firmaseguro-ui";
+import { serializeDraftSignatureDispatch } from "@/lib/firmaseguro-draft-dispatch-summary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,7 @@ type StatusRow = {
   validation: VeriffValidationRow | null;
   process: (FirmaSeguroProcessRow & { signedPdfVerified?: boolean }) | null;
   declinedAttempts: number | string;
+  signatureDispatch?: unknown;
 };
 
 /** Reads persisted webhook evidence in one database snapshot. No provider or write operations. */
@@ -61,6 +63,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
           'valorEquipoTotal', d."payload"->'valorEquipoTotal',
           'cuotaInicial', d."payload"->'cuotaInicial', 'plazoMeses', d."payload"->'plazoMeses'
         ) AS "payload", to_jsonb(validation) AS "validation", to_jsonb(signature) AS "process",
+        to_jsonb(dispatch) AS "signatureDispatch",
         (SELECT COUNT(*)::integer FROM "VeriffIdentityValidation" declined
           WHERE declined."draftId" = d."id" AND declined."status" = 'DECLINED'
             AND NOT EXISTS (SELECT 1 FROM "VeriffIdentityValidation" newer
@@ -81,6 +84,19 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         FROM "FirmaSeguroProcess" p WHERE p."draftId" = d."id" AND p."creditoId" IS NULL
           AND p."supersededAt" IS NULL ORDER BY p."createdAt" DESC, p."id" DESC LIMIT 1
       ) signature ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT attempt."id"::text, attempt."status", attempt."createdAt", attempt."updatedAt",
+          attempt."actorUserId", attempt."reason", attempt."expectedProcessUuid",
+          CASE WHEN LEFT(attempt."lastError", LENGTH('provider_dispatch [')) = 'provider_dispatch [' THEN 'provider_dispatch'
+            WHEN LEFT(attempt."lastError", LENGTH('receipt_persistence [')) = 'receipt_persistence [' THEN 'receipt_persistence'
+            ELSE NULL END AS "failureStage",
+          NULLIF(BTRIM(COALESCE(attempt."processUuid", '')), '') IS NOT NULL AS "hasProviderLocator",
+          EXISTS (SELECT 1 FROM "FirmaSeguroDraftDispatchReceipt" receipt
+            WHERE receipt."dispatchId" = attempt."id") AS "hasReceipt"
+        FROM "FirmaSeguroDraftDispatch" attempt
+        WHERE attempt."draftId" = d."id" AND attempt."status" IN ('PREPARING','DISPATCHING','UNCERTAIN')
+        ORDER BY attempt."createdAt" DESC, attempt."id" DESC LIMIT 1
+      ) dispatch ON TRUE
       WHERE d."id" = $1 AND d."creditoId" IS NULL
         AND (d."estado" = 'ABIERTO' OR (d."estado" = 'CERRADO' AND d."closedReason" = 'RECHAZADA'))
         AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
@@ -93,17 +109,21 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
     const validation = serializeVeriffValidation(row.validation);
     const process = serializeStoredDraftSignature(row.process);
+    const signatureDispatch = serializeDraftSignatureDispatch(row.signatureDispatch, { actorUserId: user.id });
     const signatureState = resolveFirmaSeguroProcessUiState(process);
-    const pending = row.estado === "ABIERTO" && (validation?.pending === true || signatureState === "waiting");
+    const pending = row.estado === "ABIERTO" && (validation?.pending === true || signatureState === "waiting" || signatureDispatch !== null);
     const iso = (value: Date | string | null | undefined) => value instanceof Date ? value.toISOString() : value || null;
     return response({
       ok: true, draftId: row.id,
       revision: {
         draftUpdatedAt: iso(row.updatedAt), processId: process?.id || null, processUpdatedAt: process?.updatedAt || null,
         validationId: validation?.id || null, validationUpdatedAt: validation?.updatedAt || null,
+        signatureDispatchId: signatureDispatch?.id || null, signatureDispatchStatus: signatureDispatch?.status || null,
+        signatureDispatchUpdatedAt: signatureDispatch?.updatedAt || null,
+        signatureDispatchHasReceipt: signatureDispatch?.hasReceipt || false,
       },
       validation: central ? validation : redactVeriffValidationForOperator(validation),
-      process, retryPolicy: buildVeriffRetryPolicy(Number(row.declinedAttempts || 0)), pending,
+      process, signatureDispatch, retryPolicy: buildVeriffRetryPolicy(Number(row.declinedAttempts || 0)), pending,
       ...resolveStoredDraftCorrectionPending({ draftId: row.id, documentNumber: row.clienteDocumento,
         clientName: row.clienteNombre, imei: row.imei, payload: row.payload, process: row.process }),
     });

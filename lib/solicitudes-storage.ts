@@ -1180,7 +1180,7 @@ export async function saveSolicitudDraft(input: SaveSolicitudDraftInput) {
     if (targetId) {
       await lockSolicitudOperationMutation(transaction, targetId);
       if (await getUnresolvedDraftDispatch(targetId, transaction)) {
-        throw new SolicitudCanonicalMutationError("SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE");
+        throw new SolicitudCanonicalMutationError("SOLICITUD_ENVIO_FIRMA_PENDIENTE");
       }
     }
     if (documentToLock) {

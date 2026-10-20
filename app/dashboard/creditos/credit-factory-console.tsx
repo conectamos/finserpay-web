@@ -170,8 +170,12 @@ import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginatio
 import {
   firmaSeguroCorrectionReviewKey,
   hasFirmaSeguroCorrectionViewChanges,
+  pendingDraftSignatureMessage,
+  readPendingDraftSignatureDispatch,
   resolveFirmaSeguroDraftForSubmission,
+  type DraftSignatureStateLookupResult,
 } from "@/lib/firmaseguro-draft-submit";
+import type { DraftSignatureDispatchSummary } from "@/lib/firmaseguro-draft-dispatch-summary";
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import CreditRemissionNote from "@/app/dashboard/creditos/credit-remission-note";
@@ -3412,6 +3416,10 @@ export default function CreditFactoryConsole({
   const auditedIdentityCorrectionRef = useRef(false);
   const [firmaSeguroDraftProcess, setFirmaSeguroDraftProcess] =
     useState<FirmaSeguroProcess | null>(null);
+  const [firmaSeguroDispatchSnapshot, setFirmaSeguroDispatchSnapshot] =
+    useState<{ draftId: number; dispatch: DraftSignatureDispatchSummary | null } | null>(null);
+  const pendingFirmaSeguroDispatch = firmaSeguroDispatchSnapshot?.draftId === draftId
+    ? firmaSeguroDispatchSnapshot.dispatch : null;
   // A null process is not evidence of an unsigned draft until its GET succeeds.
   const [firmaSeguroPendingDraftId, setFirmaSeguroPendingDraftId] =
     useState<number | null>(initialDraftId);
@@ -8472,7 +8480,7 @@ export default function CreditFactoryConsole({
         throw Object.assign(new Error(formatCreditDraftSaveError(result.data)), { code: result.data.code });
       }
       if (result.status === 409) draftSaveConflictFingerprintRef.current = requestBody;
-      throw new Error(formatCreditDraftSaveError(result.data));
+      throw Object.assign(new Error(formatCreditDraftSaveError(result.data)), { code: result.data?.code });
     }
 
     draftSaveConflictFingerprintRef.current = null;
@@ -8979,7 +8987,7 @@ export default function CreditFactoryConsole({
       !draftResumeHydrating && !draftResumeLoadFailed && !veriffSubmitting && !firmaSeguroSubmitting &&
       !firmaSeguroImeiCorrecting && !signedTermsCorrectionBusy,
     pending: Boolean((veriffValidation?.id && !veriffHasFinalDecision) ||
-      (firmaSeguroProcessSent && !firmaSeguroProcessSigned && !firmaSeguroProcessFailed)),
+      pendingFirmaSeguroDispatch || (firmaSeguroProcessSent && !firmaSeguroProcessSigned && !firmaSeguroProcessFailed)),
     onSnapshot: (snapshot) => {
       const validation = snapshot.validation;
       setVeriffValidation((current) => validation ? {
@@ -8998,6 +9006,7 @@ export default function CreditFactoryConsole({
         if (validation.approved) setNotice((current) => current?.text === "La validación facial guardada aún no está aprobada. Complétala en el paso 3 antes de firmar." ? null : current);
       }
       setFirmaSeguroDraftProcess(snapshot.process);
+      setFirmaSeguroDispatchSnapshot({ draftId: snapshot.draftId, dispatch: snapshot.signatureDispatch || null });
       setFirmaSeguroDraftCorrectionPending(snapshot.imeiCorrectionPending);
       setFirmaSeguroIdentityCorrectionPending(snapshot.identityCorrectionPending);
       setFirmaSeguroFinancialCorrectionPending(snapshot.financialCorrectionPending);
@@ -10086,7 +10095,7 @@ export default function CreditFactoryConsole({
     }
   };
 
-  const submitFirmaSeguroDraft = async (currentDraftId: number) => {
+  const submitFirmaSeguroDraft = async (currentDraftId: number, originalDispatchId?: string) => {
     if (resolvePersistedDraftStep(4) < 3) {
       recoverEquipmentImeiConfirmation(currentDraftId);
       throw Object.assign(new Error("Revisa el IMEI en Equipo y plan y pulsa Continuar para confirmarlo."), { code: "IMEI_CONFIRMATION_REQUIRED" });
@@ -10095,6 +10104,8 @@ export default function CreditFactoryConsole({
       `/api/creditos/borradores/${currentDraftId}/firma-seguro`,
       {
         method: "POST",
+        ...(originalDispatchId ? { headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idempotencyKey: originalDispatchId }) } : {}),
       }
     );
 
@@ -10116,8 +10127,26 @@ export default function CreditFactoryConsole({
 
     setFirmaSeguroIdentityReviewDraftId(null);
     setFirmaSeguroDraftProcess(result.data.process || null);
+    setFirmaSeguroDispatchSnapshot({ draftId: currentDraftId, dispatch: null });
     setFirmaSeguroPendingDraftId((pending) => pending === currentDraftId ? null : pending);
     return result.data;
+  };
+
+  const readFirmaSeguroDispatchState = async (currentDraftId: number, signal?: AbortSignal): Promise<DraftSignatureStateLookupResult> => {
+    const result = await requestJson<DraftSignatureStateLookupResult>(
+      `/api/creditos/borradores/${currentDraftId}/estado-proceso`,
+      { method: "GET", cache: "no-store", timeoutMs: 20_000, signal },
+    );
+    if (!result.ok || !result.data?.ok || result.data.draftId !== currentDraftId ||
+      !Object.prototype.hasOwnProperty.call(result.data, "signatureDispatch")) {
+      return { ok: false, error: result.data?.error || "No se pudo comprobar el envío de firma. Consulta el estado antes de continuar." };
+    }
+    const dispatch = readPendingDraftSignatureDispatch(result.data.signatureDispatch);
+    if (currentEquipmentDraftIdRef.current !== currentDraftId || signal?.aborted) {
+      throw new Error("La solicitud cambió durante la consulta. Actualiza el caso vigente.");
+    }
+    setFirmaSeguroDispatchSnapshot({ draftId: currentDraftId, dispatch });
+    return { ok: true, draftId: currentDraftId, signatureDispatch: dispatch };
   };
 
   const refreshFirmaSeguroDraftProcess = async () => {
@@ -10179,6 +10208,10 @@ export default function CreditFactoryConsole({
         throw new Error("No se pudo verificar la solicitud vigente después de consultar FirmaSeguro.");
       }
       const currentPayload = draftResult.data.item.payload || {};
+      const dispatchState = await readFirmaSeguroDispatchState(draftId, controller.signal);
+      if (!isCurrentRefresh()) return null;
+      if (!dispatchState.ok) throw new Error(dispatchState.error);
+      const unresolvedDispatch = readPendingDraftSignatureDispatch(dispatchState.signatureDispatch);
       const identityCorrectionPending =
         currentPayload.firmaSeguroIdentityCorrectionPending === true;
       setFirmaSeguroIdentityCorrectionPending(identityCorrectionPending);
@@ -10187,7 +10220,9 @@ export default function CreditFactoryConsole({
       setFirmaSeguroPendingDraftId((pending) => pending === draftId ? null : pending);
       if (createClientMode) processLiveStatus.retry();
 
-      if (identityCorrectionPending) {
+      if (unresolvedDispatch) {
+        setNotice({ text: pendingDraftSignatureMessage(unresolvedDispatch), tone: "amber" });
+      } else if (identityCorrectionPending) {
         setWizardStep(4);
         setNotice({
           text: "La identidad fue corregida. Espera la nueva firma antes de generar la remisión.",
@@ -11004,7 +11039,7 @@ export default function CreditFactoryConsole({
       setNotice(null);
       cancelPendingDraftAutosave();
 
-      const { draftId: currentDraftId, correctionDraft } =
+      const { draftId: currentDraftId, correctionDraft, signatureDispatch, dispatchDraft } =
         await resolveFirmaSeguroDraftForSubmission<CreditDraftItem>({
           draftId,
           loadDraft: async (id) => {
@@ -11019,6 +11054,7 @@ export default function CreditFactoryConsole({
               error: result.data?.error,
             };
           },
+          loadSignatureState: readFirmaSeguroDispatchState,
           saveDraft: () => {
             if (preflightNotice) {
               throw new Error(preflightNotice.text);
@@ -11026,6 +11062,22 @@ export default function CreditFactoryConsole({
             return saveCurrentDraft(4);
           },
         });
+
+      if (signatureDispatch) {
+        if (!signatureDispatch.canResume) {
+          setNotice({ text: pendingDraftSignatureMessage(signatureDispatch), tone: "amber" });
+          return;
+        }
+        if (!dispatchDraft) throw new Error("No se pudo recuperar el contrato preparado. Consulta el estado.");
+        const reviewKey = `dispatch:${signatureDispatch.id}:${firmaSeguroCorrectionReviewKey(dispatchDraft)}`;
+        if (hasFirmaSeguroCorrectionViewChanges(factoryDraftPayload, dispatchDraft.payload || {}) &&
+          firmaSeguroCorrectionReviewKeyRef.current !== reviewKey) {
+          firmaSeguroCorrectionReviewKeyRef.current = reviewKey;
+          applyDraftPayload(dispatchDraft);
+          setNotice({ text: "Se cargaron los datos guardados del contrato preparado. Revísalos y pulsa Continuar el mismo envío para enviarlo.", tone: "amber" });
+          return;
+        }
+      }
 
       if (correctionDraft) {
         setFirmaSeguroDraftCorrectionPending(true);
@@ -11049,7 +11101,7 @@ export default function CreditFactoryConsole({
         }
       }
 
-      const signature = await submitFirmaSeguroDraft(currentDraftId);
+      const signature = await submitFirmaSeguroDraft(currentDraftId, signatureDispatch?.id);
       firmaSeguroCorrectionReviewKeyRef.current = null;
       if (correctionDraft) {
         setFirmaSeguroDraftCorrectionPending(false);
@@ -11099,6 +11151,17 @@ export default function CreditFactoryConsole({
       if ((error as { code?: string } | null)?.code === "FIRMASEGURO_IDENTITY_COMPONENTS_REQUIRED") {
         firmaSeguroIdentityReadiness.retry();
         setNotice({ text: "Revisa los nombres y apellidos del cliente para preparar la firma.", tone: "amber" });
+        return;
+      }
+      if (["SOLICITUD_ENVIO_FIRMA_PENDIENTE", "DRAFT_DISPATCH_UNRESOLVED"].includes(String((error as { code?: string } | null)?.code))) {
+        if (draftId) {
+          try {
+            const state = await readFirmaSeguroDispatchState(draftId);
+            const dispatch = state.ok ? readPendingDraftSignatureDispatch(state.signatureDispatch) : null;
+            if (dispatch) { setNotice({ text: pendingDraftSignatureMessage(dispatch), tone: "amber" }); return; }
+          } catch { /* Preserve the pending explanation even if the follow-up read fails. */ }
+        }
+        setNotice({ text: "Hay un envío de firma pendiente de confirmar. Consulta su estado antes de volver a enviar.", tone: "amber" });
         return;
       }
       setNotice({
@@ -12410,6 +12473,8 @@ export default function CreditFactoryConsole({
       draftResumeHydrating ||
       draftResumeLoadFailed ||
       firmaSeguroDraftCorrectionPending ||
+      firmaSeguroSubmitting ||
+      pendingFirmaSeguroDispatch ||
       (firmaSeguroProcessSent && !firmaSeguroProcessSigned) ||
       !draftId ||
       !draftHasMeaningfulData
@@ -12559,6 +12624,8 @@ export default function CreditFactoryConsole({
     draftResumeHydrating,
     factoryDraftPayload,
     firmaSeguroDraftCorrectionPending,
+    firmaSeguroSubmitting,
+    pendingFirmaSeguroDispatch,
     firmaSeguroProcessSent,
     firmaSeguroProcessSigned,
     currentIphoneClosureFingerprint,
@@ -16586,7 +16653,7 @@ export default function CreditFactoryConsole({
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {veriffApproved
-                          ? firmaSeguroProcessSigned ? "Contrato firmado. Revisa los estados y continúa a entrega." : "La identidad fue aprobada. Envía el contrato para continuar."
+                          ? pendingFirmaSeguroDispatch ? "Consulta el envío preparado del contrato para continuar." : firmaSeguroProcessSigned ? "Contrato firmado. Revisa los estados y continúa a entrega." : "La identidad fue aprobada. Envía el contrato para continuar."
                           : "Valida la identidad del cliente para continuar con la firma."}
                       </p>
                     </div>
@@ -16637,7 +16704,16 @@ export default function CreditFactoryConsole({
                     {processLiveStatus.error ? <span>{processLiveStatus.error}</span> : null}
                   </div>
 
-                  {veriffApproved ? <IdentitySignatureOverview identityApproved={veriffApproved} identityRejected={veriffRejected || dataCreditoVeriffDocumentRejected}
+                  {pendingFirmaSeguroDispatch ? <section className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-amber-soft)] p-5" role="status" aria-label="Estado del envío de firma">
+                    <h4 className="flex items-center gap-2 font-bold"><Clock3 className="h-5 w-5" aria-hidden="true" />{pendingFirmaSeguroDispatch.status === "PREPARING" ? "Contrato preparado" : "Envío de firma por confirmar"}</h4>
+                    <p className="mt-2 text-sm leading-6">{pendingDraftSignatureMessage(pendingFirmaSeguroDispatch)}</p>
+                    <Button type="button" variant="secondary" className="mt-4" onClick={() => void refreshFirmaSeguroDraftProcess()}
+                      disabled={firmaSeguroRefreshing || firmaSeguroSubmitting} aria-busy={firmaSeguroRefreshing}>
+                      <RefreshCw className={`h-4 w-4${firmaSeguroRefreshing ? " animate-spin" : ""}`} aria-hidden="true" />Consultar estado
+                    </Button>
+                  </section> : null}
+
+                  {veriffApproved && !pendingFirmaSeguroDispatch ? <IdentitySignatureOverview identityApproved={veriffApproved} identityRejected={veriffRejected || dataCreditoVeriffDocumentRejected}
                     identityLabel={veriffVisualLabel} signed={firmaSeguroProcessSigned} sent={firmaSeguroProcessSent}
                     failed={firmaSeguroProcessFailed} reissueRequired={firmaSeguroRequiresFirstPaymentDateReissue || firmaSeguroDraftCorrectionPending || firmaSeguroIdentityCorrectionPending || firmaSeguroFinancialCorrectionPending}
                     ready={stepIdentityContractReady} /> : null}
@@ -16695,7 +16771,7 @@ export default function CreditFactoryConsole({
                       },
                       {
                         number: 2,
-                        label: "Expediente preparado",
+                        label: pendingFirmaSeguroDispatch ? "Envío pendiente" : "Expediente preparado",
                         active: veriffApproved && !firmaSeguroProcessSent,
                         complete: firmaSeguroProcessSent,
                       },
@@ -16775,7 +16851,7 @@ export default function CreditFactoryConsole({
                                 className="h-[18px] w-[18px]"
                                 strokeWidth={2}
                               />
-                            ) : firmaSeguroProcessSent || !firmaSeguroSigningIdentityReady ? (
+                            ) : pendingFirmaSeguroDispatch || firmaSeguroProcessSent || !firmaSeguroSigningIdentityReady ? (
                               <Clock3
                                 className="h-[18px] w-[18px]"
                                 strokeWidth={2}
@@ -16786,7 +16862,9 @@ export default function CreditFactoryConsole({
                                 strokeWidth={2.2}
                               />
                             )}
-                            {firmaSeguroRequiresFirstPaymentDateReissue
+                            {pendingFirmaSeguroDispatch
+                              ? pendingFirmaSeguroDispatch.status === "PREPARING" ? "Contrato preparado" : "Envío por confirmar"
+                              : firmaSeguroRequiresFirstPaymentDateReissue
                               ? "Nueva firma requerida"
                               : firmaSeguroProcessSigned
                                 ? "Contrato firmado"
@@ -16820,15 +16898,13 @@ export default function CreditFactoryConsole({
                         <button
                           type="button"
                           className="fp-step3-firma-primary"
-                          onClick={() => void handleFirmaSeguroStepReady()}
+                          onClick={() => void (pendingFirmaSeguroDispatch && !pendingFirmaSeguroDispatch.canResume ? refreshFirmaSeguroDraftProcess() : handleFirmaSeguroStepReady())}
                           disabled={
-                            (!draftId &&
+                            (!(pendingFirmaSeguroDispatch && !pendingFirmaSeguroDispatch.canResume) && ((!draftId &&
                               (!contratoListo || !firmaSeguroDocumentsReady)) ||
-                            creating ||
-                            firmaSeguroSubmitting ||
                             firmaSeguroProcessSent ||
                             !firmaSeguroSigningIdentityReady ||
-                            firmaSeguroImeiCorrecting
+                            firmaSeguroImeiCorrecting)) || creating || firmaSeguroSubmitting || firmaSeguroRefreshing
                           }
                           aria-busy={creating || firmaSeguroSubmitting}
                         >
@@ -16847,7 +16923,9 @@ export default function CreditFactoryConsole({
                           )}
                           {creating || firmaSeguroSubmitting
                             ? "Enviando…"
-                            : firmaSeguroRequiresFirstPaymentDateReissue
+                            : pendingFirmaSeguroDispatch
+                              ? pendingFirmaSeguroDispatch.canResume ? "Continuar el mismo envío" : "Consultar estado del envío"
+                              : firmaSeguroRequiresFirstPaymentDateReissue
                               ? "REENVIAR CON FECHA ACTUALIZADA"
                               : firmaSeguroProcessSigned
                                 ? "FIRMA CONFIRMADA"
@@ -16878,7 +16956,7 @@ export default function CreditFactoryConsole({
                         </div>
                       ) : null}
 
-                      {firmaSeguroRequiresFirstPaymentDateReissue ? (
+                      {pendingFirmaSeguroDispatch ? null : firmaSeguroRequiresFirstPaymentDateReissue ? (
                         <p
                           className="fp-step3-firma-message is-pending"
                           role="status"
@@ -17136,7 +17214,7 @@ export default function CreditFactoryConsole({
                           </div>
                           <button
                             type="button"
-                            onClick={() => void handleFirmaSeguroStepReady()}
+                            onClick={() => void (pendingFirmaSeguroDispatch && !pendingFirmaSeguroDispatch.canResume ? refreshFirmaSeguroDraftProcess() : handleFirmaSeguroStepReady())}
                             disabled={
                               !stepDocumentosReady ||
                               creating ||
@@ -17144,7 +17222,9 @@ export default function CreditFactoryConsole({
                             }
                             className="rounded-2xl bg-[#145a5a] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0f4a4a] disabled:cursor-not-allowed disabled:opacity-70"
                           >
-                            {firmaSeguroProcessSent
+                            {pendingFirmaSeguroDispatch
+                              ? pendingFirmaSeguroDispatch.canResume ? "Continuar el mismo envío" : "Consultar estado del envío"
+                              : firmaSeguroProcessSent
                               ? "FirmaSeguro enviado"
                               : firmaSeguroProcessFailed
                                 ? "Reintentar FirmaSeguro"

@@ -122,6 +122,7 @@ export type SolicitudCanonicalMutationCode =
   | "SOLICITUD_CORRECCION_FINANCIERA_PENDIENTE"
   | "SOLICITUD_FIRMA_IMEI_PENDIENTE"
   | "SOLICITUD_EVIDENCIA_IMEI_ANTERIOR"
+  | "SOLICITUD_ENVIO_FIRMA_PENDIENTE"
   | "SOLICITUD_TERMINOS_FIRMADOS_INMUTABLE";
 
 export class SolicitudCanonicalMutationError extends Error {
@@ -146,6 +147,8 @@ export class SolicitudCanonicalMutationError extends Error {
                 ? "La nueva firma del contrato con el IMEI corregido sigue pendiente. Espera su aprobación antes de cargar la remisión y las fotos de entrega."
               : code === "SOLICITUD_EVIDENCIA_IMEI_ANTERIOR"
                 ? "La remisión o la foto de entrega pertenece a una versión anterior. Vuelve a cargar las fotos del equipo corregido."
+              : code === "SOLICITUD_ENVIO_FIRMA_PENDIENTE"
+                ? "Existe un envío de firma pendiente de confirmación. Consulta su estado sin cambiar los datos ni crear otro envío."
               : "Los datos incluidos en el contrato no se pueden cambiar después de enviarlo a firma."
     );
     this.code = code;
