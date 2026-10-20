@@ -7,6 +7,60 @@ const creditWelcomeVoiceAttemptCheck = `"attemptNumber">=0 AND
       (("source"='OPERATOR_REQUEST' AND "repeatOf" IS NULL) OR
        ("source"<>'OPERATOR_REQUEST' AND (("attemptNumber"=0 AND "repeatOf" IS NULL) OR ("attemptNumber">0 AND "source"='CONTROLLED_TEST' AND "repeatOf" IS NOT NULL))))))))`;
 
+const automaticAttempt = alias => `${alias}."source" IN ('NORMAL','INDIVIDUAL_IMPORT','AUTOMATIC_RETRY','SCHEDULED_CAMPAIGN') AND (
+  ${alias}."providerCallId" IS NOT NULL OR ${alias}."resultHash" IS NOT NULL
+  OR ${alias}."status" IN ('ACCEPTED','COMPLETED','FAILED','UNKNOWN'))`;
+const clearlyUnsent = alias => `${alias}."status"='PENDING' AND ${alias}."dispatchedAt" IS NULL
+  AND ${alias}."acceptedAt" IS NULL AND ${alias}."completedAt" IS NULL AND ${alias}."providerCallId" IS NULL
+  AND ${alias}."resultHash" IS NULL AND ${alias}."identityAttempts"=0 AND ${alias}."identityVerifiedAt" IS NULL
+  AND ${alias}."communicationOutcome" IS NULL AND ${alias}."disconnectionReason" IS NULL
+  AND ${alias}."durationSeconds" IS NULL AND ${alias}."summary" IS NULL AND ${alias}."doubts" IS NULL
+  AND ${alias}."transcript" IS NULL AND ${alias}."recordingUrl" IS NULL`;
+const hasPreviousAutomatic = alias => `EXISTS (SELECT 1 FROM public."CreditWelcomeVoiceEvent" p
+  WHERE p."creditoId"=${alias}."creditoId" AND ${automaticAttempt("p")})`;
+const firstInitialPending = alias => `EXISTS (SELECT 1 FROM public."CreditWelcomeVoiceEvent" p
+  WHERE p."creditoId"=${alias}."creditoId" AND p."source" IN ('NORMAL','INDIVIDUAL_IMPORT') AND ${clearlyUnsent("p")})`;
+const followupToStop = `f."phase" IN ('FAST','PENDING','HELD') AND (
+  f."fastAttempts">0 OR ${hasPreviousAutomatic("f")} OR EXISTS (SELECT 1 FROM public."CreditWelcomeVoiceEvent" p
+    WHERE p."creditoId"=f."creditoId" AND p."source"='AUTOMATIC_RETRY' AND p."status" IN ('PENDING','DISPATCHING')))`;
+const memberToStop = `m."state" IN ('ACTIVE','HELD') AND m."stopReason" IS DISTINCT FROM 'OPERATOR_EXCLUDED' AND (
+  ${hasPreviousAutomatic("m")} OR ${firstInitialPending("m")} OR EXISTS (
+    SELECT 1 FROM public."CreditWelcomeVoiceEvent" p WHERE p."creditoId"=m."creditoId"
+    AND p."source"='SCHEDULED_CAMPAIGN' AND ${clearlyUnsent("p")} AND p."campaignId"<>m."campaignId"
+    AND NOT EXISTS (SELECT 1 FROM public."CreditWelcomeVoiceEvent" earlier
+      WHERE earlier."creditoId"=p."creditoId" AND earlier."source"='SCHEDULED_CAMPAIGN' AND ${clearlyUnsent("earlier")}
+      AND (earlier."createdAt",earlier."id")<(p."createdAt",p."id"))))`;
+const retryToCancel = `${clearlyUnsent("e")} AND (e."source"='AUTOMATIC_RETRY' OR (
+  e."source"='SCHEDULED_CAMPAIGN' AND (${hasPreviousAutomatic("e")} OR ${firstInitialPending("e")} OR EXISTS (
+    SELECT 1 FROM public."CreditWelcomeVoiceEvent" p WHERE p."creditoId"=e."creditoId"
+    AND p."source"='SCHEDULED_CAMPAIGN' AND ${clearlyUnsent("p")}
+    AND (p."createdAt",p."id")<(e."createdAt",e."id")))))`;
+
+// Reinstalling the schema also retires old retry queues. Never rewrite a provider
+// result or an explicit operator/test call. Skip busy rows so a live callback can
+// finish; the new runtime enforces the same one-call rule before provider HTTP.
+// A first DISPATCHING event without provider/result evidence may still be before
+// HTTP. Do not stop its stream merely because the claim set dispatchedAt.
+export const creditWelcomeVoiceSingleCallCleanupStatements = [
+  `WITH targets AS (SELECT f."creditoId" FROM public."CreditWelcomeVoiceFollowup" f
+    WHERE ${followupToStop} FOR UPDATE OF f SKIP LOCKED)
+   UPDATE public."CreditWelcomeVoiceFollowup" f SET "phase"='STOPPED',"reason"='AUTOMATIC_CALL_LIMIT_REACHED',
+     "nextAttemptAt"=NULL,"updatedAt"=CURRENT_TIMESTAMP FROM targets t WHERE f."creditoId"=t."creditoId"`,
+  `WITH targets AS (SELECT m."campaignId",m."creditoId" FROM public."VoiceReviewCampaignMember" m
+    WHERE ${memberToStop} FOR UPDATE OF m SKIP LOCKED)
+   UPDATE public."VoiceReviewCampaignMember" m SET "state"='STOPPED',"stopReason"='AUTOMATIC_CALL_LIMIT_REACHED',
+     "updatedAt"=CURRENT_TIMESTAMP FROM targets t WHERE m."campaignId"=t."campaignId" AND m."creditoId"=t."creditoId"`,
+  `WITH targets AS (SELECT e."id" FROM public."CreditWelcomeVoiceEvent" e WHERE ${retryToCancel}
+    FOR UPDATE OF e SKIP LOCKED)
+   UPDATE public."CreditWelcomeVoiceEvent" e SET "status"='CANCELLED',"resultCode"='AUTOMATIC_CALL_LIMIT_REACHED',
+     "updatedAt"=CURRENT_TIMESTAMP FROM targets t WHERE e."id"=t."id"`,
+];
+
+const singleCallRemaining = `SELECT
+  (SELECT COUNT(*)::integer FROM public."CreditWelcomeVoiceFollowup" f WHERE ${followupToStop}) AS "followupsRemaining",
+  (SELECT COUNT(*)::integer FROM public."VoiceReviewCampaignMember" m WHERE ${memberToStop}) AS "campaignMembersRemaining",
+  (SELECT COUNT(*)::integer FROM public."CreditWelcomeVoiceEvent" e WHERE ${retryToCancel}) AS "pendingRetriesRemaining"`;
+
 export const creditWelcomeVoiceSchemaStatements = [
   `CREATE TABLE IF NOT EXISTS public."VoiceReviewCampaign" (
     "id" VARCHAR(64) PRIMARY KEY,
@@ -223,6 +277,7 @@ export const creditWelcomeVoiceSchemaStatements = [
   `CREATE INDEX IF NOT EXISTS "VoiceReviewCampaignMember_active_idx" ON public."VoiceReviewCampaignMember" ("campaignId","state","creditoId")`,
   `CREATE INDEX IF NOT EXISTS "CreditWelcomeVoiceEvent_pending_idx"
     ON public."CreditWelcomeVoiceEvent" ("status","createdAt","id")`,
+  ...creditWelcomeVoiceSingleCallCleanupStatements,
 ];
 
 export async function installCreditWelcomeVoiceSchema(client) {
@@ -231,8 +286,23 @@ export async function installCreditWelcomeVoiceSchema(client) {
     await client.query("SET LOCAL lock_timeout='10s'");
     await client.query("SET LOCAL statement_timeout='120s'");
     await client.query("SELECT pg_advisory_xact_lock(hashtext('finserpay-credit-welcome-voice-schema'))");
-    for (const statement of creditWelcomeVoiceSchemaStatements) await client.query(statement);
+    const counters = { followupsStopped: 0, campaignMembersStopped: 0, pendingEventsCancelled: 0 };
+    const counterKeys = Object.keys(counters);
+    for (const statement of creditWelcomeVoiceSchemaStatements) {
+      const result = await client.query(statement);
+      const index = creditWelcomeVoiceSingleCallCleanupStatements.indexOf(statement);
+      if (index >= 0) {
+        if (!Number.isSafeInteger(result?.rowCount) || result.rowCount < 0) throw new Error("Missing single-call cleanup count");
+        counters[counterKeys[index]] = result.rowCount;
+      }
+    }
+    const remaining = (await client.query(singleCallRemaining))?.rows?.[0];
+    for (const key of ["followupsRemaining", "campaignMembersRemaining", "pendingRetriesRemaining"]) {
+      if (!Number.isSafeInteger(remaining?.[key]) || remaining[key] < 0) throw new Error("Missing single-call remaining count");
+    }
     await client.query("COMMIT");
+    return { ...counters, followupsRemaining: remaining.followupsRemaining,
+      campaignMembersRemaining: remaining.campaignMembersRemaining, pendingRetriesRemaining: remaining.pendingRetriesRemaining };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

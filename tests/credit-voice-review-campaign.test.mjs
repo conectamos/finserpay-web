@@ -126,12 +126,12 @@ test("pending calls have daily 08/10/14/17 Colombia slots without catch-up", () 
   assert.equal(policy.getVoiceReviewCampaignSlot(campaign, new Date(NaN)), null);
 });
 
-test("only explicit no-answer on a terminal event is retryable; uncertain and model claims remain held", () => {
+test("terminal no-answer stops automatic calls; uncertain and model claims remain held", () => {
   for (const status of ["PENDING", "DISPATCHING", "ACCEPTED", "UNKNOWN"]) {
     assert.equal(policy.classifyVoiceCampaignResult({ status, communicationOutcome: "NO_ANSWER" }), "HELD");
   }
   for (const status of ["COMPLETED", "FAILED"]) {
-    assert.equal(policy.classifyVoiceCampaignResult({ status, communicationOutcome: "NO_ANSWER" }), "RETRY");
+    assert.equal(policy.classifyVoiceCampaignResult({ status, communicationOutcome: "NO_ANSWER" }), "STOPPED");
     for (const resultCode of ["CALL_COMPLETED", "TERMS_REVIEWED", "CALL_FAILED", "VOICEMAIL", "NO_ANSWER", null]) {
       assert.equal(policy.classifyVoiceCampaignResult({ status, resultCode, terms_confirmed: true,
         customer_agreed: true, durationSeconds: 200 }), "HELD");
@@ -139,8 +139,8 @@ test("only explicit no-answer on a terminal event is retryable; uncertain and mo
   }
 });
 
-test("only the local known-unsent window failure is retryable without a provider no-answer", () => {
-  assert.equal(policy.classifyVoiceCampaignResult({ status: "FAILED", resultCode: "WINDOW_CLOSED_BEFORE_DISPATCH" }), "RETRY");
+test("a local window failure does not schedule another automatic welcome call", () => {
+  assert.equal(policy.classifyVoiceCampaignResult({ status: "FAILED", resultCode: "WINDOW_CLOSED_BEFORE_DISPATCH" }), "STOPPED");
   for (const status of ["DISPATCHING", "ACCEPTED", "UNKNOWN", "COMPLETED"]) {
     assert.equal(policy.classifyVoiceCampaignResult({ status, resultCode: "WINDOW_CLOSED_BEFORE_DISPATCH" }), "HELD");
   }

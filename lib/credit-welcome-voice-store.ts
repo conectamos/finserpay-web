@@ -12,7 +12,7 @@ import { creditWelcomeVoiceSchemaStatements } from "@/scripts/credit-welcome-voi
 import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } from "@/lib/credit-welcome-voice-speech";
 import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
 import { isWelcomeVoiceDocumentFragment, parseWelcomeVoiceDocumentDictation } from "@/lib/credit-welcome-voice-document";
-import { getCreditWelcomeVoicePendingSlot, planCreditWelcomeVoiceFollowup, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
+import { planCreditWelcomeVoiceFollowup, WELCOME_VOICE_AUTOMATIC_LIMIT_REASON, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
 import { hasSavedCreditApprovalCallRecording, stopAutomaticCreditWelcomeCallsForRecording } from "@/lib/credit-welcome-voice-recording";
 
 export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN" | "AUTOMATIC_RETRY" | "OPERATOR_REQUEST";
@@ -382,6 +382,24 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (events.some(event => event.identityVerifiedAt || event.communicationOutcome === "HUMAN_CONTACT")) return { phase: "CONTACTED" as const, reason: "HUMAN_CONTACT" };
     return events.length ? { phase: null, reason: "OTHER_CALL_IN_FLIGHT" } : null;
   }
+  /** Called only while holding the credit lock, across every automatic source. */
+  async function automaticCallAlreadyAttempted(db: WelcomeVoiceTransaction, creditId: number, currentEventId: string | null = null) {
+    const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(`SELECT "id"::text FROM "CreditWelcomeVoiceEvent"
+      WHERE "creditoId"=$1 AND ($2::uuid IS NULL OR "id"<>$2::uuid)
+      AND "source" IN ('NORMAL','INDIVIDUAL_IMPORT','AUTOMATIC_RETRY','SCHEDULED_CAMPAIGN')
+      AND ("dispatchedAt" IS NOT NULL OR "providerCallId" IS NOT NULL OR "resultHash" IS NOT NULL
+        OR "status" IN ('DISPATCHING','ACCEPTED','COMPLETED','FAILED','UNKNOWN')) LIMIT 1`, creditId, currentEventId);
+    return rows.length > 0;
+  }
+  async function stopAutomaticDispatch(db: WelcomeVoiceTransaction, event: EventRow, followup: FollowupRow | null) {
+    // Only this dispatch owner can assert that its claimed request has not begun HTTP.
+    await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='CANCELLED',"resultCode"=$2,"updatedAt"=$3
+      WHERE "id"=$1::uuid AND "status" IN ('PENDING','DISPATCHING')`, event.id, WELCOME_VOICE_AUTOMATIC_LIMIT_REASON, now());
+    if (followup && !["CONTACTED", "STOPPED"].includes(followup.phase)) {
+      await updateFollowup(db, followup, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
+    }
+    if (event.campaignId) await setMemberState(db, event.campaignId, event.creditoId, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
+  }
   async function operatorCallBlock(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, creditId: number, currentEventId: string | null = null) {
     const excluded = await db.$queryRawUnsafe<Array<{ creditoId: number }>>(`SELECT "creditoId" FROM "VoiceReviewCampaignMember"
       WHERE "creditoId"=$1 AND "stopReason"='OPERATOR_EXCLUDED' LIMIT 1`, creditId);
@@ -443,6 +461,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     }
     await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, input.creditId);
     if (await stopForSavedRecording(db, input.creditId)) return null;
+    if (await automaticCallAlreadyAttempted(db, input.creditId)) return null;
     const credit = await readCredit(db, input.creditId);
     if (!credit) throw new CreditWelcomeVoiceStoreError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
     const snapshot = buildCreditWelcomeVoiceSnapshot(credit);
@@ -530,34 +549,34 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           WHERE "creditoId"=$1 AND (("id"=$2::uuid AND "source" IN ('NORMAL','INDIVIDUAL_IMPORT')) OR
             ("source"='AUTOMATIC_RETRY' AND "retryPhase"='FAST'))
           AND ("providerCallId" IS NOT NULL OR "status" IN ('ACCEPTED','UNKNOWN') OR "resultHash" IS NOT NULL)`, followup.creditoId, initial.id))[0].count;
-        if (actualAttempts > 5) { await updateFollowup(db, followup, "HELD", "INVALID_ATTEMPT_COUNT"); continue; }
+        if (actualAttempts > 5) { await updateFollowup(db, followup, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON); continue; }
         const plan = planCreditWelcomeVoiceFollowup({ now: now(), phase: followup.phase, fastAttempts: actualAttempts,
           lastEvent: last, lastPendingSlot: followup.lastPendingSlot, holdReason: followup.reason });
         await updateFollowup(db, followup, plan.phase, plan.reason, plan.nextAttemptAt, actualAttempts);
-        if (!plan.shouldDispatch) continue;
+        if (!plan.shouldDispatch) {
+          if (plan.phase === "STOPPED" && last.source === "AUTOMATIC_RETRY" && last.status === "PENDING") {
+            await stopAutomaticDispatch(db, last, followup);
+          }
+          continue;
+        }
         const blocking = await globalWelcomeBlock(db, followup.creditoId, last.id);
         if (blocking) {
           if (blocking.phase) await updateFollowup(db, followup, blocking.phase, blocking.reason, null, actualAttempts);
           continue;
         }
+        if (await automaticCallAlreadyAttempted(db, followup.creditoId, last.id)) {
+          await stopAutomaticDispatch(db, last, followup); continue;
+        }
         const snapshot = await revalidateAutomaticSnapshot(db, { ...followup, fastAttempts: actualAttempts }, initial);
         if (!snapshot) continue;
-        let eventId = last.id;
+        const eventId = last.id;
         const time = now();
         if (last.status === "PENDING" && last.id === initial.id && actualAttempts === 0) {
           await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='DISPATCHING',"dispatchedAt"=$2,"updatedAt"=$2
             WHERE "id"=$1::uuid AND "status"='PENDING'`, last.id, time);
         } else {
-          const max = (await db.$queryRawUnsafe<Array<{ max: number }>>(`SELECT COALESCE(MAX("attemptNumber"),0) AS "max"
-            FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ'`, followup.creditoId))[0].max;
-          if (!Number.isSafeInteger(max) || max >= 2_147_483_647) {
-            await updateFollowup(db, followup, "HELD", "ATTEMPT_LIMIT", null, actualAttempts); continue;
-          }
-          eventId = randomUUID();
-          await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
-            ("id","creditoId","source","attemptNumber","retryPhase","retrySlot","status","snapshot","dispatchedAt","createdAt","updatedAt")
-            VALUES ($1::uuid,$2,'AUTOMATIC_RETRY',$3,$4,$5,'DISPATCHING',$6::jsonb,$7,$7,$7)`,
-            eventId, followup.creditoId, max + 1, plan.phase, plan.pendingSlot, JSON.stringify(initial.snapshot), time);
+          await updateFollowup(db, followup, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON, null, actualAttempts);
+          continue;
         }
         await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceFollowup" SET "lastEventId"=$2::uuid,"phase"=$3,"lastPendingSlot"=COALESCE($4,"lastPendingSlot"),
           "nextAttemptAt"=NULL,"reason"=NULL,"updatedAt"=$5 WHERE "creditoId"=$1`, followup.creditoId, eventId, plan.phase, plan.pendingSlot, time);
@@ -618,6 +637,10 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         const globalBlock = await globalWelcomeBlock(db, member.creditoId);
         if (globalBlock) {
           if (globalBlock.phase) await setMemberState(db, input.campaignId, member.creditoId, globalBlock.phase, globalBlock.reason);
+          continue;
+        }
+        if (await automaticCallAlreadyAttempted(db, member.creditoId)) {
+          await setMemberState(db, input.campaignId, member.creditoId, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
           continue;
         }
         const credit = await readCredit(db, member.creditoId);
@@ -814,6 +837,11 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           "resultCode"='CALL_RECORDING_SAVED',"updatedAt"=$2 WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, event.id, now());
         return null;
       }
+      if (["NORMAL", "INDIVIDUAL_IMPORT", "AUTOMATIC_RETRY", "SCHEDULED_CAMPAIGN"].includes(event.source)
+        && (event.source === "AUTOMATIC_RETRY" || await automaticCallAlreadyAttempted(db, event.creditoId, event.id))) {
+        await stopAutomaticDispatch(db, event, followup);
+        return null;
+      }
       if (operator) {
         const request = await readOperatorRequest(db, "eventId", event.id);
         const blocked = await operatorCallBlock(db, event.creditoId, event.id);
@@ -825,11 +853,6 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       }
       if (automatic) {
         if (!followup || !["FAST", "PENDING"].includes(followup.phase) || followup.lastEventId !== event.id) return null;
-        if (event.source === "AUTOMATIC_RETRY" && event.retryPhase === "PENDING" && getCreditWelcomeVoicePendingSlot(now()) !== event.retrySlot) {
-          await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='FAILED',"resultCode"='WINDOW_CLOSED_BEFORE_DISPATCH',"updatedAt"=$2
-            WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, event.id, now());
-          return null;
-        }
         const initial = followup.initialEventId === event.id ? event : await readEvent(db, followup.initialEventId);
         if (!initial || initial.creditoId !== event.creditoId || !["NORMAL", "INDIVIDUAL_IMPORT"].includes(initial.source)) {
           await updateFollowup(db, followup, "STOPPED", "INVALID_AUTOMATIC_STREAM"); return null;
@@ -848,11 +871,6 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           await exclude(db, event, "OTHER_CALL_PRESENT");
           await updateFollowup(db, followup, other.phase ?? "HELD", other.reason);
           return null;
-        }
-        // A slow credit/ledger read must not extend a daily window.
-        if (event.source === "AUTOMATIC_RETRY" && event.retryPhase === "PENDING" && getCreditWelcomeVoicePendingSlot(now()) !== event.retrySlot) {
-          await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='FAILED',"resultCode"='WINDOW_CLOSED_BEFORE_DISPATCH',"updatedAt"=$2
-            WHERE "id"=$1::uuid AND "status"='DISPATCHING'`, event.id, now()); return null;
         }
         return { eventId, creditId: event.creditoId, snapshot: event.snapshot };
       }
