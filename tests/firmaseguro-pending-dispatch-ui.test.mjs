@@ -49,7 +49,7 @@ function fixture(options = {}) {
     resolveFirmaSeguroProcessUiState: process => process?.completedAt ? "signed" : "waiting",
     formatFirmaSeguroProcessIssue: () => "Revisión requerida",
     readFirmaSeguroDispatchState: async selectedId => {
-      reads.push(["status", selectedId]);
+      reads.push(["status", selectedId, signatureState?.id || null]);
       if (options.statusFailure) return { ok: false, error: "Sin conexión al consultar el envío" };
       return { ok: true, draftId: options.statusDraftId || selectedId, signatureDispatch: signatureState };
     },
@@ -65,6 +65,10 @@ function fixture(options = {}) {
     },
     submitFirmaSeguroDraft: async (selectedId, originalId) => {
       sends.push({ selectedId, originalId });
+      if (options.submitFailure) {
+        signatureState = pending({ status: "UNCERTAIN", canResume: false, ...options.failedSubmissionState });
+        throw Object.assign(new Error("No se pudo confirmar el resultado del envío"), { code: options.submitFailure });
+      }
       return { process: { processUuid: "same-provider-process", status: "PENDING" } };
     },
     applyDraftPayload: item => { applied.push(item); context.factoryDraftPayload = { ...item.payload }; },
@@ -120,6 +124,27 @@ test("una reserva creada entre preflight y guardado muestra el pendiente y no cr
   const f = fixture({ state: null, saveRace: true }); await f.run();
   assert.equal(f.saves.length, 1); assert.equal(f.sends.length, 0);
   assert.equal(f.notices.at(-1).tone, "amber"); assert.match(f.notices.at(-1).text, /envío anterior.*confirmado/i);
+});
+
+test("un envío inicial incierto o sin persistir consulta el mismo intento y evita otro POST o guardado", async () => {
+  for (const code of ["DRAFT_DISPATCH_UNCERTAIN", "DRAFT_DISPATCH_ACK_PERSISTENCE_FAILED", "DRAFT_DISPATCH_PERSISTENCE_FAILED"]) {
+    const f = fixture({ state: null, submitFailure: code,
+      failedSubmissionState: { hasReceipt: code === "DRAFT_DISPATCH_PERSISTENCE_FAILED", hasProviderLocator: true } });
+    await f.run();
+    assert.deepEqual(f.reads.map(item => item[0]), ["status", "draft", "status"], `${code}: consulta inmediata tras el fallo`);
+    assert.deepEqual(f.reads.filter(item => item[0] === "status").map(item => item[2]), [null, id], "recupera el UUID reservado por el primer envío");
+    assert.deepEqual(f.saves, [4]);
+    assert.equal(f.sends.length, 1);
+    assert.equal(f.sends[0].originalId, undefined, "sólo se intentó el envío inicial");
+    assert.equal(f.notices.at(-1).tone, "amber", code);
+    assert.match(f.notices.at(-1).text, /envío anterior.*confirmado|confirmación pendiente de conciliar/i);
+    assert.equal(f.context.firmaSeguroRequestInFlightRef.current, false);
+
+    await f.run();
+    assert.equal(f.sends.length, 1, "un nuevo clic no vuelve a contactar al proveedor");
+    assert.deepEqual(f.saves, [4], "el intento pendiente tampoco vuelve a guardar el contrato");
+    assert.equal(f.notices.at(-1).tone, "amber");
+  }
 });
 
 test("sin reserva pendiente, los cambios reales se guardan y el envío normal conserva su flujo", async () => {

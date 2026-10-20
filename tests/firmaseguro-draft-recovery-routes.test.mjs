@@ -3,14 +3,13 @@ import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
+import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 const routePath = new URL("../app/api/creditos/borradores/[id]/firma-seguro/route.ts", import.meta.url);
-const callbackPath = new URL("../app/api/firma-seguro/callback/route.ts", import.meta.url);
 const reconcilePath = new URL("../app/api/creditos/borradores/[id]/firma-seguro/conciliar/route.ts", import.meta.url);
 const source = await readFile(routePath, "utf8");
 const getSource = source.slice(source.indexOf("async function resumeAcknowledgedDraftDispatch"),
   source.indexOf("async function requireApprovedVeriffBeforeFirmaSeguro"));
-const callbackSource = (await readFile(callbackPath, "utf8")).split("export async function POST")[1];
 const reconcileSource = (await readFile(reconcilePath, "utf8")).split("export async function POST")[1];
 
 function load(code, name, fixtures) {
@@ -57,23 +56,36 @@ test("GET no libera un envío incierto sin confirmación ni accede a otra solici
 });
 
 function callbackFixture({ receipt = true, authorized = true } = {}) {
-  const calls = [];
+  const calls = [], queued = [];
+  const processUuid = "a0000000-0000-4000-8000-000000003433";
+  const correlation = loadReissueModule("lib/firmaseguro-draft-callback-correlation.ts");
   let current = null;
-  const handler = load(`async function POST${callbackSource}`, "POST", {
-    isAuthorizedCallback: () => authorized,
-    extractFirmaSeguroUuid: (body) => body.uuid,
-    extractFirmaSeguroStatus: () => "CREATED",
-    getFirmaSeguroProcessForCallback: async () => current,
-    getDraftDispatchReceiptByProcessUuid: async (uuid) => { assert.equal(uuid, "provider-process"); calls.push("receipt"); return receipt ? { dispatchId: "dispatch" } : null; },
-    finalizeDraftDispatch: async (id) => { assert.equal(id, "dispatch"); calls.push("finalize"); current = { processUuid: "provider-process" }; },
-    updateFirmaSeguroProcess: async () => { calls.push("update"); return current; },
-    refreshFirmaSeguroProcess: async (process) => { calls.push("refresh"); return process; },
-    recordVerifiedDraftCorrectionReissues: async () => {},
-    serializeFirmaSeguroProcess: (process) => process,
-  });
-  return { calls, invoke: () => handler(new Request("https://example.test/api/firma-seguro/callback", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ uuid: "provider-process", tags: [{ reissue: "untrusted-callback-tag" }] }),
+  const handler = loadReissueModule("app/api/firma-seguro/callback/route.ts", {
+    "next/server": { NextResponse: Response },
+    "@/lib/firmaseguro": {
+      getFirmaSeguroConfig: () => ({ callbackSecret: "test-secret" }),
+      extractFirmaSeguroUuid: (body) => body?.uuid,
+      extractFirmaSeguroStatus: () => "CREATED",
+    },
+    "@/lib/firmaseguro-credit": {
+      getFirmaSeguroProcessForCallback: async () => current,
+      refreshFirmaSeguroProcess: async (process) => { calls.push("refresh"); return process; },
+      serializeFirmaSeguroProcess: (process) => process,
+    },
+    "@/lib/firmaseguro-draft-dispatch-ledger": {
+      getDraftDispatchReceiptByProcessUuid: async (uuid) => { assert.equal(uuid, processUuid); calls.push("receipt"); return receipt ? { dispatchId: "dispatch" } : null; },
+      finalizeDraftDispatch: async (id) => { assert.equal(id, "dispatch"); calls.push("finalize"); current = { processUuid }; },
+    },
+    "@/lib/firmaseguro-storage": { updateFirmaSeguroProcess: async () => { calls.push("update"); return current; } },
+    "@/lib/firmaseguro-draft-correction-complete": { recordVerifiedDraftCorrectionReissues: async () => {} },
+    "@/lib/firmaseguro-draft-callback-correlation": correlation,
+    "@/lib/firmaseguro-draft-recovery": { enqueueDraftSignatureRecovery: async (input) => {
+      calls.push("queue"); queued.push(input); return { queued: true, id: "private" };
+    } },
+  }).POST;
+  return { calls, queued, invoke: () => handler(new Request("https://example.test/api/firma-seguro/callback", {
+    method: "POST", headers: { "Content-Type": "application/json", "x-firmaseguro-token": authorized ? "test-secret" : "wrong" },
+    body: JSON.stringify({ uuid: processUuid, tags: [{ reissue: "untrusted-callback-tag" }] }),
   })) };
 }
 
@@ -81,15 +93,23 @@ test("callback materializa una confirmación propia antes de actualizar su estad
   const fixture = callbackFixture();
   assert.equal((await fixture.invoke()).status, 200);
   assert.deepEqual(fixture.calls, ["receipt", "finalize", "update", "refresh"]);
+  assert.equal(fixture.queued.length, 0);
 });
 
-test("callback desconocido no concilia por etiquetas del cuerpo ni omite autenticación", async () => {
+test("callback desconocido conserva un candidato durable sin conciliar por etiquetas ni omitir autenticación", async () => {
   const unknown = callbackFixture({ receipt: false });
-  assert.equal((await unknown.invoke()).status, 404);
-  assert.deepEqual(unknown.calls, ["receipt"]);
+  const response = await unknown.invoke();
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { ok: true, accepted: true });
+  assert.deepEqual(unknown.calls, ["receipt", "queue"]);
+  assert.equal(unknown.queued.length, 1);
+  assert.equal(unknown.queued[0].dispatchId, null, "el tag no confiable del cuerpo no vincula un despacho");
+  assert.match(unknown.queued[0].payloadSha256, /^[a-f0-9]{64}$/);
+  assert.equal(Object.hasOwn(unknown.queued[0], "tags"), false);
   const denied = callbackFixture({ authorized: false });
   assert.equal((await denied.invoke()).status, 401);
   assert.deepEqual(denied.calls, []);
+  assert.equal(denied.queued.length, 0);
 });
 
 function reconciliationFixture({ user = { id: 7, nombre: "Admin", rolNombre: "ADMIN", aliadoAccesoCodigo: "CENTRAL" }, draftId = 1, status = "AWAITING_SIGNATURE" } = {}) {

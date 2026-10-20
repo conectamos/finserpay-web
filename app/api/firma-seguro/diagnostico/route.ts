@@ -74,6 +74,7 @@ function getDiagnosticBase() {
     nit: config.nit,
     useCompanyEndpoint: config.useCompanyEndpoint,
     callbackConfigured: Boolean(config.callbackUrl),
+    callbackAuthenticationConfigured: Boolean(config.callbackSecret),
     processTypeId: config.processTypeId,
     signatureMethodId: config.signatureMethodId,
     authMethodId: config.authMethodId,

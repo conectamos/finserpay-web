@@ -68,6 +68,28 @@ const statements = [
     )`,
   `CREATE INDEX IF NOT EXISTS "FirmaSeguroDraftDispatchReconciliation_latest"
       ON "FirmaSeguroDraftDispatchReconciliation"("dispatchId","id" DESC)`,
+  `ALTER TABLE "FirmaSeguroDraftDispatchReceipt"
+      ADD COLUMN IF NOT EXISTS "actorKind" TEXT NOT NULL DEFAULT 'HUMAN'`,
+  `ALTER TABLE "FirmaSeguroDraftDispatchReconciliation"
+      ADD COLUMN IF NOT EXISTS "actorKind" TEXT NOT NULL DEFAULT 'HUMAN'`,
+  `ALTER TABLE "FirmaSeguroDraftDispatchReconciliation"
+      ALTER COLUMN "actorUserId" DROP NOT NULL`,
+  `DO $$ BEGIN
+      PERFORM pg_advisory_xact_lock(5843, 20261020);
+      ALTER TABLE "FirmaSeguroDraftDispatchReceipt" DROP CONSTRAINT IF EXISTS "FirmaSeguroDraftDispatchReceipt_evidence_check";
+      ALTER TABLE "FirmaSeguroDraftDispatchReceipt" ADD CONSTRAINT "FirmaSeguroDraftDispatchReceipt_evidence_check" CHECK
+        ("actorKind" IN ('HUMAN','SYSTEM') AND ("source" <> 'provider_reconciliation' OR
+          ("actorName" IS NOT NULL AND LENGTH(BTRIM("actorName")) > 0
+            AND jsonb_typeof("evidence")='object' AND "evidence" <> '{}'::jsonb
+            AND (("actorKind"='HUMAN' AND "actorUserId" IS NOT NULL)
+              OR ("actorKind"='SYSTEM' AND "actorUserId" IS NULL
+                AND "actorName"='Sistema FINSER PAY (recuperación de firma)' AND COALESCE("evidence"->>'actorKind','')='SYSTEM')))));
+      ALTER TABLE "FirmaSeguroDraftDispatchReconciliation" DROP CONSTRAINT IF EXISTS "FirmaSeguroDraftDispatchReconciliation_actor_check";
+      ALTER TABLE "FirmaSeguroDraftDispatchReconciliation" ADD CONSTRAINT "FirmaSeguroDraftDispatchReconciliation_actor_check" CHECK
+        (("actorKind"='HUMAN' AND "actorUserId" IS NOT NULL) OR
+          ("actorKind"='SYSTEM' AND "actorUserId" IS NULL
+            AND "actorName"='Sistema FINSER PAY (recuperación de firma)' AND COALESCE("evidence"->>'actorKind','')='SYSTEM'));
+    END $$`,
   `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_audit()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         IF TG_OP='INSERT' THEN
@@ -169,6 +191,42 @@ const statements = [
   `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftDispatchReconciliation_immutable"
       BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftDispatchReconciliation"
       FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_reconciliation_immutable()`,
+  `CREATE TABLE IF NOT EXISTS "FirmaSeguroDraftRecovery" (
+      "id" UUID PRIMARY KEY, "dedupeKey" CHAR(64) NOT NULL UNIQUE,
+      "processUuid" TEXT NOT NULL, "dispatchId" UUID,
+      "payloadSha256" CHAR(64) NOT NULL CHECK ("payloadSha256" ~ '^[a-f0-9]{64}$'),
+      "lastDeliverySha256" CHAR(64) NOT NULL, "receiptObserved" BOOLEAN NOT NULL DEFAULT FALSE, "retryable" BOOLEAN NOT NULL DEFAULT TRUE,
+      "source" TEXT NOT NULL CHECK ("source" IN ('CALLBACK','LOCATOR','RECEIPT')),
+      "status" TEXT NOT NULL DEFAULT 'QUEUED' CHECK ("status" IN ('QUEUED','PROCESSING','RETRY','RECOVERED','NEEDS_REVIEW')),
+      "attempts" INTEGER NOT NULL DEFAULT 0, "nextAttemptAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "leaseToken" UUID, "leaseUntil" TIMESTAMPTZ, "lastErrorCode" TEXT, "resolvedDispatchId" UUID,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+  `CREATE INDEX IF NOT EXISTS "FirmaSeguroDraftRecovery_due"
+      ON "FirmaSeguroDraftRecovery"("status","nextAttemptAt")`,
+  `CREATE TABLE IF NOT EXISTS "FirmaSeguroDraftRecoveryEvent" (
+      "id" BIGSERIAL PRIMARY KEY, "recoveryId" UUID NOT NULL REFERENCES "FirmaSeguroDraftRecovery"("id") ON DELETE RESTRICT,
+      "eventType" TEXT NOT NULL, "errorCode" TEXT, "payloadSha256" CHAR(64),
+      "actorKind" TEXT NOT NULL DEFAULT 'SYSTEM' CHECK ("actorKind"='SYSTEM'),
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+  `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_recovery_preserve()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF TG_OP='DELETE' OR ROW(NEW."id",NEW."dedupeKey",NEW."processUuid",NEW."dispatchId",NEW."payloadSha256",NEW."source",NEW."createdAt")
+          IS DISTINCT FROM ROW(OLD."id",OLD."dedupeKey",OLD."processUuid",OLD."dispatchId",OLD."payloadSha256",OLD."source",OLD."createdAt")
+        THEN RAISE EXCEPTION 'DRAFT_RECOVERY_IMMUTABLE' USING ERRCODE='23514'; END IF;
+        RETURN NEW;
+      END $$`,
+  `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftRecovery_preserve"
+      BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftRecovery"
+      FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_recovery_preserve()`,
+  `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_recovery_event_preserve()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        RAISE EXCEPTION 'DRAFT_RECOVERY_EVENT_IMMUTABLE' USING ERRCODE='23514';
+      END $$`,
+  `CREATE OR REPLACE TRIGGER "FirmaSeguroDraftRecoveryEvent_preserve"
+      BEFORE UPDATE OR DELETE ON "FirmaSeguroDraftRecoveryEvent"
+      FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_recovery_event_preserve()`,
 ];
 
 const connectionString = String(process.env.DATABASE_URL || "").trim();

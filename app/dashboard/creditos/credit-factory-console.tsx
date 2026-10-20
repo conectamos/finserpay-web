@@ -11153,7 +11153,13 @@ export default function CreditFactoryConsole({
         setNotice({ text: "Revisa los nombres y apellidos del cliente para preparar la firma.", tone: "amber" });
         return;
       }
-      if (["SOLICITUD_ENVIO_FIRMA_PENDIENTE", "DRAFT_DISPATCH_UNRESOLVED"].includes(String((error as { code?: string } | null)?.code))) {
+      if ([
+        "SOLICITUD_ENVIO_FIRMA_PENDIENTE",
+        "DRAFT_DISPATCH_UNRESOLVED",
+        "DRAFT_DISPATCH_UNCERTAIN",
+        "DRAFT_DISPATCH_ACK_PERSISTENCE_FAILED",
+        "DRAFT_DISPATCH_PERSISTENCE_FAILED",
+      ].includes(String((error as { code?: string } | null)?.code))) {
         if (draftId) {
           try {
             const state = await readFirmaSeguroDispatchState(draftId);

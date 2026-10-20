@@ -77,7 +77,8 @@ function fixture() {
     VERIFF_REQUEST_TIMEOUT_MS: 15000, VERIFF_IDENTITY_CONFLICT_MESSAGE: "Conflicto de identidad", VERIFF_IDENTITY_MISSING_MESSAGE: "Falta identidad", veriffStatusLabel: validation => validation.status,
     ACTIVE_SOLICITUD_RESUME_MESSAGE: "Retomando solicitud", DRAFT_REQUIRES_DATACREDITO_CODE: "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO",
     draftResumeHydrationRef: { current: false }, dataCreditoFinancialTermsRecovery: false, draftResumeHydrating: false, draftResumeLoadFailed: false,
-    firmaSeguroDraftCorrectionPending: false, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, draftHasMeaningfulData: true,
+    firmaSeguroDraftCorrectionPending: false, firmaSeguroSubmitting: false, pendingFirmaSeguroDispatch: null,
+    firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, draftHasMeaningfulData: true,
     veriffMediaRequestedKeyRef: { current: "" },
     applyingDraftRef: { current: false }, nextFactoryStep: { id: 4 }, currentIphoneClosureFingerprint: "closure-fingerprint",
     veriffIdentityFlowEnabled: true, veriffHasFinalDecision: false, VERIFF_POLL_MAX_ATTEMPTS: 12, VERIFF_POLL_BACKOFF_MS: [4000, 6000],
@@ -93,7 +94,7 @@ function fixture() {
     if (url === "/api/creditos/veriff") return { ok: true, status: 200, data: { validation: pending } };
     if (url === "/api/creditos/borradores/2883/estado-proceso") return { ok: true, status: 200, data: { ok: true, draftId: 2883,
       revision: { draftUpdatedAt: "2026-10-10T00:00:00Z", processId: null, processUpdatedAt: null, validationId: 42, validationUpdatedAt: "2026-10-10T00:00:00Z" },
-      process: null, pending: false, identityCorrectionPending: false, imeiCorrectionPending: false, financialCorrectionPending: false,
+      process: null, signatureDispatch: null, pending: false, identityCorrectionPending: false, imeiCorrectionPending: false, financialCorrectionPending: false,
       validation: { ...pending, status: "APPROVED", approved: true, pending: false, decidedAt: "2026-10-10T00:00:00Z", identityDocumentStatus: "match", identityDocumentNumber: "123456789", identityDataAvailable: true, identityData: { firstName: "Otro nombre", lastName: "Otro apellido", documentNumber: "123456789" } } } };
     assert.fail("Unexpected request: " + url);
   };
@@ -201,6 +202,38 @@ test("la aprobación de identidad puede reprogramar el autosave mientras se guar
   assert.equal(f.context.notice.tone, "emerald");
   assert.equal(f.requests.filter(request => request.url === "/api/creditos/veriff").length, 1);
   assert.equal(f.requests.some(request => request.url.includes("datacredito")), false);
+});
+
+test("el envío de firma pausa el autosave de identidad y lo permite al resolver el pendiente", async () => {
+  const dispatch = { id: "11111111-1111-4111-8111-111111111111", pending: true,
+    createdAt: "2026-10-20T16:39:50Z", updatedAt: "2026-10-20T16:39:50Z",
+    hasReceipt: false, hasProviderLocator: false, failureStage: null };
+  for (const state of [
+    { firmaSeguroSubmitting: true },
+    { pendingFirmaSeguroDispatch: { ...dispatch, status: "PREPARING", canResume: true } },
+    { pendingFirmaSeguroDispatch: { ...dispatch, status: "UNCERTAIN", canResume: false } },
+  ]) {
+    const f = fixture();
+    f.context.veriffValidation = { ...pending, status: "APPROVED", approved: true, pending: false };
+    f.mount(autosaveEffect);
+    assert.equal(f.timers.size, 1, "la identidad aprobada conserva el guardado normal antes del envío");
+
+    Object.assign(f.context, state);
+    f.mount(autosaveEffect);
+    assert.equal(f.timers.size, 0, "un envío en curso o reservado cancela el guardado programado");
+    await flush();
+    assert.equal(f.requests.length, 0, "el contrato preparado no genera otro guardado ni consulta de identidad");
+
+    f.context.firmaSeguroSubmitting = false;
+    f.context.pendingFirmaSeguroDispatch = null;
+    f.mount(autosaveEffect);
+    assert.equal(f.timers.size, 1, "resolver el envío permite programar el guardado nuevamente");
+    const [id, timer] = [...f.timers][0]; f.timers.delete(id); timer.callback(); await flush();
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.requests[0].url, "/api/creditos/borradores");
+    assert.equal(f.requests[0].body.payload.clienteNombre, fullName);
+    assert.equal(f.context.draftStatus, "saved");
+  }
 });
 
 test("salir del formulario invalida un guardado pendiente aunque no cambie la solicitud", async () => {

@@ -47,6 +47,7 @@ import {
   upsertFirmaSeguroProcess,
 } from "@/lib/firmaseguro-storage";
 import prisma from "@/lib/prisma";
+import { buildDraftSignatureCallbackUrl } from "@/lib/firmaseguro-draft-callback-correlation";
 import { isAdminRole } from "@/lib/roles";
 import { getSellerSessionUser } from "@/lib/seller-auth";
 import { completeOperationalSignatureVersion, isSupersededTerminalOperationalProcess,
@@ -1277,15 +1278,19 @@ async function createFirmaSeguroProcess(
 
 /** Prepare authentication before reserving the one provider call. No create retries or endpoint fallback. */
 export async function prepareFirmaSeguroReissue(
-  credito: CreditForFirmaSeguroPdf, pdf: Buffer, operationId: string
+  credito: CreditForFirmaSeguroPdf, pdf: Buffer, operationId: string,
+  options: { callbackScope?: "draft_dispatch" } = {},
 ) {
   if (!isFirmaSeguroConfigured() || !pdf.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
     throw new Error("REISSUE_PREPARATION_UNAVAILABLE");
   }
-  const callbackUrl = buildFirmaSeguroCallbackUrl();
-  if (!callbackUrl) throw new Error("REISSUE_PREPARATION_UNAVAILABLE");
+  const baseCallbackUrl = buildFirmaSeguroCallbackUrl();
+  if (!baseCallbackUrl) throw new Error("REISSUE_PREPARATION_UNAVAILABLE");
   const person = splitClientName(credito);
   const config = getFirmaSeguroConfig();
+  const callbackUrl = options.callbackScope === "draft_dispatch"
+    ? buildDraftSignatureCallbackUrl(baseCallbackUrl, operationId, config.callbackSecret)
+    : baseCallbackUrl;
   let delivery = getFirmaSeguroDelivery(person);
   if (!person.document || (!delivery.sendByEmail && !delivery.sendByWhatsApp)
     || (config.notifyByEmail && !delivery.signerEmail)) throw new Error("REISSUE_CONTACT_UNAVAILABLE");
@@ -1353,7 +1358,8 @@ export async function createFirmaSeguroProcessForDraft(
 
 export async function refreshFirmaSeguroProcess(
   process: FirmaSeguroProcessRow,
-  options: { credito?: FirmaSeguroCredit | null; synchronizeContractState?: boolean; providerTimeoutMs?: number } = {}
+  options: { credito?: FirmaSeguroCredit | null; synchronizeContractState?: boolean; providerTimeoutMs?: number;
+    documentReadBudgetMs?: number; maxDocumentCandidates?: number } = {}
 ) {
   // A nominal status/PDF consultation must not mutate contractual snapshots or
   // reacquire the caller's draft operation lock through completion workflows.
@@ -1414,11 +1420,20 @@ export async function refreshFirmaSeguroProcess(
   let documentDownloadError: string | null = null;
 
   if (completed) {
+    const documentDeadline = Number.isFinite(options.documentReadBudgetMs) && Number(options.documentReadBudgetMs) > 0
+      ? Date.now() + Math.min(30_000, Math.max(1, Math.trunc(options.documentReadBudgetMs!))) : null;
+    const documentRequestOptions = () => {
+      if (documentDeadline === null) return requestOptions;
+      const remaining = documentDeadline - Date.now();
+      if (remaining <= 0) throw new Error("FIRMASEGURO_DOCUMENT_READ_BUDGET_EXHAUSTED");
+      return { timeoutMs: Math.min(requestOptions.timeoutMs || remaining, remaining) };
+    };
     const trySignedDocumentPayload = async (
       source: string,
       fetchPayload: () => Promise<unknown>
     ) => {
       try {
+        documentRequestOptions();
         const payload = await fetchPayload();
         const info = extractFirmaSeguroSignedDocument(payload);
         documentAttempts.push({
@@ -1450,7 +1465,9 @@ export async function refreshFirmaSeguroProcess(
           process.signaturesPayload,
           process.documentsPayload
         ),
-      ].filter((uuid, index, list) => uuid && list.indexOf(uuid) === index);
+      ].filter((uuid, index, list) => uuid && list.indexOf(uuid) === index)
+        .slice(0, Number.isFinite(options.maxDocumentCandidates) && Number(options.maxDocumentCandidates) > 0
+          ? Math.min(10, Math.max(1, Math.trunc(options.maxDocumentCandidates!))) : undefined);
 
       let documentResult: Awaited<
         ReturnType<typeof trySignedDocumentPayload>
@@ -1467,7 +1484,7 @@ export async function refreshFirmaSeguroProcess(
 
         documentResult = await trySignedDocumentPayload(
           `Document/ByUUID public (${label})`,
-          () => firmaSeguroGetDocumentsByUuid(documentUuid, undefined, requestOptions)
+          () => firmaSeguroGetDocumentsByUuid(documentUuid, undefined, documentRequestOptions())
         );
         documentInfo = documentResult?.info || documentInfo;
 
@@ -1479,7 +1496,7 @@ export async function refreshFirmaSeguroProcess(
           `Document/ByUUID autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetDocumentsByUuid(documentUuid, token, requestOptions)
+              firmaSeguroGetDocumentsByUuid(documentUuid, token, documentRequestOptions())
             );
             return result;
           }
@@ -1494,7 +1511,7 @@ export async function refreshFirmaSeguroProcess(
           `Document Aura Quantic autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetAuraQuanticDocumentByUuid(documentUuid, token, requestOptions)
+              firmaSeguroGetAuraQuanticDocumentByUuid(documentUuid, token, documentRequestOptions())
             );
             return result;
           }
@@ -1507,7 +1524,7 @@ export async function refreshFirmaSeguroProcess(
 
         documentResult = await trySignedDocumentPayload(
           `Document individual public (${label})`,
-          () => firmaSeguroGetDocumentByUuid(documentUuid, undefined, requestOptions)
+          () => firmaSeguroGetDocumentByUuid(documentUuid, undefined, documentRequestOptions())
         );
         documentInfo = documentResult?.info || documentInfo;
 
@@ -1519,7 +1536,7 @@ export async function refreshFirmaSeguroProcess(
           `Document individual autenticado (${label})`,
           async () => {
             const { result } = await runWithFirmaSeguroAuth((token) =>
-              firmaSeguroGetDocumentByUuid(documentUuid, token, requestOptions)
+              firmaSeguroGetDocumentByUuid(documentUuid, token, documentRequestOptions())
             );
             return result;
           }
@@ -1537,7 +1554,7 @@ export async function refreshFirmaSeguroProcess(
       if (!documentInfo.base64 && documentInfo.url) {
         const downloadedDocument = await downloadFirmaSeguroSignedDocument(
           documentInfo.url,
-          requestOptions
+          documentRequestOptions()
         );
         signedDocumentBase64 =
           downloadedDocument.base64 || signedDocumentBase64;
