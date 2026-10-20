@@ -67,6 +67,17 @@
 @media(max-width:480px){.reports .account{gap:10px;}.reports .notification{padding-right:10px;}}
 .reports .brand p{font-size:21px;letter-spacing:0;}
 
+/* Administrative history uses the same white navigation and compact brand. */
+.administration { min-height: 68px; }
+.administration .brand { height: 40px; padding: 6px 16px; border-radius: 24px; }
+.administration .navigation { gap: 28px; }
+.administration .avatar { background: var(--fp-lime-soft); color: var(--fp-graphite); }
+.support { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; color: var(--fp-muted); font-size: 14px; }
+.support svg { width: 19px; height: 19px; }
+@media (max-width: 1250px) { .administration .navigation { gap: 20px; } }
+@media (max-width: 1050px) { .administration { padding-top: 10px; } .administration .navigation { gap: 22px; } }
+@media (max-width: 500px) { .support span { display: none; } .administration .navigation { gap: 0 18px; } }
+
 .topbar.settlement {
   height: 57px;
   min-height: 57px;

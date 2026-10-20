@@ -179,6 +179,26 @@ permanece montado y conserva filtros, tamaño de página, página, posición y f
 Los recaudos se consultan desde una franja compacta; sin registros asociados no
 se muestra una tabla vacía. Montos y porcentajes guardados conservan sus decimales.
 
+## Historial DataCrédito
+
+`/dashboard/datacredito` usa la navegación horizontal blanca compartida en su
+variante administrativa, con marca sobre grafito e Integraciones seleccionado.
+Conserva el acceso exclusivo del administrador central y el enlace de ayuda.
+Los indicadores grafito describen la integración y únicamente las consultas
+cargadas; no representan totales globales del historial. Los filtros y la tabla
+ocupan el ancho disponible, sin dividir permanentemente lista y expediente.
+
+El expediente aparece al seleccionar una consulta. Su cierre conserva la lista,
+los filtros y el foco. Las secciones MiDecisor y las ayudas extensas son
+desplegables; advertencias, estados y ausencia de información permanecen
+explícitos. La tabla mantiene desplazamiento horizontal propio en móvil y la
+acción Ver queda fija en su extremo derecho. Se reutilizan los controles,
+estados y tokens compartidos, incluida la tipografía Roboto de la navegación.
+
+El rediseño conserva la búsqueda administrativa POST con cédula en el cuerpo,
+el detalle protegido GET, la auditoría y la retención. Consultar este historial
+no inicia evaluaciones del proveedor ni genera consultas pagas.
+
 ## Parámetros de crédito
 
 Las cuatro pestañas de `/dashboard/parametros-credito` comparten cabecera blanca,

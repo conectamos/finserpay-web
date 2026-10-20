@@ -10,13 +10,19 @@ import {
 } from "react";
 import {
   AlertTriangle,
+  ArrowUpRight,
+  CheckCheck,
   ChevronDown,
   FileSearch,
+  Files,
+  Info,
+  Link2,
   LoaderCircle,
   RefreshCw,
   Search,
   ShieldCheck,
   Smartphone,
+  X,
 } from "lucide-react";
 import {
   Button,
@@ -33,6 +39,7 @@ import type {
   DataCreditoAdminRiskSummary,
   DataCreditoSanitizedProviderPayload,
 } from "@/lib/datacredito/admin-report";
+import styles from "./datacredito-history.module.css";
 
 type Offer = {
   initialPaymentPercentage: number;
@@ -161,6 +168,14 @@ function statusTone(status: string) {
   return "neutral" as const;
 }
 
+function statusLabel(status: string) {
+  if (status === "APROBADO") return "Aprobado";
+  if (status === "RECHAZADO") return "Rechazado";
+  if (status === "NO_EVALUADO") return "No evaluado";
+  if (status === "PENDING") return "En proceso";
+  return status.replaceAll("_", " ");
+}
+
 function numberLabel(value: number | null | undefined) {
   return value === null || value === undefined || !Number.isFinite(value)
     ? "No disponible"
@@ -195,20 +210,24 @@ function ReportSection({
   children: ReactNode;
 }) {
   return (
-    <section aria-labelledby={id} className="space-y-3">
-      <div>
-        <h3 id={id} className="text-lg font-black">
-          {title}
-        </h3>
-        {description ? (
-          <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-            {description}
-          </p>
-        ) : null}
+    <details className={styles.reportSection}>
+      <summary aria-labelledby={id}>
+        <span id={id}>{title}</span>
+        <ChevronDown aria-hidden="true" />
+      </summary>
+      <div className={styles.reportContent}>
+        {description ? <p className={styles.sectionDescription}>{description}</p> : null}
+        {children}
       </div>
-      {children}
-    </section>
+    </details>
   );
+}
+
+function HelpDisclosure({ label, children }: { label: string; children: ReactNode }) {
+  return <details className={styles.help}>
+    <summary><Info size={16} aria-hidden="true" />{label}<ChevronDown size={15} aria-hidden="true" /></summary>
+    <div>{children}</div>
+  </details>;
 }
 
 function DetailValue({
@@ -255,7 +274,7 @@ function AssessmentOriginStatus({
   return (
     <StatusPill
       tone={reused ? "positive" : "neutral"}
-      className="whitespace-nowrap"
+      className={styles.origin}
     >
       {reused
         ? "Reutilizada · sin nueva consulta/cobro"
@@ -279,6 +298,29 @@ export default function DataCreditoAdminConsole() {
   const [detailLoading, setDetailLoading] = useState(false);
   const listRequestSequenceRef = useRef(0);
   const detailRequestSequenceRef = useRef(0);
+  const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
+
+  useEffect(() => {
+    if (selectedId) detailHeadingRef.current?.focus();
+  }, [selectedId]);
+
+  function closeDetail(restoreFocus = true) {
+    const previousId = selectedId;
+    detailRequestSequenceRef.current += 1;
+    setSelectedId(null);
+    setDetail(null);
+    setDetailLoading(false);
+    if (restoreFocus && previousId && typeof document !== "undefined") {
+      document.getElementById("assessment-open-" + previousId)?.focus();
+    }
+  }
+
+  function clearFilters() {
+    setFilters(EMPTY_FILTERS);
+    setAppliedFilters(EMPTY_FILTERS);
+    closeDetail(false);
+    void loadItems(EMPTY_FILTERS);
+  }
 
   const loadItems = useCallback(
     async (input: Filters, cursor: string | null = null) => {
@@ -430,317 +472,93 @@ export default function DataCreditoAdminConsole() {
     detail?.identity?.firstSurname ||
     "Consulta histórica sin identidad recuperable";
 
+  const originalCount = items.filter(item => !item.reusedFromAssessmentId).length;
+  const reusedCount = items.length - originalCount;
+
   return (
-    <main className="px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
-      <div className="mx-auto max-w-[1680px] space-y-5">
-        <header className="flex flex-col gap-4 border-b border-[var(--fp-border)] pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <main className={styles.page}>
+      <div className={styles.content}>
+        <header className={styles.heading}>
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#6d8c19]">
-              Auditoría de riesgo
-            </p>
-            <h1 className="mt-2 text-3xl font-black sm:text-4xl">
-              Historial DataCrédito
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-              Consulta el resultado, la oferta y el expediente MiDecisor. El
-              puntaje y la cédula completa solo aparecen para el administrador central.
-            </p>
+            <p className={styles.eyebrow}>AUDITORÍA DE RIESGO</p>
+            <h1>Historial DataCrédito</h1>
+            <p>Resultados, ofertas y expedientes de tus consultas.</p>
           </div>
-          <StatusPill tone={provider?.isProduction ? "positive" : "warning"}>
-            {provider
-              ? "Ambiente " + provider.environment.toUpperCase()
-              : "Verificando ambiente"}
-          </StatusPill>
+          <Button variant="secondary" onClick={() => void loadItems(appliedFilters)} disabled={loading} aria-label="Actualizar historial">
+            <RefreshCw size={17} aria-hidden="true" />Actualizar
+          </Button>
         </header>
 
+        <section className={styles.overview} aria-label="Estado de la integración y resultados cargados">
+          <div><span className={styles.overviewIcon}><Link2 aria-hidden="true" /></span><div><span>Integración</span><strong className={styles.integrationState} data-active={provider?.enabled}>{provider ? <><i aria-hidden="true" />{provider.enabled ? "Activa" : "Inactiva"}</> : "Verificando…"}</strong></div></div>
+          <div><span className={styles.overviewIcon}><ShieldCheck aria-hidden="true" /></span><div><span>Ambiente</span><strong>{provider ? (provider.isProduction ? "Producción" : provider.environment.toUpperCase()) : "—"}</strong></div></div>
+          <div><span className={styles.overviewIcon}><Files aria-hidden="true" /></span><div><span>Resultados cargados</span><strong>{items.length}<small>{nextCursor ? "Hay más disponibles" : "En esta vista"}</small></strong></div></div>
+          <div><span className={styles.overviewIcon}><CheckCheck aria-hidden="true" /></span><div><span>Origen en esta vista</span><strong className={styles.originCounts}>{originalCount} {originalCount === 1 ? "original" : "originales"} <small>{reusedCount} {reusedCount === 1 ? "reutilizada" : "reutilizadas"}</small></strong></div></div>
+        </section>
+
         {provider && !provider.isProduction ? (
-          <div
-            role="alert"
-            className="flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-4 text-sm text-[var(--fp-graphite)]"
-          >
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-            <p>
-              Este ambiente usa datos ficticios o enmascarados de certificación.
-              No utilices sus puntajes para aprobar ventas reales.
-            </p>
+          <div role="alert" className={styles.warning}>
+            <AlertTriangle size={19} aria-hidden="true" />
+            <p>Este ambiente usa datos ficticios o enmascarados de certificación. No utilices sus puntajes para aprobar ventas reales.</p>
           </div>
         ) : null}
-
         {provider?.isProduction && nonProductionVisibleCount > 0 ? (
-          <div
-            role="alert"
-            className="flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-4 text-sm text-[var(--fp-graphite)]"
-          >
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-            <p>
-              La vista incluye {nonProductionVisibleCount} consulta(s) de ambiente
-              DEMO, certificación o legado. No uses esos resultados para decisiones
-              de crédito reales.
-            </p>
+          <div role="alert" className={styles.warning}>
+            <AlertTriangle size={19} aria-hidden="true" />
+            <p>La vista incluye {nonProductionVisibleCount} consulta(s) de ambiente DEMO, certificación o legado. No uses esos resultados para decisiones de crédito reales.</p>
           </div>
         ) : null}
 
-        <Card className="p-5 sm:p-6">
-          <form
-            onSubmit={submitFilters}
-            className="grid gap-4 lg:grid-cols-[1.25fr_0.8fr_0.8fr_0.8fr_0.8fr_auto]"
-          >
-            <label className="grid gap-2 text-xs font-black">
-              Cédula exacta
-              <Input
-                inputMode="numeric"
-                value={filters.documentNumber}
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    documentNumber: event.target.value
-                      .replace(/\D/g, "")
-                      .slice(0, 13),
-                  }))
-                }
-                placeholder="Número de cédula"
-              />
-            </label>
-            <label className="grid gap-2 text-xs font-black">
-              Resultado
-              <Select
-                value={filters.status}
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    status: event.target.value,
-                  }))
-                }
-              >
-                <option value="">Todos</option>
-                <option value="APROBADO">Aprobado</option>
-                <option value="RECHAZADO">Rechazado</option>
-                <option value="NO_EVALUADO">No evaluado</option>
-                <option value="PENDING">En proceso</option>
-              </Select>
-            </label>
-            <label className="grid gap-2 text-xs font-black">
-              Plataforma
-              <Select
-                value={filters.platform}
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    platform: event.target.value,
-                  }))
-                }
-              >
-                <option value="">Todas</option>
-                <option value="ANDROID">Android</option>
-                <option value="IPHONE">iPhone</option>
-              </Select>
-            </label>
-            <label className="grid gap-2 text-xs font-black">
-              Desde
-              <Input
-                type="date"
-                value={filters.dateFrom}
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    dateFrom: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label className="grid gap-2 text-xs font-black">
-              Hasta
-              <Input
-                type="date"
-                value={filters.dateTo}
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    dateTo: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <Button type="submit" className="self-end" disabled={loading}>
-              <Search className="h-4 w-4" aria-hidden="true" />
-              Consultar
-            </Button>
+        <Card className={styles.filtersCard}>
+          <form onSubmit={submitFilters} className={styles.filters} aria-label="Filtros del historial">
+            <label>Cédula exacta<Input inputMode="numeric" value={filters.documentNumber} onChange={event => setFilters(current => ({ ...current, documentNumber: event.target.value.replace(/\D/g, "").slice(0, 13) }))} placeholder="Número de cédula" /></label>
+            <label>Resultado<Select value={filters.status} onChange={event => setFilters(current => ({ ...current, status: event.target.value }))}>
+              <option value="">Todos</option><option value="APROBADO">Aprobado</option><option value="RECHAZADO">Rechazado</option><option value="NO_EVALUADO">No evaluado</option><option value="PENDING">En proceso</option>
+            </Select></label>
+            <label>Producto<Select value={filters.platform} onChange={event => setFilters(current => ({ ...current, platform: event.target.value }))} aria-label="Plataforma">
+              <option value="">Todos los productos</option><option value="ANDROID">Android</option><option value="IPHONE">iPhone</option>
+            </Select></label>
+            <label>Desde<Input type="date" value={filters.dateFrom} onChange={event => setFilters(current => ({ ...current, dateFrom: event.target.value }))} /></label>
+            <label>Hasta<Input type="date" value={filters.dateTo} onChange={event => setFilters(current => ({ ...current, dateTo: event.target.value }))} /></label>
+            <div className={styles.filterActions}><Button type="submit" disabled={loading}><Search size={17} aria-hidden="true" />Consultar</Button><Button variant="ghost" onClick={clearFilters} disabled={loading} aria-label="Limpiar filtros">Limpiar</Button></div>
           </form>
         </Card>
 
-        {error ? (
-          <div
-            role="alert"
-            className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-bold text-[var(--fp-danger)]"
-          >
-            {error}
-          </div>
-        ) : null}
+        {error ? <div role="alert" className={styles.error}><AlertTriangle size={18} aria-hidden="true" />{error}</div> : null}
 
-        <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.05fr)_minmax(480px,0.95fr)]">
-          <Card className="overflow-hidden">
-            <div className="flex items-center justify-between border-b border-[var(--fp-border)] px-5 py-5">
-              <div>
-                <h2 className="text-xl font-black">Consultas registradas</h2>
-                <p className="mt-1 text-sm text-[var(--fp-muted)]">
-                  {items.length} resultado(s) en esta vista
-                </p>
-                <p className="mt-1 text-xs text-[var(--fp-muted)]">
-                  Las reutilizadas conservan una consulta vigente y no generan
-                  una nueva consulta ni cobro.
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                onClick={() => void loadItems(appliedFilters)}
-                disabled={loading}
-                aria-label="Actualizar historial"
-              >
-                <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              </Button>
+        <div className={styles.results}>
+          <Card className={styles.listCard}>
+            <div className={styles.sectionHeading}>
+              <div><h2>Consultas registradas</h2><p>{items.length} resultado(s) en esta vista</p></div>
+              <HelpDisclosure label="Sobre este historial">Las reutilizadas conservan una consulta vigente y no generan una nueva consulta ni cobro. El puntaje y la cédula completa solo aparecen para el administrador central.</HelpDisclosure>
             </div>
-            {loading ? (
-              <LoadingState label="Cargando consultas..." />
-            ) : items.length === 0 ? (
-              <EmptyState
-                title="No hay consultas para estos filtros"
-                description="Prueba otra cédula, rango de fechas o resultado."
-              />
+            {loading ? <LoadingState label="Cargando consultas..." /> : items.length === 0 ? (
+              <EmptyState title="No hay consultas para estos filtros" description="Prueba otra cédula, rango de fechas o resultado." action={<FileSearch size={30} aria-hidden="true" />} />
             ) : (
-              <DataTable>
-                <div className="min-w-[1360px]">
-                  <div className="grid grid-cols-[1.05fr_0.75fr_0.65fr_0.7fr_0.95fr_1.35fr_1fr_0.5fr] gap-4 bg-[var(--fp-bg)] px-5 py-3 text-[11px] font-black uppercase text-[var(--fp-muted)]">
-                    <span>Fecha / cédula</span>
-                    <span>Resultado</span>
-                    <span>Puntaje</span>
-                    <span>Plataforma</span>
-                    <span>Oferta</span>
-                    <span>Origen</span>
-                    <span>Consultó</span>
-                    <span className="sr-only">Acciones</span>
-                  </div>
-                  <div className="divide-y divide-[var(--fp-border)]">
-                    {items.map((item) => (
-                      <article
-                        key={item.id}
-                        className={[
-                          "grid grid-cols-[1.05fr_0.75fr_0.65fr_0.7fr_0.95fr_1.35fr_1fr_0.5fr] items-center gap-4 px-5 py-4 text-sm transition",
-                          selectedId === item.id
-                            ? "bg-[var(--fp-lime-soft)]"
-                            : "hover:bg-[#fbfcf8]",
-                        ].join(" ")}
-                      >
-                        <div>
-                          <p className="font-black">{item.documentLabel}</p>
-                          <p className="mt-1 text-xs text-[var(--fp-muted)]">
-                            {dateTime(item.createdAt)}
-                          </p>
-                        </div>
-                        <StatusPill tone={statusTone(item.status)}>
-                          {item.status.replace("_", " ")}
-                        </StatusPill>
-                        <strong>{scoreLabel(item.score)}</strong>
-                        <div>
-                          <span className="inline-flex items-center gap-1.5 font-bold">
-                            <Smartphone className="h-4 w-4" aria-hidden="true" />
-                            {item.platform}
-                          </span>
-                          <span
-                            className={[
-                              "mt-1 block text-[10px] font-black uppercase tracking-[0.08em]",
-                              isProductionProviderEnvironment(
-                                item.providerEnvironment
-                              )
-                                ? "text-[var(--fp-muted)]"
-                                : "text-[var(--fp-amber)]",
-                            ].join(" ")}
-                          >
-                            {isProductionProviderEnvironment(
-                              item.providerEnvironment
-                            )
-                              ? "Ambiente " + item.providerEnvironment
-                              : "Advertencia: ambiente " +
-                                (item.providerEnvironment || "legacy")}
-                          </span>
-                        </div>
-                        <div className="text-xs leading-5">
-                          {item.offer?.decisionRule ===
-                          "TELCO_DELINQUENCY_THRESHOLD" ? (
-                            <>
-                              <strong>Rechazo prioritario TELCOS</strong>
-                              <br />
-                              Umbral {currency(
-                                item.offer.telcoRejectionThresholdCop
-                              )}
-                            </>
-                          ) : item.offer?.decisionRule ===
-                            "TOTAL_DELINQUENCY_THRESHOLD" ? (
-                            <>
-                              <strong>Rechazo prioritario · mora total</strong>
-                              <br />
-                              Umbral {currency(
-                                item.offer
-                                  .totalDelinquencyRejectionThresholdCop
-                              )}
-                            </>
-                          ) : item.offer ? (
-                            <>
-                              <strong>
-                                Inicial {item.offer.initialPaymentPercentage} %
-                              </strong>
-                              <br />
-                              Máx. {currency(item.offer.maxFinancedAmount)}
-                            </>
-                          ) : (
-                            "Sin oferta"
-                          )}
-                        </div>
-                        <AssessmentOriginStatus
-                          reusedFromAssessmentId={item.reusedFromAssessmentId}
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate font-bold">
-                            {item.actor.sellerName || item.actor.userName}
-                          </p>
-                          <p className="mt-1 truncate text-xs text-[var(--fp-muted)]">
-                            {item.actor.aliadoName || "FINSER PAY"} ·{" "}
-                            {item.actor.sedeName}
-                          </p>
-                        </div>
-                        <Button
-                          variant="secondary"
-                          onClick={() => void openDetail(item.id)}
-                          aria-label={"Ver expediente de " + item.documentLabel}
-                        >
-                          Ver
-                        </Button>
-                      </article>
-                    ))}
-                  </div>
-                </div>
+              <DataTable className={styles.resultsTable}>
+                <table>
+                  <caption className="sr-only">Consultas DataCrédito registradas</caption>
+                  <thead><tr><th scope="col">Fecha / cédula</th><th scope="col">Resultado</th><th scope="col">Puntaje</th><th scope="col">Producto</th><th scope="col">Oferta</th><th scope="col"><span>Origen</span></th><th scope="col">Consultó</th><th scope="col"><span className="sr-only">Acciones</span></th></tr></thead>
+                  <tbody>{items.map(item => (
+                    <tr key={item.id} className={selectedId === item.id ? styles.selectedRow : undefined}>
+                      <td><strong>{item.documentLabel}</strong><small>{dateTime(item.createdAt)}</small></td>
+                      <td><StatusPill className={styles.resultStatus} tone={statusTone(item.status)}>{statusLabel(item.status)}</StatusPill></td>
+                      <td><strong className={Number.isInteger(item.score) && item.score !== -1 ? styles.score : styles.scoreUnavailable}>{scoreLabel(item.score)}</strong></td>
+                      <td><span className={styles.product}><Smartphone size={17} aria-hidden="true" />{item.platform === "IPHONE" ? "iPhone" : "Android"}</span><small className={!isProductionProviderEnvironment(item.providerEnvironment) ? styles.environmentWarning : undefined}>{isProductionProviderEnvironment(item.providerEnvironment) ? "Ambiente " + item.providerEnvironment : "Advertencia: ambiente " + (item.providerEnvironment || "legacy")}</small></td>
+                      <td>{item.offer?.decisionRule === "TELCO_DELINQUENCY_THRESHOLD" ? <><strong>Rechazo prioritario TELCOS</strong><small>Umbral {currency(item.offer.telcoRejectionThresholdCop)}</small></> : item.offer?.decisionRule === "TOTAL_DELINQUENCY_THRESHOLD" ? <><strong>Rechazo prioritario · mora total</strong><small>Umbral {currency(item.offer.totalDelinquencyRejectionThresholdCop)}</small></> : item.offer ? <><strong>Inicial {item.offer.initialPaymentPercentage} %</strong><small>Máx. {currency(item.offer.maxFinancedAmount)}</small></> : <span className={styles.muted}>Sin oferta</span>}</td>
+                      <td><AssessmentOriginStatus reusedFromAssessmentId={item.reusedFromAssessmentId} /></td>
+                      <td><strong>{item.actor.sellerName || item.actor.userName}</strong><small>{item.actor.aliadoName || "FINSER PAY"} · {item.actor.sedeName}</small></td>
+                      <td><Button id={"assessment-open-" + item.id} variant={selectedId === item.id ? "primary" : "secondary"} onClick={() => void openDetail(item.id)} aria-label={"Ver expediente de " + item.documentLabel} aria-expanded={selectedId === item.id} aria-controls="datacredito-dossier">Ver<ArrowUpRight size={15} aria-hidden="true" /></Button></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
               </DataTable>
             )}
-            {nextCursor ? (
-              <div className="border-t border-[var(--fp-border)] px-5 py-4 text-center">
-                <Button
-                  variant="secondary"
-                  disabled={loadingMore}
-                  onClick={() =>
-                    void loadItems(appliedFilters, nextCursor)
-                  }
-                >
-                  {loadingMore ? (
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4" />
-                  )}
-                  Cargar más
-                </Button>
-              </div>
-            ) : null}
+            <div className={styles.listFooter}><span>{items.length} consultas cargadas{nextCursor ? " · Hay más resultados" : ""}</span>{nextCursor ? <Button variant="secondary" disabled={loadingMore} onClick={() => void loadItems(appliedFilters, nextCursor)}>{loadingMore ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}Cargar más</Button> : <span className={styles.muted}>Fin de los resultados</span>}</div>
           </Card>
 
-          <Card className="min-h-[520px] p-5 sm:p-6">
+          {selectedId ? <Card className={styles.dossier} id="datacredito-dossier" role="region" aria-labelledby="dossier-title">
+            <div className={styles.dossierHeading}><div><p className={styles.eyebrow}>DETALLE DE LA CONSULTA</p><h2 id="dossier-title" tabIndex={-1} ref={detailHeadingRef}>Expediente MiDecisor</h2></div><Button variant="secondary" onClick={() => closeDetail()} aria-label="Cerrar expediente"><X size={17} aria-hidden="true" />Cerrar</Button></div>
             {detailLoading ? (
               <LoadingState label="Abriendo expediente cifrado..." />
             ) : !detail ? (
@@ -750,15 +568,11 @@ export default function DataCreditoAdminConsole() {
                 action={<FileSearch className="mx-auto h-8 w-8 text-[var(--fp-muted)]" />}
               />
             ) : (
-              <div className="space-y-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className={styles.dossierContent}>
+                <div className={styles.identityHeading}>
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#6d8c19]">
-                      Expediente MiDecisor
-                    </p>
-                    <h2 className="mt-2 text-2xl font-black">
-                      CC {detailDocument}
-                    </h2>
+                    <p className={styles.identityLabel}>CLIENTE</p>
+                    <h3 className={styles.documentTitle}>CC {detailDocument}</h3>
                     <p className="mt-1 text-sm text-[var(--fp-muted)]">
                       {detailName}
                     </p>
@@ -766,14 +580,11 @@ export default function DataCreditoAdminConsole() {
                   <StatusPill
                     tone={statusTone(detail.assessment?.status || "NO_EVALUADO")}
                   >
-                    {(detail.assessment?.status || "NO_EVALUADO").replace(
-                      "_",
-                      " "
-                    )}
+                    {statusLabel(detail.assessment?.status || "NO_EVALUADO")}
                   </StatusPill>
                 </div>
 
-                <div className="grid gap-2 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4 text-xs text-[var(--fp-muted)] sm:grid-cols-2">
+                <div className={styles.recordBar}>
                   <p>
                     <strong className="text-[var(--fp-graphite)]">Consultó:</strong>{" "}
                     {detail.assessment?.actor.sellerName ||
@@ -809,18 +620,15 @@ export default function DataCreditoAdminConsole() {
                   </div>
                 ) : null}
 
-                <div
-                  role="note"
-                  className="rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-3 text-sm leading-6 text-[var(--fp-graphite)]"
-                >
-                  MiDecisor informa saldos, cuotas, moras, cupos y valores
+                <HelpDisclosure label="Cómo leer los valores de MiDecisor">
+                  <p>MiDecisor informa saldos, cuotas, moras, cupos y valores
                   iniciales en miles de COP. Por ejemplo, 359 equivale a
                   $359.000. Las reglas prioritarias usan la mora vigente agregada
                   del sector TELCOS y la mora vigente total, ambas convertidas a
-                  COP. El total informado no se vuelve a sumar por sectores.
-                </div>
+                  COP. El total informado no se vuelve a sumar por sectores.</p>
+                </HelpDisclosure>
 
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div className={styles.riskMetrics}>
                   <MetricCard
                     label="Puntaje MiDecisor"
                     value={scoreLabel(providerScore)}
@@ -928,31 +736,13 @@ export default function DataCreditoAdminConsole() {
                   </div>
                 ) : null}
 
-                <section
-                  aria-labelledby="telcos-summary-title"
-                  className="overflow-hidden rounded-[var(--fp-radius-lg)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)]"
-                >
-                  <div className="flex flex-col gap-3 border-b border-[var(--fp-lime)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[#6d8c19]">
-                        Información sectorial
-                      </p>
-                      <h3 id="telcos-summary-title" className="mt-1 text-xl font-black">
-                        Resumen Telcos
-                      </h3>
-                    </div>
-                    <div className="text-left sm:text-right">
-                      <StatusPill tone={telcoTone}>
-                        {telco?.delinquencyStatus || "Mora no informada"}
-                      </StatusPill>
-                      <p className="mt-2 text-xs text-[var(--fp-muted)]">
-                        {telco?.available
-                          ? "Agregado Sector Telcos informado"
-                          : "Sector Telcos no informado por MiDecisor"}
-                      </p>
-                    </div>
-                  </div>
-
+                <details className={styles.reportSection}>
+                  <summary aria-labelledby="telcos-summary-title">
+                    <span className={styles.telcosHeader}><span id="telcos-summary-title">Resumen Telcos</span><StatusPill tone={telcoTone}>{telco?.delinquencyStatus || "Mora no informada"}</StatusPill></span>
+                    <ChevronDown aria-hidden="true" />
+                  </summary>
+                  <div className={styles.reportContent}>
+                    <p className={styles.sectionDescription}>{telco?.available ? "Agregado Sector Telcos informado" : "Sector Telcos no informado por MiDecisor"}</p>
                   <dl className="grid bg-[var(--fp-surface)] sm:grid-cols-3">
                     <DetailValue
                       label="Obligaciones vigentes"
@@ -1004,17 +794,13 @@ export default function DataCreditoAdminConsole() {
                     />
                   </dl>
 
-                  <div
-                    role="note"
-                    className="border-t border-[var(--fp-lime)] px-4 py-4 text-sm leading-6 text-[var(--fp-graphite)]"
-                  >
-                    <strong>Alcance del dato:</strong> MiDecisor PN actual no identifica
+                    <HelpDisclosure label="Alcance de la información Telcos"><p><strong>Alcance del dato:</strong> MiDecisor PN actual no identifica
                     operador ni cuenta individual. Una mora de $0 solo indica ausencia
                     de mora vigente agregada reportada; no prueba pagos históricos ni
                     ausencia de mora histórica. El historial global mostrado más abajo
-                    no es específico de Telcos.
+                    no es específico de Telcos.</p></HelpDisclosure>
                   </div>
-                </section>
+                </details>
 
                 {detail.assessment?.offer &&
                 detail.assessment.offer.decisionRule !==
@@ -1522,10 +1308,8 @@ export default function DataCreditoAdminConsole() {
                 </ReportSection>
 
                 {detail.providerData ? (
-                  <details className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)]">
-                    <summary className="min-h-11 cursor-pointer px-4 py-3 text-sm font-black">
-                      Ver detalle técnico sanitizado de MiDecisor
-                    </summary>
+                  <details className={styles.reportSection}>
+                    <summary>Ver detalle técnico sanitizado de MiDecisor<ChevronDown aria-hidden="true" /></summary>
                     <p className="border-t border-[var(--fp-border)] bg-[#f8fafb] px-4 pt-4 text-xs leading-5 text-[var(--fp-muted)]">
                       Vista reconstruida mediante allowlist; puede omitir campos no
                       contratados, desconocidos o truncados por seguridad.
@@ -1545,7 +1329,7 @@ export default function DataCreditoAdminConsole() {
                 </div>
               </div>
             )}
-          </Card>
+          </Card> : null}
         </div>
       </div>
     </main>

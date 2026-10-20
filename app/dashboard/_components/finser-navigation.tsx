@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Bell, ChartNoAxesColumnIncreasing, ChevronDown, LayoutGrid, Settings, Timer, UserRound, Wallet, WalletCards, type LucideIcon } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
 import CentralDashboardMenu from "./central-dashboard-menu";
@@ -14,7 +15,7 @@ function NavigationMenu({ label, items, active = false, icon: Icon }: { label: s
   </div>;
 }
 
-export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation"}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests"|"reports"|"settlement";activeSection?:"operation"|"administration"|"reports"|"portfolio";}) {
+export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation",accountActions}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests"|"reports"|"settlement"|"administration";activeSection?:"operation"|"administration"|"reports"|"portfolio"|"integrations";accountActions?:ReactNode;}) {
   const operation: Item[] = [
     ...(admin ? [[adminCentral ? "Aprobaciones" : "Pendientes", adminCentral ? "/dashboard/aprobaciones" : "/dashboard/pendientes"]] as Item[] : []),
     ["Nueva venta", "/dashboard/creditos"], ["Solicitudes", "/dashboard/solicitudes"], ["Simulador", "/dashboard/creditos?mode=simulator"],
@@ -60,17 +61,18 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
       </div>
     </header>;
   }
-return (<header className={`${styles.topbar} ${variant === "requests" ? styles.requests : ""} ${variant === "reports" ? styles.reports : ""}`}>
-      <Link href="/dashboard" aria-label="FINSER PAY, inicio" className={styles.brand}><FinserBrand dark accentPay wordmarkOnly={variant === "sale"} mini={variant !== "sale"} plainMark={variant === "reports"} showTagline={false} /></Link>
+return (<header className={`${styles.topbar} ${variant === "requests" ? styles.requests : ""} ${variant === "reports" || variant === "administration" ? styles.reports : ""} ${variant === "administration" ? styles.administration : ""}`}>
+      <Link href="/dashboard" aria-label="FINSER PAY, inicio" className={styles.brand}><FinserBrand dark accentPay wordmarkOnly={variant === "sale" || variant === "administration"} mini={variant !== "sale"} plainMark={variant === "reports"} showTagline={false} /></Link>
       <nav className={styles.navigation} aria-label="Navegación principal">
         <Link href="/dashboard">{variant === "reports" ? "Panel central" : "Inicio"}</Link>
         <NavigationMenu label="Operación" items={operation} active={activeSection==="operation"} />
         {(admin || isSupervisor) && <NavigationMenu label="Cartera" items={portfolio} active={activeSection === "portfolio"} />}
         {variant === "reports" && admin && <Link href="/dashboard/reportes" className={styles.active} aria-current="location">Reportes</Link>}
         {admin && <NavigationMenu label="Administración" items={administration} active={activeSection==="administration"} />}
-        {(variant === "requests" || variant === "reports") && adminCentral && <NavigationMenu label="Integraciones" items={integrations} />}
+        {(variant === "requests" || variant === "reports" || variant === "administration") && adminCentral && <NavigationMenu label="Integraciones" items={integrations} active={activeSection === "integrations"} />}
       </nav>
       <div className={styles.account}>
+        {accountActions && <div className={styles.support}>{accountActions}</div>}
         {variant === "reports" && adminCentral && <Link className={styles.notification} href="/dashboard/aprobaciones" aria-label="Consultar bienvenidas y aprobaciones"><Bell aria-hidden="true" /></Link>}
         {variant === "requests" && <Link className={styles.notification} href="/dashboard/solicitudes?estado=PROCESO" aria-label="Consultar solicitudes en proceso"><Bell aria-hidden="true" /></Link>}
         <CentralDashboardMenu summaryClassName={variant !== "sale" ? styles.requestProfile : styles.profile} label={variant !== "sale" ? <><span className={styles.avatar}>{nombreUsuario.trim().split(/\s+/).slice(0,2).map(part => part[0]).join("").toUpperCase()}</span><span className={styles.profileName}>{nombreUsuario}</span><ChevronDown aria-hidden="true" /></> : <><UserRound aria-hidden="true" /><span className={styles.srOnly}>Perfil de {nombreUsuario}</span></>}>
