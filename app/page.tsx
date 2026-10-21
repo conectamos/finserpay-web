@@ -14,7 +14,7 @@ export const metadata: Metadata = {
     title: "FINSER PAY | Tu próximo celular empieza aquí",
     description: "Financiación de iPhone y Android en comercios aliados. Consulta tu crédito, conoce cómo pagar y recibe soporte.",
     url: "https://finserpay.com/", locale: "es_CO", type: "website",
-    images: [{ url: "https://finserpay.com/assets/public-site/mascota-finser.png", alt: "Mascota de FINSER PAY" }],
+    images: [{ url: "https://finserpay.com/assets/public-site/mascota-premium-v2.webp", alt: "Mascota de FINSER PAY" }],
   },
 };
 
@@ -48,9 +48,7 @@ export default function PublicHomePage() {
               <div className={styles.visualOrbit} aria-hidden="true" />
               <span className={styles.visualLabel}>UN NUEVO CELULAR.<br /><b>NUEVAS POSIBILIDADES.</b></span>
               <picture>
-                <source media="(prefers-reduced-motion: reduce)" srcSet="/assets/public-site/mascota-finser.png" />
-                {/* Browser-selected animation with a static reduced-motion alternative. */}
-                <img src="/assets/public-site/mascota-animada.webp" alt="Celular negro de FINSER PAY saludando y celebrando" width={512} height={768} fetchPriority="high" />
+                <img src="/assets/public-site/mascota-premium-v2.webp" alt="Celular FINSER PAY con acabado de cristal y titanio, extendiendo la mano" width={800} height={1200} fetchPriority="high" />
               </picture>
               <div className={styles.visualBadge}><span><Check size={20} aria-hidden="true" /></span><div><b>Contigo, en cada paso.</b><small>Tu próxima oportunidad empieza aquí.</small></div></div>
             </div>
