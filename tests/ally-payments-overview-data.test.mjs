@@ -87,6 +87,11 @@ const collectionRow = {
 
 function harness({ history = [], credits = [], collections = [] } = {}) {
   const calls = [];
+  const deliveryCalls = [];
+  const rejectDelivery = action => {
+    deliveryCalls.push(action);
+    assert.fail("Consultar pagos a aliados no debe iniciar envíos: " + action);
+  };
   const database = {
     async $queryRawUnsafe(sql, ...values) {
       calls.push(["sql", sql, plain(values)]);
@@ -108,8 +113,11 @@ function harness({ history = [], credits = [], collections = [] } = {}) {
     "@/lib/credit-ally-payment-exclusion-storage": { ensureCreditAllyPaymentExclusionSchema: async () => {} },
     "@/lib/datacredito/database-errors": { isDataCreditoUniqueViolation: () => false },
     "@/lib/prisma": { default: database },
+    "@/lib/ally-settlement-delivery-store": {
+      enqueueInitialSettlementDeliveries: () => rejectDelivery("enqueue"),
+    },
   });
-  return { storage, calls };
+  return { storage, calls, deliveryCalls, rejectDelivery };
 }
 
 test("el historial completo conserva más de 200 períodos y no aplica un límite silencioso", async () => {
@@ -123,6 +131,7 @@ test("el historial completo conserva más de 200 períodos y no aplica un límit
   assert.equal(query.where.aliadoId, 7);
   assert.deepEqual(query.where.periodoInicio, { gte: "2026-09-01T00:00:00.000Z" });
   assert.deepEqual(query.orderBy, [{ pagadoAt: "desc" }, { id: "desc" }]);
+  assert.deepEqual(api.deliveryCalls, []);
 });
 
 test("los callers con limit explícito conservan el límite anterior", async () => {
@@ -132,6 +141,7 @@ test("los callers con limit explícito conservan el límite anterior", async () 
     assert.equal(result.length, expected);
     assert.equal(api.calls.at(-1)[1].take, expected);
   }
+  assert.deepEqual(api.deliveryCalls, []);
 });
 
 test("el historial conserva montos congelados, documentos y sentido del saldo sin consultar parámetros actuales", async () => {
@@ -150,6 +160,7 @@ test("el historial conserva montos congelados, documentos y sentido del saldo si
   assert.equal(result.valorConsignarAliado, 300.25);
   assert.equal(result.registradoPorNombre, "Usuario histórico QA");
   assert.deepEqual(api.calls.map(([name]) => name), ["history"]);
+  assert.deepEqual(api.deliveryCalls, []);
 });
 
 test("pendientes entrega metadata de recaudos aunque el crédito ya no esté en los créditos pendientes", async () => {
@@ -188,6 +199,7 @@ test("pendientes entrega metadata de recaudos aunque el crédito ya no esté en 
     "La exclusión del pago del crédito no puede ocultar dinero recaudado por el aliado."
   );
   assert.doesNotMatch(collectionQuery[1], /\bLIMIT\b|\bOFFSET\b/);
+  assert.deepEqual(api.deliveryCalls, []);
 });
 
 test("recaudos pendientes usa deviceUid y marca solo cuando faltan IMEI o plataforma congelada", async () => {
@@ -198,6 +210,7 @@ test("recaudos pendientes usa deviceUid y marca solo cuando faltan IMEI o plataf
   assert.equal(result.items.length, 0);
   assert.equal(result.totalRecaudosAliado, 123.45);
   assert.equal(result.saldoNeto, -123.45);
+  assert.deepEqual(api.deliveryCalls, []);
 });
 
 test("GET entrega todo el historial autorizado y rechaza un aliado fuera de alcance antes de consultar", async () => {
@@ -206,7 +219,11 @@ test("GET entrega todo el historial autorizado y rechaza un aliado fuera de alca
     credits: [creditRow], collections: [collectionRow],
   });
   const route = load("app/api/pagos-aliados/route.ts", {
-    "node:crypto": crypto, "next/server": { NextResponse: Response },
+    "node:crypto": crypto,
+    "next/server": { NextResponse: Response, after: () => api.rejectDelivery("after") },
+    "@/lib/ally-settlement-delivery-service": {
+      runSettlementDeliveryQueue: () => api.rejectDelivery("dispatch"),
+    },
     "@/lib/credit-display-number-server": { withSettlementDisplayNumbers: async rows => rows },
     "@/lib/ally-payment-access": {
       getAllyPaymentAccess: async () => ({ ok: true, kind: "ALLY_ADMIN", allyId: 7, user: { id: 4, nombre: "Admin aliado QA" } }),
@@ -228,4 +245,5 @@ test("GET entrega todo el historial autorizado y rechaza un aliado fuera de alca
   assert.equal(result.preview, null, "Los filtros cliente no ejecutan una previsualización ni escritura.");
   assert.equal(api.calls.find(([name]) => name === "history")[1].where.aliadoId, 7);
   assert.deepEqual(api.calls.find(([, sql]) => typeof sql === "string" && sql.includes('FROM public."CreditoAbono"'))[2], ["2026-09-01T05:00:00.000Z", 7]);
+  assert.deepEqual(api.deliveryCalls, [], "GET no encola, programa ni despacha liquidaciones.");
 });

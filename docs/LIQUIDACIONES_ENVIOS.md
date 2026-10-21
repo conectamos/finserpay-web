@@ -51,8 +51,8 @@ instaladores: la cola sigue el patrón SQL del proyecto.
 | WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID | 1162059967000416, confirmado para +57 3124085562; se verifica display_phone_number antes de cada envío. Si no está definido, usa WHATSAPP_PHONE_NUMBER_ID. |
 | WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID | 2148284059050848, WABA del número oficial y de la plantilla aprobada. Si no está definido, usa WHATSAPP_BUSINESS_ACCOUNT_ID. Se verifica que la cuenta contiene el número. |
 | WHATSAPP_GRAPH_API_VERSION | Reutiliza la versión existente; v25.0 por defecto. |
-| WHATSAPP_SETTLEMENT_TEMPLATE_NAME | Nombre de la nueva plantilla aprobada con encabezado DOCUMENT. |
-| WHATSAPP_SETTLEMENT_TEMPLATE_LANGUAGE | Idioma exacto aprobado, por ejemplo es_CO; no se toma el idioma de otras campañas. |
+| WHATSAPP_SETTLEMENT_TEMPLATE_NAME | liquidacion_aliado; debe existir y estar aprobada con encabezado DOCUMENT. |
+| WHATSAPP_SETTLEMENT_TEMPLATE_LANGUAGE | es_CO; debe coincidir con el idioma aprobado, no se toma el de otras campañas. |
 | WHATSAPP_SETTLEMENT_APP_SECRET | Secreto de la app Meta dedicada al número oficial para verificar firmas del webhook. Si no está definido, usa WHATSAPP_APP_SECRET. |
 | WHATSAPP_SETTLEMENT_VERIFY_TOKEN | Secreto aleatorio de al menos 32 caracteres para verificar la suscripción del webhook. |
 
@@ -81,6 +81,13 @@ RESEND_SETTLEMENT_DOMAIN_ID. No se envió correo para comprobarlo.
 El token de verificación del webhook se generó y almacenó directamente en Railway.
 La activación sigue requiriendo un token Meta con acceso al WABA oficial, la plantilla
 aprobada, el secreto de su app y una suscripción compatible con el callback actual de Dapta.
+La sesión de Meta confirmó que el portafolio Finser PAY (1109745271496382) no tiene
+aplicaciones ni usuarios del sistema; el botón para añadir usuarios está deshabilitado.
+Se necesita acceso administrador a una app propia autorizada para el WABA oficial, o
+al administrador que pueda asociarla y emitir el token de usuario del sistema. El
+secreto debe corresponder a la app que entregue los eventos firmados al webhook.
+La conexión oficial de Dapta no expone una credencial reutilizable para la subida
+privada del PDF mediante Meta. Sus campañas y callbacks permanecen sin cambios.
 
 ## Plantilla Meta
 
