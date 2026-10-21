@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRight, ExternalLink, Headphones, ShieldCheck, Smartphone, Wallet, ArrowUpRight, Check, Store, CreditCard } from "lucide-react";
 import FinserBrand from "./_components/finser-brand";
 import PublicHeader from "./_components/public-site/header";
+import WhereToBuy from "./_components/public-site/where-to-buy";
 import MerchantApplicationForm from "./_components/public-site/merchant-application-form";
 import styles from "./_components/public-site/public-site.module.css";
 
@@ -59,6 +60,7 @@ export default function PublicHomePage() {
           <a href="#pagos"><span className={styles.quickIcon}><Wallet size={22} aria-hidden="true" /></span><div><b>Quiero pagar</b><span>Encuentra tus medios de pago</span></div><ArrowUpRight size={22} aria-hidden="true" /></a>
           <a href="#comercios"><span className={styles.quickIcon}><Store size={22} aria-hidden="true" /></span><div><b>Mi negocio con FINSER</b><span>Conoce cómo ser aliado</span></div><ArrowUpRight size={22} aria-hidden="true" /></a>
         </div>
+        <WhereToBuy />
         <section className={`${styles.section} ${styles.howItWorks}`} aria-labelledby="pasos-title">
           <div className={styles.container}>
             <div className={styles.split}><div><p className={styles.sectionLabel}>ASÍ DE FÁCIL</p><h2 id="pasos-title">Más cerca de tu<br />próximo celular.</h2></div><p>Elige el equipo que va contigo.<br />Nosotros te acompañamos en el proceso.</p></div>
@@ -99,7 +101,7 @@ export default function PublicHomePage() {
         </section>
         <section className={styles.support} id="soporte" aria-labelledby="soporte-title"><div className={`${styles.container} ${styles.supportGrid}`}><div><p className={styles.sectionLabel}>SOPORTE FINSER PAY</p><h2 id="soporte-title">¿Necesitas ayuda?</h2><p>Si tienes preguntas sobre tu crédito, cuotas o acceso al portal, escríbenos.</p></div><a className={`${styles.button} ${styles.lime}`} href={PUBLIC_SUPPORT_URL} target="_blank" rel="noopener noreferrer">Escribir por WhatsApp <ArrowRight size={18} aria-hidden="true" /></a></div></section>
       </main>
-      <footer className={styles.footerShell}><div className={`${styles.container} ${styles.footer}`}><div><a href="#inicio" aria-label="FINSER PAY, inicio"><div className={styles.brand}><FinserBrand dark accentPay wordmarkOnly showTagline={false} /></div></a><p>INNOVACIÓN FINANCIERA CON CONFIANZA</p></div><nav aria-label="Enlaces del pie de página"><Link href="/clientes">Portal de clientes</Link><Link href="/aliados">Acceso de aliados</Link><a href="#pagos">Medios de pago</a><a href="#comercios">Comercios</a><a href={PUBLIC_SUPPORT_URL} target="_blank" rel="noopener noreferrer">Soporte</a></nav><small>© {new Date().getFullYear()} FINSER PAY<br /><Link href="/politica-privacidad">Política de privacidad</Link></small></div></footer>
+      <footer className={styles.footerShell}><div className={`${styles.container} ${styles.footer}`}><div><a href="#inicio" aria-label="FINSER PAY, inicio"><div className={styles.brand}><FinserBrand dark accentPay wordmarkOnly showTagline={false} /></div></a><p>INNOVACIÓN FINANCIERA CON CONFIANZA</p></div><nav aria-label="Enlaces del pie de página"><Link href="/clientes">Portal de clientes</Link><Link href="/aliados">Acceso de aliados</Link><a href="#pagos">Medios de pago</a><a href="#donde-comprar">¿Dónde comprar?</a><a href="#comercios">Comercios</a><a href={PUBLIC_SUPPORT_URL} target="_blank" rel="noopener noreferrer">Soporte</a></nav><small>© {new Date().getFullYear()} FINSER PAY<br /><Link href="/politica-privacidad">Política de privacidad</Link></small></div></footer>
     </div>
   );
 }

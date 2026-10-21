@@ -564,3 +564,14 @@ test("logout elimina también la cookie nominal del analista", async () => {
   assert.equal(cleared.value, "");
   assert.equal(cleared.cookieOptions.maxAge, 0);
 });
+
+test("el directorio comercial público funciona con cookie de analista sin autorizar su administración", () => {
+  const cookies = { [session.APPROVAL_ANALYST_SESSION_COOKIE_NAME]: "signed-analyst-cookie" };
+  for (const path of ["/api/public/comercios", "/api/public/comercios/00000000-0000-4000-8000-000000000001/imagen"]) {
+    assert.equal(proxyModule.proxy(proxyRequest(path, cookies, "GET")).kind, "next");
+    assert.equal(proxyModule.proxy(proxyRequest(path, cookies, "PATCH")).status, 403);
+  }
+  for (const method of ["GET", "POST", "PATCH"]) {
+    assert.equal(proxyModule.proxy(proxyRequest("/api/admin/comercios-publicos", cookies, method)).status, 403);
+  }
+});

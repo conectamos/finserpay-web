@@ -24,7 +24,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
     ...(adminCentral ? [["Créditos masivos", "/dashboard/creditos-masivos"], ["Excepciones por mora", "/dashboard/excepciones-mora"]] as Item[] : []),
   ];
   const administration: Item[] = [
-    ...(adminCentral ? [["Comisiones", "/dashboard/comisiones"], ["Aliados", "/dashboard/aliados"], ["Lista negra", "/dashboard/lista-negra"]] as Item[] : []),
+    ...(adminCentral ? [["Comisiones", "/dashboard/comisiones"], ["Aliados", "/dashboard/aliados"], ["¿Dónde comprar?", "/dashboard/comercios-publicos"], ["Lista negra", "/dashboard/lista-negra"]] as Item[] : []),
     ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"],
     ...(admin ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"]] as Item[] : []),
     ...(adminCentral ? [["Parámetros de crédito", "/dashboard/parametros-credito"]] as Item[] : []),
