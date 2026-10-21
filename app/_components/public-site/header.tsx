@@ -18,7 +18,7 @@ export default function PublicHeader() {
         <a className={styles.brand} href="#inicio" aria-label="FINSER PAY, inicio"><FinserBrand accentPay wordmarkOnly showTagline={false} /></a>
         <Button variant="ghost" className={styles.menu} aria-label={open ? "Cerrar menú" : "Abrir menú"} aria-expanded={open} aria-controls="public-navigation" onClick={() => setOpen(!open)}>{open ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}</Button>
         <nav id="public-navigation" className={`${styles.navigation} ${open ? styles.navigationOpen : ""}`} aria-label="Navegación principal" onClick={() => setOpen(false)}>
-          <a href="#clientes">Clientes</a><a href="#pagos">Medios de pago</a><a href="#comercios">Comercios</a><a href="#soporte">Soporte</a><Link href="/aliados">Acceso aliados</Link>
+          <a href="#donde-comprar">¿Dónde comprar?</a><a href="#clientes">Clientes</a><a href="#pagos">Medios de pago</a><a href="#comercios">Comercios</a><a href="#soporte">Soporte</a><Link href="/aliados">Acceso aliados</Link>
           <Link className={styles.mobilePortal} href="/clientes">Portal de clientes <ArrowRight size={16} aria-hidden="true" /></Link>
         </nav>
         <Link className={styles.headerCta} href="/clientes">Portal de clientes <ArrowRight size={16} aria-hidden="true" /></Link>

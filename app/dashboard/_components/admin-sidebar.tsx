@@ -218,6 +218,7 @@ export default function AdminSidebar({
         ...(adminCentral
           ? [
               { href: "/dashboard/aliados", icon: Handshake, label: "Aliados" },
+              { href: "/dashboard/comercios-publicos", icon: MapPin, label: "¿Dónde comprar?" },
               { href: "/dashboard/lista-negra", icon: ShieldBan, label: "LISTA NEGRA" },
             ]
           : []),

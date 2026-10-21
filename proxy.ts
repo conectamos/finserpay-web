@@ -35,6 +35,7 @@ const ADMIN_ONLY_DASHBOARD_PREFIXES = [
 
 const PUBLIC_API_PREFIXES = [
   "/api/clientes",
+  "/api/public/comercios",
   "/api/creditos/push-reminders",
   "/api/creditos/sync-mora",
   "/api/health",
@@ -169,7 +170,8 @@ export function proxy(request: NextRequest) {
     // El portal del cliente es público y no hereda el alcance de una sesión
     // de Aprobaciones que el navegador pueda conservar, incluso si venció.
     const clientPortalApi = pathMatches(pathname, ["/api/clientes"]);
-    if (hasApprovalAnalystSession && !approvalAnalystApi && !clientPortalApi) {
+    const publicMerchantApi = request.method === "GET" && pathMatches(pathname, ["/api/public/comercios"]);
+    if (hasApprovalAnalystSession && !approvalAnalystApi && !clientPortalApi && !publicMerchantApi) {
       return NextResponse.json({ error: "Acceso no autorizado" }, { status: 403 });
     }
 
