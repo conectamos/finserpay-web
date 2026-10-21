@@ -26,10 +26,24 @@ function getLegacyWebhookUrl() {
   ).trim();
 }
 
+function getConectamosWebhookUrl() {
+  try {
+    const url = new URL((process.env.WOMPI_CONECTAMOS_WEBHOOK_URL || "").trim());
+    if (
+      url.protocol !== "https:" || url.username || url.password ||
+      url.search || url.hash || url.pathname !== "/api/payments/wompi/events"
+    ) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 async function forwardWebhook(
   url: string,
   bodyText: string,
-  checksum: string | null
+  checksum: string | null,
+  options: Pick<RequestInit, "redirect" | "signal"> = {}
 ) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -43,6 +57,7 @@ async function forwardWebhook(
     body: bodyText,
     headers,
     method: "POST",
+    ...options,
   });
 }
 
@@ -61,21 +76,29 @@ export async function POST(req: Request) {
       payload.signature?.checksum ||
       null;
     const isFinserpayReference = reference.startsWith("FP-");
-    const targetUrl = isFinserpayReference
+    const isConectamosReference = /^wp_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(reference);
+    const target = isFinserpayReference ? "finserpay" : isConectamosReference ? "conectamos" : "legacy";
+    const targetUrl = isConectamosReference
+      ? getConectamosWebhookUrl()
+      : isFinserpayReference
       ? new URL("/api/wompi/webhook", req.url).toString()
       : getLegacyWebhookUrl();
-    const response = await forwardWebhook(targetUrl, bodyText, checksum);
+    // Never send a store order to the legacy credit collector when its route is unavailable.
+    if (!targetUrl) return NextResponse.json({ ok: false, target }, { status: 503 });
+    const response = await forwardWebhook(targetUrl, bodyText, checksum,
+      isConectamosReference ? { redirect: "manual", signal: AbortSignal.timeout(15000) } : {}
+    );
 
     if (!response.ok) {
       console.error("ERROR REENVIANDO EVENTO WOMPI:", {
         status: response.status,
-        target: isFinserpayReference ? "finserpay" : "legacy",
+        target,
       });
 
       return NextResponse.json(
         {
           ok: false,
-          target: isFinserpayReference ? "finserpay" : "legacy",
+          target,
         },
         { status: 502 }
       );
@@ -83,7 +106,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      target: isFinserpayReference ? "finserpay" : "legacy",
+      target,
     });
   } catch (error) {
     console.error("ERROR ROUTER WEBHOOK WOMPI:", error);
