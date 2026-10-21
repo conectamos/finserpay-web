@@ -211,36 +211,60 @@ a.paymentCard:hover { transform: translateY(-4px); box-shadow: var(--fp-shadow-m
 }
 
 .directorySection { background: var(--fp-surface); border-bottom: 1px solid var(--fp-border); }
-.directoryToolbar { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin: 36px 0 24px; }
-.directoryToolbar > p, .directoryHelp { color: var(--fp-client-muted); font-size: 13px; line-height: 1.6; }
-.directorySearch { display: flex; align-items: center; gap: 12px; width: min(100%, 400px); border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); padding: 0 14px; color: var(--fp-client-muted); }
+.directoryHeading h2 { font-size: clamp(36px, 4.5vw, 60px); letter-spacing: -2.5px; margin: 16px 0 12px; }
+.directoryIntro { color: var(--fp-client-muted); font-size: clamp(18px, 2vw, 25px); line-height: 1.5; margin: 0; }
+.directoryToolbar { display: flex; justify-content: space-between; align-items: center; gap: 32px; margin: 34px 0 28px; }
+.directoryToolbar > p { color: var(--fp-client-muted); font-size: 15px; white-space: nowrap; margin: 0; }
+.directorySearch { display: flex; align-items: center; flex: 1; gap: 14px; border: 1px solid var(--fp-border); border-radius: 10px; padding: 0 20px; color: var(--fp-client-muted); }
 .directorySearch:focus-within { outline: 2px solid var(--fp-lime-strong); outline-offset: 3px; }
-.directorySearch input { width: 100%; min-width: 0; height: 48px; border: 0; padding: 0; background: transparent; font-size: 14px; outline: 0; box-shadow: none; color: var(--fp-graphite); }
+.directorySearch input { width: 100%; min-width: 0; height: 58px; border: 0; padding: 0; background: transparent; font-size: 16px; outline: 0; box-shadow: none; color: var(--fp-graphite); }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.directoryGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; list-style: none; margin: 0; padding: 0; }
-.directoryGrid li { position: relative; display: flex; flex-direction: column; align-items: start; padding: 24px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: var(--fp-bg); }
-.directoryIcon { display: grid; place-items: center; width: 46px; height: 46px; background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 12px; margin-bottom: 20px; }
-.directoryTag { color: var(--fp-client-green); font-size: 11px; font-weight: 700; }
-.directoryGrid h3 { font-size: 19px; line-height: 1.4; margin: 10px 0 14px; overflow-wrap: anywhere; }
-.directoryGrid .textLink { margin-top: auto; font-size: 13px; }
+.directoryGrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; list-style: none; margin: 0; padding: 0; }
+.directoryCard { display: grid; grid-template-columns: 230px minmax(0, 1fr) 265px; align-items: center; gap: 30px; padding: 24px; border: 1px solid var(--fp-border); border-radius: 16px; background: var(--fp-surface); box-shadow: 0 8px 24px #151a2106; }
+.directoryImageFrame { width: 100%; height: 148px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--fp-border); border-radius: 10px; background: var(--fp-surface); }
+.directoryImage { display: block; width: 100%; height: 100%; object-fit: contain; }
+.directoryDetails { min-width: 0; }
+.directoryDetails h3 { font-size: 23px; letter-spacing: -.7px; line-height: 1.25; margin: 0 0 16px; overflow-wrap: anywhere; }
+.directoryAddress, .directoryPhone { display: flex; align-items: flex-start; gap: 12px; color: var(--fp-client-muted); font-size: 15px; line-height: 1.6; min-height: 40px; }
+.directoryAddress > svg, .directoryPhone > svg { margin-top: 2px; }
+.directoryAddress > span { text-decoration: underline; text-underline-offset: 4px; overflow-wrap: anywhere; }
+.directoryAddress span svg, .directoryMaps span svg { display: inline-block; vertical-align: -2px; }
+.directoryAddress:hover, .directoryPhone:hover { color: var(--fp-client-green); }
+.directoryActions { border-left: 1px solid var(--fp-border); min-height: 132px; padding-left: 26px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+.directoryMaps { display: flex; align-items: center; justify-content: center; gap: 10px; border: 1px solid var(--fp-client-green); color: var(--fp-client-green); border-radius: 12px; min-height: 52px; padding: 10px 12px; font-size: 14px; font-weight: 600; }
+.directoryMaps:hover { background: var(--fp-lime-soft); }
+.directoryCall { display: flex; align-items: center; gap: 18px; min-height: 44px; padding: 4px; color: var(--fp-client-muted); font-size: 15px; }
+.directoryCall span { text-decoration: underline; text-underline-offset: 4px; color: var(--fp-client-green); }
 .directoryNotice { padding: 30px 0; color: var(--fp-client-muted); line-height: 1.7; }
 .directoryRetry { background: var(--fp-graphite); color: white; margin: 16px 20px 0 0; cursor: pointer; }
-.directoryHelp { margin-top: 24px; }
+.directoryHelp { color: var(--fp-client-muted); font-size: 13px; line-height: 1.6; margin: 26px 0 0; }
 @media (min-width: 901px) and (max-width: 1250px) {
   .navigation { gap: 14px; }
   .header { gap: 18px; }
   .headerCta { display: none; }
+  .directoryCard { grid-template-columns: 180px minmax(0, 1fr) 230px; gap: 20px; padding: 20px; }
+  .directoryActions { padding-left: 20px; }
 }
 @media (max-width: 900px) {
-  .directoryGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-  .directoryGrid li { padding: 18px; }
-  .directoryToolbar { align-items: stretch; flex-direction: column; gap: 12px; }
-  .directorySearch { width: 100%; }
-  .directoryToolbar > p { margin: 0; }
+  .directoryHeading h2 { letter-spacing: -1.8px; }
+  .directoryToolbar { gap: 14px; margin: 26px 0 20px; }
+  .directoryToolbar > p { font-size: 13px; }
+  .directorySearch { padding: 0 14px; gap: 10px; }
+  .directorySearch input { height: 52px; }
+  .directoryCard { grid-template-columns: 120px minmax(0, 1fr); align-items: start; padding: 20px; gap: 20px; }
+  .directoryImageFrame { height: 100px; }
+  .directoryDetails h3 { font-size: 20px; letter-spacing: -.4px; margin-bottom: 12px; }
+  .directoryAddress, .directoryPhone { font-size: 14px; gap: 8px; }
+  .directoryActions { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: stretch; border-left: 0; border-top: 1px solid var(--fp-border); padding: 16px 0 0; min-height: 0; gap: 18px; }
+  .directoryMaps { flex: 1; }
+  .directoryCall { padding: 4px 10px; gap: 10px; }
 }
-@media (max-width: 540px) { .directoryGrid { grid-template-columns: 1fr; } }
-.directoryImage { width: calc(100% + 48px); height: 180px; object-fit: cover; margin: -24px -24px 22px; border-radius: var(--fp-radius-lg) var(--fp-radius-lg) 0 0; background: var(--fp-surface); }
-.directoryAddress { display: flex; align-items: flex-start; gap: 8px; color: var(--fp-client-muted); font-size: 14px; line-height: 1.6; margin: 0 0 10px; }
-.directoryAddress svg { margin-top: 3px; }
-.directoryPhone { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; min-height: 44px; margin-bottom: 12px; }
-@media (max-width: 900px) { .directoryImage { width: calc(100% + 36px); margin: -18px -18px 20px; } }
+@media (max-width: 480px) {
+  .directoryToolbar { flex-wrap: wrap; gap: 12px; }
+  .directorySearch { flex-basis: 100%; }
+  .directoryToolbar > p { margin-left: auto; }
+  .directoryCard { grid-template-columns: 1fr; gap: 18px; }
+  .directoryImageFrame { width: 100%; height: 150px; }
+  .directoryActions { flex-direction: column; align-items: stretch; gap: 10px; }
+  .directoryCall { justify-content: center; }
+}
