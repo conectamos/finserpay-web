@@ -132,12 +132,14 @@ incompleta, aceptación sin recibo, historial, PDF congelado, webhook firmado y 
 Los proveedores se inyectan y ningún test usa credenciales reales.
 La revisión visual de escritorio y 320 px utiliza respuestas HTTP simuladas.
 
-Resultado de verificación del 21/10/2026: 114/114 pruebas aprobadas, npm run build
+Resultado de verificación del 21/10/2026: 119/119 pruebas aprobadas, npm run build
 completado con TypeScript y 105 páginas estáticas, y ESLint focalizado aprobado.
 La prueba integral usa PostgreSQL embebido, PDFKit real y proveedores simulados;
 verifica el mismo PDF por ambos canales, ausencia de duplicados y aislamiento por aliado.
-Los instaladores de esquema se probaron en bases aisladas. No se ejecutaron migraciones
-en producción, no se desplegó esta rama y no se activaron credenciales ni envíos reales.
+Los instaladores de esquema se probaron en bases aisladas. Las verificaciones locales
+no ejecutan migraciones productivas ni envían mensajes. El despliegue ejecuta los
+instaladores aditivos mediante railway-predeploy.mjs; conservar
+ALLY_SETTLEMENT_DELIVERY_ENABLED=false hasta completar la configuración de ambos canales.
 
 Referencias oficiales: [adjuntos Resend](https://resend.com/docs/dashboard/emails/attachments),
 [idempotencia Resend](https://resend.com/docs/dashboard/emails/idempotency-keys),
