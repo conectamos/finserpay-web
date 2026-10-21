@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { runInNewContext } from "node:vm";
 import { createJiti } from "jiti";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import ts from "typescript";
+import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("../", import.meta.url)) } });
 const { buildAllyPaymentSettlementPdf } = await jiti.import("../lib/ally-payment-settlement-pdf.ts");
@@ -523,16 +521,13 @@ function pdfRouteFixture(snapshot, access) {
       buildAllyPaymentSettlementPdf: async input => { calls.push(["pdf", input]); return buildAllyPaymentSettlementPdf(input); },
     },
   };
-  const source = readFileSync(new URL("../app/api/pagos-aliados/[id]/comprobante/route.ts", import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source, { compilerOptions: {
-    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
-  } }).outputText;
-  const loadedModule = { exports: {} };
-  runInNewContext(compiled, {
-    module: loadedModule, exports: loadedModule.exports, Date, URL, Uint8Array, console,
-    require(name) { assert.ok(name in dependencies, `Dependencia inesperada: ${name}`); return dependencies[name]; },
-  });
-  return { get: loadedModule.exports.GET, calls };
+  // Execute the shared mapper used by downloads and outbound delivery. Keep the
+  // real PDF builder so the assertions below still inspect the complete PDF.
+  dependencies["@/lib/ally-settlement-document"] = loadReissueModule(
+    "lib/ally-settlement-document.ts", dependencies
+  );
+  const route = loadReissueModule("app/api/pagos-aliados/[id]/comprobante/route.ts", dependencies);
+  return { get: route.GET, calls };
 }
 
 test("imprimir y descargar consultan el snapshot completo con el mismo alcance, independientemente de la página visible", async t => {

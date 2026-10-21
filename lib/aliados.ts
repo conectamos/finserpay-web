@@ -40,6 +40,12 @@ async function runAliadoSchemaSetup(prisma: AliadoSchemaClient) {
 
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "Aliado"
+      ADD COLUMN IF NOT EXISTS "email" TEXT,
+      ADD COLUMN IF NOT EXISTS "telefonoWhatsapp" TEXT
+  `);
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "Aliado"
       ADD COLUMN IF NOT EXISTS "redescuentoPorcentaje" DOUBLE PRECISION NOT NULL DEFAULT ${DEFAULT_REDESCUENTO_PERCENTAGE}
   `);
 

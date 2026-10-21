@@ -36,6 +36,7 @@ import {
 import { ensureCreditAllyPaymentExclusionSchema } from "@/lib/credit-ally-payment-exclusion-storage";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
 import prisma from "@/lib/prisma";
+import { enqueueInitialSettlementDeliveries } from "@/lib/ally-settlement-delivery-store";
 
 const PAYMENT_CALCULATION_VERSION =
   "ALLY_INTERMEDIATION_COLLECTIONS_ANNULMENTS_CENTRAL_ADJUSTMENTS_V4";
@@ -1178,8 +1179,10 @@ export async function createAllyPayment(input: {
           include: SETTLEMENT_INCLUDE,
         });
 
+        const settlement = serializeSettlement(created);
+        await enqueueInitialSettlementDeliveries(tx, settlement, actorUserId);
         return {
-          ...serializeSettlement(created),
+          ...settlement,
           idempotent: false,
         };
       },

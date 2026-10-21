@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
+import { runSettlementDeliveryQueue } from "@/lib/ally-settlement-delivery-service";
 import { withSettlementDisplayNumbers } from "@/lib/credit-display-number-server";
 import {
   canCreateAllyPayment,
@@ -264,6 +265,11 @@ export async function POST(request: Request) {
       intermediationAdjustments: body.ajustesIntermediacion,
       registradoPorUsuarioId: access.user.id,
       registradoPorNombre: access.user.nombre,
+    });
+
+    after(async () => {
+      try { await runSettlementDeliveryQueue(result.id); }
+      catch { console.error("[settlement-delivery] Liquidación guardada; el worker recuperará los envíos pendientes."); }
     });
 
     return response(

@@ -11,4 +11,6 @@ export async function register() {
   startInternalCron();
   const { startSolicitudExportWorker } = await import("./lib/solicitudes-export-jobs");
   startSolicitudExportWorker();
+  const { startSettlementDeliveryWorker } = await import("./lib/ally-settlement-delivery-service");
+  startSettlementDeliveryWorker();
 }

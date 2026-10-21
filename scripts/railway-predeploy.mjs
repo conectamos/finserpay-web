@@ -1,6 +1,8 @@
 await import("./ensure-aliado-redescuento-schema.mjs");
 await import("./ensure-document-blacklist-schema.mjs");
 await import("./ensure-ally-payments-schema.mjs");
+await import("./ensure-ally-contact-schema.mjs");
+await import("./ensure-ally-settlement-delivery-schema.mjs");
 await import("./ensure-iphone-identity-evidence-column.mjs");
 await import("./ensure-datacredito-schema.mjs");
 await import("./ensure-credit-amortization-schema.mjs");
