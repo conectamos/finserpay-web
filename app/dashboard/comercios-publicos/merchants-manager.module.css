@@ -32,3 +32,6 @@
 .error { color: var(--fp-danger); background: var(--fp-danger-soft); }
 @media(max-width: 1050px) { .columns { grid-template-columns: 1fr; } }
 @media(max-width: 600px) { .workspace { padding: 20px 16px; } .merchant { flex-direction: column; } .thumbnail { width: 100%; height: 170px; } }
+.formAnchor > div { padding: 24px; }
+.columns > section > :global(.fp-ui-card) { padding: 24px; }
+.merchant { padding: 20px; }
