@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { creditWelcomeVoiceSchemaStatements } from "../scripts/credit-welcome-voice-schema.mjs";
+import { creditWelcomeVoiceSchemaStatements as legacySchemaStatements } from "./fixtures/credit-welcome-voice-schema-94c2f5e.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
@@ -196,11 +196,9 @@ test("manual request and metadata roll back together and validation rejects wron
 
 test("schema upgrade preserves old calls, allows audited operator attempts and old installers never remove the additive support", async t => {
   const f = await fixture(t);
-  const oldSource = execFileSync("git", ["show", "94c2f5e:scripts/credit-welcome-voice-schema.mjs"], { cwd: root, encoding: "utf8" });
-  const oldModule = await import(`data:text/javascript;base64,${Buffer.from(oldSource).toString("base64")}`);
   const call = await f.store.prepareCreditWelcomeVoiceOperatorCall(input());
   await f.complete(call); const history = await f.events(), audit = await f.requests();
-  for (const statement of oldModule.creditWelcomeVoiceSchemaStatements) await f.db.exec(statement);
+  for (const statement of legacySchemaStatements) await f.db.exec(statement);
   for (const statement of creditWelcomeVoiceSchemaStatements) await f.db.exec(statement);
   assert.deepEqual(await f.events(), history); assert.deepEqual(await f.requests(), audit);
   assert.equal((await f.store.prepareCreditWelcomeVoiceOperatorCall(input({ requestId: requestId2 }))).created, true);
