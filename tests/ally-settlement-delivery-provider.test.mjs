@@ -262,3 +262,77 @@ test("unproven WABA ownership, repeated cursors, and excessive pages cannot uplo
     assert.ok(!f.calls.some(call => call.url.includes("/message_templates?") || call.options.method === "POST"));
   }
 });
+
+test("dedicated settlement Meta configuration takes priority without changing shared integration values", async () => {
+  const dedicated = Object.freeze({
+    ...env,
+    WHATSAPP_SETTLEMENT_ACCESS_TOKEN: "dedicated-fixture-token",
+    WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID: "444444444444444",
+    WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID: "555555555555555",
+  });
+  const before = JSON.stringify(dedicated);
+  const phone = { id: dedicated.WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID, display_phone_number: "+57 312 4085562" };
+  const f = fixture({ phone, numbers: [phone] });
+  assert.deepEqual(await sendSettlementDelivery(input("WHATSAPP"), { env: dedicated, fetch: f.fetcher }), { providerId: "wamid.fixture123==" });
+  assert.equal(f.calls.length, 5);
+  for (const call of f.calls) {
+    assert.equal(call.options.headers.Authorization, "Bearer dedicated-fixture-token");
+    assert.ok(!call.url.includes(`/${env.WHATSAPP_PHONE_NUMBER_ID}`));
+    assert.ok(!call.url.includes(`/${env.WHATSAPP_BUSINESS_ACCOUNT_ID}`));
+  }
+  assert.ok(f.calls[0].url.includes(`/${dedicated.WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID}?`));
+  assert.ok(f.calls[1].url.includes(`/${dedicated.WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID}/phone_numbers?`));
+  assert.ok(f.calls[2].url.includes(`/${dedicated.WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID}/message_templates?`));
+  assert.ok(f.calls[4].url.endsWith(`/${dedicated.WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID}/messages`));
+  assert.equal(JSON.stringify(dedicated), before);
+  assert.equal(dedicated.WHATSAPP_ACCESS_TOKEN, env.WHATSAPP_ACCESS_TOKEN);
+  assert.equal(dedicated.WHATSAPP_PHONE_NUMBER_ID, env.WHATSAPP_PHONE_NUMBER_ID);
+  assert.equal(dedicated.WHATSAPP_BUSINESS_ACCOUNT_ID, env.WHATSAPP_BUSINESS_ACCOUNT_ID);
+});
+
+test("omitted dedicated Meta settings fall back individually while invalid defined overrides never fall back", async () => {
+  const f = fixture();
+  const tokenOnly = { ...env, WHATSAPP_SETTLEMENT_ACCESS_TOKEN: "dedicated-token-only" };
+  assert.deepEqual(await sendSettlementDelivery(input("WHATSAPP"), { env: tokenOnly, fetch: f.fetcher }), { providerId: "wamid.fixture123==" });
+  assert.ok(f.calls.every(call => call.options.headers.Authorization === "Bearer dedicated-token-only"));
+  assert.ok(f.calls[0].url.includes(`/${env.WHATSAPP_PHONE_NUMBER_ID}?`));
+  assert.ok(f.calls[1].url.includes(`/${env.WHATSAPP_BUSINESS_ACCOUNT_ID}/phone_numbers?`));
+  for (const [name, value] of [
+    ["WHATSAPP_SETTLEMENT_ACCESS_TOKEN", ""],
+    ["WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID", ""],
+    ["WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID", "not-a-phone-id"],
+    ["WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID", " "],
+    ["WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID", "https://wrong.invalid"],
+  ]) {
+    const invalid = fixture();
+    await rejectsSafely(() => sendSettlementDelivery(input("WHATSAPP"), {
+      env: { ...env, [name]: value }, fetch: invalid.fetcher,
+    }), new RegExp(name));
+    assert.equal(invalid.calls.length, 0);
+  }
+});
+
+test("partial or mismatched dedicated sender overrides still require the official phone and matching WABA", async () => {
+  const dedicatedPhoneId = "444444444444444";
+  const dedicatedBusinessId = "555555555555555";
+  for (const [patch, overrides, expected] of [
+    [{ WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID: dedicatedPhoneId }, {
+      phone: { id: dedicatedPhoneId, display_phone_number: "+57 300 1234567" },
+    }, /WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID/],
+    [{ WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID: dedicatedPhoneId }, {
+      phone: { id: dedicatedPhoneId, display_phone_number: "+57 312 4085562" },
+      numbers: [{ id: env.WHATSAPP_PHONE_NUMBER_ID, display_phone_number: "+57 312 4085562" }],
+    }, /WHATSAPP_BUSINESS_ACCOUNT_ID/],
+    [{ WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID: dedicatedPhoneId, WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID: dedicatedBusinessId }, {
+      phone: { id: dedicatedPhoneId, display_phone_number: "+57 312 4085562" }, numbers: [],
+    }, /WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID/],
+  ]) {
+    const f = fixture(overrides);
+    let boundary = false;
+    await rejectsSafely(() => sendSettlementDelivery(input("WHATSAPP"), {
+      env: { ...env, ...patch }, fetch: f.fetcher, beforeSend: async () => { boundary = true; },
+    }), expected);
+    assert.equal(boundary, false);
+    assert.ok(f.calls.every(call => call.options.method !== "POST"));
+  }
+});

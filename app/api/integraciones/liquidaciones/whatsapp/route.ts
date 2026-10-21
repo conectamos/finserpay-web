@@ -18,11 +18,13 @@ export async function POST(request: Request) {
   let raw: string;
   try { raw = await readDeliveryBody(request, 256_000); }
   catch (error) { return new Response("Invalid body", { status: error instanceof DeliveryBodyTooLargeError ? 413 : 400 }); }
-  if (!verifySettlementWebhook(raw, request.headers.get("x-hub-signature-256"), process.env.WHATSAPP_APP_SECRET)) {
+  const secret = process.env.WHATSAPP_SETTLEMENT_APP_SECRET ?? process.env.WHATSAPP_APP_SECRET;
+  if (!verifySettlementWebhook(raw, request.headers.get("x-hub-signature-256"), secret)) {
     return new Response("Forbidden", { status: 403 });
   }
   try {
-    const events = settlementWebhookEvents(JSON.parse(raw), process.env.WHATSAPP_PHONE_NUMBER_ID || "");
+    const phoneId = (process.env.WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID ?? process.env.WHATSAPP_PHONE_NUMBER_ID ?? "").trim();
+    const events = settlementWebhookEvents(JSON.parse(raw), phoneId);
     for (const event of events) await settlementDeliveryStore.reconcileWhatsApp(event);
     return NextResponse.json({ ok: true });
   } catch { return NextResponse.json({ ok: false }, { status: 500 }); }

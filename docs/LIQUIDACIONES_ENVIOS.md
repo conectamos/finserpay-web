@@ -47,26 +47,40 @@ instaladores: la cola sigue el patrón SQL del proyecto.
 | ALLY_SETTLEMENT_DELIVERY_ENABLED | true solo al activar envíos reales. Ausente/otro valor impide mensajes y registra error de configuración. |
 | RESEND_API_KEY | Reutiliza la clave existente; necesita enviar y consultar el dominio mediante GET /domains/:id. |
 | RESEND_SETTLEMENT_DOMAIN_ID | UUID del dominio raíz finserpay.com en la misma cuenta Resend. |
-| WHATSAPP_ACCESS_TOKEN | Reutiliza la integración Meta; permisos whatsapp_business_messaging y whatsapp_business_management sobre el número y WABA. |
-| WHATSAPP_PHONE_NUMBER_ID | ID Meta cuyo display_phone_number sea exactamente +57 3124085562; se verifica antes de cada envío. |
-| WHATSAPP_BUSINESS_ACCOUNT_ID | WABA que contiene la plantilla aprobada. |
+| WHATSAPP_SETTLEMENT_ACCESS_TOKEN | Token exclusivo de liquidaciones con permisos whatsapp_business_messaging y whatsapp_business_management sobre el número y WABA oficiales. Si no está definido, usa WHATSAPP_ACCESS_TOKEN sin modificarlo. |
+| WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID | 1162059967000416, confirmado para +57 3124085562; se verifica display_phone_number antes de cada envío. Si no está definido, usa WHATSAPP_PHONE_NUMBER_ID. |
+| WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID | 2148284059050848, WABA del número oficial y de la plantilla aprobada. Si no está definido, usa WHATSAPP_BUSINESS_ACCOUNT_ID. Se verifica que la cuenta contiene el número. |
 | WHATSAPP_GRAPH_API_VERSION | Reutiliza la versión existente; v25.0 por defecto. |
 | WHATSAPP_SETTLEMENT_TEMPLATE_NAME | Nombre de la nueva plantilla aprobada con encabezado DOCUMENT. |
 | WHATSAPP_SETTLEMENT_TEMPLATE_LANGUAGE | Idioma exacto aprobado, por ejemplo es_CO; no se toma el idioma de otras campañas. |
-| WHATSAPP_APP_SECRET | Secreto de la app Meta para verificar firmas de los webhooks. |
+| WHATSAPP_SETTLEMENT_APP_SECRET | Secreto de la app Meta dedicada al número oficial para verificar firmas del webhook. Si no está definido, usa WHATSAPP_APP_SECRET. |
 | WHATSAPP_SETTLEMENT_VERIFY_TOKEN | Secreto aleatorio de al menos 32 caracteres para verificar la suscripción del webhook. |
 
 Todas las credenciales deben almacenarse en variables servidor, nunca NEXT_PUBLIC.
+Las variables WHATSAPP_SETTLEMENT_* tienen prioridad únicamente para liquidaciones;
+no se escriben ni cambian las variables compartidas ni las integraciones existentes.
+Una variable dedicada definida pero vacía o inválida bloquea su operación: no se
+reemplaza silenciosamente por el valor compartido. Una configuración parcial sigue
+obligada a demostrar el número oficial, su pertenencia al WABA y la plantilla aprobada.
+El webhook usa el mismo PHONE_NUMBER_ID efectivo que el envío y rechaza firmas del
+secreto compartido cuando existe WHATSAPP_SETTLEMENT_APP_SECRET.
 El remitente de correo está fijado en FINSER PAY <pagos@finserpay.com>.
 El adaptador verifica que Resend tenga finserpay.com verificado y envío habilitado;
 no sustituye el remitente por otro dominio. La presencia de una clave no se considera
 prueba de autorización.
 
-La auditoría de solo lectura encontró las claves básicas de Resend y Meta en Railway,
-pero sus valores están ocultos. La cuenta Dapta FINSERPAY tiene un canal Meta activo
-con ID 1162059967000416; eso no demuestra su número visible. Las 14 plantillas consultadas
-no incluían liquidaciones ni encabezados DOCUMENT. Faltan el dominio verificado/ID de
-Resend y acceso de lectura, la confirmación del número Meta y la plantilla aprobada.
+La auditoría inicial encontró claves básicas de Resend y Meta en Railway y 14 plantillas
+sin liquidaciones ni encabezados DOCUMENT. La revisión posterior confirmó el número
+oficial +57 3124085562 en PHONE_NUMBER_ID 1162059967000416 y WABA 2148284059050848.
+La integración compartida productiva usa +57 3113539730 y su token no tiene acceso
+al número oficial de liquidaciones; se conservan sus variables. Railway tiene ahora
+los IDs dedicados y ALLY_SETTLEMENT_DELIVERY_ENABLED=false.
+Resend se verificó mediante la clave existente: dominio finserpay.com, estado verified,
+capabilities.sending=enabled e ID 1b0966af-1f99-48ca-8f92-870f3c92d47a, guardado en
+RESEND_SETTLEMENT_DOMAIN_ID. No se envió correo para comprobarlo.
+El token de verificación del webhook se generó y almacenó directamente en Railway.
+La activación sigue requiriendo un token Meta con acceso al WABA oficial, la plantilla
+aprobada, el secreto de su app y una suscripción compatible con el callback actual de Dapta.
 
 ## Plantilla Meta
 

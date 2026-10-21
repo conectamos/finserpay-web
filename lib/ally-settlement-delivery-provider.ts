@@ -48,6 +48,13 @@ function required(env: NodeJS.ProcessEnv, key: string, pattern?: RegExp): string
   return value;
 }
 
+function settlementWhatsAppKey(env: NodeJS.ProcessEnv, suffix: "ACCESS_TOKEN" | "PHONE_NUMBER_ID" | "BUSINESS_ACCOUNT_ID") {
+  const dedicated = `WHATSAPP_SETTLEMENT_${suffix}`;
+  // A defined but invalid override must fail closed; it must never silently
+  // switch to another campaign's shared sender or credentials.
+  return env[dedicated] !== undefined ? dedicated : `WHATSAPP_${suffix}`;
+}
+
 function normalizeTemplateText(value: unknown) {
   return typeof value === "string" ? value.normalize("NFC").replace(/\s+/g, " ").trim() : "";
 }
@@ -130,9 +137,11 @@ async function sendEmail(input: SettlementDeliveryInput, options: Options, env: 
 }
 
 async function sendWhatsApp(input: SettlementDeliveryInput, options: Options, env: NodeJS.ProcessEnv, fetcher: typeof fetch) {
-  const token = required(env, "WHATSAPP_ACCESS_TOKEN");
-  const phoneId = required(env, "WHATSAPP_PHONE_NUMBER_ID", NUMERIC_ID);
-  const businessId = required(env, "WHATSAPP_BUSINESS_ACCOUNT_ID", NUMERIC_ID);
+  const token = required(env, settlementWhatsAppKey(env, "ACCESS_TOKEN"));
+  const phoneKey = settlementWhatsAppKey(env, "PHONE_NUMBER_ID");
+  const businessKey = settlementWhatsAppKey(env, "BUSINESS_ACCOUNT_ID");
+  const phoneId = required(env, phoneKey, NUMERIC_ID);
+  const businessId = required(env, businessKey, NUMERIC_ID);
   const version = env.WHATSAPP_GRAPH_API_VERSION?.trim() || "v25.0";
   if (!/^v\d{1,3}\.\d{1,2}$/.test(version)) throw new DeliveryProviderError("WHATSAPP_GRAPH_API_VERSION no es válida.");
   const templateName = required(env, "WHATSAPP_SETTLEMENT_TEMPLATE_NAME", /^[a-z0-9_]{1,512}$/);
@@ -141,7 +150,7 @@ async function sendWhatsApp(input: SettlementDeliveryInput, options: Options, en
   const headers = { Authorization: `Bearer ${token}` };
   const phone = await providerRequest(fetcher, `${base}/${phoneId}?fields=id,display_phone_number`, { headers }, "Verificación del número de WhatsApp");
   if (phone.id !== phoneId || normalizeWhatsAppRecipient(phone.display_phone_number) !== SETTLEMENT_WHATSAPP_SENDER) {
-    throw new DeliveryProviderError("WHATSAPP_PHONE_NUMBER_ID debe corresponder al número oficial +57 3124085562.");
+    throw new DeliveryProviderError(`${phoneKey} debe corresponder al número oficial +57 3124085562.`);
   }
   // A template name is scoped to a WABA. Prove the checked template catalogue
   // owns this sender; a similarly named template in another WABA is not evidence.
@@ -168,7 +177,7 @@ async function sendWhatsApp(input: SettlementDeliveryInput, options: Options, en
     cursor = nextCursor;
   }
   if (!ownsPhone) {
-    throw new DeliveryProviderError("WHATSAPP_BUSINESS_ACCOUNT_ID debe contener el número oficial configurado +57 3124085562.");
+    throw new DeliveryProviderError(`${businessKey} debe contener el número oficial configurado +57 3124085562.`);
   }
   const query = new URLSearchParams({ name: templateName, fields: "name,status,language,components,parameter_format", limit: "100" });
   const catalogue = await providerRequest(fetcher, `${base}/${businessId}/message_templates?${query}`, { headers }, "Verificación de plantilla de WhatsApp");
