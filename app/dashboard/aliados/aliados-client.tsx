@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { normalizeAllyEmail, normalizeAllyWhatsApp } from "@/lib/ally-contact";
 import {
   Building2,
   ChevronDown,
@@ -36,6 +37,8 @@ type AliadoItem = {
   id: number;
   nombre: string;
   codigo: string | null;
+  email: string | null;
+  telefonoWhatsapp: string | null;
   activo: boolean;
   redescuentoPorcentaje?: number;
   redescuentoAndroidPorcentaje?: number;
@@ -47,6 +50,7 @@ type AliadoItem = {
 };
 
 type RedescuentoPlataforma = "android" | "iphone";
+type ContactoAliado = { email: string; telefonoWhatsapp: string };
 
 type RedescuentoInputState = Record<
   number,
@@ -143,6 +147,9 @@ export default function AliadosClient() {
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [codigo, setCodigo] = useState("");
+  const [email, setEmail] = useState("");
+  const [telefonoWhatsapp, setTelefonoWhatsapp] = useState("");
+  const [contactos, setContactos] = useState<Record<number, ContactoAliado>>({});
   const [redescuentoAndroidPorcentaje, setRedescuentoAndroidPorcentaje] =
     useState("10");
   const [redescuentoIphonePorcentaje, setRedescuentoIphonePorcentaje] =
@@ -154,7 +161,6 @@ export default function AliadosClient() {
 
   const cargarAliados = async () => {
     try {
-      setMensaje("");
       const res = await fetch("/api/aliados/admin", { cache: "no-store" });
       const data = (await res.json()) as Partial<AliadosPayload> & {
         error?: string;
@@ -168,6 +174,9 @@ export default function AliadosClient() {
       const items = Array.isArray(data.aliados) ? data.aliados : [];
       setSistemaCentral(data.sistemaCentral || null);
       setAliados(items);
+      setContactos(Object.fromEntries(items.map((aliado) => [aliado.id, {
+        email: aliado.email || "", telefonoWhatsapp: aliado.telefonoWhatsapp || "",
+      }])));
       setEsCentral(Boolean(data.scope?.central));
       setRedescuentoInputs(
         items.reduce((acc: RedescuentoInputState, aliado) => {
@@ -208,6 +217,8 @@ export default function AliadosClient() {
         body: JSON.stringify({
           nombre,
           codigo,
+          email: normalizeAllyEmail(email),
+          telefonoWhatsapp: normalizeAllyWhatsApp(telefonoWhatsapp),
           redescuentoAndroidPorcentaje,
           redescuentoIphonePorcentaje,
         }),
@@ -223,11 +234,13 @@ export default function AliadosClient() {
       setMensaje(data.mensaje || "Aliado creado correctamente");
       setNombre("");
       setCodigo("");
+      setEmail("");
+      setTelefonoWhatsapp("");
       setRedescuentoAndroidPorcentaje("10");
       setRedescuentoIphonePorcentaje("10");
       await cargarAliados();
-    } catch {
-      setMensaje("Error creando aliado");
+    } catch (error) {
+      setMensaje(error instanceof Error ? error.message : "Error creando aliado");
     } finally {
       setGuardando(false);
     }
@@ -265,6 +278,41 @@ export default function AliadosClient() {
         [aliadoId]: siguiente,
       };
     });
+  };
+
+  const guardarContacto = async (aliado: AliadoItem) => {
+    const contacto = contactos[aliado.id] || { email: aliado.email || "", telefonoWhatsapp: aliado.telefonoWhatsapp || "" };
+    try {
+      setProcesandoId(aliado.id);
+      setMensaje("");
+      const res = await fetch("/api/aliados/admin", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aliadoId: aliado.id,
+          email: normalizeAllyEmail(contacto.email),
+          telefonoWhatsapp: normalizeAllyWhatsApp(contacto.telefonoWhatsapp),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMensaje(data.error || "No se pudo guardar el contacto del aliado");
+        return;
+      }
+      await cargarAliados();
+      setMensaje("Contacto del aliado actualizado correctamente");
+    } catch (error) {
+      setMensaje(error instanceof Error ? error.message : "Error guardando el contacto del aliado");
+    } finally {
+      setProcesandoId(null);
+    }
+  };
+
+  const editarContacto = (aliado: AliadoItem, field: keyof ContactoAliado, value: string) => {
+    setContactos((actual) => ({ ...actual, [aliado.id]: {
+      ...(actual[aliado.id] || { email: aliado.email || "", telefonoWhatsapp: aliado.telefonoWhatsapp || "" }),
+      [field]: value,
+    } }));
   };
 
   const crearSede = async (aliado: AliadoItem) => {
@@ -382,7 +430,7 @@ export default function AliadosClient() {
     (total, aliado) => total + Number(aliado.totalRecaudos || 0),
     0
   );
-  const mensajeEsError = /error|no se pudo/i.test(mensaje);
+  const mensajeEsError = /error|no se pudo|inválido|inválida/i.test(mensaje);
 
   return (
     <main className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
@@ -589,7 +637,7 @@ export default function AliadosClient() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(140px,0.55fr)_minmax(155px,0.45fr)_minmax(155px,0.45fr)_170px] xl:items-end">
+              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4 xl:items-end">
                 <label className="flex flex-col gap-2 text-sm font-semibold text-[#344054]">
                   Nombre comercial
                   <Input
@@ -605,6 +653,16 @@ export default function AliadosClient() {
                     onChange={(event) => setCodigo(event.target.value)}
                     placeholder="PUNTO-CELULAR"
                   />
+                </label>
+                <label className="flex flex-col gap-2 text-sm font-semibold text-[var(--fp-graphite)]">
+                  Correo electrónico
+                  <Input type="email" autoComplete="email" maxLength={254} value={email}
+                    onChange={(event) => setEmail(event.target.value)} placeholder="Correo para liquidaciones" />
+                </label>
+                <label className="flex flex-col gap-2 text-sm font-semibold text-[var(--fp-graphite)]">
+                  WhatsApp
+                  <Input type="tel" autoComplete="tel" maxLength={32} value={telefonoWhatsapp}
+                    onChange={(event) => setTelefonoWhatsapp(event.target.value)} placeholder="Celular con indicativo" />
                 </label>
                 <label className="flex flex-col gap-2 text-sm font-semibold text-[#344054]">
                   Android (%)
@@ -734,6 +792,38 @@ export default function AliadosClient() {
                       </summary>
 
                       <div className="border-t border-[#e4e7ec] bg-[#f8fafb]">
+                        <section className="border-b border-[var(--fp-border)] p-5 sm:p-6" aria-label={`Contacto de ${aliado.nombre}`}>
+                          <h3 className="text-sm font-bold text-[var(--fp-graphite)]">Envío de liquidaciones</h3>
+                          <p className="mt-2 text-sm text-[var(--fp-muted)]">
+                            Cada liquidación se envía al correo y al WhatsApp registrados aquí. Si falta un dato, se usa únicamente el canal disponible.
+                          </p>
+                          <div className="mt-4 grid items-end gap-4 md:grid-cols-[1fr_1fr_auto]">
+                            <label className="flex min-w-0 flex-col gap-2 text-sm font-semibold text-[var(--fp-graphite)]">
+                              Correo electrónico
+                              <Input type="email" autoComplete="email" maxLength={254}
+                                value={contactos[aliado.id]?.email ?? aliado.email ?? ""}
+                                onChange={(event) => editarContacto(aliado, "email", event.target.value)}
+                                placeholder="Correo para liquidaciones" />
+                            </label>
+                            <label className="flex min-w-0 flex-col gap-2 text-sm font-semibold text-[var(--fp-graphite)]">
+                              WhatsApp
+                              <Input type="tel" autoComplete="tel" maxLength={32}
+                                value={contactos[aliado.id]?.telefonoWhatsapp ?? aliado.telefonoWhatsapp ?? ""}
+                                onChange={(event) => editarContacto(aliado, "telefonoWhatsapp", event.target.value)}
+                                placeholder="Celular con indicativo" />
+                            </label>
+                            <Button variant="secondary" onClick={() => guardarContacto(aliado)} disabled={procesandoId !== null}>
+                              <Save className="h-4 w-4" aria-hidden="true" />
+                              {procesandoId === aliado.id ? "Guardando..." : "Guardar contacto"}
+                            </Button>
+                          </div>
+                          {(!aliado.email || !aliado.telefonoWhatsapp) && (
+                            <p className="mt-3 text-sm text-[var(--fp-muted)]">
+                              {!aliado.email ? "Falta registrar el correo electrónico. " : ""}
+                              {!aliado.telefonoWhatsapp ? "Falta registrar el teléfono de WhatsApp." : ""}
+                            </p>
+                          )}
+                        </section>
                         <div className="grid xl:grid-cols-[0.72fr_1.45fr]">
                           {esCentral ? (
                             <section className="border-b border-[#e4e7ec] p-5 sm:p-6 xl:border-b-0 xl:border-r">

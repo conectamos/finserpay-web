@@ -52,6 +52,10 @@ COPY --from=builder \
   /app/scripts/correct-historic-mass-credit-first-payments-20260925.mjs \
   /app/scripts/ensure-aliado-redescuento-schema.mjs \
   /app/scripts/ensure-ally-payments-schema.mjs \
+  /app/scripts/ensure-ally-contact-schema.mjs \
+  /app/scripts/ally-contact-schema.mjs \
+  /app/scripts/ensure-ally-settlement-delivery-schema.mjs \
+  /app/scripts/ally-settlement-delivery-schema.mjs \
   /app/scripts/credit-abono-ally-attribution-schema.mjs \
   /app/scripts/credit-ally-payment-exclusion-schema.mjs \
   /app/scripts/ally-payment-central-collection-adjustment-schema.mjs \

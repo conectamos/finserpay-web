@@ -1634,6 +1634,7 @@ export default function AllyPaymentsConsole({
         <HistoricalSettlementDetail
           key={String(selectedSettlement.id)}
           settlement={selectedSettlement}
+          adminCentral={adminCentral}
           summary={settlementSummary(selectedSettlement)}
           items={settlementItems(selectedSettlement)}
           collectionCount={collectionItems(selectedSettlement).length}

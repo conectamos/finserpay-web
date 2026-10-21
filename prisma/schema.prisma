@@ -80,6 +80,8 @@ model Aliado {
   id                              Int                                @id @default(autoincrement())
   nombre                          String                             @unique
   codigo                          String?                            @unique
+  email                           String?
+  telefonoWhatsapp                String?
   activo                          Boolean                            @default(true)
   redescuentoPorcentaje           Float                              @default(10)
   redescuentoAndroidPorcentaje    Float                              @default(10)

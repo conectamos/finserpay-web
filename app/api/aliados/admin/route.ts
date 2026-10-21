@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
+import { AllyContactValidationError, normalizeAllyEmail, normalizeAllyWhatsApp } from "@/lib/ally-contact";
 import {
   ensureAliadoConectamos,
   ensureAliadoFinserPay,
@@ -41,6 +42,13 @@ async function requireAdmin() {
     };
   }
 
+  if (!isFinserPayCentralAlly(user.aliadoAccesoCodigo) && !parseId(user.aliadoAccesoId)) {
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: "El usuario no tiene un aliado asignado" }, { status: 403 }),
+    };
+  }
+
   return { ok: true as const, user };
 }
 
@@ -70,6 +78,8 @@ async function loadAliadosPayload(aliadoScopeId: number | null) {
       id: true,
       nombre: true,
       codigo: true,
+      email: true,
+      telefonoWhatsapp: true,
       activo: true,
       redescuentoPorcentaje: true,
       redescuentoAndroidPorcentaje: true,
@@ -132,6 +142,8 @@ async function loadAliadosPayload(aliadoScopeId: number | null) {
         id: aliado.id,
         nombre: aliado.nombre,
         codigo: aliado.codigo,
+        email: aliado.email,
+        telefonoWhatsapp: aliado.telefonoWhatsapp,
         activo: aliado.activo,
         redescuentoPorcentaje: aliado.redescuentoPorcentaje,
         redescuentoAndroidPorcentaje:
@@ -178,7 +190,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       ...(await loadAliadosPayload(aliadoScopeId)),
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("ERROR GET ADMIN ALIADOS:", error);
     return NextResponse.json(
@@ -206,6 +218,8 @@ export async function POST(req: Request) {
     const body = (await req.json()) as Record<string, unknown>;
     const nombre = normalizeAllyName(body.nombre);
     const codigo = normalizeAllyCode(body.codigo || nombre);
+    const email = normalizeAllyEmail(body.email);
+    const telefonoWhatsapp = normalizeAllyWhatsApp(body.telefonoWhatsapp);
     const redescuentoPorcentajeAnterior = normalizeRedescuentoPercentage(
       body.redescuentoPorcentaje
     );
@@ -223,10 +237,13 @@ export async function POST(req: Request) {
       );
     }
 
+    await ensureAliadoSchema(prisma);
     await prisma.aliado.create({
       data: {
         nombre,
         codigo,
+        email,
+        telefonoWhatsapp,
         redescuentoPorcentaje: redescuentoAndroidPorcentaje,
         redescuentoAndroidPorcentaje,
         redescuentoIphonePorcentaje,
@@ -240,6 +257,9 @@ export async function POST(req: Request) {
       ...(await loadAliadosPayload(null)),
     });
   } catch (error) {
+    if (error instanceof AllyContactValidationError) {
+      return NextResponse.json({ error: error.message, field: error.field }, { status: 400 });
+    }
     console.error("ERROR POST ADMIN ALIADOS:", error);
     return NextResponse.json(
       { error: "Error creando aliado" },
@@ -274,6 +294,8 @@ export async function PATCH(req: Request) {
     const data: {
       nombre?: string;
       codigo?: string | null;
+      email?: string | null;
+      telefonoWhatsapp?: string | null;
       activo?: boolean;
       redescuentoPorcentaje?: number;
       redescuentoAndroidPorcentaje?: number;
@@ -296,6 +318,9 @@ export async function PATCH(req: Request) {
     if ("codigo" in body) {
       data.codigo = normalizeAllyCode(body.codigo);
     }
+
+    if ("email" in body) data.email = normalizeAllyEmail(body.email);
+    if ("telefonoWhatsapp" in body) data.telefonoWhatsapp = normalizeAllyWhatsApp(body.telefonoWhatsapp);
 
     if ("activo" in body) {
       data.activo = Boolean(body.activo);
@@ -345,6 +370,7 @@ export async function PATCH(req: Request) {
     }
 
     if (Object.keys(data).length > 0) {
+      await ensureAliadoSchema(prisma);
       await prisma.aliado.update({
         where: {
           id: aliadoId,
@@ -359,6 +385,9 @@ export async function PATCH(req: Request) {
       ...(await loadAliadosPayload(aliadoScopeId)),
     });
   } catch (error) {
+    if (error instanceof AllyContactValidationError) {
+      return NextResponse.json({ error: error.message, field: error.field }, { status: 400 });
+    }
     console.error("ERROR PATCH ADMIN ALIADOS:", error);
     return NextResponse.json(
       { error: "Error actualizando aliado" },

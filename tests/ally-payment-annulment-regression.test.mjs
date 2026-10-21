@@ -23,6 +23,7 @@ const [
   paymentViewStyles,
   historicalStyles,
   pdfRoute,
+  pdfDocument,
   pdfBuilder,
 ] = await Promise.all([
   readProjectFile("prisma/schema.prisma"),
@@ -38,6 +39,7 @@ const [
   readProjectFile("app/dashboard/pagos-aliados/ally-payment-views.module.css"),
   readProjectFile("app/dashboard/pagos-aliados/historical-settlement-detail.module.css"),
   readProjectFile("app/api/pagos-aliados/[id]/comprobante/route.ts"),
+  readProjectFile("lib/ally-settlement-document.ts"),
   readProjectFile("lib/ally-payment-settlement-pdf.ts"),
 ]);
 
@@ -227,9 +229,23 @@ test("UI e historico muestran el descuento en rojo y el PDF recibe el mismo snap
   assert.match(styles, /\.annulledRow\s*{/);
   assert.match(styles, /--fp-danger|#(?:b91c1c|dc2626|ef4444)/i);
 
-  assert.match(pdfRoute, /ajustesAnulacion/);
-  assert.match(pdfRoute, /annulmentAdjustments/);
-  assert.match(pdfRoute, /totalAnnulmentAdjustments/);
+  assert.match(
+    pdfRoute,
+    /import\s*{\s*buildSavedSettlementPdf\s*}\s*from\s*["']@\/lib\/ally-settlement-document["']/
+  );
+  assert.match(pdfRoute, /await\s+buildSavedSettlementPdf\(settlement\)/);
+  assert.match(pdfDocument, /await\s+buildAllyPaymentSettlementPdf\s*\(/);
+  assert.match(
+    pdfDocument,
+    /const\s+annulmentAdjustments\s*=\s*Array\.isArray\(settlement\.ajustesAnulacion\)\s*\?\s*settlement\.ajustesAnulacion\s*:\s*\[\]/
+  );
+  assert.match(
+    pdfDocument,
+    /totalAnnulmentAdjustments:\s*settlement\.totalAjustesAnulacion/
+  );
+  assert.match(pdfDocument, /annulmentAdjustments:\s*annulmentAdjustments\.map\(/);
+  assert.match(pdfDocument, /discountValue:\s*item\.valorDescuento/);
+  assert.match(pdfDocument, /sourceSettlementId:\s*item\.liquidacionOrigenId/);
   assert.match(pdfBuilder, /annulmentAdjustments/);
   assert.match(pdfBuilder, /Descuentos por cr[eé]ditos anulados/);
   assert.match(pdfBuilder, /Descontado/i);

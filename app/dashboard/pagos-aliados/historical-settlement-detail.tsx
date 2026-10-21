@@ -7,6 +7,7 @@ import { PlatformIcon } from "./ally-payment-views";
 import { formatDate, formatMoney, formatNumber, numberValue, statusTone } from "./ally-payment-format";
 import type { PaymentCreditItem, PaymentSummary, PaymentSummaryBucket, Settlement } from "./ally-payment-types";
 import styles from "./historical-settlement-detail.module.css";
+import SettlementDeliveryPanel from "./settlement-delivery-panel";
 
 const PAGE_SIZE = 10;
 const savedPercentFormatter = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 4 });
@@ -105,8 +106,9 @@ function SavedCreditTable({ items }: { items: PaymentCreditItem[] }) {
   );
 }
 
-export default function HistoricalSettlementDetail({ settlement, summary, items, collectionCount, collectionDetail, annulmentCount, annulmentTotal, annulmentDetail, centralCollectionAdjustmentCount, centralCollectionAdjustmentTotal, centralCollectionAdjustmentDetail, onPrint, onDownload, onClose }: {
+export default function HistoricalSettlementDetail({ settlement, adminCentral = false, summary, items, collectionCount, collectionDetail, annulmentCount, annulmentTotal, annulmentDetail, centralCollectionAdjustmentCount, centralCollectionAdjustmentTotal, centralCollectionAdjustmentDetail, onPrint, onDownload, onClose }: {
   settlement: Settlement;
+  adminCentral?: boolean;
   summary: PaymentSummary | null;
   items: PaymentCreditItem[];
   collectionCount: number;
@@ -158,6 +160,7 @@ export default function HistoricalSettlementDetail({ settlement, summary, items,
         ))}
         <Card className={styles.netCard}><h2>{title}</h2><strong className={styles.netAmount}>{formatMoney(Math.abs(net))}</strong><div className={`${styles.result} ${annulled ? styles.annulled : ""}`}><CheckCircle2 size={32} aria-hidden="true" /><span>{result}</span></div><dl><div><dt>Valor por créditos</dt><dd>{formatMoney(creditsTotal)}</dd></div><div><dt>Recaudos del aliado</dt><dd>− {formatMoney(collectionsTotal)}</dd></div><div className={styles.annulmentBreakdown}><dt>Créditos anulados</dt><dd>− {formatMoney(annulmentTotal)}</dd></div><div className={styles.centralAdjustmentBreakdown}><dt>Ajustes por recaudos FINSER PAY</dt><dd>+ {formatMoney(centralCollectionAdjustmentTotal)}</dd></div></dl></Card>
       </section>
+      <SettlementDeliveryPanel key={String(settlement.id)} settlementId={settlement.id} adminCentral={adminCentral} />
       {items.length > 0 ? <SavedCreditTable key={String(settlement.id)} items={items} /> : null}
       {annulmentCount > 0 ? annulmentDetail : null}
       {centralCollectionAdjustmentCount > 0 ? centralCollectionAdjustmentDetail : null}

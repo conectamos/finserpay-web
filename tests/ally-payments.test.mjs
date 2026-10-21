@@ -31,6 +31,7 @@ const [
   eligibilitySource,
   historicalDetailSource,
   attributionSchema,
+  pdfMapperSource,
 ] = await Promise.all([
   readProjectFile("lib/ally-payment-access.ts"),
   readProjectFile("app/api/pagos-aliados/route.ts"),
@@ -49,6 +50,7 @@ const [
   readProjectFile("lib/ally-payment-eligibility.ts"),
   readProjectFile("app/dashboard/pagos-aliados/historical-settlement-detail.tsx"),
   readProjectFile("scripts/credit-abono-ally-attribution-schema.mjs"),
+  readProjectFile("lib/ally-settlement-document.ts"),
 ]);
 
 function sectionBetween(contents, startMarker, endMarker) {
@@ -473,23 +475,24 @@ test("el comprobante PDF conserva fecha de pago, snapshots y alcance por aliado"
     pdfRouteSource,
     /allyId:\s*access\.kind\s*===\s*"CENTRAL_ADMIN"\s*\?\s*null\s*:\s*access\.allyId/
   );
-  assert.match(pdfRouteSource, /const paidAt = new Date\(settlement\.pagadoAt\)/);
-  assert.match(pdfRouteSource, /buildAllyPaymentSettlementPdf\(\s*{/);
-  assert.match(pdfRouteSource, /lines:\s*settlement\.items\.map/);
-  assert.match(pdfRouteSource, /allyName:\s*settlement\.aliado\.nombre/);
-  assert.match(pdfRouteSource, /siteName:\s*item\.sede\.nombre/);
-  assert.match(pdfRouteSource, /clientDocument:\s*item\.clienteDocumento/);
-  assert.match(pdfRouteSource, /imei:\s*item\.imei/);
-  assert.match(pdfRouteSource, /status:\s*item\.estado/);
+  assert.match(pdfRouteSource, /await buildSavedSettlementPdf\(settlement\)/);
+  assert.match(pdfMapperSource, /const paidAt = new Date\(settlement\.pagadoAt\)/);
+  assert.match(pdfMapperSource, /buildAllyPaymentSettlementPdf\(\s*{/);
+  assert.match(pdfMapperSource, /lines:\s*settlement\.items\.map/);
+  assert.match(pdfMapperSource, /allyName:\s*settlement\.aliado\.nombre/);
+  assert.match(pdfMapperSource, /siteName:\s*item\.sede\.nombre/);
+  assert.match(pdfMapperSource, /clientDocument:\s*item\.clienteDocumento/);
+  assert.match(pdfMapperSource, /imei:\s*item\.imei/);
+  assert.match(pdfMapperSource, /status:\s*item\.estado/);
   const creditPdfLines = sectionBetween(
-    pdfRouteSource,
+    pdfMapperSource,
     "lines: settlement.items.map",
     "collections: settlement.recaudos.map"
   );
   assert.doesNotMatch(creditPdfLines, /folio:\s*item\.folio/);
-  assert.match(pdfRouteSource, /collections:\s*settlement\.recaudos\.map/);
-  assert.match(pdfRouteSource, /folio:\s*item\.folio/);
-  assert.match(pdfRouteSource, /siteName:\s*item\.sedeNombre/);
+  assert.match(pdfMapperSource, /collections:\s*settlement\.recaudos\.map/);
+  assert.match(pdfMapperSource, /folio:\s*item\.folio/);
+  assert.match(pdfMapperSource, /siteName:\s*item\.sedeNombre/);
   assert.match(pdfRouteSource, /searchParams\.get\("download"\)\s*===\s*"1"/);
   assert.match(pdfRouteSource, /"Content-Type":\s*"application\/pdf"/);
   assert.match(pdfRouteSource, /download\s*\?\s*"attachment"\s*:\s*"inline"/);

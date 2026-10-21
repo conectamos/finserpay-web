@@ -89,9 +89,12 @@ function ledger({
   rows = [credit(1)],
   collectionValue = "123.45",
   centralAdjustmentRows = [],
+  enqueueFailures = 0,
 } = {}) {
   const calls = [];
   const settlements = [];
+  const deliveries = [];
+  let activeTransaction = null;
   const collections = collectionValue === null ? [] : [{
     id: 99, creditoId: 1, sedeId: 4, fechaAbono: new Date("2026-10-07T12:30:00Z"),
     folio: "0000-F-1", clienteNombre: "Cliente sintético 1", clienteDocumento: "001234567890",
@@ -159,7 +162,22 @@ function ledger({
     },
     async $transaction(run, options) {
       calls.push(["transaction", plain(options)]);
-      return run(database);
+      const settlementCount = settlements.length;
+      const deliveryCount = deliveries.length;
+      const tx = { ...database };
+      activeTransaction = tx;
+      try {
+        const result = await run(tx);
+        calls.push(["commit"]);
+        return result;
+      } catch (error) {
+        settlements.splice(settlementCount);
+        deliveries.splice(deliveryCount);
+        calls.push(["rollback"]);
+        throw error;
+      } finally {
+        activeTransaction = null;
+      }
     },
   };
   const storage = load("lib/ally-payments.ts", {
@@ -167,6 +185,18 @@ function ledger({
     "@/lib/colombia-date": dates, "@/lib/ally-payment-eligibility": eligibility,
     "@/lib/ally-payment-annulments": annulments,
     "@/lib/ally-payment-central-collection-adjustments": centralCollectionAdjustments,
+    "@/lib/ally-settlement-delivery-store": {
+      async enqueueInitialSettlementDeliveries(tx, settlement, actorUserId) {
+        assert.equal(tx, activeTransaction, "La cola debe guardarse dentro de la misma transacción de la liquidación.");
+        assert.notEqual(tx, database, "No debe escribirse la cola por fuera del cliente transaccional.");
+        assert.ok(settlements.some((saved) => saved.id === settlement.id), "La liquidación debe existir antes de encolar.");
+        calls.push(["enqueue", plain(settlement), actorUserId]);
+        for (const channel of ["EMAIL", "WHATSAPP"]) {
+          deliveries.push({ settlementId: settlement.id, channel, snapshot: plain(settlement), actorUserId });
+        }
+        if (enqueueFailures-- > 0) throw new Error("Outbox de prueba no disponible");
+      },
+    },
     "@/lib/credit-ally-payment-exclusion-storage": { ensureCreditAllyPaymentExclusionSchema: async () => {} },
     "@/lib/datacredito/database-errors": { isDataCreditoUniqueViolation: () => false },
     "@/lib/prisma": { default: database },
@@ -185,6 +215,7 @@ function ledger({
     centralAdjustmentRows,
     calls,
     settlements,
+    deliveries,
     preview,
     confirmation,
   };
@@ -222,6 +253,17 @@ test("confirmación guarda todos los ajustes y los dos productos; central y alia
   assert.deepEqual(api.calls.find(([kind]) => kind === "transaction")[1], {
     isolationLevel: "Serializable", maxWait: 5000, timeout: 20000,
   });
+  const enqueued = api.calls.filter(([kind]) => kind === "enqueue");
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0][1].id, result.id);
+  assert.equal(enqueued[0][1].aliado.id, 7);
+  assert.equal(enqueued[0][1].saldoNeto, result.saldoNeto);
+  assert.equal(enqueued[0][1].periodoInicio, result.periodoInicio);
+  assert.equal(enqueued[0][1].periodoFin, result.periodoFin);
+  assert.equal(enqueued[0][2], 3);
+  assert.deepEqual(api.deliveries.map((delivery) => delivery.channel), ["EMAIL", "WHATSAPP"]);
+  assert.ok(api.calls.findIndex(([kind]) => kind === "create") < api.calls.findIndex(([kind]) => kind === "enqueue"));
+  assert.ok(api.calls.findIndex(([kind]) => kind === "enqueue") < api.calls.findIndex(([kind]) => kind === "commit"));
   // A later change in product prices or configured rates cannot rewrite history.
   api.rows.forEach(row => { row.valorEquipoTotal = "99999999"; row.redescuentoIphonePorcentaje = 99; });
   api.collections[0].valor = "99999999";
@@ -246,6 +288,8 @@ test("reintentar la misma confirmación es idempotente y cambiar sus ajustes da 
   assert.equal(retry.id, first.id);
   assert.equal(api.settlements.length, 1);
   assert.equal(api.calls.filter(([kind]) => kind === "create").length, 1);
+  assert.equal(api.calls.filter(([kind]) => kind === "enqueue").length, 1, "Repetir la operación guardada no encola nuevos envíos.");
+  assert.equal(api.deliveries.length, 2);
   await assert.rejects(api.storage.createAllyPayment({ ...input,
     intermediationAdjustments: [{ creditoId: 1, porcentajeIntermediacion: 0 }],
   }), error => error.code === "ALLY_PAYMENT_MUTATION_CONFLICT");
@@ -264,8 +308,32 @@ test("cambios en recaudos o aprobación invalidan el token antes de guardar", as
         error => error.code === "ALLY_PAYMENT_PREVIEW_CHANGED");
       assert.equal(api.settlements.length, 0);
       assert.equal(api.calls.some(([kind]) => kind === "create"), false);
+      assert.equal(api.calls.some(([kind]) => kind === "enqueue"), false);
+      assert.equal(api.deliveries.length, 0);
     });
   }
+});
+
+test("si falla la cola, revierte el registro y los intentos; el mismo mutationId puede confirmarse después", async () => {
+  const api = ledger({ enqueueFailures: 1 });
+  const preview = await api.preview();
+  const input = api.confirmation(preview.token);
+  await assert.rejects(api.storage.createAllyPayment(input), /Outbox de prueba no disponible/);
+  assert.equal(api.settlements.length, 0, "No queda una liquidación sin sus envíos durables.");
+  assert.equal(api.deliveries.length, 0, "La cola parcial se revierte junto a la liquidación.");
+  assert.equal(api.calls.filter(([kind]) => kind === "rollback").length, 1);
+  const current = await api.preview();
+  assert.equal(current.items.length, 1, "El crédito no queda consumido por la transacción fallida.");
+  assert.equal(current.recaudos.length, 1, "El recaudo queda disponible tras la reversión.");
+  assert.equal(current.token, preview.token);
+  const saved = await api.storage.createAllyPayment(input);
+  assert.equal(saved.idempotent, false);
+  assert.equal(api.settlements.length, 1);
+  assert.equal(api.deliveries.length, 2);
+  assert.equal(api.deliveries.every((delivery) => delivery.settlementId === saved.id), true);
+  const replay = await api.storage.createAllyPayment(input);
+  assert.equal(replay.idempotent, true);
+  assert.equal(api.deliveries.length, 2);
 });
 
 test("solo acepta ajustes de créditos vigentes y porcentajes numéricos con máximo dos decimales", async () => {
