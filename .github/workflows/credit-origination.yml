@@ -39,6 +39,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run test:welcome-voice
       - run: npm run test:cuotavencida
       - run: npm run test:commissions
       # All provider responses are local fixtures; no paid queries or signatures.

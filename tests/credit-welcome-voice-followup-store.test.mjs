@@ -138,263 +138,196 @@ test("a deployment-gap historical initial with a saved recording is never adopte
   assert.equal((await f.followups()).length, 0); assert.deepEqual(await f.events(), history);
 });
 
-test("recording saved after a retry claim cancels that retry while preserving its completed initial event", async t => {
-  const f = await fixture(t);
-  await f.enqueue(); const [initial] = await f.store.claimPendingCreditWelcomeVoice();
-  await f.result(initial, { recordingUrl: "https://app.dapta.ai/calls/synthetic-no-answer-recording" });
-  const original = (await f.events())[0]; f.advance(300_000);
-  assert.equal(original.recordingUrl, "https://app.dapta.ai/calls/synthetic-no-answer-recording");
-  // A private provider URL is not a manually saved approval audio file.
-  const [retry] = await f.store.claimPendingCreditWelcomeVoice(); assert.ok(retry);
-  await f.saveRecording();
-  assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(retry.eventId), null);
-  const events = await f.events(); assert.deepEqual(events[0], original);
-  assert.equal(events[1].source, "AUTOMATIC_RETRY"); assert.equal(events[1].status, "CANCELLED");
-  assert.equal(events[1].resultCode, "CALL_RECORDING_SAVED");
-  assert.equal((await f.followups())[0].reason, "CALL_RECORDING_SAVED");
-});
+async function legacyRetry(f, initial, { phase = "FAST", status = "DISPATCHING" } = {}) {
+  const original = (await f.events()).find(row => row.id === initial.eventId);
+  const id = phase === "FAST" ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222";
+  await f.db.query('INSERT INTO "CreditWelcomeVoiceEvent" ("id","creditoId","source","attemptNumber","retryPhase","retrySlot","status","snapshot","dispatchedAt") VALUES ($1,$2,\'AUTOMATIC_RETRY\',1,$3,$4,$5,$6::jsonb,$7)',
+    [id, initial.creditId, phase, phase === "PENDING" ? "2026-10-09T10:00" : null, status, JSON.stringify(original.snapshot), status === "DISPATCHING" ? f.now() : null]);
+  await f.db.query('UPDATE "CreditWelcomeVoiceFollowup" SET "lastEventId"=$2,"phase"=$3,"fastAttempts"=1,"reason"=NULL WHERE "creditoId"=$1',
+    [initial.creditId, id, phase]);
+  return { eventId: id, creditId: initial.creditId, snapshot: original.snapshot };
+}
 
-test("five real attempts total wait five minutes after each no-answer, then use unique daily Colombia slots", async t => {
-  const f = await fixture(t);
-  const initial = await f.enqueue();
-  let event = (await f.store.claimPendingCreditWelcomeVoice())[0];
-  assert.equal(event.eventId, initial.eventId);
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(event.eventId));
-    await f.accepted(event); f.advance(30_000); await f.result(event);
-    assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-    const row = (await f.followups())[0];
-    assert.equal(row.fastAttempts, attempt);
-    if (attempt < 5) {
-      assert.equal(row.phase, "FAST");
-      assert.equal(new Date(row.nextAttemptAt).getTime(), f.now().getTime() + 300_000);
-      f.advance(299_999); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-      f.advance(1); event = (await f.store.claimPendingCreditWelcomeVoice())[0]; assert.ok(event);
-    } else {
-      assert.equal(row.phase, "PENDING");
-      assert.equal(new Date(row.nextAttemptAt).toISOString(), "2026-10-09T15:00:00.000Z");
-    }
+test("one automatic call is final after no-answer, voicemail, failure, unknown, uncertainty or human contact", async t => {
+  const f = await fixture(t, { count: 7 });
+  for (let id = 1; id <= 7; id++) await f.enqueue(id, id % 2 ? "NORMAL" : "INDIVIDUAL_IMPORT");
+  const claims = await f.store.claimPendingCreditWelcomeVoice({ limit: 10 });
+  for (const claim of claims) assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(claim.eventId));
+  await f.result(claims[0]);
+  await f.result(claims[1], { resultCode: "VOICEMAIL", disconnectionReason: "voicemail_reached" });
+  await f.result(claims[2], { status: "FAILED", resultCode: "CALL_FAILED" });
+  await f.store.markCreditWelcomeVoiceDispatchUnknown(claims[3].eventId);
+  await f.result(claims[4], { communicationOutcome: "UNCERTAIN" });
+  await f.result(claims[5], { communicationOutcome: "HUMAN_CONTACT" });
+  await f.store.markCreditWelcomeVoiceDispatchFailed(claims[6].eventId, "INVALID_DISPATCH_CONFIG");
+  const history = await f.events();
+  for (const time of ["2026-10-09T14:05:00Z", "2026-10-09T15:00:00Z", "2026-10-10T13:00:00Z", "2026-11-09T22:00:00Z"]) {
+    f.time(time); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
   }
-  assert.equal((await f.events()).length, 5);
-  assert.deepEqual((await f.events()).map(row => row.source), ["NORMAL", ...Array(4).fill("AUTOMATIC_RETRY")]);
-  f.time("2026-10-09T14:59:59.999Z"); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  f.time("2026-10-09T15:00:00Z");
-  const pending = (await Promise.all([f.store.claimPendingCreditWelcomeVoice(), f.store.claimPendingCreditWelcomeVoice()])).flat();
-  assert.equal(pending.length, 1);
-  const record = (await f.events()).at(-1);
-  assert.equal(record.retryPhase, "PENDING"); assert.equal(record.retrySlot, "2026-10-09T10:00");
-  assert.equal(record.campaignId, null); assert.equal(record.repeatOf, null);
-  await f.accepted(pending[0]); f.advance(60_000); await f.result(pending[0]);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.equal((await f.followups())[0].fastAttempts, 5);
-  f.time("2026-10-09T19:10:00Z"); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  f.time("2026-10-10T13:00:00Z");
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 1);
-  assert.equal((await f.events()).at(-1).retrySlot, "2026-10-10T08:00");
+  assert.deepEqual(await f.events(), history);
+  assert.deepEqual((await f.followups()).map(row => row.phase), ["STOPPED", "STOPPED", "STOPPED", "STOPPED", "STOPPED", "CONTACTED", "STOPPED"]);
+  assert.ok((await f.followups()).every(row => row.nextAttemptAt === null));
 });
 
-test("unknown and in-flight calls never age into redial; only a late authentic no-answer releases unknown", async t => {
-  const f = await fixture(t, { count: 3 });
-  for (let id = 1; id <= 3; id++) await f.enqueue(id);
-  const events = await f.store.claimPendingCreditWelcomeVoice();
-  await f.store.markCreditWelcomeVoiceDispatchUnknown(events[0].eventId);
-  await f.accepted(events[1]);
-  await f.result(events[2], { communicationOutcome: "UNCERTAIN" });
-  f.advance(24 * 60 * 60_000);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.deepEqual((await f.followups()).map(row => [row.phase, row.reason]), [["HELD", "UNKNOWN_CALL"], ["FAST", "CALL_IN_FLIGHT"], ["HELD", "UNCERTAIN_RESULT"]]);
-  await f.result(events[0]);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  f.advance(300_000);
-  const [retry] = await f.store.claimPendingCreditWelcomeVoice();
-  assert.equal(retry.creditId, 1); assert.notEqual(retry.eventId, events[0].eventId);
-  assert.equal((await f.followups())[0].fastAttempts, 1);
-});
-
-test("real verified contact and refusals stop following even when approval is already approved", async t => {
-  const f = await fixture(t, { count: 4 });
-  for (let id = 1; id <= 4; id++) await f.enqueue(id);
-  const events = await f.store.claimPendingCreditWelcomeVoice();
-  await f.result(events[0], { communicationOutcome: "HUMAN_CONTACT" });
-  await f.store.verifyCreditWelcomeVoiceIdentity({ eventId: events[1].eventId, creditId: 2, requireFreshDispatch: true,
-    customerName: "Ana", customerDocument: "00123456" });
-  await f.result(events[1], { communicationOutcome: "UNCERTAIN" });
-  await f.result(events[2], { communicationOutcome: "OPT_OUT" });
-  await f.result(events[3], { communicationOutcome: "NO_ANSWER", resultCode: "RECORDING_DECLINED" });
-  f.advance(300_000);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.deepEqual((await f.followups()).map(row => row.phase), ["CONTACTED", "CONTACTED", "STOPPED", "STOPPED"]);
-  assert.equal((await f.db.query('SELECT COUNT(*)::integer AS count FROM "CreditApprovalReview" WHERE "status"=\'APPROVED\'')).rows[0].count, 4);
-});
-
-test("paid or changed credits stop or hold retries while preserving the original completed snapshot", async t => {
-  const f = await fixture(t, { count: 3 });
-  for (let id = 1; id <= 3; id++) await f.enqueue(id);
-  const events = await f.store.claimPendingCreditWelcomeVoice();
-  for (const event of events) await f.result(event);
-  const before = await f.events();
-  await f.update(1, { estado: "PAGADO" });
-  await f.update(2, { clienteTelefono: "3000000002" });
-  await f.update(3, { cuotaInicial: 201 });
-  f.advance(300_000);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.deepEqual((await f.followups()).map(row => [row.phase, row.reason]), [["STOPPED", "CREDIT_CLOSED"], ["HELD", "CONTACT_CHANGED"], ["HELD", "CONDITIONS_CHANGED"]]);
-  assert.deepEqual(await f.events(), before);
-});
-
-test("new queue and retry reservations roll back atomically and concurrent claims share their limit", async t => {
+test("concurrent claims share the initial event and a second worker cannot suppress its still-unsent prepare", async t => {
   const f = await fixture(t, { count: 2 });
   f.rollback(); await assert.rejects(f.enqueue());
-  assert.equal((await f.events()).length, 0); assert.equal((await f.followups()).length, 0);
+  assert.equal((await f.events()).length, 0);
   await Promise.all([f.enqueue(), f.enqueue()]); await f.enqueue(2, "INDIVIDUAL_IMPORT");
-  const first = (await Promise.all([f.store.claimPendingCreditWelcomeVoice({ limit: 1 }), f.store.claimPendingCreditWelcomeVoice({ limit: 1 })])).flat();
-  assert.equal(first.length, 2); assert.equal(new Set(first.map(row => row.eventId)).size, 2);
-  for (const event of first) await f.result(event);
-  f.advance(300_000); f.rollback(); await assert.rejects(f.store.claimPendingCreditWelcomeVoice({ limit: 1 }));
+  const claims = (await Promise.all([f.store.claimPendingCreditWelcomeVoice({ limit: 1 }), f.store.claimPendingCreditWelcomeVoice({ limit: 1 })])).flat();
+  assert.equal(claims.length, 2); assert.equal(new Set(claims.map(row => row.eventId)).size, 2);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  for (const claim of claims) assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(claim.eventId));
+  for (const claim of claims) await f.result(claim);
+  f.advance(300000);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
   assert.equal((await f.events()).length, 2);
-  const retries = (await Promise.all([f.store.claimPendingCreditWelcomeVoice({ limit: 1 }), f.store.claimPendingCreditWelcomeVoice({ limit: 1 })])).flat();
-  assert.equal(retries.length, 2); assert.equal((await f.events()).length, 4);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
 });
 
-test("only initial real events at or after the configured start are adopted, and invalid adoption configuration does not disable new queues", async t => {
-  const f = await fixture(t, { count: 4, env: { DAPTA_WELCOME_VOICE_AUTOMATIC_START_AT: "2026-10-09T14:00:00.000Z" } });
-  f.time("2026-10-09T13:59:59.999Z"); const old = await f.enqueue(1);
-  f.time("2026-10-09T14:00:00Z"); await f.enqueue(2, "INDIVIDUAL_IMPORT");
-  await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 3, expectedPhone: "3000000001" });
-  await f.db.exec('DELETE FROM "CreditWelcomeVoiceFollowup"');
-  const claims = await f.store.claimPendingCreditWelcomeVoice();
-  assert.deepEqual(Array.from(claims, row => row.creditId), [2]);
-  assert.equal((await f.events()).find(row => row.id === old.eventId).status, "PENDING");
-  assert.deepEqual((await f.followups()).map(row => row.creditoId), [2]);
-  f.env.DAPTA_WELCOME_VOICE_AUTOMATIC_START_AT = "2026-02-30T14:00:00.000Z";
-  await f.enqueue(4);
-  assert.deepEqual(Array.from(await f.store.claimPendingCreditWelcomeVoice(), row => row.creditId), [4]);
-  assert.equal((await f.followups()).length, 2);
-});
-
-test("deployment-gap adoption follows a real completed no-answer once and preserves its initial call evidence", async t => {
-  const f = await fixture(t, { env: { DAPTA_WELCOME_VOICE_AUTOMATIC_START_AT: "2026-10-09T13:59:00.000Z" } });
-  await f.enqueue(); const [initial] = await f.store.claimPendingCreditWelcomeVoice();
-  await f.accepted(initial); f.advance(30_000); await f.result(initial);
-  const before = (await f.events())[0];
-  await f.db.exec('DELETE FROM "CreditWelcomeVoiceFollowup"');
-  f.advance(20 * 60_000);
-  const [retry] = await f.store.claimPendingCreditWelcomeVoice();
-  assert.ok(retry && retry.eventId !== initial.eventId);
-  const rows = await f.events(); assert.deepEqual(rows[0], before);
-  assert.equal(rows[1].source, "AUTOMATIC_RETRY"); assert.equal(rows[1].retryPhase, "FAST");
-  assert.equal((await f.followups())[0].fastAttempts, 1);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-});
-
-test("a daily slot that closes before prepare cannot call or consume a real attempt and waits for the next slot", async t => {
-  const f = await fixture(t);
-  await f.enqueue(); const [first] = await f.store.claimPendingCreditWelcomeVoice(); await f.result(first);
-  // Reproduce five real historical FAST calls with authenticated ledger evidence.
-  for (let n = 1; n < 5; n++) {
-    f.advance(300_000); const [event] = await f.store.claimPendingCreditWelcomeVoice(); await f.result(event);
+test("claimed legacy FAST and daily retries are cancelled at the real pre-HTTP gate, preserving initial history", async t => {
+  for (const phase of ["FAST", "PENDING"]) {
+    const f = await fixture(t); await f.enqueue();
+    const [initial] = await f.store.claimPendingCreditWelcomeVoice();
+    await f.result(initial, { recordingUrl: "https://app.dapta.ai/calls/synthetic-original" });
+    const original = (await f.events())[0];
+    const retry = await legacyRetry(f, initial, { phase });
+    let requests = 0;
+    const report = await dispatcher.dispatchCreditWelcomeVoice({}, {
+      config: { webhookUrl: "https://api.dapta.ai/synthetic-single-call", secret: "synthetic-single-call-secret-at-least-32-characters",
+        agentId: "4b68b7b8-382f-4f9a-8e1f-8b88665acf38" },
+      ensureSchema: async () => {}, claim: async () => [retry], prepare: f.store.prepareCreditWelcomeVoiceDispatch,
+      accepted: () => assert.fail("A retry cannot be accepted"), unknown: () => assert.fail("No HTTP was made"),
+      failed: () => assert.fail("Suppression is persistent"), fetcher: async () => { requests++; assert.fail("No external call"); },
+    });
+    assert.equal(requests, 0); assert.equal(report.skipped, 1);
+    const rows = await f.events(); assert.deepEqual(rows[0], original);
+    assert.equal(rows[1].status, "CANCELLED"); assert.equal(rows[1].resultCode, "AUTOMATIC_CALL_LIMIT_REACHED");
+    assert.equal((await f.followups())[0].phase, "STOPPED");
+    assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(retry.eventId), null);
   }
-  f.time("2026-10-09T15:09:59.999Z"); const [pending] = await f.store.claimPendingCreditWelcomeVoice();
-  assert.ok(pending); f.advance(1);
-  assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(pending.eventId), null);
-  assert.equal((await f.events()).at(-1).resultCode, "WINDOW_CLOSED_BEFORE_DISPATCH");
-  assert.equal((await f.followups())[0].fastAttempts, 5);
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  f.time("2026-10-09T19:00:00Z"); const [retry] = await f.store.claimPendingCreditWelcomeVoice();
-  assert.ok(retry); assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(retry.eventId));
-  assert.equal((await f.events()).at(-1).retrySlot, "2026-10-09T14:00");
-  assert.equal((await f.events()).at(-1).attemptNumber, 6);
 });
 
-test("a controlled test cannot be adopted or counted, and a disabled queue performs no database access", async t => {
+test("a queued legacy retry never becomes a second call and is durably cancelled", async t => {
+  const f = await fixture(t); await f.enqueue();
+  const [initial] = await f.store.claimPendingCreditWelcomeVoice(); await f.result(initial);
+  const retry = await legacyRetry(f, initial, { status: "PENDING" });
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  const row = (await f.events()).find(row => row.id === retry.eventId);
+  assert.equal(row.status, "CANCELLED"); assert.equal(row.dispatchedAt, null);
+  assert.equal((await f.followups())[0].reason, "AUTOMATIC_CALL_LIMIT_REACHED");
+});
+
+test("late authenticated callbacks and recordings remain writable after automatic followup has stopped", async t => {
+  const f = await fixture(t); await f.enqueue();
+  const [initial] = await f.store.claimPendingCreditWelcomeVoice();
+  await f.store.markCreditWelcomeVoiceDispatchUnknown(initial.eventId);
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  const result = { communicationOutcome: "HUMAN_CONTACT", recordingUrl: "https://app.dapta.ai/calls/synthetic-late", durationSeconds: 81 };
+  await f.result(initial, result); await f.result(initial, result);
+  const [row] = await f.events();
+  assert.equal(row.status, "COMPLETED"); assert.equal(row.communicationOutcome, "HUMAN_CONTACT");
+  assert.equal(row.recordingUrl, result.recordingUrl); assert.equal(row.durationSeconds, 81);
+  f.advance(86400000); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.equal((await f.events()).length, 1);
+});
+
+test("deployment-gap adoption stops completed initials and preserves a genuinely pending first call", async t => {
+  const f = await fixture(t, { count: 2, env: { DAPTA_WELCOME_VOICE_AUTOMATIC_START_AT: "2026-10-09T13:59:00.000Z" } });
+  await f.enqueue(1);
+  const [initial] = await f.store.claimPendingCreditWelcomeVoice(); await f.result(initial);
+  const original = (await f.events())[0]; await f.enqueue(2, "INDIVIDUAL_IMPORT");
+  await f.db.exec('DELETE FROM "CreditWelcomeVoiceFollowup"');
+  f.advance(300000);
+  const adopted = await f.store.claimPendingCreditWelcomeVoice();
+  assert.deepEqual(Array.from(adopted, row => row.creditId), [2]);
+  assert.equal((await f.followups()).find(row => row.creditoId === 1).phase, "STOPPED");
+  assert.deepEqual((await f.events())[0], original);
+  assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(adopted[0].eventId));
+});
+
+test("automatic sources share one credit-wide limit while an explicit operator call remains available", async t => {
+  const f = await fixture(t); await f.enqueue();
+  const [initial] = await f.store.claimPendingCreditWelcomeVoice(); await f.result(initial);
+  await f.db.exec('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\'');
+  await f.store.ensureVoiceReviewCampaign({ id: "same-credit", startDate: "2026-10-09", creditIds: [1] });
+  f.time("2026-10-09T15:00:00Z");
+  assert.equal((await f.store.claimVoiceReviewCampaign({ campaignId: "same-credit", slot: "2026-10-09T10:00" })).length, 0);
+  assert.equal((await f.db.query('SELECT "state" FROM "VoiceReviewCampaignMember"')).rows[0].state, "STOPPED");
+  const operator = await f.store.prepareCreditWelcomeVoiceOperatorCall({ creditId: 1, requestId: "33333333-3333-4333-8333-333333333333",
+    actorId: 7, phone: "3000000002" });
+  assert.equal(operator.created, true); assert.equal(operator.destinationPhone, "573000000002");
+  const prepared = await f.store.prepareCreditWelcomeVoiceDispatch(operator.eventId);
+  assert.equal(prepared.destinationPhone, "573000000002");
+  assert.equal(prepared.snapshot.phone, initial.snapshot.phone);
+  assert.equal((await f.events()).filter(row => row.source === "NORMAL").length, 1);
+});
+
+test("a first scheduled call with nonzero attempt number is allowed but it blocks a later normal stream", async t => {
   const f = await fixture(t);
-  const initial = await f.enqueue();
-  const controlled = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "3000000001" });
-  assert.equal(controlled.eventId, initial.eventId); await f.result(controlled);
+  await f.db.exec('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\'');
+  await f.store.ensureVoiceReviewCampaign({ id: "first-scheduled", startDate: "2026-10-09", creditIds: [1] });
+  f.time("2026-10-09T15:00:00Z");
+  const [scheduled] = await f.store.claimVoiceReviewCampaign({ campaignId: "first-scheduled", slot: "2026-10-09T10:00" });
+  assert.equal((await f.events())[0].attemptNumber, 1);
+  // A concurrent creation hook cannot add a NORMAL/PENDING event that would
+  // suppress this already reserved, still-unsent first scheduled call.
+  assert.equal(await f.enqueue(), null);
+  assert.ok(await f.store.prepareVoiceReviewCampaign(scheduled.eventId)); await f.result(scheduled);
+  assert.equal(await f.enqueue(), null);
   assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.equal((await f.followups())[0].phase, "STOPPED"); assert.equal((await f.followups())[0].fastAttempts, 0);
-  const disabled = await fixture(t, { enabled: false });
-  assert.equal(await disabled.enqueue(), null); assert.equal((await disabled.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.equal(disabled.queries(), 0);
+  assert.equal((await f.events()).some(row => row.source === "NORMAL"), false);
+  assert.equal((await f.events()).filter(row => row.source === "SCHEDULED_CAMPAIGN").length, 1);
 });
 
-test("a retry cancelled by final revalidation is known unsent and leaves the completed initial evidence intact", async t => {
+test("a legacy scheduled claim is blocked before HTTP when another automatic source already attempted the credit", async t => {
+  const f = await fixture(t);
+  await f.db.exec('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\'');
+  await f.store.ensureVoiceReviewCampaign({ id: "claimed-before-policy", startDate: "2026-10-09", creditIds: [1] });
+  f.time("2026-10-09T15:00:00Z");
+  const [scheduled] = await f.store.claimVoiceReviewCampaign({ campaignId: "claimed-before-policy", slot: "2026-10-09T10:00" });
+  const previous = "66666666-6666-4666-8666-666666666666";
+  await f.db.query('INSERT INTO "CreditWelcomeVoiceEvent" ("id","creditoId","source","attemptNumber","status","snapshot","dispatchedAt","resultCode") VALUES ($1,1,\'NORMAL\',0,\'FAILED\',$2::jsonb,$3,\'CALL_FAILED\')',
+    [previous, JSON.stringify(scheduled.snapshot), f.now()]);
+  const original = (await f.events()).find(row => row.id === previous);
+  assert.equal(await f.store.prepareVoiceReviewCampaign(scheduled.eventId), null);
+  const rows = await f.events(); assert.deepEqual(rows.find(row => row.id === previous), original);
+  assert.equal(rows.find(row => row.id === scheduled.eventId).status, "CANCELLED");
+  assert.equal((await f.db.query('SELECT "state" FROM "VoiceReviewCampaignMember"')).rows[0].state, "STOPPED");
+});
+
+test("first-call financial and contact guards still reject changed data before HTTP", async t => {
   const f = await fixture(t, { count: 3 });
   for (let id = 1; id <= 3; id++) await f.enqueue(id);
-  const first = await f.store.claimPendingCreditWelcomeVoice();
-  for (const event of first) await f.result(event);
-  const originals = await f.events(); f.advance(300_000);
-  const retries = await f.store.claimPendingCreditWelcomeVoice();
+  const claims = await f.store.claimPendingCreditWelcomeVoice();
   await f.update(1, { estado: "ANULADO" }); await f.update(2, { clienteTelefono: "3000000002" }); await f.update(3, { cuotaInicial: 201 });
-  for (const event of retries) assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(event.eventId), null);
-  const rows = await f.events();
-  assert.deepEqual(rows.filter(row => row.attemptNumber === 0), originals);
-  assert.deepEqual(rows.filter(row => row.attemptNumber > 0).map(row => [row.status, row.resultCode, row.providerCallId]), [
-    ["CANCELLED", "CREDIT_CLOSED", null], ["SKIPPED", "CONTACT_CHANGED", null], ["SKIPPED", "CONDITIONS_CHANGED", null],
-  ]);
-  assert.deepEqual((await f.followups()).map(row => [row.phase, row.fastAttempts]), [["STOPPED", 1], ["HELD", 1], ["HELD", 1]]);
+  for (const claim of claims) assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(claim.eventId), null);
+  assert.deepEqual((await f.events()).map(row => row.resultCode), ["CREDIT_CLOSED", "CONTACT_CHANGED", "CONDITIONS_CHANGED"]);
 });
 
-test("a genuine late refusal supersedes an in-flight identity confirmation without restoring a retry", async t => {
-  const f = await fixture(t); await f.enqueue();
-  const [event] = await f.store.claimPendingCreditWelcomeVoice(); await f.accepted(event);
-  await f.store.verifyCreditWelcomeVoiceIdentity({ eventId: event.eventId, creditId: 1, requireFreshDispatch: true,
-    customerName: "Ana", customerDocument: "00123456" });
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.equal((await f.followups())[0].phase, "CONTACTED");
-  await f.result(event, { communicationOutcome: "OPT_OUT" });
-  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.equal((await f.followups())[0].phase, "STOPPED");
-  f.advance(24 * 60 * 60_000); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-});
-
-test("real contacts and opt-outs stop both campaign claim and prepare; controlled owner contact never does", async t => {
-  const f = await fixture(t, { count: 3 });
+test("explicit opt-out and operator exclusion remain authoritative for manual requests", async t => {
+  const f = await fixture(t, { count: 2 });
+  await f.enqueue(1);
+  const [initial] = await f.store.claimPendingCreditWelcomeVoice(); await f.result(initial, { communicationOutcome: "OPT_OUT" });
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall({ creditId: 1, requestId: "44444444-4444-4444-8444-444444444444", actorId: 7 }),
+    error => error.code === "OPT_OUT");
   await f.db.exec('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\'');
-  await f.store.ensureVoiceReviewCampaign({ id: "shared-guards", startDate: "2026-10-09", creditIds: [1, 2, 3] });
-  await f.enqueue(1); await f.enqueue(2);
-  const real = await f.store.claimPendingCreditWelcomeVoice();
-  await f.result(real[0], { communicationOutcome: "HUMAN_CONTACT" }); await f.result(real[1], { communicationOutcome: "OPT_OUT" });
-  const controlled = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 3, expectedPhone: "3000000001" });
+  await f.store.ensureVoiceReviewCampaign({ id: "excluded", startDate: "2026-10-09", creditIds: [2] });
+  await f.db.exec('UPDATE "VoiceReviewCampaignMember" SET "state"=\'STOPPED\',"stopReason"=\'OPERATOR_EXCLUDED\'');
+  await f.enqueue(2); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall({ creditId: 2, requestId: "55555555-5555-4555-8555-555555555555", actorId: 7 }),
+    error => error.code === "OPERATOR_EXCLUDED");
+});
+
+test("a controlled test is explicit, ignored by automatic adoption and unchanged by the new limit", async t => {
+  const f = await fixture(t); const initial = await f.enqueue();
+  const controlled = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "3000000001" });
+  assert.equal(controlled.eventId, initial.eventId);
+  assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(controlled.eventId));
   await f.result(controlled, { communicationOutcome: "HUMAN_CONTACT" });
-  f.time("2026-10-09T15:00:00Z");
-  const scheduled = await f.store.claimVoiceReviewCampaign({ campaignId: "shared-guards", slot: "2026-10-09T10:00" });
-  assert.deepEqual(Array.from(scheduled, row => row.creditId), [3]);
-  assert.deepEqual((await f.db.query('SELECT "state" FROM "VoiceReviewCampaignMember" ORDER BY "creditoId"')).rows.map(row => row.state), ["CONTACTED", "STOPPED", "ACTIVE"]);
-  const other = "11111111-1111-4111-8111-111111111111";
-  await f.db.query(`INSERT INTO "CreditWelcomeVoiceEvent" ("id","creditoId","source","attemptNumber","retryPhase","status","dispatchedAt")
-    VALUES ($1,3,'AUTOMATIC_RETRY',2,'FAST','DISPATCHING',$2)`, [other, f.now()]);
-  await f.result({ eventId: other, creditId: 3 }, { communicationOutcome: "OPT_OUT" });
-  assert.equal(await f.store.prepareVoiceReviewCampaign(scheduled[0].eventId), null);
-  assert.equal((await f.db.query('SELECT "state","stopReason" FROM "VoiceReviewCampaignMember" WHERE "creditoId"=3')).rows[0].state, "STOPPED");
-  assert.equal((await f.events()).find(row => row.id === scheduled[0].eventId).status, "SKIPPED");
-});
-
-test("operator exclusion remains global even when a fresh automatic outbox event exists", async t => {
-  const f = await fixture(t);
-  await f.db.exec('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\'');
-  await f.store.ensureVoiceReviewCampaign({ id: "original-exclusion", startDate: "2026-10-09", creditIds: [1] });
-  await f.db.exec(`UPDATE "VoiceReviewCampaignMember" SET "state"='STOPPED',"stopReason"='OPERATOR_EXCLUDED'`);
-  await f.enqueue(); assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
-  assert.deepEqual((await f.followups()).map(row => [row.phase, row.reason]), [["STOPPED", "OPERATOR_EXCLUDED"]]);
-  assert.equal((await f.events())[0].dispatchedAt, null);
-});
-
-test("retry DDL rejects null phase and malformed daily keys and preserves queue state on idempotent installation", async t => {
-  const f = await fixture(t); await f.enqueue();
-  const first = (await f.store.claimPendingCreditWelcomeVoice())[0]; await f.result(first);
-  f.advance(300_000); await f.store.claimPendingCreditWelcomeVoice();
-  const beforeEvents = await f.events(), beforeQueues = await f.followups();
-  for (let repeat = 0; repeat < 2; repeat++) for (const statement of creditWelcomeVoiceSchemaStatements) await f.db.exec(statement);
-  assert.deepEqual(await f.events(), beforeEvents); assert.deepEqual(await f.followups(), beforeQueues);
-  let sequence = 10;
-  const insert = (phase, slot, attempt = 2) => f.db.query(`INSERT INTO "CreditWelcomeVoiceEvent"
-    ("id","creditoId","source","attemptNumber","retryPhase","retrySlot","status") VALUES ($1,1,'AUTOMATIC_RETRY',$2,$3,$4,'PENDING')`,
-    [`00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`, attempt, phase, slot]);
-  for (const [phase, slot] of [[null, null], ["OTHER", null], ["FAST", "2026-10-09T10:00"], ["PENDING", null], ["PENDING", "2026-10-09T09:00"]]) {
-    await assert.rejects(insert(phase, slot), error => error.code === "23514");
-  }
-  await insert("PENDING", "2026-10-09T10:00");
-  await assert.rejects(insert("PENDING", "2026-10-09T10:00", 3), error => error.code === "23505");
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.equal((await f.events())[0].source, "CONTROLLED_TEST");
+  const disabled = await fixture(t, { enabled: false });
+  assert.equal(await disabled.enqueue(), null);
+  assert.equal((await disabled.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.equal(disabled.queries(), 0);
 });

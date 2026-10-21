@@ -126,7 +126,8 @@ test("saved approval audio stops campaign membership across revisions while unre
 
 test("campaign recording added between claim and dispatch cancels only its unsent event and preserves prior history", async t => {
   const f = await fixture(t); await f.ensure();
-  const [first] = await f.claim(); await f.save(first);
+  const first = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 1, expectedPhone: "3000000001" });
+  await f.save(first);
   const original = (await f.rows())[0]; f.time("2026-10-09T15:00:00Z");
   const [second] = await f.claim("2026-10-09T10:00"); assert.ok(second);
   await f.db.exec(`CREATE TABLE "CreditApprovalCallRecording" ("creditoId" integer,"revision" integer);
@@ -158,7 +159,7 @@ test("claims use frozen pending members only, max attempt plus one, and one even
   assert.equal((await f.claim()).length, 0);
 });
 
-test("inflight uncertainty skips without permanently holding; an authenticated no-answer permits the next slot", async t => {
+test("inflight uncertainty never redials and a late no-answer cannot authorize another scheduled call", async t => {
   const f = await fixture(t);
   await f.ensure();
   const first = (await f.claim())[0];
@@ -167,10 +168,10 @@ test("inflight uncertainty skips without permanently holding; an authenticated n
   assert.equal((await f.claim("2026-10-09T10:00")).length, 0);
   assert.equal((await f.members())[0].state, "ACTIVE");
   await f.save(first);
-  const second = (await f.claim("2026-10-09T10:00"))[0];
-  assert.ok(second && second.eventId !== first.eventId);
-  assert.deepEqual(JSON.parse(JSON.stringify(second.snapshot)), JSON.parse(JSON.stringify(first.snapshot)));
-  assert.equal((await f.rows())[1].attemptNumber, 2);
+  assert.equal((await f.claim("2026-10-09T10:00")).length, 0);
+  assert.equal((await f.rows()).length, 1);
+  assert.equal((await f.rows())[0].status, "COMPLETED");
+  assert.equal((await f.members())[0].state, "STOPPED");
 });
 
 test("a non-test call already in flight blocks campaign redial", async t => {
@@ -184,7 +185,7 @@ test("a non-test call already in flight blocks campaign redial", async t => {
   assert.equal((await f.rows()).length, 1);
 });
 
-test("real communication stops retries, opt-out takes priority over identity, uncertain terminal results hold", async t => {
+test("real communication and opt-outs stop retries, and uncertain terminal evidence never permits another automatic call", async t => {
   const f = await fixture(t, { count: 4 });
   await f.ensure();
   const events = await f.claim();
@@ -196,26 +197,25 @@ test("real communication stops retries, opt-out takes priority over identity, un
   await f.save(events[3], { communicationOutcome: "UNCERTAIN" });
   f.time("2026-10-09T15:00:00Z");
   assert.equal((await f.claim("2026-10-09T10:00")).length, 0);
-  assert.deepEqual((await f.members()).map(row => row.state), ["CONTACTED", "CONTACTED", "STOPPED", "HELD"]);
+  assert.deepEqual((await f.members()).map(row => row.state), ["CONTACTED", "CONTACTED", "STOPPED", "STOPPED"]);
+  assert.equal((await f.rows())[3].communicationOutcome, "UNCERTAIN");
 });
 
-test("review, contact, financial changes and paid credits are revalidated before retry", async t => {
+test("review, contact, financial changes and paid credits are revalidated before the first dispatch", async t => {
   const f = await fixture(t, { count: 4 });
   await f.ensure();
   const events = await f.claim();
-  for (const event of events) await f.save(event);
   await f.db.exec('UPDATE "CreditApprovalReview" SET "revision"=2 WHERE "creditoId"=1');
   await f.update(2, { clienteTelefono: "3000000002" });
   await f.update(3, { cuotaInicial: 201 });
   await f.update(4, { estado: "PAGADO" });
-  f.time("2026-10-09T15:00:00Z");
-  assert.equal((await f.claim("2026-10-09T10:00")).length, 0);
+  for (const event of events) assert.equal(await f.store.prepareVoiceReviewCampaign(event.eventId), null);
   assert.deepEqual((await f.members()).map(row => [row.state, row.stopReason]), [
     ["HELD", "REVIEW_CHANGED"], ["HELD", "CONTACT_CHANGED"], ["HELD", "CONDITIONS_CHANGED"], ["STOPPED", "CREDIT_CLOSED"],
   ]);
 });
 
-test("prepare rechecks pending review and window, and a local window rejection can retry without a provider request", async t => {
+test("prepare rechecks pending review and window, and a local window rejection never retries automatically", async t => {
   const f = await fixture(t, { count: 2 });
   await f.ensure();
   const events = await f.claim();
@@ -226,9 +226,8 @@ test("prepare rechecks pending review and window, and a local window rejection c
   assert.equal((await f.rows())[1].resultCode, "WINDOW_CLOSED_BEFORE_DISPATCH");
   f.time("2026-10-09T15:00:00Z");
   const retry = await f.claim("2026-10-09T10:00");
-  assert.equal(retry.length, 1);
-  assert.equal(retry[0].creditId, 2);
-  assert.ok(await f.store.prepareVoiceReviewCampaign(retry[0].eventId));
+  assert.equal(retry.length, 0);
+  assert.equal((await f.rows()).length, 2);
 });
 
 test("callback outcomes and reasons persist with duplicate protection; legacy omitted fields keep the same result hash", async t => {
@@ -318,7 +317,7 @@ test("manual authorization schema rejects malformed slots, excessive lifetime, m
   await assert.rejects(f.manualWindow(), error => error.code === "23505");
 });
 
-test("manual expiry between claim and prepare prevents a call and allows the authorized 14:00 retry", async t => {
+test("manual expiry between claim and prepare prevents a call and never creates a 14:00 retry", async t => {
   const f = await fixture(t);
   await f.ensure(); await f.manualWindow(); f.time("2026-10-09T17:15:29.999Z");
   const [event] = await f.claim("2026-10-09T12:05");
@@ -329,9 +328,8 @@ test("manual expiry between claim and prepare prevents a call and allows the aut
   assert.equal((await f.rows())[0].resultCode, "WINDOW_CLOSED_BEFORE_DISPATCH");
   assert.equal((await f.members())[0].state, "ACTIVE");
   f.time("2026-10-09T19:00:00Z");
-  const [retry] = await f.claim("2026-10-09T14:00");
-  assert.ok(retry && retry.eventId !== event.eventId);
-  assert.ok(await f.store.prepareVoiceReviewCampaign(retry.eventId));
+  assert.equal((await f.claim("2026-10-09T14:00")).length, 0);
+  assert.equal((await f.rows()).length, 1);
   assert.equal((await f.claim("2026-10-09T14:00")).length, 0);
 });
 
@@ -356,7 +354,7 @@ test("manual claims preserve exclusions, ignore owner-only controlled tests and 
   for (const event of events) await f.save(event, event.creditId === 1 ? { communicationOutcome: "HUMAN_CONTACT" } : {});
   f.time("2026-10-09T19:00:00Z");
   const retries = await f.claim("2026-10-09T14:00");
-  assert.deepEqual(Array.from(retries, event => event.creditId), [2, 3]);
+  assert.equal(retries.length, 0);
   assert.equal((await f.claim("2026-10-09T14:00")).length, 0);
-  assert.deepEqual((await f.members()).map(row => [row.creditoId, row.state]), [[1, "CONTACTED"], [2, "ACTIVE"], [3, "ACTIVE"], [4, "STOPPED"]]);
+  assert.deepEqual((await f.members()).map(row => [row.creditoId, row.state]), [[1, "CONTACTED"], [2, "STOPPED"], [3, "STOPPED"], [4, "STOPPED"]]);
 });

@@ -7,6 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:welcome-voice": "node --experimental-strip-types --test --test-concurrency=2 tests/credit-welcome-voice-*.test.mjs tests/credit-voice-review-campaign*.test.mjs",
     "test:credit-renewal": "node --experimental-strip-types --test tests/paid-credit-new-sale-reservation.test.mjs tests/datacredito-paid-credit-reentry.test.mjs tests/second-credit-paid-renewal.test.mjs",
     "test:ally-sales": "node --experimental-strip-types --test tests/ally-sales-*.test.mjs",
     "test:credit-payments": "node --experimental-strip-types --test tests/credit-partial-payment-*.test.mjs tests/register-payment-methods.test.mjs tests/payment-next-date-after-payment.test.mjs tests/payment-date-and-rounding.test.mjs tests/credit-payment-plan-settled.test.mjs",

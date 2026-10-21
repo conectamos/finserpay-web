@@ -1,35 +1,15 @@
-# Bienvenida inmediata y seguimiento de contacto
+# Una sola llamada automática de bienvenida
 
-La política pura `planCreditWelcomeVoiceFollowup`, en `lib/credit-welcome-voice-followup-core.ts`, calcula la elegibilidad. No llama a Dapta, no escribe en la base de datos ni cambia aprobaciones. La cola duradera, el bloqueo de filas, la correlación del callback y la única solicitud externa por evento pertenecen al store y al worker.
+Desde el 20 de octubre de 2026, cada crédito admite una sola llamada automática de bienvenida. Esta política reemplaza los cinco intentos y la insistencia diaria que documentaba anteriormente este archivo.
 
-## Contrato de integración
+La primera llamada se encola al confirmar el crédito definitivo. El worker conserva la llamada inicial pendiente y comprueba nuevamente el estado del crédito, sus condiciones, teléfono y exclusiones antes de despacharla.
 
-Entrada: `now`, fase persistida `FAST | PENDING | CONTACTED | STOPPED | HELD`, `fastAttempts`, último evento del seguimiento, `lastPendingSlot` y, si corresponde, `holdReason`. Salida: `phase`, `shouldDispatch`, `nextAttemptAt` en UTC, `pendingSlot` local de Bogotá y un código `reason` sin datos del cliente.
+No se crean reintentos cada cinco minutos ni en las franjas 08:00, 10:00, 14:00 y 17:00. Un buzón, ocupado, ausencia de respuesta o fallo no habilita otra llamada automática. Una respuesta incierta tampoco se redespacha.
 
-`getCreditWelcomeVoicePendingSlot(now)` devuelve únicamente la franja diaria actualmente abierta o `null`. Sirve para comparar la franja de un evento PENDING ya reclamado antes y después de revalidar datos; no vuelve a planificar un DISPATCHING ni autoriza por sí solo una llamada.
+El límite se comparte entre NORMAL, INDIVIDUAL_IMPORT, AUTOMATIC_RETRY y SCHEDULED_CAMPAIGN, bajo el bloqueo del crédito. La preparación anterior al HTTP también comprueba el límite para rechazar reintentos reclamados previamente. El número de secuencia de un evento, por sí solo, no demuestra una llamada realizada.
 
-El store cuenta únicamente solicitudes reales de FAST, incluyendo la bienvenida inicial. Excluye `CONTROLLED_TEST`, intentos diarios PENDING y fallos locales que acreditan que no se hizo la solicitud. Un evento DISPATCHING sin respuesta permanece en curso; la ausencia de recibo no permite redespacharlo. Los contadores y fases se actualizan bajo el mismo bloqueo que el ledger de eventos, nunca desde parámetros del cliente.
+La instalación del esquema detiene los seguimientos y miembros de campaña que ya tienen un intento, con motivo AUTOMATIC_CALL_LIMIT_REACHED, y cancela los reintentos pendientes claramente no enviados. Conserva las llamadas en curso, los resultados, las grabaciones y la recepción de callbacks autenticados tardíos. El resumen de limpieza contiene únicamente cantidades y códigos operativos.
 
-`lastEvent.communicationOutcome`, `identityVerifiedAt` y `completedAt` son datos del backend. Los resultados terminales y su fecha provienen exclusivamente del callback autenticado y correlacionado. Los indicadores del modelo, como `identity_confirmed` o `call_successful`, no constituyen prueba de identidad ni de comunicación. El core ignora defensivamente un último evento `CONTROLLED_TEST`; el store debe seleccionar el último evento real del seguimiento y excluir las pruebas también del contador.
+Una grabación manual en CreditApprovalCallRecording sigue deteniendo la bienvenida automática con motivo CALL_RECORDING_SAVED. Se mantienen las exclusiones por solicitud del operador, negativa, crédito anulado o pagado y cambios en las condiciones del crédito.
 
-## Cinco intentos y cola diaria
-
-FAST comienza inmediatamente. El evento inicial NORMAL/PENDING o INDIVIDUAL_IMPORT/PENDING se reutiliza, no se reemplaza con otro. Después de cada resultado terminal `NO_ANSWER`, los intentos segundo al quinto quedan habilitados cinco minutos después de su `completedAt` autenticado. Un reinicio puede ejecutar un intento vencido, pero no inventa ni acumula llamadas perdidas: la siguiente espera comienza con el resultado de la llamada que realmente se hizo.
-
-Después del quinto intento total, la fase pasa a PENDING. Sus horarios son 08:00, 10:00, 14:00 y 17:00 en `America/Bogota`, con diez minutos de ventana. La primera franja debe comenzar estrictamente después del último resultado; así, terminar el quinto intento a las 14:02 no autoriza un sexto dentro de esa misma franja. Cada franja admite un intento por contacto y no se recuperan horarios que ya terminaron. La fase continúa diariamente mientras los resultados auténticos sean `NO_ANSWER`.
-
-## Parada y conciliación
-
-Una grabación manual persistida en `CreditApprovalCallRecording` detiene las bienvenidas automáticas, sus reintentos y la campaña de solicitudes pendientes del mismo crédito, con motivo `CALL_RECORDING_SAVED`. Se comprueba cualquier grabación guardada, aunque pertenezca a una revisión anterior, al encolar, adoptar eventos antiguos, reclamar y preparar el despacho antes de contactar a Dapta. Un enlace `CreditWelcomeVoiceEvent.recordingUrl` no equivale a esa evidencia: puede corresponder a buzón o al registro del proveedor.
-
-El guardado válido del audio y su repetición idempotente detienen el seguimiento `FAST/PENDING/HELD`, los integrantes `ACTIVE/HELD` y los eventos automáticos todavía `PENDING` dentro de la misma transacción. La limpieza usa `SKIP LOCKED` para no invertir el orden de bloqueos de la cola; el propietario de una fila ocupada vuelve a comprobar la grabación antes del despacho. No se reescriben llamadas aceptadas, resultados inciertos ni historial. Sólo el propio preparador, antes de iniciar HTTP, puede cancelar su evento `DISPATCHING` al detectar el audio. Guardar audio no aprueba el crédito ni acredita identidad o conformidad con sus condiciones.
-
-El botón «Llamar ahora» y las pruebas controladas siguen siendo solicitudes explícitas independientes, sujetas a sus permisos y exclusiones. El bloqueo por audio se aplica a las fuentes automáticas `NORMAL`, `INDIVIDUAL_IMPORT`, `AUTOMATIC_RETRY` y `SCHEDULED_CAMPAIGN`.
-
-La identidad verificada por FINSERPAY o el resultado `HUMAN_CONTACT` dejan el contacto en CONTACTED. Una negativa explícita registrada por el backend lo deja en STOPPED y prevalece sobre contacto anterior. Estos estados no vuelven a programarse por un callback posterior de ausencia de respuesta.
-
-DISPATCHING y ACCEPTED mantienen su fase, sin otra llamada elegible. UNKNOWN queda retenido con motivo `UNKNOWN_CALL`; la antigüedad nunca lo convierte en ausencia de respuesta. Un callback tardío autenticado puede recuperar FAST o PENDING desde `retryPhase`; cuando una bienvenida inicial antigua no tiene ese campo, se infiere desde el contador real y `lastPendingSlot`. Las retenciones por cambio de contacto, condiciones o resultado terminal ambiguo permanecen retenidas y requieren revisión; no se levantan por un callback de ausencia de respuesta.
-
-Antes de cada solicitud externa, el store vuelve a validar estado del crédito, saldo, snapshot contractual, teléfono y exclusiones, y el worker vuelve a comprobar elegibilidad y ventana después de esa lectura. Un crédito pagado, anulado o excluido no recibe llamada. La revisión `APPROVED` no bloquea por sí sola la bienvenida: este seguimiento es independiente de la campaña de solicitudes pendientes y no modifica `CreditApprovalReview`.
-
-La política y sus pruebas locales no demuestran entrega telefónica, calidad del audio ni corrección de la despedida del proveedor. La activación y cualquier incorporación excepcional de créditos anteriores requieren su configuración y selección explícitas; este documento no activa ninguna llamada.
+El botón «Llamar ahora» y las pruebas controladas siguen siendo acciones explícitas independientes. No se ejecutan como parte de la comprobación de esta política. La bienvenida de WhatsApp y las campañas de cobranza conservan sus propios procesos.

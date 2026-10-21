@@ -403,7 +403,7 @@ test("recording refusal requires explicit structured user speech and remains opt
   assert.notEqual(agentOnly.resultCode, "RECORDING_DECLINED");
 });
 
-test("known no-answer and voicemail remain retryable despite a false recording model flag", async () => {
+test("known no-answer and voicemail retain their outcome despite a false recording model flag", async () => {
   for (const fields of [{ reason: "dial_no_answer" }, { status: "failed", reason: "dial_busy" },
     { reason: "voicemail_reached", turns: [userTurn("Deje su mensaje después del tono.")] }, { voicemail: true }]) {
     const saved = await saveCommunication(communicationCall({ ...fields, recordingAccepted: false }));

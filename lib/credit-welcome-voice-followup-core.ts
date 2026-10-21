@@ -26,8 +26,8 @@ export type WelcomeVoiceFollowupInput = {
   holdReason?: string | null;
 };
 
-export const WELCOME_VOICE_FAST_ATTEMPTS = 5;
-export const WELCOME_VOICE_FAST_INTERVAL_MS = 5 * 60_000;
+export const WELCOME_VOICE_FAST_ATTEMPTS = 1;
+export const WELCOME_VOICE_AUTOMATIC_LIMIT_REASON = "AUTOMATIC_CALL_LIMIT_REACHED";
 export const WELCOME_VOICE_PENDING_WINDOW_MS = 10 * 60_000;
 const HOURS = [8, 10, 14, 17];
 const PHASES = new Set<WelcomeVoiceFollowupPhase>(["FAST", "PENDING", "CONTACTED", "STOPPED", "HELD"]);
@@ -70,30 +70,18 @@ function plan(phase: WelcomeVoiceFollowupPhase, reason: string | null,
   return { phase, shouldDispatch, nextAttemptAt: nextAttemptAt === null ? null : new Date(nextAttemptAt).toISOString(), pendingSlot, reason };
 }
 
-function pendingPlan(now: number, completedAt: number | null, lastPendingSlot: string | null | undefined) {
-  const previousSlot = lastPendingSlot == null ? null : slotMillis(lastPendingSlot);
-  if (lastPendingSlot != null && previousSlot === null) return plan("HELD", "INVALID_PENDING_SLOT");
-  const lowerBound = Math.max(completedAt ?? -Infinity, previousSlot ?? -Infinity);
-  const today = colombiaDay(now);
-  const slots = pendingSlots(today);
-  const open = slots.find(slot => slot.time <= now && now < slot.time + WELCOME_VOICE_PENDING_WINDOW_MS
-    && slot.time > lowerBound);
-  if (open) return plan("PENDING", "PENDING_SLOT_DUE", open.time, true, open.slot);
-  const tomorrow = new Date(new Date(today + "T12:00:00Z").getTime() + 24 * 60 * 60_000).toISOString().slice(0, 10);
-  const next = [...slots, ...pendingSlots(tomorrow)].find(slot => slot.time > now && slot.time > lowerBound);
-  return next ? plan("PENDING", "WAITING_PENDING_SLOT", next.time, false, next.slot) : plan("HELD", "INVALID_PENDING_SLOT");
-}
-
-/** Pure scheduling policy; this never claims events, authenticates callbacks or places calls. */
+/** One initial automatic call only. Terminal or ambiguous outcomes never authorize another. */
 export function planCreditWelcomeVoiceFollowup(input: WelcomeVoiceFollowupInput): WelcomeVoiceFollowupPlan {
   const { phase, fastAttempts } = input;
   if (phase === "STOPPED") return plan("STOPPED", "ALREADY_STOPPED");
-  const event = input.lastEvent?.source === "CONTROLLED_TEST" ? null : input.lastEvent;
+  const event = input.lastEvent && ["CONTROLLED_TEST", "OPERATOR_REQUEST"].includes(input.lastEvent.source) ? null : input.lastEvent;
   // A recorded refusal takes priority, including a refusal after an earlier conversation.
   if (event?.communicationOutcome === "OPT_OUT" || event?.resultCode === "RECORDING_DECLINED") return plan("STOPPED", "OPT_OUT");
   if (phase === "CONTACTED") return plan("CONTACTED", "ALREADY_CONTACTED");
   const now = dateMillis(input.now);
-  if (now === null || !PHASES.has(phase) || !Number.isInteger(fastAttempts) || fastAttempts < 0 || fastAttempts > WELCOME_VOICE_FAST_ATTEMPTS ||
+  // Historical queues may contain the old five-attempt counter. Stop them,
+  // rather than treating those persisted counters as a new initial call.
+  if (now === null || !PHASES.has(phase) || !Number.isSafeInteger(fastAttempts) || fastAttempts < 0 ||
     (event?.retryPhase != null && !["FAST", "PENDING"].includes(event.retryPhase))) return plan("HELD", "INVALID_STATE");
   if (event?.identityVerifiedAt) {
     const verifiedAt = dateMillis(event.identityVerifiedAt);
@@ -101,27 +89,15 @@ export function planCreditWelcomeVoiceFollowup(input: WelcomeVoiceFollowupInput)
   }
   if (event?.communicationOutcome === "HUMAN_CONTACT") return plan("CONTACTED", "HUMAN_CONTACT");
   if (phase === "HELD" && input.holdReason !== "UNKNOWN_CALL") return plan("HELD", input.holdReason ?? "HELD_FOR_REVIEW");
-  let activePhase: "FAST" | "PENDING" = phase === "PENDING" ? "PENDING" : "FAST";
-  if (phase === "HELD") activePhase = event?.retryPhase ?? (input.lastPendingSlot || fastAttempts >= WELCOME_VOICE_FAST_ATTEMPTS ? "PENDING" : "FAST");
-  if (!event) return phase === "FAST" && fastAttempts === 0 ? plan("FAST", "INITIAL_CALL_DUE", now, true) : plan("HELD", "MISSING_RESULT");
-  if (event.status === "UNKNOWN") return plan("HELD", "UNKNOWN_CALL");
-  if (["DISPATCHING", "ACCEPTED"].includes(event.status)) return plan(activePhase, "CALL_IN_FLIGHT");
-  if (event.status === "PENDING") {
-    // Reuse the existing initial NORMAL/PENDING event; the store must not create another.
-    return activePhase === "FAST" && fastAttempts === 0 && ["NORMAL", "INDIVIDUAL_IMPORT"].includes(event.source)
-      ? plan("FAST", "INITIAL_CALL_DUE", now, true) : plan(activePhase, "CALL_ALREADY_QUEUED");
+  if (event?.source === "AUTOMATIC_RETRY") return plan("STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
+  // A second worker must not stop the first owner's still-unsent initial claim.
+  if (event && ["DISPATCHING", "ACCEPTED"].includes(event.status)) return plan(phase === "PENDING" ? "PENDING" : "FAST", "CALL_IN_FLIGHT");
+  if (fastAttempts >= WELCOME_VOICE_FAST_ATTEMPTS) return plan("STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
+  if (!event) return phase === "FAST" ? plan("FAST", "INITIAL_CALL_DUE", now, true) : plan("HELD", "MISSING_RESULT");
+  // Reuse an initial event, including a legacy queue with a nonzero event
+  // attemptNumber. The store verifies actual prior automatic dispatch evidence.
+  if (event.status === "PENDING" && ["NORMAL", "INDIVIDUAL_IMPORT"].includes(event.source)) {
+    return plan("FAST", "INITIAL_CALL_DUE", now, true);
   }
-  if (["CANCELLED", "SKIPPED"].includes(event.status)) return plan("STOPPED", "EVENT_EXCLUDED");
-  if (event.status === "FAILED" && event.resultCode === "WINDOW_CLOSED_BEFORE_DISPATCH") {
-    // This local failure proves that no request was made; it is not a sixth call.
-    return activePhase === "PENDING" || fastAttempts === WELCOME_VOICE_FAST_ATTEMPTS
-      ? pendingPlan(now, null, input.lastPendingSlot) : plan("FAST", "KNOWN_UNSENT", now, true);
-  }
-  if (!["COMPLETED", "FAILED"].includes(event.status) || event.communicationOutcome !== "NO_ANSWER") return plan("HELD", "UNCERTAIN_RESULT");
-  const completedAt = dateMillis(event.completedAt);
-  if (completedAt === null || completedAt > now) return plan("HELD", "INVALID_RESULT_TIME");
-  if (activePhase === "PENDING" || fastAttempts === WELCOME_VOICE_FAST_ATTEMPTS) return pendingPlan(now, completedAt, input.lastPendingSlot);
-  if (fastAttempts < 1) return plan("HELD", "INVALID_ATTEMPT_COUNT");
-  const next = completedAt + WELCOME_VOICE_FAST_INTERVAL_MS;
-  return plan("FAST", now >= next ? "FAST_RETRY_DUE" : "WAITING_FAST_RETRY", next, now >= next);
+  return plan("STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
 }

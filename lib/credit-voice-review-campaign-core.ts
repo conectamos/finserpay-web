@@ -55,7 +55,8 @@ export function classifyVoiceCampaignResult(event: {
   if (["CANCELLED", "SKIPPED"].includes(event.status) || event.communicationOutcome === "OPT_OUT"
     || event.resultCode === "RECORDING_DECLINED") return "STOPPED";
   if (event.identityVerifiedAt || event.communicationOutcome === "HUMAN_CONTACT") return "CONTACTED";
-  if (event.status === "FAILED" && event.resultCode === "WINDOW_CLOSED_BEFORE_DISPATCH") return "RETRY";
-  if (event.communicationOutcome === "NO_ANSWER") return "RETRY";
+  // Welcome calls have a single automatic attempt, including the legacy cohort.
+  if (event.status === "FAILED" && event.resultCode === "WINDOW_CLOSED_BEFORE_DISPATCH") return "STOPPED";
+  if (event.communicationOutcome === "NO_ANSWER") return "STOPPED";
   return "HELD";
 }

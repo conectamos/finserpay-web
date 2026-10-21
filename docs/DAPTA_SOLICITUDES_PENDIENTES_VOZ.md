@@ -2,6 +2,8 @@
 
 La campaña llama a un lote cerrado de créditos ya finalizados que siguen pendientes de revisión. Utiliza a Diana y sus herramientas de identidad y condiciones contractuales. No aprueba créditos ni modifica sus condiciones.
 
+Desde el 20 de octubre de 2026 comparte el límite de **una sola llamada automática por crédito** con las bienvenidas de créditos nuevos. Las franjas siguientes solo pueden seleccionar créditos que todavía no tengan un intento automático; no habilitan insistencia a los que ya fueron llamados.
+
 ## Horario
 
 La zona es `America/Bogota`. Desde `startDate`, los lotes comienzan diariamente a las 08:00, 10:00, 14:00 y 17:00, mientras queden contactos activos. Cada lote admite despachos durante diez minutos; un reinicio no reproduce franjas anteriores. El cron del servidor comprueba la cola cada treinta segundos y despacha hasta tres contactos por tanda.
@@ -22,11 +24,11 @@ Antes de activar, comprobar la selección contra el muro de aprobaciones: `Credi
 
 ## Intentos y parada
 
-Cada franja tiene como máximo un intento por crédito, con UUID y token nuevos. Las restricciones de base de datos y los bloqueos evitan que dos instancias reclamen el mismo contacto. Las pruebas `CONTROLLED_TEST` anteriores no cuentan como contacto de esta campaña.
+Cada crédito admite un único intento automático, con UUID y token propios. Las restricciones de base de datos y los bloqueos evitan que dos instancias reclamen el mismo contacto. Las pruebas `CONTROLLED_TEST` anteriores no consumen ese intento.
 
 Si el crédito ya tiene una grabación manual guardada en `CreditApprovalCallRecording`, la campaña se detiene con motivo `CALL_RECORDING_SAVED`, incluso si el audio es de una revisión anterior. El guardado y la comprobación antes del despacho siguen la misma regla de [bienvenidas y reintentos](DAPTA_BIENVENIDA_CINCO_INTENTOS.md). No se interpreta una grabación de buzón ni un enlace al registro de Dapta como una llamada manual realizada.
 
-Solo se reintenta automáticamente una ausencia de respuesta confirmada: ocupado, sin contestar, fallo de marcación o buzón, sin evidencia contradictoria de una conversación. La identidad verificada por FINSERPAY o una conversación humana acreditada detienen las llamadas; una negativa o una solicitud de no volver a llamar también las detienen. Esto registra comunicación, no conformidad con el contrato.
+No se reintenta automáticamente una ausencia de respuesta, ocupado, fallo de marcación o buzón. El intento previo detiene la selección con motivo `AUTOMATIC_CALL_LIMIT_REACHED`, incluso si corresponde a otra fuente automática de bienvenida. La identidad verificada, la conversación humana y la negativa conservan sus respectivos estados; ninguno autoriza otra llamada automática. Esto registra comunicación, no conformidad con el contrato.
 
 Los resultados ambiguos, callbacks ausentes y llamadas en curso permanecen retenidos. No se convierten en «sin contestar» por antigüedad o duración. Su resolución requiere el resultado autenticado de Dapta o revisión del operador. `TERMS_REVIEWED`, `COMPLETED` y `call_successful` por sí solos no acreditan comunicación.
 
