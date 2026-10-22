@@ -115,6 +115,7 @@ COPY --from=builder \
   /app/scripts/ensure-credit-welcome-voice-schema.mjs \
   ./scripts/
 COPY --from=builder /app/lib/solicitudes-export-schema-statements.json ./lib/solicitudes-export-schema-statements.json
+COPY --from=builder /app/lib/firmaseguro-draft-administration-schema.json ./lib/firmaseguro-draft-administration-schema.json
 
 EXPOSE 3000
 

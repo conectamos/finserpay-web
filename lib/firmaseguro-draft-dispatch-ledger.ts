@@ -23,7 +23,7 @@ import { requestDataValues } from "@/lib/approval-request-correction-core";
 import { verifiesFrozenClientCorrectionSource } from "@/lib/firmaseguro-draft-client-correction-frozen";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-type DispatchStatus = "PREPARING" | "DISPATCHING" | "AWAITING_SIGNATURE" | "FAILED_SAFE" | "UNCERTAIN";
+type DispatchStatus = "PREPARING" | "DISPATCHING" | "AWAITING_SIGNATURE" | "FAILED_SAFE" | "UNCERTAIN" | "ABANDONED";
 export type DraftDispatchRow = {
   id: string; draftId: number; actorUserId: number; actorName: string; reason: string;
   expectedProcessUuid: string | null; processUuid: string | null; status: DispatchStatus;
@@ -238,7 +238,7 @@ export function ensureDraftDispatchSchema() {
       FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_audit()`);
     await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_preserve()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-        IF TG_OP='DELETE' THEN
+        IF TG_OP='DELETE' OR (OLD."status"='ABANDONED' AND NEW IS DISTINCT FROM OLD) THEN
           RAISE EXCEPTION 'DRAFT_DISPATCH_IMMUTABLE' USING ERRCODE='23514';
         END IF;
         IF ROW(NEW."draftId",NEW."actorUserId",NEW."actorName",NEW."reason",
@@ -254,8 +254,8 @@ export function ensureDraftDispatchSchema() {
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_IMMUTABLE' USING ERRCODE='23514'; END IF;
         IF (OLD."status"='PREPARING' AND NEW."status" NOT IN ('PREPARING','DISPATCHING','FAILED_SAFE'))
           OR (OLD."status"='DISPATCHING' AND NEW."status" NOT IN ('DISPATCHING','AWAITING_SIGNATURE','FAILED_SAFE','UNCERTAIN'))
-          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE','FAILED_SAFE'))
-          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE')
+          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE','FAILED_SAFE','ABANDONED'))
+          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE','ABANDONED')
             AND NEW."status" IS DISTINCT FROM OLD."status")
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_STATUS_INVALID' USING ERRCODE='23514'; END IF;
         IF NEW."status"='FAILED_SAFE' AND OLD."status" IN ('DISPATCHING','UNCERTAIN')
