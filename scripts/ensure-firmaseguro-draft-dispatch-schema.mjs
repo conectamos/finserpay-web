@@ -245,6 +245,7 @@ try {
   await client.query("SET LOCAL statement_timeout = '120s'");
   await client.query("SELECT pg_advisory_xact_lock(hashtext('finserpay-firmaseguro-draft-dispatch-schema'))");
   await client.query("SELECT pg_advisory_xact_lock(5843,20261022)");
+  await client.query("SELECT pg_advisory_xact_lock(5843,20261020)");
   for (const statement of statements) await client.query(statement);
   const administrativeSchema = JSON.parse(readFileSync(new URL("../lib/firmaseguro-draft-administration-schema.json", import.meta.url), "utf8"));
   for (const statement of administrativeSchema) await client.query(statement);

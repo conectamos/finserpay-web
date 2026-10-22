@@ -254,3 +254,12 @@ test("ordinary expiry may close a reserved draft while preserving all contract v
  const row=(await f.db.query('SELECT "estado","payload" FROM "CreditoBorrador" WHERE "id"=81')).rows[0];
  assert.equal(row.estado,"CERRADO");assert.deepEqual(row.payload,f.payload);
 });
+
+test("predeploy acquires both runtime schema locks before retaining any DDL lock",()=>{
+ const installer=readFileSync(new URL("../scripts/ensure-firmaseguro-draft-dispatch-schema.mjs",import.meta.url),"utf8");
+ const ddl=installer.indexOf("for (const statement of statements) await client.query(statement)");
+ const adminLock=installer.indexOf('await client.query("SELECT pg_advisory_xact_lock(5843,20261022)")');
+ const baseLock=installer.indexOf('await client.query("SELECT pg_advisory_xact_lock(5843,20261020)")');
+ assert.ok(adminLock>=0 && baseLock>adminLock && ddl>baseLock,
+  "DDL must not retain Receipt locks while waiting for either runtime schema lock");
+});
