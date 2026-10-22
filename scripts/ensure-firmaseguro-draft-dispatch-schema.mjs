@@ -1,4 +1,5 @@
 import pg from "pg";
+import { readFileSync } from "node:fs";
 
 // Keep these statements identical to the runtime schema; tests detect drift.
 const statements = [
@@ -105,7 +106,7 @@ const statements = [
       FOR EACH ROW EXECUTE FUNCTION public.firmaseguro_draft_dispatch_audit()`,
   `CREATE OR REPLACE FUNCTION public.firmaseguro_draft_dispatch_preserve()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-        IF TG_OP='DELETE' THEN
+        IF TG_OP='DELETE' OR (OLD."status"='ABANDONED' AND NEW IS DISTINCT FROM OLD) THEN
           RAISE EXCEPTION 'DRAFT_DISPATCH_IMMUTABLE' USING ERRCODE='23514';
         END IF;
         IF ROW(NEW."draftId",NEW."actorUserId",NEW."actorName",NEW."reason",
@@ -121,8 +122,8 @@ const statements = [
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_IMMUTABLE' USING ERRCODE='23514'; END IF;
         IF (OLD."status"='PREPARING' AND NEW."status" NOT IN ('PREPARING','DISPATCHING','FAILED_SAFE'))
           OR (OLD."status"='DISPATCHING' AND NEW."status" NOT IN ('DISPATCHING','AWAITING_SIGNATURE','FAILED_SAFE','UNCERTAIN'))
-          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE','FAILED_SAFE'))
-          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE')
+          OR (OLD."status"='UNCERTAIN' AND NEW."status" NOT IN ('UNCERTAIN','AWAITING_SIGNATURE','FAILED_SAFE','ABANDONED'))
+          OR (OLD."status" IN ('AWAITING_SIGNATURE','FAILED_SAFE','ABANDONED')
             AND NEW."status" IS DISTINCT FROM OLD."status")
         THEN RAISE EXCEPTION 'DRAFT_DISPATCH_STATUS_INVALID' USING ERRCODE='23514'; END IF;
         IF NEW."status"='FAILED_SAFE' AND OLD."status" IN ('DISPATCHING','UNCERTAIN')
@@ -243,7 +244,10 @@ try {
   await client.query("SET LOCAL lock_timeout = '10s'");
   await client.query("SET LOCAL statement_timeout = '120s'");
   await client.query("SELECT pg_advisory_xact_lock(hashtext('finserpay-firmaseguro-draft-dispatch-schema'))");
+  await client.query("SELECT pg_advisory_xact_lock(5843,20261022)");
   for (const statement of statements) await client.query(statement);
+  const administrativeSchema = JSON.parse(readFileSync(new URL("../lib/firmaseguro-draft-administration-schema.json", import.meta.url), "utf8"));
+  for (const statement of administrativeSchema) await client.query(statement);
   await client.query("COMMIT");
   console.log("Esquema de envios de FirmaSeguro para borradores verificado.");
 } catch (error) {

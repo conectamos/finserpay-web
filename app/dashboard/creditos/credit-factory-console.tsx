@@ -86,6 +86,7 @@ import CreditFinancingProposal from "./credit-financing-proposal";
 import EquipmentVisual from "./equipment-visual";
 import ImeiConfirmationDialog from "./imei-confirmation-dialog";
 import IdentitySignatureOverview from "./identity-signature-overview";
+import PendingSignatureRecovery from "./pending-signature-recovery";
 import VeriffIdentityDialog from "./veriff-identity-dialog";
 import equipmentSignatureStyles from "./equipment-signature.module.css";
 import { useCreditProcessLiveStatus } from "./use-credit-process-live-status";
@@ -16718,6 +16719,15 @@ export default function CreditFactoryConsole({
                       <RefreshCw className={`h-4 w-4${firmaSeguroRefreshing ? " animate-spin" : ""}`} aria-hidden="true" />Consultar estado
                     </Button>
                   </section> : null}
+
+                  {draftId && pendingFirmaSeguroDispatch ? <PendingSignatureRecovery
+                    key={`${draftId}:${pendingFirmaSeguroDispatch.id}`}
+                    draftId={draftId} dispatchId={pendingFirmaSeguroDispatch.id}
+                    canRecover={canSeeInternalPricing && pendingFirmaSeguroDispatch.status === "UNCERTAIN"
+                      && pendingFirmaSeguroDispatch.failureStage === "provider_dispatch"
+                      && !pendingFirmaSeguroDispatch.hasReceipt && pendingFirmaSeguroDispatch.hasProviderLocator === false}
+                    onRecovered={() => { processLiveStatus.retry(); void refreshFirmaSeguroDraftProcess(); }}
+                  /> : null}
 
                   {veriffApproved && !pendingFirmaSeguroDispatch ? <IdentitySignatureOverview identityApproved={veriffApproved} identityRejected={veriffRejected || dataCreditoVeriffDocumentRejected}
                     identityLabel={veriffVisualLabel} signed={firmaSeguroProcessSigned} sent={firmaSeguroProcessSent}
