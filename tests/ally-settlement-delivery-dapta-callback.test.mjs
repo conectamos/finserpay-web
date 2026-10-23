@@ -50,13 +50,13 @@ const receiptInput = (id, overrides = {}) => parseDaptaCallback({
 });
 
 before(async () => {
-  await pg.exec('CREATE TABLE "LiquidacionAliado" (id integer PRIMARY KEY)');
+  await pg.exec('CREATE TABLE "LiquidacionAliado" (id integer PRIMARY KEY, "aliadoId" integer NOT NULL)');
   for (const sql of allySettlementDeliverySchemaStatements) await pg.exec(sql);
   // Re-running the startup migration must preserve the same contract.
   for (const sql of allySettlementDeliverySchemaStatements) await pg.exec(sql);
 });
 beforeEach(async () => {
-  await pg.exec('TRUNCATE "LiquidacionAliado" CASCADE; INSERT INTO "LiquidacionAliado" VALUES (101),(202)');
+  await pg.exec('TRUNCATE "LiquidacionAliado" CASCADE; INSERT INTO "LiquidacionAliado" VALUES (101,1),(202,2)');
 });
 after(async () => { await pg.close(); });
 
@@ -109,7 +109,7 @@ test("gate apagado, lease vencido, canal incorrecto, falta de inicio o PDF y est
     { leaseValid: false }, { started: false }, { channel: "EMAIL" }, { document: false },
     ...["QUEUED", "FAILED", "SENT", "UNCERTAIN"].map(status => ({ status })),
   ]) {
-    await pg.exec('TRUNCATE "LiquidacionAliado" CASCADE; INSERT INTO "LiquidacionAliado" VALUES (101),(202)');
+    await pg.exec('TRUNCATE "LiquidacionAliado" CASCADE; INSERT INTO "LiquidacionAliado" VALUES (101,1),(202,2)');
     const invalid = await seed(options);
     assert.equal((await store.claim(claimInput(invalid))).authorized, false, JSON.stringify(options));
     assert.equal((await claims()).length, 0);
@@ -299,7 +299,7 @@ test("fechas futuras injustificadas o anteriores al despacho no concilian el int
 
 test("dispatcher conserva recibos concurrentes y permite conciliar después de timeout sin error espurio ni reenvío", async () => {
   for (const mode of ["sent-before-timeout", "uncertain-before-timeout", "receipt-after-timeout", "sent-before-accepted"]) {
-    await pg.exec('TRUNCATE "LiquidacionAliado" CASCADE; INSERT INTO "LiquidacionAliado" VALUES (101),(202)');
+    await pg.exec('TRUNCATE "LiquidacionAliado" CASCADE; INSERT INTO "LiquidacionAliado" VALUES (101,1),(202,2)');
     const id = await seed({ status: "QUEUED", started: false });
     const deliveryStore = createSettlementDeliveryStore(db);
     let requests = 0;

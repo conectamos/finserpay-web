@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
@@ -104,7 +104,7 @@ test("flujo completo offline: commit, PDF real, Resend/Meta ficticios, aislamien
         assert.equal(options.method, "POST");
         const body = JSON.parse(options.body);
         assert.deepEqual(body.to, ["uno@example.invalid"]);
-        assert.deepEqual(body.bcc, ["pagos@finserpay.com"]);
+        assert.deepEqual(body.bcc, ["pagos@finserpay.com", "contabilidadfinserpaysas@gmail.com"]);
         assert.equal(body.cc, undefined);
         assert.equal(body.from, "FINSER PAY <pagos@finserpay.com>");
         assert.equal(body.subject, "FINSER PAY | Liquidación del 01/10/2026 al 15/10/2026");
@@ -188,6 +188,87 @@ test("flujo completo offline: commit, PDF real, Resend/Meta ficticios, aislamien
     assert.equal((await dispatchSettlementDeliveries({ store, document, send, settlementId: 101 })).processed, 0);
     assert.equal(requests.length, requestCount, "Repeated worker runs cannot make another provider request");
     assert.equal(outgoing.length, 2);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await pg.close();
+  }
+});
+
+test("copias por identidad: JG, Monky y tercero quedan aislados incluso al reenviar payloads históricos", async () => {
+  const pg = new PGlite();
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("La prueba prohíbe cualquier solicitud real de red"); };
+  try {
+    await pg.exec(`
+      CREATE TABLE "Aliado" (id integer PRIMARY KEY, nombre text, email text, "telefonoWhatsapp" text);
+      CREATE TABLE "LiquidacionAliado" (id integer PRIMARY KEY, "aliadoId" integer NOT NULL REFERENCES "Aliado"(id));
+      INSERT INTO "Aliado" VALUES
+        (65588, 'Nombre de prueba compartido', 'jg-ficticio@example.invalid', NULL),
+        (14877, 'Nombre de prueba compartido', 'monky-ficticio@example.invalid', NULL),
+        (99999, 'Nombre de prueba compartido', 'tercero-ficticio@example.invalid', NULL);
+      INSERT INTO "LiquidacionAliado" VALUES (101,65588),(202,14877),(303,99999);
+    `);
+    for (const sql of allySettlementDeliverySchemaStatements) await pg.exec(sql);
+    const db = { ...adapter(pg), $transaction: fn => pg.transaction(tx => fn(adapter(tx))) };
+    const store = createSettlementDeliveryStore(db);
+    const globalCopies = ["pagos@finserpay.com", "contabilidadfinserpaysas@gmail.com"];
+    const cases = [
+      { id: 101, allyId: 65588, recipient: "jg-ficticio@example.invalid", copies: [...globalCopies, "jesusguarni@hotmail.com"] },
+      { id: 202, allyId: 14877, recipient: "monky-ficticio@example.invalid", copies: [...globalCopies, "javiermonki19@gmail.com"] },
+      { id: 303, allyId: 99999, recipient: "tercero-ficticio@example.invalid", copies: globalCopies },
+    ];
+    const snapshot = row => ({
+      id: row.id, aliado: { id: row.allyId, nombre: "Nombre de prueba compartido" },
+      periodoInicio: "2026-10-01", periodoFin: "2026-10-15", saldoNeto: row.id * 100,
+    });
+    for (const row of cases) await db.$transaction(tx => enqueueInitialSettlementDeliveries(tx, snapshot(row), 99));
+    // The same shape as historical attempts: no routing identity in the payload.
+    const originalAttempts = await db.$queryRawUnsafe('SELECT * FROM "AllySettlementDeliveryAttempt" WHERE channel=\'EMAIL\'');
+    assert.ok(originalAttempts.every(row => row.payload.allyId === undefined));
+    const domainId = "11111111-1111-4111-8111-111111111111";
+    const env = {
+      ALLY_SETTLEMENT_DELIVERY_ENABLED: "true", RESEND_API_KEY: "TEST-KEY-NOT-A-CREDENTIAL",
+      RESEND_SETTLEMENT_DOMAIN_ID: domainId,
+    };
+    const requests = [];
+    const send = (input, options) => sendSettlementDelivery(input, {
+      ...options, env, fetch: async (url, init) => {
+        if (url === `https://api.resend.com/domains/${domainId}`) {
+          return Response.json({ id: domainId, name: "finserpay.com", status: "verified", capabilities: { sending: "enabled" } });
+        }
+        assert.equal(url, "https://api.resend.com/emails");
+        requests.push({ body: JSON.parse(init.body), key: init.headers["Idempotency-Key"] });
+        return Response.json({ id: randomUUID() });
+      },
+    });
+    let pdfBuilds = 0;
+    const document = id => store.document(id, async () => {
+      pdfBuilds++;
+      return Buffer.from(`%PDF-1.4\nDOCUMENTO FICTICIO EXCLUSIVO ${id}\n%%EOF`);
+    });
+    for (const row of cases) {
+      assert.equal((await dispatchSettlementDeliveries({ store, document, send, settlementId: row.id })).processed, 1);
+      const delivery = requests.at(-1);
+      assert.deepEqual(delivery.body.to, [row.recipient]);
+      assert.deepEqual(delivery.body.bcc, row.copies);
+      assert.equal(delivery.body.cc, undefined);
+      assert.equal(Buffer.from(delivery.body.attachments[0].content, "base64").toString(), `%PDF-1.4\nDOCUMENTO FICTICIO EXCLUSIVO ${row.id}\n%%EOF`);
+      assert.equal((await store.list(row.id)).deliveries.find(item => item.channel === "EMAIL").status, "SENT");
+    }
+    assert.equal(requests.length, 3);
+    assert.equal(pdfBuilds, 3);
+    const originalJgRequest = requests.find(row => row.body.to[0] === cases[0].recipient);
+    const operation = randomUUID();
+    const retry = await store.retry(snapshot({ ...cases[0], allyId: 14877 }), "EMAIL", operation, 99);
+    assert.deepEqual(retry.payload, originalAttempts.find(row => row.settlementId === 101).payload);
+    assert.equal((await dispatchSettlementDeliveries({ store, document, send, settlementId: 101 })).processed, 1);
+    assert.equal(requests.length, 4);
+    assert.deepEqual(requests.at(-1).body, originalJgRequest.body, "Reenviar conserva el PDF, mensaje y copias del aliado real");
+    assert.notEqual(requests.at(-1).key, originalJgRequest.key, "Un reenvío explícito tiene su propio intento");
+    assert.equal((await store.retry(snapshot(cases[0]), "EMAIL", operation, 99)).id, retry.id);
+    assert.equal((await dispatchSettlementDeliveries({ store, document, send })).processed, 0);
+    assert.equal(requests.length, 4, "Repetir la operación o el worker no duplica el correo ni sus copias");
+    assert.equal(pdfBuilds, 3, "El reenvío usa el documento previamente congelado");
   } finally {
     globalThis.fetch = previousFetch;
     await pg.close();

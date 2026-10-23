@@ -3,7 +3,7 @@ import { DeliveryProviderError, sendSettlementDelivery } from "./ally-settlement
 
 export type DeliveryDispatchStore = {
   recover(): Promise<void>;
-  claim(settlementId?: number): Promise<SettlementDeliveryAttempt | null>;
+  claim(settlementId?: number): Promise<(SettlementDeliveryAttempt & { allyId: number }) | null>;
   beforeSend(id: string, claimToken: string): Promise<void>;
   accepted(id: string, providerId: string, claimToken: string): Promise<void>;
   failed(id: string, error: string, uncertain: boolean, claimToken: string): Promise<void>;
@@ -27,7 +27,8 @@ export async function dispatchSettlementDeliveries(input: {
       const document = await input.document(attempt.settlementId);
       const result = await (input.send || sendSettlementDelivery)({
         ...attempt.payload, ...document, channel: attempt.channel,
-        recipient: attempt.recipient, attemptId: attempt.id,
+        // Resolve identity from the settlement relation, including old payloads.
+        allyId: attempt.allyId, recipient: attempt.recipient, attemptId: attempt.id,
       }, { beforeSend: async () => {
         await input.store.beforeSend(attempt.id, attempt.claimToken);
         sending = true;

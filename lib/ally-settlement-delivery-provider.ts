@@ -3,7 +3,12 @@ import { createSettlementDaptaToken } from "./ally-settlement-delivery-dapta-aut
 import { createSettlementMediaUrl } from "./ally-settlement-delivery-media";
 
 export const SETTLEMENT_EMAIL_FROM = "FINSER PAY <pagos@finserpay.com>";
-const SETTLEMENT_EMAIL_COPY = "pagos@finserpay.com";
+const SETTLEMENT_EMAIL_COPIES = ["pagos@finserpay.com", "contabilidadfinserpaysas@gmail.com"];
+// Confirmed Aliado IDs: names and primary addresses may change independently.
+const SETTLEMENT_ALLY_EMAIL_COPIES = new Map<number, string>([
+  [65588, "jesusguarni@hotmail.com"], // JG COMPANY (JG)
+  [14877, "javiermonki19@gmail.com"], // MONKY TECNOLOGY (MT)
+]);
 export const SETTLEMENT_WHATSAPP_SENDER = "573124085562";
 // This exact body must be approved in Meta with a DOCUMENT header. Comparing
 // approved content prevents an unrelated or edited payment-confirmation template.
@@ -20,6 +25,7 @@ export class DeliveryProviderError extends Error {
 
 export type SettlementDeliveryInput = {
   channel: "EMAIL" | "WHATSAPP";
+  allyId?: number;
   attemptId: string;
   recipient: string;
   subject: string;
@@ -64,6 +70,9 @@ function normalizeTemplateText(value: unknown) {
 
 function validateInput(input: SettlementDeliveryInput) {
   if (!UUID.test(input.attemptId)) throw new DeliveryProviderError("El identificador del intento no es válido.");
+  if (input.allyId !== undefined && (!Number.isSafeInteger(input.allyId) || input.allyId <= 0)) {
+    throw new DeliveryProviderError("El identificador del aliado no es válido.");
+  }
   if (!["EMAIL", "WHATSAPP"].includes(input.channel)) throw new DeliveryProviderError("Canal de envío inválido.");
   if (!Buffer.isBuffer(input.pdf) || input.pdf.length < 5 || input.pdf.length > 20 * 1024 * 1024 ||
     input.pdf.subarray(0, 5).toString("ascii") !== "%PDF-") {
@@ -123,13 +132,15 @@ async function sendEmail(input: SettlementDeliveryInput, options: Options, env: 
     asRecord(domain.capabilities).sending !== "enabled") {
     throw new DeliveryProviderError("Resend debe verificar finserpay.com con envío habilitado para pagos@finserpay.com.");
   }
+  const allyCopy = input.allyId === undefined ? undefined : SETTLEMENT_ALLY_EMAIL_COPIES.get(input.allyId);
+  const bcc = [...new Set([...SETTLEMENT_EMAIL_COPIES, ...(allyCopy ? [allyCopy] : [])])]
+    .filter(address => address !== input.recipient.toLowerCase());
   // Fixed field order and persisted input make retries byte-identical. Resend's
   // key lasts 24h: the dispatcher must not blindly retry old ambiguous attempts.
   const body = JSON.stringify({
     from: SETTLEMENT_EMAIL_FROM, to: [input.recipient],
-    // Keep the internal copy in the same idempotent request and avoid sending
-    // twice to the audit mailbox when it is already the primary recipient.
-    ...(input.recipient.toLowerCase() === SETTLEMENT_EMAIL_COPY ? {} : { bcc: [SETTLEMENT_EMAIL_COPY] }),
+    // All copies share the same PDF and idempotency key. Never duplicate To.
+    ...(bcc.length ? { bcc } : {}),
     subject: input.subject, text: input.text,
     attachments: [{ content: input.pdf.toString("base64"), filename: input.filename }],
   });

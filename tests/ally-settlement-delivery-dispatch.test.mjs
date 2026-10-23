@@ -10,7 +10,7 @@ const { DeliveryProviderError, sendSettlementDelivery } = await jiti.import("../
 const { buildSettlementDeliveryPayload } = await jiti.import("../lib/ally-settlement-delivery-types.ts");
 const id = suffix => `11111111-1111-4111-8111-${String(suffix).padStart(12, "0")}`;
 const attempt = (channel, settlementId = 10, suffix = channel === "EMAIL" ? 1 : 2) => ({
-  id: id(suffix), claimToken: id(suffix + 100), settlementId, channel, sequence: 1,
+  id: id(suffix), claimToken: id(suffix + 100), settlementId, allyId: settlementId + 1000, channel, sequence: 1,
   recipient: channel === "EMAIL" ? `aliado${settlementId}@example.invalid` : "573001234567", status: "PROCESSING",
   payload: buildSettlementDeliveryPayload({ allyName: `Aliado ${settlementId}`, periodStart: "2026-10-01", periodEnd: "2026-10-15", netAmount: settlementId * 1000 }),
   error: null, createdAt: new Date("2026-10-21T14:00:00Z"), attemptedAt: new Date("2026-10-21T14:01:00Z"),
@@ -72,10 +72,23 @@ test("each channel receives only its settlement's saved PDF and original snapsho
     assert.deepEqual(request.pdf, f.pdfs.get(row.settlementId));
     assert.equal(request.filename, `liquidacion-${row.settlementId}.pdf`);
     assert.equal(request.recipient, row.recipient); assert.equal(request.allyName, row.payload.allyName);
+    assert.equal(request.allyId, row.allyId);
     assert.equal(request.subject, row.payload.subject); assert.equal(request.netAmount, row.payload.netAmount);
   }
   assert.deepEqual(f.requests[0].pdf, f.requests[1].pdf);
   assert.notDeepEqual(f.requests[0].pdf, f.requests[2].pdf);
+});
+
+test("dispatch usa la identidad reclamada aunque el payload indique otro aliado", async () => {
+  const row = attempt("EMAIL");
+  row.allyId = 65588;
+  row.payload = { ...row.payload, allyId: 14877 };
+  const f = fixture([row]);
+  await dispatchSettlementDeliveries({ store: f.store, document: f.document, send: f.send });
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].allyId, 65588);
+  assert.equal(f.requests[0].allyName, row.payload.allyName);
+  assert.deepEqual(f.requests[0].pdf, f.pdfs.get(row.settlementId));
 });
 
 test("the durable send boundary follows document and preflight, precedes the POST, and carries its lease token", async () => {
