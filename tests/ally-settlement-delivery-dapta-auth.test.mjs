@@ -34,9 +34,22 @@ test("caduca a los treinta minutos exactos y rechaza vencimientos demasiado leja
   assert.equal(verifySettlementDaptaToken(token, id, recipient, env, now + 1800_000 - 1), true);
   assert.equal(verifySettlementDaptaToken(token, id, recipient, env, now + 1800_000), false);
   assert.equal(verifySettlementDaptaToken(token, id, recipient, env, now + 1800_001), false);
-  assert.equal(verifySettlementDaptaToken(token, id, recipient, env, now - 1000), false);
+  assert.equal(Number(token.split(".")[1]) - now / 1000, 1800, "Signing lifetime stays exactly 1800 seconds");
   const future = createSettlementDaptaToken(id, recipient, env, now + 3600_000);
   assert.equal(verifySettlementDaptaToken(future, id, recipient, env, now), false);
+});
+
+test("tolera emisor adelantado hasta treinta segundos solo en la cota futura", () => {
+  for (const [skewSeconds, expected] of [[1, true], [30, true], [31, false]]) {
+    const issuedAt = now + skewSeconds * 1000;
+    const token = createSettlementDaptaToken(id, recipient, env, issuedAt);
+    const expiresAt = Number(token.split(".")[1]) * 1000;
+    assert.equal(expiresAt - issuedAt, 1800_000);
+    assert.equal(verifySettlementDaptaToken(token, id, recipient, env, now), expected, `Issuer ahead ${skewSeconds}s`);
+    assert.equal(verifySettlementDaptaToken(token, id, recipient, env, expiresAt - 1), true);
+    assert.equal(verifySettlementDaptaToken(token, id, recipient, env, expiresAt), false);
+    assert.equal(verifySettlementDaptaToken(token, id, recipient, env, expiresAt + 1000), false);
+  }
 });
 
 test("mutaciones de versión, firma, vencimiento y espacios fallan cerradas", () => {

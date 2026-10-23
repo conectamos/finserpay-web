@@ -21,7 +21,14 @@ const claim = () => ({
   net_amount: "$123.456", filename: "liquidacion-prueba.pdf",
   pdf_url: `https://finserpay.com/api/integraciones/liquidaciones/documento?attempt=${eventId}&expires=1792778000&signature=fixture`,
 });
-const nativeAccepted = () => ({ success: true, status: "sent", suppressed: false, provider_message_id: "wamid.fixture123==" });
+// Shape observed from the authorized fictitious PDF delivery on 2026-10-23.
+// The provider id stays synthetic so no test-recipient identifier is committed.
+const nativeAccepted = () => ({
+  success: true, status: "sent", message: "Template sent successfully",
+  template_id: "71f2b7b4-64de-494b-91d8-6db523276c32",
+  scheduled: false, workflow_id: null, send_at: null,
+  suppressed: false, suppression_reason: null, provider_message_id: "wamid.fixture123==",
+});
 const nodeKey = node => node.name.trim().replace(/ /g, "_").toLowerCase();
 const lookup = (params, path) => path.split(".").reduce((value, key) => value?.[key], params);
 function interpolate(value, params) {
@@ -94,7 +101,7 @@ test("replaying one event with a denied second claim never invokes WhatsApp twic
   assert.equal(duplicate.response.accepted, false);
 });
 
-test("only the approved fixed line/template and the database claim supply PDF and four variables", () => {
+test("only the configured fixed line/template and the database claim supply PDF and four variables", () => {
   const result = execute({ body: { ...input(), ally_name: "Untrusted input", pdf_url: "https://example.invalid/wrong.pdf", template_id: "wrong", filename: "wrong.pdf" } });
   assert.equal(result.nativeCalls.length, 1);
   const request = result.nativeCalls[0];

@@ -3,6 +3,7 @@ import type { DeliveryDb } from "./ally-settlement-delivery-store";
 
 const MEDIA_ENDPOINT = "https://finserpay.com/api/integraciones/liquidaciones/documento";
 const MEDIA_TTL_SECONDS = 30 * 60;
+const ISSUER_CLOCK_TOLERANCE_SECONDS = 30;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SIGNATURE = /^[0-9a-f]{64}$/;
 const SAFE_FILENAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,149}\.pdf$/i;
@@ -54,8 +55,9 @@ export function verifySettlementMediaUrl(input: string, env: NodeJS.ProcessEnv =
     if (!UUID.test(attemptId) || !/^[1-9]\d{0,10}$/.test(expires) || !SIGNATURE.test(token)) return null;
     const expirySeconds = Number(expires);
     const currentSeconds = nowSeconds(now);
+    // Clock tolerance applies only to the future bound, never to expiration.
     if (!Number.isSafeInteger(expirySeconds) || expirySeconds <= currentSeconds ||
-        expirySeconds > currentSeconds + MEDIA_TTL_SECONDS) return null;
+        expirySeconds > currentSeconds + MEDIA_TTL_SECONDS + ISSUER_CLOCK_TOLERANCE_SECONDS) return null;
     const expected = signature(attemptId, expires, mediaSecret(env));
     return timingSafeEqual(expected, Buffer.from(token, "hex")) ? attemptId : null;
   } catch {

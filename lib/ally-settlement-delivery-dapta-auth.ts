@@ -4,6 +4,7 @@ import { normalizeAllyWhatsApp } from "./ally-contact";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN = /^v1\.([1-9]\d{0,10})\.([a-f0-9]{64})$/;
 const TTL_SECONDS = 30 * 60;
+const ISSUER_CLOCK_TOLERANCE_SECONDS = 30;
 const SCOPE = "FINSER_PAY_SETTLEMENT_DAPTA_CALLBACK";
 
 function secret(env: NodeJS.ProcessEnv) {
@@ -44,7 +45,10 @@ export function verifySettlementDaptaToken(token: string, eventId: string, recip
     if (!match) return false;
     const expiry = Number(match[1]);
     const current = seconds(now);
-    if (!Number.isSafeInteger(expiry) || expiry <= current || expiry > current + TTL_SECONDS) return false;
+    // Allow a small issuer clock lead only at the future bound. Expiration
+    // remains strict and signing still grants exactly thirty minutes.
+    if (!Number.isSafeInteger(expiry) || expiry <= current ||
+        expiry > current + TTL_SECONDS + ISSUER_CLOCK_TOLERANCE_SECONDS) return false;
     const normalized = target(eventId, recipient);
     const expected = signature(normalized.eventId, normalized.recipient, match[1], secret(env));
     return timingSafeEqual(expected, Buffer.from(match[2], "hex"));
