@@ -21,7 +21,14 @@ const claim = () => ({
   net_amount: "$123.456", filename: "liquidacion-prueba.pdf",
   pdf_url: `https://finserpay.com/api/integraciones/liquidaciones/documento?attempt=${eventId}&expires=1792778000&signature=fixture`,
 });
-const nativeAccepted = () => ({ success: true, status: "sent", suppressed: false, provider_message_id: "wamid.fixture123==" });
+// Shape observed from the authorized fictitious PDF delivery on 2026-10-23.
+// The provider id stays synthetic so no test-recipient identifier is committed.
+const nativeAccepted = () => ({
+  success: true, status: "sent", message: "Template sent successfully",
+  template_id: "71f2b7b4-64de-494b-91d8-6db523276c32",
+  scheduled: false, workflow_id: null, send_at: null,
+  suppressed: false, suppression_reason: null, provider_message_id: "wamid.fixture123==",
+});
 const nodeKey = node => node.name.trim().replace(/ /g, "_").toLowerCase();
 const lookup = (params, path) => path.split(".").reduce((value, key) => value?.[key], params);
 function interpolate(value, params) {
@@ -99,7 +106,7 @@ test("only the configured fixed line/template and the database claim supply PDF 
   assert.equal(result.nativeCalls.length, 1);
   const request = result.nativeCalls[0];
   assert.equal(request.agent_channel_id, "6933b28b-b0a1-400c-aa1e-54f75bfbbd91");
-  assert.equal(request.template_id, "0472de26-727a-4659-9dc1-d27827969d69");
+  assert.equal(request.template_id, "71f2b7b4-64de-494b-91d8-6db523276c32");
   assert.equal(request.to_number, `+${recipient}`);
   assert.equal(request.header_media_url, claim().pdf_url);
   assert.deepEqual(request.variables, [
