@@ -3,6 +3,7 @@ import { createSettlementDaptaToken } from "./ally-settlement-delivery-dapta-aut
 import { createSettlementMediaUrl } from "./ally-settlement-delivery-media";
 
 export const SETTLEMENT_EMAIL_FROM = "FINSER PAY <pagos@finserpay.com>";
+const SETTLEMENT_EMAIL_COPY = "pagos@finserpay.com";
 export const SETTLEMENT_WHATSAPP_SENDER = "573124085562";
 // This exact body must be approved in Meta with a DOCUMENT header. Comparing
 // approved content prevents an unrelated or edited payment-confirmation template.
@@ -125,7 +126,11 @@ async function sendEmail(input: SettlementDeliveryInput, options: Options, env: 
   // Fixed field order and persisted input make retries byte-identical. Resend's
   // key lasts 24h: the dispatcher must not blindly retry old ambiguous attempts.
   const body = JSON.stringify({
-    from: SETTLEMENT_EMAIL_FROM, to: [input.recipient], subject: input.subject, text: input.text,
+    from: SETTLEMENT_EMAIL_FROM, to: [input.recipient],
+    // Keep the internal copy in the same idempotent request and avoid sending
+    // twice to the audit mailbox when it is already the primary recipient.
+    ...(input.recipient.toLowerCase() === SETTLEMENT_EMAIL_COPY ? {} : { bcc: [SETTLEMENT_EMAIL_COPY] }),
+    subject: input.subject, text: input.text,
     attachments: [{ content: input.pdf.toString("base64"), filename: input.filename }],
   });
   await options.beforeSend?.();

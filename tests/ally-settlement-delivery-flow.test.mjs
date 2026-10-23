@@ -104,6 +104,8 @@ test("flujo completo offline: commit, PDF real, Resend/Meta ficticios, aislamien
         assert.equal(options.method, "POST");
         const body = JSON.parse(options.body);
         assert.deepEqual(body.to, ["uno@example.invalid"]);
+        assert.deepEqual(body.bcc, ["pagos@finserpay.com"]);
+        assert.equal(body.cc, undefined);
         assert.equal(body.from, "FINSER PAY <pagos@finserpay.com>");
         assert.equal(body.subject, "FINSER PAY | Liquidación del 01/10/2026 al 15/10/2026");
         assert.match(body.text, /COMERCIO SINTETICO UNO/);
