@@ -79,6 +79,41 @@ test("dos workers concurrentes nunca reservan un mismo intento", async () => {
   assert.equal(await store.claim(100), null);
 });
 
+test("claim resuelve el aliado de la liquidación para payloads históricos o con identidad ajena", async () => {
+  await initial();
+  await initial(snapshot(200, 2));
+  const historical = (await rows()).find(row => row.settlementId === 100 && row.channel === "EMAIL");
+  assert.equal(historical.payload.allyId, undefined);
+  await db.$executeRawUnsafe(
+    'UPDATE "AllySettlementDeliveryAttempt" SET payload=payload || $1::jsonb WHERE "settlementId"=200',
+    JSON.stringify({ allyId: 1, allyName: "Nombre de otro aliado" }),
+  );
+  const first = await store.claim(100);
+  const second = await store.claim(200);
+  assert.equal(first.allyId, 1);
+  assert.equal(second.allyId, 2);
+  assert.equal(first.payload.allyId, undefined, "El payload histórico no requiere una migración");
+  assert.equal(second.payload.allyId, 1, "La identidad confiable no depende del snapshot del mensaje");
+});
+
+test("reintento de un payload histórico conserva el mensaje y recupera la identidad real al reclamar", async () => {
+  await initial();
+  const first = await claimChannel("EMAIL");
+  assert.equal(first.payload.allyId, undefined);
+  await store.failed(first.id, "Rechazo de prueba", false, first.claimToken);
+  const operation = randomUUID();
+  const retry = await store.retry(snapshot(100, 2), "EMAIL", operation, 9);
+  assert.deepEqual(retry.payload, first.payload);
+  assert.equal(retry.recipient, first.recipient);
+  const claimed = await claimChannel("EMAIL");
+  assert.equal(claimed.id, retry.id);
+  assert.equal(claimed.allyId, 1, "La relación guardada prevalece sobre el snapshot recibido");
+  await store.beforeSend(claimed.id, claimed.claimToken);
+  await store.accepted(claimed.id, "provider-historical-retry", claimed.claimToken);
+  assert.equal((await store.retry(snapshot(), "EMAIL", operation, 9)).id, claimed.id);
+  assert.equal((await rows()).filter(row => row.channel === "EMAIL").length, 2);
+});
+
 test("el teléfono faltante falla por separado y permite reclamar el correo disponible", async () => {
   await db.$executeRawUnsafe('UPDATE "Aliado" SET "telefonoWhatsapp"=NULL WHERE id=1');
   await initial();

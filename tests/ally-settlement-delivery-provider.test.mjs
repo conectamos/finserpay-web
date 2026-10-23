@@ -86,6 +86,7 @@ test("invalid destinations, metadata and PDF are rejected before provider work",
     { recipient: "a@example.invalid\r\nBcc: b@example.invalid" }, { attemptId: "not-uuid" },
     { pdf: Buffer.from("not a pdf") }, { filename: "../private.pdf" }, { filename: "x\ny.pdf" },
     { subject: "subject\r\nBcc: other@example.invalid" }, { allyName: "" },
+    { allyId: "65588" }, { allyId: -1 }, { allyId: 1.5 },
   ]) {
     const f = fixture();
     await rejectsSafely(() => sendSettlementDelivery(input("EMAIL", patch), { env, fetch: f.fetcher }));
@@ -98,7 +99,7 @@ test("invalid destinations, metadata and PDF are rejected before provider work",
   }
 });
 
-test("email sends the frozen PDF to its ally with one fixed internal copy in the same idempotent request", async () => {
+test("email sends the frozen PDF with both internal copies in the same idempotent request", async () => {
   const f = fixture(); let boundary = 0;
   const data = input();
   const result = await sendSettlementDelivery(data, { env, fetch: f.fetcher, beforeSend: async () => {
@@ -108,7 +109,7 @@ test("email sends the frozen PDF to its ally with one fixed internal copy in the
   const request = f.calls[1]; const payload = JSON.parse(request.options.body);
   assert.equal(payload.from, "FINSER PAY <pagos@finserpay.com>");
   assert.deepEqual(payload.to, [data.recipient]);
-  assert.deepEqual(payload.bcc, ["pagos@finserpay.com"]);
+  assert.deepEqual(payload.bcc, ["pagos@finserpay.com", "contabilidadfinserpaysas@gmail.com"]);
   assert.equal(payload.cc, undefined);
   assert.equal(payload.subject, data.subject); assert.equal(payload.text, data.text);
   assert.equal(payload.attachments.length, 1);
@@ -120,15 +121,37 @@ test("email sends the frozen PDF to its ally with one fixed internal copy in the
   assert.equal(f.calls[3].options.headers["Idempotency-Key"], request.options.headers["Idempotency-Key"]);
 });
 
-test("email does not duplicate the internal copy when pagos is already the recipient", async () => {
-  for (const recipient of ["pagos@finserpay.com", "PAGOS@FINSERPAY.COM"]) {
+test("ally-specific copies use only the trusted ID, never the name or primary address", async () => {
+  const globalCopies = ["pagos@finserpay.com", "contabilidadfinserpaysas@gmail.com"];
+  for (const [allyId, extra] of [[65588, ["jesusguarni@hotmail.com"]], [14877, ["javiermonki19@gmail.com"]], [123, []], [undefined, []]]) {
     const f = fixture();
-    await sendSettlementDelivery(input("EMAIL", { recipient }), { env, fetch: f.fetcher });
+    const data = input("EMAIL", { allyId, allyName: "JG COMPANY", bcc: ["unapproved@example.invalid"] });
+    await sendSettlementDelivery(data, { env, fetch: f.fetcher });
     assert.equal(f.calls.length, 2);
     const payload = JSON.parse(f.calls[1].options.body);
-    assert.deepEqual(payload.to, [recipient]);
-    assert.equal(payload.bcc, undefined);
+    assert.deepEqual(payload.to, [data.recipient]);
+    assert.deepEqual(payload.bcc, [...globalCopies, ...extra]);
     assert.equal(payload.cc, undefined);
+    assert.deepEqual(Buffer.from(payload.attachments[0].content, "base64"), data.pdf);
+    await sendSettlementDelivery(data, { env, fetch: f.fetcher });
+    assert.equal(f.calls[3].options.body, f.calls[1].options.body);
+    assert.equal(f.calls[3].options.headers["Idempotency-Key"], f.calls[1].options.headers["Idempotency-Key"]);
+  }
+});
+
+test("email does not duplicate any copy already present in To, ignoring case", async () => {
+  const globals = ["pagos@finserpay.com", "contabilidadfinserpaysas@gmail.com"];
+  for (const [allyId, copy] of [[65588, "jesusguarni@hotmail.com"], [14877, "javiermonki19@gmail.com"]]) {
+    const copies = [...globals, copy];
+    for (const address of copies) for (const recipient of [address, address.toUpperCase()]) {
+      const f = fixture();
+      await sendSettlementDelivery(input("EMAIL", { allyId, recipient }), { env, fetch: f.fetcher });
+      assert.equal(f.calls.length, 2);
+      const payload = JSON.parse(f.calls[1].options.body);
+      assert.deepEqual(payload.to, [recipient]);
+      assert.deepEqual(payload.bcc, copies.filter(email => email !== address));
+      assert.equal(payload.cc, undefined);
+    }
   }
 });
 
@@ -145,7 +168,7 @@ test("unverified, wrong, or sending-disabled Resend domain prevents email", asyn
 
 test("WhatsApp verifies the exact sender and approved document template then uploads the private PDF", async () => {
   const f = fixture(); let boundary = 0;
-  const data = input("WHATSAPP");
+  const data = input("WHATSAPP", { allyId: 65588 });
   assert.deepEqual(await sendSettlementDelivery(data, { env, fetch: f.fetcher, beforeSend: async () => {
     boundary++; assert.equal(f.calls.length, 4); assert.ok(f.calls[3].url.endsWith("/media"));
   } }), { providerId: "wamid.fixture123==" });
@@ -155,6 +178,8 @@ test("WhatsApp verifies the exact sender and approved document template then upl
   assert.equal(media.get("type"), "application/pdf");
   assert.deepEqual(Buffer.from(await media.get("file").arrayBuffer()), data.pdf);
   const body = JSON.parse(f.calls[4].options.body);
+  assert.equal(body.bcc, undefined);
+  assert.doesNotMatch(JSON.stringify(body), /jesusguarni|contabilidadfinserpaysas|pagos@/);
   assert.equal(body.to, "573001234567"); assert.equal(body.biz_opaque_callback_data, attemptId);
   assert.equal(body.type, "template"); assert.equal(body.template.name, env.WHATSAPP_SETTLEMENT_TEMPLATE_NAME);
   assert.deepEqual(body.template.language, { code: "es_CO" });

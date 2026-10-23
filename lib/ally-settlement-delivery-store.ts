@@ -137,12 +137,14 @@ export function createSettlementDeliveryStore(db: DeliveryDatabase) {
         WHERE "status"='PROCESSING' AND "leaseUntil"<now()`);
     },
     async claim(settlementId?: number) {
-      const [row] = await db.$queryRawUnsafe<SettlementDeliveryAttempt[]>(
-        `UPDATE public."AllySettlementDeliveryAttempt" SET "status"='PROCESSING',
+      const [row] = await db.$queryRawUnsafe<Array<SettlementDeliveryAttempt & { allyId: number }>>(
+        `UPDATE public."AllySettlementDeliveryAttempt" AS attempt SET "status"='PROCESSING',
             "attemptedAt"=now(),"leaseUntil"=now()+interval '5 minutes',"claimToken"=$2::uuid
           WHERE "id"=(SELECT "id" FROM public."AllySettlementDeliveryAttempt"
             WHERE "status"='QUEUED' AND ($1::integer IS NULL OR "settlementId"=$1)
-            ORDER BY "createdAt","id" LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *`,
+            ORDER BY "createdAt","id" LIMIT 1 FOR UPDATE SKIP LOCKED)
+          RETURNING attempt.*, (SELECT s."aliadoId" FROM public."LiquidacionAliado" s
+            WHERE s."id"=attempt."settlementId") AS "allyId"`,
         settlementId ?? null, randomUUID(),
       );
       return row || null;
