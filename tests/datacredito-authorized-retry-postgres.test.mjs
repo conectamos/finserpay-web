@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { PGlite } from "@electric-sql/pglite";
 
 const setup = await readFile(new URL("../scripts/setup-datacredito.sql", import.meta.url), "utf8");
 const auditStart = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoAdminAccessAudit" (');
 const recoveryStart = setup.indexOf("-- An explicitly authorized TX06 surname correction");
-const ambiguousRecoveryStart = setup.indexOf("-- A provider timeout can be released only after");
+const ambiguousRecoveryStart = setup.indexOf("-- An ambiguous timeout or HTTP 5xx can be released only after");
 const recoveryEnd = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit"', ambiguousRecoveryStart);
 const recoverySql = setup.slice(recoveryStart, ambiguousRecoveryStart);
 const ambiguousRecoverySql = setup.slice(ambiguousRecoveryStart, recoveryEnd);
@@ -48,6 +49,7 @@ test("la excepcion ambigua exige autorizacion con riesgo y conserva toda la evid
     'root."decision" IS NULL',
     'root."offer" IS NULL',
     'root."providerStatus" IS NULL',
+    `OR root."providerStatus" ~ '^HTTP 5[0-9]{2}$'`,
     'root."transactionCode" IS NULL',
     'root."durationMs" IS NOT NULL',
     'root."claimedAt" IS NULL',
@@ -63,6 +65,88 @@ test("la excepcion ambigua exige autorizacion con riesgo y conserva toda la evid
     ambiguousRecoverySql,
     /SET\s+"(?:status|errorCode|providerStatus|transactionCode|score|decision|offer)"/,
   );
+});
+
+test("PostgreSQL: HTTP 500 solo se libera con riesgo autorizado y permanece liberado tras el preflight", async () => {
+  const database = new PGlite();
+  try {
+    await database.exec(`BEGIN;
+      CREATE TEMP TABLE "DataCreditoAssessment" (
+        "id" UUID PRIMARY KEY, "reusedFromAssessmentId" UUID,
+        "status" TEXT, "errorCode" TEXT, "providerStatus" TEXT, "transactionCode" TEXT,
+        "score" INTEGER, "decision" TEXT, "offer" JSONB,
+        "claimedAt" TIMESTAMP, "claimTokenHash" TEXT, "claimExpiresAt" TIMESTAMP,
+        "consumedAt" TIMESTAMP, "creditId" INTEGER, "durationMs" INTEGER,
+        "createdAt" TIMESTAMP, "expiresAt" TIMESTAMP, "retainedUntil" TIMESTAMP,
+        "payload" JSONB
+      ) ON COMMIT DROP;
+      CREATE TEMP TABLE "DataCreditoDailyQuotaUsage" ("used" INTEGER) ON COMMIT DROP;
+      INSERT INTO "DataCreditoDailyQuotaUsage" VALUES (7);`);
+    await database.exec(setup.slice(auditStart, recoveryStart)
+      .replace("CREATE TABLE IF NOT EXISTS", "CREATE TEMP TABLE IF NOT EXISTS"));
+    const fixtures = [
+      { name: "timeout-authorized", providerStatus: null, eligible: true },
+      { name: "http500-authorized", eligible: true },
+      { name: "http503-authorized", providerStatus: "HTTP 503", eligible: true },
+      { name: "http599-authorized", providerStatus: "HTTP 599", eligible: true },
+      { name: "http500-no-audit", audit: false },
+      { name: "http500-wrong-action", action: "DETAIL_VIEW" },
+      { name: "http500-risk-not-acknowledged", outcome: "AUTHORIZED" },
+      { name: "http500-denied", outcome: "DENIED" },
+      { name: "http400-authorized", providerStatus: "HTTP 400" },
+      { name: "http200-authorized", providerStatus: "HTTP 200" },
+      { name: "malformed-status", providerStatus: "HTTP 500 EXTRA" },
+      { name: "http500-with-score", score: 700 },
+      { name: "http500-with-offer", offer: { approved: true } },
+      { name: "http500-with-decision", decision: "APROBADO" },
+      { name: "http500-with-transaction", transactionCode: "00" },
+      { name: "http500-consumed", creditId: 1 },
+      { name: "http500-claimed", claimedAt: "2026-01-02" },
+      { name: "http500-clone", reusedFromAssessmentId: randomUUID() },
+      { name: "http500-without-dispatch-time", durationMs: null },
+      { name: "http500-audit-before-query", auditDate: "2025-12-31" },
+    ].map((fixture) => ({ id: randomUUID(), providerStatus: "HTTP 500", durationMs: 183, ...fixture }));
+    for (const fixture of fixtures) {
+      await database.query(`INSERT INTO "DataCreditoAssessment"
+        ("id", "reusedFromAssessmentId", "status", "errorCode", "providerStatus", "transactionCode",
+         "score", "decision", "offer", "claimedAt", "creditId", "durationMs",
+         "createdAt", "expiresAt", "retainedUntil", "payload")
+        VALUES ($1,$2,'NO_EVALUADO','PROVIDER_OUTCOME_AMBIGUOUS',$3,$4,$5,$6,$7,$8,$9,$10,
+          '2026-01-01','2026-01-16','2026-04-01','{"status":"PENDING","evidence":"preserved"}')`, [
+        fixture.id, fixture.reusedFromAssessmentId || null, fixture.providerStatus,
+        fixture.transactionCode || null, fixture.score ?? null, fixture.decision || null,
+        fixture.offer ? JSON.stringify(fixture.offer) : null, fixture.claimedAt || null,
+        fixture.creditId || null, fixture.durationMs,
+      ]);
+    }
+    const rows = async () => (await database.query('SELECT * FROM "DataCreditoAssessment" ORDER BY "id"')).rows;
+    const before = await rows();
+    await database.exec(ambiguousRecoverySql);
+    assert.deepEqual(await rows(), before, "Sin autorización no se libera ningún HTTP 500");
+    for (const fixture of fixtures.filter((item) => item.audit !== false)) {
+      await database.query(`INSERT INTO "DataCreditoAdminAccessAudit"
+        ("id","assessmentId","actorUserId","action","outcome","requestCorrelationId","retainedUntil","createdAt")
+        VALUES ($1,$2,1,$3,$4,$5,'2026-04-01',$6)`, [
+        randomUUID(), fixture.id, fixture.action || "OPS_AMBIGUOUS_RETRY_AUTHORIZED",
+        fixture.outcome || "AUTHORIZED_WITH_RISK_ACK", randomUUID(), fixture.auditDate || "2026-01-02",
+      ]);
+    }
+    const authorizedAt = (await database.query(`SELECT TIMESTAMP '2026-01-02' AS value`)).rows[0].value;
+    const expected = before.map((row) => fixtures.find((fixture) => fixture.id === row.id).eligible
+      ? { ...row, expiresAt: authorizedAt } : row);
+    await database.exec(ambiguousRecoverySql);
+    assert.deepEqual(await rows(), expected, "Solo vence la autorización elegible; HTTP 500, duración y evidencia se conservan");
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      await database.exec(rootBackfill);
+      await database.exec(ambiguousRecoverySql);
+      assert.deepEqual(await rows(), expected, "El preflight no restablece el bloqueo autorizado");
+    }
+    assert.deepEqual((await database.query('SELECT * FROM "DataCreditoDailyQuotaUsage"')).rows, [{ used: 7 }],
+      "La liberación conserva el consumo del cupo");
+  } finally {
+    await database.exec("ROLLBACK").catch(() => {});
+    await database.close();
+  }
 });
 
 const connectionString = process.env.DATACREDITO_RETRY_TEST_DATABASE_URL;

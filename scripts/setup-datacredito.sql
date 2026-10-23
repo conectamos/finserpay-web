@@ -800,7 +800,7 @@ WHERE root."id" = retry_authorization."assessmentId"
   AND retry_authorization."authorizedAt" >= root."createdAt"
   AND root."expiresAt" > retry_authorization."authorizedAt";
 
--- A provider timeout can be released only after an explicit, risk-acknowledged
+-- An ambiguous timeout or HTTP 5xx can be released only after an explicit, risk-acknowledged
 -- operational authorization. Reapply that narrowly audited exception after the
 -- contractual backfill so a later deployment cannot reinstate the review block.
 -- The ambiguous provider outcome, correlation and retention evidence stay intact.
@@ -820,7 +820,10 @@ WHERE root."id" = retry_authorization."assessmentId"
   AND root."score" IS NULL
   AND root."decision" IS NULL
   AND root."offer" IS NULL
-  AND root."providerStatus" IS NULL
+  AND (
+    root."providerStatus" IS NULL
+    OR root."providerStatus" ~ '^HTTP 5[0-9]{2}$'
+  )
   AND root."transactionCode" IS NULL
   AND root."durationMs" IS NOT NULL
   AND root."claimedAt" IS NULL
