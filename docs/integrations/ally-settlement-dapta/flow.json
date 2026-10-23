@@ -1,0 +1,728 @@
+{
+  "name": "Liquidaciones aliados — PDF WhatsApp",
+  "type": "api",
+  "timeout": 60,
+  "version": 1,
+  "enableErrorNotification": true,
+  "api_nodes": [
+    {
+      "x": 400,
+      "y": 170,
+      "id": "start",
+      "name": "Inicio HTTP",
+      "type": "trigger",
+      "childRef": "nrmEv",
+      "api_trigger": {
+        "trigger_type": "post",
+        "trigger_params": [
+          {
+            "id": "p0000",
+            "key": "event_id",
+            "type": "text",
+            "origin": "body",
+            "required": true
+          },
+          {
+            "id": "p0001",
+            "key": "recipient",
+            "type": "text",
+            "origin": "body",
+            "required": true
+          },
+          {
+            "id": "p0002",
+            "key": "callback_token",
+            "type": "text",
+            "origin": "body",
+            "required": true
+          }
+        ],
+        "trigger_options": "http"
+      }
+    },
+    {
+      "x": 400,
+      "y": 280,
+      "id": "nrmEv",
+      "name": "Normalizar evento",
+      "type": "action",
+      "childRef": "claim",
+      "api_action": {
+        "on_error": "stop",
+        "response": [
+          {
+            "variable_name": "event_id",
+            "response_value_path": "event_id"
+          },
+          {
+            "variable_name": "recipient",
+            "response_value_path": "recipient"
+          },
+          {
+            "variable_name": "callback_token",
+            "response_value_path": "callback_token"
+          },
+          {
+            "variable_name": "claim_body",
+            "response_value_path": "claim_body"
+          }
+        ],
+        "action_type": "code",
+        "code_action": {
+          "code": "const b=params.trigger?.body;\nif(!b||typeof b!=='object'||Array.isArray(b))throw new Error('Solicitud no valida');\nif(typeof b.event_id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(b.event_id))throw new Error('Evento no valido');\nif(typeof b.recipient!=='string'||!/^[1-9]\\d{7,14}$/.test(b.recipient))throw new Error('Destino no valido');\nif(typeof b.callback_token!=='string'||!/^v1\\.\\d{10}\\.[0-9a-f]{64}$/.test(b.callback_token))throw new Error('Autorizacion no valida');\nconst event_id=b.event_id.toLowerCase();\nmodule.exports={event_id,recipient:b.recipient,callback_token:b.callback_token,claim_body:JSON.stringify({action:'claim',event_id,recipient:b.recipient})};"
+        }
+      },
+      "parentRefs": [
+        "start"
+      ]
+    },
+    {
+      "x": 400,
+      "y": 390,
+      "id": "claim",
+      "name": "Autorizar envio",
+      "type": "action",
+      "childRef": "vldCl",
+      "api_action": {
+        "on_error": "continue",
+        "response": [
+          {
+            "variable_name": "response",
+            "response_value_path": "response"
+          }
+        ],
+        "action_type": "api",
+        "external_api_action": {
+          "url": "https://finserpay.com/api/integraciones/liquidaciones/dapta",
+          "body": "{{normalizar_evento.claim_body}}",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body_format": "raw",
+          "request_type": "post",
+          "authorization": {
+            "type": "bearer",
+            "token": "{{normalizar_evento.callback_token}}"
+          }
+        }
+      },
+      "parentRefs": [
+        "nrmEv"
+      ]
+    },
+    {
+      "x": 400,
+      "y": 500,
+      "id": "vldCl",
+      "name": "Validar autorizacion",
+      "type": "action",
+      "childRef": "allow",
+      "api_action": {
+        "on_error": "stop",
+        "response": [
+          {
+            "variable_name": "authorized",
+            "response_value_path": "authorized"
+          },
+          {
+            "variable_name": "event_id",
+            "response_value_path": "event_id"
+          },
+          {
+            "variable_name": "recipient",
+            "response_value_path": "recipient"
+          },
+          {
+            "variable_name": "sender",
+            "response_value_path": "sender"
+          },
+          {
+            "variable_name": "ally_name",
+            "response_value_path": "ally_name"
+          },
+          {
+            "variable_name": "period_start",
+            "response_value_path": "period_start"
+          },
+          {
+            "variable_name": "period_end",
+            "response_value_path": "period_end"
+          },
+          {
+            "variable_name": "net_amount",
+            "response_value_path": "net_amount"
+          },
+          {
+            "variable_name": "pdf_url",
+            "response_value_path": "pdf_url"
+          },
+          {
+            "variable_name": "filename",
+            "response_value_path": "filename"
+          }
+        ],
+        "action_type": "code",
+        "code_action": {
+          "code": "const expected=params.normalizar_evento;\nconst parsed=value=>{if(typeof value!=='string'||value.length>32768)return value;try{return JSON.parse(value);}catch{return value;}};\nlet root=parsed(params.autorizar_envio?.response);\nfor(let i=0;i<4&&root&&typeof root==='object'&&root.ok===undefined;i++)root=parsed(root.response??root.body??root.data);\nconst plain=value=>value&&typeof value==='object'&&!Array.isArray(value);\nif(!plain(root)||root.ok!==true||root.authorized!==true){\n  module.exports={authorized:'no',event_id:expected.event_id,recipient:expected.recipient};\n}else{\n  const fields=['ally_name','period_start','period_end','net_amount','pdf_url','filename'];\n  if(root.event_id!==expected.event_id||root.recipient!==expected.recipient||root.sender!=='573124085562'||\n    fields.some(k=>typeof root[k]!=='string'||!root[k].trim()||root[k].length>(k==='pdf_url'?4096:300)||/[\\u0000-\\u001f\\u007f]/.test(root[k]))||\n    !/^https:\\/\\/finserpay\\.com\\/api\\/integraciones\\/liquidaciones\\/documento\\?/.test(root.pdf_url))throw new Error('Autorizacion inconsistente');\n  module.exports={authorized:'yes',event_id:root.event_id,recipient:root.recipient,sender:root.sender,ally_name:root.ally_name,period_start:root.period_start,period_end:root.period_end,net_amount:root.net_amount,pdf_url:root.pdf_url,filename:root.filename};\n}"
+        }
+      },
+      "parentRefs": [
+        "claim"
+      ]
+    },
+    {
+      "x": 400,
+      "y": 610,
+      "id": "allow",
+      "name": "Envio autorizado",
+      "type": "conditional",
+      "childTrue": "sndWa",
+      "childFalse": "denyR",
+      "parentRefs": [
+        "vldCl"
+      ],
+      "api_conditional": {
+        "conditionalGroups": [
+          {
+            "conditionals": [
+              {
+                "partOne": "{{validar_autorizacion.authorized}}",
+                "partTwo": "yes",
+                "dataType": "string",
+                "operator": "eq"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "x": 240,
+      "y": 720,
+      "id": "sndWa",
+      "name": "Enviar liquidacion",
+      "type": "action",
+      "childRef": "rcptC",
+      "api_action": {
+        "on_error": "continue",
+        "response": [
+          {
+            "variable_name": "response",
+            "response_value_path": "response"
+          }
+        ],
+        "action_type": "custom.dapta_send_whatsapp_templatev2",
+        "code_action": null,
+        "custom_action": {
+          "type": "external_api_action",
+          "view": "simple",
+          "values": {
+            "to_number": "+{{validar_autorizacion.recipient}}",
+            "variables": [
+              {
+                "key": "var_1",
+                "value": "{{validar_autorizacion.ally_name}}"
+              },
+              {
+                "key": "var_2",
+                "value": "{{validar_autorizacion.period_start}}"
+              },
+              {
+                "key": "var_3",
+                "value": "{{validar_autorizacion.period_end}}"
+              },
+              {
+                "key": "var_4",
+                "value": "{{validar_autorizacion.net_amount}}"
+              }
+            ],
+            "template_id": "71f2b7b4-64de-494b-91d8-6db523276c32",
+            "agent_channel_id": "6933b28b-b0a1-400c-aa1e-54f75bfbbd91",
+            "header_media_url": "{{validar_autorizacion.pdf_url}}"
+          },
+          "version": 1,
+          "attributes": [
+            {
+              "name": "agent_channel_id",
+              "type": "select",
+              "displayName": "WhatsApp Line",
+              "dynamicLoad": {
+                "dependencies": {},
+                "custom_action": {
+                  "attributes": [
+                    {
+                      "name": "workspace_id",
+                      "type": "input",
+                      "displayName": "Workspace ID",
+                      "external_api_action": {
+                        "body": {
+                          "workspace_id": "{{value}}"
+                        },
+                        "body_format": "raw"
+                      }
+                    }
+                  ]
+                },
+                "resultMapping": {
+                  "type": "selector",
+                  "array": "response.channels",
+                  "value": "id",
+                  "displayName": "sender_label"
+                },
+                "useUserContext": {
+                  "workspace_id": "{{userContext.organization_id}}"
+                },
+                "noOptionsAction": {
+                  "type": "redirect",
+                  "label": "Add WhatsApp Line",
+                  "enabled": true,
+                  "queryParams": {
+                    "create": true
+                  },
+                  "redirectUrl": "/agents-studio/channels"
+                },
+                "external_api_action": {
+                  "url": "https://agents-v2.dapta.ai/text-agent-v2/api/v2/whatsapp-templates/workspace-channels",
+                  "body": "",
+                  "headers": [],
+                  "body_format": "raw",
+                  "body_params": [],
+                  "path_params": [],
+                  "query_params": [],
+                  "request_type": "post",
+                  "authorization": {
+                    "type": "",
+                    "token": "",
+                    "password": "",
+                    "username": "",
+                    "credential": ""
+                  },
+                  "selfsignedCertificate": "false"
+                }
+              },
+              "isDynamicLoading": true,
+              "external_api_action": {
+                "body": {
+                  "agent_channel_id": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            },
+            {
+              "name": "to_number",
+              "type": "input",
+              "displayName": "To Number",
+              "external_api_action": {
+                "body": {
+                  "to_phone_number": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            },
+            {
+              "name": "template_id",
+              "type": "select",
+              "displayName": "Template",
+              "dynamicLoad": {
+                "dependencies": {
+                  "agent_channel_id": {
+                    "inheritConfig": true
+                  }
+                },
+                "custom_action": {
+                  "attributes": [
+                    {
+                      "name": "account_id",
+                      "type": "input",
+                      "displayName": "Account ID",
+                      "external_api_action": {
+                        "body": {
+                          "account_id": "{{value}}"
+                        },
+                        "body_format": "raw"
+                      }
+                    }
+                  ]
+                },
+                "resultMapping": {
+                  "type": "selector",
+                  "array": "response.templates",
+                  "value": "id",
+                  "displayName": "friendly_name"
+                },
+                "useUserContext": {
+                  "account_id": "{{userContext.account_id}}"
+                },
+                "external_api_action": {
+                  "url": "https://agents-v2.dapta.ai/text-agent-v2/api/v2/whatsapp-templates/templates",
+                  "body": "",
+                  "headers": [],
+                  "body_format": "raw",
+                  "body_params": [],
+                  "path_params": [],
+                  "query_params": [],
+                  "request_type": "post",
+                  "authorization": {
+                    "type": "",
+                    "token": "",
+                    "password": "",
+                    "username": "",
+                    "credential": ""
+                  },
+                  "selfsignedCertificate": "false"
+                }
+              },
+              "dynamicOptions": [],
+              "isDynamicLoading": true,
+              "external_api_action": {
+                "body": {
+                  "template_id": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            },
+            {
+              "name": "variables",
+              "type": "key-value",
+              "displayName": " Template Variables",
+              "dynamicLoad": {
+                "dependencies": {
+                  "template_id": {
+                    "inheritConfig": true
+                  }
+                },
+                "custom_action": {
+                  "attributes": [
+                    {
+                      "name": "template_id",
+                      "type": "input",
+                      "displayName": "Template ID",
+                      "external_api_action": {
+                        "body": {
+                          "template_id": "{{value}}"
+                        },
+                        "body_format": "raw"
+                      }
+                    }
+                  ]
+                },
+                "resultMapping": {
+                  "type": "selector",
+                  "array": "response.variables",
+                  "value": "key",
+                  "displayName": "key"
+                },
+                "useUserContext": {
+                  "account_id": "{{userContext.organization_id}}"
+                },
+                "external_api_action": {
+                  "url": "https://agents-v2.dapta.ai/text-agent-v2/api/v2/whatsapp-templates/template-variables",
+                  "body": "",
+                  "headers": [],
+                  "body_format": "raw",
+                  "body_params": [],
+                  "path_params": [],
+                  "query_params": [],
+                  "request_type": "post",
+                  "authorization": {
+                    "type": "",
+                    "token": "",
+                    "password": "",
+                    "username": "",
+                    "credential": ""
+                  },
+                  "selfsignedCertificate": "false"
+                }
+              },
+              "isDynamicLoading": true,
+              "external_api_action": {
+                "body": {
+                  "variables": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            },
+            {
+              "name": "conversation_variables",
+              "type": "key-value",
+              "displayName": "Conversation Variables",
+              "dynamicLoad": {
+                "dependencies": {
+                  "agent_channel_id": {
+                    "inheritConfig": true
+                  }
+                },
+                "custom_action": {
+                  "attributes": [
+                    {
+                      "name": "agent_channel_id",
+                      "type": "input",
+                      "displayName": "WhatsApp Line",
+                      "external_api_action": {
+                        "body": {
+                          "agent_channel_id": "{{value}}"
+                        },
+                        "body_format": "raw"
+                      }
+                    }
+                  ]
+                },
+                "resultMapping": {
+                  "type": "selector",
+                  "array": "response.variables",
+                  "value": "key",
+                  "displayName": "key"
+                },
+                "useUserContext": {
+                  "account_id": "{{userContext.organization_id}}"
+                },
+                "external_api_action": {
+                  "url": "https://agents-v2.dapta.ai/text-agent-v2/api/v2/whatsapp-templates/agent-variables",
+                  "body": "",
+                  "headers": [],
+                  "body_format": "raw",
+                  "body_params": [],
+                  "path_params": [],
+                  "query_params": [],
+                  "request_type": "post",
+                  "authorization": {
+                    "type": "",
+                    "token": "",
+                    "password": "",
+                    "username": "",
+                    "credential": ""
+                  },
+                  "selfsignedCertificate": "false"
+                }
+              },
+              "isDynamicLoading": true,
+              "external_api_action": {
+                "body": {
+                  "conversation_variables": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            },
+            {
+              "name": "header_media_url",
+              "type": "input",
+              "displayName": "Header Media URL",
+              "external_api_action": {
+                "body": {
+                  "header_media_url": "{{value}}"
+                },
+                "body_format": "raw"
+              }
+            }
+          ]
+        },
+        "notion_action": null,
+        "openai_action": null,
+        "webflow_action": null,
+        "database_action": null,
+        "external_api_action": {
+          "url": "https://agents-v2.dapta.ai/text-agent-v2/api/v2/whatsapp-templates/send",
+          "body": "",
+          "headers": [],
+          "body_format": "raw",
+          "body_params": [],
+          "path_params": [],
+          "query_params": [],
+          "request_type": "post",
+          "authorization": {
+            "type": "",
+            "token": "",
+            "password": "",
+            "username": "",
+            "credential": ""
+          },
+          "selfsignedCertificate": "false"
+        },
+        "communication_action": null,
+        "generate_file_action": null,
+        "google_sheets_action": null
+      },
+      "parentRefs": [
+        "allow"
+      ],
+      "template_id": "b289c001-25c2-45da-8dc6-bec6df4f7feb",
+      "from_template": true
+    },
+    {
+      "x": 240,
+      "y": 830,
+      "id": "rcptC",
+      "name": "Confirmar recibo",
+      "type": "action",
+      "childRef": "saveR",
+      "api_action": {
+        "on_error": "stop",
+        "response": [
+          {
+            "variable_name": "ok",
+            "response_value_path": "ok"
+          },
+          {
+            "variable_name": "accepted",
+            "response_value_path": "accepted"
+          },
+          {
+            "variable_name": "event_id",
+            "response_value_path": "event_id"
+          },
+          {
+            "variable_name": "recipient",
+            "response_value_path": "recipient"
+          },
+          {
+            "variable_name": "sender",
+            "response_value_path": "sender"
+          },
+          {
+            "variable_name": "provider_message_id",
+            "response_value_path": "provider_message_id"
+          },
+          {
+            "variable_name": "code",
+            "response_value_path": "code"
+          },
+          {
+            "variable_name": "receipt_body",
+            "response_value_path": "receipt_body"
+          }
+        ],
+        "action_type": "code",
+        "code_action": {
+          "code": "const context=params.validar_autorizacion;\nconst parsed=value=>{if(typeof value!=='string'||value.length>65536||!/^[\\s]*[\\[{]/.test(value))return value;try{return JSON.parse(value);}catch{return value;}};\nlet count=0,rejected=false;const seen=new Set(),receipts=new Set();\nconst populated=x=>x!==undefined&&x!==null&&x!==false&&x!==''&&!(Array.isArray(x)&&x.length===0);\nconst visit=(original,depth)=>{\n  if(depth>8||count++>200){rejected=true;return;}\n  const v=parsed(original);if(!v||typeof v!=='object'||seen.has(v))return;seen.add(v);\n  if(v.ok===false||v.success===false||v.suppressed===true||v.scheduled===true||populated(v.error)||populated(v.errors)||['failed','error','rejected','suppressed','scheduled'].includes(String(v.status||'').toLowerCase()))rejected=true;\n  if(v.success===true&&v.status==='sent'&&v.suppressed===false&&v.scheduled!==true&&typeof v.provider_message_id==='string'&&/^wamid\\.[A-Za-z0-9+/=_-]{5,512}$/.test(v.provider_message_id))receipts.add(v.provider_message_id);\n  for(const child of Object.values(v))if(child&&(typeof child==='object'||typeof child==='string'))visit(child,depth+1);\n};\nvisit(params.enviar_liquidacion,0);\nconst accepted=!rejected&&receipts.size===1;\nconst provider_message_id=accepted?[...receipts][0]:null;\nconst code=accepted?null:'PROVIDER_RECEIPT_UNCONFIRMED';\nconst base={event_id:context.event_id,recipient:context.recipient,sender:'573124085562',provider_message_id,code};\nconst receipt_body=JSON.stringify({action:'receipt',...base,status:accepted?'accepted':'uncertain',timestamp:new Date().toISOString()});\nmodule.exports={...base,ok:accepted,accepted,receipt_body};"
+        }
+      },
+      "parentRefs": [
+        "sndWa"
+      ]
+    },
+    {
+      "x": 240,
+      "y": 940,
+      "id": "saveR",
+      "name": "Registrar recibo",
+      "type": "action",
+      "childRef": "respR",
+      "api_action": {
+        "on_error": "continue",
+        "response": [
+          {
+            "variable_name": "response",
+            "response_value_path": "response"
+          }
+        ],
+        "action_type": "api",
+        "external_api_action": {
+          "url": "https://finserpay.com/api/integraciones/liquidaciones/dapta",
+          "body": "{{confirmar_recibo.receipt_body}}",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body_format": "raw",
+          "request_type": "post",
+          "authorization": {
+            "type": "bearer",
+            "token": "{{normalizar_evento.callback_token}}"
+          }
+        }
+      },
+      "parentRefs": [
+        "rcptC"
+      ]
+    },
+    {
+      "x": 240,
+      "y": 1050,
+      "id": "respR",
+      "name": "Respuesta envio",
+      "type": "response",
+      "parentRefs": [
+        "saveR"
+      ],
+      "api_response": {
+        "response_params": [
+          {
+            "key": "ok",
+            "value": "{{confirmar_recibo.ok}}"
+          },
+          {
+            "key": "accepted",
+            "value": "{{confirmar_recibo.accepted}}"
+          },
+          {
+            "key": "event_id",
+            "value": "{{confirmar_recibo.event_id}}"
+          },
+          {
+            "key": "recipient",
+            "value": "{{confirmar_recibo.recipient}}"
+          },
+          {
+            "key": "sender",
+            "value": "{{confirmar_recibo.sender}}"
+          },
+          {
+            "key": "provider_message_id",
+            "value": "{{confirmar_recibo.provider_message_id}}"
+          },
+          {
+            "key": "code",
+            "value": "{{confirmar_recibo.code}}"
+          }
+        ]
+      }
+    },
+    {
+      "x": 560,
+      "y": 720,
+      "id": "denyR",
+      "name": "Respuesta sin envio",
+      "type": "response",
+      "parentRefs": [
+        "allow"
+      ],
+      "api_response": {
+        "response_params": [
+          {
+            "key": "ok",
+            "value": false
+          },
+          {
+            "key": "accepted",
+            "value": false
+          },
+          {
+            "key": "event_id",
+            "value": "{{normalizar_evento.event_id}}"
+          },
+          {
+            "key": "recipient",
+            "value": "{{normalizar_evento.recipient}}"
+          },
+          {
+            "key": "sender",
+            "value": "573124085562"
+          },
+          {
+            "key": "provider_message_id",
+            "value": null
+          },
+          {
+            "key": "code",
+            "value": "CLAIM_DENIED"
+          }
+        ]
+      }
+    }
+  ]
+}
