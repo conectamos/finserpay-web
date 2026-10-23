@@ -39,4 +39,15 @@ export const allySettlementDeliverySchemaStatements = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "AllySettlementDeliveryAttempt_provider_idx"
     ON public."AllySettlementDeliveryAttempt" ("channel","providerId") WHERE "providerId" IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS public."AllySettlementDaptaClaim" (
+    "attemptId" UUID PRIMARY KEY REFERENCES public."AllySettlementDeliveryAttempt"("id") ON DELETE RESTRICT,
+    "recipient" TEXT NOT NULL,
+    "claimedAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+    "receiptAt" TIMESTAMPTZ,
+    "receiptStatus" TEXT CHECK ("receiptStatus" IN ('SENT','FAILED','UNCERTAIN')),
+    "providerId" TEXT,
+    "errorCode" TEXT
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "AllySettlementDaptaClaim_provider_idx"
+    ON public."AllySettlementDaptaClaim" ("providerId") WHERE "providerId" IS NOT NULL`,
 ];

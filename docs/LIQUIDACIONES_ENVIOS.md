@@ -1,6 +1,6 @@
 # Envío de liquidaciones a aliados
 
-Implementación preparada sobre origin/main dd16d957. Los ensayos usan contactos ficticios,
+El correo utiliza Resend y WhatsApp puede utilizar Dapta o Meta directamente. Los ensayos usan contactos ficticios,
 PGlite y proveedores inyectados; no envían mensajes ni consultan bases productivas.
 
 ## Funcionamiento
@@ -16,13 +16,16 @@ proveedor. El destinatario se obtiene del aliado de esa liquidación; la API no 
 destinatarios arbitrarios. Los reintentos explícitos toman los contactos actualizados.
 Los intentos anteriores permanecen en la auditoría y en el campo history del endpoint.
 El panel muestra fechas en America/Bogota. SENT significa aceptado por el proveedor;
-no acredita lectura, llegada a bandeja principal ni desembolso. Los errores posteriores
-de WhatsApp se concilian mediante webhook firmado.
+no acredita lectura, llegada a bandeja principal ni desembolso. Meta directo recibe
+eventos posteriores mediante su webhook firmado. Dapta concilia la aceptación del
+envío mediante el recibo autenticado del flujo; no reporta entrega ni lectura posterior.
 
 El PDF usa el generador existente, sin cambiar diseño ni cálculos. El mapeo del snapshot
 se comparte entre descarga y envío; el primer PDF enviado queda almacenado con SHA-256
-y se reutiliza idéntico para ambos canales y reenvíos. No se publica una URL del PDF.
-La carga de medios en Meta es autenticada.
+y se reutiliza idéntico para ambos canales y reenvíos. Meta directo utiliza carga autenticada.
+Dapta recibe una URL firmada de 30 minutos, limitada al intento y al PDF ya guardado.
+La URL no permite consultar otra liquidación ni generar documentos, tiene caché desactivada
+y deja de servir cuando los envíos están deshabilitados. No existe un enlace público permanente.
 
 El asunto es FINSER PAY | Liquidación del DD/MM/AAAA al DD/MM/AAAA. El texto incluye
 aliado, período y neto con signo, y aclara que la liquidación no confirma un desembolso.
@@ -47,6 +50,10 @@ instaladores: la cola sigue el patrón SQL del proyecto.
 | ALLY_SETTLEMENT_DELIVERY_ENABLED | true solo al activar envíos reales. Ausente/otro valor impide mensajes y registra error de configuración. |
 | RESEND_API_KEY | Reutiliza la clave existente; necesita enviar y consultar el dominio mediante GET /domains/:id. |
 | RESEND_SETTLEMENT_DOMAIN_ID | UUID del dominio raíz finserpay.com en la misma cuenta Resend. |
+| WHATSAPP_SETTLEMENT_PROVIDER | `dapta` para reutilizar el canal oficial existente; `meta` (predeterminado) para acceso directo. |
+| DAPTA_SETTLEMENT_WEBHOOK_URL | Ruta HTTPS autenticada del flujo exclusivo de liquidaciones en api.dapta.ai. Solo para el adaptador Dapta. |
+| ALLY_SETTLEMENT_DAPTA_CALLBACK_SECRET | Secreto aleatorio de al menos 32 bytes, solo servidor. Firma autorizaciones por intento de 30 minutos; el secreto nunca se entrega a Dapta. |
+| ALLY_SETTLEMENT_MEDIA_SECRET | Secreto aleatorio independiente de al menos 32 bytes para URLs temporales del PDF. |
 | WHATSAPP_SETTLEMENT_ACCESS_TOKEN | Token exclusivo de liquidaciones con permisos whatsapp_business_messaging y whatsapp_business_management sobre el número y WABA oficiales. Si no está definido, usa WHATSAPP_ACCESS_TOKEN sin modificarlo. |
 | WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID | 1162059967000416, confirmado para +57 3124085562; se verifica display_phone_number antes de cada envío. Si no está definido, usa WHATSAPP_PHONE_NUMBER_ID. |
 | WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID | 2148284059050848, WABA del número oficial y de la plantilla aprobada. Si no está definido, usa WHATSAPP_BUSINESS_ACCOUNT_ID. Se verifica que la cuenta contiene el número. |
@@ -57,37 +64,58 @@ instaladores: la cola sigue el patrón SQL del proyecto.
 | WHATSAPP_SETTLEMENT_VERIFY_TOKEN | Secreto aleatorio de al menos 32 caracteres para verificar la suscripción del webhook. |
 
 Todas las credenciales deben almacenarse en variables servidor, nunca NEXT_PUBLIC.
+Los tokens/secreto de app de Meta y su suscripción propia solo son necesarios para
+el adaptador `meta`. Dapta utiliza la conexión de WhatsApp ya autorizada en su plataforma.
 Las variables WHATSAPP_SETTLEMENT_* tienen prioridad únicamente para liquidaciones;
 no se escriben ni cambian las variables compartidas ni las integraciones existentes.
 Una variable dedicada definida pero vacía o inválida bloquea su operación: no se
-reemplaza silenciosamente por el valor compartido. Una configuración parcial sigue
-obligada a demostrar el número oficial, su pertenencia al WABA y la plantilla aprobada.
-El webhook usa el mismo PHONE_NUMBER_ID efectivo que el envío y rechaza firmas del
+reemplaza silenciosamente por el valor compartido. El adaptador Meta directo sigue
+obligado a demostrar el número oficial, su pertenencia al WABA y la plantilla aprobada.
+Su webhook usa el mismo PHONE_NUMBER_ID efectivo que el envío y rechaza firmas del
 secreto compartido cuando existe WHATSAPP_SETTLEMENT_APP_SECRET.
 El remitente de correo está fijado en FINSER PAY <pagos@finserpay.com>.
 El adaptador verifica que Resend tenga finserpay.com verificado y envío habilitado;
 no sustituye el remitente por otro dominio. La presencia de una clave no se considera
 prueba de autorización.
 
-La auditoría inicial encontró claves básicas de Resend y Meta en Railway y 14 plantillas
-sin liquidaciones ni encabezados DOCUMENT. La revisión posterior confirmó el número
-oficial +57 3124085562 en PHONE_NUMBER_ID 1162059967000416 y WABA 2148284059050848.
-La integración compartida productiva usa +57 3113539730 y su token no tiene acceso
-al número oficial de liquidaciones; se conservan sus variables. Railway tiene ahora
-los IDs dedicados y ALLY_SETTLEMENT_DELIVERY_ENABLED=false.
+La conexión oficial de Dapta corresponde a +57 3124085562, PHONE_NUMBER_ID
+1162059967000416, WABA 2148284059050848 y canal Dapta
+6933b28b-b0a1-400c-aa1e-54f75bfbbd91. Las conexiones de Diana y cobranza permanecen sin cambios.
+La integración Meta compartida usa otro número; no se reutiliza su token para liquidaciones.
 Resend se verificó mediante la clave existente: dominio finserpay.com, estado verified,
 capabilities.sending=enabled e ID 1b0966af-1f99-48ca-8f92-870f3c92d47a, guardado en
 RESEND_SETTLEMENT_DOMAIN_ID. No se envió correo para comprobarlo.
-El token de verificación del webhook se generó y almacenó directamente en Railway.
-La activación sigue requiriendo un token Meta con acceso al WABA oficial, la plantilla
-aprobada, el secreto de su app y una suscripción compatible con el callback actual de Dapta.
-La sesión de Meta confirmó que el portafolio Finser PAY (1109745271496382) no tiene
-aplicaciones ni usuarios del sistema; el botón para añadir usuarios está deshabilitado.
-Se necesita acceso administrador a una app propia autorizada para el WABA oficial, o
-al administrador que pueda asociarla y emitir el token de usuario del sistema. El
-secreto debe corresponder a la app que entregue los eventos firmados al webhook.
-La conexión oficial de Dapta no expone una credencial reutilizable para la subida
-privada del PDF mediante Meta. Sus campañas y callbacks permanecen sin cambios.
+
+## Flujo Dapta y autorización de uso único
+
+Flujo `BfHAJ`, **Liquidaciones aliados — PDF WhatsApp**, en el workspace FINSERPAY.
+Su definición sin credenciales está en
+`docs/integrations/ally-settlement-dapta/flow.json`; las pruebas ejecutan sus nodos de
+código y verifican las conexiones sin invocar servicios externos. La URL autenticada
+se guarda únicamente en `DAPTA_SETTLEMENT_WEBHOOK_URL` de Railway.
+
+El adaptador envía solamente `event_id`, `recipient` y `callback_token`. Este último
+es una autorización HMAC efímera vinculada al intento y al destinatario; no es una
+credencial global. El flujo la utiliza como Bearer contra
+`POST /api/integraciones/liquidaciones/dapta`:
+
+1. `action: claim` comprueba la firma, el interruptor general, la reserva vigente,
+   el canal y el destinatario. Una reserva única en PostgreSQL autoriza una sola ejecución.
+2. La respuesta autorizada entrega nombre, período, neto, destinatario y URL del PDF
+   obtenidos de los datos guardados. El flujo no acepta sustituciones desde su entrada.
+3. El nodo nativo de Dapta usa canal y plantilla fijos, parámetros `var_1` a `var_4`
+   y `header_media_url`. Solo un recibo real `wamid.*` prueba aceptación.
+4. `action: receipt` concilia el mismo intento, destinatario, remitente e ID del
+   proveedor. Una respuesta HTTP satisfactoria sin recibo no se registra como enviada.
+
+La plantilla importada en Dapta tiene ID `71f2b7b4-64de-494b-91d8-6db523276c32`:
+`liquidacion_aliado`, idioma `es_CO`, categoría UTILITY y encabezado DOCUMENT.
+Fue aprobada en Meta e importada en Dapta el 23/10/2026. El PDF de muestra tiene datos ficticios.
+La URL dinámica debe ser aceptada por la configuración del encabezado de Dapta;
+no reemplazarla por el PDF de muestra en los envíos reales.
+El archivo público `public/integrations/ally-settlement-template-sample.pdf` contiene
+únicamente datos ficticios y permite configurar el dominio `finserpay.com` para el
+encabezado. Los documentos reales siguen usando exclusivamente la ruta firmada.
 
 ## Plantilla Meta
 
@@ -97,10 +125,11 @@ este cuerpo exacto (sin pie ni botones):
 > Hola {{1}}. Adjuntamos tu liquidación FINSER PAY del {{2}} al {{3}}. Valor neto de la liquidación: {{4}}. Este documento informa la liquidación generada y no confirma un desembolso.
 
 Parámetros: nombre del aliado, fecha inicial, fecha final, neto formateado en COP.
-La aprobación debe ser APPROVED; el servidor comprueba nombre, idioma, encabezado y
-cuerpo aprobado antes de cargar o enviar el PDF.
+La aprobación debe ser APPROVED. Meta directo comprueba nombre, idioma, encabezado y
+cuerpo antes de enviar. El flujo Dapta utiliza la plantilla aprobada importada y el canal
+oficial fijados en su definición; debe mantenerse el mismo cuerpo y orden de parámetros.
 
-Suscribir messages de la app Meta a
+Solo para Meta directo, suscribir messages de la app Meta a
 /api/integraciones/liquidaciones/whatsapp. Configurar los dos secretos anteriores.
 Si la app ya tiene callback para Diana/Dapta, conservarlo: utilizar la suscripción
 de app correspondiente o un relay del proveedor que preserve cuerpo y firma Meta.
@@ -120,7 +149,8 @@ respuesta sin recibo o caída después de iniciar el envío quedan UNCERTAIN, vi
 como Fallido con explicación y reenvío bloqueado. No se recicla la clave ni se
 reintenta automáticamente un resultado incierto.
 
-WhatsApp puede resolverlo mediante su webhook firmado. Para correo sin recibo,
+Meta directo puede resolverlo mediante su webhook firmado; Dapta, mediante un recibo
+posterior del mismo flujo dentro de la vigencia de su autorización. Para correo sin recibo,
 operaciones debe consultar Resend por la clave y destinatario antes de conciliar:
 solo registrar SENT con evidencia del ID real, o FAILED con constancia de que no
 se aceptó. Conservar dicha evidencia en la gestión operativa. No desbloquear a ciegas
@@ -141,6 +171,10 @@ La revisión visual de escritorio y 320 px utiliza respuestas HTTP simuladas.
 
 Resultado de verificación del 21/10/2026: 119/119 pruebas aprobadas, npm run build
 completado con TypeScript y 105 páginas estáticas, y ESLint focalizado aprobado.
+Ampliación Dapta del 23/10/2026: 171/171 pruebas aprobadas; build de producción,
+TypeScript y ESLint focalizado aprobados. Incluye ejecución local de los nodos del
+flujo, autorización única, caducidad y manipulación de enlaces, respuestas ambiguas
+y carreras entre callback, respuesta del proveedor y timeout. Ningún mensaje real.
 La prueba integral usa PostgreSQL embebido, PDFKit real y proveedores simulados;
 verifica el mismo PDF por ambos canales, ausencia de duplicados y aislamiento por aliado.
 Los instaladores de esquema se probaron en bases aisladas. Las verificaciones locales

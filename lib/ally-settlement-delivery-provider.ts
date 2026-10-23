@@ -1,4 +1,6 @@
 import { normalizeWhatsAppRecipient } from "@/lib/whatsapp";
+import { createSettlementDaptaToken } from "./ally-settlement-delivery-dapta-auth";
+import { createSettlementMediaUrl } from "./ally-settlement-delivery-media";
 
 export const SETTLEMENT_EMAIL_FROM = "FINSER PAY <pagos@finserpay.com>";
 export const SETTLEMENT_WHATSAPP_SENDER = "573124085562";
@@ -221,6 +223,91 @@ async function sendWhatsApp(input: SettlementDeliveryInput, options: Options, en
   return { providerId };
 }
 
+/** Only the final, correlated flow receipt proves provider acceptance. A 2xx
+ * execution acknowledgement is not evidence that WhatsApp accepted a message. */
+export function settlementDaptaReceipt(payload: unknown, attemptId: string, recipient: string) {
+  const outer = asRecord(payload);
+  const result = outer.response === undefined ? outer : asRecord(outer.response);
+  const definiteRejection = result.ok === false && result.accepted === false && result.provider_message_id === null &&
+    (result.status === undefined || result.status === "failed") &&
+    (result.success === undefined || result.success === false) &&
+    result.code === "META_REJECTED" && [400, 401, 403, 404, 422, 429].includes(Number(result.provider_http_status)) &&
+    Number.isSafeInteger(result.provider_error_code) && Number(result.provider_error_code) > 0;
+  const hasFailure = (value: unknown, depth = 0): boolean => {
+    if (!value || typeof value !== "object") return false;
+    if (depth > 12) return true;
+    if (Array.isArray(value)) return value.some(item => hasFailure(item, depth + 1));
+    const row = asRecord(value);
+    // Only the correlated result's proven rejection may carry these failure
+    // markers. An unrelated failing node still makes the outcome ambiguous.
+    const provenRejection = row === result && definiteRejection;
+    if ((!provenRejection && row.success === false) || (row !== result && row.ok === false)) return true;
+    if (row.suppressed === true || row.scheduled === true || row.error || row.errors || row.node_error ||
+        (!provenRejection && typeof row.status === "string" && /^(?:failed|error|node_error|rejected)$/i.test(row.status))) return true;
+    return Object.values(row).some(item => hasFailure(item, depth + 1));
+  };
+  if (hasFailure(payload) || result.event_id !== attemptId || result.recipient !== recipient ||
+      result.sender !== SETTLEMENT_WHATSAPP_SENDER) return { status: "UNCERTAIN" as const };
+  if (result.ok === true && result.accepted === true && result.code === null &&
+      typeof result.provider_message_id === "string" && /^wamid\.[A-Za-z0-9_+=/-]{1,490}$/.test(result.provider_message_id)) {
+    return { status: "ACCEPTED" as const, providerId: result.provider_message_id };
+  }
+  if (definiteRejection) return { status: "FAILED" as const };
+  return { status: "UNCERTAIN" as const };
+}
+
+async function sendWhatsAppDapta(input: SettlementDeliveryInput, options: Options, env: NodeJS.ProcessEnv, fetcher: typeof fetch) {
+  const rawUrl = required(env, "DAPTA_SETTLEMENT_WEBHOOK_URL");
+  let url: URL;
+  try { url = new URL(rawUrl); }
+  catch { throw new DeliveryProviderError("DAPTA_SETTLEMENT_WEBHOOK_URL no es válida."); }
+  if (url.origin !== "https://api.dapta.ai" || url.username || url.password || url.hash || url.pathname === "/") {
+    throw new DeliveryProviderError("DAPTA_SETTLEMENT_WEBHOOK_URL debe ser una ruta HTTPS de api.dapta.ai.");
+  }
+  for (const key of ["ALLY_SETTLEMENT_MEDIA_SECRET", "ALLY_SETTLEMENT_DAPTA_CALLBACK_SECRET"]) {
+    if (Buffer.byteLength(required(env, key), "utf8") < 32) throw new DeliveryProviderError(`${key} requiere al menos 32 bytes.`);
+  }
+  // Exercise the exact signing validation before consuming the send boundary.
+  // The actual URL is issued later, only after the flow's single-use claim.
+  try { createSettlementMediaUrl(input.attemptId.toLowerCase(), env); }
+  catch { throw new DeliveryProviderError("Falta configurar ALLY_SETTLEMENT_MEDIA_SECRET con un valor válido de al menos 32 bytes."); }
+  const recipient = normalizeWhatsAppRecipient(input.recipient)!;
+  let callbackToken: string;
+  try { callbackToken = createSettlementDaptaToken(input.attemptId, recipient, env); }
+  catch { throw new DeliveryProviderError("No se pudo preparar la autorización temporal de Dapta."); }
+  // The flow obtains the immutable payload, recipient and signed PDF URL from
+  // the authenticated single-use claim endpoint. Callers cannot substitute a PDF.
+  await options.beforeSend?.();
+  let response: Response;
+  try {
+    response = await fetcher(url.toString(), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_id: input.attemptId, recipient, callback_token: callbackToken }),
+      redirect: "error", cache: "no-store", signal: AbortSignal.timeout(25_000),
+    });
+  } catch { throw new DeliveryProviderError("Dapta: no se pudo confirmar el resultado. Requiere conciliación antes de reenviar.", true); }
+  // Even an HTTP error can follow a committed send within the flow.
+  if (!response.ok) throw new DeliveryProviderError(`Dapta: respuesta HTTP ${response.status}; resultado pendiente de conciliación.`, true);
+  let receipt: ReturnType<typeof settlementDaptaReceipt>;
+  try {
+    if (Number(response.headers.get("content-length") || 0) > 131072) throw new Error("too large");
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("empty");
+    const chunks: Uint8Array[] = []; let length = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.length;
+      if (length > 131072) { await reader.cancel(); throw new Error("too large"); }
+      chunks.push(value);
+    }
+    receipt = settlementDaptaReceipt(JSON.parse(Buffer.concat(chunks).toString("utf8")), input.attemptId, recipient);
+  } catch { throw new DeliveryProviderError("Dapta: falta un recibo válido; requiere conciliación antes de reenviar.", true); }
+  if (receipt.status === "ACCEPTED") return { providerId: receipt.providerId };
+  if (receipt.status === "FAILED") throw new DeliveryProviderError("Dapta informó que WhatsApp rechazó el mensaje. Puedes reintentar este canal.");
+  throw new DeliveryProviderError("Dapta: resultado no confirmado; requiere conciliación antes de reenviar.", true);
+}
+
 export async function sendSettlementDelivery(input: SettlementDeliveryInput, options: Options = {}): Promise<{ providerId: string }> {
   const env = options.env ?? process.env;
   if (env.ALLY_SETTLEMENT_DELIVERY_ENABLED !== "true") {
@@ -228,5 +315,9 @@ export async function sendSettlementDelivery(input: SettlementDeliveryInput, opt
   }
   validateInput(input);
   const fetcher = options.fetch ?? fetch;
-  return input.channel === "EMAIL" ? sendEmail(input, options, env, fetcher) : sendWhatsApp(input, options, env, fetcher);
+  if (input.channel === "EMAIL") return sendEmail(input, options, env, fetcher);
+  const provider = env.WHATSAPP_SETTLEMENT_PROVIDER ?? "meta";
+  if (provider === "dapta") return sendWhatsAppDapta(input, options, env, fetcher);
+  if (provider !== "meta") throw new DeliveryProviderError("WHATSAPP_SETTLEMENT_PROVIDER debe ser meta o dapta.");
+  return sendWhatsApp(input, options, env, fetcher);
 }
