@@ -106,6 +106,7 @@ async function fixture(t, options = {}) {
             : id === options.retryOperationId ? options.retryProcessUuid : null;
         assert.ok(selectedProcessUuid, `Unexpected operation id ${id}`);
         assert.equal(document.subarray(0, 5).toString(), "%PDF-");
+        if (id === operationId && options.preparationError) throw options.preparationError;
         if ((id === options.redirectOperationId && options.redirectPreparationError)
           || (id === options.retryOperationId && options.retryPreparationError)) {
           throw new Error("injected preparation failure");
@@ -233,6 +234,89 @@ async function redirectReservation(f, { id, phone, expectedProcessUuid = f.proce
     supersedeActive: true,
     options: { requireUnsignedActive: true, allowTerminalFailedActive, updatedPhone: phone },
   };
+}
+
+const privatePreparationDiagnostic = "provider-private@example.invalid token=DO_NOT_EXPOSE <html>upstream error</html>";
+const preparationFailureCases = [
+  ...[500, 502, 503, 504, 408, 429].map(status => ({
+    name: `acceso temporal HTTP ${status}`,
+    error: Object.assign(new Error(privatePreparationDiagnostic), {
+      name: "FirmaSeguroApiError", status,
+      detail: { path: "/api/v2/Auth/SignIn", payload: { accessToken: "DO_NOT_EXPOSE" } },
+    }),
+    expected: /servicio de acceso de FirmaSeguro respondió con un error temporal/,
+  })),
+  {
+    name: "acceso no autorizado",
+    error: Object.assign(new Error(privatePreparationDiagnostic), {
+      name: "FirmaSeguroApiError", status: 401, detail: { path: "/api/v2/Auth/SignIn" },
+    }),
+    expected: /administrador revisar el acceso de la integración/,
+  },
+  {
+    name: "DNS del proveedor",
+    error: Object.assign(new Error(privatePreparationDiagnostic), {
+      name: "TypeError", cause: { code: "ENOTFOUND" },
+    }),
+    expected: /No se pudo completar la conexión con FirmaSeguro/,
+  },
+  {
+    name: "tiempo de conexión agotado",
+    error: Object.assign(new Error(privatePreparationDiagnostic), { name: "TimeoutError" }),
+    expected: /No se pudo completar la conexión con FirmaSeguro/,
+  },
+  {
+    name: "contacto incompleto",
+    error: new Error("REISSUE_CONTACT_UNAVAILABLE"),
+    expected: /Revisa el correo y el teléfono del cliente/,
+  },
+  {
+    name: "configuración incompleta",
+    error: new Error("REISSUE_PREPARATION_UNAVAILABLE"),
+    expected: /administrador revisar la configuración/,
+  },
+  {
+    name: "error desconocido sin diagnóstico público",
+    error: new Error(privatePreparationDiagnostic),
+    expected: /Solicita revisar el detalle del intento/,
+  },
+  {
+    name: "otro endpoint no se presenta como error de acceso",
+    error: Object.assign(new Error(privatePreparationDiagnostic), {
+      name: "FirmaSeguroApiError", status: 503, detail: { path: "/api/v2/Other" },
+    }),
+    expected: /Solicita revisar el detalle del intento/,
+  },
+];
+
+for (const scenario of preparationFailureCases) {
+  test(`PostgreSQL: preparación informa ${scenario.name} sin enviar ni exponer el diagnóstico`, async t => {
+    const f = await fixture(t, { preparationError: scenario.error });
+    const draftBefore = structuredClone(await f.draft());
+    await assert.rejects(f.ledger.dispatchReservedDraft(f.operationId), error => {
+      assert.equal(error.code, "DRAFT_DISPATCH_PREPARATION_FAILED");
+      assert.equal(error.status, 409, "conserva el contrato de error para consumidores existentes");
+      assert.match(error.message, scenario.expected);
+      assert.match(error.message, /El contrato no se envió/);
+      assert.doesNotMatch(error.message, /DO_NOT_EXPOSE|provider-private|<html>|Corrige el problema/);
+      return true;
+    });
+    const failed = await f.row();
+    assert.equal(failed.status, "FAILED_SAFE");
+    assert.equal(failed.lastError, scenario.error.message, "el servidor conserva el diagnóstico para soporte");
+    assert.equal(failed.dispatchedAt, null);
+    assert.equal(failed.processUuid, null);
+    assert.equal(failed.requestPayload, null);
+    assert.deepEqual(await f.events(), ["PREPARING", "FAILED_SAFE"]);
+    assert.deepEqual(await f.draft(), draftBefore);
+    assert.equal((await f.processes()).length, 0);
+    assert.equal((await f.receipts()).length, 0);
+    assert.equal((await f.actions()).length, 0);
+    assert.equal(f.sends(), 0);
+    assert.equal((await f.ledger.dispatchReservedDraft(f.operationId)).status, "FAILED_SAFE",
+      "consultar o repetir la operación fallida no crea un envío");
+    assert.equal(f.sends(), 0);
+  });
 }
 
 test("PostgreSQL: recuperación automática mantiene al iniciador y audita SYSTEM sin usuario suplantado", async t => {

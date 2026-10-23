@@ -782,6 +782,35 @@ function dispatchFailureSummary(error: unknown, stage: string) {
   return `${stage} [${code}]: ${detail}`.slice(0, 500);
 }
 
+function preparationFailureMessage(error: unknown) {
+  // Keep provider diagnostics in the server ledger. Only fixed, actionable
+  // messages may cross the API boundary; provider responses can contain PII.
+  const failure = record(error);
+  const detail = record(failure.detail);
+  const status = typeof failure.status === "number" ? failure.status : 0;
+  const loginFailure = failure.name === "FirmaSeguroApiError"
+    && detail.path === "/api/v2/Auth/SignIn";
+  if (loginFailure && (status === 408 || status === 429 || (status >= 500 && status <= 599))) {
+    return "El servicio de acceso de FirmaSeguro respondió con un error temporal. El contrato no se envió. Reintenta en unos momentos; los datos del cliente se conservan.";
+  }
+  if (loginFailure) {
+    return "No fue posible autenticar la integración con FirmaSeguro. El contrato no se envió. Solicita al administrador revisar el acceso de la integración.";
+  }
+  const cause = record(failure.cause);
+  const connectionCodes = ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"];
+  if (failure.name === "TimeoutError" || failure.name === "AbortError"
+    || connectionCodes.includes(String(failure.code || cause.code || ""))) {
+    return "No se pudo completar la conexión con FirmaSeguro. El contrato no se envió. Reintenta en unos momentos; los datos del cliente se conservan.";
+  }
+  if (failure.message === "REISSUE_CONTACT_UNAVAILABLE") {
+    return "Falta un dato de contacto válido para enviar la firma. Revisa el correo y el teléfono del cliente. El contrato no se envió.";
+  }
+  if (failure.message === "REISSUE_PREPARATION_UNAVAILABLE") {
+    return "La integración de firma no está lista para preparar el envío. El contrato no se envió. Solicita al administrador revisar la configuración.";
+  }
+  return "No fue posible preparar el envío a FirmaSeguro. El contrato no se envió y los datos del cliente se conservan. Solicita revisar el detalle del intento.";
+}
+
 async function markDispatchUncertain(id: string, error: unknown, stage: string, acknowledgement?: ProviderAcknowledgement) {
   // An acknowledged UUID survives even if the receipt INSERT failed. It is only a
   // recovery locator: a receipt is still mandatory before materialization.
@@ -886,7 +915,7 @@ export async function dispatchReservedDraft(id: string) {
       WHERE "id"=$1::uuid AND "status"='PREPARING'`, id,
       error instanceof Error ? error.message.slice(0, 500) : "Preparación fallida");
     throw new DraftDispatchError("DRAFT_DISPATCH_PREPARATION_FAILED",
-      "No se preparó el envío de firma. Corrige el problema y vuelve a intentar.");
+      preparationFailureMessage(error));
   }
   const claimed = await prisma.$transaction(async (db) => {
     await lockSolicitudOperationMutation(db, row.draftId);
