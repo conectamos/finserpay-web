@@ -4,6 +4,7 @@ import { getAllyPaymentDetail, AllyPaymentNotFoundError } from "@/lib/ally-payme
 import { DeliveryConflictError } from "@/lib/ally-settlement-delivery-store";
 import { runSettlementDeliveryQueue, settlementDeliveryStore } from "@/lib/ally-settlement-delivery-service";
 import { DeliveryBodyTooLargeError, readDeliveryBody } from "@/lib/ally-settlement-delivery-body";
+import { isSameApprovalOrigin } from "@/lib/credit-approval-http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,8 +38,7 @@ export async function POST(request: Request, context: Context) {
   try {
     const result = await authorize(context, true);
     if (result.error) return result.error;
-    const origin = request.headers.get("origin");
-    if (origin && origin !== new URL(request.url).origin) return reply({ ok: false, error: "Origen no autorizado." }, 403);
+    if (!isSameApprovalOrigin(request)) return reply({ ok: false, error: "Origen no autorizado." }, 403);
     if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return reply({ ok: false, error: "Se requiere JSON." }, 415);
     const raw = await readDeliveryBody(request, 2048);
     let body;

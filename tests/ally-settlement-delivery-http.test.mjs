@@ -4,6 +4,14 @@ import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 const operationId = "10000000-0000-4000-8000-000000000001";
 const deliveryBody = loadReissueModule("lib/ally-settlement-delivery-body.ts");
+const { isSameApprovalOrigin } = loadReissueModule("lib/credit-approval-http.ts", {
+  "next/server": { NextResponse: Response },
+  "@/lib/auth": {},
+  "@/lib/roles": {},
+  "@/lib/approval-shared-session": {},
+  "@/lib/credit-approval-actor": {},
+  "@/lib/credit-approval": {},
+});
 const central = { ok: true, kind: "CENTRAL_ADMIN", allyId: null, user: { id: 91 } };
 const ally = { ok: true, kind: "ALLY_ADMIN", allyId: 7, user: { id: 92 } };
 class AllyPaymentNotFoundError extends Error {}
@@ -32,6 +40,7 @@ function fixture({ access = central, retry, list, run } = {}) {
     },
     "@/lib/ally-settlement-delivery-store": { DeliveryConflictError },
     "@/lib/ally-settlement-delivery-body": deliveryBody,
+    "@/lib/credit-approval-http": { isSameApprovalOrigin },
     "@/lib/ally-settlement-delivery-service": {
       runSettlementDeliveryQueue: async id => { calls.push(["dispatch", id]); return run?.(id); },
       settlementDeliveryStore: {
@@ -47,8 +56,8 @@ function fixture({ access = central, retry, list, run } = {}) {
     fetch: () => assert.fail("No network calls are permitted in these HTTP tests"),
     console: { error: (...args) => errors.push(args) },
   });
-  function request(method = "GET", body, headers = {}, raw) {
-    return new Request("https://qa.invalid/api/pagos-aliados/123/envios", {
+  function request(method = "GET", body, headers = {}, raw, url = "https://qa.invalid/api/pagos-aliados/123/envios") {
+    return new Request(url, {
       method, headers: method === "POST" ? { "Content-Type": "application/json", ...headers } : headers,
       ...(method === "POST" ? { body: raw ?? JSON.stringify(body ?? { channel: "EMAIL", requestId: operationId }) } : {}),
     });
@@ -120,6 +129,45 @@ test("after se registra únicamente después de persistir el reintento", async (
   assert.equal((await responsePromise).status, 200);
   assert.equal(f.callbacks.length, 1);
   assert.ok(!f.calls.some(call => call[0] === "dispatch"));
+});
+
+test("reintentos de ambos canales aceptan el Host público detrás de Railway", async () => {
+  for (const channel of ["EMAIL", "WHATSAPP"]) {
+    const f = fixture();
+    const response = await f.route.POST(f.request("POST", { channel, requestId: operationId }, {
+      Origin: "https://finserpay.com", Host: "finserpay.com", "Sec-Fetch-Site": "same-origin",
+    }, undefined, "http://0.0.0.0:3000/api/pagos-aliados/123/envios"), f.context());
+    assert.equal(response.status, 200);
+    assert.deepEqual(f.calls.map(call => call[0]), ["detail", "retry-start", "retry-saved", "after", "list"]);
+    assert.equal(f.calls[1][2], channel);
+    assert.equal(f.callbacks.length, 1);
+    await f.callbacks[0]();
+    assert.deepEqual(f.calls.at(-1), ["dispatch", 123]);
+  }
+});
+
+test("orígenes externos, encabezados reenviados y Fetch Metadata no autorizan reintentos", async () => {
+  const deniedHeaders = [
+    { Origin: "https://attacker.invalid", "X-Forwarded-Host": "attacker.invalid" },
+    { Origin: "http://0.0.0.0:3000", "X-Forwarded-Host": "0.0.0.0:3000" },
+    { Origin: "https://finserpay.com.attacker.invalid" },
+    { Origin: "https://finserpay.com:8443" },
+    { Origin: "https://finserpay.com/path" },
+    { Origin: "null" },
+    { Origin: "https://finserpay.com", "Sec-Fetch-Site": "cross-site" },
+    { Origin: "https://finserpay.com", "Sec-Fetch-Site": "same-site" },
+    { "Sec-Fetch-Site": "cross-site" },
+  ];
+  for (const headers of deniedHeaders) {
+    const f = fixture();
+    const response = await f.route.POST(f.request("POST", undefined, {
+      Host: "finserpay.com", "Sec-Fetch-Site": "same-origin", ...headers,
+    }, undefined, "http://0.0.0.0:3000/api/pagos-aliados/123/envios"), f.context());
+    assert.equal(response.status, 403, JSON.stringify(headers));
+    assert.equal((await response.json()).error, "Origen no autorizado.");
+    assert.deepEqual(f.calls.map(call => call[0]), ["detail"]);
+    assert.equal(f.callbacks.length, 0);
+  }
 });
 
 test("conflicto o fallo al persistir conserva la liquidación sin programar envío", async () => {
