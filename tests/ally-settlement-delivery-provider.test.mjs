@@ -98,7 +98,7 @@ test("invalid destinations, metadata and PDF are rejected before provider work",
   }
 });
 
-test("email verifies sender authorization and attaches exactly the frozen PDF to one recipient", async () => {
+test("email sends the frozen PDF to its ally with one fixed internal copy in the same idempotent request", async () => {
   const f = fixture(); let boundary = 0;
   const data = input();
   const result = await sendSettlementDelivery(data, { env, fetch: f.fetcher, beforeSend: async () => {
@@ -108,6 +108,8 @@ test("email verifies sender authorization and attaches exactly the frozen PDF to
   const request = f.calls[1]; const payload = JSON.parse(request.options.body);
   assert.equal(payload.from, "FINSER PAY <pagos@finserpay.com>");
   assert.deepEqual(payload.to, [data.recipient]);
+  assert.deepEqual(payload.bcc, ["pagos@finserpay.com"]);
+  assert.equal(payload.cc, undefined);
   assert.equal(payload.subject, data.subject); assert.equal(payload.text, data.text);
   assert.equal(payload.attachments.length, 1);
   assert.deepEqual(Buffer.from(payload.attachments[0].content, "base64"), data.pdf);
@@ -116,6 +118,18 @@ test("email verifies sender authorization and attaches exactly the frozen PDF to
   await sendSettlementDelivery(data, { env, fetch: f.fetcher });
   assert.equal(f.calls[3].options.body, request.options.body);
   assert.equal(f.calls[3].options.headers["Idempotency-Key"], request.options.headers["Idempotency-Key"]);
+});
+
+test("email does not duplicate the internal copy when pagos is already the recipient", async () => {
+  for (const recipient of ["pagos@finserpay.com", "PAGOS@FINSERPAY.COM"]) {
+    const f = fixture();
+    await sendSettlementDelivery(input("EMAIL", { recipient }), { env, fetch: f.fetcher });
+    assert.equal(f.calls.length, 2);
+    const payload = JSON.parse(f.calls[1].options.body);
+    assert.deepEqual(payload.to, [recipient]);
+    assert.equal(payload.bcc, undefined);
+    assert.equal(payload.cc, undefined);
+  }
 });
 
 test("unverified, wrong, or sending-disabled Resend domain prevents email", async () => {

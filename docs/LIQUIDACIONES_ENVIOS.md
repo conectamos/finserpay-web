@@ -30,6 +30,14 @@ y deja de servir cuando los envíos están deshabilitados. No existe un enlace p
 El asunto es FINSER PAY | Liquidación del DD/MM/AAAA al DD/MM/AAAA. El texto incluye
 aliado, período y neto con signo, y aclara que la liquidación no confirma un desembolso.
 
+Cada correo incluye una copia oculta fija a pagos@finserpay.com, con el mismo texto
+y PDF del aliado, en la misma solicitud e identificador de idempotencia de Resend.
+Si esa dirección ya es el destinatario principal, no se añade una segunda copia.
+Aplica a nuevos envíos y reenvíos explícitos; no reenvía liquidaciones históricas.
+La copia llega como correo recibido a ese buzón; no sincroniza su carpeta Enviados.
+El estado del intento corresponde a la aceptación del mensaje por Resend, sin un
+estado separado de entrega de la copia interna.
+
 ## Datos y migraciones
 
 Aliado.email y Aliado.telefonoWhatsapp son opcionales y editables. Los valores
