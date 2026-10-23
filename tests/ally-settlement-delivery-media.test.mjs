@@ -96,14 +96,26 @@ test("media signatures reject altered attempts, expiry, signature and wrong keys
   assert.equal(media.verifySettlementMediaUrl(url, { ...env, ALLY_SETTLEMENT_MEDIA_SECRET: "another-offline-secret-not-for-production" }, now), null);
 });
 
-test("media verifies exact expiration and rejects future-issued or excessive-lifetime links", () => {
+test("media verifies exact expiration and rejects excessive-lifetime links", () => {
   assert.equal(media.verifySettlementMediaUrl(signed(), env, now + 30 * 60_000 - 1), firstId);
   assert.equal(media.verifySettlementMediaUrl(signed(), env, now + 30 * 60_000), null);
   assert.equal(media.verifySettlementMediaUrl(signed(), env, now + 31 * 60_000), null);
-  assert.equal(media.verifySettlementMediaUrl(signed(firstId, now + 1000), env, now), null);
   assert.equal(media.verifySettlementMediaUrl(signed(firstId, now + 60 * 60_000), env, now), null);
   assert.equal(media.verifySettlementMediaUrl(signed(), env, Number.NaN), null);
   assert.throws(() => signed(firstId, Number.NaN), /Fecha/);
+});
+
+test("media tolerates up to thirty seconds issuer clock lead without expiration grace", () => {
+  for (const [skewSeconds, expected] of [[1, firstId], [30, firstId], [31, null]]) {
+    const issuedAt = now + skewSeconds * 1000;
+    const url = signed(firstId, issuedAt);
+    const expiresAt = Number(new URL(url).searchParams.get("expires")) * 1000;
+    assert.equal(expiresAt - issuedAt, 1800_000, "Signing lifetime stays exactly 1800 seconds");
+    assert.equal(media.verifySettlementMediaUrl(url, env, now), expected, `Issuer ahead ${skewSeconds}s`);
+    assert.equal(media.verifySettlementMediaUrl(url, env, expiresAt - 1), firstId);
+    assert.equal(media.verifySettlementMediaUrl(url, env, expiresAt), null);
+    assert.equal(media.verifySettlementMediaUrl(url, env, expiresAt + 1000), null);
+  }
 });
 
 test("media secret configuration fails closed and counts UTF-8 bytes", () => {

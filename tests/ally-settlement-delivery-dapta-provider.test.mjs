@@ -94,6 +94,33 @@ test("Only a real receipt matching attempt, destination and official sender coun
   ]) assert.deepEqual(settlementDaptaReceipt(payload, attemptId, recipient), { status: "UNCERTAIN" });
   assert.deepEqual(settlementDaptaReceipt(receipt(), attemptId, recipient), { status: "ACCEPTED", providerId: "wamid.fixture123==" });
 });
+
+test("Dapta's numeric sender is accepted only as the exact official safe integer", async () => {
+  for (const sender of ["573124085562", 573124085562]) {
+    const payload = { response: receipt({ sender }) };
+    assert.deepEqual(settlementDaptaReceipt(payload, attemptId, recipient), { status: "ACCEPTED", providerId: "wamid.fixture123==" });
+    let requests = 0;
+    const result = await sendSettlementDelivery(input, { env, fetch: async () => {
+      requests++;
+      return Response.json(payload);
+    } });
+    assert.deepEqual(result, { providerId: "wamid.fixture123==" });
+    assert.equal(requests, 1);
+  }
+  for (const sender of [
+    573124085563, 573113539730, -573124085562, 573124085562.5, Number.MAX_SAFE_INTEGER + 1,
+    Number.NaN, Number.POSITIVE_INFINITY, null, true, "573124085562.0", "5.73124085562e11",
+    "+573124085562", "573124085562 ", " 573124085562", "0573124085562", { value: 573124085562 },
+  ]) {
+    assert.deepEqual(settlementDaptaReceipt(receipt({ sender }), attemptId, recipient), { status: "UNCERTAIN" });
+  }
+  for (const patch of [
+    { recipient: Number(recipient) }, { recipient: `+${recipient}` }, { event_id: ` ${attemptId}` },
+    { ok: 1 }, { accepted: "true" }, { success: false }, { status: "failed" },
+  ]) {
+    assert.deepEqual(settlementDaptaReceipt(receipt({ sender: 573124085562, ...patch }), attemptId, recipient), { status: "UNCERTAIN" });
+  }
+});
 test("HTTP/network/malformed receipts are uncertain, with no retries or leaked credentials", async () => {
   for (const mode of ["network", "json", "missing", "large", "chunked-large", 400, 401, 429, 503]) {
     let calls = 0;

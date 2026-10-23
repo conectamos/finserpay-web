@@ -94,12 +94,12 @@ test("replaying one event with a denied second claim never invokes WhatsApp twic
   assert.equal(duplicate.response.accepted, false);
 });
 
-test("only the approved fixed line/template and the database claim supply PDF and four variables", () => {
+test("only the configured fixed line/template and the database claim supply PDF and four variables", () => {
   const result = execute({ body: { ...input(), ally_name: "Untrusted input", pdf_url: "https://example.invalid/wrong.pdf", template_id: "wrong", filename: "wrong.pdf" } });
   assert.equal(result.nativeCalls.length, 1);
   const request = result.nativeCalls[0];
   assert.equal(request.agent_channel_id, "6933b28b-b0a1-400c-aa1e-54f75bfbbd91");
-  assert.equal(request.template_id, "71f2b7b4-64de-494b-91d8-6db523276c32");
+  assert.equal(request.template_id, "0472de26-727a-4659-9dc1-d27827969d69");
   assert.equal(request.to_number, `+${recipient}`);
   assert.equal(request.header_media_url, claim().pdf_url);
   assert.deepEqual(request.variables, [

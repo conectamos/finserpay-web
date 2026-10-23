@@ -108,11 +108,12 @@ credencial global. El flujo la utiliza como Bearer contra
 4. `action: receipt` concilia el mismo intento, destinatario, remitente e ID del
    proveedor. Una respuesta HTTP satisfactoria sin recibo no se registra como enviada.
 
-La plantilla importada en Dapta tiene ID `71f2b7b4-64de-494b-91d8-6db523276c32`:
-`liquidacion_aliado`, idioma `es_CO`, categoría UTILITY y encabezado DOCUMENT.
-Fue aprobada en Meta e importada en Dapta el 23/10/2026. El PDF de muestra tiene datos ficticios.
-La URL dinámica debe ser aceptada por la configuración del encabezado de Dapta;
-no reemplazarla por el PDF de muestra en los envíos reales.
+La plantilla dedicada de Dapta tiene ID `0472de26-727a-4659-9dc1-d27827969d69`:
+`liquidacion_aliado_pdf`, idioma `es_CO`, categoría UTILITY y encabezado DOCUMENT.
+Se configuró con el dominio `finserpay.com`, que Dapta exige conservar al reemplazar
+el adjunto en cada envío. Meta debe mostrarla APPROVED y Dapta debe indicar que
+permite enviar antes de habilitar la cola. No reemplazar el documento real por el PDF
+de muestra en los envíos a aliados.
 El archivo público `public/integrations/ally-settlement-template-sample.pdf` contiene
 únicamente datos ficticios y permite configurar el dominio `finserpay.com` para el
 encabezado. Los documentos reales siguen usando exclusivamente la ruta firmada.
@@ -171,10 +172,19 @@ La revisión visual de escritorio y 320 px utiliza respuestas HTTP simuladas.
 
 Resultado de verificación del 21/10/2026: 119/119 pruebas aprobadas, npm run build
 completado con TypeScript y 105 páginas estáticas, y ESLint focalizado aprobado.
-Ampliación Dapta del 23/10/2026: 171/171 pruebas aprobadas; build de producción,
+Ampliación Dapta del 23/10/2026: 174/174 pruebas aprobadas; build de producción,
 TypeScript y ESLint focalizado aprobados. Incluye ejecución local de los nodos del
 flujo, autorización única, caducidad y manipulación de enlaces, respuestas ambiguas
-y carreras entre callback, respuesta del proveedor y timeout. Ningún mensaje real.
+y carreras entre callback, respuesta del proveedor y timeout. Incluye tolerancia de
+30 segundos al reloj del emisor sin aceptar tokens vencidos y el remitente numérico
+devuelto por Dapta. Ninguna prueba automatizada envía mensajes.
+
+La comprobación del despliegue confirmó el bloqueo general, el rechazo de firmas
+incorrectas, el PDF protegido y la rama CLAIM_DENIED del flujo real. Se envió además
+un único correo con el PDF ficticio al contacto de prueba expresamente autorizado:
+Resend confirmó `delivered` y el remitente `pagos@finserpay.com`. Para activar WhatsApp
+se exige la aprobación de la plantilla con dominio configurado y la prueba ficticia
+al número autorizado, conservando deshabilitados los envíos automáticos hasta entonces.
 La prueba integral usa PostgreSQL embebido, PDFKit real y proveedores simulados;
 verifica el mismo PDF por ambos canales, ausencia de duplicados y aislamiento por aliado.
 Los instaladores de esquema se probaron en bases aisladas. Las verificaciones locales

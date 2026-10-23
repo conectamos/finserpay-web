@@ -228,6 +228,11 @@ async function sendWhatsApp(input: SettlementDeliveryInput, options: Options, en
 export function settlementDaptaReceipt(payload: unknown, attemptId: string, recipient: string) {
   const outer = asRecord(payload);
   const result = outer.response === undefined ? outer : asRecord(outer.response);
+  // FlowStudio can serialize its constant sender as a JSON number. Accept only
+  // the exact official safe integer; all other receipt fields stay exact.
+  const officialSender = result.sender === SETTLEMENT_WHATSAPP_SENDER ||
+    (typeof result.sender === "number" && Number.isSafeInteger(result.sender) &&
+      String(result.sender) === SETTLEMENT_WHATSAPP_SENDER);
   const definiteRejection = result.ok === false && result.accepted === false && result.provider_message_id === null &&
     (result.status === undefined || result.status === "failed") &&
     (result.success === undefined || result.success === false) &&
@@ -247,7 +252,7 @@ export function settlementDaptaReceipt(payload: unknown, attemptId: string, reci
     return Object.values(row).some(item => hasFailure(item, depth + 1));
   };
   if (hasFailure(payload) || result.event_id !== attemptId || result.recipient !== recipient ||
-      result.sender !== SETTLEMENT_WHATSAPP_SENDER) return { status: "UNCERTAIN" as const };
+      !officialSender) return { status: "UNCERTAIN" as const };
   if (result.ok === true && result.accepted === true && result.code === null &&
       typeof result.provider_message_id === "string" && /^wamid\.[A-Za-z0-9_+=/-]{1,490}$/.test(result.provider_message_id)) {
     return { status: "ACCEPTED" as const, providerId: result.provider_message_id };

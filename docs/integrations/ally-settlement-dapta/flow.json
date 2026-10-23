@@ -239,7 +239,7 @@
                 "value": "{{validar_autorizacion.net_amount}}"
               }
             ],
-            "template_id": "71f2b7b4-64de-494b-91d8-6db523276c32",
+            "template_id": "0472de26-727a-4659-9dc1-d27827969d69",
             "agent_channel_id": "6933b28b-b0a1-400c-aa1e-54f75bfbbd91",
             "header_media_url": "{{validar_autorizacion.pdf_url}}"
           },
