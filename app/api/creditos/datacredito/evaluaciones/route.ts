@@ -903,11 +903,15 @@ export async function POST(request: Request) {
     const providerTimeoutMs = resolveDataCreditoConfig(process.env, correlationId).timeoutMs;
     const result = await prisma.$transaction(async (transaction) => {
       await assertDocumentNotBlacklisted(documentNumber, transaction);
-      providerStartedAt = Date.now();
       return await queryDataCreditoNaturalPerson({
         documentNumber,
         firstSurname,
         correlationId,
+        onProviderDispatch: () => {
+          // OAuth is not a credit inquiry. Keep the first dispatch sticky if a
+          // later token refresh fails after an initial provider request.
+          providerStartedAt ??= Date.now();
+        },
       });
     }, { timeout: providerTimeoutMs * 4 + 5_000 });
     const transactionCode = safeProviderValue(result.transactionCode, 32);
@@ -1224,6 +1228,9 @@ export async function POST(request: Request) {
       correlationId,
       code,
       errorType: error instanceof Error ? error.name : "UnknownError",
+      phase: error instanceof DataCreditoError ? error.phase : null,
+      providerDispatched: providerStartedAt !== null,
+      providerHttpStatus: error instanceof DataCreditoError ? error.providerHttpStatus : null,
     });
 
     return technicalResponse({

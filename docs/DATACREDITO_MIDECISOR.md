@@ -544,3 +544,42 @@ pagada sin verificar si el credito ya fue creado.
 
 La clave recibida por correo abre el archivo de manuales. No es una credencial
 de API y no debe configurarse en Railway.
+## Timeouts y revisión técnica
+
+La autenticación OAuth y la consulta de MiDecisor son operaciones distintas. El
+servidor marca el primer despacho justo antes del POST de consulta; obtener o
+renovar el token no marca por sí solo una consulta crediticia. Si falla OAuth
+antes de ese despacho, se libera la reserva del cupo diario y se conserva el
+error original con duración de consulta nula. No se crea el bloqueo de resultado
+ambiguo de 15 días por una operación que no llegó a enviarse.
+
+Después del primer despacho, un timeout o error de red conserva el resultado
+incierto y el cupo utilizado. Un fallo de OAuth durante la renovación posterior
+a un HTTP 401 también conserva ese primer despacho. Se mantiene exclusivamente
+el reintento por 401 ya existente; no se agregan reintentos automáticos por
+timeout ni consultas por abrir o recargar el formulario.
+
+Los registros técnicos incluyen correlación, código, fase (`AUTH_TOKEN`,
+`QUERY_REQUEST` o `QUERY_RESPONSE`), existencia de despacho y estado HTTP del
+proveedor cuando exista. No incluyen nombres, cédulas, credenciales ni respuestas
+crediticias. Los fallos al leer el cuerpo que provengan del tiempo límite siguen
+siendo `TIMEOUT`; no se convierten en un error de red genérico.
+
+El 26 de octubre de 2026 se configuró `DATACREDITO_TIMEOUT_MS=30000` en producción
+para sustituir el corte anterior de 12 segundos. El valor es por petición HTTP;
+la transacción y el umbral de pendientes se calculan a partir del mismo límite.
+La interfaz no envía otra consulta por vencer un temporizador local.
+
+Los registros ambiguos anteriores a este cambio no guardan la fase histórica y
+no se liberan automáticamente. Su estado, duración, código original y correlación
+se revisan sin descifrar el expediente. La existencia de un sobre cifrado no
+prueba que contenga una decisión: puede ser el registro pendiente inicial.
+Si no hay una respuesta confirmada reutilizable, debe conciliarse el resultado
+con el proveedor antes de autorizar otra consulta que pueda generar costo.
+Una revisión técnica no equivale a aprobación y no permite inventar una decisión.
+
+La regresión de cliente y API cubre OAuth fallido sin POST de consulta, devolución
+de cupo con SQL real, timeout después del envío sin devolución ni duplicado,
+renovación OAuth fallida después de un 401 y correlaciones independientes cuando
+varios solicitantes comparten la autenticación. Se ejecuta con
+`npm run test:datacredito`; los escenarios usan respuestas de prueba.

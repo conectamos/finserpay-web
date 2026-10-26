@@ -160,7 +160,7 @@ test("la llamada pagada ejecuta el guard con la misma transacción antes de toca
       resolveDataCreditoConfig: () => ({ timeoutMs: 12_000 }),
       prisma: { $transaction: async (callback, options) => { assert.equal(options.timeout, 53_000); calls.push("begin"); try { return await callback(tx); } finally { calls.push("end"); } } },
       assertDocumentNotBlacklisted: async (document, db) => { assert.equal(document, "1062402825"); assert.equal(db, tx); calls.push("guard"); if (blocked) throw blockedError; },
-      queryDataCreditoNaturalPerson: async () => { calls.push("provider"); return { providerPayload: { fixture: true } }; },
+      queryDataCreditoNaturalPerson: async input => { input.onProviderDispatch?.();calls.push("provider"); return { providerPayload: { fixture: true } }; },
     });
     if (blocked) {
       await assert.rejects(() => run("1062402825"), (error) => error === blockedError);
