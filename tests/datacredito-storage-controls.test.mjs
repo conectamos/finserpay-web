@@ -153,7 +153,7 @@ test("el agotamiento responde 429 y el fallo local predespacho compensa sin deja
   );
   assert.match(
     evaluationRoute,
-    /providerStartedAt = Date\.now\(\);\s*return await queryDataCreditoNaturalPerson/
+    /queryDataCreditoNaturalPerson\(\{[\s\S]*?onProviderDispatch:\s*\(\)\s*=>\s*\{[\s\S]*?providerStartedAt\s*(?:=|\?\?=)\s*Date\.now\(\)/
   );
   assert.match(
     evaluationRoute,

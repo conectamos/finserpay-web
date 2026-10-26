@@ -4,7 +4,7 @@ import {
   type DataCreditoConfig,
   resolveDataCreditoConfig,
 } from "./config";
-import { DataCreditoError } from "./errors";
+import { DataCreditoError, type DataCreditoErrorPhase } from "./errors";
 import {
   parseDataCreditoQueryResponse,
   type DataCreditoQueryResult,
@@ -27,6 +27,7 @@ export type DataCreditoNaturalPersonQuery = {
   correlationId: string;
   documentNumber: string;
   firstSurname: string;
+  onProviderDispatch?: () => void | Promise<void>;
 };
 
 export type DataCreditoNaturalPersonQueryResult = DataCreditoQueryResult & {
@@ -163,14 +164,15 @@ async function responseJsonWithinLimit(
 
       try {
         chunk = await reader.read();
-      } catch {
+      } catch (error) {
+        const failure = requestError(error, correlationId);
         throw new DataCreditoError({
-          code: "NETWORK_ERROR",
+          code: failure.code,
           correlationId,
-          httpStatus: 502,
-          message: "La respuesta de DataCredito se interrumpio.",
+          httpStatus: failure.httpStatus,
+          message: failure.code === "TIMEOUT" ? failure.message : "La respuesta de DataCredito se interrumpio.",
           providerHttpStatus: response.status,
-          retryable: true,
+          retryable: failure.retryable,
         });
       }
 
@@ -267,9 +269,19 @@ function providerHttpError(response: Response, correlationId: string) {
   });
 }
 
-function requestError(error: unknown, correlationId: string) {
+function requestError(error: unknown, correlationId: string, phase?: DataCreditoErrorPhase) {
   if (error instanceof DataCreditoError) {
-    return error;
+    // Token failures can fan out to several callers. Rebind each error without
+    // mutating the error owned by the shared authentication promise.
+    return new DataCreditoError({
+      code: error.code,
+      correlationId,
+      phase: phase ?? error.phase,
+      httpStatus: error.httpStatus,
+      message: error.message,
+      providerHttpStatus: error.providerHttpStatus,
+      retryable: error.retryable,
+    });
   }
 
   const name =
@@ -281,6 +293,7 @@ function requestError(error: unknown, correlationId: string) {
     return new DataCreditoError({
       code: "TIMEOUT",
       correlationId,
+      phase,
       httpStatus: 504,
       message: "DataCredito no respondio dentro del tiempo permitido.",
       retryable: true,
@@ -290,6 +303,7 @@ function requestError(error: unknown, correlationId: string) {
   return new DataCreditoError({
     code: "NETWORK_ERROR",
     correlationId,
+    phase,
     httpStatus: 502,
     message: "No fue posible conectar con DataCredito.",
     retryable: true,
@@ -442,8 +456,12 @@ export function createDataCreditoClient(
     config: DataCreditoConfig,
     token: string,
     input: { documentNumber: string; firstSurname: string },
-    correlationId: string
+    correlationId: string,
+    onProviderDispatch?: DataCreditoNaturalPersonQuery["onProviderDispatch"]
   ) {
+    // Authentication is not a credit inquiry. Only this callback marks the
+    // imminent query POST, including the existing single retry after a 401.
+    await onProviderDispatch?.();
     return performFetch(
       joinedUrl(config.apiBaseUrl, config.queryPath),
       {
@@ -480,41 +498,53 @@ export function createDataCreditoClient(
     }
 
     const input = validateQueryInput(rawInput, correlationId);
-    let token = await accessToken(config, correlationId);
-    const startedAt = now();
-    let response = await providerQuery(
-      config,
-      token,
-      input,
-      correlationId
-    );
-
-    if (response.status === 401) {
-      await cancelResponse(response);
-      invalidateToken(config, token);
-      token = await accessToken(config, correlationId);
-      response = await providerQuery(
+    let phase: DataCreditoErrorPhase = "AUTH_TOKEN";
+    try {
+      let token = await accessToken(config, correlationId);
+      const startedAt = now();
+      phase = "QUERY_REQUEST";
+      let response = await providerQuery(
         config,
         token,
         input,
+        correlationId,
+        rawInput.onProviderDispatch
+      );
+      phase = "QUERY_RESPONSE";
+
+      if (response.status === 401) {
+        await cancelResponse(response);
+        invalidateToken(config, token);
+        phase = "AUTH_TOKEN";
+        token = await accessToken(config, correlationId);
+        phase = "QUERY_REQUEST";
+        response = await providerQuery(
+          config,
+          token,
+          input,
+          correlationId,
+          rawInput.onProviderDispatch
+        );
+        phase = "QUERY_RESPONSE";
+      }
+
+      if (!response.ok) {
+        await cancelResponse(response);
+        throw providerHttpError(response, correlationId);
+      }
+
+      const payload = await responseJsonWithinLimit(
+        response,
+        config.responseMaxBytes,
         correlationId
       );
+      return {
+        ...parseDataCreditoQueryResponse(payload, now() - startedAt),
+        providerPayload: payload,
+      };
+    } catch (error) {
+      throw requestError(error, correlationId, phase);
     }
-
-    if (!response.ok) {
-      await cancelResponse(response);
-      throw providerHttpError(response, correlationId);
-    }
-
-    const payload = await responseJsonWithinLimit(
-      response,
-      config.responseMaxBytes,
-      correlationId
-    );
-    return {
-      ...parseDataCreditoQueryResponse(payload, now() - startedAt),
-      providerPayload: payload,
-    };
   }
 
   return { queryDataCreditoNaturalPerson };

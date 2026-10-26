@@ -185,6 +185,7 @@ test("comparte una sola solicitud de token entre consultas concurrentes", async 
 test("invalida el token y reintenta exactamente una vez despues de un 401", async () => {
   let tokenRequests = 0;
   let queryRequests = 0;
+  let dispatches = 0;
   const seenAuthorization = [];
   const client = createDataCreditoClient({
     env: baseEnv,
@@ -210,11 +211,13 @@ test("invalida el token y reintenta exactamente una vez despues de un 401", asyn
     correlationId: "dc-retry-0001",
     documentNumber: "7001234",
     firstSurname: "Prueba",
+    onProviderDispatch: () => { dispatches += 1; },
   });
 
   assert.equal(result.score, 688);
   assert.equal(tokenRequests, 2);
   assert.equal(queryRequests, 2);
+  assert.equal(dispatches, 2);
   assert.deepEqual(seenAuthorization, [
     "Bearer fixture-token-1",
     "Bearer fixture-token-2",
@@ -585,4 +588,121 @@ test("valida cedula, apellido y correlacion antes de llamar al proveedor", async
   }
 
   assert.equal(calls, 0);
+});
+
+
+test("OAuth fallido nunca marca despacho ni envía consulta y mantiene los códigos públicos", async () => {
+  for (const [failure, code] of [["TIMEOUT", "TIMEOUT"], [401, "AUTHENTICATION_FAILED"], [500, "PROVIDER_UNAVAILABLE"], ["JSON", "INVALID_RESPONSE"]]) {
+    let requests = 0; let dispatches = 0;
+    const client = createDataCreditoClient({ env: baseEnv, timeoutSignal: testSignal,
+      fetchImpl: async url => {
+        requests += 1; assert.ok(String(url).endsWith("/token"));
+        if (failure === "TIMEOUT") throw new DOMException("fixture-password private detail", "TimeoutError");
+        return failure === "JSON" ? new Response("not-json") : new Response(null, { status: failure });
+      },
+    });
+    await assert.rejects(client.queryDataCreditoNaturalPerson({ correlationId: "dc-auth-stage-01", documentNumber: "4001234", firstSurname: "Tiempo",
+      onProviderDispatch: () => { dispatches += 1; } }), error => {
+      assert.ok(error instanceof DataCreditoError); assert.equal(error.code, code); assert.equal(error.phase, "AUTH_TOKEN");
+      assert.equal(error.correlationId, "dc-auth-stage-01"); assert.doesNotMatch(error.message, /fixture-password|private detail|4001234/); return true;
+    });
+    assert.equal(requests, 1); assert.equal(dispatches, 0);
+  }
+});
+
+test("timeout de consulta marca un único despacho justo antes del POST sin serializar el callback", async () => {
+  const events = []; let queries = 0;
+  const client = createDataCreditoClient({ env: baseEnv, timeoutSignal: testSignal,
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/token")) { events.push("oauth"); return jsonResponse({ access_token: "fixture-token", expires_in: "1800" }); }
+      queries += 1; events.push("query"); assert.deepEqual(events, ["oauth", "dispatch", "query"]);
+      assert.deepEqual(JSON.parse(init.body), { apellidoRazonSocial: "Tiempo", numeroIdentificacion: "4001234", tipoIdentificacion: "1" });
+      assert.doesNotMatch(init.body, /onProviderDispatch|callback/);
+      throw new DOMException("fixture-client-secret private detail", "TimeoutError");
+    },
+  });
+  await assert.rejects(client.queryDataCreditoNaturalPerson({ correlationId: "dc-query-stage-01", documentNumber: "4001234", firstSurname: "Tiempo",
+    onProviderDispatch: () => { events.push("dispatch"); } }), error => {
+    assert.equal(error.code, "TIMEOUT"); assert.equal(error.phase, "QUERY_REQUEST"); assert.equal(error.httpStatus, 504);
+    assert.doesNotMatch(error.message, /fixture-client-secret|private detail|4001234/); return true;
+  });
+  assert.equal(queries, 1);
+});
+
+test("un 401 de consulta seguido de OAuth fallido conserva el despacho previo sin repetir el POST", async () => {
+  let auth = 0; let queries = 0; let dispatches = 0;
+  const client = createDataCreditoClient({ env: baseEnv, timeoutSignal: testSignal,
+    fetchImpl: async url => {
+      if (String(url).endsWith("/token")) {
+        auth += 1; if (auth === 2) throw new DOMException("private token failure", "TimeoutError");
+        return jsonResponse({ access_token: "fixture-token", expires_in: "1800" });
+      }
+      queries += 1; return new Response(null, { status: 401 });
+    },
+  });
+  await assert.rejects(client.queryDataCreditoNaturalPerson({ correlationId: "dc-refresh-stage-01", documentNumber: "4001234", firstSurname: "Tiempo",
+    onProviderDispatch: () => { dispatches += 1; } }), error => error.code === "TIMEOUT" && error.phase === "AUTH_TOKEN");
+  assert.equal(auth, 2); assert.equal(queries, 1); assert.equal(dispatches, 1);
+});
+
+test("si falla el control previo al despacho, incluso asincrónicamente, no se envía la consulta", async () => {
+  for (const asynchronous of [false, true]) {
+    let auth = 0; let queries = 0; let dispatches = 0;
+    const client = createDataCreditoClient({ env: baseEnv, timeoutSignal: testSignal,
+      fetchImpl: async url => {
+        if (String(url).endsWith("/token")) { auth += 1; return jsonResponse({ access_token: "fixture-token", expires_in: "1800" }); }
+        queries += 1; return jsonResponse(providerPayload());
+      },
+    });
+    const reject = () => { dispatches += 1; throw new Error("private callback detail 4001234"); };
+    await assert.rejects(client.queryDataCreditoNaturalPerson({ correlationId: "dc-guard-stage-01", documentNumber: "4001234", firstSurname: "Tiempo",
+      onProviderDispatch: asynchronous ? async () => reject() : reject }), error => {
+      assert.equal(error.phase, "QUERY_REQUEST"); assert.equal(error.code, "NETWORK_ERROR"); assert.doesNotMatch(error.message, /private callback|4001234/); return true;
+    });
+    assert.equal(auth, 1); assert.equal(queries, 0); assert.equal(dispatches, 1);
+  }
+});
+
+test("abort al leer un body asíncrono conserva TIMEOUT y distingue OAuth de la respuesta de consulta", async () => {
+  for (const phase of ["AUTH_TOKEN", "QUERY_RESPONSE"]) {
+    for (const abortName of ["AbortError", "TimeoutError"]) {
+      let queries = 0; let dispatches = 0;
+      const client = createDataCreditoClient({ env: baseEnv, timeoutSignal: testSignal,
+        fetchImpl: async url => {
+          const token = String(url).endsWith("/token");
+          if (token && phase !== "AUTH_TOKEN") return jsonResponse({ access_token: "fixture-token", expires_in: "1800" });
+          if (!token) queries += 1;
+          return new Response(new ReadableStream({ start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"partial":'));
+            setImmediate(() => controller.error(new DOMException("private stream detail", abortName)));
+          } }));
+        },
+      });
+      await assert.rejects(client.queryDataCreditoNaturalPerson({ correlationId: "dc-body-stage-01", documentNumber: "4001234", firstSurname: "Tiempo",
+        onProviderDispatch: () => { dispatches += 1; } }), error => {
+        assert.equal(error.code, "TIMEOUT"); assert.equal(error.phase, phase); assert.equal(error.httpStatus, 504);
+        assert.equal(error.providerHttpStatus, 200); assert.doesNotMatch(error.message, /private stream detail|4001234/); return true;
+      });
+      assert.equal(queries, phase === "AUTH_TOKEN" ? 0 : 1); assert.equal(dispatches, queries);
+    }
+  }
+});
+
+test("fallo de token compartido mantiene la fase y correlación de cada solicitante sin mutar el error compartido", async () => {
+  let rejectToken; let requests = 0; let dispatches = 0;
+  const pendingToken = new Promise((_resolve, reject) => { rejectToken = reject; });
+  const client = createDataCreditoClient({ env: baseEnv, timeoutSignal: testSignal,
+    fetchImpl: async url => { requests += 1; assert.ok(String(url).endsWith("/token")); return pendingToken; },
+  });
+  const results = Promise.allSettled(["dc-token-caller-01", "dc-token-caller-02"].map(correlationId => client.queryDataCreditoNaturalPerson({
+    correlationId, documentNumber: "4001234", firstSurname: "Tiempo", onProviderDispatch: () => { dispatches += 1; },
+  })));
+  rejectToken(new DOMException("fixture-password private token detail", "TimeoutError"));
+  const failures = (await results).map(result => { assert.equal(result.status, "rejected"); return result.reason; });
+  assert.notEqual(failures[0], failures[1]);
+  for (const [index, failure] of failures.entries()) {
+    assert.equal(failure.correlationId, `dc-token-caller-0${index + 1}`); assert.equal(failure.phase, "AUTH_TOKEN"); assert.equal(failure.code, "TIMEOUT");
+    assert.doesNotMatch(failure.message, /fixture-password|private token detail|4001234/);
+  }
+  assert.equal(requests, 1); assert.equal(dispatches, 0);
 });

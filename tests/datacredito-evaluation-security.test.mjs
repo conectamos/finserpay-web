@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { randomUUID } from "node:crypto";
 import ts from "typescript";
+import { createJiti } from "jiti";
+import { PGlite } from "@electric-sql/pglite";
+const jiti = createJiti(import.meta.url);
+const { createDataCreditoClient, DataCreditoError: RealDataCreditoError } = await jiti.import("../lib/datacredito/client.ts");
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -248,7 +252,7 @@ const normalizers = runInNewContext(`${ts.transpileModule(realNormalizers, {
 }).outputText}\n({normalizeDataCreditoDocument, normalizeDataCreditoSurname})`);
 
 function evaluationFixture(options = {}) {
-  class DataCreditoError extends Error {
+  const DataCreditoError = options.errorType || class extends Error {
     constructor(code, httpStatus = 504) {
       super(code);
       this.code = code;
@@ -286,10 +290,11 @@ function evaluationFixture(options = {}) {
         dailyQuotaReservation: { allyId: 7, businessDate: "2026-10-09" } };
     },
     serializeDataCreditoAssessment: assessment => ({ assessment: { ...assessment } }),
-    failDataCreditoAssessmentBeforeProviderDispatch: async input => record("fail-before-provider", input),
+    failDataCreditoAssessmentBeforeProviderDispatch: async input => { record("fail-before-provider", input);return options.compensate?.(input); },
     failDataCreditoAssessment: async input => {
       record("fail", input);
       if (input.errorCode === "PROVIDER_OUTCOME_AMBIGUOUS") state.cached = { kind: "REQUIRES_REVIEW" };
+      return options.persistFailure?.(input);
     },
   };
   const dependencies = {
@@ -313,6 +318,8 @@ function evaluationFixture(options = {}) {
       getDataCreditoPublicConfig: () => ({ enabled: true, configured: true, productionReady: true, environment: "prod" }),
       queryDataCreditoNaturalPerson: async input => {
         record("provider", input);
+        if (options.client) return options.client.queryDataCreditoNaturalPerson(input);
+        input.onProviderDispatch?.();record("provider-dispatch");
         if (options.provider) return options.provider(input, DataCreditoError);
         return { outcome: "SCORE", score: 700, providerPayload: {}, durationMs: 5, transactionCode: "00" };
       },
@@ -494,7 +501,10 @@ test("un resultado ambiguo no se repite automáticamente ni con un nuevo envío 
   const first = await api.request({});
   assert.equal(first.status, 504);
   assert.equal((await first.json()).code, "PROVIDER_TIMEOUT");
-  assert.equal(api.calls.find(call => call.name === "fail").input.errorCode, "PROVIDER_OUTCOME_AMBIGUOUS");
+  const failure = api.calls.find(call => call.name === "fail").input;
+  assert.equal(failure.errorCode, "PROVIDER_OUTCOME_AMBIGUOUS");
+  assert.ok(Number.isInteger(failure.durationMs) && failure.durationMs >= 0);
+  assert.equal(api.calls.filter(call => call.name === "fail-before-provider").length, 0);
   const retry = await api.request({});
   assert.equal(retry.status, 409);
   assert.equal((await retry.json()).code, "ASSESSMENT_REQUIRES_REVIEW");
@@ -512,4 +522,114 @@ test("reutilizar una aprobación o rechazo vigente conserva la decisión sin con
     assert.equal(payload.assessment.status, status);
     assert.ok(!api.calls.some(call => ["provider", "reserve"].includes(call.name)));
   });
+});
+
+
+const clientEnvironment = Object.freeze({
+  DATACREDITO_API_BASE_URL: "https://service-fixture.datacredito.com.co",
+  DATACREDITO_AUTH_BASE_URL: "https://auth-fixture.datacredito.com.co",
+  DATACREDITO_CLIENT_ID: "fixture-client", DATACREDITO_CLIENT_SECRET: "fixture-secret",
+  DATACREDITO_ENVIRONMENT: "uat", DATACREDITO_PASSWORD: "fixture-password",
+  DATACREDITO_QUERY_ENABLED: "true", DATACREDITO_USERNAME: "fixture-user",
+});
+const mockClient = fetchImpl => createDataCreditoClient({ env: clientEnvironment, fetchImpl, timeoutSignal: () => new AbortController().signal });
+const tokenResponse = () => Response.json({ access_token: "isolated-test-token", expires_in: "1800" });
+
+// Execute the real compensation operation and review predicate against SQL.
+// Only schema bootstrap is replaced; persisted error, duration and quota are not mocked.
+async function compensationDatabase() {
+  const pg = new PGlite();
+  await pg.exec(`CREATE TABLE "DataCreditoAssessment" ("id" UUID PRIMARY KEY,"status" TEXT,"aliadoId" INTEGER,
+    "errorCode" TEXT,"transactionCode" TEXT,"providerStatus" TEXT,"durationMs" INTEGER,
+    "updatedAt" TIMESTAMPTZ,"documentHash" TEXT,"providerEnvironment" TEXT,"expiresAt" TIMESTAMPTZ);
+    CREATE TABLE "DataCreditoDailyQuotaUsage" ("allyId" INTEGER,"businessDate" DATE,"usedCount" INTEGER,"updatedAt" TIMESTAMPTZ);`);
+  const client = driver => ({ $queryRawUnsafe: async (sql, ...args) => (await driver.query(sql, args)).rows });
+  const prisma = { ...client(pg), $transaction: callback => pg.transaction(tx => callback(client(tx))) };
+  const names = ["failDataCreditoAssessmentBeforeProviderDispatch", "failDataCreditoAssessment", "hasRecentDataCreditoReviewBlock"];
+  const functions = names.map(name => storageAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(storageAst).replace(/^export /, "")).join("\n");
+  const loaded = { exports: {} };
+  runInNewContext(ts.transpileModule(functions + `\nmodule.exports = { ${names.join(",")} };`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, { module: loaded, exports: loaded.exports, prisma, ensureDataCreditoSchema: async () => {} });
+  return { pg, database: client(pg), ...loaded.exports, reset: () => pg.exec(`TRUNCATE "DataCreditoAssessment","DataCreditoDailyQuotaUsage";
+    INSERT INTO "DataCreditoAssessment" VALUES ('c23ad54f-3f60-42f6-9941-311c2db08a26','PENDING',7,NULL,NULL,NULL,NULL,NULL,'fixture-document','prod',CURRENT_TIMESTAMP + INTERVAL '15 days');
+    INSERT INTO "DataCreditoDailyQuotaUsage" VALUES (7,'2026-10-09',1,NULL);`) };
+}
+
+test("OAuth fallido sin despacho devuelve el cupo, deja duración NULL y no crea bloqueo de revisión de 15 días", async t => {
+  const f = await compensationDatabase();
+  try {
+    for (const [name, status, code] of [["401", 401, "AUTHENTICATION_FAILED"], ["500", 500, "PROVIDER_UNAVAILABLE"], ["red", null, "NETWORK_ERROR"]]) {
+      await t.test(name, async () => {
+        await f.reset();
+        const requests = [];
+        const client = mockClient(async url => {
+          requests.push(String(url));
+          assert.ok(String(url).includes("/token"), "La consulta MiDecisor no debe comenzar");
+          if (status === null) throw new TypeError("isolated token network failure");
+          return new Response(null, { status });
+        });
+        const api = evaluationFixture({ client, errorType: RealDataCreditoError, compensate: f.failDataCreditoAssessmentBeforeProviderDispatch });
+        const response = await api.request({});
+        assert.equal(response.status, status === null ? 502 : 503);assert.equal((await response.json()).code, code);
+        assert.equal(requests.length, 1);assert.equal(api.calls.filter(call => call.name === "fail-before-provider").length, 1);
+        assert.equal(api.calls.filter(call => call.name === "fail").length, 0);
+        const saved = (await f.pg.query('SELECT "status","errorCode","durationMs","providerStatus","transactionCode" FROM "DataCreditoAssessment"')).rows[0];
+        assert.deepEqual(saved, { status: "NO_EVALUADO", errorCode: code, durationMs: null, providerStatus: null, transactionCode: null });
+        assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoDailyQuotaUsage"')).rows[0].usedCount, 0);
+        assert.equal(await f.hasRecentDataCreditoReviewBlock({ documentHash: "fixture-document", providerEnvironment: "prod" }, f.database), false);
+        assert.equal(api.state.locked, false);
+      });
+    }
+  } finally { await f.pg.close(); }
+});
+
+test("timeout después del despacho real conserva ambigüedad, duración y cupo; otro envío no llama al proveedor", async () => {
+  const f = await compensationDatabase();
+  try {
+  await f.reset();
+  const requests = [];
+  const client = mockClient(async url => {
+    requests.push(String(url));
+    if (String(url).includes("/token")) return tokenResponse();
+    const error = new Error("isolated query timeout");error.name = "TimeoutError";throw error;
+  });
+  const api = evaluationFixture({ client, errorType: RealDataCreditoError, persistFailure: f.failDataCreditoAssessment });
+  const response = await api.request({});assert.equal(response.status, 504);assert.equal((await response.json()).code, "TIMEOUT");
+  assert.equal(requests.filter(url => url.includes("/token")).length, 1);
+  assert.equal(requests.filter(url => !url.includes("/token")).length, 1);
+  const saved = api.calls.find(call => call.name === "fail").input;
+  assert.equal(saved.errorCode, "PROVIDER_OUTCOME_AMBIGUOUS");assert.ok(Number.isInteger(saved.durationMs) && saved.durationMs >= 0);
+  assert.equal(api.calls.filter(call => call.name === "fail-before-provider").length, 0);
+  const retry = await api.request({});assert.equal(retry.status, 409);assert.equal((await retry.json()).code, "ASSESSMENT_REQUIRES_REVIEW");
+  assert.equal(requests.length, 2);assert.equal(api.state.locked, false);
+  const stored = (await f.pg.query('SELECT "errorCode","durationMs" FROM "DataCreditoAssessment"')).rows[0];
+  assert.equal(stored.errorCode, "PROVIDER_OUTCOME_AMBIGUOUS");assert.equal(stored.durationMs, saved.durationMs);
+  assert.equal(await f.hasRecentDataCreditoReviewBlock({ documentHash: "fixture-document", providerEnvironment: "prod" }, f.database), true);
+  assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoDailyQuotaUsage"')).rows[0].usedCount, 1);
+  } finally { await f.pg.close(); }
+});
+
+test("fallar OAuth al refrescar tras una consulta 401 conserva la evidencia de despacho y no devuelve cupo", async () => {
+  const f = await compensationDatabase();
+  try {
+  await f.reset();
+  let tokens = 0, queries = 0;
+  const client = mockClient(async url => {
+    if (String(url).includes("/token")) return ++tokens === 1 ? tokenResponse() : new Response(null, { status: 500 });
+    queries++;return new Response(null, { status: 401 });
+  });
+  const api = evaluationFixture({ client, errorType: RealDataCreditoError, persistFailure: f.failDataCreditoAssessment });
+  const response = await api.request({});assert.equal(response.status, 503);assert.equal((await response.json()).code, "PROVIDER_UNAVAILABLE");
+  assert.equal(tokens, 2);assert.equal(queries, 1);
+  const saved = api.calls.find(call => call.name === "fail").input;
+  assert.equal(saved.errorCode, "PROVIDER_OUTCOME_AMBIGUOUS");assert.equal(saved.providerStatus, "HTTP 500");
+  assert.ok(Number.isInteger(saved.durationMs) && saved.durationMs >= 0);
+  assert.equal(api.calls.filter(call => call.name === "fail-before-provider").length, 0);
+  const retry = await api.request({});assert.equal(retry.status, 409);assert.equal((await retry.json()).code, "ASSESSMENT_REQUIRES_REVIEW");
+  assert.equal(tokens, 2);assert.equal(queries, 1);
+  assert.equal(await f.hasRecentDataCreditoReviewBlock({ documentHash: "fixture-document", providerEnvironment: "prod" }, f.database), true);
+  assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoDailyQuotaUsage"')).rows[0].usedCount, 1);
+  assert.equal((await f.pg.query('SELECT "durationMs" FROM "DataCreditoAssessment"')).rows[0].durationMs, saved.durationMs);
+  } finally { await f.pg.close(); }
 });
