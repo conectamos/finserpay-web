@@ -583,3 +583,31 @@ de cupo con SQL real, timeout después del envío sin devolución ni duplicado,
 renovación OAuth fallida después de un 401 y correlaciones independientes cuando
 varios solicitantes comparten la autenticación. Se ejecuta con
 `npm run test:datacredito`; los escenarios usan respuestas de prueba.
+## Respuestas recibidas no evaluables y reconsulta autorizada
+
+`NO_EVALUABLE_INFORMATION` significa que la respuesta recibida no permite obtener
+un puntaje evaluable según el contrato de la integración. Una respuesta
+`ACCEPTED` con `TX=07` no basta por sí sola para aprobar, rechazar o aplicar la
+banda `Sin informacion`: el parser exige los campos de información de riesgo y
+su indicador explícito. La ausencia del bloque no se convierte en riesgo cero.
+
+La pantalla conserva el código y muestra `Respuesta pendiente de revisión` tanto
+al recibir el POST como al restaurar el GET. Su explicación usa un texto seguro,
+sin exponer errores arbitrarios ni datos del proveedor. En ese estado se ofrecen
+los enlaces de revisión del expediente y se evita el ciclo de disponibilidad o
+un nuevo POST de consulta.
+
+Una autorización operativa explícita para otra consulta puede cerrar únicamente
+la vigencia reutilizable del resultado original. Para `ACCEPTED/TX07`, el replay
+utiliza `OPS_NO_EVALUABLE_RETRY_AUTH` y `AUTHORIZED_WITH_RISK_ACK`: requiere raíz
+`NO_EVALUADO/NO_EVALUABLE_INFORMATION`, score, decisión y oferta nulos, duración
+presente y ausencia de reserva, consumo o crédito. Conserva la respuesta cifrada,
+los códigos originales, retención y cupo utilizado. La autorización puede implicar
+otro cobro; no consulta automáticamente ni constituye aprobación del crédito.
+Se reaplica después del backfill de 15 días para que un despliegue no restaure
+el bloqueo autorizado. Una respuesta nueva no hereda esa autorización.
+
+El formulario de una evaluación vencida exige un envío manual y consentimiento
+nuevo. Las solicitudes cerradas permanecen cerradas. Las pruebas de replay usan
+PostgreSQL embebido e incluyen casos sin autorización, estados o códigos distintos,
+puntaje presente, reservas y créditos; sólo el caso expresamente autorizado vence.

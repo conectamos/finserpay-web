@@ -646,7 +646,7 @@ test("restoring a saved assessment preserves a business conflict using reads onl
 });
 
 test("technical payloads are not exposed as business explanations", async () => {
-  for (const status of [409, 500]) {
+  for (const status of [409, 422, 500]) {
     const harness = createGateHarness({ responses: [{ status, body: { ok: false, code: "EVALUATION_ERROR", error: "Sensitive internal failure" } }] });
     await harness.functions.submitAssessment({ preventDefault() {} });
     assert.equal(harness.state.view, "technical-error");
@@ -840,4 +840,77 @@ test("manual correction cannot reopen review, pending, consumed or identity-conf
   consumed.functions.retryTechnicalFailure();
   assert.equal(consumed.state.view, "technical-error");
   assert.equal(consumed.requests.length, 0);
+});
+
+
+const safeNoEvaluableMessage = "La respuesta de DataCrédito no contiene datos válidos suficientes para evaluar esta solicitud. Solicita revisión de la respuesta guardada antes de repetir la consulta.";
+function assertSavedResponseReviewPanel(harness) {
+  const ui = loadJsxModule(sharedUi);
+  const Panel = loadJsxModule(realDeclaration("TechnicalErrorPanel") + "\nmodule.exports = TechnicalErrorPanel;", {}, {
+    ...ui, ...icons, Link: ({ children, ...props }) => React.createElement("a", props, children),
+  });
+  const html = renderToStaticMarkup(React.createElement(Panel, {
+    conflictCode: harness.state.conflictCode, conflictMessage: harness.state.conflictMessage,
+    // Even stale action flags or a returned draft must not create a query loop.
+    continuationHref: "/dashboard/creditos?mode=create-client&platform=iphone&draft=88",
+    canRetryBootstrap: true, canCorrectInput: true, canReviewSavedResult: true,
+    solicitudWallHref: "/dashboard/solicitudes?q=123456789",
+    correlationId: harness.state.correlationId, consumedCreditId: null,
+    onRetry() { assert.fail("A retained provider response requires review before any retry"); },
+  }));
+  assert.ok(html.includes("Respuesta pendiente de revisión"));
+  assert.ok(html.includes("NO_EVALUABLE_INFORMATION"));
+  assert.ok(html.includes(safeNoEvaluableMessage));
+  assert.ok(html.includes("Solicita la revisión administrativa"));
+  assert.ok(html.includes('href="/dashboard/solicitudes?q=123456789"'));
+  assert.ok(html.includes("Volver a solicitudes"));
+  assert.ok(html.includes('href="/dashboard/creditos"'));
+  for (const forbidden of ["Revisar disponibilidad", "Continuar solicitud", "Corregir datos", "Revisar resultado guardado", "No se pudo evaluar", "Sensitive provider detail"]) {
+    assert.ok(!html.includes(forbidden), `The review state must not expose ${forbidden}`);
+  }
+}
+
+test("GET 422 NO_EVALUABLE_INFORMATION conserva un motivo seguro y no ofrece otra consulta ni un bucle de disponibilidad", async () => {
+  const harness = createGateHarness({
+    responses: [{ body: policy }, { status: 422, body: {
+      ok: false, code: "NO_EVALUABLE_INFORMATION", error: "Sensitive provider detail", correlationId: "retained-response-get",
+    } }],
+    callbacks: ["loadInitialState", "retryTechnicalFailure", "submitAssessment"],
+    overrides: { initialSolicitudId: 12, initialAssessmentId: approved.assessment.assessmentId },
+  });
+  await harness.functions.loadInitialState();
+  assert.equal(harness.state.view, "technical-error");assert.equal(harness.state.retryMode, "bootstrap");
+  assert.equal(harness.state.conflictCode, "NO_EVALUABLE_INFORMATION");assert.equal(harness.state.conflictMessage, safeNoEvaluableMessage);
+  assert.equal(harness.state.correlationId, "retained-response-get");assert.equal(harness.approvals.length, 0);
+  assert.deepEqual(harness.requests.map(request => request.method), ["GET", "GET"]);
+  assertSavedResponseReviewPanel(harness);
+  await harness.functions.retryTechnicalFailure();
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.requests.length, 2, "Reviewing a retained response never starts a POST or repeats bootstrap");
+  assert.equal(harness.state.view, "technical-error");assert.equal(harness.approvals.length, 0);
+});
+
+test("POST 422 NO_EVALUABLE_INFORMATION muestra revisión de la respuesta guardada y no reenvía ni aprueba", async () => {
+  const harness = createGateHarness({ responses: [{ status: 422, body: {
+    ok: false, code: "NO_EVALUABLE_INFORMATION", error: "Sensitive provider detail", correlationId: "retained-response-post", solicitudId: 88,
+  } }], callbacks: ["submitAssessment", "retryTechnicalFailure"] });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.state.view, "technical-error");assert.equal(harness.state.retryMode, "form");
+  assert.equal(harness.state.conflictCode, "NO_EVALUABLE_INFORMATION");assert.equal(harness.state.conflictMessage, safeNoEvaluableMessage);
+  assert.equal(harness.state.correlationId, "retained-response-post");assert.equal(harness.state.conflictSolicitudId, 88);
+  assert.equal(harness.requests.length, 1);assert.equal(harness.requests[0].method, "POST");assert.equal(harness.approvals.length, 0);
+  assertSavedResponseReviewPanel(harness);
+  await harness.functions.retryTechnicalFailure();
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.requests.length, 1, "The initial provider response must not trigger another evaluation");
+  assert.equal(harness.state.view, "technical-error");assert.equal(harness.approvals.length, 0);
+});
+
+test("la explicación de respuesta no evaluable exige su código y estado permitidos", () => {
+  const harness = createGateHarness({ callbacks: [] });
+  const getMessage = harness.functions.getAssessmentConflictMessage;
+  for (const [code, status] of [["NO_EVALUABLE_INFORMATION", 500], ["NO_EVALUABLE_INFORMATION", 409], ["NO_EVALUABLE_INFORMATION", 200], ["EVALUATION_ERROR", 422], ["AUTHENTICATION_FAILED", 422]]) {
+    assert.equal(getMessage({ code, error: "Sensitive provider detail" }, new Response(null, { status })), null);
+  }
+  assert.equal(harness.functions.isRecoverableInitialAssessmentFailure(new Response(null, { status: 422 }), { code: "NO_EVALUABLE_INFORMATION" }), false);
 });
