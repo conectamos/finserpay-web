@@ -834,6 +834,38 @@ WHERE root."id" = retry_authorization."assessmentId"
   AND retry_authorization."authorizedAt" >= root."createdAt"
   AND root."expiresAt" > retry_authorization."authorizedAt";
 
+-- An explicitly risk-acknowledged retry of a non-evaluable ACCEPTED/TX07
+-- response may end only that audited root's reuse window. This is permission
+-- to request another inquiry, never a credit approval or a TX06 correction.
+-- Reapply after the contractual backfill; preserve all original evidence,
+-- retention, provider outcome and consumed daily quota.
+UPDATE "DataCreditoAssessment" root
+SET "expiresAt" = LEAST(root."expiresAt", retry_authorization."authorizedAt")
+FROM (
+  SELECT "assessmentId", MIN("createdAt") AS "authorizedAt"
+  FROM "DataCreditoAdminAccessAudit"
+  WHERE "action" = 'OPS_NO_EVALUABLE_RETRY_AUTH'
+    AND "outcome" = 'AUTHORIZED_WITH_RISK_ACK'
+  GROUP BY "assessmentId"
+) retry_authorization
+WHERE root."id" = retry_authorization."assessmentId"
+  AND root."reusedFromAssessmentId" IS NULL
+  AND root."status" = 'NO_EVALUADO'
+  AND root."errorCode" = 'NO_EVALUABLE_INFORMATION'
+  AND root."providerStatus" = 'ACCEPTED'
+  AND root."transactionCode" = '07'
+  AND root."score" IS NULL
+  AND root."decision" IS NULL
+  AND root."offer" IS NULL
+  AND root."durationMs" IS NOT NULL
+  AND root."claimedAt" IS NULL
+  AND root."claimTokenHash" IS NULL
+  AND root."claimExpiresAt" IS NULL
+  AND root."consumedAt" IS NULL
+  AND root."creditId" IS NULL
+  AND retry_authorization."authorizedAt" >= root."createdAt"
+  AND root."expiresAt" > retry_authorization."authorizedAt";
+
 CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit" (
   "id" UUID PRIMARY KEY,
   "allyId" INTEGER NOT NULL,

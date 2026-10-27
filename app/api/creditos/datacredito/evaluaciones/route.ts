@@ -966,7 +966,7 @@ export async function POST(request: Request) {
       return technicalResponse({
         correlationId,
         code: "NO_EVALUABLE_INFORMATION",
-        error: "DataCredito no retorno informacion suficiente para evaluar la solicitud",
+        error: "La respuesta de DataCrédito no contiene datos válidos suficientes para evaluar esta solicitud. Solicita revisión de la respuesta guardada antes de repetir la consulta.",
         status: 422,
       });
     }

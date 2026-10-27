@@ -307,7 +307,7 @@ export async function GET(request: Request, context: RouteContext) {
           ok: false,
           status: "NO_EVALUADO",
           code: row.errorCode || "EVALUATION_ERROR",
-          error: "No fue posible completar la evaluacion crediticia",
+          error: row.errorCode === "NO_EVALUABLE_INFORMATION" ? "La respuesta de DataCrédito no contiene datos válidos suficientes para evaluar esta solicitud. Solicita revisión de la respuesta guardada antes de repetir la consulta." : "No fue posible completar la evaluacion crediticia",
           correlationId: row.correlationId,
         },
         { status: 422 }

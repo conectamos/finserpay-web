@@ -8,9 +8,11 @@ const setup = await readFile(new URL("../scripts/setup-datacredito.sql", import.
 const auditStart = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoAdminAccessAudit" (');
 const recoveryStart = setup.indexOf("-- An explicitly authorized TX06 surname correction");
 const ambiguousRecoveryStart = setup.indexOf("-- An ambiguous timeout or HTTP 5xx can be released only after");
-const recoveryEnd = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit"', ambiguousRecoveryStart);
+const noEvaluableRecoveryStart = setup.indexOf("-- An explicitly risk-acknowledged retry of a non-evaluable ACCEPTED/TX07");
+const recoveryEnd = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit"', noEvaluableRecoveryStart);
 const recoverySql = setup.slice(recoveryStart, ambiguousRecoveryStart);
-const ambiguousRecoverySql = setup.slice(ambiguousRecoveryStart, recoveryEnd);
+const ambiguousRecoverySql = setup.slice(ambiguousRecoveryStart, noEvaluableRecoveryStart);
+const noEvaluableRecoverySql = setup.slice(noEvaluableRecoveryStart, recoveryEnd);
 const rootStart = setup.indexOf('UPDATE "DataCreditoAssessment" root');
 const rootEnd = setup.indexOf('UPDATE "DataCreditoAssessment" clone', rootStart);
 const rootBackfill = setup.slice(rootStart, rootEnd);
@@ -226,5 +228,118 @@ test("PostgreSQL: solo TX06 autorizado vence y el preflight repetido conserva la
   } finally {
     await client.query("ROLLBACK").catch(() => {});
     await client.end();
+  }
+});
+
+
+test("la autorización TX07 no evaluable es explícita, acotada y distinta de una aprobación o corrección TX06", () => {
+  assert.ok(noEvaluableRecoveryStart > ambiguousRecoveryStart);
+  assert.ok(recoveryEnd > noEvaluableRecoveryStart && recoveryEnd < setup.lastIndexOf("COMMIT;"));
+  assert.match(noEvaluableRecoverySql, /SET "expiresAt" = LEAST\(root\."expiresAt", retry_authorization\."authorizedAt"\)/);
+  assert.match(noEvaluableRecoverySql, /MIN\("createdAt"\)/);
+  for (const condition of [
+    `"action" = 'OPS_NO_EVALUABLE_RETRY_AUTH'`, `"outcome" = 'AUTHORIZED_WITH_RISK_ACK'`,
+    'root."id" = retry_authorization."assessmentId"', 'root."reusedFromAssessmentId" IS NULL',
+    `root."status" = 'NO_EVALUADO'`, `root."errorCode" = 'NO_EVALUABLE_INFORMATION'`,
+    `root."providerStatus" = 'ACCEPTED'`, `root."transactionCode" = '07'`,
+    'root."score" IS NULL', 'root."decision" IS NULL', 'root."offer" IS NULL',
+    'root."durationMs" IS NOT NULL', 'root."claimedAt" IS NULL', 'root."claimTokenHash" IS NULL',
+    'root."claimExpiresAt" IS NULL', 'root."consumedAt" IS NULL', 'root."creditId" IS NULL',
+    'retry_authorization."authorizedAt" >= root."createdAt"', 'root."expiresAt" > retry_authorization."authorizedAt"',
+  ]) assert.ok(noEvaluableRecoverySql.includes(condition), `Falta condición: ${condition}`);
+  assert.doesNotMatch(noEvaluableRecoverySql, /UPDATE\s+"DataCreditoDailyQuotaUsage"/);
+  assert.doesNotMatch(noEvaluableRecoverySql, /SET\s+"(?:status|score|decision|offer|errorCode|providerStatus|transactionCode|durationMs|retainedUntil)"/);
+});
+
+test("PostgreSQL: sólo TX07 sin resultado y con riesgo autorizado vence; conserva evidencia/cupo tras backfill y replay", async () => {
+  const database = new PGlite();
+  try {
+    await database.exec(`BEGIN;
+      CREATE TEMP TABLE "DataCreditoAssessment" (
+        "id" UUID PRIMARY KEY,"reusedFromAssessmentId" UUID,"status" TEXT,"errorCode" TEXT,
+        "providerStatus" TEXT,"transactionCode" TEXT,"score" INTEGER,"decision" TEXT,"offer" JSONB,
+        "durationMs" INTEGER,"claimedAt" TIMESTAMP,"claimTokenHash" TEXT,"claimExpiresAt" TIMESTAMP,
+        "consumedAt" TIMESTAMP,"creditId" INTEGER,"createdAt" TIMESTAMP,"expiresAt" TIMESTAMP,
+        "retainedUntil" TIMESTAMP,"payload" JSONB
+      ) ON COMMIT DROP;
+      CREATE TEMP TABLE "DataCreditoDailyQuotaUsage" ("used" INTEGER) ON COMMIT DROP;
+      INSERT INTO "DataCreditoDailyQuotaUsage" VALUES (7);
+      CREATE TEMP TABLE "DataCreditoAssessmentSecurePayload" ("assessmentId" UUID,"ciphertext" BYTEA) ON COMMIT DROP;`);
+    await database.exec(setup.slice(auditStart, recoveryStart).replace("CREATE TABLE IF NOT EXISTS", "CREATE TEMP TABLE IF NOT EXISTS"));
+    const fixtures = [
+      { name: "authorized", eligible: true },
+      { name: "authorized-zero-duration", durationMs: 0, eligible: true },
+      { name: "authorized-at-created-time", auditDate: "2026-01-01", eligible: true },
+      { name: "without-audit", audit: false },
+      { name: "wrong-action", action: "VIEW_DOSSIER" },
+      { name: "tx06-authorization-is-not-tx07", action: "OPS_TX06_RETRY_AUTHORIZED", outcome: "AUTHORIZED" },
+      { name: "ambiguous-authorization-is-not-tx07", action: "OPS_AMBIGUOUS_RETRY_AUTHORIZED" },
+      { name: "without-risk-ack", outcome: "AUTHORIZED" },
+      { name: "denied", outcome: "DENIED" },
+      { name: "approved", status: "APROBADO" }, { name: "rejected", status: "RECHAZADO" }, { name: "pending", status: "PENDING" },
+      { name: "ambiguous-error", errorCode: "PROVIDER_OUTCOME_AMBIGUOUS" },
+      { name: "missing-error", errorCode: null },
+      { name: "other-provider-status", providerStatus: "REJECTED" },
+      { name: "missing-provider-status", providerStatus: null },
+      { name: "tx06-result-is-not-tx07", transactionCode: "06" },
+      { name: "other-transaction", transactionCode: "03" },
+      { name: "missing-transaction", transactionCode: null },
+      { name: "unformatted-transaction", transactionCode: "7" },
+      { name: "with-score-zero", score: 0 }, { name: "with-no-information-score", score: -1 },
+      { name: "with-decision", decision: "APROBADO" }, { name: "with-empty-offer", offer: {} },
+      { name: "without-duration", durationMs: null },
+      { name: "claimed", claimedAt: "2026-01-02" },
+      { name: "claim-token", claimTokenHash: "fixture-token" },
+      { name: "claim-expiry", claimExpiresAt: "2026-01-03" },
+      { name: "consumed", consumedAt: "2026-01-02" }, { name: "credit-linked", creditId: 1 },
+      { name: "clone", reusedFromAssessmentId: randomUUID() },
+      { name: "audit-before-query", auditDate: "2025-12-31" },
+      { name: "audit-at-expiry", auditDate: "2026-01-16" },
+      { name: "audit-after-expiry", auditDate: "2026-01-17" },
+    ].map(fixture => ({ id: randomUUID(), status: "NO_EVALUADO", errorCode: "NO_EVALUABLE_INFORMATION",
+      providerStatus: "ACCEPTED", transactionCode: "07", durationMs: 1939, ...fixture }));
+    for (const fixture of fixtures) {
+      await database.query(`INSERT INTO "DataCreditoAssessment" VALUES
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'2026-01-01','2026-01-16','2026-04-01','{"originalEvidence":"preserved"}')`, [
+        fixture.id, fixture.reusedFromAssessmentId ?? null, fixture.status, fixture.errorCode, fixture.providerStatus,
+        fixture.transactionCode, fixture.score ?? null, fixture.decision ?? null,
+        fixture.offer === undefined ? null : JSON.stringify(fixture.offer), fixture.durationMs,
+        fixture.claimedAt ?? null, fixture.claimTokenHash ?? null, fixture.claimExpiresAt ?? null, fixture.consumedAt ?? null, fixture.creditId ?? null,
+      ]);
+      await database.query(`INSERT INTO "DataCreditoAssessmentSecurePayload" VALUES ($1,decode('abcdef','hex'))`, [fixture.id]);
+    }
+    const rows = async () => (await database.query('SELECT * FROM "DataCreditoAssessment" ORDER BY "id"')).rows;
+    const before = await rows();
+    const secureBefore = (await database.query('SELECT * FROM "DataCreditoAssessmentSecurePayload" ORDER BY "assessmentId"')).rows;
+    await database.exec(noEvaluableRecoverySql);
+    assert.deepEqual(await rows(), before, "Sin una autorización auditada no cambia ningún TX07");
+    for (const fixture of fixtures.filter(item => item.audit !== false)) {
+      await database.query(`INSERT INTO "DataCreditoAdminAccessAudit"
+        ("id","assessmentId","actorUserId","action","outcome","requestCorrelationId","retainedUntil","createdAt")
+        VALUES ($1,$2,1,$3,$4,$5,'2026-04-01',$6)`, [randomUUID(), fixture.id,
+        fixture.action || "OPS_NO_EVALUABLE_RETRY_AUTH", fixture.outcome || "AUTHORIZED_WITH_RISK_ACK", randomUUID(), fixture.auditDate || "2026-01-02"]);
+    }
+    const authorized = fixtures.find(fixture => fixture.name === "authorized");
+    await database.query(`INSERT INTO "DataCreditoAdminAccessAudit"
+      ("id","assessmentId","actorUserId","action","outcome","requestCorrelationId","retainedUntil","createdAt")
+      VALUES ($1,$2,1,'OPS_NO_EVALUABLE_RETRY_AUTH','AUTHORIZED_WITH_RISK_ACK',$3,'2026-04-01','2026-01-03')`, [randomUUID(), authorized.id, randomUUID()]);
+    const authorizations = (await database.query(`SELECT "assessmentId", MIN("createdAt") AS "createdAt" FROM "DataCreditoAdminAccessAudit"
+      WHERE "action"='OPS_NO_EVALUABLE_RETRY_AUTH' AND "outcome"='AUTHORIZED_WITH_RISK_ACK' GROUP BY "assessmentId"`)).rows;
+    const expected = before.map(row => fixtures.find(fixture => fixture.id === row.id).eligible
+      ? { ...row, expiresAt: authorizations.find(audit => audit.assessmentId === row.id).createdAt } : row);
+    const replay = async () => { await database.exec(recoverySql);await database.exec(ambiguousRecoverySql);await database.exec(noEvaluableRecoverySql); };
+    await replay();
+    assert.deepEqual(await rows(), expected, "Sólo cambia expiresAt del root TX07 expresamente autorizado sin datos de decisión");
+    for (let repeat = 0; repeat < 3; repeat++) {
+      await database.exec(rootBackfill);await replay();
+      assert.deepEqual(await rows(), expected, "El preflight repetido mantiene la autorización más temprana y no autoriza otros casos");
+    }
+    assert.deepEqual((await database.query('SELECT * FROM "DataCreditoDailyQuotaUsage"')).rows, [{ used: 7 }], "El reintento autorizado no devuelve el cupo de la consulta enviada");
+    assert.deepEqual((await database.query('SELECT * FROM "DataCreditoAssessmentSecurePayload" ORDER BY "assessmentId"')).rows, secureBefore, "La respuesta cifrada retenida permanece intacta");
+    await database.query('UPDATE "DataCreditoAssessment" SET "expiresAt"=$1 WHERE "id"=$2', ["2026-01-01 12:00:00", authorized.id]);
+    const earlier = await rows();await database.exec(noEvaluableRecoverySql);
+    assert.deepEqual(await rows(), earlier, "La excepción nunca extiende un vencimiento anterior");
+  } finally {
+    await database.exec("ROLLBACK").catch(() => {});await database.close();
   }
 });
