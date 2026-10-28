@@ -69,6 +69,48 @@ function isValidPin(pin: string) {
   return /^\d{4,6}$/.test(pin);
 }
 
+function sameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (!origin || (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none")) return false;
+  try {
+    const parsed = new URL(origin);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin) return false;
+    // Railway terminates TLS before Node; Host retains the public authority.
+    const publicHost = request.headers.get("host");
+    return publicHost
+      ? parsed.host.toLowerCase() === publicHost.toLowerCase()
+      : parsed.origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
+}
+
+async function readUpdateBody(request: Request) {
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const parts: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > 65536) {
+      await reader.cancel();
+      return null;
+    }
+    parts.push(value);
+  }
+  try {
+    const body: unknown = JSON.parse(Buffer.concat(parts).toString("utf8"));
+    return body && typeof body === "object" && !Array.isArray(body)
+      ? body as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function requireAdmin() {
   const user = await getSessionUser();
 
@@ -629,7 +671,89 @@ export async function PATCH(req: Request) {
     await ensureVendorProfileVisualColumns();
     const aliadoScopeId = getAliadoScope(session.user);
 
-    const body = (await req.json()) as Record<string, unknown>;
+    if (req.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
+      return NextResponse.json({ error: "Se requiere una solicitud JSON" }, { status: 415 });
+    }
+    const body = await readUpdateBody(req);
+    if (!body) return NextResponse.json({ error: "Solicitud de actualizacion invalida" }, { status: 400 });
+
+    if ("administradorId" in body || String(body.tipoPerfil || "").trim().toUpperCase() === "ADMIN_CENTRAL") {
+      if (!canManageApprovalAnalysts(session.user)) {
+        return NextResponse.json({ error: "Solo Admin Central FINSER puede gestionar administradores centrales" }, { status: 403 });
+      }
+      if (!sameOrigin(req)) return NextResponse.json({ error: "Origen de solicitud no permitido" }, { status: 403 });
+      const allowedFields = new Set(["tipoPerfil", "administradorId", "nombre", "usuario", "activo", "expectedUpdatedAt"]);
+      if (Object.keys(body).some((key) => !allowedFields.has(key))) {
+        return NextResponse.json({ error: "Solo puedes editar nombre, usuario y estado del administrador central" }, { status: 400 });
+      }
+      const administradorId = typeof body.administradorId === "number" ? parseSellerId(body.administradorId) : null;
+      const nombre = typeof body.nombre === "string" ? normalizeText(body.nombre) : "";
+      const usuario = typeof body.usuario === "string" ? normalizeUsername(body.usuario) : "";
+      const expectedUpdatedAt = new Date(typeof body.expectedUpdatedAt === "string" ? body.expectedUpdatedAt : "");
+      if (body.tipoPerfil !== "ADMIN_CENTRAL" || !administradorId || !nombre || nombre.length > 120 ||
+          !/^[a-z0-9._@-]{3,80}$/.test(usuario) || typeof body.activo !== "boolean" ||
+          !Number.isFinite(expectedUpdatedAt.getTime())) {
+        return NextResponse.json({ error: "Ingresa nombre de hasta 120 caracteres, usuario de 3 a 80 caracteres y un estado valido. Actualiza la lista antes de continuar." }, { status: 400 });
+      }
+      const activo = body.activo;
+      if (!activo && administradorId === session.user.id) {
+        return NextResponse.json({ error: "No puedes desactivar tu propia cuenta" }, { status: 403 });
+      }
+
+      try {
+        const result = await prisma.$transaction(async (tx) => {
+          const centralScope = {
+            rol: { nombre: "ADMIN" },
+            sede: { activa: true, aliado: { codigo: "FINSERPAY", activo: true } },
+          };
+          // Recheck the actor inside the same serializable transaction. Two
+          // administrators cannot deactivate each other from stale sessions.
+          const actor = await tx.usuario.findFirst({
+            where: { id: session.user.id, activo: true, ...centralScope },
+            select: { id: true },
+          });
+          if (!actor) return { status: 403, error: "Tu cuenta ya no tiene acceso administrativo central" };
+          const administrator = await tx.usuario.findFirst({
+            where: { id: administradorId, ...centralScope },
+            select: { id: true, activo: true, updatedAt: true },
+          });
+          if (!administrator) return { status: 404, error: "Administrador central no encontrado" };
+          if (administrator.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+            return { status: 409, error: "El administrador cambio. Actualiza la lista antes de continuar." };
+          }
+          if (!activo && administrator.activo) {
+            const activeCount = await tx.usuario.count({ where: { activo: true, ...centralScope } });
+            if (activeCount <= 1) return { status: 409, error: "Debe permanecer al menos un administrador central activo" };
+          }
+          const duplicate = await tx.usuario.findFirst({
+            where: { usuario, id: { not: administradorId } }, select: { id: true },
+          });
+          if (duplicate) return { status: 409, error: "Ya existe un usuario con ese acceso" };
+          const updated = await tx.usuario.updateMany({
+            where: { id: administradorId, updatedAt: expectedUpdatedAt, ...centralScope },
+            data: {
+              nombre, usuario, activo,
+              updatedAt: new Date(Math.max(Date.now(), administrator.updatedAt.getTime() + 1)),
+            },
+          });
+          if (updated.count !== 1) return { status: 409, error: "El administrador cambio. Actualiza la lista antes de continuar." };
+          return { status: 200 };
+        }, { isolationLevel: "Serializable" });
+
+        if (result.status !== 200) return NextResponse.json({ error: result.error }, { status: result.status });
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error) {
+          if (error.code === "P2002") return NextResponse.json({ error: "Ya existe un usuario con ese acceso" }, { status: 409 });
+          if (error.code === "P2034") return NextResponse.json({ error: "La gestion de administradores cambio durante la solicitud. Actualiza la lista e intenta nuevamente." }, { status: 409 });
+        }
+        throw error;
+      }
+      return NextResponse.json({
+        ok: true,
+        mensaje: "Administrador central actualizado correctamente",
+        ...(await loadAdminSellersPayload(aliadoScopeId, true)),
+      }, { headers: { "Cache-Control": "private, no-store" } });
+    }
     if ("analistaId" in body || String(body.tipoPerfil || "").trim().toUpperCase() === APPROVAL_ANALYST_ROLE) {
       if (!canManageApprovalAnalysts(session.user)) {
         return NextResponse.json({ error: "Solo el administrador central puede gestionar analistas" }, { status: 403 });

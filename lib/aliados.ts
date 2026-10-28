@@ -272,16 +272,26 @@ async function runFinserPayCentralAdminBootstrap(prisma: CentralAdminClient) {
         },
       });
 
+  // This is a one-time migration of the legacy administrator. Once central
+  // accounts exist, their identity and active state belong to user management.
+  // Include inactive accounts so a restart cannot undo a deliberate deactivation
+  // or promote another ally's account that subsequently takes the login "admin".
+  const centralAdmin = await prisma.usuario.findFirst({
+    where: { rol: { nombre: "ADMIN" }, sede: { aliadoId: aliado.id } },
+    select: { id: true },
+  });
+  if (centralAdmin) return sede;
+
   await prisma.usuario.updateMany({
     where: {
       usuario: "admin",
+      activo: true,
       rol: {
         nombre: "ADMIN",
       },
     },
     data: {
       sedeId: sede.id,
-      activo: true,
     },
   });
 

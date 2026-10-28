@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ShieldCheck, UserCog, UserRound } from "lucide-react";
 import { Input, MetricCard, PageHeader } from "@/app/_components/finser-ui";
 import ApprovalAnalystAccounts, { type ApprovalAnalystAccount } from "./approval-analyst-accounts";
+import CentralAdminAccounts from "./central-admin-accounts";
 import {
   type AvatarPerfilKey,
   type TipoPerfilVendedor,
@@ -447,6 +448,7 @@ export default function GestionVendedoresPage() {
   });
 
   const [analistas, setAnalistas] = useState<ApprovalAnalystAccount[]>([]);
+  const [centralAccountsLoadError, setCentralAccountsLoadError] = useState("");
 
   const [ediciones, setEdiciones] = useState<Record<number, SellerDraft>>({});
 
@@ -536,14 +538,30 @@ export default function GestionVendedoresPage() {
 
       if (usersRes.ok) {
         applyData(usersData);
+        setCentralAccountsLoadError("");
       } else {
         setMensaje(usersData.error || "No se pudo cargar la gestion de usuarios");
+        setCentralAccountsLoadError(usersData.error || "No se pudo cargar la lista de administradores centrales.");
       }
     } catch {
       setMensaje("Error cargando la gestion de usuarios");
+      setCentralAccountsLoadError("No se pudo cargar la lista de administradores centrales.");
     } finally {
       setCargando(false);
     }
+  };
+
+  const reloadCentralAccounts = async () => {
+    const response = await fetch("/api/usuarios/admin", { cache: "no-store" });
+    const data = await response.json() as AdminUsersResponse & { error?: string };
+    if (!response.ok || !Array.isArray(data.administradores)) {
+      throw new Error(data.error || "No se pudo actualizar la lista de administradores centrales.");
+    }
+    setAdministradores(data.administradores);
+    setCentralAccountsLoadError("");
+    const currentAccount = data.administradores.find(account => account.id === user?.id);
+    if (currentAccount) setUser(current => current ? { ...current, nombre: currentAccount.nombre, usuario: currentAccount.usuario } : current);
+    return data.administradores.filter(account => esAliadoFinserPay(account.sede.aliado?.codigo));
   };
 
   useEffect(() => {
@@ -1129,6 +1147,13 @@ export default function GestionVendedoresPage() {
             </button>
           </div>
         </section>
+
+        {esAdminCentral && user && <CentralAdminAccounts
+          accounts={administradores.filter(account => esAliadoFinserPay(account.sede.aliado?.codigo))}
+          currentUserId={user.id}
+          loadError={centralAccountsLoadError}
+          onReload={reloadCentralAccounts}
+        />}
 
         {esAdminCentral && (
           <ApprovalAnalystAccounts accounts={analistas} sedes={sedes} onUpdated={cargarTodo} />
