@@ -135,7 +135,7 @@ export default function CentralAdminAccounts({ accounts, currentUserId, loadErro
     {reloading && <LoadingState label="Actualizando administradores centrales..." />}
     {!loadError && accounts.length === 0 && <EmptyState title="No hay administradores centrales disponibles" description="Crea una cuenta con el perfil Admin Central FINSER desde Nuevo usuario." />}
     {accounts.length > 0 && <DataTable className="mt-5">
-      <table>
+      <table className="w-full text-left text-sm [&_th]:whitespace-nowrap [&_th]:px-4 [&_th]:py-3 [&_th]:font-semibold [&_td]:px-4 [&_td]:py-3 [&_td]:align-top [&_thead]:bg-[var(--fp-bg)] [&_tbody_tr]:border-t [&_tbody_tr]:border-[var(--fp-border)]">
         <thead><tr><th scope="col">Nombre</th><th scope="col">Usuario de ingreso</th><th scope="col">Sede</th><th scope="col">Estado</th><th scope="col">Acciones</th></tr></thead>
         <tbody>{accounts.map(account => <tr key={account.id}>
           <td><strong>{account.nombre}</strong>{account.id === currentUserId && <span className="ml-2 text-sm text-[var(--fp-muted)]">Tu cuenta</span>}</td>
