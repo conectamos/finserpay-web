@@ -11,7 +11,7 @@ const { ensureFinserPayCentralAdmin } = await jiti.import(
   "../lib/aliados.ts"
 );
 
-function centralAdminClient({ failFirst = false } = {}) {
+function centralAdminClient({ failFirst = false, accounts = [] } = {}) {
   const calls = {
     aliadoUpsert: 0,
     sedeFind: 0,
@@ -47,7 +47,14 @@ function centralAdminClient({ failFirst = false } = {}) {
         },
       },
       usuario: {
-        async updateMany() {
+        async findFirst({ where, select }) {
+          assert.deepEqual(where, { rol: { nombre: "ADMIN" }, sede: { aliadoId: 1 } });
+          assert.deepEqual(select, { id: true });
+          return accounts.find((account) => account.rol === "ADMIN" && account.aliadoId === 1) || null;
+        },
+        async updateMany({ where, data }) {
+          assert.deepEqual(where, { usuario: "admin", activo: true, rol: { nombre: "ADMIN" } });
+          assert.deepEqual(data, { sedeId: 2 });
           calls.usuarioUpdate += 1;
           return { count: 1 };
         },
@@ -86,3 +93,17 @@ test("permite reintentar el bootstrap si el primer intento falla", async () => {
   assert.equal(calls.aliadoUpsert, 2);
   assert.equal(calls.usuarioUpdate, 1);
 });
+
+for (const activo of [true, false]) {
+  test(`conserva el administrador renombrado ${activo ? "activo" : "inactivo"} sin elevar otro admin aliado al reiniciar`, async () => {
+    const accounts = [
+      { id: 10, usuario: "central.renombrado", rol: "ADMIN", aliadoId: 1, activo },
+      { id: 20, usuario: "admin", rol: "ADMIN", aliadoId: 9, activo: true },
+    ];
+    for (let restart = 0; restart < 2; restart += 1) {
+      const { client, calls } = centralAdminClient({ accounts });
+      await ensureFinserPayCentralAdmin(client);
+      assert.equal(calls.usuarioUpdate, 0);
+    }
+  });
+}
