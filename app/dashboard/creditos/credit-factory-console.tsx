@@ -3199,6 +3199,9 @@ export default function CreditFactoryConsole({
   const [clientePrimerApellido, setClientePrimerApellido] = useState("");
   const [clienteSegundoApellido, setClienteSegundoApellido] = useState("");
   const [editingDataCreditoNames, setEditingDataCreditoNames] = useState(false);
+  const [missingIdentitySurname, setMissingIdentitySurname] = useState("");
+  const [completingMissingIdentity, setCompletingMissingIdentity] = useState(false);
+  const [missingIdentityReviewError, setMissingIdentityReviewError] = useState("");
   const preservedCanonicalClientNameRef = useRef<{
     firstNames: string;
     firstSurname: string;
@@ -3227,6 +3230,7 @@ export default function CreditFactoryConsole({
   const [dataCreditoApproval, setDataCreditoApproval] = useState<
     DataCreditoApprovedResult | null
   >(null);
+  const dataCreditoInternalException = dataCreditoApproval?.creditAuthorizationSource === "INTERNAL_EXCEPTION";
   const dataCreditoFullNameOnly = dataCreditoApproval?.identity?.effective.nameMode === "FULL_NAME_ONLY";
   const dataCreditoCanEditNameComponents = Boolean(dataCreditoApproval?.identity?.effective.firstSurname && !dataCreditoFullNameOnly);
   const [dataCreditoSimulation, setDataCreditoSimulation] =
@@ -3989,6 +3993,7 @@ export default function CreditFactoryConsole({
   const activeDataCreditoManualCreditLimit =
     !simulatorMode &&
     dataCreditoCreditCreationMode &&
+    !dataCreditoInternalException &&
     activeDataCreditoOffer &&
     dataCreditoManualCreditLimit?.documentNumber ===
       normalizedCurrentClientDocument &&
@@ -4508,6 +4513,8 @@ export default function CreditFactoryConsole({
         contratoCedulaRespaldoAudit?.capturedAt || null,
       contratoCedulaRespaldoSource: contratoCedulaRespaldoAudit?.source || null,
       dataCreditoAssessmentId,
+      creditRiskExceptionId: dataCreditoApproval?.creditRiskExceptionId || null,
+      creditAuthorizationSource: dataCreditoApproval?.creditAuthorizationSource || null,
       veriffValidationId: veriffValidation?.id || null,
       pagareAceptado,
       cartaAceptada,
@@ -4549,6 +4556,8 @@ export default function CreditFactoryConsole({
       contratoFotoAudit?.source,
       contratoFotoDataUrl,
       cuotaInicial,
+      dataCreditoApproval?.creditRiskExceptionId,
+      dataCreditoApproval?.creditAuthorizationSource,
       dataCreditoAssessmentId,
       equipoMarca,
       equipoModelo,
@@ -5306,6 +5315,8 @@ export default function CreditFactoryConsole({
       preservedCanonicalClientNameRef.current = null;
       setClientePrimerNombre(""); setClientePrimerApellido(""); setClienteSegundoApellido("");
       setEditingDataCreditoNames(false);
+      setMissingIdentitySurname("");
+      setMissingIdentityReviewError("");
     }
     setDataCreditoResumeErrorCode(null);
     setFianzaPorcentaje(
@@ -5367,8 +5378,9 @@ export default function CreditFactoryConsole({
       veriffAutoSessionRef.current = false;
       setWizardStep(1);
       setNotice({
-        text:
-          "La precalificación venció. Realiza una nueva evaluación antes de continuar; esto no corresponde a un rechazo.",
+        text: dataCreditoApproval.creditAuthorizationSource === "INTERNAL_EXCEPTION"
+          ? "La autorización interna excepcional venció. Solicita una revisión administrativa antes de continuar."
+          : "La precalificación venció. Realiza una nueva evaluación antes de continuar; esto no corresponde a un rechazo.",
         tone: "amber",
       });
       window.requestAnimationFrame(() => noticeRef.current?.focus());
@@ -6056,7 +6068,7 @@ export default function CreditFactoryConsole({
   const firmaSeguroRequiresIdentityReadiness = Boolean(dataCreditoApproval || dataCreditoAssessmentId);
   const firmaSeguroIdentityReadiness = useFirmaSeguroIdentityReadiness({
     draftId, validationId: veriffValidation?.id || null, assessmentId: dataCreditoAssessmentId,
-    fullName: getDataCreditoClientDisplayName(dataCreditoApproval), documentNumber: clienteDocumento,
+    fullName: getDataCreditoClientDisplayName(dataCreditoApproval, clienteNombre), documentNumber: clienteDocumento,
     enabled: firmaSeguroRequiresIdentityReadiness && identitySignatureManagementReady && wizardStep === 4 &&
       !firmaSeguroProcessSent && !draftResumeHydrating && !draftResumeLoadFailed,
   });
@@ -9907,6 +9919,8 @@ export default function CreditFactoryConsole({
 
   const resetForm = () => {
     setCustomerFormRevision(value => value + 1);
+    setMissingIdentitySurname("");
+    setMissingIdentityReviewError("");
     setClientTouchedFields({});
     setClientValidationAttempted(false);
     cancelPendingDraftAutosave(true);
@@ -10834,6 +10848,8 @@ export default function CreditFactoryConsole({
           dataCreditoAssessmentId: dataCreditoCreditCreationMode
             ? dataCreditoAssessmentId
             : null,
+          creditRiskExceptionId: dataCreditoApproval?.creditRiskExceptionId || null,
+          creditAuthorizationSource: dataCreditoApproval?.creditAuthorizationSource || null,
           referenciaFamiliar1Nombre,
           referenciaFamiliar1Parentesco,
           referenciaFamiliar1Telefono,
@@ -12650,6 +12666,39 @@ export default function CreditFactoryConsole({
     }
   });
 
+  const completeMissingPrimaryIdentity = async () => {
+    const approval = dataCreditoApproval;
+    if (!canSeeInternalPricing || !draftId || !approval?.creditRiskExceptionId ||
+        approval.creditAuthorizationSource !== "INTERNAL_EXCEPTION" || !approval.identity || completingMissingIdentity) return;
+    const effective = approval.identity.effective;
+    const input = {
+      draftId, creditRiskExceptionId: approval.creditRiskExceptionId,
+      ...(!effective.firstSurname ? { firstSurname: missingIdentitySurname.normalize("NFC").trim() } : {}),
+      ...(!effective.documentNumber ? { documentNumber: approval.documentNumber } : {}),
+      ...(!effective.documentType ? { documentType: "CEDULA_DE_CIUDADANIA" } : {}),
+    };
+    if (!effective.firstSurname && !String(input.firstSurname || "").trim()) {
+      setMissingIdentityReviewError("Confirma el primer apellido real del documento. Este dato no fue verificado por DataCrédito.");
+      return;
+    }
+    setCompletingMissingIdentity(true);
+    setMissingIdentityReviewError("");
+    try {
+      const response = await requestJson<{ ok?: boolean; error?: string }>(
+        `/api/creditos/datacredito/evaluaciones/${encodeURIComponent(approval.assessmentId)}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+        });
+      if (!response.ok || !response.data?.ok) throw new Error(response.data?.error || "No se pudo registrar la revisión de identidad.");
+      cancelPendingDraftAutosave(true);
+      setMissingIdentitySurname("");
+      setDataCreditoApproval(null);
+      setDataCreditoBypassed(false);
+      setNotice({ text: "Identidad completada mediante revisión administrativa registrada. Confirma los nombres antes de continuar.", tone: "emerald" });
+    } catch (error) {
+      setMissingIdentityReviewError(error instanceof Error ? error.message : "No se pudo registrar la revisión de identidad.");
+    } finally { setCompletingMissingIdentity(false); }
+  };
+
   const handleDataCreditoBypass = () => {
     setDataCreditoAssessmentId(null);
     setDataCreditoResumeErrorCode(null);
@@ -12740,7 +12789,9 @@ export default function CreditFactoryConsole({
       financialSettings.frecuenciaPago
     );
     const restoredFrequency =
-      restoringDraftAssessment && restoredDraftSnapshot
+      result.creditAuthorizationSource === "INTERNAL_EXCEPTION"
+        ? policyFrequency
+        : restoringDraftAssessment && restoredDraftSnapshot
         ? normalizePaymentFrequency(restoredDraftSnapshot.frecuenciaPago)
         : sameAssessment || refreshingFinancialTerms
           ? normalizePaymentFrequency(frecuenciaPagoCredito)
@@ -12755,11 +12806,13 @@ export default function CreditFactoryConsole({
       restoredDraftSnapshot?.fianzaPorcentaje
     );
     const restoredSuretyPercentage =
-      restoringDraftAssessment && Number.isFinite(restoredSuretyNumber)
+      result.creditAuthorizationSource === "INTERNAL_EXCEPTION"
+        ? result.offer.suretyPercentage
+        : restoringDraftAssessment && Number.isFinite(restoredSuretyNumber)
         ? restoredSuretyNumber
         : result.offer.suretyPercentage;
     const resultFinancialSettings = result.offer.financialSettings;
-    const approvedResult = restoringDraftAssessment
+    const approvedResult = restoringDraftAssessment && result.creditAuthorizationSource !== "INTERNAL_EXCEPTION"
       ? {
           ...result,
           offer: {
@@ -14247,10 +14300,10 @@ export default function CreditFactoryConsole({
                         </span>
                         <div>
                           <p className="text-sm font-black">
-                            Consulta DataCrédito aprobada
+                            {dataCreditoInternalException ? "Autorización interna excepcional" : "Consulta DataCrédito aprobada"}
                           </p>
                           <p className="mt-1 text-sm leading-6 text-slate-600">
-                            Completa y confirma la información del cliente.
+                            {dataCreditoInternalException ? "DataCrédito conserva el resultado no evaluado. Veriff, firma y entrega son obligatorios." : "Completa y confirma la información del cliente."}
                           </p>
                         </div>
                       </div>
@@ -15048,6 +15101,24 @@ export default function CreditFactoryConsole({
                       values={factoryDraftPayload}
                       validation={clientFormValidation}
                       approval={dataCreditoApproval}
+                      identityReview={dataCreditoInternalException && dataCreditoApproval?.identity &&
+                        (!dataCreditoApproval.identity.effective.firstSurname || !dataCreditoApproval.identity.effective.documentNumber || !dataCreditoApproval.identity.effective.documentType) ? (
+                        <section className="my-4 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4" aria-labelledby="missing-primary-identity-title">
+                          <h3 id="missing-primary-identity-title" className="font-semibold text-[var(--fp-graphite)]">Identidad pendiente de revisión autorizada</h3>
+                          <p className="mt-2 text-sm text-[var(--fp-muted)]">DataCrédito no entregó todos los datos primarios. Los valores completados se registran como ingreso manual; Veriff debe aprobar el mismo documento antes de firmar.</p>
+                          {canSeeInternalPricing ? <>
+                            {!dataCreditoApproval.identity.effective.firstSurname ? <div className="mt-3">
+                              <label htmlFor="missing-primary-surname" className="mb-2 block text-sm font-semibold">Primer apellido según el documento</label>
+                              <Input id="missing-primary-surname" value={missingIdentitySurname} onChange={event => setMissingIdentitySurname(event.target.value)} maxLength={90} disabled={completingMissingIdentity} autoComplete="off" />
+                            </div> : null}
+                            <p className="mt-2 text-sm">Cédula consultada: {dataCreditoApproval.documentNumber}</p>
+                            <Button variant="secondary" className="mt-3" onClick={() => void completeMissingPrimaryIdentity()} disabled={completingMissingIdentity}>
+                              {completingMissingIdentity ? "Registrando revisión..." : "Registrar revisión administrativa"}
+                            </Button>
+                            {missingIdentityReviewError ? <p className="mt-2 text-sm text-[var(--fp-danger)]" role="alert">{missingIdentityReviewError}</p> : null}
+                          </> : <p className="mt-2 text-sm font-semibold">Solicita al administrador central completar los datos faltantes.</p>}
+                        </section>
+                      ) : undefined}
                       canEdit={dataCreditoCanEditNameComponents}
                       editing={editingDataCreditoNames}
                       onEdit={() => setEditingDataCreditoNames(value => !value)}

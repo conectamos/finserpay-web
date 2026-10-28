@@ -54,7 +54,7 @@ test("DataCrédito aprobado despliega los datos del cliente en el mismo paso 1",
   assert.match(factory, /const showIdentityClientForm = clienteFormUnlocked;/);
   assert.match(factory, /showIdentityClientForm \? \(\s*<CustomerDetailsForm/);
   assert.match(customerForm, />\s*Datos del cliente\s*</);
-  assert.match(customerForm, /index === 0 && approval[^\n]*>DataCrédito</);
+  assert.match(customerForm, /index === 0 && approval[^\n]*approval\.creditAuthorizationSource === "INTERNAL_EXCEPTION"[^\n]*\? "Ingreso manual" : "DataCrédito"/);
   assert.match(factory, />\s*Nombres y apellidos\s*</);
   assert.match(gate, />\s*Consulta aprobada\s*</);
   assert.match(gate, /Continuar con los datos/);
@@ -145,7 +145,9 @@ test("Veriff solo inicia con DataCrédito vigente y el equipo completo", async (
   );
   assert.match(route, /\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$/);
   assert.match(route, /if \(!dataCreditoConfig\.enabled\)/);
-  assert.match(route, /getApprovedDataCreditoAssessmentForCredit\(\{/);
+  assert.match(route, /getApprovedDataCreditoAssessmentForCredit\(assessmentMatch\)/);
+  assert.match(route, /getCreditRiskAuthorizationForDraft\(\{ \.\.\.assessmentMatch, solicitudId: draft\.id \}\)/);
+  assert.match(route, /riskAuthorization\?\.source === "INTERNAL_EXCEPTION" && riskAuthorization\.exceptionId === exceptionId/);
   assert.match(route, /VERIFF_DATACREDITO_NOT_APPROVED/);
   assert.ok(readiness >= 0);
   assert.ok(reuse > readiness);

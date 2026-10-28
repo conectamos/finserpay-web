@@ -16,6 +16,9 @@ function load(path, dependencies = {}) {
     require(name) {
       if (name === "server-only") return {};
       if (name === "node:crypto") return crypto;
+      if (name === "@/lib/datacredito/risk-exception-display-sql") {
+        return load("lib/datacredito/risk-exception-display-sql.ts");
+      }
       assert.ok(name in dependencies, `Dependencia inesperada: ${name}`);
       return dependencies[name];
     },

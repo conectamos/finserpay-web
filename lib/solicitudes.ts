@@ -71,6 +71,7 @@ export type SolicitudSignals = {
   currentStep?: number | null;
   dataCreditoStatus?: string | null;
   dataCreditoErrorCode?: string | null;
+  creditRiskExceptionAuthorized?: boolean;
   veriffStatus?: string | null;
   firmaStatus?: string | null;
   firmaLastError?: string | null;
@@ -523,7 +524,7 @@ export function resolveSolicitudStage(signals: SolicitudSignals): SolicitudState
   }
 
   if (
-    (dataCreditoStatus === "NO_EVALUADO" && Boolean(dataCreditoError)) ||
+    (dataCreditoStatus === "NO_EVALUADO" && Boolean(dataCreditoError) && !signals.creditRiskExceptionAuthorized) ||
     veriffStatus === "ERROR" ||
     Boolean(compactText(signals.firmaLastError, 200))
   ) {
@@ -548,7 +549,7 @@ export function resolveSolicitudProcessStage(
   if (!dataCreditoStatus || dataCreditoStatus === "PENDING") {
     return "CONSULTA_PENDIENTE";
   }
-  if (dataCreditoStatus !== "APROBADO") return "CONSULTA_PENDIENTE";
+  if (dataCreditoStatus !== "APROBADO" && !signals.creditRiskExceptionAuthorized) return "CONSULTA_PENDIENTE";
   if (
     ["SIGNED", "COMPLETED", "COMPLETADO", "FIRMADO"].includes(firmaStatus) ||
     currentStep >= 5

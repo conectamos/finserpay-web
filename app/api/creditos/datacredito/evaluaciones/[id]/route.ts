@@ -301,6 +301,33 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
+    if (row.status === "NO_EVALUADO" && draftId && requestedDraft) {
+      // The provider result remains immutable. A separate, scoped internal
+      // authorization may permit this exact draft to continue without a query.
+      const { getCreditRiskAuthorizationForDraft } = await import("@/lib/datacredito/risk-exception");
+      const authorization = await getCreditRiskAuthorizationForDraft({
+        ...scope, solicitudId: requestedDraft.id, assessmentId: row.id,
+        documentNumber: normalizeDataCreditoDocument(identityDocument),
+        firstSurname: normalizeDataCreditoSurname(identitySurname),
+        platform: row.platform, providerEnvironment: provider.environment,
+      });
+      if (authorization?.source === "INTERNAL_EXCEPTION" && authorization.exceptionId) {
+        return NextResponse.json({
+          ok: true, ...serializeDataCreditoAssessment(row),
+          solicitudId: requestedDraft.id,
+          documentNumber: normalizeDataCreditoDocument(identityDocument),
+          firstSurname: normalizeDataCreditoSurname(identitySurname),
+          identity: await getDataCreditoCustomerIdentityForDisplay(row),
+          creditAuthorization: {
+            source: "INTERNAL_EXCEPTION", exceptionId: authorization.exceptionId,
+            solicitudId: requestedDraft.id, assessmentId: row.id,
+            offer: { ...authorization.offer, policyVersion: authorization.policyVersion },
+            expiresAt: authorization.expiresAt.toISOString(),
+          },
+        });
+      }
+    }
+
     if (row.status === "NO_EVALUADO") {
       return NextResponse.json(
         {
@@ -343,10 +370,34 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!user || !isAdminRole(user.rolNombre)) return NextResponse.json({ error: "Requiere revisión de un administrador autorizado" }, { status: 403 });
   const { id } = await context.params;
   const row = await getDataCreditoAssessmentById(id);
-  if (!row || row.sedeId !== user.sedeId || row.aliadoId !== (user.aliadoId || null)) return NextResponse.json({ error: "Evaluación no encontrada" }, { status: 404 });
-  if (row.status !== "APROBADO" || row.consumedAt) return NextResponse.json({ error: "La identidad de esta solicitud ya no admite cambios" }, { status: 409 });
+  if (!row) return NextResponse.json({ error: "Evaluación no encontrada" }, { status: 404 });
   try {
-    const identity = await completeMissingDataCreditoIdentity(row, await request.json(), { userId: user.id, sellerId: null });
+    const input = await request.json();
+    let authorizedDraftId: number | undefined;
+    if (row.status === "NO_EVALUADO") {
+      const draftId = Number(input.draftId);
+      if (!isFinserPayCentralAlly(user.aliadoAccesoCodigo) || !Number.isSafeInteger(draftId) || draftId <= 0) {
+        return NextResponse.json({ error: "Requiere revisión del administrador central de la solicitud autorizada" }, { status: 403 });
+      }
+      const draft = await getActiveSolicitudCreditContext(draftId);
+      if (!draft || draft.dataCreditoAssessmentId !== row.id) return NextResponse.json({ error: "Evaluación no encontrada" }, { status: 404 });
+      const scope = { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId };
+      const { getActiveCreditRiskExceptionForDraft } = await import("@/lib/datacredito/risk-exception");
+      const authorization = await getActiveCreditRiskExceptionForDraft({
+        ...scope, solicitudId: draft.id, assessmentId: row.id,
+        documentNumber: normalizeDataCreditoDocument(draft.clienteDocumento),
+        platform: row.platform, providerEnvironment: getDataCreditoPublicConfig().environment,
+      });
+      if (!authorization || authorization.id !== String(input.creditRiskExceptionId || "")) {
+        return NextResponse.json({ error: "La autorización interna no está vigente para esta solicitud" }, { status: 409 });
+      }
+      authorizedDraftId = draft.id;
+    } else if (row.status !== "APROBADO" || row.consumedAt) {
+      return NextResponse.json({ error: "La identidad de esta solicitud ya no admite cambios" }, { status: 409 });
+    } else if (row.sedeId !== user.sedeId || row.aliadoId !== (user.aliadoId || null)) {
+      return NextResponse.json({ error: "Evaluación no encontrada" }, { status: 404 });
+    }
+    const identity = await completeMissingDataCreditoIdentity(row, input, { userId: user.id, sellerId: null }, authorizedDraftId);
     return NextResponse.json({ ok: true, identity });
   } catch (error) {
     return NextResponse.json({ error: "No se pudo completar la identidad. Solo se admiten datos ausentes, del documento consultado.", code: error instanceof Error && error.message.startsWith("DATACREDITO_IDENTITY_") ? error.message : "DATACREDITO_IDENTITY_REVIEW_FAILED" }, { status: 409 });

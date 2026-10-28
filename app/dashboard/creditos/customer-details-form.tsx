@@ -15,6 +15,7 @@ type Props = {
   values: CreditClientFormValues;
   validation: CreditClientValidationResult;
   approval: DataCreditoApprovedResult | null;
+  identityReview?: ReactNode;
   nameFields: ReactNode;
   canEdit: boolean;
   editing: boolean;
@@ -134,11 +135,13 @@ export default function CustomerDetailsForm(props: Props) {
     <header className={styles.header}>
       <h2>Datos del cliente</h2>
       <div className={styles.approval}>
-        <Badge tone={approval ? "positive" : "neutral"}>{approval ? <Check aria-hidden="true" /> : null}{approval ? "Aprobado" : "Sin aprobación"}</Badge>
+        <Badge tone={approval ? "positive" : "neutral"}>{approval ? <Check aria-hidden="true" /> : null}{approval?.creditAuthorizationSource === "INTERNAL_EXCEPTION" ? "Autorización interna excepcional" : approval ? "Aprobado" : "Sin aprobación"}</Badge>
         {approval ? <Button variant="secondary" aria-expanded={conditionsOpen} aria-controls="customer-approved-conditions" onClick={() => setConditionsOpen(!conditionsOpen)}>Ver condiciones<ChevronRight aria-hidden="true" /></Button> : null}
       </div>
       <Image className={styles.mascot} src="/assets/creditos/customer-form-mascot.png" alt="" width={140} height={140} />
     </header>
+    {approval?.creditAuthorizationSource === "INTERNAL_EXCEPTION" ? <p role="status">DataCrédito conserva el resultado no evaluado. Se mantienen la validación de Veriff, la firma y los controles de entrega.</p> : null}
+    {props.identityReview}
     {approval && conditionsOpen ? <dl id="customer-approved-conditions" className={styles.conditions}>
       <div><dt>Inicial mínima</dt><dd>{approval.offer.initialPaymentPercentage}%</dd></div>
       <div><dt>Crédito máximo</dt><dd>{money(approval.offer.maxFinancedAmount)}</dd></div>
@@ -158,7 +161,7 @@ export default function CustomerDetailsForm(props: Props) {
           <button type="button" className={styles.blockToggle} disabled={!enabled[index]} aria-expanded={expanded} aria-controls={`customer-block-${index}`} onClick={() => setOpen(expanded ? -1 : index)}>
             <span className={styles.icon}><Icon aria-hidden="true" /></span>
             <span>{title}</span>
-            {index === 0 && approval ? <span className={styles.source}>DataCrédito</span> : null}
+            {index === 0 && approval ? <span className={styles.source}>{approval.creditAuthorizationSource === "INTERNAL_EXCEPTION" && !approval.identity?.original.fullName ? "Ingreso manual" : "DataCrédito"}</span> : null}
             <span className={styles.blockState}>{!enabled[index] ? <><LockKeyhole aria-hidden="true" /><span className={styles.srOnly}>Bloqueado: completa el bloque anterior</span></> : done ? <><Check aria-hidden="true" /><span className={styles.srOnly}>Completado</span></> : <span className={styles.srOnly}>Pendiente</span>}</span>
             {enabled[index] ? <ChevronDown className={expanded ? styles.chevronOpen : ""} aria-hidden="true" /> : null}
           </button>

@@ -45,11 +45,24 @@ export async function getDataCreditoCustomerIdentityForDisplay(row: DataCreditoA
     return null;
   }
 }
-export async function enforceDataCreditoCustomerIdentity(payload: Record<string, unknown>, scope: DataCreditoAssessmentScope, saveCorrection = true, actor = { userId: scope.userId, sellerId: scope.sellerId }) {
+async function hasDraftRiskException(row: DataCreditoAssessmentRow, scope: DataCreditoAssessmentScope, payload: Record<string, unknown>, solicitudId?: number) {
+  const exceptionId = String(payload.creditRiskExceptionId || "").trim();
+  if (!exceptionId || !Number.isSafeInteger(solicitudId) || Number(solicitudId) <= 0) return false;
+  const { getActiveCreditRiskExceptionForDraft } = await import("./risk-exception");
+  const exception = await getActiveCreditRiskExceptionForDraft({
+    solicitudId: Number(solicitudId), assessmentId: row.id,
+    documentNumber: String(payload.clienteDocumento || "").replace(/\D/g, ""),
+    platform: row.platform, providerEnvironment: row.providerEnvironment, ...scope,
+  });
+  return exception?.id === exceptionId;
+}
+export async function enforceDataCreditoCustomerIdentity(payload: Record<string, unknown>, scope: DataCreditoAssessmentScope, saveCorrection = true, actor = { userId: scope.userId, sellerId: scope.sellerId }, solicitudId?: number) {
   const id = String(payload.dataCreditoAssessmentId || "");
   if (!id) return null;
   const row = await getDataCreditoAssessmentById(id);
-  if (!row || !dataCreditoAssessmentMatchesScope(row, scope) || row.status !== "APROBADO") throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
+  if (!row || !dataCreditoAssessmentMatchesScope(row, scope)) throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
+  const riskExceptionAuthorized = row.status !== "APROBADO" && await hasDraftRiskException(row, scope, payload, solicitudId);
+  if (row.status !== "APROBADO" && !riskExceptionAuthorized) throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
   const identity = await getDataCreditoCustomerIdentity(row);
   if (!identity) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
   if (String(payload.clienteDocumento || "").replace(/\D/g, "") !== identity.queryDocumentNumber) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");
@@ -78,7 +91,7 @@ export async function enforceDataCreditoCustomerIdentity(payload: Record<string,
     const locked = await transaction.$queryRawUnsafe<Array<{ status: string; consumedAt?: Date | null }>>(
       'SELECT * FROM "DataCreditoAssessment" WHERE "id" = $1 FOR UPDATE', id,
     );
-    if (!locked[0] || locked[0].status !== "APROBADO" || (saveCorrection && locked[0].consumedAt)) {
+    if (!locked[0] || (locked[0].status !== "APROBADO" && !(riskExceptionAuthorized && locked[0].status === "NO_EVALUADO")) || (saveCorrection && locked[0].consumedAt)) {
       throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
     }
     const corrections = await transaction.$queryRawUnsafe<Array<{ effective: typeof identity.original }>>(
@@ -108,25 +121,26 @@ export async function enforceDataCreditoCustomerIdentity(payload: Record<string,
   });
 }
 
-export async function enforceDataCreditoCustomerIdentityForVeriff(payload: Record<string, unknown>, scope: DataCreditoAssessmentScope) {
-  return enforceDataCreditoCustomerIdentity(payload, scope, false);
+export async function enforceDataCreditoCustomerIdentityForVeriff(payload: Record<string, unknown>, scope: DataCreditoAssessmentScope, solicitudId?: number) {
+  return enforceDataCreditoCustomerIdentity(payload, scope, false, undefined, solicitudId);
 }
 
 // Separate administrative procedure: only fills fields absent from the provider.
 // It never changes a field returned by DataCrédito or marks manual values as verified.
-export async function completeMissingDataCreditoIdentity(row: DataCreditoAssessmentRow, input: Record<string, unknown>, actor: { userId: number; sellerId: number | null }) {
+export async function completeMissingDataCreditoIdentity(row: DataCreditoAssessmentRow, input: Record<string, unknown>, actor: { userId: number; sellerId: number | null }, solicitudId?: number) {
   // Read the immutable provider record before holding a transactional connection.
   // All mutable identity reads and writes below use that same transaction client.
   const source = await readDataCreditoIdentitySource(row);
   if (!source) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
   const original = extractDataCreditoIdentity(source.providerPayload, source.documentNumber);
+  const riskExceptionAuthorized = row.status !== "APROBADO" && await hasDraftRiskException(row, { userId: row.userId, sellerId: row.sellerId, sedeId: row.sedeId, aliadoId: row.aliadoId }, { ...input, clienteDocumento: source.documentNumber }, solicitudId);
   await ensureSchema();
 
   return prisma.$transaction(async (transaction) => {
     const locked = await transaction.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
       'SELECT * FROM "DataCreditoAssessment" WHERE "id" = $1 FOR UPDATE', row.id
     );
-    if (!locked[0] || locked[0].status !== "APROBADO" || locked[0].consumedAt) {
+    if (!locked[0] || (locked[0].status !== "APROBADO" && !(riskExceptionAuthorized && locked[0].status === "NO_EVALUADO")) || locked[0].consumedAt) {
       throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
     }
     const corrections = await transaction.$queryRawUnsafe<Array<{ effective: typeof original }>>(
@@ -157,9 +171,10 @@ export async function completeMissingDataCreditoIdentity(row: DataCreditoAssessm
 
 // A completed signature preserves its signed identity. The credit approval still
 // has to match the encrypted query document and its owner, never the browser input.
-export async function getScopedDataCreditoQueryIdentity(id: string, scope: DataCreditoAssessmentScope, expectedDocument: string) {
+export async function getScopedDataCreditoQueryIdentity(id: string, scope: DataCreditoAssessmentScope, expectedDocument: string, solicitudId?: number, exceptionId?: string) {
   const row = await getDataCreditoAssessmentById(id);
-  if (!row || row.status !== "APROBADO" || !dataCreditoAssessmentMatchesScope(row, scope)) throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
+  if (!row || !dataCreditoAssessmentMatchesScope(row, scope)) throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
+  if (row.status !== "APROBADO" && !await hasDraftRiskException(row, scope, { clienteDocumento: expectedDocument, creditRiskExceptionId: exceptionId }, solicitudId)) throw new Error("DATACREDITO_IDENTITY_UNAUTHORIZED");
   const source = await readDataCreditoIdentitySource(row);
   if (!source) throw new Error("DATACREDITO_IDENTITY_SOURCE_UNAVAILABLE");
   if (source.documentNumber !== expectedDocument.replace(/\D/g, "")) throw new Error("DATACREDITO_IDENTITY_DOCUMENT_MISMATCH");

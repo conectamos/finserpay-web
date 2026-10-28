@@ -63,6 +63,8 @@ export type DataCreditoApprovedResult = {
   identity?: { original: DataCreditoIdentity; effective: DataCreditoIdentity } | null;
   offer: DataCreditoOffer;
   expiresAt: string;
+  creditAuthorizationSource?: "INTERNAL_EXCEPTION";
+  creditRiskExceptionId?: string;
 };
 
 export type DatacreditoPrequalificationGateProps = {
@@ -259,7 +261,22 @@ function normalizeApprovedAssessment(
   fallback: AssessmentFallback = {}
 ): DataCreditoApprovedResult | null {
   const source = isRecord(payload.assessment) ? payload.assessment : payload;
-  const offerSource = isRecord(source.offer)
+  const authorization = isRecord(payload.creditAuthorization) &&
+    payload.creditAuthorization.source === "INTERNAL_EXCEPTION"
+      ? payload.creditAuthorization : null;
+  const exceptionId = authorization ? readString(authorization.exceptionId) : null;
+  if (authorization && (
+    String(source.status || "").toUpperCase() !== "NO_EVALUADO" ||
+    !exceptionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(exceptionId) ||
+    !fallback.solicitudId || readNumber(authorization.solicitudId) !== fallback.solicitudId ||
+    readString(authorization.assessmentId) !== (fallback.assessmentId || readString(source.assessmentId)) ||
+    (fallback.documentNumber && readString(source.documentNumber) !== fallback.documentNumber) ||
+    !readString(authorization.expiresAt) || !Number.isFinite(Date.parse(String(authorization.expiresAt))) ||
+    Date.parse(String(authorization.expiresAt)) <= Date.now()
+  )) return null;
+  const offerSource = authorization && isRecord(authorization.offer)
+    ? authorization.offer
+    : isRecord(source.offer)
     ? source.offer
     : isRecord(payload.offer)
       ? payload.offer
@@ -300,7 +317,7 @@ function normalizeApprovedAssessment(
     fallback.platform ||
     null;
   const expiresAt =
-    readString(source.expiresAt) || readString(payload.expiresAt) || null;
+    readString(authorization?.expiresAt) || readString(source.expiresAt) || readString(payload.expiresAt) || null;
   const initialPaymentPercentage = readNumber(
     offerSource.initialPaymentPercentage
   );
@@ -344,6 +361,7 @@ function normalizeApprovedAssessment(
     documentNumber,
     firstSurname,
     identity: (source.identity || payload.identity || null) as DataCreditoApprovedResult["identity"],
+    ...(authorization ? { creditAuthorizationSource: "INTERNAL_EXCEPTION" as const, creditRiskExceptionId: exceptionId! } : {}),
     expiresAt,
     offer: {
       ...offerSource,
@@ -364,6 +382,8 @@ function normalizeDecision(payload: JsonRecord) {
     .trim()
     .toUpperCase();
 
+  if (value === "NO_EVALUADO" && isRecord(payload.creditAuthorization) &&
+      payload.creditAuthorization.source === "INTERNAL_EXCEPTION") return "INTERNAL_EXCEPTION";
   if (value === "APROBADO" || value === "APPROVED") return "APROBADO";
   if (value === "RECHAZADO" || value === "REJECTED") return "RECHAZADO";
   return null;
@@ -1005,7 +1025,7 @@ export default function DatacreditoPrequalificationGate({
           return;
         }
 
-        if (decision === "APROBADO") {
+        if (decision === "APROBADO" || decision === "INTERNAL_EXCEPTION") {
           const approved = normalizeApprovedAssessment(assessmentPayload, {
             solicitudId: initialSolicitudId,
             assessmentId: initialAssessmentId,

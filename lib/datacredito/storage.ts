@@ -3222,6 +3222,21 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
               AND claimed."claimTokenHash" IS NOT NULL
               AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
           )
+          AND NOT EXISTS (
+            SELECT 1 FROM "CreditRiskException" exception
+            WHERE exception."documentHash" = target."documentHash"
+              AND exception."providerEnvironment" = target."providerEnvironment"
+              AND (
+                (exception."claimTokenHash" IS NOT NULL AND exception."claimExpiresAt" > CURRENT_TIMESTAMP)
+                OR (exception."consumedAt" IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM "Credito" prior_credit WHERE prior_credit."id" = exception."creditId"
+                    AND (prior_credit."estado" = 'ANULADO' OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id" AND prior_payment."estado" <> 'ANULADO'
+                    ), 0)))
+                ))
+              )
+          )
         RETURNING target.*
       `,
       match.assessmentId,
@@ -3308,6 +3323,21 @@ async function consumeDataCreditoAssessmentInTransaction(
             AND claimed."claimTokenHash" IS NOT NULL
             AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         )
+          AND NOT EXISTS (
+            SELECT 1 FROM "CreditRiskException" exception
+            WHERE exception."documentHash" = target."documentHash"
+              AND exception."providerEnvironment" = target."providerEnvironment"
+              AND (
+                (exception."claimTokenHash" IS NOT NULL AND exception."claimExpiresAt" > CURRENT_TIMESTAMP)
+                OR (exception."consumedAt" IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM "Credito" prior_credit WHERE prior_credit."id" = exception."creditId"
+                    AND (prior_credit."estado" = 'ANULADO' OR prior_credit."montoCredito" <= GREATEST(0, COALESCE((
+                      SELECT SUM(prior_payment."valor") FROM "CreditoAbono" prior_payment
+                      WHERE prior_payment."creditoId" = prior_credit."id" AND prior_payment."estado" <> 'ANULADO'
+                    ), 0)))
+                ))
+              )
+          )
       FOR UPDATE
     `,
     input.assessmentId,

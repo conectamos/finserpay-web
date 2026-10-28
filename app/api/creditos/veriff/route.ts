@@ -148,8 +148,8 @@ async function validateDraftReadyForVeriff(
   if (!dataCreditoConfig.enabled) {
     return { ok: true as const };
   }
-  const identity = await enforceDataCreditoCustomerIdentityForVeriff(payload, { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId });
-  const assessment = await getApprovedDataCreditoAssessmentForCredit({
+  const identity = await enforceDataCreditoCustomerIdentityForVeriff(payload, { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId }, draft.id);
+  const assessmentMatch = {
     assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
     documentNumber: String(draft.clienteDocumento || "").replace(/\D/g, ""),
     firstSurname: identity?.querySurname || sanitizeText(payload.clientePrimerApellido),
@@ -159,7 +159,14 @@ async function validateDraftReadyForVeriff(
     sellerId: draft.vendedorId,
     sedeId: draft.sedeId,
     aliadoId: draft.aliadoId,
-  });
+  };
+  const exceptionId = sanitizeText(payload.creditRiskExceptionId);
+  const riskAuthorization = exceptionId
+    ? await (await import("@/lib/datacredito/risk-exception")).getCreditRiskAuthorizationForDraft({ ...assessmentMatch, solicitudId: draft.id })
+    : null;
+  const assessment = exceptionId
+    ? riskAuthorization?.source === "INTERNAL_EXCEPTION" && riskAuthorization.exceptionId === exceptionId ? riskAuthorization.assessment : null
+    : await getApprovedDataCreditoAssessmentForCredit(assessmentMatch);
 
   if (!assessment) {
     return {
@@ -350,14 +357,18 @@ export async function POST(request: Request) {
     const draftPayload = payloadObject(draft.payload);
     const fullNameIdentity = "identity" in readiness && readiness.identity?.effective.nameMode === "FULL_NAME_ONLY"
       ? readiness.identity.effective : null;
+    const controlledIdentity = fullNameIdentity || (sanitizeText(draftPayload.creditRiskExceptionId) && "identity" in readiness
+      ? readiness.identity?.effective : null);
     const correctedIdentity = Number(draftPayload.analystDataRevision) > 0;
-    const clientePrimerNombre = fullNameIdentity ? fullNameIdentity.names : sanitizeText(correctedIdentity
+    const clientePrimerNombre = controlledIdentity ? controlledIdentity.names : sanitizeText(correctedIdentity
       ? draftPayload.clientePrimerNombre : body.clientePrimerNombre);
-    const clientePrimerApellido = fullNameIdentity ? fullNameIdentity.firstSurname : sanitizeText(correctedIdentity
+    const clientePrimerApellido = controlledIdentity ? controlledIdentity.firstSurname : sanitizeText(correctedIdentity
       ? draftPayload.clientePrimerApellido : body.clientePrimerApellido);
-    const clienteNombre = fullNameIdentity?.fullName || [clientePrimerNombre, clientePrimerApellido]
+    const clienteNombre = controlledIdentity?.fullName || [clientePrimerNombre, clientePrimerApellido]
       .filter(Boolean)
       .join(" ");
+    const clienteApellidosVeriff = sanitizeText(draftPayload.creditRiskExceptionId) && controlledIdentity?.nameMode !== "FULL_NAME_ONLY" && controlledIdentity
+      ? [controlledIdentity.firstSurname, controlledIdentity.secondSurname].filter(Boolean).join(" ") : clientePrimerApellido;
     const retryPolicy = await getVeriffRetryPolicy(draftId);
 
     if (retryPolicy.applicationRejected) {
@@ -585,7 +596,7 @@ export async function POST(request: Request) {
           ? draftPayload.clienteTipoDocumento : body.clienteTipoDocumento),
         endUserId,
         firstName: clientePrimerNombre,
-        lastName: clientePrimerApellido,
+        lastName: clienteApellidosVeriff,
         vendorData,
       });
     } catch (error) {
