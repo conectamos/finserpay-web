@@ -2,7 +2,7 @@ import { APPROVAL_SHARED_COOKIE_NAME } from "@/lib/session";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { hashPassword, isPasswordHash, verifyPassword } from "@/lib/password";
-import { canReviewCreditApprovals, isApprovalAnalystRole } from "@/lib/roles";
+import { canReviewCreditApprovals, isAdminRole, isApprovalAnalystRole } from "@/lib/roles";
 import {
   SELLER_SESSION_COOKIE_NAME,
   APPROVAL_ANALYST_SESSION_COOKIE_NAME,
@@ -83,13 +83,18 @@ export async function POST(req: Request) {
     let credentialUpdatedAt = user.updatedAt;
     if (!isPasswordHash(user.claveHash)) {
       passwordHash = hashPassword(clave);
-      const updatedUser = await prisma.usuario.update({
-        where: { id: user.id },
+      // A login that read a legacy credential must not restore it after a
+      // concurrent password change has already revoked its sessions.
+      const [updatedUser] = await prisma.usuario.updateManyAndReturn({
+        where: { id: user.id, activo: true, rolId: user.rol.id, claveHash: user.claveHash },
         data: {
           claveHash: passwordHash,
         },
         select: { updatedAt: true },
       });
+      if (!updatedUser) {
+        return NextResponse.json({ error: "La cuenta cambió durante el ingreso. Inténtalo nuevamente." }, { status: 409 });
+      }
       credentialUpdatedAt = updatedUser.updatedAt;
     }
 
@@ -126,7 +131,9 @@ export async function POST(req: Request) {
     } else {
       response.cookies.set(
         SESSION_COOKIE_NAME,
-        createSessionToken(user.id),
+        createSessionToken(user.id, isAdminRole(user.rol.nombre)
+          ? getSessionCredentialVersion(passwordHash)
+          : undefined),
         getSessionCookieOptions()
       );
       response.cookies.set(APPROVAL_ANALYST_SESSION_COOKIE_NAME, "", expiredCookie);
@@ -139,8 +146,8 @@ export async function POST(req: Request) {
     response.cookies.delete("userId");
 
     return response;
-  } catch (error) {
-    console.error("ERROR LOGIN API:", error);
+  } catch {
+    console.error("ERROR LOGIN API: No se pudo completar el ingreso.");
     return NextResponse.json(
       { error: "Error al conectar con el servidor" },
       { status: 500 }

@@ -36,7 +36,7 @@ const analyst = {
 function authFixture() {
   let user = {
     id: 7, nombre: "Analista de prueba", usuario: "analista.prueba", activo: true,
-    claveHash: "isolated-password-hash", updatedAt: new Date("2026-09-09T10:00:00.000Z"),
+    claveHash: "isolated-password-hash", legacySessionRevokedAt: null, updatedAt: new Date("2026-09-09T10:00:00.000Z"),
     sedeId: 1, rolId: 4, rol: { nombre: "ANALISTA_APROBACION" },
     sede: {
       nombre: "Central", aliadoId: 1, activa: true,
@@ -322,7 +322,8 @@ test("el login rechaza analista externo, inactivo o con clave equivocada y conse
   const admin = loginApi({ rol: { nombre: "ADMIN" } });
   const response = await admin.api.POST(request({ usuario: "admin", clave: "test-login-passphrase" }));
   assert.equal((await response.json()).destination, "/dashboard");
-  assert.ok(session.verifySessionToken(admin.cookies.get("session").value));
+  assert.equal(session.verifySessionToken(admin.cookies.get("session").value).credentialVersion,
+    session.getSessionCredentialVersion(admin.user.claveHash));
   assert.equal(admin.cookies.get(session.APPROVAL_ANALYST_SESSION_COOKIE_NAME).value, "");
 });
 

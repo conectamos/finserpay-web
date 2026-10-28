@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import prisma from "@/lib/prisma";
 import { isAdminRole } from "@/lib/roles";
+import { createSessionToken, getSessionCookieOptions, getSessionCredentialVersion, SESSION_COOKIE_NAME } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -108,15 +109,26 @@ export async function PATCH(request: Request) {
     if (!account?.activo || !isAdminRole(account.rol.nombre)) return json({ error: "La cuenta ya no tiene acceso administrativo." }, 403);
     if (!verifyPassword(currentPassword, account.claveHash)) return json({ error: "La contraseña actual no coincide." }, 400);
 
-    // A concurrent password reset, account deactivation or role change must not be overwritten.
+    const passwordHash = hashPassword(newPassword);
+    // Prepare the replacement cookie before committing so signing failures
+    // cannot change the password without a usable session for this browser.
+    const response = json({ ok: true, mensaje: "Contraseña actualizada correctamente. Se cerraron las demás sesiones." });
+    response.cookies.set(
+      SESSION_COOKIE_NAME,
+      createSessionToken(account.id, getSessionCredentialVersion(passwordHash)),
+      getSessionCookieOptions(),
+    );
+
+    // Changing both fields in one CAS revokes legacy and versioned cookies
+    // together, without overwriting a concurrent reset or role change.
     const updated = await prisma.usuario.updateMany({
       where: { id: account.id, activo: true, rolId: account.rolId, claveHash: account.claveHash },
-      data: { claveHash: hashPassword(newPassword) },
+      data: { claveHash: passwordHash, legacySessionRevokedAt: new Date() },
     });
     if (updated.count !== 1) return json({ error: "La cuenta cambió durante la solicitud. Vuelve a ingresar e inténtalo nuevamente." }, 409);
 
     attempts.delete(user.id);
-    return json({ ok: true, mensaje: "Contraseña actualizada correctamente." });
+    return response;
   } catch {
     // Database exceptions may include query parameters. Never log credentials or hashes.
     console.error("[cambio-contrasena] No se pudo completar la actualización.");

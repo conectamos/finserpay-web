@@ -1,4 +1,5 @@
 await import("./ensure-aliado-redescuento-schema.mjs");
+await import("./ensure-admin-session-schema.mjs");
 await import("./ensure-document-blacklist-schema.mjs");
 await import("./ensure-ally-payments-schema.mjs");
 await import("./ensure-ally-contact-schema.mjs");

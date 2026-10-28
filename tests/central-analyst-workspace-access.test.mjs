@@ -6,11 +6,11 @@ import test from "node:test";
 import ts from "typescript";
 
 function load(path, dependencies = {}) {
-  const module = { exports: {} };
+  const loadedModule = { exports: {} };
   const compiled = ts.transpileModule(readFileSync(new URL("../" + path, import.meta.url), "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  runInNewContext(compiled, { module, exports: module.exports, Date, Buffer, Request, Response, URL,
+  runInNewContext(compiled, { module: loadedModule, exports: loadedModule.exports, Date, Buffer, Request, Response, URL,
     process: { env: { SESSION_SECRET: "isolated-workspace-session-secret-32-characters" } },
     require(name) {
       if (name === "node:crypto") return crypto;
@@ -19,19 +19,19 @@ function load(path, dependencies = {}) {
       return dependencies[name];
     },
   }, { filename: path });
-  return module.exports;
+  return loadedModule.exports;
 }
 const session = load("lib/session.ts");
 const roles = load("lib/roles.ts");
 
 function fixture({ role = "ADMIN", central = true, active = true, siteActive = true, allyActive = true } = {}) {
   const user = { id: role === "ADMIN" ? 82 : 17, nombre: "Cuenta personal", usuario: "cuenta.personal", activo: active,
-    claveHash: "isolated-password-hash", updatedAt: new Date("2026-10-01T12:00:00.000Z"), sedeId: 1, rolId: 1,
+    claveHash: "isolated-password-hash", legacySessionRevokedAt: null, updatedAt: new Date("2026-10-01T12:00:00.000Z"), sedeId: 1, rolId: 1,
     rol: { nombre: role }, sede: { id: 1, nombre: "Central", activa: siteActive, aliadoId: 1,
       aliado: { id: 1, codigo: central ? "FINSERPAY" : "ALIADO", nombre: "Finser", activo: allyActive } } };
   const cookies = new Map();
   const version = session.getSessionCredentialVersion(user.claveHash, user.updatedAt);
-  const regular = session.createSessionToken(user.id, version);
+  const regular = session.createSessionToken(user.id, session.getSessionCredentialVersion(user.claveHash));
   const analyst = session.createApprovalAnalystSessionToken(user.id, version);
   cookies.set(role === "ANALISTA_APROBACION" ? session.APPROVAL_ANALYST_SESSION_COOKIE_NAME : session.SESSION_COOKIE_NAME,
     role === "ANALISTA_APROBACION" ? analyst : regular);

@@ -54,6 +54,8 @@ COPY --from=builder \
   /app/scripts/ensure-ally-payments-schema.mjs \
   /app/scripts/ensure-ally-contact-schema.mjs \
   /app/scripts/ally-contact-schema.mjs \
+  /app/scripts/ensure-admin-session-schema.mjs \
+  /app/scripts/admin-session-schema.mjs \
   /app/scripts/ensure-ally-settlement-delivery-schema.mjs \
   /app/scripts/ally-settlement-delivery-schema.mjs \
   /app/scripts/credit-abono-ally-attribution-schema.mjs \

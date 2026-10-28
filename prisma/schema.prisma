@@ -207,6 +207,7 @@ model Usuario {
   nombre          String
   usuario         String                  @unique
   claveHash       String
+  legacySessionRevokedAt DateTime? @db.Timestamp(3)
   avatarKey       String?
   activo          Boolean                 @default(true)
   rolId           Int

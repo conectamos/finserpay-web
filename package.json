@@ -7,7 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
-    "test:admin-access": "node --test tests/admin-password-change.test.mjs tests/central-admin-users.test.mjs tests/central-analyst-*.test.mjs tests/analyst-center-api.test.mjs tests/approval-analyst-access.test.mjs tests/approval-analyst-dashboard-ui.test.mjs",
+    "test:admin-access": "node --test tests/admin-password-change.test.mjs tests/admin-session-*.test.mjs tests/central-admin-users.test.mjs tests/central-analyst-*.test.mjs tests/analyst-center-api.test.mjs tests/approval-analyst-access.test.mjs tests/approval-analyst-dashboard-ui.test.mjs",
     "test:welcome-voice": "node --experimental-strip-types --test --test-concurrency=2 tests/credit-welcome-voice-*.test.mjs tests/credit-voice-review-campaign*.test.mjs",
     "test:settlement-delivery": "node --experimental-strip-types --test tests/ally-contact.test.mjs tests/ally-settlement-delivery-*.test.mjs tests/ally-payment-confirmation.test.mjs tests/ally-payment-settlement-pdf.test.mjs tests/ally-payments.test.mjs tests/ally-payments-core.test.mjs",
     "test:credit-renewal": "node --experimental-strip-types --test tests/paid-credit-new-sale-reservation.test.mjs tests/datacredito-paid-credit-reentry.test.mjs tests/second-credit-paid-renewal.test.mjs",

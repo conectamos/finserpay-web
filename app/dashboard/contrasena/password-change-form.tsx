@@ -43,7 +43,7 @@ export default function PasswordChangeForm() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setSuccess(data.mensaje || "Contraseña actualizada correctamente.");
+      setSuccess(data.mensaje || "Contraseña actualizada correctamente. Se cerraron las demás sesiones.");
     } catch {
       setError("No se pudo conectar con el servidor. Inténtalo nuevamente.");
     } finally {
@@ -55,6 +55,7 @@ export default function PasswordChangeForm() {
   return (
     <Card className="p-6 sm:p-8">
       <form onSubmit={save} className="space-y-6" aria-busy={saving}>
+        <p className="text-sm text-[var(--fp-muted)]">Al guardar, se cerrarán tus otras sesiones. Esta sesión permanecerá abierta.</p>
         <fieldset disabled={saving} className="space-y-5">
           <legend className="sr-only">Contraseña de ingreso</legend>
           <div className="space-y-2">
