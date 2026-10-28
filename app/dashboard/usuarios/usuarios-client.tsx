@@ -648,10 +648,6 @@ export default function GestionVendedoresPage() {
   const actualizarNuevoTipo = (tipoPerfil: TipoPerfilFormulario) => {
     const administrador = tipoPerfil === "ADMINISTRADOR" || tipoPerfil === "ADMIN_CENTRAL";
     setConfirmarClave("");
-    if (tipoPerfil === "ADMIN_CENTRAL") {
-      const aliadoCentral = aliados.find((aliado) => esAliadoFinserPay(aliado.codigo));
-      if (aliadoCentral) setAliadoSeleccionadoId(String(aliadoCentral.id));
-    }
     setNuevo((current) => ({
       ...current,
       tipoPerfil,
@@ -932,12 +928,12 @@ export default function GestionVendedoresPage() {
               <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 lg:col-span-2">
                 Aliado
                 <select
-                  value={aliadoSeleccionadoId}
+                  value={nuevoEsCentral ? "FINSERPAY" : aliadoSeleccionadoId}
                   disabled={nuevoEsCentral}
                   onChange={(event) => setAliadoSeleccionadoId(event.target.value)}
                   className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 >
-                  {aliados.map((aliado) => (
+                  {nuevoEsCentral ? <option value="FINSERPAY">FINSER PAY</option> : aliados.map((aliado) => (
                     <option key={aliado.id} value={aliado.id}>
                       {aliado.nombre}
                     </option>
