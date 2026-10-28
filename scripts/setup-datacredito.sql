@@ -1146,4 +1146,53 @@ DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger
       CREATE TRIGGER "FirmaSeguroIdentityReview_immutable" BEFORE UPDATE OR DELETE ON "FirmaSeguroIdentityReview"
       FOR EACH ROW EXECUTE FUNCTION "FinserRejectFirmaSeguroIdentityReviewMutation"(); END IF; END $$;
 
+-- BEGIN SINGLE CASE INTERNAL RISK EXCEPTION
+-- Internal authority is independent of the immutable NO_EVALUADO provider reply.
+CREATE TABLE IF NOT EXISTS "CreditRiskException" (
+  "id" UUID PRIMARY KEY, "mutationId" UUID NOT NULL UNIQUE, "requestHash" TEXT NOT NULL,
+  "solicitudId" INTEGER NOT NULL UNIQUE, "assessmentId" UUID NOT NULL UNIQUE,
+  "documentHash" TEXT NOT NULL, "surnameHash" TEXT NOT NULL,
+  "platform" TEXT NOT NULL CHECK ("platform" IN ('ANDROID','IPHONE')), "providerEnvironment" TEXT NOT NULL,
+  "userId" INTEGER NOT NULL, "sellerId" INTEGER, "sedeId" INTEGER NOT NULL, "aliadoId" INTEGER,
+  "actorUserId" INTEGER NOT NULL, "reason" TEXT NOT NULL CHECK (LENGTH(BTRIM("reason")) BETWEEN 10 AND 500),
+  "riskAcknowledged" BOOLEAN NOT NULL CHECK ("riskAcknowledged"=TRUE),
+  "policyVersion" INTEGER NOT NULL CHECK ("policyVersion">0), "policyRevisionId" UUID NOT NULL,
+  "offer" JSONB NOT NULL CHECK (jsonb_typeof("offer")='object'),
+  "providerStatus" TEXT NOT NULL CHECK ("providerStatus"='ACCEPTED'),
+  "transactionCode" TEXT NOT NULL CHECK ("transactionCode"='07'), "historyCode" TEXT NOT NULL CHECK ("historyCode"='09'),
+  "errorCode" TEXT NOT NULL CHECK ("errorCode"='NO_EVALUABLE_INFORMATION'),
+  "expiresAt" TIMESTAMPTZ NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "revokedAt" TIMESTAMPTZ,
+  "claimedAt" TIMESTAMPTZ, "claimTokenHash" TEXT, "claimExpiresAt" TIMESTAMPTZ,
+  "consumedAt" TIMESTAMPTZ, "creditId" INTEGER UNIQUE,
+  CHECK (("consumedAt" IS NULL)=("creditId" IS NULL)),
+  CHECK (("claimTokenHash" IS NULL)=("claimExpiresAt" IS NULL)),
+  CHECK ("expiresAt">"createdAt")
+);
+CREATE INDEX IF NOT EXISTS "CreditRiskException_document_idx" ON "CreditRiskException" ("documentHash","providerEnvironment");
+ALTER TABLE IF EXISTS "CreditoBorrador" ADD COLUMN IF NOT EXISTS "creditRiskExceptionId" UUID;
+CREATE TABLE IF NOT EXISTS "CreditRiskExceptionAudit" (
+  "id" BIGSERIAL PRIMARY KEY, "exceptionId" UUID NOT NULL,
+  "action" TEXT NOT NULL CHECK ("action" IN ('AUTHORIZED','CLAIMED','RELEASED','CONSUMED','REVOKED')),
+  "actorUserId" INTEGER, "solicitudId" INTEGER NOT NULL, "assessmentId" UUID NOT NULL,
+  "documentHash" TEXT NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "CreditRiskExceptionAudit_exception_idx" ON "CreditRiskExceptionAudit" ("exceptionId","id");
+CREATE OR REPLACE FUNCTION "FinserProtectCreditRiskException"() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'Internal risk decisions cannot be deleted'; END IF;
+  IF (to_jsonb(NEW)-ARRAY['claimedAt','claimTokenHash','claimExpiresAt','consumedAt','creditId','revokedAt','updatedAt']) IS DISTINCT FROM
+     (to_jsonb(OLD)-ARRAY['claimedAt','claimTokenHash','claimExpiresAt','consumedAt','creditId','revokedAt','updatedAt']) THEN
+    RAISE EXCEPTION 'Internal risk decision and terms are immutable';
+  END IF;
+  IF OLD."consumedAt" IS NOT NULL AND (NEW."consumedAt" IS DISTINCT FROM OLD."consumedAt" OR NEW."creditId" IS DISTINCT FROM OLD."creditId") THEN RAISE EXCEPTION 'Internal risk consumption is final'; END IF;
+  IF OLD."revokedAt" IS NOT NULL AND NEW."revokedAt" IS DISTINCT FROM OLD."revokedAt" THEN RAISE EXCEPTION 'Internal risk revocation is final'; END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS "CreditRiskException_immutable_decision" ON "CreditRiskException";
+CREATE TRIGGER "CreditRiskException_immutable_decision" BEFORE UPDATE OR DELETE ON "CreditRiskException" FOR EACH ROW EXECUTE FUNCTION "FinserProtectCreditRiskException"();
+CREATE OR REPLACE FUNCTION "FinserRejectCreditRiskExceptionAuditMutation"() RETURNS TRIGGER AS $$ BEGIN RAISE EXCEPTION 'Internal risk audit is immutable'; END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS "CreditRiskExceptionAudit_immutable" ON "CreditRiskExceptionAudit";
+CREATE TRIGGER "CreditRiskExceptionAudit_immutable" BEFORE UPDATE OR DELETE ON "CreditRiskExceptionAudit" FOR EACH ROW EXECUTE FUNCTION "FinserRejectCreditRiskExceptionAuditMutation"();
+-- END SINGLE CASE INTERNAL RISK EXCEPTION
 COMMIT;

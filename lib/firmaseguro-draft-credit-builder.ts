@@ -77,6 +77,8 @@ export type DraftRow = {
 
 export type DraftDataCreditoOffer = {
   assessmentId: string;
+  authorizationSource?: "DATACREDITO" | "INTERNAL_EXCEPTION";
+  creditRiskExceptionId?: string | null;
   policyVersion: number;
   policyRevisionId: string;
   initialPaymentPercentage: number;
@@ -162,8 +164,8 @@ export async function getDraftDataCreditoOffer(
     );
   }
 
-  const identity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
-  const assessment = await getApprovedDataCreditoAssessmentForCredit({
+  const identity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false, undefined, row.id);
+  const assessmentMatch = {
     assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
     documentNumber,
     firstSurname: identity?.querySurname || sanitizeText(payload.clientePrimerApellido),
@@ -173,7 +175,15 @@ export async function getDraftDataCreditoOffer(
     sellerId: row.vendedorId,
     sedeId: row.sedeId,
     aliadoId: row.sedeAliadoId,
-  });
+  };
+  const exceptionId = sanitizeText(payload.creditRiskExceptionId);
+  const riskAuthorization = exceptionId
+    ? await (await import("@/lib/datacredito/risk-exception")).getCreditRiskAuthorizationForDraft({ ...assessmentMatch, solicitudId: row.id })
+    : null;
+  const assessment = exceptionId
+    ? riskAuthorization?.source === "INTERNAL_EXCEPTION" && riskAuthorization.exceptionId === exceptionId ? riskAuthorization.assessment : null
+    : await getApprovedDataCreditoAssessmentForCredit(assessmentMatch);
+  const offer = riskAuthorization?.offer || assessment?.offer;
 
   if (!assessment) {
     throw new CreditValidationError(
@@ -184,13 +194,13 @@ export async function getDraftDataCreditoOffer(
   }
 
   const initialPaymentPercentage = Number(
-    assessment.offer?.initialPaymentPercentage
+    offer?.initialPaymentPercentage
   );
-  const suretyPercentage = Number(assessment.offer?.suretyPercentage);
-  const maxFinancedAmount = Number(assessment.offer?.maxFinancedAmount);
+  const suretyPercentage = Number(offer?.suretyPercentage);
+  const maxFinancedAmount = Number(offer?.maxFinancedAmount);
   const financingTerms = resolveDataCreditoOfferFinancingTerms(
     platform,
-    assessment.offer
+    offer
   );
   const validOffer =
     Number.isFinite(initialPaymentPercentage) &&
@@ -213,15 +223,19 @@ export async function getDraftDataCreditoOffer(
 
   return {
     assessmentId: assessment.id,
-    policyVersion: assessment.policyVersion,
-    policyRevisionId: assessment.policyRevisionId,
+    ...(riskAuthorization?.source === "INTERNAL_EXCEPTION" ? {
+      authorizationSource: "INTERNAL_EXCEPTION" as const,
+      creditRiskExceptionId: riskAuthorization.exceptionId,
+    } : {}),
+    policyVersion: riskAuthorization?.policyVersion ?? assessment.policyVersion,
+    policyRevisionId: riskAuthorization?.policyRevisionId || assessment.policyRevisionId,
     initialPaymentPercentage,
     suretyPercentage,
     maxFinancedAmount,
     installmentCount: financingTerms.installmentCount,
     maxInstallmentAmount: financingTerms.maxInstallmentAmount,
     usedLegacyFinancingTermsFallback: financingTerms.usedLegacyFallback,
-    financialSettings: assessment.offer?.financialSettings || null,
+    financialSettings: offer?.financialSettings || null,
   };
 }
 
@@ -232,7 +246,7 @@ export async function buildDraftCredit(
   // Identity recovery may fill canonical fields. Keep the persisted source
   // immutable: the dispatch ledger compares it with the locked database row.
   const payload = { ...payloadObject(row.payload) };
-  const dataCreditoIdentity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false);
+  const dataCreditoIdentity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false, undefined, row.id);
   let firmaSeguroIdentity: Awaited<ReturnType<typeof getFirmaSeguroFullNameIdentityForDraft>> | null = null;
   if (options.requireFirmaSeguroIdentity && dataCreditoIdentity) {
     try {
@@ -343,7 +357,10 @@ export async function buildDraftCredit(
     plataformaDispositivo
   );
   const dataCreditoCreditLimit = dataCreditoOffer
-    ? await resolveDataCreditoManualCreditLimit({
+    ? dataCreditoOffer.authorizationSource === "INTERNAL_EXCEPTION"
+      ? { source: "POLICY" as const, policyMaxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
+          maxFinancedAmount: dataCreditoOffer.maxFinancedAmount, manualLimit: null }
+      : await resolveDataCreditoManualCreditLimit({
         documento: clienteDocumento,
         policyMaxFinancedAmount: dataCreditoOffer.maxFinancedAmount,
       })
@@ -477,6 +494,12 @@ export async function buildDraftCredit(
     contratoSnapshot: {
       borradorId: row.id,
       origen: "BORRADOR_FIRMASEGURO",
+      ...(dataCreditoOffer?.authorizationSource === "INTERNAL_EXCEPTION" ? { creditAuthorization: {
+        source: "INTERNAL_EXCEPTION", exceptionId: dataCreditoOffer.creditRiskExceptionId,
+        assessmentId: dataCreditoOffer.assessmentId, providerStatus: "NO_EVALUADO",
+        policyVersion: dataCreditoOffer.policyVersion, policyRevisionId: dataCreditoOffer.policyRevisionId,
+        offer: dataCreditoOffer,
+      } } : {}),
       dataCreditoIdentity,
       ...(firmaSeguroIdentity ? { firmaSeguroIdentity, firmaSeguroContractNameVersion: 1 } : {}),
       ...(amortizationPlan.version === ARES_COMMERCIAL_AMORTIZATION_VERSION
@@ -494,6 +517,10 @@ export async function buildDraftCredit(
       dataCredito: dataCreditoOffer
         ? {
             assessmentId: dataCreditoOffer.assessmentId,
+            ...(dataCreditoOffer.authorizationSource === "INTERNAL_EXCEPTION" ? {
+              authorizationSource: "INTERNAL_EXCEPTION", creditRiskExceptionId: dataCreditoOffer.creditRiskExceptionId,
+              providerStatus: "NO_EVALUADO",
+            } : {}),
             policyVersion: dataCreditoOffer.policyVersion,
             policyRevisionId: dataCreditoOffer.policyRevisionId,
             policyMaxFinancedAmount: dataCreditoOffer.maxFinancedAmount,

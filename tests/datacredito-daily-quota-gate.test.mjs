@@ -914,3 +914,57 @@ test("la explicación de respuesta no evaluable exige su código y estado permit
   }
   assert.equal(harness.functions.isRecoverableInitialAssessmentFailure(new Response(null, { status: 422 }), { code: "NO_EVALUABLE_INFORMATION" }), false);
 });
+
+
+const exceptionalApproval = () => ({
+  ok: true, status: "NO_EVALUADO", assessmentId: approved.assessment.assessmentId,
+  platform: "IPHONE", solicitudId: 12, documentNumber: "123456789", firstSurname: "PRUEBA",
+  offer: null, expiresAt: "2099-10-25T05:00:00.000Z",
+  creditAuthorization: {
+    source: "INTERNAL_EXCEPTION", exceptionId: "a710d188-4f94-44ef-94cd-42f8807f4daf",
+    solicitudId: 12, assessmentId: approved.assessment.assessmentId,
+    expiresAt: "2099-10-24T05:00:00.000Z", offer: { ...approved.assessment.offer },
+  },
+});
+
+test("restores a scoped internal risk authorization by GET without changing the provider result", async () => {
+  const payload = exceptionalApproval();
+  const harness = createGateHarness({
+    callbacks: ["loadInitialState"],
+    overrides: { initialSolicitudId: 12, initialAssessmentId: payload.assessmentId },
+    responses: [{ body: policy }, { body: payload }],
+  });
+  await harness.functions.loadInitialState();
+  assert.deepEqual(harness.requests.map(request => request.method), ["GET", "GET"]);
+  assert.match(harness.requests[1].url, /draftId=12/);
+  assert.equal(harness.approvals.length, 1);
+  assert.equal(harness.approvals[0].creditAuthorizationSource, "INTERNAL_EXCEPTION");
+  assert.equal(harness.approvals[0].creditRiskExceptionId, payload.creditAuthorization.exceptionId);
+  assert.equal(harness.approvals[0].offer.maxFinancedAmount, payload.creditAuthorization.offer.maxFinancedAmount);
+  assert.equal(harness.approvals[0].expiresAt, payload.creditAuthorization.expiresAt);
+  assert.equal(payload.status, "NO_EVALUADO");
+  assert.equal(payload.offer, null);
+});
+
+test("rejects stale, mismatched or malformed internal authorization snapshots", () => {
+  const { functions } = createGateHarness({ callbacks: [] });
+  const fallback = { solicitudId: 12, assessmentId: approved.assessment.assessmentId, documentNumber: "123456789", firstSurname: "PRUEBA" };
+  const valid = exceptionalApproval();
+  assert.equal(functions.normalizeDecision(valid), "INTERNAL_EXCEPTION");
+  assert.equal(functions.normalizeApprovedAssessment(valid, fallback).creditAuthorizationSource, "INTERNAL_EXCEPTION");
+  for (const mutation of [
+    value => { value.creditAuthorization.solicitudId = 13; },
+    value => { value.creditAuthorization.assessmentId = "b710d188-4f94-44ef-94cd-42f8807f4daf"; },
+    value => { value.creditAuthorization.exceptionId = "not-an-authorization"; },
+    value => { value.creditAuthorization.expiresAt = "2000-10-24T05:00:00.000Z"; },
+    value => { value.creditAuthorization.expiresAt = "invalid"; },
+    value => { value.documentNumber = "987654321"; },
+    value => { value.status = "RECHAZADO"; },
+    value => { value.creditAuthorization.offer = null; },
+  ]) {
+    const payload = exceptionalApproval(); mutation(payload);
+    assert.equal(functions.normalizeApprovedAssessment(payload, fallback), null, JSON.stringify(payload));
+  }
+  assert.equal(functions.normalizeApprovedAssessment(valid, { ...fallback, solicitudId: null }), null);
+  assert.equal(functions.normalizeDecision({ ...valid, creditAuthorization: undefined }), null);
+});

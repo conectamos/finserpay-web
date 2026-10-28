@@ -1164,11 +1164,14 @@ test("la fábrica sincroniza el resultado y el portal usa un acceso compartido s
     factorySource,
     /const deliveryEvidenceUnlocked = iphoneFactory\s*\? iphoneEnrollmentReady\s*:\s*androidEnrollmentReady/
   );
-  assert.match(factorySource, /iphoneFactory && nextStep === 5 && draftId/);
-  assert.match(
-    factorySource,
-    /await saveDraftPayloadForVeriff\(\s*factoryDraftPayload,\s*nextStep,\s*draftId\s*\)/
-  );
+  const persistWizardStep = factorySource.slice(factorySource.indexOf("const persistWizardStep"), factorySource.indexOf("const goToStep"));
+  const advanceToStep = factorySource.slice(factorySource.indexOf("const advanceToStep"), factorySource.indexOf("const requestEquipmentImeiConfirmation"));
+  assert.ok(persistWizardStep.startsWith("const persistWizardStep") && advanceToStep.startsWith("const advanceToStep"));
+  assert.match(persistWizardStep, /await saveCurrentDraft\(persistedWizardStep,[\s\S]*setWizardStep\(nextStep\)/,
+    "el paso de entrega, igual que los demás pasos, se muestra sólo después del guardado autoritativo");
+  assert.match(advanceToStep, /wizardStep === 4 && !stepIdentityContractReady/,
+    "la navegación mantiene el requisito de identidad y firma antes de entrega");
+  assert.match(advanceToStep, /await persistWizardStep\(targetStep\)/);
 
   assert.match(portalSource, /fragment\.get\("acceso"\)/);
   assert.match(portalSource, /window\.history\.replaceState/);

@@ -1166,7 +1166,8 @@ test("DataCredito aprobado se reanuda por GET en la misma solicitud sin POST ni 
     "function normalizeApprovedAssessment",
     "function normalizeDecision"
   );
-  const approvedStart = bootstrap.indexOf('if (decision === "APROBADO")');
+  const approvedStart = bootstrap.search(/if\s*\(decision === "APROBADO"(?:\s*\|\|\s*decision === "INTERNAL_EXCEPTION")?\)/);
+  assert.ok(approvedStart >= 0, "la restauración conserva el camino aprobado y sólo admite la autoridad interna explícita adicional");
   const approvedEnd = bootstrap.indexOf("} catch (error)", approvedStart);
   const approvedBootstrap = bootstrap.slice(approvedStart, approvedEnd);
   const resumeBranch = approvedBootstrap.match(

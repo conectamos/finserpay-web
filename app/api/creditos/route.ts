@@ -1,4 +1,5 @@
 import type { DataCreditoIdentity } from "@/lib/datacredito/identity";
+import type { CreditRiskAuthorization } from "@/lib/datacredito/risk-exception";
 import { FirmaSeguroFullNameIdentityError, readFirmaSeguroFullNameIdentity } from "@/lib/datacredito/firmaseguro-identity";
 import { requireDraftImeiConfirmation } from "@/lib/credit-imei-confirmation-storage";
 import { ImeiConfirmationError } from "@/lib/credit-imei-confirmation";
@@ -405,6 +406,7 @@ type CreditCreateBody = {
   fotoRemisionSource?: string;
   cuotaInicial?: number | string;
   dataCreditoAssessmentId?: string | null;
+  creditRiskExceptionId?: string | null;
   solicitudId?: number | string | null;
   deviceUid?: string;
   equipoMarca?: string;
@@ -1130,6 +1132,10 @@ export async function POST(req: Request) {
   } | null = null;
   let dataCreditoAssessmentMatch: DataCreditoAssessmentMatchInput | null =
     null;
+  let creditRiskExceptionClaim: {
+    match: DataCreditoAssessmentMatchInput & { solicitudId: number; exceptionId: string; actorUserId: number };
+    claimToken: string;
+  } | null = null;
   let createdCreditId: number | null = null;
   let canViewSensitiveCredit = false;
   let solicitudOperationLock:
@@ -1628,6 +1634,7 @@ export async function POST(req: Request) {
     const dataCreditoProvider = getDataCreditoPublicConfig();
     const dataCreditoRequired = dataCreditoProvider.enabled;
     let dataCreditoAssessment: DataCreditoAssessmentRow | null = null;
+    let creditRiskAuthorization: CreditRiskAuthorization | null = null;
     let recoveredCustomerIdentity: { original: DataCreditoIdentity; effective: DataCreditoIdentity; querySurname: string } | null = null;
 
     if (dataCreditoRequired) {
@@ -1694,13 +1701,13 @@ export async function POST(req: Request) {
       const identityScope = { userId: creditOwner.usuarioId, sellerId: creditOwner.vendedorId, sedeId: creditOwner.sedeId, aliadoId: creditOwner.aliadoId };
       let querySurname = "";
       if (hasAuthoritativeSignedIdentity) {
-        const signedQueryIdentity = await getScopedDataCreditoQueryIdentity(assessmentId, identityScope, clienteDocumento);
+        const signedQueryIdentity = await getScopedDataCreditoQueryIdentity(assessmentId, identityScope, clienteDocumento, requestedSolicitudId || undefined, sanitizeText(body.creditRiskExceptionId));
         querySurname = signedQueryIdentity.querySurname;
         // Provider names are optional metadata here, never a new prerequisite
         // for delivery of a document whose identity is already signed.
         recoveredCustomerIdentity = await getDataCreditoCustomerIdentityForDisplay(signedQueryIdentity.assessment);
       } else {
-        recoveredCustomerIdentity = await enforceDataCreditoCustomerIdentity(body as unknown as Record<string, unknown>, identityScope, false);
+        recoveredCustomerIdentity = await enforceDataCreditoCustomerIdentity(body as unknown as Record<string, unknown>, identityScope, false, undefined, requestedSolicitudId || undefined);
         querySurname = recoveredCustomerIdentity?.querySurname || "";
         if (recoveredCustomerIdentity?.effective.nameMode === "FULL_NAME_ONLY") {
           clientePrimerNombre = recoveredCustomerIdentity.effective.names;
@@ -1719,10 +1726,16 @@ export async function POST(req: Request) {
         sedeId: creditOwner.sedeId,
         aliadoId: creditOwner.aliadoId,
       };
-      dataCreditoAssessment =
-        await getApprovedDataCreditoAssessmentForCredit(
-          dataCreditoAssessmentMatch
-        );
+      const requestedRiskExceptionId = sanitizeText(body.creditRiskExceptionId);
+      if (requestedRiskExceptionId && requestedSolicitudId) {
+        creditRiskAuthorization = await (await import("@/lib/datacredito/risk-exception")).getCreditRiskAuthorizationForDraft({
+          ...dataCreditoAssessmentMatch, solicitudId: requestedSolicitudId,
+        });
+        dataCreditoAssessment = creditRiskAuthorization?.source === "INTERNAL_EXCEPTION" &&
+          creditRiskAuthorization.exceptionId === requestedRiskExceptionId ? creditRiskAuthorization.assessment : null;
+      } else {
+        dataCreditoAssessment = requestedRiskExceptionId ? null : await getApprovedDataCreditoAssessmentForCredit(dataCreditoAssessmentMatch);
+      }
 
       if (!dataCreditoAssessment) {
         const recovery = await recoverDataCreditoCredit(
@@ -1759,6 +1772,9 @@ export async function POST(req: Request) {
       }
     }
 
+    const dataCreditoOffer = creditRiskAuthorization?.offer || dataCreditoAssessment?.offer || null;
+    const dataCreditoPolicyVersion = creditRiskAuthorization?.policyVersion ?? dataCreditoAssessment?.policyVersion ?? null;
+    const dataCreditoPolicyRevisionId = creditRiskAuthorization?.policyRevisionId || dataCreditoAssessment?.policyRevisionId || null;
     const dataCreditoFullNameOnly = recoveredCustomerIdentity?.effective.nameMode === "FULL_NAME_ONLY";
     const verifiedFullName = hasAuthoritativeSignedIdentity && (!clientePrimerNombre || !clientePrimerApellido)
       ? clienteNombre
@@ -1823,18 +1839,18 @@ export async function POST(req: Request) {
       plataformaDispositivo
     );
     const dataCreditoInitialPaymentPercentage = Number(
-      dataCreditoAssessment?.offer?.initialPaymentPercentage
+      dataCreditoOffer?.initialPaymentPercentage
     );
     const dataCreditoSuretyPercentage = Number(
-      dataCreditoAssessment?.offer?.suretyPercentage
+      dataCreditoOffer?.suretyPercentage
     );
     const dataCreditoPolicyMaxFinancedAmount = Number(
-      dataCreditoAssessment?.offer?.maxFinancedAmount
+      dataCreditoOffer?.maxFinancedAmount
     );
     const dataCreditoFinancingTerms = dataCreditoAssessment
       ? resolveDataCreditoOfferFinancingTerms(
           plataformaDispositivo,
-          dataCreditoAssessment.offer
+          dataCreditoOffer
         )
       : null;
     const hasValidDataCreditoOffer =
@@ -1862,7 +1878,10 @@ export async function POST(req: Request) {
     }
 
     const dataCreditoCreditLimit = dataCreditoAssessment
-      ? await resolveDataCreditoManualCreditLimit({
+      ? creditRiskAuthorization?.source === "INTERNAL_EXCEPTION"
+        ? { source: "POLICY" as const, policyMaxFinancedAmount: dataCreditoPolicyMaxFinancedAmount,
+            maxFinancedAmount: dataCreditoPolicyMaxFinancedAmount, manualLimit: null }
+        : await resolveDataCreditoManualCreditLimit({
           documento: clienteDocumento,
           policyMaxFinancedAmount: dataCreditoPolicyMaxFinancedAmount,
         })
@@ -1937,7 +1956,7 @@ export async function POST(req: Request) {
         : resolveCreditPolicyFinancialSettings({
             globalSettings: effectiveCreditSettings.globalSettings,
             policyFinancialSettings:
-              dataCreditoAssessment?.offer?.financialSettings,
+              dataCreditoOffer?.financialSettings,
             legacyOfferSuretyPercentage: dataCreditoAssessment
               ? dataCreditoSuretyPercentage
               : null,
@@ -1959,7 +1978,9 @@ export async function POST(req: Request) {
       resolvedPolicyFinancialSettings.frecuenciaPago
     );
     const policyFinancialSettings =
-      dataCreditoAssessment?.offer?.financialSettings || null;
+      dataCreditoOffer?.financialSettings || null;
+    const riskFinancialSource = creditRiskAuthorization?.source === "INTERNAL_EXCEPTION"
+      ? "EXCEPCION_INTERNA" : "POLITICA_DATACREDITO";
     const financialParameterOrigins = signedTermsSnapshot
       ? {
           calculo: signedTermsSnapshot.calculoVersion,
@@ -1972,15 +1993,15 @@ export async function POST(req: Request) {
       : {
           calculo: resolvedPolicyFinancialSettings.calculoVersion,
           tasaInteresEa: policyFinancialSettings
-            ? "POLITICA_DATACREDITO"
+            ? riskFinancialSource
             : "CONFIGURACION_GLOBAL",
           fianzaModalidad: resolvedPolicyFinancialSettings.fianzaModalidad,
           fianzaFuente: resolvedPolicyFinancialSettings.fianzaSource,
           seguro: policyFinancialSettings
-            ? "POLITICA_DATACREDITO"
+            ? riskFinancialSource
             : "CONFIGURACION_GLOBAL",
           frecuenciaPago: policyFinancialSettings
-            ? "POLITICA_DATACREDITO"
+            ? riskFinancialSource
             : "CONFIGURACION_GLOBAL",
         };
     const fechaCredito = new Date();
@@ -2003,6 +2024,10 @@ export async function POST(req: Request) {
     }
     const fechaPrimerPago = firstPaymentResolution.date;
     const firmaSeguroPasoContratos = Boolean(body.firmaSeguroPasoContratos);
+    if (creditRiskAuthorization?.source === "INTERNAL_EXCEPTION" && !firmaSeguroPasoContratos) {
+      return NextResponse.json({ code: "CREDIT_RISK_EXCEPTION_SIGNATURE_REQUIRED",
+        error: "La autorización interna exige completar FirmaSeguro antes de cerrar este crédito." }, { status: 409 });
+    }
     const firmaSeguroProcessUuid = sanitizeText(body.firmaSeguroProcessUuid);
     let firmaSeguroProcess:
       | Awaited<ReturnType<typeof getFirmaSeguroProcessByUuid>>
@@ -2210,10 +2235,10 @@ export async function POST(req: Request) {
           resolvedPolicyFinancialSettings.redondeoComercial,
         policyVersion: signedTermsSnapshot
           ? signedTermsSnapshot.policyVersion
-          : dataCreditoAssessment?.policyVersion || null,
+          : dataCreditoPolicyVersion,
         policyRevisionId: signedTermsSnapshot
           ? signedTermsSnapshot.policyRevisionId
-          : dataCreditoAssessment?.policyRevisionId || null,
+          : dataCreditoPolicyRevisionId,
       },
     });
 
@@ -3045,7 +3070,16 @@ export async function POST(req: Request) {
       );
     }
 
-    if (dataCreditoAssessment && dataCreditoAssessmentMatch) {
+    if (creditRiskAuthorization?.source === "INTERNAL_EXCEPTION" && creditRiskAuthorization.exceptionId &&
+        dataCreditoAssessmentMatch && requestedSolicitudId) {
+      const match = { ...dataCreditoAssessmentMatch, solicitudId: requestedSolicitudId,
+        exceptionId: creditRiskAuthorization.exceptionId, actorUserId: user.id };
+      const claimed = await (await import("@/lib/datacredito/risk-exception")).claimCreditRiskException(match);
+      if (!claimed) return NextResponse.json({ code: "CREDIT_RISK_EXCEPTION_INVALID",
+        error: "La autorización interna ya fue utilizada, venció o está siendo procesada." }, { status: 409 });
+      creditRiskExceptionClaim = { match, claimToken: claimed.claimToken };
+    }
+    if (dataCreditoAssessment && dataCreditoAssessmentMatch && creditRiskAuthorization?.source !== "INTERNAL_EXCEPTION") {
       const claimed = await claimDataCreditoAssessment(
         dataCreditoAssessmentMatch
       );
@@ -3214,6 +3248,12 @@ export async function POST(req: Request) {
             expectedDraftId: solicitudReservation.id })
         : null;
     const contratoSnapshot = {
+      ...(creditRiskAuthorization?.source === "INTERNAL_EXCEPTION" ? { creditAuthorization: {
+        source: creditRiskAuthorization.source, exceptionId: creditRiskAuthorization.exceptionId,
+        assessmentId: creditRiskAuthorization.assessment.id, providerStatus: creditRiskAuthorization.assessment.status,
+        policyVersion: creditRiskAuthorization.policyVersion, policyRevisionId: creditRiskAuthorization.policyRevisionId,
+        expiresAt: creditRiskAuthorization.expiresAt.toISOString(), offer: creditRiskAuthorization.offer,
+      } } : {}),
       firmaSeguroIdentity,
       ...(firmaSeguroIdentity && signedIdentityPayload?.firmaSeguroContractNameVersion === 1
         ? { firmaSeguroContractNameVersion: 1 } : {}),
@@ -3331,8 +3371,13 @@ export async function POST(req: Request) {
         dataCredito: dataCreditoAssessment
           ? {
               assessmentId: dataCreditoAssessment.id,
-              policyVersion: dataCreditoAssessment.policyVersion,
-              policyRevisionId: dataCreditoAssessment.policyRevisionId,
+              ...(creditRiskAuthorization?.source === "INTERNAL_EXCEPTION" ? {
+                authorizationSource: creditRiskAuthorization.source,
+                creditRiskExceptionId: creditRiskAuthorization.exceptionId,
+                providerStatus: dataCreditoAssessment.status,
+              } : {}),
+              policyVersion: dataCreditoPolicyVersion,
+              policyRevisionId: dataCreditoPolicyRevisionId,
               policyMaxFinancedAmount: dataCreditoPolicyMaxFinancedAmount,
               manualMaxFinancedAmount:
                 dataCreditoCreditLimit?.manualLimit?.maxFinancedAmount ?? null,
@@ -3611,9 +3656,9 @@ export async function POST(req: Request) {
         resolvedPolicyFinancialSettings.redondeoComercial,
       origenParametros: financialParameterOrigins,
       dataCreditoAssessmentId: dataCreditoAssessment?.id || null,
-      dataCreditoPolicyVersion: dataCreditoAssessment?.policyVersion || null,
+      dataCreditoPolicyVersion,
       dataCreditoPolicyRevisionId:
-        dataCreditoAssessment?.policyRevisionId || null,
+        dataCreditoPolicyRevisionId,
       dataCreditoInstallmentCount:
         dataCreditoFinancingTerms?.installmentCount || null,
       dataCreditoMaxInstallmentCount:
@@ -3895,6 +3940,14 @@ export async function POST(req: Request) {
           );
         }
       }
+      // Consume the separate authority in the same transaction, while its
+      // authoritative draft is still open. Any later failure rolls it back.
+      if (creditRiskExceptionClaim) {
+        const consumed = await (await import("@/lib/datacredito/risk-exception")).consumeCreditRiskException({
+          ...creditRiskExceptionClaim.match, claimToken: creditRiskExceptionClaim.claimToken, creditId: credit.id,
+        }, transaction);
+        if (!consumed) throw new Error("CREDIT_RISK_EXCEPTION_CONSUME_CONFLICT");
+      }
       const linkedSolicitudId = await completeSolicitudForCredit(
         {
           solicitudId: solicitudReservation.id,
@@ -3946,6 +3999,7 @@ export async function POST(req: Request) {
       creationResult = await prisma.$transaction((transaction) =>
         createCreditWithAmortization(transaction)
       );
+      creditRiskExceptionClaim = null;
     }
     // Only a committed outbox event wakes voice. The cron remains the durable fallback.
     if (creationResult.voiceWelcomeEnqueued && process.env.DAPTA_WELCOME_VOICE_ENABLED === "true") {
@@ -4104,6 +4158,12 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   } finally {
+    if (creditRiskExceptionClaim && !createdCreditId) {
+      await (await import("@/lib/datacredito/risk-exception")).releaseCreditRiskException({
+        ...creditRiskExceptionClaim.match, claimToken: creditRiskExceptionClaim.claimToken,
+      }).catch(() => undefined);
+      creditRiskExceptionClaim = null;
+    }
     if (dataCreditoClaim && !createdCreditId) {
       await releaseDataCreditoAssessment(dataCreditoClaim).catch(() => undefined);
       dataCreditoClaim = null;

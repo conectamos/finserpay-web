@@ -7,6 +7,7 @@ import {
   collectSolicitudBlacklistDocuments,
 } from "@/lib/solicitud-blacklist-locks";
 import { ensureDataCreditoSchema } from "@/lib/datacredito/storage";
+import { activeRiskExceptionSql } from "@/lib/datacredito/risk-exception-display-sql";
 import {
   isFirmaSeguroFailedStatus,
   isFirmaSeguroSuccessfulStatus,
@@ -80,6 +81,7 @@ type SolicitudRow = {
   dataCreditoStatus: string | null;
   dataCreditoErrorCode: string | null;
   dataCreditoUpdatedAt: Date | string | null;
+  creditRiskExceptionAuthorized?: boolean;
   veriffStatus: string | null;
   veriffUpdatedAt: Date | string | null;
   firmaStatus: string | null;
@@ -229,6 +231,7 @@ export async function ensureSolicitudSchema() {
           "imei" TEXT,
           "plataforma" TEXT,
           "dataCreditoAssessmentId" UUID,
+          "creditRiskExceptionId" UUID,
           "dataCreditoStatus" TEXT,
           "dataCreditoErrorCode" TEXT,
           "creditoId" INTEGER,
@@ -246,6 +249,7 @@ export async function ensureSolicitudSchema() {
         ALTER TABLE "CreditoBorrador"
           ADD COLUMN IF NOT EXISTS "plataforma" TEXT,
           ADD COLUMN IF NOT EXISTS "dataCreditoAssessmentId" UUID,
+          ADD COLUMN IF NOT EXISTS "creditRiskExceptionId" UUID,
           ADD COLUMN IF NOT EXISTS "dataCreditoStatus" TEXT,
           ADD COLUMN IF NOT EXISTS "dataCreditoErrorCode" TEXT,
           ADD COLUMN IF NOT EXISTS "creditoId" INTEGER,
@@ -388,6 +392,7 @@ export type ActiveSolicitudCreditContext = {
   plataforma: string | null;
   dataCreditoAssessmentId: string | null;
   dataCreditoErrorCode: string | null;
+  creditRiskExceptionId: string | null;
 };
 
 export async function getActiveSolicitudCreditContext(
@@ -405,7 +410,8 @@ export async function getActiveSolicitudCreditContext(
           d."dataCreditoAssessmentId"::text,
           NULLIF(d."payload"->>'dataCreditoAssessmentId', '')
         ) AS "dataCreditoAssessmentId",
-        NULLIF(d."payload"->>'dataCreditoErrorCode', '') AS "dataCreditoErrorCode"
+        NULLIF(d."payload"->>'dataCreditoErrorCode', '') AS "dataCreditoErrorCode",
+        d."creditRiskExceptionId"::text AS "creditRiskExceptionId"
       FROM "CreditoBorrador" d
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
       WHERE d."id" = $1
@@ -2440,6 +2446,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
         COALESCE(dc."status", NULLIF(d."dataCreditoStatus", '')) AS "dataCreditoStatus",
         COALESCE(dc."errorCode", NULLIF(d."dataCreditoErrorCode", '')) AS "dataCreditoErrorCode",
         COALESCE(dc."updatedAt", d."updatedAt") AS "dataCreditoUpdatedAt",
+        ${activeRiskExceptionSql({ draft: "d", assessment: "dc", allyId: 's."aliadoId"' })} AS "creditRiskExceptionAuthorized",
         veriff."status" AS "veriffStatus", veriff."updatedAt" AS "veriffUpdatedAt",
         firma."status" AS "firmaStatus", firma."lastError" AS "firmaLastError",
         firma."updatedAt" AS "firmaUpdatedAt",
@@ -2450,7 +2457,7 @@ async function readDraftRows(viewer: SolicitudViewer, filters: SolicitudFilters)
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
       LEFT JOIN "Aliado" a ON a."id" = s."aliadoId"
       LEFT JOIN LATERAL (
-        SELECT assessment."status", assessment."errorCode", assessment."platform", assessment."updatedAt"
+        SELECT assessment.*
         FROM "DataCreditoAssessment" assessment
         WHERE assessment."id" = d."dataCreditoAssessmentId"
         ORDER BY assessment."updatedAt" DESC LIMIT 1
@@ -2558,6 +2565,7 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
     currentStep: row.currentStep,
     dataCreditoStatus: row.dataCreditoStatus,
     dataCreditoErrorCode: row.dataCreditoErrorCode,
+    creditRiskExceptionAuthorized: row.creditRiskExceptionAuthorized === true,
     veriffStatus: row.veriffStatus,
     firmaStatus: row.firmaStatus,
     firmaLastError: row.firmaLastError,
@@ -2586,6 +2594,9 @@ function serializeSolicitudRow(row: SolicitudRow, viewer: SolicitudViewer) {
 
   const timeline = [
     { key: "CREADA", label: "Solicitud creada", status: "COMPLETADA", at: toIso(row.createdAt) },
+    row.creditRiskExceptionAuthorized
+      ? { key: "RIESGO_INTERNO", label: "Autorización interna excepcional", status: "AUTORIZADA", at: null }
+      : null,
     row.dataCreditoStatus
       ? {
           key: "DATACREDITO",

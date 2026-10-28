@@ -24,6 +24,7 @@ import {
 import prisma from "@/lib/prisma";
 import { assertMoraActor } from "@/lib/analyst-mora-access";
 import { hmacDataCreditoValue } from "@/lib/datacredito/storage";
+import { activeRiskExceptionSql } from "@/lib/datacredito/risk-exception-display-sql";
 import {
   ensureFirmaSeguroSchema,
   FIRMASEGURO_DRAFT_LOCK_NAMESPACE,
@@ -840,8 +841,10 @@ function existingReviewApprovalResult(
 
 const APPROVED_IPHONE_CASE_WHERE = `
   UPPER(COALESCE(d."plataforma", '')) = 'IPHONE'
-  AND dc."status" = 'APROBADO'
-  AND dc."decision" = 'APROBADO'
+  AND (
+    (dc."status" = 'APROBADO' AND dc."decision" = 'APROBADO')
+    OR ${activeRiskExceptionSql({ draft: "d", assessment: "dc", allyId: 'aliado."id"' })}
+  )
   AND dc."platform" = 'IPHONE'
   AND dc."userId" = d."usuarioId"
   AND dc."sedeId" = d."sedeId"

@@ -1,6 +1,7 @@
 import "server-only";
 
 import prisma from "@/lib/prisma";
+import { activeRiskExceptionSql } from "@/lib/datacredito/risk-exception-display-sql";
 import {
   normalizeIphoneEnrollmentDocument,
   normalizeIphoneEnrollmentImei,
@@ -50,6 +51,7 @@ type CandidateRow = Omit<IphoneEnrollmentDiagnosticCandidate, "solicitudNumero" 
   closedReason: string | null;
   expired: boolean;
   dataCreditoStatus: string | null;
+  creditRiskExceptionAuthorized?: boolean;
   firmaStatus: string | null;
   firmaCompleted: boolean;
   veriffStatus: string | null;
@@ -60,6 +62,7 @@ type DiagnosticTables = {
   replacements: boolean;
   firma: boolean;
   veriff: boolean;
+  riskExceptions?: boolean;
 };
 
 function applicationStepLabel(step: number | null) {
@@ -89,7 +92,7 @@ function pendingReason(row: CandidateRow) {
   if (row.status !== "ABIERTO") return "La solicitud ya no está abierta.";
   if (row.expired) return "La solicitud está vencida.";
   if (row.platform !== "IPHONE") return "La plataforma guardada no corresponde a iPhone.";
-  if (row.dataCreditoStatus !== "APROBADO") return "La consulta de crédito todavía requiere verificación.";
+  if (row.dataCreditoStatus !== "APROBADO" && !row.creditRiskExceptionAuthorized) return "La consulta de crédito todavía requiere verificación.";
   if (row.currentStep === null || row.currentStep < 5) {
     return `La solicitud está en ${applicationStepLabel(row.currentStep)}. Todavía no está en Enrolamiento y entrega.`;
   }
@@ -137,10 +140,12 @@ function candidateSql(tables: DiagnosticTables, exact: boolean) {
         d."updatedAt", d."closedReason",
         COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') <= CURRENT_TIMESTAMP AS "expired",
         UPPER(COALESCE(d."dataCreditoStatus", '')) AS "dataCreditoStatus",
+        ${tables.riskExceptions ? activeRiskExceptionSql({ draft: "d", assessment: "dc", allyId: 's."aliadoId"' }) : 'FALSE'} AS "creditRiskExceptionAuthorized",
         ${tables.firma ? 'signature."status"' : 'NULL::text'} AS "firmaStatus",
         ${tables.firma ? 'COALESCE(signature."completed", FALSE)' : 'FALSE'} AS "firmaCompleted",
         ${tables.veriff ? 'identity."status"' : 'NULL::text'} AS "veriffStatus"
       FROM "CreditoBorrador" d
+      ${tables.riskExceptions ? 'LEFT JOIN "Sede" s ON s."id"=d."sedeId" LEFT JOIN "DataCreditoAssessment" dc ON dc."id"=d."dataCreditoAssessmentId"' : ''}
       ${tables.firma ? `LEFT JOIN LATERAL (
         SELECT p."status", (p."completedAt" IS NOT NULL OR NULLIF(BTRIM(p."signedDocumentBase64"), '') IS NOT NULL) AS "completed"
         FROM "FirmaSeguroProcess" p WHERE p."draftId" = d."id" AND p."supersededAt" IS NULL
@@ -163,7 +168,7 @@ function candidateSql(tables: DiagnosticTables, exact: boolean) {
       c."clienteNombre", COALESCE(c."clienteDocumento", '') AS "document", COALESCE(NULLIF(c."imei", ''), c."deviceUid", '') AS "imei",
       ${tables.applications ? 'origin."currentStep"' : 'NULL::integer'} AS "currentStep", c."estado" AS "status",
       NULLIF(UPPER(BTRIM(COALESCE(${tables.applications ? 'NULLIF(origin."plataforma", \'\'),' : ''} c."contratoSnapshot"->'equipo'->>'plataforma', ''))), '') AS "platform",
-      c."updatedAt", NULL::text AS "closedReason", FALSE AS "expired", NULL::text AS "dataCreditoStatus",
+      c."updatedAt", NULL::text AS "closedReason", FALSE AS "expired", NULL::text AS "dataCreditoStatus", FALSE AS "creditRiskExceptionAuthorized",
       NULL::text AS "firmaStatus", FALSE AS "firmaCompleted", NULL::text AS "veriffStatus"
     FROM "Credito" c ${originJoin}
   `);
@@ -174,7 +179,7 @@ function candidateSql(tables: DiagnosticTables, exact: boolean) {
         c."clienteNombre", COALESCE(c."clienteDocumento", '') AS "document", replacement."newImei" AS "imei",
         ${tables.applications ? 'origin."currentStep"' : 'NULL::integer'} AS "currentStep", replacement."status",
         NULLIF(UPPER(BTRIM(COALESCE(${tables.applications ? 'NULLIF(origin."plataforma", \'\'),' : ''} c."contratoSnapshot"->'equipo'->>'plataforma', ''))), '') AS "platform",
-        replacement."updatedAt", NULL::text AS "closedReason", FALSE AS "expired", NULL::text AS "dataCreditoStatus",
+        replacement."updatedAt", NULL::text AS "closedReason", FALSE AS "expired", NULL::text AS "dataCreditoStatus", FALSE AS "creditRiskExceptionAuthorized",
         NULL::text AS "firmaStatus", FALSE AS "firmaCompleted", NULL::text AS "veriffStatus"
       FROM "CreditDeviceReplacement" replacement INNER JOIN "Credito" c ON c."id" = replacement."creditId"
       ${tables.applications ? 'LEFT JOIN "CreditoBorrador" origin ON origin."id" = replacement."solicitudId"' : ''}
@@ -184,7 +189,7 @@ function candidateSql(tables: DiagnosticTables, exact: boolean) {
     SELECT cases.*, regexp_replace("document", '[^0-9]', '', 'g') AS "documentDigits",
       regexp_replace("imei", '[^0-9]', '', 'g') AS "imeiDigits" FROM cases
   ) SELECT "source", "sourceId", "solicitudId", "creditoId", "creditoFolio", "clienteNombre", "document", "imei",
-    "currentStep", "status", "platform", "updatedAt", "closedReason", "expired", "dataCreditoStatus", "firmaStatus", "firmaCompleted", "veriffStatus",
+    "currentStep", "status", "platform", "updatedAt", "closedReason", "expired", "dataCreditoStatus", "creditRiskExceptionAuthorized", "firmaStatus", "firmaCompleted", "veriffStatus",
     CASE WHEN "documentDigits" = $1 AND "imeiDigits" = $2 THEN 'BOTH'
       WHEN "documentDigits" = $1 THEN 'DOCUMENT' ELSE 'IMEI' END AS "matchedBy"
     FROM normalized WHERE ${exact ? '"documentDigits" = $1 AND "imeiDigits" = $2' : '"documentDigits" = $1 OR "imeiDigits" = $2'}
@@ -222,7 +227,8 @@ export async function lookupNominalIphoneEnrollmentDiagnostics(
       to_regclass('"CreditoBorrador"') IS NOT NULL AS "applications",
       to_regclass('"CreditDeviceReplacement"') IS NOT NULL AS "replacements",
       to_regclass('"FirmaSeguroProcess"') IS NOT NULL AS "firma",
-      to_regclass('"VeriffIdentityValidation"') IS NOT NULL AS "veriff"`);
+      to_regclass('"VeriffIdentityValidation"') IS NOT NULL AS "veriff",
+      to_regclass('"CreditRiskException"') IS NOT NULL AS "riskExceptions"`);
     const exactRows = await tx.$queryRawUnsafe<CandidateRow[]>(candidateSql(tables, true), document, imei);
     const rows = exactRows.length ? exactRows : await tx.$queryRawUnsafe<CandidateRow[]>(candidateSql(tables, false), document, imei);
     return {

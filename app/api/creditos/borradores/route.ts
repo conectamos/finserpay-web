@@ -481,8 +481,17 @@ export async function POST(req: Request) {
     if (!payload.dataCreditoAssessmentId && existingDraft?.dataCreditoAssessmentId) {
       payload.dataCreditoAssessmentId = existingDraft.dataCreditoAssessmentId;
     }
+    // Risk authority is linked by the server, never by a browser payload.
+    delete payload.creditAuthorization;
+    if (existingDraft?.creditRiskExceptionId) {
+      payload.creditRiskExceptionId = existingDraft.creditRiskExceptionId;
+      payload.creditAuthorizationSource = "INTERNAL_EXCEPTION";
+    } else {
+      delete payload.creditRiskExceptionId;
+      delete payload.creditAuthorizationSource;
+    }
     const recoveredIdentity = !signed[0]?.signed
-      ? await enforceDataCreditoCustomerIdentity(payload, { userId: owner.usuarioId, sellerId: owner.vendedorId, sedeId: owner.sedeId, aliadoId: existingDraft?.aliadoId ?? access.user.aliadoId ?? null }, true, { userId: access.user.id, sellerId: access.seller?.id || null })
+      ? await enforceDataCreditoCustomerIdentity(payload, { userId: owner.usuarioId, sellerId: owner.vendedorId, sedeId: owner.sedeId, aliadoId: existingDraft?.aliadoId ?? access.user.aliadoId ?? null }, true, { userId: access.user.id, sellerId: access.seller?.id || null }, draftId || undefined)
       : null;
     if (requiresCreditClientStepValidation({
       action: body.action,

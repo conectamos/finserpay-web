@@ -60,6 +60,10 @@ async function fixture() {
     INSERT INTO "Credito" ("id","estado","montoCredito","cuotaInicial","sedeId","usuarioId")
       VALUES (1,'GENERADO',1000000,300000,3,4), (2,'GENERADO',1500000,500000,79,77);
   `);
+  const exceptionStart = setup.indexOf('-- BEGIN SINGLE CASE INTERNAL RISK EXCEPTION');
+  const exceptionEnd = setup.indexOf('-- END SINGLE CASE INTERNAL RISK EXCEPTION', exceptionStart);
+  assert.ok(exceptionStart > 0 && exceptionEnd > exceptionStart);
+  await pg.exec(setup.slice(exceptionStart, exceptionEnd));
   await pg.exec(sqlSection('CREATE OR REPLACE FUNCTION "finser_guard_datacredito_pending_global"()',
     'EXECUTE FUNCTION "finser_guard_datacredito_pending_global"();'));
   await pg.exec(sqlSection('CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()',
@@ -196,5 +200,27 @@ test("un crédito consumidor inexistente falla cerrado y una respuesta ambigua s
     await f.pg.exec(`UPDATE "DataCreditoAssessment" SET "durationMs"=1000,
       "errorCode"='PROVIDER_OUTCOME_AMBIGUOUS' WHERE "documentHash"='ambiguous'`);
     await assert.rejects(f.addAssessment({ status: "PENDING", document: "ambiguous" }), /consulta DataCredito activa|document_guard_key/);
+  } finally { await f.pg.close(); }
+});
+
+
+test("una reserva o consumo de excepción interna bloquea claim/consumo ordinario del mismo documento", async () => {
+  const f = await fixture();
+  try {
+    const current = await f.addAssessment();
+    const claim = await f.operations.claimDataCreditoAssessment(f.match(current));
+    assert.ok(claim);
+    const exceptionId = randomUUID();
+    await f.pg.query(`INSERT INTO "CreditRiskException"
+      ("id","mutationId","requestHash","solicitudId","assessmentId","documentHash","surnameHash","platform","providerEnvironment","userId","sellerId","sedeId","aliadoId","actorUserId","reason","riskAcknowledged","policyVersion","policyRevisionId","offer","providerStatus","transactionCode","historyCode","errorCode","expiresAt","claimTokenHash","claimExpiresAt")
+      VALUES($1,$2,'test',4098,$3,'paid-client','surname','IPHONE','production',77,78,79,80,1,'Autorización técnica de prueba',TRUE,1,$4,'{}','ACCEPTED','07','09','NO_EVALUABLE_INFORMATION',CURRENT_TIMESTAMP+INTERVAL '1 day','internal-claim',CURRENT_TIMESTAMP+INTERVAL '1 minute')`,
+      [exceptionId, randomUUID(), randomUUID(), randomUUID()]);
+    assert.equal(await f.operations.consumeDataCreditoAssessmentInTransaction({assessmentId: current, claimToken:claim.claimToken,creditId:2},f.database),null);
+    await f.pg.query('UPDATE "DataCreditoAssessment" SET "claimTokenHash"=NULL,"claimExpiresAt"=NULL WHERE "id"=$1',[current]);
+    assert.equal(await f.operations.claimDataCreditoAssessment(f.match(current)),null);
+    await f.pg.query('UPDATE "CreditRiskException" SET "claimTokenHash"=NULL,"claimExpiresAt"=NULL,"consumedAt"=CURRENT_TIMESTAMP,"creditId"=2 WHERE "id"=$1',[exceptionId]);
+    assert.equal(await f.operations.claimDataCreditoAssessment(f.match(current)),null);
+    await f.pg.exec("INSERT INTO \"CreditoAbono\" VALUES(2,1500000,'REGISTRADO')");
+    assert.ok(await f.operations.claimDataCreditoAssessment(f.match(current)), 'Una obligación totalmente pagada deja de competir');
   } finally { await f.pg.close(); }
 });

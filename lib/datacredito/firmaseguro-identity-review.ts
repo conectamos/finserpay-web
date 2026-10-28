@@ -82,7 +82,7 @@ async function context(db: Database, draft: Draft, mutation = false, manualRevie
   const assessmentId = draft.dataCreditoAssessmentId || text(payload.dataCreditoAssessmentId);
   if (!assessmentId || text(payload.dataCreditoAssessmentId) !== assessmentId) fail("FIRMASEGURO_REVIEW_ASSESSMENT_CHANGED", "La consulta vinculada cambió; actualiza la solicitud.");
   const scope = { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId };
-  const identity = await enforceDataCreditoCustomerIdentity(payload, scope, false);
+  const identity = await enforceDataCreditoCustomerIdentity(payload, scope, false, undefined, draft.id);
   if (!identity?.effective.fullName || (manualReview && identity.effective.nameMode !== "FULL_NAME_ONLY")) {
     throw new FirmaSeguroIdentityReviewError("FIRMASEGURO_REVIEW_NOT_APPLICABLE", "Esta revisión sólo completa los componentes de un nombre completo de DataCrédito.");
   }
@@ -90,10 +90,17 @@ async function context(db: Database, draft: Draft, mutation = false, manualRevie
   if (!compareStrictIdentityDocuments(payload.clienteDocumento, documentNumber).ok) fail("FIRMASEGURO_REVIEW_DOCUMENT_CHANGED", "La cédula de la solicitud cambió.");
   const config = getDataCreditoPublicConfig();
   const platform = text(draft.plataforma || payload.plataformaDispositivo).toUpperCase();
-  if (!config.enabled || (platform !== "ANDROID" && platform !== "IPHONE") || !await getApprovedDataCreditoAssessmentForCredit({
-    assessmentId, documentNumber, firstSurname: identity.querySurname, platform,
-    providerEnvironment: config.environment, ...scope,
-  })) fail("FIRMASEGURO_REVIEW_ASSESSMENT_INVALID", "La consulta aprobada no está vigente para esta solicitud.");
+  if (!config.enabled || (platform !== "ANDROID" && platform !== "IPHONE")) fail("FIRMASEGURO_REVIEW_ASSESSMENT_INVALID", "La autoridad de riesgo no está vigente para esta solicitud.");
+  const assessmentMatch = { assessmentId, documentNumber, firstSurname: identity.querySurname,
+    platform: platform as "ANDROID" | "IPHONE", providerEnvironment: config.environment, ...scope };
+  const exceptionId = text(payload.creditRiskExceptionId);
+  const riskAuthorization = exceptionId
+    ? await (await import("./risk-exception")).getCreditRiskAuthorizationForDraft({ ...assessmentMatch, solicitudId: draft.id })
+    : null;
+  const assessment = exceptionId
+    ? riskAuthorization?.source === "INTERNAL_EXCEPTION" && riskAuthorization.exceptionId === exceptionId ? riskAuthorization.assessment : null
+    : await getApprovedDataCreditoAssessmentForCredit(assessmentMatch);
+  if (!assessment) fail("FIRMASEGURO_REVIEW_ASSESSMENT_INVALID", "La consulta aprobada no está vigente para esta solicitud.");
   const rows = await db.$queryRawUnsafe<VeriffValidationRow[]>(`SELECT * FROM "VeriffIdentityValidation"
     WHERE "draftId"=$1 AND "creditoId" IS NULL ORDER BY "id" DESC LIMIT 1 ${mutation ? 'FOR UPDATE' : ''}`, draft.id);
   const validation = rows[0];

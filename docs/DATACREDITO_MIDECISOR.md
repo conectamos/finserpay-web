@@ -611,3 +611,32 @@ El formulario de una evaluación vencida exige un envío manual y consentimiento
 nuevo. Las solicitudes cerradas permanecen cerradas. Las pruebas de replay usan
 PostgreSQL embebido e incluyen casos sin autorización, estados o códigos distintos,
 puntaje presente, reservas y créditos; sólo el caso expresamente autorizado vence.
+
+## Autorización interna excepcional individual
+
+Una autorización expresa de riesgo puede permitir continuar una solicitud concreta
+sin atribuir una aprobación a DataCrédito. Se registra en `CreditRiskException`,
+separada de la evaluación original, que conserva `NO_EVALUADO`, puntaje y oferta
+nulos y su expediente cifrado íntegro. Esta implementación está limitada a una
+única solicitud y evaluación autorizadas; no agrega un endpoint general para
+aprobar consultas técnicas ni cambia la interpretación de `HC09/TX07`.
+
+El registro exige un administrador central activo, motivo, reconocimiento del
+riesgo, coincidencia de documento y alcance y una política asignada activa.
+Congela las condiciones vigentes de la banda `Sin información` sin asignar un
+puntaje ficticio al proveedor. La identidad se completa mediante el procedimiento
+administrativo auditado cuando el proveedor no la entrega; esos datos se muestran
+como ingreso manual. El apellido usado en la consulta sigue separado de los datos
+verificados o completados del cliente.
+
+Cada guardado y operación vuelve a validar la autorización ligada a la columna
+servidora `CreditoBorrador.creditRiskExceptionId`. Recarga, Veriff, FirmaSeguro,
+enrolamiento y cierre usan el mismo documento y oferta autorizada. Los metadatos
+del navegador no conceden permisos. Veriff, FirmaSeguro y entrega conservan sus
+requisitos; los cupos manuales no pueden aumentar el máximo excepcional.
+
+La reserva y el consumo único usan el bloqueo común por documento y una auditoría
+inmutable. El consumo ocurre en la misma transacción que crea el crédito y cierra
+la solicitud. Una falla revierte el consumo; una reserva abandonada vence. La
+decisión, sus condiciones y su auditoría no se borran al depurar el expediente del
+proveedor. No se generan nuevas consultas pagas para aplicar esta autorización.

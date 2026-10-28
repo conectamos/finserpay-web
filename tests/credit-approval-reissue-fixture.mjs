@@ -13,6 +13,9 @@ export function loadReissueModule(path, dependencies = {}, globals = {}) {
     require: name => {
       if (name === "server-only") return {};
       if (name === "node:crypto") return crypto;
+      if (name === "@/lib/datacredito/risk-exception-display-sql") {
+        return loadReissueModule("lib/datacredito/risk-exception-display-sql.ts");
+      }
       assert.ok(name in dependencies, "Unexpected dependency " + name + " in " + path);
       return dependencies[name];
     },
