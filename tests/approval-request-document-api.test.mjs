@@ -31,7 +31,7 @@ function fixture({ nominal = analyst, shared, found = true, value = image, fail 
   const calls = [];
   const route = load("app/api/aprobaciones/solicitudes/[id]/archivo/[key]/route.ts", {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
-    "@/lib/auth": { getNominalApprovalAnalystSessionUser: async () => nominal },
+    "@/lib/auth": { getNominalApprovalWorkspaceSessionUser: async () => nominal },
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => shared },
     "@/lib/approval-request-document": documents,
     "@/lib/solicitudes": { normalizeSolicitudFilters: input => input },

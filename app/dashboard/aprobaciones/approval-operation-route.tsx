@@ -22,7 +22,7 @@ export default function ApprovalOperationRoute({
       initialQuery={initialQuery}
       initialCase={initialCase}
       onOpenApproval={(creditId) => {
-        router.push(`/dashboard/aprobaciones?credito=${encodeURIComponent(String(creditId))}`);
+        router.push(`/dashboard/aprobaciones?vista=analista&credito=${encodeURIComponent(String(creditId))}`);
       }}
     />
   );

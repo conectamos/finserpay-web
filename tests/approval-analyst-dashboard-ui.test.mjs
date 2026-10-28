@@ -27,9 +27,9 @@ test("el sidebar del analista incluye enrolamiento iPhone bajo Aprobaciones", ()
   assert.doesNotMatch(analystNavigation, /label: "Bienvenida"/);
 });
 
-test("las subrutas operativas exigen la cuenta nominal del analista", () => {
+test("las subrutas operativas exigen cuenta nominal de analista o Admin Central", () => {
   const access = read("app/dashboard/aprobaciones/approval-dashboard-access.ts");
-  assert.match(access, /getNominalApprovalAnalystSessionUser/);
+  assert.match(access, /getNominalApprovalWorkspaceSessionUser/);
   assert.match(access, /getApprovalSharedRequestActor/);
   assert.doesNotMatch(access, /getCreditApprovalSessionUser/);
 
@@ -75,7 +75,7 @@ test("IMEI, firma, solicitudes y TX06 reutilizan los componentes existentes en m
   assert.match(operationRoute, /mode=\{preferredPanel\}/);
   assert.match(operationRoute, /preferredPanel=\{preferredPanel\}/);
   assert.match(operationRoute, /initialQuery=\{initialQuery\}/);
-  assert.match(operationRoute, /\/dashboard\/aprobaciones\?credito=/);
+  assert.match(operationRoute, /\/dashboard\/aprobaciones\?vista=analista&credito=/);
 
   const requests = read("app/dashboard/aprobaciones/solicitudes/page.tsx");
   assert.match(requests, /viewerRole="ANALYST"/);

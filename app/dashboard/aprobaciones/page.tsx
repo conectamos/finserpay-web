@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { Card } from "@/app/_components/finser-ui";
 import SharedLogout from "@/app/revision-creditos/shared-logout";
 import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
-import { getCreditApprovalSessionUser } from "@/lib/auth";
+import { getCreditApprovalSessionUser, getNominalApprovalWorkspaceSessionUser } from "@/lib/auth";
 import { canManageApprovalAnalysts, canReviewCreditApprovals, isApprovalAnalystRole } from "@/lib/roles";
 import ApprovalDashboardShell from "./approval-dashboard-shell";
 import ApprovalWorkspace from "./approval-workspace";
@@ -16,15 +16,18 @@ export const metadata = {
 export default async function AprobacionesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ credito?: string | string[] }>;
+  searchParams: Promise<{ credito?: string | string[]; vista?: string | string[] }>;
 }) {
   const user = await getCreditApprovalSessionUser();
   if (!user) redirect("/aliados");
   if (!canReviewCreditApprovals(user)) redirect("/dashboard");
   const sharedContext = await getApprovalSharedRequestActor();
   const centralAdmin = canManageApprovalAnalysts(user);
-  const analystDesk = isApprovalAnalystRole(user.rolNombre) && sharedContext === undefined;
   const params = await searchParams;
+  const workspaceUser = await getNominalApprovalWorkspaceSessionUser();
+  const analystDesk = sharedContext === undefined && Boolean(workspaceUser)
+    && workspaceUser?.id === user.id
+    && (isApprovalAnalystRole(user.rolNombre) || params.vista === "analista");
   const rawCreditId = Array.isArray(params.credito) ? params.credito[0] : params.credito;
   const parsedCreditId = Number(rawCreditId);
   const focusApprovalCreditId = Number.isSafeInteger(parsedCreditId) && parsedCreditId > 0
@@ -32,7 +35,7 @@ export default async function AprobacionesPage({
     : null;
 
   return (
-    <ApprovalDashboardShell activeHref="/dashboard/aprobaciones" user={user}>
+    <ApprovalDashboardShell activeHref="/dashboard/aprobaciones" user={user} analystWorkspace={analystDesk}>
       {sharedContext !== undefined && <Card className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-4 border-[var(--fp-amber)] p-4 sm:mx-6 lg:mx-8">
         <div role="status">
           <p className="font-semibold">{sharedContext ? "Acceso compartido activo en este navegador" : "El acceso compartido venció o fue revocado"}</p>

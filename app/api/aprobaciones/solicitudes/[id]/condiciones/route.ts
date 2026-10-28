@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getNominalApprovalAnalystSessionUser } from "@/lib/auth";
+import { getNominalApprovalWorkspaceSessionUser } from "@/lib/auth";
 import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import { approvalErrorResponse, readApprovalRequest } from "@/lib/credit-approval-http";
 import { parseRequestFinancialCorrection, RequestFinancialCorrectionError } from "@/lib/approval-request-financial-correction-core";
@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
 const privateHeaders = { "Cache-Control": "private, no-store, max-age=0", "X-Content-Type-Options": "nosniff", Vary: "Cookie" };
 async function getActor() {
-  const analyst = await getNominalApprovalAnalystSessionUser();
+  const analyst = await getNominalApprovalWorkspaceSessionUser();
   if (!analyst || (await getApprovalSharedRequestActor()) !== undefined)
-    throw new RequestFinancialCorrectionError("UNAUTHORIZED", "Inicia sesión con tu cuenta de analista.", 401);
+    throw new RequestFinancialCorrectionError("UNAUTHORIZED", "Inicia sesión con tu cuenta de analista o Admin Central FINSER.", 401);
   return { id: analyst.id, nombre: analyst.nombre };
 }
 function errorResponse(error: unknown) {

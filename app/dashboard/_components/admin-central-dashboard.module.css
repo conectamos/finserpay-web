@@ -51,7 +51,7 @@
   display: flex;
   align-items: center;
   padding: 0 4%;
-  gap: 8%;
+  gap: clamp(16px, 3vw, 40px);
   position: relative;
   z-index: 10;
 }
@@ -703,7 +703,6 @@
 }
 @media(max-width:1300px) {
   .topbar {
-    gap: 4%;
     padding: 0 3%;
   }
   .navigation {
@@ -746,6 +745,28 @@
   .action {
     padding: 7px 12px;
     gap: 10px;
+  }
+}
+@media(min-width:1051px) and (max-width:1200px) {
+  .topbar {
+    height: auto;
+    min-height: 62px;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 12px 4%;
+  }
+  .navigation {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .navigation>a {
+    min-height: 44px;
+  }
+  .active:after {
+    bottom: 0;
   }
 }
 @media(max-width:1050px) {

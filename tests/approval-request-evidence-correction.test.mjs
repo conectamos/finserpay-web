@@ -111,7 +111,7 @@ test("API: solo analista nominal, cuerpo acotado y respuesta privada sin bytes",
   let maximum;
   const route = load("app/api/aprobaciones/solicitudes/[id]/evidencias/route.ts", {
     "next/server": { NextResponse: { json: (value, options = {}) => ({ value, status: options.status ?? 200, headers: options.headers }) } },
-    "@/lib/auth": { getNominalApprovalAnalystSessionUser: async () => analyst },
+    "@/lib/auth": { getNominalApprovalWorkspaceSessionUser: async () => analyst },
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => shared },
     "@/lib/credit-approval-http": { approvalErrorResponse: () => ({ status: 503 }),
       readApprovalRequest: async (_request, options) => { maximum = options.maxBytes; return correction(); } },
