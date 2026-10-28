@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { ShieldCheck, UserCog, UserRound } from "lucide-react";
-import { MetricCard, PageHeader } from "@/app/_components/finser-ui";
+import { Input, MetricCard, PageHeader } from "@/app/_components/finser-ui";
 import ApprovalAnalystAccounts, { type ApprovalAnalystAccount } from "./approval-analyst-accounts";
 import {
   type AvatarPerfilKey,
@@ -100,7 +100,7 @@ type AliadosResponse = {
   aliados?: AliadoItem[];
 };
 
-type TipoPerfilFormulario = TipoPerfilVendedor | "ADMINISTRADOR";
+type TipoPerfilFormulario = TipoPerfilVendedor | "ADMINISTRADOR" | "ADMIN_CENTRAL";
 
 type SellerDraft = {
   nombre: string;
@@ -410,6 +410,8 @@ function AdminProfileButton({
         </span>
       </div>
       <p className="mt-3 text-xs leading-5 text-slate-500">
+        {esAliadoFinserPay(admin.sede.aliado?.codigo) ? "Admin Central FINSER" : "Admin Aliados"}
+        <br />
         Sede base: {admin.sede.nombre}
       </p>
     </button>
@@ -425,6 +427,7 @@ export default function GestionVendedoresPage() {
   const [mensaje, setMensaje] = useState("");
   const [cargando, setCargando] = useState(true);
   const [guardandoNuevo, setGuardandoNuevo] = useState(false);
+  const [confirmarClave, setConfirmarClave] = useState("");
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [filtroSede, setFiltroSede] = useState("");
   const [aliadoSeleccionadoId, setAliadoSeleccionadoId] = useState("");
@@ -606,7 +609,8 @@ export default function GestionVendedoresPage() {
     selectedProfile?.type === "ADMIN"
       ? administradores.find((item) => item.id === selectedProfile.id) || null
       : null;
-  const nuevoEsAdmin = nuevo.tipoPerfil === "ADMINISTRADOR";
+  const nuevoEsCentral = nuevo.tipoPerfil === "ADMIN_CENTRAL";
+  const nuevoEsAdmin = nuevo.tipoPerfil === "ADMINISTRADOR" || nuevoEsCentral;
 
   const toggleNuevoSede = (sedeId: number) => {
     setNuevo((current) => ({
@@ -642,15 +646,22 @@ export default function GestionVendedoresPage() {
   };
 
   const actualizarNuevoTipo = (tipoPerfil: TipoPerfilFormulario) => {
+    const administrador = tipoPerfil === "ADMINISTRADOR" || tipoPerfil === "ADMIN_CENTRAL";
+    setConfirmarClave("");
+    if (tipoPerfil === "ADMIN_CENTRAL") {
+      const aliadoCentral = aliados.find((aliado) => esAliadoFinserPay(aliado.codigo));
+      if (aliadoCentral) setAliadoSeleccionadoId(String(aliadoCentral.id));
+    }
     setNuevo((current) => ({
       ...current,
       tipoPerfil,
+      pin: "",
       avatarKey:
-        tipoPerfil === "ADMINISTRADOR"
+        administrador
           ? obtenerAvatarDefaultPorTipo("ADMINISTRADOR")
-          : obtenerAvatarDefaultPorTipo(tipoPerfil),
+          : obtenerAvatarDefaultPorTipo(tipoPerfil as TipoPerfilVendedor),
       sedeIds:
-        tipoPerfil === "ADMINISTRADOR"
+        administrador
           ? current.sedeIds.slice(0, 1)
           : current.sedeIds,
     }));
@@ -685,6 +696,15 @@ export default function GestionVendedoresPage() {
   };
 
   const crearVendedor = async () => {
+    if (guardandoNuevo) return;
+    if (nuevoEsAdmin && (nuevo.pin.length < 8 || nuevo.pin.length > 128 || !nuevo.pin.trim())) {
+      setMensaje("La clave inicial debe tener entre 8 y 128 caracteres");
+      return;
+    }
+    if (nuevoEsCentral && nuevo.pin !== confirmarClave) {
+      setMensaje("Las contraseñas no coinciden");
+      return;
+    }
     try {
       setGuardandoNuevo(true);
       setMensaje("");
@@ -702,7 +722,9 @@ export default function GestionVendedoresPage() {
           documento: nuevo.documento,
           telefono: nuevo.telefono,
           email: nuevo.email,
-          pin: nuevo.pin,
+          pin: nuevoEsAdmin ? undefined : nuevo.pin,
+          clave: nuevoEsAdmin ? nuevo.pin : undefined,
+          confirmarClave: nuevoEsCentral ? confirmarClave : undefined,
           activo: nuevo.activo,
           sedeId: nuevoEsAdmin ? nuevo.sedeIds[0] || null : undefined,
           sedeIds: nuevo.sedeIds,
@@ -720,6 +742,7 @@ export default function GestionVendedoresPage() {
       }
 
       applyData(data);
+      setConfirmarClave("");
       setMensaje(data.mensaje || "Usuario creado correctamente");
       setNuevo({
         nombre: "",
@@ -892,10 +915,12 @@ export default function GestionVendedoresPage() {
                 Nuevo usuario
               </div>
               <h2 className="mt-2 text-xl font-black text-[#151a21]">
-                {nuevoEsAdmin ? "Crear administrador" : "Crear perfil con PIN"}
+                {nuevoEsCentral ? "Crear Admin Central FINSER" : nuevoEsAdmin ? "Crear administrador" : "Crear perfil con PIN"}
               </h2>
               <p className="mt-2 text-sm text-slate-500">
-                {nuevoEsAdmin
+                {nuevoEsCentral
+                  ? "Crea un acceso personal con los permisos de Admin Central FINSER. La cuenta se asigna automáticamente a FINSER PAY."
+                  : nuevoEsAdmin
                   ? "El administrador entra con usuario y clave al panel principal."
                   : "El PIN inicial debe tener entre 4 y 6 digitos. El usuario podra cambiarlo desde su perfil."}
               </p>
@@ -908,6 +933,7 @@ export default function GestionVendedoresPage() {
                 Aliado
                 <select
                   value={aliadoSeleccionadoId}
+                  disabled={nuevoEsCentral}
                   onChange={(event) => setAliadoSeleccionadoId(event.target.value)}
                   className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 >
@@ -942,6 +968,7 @@ export default function GestionVendedoresPage() {
                 <option value="VENDEDOR">Vendedor</option>
                 <option value="SUPERVISOR">Supervisor</option>
                 <option value="ADMINISTRADOR">Administrador</option>
+                {esAdminCentral && <option value="ADMIN_CENTRAL">Admin Central FINSER</option>}
               </select>
             </label>
 
@@ -951,6 +978,8 @@ export default function GestionVendedoresPage() {
                   Usuario de acceso
                   <input
                     value={nuevo.usuario}
+                    autoComplete="off"
+                    maxLength={80}
                     onChange={(event) =>
                       actualizarNuevo("usuario", sanitizeUsername(event.target.value))
                     }
@@ -959,7 +988,12 @@ export default function GestionVendedoresPage() {
                   />
                 </label>
 
-                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                {nuevoEsCentral ? (
+                  <div className="flex flex-col justify-center gap-2 text-sm text-[var(--fp-muted)]">
+                    <strong className="text-[var(--fp-graphite)]">Alcance central de FINSER PAY</strong>
+                    Todas las funciones habilitadas para el rol administrativo central.
+                  </div>
+                ) : <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
                   Sede base
                   <select
                     value={nuevo.sedeIds[0] || ""}
@@ -978,7 +1012,7 @@ export default function GestionVendedoresPage() {
                       </option>
                     ))}
                   </select>
-                </label>
+                </label>}
               </>
             ) : (
               <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
@@ -1025,6 +1059,8 @@ export default function GestionVendedoresPage() {
               {nuevoEsAdmin ? "Clave inicial" : "PIN inicial"}
               <input
                 type="password"
+                autoComplete="new-password"
+                maxLength={nuevoEsAdmin ? 128 : 6}
                 value={nuevo.pin}
                 onChange={(event) =>
                   actualizarNuevo(
@@ -1032,10 +1068,18 @@ export default function GestionVendedoresPage() {
                     nuevoEsAdmin ? event.target.value : sanitizePin(event.target.value)
                   )
                 }
-                placeholder={nuevoEsAdmin ? "Clave de acceso" : "4 a 6 digitos"}
+                placeholder={nuevoEsAdmin ? "Entre 8 y 128 caracteres" : "4 a 6 digitos"}
                 className="rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
               />
             </label>
+
+            {nuevoEsCentral && (
+              <label className="flex flex-col gap-2 text-sm font-semibold text-[var(--fp-graphite)]">
+                Confirmar contraseña inicial
+                <Input type="password" autoComplete="new-password" maxLength={128}
+                  value={confirmarClave} onChange={(event) => setConfirmarClave(event.target.value)} />
+              </label>
+            )}
 
             <label className="flex items-end gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
               <input
@@ -1082,7 +1126,7 @@ export default function GestionVendedoresPage() {
             <button
               type="button"
               onClick={() => void crearVendedor()}
-              disabled={guardandoNuevo || (esAdminCentral && !aliadoSeleccionadoId)}
+              disabled={guardandoNuevo || (esAdminCentral && !nuevoEsCentral && !aliadoSeleccionadoId)}
               className="fp-ui-button is-primary"
             >
               {guardandoNuevo ? "Creando..." : "Crear usuario"}
@@ -1209,7 +1253,7 @@ export default function GestionVendedoresPage() {
                   <p className="font-semibold text-slate-900">
                     {selectedAdmin.activo ? "Perfil activo" : "Perfil inactivo"}
                   </p>
-                  <p className="mt-1 text-slate-500">Rol: {selectedAdmin.rolNombre}</p>
+                  <p className="mt-1 text-slate-500">Perfil: {esAliadoFinserPay(selectedAdmin.sede.aliado?.codigo) ? "Admin Central FINSER" : "Admin Aliados"}</p>
                 </div>
               </div>
 

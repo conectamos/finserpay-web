@@ -172,7 +172,7 @@ function routeFixture({ analyst = { id: 17, nombre: "Analista" }, shared = undef
   const calls = [];
   const route = load("app/api/aprobaciones/solicitudes/[id]/datos/route.ts", {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
-    "@/lib/auth": { getNominalApprovalAnalystSessionUser: async () => analyst },
+    "@/lib/auth": { getNominalApprovalWorkspaceSessionUser: async () => analyst },
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => shared },
     "@/lib/credit-approval-http": { readApprovalRequest: async (request) => { calls.push("body"); return request.json(); },
       approvalErrorResponse: () => Response.json({ ok: false }, { status: 503 }) },
@@ -342,7 +342,12 @@ test("Veriff usa nombres y tipo autoritativos después del lock aunque el asesor
       locked = true; calls.push(["lock"]); return { release: async () => { calls.push(["release"]); } };
     } },
     "@/lib/datacredito": { getDataCreditoPublicConfig: () => ({ enabled: false }) },
+    "@/lib/datacredito/customer-identity": { enforceDataCreditoCustomerIdentityForVeriff: async () => {
+      throw new Error("DataCrédito está deshabilitado en este escenario");
+    } },
     "@/lib/datacredito/storage": { getApprovedDataCreditoAssessmentForCredit: async () => null },
+    "@/lib/credit-imei-confirmation-storage": { requireDraftImeiConfirmation: async () => {} },
+    "@/lib/credit-imei-confirmation": { ImeiConfirmationError: class extends Error {} },
     "@/lib/veriff": { VeriffApiError: class extends Error {}, isVeriffConfigured: () => true,
       getVeriffPublicSummary: () => ({}), redactVeriffPayload: (value) => value,
       extractVeriffSessionId: () => "test-session", extractVeriffSessionUrl: () => "https://veriff.test/session",

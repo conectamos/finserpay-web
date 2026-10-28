@@ -24,6 +24,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
     ...(adminCentral ? [["Créditos masivos", "/dashboard/creditos-masivos"], ["Excepciones por mora", "/dashboard/excepciones-mora"]] as Item[] : []),
   ];
   const administration: Item[] = [
+    ...(admin && adminCentral ? [["Analistas", "/dashboard/aprobaciones/centro"]] as Item[] : []),
     ...(adminCentral ? [["Comisiones", "/dashboard/comisiones"], ["Aliados", "/dashboard/aliados"], ["¿Dónde comprar?", "/dashboard/comercios-publicos"], ["Lista negra", "/dashboard/lista-negra"]] as Item[] : []),
     ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"],
     ...(admin ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"]] as Item[] : []),
@@ -56,6 +57,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
         <CentralDashboardMenu summaryClassName={styles.settlementProfile} label={<><span className={styles.avatar}>{initials || <UserRound aria-hidden="true" />}</span><span className={styles.profileName}>{nombreUsuario}</span><ChevronDown aria-hidden="true" /><span className={styles.srOnly}>Perfil de {nombreUsuario}</span></>}>
           <div className={styles.identity}><strong>{nombreUsuario}</strong><span>{rolUsuario}</span></div>
           {!admin && <Link href="/dashboard/pin">Cambiar PIN</Link>}
+          {admin && <Link href="/dashboard/contrasena">Cambiar contraseña</Link>}
           <LogoutButton className={styles.logout} showIcon />
         </CentralDashboardMenu>
       </div>
@@ -78,6 +80,7 @@ return (<header className={`${styles.topbar} ${variant === "requests" ? styles.r
         <CentralDashboardMenu summaryClassName={variant !== "sale" ? styles.requestProfile : styles.profile} label={variant !== "sale" ? <><span className={styles.avatar}>{nombreUsuario.trim().split(/\s+/).slice(0,2).map(part => part[0]).join("").toUpperCase()}</span><span className={styles.profileName}>{nombreUsuario}</span><ChevronDown aria-hidden="true" /></> : <><UserRound aria-hidden="true" /><span className={styles.srOnly}>Perfil de {nombreUsuario}</span></>}>
           <div className={styles.identity}><strong>{nombreUsuario}</strong><span>{rolUsuario}</span></div>
           {!admin && <Link href="/dashboard/pin">Cambiar PIN</Link>}
+          {admin && <Link href="/dashboard/contrasena">Cambiar contraseña</Link>}
           <LogoutButton className={styles.logout} showIcon />
         </CentralDashboardMenu>
         <span className={styles.srOnly}>Perfil de {nombreUsuario}</span>

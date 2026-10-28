@@ -10,7 +10,7 @@ import styles from "./analyst-center.module.css";
 import CreditWelcomeVoiceResult from "../credit-welcome-voice-result";
 
 const operationModules = [
-  { href: "/dashboard/aprobaciones", title: "Aprobaciones", description: "Solicitudes y bienvenida", icon: ClipboardList },
+  { href: "/dashboard/aprobaciones?vista=analista", title: "Aprobaciones", description: "Solicitudes y bienvenida", icon: ClipboardList },
   { href: "/dashboard/aprobaciones/cambio-imei", title: "Cambio de IMEI", description: "Actualiza el equipo asociado", icon: Smartphone },
   { href: "/dashboard/aprobaciones/enrolamiento", title: "Enrolamiento iPhone", description: "Consulta y valida el enrolamiento", icon: ShieldCheck },
   { href: "/dashboard/aprobaciones/firma-seguro", title: "Gestionar firma", description: "Envíos y datos de contacto", icon: Signature },

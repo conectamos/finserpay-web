@@ -5,6 +5,7 @@ import {
   SESSION_COOKIE_NAME,
   APPROVAL_ANALYST_SESSION_COOKIE_NAME,
   APPROVAL_ACCESS_COOKIE_NAME,
+  APPROVAL_SHARED_COOKIE_NAME,
   getSessionCredentialVersion,
   verifyApprovalAnalystSessionToken,
   verifySellerSessionToken,
@@ -187,6 +188,26 @@ export async function getNominalApprovalAnalystSessionUser() {
 
   const user = await getSessionUser({ allowApprovalAnalyst: true });
   return user && isApprovalAnalystRole(user.rolNombre) && canReviewCreditApprovals(user)
+    ? user
+    : null;
+}
+
+/**
+ * Personal workspace access retains the signed-in identity. A central admin
+ * uses the regular session; no analyst account, link or impersonation is made.
+ * Never fall back to an admin when another approval identity is present.
+ */
+export async function getNominalApprovalWorkspaceSessionUser() {
+  const cookieStore = await cookies();
+  if (cookieStore.get(APPROVAL_SHARED_COOKIE_NAME)?.value) return null;
+  if (cookieStore.get(APPROVAL_ANALYST_SESSION_COOKIE_NAME)?.value) {
+    return getNominalApprovalAnalystSessionUser();
+  }
+  if (cookieStore.get(APPROVAL_ACCESS_COOKIE_NAME)?.value) return null;
+
+  const user = await getSessionUser();
+  return user && isAdminRole(user.rolNombre) && canReviewCreditApprovals(user)
+    && user.sedeAccesoActiva && user.aliadoAccesoActivo
     ? user
     : null;
 }

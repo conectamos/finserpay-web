@@ -50,10 +50,10 @@ function harness({ cookies = [nominalCookie], shared, active = true, role = "ANA
     } },
     "@/lib/session": {
       SELLER_SESSION_COOKIE_NAME: "seller", SESSION_COOKIE_NAME: "regular", APPROVAL_ANALYST_SESSION_COOKIE_NAME: nominalCookie,
-      APPROVAL_ACCESS_COOKIE_NAME: personalCookie, getSessionCredentialVersion: () => "current",
+      APPROVAL_ACCESS_COOKIE_NAME: personalCookie, APPROVAL_SHARED_COOKIE_NAME: "shared-cookie", getSessionCredentialVersion: () => "current",
       verifyApprovalAnalystSessionToken: value => value === nominalCookie && !expired
         ? { userId: 17, credentialVersion: staleCredential ? "old" : "current" } : null,
-      verifySessionToken: value => value ? { userId: 17, credentialVersion: "current", approvalAccessGrantId: value === personalCookie ? "grant" : null } : null,
+      verifySessionToken: value => value && !expired ? { userId: 17, credentialVersion: "current", approvalAccessGrantId: value === personalCookie ? "grant" : null } : null,
       verifySellerSessionToken: () => null,
     },
     "@/lib/roles": roles,
@@ -92,22 +92,29 @@ function harness({ cookies = [nominalCookie], shared, active = true, role = "ANA
 const request = query => new Request("https://finserpay.test/api/aprobaciones/centro/" + query);
 const context = { params: Promise.resolve({ kind: "DRAFT", id: "31" }) };
 
-test("centro acepta únicamente cuenta nominal central vigente; niega enlaces, otros roles y cuentas inactivas antes de leer datos", async () => {
+test("centro acepta analista nominal y Admin Central; niega enlaces, otros roles y cuentas inactivas antes de leer datos", async () => {
   const scenarios = [
     {}, { cookies: [] }, { cookies: [personalCookie] }, { cookies: ["regular"], role: "ADMIN" },
     { role: "ADMIN" }, { role: "ADMIN_ALIADO" }, { role: "VENDEDOR" }, { active: false },
     { siteActive: false }, { allyActive: false }, { allyCode: "OTRO" }, { expired: true }, { staleCredential: true },
+    { cookies: ["regular"], role: "ADMIN", allyCode: "OTRO" },
+    { cookies: ["regular"], role: "ADMIN", active: false },
+    { cookies: ["regular"], role: "ADMIN", siteActive: false },
+    { cookies: ["regular"], role: "ADMIN", allyActive: false },
+    { cookies: ["regular"], role: "ADMIN", expired: true },
+    { cookies: ["regular", personalCookie], role: "ADMIN" },
+    { cookies: ["regular", "shared-cookie"], role: "ADMIN" },
   ];
   for (const [index, scenario] of scenarios.entries()) {
     const api = harness(scenario);
     for (const [name, path] of [["search", "buscar?q=001234"], ["detail", "expediente/DRAFT/31"], ["management", "gestiones?page=2&pageSize=10"]]) {
       const response = await api[name].GET(request(path), context);
-      assert.equal(response.status, index === 0 ? 200 : 401, `${name}: ${JSON.stringify(scenario)}`);
+      assert.equal(response.status, index === 0 || index === 3 ? 200 : 401, `${name}: ${JSON.stringify(scenario)}`);
       assert.equal(response.headers.get("cache-control"), "private, no-store, max-age=0");
       assert.equal(response.headers.get("vary"), "Cookie");
       assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     }
-    if (index !== 0) assert.equal(api.calls.length, 0, "Un enlace no consulta siquiera su grant desde el nuevo Centro.");
+    if (index !== 0 && index !== 3) assert.equal(api.calls.length, 0, "Un enlace no consulta siquiera su grant desde el nuevo Centro.");
   }
 });
 

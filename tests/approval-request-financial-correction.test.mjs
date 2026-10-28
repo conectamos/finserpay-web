@@ -252,7 +252,7 @@ test("endpoint requiere analista nominal y rechaza enlaces compartidos", async (
   let analyst = null, shared, calls = 0;
   const route = load("app/api/aprobaciones/solicitudes/[id]/condiciones/route.ts", {
     "next/server": { NextResponse: { json: (value, options = {}) => Response.json(value, options) } },
-    "@/lib/auth": { getNominalApprovalAnalystSessionUser: async () => analyst },
+    "@/lib/auth": { getNominalApprovalWorkspaceSessionUser: async () => analyst },
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => shared },
     "@/lib/credit-approval-http": { approvalErrorResponse: () => Response.json({ ok: false }, { status: 500 }), readApprovalRequest: (request) => request.json() },
     "@/lib/approval-request-financial-correction-core": core,

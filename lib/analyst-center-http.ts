@@ -1,6 +1,6 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { getNominalApprovalAnalystSessionUser } from "@/lib/auth";
+import { getNominalApprovalWorkspaceSessionUser } from "@/lib/auth";
 import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { OperationalCaseReadError } from "@/lib/approval-operations-read";
@@ -16,9 +16,9 @@ export async function requireAnalystCenterActor() {
   if ((await getApprovalSharedRequestActor()) !== undefined) {
     throw new CreditApprovalError("SHARED_ACCESS", "Cierra el acceso compartido y usa tu cuenta personal.", 403);
   }
-  const user = await getNominalApprovalAnalystSessionUser();
+  const user = await getNominalApprovalWorkspaceSessionUser();
   if (!user) {
-    throw new CreditApprovalError("UNAUTHORIZED", "Inicia sesión con tu cuenta personal de analista.", 401);
+    throw new CreditApprovalError("UNAUTHORIZED", "Inicia sesión con tu cuenta de analista o Admin Central FINSER.", 401);
   }
   return { id: user.id, nombre: user.nombre };
 }

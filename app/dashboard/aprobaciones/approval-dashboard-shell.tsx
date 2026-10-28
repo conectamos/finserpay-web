@@ -5,9 +5,8 @@ import { AppShell } from "@/app/_components/finser-ui";
 import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
 import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
-import { isApprovalAnalystRole } from "@/lib/roles";
-import { getNominalApprovalAnalystSessionUser } from "@/lib/auth";
-import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
+import { isAdminRole, isApprovalAnalystRole } from "@/lib/roles";
+import { getNominalApprovalWorkspaceSessionUser } from "@/lib/auth";
 import AnalystNavigation from "./analyst-navigation";
 import styles from "./analyst-navigation.module.css";
 
@@ -21,18 +20,26 @@ export default async function ApprovalDashboardShell({
   activeHref,
   children,
   user,
+  analystWorkspace = activeHref.startsWith("/dashboard/aprobaciones/centro") || [
+    "/dashboard/aprobaciones/solicitudes",
+    "/dashboard/aprobaciones/cambio-imei",
+    "/dashboard/aprobaciones/firma-seguro",
+    "/dashboard/aprobaciones/liberar-consulta",
+    "/dashboard/aprobaciones/sadmin",
+  ].includes(activeHref),
 }: {
   activeHref: string;
   children: ReactNode;
   user: ApprovalDashboardUser;
+  analystWorkspace?: boolean;
 }) {
-  const nominalAnalyst = isApprovalAnalystRole(user.rolNombre)
-    && Boolean(await getNominalApprovalAnalystSessionUser())
-    && (await getApprovalSharedRequestActor()) === undefined;
+  const workspaceUser = await getNominalApprovalWorkspaceSessionUser();
+  const nominalAnalyst = Boolean(workspaceUser)
+    && (isApprovalAnalystRole(user.rolNombre) || analystWorkspace);
   const compact = activeHref === "/dashboard/aprobaciones/excepciones-mora";
   if (activeHref === "/dashboard/aprobaciones" && !nominalAnalyst) return <div className={styles.exceptionShell}><FinserNavigation admin adminCentral={isFinserPayCentralAlly(user.aliadoAccesoCodigo)} nombreUsuario={user.nombre} rolUsuario={user.rolNombre} variant="requests" />{children}</div>;
   if (nominalAnalyst) return <div className={styles.shell}>
-    <AnalystNavigation userName={user.nombre} userRole={user.rolNombre} compact={compact || activeHref === "/dashboard/aprobaciones"} />
+    <AnalystNavigation userName={user.nombre} userRole={user.rolNombre} centralAdmin={isAdminRole(user.rolNombre)} compact={compact || activeHref === "/dashboard/aprobaciones"} />
     {activeHref !== "/dashboard/aprobaciones/centro" && <Link className={`${styles.back}${compact ? ` ${styles.compactBack}` : ""}`} href="/dashboard/aprobaciones/centro"><ArrowLeft aria-hidden="true" />Volver al Centro del analista</Link>}
     {children}
   </div>;

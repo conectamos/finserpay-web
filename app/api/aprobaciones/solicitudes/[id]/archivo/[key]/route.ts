@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getNominalApprovalAnalystSessionUser } from "@/lib/auth";
+import { getNominalApprovalWorkspaceSessionUser } from "@/lib/auth";
 import { getApprovalSharedRequestActor } from "@/lib/approval-shared-session";
 import {
   APPROVAL_REQUEST_DOCUMENT_FIELDS,
@@ -28,9 +28,9 @@ function errorResponse(status: number, error: string) {
 
 export async function GET(_request: Request, context: Context) {
   try {
-    const analyst = await getNominalApprovalAnalystSessionUser();
+    const analyst = await getNominalApprovalWorkspaceSessionUser();
     if (!analyst || (await getApprovalSharedRequestActor()) !== undefined) {
-      return errorResponse(401, "Inicia sesión con tu cuenta de analista.");
+      return errorResponse(401, "Inicia sesión con tu cuenta de analista o Admin Central FINSER.");
     }
 
     const params = await context.params;

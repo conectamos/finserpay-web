@@ -160,6 +160,9 @@ export default function AdminSidebar({
           icon: LayoutDashboard,
           label: adminCentral ? "Panel central" : "Panel aliado",
         },
+        ...(adminCentral && isAdminRole(rolUsuario)
+          ? [{ href: "/dashboard/aprobaciones/centro", icon: ShieldCheck, label: "Analistas" }]
+          : []),
       ],
     },
     {
@@ -224,6 +227,9 @@ export default function AdminSidebar({
           : []),
         { href: "/dashboard/sedes", icon: MapPin, label: "Sedes" },
         { href: "/dashboard/usuarios", icon: UserRound, label: "Usuarios" },
+        ...(isAdminRole(rolUsuario)
+          ? [{ href: "/dashboard/contrasena", icon: UserRound, label: "Cambiar contraseña" }]
+          : []),
         ...(isAdminRole(rolUsuario)
           ? [
               {

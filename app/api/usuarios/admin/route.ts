@@ -89,6 +89,14 @@ async function requireAdmin() {
     };
   }
 
+  // Only the central ally has global scope. An unassigned admin must fail closed.
+  if (!isFinserPayCentralAlly(user.aliadoAccesoCodigo) && !parseSedeId(user.aliadoAccesoId)) {
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: "El administrador no tiene un aliado asignado" }, { status: 403 }),
+    };
+  }
+
   return {
     ok: true as const,
     user,
@@ -418,38 +426,59 @@ export async function POST(req: Request) {
       });
     }
 
-    if (tipoPerfilRaw === "ADMINISTRADOR") {
+    if (tipoPerfilRaw === "ADMINISTRADOR" || tipoPerfilRaw === "ADMIN_CENTRAL") {
+      const central = tipoPerfilRaw === "ADMIN_CENTRAL";
+      if (central && !canManageApprovalAnalysts(session.user)) {
+        return NextResponse.json({ error: "Solo Admin Central FINSER puede crear otro administrador central" }, { status: 403 });
+      }
       await ensureUserProfileVisualColumns();
 
       const usuario = normalizeUsername(body.usuario);
-      const clave = String(body.clave || body.pin || "").trim();
+      const clave = typeof body.clave === "string" ? body.clave : typeof body.pin === "string" ? body.pin : "";
       const avatarAdministrador = normalizarAvatarPerfil(
         body.avatarKey,
         "ADMINISTRADOR"
       );
-      const sedeId =
+      let sedeId =
         parseSedeId(body.sedeId) ||
         (sedeIds.length === 1 ? sedeIds[0] : null);
 
-      if (!nombre) {
+      if (!nombre || nombre.length > 120) {
         return NextResponse.json(
-          { error: "El nombre del administrador es obligatorio" },
+          { error: "Ingresa el nombre del administrador, hasta 120 caracteres" },
           { status: 400 }
         );
       }
 
-      if (!usuario) {
+      if (!/^[a-z0-9._@-]{3,80}$/.test(usuario)) {
         return NextResponse.json(
-          { error: "El usuario de acceso es obligatorio" },
+          { error: "El usuario debe tener entre 3 y 80 caracteres: letras, numeros, punto, guion, guion bajo o @" },
           { status: 400 }
         );
       }
 
-      if (clave.length < 4) {
+      if (clave.length < 8 || clave.length > 128 || !clave.trim()) {
         return NextResponse.json(
-          { error: "La clave inicial debe tener al menos 4 caracteres" },
+          { error: "La clave inicial debe tener entre 8 y 128 caracteres" },
           { status: 400 }
         );
+      }
+
+      if (central && body.confirmarClave !== clave) {
+        return NextResponse.json({ error: "Las contraseñas no coinciden" }, { status: 400 });
+      }
+
+      if (central) {
+        // The client cannot choose another ally or role for a central account.
+        const sedeCentral = await prisma.sede.findFirst({
+          where: { codigo: "ADMIN-FINSERPAY", activa: true, aliado: { codigo: "FINSERPAY", activo: true } },
+          select: { id: true },
+          orderBy: { id: "asc" },
+        });
+        if (!sedeCentral) {
+          return NextResponse.json({ error: "No hay una sede central activa de FINSER PAY configurada" }, { status: 409 });
+        }
+        sedeId = sedeCentral.id;
       }
 
       if (!sedeId || !(await ensureSedeExists(sedeId, aliadoScopeId))) {
@@ -466,8 +495,8 @@ export async function POST(req: Request) {
 
       if (existingUser) {
         return NextResponse.json(
-          { error: "Ya existe un administrador con ese usuario" },
-          { status: 400 }
+          { error: "Ya existe un usuario con ese acceso" },
+          { status: 409 }
         );
       }
 
@@ -483,21 +512,29 @@ export async function POST(req: Request) {
         },
       });
 
-      await prisma.usuario.create({
-        data: {
-          nombre,
-          usuario,
-          claveHash: hashPassword(clave),
-          avatarKey: avatarAdministrador,
-          activo,
-          rolId: adminRole.id,
-          sedeId,
-        },
-      });
+      try {
+        await prisma.usuario.create({
+          data: {
+            nombre,
+            usuario,
+            claveHash: hashPassword(clave),
+            avatarKey: avatarAdministrador,
+            activo,
+            rolId: adminRole.id,
+            sedeId,
+          },
+          select: { id: true },
+        });
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+          return NextResponse.json({ error: "Ya existe un usuario con ese acceso" }, { status: 409 });
+        }
+        throw error;
+      }
 
       return NextResponse.json({
         ok: true,
-        mensaje: "Administrador creado correctamente",
+        mensaje: central ? "Admin Central FINSER creado correctamente" : "Administrador creado correctamente",
         ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
       });
     }
@@ -571,8 +608,9 @@ export async function POST(req: Request) {
       mensaje: "Usuario creado correctamente",
       ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
     });
-  } catch (error) {
-    console.error("ERROR CREANDO VENDEDOR:", error);
+  } catch {
+    // Prisma errors can include credential hashes in query parameters.
+    console.error("ERROR CREANDO USUARIO: No se pudo completar la operacion");
     return NextResponse.json(
       { error: "No se pudo crear el usuario" },
       { status: 500 }
@@ -779,8 +817,8 @@ export async function PATCH(req: Request) {
         : "Usuario actualizado correctamente",
       ...(await loadAdminSellersPayload(aliadoScopeId, canManageApprovalAnalysts(session.user))),
     });
-  } catch (error) {
-    console.error("ERROR ACTUALIZANDO VENDEDOR:", error);
+  } catch {
+    console.error("ERROR ACTUALIZANDO USUARIO: No se pudo completar la operacion");
     return NextResponse.json(
       { error: "No se pudo actualizar el usuario" },
       { status: 500 }

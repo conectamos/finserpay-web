@@ -39,7 +39,7 @@ function fixture({ nominal = analyst, shared, rows = [{ nombre: "Aliado Uno" }, 
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/prisma": { default: { $queryRawUnsafe: async (sql) => { queries.push(sql); return rows; } } },
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => shared },
-    "@/lib/auth": { getNominalApprovalAnalystSessionUser: async () => nominal },
+    "@/lib/auth": { getNominalApprovalWorkspaceSessionUser: async () => nominal },
     "@/lib/credit-approval-errors": { CreditApprovalError },
     "@/lib/credit-approval-http": {
       approvalPrivateHeaders: privateHeaders,
