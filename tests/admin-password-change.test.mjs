@@ -34,7 +34,8 @@ function harness({ user = central, account: suppliedAccount, updateCount = 1, db
       }
       return require(name);
     };
-    new Function("require", "module", "exports", outputText)(scopedRequire, mod, mod.exports);
+    new Function("require", "module", "exports", "process", outputText)(scopedRequire, mod, mod.exports,
+      { env: { NODE_ENV: "production", SESSION_SECRET: "isolated-admin-password-test-secret" } });
     cache.set(file, mod.exports);
     return mod.exports;
   }
@@ -70,7 +71,16 @@ test("admin aliado y central actualizan solo su cuenta con scrypt y nunca devuel
     assert.equal(h.password.isPasswordHash(stored), true);
     assert.equal(h.password.verifyPassword(valid.newPassword, stored), true);
     assert.equal(h.password.verifyPassword(valid.currentPassword, stored), false);
-    assert.deepEqual(Object.keys(h.calls.writes[0].data), ["claveHash"]);
+    assert.deepEqual(Object.keys(h.calls.writes[0].data), ["claveHash", "legacySessionRevokedAt"]);
+    assert.ok(h.calls.writes[0].data.legacySessionRevokedAt instanceof Date);
+    const session = h.load("lib/session.ts");
+    const token = session.verifySessionToken(response.cookies.get("session").value);
+    assert.equal(token.userId, user.id);
+    assert.equal(token.credentialVersion, session.getSessionCredentialVersion(stored));
+    const cookie = response.headers.get("set-cookie");
+    assert.match(cookie, /HttpOnly/i);
+    assert.match(cookie, /Secure/i);
+    assert.match(cookie, /SameSite=lax/i);
     const body = await response.text();
     for (const secret of [valid.currentPassword, valid.newPassword, stored, h.account.claveHash]) assert.equal(body.includes(secret), false);
   }
@@ -139,7 +149,9 @@ test("cuenta inactiva, inexistente o sin rol administrativo no puede mutar crede
 
 test("un cambio concurrente de credencial o rol devuelve conflicto", async () => {
   const h = harness({ updateCount: 0 });
-  assert.equal((await h.route.PATCH(patch())).status, 409);
+  const response = await h.route.PATCH(patch());
+  assert.equal(response.status, 409);
+  assert.equal(response.headers.get("set-cookie"), null);
   assert.equal(h.calls.writes[0].where.claveHash, h.account.claveHash);
   assert.equal(h.calls.writes[0].where.rolId, 1);
 });
@@ -178,5 +190,6 @@ test("formulario renderiza tres campos ocultos con labels, autocompletado y lím
   assert.match(html, /autoComplete="current-password"/);
   assert.equal((html.match(/autoComplete="new-password"/g) || []).length, 2);
   assert.match(html, /Guardar contraseña/);
+  assert.match(html, /se cerrarán tus otras sesiones/);
   assert.equal(html.includes(valid.currentPassword), false);
 });

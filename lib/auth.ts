@@ -50,6 +50,7 @@ export async function getSessionUser(options: { allowApprovalAnalyst?: boolean; 
       usuario: true,
       activo: true,
       claveHash: true,
+      legacySessionRevokedAt: true,
       updatedAt: true,
       sedeId: true,
       rolId: true,
@@ -80,6 +81,17 @@ export async function getSessionUser(options: { allowApprovalAnalyst?: boolean; 
   });
 
   if (!user || !user.activo) return null;
+
+  // Existing administrative cookies remain valid until the first password
+  // change. Versioned cookies are bound only to the password hash, never to
+  // profile edits or bootstrap updates of updatedAt.
+  if (isAdminRole(user.rol?.nombre)) {
+    if ("credentialVersion" in session) {
+      if (session.credentialVersion !== getSessionCredentialVersion(user.claveHash)) return null;
+    } else if (user.legacySessionRevokedAt !== null) {
+      return null;
+    }
+  }
 
   // Operational callers deny the specialist by default, including API routes
   // that historically required only a session. Approval routes opt in explicitly.

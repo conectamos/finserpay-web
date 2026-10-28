@@ -7,7 +7,7 @@ const grantId = randomUUID();
 const sharedSessionId = randomUUID();
 const nominal = {
   id: 7, nombre: "Analista sintético", usuario: "analyst", activo: true,
-  claveHash: "hash-1", updatedAt: "2026-09-01", sedeId: 10, rolId: 2,
+  claveHash: "hash-1", legacySessionRevokedAt: null, updatedAt: "2026-09-01", sedeId: 10, rolId: 2,
   rol: { id: 2, nombre: "ANALISTA_APROBACION" },
   sede: { id: 10, nombre: "Central", activa: true, aliadoId: 10,
     aliado: { id: 10, nombre: "FINSER PAY", codigo: "FINSERPAY", activo: true } },
