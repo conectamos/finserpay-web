@@ -5,6 +5,7 @@ on:
     paths:
       - "app/dashboard/creditos/**"
       - "app/dashboard/cartera/**"
+      - "app/dashboard/usuarios/**"
       - "app/api/creditos/**"
       - "lib/**"
       - "tests/**"
@@ -15,6 +16,7 @@ on:
     paths:
       - "app/dashboard/creditos/**"
       - "app/dashboard/cartera/**"
+      - "app/dashboard/usuarios/**"
       - "app/api/creditos/**"
       - "lib/**"
       - "tests/**"
