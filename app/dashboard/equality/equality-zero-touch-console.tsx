@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   Activity,
   ArrowLeft,
+  ArrowUpRight,
   ChevronDown,
   CircleAlert,
   CircleCheck,
@@ -21,12 +22,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
   Card,
-  EmptyState,
   Input,
   PageHeader,
   StatusPill,
 } from "@/app/_components/finser-ui";
+import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { useLiveRefresh } from "@/lib/use-live-refresh";
+import styles from "./equality-zero-touch-console.module.css";
 
 type EqualityResponse = {
   configured: boolean;
@@ -64,9 +66,15 @@ type EqualityResponse = {
 type EqualityAction =
   | "enroll"
   | "lock"
-  | "query"
   | "release"
   | "unlock";
+
+const actionCopy = {
+  enroll: { label: "Inscribir equipo", description: "Se inscribirá el equipo y se activará su servicio de financiación." },
+  unlock: { label: "Desbloquear equipo", description: "Se enviará la orden de desbloqueo al equipo." },
+  lock: { label: "Bloquear equipo", description: "Se restringirá el uso del equipo. Verifica que corresponda aplicar este bloqueo." },
+  release: { label: "Liberar equipo", description: "Se finalizará el servicio de financiación del equipo. Esta acción es distinta de un desbloqueo." },
+};
 
 type DeliveryTone = "amber" | "emerald" | "red" | "sky" | "slate";
 type NoticeTone = "amber" | "emerald" | "red" | "slate";
@@ -75,6 +83,7 @@ type UiTone = "danger" | "neutral" | "positive" | "warning";
 type ConsoleNotice = {
   text: string;
   tone: NoticeTone;
+  source?: "query";
 };
 
 function formatoFecha(valor: string | null) {
@@ -175,8 +184,8 @@ function readinessCopy(result: EqualityResponse | null) {
 
   if (!result.configured) {
     return {
-      eyebrow: "Configuracion pendiente",
-      title: "Equality no esta disponible",
+      eyebrow: "Configuración pendiente",
+      title: "Equality no está disponible",
       detail: "El servicio debe configurarse en el servidor antes de operar equipos.",
     };
   }
@@ -202,7 +211,7 @@ function readinessCopy(result: EqualityResponse | null) {
   if (result.deliveryStatus) {
     return {
       eyebrow: result.deliveryStatus.label,
-      title: "No entregues el equipo todavia",
+      title: "No entregues el equipo todavía",
       detail: result.deliveryStatus.detail,
     };
   }
@@ -224,7 +233,7 @@ function serviceCopy(result: EqualityResponse | null): {
   if (!result) {
     return {
       detail: "Prueba la conexion o consulta un equipo para validar el servicio.",
-      label: "Servicio sin verificar",
+      label: "Sin verificar",
       tone: "neutral",
     };
   }
@@ -232,7 +241,7 @@ function serviceCopy(result: EqualityResponse | null): {
   if (!result.configured) {
     return {
       detail: "La integracion debe configurarse en el servidor.",
-      label: "Configuracion pendiente",
+      label: "Configuración pendiente",
       tone: "warning",
     };
   }
@@ -256,6 +265,11 @@ export default function EqualityZeroTouchConsole({
   const [notice, setNotice] = useState<ConsoleNotice | null>(null);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState<EqualityAction | null>(null);
+  const [confirmation, setConfirmation] = useState<{ action: EqualityAction; deviceUid: string } | null>(null);
+  const [connectionResult, setConnectionResult] = useState<EqualityResponse | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
+  const queryInFlight = useRef(false);
+  const actionInFlight = useRef(false);
   const consultRef = useRef<
     (options?: { deviceUid?: string; probe?: boolean; silent?: boolean }) => Promise<void>
   >(async () => {});
@@ -280,6 +294,8 @@ export default function EqualityZeroTouchConsole({
       const silent = Boolean(options?.silent);
       const nextDeviceUid = sanitizeDeviceUid(options?.deviceUid ?? deviceUid);
 
+      if (queryInFlight.current) return;
+
       if (!probe && !nextDeviceUid) {
         if (!silent) {
           setNotice({
@@ -291,6 +307,7 @@ export default function EqualityZeroTouchConsole({
       }
 
       try {
+        queryInFlight.current = true;
         setLoading(true);
         if (!silent) {
           setNotice(null);
@@ -310,39 +327,26 @@ export default function EqualityZeroTouchConsole({
         const data = await response.json();
 
         if (!response.ok) {
-          if (!silent) {
-            setNotice({
-              text: data.error || "No se pudo consultar Equality Zero Touch.",
-              tone: "red",
-            });
-          }
+          setConnectionError(true);
+          setNotice({ text: data.error || "No se pudo consultar Equality Zero Touch.", tone: "red", source: "query" });
           return;
         }
 
-        setResult(data);
+        setConnectionError(false);
+        setConnectionResult(data);
+        if (!probe) setResult(data);
 
-        if (!probe) {
+        if (!probe && !silent) {
           setDeviceUid(nextDeviceUid);
           syncUrl(nextDeviceUid);
         }
 
-        if (!silent) {
-          setNotice({
-            text:
-              data.deliveryStatus?.detail ||
-              data.resultMessage ||
-              "Consulta actualizada correctamente.",
-            tone: data.deliveryStatus?.ready ? "emerald" : "slate",
-          });
-        }
+        setNotice((previous) => !silent || previous?.source === "query" ? null : previous);
       } catch {
-        if (!silent) {
-          setNotice({
-            text: "No se pudo consultar Equality Zero Touch.",
-            tone: "red",
-          });
-        }
+        setConnectionError(true);
+        setNotice({ text: "No se pudo consultar Equality Zero Touch. Intenta de nuevo.", tone: "red", source: "query" });
       } finally {
+        queryInFlight.current = false;
         setLoading(false);
       }
     },
@@ -368,20 +372,23 @@ export default function EqualityZeroTouchConsole({
 
   useLiveRefresh(
     async () => {
-      if (!result?.deviceUid || result.probe) {
+      if (!result?.deviceUid || result.probe || actionInFlight.current) {
         return;
       }
 
       await consultar({ deviceUid: result.deviceUid, silent: true });
     },
     {
-      enabled: Boolean(result?.configured && result?.deviceUid && !result?.probe),
+      enabled: Boolean(result?.configured && result?.deviceUid && !result?.probe && !confirmation && !processing && sanitizeDeviceUid(deviceUid) === result.deviceUid),
       intervalMs: 25000,
     }
   );
 
-  const ejecutarAccion = async (action: EqualityAction) => {
-    const nextDeviceUid = sanitizeDeviceUid(deviceUid || result?.deviceUid || "");
+  const ejecutarAccion = async (action: EqualityAction, confirmedDeviceUid: string) => {
+    const nextDeviceUid = sanitizeDeviceUid(confirmedDeviceUid);
+
+    if (actionInFlight.current || queryInFlight.current) return;
+    if (!result?.configured || connectionError || !result.canManage || !canAdmin || nextDeviceUid !== result.deviceUid || nextDeviceUid !== sanitizeDeviceUid(deviceUid)) return;
 
     if (!nextDeviceUid) {
       setNotice({
@@ -392,6 +399,7 @@ export default function EqualityZeroTouchConsole({
     }
 
     try {
+      actionInFlight.current = true;
       setProcessing(action);
       setNotice(null);
 
@@ -408,509 +416,187 @@ export default function EqualityZeroTouchConsole({
 
       const data = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || data.ok === false) {
+        setConfirmation(null);
         setNotice({
-          text: data.error || "No se pudo ejecutar la accion.",
+          text: data.error || data.resultMessage || "No se pudo ejecutar la acción.",
           tone: "red",
         });
         return;
       }
 
       await consultar({ deviceUid: nextDeviceUid, silent: true });
+      setConfirmation(null);
 
       setNotice({
         text:
           data.query?.deliveryStatus?.detail ||
           data.resultMessage ||
-          "Accion enviada correctamente.",
+          "Orden enviada. El estado se actualizará al recibir la confirmación del equipo.",
         tone:
           action === "enroll" && data.query?.deliveryStatus?.ready
             ? "emerald"
             : "slate",
       });
     } catch {
+      setConfirmation(null);
       setNotice({
         text: "No se pudo ejecutar la accion.",
         tone: "red",
       });
     } finally {
+      actionInFlight.current = false;
       setProcessing(null);
     }
   };
 
   const readiness = readinessCopy(result);
-  const service = serviceCopy(result);
+  const service = connectionError
+    ? { label: "Conexión sin confirmar", tone: "warning" as UiTone }
+    : serviceCopy(connectionResult);
   const snapshot = result?.deviceSnapshot;
-  const visibleDeviceUid = compactText(result?.deviceUid || deviceUid, "Sin consulta");
-  const deviceName = [
-    snapshot?.deviceManufacturer,
-    snapshot?.deviceMarketName || snapshot?.deviceModel,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const visibleDeviceUid = compactText(result?.deviceUid, "Sin consulta");
+  const deviceName = [snapshot?.deviceManufacturer, snapshot?.deviceMarketName || snapshot?.deviceModel]
+    .filter(Boolean).join(" ");
   const busy = loading || processing !== null;
+  const matchesQuery = Boolean(result?.deviceUid && result.deviceUid === sanitizeDeviceUid(deviceUid));
+  const canOperate = Boolean(matchesQuery && result?.configured && connectionResult?.configured && !connectionError && result?.canManage && canAdmin);
+  const actionHint = !result ? "Consulta un equipo para habilitar sus acciones."
+    : !matchesQuery ? "Consulta el nuevo identificador antes de operar."
+    : connectionError ? "Verifica la conexión antes de operar."
+    : !result.configured || !connectionResult?.configured ? "Configura la integración para operar."
+    : !result.canManage || !canAdmin ? `Perfil ${roleName}: sin permisos para administrar este equipo.`
+    : "Las órdenes se aplican al equipo consultado.";
+  const requestAction = (action: EqualityAction) => {
+    if (!canOperate || busy || queryInFlight.current || actionInFlight.current) return;
+    setConfirmation({ action, deviceUid: result!.deviceUid });
+  };
+  const diagnostics = result ? [
+    ["HTTP remoto", String(result.remoteStatusCode ?? "—")],
+    ["Código", compactText(result.resultCode)],
+    ["Tenant", compactText(snapshot?.tenantName)],
+    ["Modelo", compactText(snapshot?.deviceModel || snapshot?.deviceMarketName)],
+    ["Creado", formatoFecha(snapshot?.createdTimeStamp || null)],
+    ["Último cambio", formatoFecha(snapshot?.lastChanged || null)],
+    ["Transición", compactText(snapshot?.transitionState)],
+    ["Permisos", result.canManage ? "Administración" : "Solo consulta"],
+  ] : [];
 
   return (
-    <main className="mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      <PageHeader
-        eyebrow="Control de equipos"
-        title="Equality Zero Touch"
-        description="Consulta un equipo y administra su estado remoto desde una sola vista."
-        actions={
-          <Link
-            href="/dashboard/integraciones"
-            className="fp-ui-button is-secondary"
-          >
-            <ArrowLeft aria-hidden="true" size={17} />
-            Integraciones
-          </Link>
-        }
+    <main className={styles.page}>
+      <PageHeader eyebrow="CONTROL DE EQUIPOS" title="Equality Zero Touch"
+        description="Consulta y gestión remota de equipos."
+        actions={<Link href="/dashboard/integraciones" className="fp-ui-button is-secondary"><ArrowLeft size={17} aria-hidden="true" />Integraciones</Link>}
       />
 
-      <Card className="mt-5 flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <span
-            className={[
-              "grid h-10 w-10 shrink-0 place-items-center rounded-lg",
-              service.tone === "positive"
-                ? "bg-[var(--fp-lime-soft)] text-[var(--fp-lime-strong)]"
-                : service.tone === "warning"
-                  ? "bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]"
-                  : "bg-[#eef1f4] text-[var(--fp-muted)]",
-            ].join(" ")}
-          >
-            {loading && !result ? (
-              <LoaderCircle aria-hidden="true" className="animate-spin" size={19} />
-            ) : service.tone === "positive" ? (
-              <CircleCheck aria-hidden="true" size={19} />
-            ) : service.tone === "warning" ? (
-              <CircleAlert aria-hidden="true" size={19} />
-            ) : (
-              <Activity aria-hidden="true" size={19} />
-            )}
-          </span>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-extrabold text-[var(--fp-graphite)]">
-                {service.label}
-              </h2>
-              <StatusPill tone={service.tone}>
-                {result?.remoteStatusCode ? `HTTP ${result.remoteStatusCode}` : "Equality"}
-              </StatusPill>
-            </div>
-            <p className="mt-1 text-sm text-[var(--fp-muted)]">{service.detail}</p>
-          </div>
+      <div className={styles.connectionBar}>
+        <div className={styles.connectionStatus} role="status" aria-live="polite">
+          <Activity size={17} aria-hidden="true" />
+          <span>Estado del servicio</span>
+          <StatusPill tone={service.tone}>{loading && !connectionResult ? "Verificando…" : service.label}</StatusPill>
         </div>
-
-        <Button
-          variant="secondary"
-          className="h-11 shrink-0"
-          disabled={busy}
-          onClick={() => void consultar({ probe: true })}
-        >
-          {loading ? (
-            <LoaderCircle aria-hidden="true" className="animate-spin" size={17} />
-          ) : (
-            <RefreshCw aria-hidden="true" size={17} />
-          )}
-          Probar conexion
+        <Button variant="ghost" onClick={() => void consultar({ probe: true })} disabled={busy || Boolean(confirmation)}>
+          <RefreshCw size={16} aria-hidden="true" className={loading ? styles.spin : undefined} />Probar conexión
         </Button>
-      </Card>
+      </div>
 
-      {notice && (
-        <div
-          className={[
-            "mt-4 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm font-semibold",
-            noticeStyles(notice.tone),
-          ].join(" ")}
-          role="status"
-          aria-live="polite"
-        >
-          {notice.tone === "red" || notice.tone === "amber" ? (
-            <CircleAlert aria-hidden="true" className="mt-0.5 shrink-0" size={18} />
-          ) : (
-            <CircleCheck aria-hidden="true" className="mt-0.5 shrink-0" size={18} />
-          )}
-          <span>{notice.text}</span>
+      <Card className={styles.searchCard}>
+        <div className={styles.searchIntro}>
+          <span className={styles.searchIcon}><Smartphone size={26} aria-hidden="true" /></span>
+          <div><h2>Buscar equipo</h2><p>Ingresa el identificador exacto del dispositivo.</p></div>
         </div>
-      )}
-
-      <Card className="mt-5 overflow-hidden">
-        <section className="border-b border-[var(--fp-border)] p-5 sm:p-6">
-          <div>
-            <p className="fp-ui-eyebrow">Consulta principal</p>
-            <h2 className="mt-1 text-xl font-extrabold text-[var(--fp-graphite)]">
-              Buscar equipo
-            </h2>
-            <p className="mt-1 text-sm text-[var(--fp-muted)]">
-              Ingresa el IMEI o Device UID exacto del dispositivo.
-            </p>
-          </div>
-
-          <form
-            className="mt-5 flex flex-col gap-3 sm:flex-row"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void consultar({ deviceUid });
-            }}
-          >
-            <label className="sr-only" htmlFor="equality-device-uid">
-              IMEI o Device UID
-            </label>
-            <div className="relative min-w-0 flex-1">
-              <Smartphone
-                aria-hidden="true"
-                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--fp-muted)]"
-                size={19}
-              />
-              <Input
-                id="equality-device-uid"
-                value={deviceUid}
-                onChange={(event) =>
-                  setDeviceUid(sanitizeDeviceUid(event.target.value))
-                }
-                placeholder="IMEI o Device UID"
-                autoComplete="off"
-                className="h-12 !pl-11"
-              />
-            </div>
-            <Button
-              type="submit"
-              className="h-12 min-w-[136px]"
-              disabled={busy}
-            >
-              {loading ? (
-                <LoaderCircle aria-hidden="true" className="animate-spin" size={18} />
-              ) : (
-                <Search aria-hidden="true" size={18} />
-              )}
-              {loading ? "Consultando" : "Consultar"}
-            </Button>
-          </form>
-        </section>
-
-        {result && !result.probe ? (
-          <div
-            className="grid lg:grid-cols-[minmax(0,1.2fr)_minmax(290px,0.8fr)]"
-            aria-live="polite"
-          >
-            <section className="p-5 sm:p-6 lg:p-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="flex min-w-0 items-start gap-4">
-                  <span
-                    className={[
-                      "grid h-12 w-12 shrink-0 place-items-center rounded-lg",
-                      statusTone(resolveTone(result)) === "positive"
-                        ? "bg-[var(--fp-lime-soft)] text-[var(--fp-lime-strong)]"
-                        : statusTone(resolveTone(result)) === "warning"
-                          ? "bg-[var(--fp-amber-soft)] text-[var(--fp-amber)]"
-                          : statusTone(resolveTone(result)) === "danger"
-                            ? "bg-[var(--fp-danger-soft)] text-[var(--fp-danger)]"
-                            : "bg-[#eef1f4] text-[var(--fp-muted)]",
-                    ].join(" ")}
-                  >
-                    {result.deliveryStatus?.ready ? (
-                      <ShieldCheck aria-hidden="true" size={24} />
-                    ) : (
-                      <CircleAlert aria-hidden="true" size={24} />
-                    )}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="fp-ui-eyebrow">Resultado de entrega</p>
-                    <h2 className="mt-1 text-2xl font-black leading-tight text-[var(--fp-graphite)] sm:text-3xl">
-                      {readiness.title}
-                    </h2>
-                  </div>
-                </div>
-                <StatusPill
-                  tone={statusTone(resolveTone(result))}
-                  className="shrink-0 self-start"
-                >
-                  {readiness.eyebrow}
-                </StatusPill>
-              </div>
-
-              <p className="mt-5 max-w-2xl text-sm leading-6 text-[var(--fp-muted)] sm:text-base">
-                {readiness.detail}
-              </p>
-            </section>
-
-            <aside className="border-t border-[var(--fp-border)] bg-[#fafbfa] p-5 sm:p-6 lg:border-l lg:border-t-0">
-              <p className="text-xs font-extrabold uppercase text-[var(--fp-muted)]">
-                Equipo consultado
-              </p>
-              <h3 className="mt-2 break-words text-lg font-black text-[var(--fp-graphite)]">
-                {deviceName || "Equipo sin identificar"}
-              </h3>
-
-              <dl className="mt-5 divide-y divide-[var(--fp-border)] text-sm">
-                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3 first:pt-0">
-                  <dt className="text-[var(--fp-muted)]">Identificador</dt>
-                  <dd className="break-all text-right font-bold text-[var(--fp-graphite)]">
-                    {visibleDeviceUid}
-                  </dd>
-                </div>
-                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3">
-                  <dt className="text-[var(--fp-muted)]">Estado remoto</dt>
-                  <dd className="break-words text-right font-bold text-[var(--fp-graphite)]">
-                    {compactText(result.deviceState, "Sin estado")}
-                  </dd>
-                </div>
-                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3">
-                  <dt className="text-[var(--fp-muted)]">Servicio</dt>
-                  <dd className="break-words text-right font-bold text-[var(--fp-graphite)]">
-                    {compactText(
-                      result.serviceDetails || snapshot?.serviceDetails,
-                      "Sin informacion"
-                    )}
-                  </dd>
-                </div>
-                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-3 last:pb-0">
-                  <dt className="text-[var(--fp-muted)]">Ultimo contacto</dt>
-                  <dd className="text-right font-bold text-[var(--fp-graphite)]">
-                    {formatoFecha(snapshot?.lastCheckIn || null)}
-                  </dd>
-                </div>
-              </dl>
-            </aside>
-          </div>
-        ) : (
-          <div className="p-5 sm:p-6">
-            <EmptyState
-              className="min-h-[190px] border-0 shadow-none"
-              title="Consulta un equipo para ver su estado"
-              description="Aqui aparecera el veredicto de entrega y la informacion esencial del dispositivo."
+        <form className={styles.searchForm} onSubmit={(event) => { event.preventDefault(); if (!confirmation && !actionInFlight.current) void consultar({ deviceUid }); }}>
+          <label htmlFor="equality-device-uid">IMEI o Device UID</label>
+          <div className={styles.searchControls}>
+            <Input id="equality-device-uid" value={deviceUid} autoComplete="off" spellCheck={false}
+              placeholder="Escribe el IMEI o Device UID"
+              onChange={(event) => setDeviceUid(sanitizeDeviceUid(event.target.value))}
+              disabled={busy || Boolean(confirmation)}
             />
+            <Button type="submit" disabled={busy || Boolean(confirmation)}>
+              {loading ? <LoaderCircle className={styles.spin} size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
+              {loading ? "Consultando…" : "Consultar"}
+            </Button>
           </div>
-        )}
-
-        <section className="border-t border-[var(--fp-border)] bg-[#fafbfa] p-5 sm:p-6">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-            <div>
-              <h2 className="font-extrabold text-[var(--fp-graphite)]">
-                Acciones del equipo
-              </h2>
-              <p className="mt-1 text-sm text-[var(--fp-muted)]">
-                Las acciones se ejecutan sobre el identificador ingresado.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                className="h-11"
-                disabled={busy}
-                onClick={() => void ejecutarAccion("enroll")}
-              >
-                {processing === "enroll" ? (
-                  <LoaderCircle
-                    aria-hidden="true"
-                    className="animate-spin"
-                    size={17}
-                  />
-                ) : (
-                  <PackageCheck aria-hidden="true" size={17} />
-                )}
-                {processing === "enroll" ? "Inscribiendo" : "Inscribir"}
-              </Button>
-
-              {canAdmin && (
-                <>
-                  <span
-                    className="mx-1 hidden h-8 w-px self-center bg-[var(--fp-border)] sm:block"
-                    aria-hidden="true"
-                  />
-                  <Button
-                    variant="danger"
-                    className="h-11"
-                    disabled={busy}
-                    onClick={() => void ejecutarAccion("lock")}
-                  >
-                    {processing === "lock" ? (
-                      <LoaderCircle
-                        aria-hidden="true"
-                        className="animate-spin"
-                        size={17}
-                      />
-                    ) : (
-                      <LockKeyhole aria-hidden="true" size={17} />
-                    )}
-                    {processing === "lock" ? "Bloqueando" : "Bloquear"}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="h-11"
-                    disabled={busy}
-                    onClick={() => void ejecutarAccion("unlock")}
-                  >
-                    {processing === "unlock" ? (
-                      <LoaderCircle
-                        aria-hidden="true"
-                        className="animate-spin"
-                        size={17}
-                      />
-                    ) : (
-                      <UnlockKeyhole aria-hidden="true" size={17} />
-                    )}
-                    {processing === "unlock" ? "Desbloqueando" : "Desbloquear"}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="h-11"
-                    disabled={busy}
-                    onClick={() => void ejecutarAccion("release")}
-                  >
-                    {processing === "release" ? (
-                      <LoaderCircle
-                        aria-hidden="true"
-                        className="animate-spin"
-                        size={17}
-                      />
-                    ) : (
-                      <ShieldCheck aria-hidden="true" size={17} />
-                    )}
-                    {processing === "release" ? "Liberando" : "Liberar"}
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-
-          {!canAdmin && (
-            <p className="mt-4 border-t border-[var(--fp-border)] pt-4 text-sm text-[var(--fp-muted)]">
-              Perfil {roleName}: puedes consultar e inscribir equipos. Las acciones
-              administrativas estan restringidas.
-            </p>
-          )}
-        </section>
+        </form>
       </Card>
 
-      {result && !result.probe && (
-        <Card className="mt-4 overflow-hidden">
-          <details className="group">
-            <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 marker:hidden sm:px-6">
-              <span className="flex min-w-0 items-center gap-3">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#eef1f4] text-[var(--fp-muted)]">
-                  <Server aria-hidden="true" size={18} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block font-extrabold text-[var(--fp-graphite)]">
-                    Detalle tecnico
-                  </span>
-                  <span className="block text-sm text-[var(--fp-muted)]">
-                    Diagnostico y respuesta remota
-                  </span>
-                </span>
-              </span>
-              <ChevronDown
-                aria-hidden="true"
-                className="shrink-0 text-[var(--fp-muted)] transition group-open:rotate-180"
-                size={20}
-              />
-            </summary>
+      {notice && <div className={`${styles.notice} ${noticeStyles(notice.tone)}`} role={notice.tone === "red" ? "alert" : "status"}>
+        {notice.tone === "red" || notice.tone === "amber" ? <CircleAlert size={18} aria-hidden="true" /> : <CircleCheck size={18} aria-hidden="true" />}
+        <span>{notice.text}</span>
+      </div>}
 
-            <div className="border-t border-[var(--fp-border)] p-5 sm:p-6">
-              <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    HTTP remoto
-                  </dt>
-                  <dd className="mt-1 font-bold text-[var(--fp-graphite)]">
-                    {String(result.remoteStatusCode ?? "-")}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Codigo
-                  </dt>
-                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
-                    {compactText(result.resultCode)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Tenant
-                  </dt>
-                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
-                    {compactText(snapshot?.tenantName)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Modelo
-                  </dt>
-                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
-                    {compactText(
-                      snapshot?.deviceModel || snapshot?.deviceMarketName
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Creado
-                  </dt>
-                  <dd className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
-                    {formatoFecha(snapshot?.createdTimeStamp || null)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Ultimo cambio
-                  </dt>
-                  <dd className="mt-1 text-sm font-bold text-[var(--fp-graphite)]">
-                    {formatoFecha(snapshot?.lastChanged || null)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Transicion
-                  </dt>
-                  <dd className="mt-1 break-words font-bold text-[var(--fp-graphite)]">
-                    {compactText(snapshot?.transitionState)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                    Permisos
-                  </dt>
-                  <dd className="mt-1 font-bold text-[var(--fp-graphite)]">
-                    {result.canManage ? "Administracion" : "Solo consulta"}
-                  </dd>
-                </div>
-              </dl>
-
-              <div className="mt-6 border-t border-[var(--fp-border)] pt-5">
-                <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                  Cola de transiciones
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {snapshot?.transitionQueue?.length ? (
-                    snapshot.transitionQueue.map((item) => (
-                      <StatusPill key={`${visibleDeviceUid}-${item}`}>
-                        {item}
-                      </StatusPill>
-                    ))
-                  ) : (
-                    <span className="text-sm text-[var(--fp-muted)]">
-                      Sin transiciones pendientes.
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-6 overflow-hidden rounded-lg border border-[#2b333d] bg-[#11161c]">
-                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-xs font-bold uppercase text-slate-400">
-                  <Server aria-hidden="true" size={15} />
-                  Respuesta remota
-                </div>
-                <pre className="max-h-72 overflow-auto p-4 text-xs leading-6 text-slate-200">
-                  {prettyJson(result.response)}
-                </pre>
-              </div>
+      <div className={styles.workspace}>
+        <Card className={styles.deviceCard}>
+          <div className={styles.sectionHeader}><h2>Estado del equipo</h2>
+            {result && <span className={styles.readingLabel}>{connectionError ? "Última lectura recibida" : loading ? "Actualizando…" : "Actualización automática"}</span>}
+          </div>
+          {result ? <div aria-live="polite">
+            <div className={styles.deviceIdentity}>
+              <span className={styles.deviceIcon}><Smartphone size={32} aria-hidden="true" /></span>
+              <div><span className={styles.fieldLabel}>Equipo consultado</span><h3>{deviceName || "Equipo sin identificar"}</h3><p>IMEI / Device UID <strong>{visibleDeviceUid}</strong></p></div>
             </div>
-          </details>
+            {!matchesQuery && <p className={styles.staleNotice}><CircleAlert size={17} aria-hidden="true" />La lectura corresponde al identificador anterior.</p>}
+            <section className={styles.readiness} data-tone={statusTone(resolveTone(result))}>
+              <div className={styles.readinessTitle}>
+                {result.deliveryStatus?.ready ? <ShieldCheck size={25} aria-hidden="true" /> : <CircleAlert size={25} aria-hidden="true" />}
+                <div><h3>{readiness.title}</h3><p>{readiness.eyebrow}</p></div>
+              </div>
+              <p>{readiness.detail}</p>
+            </section>
+            <dl className={styles.deviceFacts}>
+              <div><dt>Estado remoto</dt><dd>{compactText(result.deviceState, "Sin estado")}</dd></div>
+              <div><dt>Servicio</dt><dd>{compactText(result.serviceDetails || snapshot?.serviceDetails, "Sin información")}</dd></div>
+              <div><dt>Último contacto</dt><dd>{formatoFecha(snapshot?.lastCheckIn || null)}</dd></div>
+            </dl>
+          </div> : <div className={styles.empty}>
+            <span className={styles.emptyIcon}><Smartphone size={48} strokeWidth={1.4} aria-hidden="true" /><Search size={22} aria-hidden="true" /></span>
+            <h3>Todo empieza con una consulta</h3>
+            <p>Busca un equipo para ver su estado de entrega y las acciones disponibles.</p>
+            <span className={styles.emptyNote}><ShieldCheck size={16} aria-hidden="true" />Consultar no modifica el equipo.</span>
+          </div>}
         </Card>
-      )}
+
+        <Card className={styles.actionsCard}>
+          <div className={styles.sectionHeader}><h2>Gestionar equipo</h2><Smartphone size={19} aria-hidden="true" /></div>
+          <div className={styles.actionBody}>
+            <p id="equality-action-hint" className={styles.actionHint}>{actionHint}</p>
+            <Button variant="primary" className={styles.actionButton} disabled={busy || !canOperate} aria-describedby="equality-action-hint" onClick={() => requestAction("enroll")}>
+              <PackageCheck size={20} aria-hidden="true" /><span>Inscribir equipo</span><ArrowUpRight size={17} aria-hidden="true" />
+            </Button>
+            {canAdmin && <Button variant="secondary" className={styles.actionButton} disabled={busy || !canOperate} aria-describedby="equality-action-hint" onClick={() => requestAction("unlock")}>
+              <UnlockKeyhole size={20} aria-hidden="true" /><span>Desbloquear equipo</span><ArrowUpRight size={17} aria-hidden="true" />
+            </Button>}
+          </div>
+          {canAdmin && <details className={styles.sensitiveActions}>
+            <summary><LockKeyhole size={17} aria-hidden="true" /><span>Acciones sensibles</span><ChevronDown size={18} aria-hidden="true" /></summary>
+            <div><p>Confirma el equipo antes de bloquearlo o finalizar su servicio.</p>
+              <Button variant="danger" className={styles.actionButton} disabled={busy || !canOperate} aria-describedby="equality-action-hint" onClick={() => requestAction("lock")}><LockKeyhole size={18} aria-hidden="true" />Bloquear equipo</Button>
+              <Button variant="secondary" className={styles.actionButton} disabled={busy || !canOperate} aria-describedby="equality-action-hint" onClick={() => requestAction("release")}><ShieldCheck size={18} aria-hidden="true" />Liberar equipo</Button>
+            </div>
+          </details>}
+        </Card>
+      </div>
+
+      {result && <Card className={styles.diagnostics}>
+        <details>
+          <summary><Server size={19} aria-hidden="true" /><span>Detalle técnico</span><span className={styles.diagnosticSubtitle}>Diagnóstico y respuesta remota</span><ChevronDown size={19} aria-hidden="true" /></summary>
+          <div className={styles.diagnosticBody}>
+            <dl className={styles.diagnosticGrid}>{diagnostics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+            <div className={styles.transitionQueue}><h3>Cola de transiciones</h3>
+              {snapshot?.transitionQueue?.length ? snapshot.transitionQueue.map((item, index) => <StatusPill key={`${index}-${item}`}>{item}</StatusPill>) : <p>Sin transiciones pendientes.</p>}
+            </div>
+            <div className={styles.rawResponse}><h3>Respuesta remota</h3><pre tabIndex={0} aria-label="Respuesta remota de Equality">{prettyJson(result.response)}</pre></div>
+          </div>
+        </details>
+      </Card>}
+      <ConfirmDialog open={Boolean(confirmation)} title={confirmation ? actionCopy[confirmation.action].label : "Confirmar acción"}
+        description={confirmation ? `${actionCopy[confirmation.action].description} IMEI / Device UID: ${confirmation.deviceUid}.` : ""}
+        confirmLabel={confirmation ? actionCopy[confirmation.action].label : "Confirmar"}
+        busy={processing !== null} danger={confirmation?.action === "lock" || confirmation?.action === "release"}
+        onCancel={() => { if (!actionInFlight.current) setConfirmation(null); }}
+        onConfirm={() => { if (confirmation) void ejecutarAccion(confirmation.action, confirmation.deviceUid); }}
+      />
     </main>
   );
 }

@@ -10,9 +10,10 @@ import {
 } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
   CircleCheckBig,
   FileSearch,
-  RefreshCcw,
+  LockKeyholeOpen,
   Search,
   ShieldCheck,
 } from "lucide-react";
@@ -21,12 +22,12 @@ import {
   Badge,
   Button,
   Card,
-  EmptyState,
   Input,
   LoadingState,
   PageHeader,
   StatusPill,
 } from "@/app/_components/finser-ui";
+import styles from "./tx06-release-console.module.css";
 
 type ReleaseActor = {
   userName: string | null;
@@ -186,9 +187,9 @@ async function postForResult<T>(
 
 function DetailValue({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="min-w-0 border-t border-[var(--fp-border)] px-4 py-3 first:border-t-0 sm:border-l sm:[&:nth-child(-n+3)]:border-t-0 sm:[&:nth-child(3n+1)]:border-l-0">
-      <dt className="text-xs font-bold text-[var(--fp-muted)]">{label}</dt>
-      <dd className="mt-1 break-words font-black text-[var(--fp-graphite)]">
+    <div className={styles.detailValue}>
+      <dt>{label}</dt>
+      <dd>
         {children}
       </dd>
     </div>
@@ -430,12 +431,12 @@ export default function Tx06ReleaseConsole({
     : "";
 
   return (
-    <main className="px-4 py-6 sm:px-6 lg:px-7 xl:px-8">
-      <div className="mx-auto max-w-[1180px] space-y-5">
+    <main className={styles.page}>
+      <div className={styles.content}>
         <PageHeader
           eyebrow={analystMode ? "Aprobaciones" : "Administración central"}
           title="Liberar consulta DataCrédito"
-          description="Autoriza un nuevo intento únicamente cuando MiDecisor aceptó una consulta TX06 sin puntaje."
+          description="Revisa una consulta y autoriza un nuevo intento."
           actions={
             analystMode ? undefined : <Link
               href="/dashboard/datacredito"
@@ -447,48 +448,27 @@ export default function Tx06ReleaseConsole({
           }
         />
 
-        <div
-          role="note"
-          className="flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] px-4 py-4 text-sm leading-6 text-[var(--fp-graphite)]"
-        >
-          <AlertTriangle
-            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-amber)]"
-            aria-hidden="true"
-          />
-          <p>
-            La liberación no cambia un rechazo, una aprobación ni un puntaje, y
-            no consulta al proveedor en este momento. El vendedor deberá usar el
-            primer apellido correcto y obtener un consentimiento nuevo; la
-            próxima consulta consumirá el cupo normal.
-          </p>
+        <div className={styles.scopeBar}>
+          <span><ShieldCheck size={17} aria-hidden="true" />Operación auditada</span>
+          <Badge tone="neutral">Solo TX06 sin puntaje</Badge>
         </div>
 
-        <Card className="p-5 sm:p-6">
-          <section aria-labelledby="tx06-search-title">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 id="tx06-search-title" className="text-xl font-black">
-                  Buscar consulta elegible
-                </h2>
-                <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                  {analystMode
-                    ? "La búsqueda es exacta y cada liberación queda asociada a tu usuario."
-                    : "La búsqueda es exacta y está disponible solo para la administración central."}
-                </p>
-              </div>
-              <Badge tone="warning">Operación auditada</Badge>
+        <Card className={styles.searchCard}>
+          <section className={styles.searchIntro} aria-labelledby="tx06-search-title">
+            <span className={styles.searchIcon}><FileSearch size={27} aria-hidden="true" /></span>
+            <div>
+              <h2 id="tx06-search-title">Buscar consulta</h2>
+              <p>Ingresa la cédula exacta del titular.</p>
             </div>
+          </section>
 
             <form
-              className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end"
+              className={styles.searchForm}
               onSubmit={searchDocument}
               noValidate
             >
-              <label
-                className="grid gap-2 text-sm font-bold"
-                htmlFor="tx06-document"
-              >
-                Cédula exacta
+              <label htmlFor="tx06-document">Cédula exacta</label>
+              <div className={styles.searchControls}>
                 <Input
                   id="tx06-document"
                   type="search"
@@ -506,20 +486,36 @@ export default function Tx06ReleaseConsole({
                     lookupError ? "tx06-lookup-error" : "tx06-document-help"
                   }
                 />
-                <span
-                  id="tx06-document-help"
-                  className="text-xs font-normal text-[var(--fp-muted)]"
-                >
-                  Ingresa todos los dígitos; la cédula no se incluye en la URL.
-                </span>
-              </label>
               <Button type="submit" disabled={searching || authorizing}>
                 <Search className="h-4 w-4" aria-hidden="true" />
                 {searching ? "Buscando..." : "Buscar"}
               </Button>
+              </div>
+              <span id="tx06-document-help" className={styles.searchHelp}>
+                Búsqueda exacta. La cédula no se incluye en la URL.
+              </span>
             </form>
-          </section>
         </Card>
+
+        <div className={styles.policyNote} role="note">
+          <AlertTriangle size={19} aria-hidden="true" />
+          <div>
+            <p><strong>La próxima consulta requiere consentimiento nuevo y consume cupo normal.</strong></p>
+            <details>
+              <summary>Condiciones de liberación<ChevronDown size={16} aria-hidden="true" /></summary>
+              <p>Autoriza un nuevo intento únicamente cuando MiDecisor aceptó una consulta TX06 sin puntaje.</p>
+              <p>
+                La liberación no cambia un rechazo, una aprobación ni un puntaje, y
+                no consulta al proveedor en este momento. El vendedor deberá usar el
+                primer apellido correcto y obtener un consentimiento nuevo; la
+                próxima consulta consumirá el cupo normal.
+              </p>
+              <p>{analystMode
+                ? "Cada liberación queda asociada a tu usuario."
+                : "Disponible solo para la administración central."}</p>
+            </details>
+          </div>
+        </div>
 
         {lookupError ? (
           <div
@@ -527,7 +523,7 @@ export default function Tx06ReleaseConsole({
             id="tx06-lookup-error"
             role="alert"
             tabIndex={-1}
-            className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm font-bold text-[var(--fp-danger)] outline-none"
+            className={styles.errorNotice}
           >
             <strong>Error de búsqueda:</strong> {lookupError}
           </div>
@@ -538,7 +534,7 @@ export default function Tx06ReleaseConsole({
             ref={mutationErrorRef}
             role="alert"
             tabIndex={-1}
-            className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm font-bold text-[var(--fp-danger)] outline-none"
+            className={styles.errorNotice}
           >
             <strong>Error de liberación:</strong> {mutationError}
           </div>
@@ -550,7 +546,7 @@ export default function Tx06ReleaseConsole({
             role="status"
             aria-live="polite"
             tabIndex={-1}
-            className="flex items-start gap-3 rounded-[var(--fp-radius-md)] border border-[var(--fp-lime)] bg-[var(--fp-lime-soft)] px-4 py-4 text-sm leading-6 text-[var(--fp-graphite)] outline-none"
+            className={styles.successNotice}
           >
             <CircleCheckBig
               className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fp-lime-strong)]"
@@ -570,39 +566,35 @@ export default function Tx06ReleaseConsole({
           </div>
         ) : null}
 
-        <section aria-labelledby="tx06-result-title" aria-busy={searching}>
+        <section className={styles.results} aria-labelledby="tx06-result-title" aria-busy={searching}>
           {searching ? (
-            <Card className="p-6">
+            <Card className={styles.loadingCard}>
+              <h2 id="tx06-result-title" className={styles.resultTitle}>Resultado de consulta</h2>
               <LoadingState label="Buscando la consulta más reciente..." />
             </Card>
           ) : !lookupResult ? (
-            <Card>
-              <EmptyState
-                title="Busca una cédula para comenzar"
-                description="Mostraremos la consulta TX06 vigente y si puede habilitarse para un nuevo intento."
-                action={
-                  <RefreshCcw
-                    className="mx-auto h-8 w-8 text-[var(--fp-muted)]"
-                    aria-hidden="true"
-                  />
-                }
-              />
+            <Card className={styles.emptyCard}>
+              <h2 id="tx06-result-title" className={styles.resultTitle}>Resultado de consulta</h2>
+              <div className={styles.emptyState}>
+                <span className={styles.emptyIcon}><FileSearch size={38} strokeWidth={1.5} aria-hidden="true" /></span>
+                <h3>Busca una cédula para comenzar</h3>
+                <p>Verás la consulta vigente y si permite autorizar un nuevo intento.</p>
+                <span className={styles.emptyNote}><ShieldCheck size={16} aria-hidden="true" />Buscar no realiza una nueva consulta al proveedor.</span>
+              </div>
             </Card>
           ) : (
-            <Card className="overflow-hidden">
-              <div className="flex flex-col gap-4 border-b border-[var(--fp-border)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6">
+            <Card className={styles.resultCard}>
+              <div className={styles.resultHeader}>
                 <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--fp-lime-strong)]">
-                    Consulta encontrada
-                  </p>
-                  <h2 id="tx06-result-title" className="mt-2 text-2xl font-black">
+                  <p className={styles.eyebrow}>Consulta encontrada</p>
+                  <h2 id="tx06-result-title">
                     {lookupResult.documentLabel}
                   </h2>
-                  <p className="mt-1 text-sm text-[var(--fp-muted)]">
+                  <p className={styles.resultDate}>
                     {dateTime(lookupResult.createdAt)}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className={styles.resultStatuses}>
                   <StatusPill tone={statusTone(lookupResult.status)}>
                     {humanStatus(lookupResult.status)}
                   </StatusPill>
@@ -616,7 +608,7 @@ export default function Tx06ReleaseConsole({
                 </div>
               </div>
 
-              <dl className="grid bg-[var(--fp-surface)] sm:grid-cols-3">
+              <dl className={styles.detailGrid}>
                 <DetailValue label="Respuesta">
                   {transactionLabel(lookupResult.transactionCode)}
                 </DetailValue>
@@ -646,36 +638,30 @@ export default function Tx06ReleaseConsole({
                 </DetailValue>
               </dl>
 
-              <div className="border-t border-[var(--fp-border)] px-5 py-5 sm:px-6">
+              <div className={styles.authorization}>
                 <div
                   id="tx06-action-help"
-                  className={[
-                    "rounded-[var(--fp-radius-md)] border px-4 py-3 text-sm leading-6",
-                    lookupResult.alreadyAuthorized
-                      ? "border-[var(--fp-lime)] bg-[var(--fp-lime-soft)]"
-                      : lookupResult.eligible
-                        ? "border-[var(--fp-amber)] bg-[var(--fp-amber-soft)]"
-                        : "border-[var(--fp-border)] bg-[var(--fp-bg)] text-[var(--fp-muted)]",
-                  ].join(" ")}
+                  className={styles.eligibility}
+                  data-tone={lookupResult.alreadyAuthorized ? "positive" : lookupResult.eligible ? "warning" : "neutral"}
                 >
-                  <strong className="block text-[var(--fp-graphite)]">
+                  {lookupResult.alreadyAuthorized ? <CircleCheckBig size={20} aria-hidden="true" /> : <LockKeyholeOpen size={20} aria-hidden="true" />}
+                  <div><strong>
                     {lookupResult.alreadyAuthorized
                       ? "Nuevo intento ya autorizado"
                       : lookupResult.eligible
                         ? "Puede autorizarse un nuevo intento"
                         : "Esta consulta no puede liberarse"}
-                  </strong>
-                  <span>{lookupResult.eligibilityMessage}</span>
+                  </strong><p>{lookupResult.eligibilityMessage}</p></div>
                 </div>
 
                 {canAuthorize ? (
                   <form
-                    className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"
+                    className={styles.authorizationForm}
                     onSubmit={prepareAuthorization}
                     noValidate
                   >
                     <label
-                      className="grid gap-2 text-sm font-bold"
+                      className={styles.surnameField}
                       htmlFor="tx06-first-surname"
                     >
                       Primer apellido correcto
@@ -700,7 +686,7 @@ export default function Tx06ReleaseConsole({
                       />
                       <span
                         id="tx06-surname-help"
-                        className="text-xs font-normal leading-5 text-[var(--fp-muted)]"
+                        className={styles.fieldHelp}
                       >
                         Debe coincidir con el documento. El vendedor lo revisará
                         antes de solicitar el consentimiento nuevo.
@@ -709,7 +695,7 @@ export default function Tx06ReleaseConsole({
                         <span
                           id="tx06-surname-error"
                           role="alert"
-                          className="text-sm font-semibold text-[var(--fp-danger)]"
+                          className={styles.fieldError}
                         >
                           {surnameError}
                         </span>

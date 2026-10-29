@@ -1,0 +1,138 @@
+.page {
+  width: 100%;
+  max-width: 1328px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.connectionBar, .connectionStatus, .searchIntro, .sectionHeader, .deviceIdentity,
+.readinessTitle, .emptyNote, .notice, .staleNotice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connectionBar { justify-content: space-between; padding: 16px 0; gap: 16px; }
+.connectionStatus { flex-wrap: wrap; color: var(--fp-muted); font-size: 13px; }
+.connectionStatus > svg { color: var(--fp-graphite); }
+.connectionStatus :global(.fp-ui-status) { font-size: 12px; }
+.searchCard {
+  display: grid;
+  grid-template-columns: minmax(230px, .85fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: 32px;
+  padding: 28px 32px;
+  background: var(--fp-graphite);
+  border-color: var(--fp-graphite);
+  color: white;
+}
+.searchIntro { gap: 16px; }
+.searchIntro h2 { font-size: 21px; font-weight: 800; line-height: 1.2; }
+.searchIntro p { margin-top: 6px; color: #c7cdd6; font-size: 13px; line-height: 1.5; max-width: 240px; }
+.searchIcon { display: grid; place-items: center; width: 52px; height: 56px; flex-shrink: 0; border: 1px solid #41474f; border-radius: var(--fp-radius-md); color: var(--fp-lime); }
+.searchForm { min-width: 0; }
+.searchForm label { display: block; margin-bottom: 8px; color: white; font-size: 13px; font-weight: 650; }
+.searchControls { display: flex; gap: 8px; }
+.searchControls input { min-width: 0; height: 48px; flex: 1; background: white; color: var(--fp-graphite); }
+.searchCard .searchControls button { min-height: 48px; background: var(--fp-lime); color: var(--fp-graphite); flex-shrink: 0; }
+.searchCard .searchControls button:hover:not(:disabled) { background: var(--fp-lime-soft); }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; gap: 20px; margin-top: 24px; }
+.deviceCard, .actionsCard { min-width: 0; overflow: hidden; }
+.sectionHeader { min-height: 64px; padding: 16px 24px; justify-content: space-between; border-bottom: 1px solid var(--fp-border); }
+.sectionHeader h2 { font-size: 16px; font-weight: 800; }
+.sectionHeader > svg { color: var(--fp-muted); }
+.readingLabel { color: var(--fp-muted); font-size: 12px; text-align: right; }
+.empty { min-height: 324px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px; text-align: center; }
+.emptyIcon { position: relative; display: grid; place-items: center; width: 88px; height: 88px; border-radius: 50%; background: var(--fp-bg); color: var(--fp-graphite); margin-bottom: 20px; }
+.emptyIcon > svg:last-child { position: absolute; bottom: 9px; right: 7px; padding: 4px; width: 31px; height: 31px; border: 3px solid white; border-radius: 50%; background: var(--fp-lime-soft); }
+.empty h3 { font-size: 20px; font-weight: 750; }
+.empty > p { max-width: 350px; margin-top: 8px; color: var(--fp-muted); font-size: 14px; line-height: 1.6; }
+.emptyNote { margin-top: 24px; font-size: 12px; color: var(--fp-muted); gap: 8px; }
+.emptyNote svg { color: var(--fp-client-green); }
+.actionBody { padding: 20px; }
+.actionHint { color: var(--fp-muted); font-size: 13px; line-height: 1.6; margin-bottom: 20px; }
+.actionButton { width: 100%; min-height: 48px; text-align: left; }
+.actionButton + .actionButton { margin-top: 12px; }
+.actionButton > span { flex: 1; }
+.sensitiveActions { border-top: 1px solid var(--fp-border); }
+.sensitiveActions summary, .diagnostics summary { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; min-height: 60px; padding: 16px 20px; font-size: 13px; font-weight: 700; }
+.sensitiveActions summary::-webkit-details-marker, .diagnostics summary::-webkit-details-marker { display: none; }
+.sensitiveActions summary > span, .diagnostics summary > span:first-of-type { flex: 1; }
+.sensitiveActions summary > svg:last-child, .diagnostics summary > svg:last-child { transition: transform 160ms; flex-shrink: 0; }
+.sensitiveActions[open] summary > svg:last-child, .diagnostics details[open] summary > svg:last-child { transform: rotate(180deg); }
+.sensitiveActions > div { padding: 0 20px 20px; }
+.sensitiveActions p { font-size: 13px; line-height: 1.6; color: var(--fp-muted); margin-bottom: 16px; }
+.page summary:focus-visible { outline: 3px solid var(--fp-lime); outline-offset: -4px; border-radius: var(--fp-radius-md); }
+.deviceIdentity { align-items: flex-start; padding: 24px; gap: 16px; }
+.deviceIcon { display: grid; place-items: center; flex-shrink: 0; width: 56px; height: 64px; border-radius: var(--fp-radius-md); background: var(--fp-bg); }
+.fieldLabel { display: block; color: var(--fp-muted); font-size: 12px; margin-bottom: 4px; }
+.deviceIdentity h3 { font-size: 20px; font-weight: 800; overflow-wrap: anywhere; }
+.deviceIdentity p { color: var(--fp-muted); font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
+.deviceIdentity strong { color: var(--fp-graphite); font-weight: 650; margin-left: 8px; }
+.readiness { margin: 0 24px 24px; border-left: 3px solid var(--fp-border); background: var(--fp-bg); padding: 20px; border-radius: var(--fp-radius-sm); }
+.readiness[data-tone="positive"] { background: var(--fp-lime-soft); border-color: var(--fp-lime-strong); }
+.readiness[data-tone="warning"] { background: var(--fp-amber-soft); border-color: var(--fp-amber); }
+.readiness[data-tone="danger"] { background: var(--fp-danger-soft); border-color: var(--fp-danger); }
+.readinessTitle { align-items: flex-start; }
+.readinessTitle > svg { flex-shrink: 0; }
+.readiness[data-tone="positive"] .readinessTitle > svg { color: var(--fp-client-green); }
+.readiness[data-tone="warning"] .readinessTitle > svg { color: var(--fp-amber); }
+.readiness[data-tone="danger"] .readinessTitle > svg { color: var(--fp-danger); }
+.readinessTitle h3 { font-size: 18px; font-weight: 800; line-height: 1.35; }
+.readinessTitle p { font-size: 12px; color: var(--fp-muted); margin-top: 4px; }
+.readiness > p { font-size: 13px; line-height: 1.6; margin-top: 12px; }
+.deviceFacts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 0 24px 24px; }
+.deviceFacts > div:last-child { grid-column: 1/-1; border-top: 1px solid var(--fp-border); padding-top: 16px; }
+.deviceFacts dt, .diagnosticGrid dt { color: var(--fp-muted); font-size: 12px; margin-bottom: 6px; }
+.deviceFacts dd, .diagnosticGrid dd { font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.notice { align-items: flex-start; padding: 16px; border-width: 1px; border-radius: var(--fp-radius-md); margin-top: 16px; font-size: 14px; line-height: 1.5; }
+.notice > svg, .staleNotice > svg { flex-shrink: 0; margin-top: 2px; }
+.staleNotice { margin: 0 24px 16px; align-items: flex-start; color: var(--fp-amber); font-size: 13px; }
+.diagnostics { margin-top: 20px; overflow: hidden; }
+.diagnostics summary { padding: 16px 24px; font-size: 14px; }
+.diagnosticSubtitle { font-size: 12px; color: var(--fp-muted); font-weight: 400; }
+.diagnosticBody { border-top: 1px solid var(--fp-border); padding: 24px; }
+.diagnosticGrid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 24px; }
+.transitionQueue { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--fp-border); display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.transitionQueue h3 { font-size: 13px; font-weight: 700; }
+.transitionQueue p { font-size: 13px; color: var(--fp-muted); }
+.rawResponse { margin-top: 20px; border-radius: var(--fp-radius-md); overflow: hidden; background: var(--fp-graphite); color: #e7ebf0; }
+.rawResponse h3 { padding: 12px 16px; border-bottom: 1px solid #41474f; font-size: 12px; font-weight: 650; }
+.rawResponse pre { max-height: 288px; overflow: auto; padding: 16px; font-size: 12px; line-height: 1.7; }
+.page :global(.fp-ui-dialog-backdrop) { backdrop-filter: blur(5px); }
+.spin { animation: rotate 1s linear infinite; }
+@keyframes rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+@media (max-width: 1199px) {
+  .page { padding: 24px; }
+  .searchCard { grid-template-columns: 1fr; gap: 20px; padding: 24px; }
+  .searchIntro p { max-width: none; }
+  .workspace { grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; }
+  .deviceIdentity h3 { font-size: 18px; }
+}
+@media (max-width: 700px) {
+  .page { padding: 24px 16px; }
+  .connectionBar { align-items: flex-start; flex-direction: column; gap: 4px; padding: 16px 0; }
+  .connectionStatus { gap: 8px; }
+  .connectionStatus > span:first-of-type { display: none; }
+  .connectionBar > button { margin-left: -8px; }
+  .searchCard { padding: 20px; }
+  .searchIntro h2 { font-size: 19px; }
+  .searchIcon { width: 44px; height: 48px; }
+  .searchControls { flex-direction: column; gap: 12px; }
+  .searchControls input { width: 100%; flex: auto; }
+  .workspace { grid-template-columns: minmax(0,1fr); margin-top: 16px; }
+  .sectionHeader { padding: 16px 20px; gap: 8px; }
+  .readingLabel { max-width: 102px; }
+  .empty { min-height: 290px; padding: 24px 20px; }
+  .empty h3 { font-size: 18px; }
+  .deviceIdentity { padding: 20px; gap: 12px; }
+  .deviceIdentity strong { display: block; margin: 4px 0 0; }
+  .deviceIcon { width: 44px; height: 56px; }
+  .readiness { margin: 0 20px 20px; padding: 16px; }
+  .deviceFacts { padding: 0 20px 20px; }
+  .diagnosticGrid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .diagnosticBody { padding: 20px; }
+  .diagnosticSubtitle { display: none; }
+  .diagnostics summary { padding: 16px 20px; }
+}
