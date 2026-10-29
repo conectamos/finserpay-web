@@ -127,7 +127,8 @@ export default function AnalystCenter() {
   return <main className={styles.main}>
     <section className={styles.intro}>
       <p className={styles.eyebrow}>CENTRO DEL ANALISTA</p>
-      <h1>¿Qué necesitas gestionar?</h1>
+      <h1>¿Qué necesitas <span>gestionar?</span></h1>
+      <p className={styles.subtitle}>Consulta un crédito o accede a tus herramientas de trabajo.</p>
       <form className={styles.search} onSubmit={event => { event.preventDefault(); void search(); }} aria-label="Consultar crédito">
         <Search aria-hidden="true" />
         <Input aria-label="Buscar por cédula, crédito, Sadmin o IMEI" placeholder="Buscar por cédula, crédito, Sadmin o IMEI" maxLength={100} value={query} onChange={event => setQuery(event.target.value)} disabled={loading} />
@@ -165,8 +166,8 @@ export default function AnalystCenter() {
     </section>}
 
     <div className={styles.groups}>
-      <section className={styles.group} aria-labelledby="analyst-operation"><h2 id="analyst-operation">Operación</h2><nav aria-label="Módulos de operación">{operationModules.map(({ href, title, description, icon: Icon }) => <Link className={styles.module} key={href} href={href}><Icon aria-hidden="true" /><span><strong>{title}</strong><span>{description}</span></span><ChevronRight className={styles.arrow} aria-hidden="true" /></Link>)}</nav></section>
-      <section className={styles.group} aria-labelledby="analyst-followup"><h2 id="analyst-followup">Gestión y seguimiento</h2><nav aria-label="Módulos de gestión y seguimiento">{followUpModules.map(({ href, title, icon: Icon }) => <Link className={styles.module} key={href} href={href}><Icon aria-hidden="true" /><span><strong>{title}</strong></span><ChevronRight className={styles.arrow} aria-hidden="true" /></Link>)}</nav></section>
+      <section className={styles.group} aria-labelledby="analyst-operation"><header className={styles.groupHeader}><div><p>ORIGINACIÓN Y SOPORTE</p><h2 id="analyst-operation">Operación</h2></div><span className={styles.moduleCount}>{operationModules.length} accesos</span></header><nav aria-label="Módulos de operación">{operationModules.map(({ href, title, description, icon: Icon }) => <Link className={styles.module} key={href} href={href}><span className={styles.moduleIcon}><Icon aria-hidden="true" /></span><span><strong>{title}</strong><span>{description}</span></span><ChevronRight className={styles.arrow} aria-hidden="true" /></Link>)}</nav></section>
+      <section className={styles.group} aria-labelledby="analyst-followup"><header className={styles.groupHeader}><div><p>CONTROL Y CARTERA</p><h2 id="analyst-followup">Gestión y seguimiento</h2></div><span className={styles.moduleCount}>{followUpModules.length} accesos</span></header><nav aria-label="Módulos de gestión y seguimiento">{followUpModules.map(({ href, title, icon: Icon }) => <Link className={styles.module} key={href} href={href}><span className={styles.moduleIcon}><Icon aria-hidden="true" /></span><span><strong>{title}</strong></span><ChevronRight className={styles.arrow} aria-hidden="true" /></Link>)}</nav></section>
     </div>
   </main>;
 }

@@ -68,7 +68,9 @@ Lucide. El fondo combina `--fp-client-bg` y `--fp-surface` para conservar el
 porcelana calido de la referencia; los neutros `#626660` y `#dedfdb` son los
 de la variante existente de analistas. Estos ajustes quedan limitados al
 contenedor nominal. Los accesos por enlace conservan su cabecera y alcance.
-La pantalla inicial solo presenta la consulta y los modulos; los expedientes
+La pantalla inicial presenta la consulta en una superficie grafito con acentos lima,
+seguida por dos grupos blancos de accesos con iconos sobre porcelana. La consulta
+usa el boton lima como accion principal y se apila en movil. Solo presenta la consulta y los modulos; los expedientes
 y formularios se muestran tras una accion explicita. Los identificadores de
 los resultados nominales se muestran completos conforme a la referencia.
 
