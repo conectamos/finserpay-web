@@ -418,6 +418,12 @@ export async function POST(req: Request) {
   try {
     const access = await getAccess();
     if (!access) return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    if (!access.central && !access.admin && !access.seller) {
+      return NextResponse.json(
+        { code: "SELLER_SESSION_REQUIRED", error: "Confirma nuevamente tu PIN para recuperar la sesión comercial y continuar con los datos de esta solicitud." },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
     if (!canOriginateSolicitud({
       central: access.central, admin: canActAsAllySalesAdmin(access.user), userId: access.user.id,
       viewerAllyId: access.user.aliadoId, seller: access.seller,

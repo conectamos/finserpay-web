@@ -33,13 +33,13 @@ function findAutosave(node) {
 findAutosave(ast); assert.ok(autosaveEffect);
 assert.ok(imeiInvalidationEffect);
 assert.ok(signatureFailureBoundary);
-const names = ["serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "cancelPendingDraftAutosave", "updateEquipmentImeiConfirmation", "synchronizeEquipmentImeiConfirmation", "resolvePersistedDraftStep", "recoverEquipmentImeiConfirmation", "saveDraftPayloadForVeriff", "saveCurrentDraft", "clampWizardStep", "persistWizardStep", "goToStep", "advanceToStep", "requestEquipmentImeiConfirmation", "confirmEquipmentImei", "submitFirmaSeguroDraft"];
+const names = ["serializeCreditDraftSaveRequest", "formatCreditDraftSaveError", "cancelPendingDraftAutosave", "updateEquipmentImeiConfirmation", "synchronizeEquipmentImeiConfirmation", "resolvePersistedDraftStep", "recoverEquipmentImeiConfirmation", "recoverDraftRequest", "saveDraftPayloadForVeriff", "saveCurrentDraft", "clampWizardStep", "persistWizardStep", "goToStep", "advanceToStep", "requestEquipmentImeiConfirmation", "confirmEquipmentImei", "submitFirmaSeguroDraft"];
 const code = names.map(declaration).join("\n") + "\nconst submitWithActualSignatureFailureBoundary = " + signatureFailureBoundary + ";\nmodule.exports = { " + names.join(", ") + ", submitWithActualSignatureFailureBoundary };";
 function fixture(overrides = {}) {
   const requests = []; const timers = new Map(); let nextTimer = 0;
   const payload = { clienteNombre: "WILMER GIOVANNY DÍAZ RUBIO", clientePrimerNombre: "", clientePrimerApellido: "", clienteSegundoApellido: "", clienteDocumento: "1110477922", clienteTipoDocumento: "CEDULA_DE_CIUDADANIA", clienteTelefono: "3001234567", clienteCorreo: "cliente@example.invalid", dataCreditoAssessmentId: "approved-test", wizardStep: 1 };
   const context = {
-    Error, AbortController, JSON, draftId: 2887, wizardStep: 1, createClientMode: true, simulatorMode: false, deliveryMode: false,
+    Error, AbortController, JSON, draftId: 2887, wizardStep: 1, canAdmin: false, createClientMode: true, simulatorMode: false, deliveryMode: false,
     factoryDraftPayload: payload, currentIphoneClosureFingerprint: "closure", canAdminMoveFreelyInFactory: false, nextFactoryStep: { id: 2 },
     draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftExplicitSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
     wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false, activeSolicitudRedirectingRef: { current: false },
@@ -48,6 +48,7 @@ function fixture(overrides = {}) {
     preflightNotice: null, firmaSeguroRequestInFlightRef: { current: false }, firmaSeguroSubmitting: false,
     analystDataSnapshotRef: { current: {} }, analystFinancialSnapshotRef: { current: { draftId: 2887 } }, analystEvidenceSnapshotRef: { current: {} },
     replaceDraftInUrl() {}, synchronizeAnalystDraftData() {}, resumeActiveSolicitudFromConflict: () => false,
+    requestSellerSessionRecovery: async () => false,
     ACTIVE_SOLICITUD_RESUME_MESSAGE: "Retomando solicitud", DRAFT_REQUIRES_DATACREDITO_CODE: "SOLICITUD_REQUIERE_CONSULTA_DATACREDITO",
     dataCreditoVeriffDocumentRejected: false, stepEquipoReady: true, iphoneInstallmentLimitExceeded: false, FLEXIBLE_WIZARD_FOR_TESTING: false,
     contactPhoneValidation: { ok: true }, stepClienteReady: true, hideIdentityWizardStep: true, stepContratoReady: true, stepIdentityContractReady: true,
@@ -82,6 +83,99 @@ function fixture(overrides = {}) {
   } };
 }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+test("recuperar el PIN reintenta el mismo borrador y cuerpo sin borrar los datos ni adelantar antes de guardar", async () => {
+  let confirm;
+  const recoveredIds = [];
+  const f = fixture({ requestSellerSessionRecovery: id => { recoveredIds.push(id); return new Promise(resolve => { confirm = resolve; }); } });
+  let attempts = 0;
+  f.setTransport(async (_url, options) => ++attempts === 1
+    ? { ok: false, status: 403, data: { code: "SELLER_SESSION_REQUIRED" } }
+    : { ok: true, status: 200, data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } });
+  const before = JSON.stringify(f.context.factoryDraftPayload);
+  const saving = f.functions.advanceToStep(2);
+  await flush();
+  assert.deepEqual(recoveredIds, [2887]);
+  assert.equal(f.context.wizardStep, 1);
+  assert.equal(f.requests.length, 1);
+  assert.equal(JSON.stringify(f.context.factoryDraftPayload), before);
+  confirm(true);
+  await saving;
+  assert.equal(f.requests.length, 2);
+  assert.deepEqual(f.requests[1].body, f.requests[0].body);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.draftId, 2887);
+  assert.equal(f.context.draftStatus, "saved");
+});
+
+test("cancelar la recuperación o recibir otro403 conserva el formulario y nunca reintenta sin PIN", async () => {
+  for (const code of ["SELLER_SESSION_REQUIRED", "FORBIDDEN"]) {
+    let prompts = 0;
+    const f = fixture({ requestSellerSessionRecovery: async () => { prompts++; return false; } });
+    f.setTransport(async () => ({ ok: false, status: 403, data: { code, error: "Acceso denegado" } }));
+    const before = JSON.stringify(f.context.factoryDraftPayload);
+    await assert.rejects(f.functions.saveCurrentDraft(2));
+    assert.equal(prompts, code === "SELLER_SESSION_REQUIRED" ? 1 : 0);
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.context.draftId, 2887);
+    assert.equal(JSON.stringify(f.context.factoryDraftPayload), before);
+  }
+});
+
+test("cambiar de solicitud, documento, IMEI, revisión o generación durante el PIN impide enviar el cuerpo obsoleto", async () => {
+  for (const invalidate of [
+    context => { context.currentEquipmentDraftIdRef.current = 9999; },
+    context => { context.currentDraftDocumentRef.current = "otro-documento"; },
+    context => { context.currentEquipmentImeiRef.current = "123456789012345"; },
+    context => { context.analystDataSnapshotRef.current.revision = 42; },
+    context => { context.analystFinancialSnapshotRef.current.revision = 42; },
+    context => { context.analystEvidenceSnapshotRef.current.revision = 42; },
+    context => { context.draftExplicitSaveGenerationRef.current++; },
+  ]) {
+    let confirm;
+    const f = fixture({ requestSellerSessionRecovery: () => new Promise(resolve => { confirm = resolve; }) });
+    f.setTransport(async () => ({ ok: false, status: 403, data: { code: "SELLER_SESSION_REQUIRED" } }));
+    const saving = f.functions.saveCurrentDraft(2);
+    const rejected = assert.rejects(saving, /solicitud cambió/i);
+    await flush();
+    invalidate(f.context);
+    confirm(true);
+    await rejected;
+    assert.equal(f.requests.length, 1);
+  }
+});
+
+test("el autosave cancelado mientras espera el PIN no escribe datos antiguos; el vigente conserva todo el cuerpo", async () => {
+  for (const cancel of [true, false]) {
+    let confirm;
+    const f = fixture({ requestSellerSessionRecovery: () => new Promise(resolve => { confirm = resolve; }) });
+    let attempts = 0;
+    f.setTransport(async (_url, options) => ++attempts === 1
+      ? { ok: false, status: 403, data: { code: "SELLER_SESSION_REQUIRED" } }
+      : { ok: true, status: 200, data: { item: { id: 2887, payload: JSON.parse(options.body).payload } } });
+    const cleanup = f.mountAutosave();
+    Array.from(f.timers.values())[0].callback();
+    await flush();
+    assert.equal(f.requests.length, 1);
+    if (cancel) cleanup();
+    confirm(true);
+    await flush();
+    assert.equal(f.requests.length, cancel ? 1 : 2);
+    if (!cancel) {
+      assert.deepEqual(f.requests[1].body, f.requests[0].body);
+      assert.equal(f.context.draftStatus, "saved");
+    }
+  }
+});
+
+test("un401 de sesión base permite recuperación pero un segundo rechazo nunca provoca bucle de reintentos", async () => {
+  let prompts = 0;
+  const f = fixture({ requestSellerSessionRecovery: async () => { prompts++; return true; } });
+  f.setTransport(async () => ({ ok: false, status: 401, data: { error: "No autenticado" } }));
+  await assert.rejects(f.functions.saveCurrentDraft(2), /No autenticado/);
+  assert.equal(prompts, 1);
+  assert.equal(f.requests.length, 2);
+});
 
 test("una reserva o envío en curso pausa el autosave y al resolverse permite guardar nuevamente", async () => {
   for (const state of [{ pendingFirmaSeguroDispatch: { status: "PREPARING" } },

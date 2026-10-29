@@ -5,6 +5,7 @@ import { creditDisplayNumber } from "@/lib/credit-display-number";
 
 import Link from "next/link";
 import CustomerDetailsForm from "./customer-details-form";
+import SellerSessionRecoveryDialog, { type SellerSessionRecoveryContext } from "./seller-session-recovery-dialog";
 import { Input } from "@/app/_components/finser-ui";
 import customerDetailsStyles from "./customer-details-form.module.css";
 import NextImage from "next/image";
@@ -3144,6 +3145,56 @@ export default function CreditFactoryConsole({
   const [searchTerm, setSearchTerm] = useState(normalizedInitialSearch);
   const [activeSearch, setActiveSearch] = useState(normalizedInitialSearch);
   const [draftId, setDraftId] = useState<number | null>(initialDraftId);
+  const [sellerRecoveryContext, setSellerRecoveryContext] = useState<SellerSessionRecoveryContext | null>(null);
+  const sellerRecoveryFlightRef = useRef<{
+    context: SellerSessionRecoveryContext;
+    promise: Promise<boolean>;
+    resolve: (recovered: boolean) => void;
+  } | null>(null);
+  const finishSellerSessionRecovery = useCallback((recovered: boolean) => {
+    const pending = sellerRecoveryFlightRef.current;
+    sellerRecoveryFlightRef.current = null;
+    setSellerRecoveryContext(null);
+    pending?.resolve(recovered);
+  }, []);
+  const requestSellerSessionRecovery = useCallback((currentDraftId: number | null) => {
+    if (!currentDraftId || !initialSeller || canAdmin) return Promise.resolve(false);
+    const context = {
+      draftId: currentDraftId, userId: initialSession.id,
+      sellerId: initialSeller.id, sellerName: initialSeller.nombre,
+      siteId: initialSession.sedeId, siteName: initialSession.sedeNombre,
+    };
+    const active = sellerRecoveryFlightRef.current;
+    if (active && active.context.draftId === context.draftId && active.context.userId === context.userId
+      && active.context.sellerId === context.sellerId && active.context.siteId === context.siteId) return active.promise;
+    active?.resolve(false);
+    let resolve!: (recovered: boolean) => void;
+    const promise = new Promise<boolean>(done => { resolve = done; });
+    sellerRecoveryFlightRef.current = { context, promise, resolve };
+    setSellerRecoveryContext(context);
+    return promise;
+  }, [canAdmin, initialSeller, initialSession.id, initialSession.sedeId, initialSession.sedeNombre]);
+  useEffect(() => {
+    const active = sellerRecoveryFlightRef.current;
+    if (active && (active.context.draftId !== draftId || active.context.userId !== initialSession.id
+      || active.context.sellerId !== initialSeller?.id || active.context.siteId !== initialSession.sedeId)) {
+      finishSellerSessionRecovery(false);
+    }
+  }, [draftId, initialSession.id, initialSeller?.id, initialSession.sedeId, finishSellerSessionRecovery]);
+  useEffect(() => () => {
+    sellerRecoveryFlightRef.current?.resolve(false);
+    sellerRecoveryFlightRef.current = null;
+  }, []);
+  const recoverDraftRequest = useCallback(async <T,>(currentDraftId: number | null, retry: () => Promise<T>, isCurrent: () => boolean) => {
+    if (!isCurrent()) throw new Error("La solicitud cambió. Revisa los datos actuales antes de guardar.");
+    if (!await requestSellerSessionRecovery(currentDraftId)) {
+      throw new Error("Confirma tu perfil para guardar. Los cambios pendientes permanecen en esta pantalla.");
+    }
+    // A cancelled autosave or changed case must never write its old payload
+    // after the PIN has been entered, even if the session was restored.
+    if (!isCurrent()) throw new Error("La solicitud cambió. Revisa los datos actuales antes de guardar.");
+    return retry();
+  }, [requestSellerSessionRecovery]);
   const [analystDataRevision, setAnalystDataRevision] = useState(0);
   const analystDataSnapshotRef = useRef<AnalystDraftDataSnapshot | null>(null);
   const [analystFinancialRevision, setAnalystFinancialRevision] = useState(0);
@@ -8461,7 +8512,7 @@ export default function CreditFactoryConsole({
       throw new Error("La solicitud cambió durante el guardado. Vuelve a intentarlo en la solicitud actual.");
     }
     const requestBody = serializeCreditDraftSaveRequest({ draftId: currentDraftId, currentStep: currentStepOverride, payloadScope, payload, action });
-    const result = await requestJson<CreditDraftSingleResponse>(
+    let result = await requestJson<CreditDraftSingleResponse>(
       "/api/creditos/borradores",
       {
         method: "POST",
@@ -8471,6 +8522,21 @@ export default function CreditFactoryConsole({
         body: requestBody,
       }
     );
+
+    if (currentDraftId && ((!canAdmin && result.status === 401) || (result.status === 403 && result.data?.code === "SELLER_SESSION_REQUIRED"))) {
+      result = await recoverDraftRequest(currentDraftId,
+        () => requestJson<CreditDraftSingleResponse>("/api/creditos/borradores", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: requestBody,
+        }),
+        () => draftExplicitSaveGenerationRef.current === saveGeneration
+          && currentEquipmentDraftIdRef.current === saveBinding.draftId
+          && currentDraftDocumentRef.current === saveBinding.document
+          && currentEquipmentImeiRef.current === saveBinding.imei
+          && analystDataSnapshotRef.current?.revision === saveBinding.analystDataRevision
+          && analystFinancialSnapshotRef.current?.revision === saveBinding.analystFinancialRevision
+          && analystEvidenceSnapshotRef.current?.revision === saveBinding.analystEvidenceRevision,
+      );
+    }
 
     if (
       draftExplicitSaveGenerationRef.current !== saveGeneration ||
@@ -9537,10 +9603,19 @@ export default function CreditFactoryConsole({
     const targetStep = imeiConfirmationTargetStep;
     const currentDraftId = draftId;
     try {
-      const result = await requestJson<{ok: boolean; error?: string; confirmation?: {imei: string}}>(
+      let result = await requestJson<{ok: boolean; error?: string; confirmation?: {imei: string}}>(
         `/api/creditos/borradores/${currentDraftId}/confirmar-imei`,
         { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({imei: confirmedImei}) },
       );
+      if ((!canAdmin && result.status === 401) || (result.status === 403 && result.data?.code === "SELLER_SESSION_REQUIRED")) {
+        result = await recoverDraftRequest(currentDraftId,
+          () => requestJson<{ok: boolean; error?: string; confirmation?: {imei: string}}>(
+            `/api/creditos/borradores/${currentDraftId}/confirmar-imei`,
+            { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({imei: confirmedImei}) },
+          ),
+          () => currentEquipmentDraftIdRef.current === currentDraftId && currentEquipmentImeiRef.current === confirmedImei,
+        );
+      }
       if (!result.ok || !result.data?.ok || result.data.confirmation?.imei !== confirmedImei) {
         throw new Error(result.data?.error || "No se pudo confirmar el IMEI vigente. Revisa el equipo e inténtalo nuevamente.");
       }
@@ -12540,7 +12615,7 @@ export default function CreditFactoryConsole({
         try {
           setDraftStatus("saving");
           setDraftErrorMessage("");
-          const result = await requestJson<CreditDraftSingleResponse>(
+          let result = await requestJson<CreditDraftSingleResponse>(
             "/api/creditos/borradores",
             {
               method: "POST",
@@ -12551,6 +12626,17 @@ export default function CreditFactoryConsole({
               body: requestBody,
             }
           );
+
+          if ((!canAdmin && result.status === 401) || (result.status === 403 && result.data?.code === "SELLER_SESSION_REQUIRED")) {
+            result = await recoverDraftRequest(canonicalDraftId,
+              () => requestJson<CreditDraftSingleResponse>("/api/creditos/borradores", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                signal: requestController?.signal, body: requestBody,
+              }),
+              () => !requestController?.signal.aborted && draftSaveGenerationRef.current === saveGeneration
+                && currentEquipmentDraftIdRef.current === canonicalDraftId,
+            );
+          }
 
           if (
             requestController?.signal.aborted ||
@@ -12636,6 +12722,7 @@ export default function CreditFactoryConsole({
     };
   }, [
     cancelPendingDraftAutosave,
+    canAdmin,
     canAdminMoveFreelyInFactory,
     equipmentImeiConfirmed,
     createClientMode,
@@ -12653,6 +12740,7 @@ export default function CreditFactoryConsole({
     firmaSeguroProcessSigned,
     currentIphoneClosureFingerprint,
     nextFactoryStep.id,
+    recoverDraftRequest,
     resumeActiveSolicitudFromConflict,
     simulatorMode,
     synchronizeAnalystDraftData,
@@ -13279,6 +13367,8 @@ export default function CreditFactoryConsole({
             ].join(" ")
       }
     >
+      {sellerRecoveryContext ? <SellerSessionRecoveryDialog open context={sellerRecoveryContext}
+        onRecovered={() => finishSellerSessionRecovery(true)} onCancel={() => finishSellerSessionRecovery(false)} /> : null}
       {completedCredit ? (
         <div
           className="fixed inset-0 z-[140] grid place-items-center overflow-y-auto bg-[#0d1112]/70 px-4 py-6 backdrop-blur-[2px]"
