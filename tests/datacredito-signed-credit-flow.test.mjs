@@ -290,7 +290,7 @@ function wizard(f, payload, step = 1) {
   const savedConfirmation = imeiConfirmation.readCreditImeiConfirmation(payload, imei);
   const confirmedBinding = savedConfirmation ? { draftId, imei: savedConfirmation.imei } : null;
   const context = {
-    Error, AbortController, JSON, draftId, wizardStep: step, createClientMode: true, simulatorMode: false, deliveryMode: false,
+    Error, AbortController, JSON, draftId, wizardStep: step, canAdmin: false, createClientMode: true, simulatorMode: false, deliveryMode: false,
     factoryDraftPayload: payload, currentIphoneClosureFingerprint: "closure", canAdminMoveFreelyInFactory: false,
     imeiDigits: imei, equipmentImeiConfirmation: confirmedBinding,
     equipmentImeiConfirmationRef: { current: confirmedBinding },

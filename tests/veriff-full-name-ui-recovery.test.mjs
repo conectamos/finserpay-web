@@ -56,7 +56,7 @@ function fixture() {
   const context = { Error, AbortController, JSON, React, createPortal: children => children, X: () => null,
     factoryDraftPayload: payload, clienteNombre: fullName, clientePrimerNombre: "", clientePrimerApellido: "", clienteSegundoApellido: "",
     dataCreditoApproval: approval, dataCreditoAssessmentId: "saved-assessment", dataCreditoRequiresVeriff: true,
-    draftId: 2883, wizardStep: 4, createClientMode: true, simulatorMode: false, deliveryMode: false,
+    draftId: 2883, wizardStep: 4, canAdmin: false, createClientMode: true, simulatorMode: false, deliveryMode: false,
     imeiDigits: "035809100123456", equipmentImeiConfirmed: true,
     equipmentImeiConfirmation: { draftId: 2883, imei: "035809100123456" },
     equipmentImeiConfirmationRef: { current: { draftId: 2883, imei: "035809100123456" } },
@@ -127,6 +127,7 @@ test("una corrección mantiene bloqueada la firma anterior y el estado vigente c
 
 test("actualizar estados locales no vuelve a consultar la evidencia biométrica al proveedor", () => {
   const f = fixture(); const requested = [];
+  f.context.canAdmin = true;
   f.context.canAdminMoveFreelyInFactory = true;
   f.context.veriffHasFinalDecision = true;
   f.context.refreshVeriffMedia = validation => requested.push(validation.id);
