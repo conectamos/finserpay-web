@@ -82,7 +82,19 @@ export async function listMoraPortfolio(search: URLSearchParams, now = new Date(
 export async function listCreditPortfolio(search: URLSearchParams, now = new Date()) {
   return listPortfolio(search, now, true);
 }
-async function listPortfolio(search: URLSearchParams, now: Date, allCredits: boolean) {
+export const MORA_EXPORT_MAX_ROWS = 10_000;
+export async function exportMoraPortfolio(search: URLSearchParams, now = new Date()) {
+  // One dataset and one clock for the full filtered portfolio. Pagination is
+  // deliberately applied only by the list endpoints below.
+  const { items } = await readPortfolio(search, now, false);
+  if (items.length > MORA_EXPORT_MAX_ROWS) {
+    throw new CreditApprovalError("MORA_EXPORT_TOO_LARGE", "La exportación supera 10.000 registros. Aplica filtros para reducir los resultados e intenta de nuevo.", 413);
+  }
+  return { items };
+}
+export type MoraPortfolioExportItem = Awaited<ReturnType<typeof exportMoraPortfolio>>["items"][number];
+
+async function readPortfolio(search: URLSearchParams, now: Date, allCredits: boolean) {
   await ensureAnalystMoraSchema();
   const q = (search.get("q") || "").trim();
   if (q.length > 100) throw new CreditApprovalError("INVALID_FILTER","Búsqueda demasiado extensa.");
@@ -124,6 +136,10 @@ async function listPortfolio(search: URLSearchParams, now: Date, allCredits: boo
     else if (credit.estadoCartera === "ANULADO") counts.anulados++;
   }
   const items = filtered.filter(credit => !financialStatus || credit.estadoCartera === financialStatus).sort((a,b)=>b.diasMora-a.diasMora||a.id-b.id);
+  return { items, counts, summaries };
+}
+async function listPortfolio(search: URLSearchParams, now: Date, allCredits: boolean) {
+  const { items, counts, summaries } = await readPortfolio(search, now, allCredits);
   const page = Number(search.get("page") || 1);
   if (!Number.isSafeInteger(page)||page<1) throw new CreditApprovalError("INVALID_FILTER","Página inválida.");
   return { items: items.slice((page-1)*25,page*25), total: items.length, page, pageSize:25, hasMore:page*25<items.length, ...(allCredits ? { counts } : {}),

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   Clock3,
+  Download,
   History,
   RefreshCw,
   Search,
@@ -102,6 +103,22 @@ const emptyFilters: Filters = {
   followUp: "",
   financialStatus: "",
 };
+
+const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+class MoraExportError extends Error {}
+
+function exportFileName(contentDisposition: string | null) {
+  const fallback = "cartera-mora.xlsx";
+  const encoded = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plain = contentDisposition?.match(/filename="([^"]+)"/i)?.[1]
+    ?? contentDisposition?.match(/filename=([^;]+)/i)?.[1];
+  let candidate = encoded ?? plain;
+  if (!candidate) return fallback;
+  try { candidate = decodeURIComponent(candidate.trim()); } catch { candidate = candidate.trim(); }
+  const safe = candidate.split(/[\\/]/).pop()?.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/^\.+/, "").trim().slice(0, 180);
+  return safe?.toLowerCase().endsWith(".xlsx") ? safe : fallback;
+}
 
 const financialLabels: Record<string, string> = {
   EN_MORA: "En mora", AL_DIA: "Al día", PAGADO: "Pagado", ANULADO: "Anulado",
@@ -252,6 +269,9 @@ export default function MoraPortfolioClient({ scope = "overdue" }: { scope?: "ov
   const [lastSavedFingerprint, setLastSavedFingerprint] = useState("");
   const [extensionBusy, setExtensionBusy] = useState(false);
   const [extensionNotice, setExtensionNotice] = useState<{ message: string; warning: string | null } | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const exportFlight = useRef(false);
   const extensionFlight = useRef(false);
   const detailController = useRef<AbortController | null>(null);
   const selectedCreditId = useRef<number | null>(null);
@@ -363,6 +383,45 @@ export default function MoraPortfolioClient({ scope = "overdue" }: { scope?: "ov
     if (submitting.current || extensionFlight.current) return;
     setRefreshVersion((value) => value + 1);
     if (selectedCreditId.current) void loadCredit(selectedCreditId.current, true);
+  }
+
+  async function exportExcel() {
+    if (allCredits || exportFlight.current || loading || saving || submitting.current || extensionBusy
+      || extensionFlight.current || listError || !portfolio || portfolio.total === 0) return;
+    exportFlight.current = true;
+    setExporting(true);
+    setExportError("");
+    try {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(filters)) {
+        if (value.trim()) params.set(key, value.trim());
+      }
+      const response = await fetch(`${apiBase}/export?${params}`, { cache: "no-store" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new MoraExportError(typeof payload?.error === "string" ? payload.error : "No fue posible generar el Excel. Intenta de nuevo.");
+      }
+      const mime = response.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
+      if (mime !== xlsxMime) throw new MoraExportError("El servidor no devolvió un archivo Excel válido. Intenta de nuevo.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = exportFileName(response.headers.get("Content-Disposition"));
+      link.style.display = "none";
+      try {
+        document.body.appendChild(link);
+        link.click();
+      } finally {
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (error) {
+      setExportError(error instanceof MoraExportError ? error.message : "No fue posible generar el Excel. Revisa tu conexión e intenta de nuevo.");
+    } finally {
+      exportFlight.current = false;
+      setExporting(false);
+    }
   }
 
   function closeDetail() {
@@ -487,8 +546,8 @@ export default function MoraPortfolioClient({ scope = "overdue" }: { scope?: "ov
         <PageHeader
           eyebrow="Aprobaciones"
           title={allCredits ? "Gestión de cartera" : "Cartera en mora"}
-          description={allCredits ? "Todos los créditos y su seguimiento. El historial se conserva aunque el cliente se ponga al día." : "Organiza el seguimiento, consulta las prórrogas vigentes y conserva cada gestión."}
-          actions={<Button variant="secondary" disabled={loading || saving || extensionBusy} onClick={refreshPortfolio}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar</Button>}
+          description={allCredits ? "Todos los créditos y su seguimiento. El historial se conserva aunque el cliente se ponga al día." : "Organiza el seguimiento, consulta las prórrogas vigentes y conserva cada gestión. El Excel incluye todos los resultados filtrados, con una fila por crédito."}
+          actions={<><Button variant="secondary" disabled={loading || saving || extensionBusy} onClick={refreshPortfolio}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar</Button>{!allCredits ? <Button variant="secondary" disabled={loading || saving || extensionBusy || exporting || !portfolio || portfolio.total === 0 || Boolean(listError)} aria-busy={exporting} onClick={() => void exportExcel()}><Download className="h-4 w-4" aria-hidden="true" />{exporting ? "Exportando..." : "Exportar Excel"}</Button> : null}</>}
         />
 
         <nav className={styles.views} aria-label="Vistas de cartera">
@@ -526,6 +585,7 @@ export default function MoraPortfolioClient({ scope = "overdue" }: { scope?: "ov
         </Card>
 
         {listError ? <div role="alert" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm">{listError}</div> : null}
+        {!allCredits && exportError ? <div role="alert" className="rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-4 py-3 text-sm">{exportError}</div> : null}
         {loading && !portfolio ? <LoadingState label={allCredits ? "Cargando todos los créditos..." : "Cargando cartera en mora..."} /> : null}
 
         <div className={styles.results}>
