@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
   CircleCheck,
+  ChevronDown,
   Download,
   FileText,
   Filter,
@@ -11,6 +12,8 @@ import {
   Landmark,
   ReceiptText,
   RotateCcw,
+  Send,
+  ShieldCheck,
   TrendingUp,
   TriangleAlert,
   WalletCards,
@@ -588,14 +591,10 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
 
       <main className={styles.content}>
         <PageHeader className={styles.heading} eyebrow="Control de cartera" title="Cartera"
-          description={<>{selectedAliadoLabel} · {selectedPlatformLabel} · Actualizada {lastUpdatedLabel}</>}
+          description={<>{selectedAliadoLabel} · {selectedPlatformLabel}</>}
           actions={<>
             <ActionLink href={exportHref} icon={Download} label="Excel" primary />
             <ActionLink href="/dashboard/reportes/creditos" icon={FileText} label="Créditos" />
-            {adminCentral ? <>
-              <ActionLink href="/dashboard/financiero/cartera" icon={ReceiptText} label="Registrar gasto" />
-              <ActionLink href="/dashboard/financiero/cartera/detalle" icon={History} label="Historial de gastos" />
-            </> : null}
           </>} />
         <Card className={styles.filters}>
             <form action="/dashboard/cartera" className={styles.filterForm}>
@@ -647,10 +646,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               </div>
             </form>
 
-            {adminCentral ? <div className={`${styles.whatsapp} grid w-full gap-5 xl:grid-cols-2`}>
-              <CuotavencidaWhatsappButton />
-              <CuotavencidaWhatsappButton campaign="bloqueo" />
-            </div> : null}
+            <p className={styles.updated}><History size={15} aria-hidden="true" />Actualizada {lastUpdatedLabel}</p>
         </Card>
 
         <section
@@ -664,6 +660,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               label="Saldo por cobrar"
               tone="neutral"
               value={money(totalPendiente)}
+              featured
             />
           ) : null}
           <MetricCard
@@ -688,44 +685,59 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             tone="neutral"
             value={percent(pctRecuperado)}
           />
-          {adminCentral ? (
-            <MetricCard
-              detail={`${money(gananciaReconocida)} reconocida descontada · ${money(totalGastosOperacion)} en gastos`}
-              icon={Landmark}
-              label="Ganancia estimada"
-              tone="gold"
-              value={money(totalGanancias)}
-              warning={totalGanancias < 0}
-            />
-          ) : null}
         </section>
 
-        <section
-          className={`${styles.secondaryMetrics} ${adminCentral ? styles.centralSecondary : styles.allySecondary}`}
-          aria-label="Indicadores complementarios"
-        >
-          <MiniMetric
-            label="Inversión acumulada"
-            value={money(adminCentral ? totalInvertido : totalCapitalInvertido)}
-            detail={adminCentral ? "Neto por crédito · activos y pagados" : "Capital original · activos y pagados"}
-          />
-          <MiniMetric
-            label="Capital comprometido"
-            value={money(totalCapitalComprometidoMora)}
-            detail={`${clientsMora} clientes en mora`}
-          />
-          {adminCentral ? (
-            <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail="Retención activa · ya descontada de la inversión" />
-          ) : null}
-          <MiniMetric label="Creditos pagados" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
-          <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
-        </section>
+        <details className={styles.financialDetails}>
+          <summary className={styles.disclosureSummary}>
+            <span className={styles.disclosureIcon}><Landmark size={21} aria-hidden="true" /></span>
+            <span className={styles.disclosureHeading}>
+              <strong>Detalle financiero</strong>
+              <span>Inversión, capital y créditos pagados</span>
+            </span>
+            {adminCentral ? <span className={styles.profitTotal}>
+              <span>Ganancia estimada</span>
+              <strong className={totalGanancias < 0 ? styles.negative : undefined}>{money(totalGanancias)}</strong>
+            </span> : null}
+            <ChevronDown size={20} className={styles.chevron} aria-hidden="true" />
+          </summary>
+          <div className={styles.disclosureBody}>
+            <section
+              className={`${styles.secondaryMetrics} ${adminCentral ? styles.centralSecondary : styles.allySecondary}`}
+              aria-label="Indicadores complementarios"
+            >
+              <MiniMetric
+                label="Inversión acumulada"
+                value={money(adminCentral ? totalInvertido : totalCapitalInvertido)}
+                detail={adminCentral ? "Neto por crédito · activos y pagados" : "Capital original · activos y pagados"}
+              />
+              <MiniMetric
+                label="Capital comprometido"
+                value={money(totalCapitalComprometidoMora)}
+                detail={`${clientsMora} clientes en mora`}
+              />
+              {adminCentral ? (
+                <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail="Retención activa · ya descontada de la inversión" />
+              ) : null}
+              <MiniMetric label="Creditos pagados" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
+              <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
+            </section>
 
-        {adminCentral ? (
-          <PortfolioProfitBreakdown input={profitInput} total={totalGanancias}
-            estimatedInvestment={totalInversionEstimada} estimatedCount={estimatedInvestments.length}
-            productFiltered={Boolean(selectedPlatform)} />
-        ) : null}
+            {adminCentral ? (
+              <>
+              <div className={styles.financialActions}>
+                <p>{money(gananciaReconocida)} reconocida descontada · {money(totalGastosOperacion)} en gastos</p>
+                <div>
+                  <ActionLink href="/dashboard/financiero/cartera" icon={ReceiptText} label="Registrar gasto" />
+                  <ActionLink href="/dashboard/financiero/cartera/detalle" icon={History} label="Historial de gastos" />
+                </div>
+              </div>
+              <PortfolioProfitBreakdown input={profitInput} total={totalGanancias}
+                estimatedInvestment={totalInversionEstimada} estimatedCount={estimatedInvestments.length}
+                productFiltered={Boolean(selectedPlatform)} />
+              </>
+            ) : null}
+          </div>
+        </details>
 
         <section
           className={`${styles.workspaces} ${adminCentral ? styles.centralWorkspaces : ""}`}
@@ -772,7 +784,32 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             </div>
           </Card>
 
-          {adminCentral ? <PushMassivePanel /> : null}
+          {adminCentral ? <section className={styles.management} aria-label="Herramientas de cobranza">
+            <div className={styles.managementHeading}>
+              <p className={styles.eyebrow}>Acciones</p>
+              <h2 className={styles.sectionTitle}>Gestión de cobranza</h2>
+            </div>
+            <details className={styles.managementDetails}>
+              <summary className={styles.disclosureSummary}>
+                <span className={styles.disclosureIcon}><Send size={20} aria-hidden="true" /></span>
+                <span className={styles.disclosureHeading}><strong>Mensajes por WhatsApp</strong><span>Cuota vencida y aviso de bloqueo</span></span>
+                <ChevronDown size={20} className={styles.chevron} aria-hidden="true" />
+              </summary>
+              <div className={styles.campaigns}>
+                <CuotavencidaWhatsappButton showProtectionNote={false} />
+                <CuotavencidaWhatsappButton campaign="bloqueo" showProtectionNote={false} />
+              </div>
+            </details>
+            <details className={styles.managementDetails}>
+              <summary className={styles.disclosureSummary}>
+                <span className={styles.disclosureIcon}><WalletCards size={20} aria-hidden="true" /></span>
+                <span className={styles.disclosureHeading}><strong>Notificaciones a dispositivos</strong><span>Selecciona el grupo y revisa el mensaje</span></span>
+                <ChevronDown size={20} className={styles.chevron} aria-hidden="true" />
+              </summary>
+              <div className={styles.pushPanel}><PushMassivePanel /></div>
+            </details>
+            <p className={styles.protection}><ShieldCheck size={17} aria-hidden="true" />Los avisos de mora excluyen prórrogas y excepciones vigentes.</p>
+          </section> : null}
         </section>
 
         <Card className={styles.priorities}>
@@ -919,6 +956,7 @@ function MetricCard({
   tone,
   value,
   warning = false,
+  featured = false,
 }: {
   detail?: string;
   icon: LucideIcon;
@@ -926,11 +964,12 @@ function MetricCard({
   tone: "gold" | "green" | "red" | "neutral";
   value: string;
   warning?: boolean;
+  featured?: boolean;
 }) {
   const toneClass = warning || tone === "red" ? styles.dangerMetric : tone === "green" ? styles.positiveMetric : "";
 
   return (
-    <Card className={`${styles.metric} ${toneClass}`}>
+    <article className={`${styles.metric} ${toneClass} ${featured ? styles.featuredMetric : ""}`}>
       <div className={styles.metricLabel}>
         <span className={styles.metricIcon}>
           <Icon size={21} strokeWidth={1.8} aria-hidden="true" />
@@ -943,7 +982,7 @@ function MetricCard({
       {detail ? (
         <p className={styles.metricDetail}>{detail}</p>
       ) : null}
-    </Card>
+    </article>
   );
 }
 
@@ -957,11 +996,11 @@ function MiniMetric({
   detail: string;
 }) {
   return (
-    <Card className={styles.miniMetric}>
+    <div className={styles.miniMetric}>
       <p className={styles.miniLabel}>{label}</p>
       <p className={styles.miniValue}>{value}</p>
       <p className={styles.metricDetail}>{detail}</p>
-    </Card>
+    </div>
   );
 }
 

@@ -1,0 +1,27 @@
+.action { min-width: 0; color: var(--fp-graphite); font-size: 14px; line-height: 1.5; }
+.heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.heading h3 { font-size: 17px; font-weight: 700; line-height: 1.4; }
+.send { flex-shrink: 0; }
+.scope { margin-top: 12px; color: var(--fp-muted); }
+.protection { margin-top: 6px; color: var(--fp-client-green); font-size: 13px; }
+.status { color: var(--fp-muted); }
+.status:empty { display: none; }
+.status:not(:empty) { margin-top: 12px; }
+.status > p + p { margin-top: 6px; }
+.running { color: var(--fp-graphite); font-weight: 600; }
+.history { margin-top: 16px; border-top: 1px solid var(--fp-border); }
+.history summary { min-height: 44px; padding: 12px 0 0; cursor: pointer; font-size: 13px; color: var(--fp-muted); }
+.history summary::marker { color: var(--fp-graphite); }
+.history summary:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: 4px; border-radius: var(--fp-radius-sm); }
+.attention { display: inline-block; margin-left: 12px; color: var(--fp-amber); font-weight: 600; }
+.batchDetails { margin-top: 12px; color: var(--fp-muted); font-size: 13px; }
+.batchDetails > p + p { margin-top: 10px; }
+.counts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-variant-numeric: tabular-nums; }
+.error { margin-top: 12px; padding: 12px; border: 1px solid var(--fp-danger); border-radius: var(--fp-radius-md); background: var(--fp-danger-soft); color: var(--fp-danger); }
+.error button { margin-top: 8px; }
+@media (max-width: 600px) {
+  .heading { align-items: stretch; flex-direction: column; }
+  .send { width: 100%; min-height: 44px; }
+  .scope { margin-top: 12px; }
+  .attention { margin-left: 8px; }
+}

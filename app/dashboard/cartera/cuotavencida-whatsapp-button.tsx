@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { LoaderCircle, Send } from "lucide-react";
 import { Button } from "@/app/_components/finser-ui";
+import styles from "./cuotavencida-whatsapp-button.module.css";
 
 type Batch = {
   id: string;
@@ -21,6 +22,7 @@ const campaigns = {
   cuotavencida: {
     endpoint: "/api/dashboard/cartera/cuotavencida",
     name: "Cuotavencida",
+    title: "Cuota vencida",
     label: "Enviar Cuotavencida por WhatsApp",
     scope: "Clientes con 1 día de mora o más · todos los aliados y productos",
     empty: "No hay clientes elegibles con mora de un día o más.",
@@ -28,6 +30,7 @@ const campaigns = {
   bloqueo: {
     endpoint: "/api/dashboard/cartera/bloqueo",
     name: "BLOQUEO",
+    title: "Aviso de bloqueo",
     label: "Enviar BLOQUEO por WhatsApp",
     scope: "Clientes en mora sin prórroga activa · todos los aliados y productos",
     empty: "No hay clientes en mora elegibles sin prórroga activa.",
@@ -60,12 +63,12 @@ function parseResult(value: unknown): Result | null {
   } };
 }
 
-export default function CuotavencidaWhatsappButton({ campaign = "cuotavencida" }: { campaign?: Campaign } = {}) {
+export default function CuotavencidaWhatsappButton({ campaign = "cuotavencida", showProtectionNote = true }: { campaign?: Campaign; showProtectionNote?: boolean } = {}) {
   // A different campaign gets fresh request, polling and result state.
-  return <CampaignWhatsappButton key={campaign} campaign={campaign} />;
+  return <CampaignWhatsappButton key={campaign} campaign={campaign} showProtectionNote={showProtectionNote} />;
 }
 
-function CampaignWhatsappButton({ campaign }: { campaign: Campaign }) {
+function CampaignWhatsappButton({ campaign, showProtectionNote }: { campaign: Campaign; showProtectionNote: boolean }) {
   const config = campaigns[campaign];
   const endpoint = config.endpoint;
   const [result, setResult] = useState<Result | null>(null);
@@ -165,33 +168,51 @@ function CampaignWhatsappButton({ campaign }: { campaign: Campaign }) {
 
   const batch = result?.batch;
   const running = active(batch);
+  const batchDetails = batch ? <div className={styles.batchDetails}>
+    {batch.total > 0 ? <p className={styles.counts}>
+        <span>Aceptados por WhatsApp: {count.format(batch.accepted)}</span>
+        <span>Pendientes: {count.format(batch.pending)}</span>
+        <span>Fallidos: {count.format(batch.failed)}</span>
+        <span>Sin confirmar: {count.format(batch.unknown)}</span>
+        <span>Omitidos: {count.format(batch.skipped)}</span>
+      </p> : null}
+    {batch.excludedActiveMoraProtection !== undefined
+      ? <p>Excluidos por prórroga o excepción al crear el lote: {count.format(batch.excludedActiveMoraProtection)} créditos.</p> : null}
+  </div> : null;
   return (
-    <div className="w-full basis-full space-y-2 text-sm text-[var(--fp-graphite)]">
-      <Button className="w-full sm:w-auto" aria-describedby={scopeId}
-        disabled={reading || sending || running || result?.configured !== true} onClick={() => { void send(); }}>
-        {sending || running ? <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
-          : <Send className="h-4 w-4" aria-hidden="true" />}
-        {config.label}
-      </Button>
-      <p id={scopeId} className="text-xs leading-5 text-[var(--fp-muted)]">{config.scope}</p>
-      <p className="text-xs leading-5 text-[var(--fp-client-green)]">Excluye créditos con prórroga o excepción vigente.</p>
-      <div role="status" aria-live="polite" aria-atomic="true" className="space-y-1">
-        {reading && !batch ? <p className="text-[var(--fp-muted)]">Consultando estado…</p> : null}
-        {sending ? <p>Solicitando el lote…</p> : null}
-        {batch ? <>
-          <p>{running ? "Lote en proceso" : "Lote finalizado"}{batch.dateKey ? ` · ${batch.dateKey}` : ""}.</p>
-          {batch.status === "COMPLETED" && batch.total === 0
-            ? <p>{config.empty}</p>
-            : <p className="text-[var(--fp-muted)]">Aceptados por WhatsApp: {count.format(batch.accepted)} · Pendientes: {count.format(batch.pending)} · Fallidos: {count.format(batch.failed)} · Sin confirmar: {count.format(batch.unknown)} · Omitidos: {count.format(batch.skipped)}.</p>}
-          {batch.excludedActiveMoraProtection !== undefined
-            ? <p className="text-[var(--fp-client-green)]">Excluidos por prórroga o excepción al crear el lote: {count.format(batch.excludedActiveMoraProtection)} créditos.</p> : null}
-        </> : null}
-        {result?.configured === false ? <p className="text-[var(--fp-muted)]">El envío por WhatsApp no está disponible en este momento.</p> : null}
+    <section className={styles.action} aria-labelledby={`${scopeId}-title`}>
+      <div className={styles.heading}>
+        <h3 id={`${scopeId}-title`}>{config.title}</h3>
+        <Button className={styles.send} aria-label={config.label} aria-describedby={scopeId}
+          disabled={reading || sending || running || result?.configured !== true} onClick={() => { void send(); }}>
+          {sending || running ? <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
+            : <Send className="h-4 w-4" aria-hidden="true" />}
+          Enviar por WhatsApp
+        </Button>
       </div>
-      {error ? <div className="space-y-1">
-        <p role="alert" className="text-[var(--fp-danger)]">{error}</p>
+      <p id={scopeId} className={styles.scope}>{config.scope}</p>
+      {showProtectionNote ? <p className={styles.protection}>Excluye créditos con prórroga o excepción vigente.</p> : null}
+      <div role="status" aria-live="polite" aria-atomic="true" className={styles.status}>
+        {reading && !batch ? <p>Consultando estado…</p> : null}
+        {sending ? <p>Solicitando el lote…</p> : null}
+        {batch && running ? <>
+          <p className={styles.running}>Lote en proceso{batch.dateKey ? ` · ${batch.dateKey}` : ""}</p>
+          {batchDetails}
+        </> : null}
+        {batch?.status === "COMPLETED" && batch.total === 0 ? <p>{config.empty}</p> : null}
+        {result?.configured === false ? <p>El envío por WhatsApp no está disponible en este momento.</p> : null}
+      </div>
+      {batch?.status === "COMPLETED" ? <details className={styles.history}>
+        <summary>
+          <span>Lote finalizado{batch.dateKey ? ` · ${batch.dateKey}` : ""}</span>
+          {batch.failed + batch.unknown > 0 ? <span className={styles.attention}>{count.format(batch.failed + batch.unknown)} por revisar</span> : null}
+        </summary>
+        {batchDetails}
+      </details> : null}
+      {error ? <div className={styles.error}>
+        <p role="alert">{error}</p>
         <Button variant="ghost" disabled={reading || sending} onClick={() => { setReading(true); setReload(value => value + 1); }}>Actualizar estado</Button>
       </div> : null}
-    </div>
+    </section>
   );
 }

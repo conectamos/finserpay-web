@@ -46,6 +46,7 @@ function fixture(fetcher = async () => response(result()), { campaign = "cuotave
   const Component = load("app/dashboard/cartera/cuotavencida-whatsapp-button.tsx", {
     react: hooks, "react/jsx-runtime": jsxRuntime, "@/app/_components/finser-ui": ui,
     "lucide-react": { LoaderCircle: () => null, Send: () => null },
+    "./cuotavencida-whatsapp-button.module.css": { default: new Proxy({}, { get: (_, name) => String(name) }) },
   }, {
     fetch: async (url, options) => { requests.push({ url, options }); return fetcher(url, options); },
     crypto: { randomUUID: () => { uuidCalls++; return uuid; } },
@@ -61,7 +62,7 @@ function fixture(fetcher = async () => response(result()), { campaign = "cuotave
   const runEffects = () => { for (const i of pendingEffects) { const effect = effects[i]; effect.cleanup?.(); effect.cleanup = effect.callback(); } pendingEffects.clear(); };
   const settle = async () => { for (let i = 0; i < 3; i++) { tree(); runEffects(); await flush(); } return render(); };
   const button = label => {
-    const item = walk(tree()).find(node => node.type === ui.Button && content(node) === label);
+    const item = walk(tree()).find(node => node.type === ui.Button && (node.props["aria-label"] === label || content(node) === label));
     assert.ok(item, `Missing button ${label}`); return item.props;
   };
   return { states, requests, timers, render, settle, button,
@@ -273,4 +274,26 @@ test("unmount clears polling and aborts an in-flight POST without an automatic r
   finish(response(result(batch()))); await flush();
   assert.equal(f.requests.length, 2);
   assert.equal(f.timers.size, 0);
+});
+
+test("completed batch details start folded while unresolved counts remain visible in its summary", async () => {
+  const f = fixture(async () => response(result(batch())));
+  const html = await f.mount();
+  assert.match(html, /<h3[^>]*>Cuota vencida<\/h3>/);
+  assert.match(html, /<details class="history"><summary>/);
+  assert.doesNotMatch(html, /<details[^>]*\bopen(?:[ =>])/);
+  assert.match(html, /2 por revisar<\/span><\/summary>/);
+  assert.match(html, /<div class="batchDetails">[\s\S]*Aceptados por WhatsApp: 1/);
+  assert.ok(f.requests.every(item => item.options.method === "GET"));
+  f.unmount();
+});
+
+test("an active batch keeps progress visible without a completed-batch disclosure", async () => {
+  const f = fixture(async () => response(result(batch({ status: "RUNNING", pending: 2 }))));
+  const html = await f.mount();
+  assert.match(html, /Lote en proceso/);
+  assert.match(html, /Pendientes: 2/);
+  assert.doesNotMatch(html, /<details/);
+  assert.ok(f.requests.every(item => item.options.method === "GET"));
+  f.unmount();
 });
