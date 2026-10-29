@@ -17,6 +17,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const admin = isAdminRole(user.rolNombre);
     const central = admin && isFinserPayCentralAlly(user.aliadoAccesoCodigo);
     const seller = admin ? null : await getSellerSessionUser(user);
+    if (!admin && !seller) {
+      return NextResponse.json(
+        { ok: false, code: "SELLER_SESSION_REQUIRED", error: "Confirma nuevamente tu PIN para recuperar la sesión comercial y continuar con los datos de esta solicitud." },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
     const allySalesAdmin = canActAsAllySalesAdmin(user);
     if (!canOriginateSolicitud({ central, admin: allySalesAdmin, userId: user.id, seller, viewerAllyId: user.aliadoId })) {
       return NextResponse.json({ ok: false, error: "Acción no autorizada" }, { status: 403 });

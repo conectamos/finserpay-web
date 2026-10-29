@@ -15,6 +15,9 @@ import {
   getSessionCookieOptions,
 } from "@/lib/session";
 import { ALIADO_FINSER_PAY, isFinserPayCentralAlly } from "@/lib/aliados";
+import { isDirectSalesProfile } from "@/lib/solicitud-operation-access";
+
+const recoveryHeaders = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
 
 function serializeSeller(item: {
   id: number;
@@ -150,15 +153,58 @@ async function getAssignedSellersForSede(sedeId: number) {
   return rows.map((row) => serializeSeller(row.vendedor));
 }
 
-export async function GET() {
+export async function GET(request?: Request) {
   try {
     const user = await getSessionUser();
 
     if (!user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+      return NextResponse.json({ code: "AUTH_REQUIRED", error: "No autenticado" }, { status: 401, headers: recoveryHeaders });
     }
 
     const accessSedeId = user.sedeAccesoId ?? user.sedeId;
+    const recoveryValue = request ? new URL(request.url).searchParams.get("recoveryDraftId") : null;
+    if (recoveryValue !== null) {
+      const draftId = Number(recoveryValue);
+      if (!Number.isSafeInteger(draftId) || draftId < 1 || draftId > 2_147_483_647) {
+        return NextResponse.json(
+          { code: "INVALID_SESSION_RECOVERY", error: "Selecciona una solicitud válida para recuperar la sesión." },
+          { status: 400, headers: recoveryHeaders },
+        );
+      }
+      if (user.activo !== true || user.sedeAccesoActiva !== true || user.aliadoAccesoActivo !== true ||
+        String(user.rolNombre || "").trim().toUpperCase() === "ADMIN") {
+        return NextResponse.json(
+          { code: "SESSION_RECOVERY_FORBIDDEN", error: "Ingresa con la cuenta de ventas original para recuperar esta solicitud." },
+          { status: 403, headers: recoveryHeaders },
+        );
+      }
+      const allyId = isFinserPayCentralAlly(user.aliadoAccesoCodigo) ? null : user.aliadoAccesoId || -1;
+      const context = await prisma.$queryRawUnsafe<Array<{
+        draftId: number; userId: number; sellerId: number; sellerName: string; siteId: number; siteName: string;
+      }>>(`
+        SELECT d."id" AS "draftId", d."usuarioId" AS "userId", v."id" AS "sellerId",
+          v."nombre" AS "sellerName", s."id" AS "siteId", s."nombre" AS "siteName"
+        FROM "CreditoBorrador" d
+        JOIN "Vendedor" v ON v."id" = d."vendedorId"
+        JOIN "SedeVendedor" sv ON sv."vendedorId" = v."id" AND sv."sedeId" = $3
+        JOIN "Sede" s ON s."id" = d."sedeId"
+        JOIN "Aliado" a ON a."id" = s."aliadoId"
+        WHERE d."id" = $1 AND d."usuarioId" = $2
+          AND d."estado" = 'ABIERTO' AND d."creditoId" IS NULL
+          AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+          AND v."activo" = TRUE AND sv."activo" = TRUE
+          AND UPPER(BTRIM(v."tipoPerfil")) IN ('VENDEDOR', 'SUPERVISOR')
+          AND s."activa" = TRUE AND a."activo" = TRUE
+          AND ($4::integer IS NULL OR s."aliadoId" = $4)
+        LIMIT 1`, draftId, user.id, accessSedeId, allyId);
+      if (!context[0]) {
+        return NextResponse.json(
+          { code: "SESSION_RECOVERY_FORBIDDEN", error: "La solicitud no está disponible para esta cuenta. Conserva la pantalla original y consulta con el administrador." },
+          { status: 403, headers: recoveryHeaders },
+        );
+      }
+      return NextResponse.json({ ok: true, recoveryContext: context[0] }, { headers: recoveryHeaders });
+    }
     const [currentSeller, sellers] = await Promise.all([
       getSellerSessionUser(user),
       getAssignedSellersForSede(accessSedeId),
@@ -168,7 +214,7 @@ export async function GET() {
       ok: true,
       currentSeller,
       sellers,
-    });
+    }, { headers: recoveryHeaders });
   } catch (error) {
     console.error("ERROR CONSULTANDO SESION DE VENDEDOR:", error);
     return NextResponse.json(
@@ -183,7 +229,7 @@ export async function POST(req: Request) {
     const user = await getSessionUser();
 
     if (!user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+      return NextResponse.json({ code: "AUTH_REQUIRED", error: "No autenticado" }, { status: 401, headers: recoveryHeaders });
     }
 
     await ensureVendorProfileVisualColumns();
@@ -200,6 +246,33 @@ export async function POST(req: Request) {
     const vendedorId = Number(body.vendedorId || 0);
     const pin = String(body.pin || "").replace(/\D/g, "").trim();
     const requestedSedeId = Number(body.sedeId || body.operationalSedeId || 0);
+    const recovering = body.recoveryDraftId !== undefined || body.expectedUserId !== undefined;
+    const recoveryDraftId = Number(body.recoveryDraftId);
+    const expectedUserId = Number(body.expectedUserId);
+
+    if (recovering) {
+      if (!Number.isSafeInteger(recoveryDraftId) || recoveryDraftId < 1 || recoveryDraftId > 2_147_483_647 ||
+        !Number.isSafeInteger(expectedUserId) || expectedUserId < 1 || expectedUserId > 2_147_483_647 ||
+        !Number.isSafeInteger(requestedSedeId) || requestedSedeId < 1 || requestedSedeId > 2_147_483_647) {
+        return NextResponse.json(
+          { code: "INVALID_SESSION_RECOVERY", error: "La solicitud de recuperación no es válida. Conserva esta pantalla y vuelve a intentarlo." },
+          { status: 400, headers: recoveryHeaders },
+        );
+      }
+      if (expectedUserId !== user.id) {
+        return NextResponse.json(
+          { code: "SESSION_USER_CHANGED", error: "La cuenta de ingreso cambió. Recupera el acceso original en otra pestaña y vuelve a intentarlo aquí." },
+          { status: 409, headers: recoveryHeaders },
+        );
+      }
+      if (user.activo !== true || user.sedeAccesoActiva !== true || user.aliadoAccesoActivo !== true ||
+        String(user.rolNombre || "").trim().toUpperCase() === "ADMIN") {
+        return NextResponse.json(
+          { code: "SESSION_RECOVERY_FORBIDDEN", error: "Este acceso no permite recuperar el perfil comercial de la solicitud." },
+          { status: 403, headers: recoveryHeaders },
+        );
+      }
+    }
 
     if (!Number.isInteger(vendedorId) || vendedorId <= 0) {
       return NextResponse.json(
@@ -257,6 +330,13 @@ export async function POST(req: Request) {
       );
     }
 
+    if (recovering && !isDirectSalesProfile(assignment.vendedor.tipoPerfil)) {
+      return NextResponse.json(
+        { code: "SESSION_RECOVERY_FORBIDDEN", error: "El perfil comercial ya no está autorizado para continuar la solicitud." },
+        { status: 403, headers: recoveryHeaders },
+      );
+    }
+
     const validMainPin = verifyPassword(pin, assignment.vendedor.pinHash);
     const validTempPin = assignment.vendedor.pinTemporalHash
       ? verifyPassword(pin, assignment.vendedor.pinTemporalHash)
@@ -264,17 +344,17 @@ export async function POST(req: Request) {
 
     if (!validMainPin && !validTempPin) {
       return NextResponse.json(
-        { error: "El PIN ingresado no es correcto" },
-        { status: 401 }
+        { ...(recovering ? { code: "INVALID_SELLER_PIN" } : {}), error: "El PIN ingresado no es correcto" },
+        { status: 401, headers: recoveryHeaders }
       );
     }
 
-    await prisma.vendedor.update({
-      where: { id: assignment.vendedor.id },
-      data: {
-        ultimoIngresoAt: new Date(),
-      },
-    });
+    if (!recovering) {
+      await prisma.vendedor.update({
+        where: { id: assignment.vendedor.id },
+        data: { ultimoIngresoAt: new Date() },
+      });
+    }
 
     const isVentasAccess = isVentasAccessSede(assignment.sede);
     const operationalSedeId = isVentasAccess
@@ -342,12 +422,39 @@ export async function POST(req: Request) {
       );
     }
 
+    if (recovering) {
+      // Only restore the already selected commercial identity, using its PIN.
+      // This query is read-only: recovery never expires, recreates, reassigns or
+      // changes the saved content of a request.
+      const eligible = await prisma.$queryRawUnsafe<Array<{ id: number }>>(`
+        SELECT d."id" FROM "CreditoBorrador" d
+        JOIN "Sede" s ON s."id" = d."sedeId"
+        JOIN "Aliado" a ON a."id" = s."aliadoId"
+        WHERE d."id" = $1 AND d."vendedorId" = $2 AND d."sedeId" = $3
+          AND d."estado" = 'ABIERTO' AND d."creditoId" IS NULL
+          AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
+          AND s."activa" = TRUE AND a."activo" = TRUE
+          AND ($4::integer IS NULL OR s."aliadoId" = $4)
+        LIMIT 1`, recoveryDraftId, assignment.vendedor.id, operationalSede.id, aliadoScopeId);
+      if (!eligible.length) {
+        return NextResponse.json(
+          { code: "SESSION_RECOVERY_FORBIDDEN", error: "La solicitud no está disponible para este perfil y sede. Conserva los datos y consulta con el administrador." },
+          { status: 403, headers: recoveryHeaders },
+        );
+      }
+      await prisma.vendedor.update({
+        where: { id: assignment.vendedor.id },
+        data: { ultimoIngresoAt: new Date() },
+      });
+    }
+
     const response = NextResponse.json({
       ok: true,
       seller: serializeSeller(assignment.vendedor),
       operationalSede: serializeSede(operationalSede),
       mustChangePin: assignment.vendedor.debeCambiarPin,
-    });
+      ...(recovering ? { recovery: { draftId: recoveryDraftId, userId: user.id, sellerId: assignment.vendedor.id, sedeId: operationalSede.id } } : {}),
+    }, { headers: recoveryHeaders });
 
     response.cookies.set(
       SELLER_SESSION_COOKIE_NAME,
