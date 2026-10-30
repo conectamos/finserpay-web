@@ -148,3 +148,7 @@
   .settlement .brand p { font-size: 18px; }
   .settlement .navigation { column-gap: 18px; }
 }
+
+.topbar.plainBrand .brand{background:transparent;box-shadow:none;padding:0;border-radius:0}
+
+.topbar.plainBrand .brand p{color:var(--fp-graphite)}.topbar.plainBrand .brand p span{color:var(--fp-client-green)}

@@ -1,5 +1,13 @@
 BEGIN;
 SET LOCAL search_path = public;
+CREATE TABLE IF NOT EXISTS "AttentionSticker" (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "userId" integer NOT NULL REFERENCES "Usuario"(id) ON DELETE RESTRICT,
+  name text NOT NULL CHECK(length(name) BETWEEN 1 AND 60), content bytea NOT NULL,
+  sha256 text NOT NULL CHECK(length(sha256)=64), size integer NOT NULL CHECK(size BETWEEN 1 AND 512000),
+  animated boolean NOT NULL DEFAULT false, favorite boolean NOT NULL DEFAULT false,
+  "archivedAt" timestamptz, version integer NOT NULL DEFAULT 1 CHECK(version>0), "createdAt" timestamptz NOT NULL DEFAULT now(),
+  UNIQUE("userId",sha256), CHECK(octet_length(content)=size)
+);
 CREATE TABLE IF NOT EXISTS "AttentionBoardSection" (
   id uuid PRIMARY KEY, name text NOT NULL CHECK(length(btrim(name)) BETWEEN 1 AND 60),
   color text NOT NULL CHECK(color IN ('green','lime','amber','slate','navy')),
@@ -44,6 +52,22 @@ ALTER TABLE "AttentionConversation" ALTER COLUMN phone DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS "AttentionConversation_scope" ON "AttentionConversation"("sedeId","assigneeKey",status,"updatedAt" DESC);
 CREATE INDEX IF NOT EXISTS "AttentionConversation_analyst" ON "AttentionConversation"("assigneeUserId","assigneeKey",status,"updatedAt" DESC);
 CREATE INDEX IF NOT EXISTS "AttentionConversation_phone" ON "AttentionConversation"(phone);
+CREATE TABLE IF NOT EXISTS "AttentionWorkRequest" (
+  id uuid PRIMARY KEY, "conversationId" uuid NOT NULL UNIQUE REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
+  kind text NOT NULL CHECK(kind IN ('enrollment','welcome')), "targetSource" text NOT NULL CHECK("targetSource" IN ('D','C')),
+  "targetId" integer NOT NULL CHECK("targetId">0), "sellerId" integer NOT NULL REFERENCES "Vendedor"(id) ON DELETE RESTRICT,
+  "userId" integer NOT NULL REFERENCES "Usuario"(id) ON DELETE RESTRICT, "sedeId" integer NOT NULL REFERENCES "Sede"(id) ON DELETE RESTRICT,
+  "aliadoId" integer NOT NULL CHECK("aliadoId">0), state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','review','information','completed')),
+  "callMode" text NOT NULL DEFAULT 'undecided' CHECK("callMode" IN ('human','dapta','undecided')), version integer NOT NULL DEFAULT 1 CHECK(version>0),
+  "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "AttentionWorkRequest_active_target" ON "AttentionWorkRequest"(kind,"targetSource","targetId") WHERE state<>'completed';
+CREATE INDEX IF NOT EXISTS "AttentionWorkRequest_queue" ON "AttentionWorkRequest"(kind,"updatedAt" DESC,id);
+CREATE TABLE IF NOT EXISTS "AttentionWorkFile" (
+  id uuid PRIMARY KEY, "workId" uuid NOT NULL REFERENCES "AttentionWorkRequest"(id) ON DELETE RESTRICT,
+  content bytea NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 16777216),
+  "mimeType" text NOT NULL CHECK("mimeType" IN ('image/jpeg','image/png','application/pdf'))
+);
 CREATE TABLE IF NOT EXISTS "AttentionMessage" (
   id uuid PRIMARY KEY, "conversationId" uuid NOT NULL REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
   "externalId" text NOT NULL, direction text NOT NULL CHECK(direction IN ('inbound','outbound')),

@@ -16,7 +16,7 @@ function NavigationMenu({ label, items, active = false, icon: Icon }: { label: s
   </div>;
 }
 
-export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation",accountActions}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests"|"reports"|"settlement"|"administration";activeSection?:"operation"|"administration"|"reports"|"portfolio"|"integrations";accountActions?:ReactNode;}) {
+export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation",accountActions,plainBrand=false}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests"|"reports"|"settlement"|"administration";activeSection?:"operation"|"administration"|"reports"|"portfolio"|"integrations";accountActions?:ReactNode;plainBrand?:boolean;}) {
   const operation: Item[] = [
     ...(admin ? [[adminCentral ? "Aprobaciones" : "Pendientes", adminCentral ? "/dashboard/aprobaciones" : "/dashboard/pendientes"]] as Item[] : []),
     ["Nueva venta", "/dashboard/creditos"], ["Solicitudes", "/dashboard/solicitudes"],
@@ -66,8 +66,8 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
       </div>
     </header>;
   }
-return (<header className={`${styles.topbar} ${variant === "requests" ? styles.requests : ""} ${variant === "reports" || variant === "administration" ? styles.reports : ""} ${variant === "administration" ? styles.administration : ""}`}>
-      <Link href="/dashboard" aria-label="FINSER PAY, inicio" className={styles.brand}><FinserBrand dark accentPay wordmarkOnly={variant === "sale" || variant === "administration"} mini={variant !== "sale"} plainMark={variant === "reports"} showTagline={false} /></Link>
+return (<header className={`${styles.topbar} ${variant === "requests" ? styles.requests : ""} ${variant === "reports" || variant === "administration" ? styles.reports : ""} ${variant === "administration" ? styles.administration : ""} ${plainBrand ? styles.plainBrand : ""}`}>
+      <Link href="/dashboard" aria-label="FINSER PAY, inicio" className={styles.brand}><FinserBrand dark={!plainBrand} accentPay wordmarkOnly={variant === "sale" || variant === "administration"} mini={variant !== "sale"} plainMark={variant === "reports"} showTagline={false} /></Link>
       <nav className={styles.navigation} aria-label="Navegación principal">
         <Link href="/dashboard">{variant === "reports" ? "Panel central" : "Inicio"}</Link>
         <NavigationMenu label="Operación" items={operation} active={activeSection==="operation"} />

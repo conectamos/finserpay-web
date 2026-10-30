@@ -4,6 +4,9 @@ import pg from "pg";
 // PostgreSQL native type names; "!" marks NOT NULL. Existing incompatible tables
 // are rejected instead of attempting an implicit repair or destructive migration.
 const expectedColumns = {
+  AttentionWorkFile: "id:uuid! workId:uuid! content:bytea! mimeType:text!",
+  AttentionWorkRequest: "id:uuid! conversationId:uuid! kind:text! targetSource:text! targetId:int4! sellerId:int4! userId:int4! sedeId:int4! aliadoId:int4! state:text! callMode:text! version:int4! createdAt:timestamptz! updatedAt:timestamptz!",
+  AttentionSticker: "id:uuid! userId:int4! name:text! content:bytea! sha256:text! size:int4! animated:bool! favorite:bool! archivedAt:timestamptz version:int4! createdAt:timestamptz!",
   AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz! metaManaged:bool! metaLastInboundAt:timestamptz sectionId:uuid boardVersion:int4!",
   AttentionBoardSection: "id:uuid! name:text! color:text! position:int4! version:int4! archivedAt:timestamptz createdByUserId:int4 createdAt:timestamptz! updatedAt:timestamptz!",
   AttentionMessage: "id:uuid! conversationId:uuid! externalId:text! direction:text! text:text! sentAt:timestamptz! author:text metaWamid:text metaPhoneNumberId:text attachment:jsonb deliveryStatus:text deliveryAt:timestamptz replyToWamid:text",
@@ -25,6 +28,9 @@ const additiveColumns = {
 };
 const tableNames = Object.keys(expectedColumns);
 const foreignKeys = {
+  AttentionWorkFile: {workId:"AttentionWorkRequest"},
+  AttentionWorkRequest: {conversationId:"AttentionConversation",sellerId:"Vendedor",userId:"Usuario",sedeId:"Sede"},
+  AttentionSticker: { userId: "Usuario" },
   AttentionConversation: { sedeId: "Sede", assigneeUserId: "Usuario", assigneeSellerId: "Vendedor", linkedCreditId: "Credito", sectionId: "AttentionBoardSection" },
   AttentionBoardSection: { createdByUserId: "Usuario" },
   AttentionMessage: { conversationId: "AttentionConversation" },
@@ -135,7 +141,7 @@ try {
   await verifySchema(client, true);
   await client.query(await readFile(new URL("./setup-atencion.sql", import.meta.url), "utf8"));
   await verifySchema(client, false);
-  console.log("Esquema de atención verificado: 12 tablas, columnas y claves compatibles; tablero con versión independiente, lectura nominal, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.");
+  console.log(`Esquema de atención verificado: ${tableNames.length} tablas, columnas y claves compatibles; tablero con versión independiente, lectura nominal, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.`);
 } catch (error) {
   if (error instanceof AttentionSchemaMismatch) throw error;
   const code = String(error?.code || "").replace(/[^A-Z0-9_]/gi, "").slice(0, 24);

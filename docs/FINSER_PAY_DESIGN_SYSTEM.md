@@ -145,8 +145,12 @@ nominal. Usa porcelana, grafito y acentos lima; no añade una navegación latera
 mascotas ni una segunda barra de búsqueda. Una franja compacta agrupa las vistas
 del módulo y el estado real de conexión.
 
-La vista inicial es Conversaciones, con bandeja y chat amplio en dos columnas.
-La ficha se abre bajo demanda en `FinserSidePanel`, sin comprimir el historial.
+La vista inicial es Conversaciones. Desde 1280 px usa tres columnas: bandeja,
+chat y ficha resumida con los archivos realmente recibidos. En anchos menores
+conserva el chat y abre la ficha bajo demanda. La marca de Atención usa el
+wordmark sobre blanco, con FINSER grafito y PAY verde. La gestión financiera
+continúa en `FinserSidePanel`. Enrolamientos y Aprobaciones tienen bandejas
+independientes con chat interno del asesor, ficha del trámite y permisos nominales.
 El panel conserva formularios al cerrarse y restituye el foco al control de origen;
 la pérdida de acceso retira los datos protegidos. Las confirmaciones financieras
 permanecen dentro del panel nativo y se cierran antes que él.

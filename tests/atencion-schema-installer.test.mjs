@@ -49,14 +49,14 @@ async function fixture(t, overrides = {}) {
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
 
-test("instalación aditiva verifica doce tablas y se puede repetir sin pérdida de datos", async t => {
+test("instalación aditiva verifica quince tablas y se puede repetir sin pérdida de datos", async t => {
   const { database, install, calls, logs, ended } = await fixture(t);
   await install();
   await database.query(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES('user:1','00000000-0000-4000-8000-000000000001','retained')`);
   await install();
   assert.equal((await database.query('SELECT fingerprint FROM "AttentionRequest"')).rows[0].fingerprint, "retained");
   assert.ok(calls.findIndex(sql => sql.startsWith("SELECT pg_advisory_lock(")) < calls.indexOf(setupSql));
-  assert.ok(logs.every(message => message.includes("12 tablas") && message.includes("auditoría inmutable")));
+  assert.ok(logs.every(message => message.includes("15 tablas") && message.includes("auditoría inmutable")));
   assert.ok(ended());
 });
 

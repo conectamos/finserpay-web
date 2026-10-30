@@ -250,7 +250,7 @@ test("drop deniega permiso, ventana vencida, chat interno y solicitud bloqueada 
   surface.unmount(); f.unmount();
 });
 
-test("micrófono sigue habilitado con texto escrito y el selector de sticker acepta WEBP", async () => {
+test("micrófono sigue habilitado con texto escrito y los stickers se preparan desde la biblioteca", async () => {
   const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Mensaje para después del audio" });
   const f = mount({ component: "ReplyComposer", props: root.composer().props });
   const tools = () => f.all().find(n => n.type?.name?.endsWith("attention-composer-tools"));
@@ -261,8 +261,11 @@ test("micrófono sigue habilitado con texto escrito y el selector de sticker ace
   assert.equal(tools().props.audioDisabled, true); assert.equal(root.composer().props.draft.file, audio);
   assert.equal(root.composer().props.draft.text, "Mensaje para después del audio");
   assert.match(text(f.all().find(n => n.type === "p" && text(n).includes("borrador"))), /quedará como borrador/);
-  const picker = f.all().find(n => n.type === "input" && n.props["aria-label"] === "Adjuntar sticker");
-  assert.equal(picker.props.accept, "image/webp,.webp");
+  const picker = f.all().find(n => n.type?.name?.endsWith("attention-sticker-picker"));
+  assert.equal(picker.props.disabled, false);
+  const sticker=new File(["sticker"],"sticker.webp",{type:"image/webp"});
+  picker.props.onSelect(sticker);await root.flush();
+  assert.equal(root.composer().props.draft.file,sticker);
   assert.equal(root.requests.filter(r => r.init.method === "POST").length, 0);
   f.unmount(); root.unmount();
 });

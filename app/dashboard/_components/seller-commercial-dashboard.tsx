@@ -68,6 +68,7 @@ type ActionItem = NavItem & {
 };
 
 const CORE_NAV_ITEMS: NavItem[] = [
+  { href: "/dashboard/gestion-comercial", icon: ClipboardList, label: "Atención de solicitudes" },
   { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
   { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
   { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
@@ -86,6 +87,8 @@ const SUPERVISOR_PORTFOLIO_ITEMS: NavItem[] = [
 ];
 
 const QUICK_ACTIONS: ActionItem[] = [
+  { href: "/dashboard/gestion-comercial?tipo=welcome", icon: ShieldCheck, label: "Solicitar aprobación" },
+  { href: "/dashboard/gestion-comercial?tipo=enrollment", icon: ClipboardList, label: "Solicitar enrolamiento" },
   {
     href: "/dashboard/creditos",
     icon: Plus,

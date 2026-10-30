@@ -65,6 +65,7 @@ export type AttentionInbox = {
   };
 };
 export type AttentionDetail = {
+  workRequest?: {id:string;kind:"enrollment"|"welcome";state:string;advisor:string;ally:string;target:string};
   conversation: AttentionConversation; messages: AttentionMessage[]; notes: AttentionNote[];
   tasks: AttentionTask[]; customer: AttentionCustomer;
   permissions: { manage: boolean; claim: boolean; assign?: boolean; canSend: boolean };
