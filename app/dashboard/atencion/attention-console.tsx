@@ -139,6 +139,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
+  const [refreshNotice, setRefreshNotice] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [showCustomer, setShowCustomer] = useState(false);
@@ -155,9 +156,13 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const [syncRevision, setSyncRevision] = useState(0);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
+  const inboxReadError = useRef(false);
+  const detailReadError = useRef(false);
   const selectionRef = useRef<string | null>(null);
   const busyRef = useRef(false);
   const syncingRef = useRef(false);
+  const foregroundReads = useRef(0);
+  const pollController = useRef<AbortController | null>(null);
   const stopSync = useRef(false);
   const mounted = useRef(true);
   const newRequestKey = useRef<string | null>(null);
@@ -177,24 +182,47 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const activeConversations = dashboard?.activeConversations ?? [];
   const role = currentActor.central ? "Administración de atención" : "Analista de atención";
 
+  const clearInaccessibleData = useCallback((message: string) => {
+    ++listRequest.current; ++detailRequest.current;
+    inboxReadError.current = true; detailReadError.current = false;
+    selectionRef.current = null;
+    setInbox(null); setDetail(null); setSelected(null); setShowCustomer(false);
+    setLoading(false); setDetailLoading(false); setDetailError(""); setError(message);
+  }, []);
+  const quickReplyBusyChanged = useCallback((value: boolean) => {
+    if (value) pollController.current?.abort();
+    busyRef.current = value;
+    if (mounted.current) setBusy(value);
+  }, []);
   const loadInbox = useCallback(async (signal?: AbortSignal) => {
+    pollController.current?.abort(); foregroundReads.current++;
+    inboxReadError.current = false;
     const request = ++listRequest.current; setLoading(true); setError("");
     try {
       const query = new URLSearchParams({ search, filter, page: String(page) });
       const result = await api<AttentionInbox>(`/api/atencion?${query}`, { signal });
-      if (request === listRequest.current) setInbox(result);
-    } catch (err) { if (!signal?.aborted && request === listRequest.current) setError(errorMessage(err)); }
-    finally { if (!signal?.aborted && request === listRequest.current) setLoading(false); }
-  }, [filter, page, search]);
+      if (mounted.current && !signal?.aborted && request === listRequest.current) setInbox(result);
+    } catch (err) {
+      if (mounted.current && !signal?.aborted && request === listRequest.current) {
+        if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
+        else { inboxReadError.current = true; setError(errorMessage(err)); }
+      }
+    } finally { foregroundReads.current--; if (mounted.current && !signal?.aborted && request === listRequest.current) setLoading(false); }
+  }, [filter, page, search, clearInaccessibleData]);
   const loadDetail = useCallback(async (id: string, signal?: AbortSignal) => {
+    pollController.current?.abort(); foregroundReads.current++;
+    detailReadError.current = false;
     const request = ++detailRequest.current; setDetailLoading(true); setDetailError("");
     try {
       const result = await api<AttentionDetail>(`/api/atencion/${encodeURIComponent(id)}`, { signal });
-      if (request === detailRequest.current && selectionRef.current === id) setDetail(result);
+      if (mounted.current && !signal?.aborted && request === detailRequest.current && selectionRef.current === id) setDetail(result);
     } catch (err) {
-      if (!signal?.aborted && request === detailRequest.current && selectionRef.current === id) { setDetail(null); setDetailError(errorMessage(err)); }
-    } finally { if (!signal?.aborted && request === detailRequest.current) setDetailLoading(false); }
-  }, []);
+      if (mounted.current && !signal?.aborted && request === detailRequest.current && selectionRef.current === id) {
+        if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
+        else { detailReadError.current = true; setDetail(null); setDetailError(errorMessage(err)); }
+      }
+    } finally { foregroundReads.current--; if (mounted.current && !signal?.aborted && request === detailRequest.current) setDetailLoading(false); }
+  }, [clearInaccessibleData]);
   useEffect(() => {
     const controller = new AbortController(); const timeout = setTimeout(() => { void loadInbox(controller.signal); }, 250);
     return () => { clearTimeout(timeout); controller.abort(); };
@@ -217,6 +245,65 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     const controller = new AbortController(); const timeout = setTimeout(() => { void loadDetail(selected, controller.signal); }, 0);
     return () => { clearTimeout(timeout); controller.abort(); };
   }, [selected, loadDetail]);
+  useEffect(() => {
+    let disposed = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const readable = () => document.visibilityState === "visible" && navigator.onLine;
+    const refresh = async () => {
+      if (disposed || !mounted.current || !readable() || foregroundReads.current || busyRef.current || syncingRef.current || pollController.current) return;
+      const controller = new AbortController(); pollController.current = controller;
+      const listVersion = listRequest.current; const detailVersion = detailRequest.current;
+      const id = view === "conversations" ? selectionRef.current : null;
+      let temporaryFailure = false; let timedOut = false;
+      const current = () => !disposed && mounted.current && !controller.signal.aborted && readable()
+        && !foregroundReads.current && !busyRef.current && !syncingRef.current
+        && listVersion === listRequest.current && detailVersion === detailRequest.current;
+      const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15_000);
+      deadline = timeout;
+      const failed = (err: unknown, detailRead: boolean) => {
+        if (!current()) return;
+        if (err instanceof ApiError && [401, 403].includes(err.status)) {
+          clearInaccessibleData(errorMessage(err)); controller.abort();
+        } else if (detailRead && err instanceof ApiError && err.status === 404) {
+          // Reassignment is deliberately reported as 404 by the scoped API.
+          detailReadError.current = true;
+          setDetail(null); setDetailError("Esta conversación ya no está disponible para tu cuenta.");
+        } else temporaryFailure = true;
+      };
+      try {
+        const query = new URLSearchParams({ search, filter, page: String(page) });
+        await Promise.all([
+          api<AttentionInbox>(`/api/atencion?${query}`, { signal: controller.signal })
+            .then(result => { if (current()) {
+              setInbox(result);
+              if (inboxReadError.current) { inboxReadError.current = false; setError(""); }
+            } }).catch(err => failed(err, false)),
+          id ? api<AttentionDetail>(`/api/atencion/${encodeURIComponent(id)}`, { signal: controller.signal })
+            .then(result => { if (current() && selectionRef.current === id) {
+              setDetail(result);
+              if (detailReadError.current) { detailReadError.current = false; setDetailError(""); }
+            } }).catch(err => failed(err, true)) : Promise.resolve(),
+        ]);
+        if (current() || timedOut && !disposed && mounted.current && listVersion === listRequest.current && detailVersion === detailRequest.current) {
+          setRefreshNotice(temporaryFailure || timedOut ? "No se pudo actualizar la vista. Conservamos los últimos datos cargados y volveremos a intentarlo." : "");
+        }
+      } finally {
+        clearTimeout(timeout);
+        if (deadline === timeout) deadline = undefined;
+        if (pollController.current === controller) pollController.current = null;
+      }
+    };
+    const environmentChanged = () => { if (!readable()) pollController.current?.abort(); };
+    const timer = setInterval(() => { void refresh(); }, 20_000);
+    document.addEventListener("visibilitychange", environmentChanged);
+    window.addEventListener("offline", environmentChanged);
+    return () => {
+      disposed = true; clearInterval(timer); pollController.current?.abort();
+      if (deadline) clearTimeout(deadline);
+      document.removeEventListener("visibilitychange", environmentChanged);
+      window.removeEventListener("offline", environmentChanged);
+    };
+  }, [filter, page, search, selected, view, clearInaccessibleData]);
   useEffect(() => { if (selected) (showCustomer ? customerHeading : chatHeading).current?.focus({ preventScroll: true }); }, [selected, showCustomer, view]);
   const historyId = detail?.conversation.id;
   const historyLength = detail?.messages.length;
@@ -245,25 +332,38 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     if (view === "conversations" && selectionRef.current) void loadDetail(selectionRef.current);
   }
   function selectConversation(id: string | null) {
+    pollController.current?.abort();
+    detailReadError.current = false;
     selectionRef.current = id; ++detailRequest.current; setSelected(id); setDetail(null); setDetailError("");
     setDetailLoading(Boolean(id)); setShowCustomer(false); setShowLatest(false); displayedHistory.current = null; followLatest.current = true; mutationKey.current = null;
     if (id) { setView("conversations"); setMobileMenu(false); }
   }
   async function mutate(input: Omit<AttentionMutation, "version" | "requestId">) {
     if (!detail || busyRef.current) return false;
+    pollController.current?.abort();
     const id = detail.conversation.id; const payload = JSON.stringify({ ...input, version: detail.conversation.version });
     if (mutationKey.current?.payload !== payload) mutationKey.current = { payload, id: crypto.randomUUID() };
+    detailReadError.current = false;
     busyRef.current = true; setBusy(true); setDetailError(""); setNotice("");
     try {
       await api(`/api/atencion/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ ...input, version: detail.conversation.version, requestId: mutationKey.current.id }) });
       mutationKey.current = null;
       setNotice(input.action === "human_request" ? "Solicitud interna guardada. Falta confirmar el traspaso en Dapta." : input.action === "transfer" ? "Conversación asignada al analista." : "Gestión guardada en FINSER PAY.");
       await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]); return true;
-    } catch (err) { setDetailError(errorMessage(err)); return false; }
+    } catch (err) {
+      if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
+      else if (selectionRef.current === id) {
+        if (err instanceof ApiError && err.status === 404) { detailReadError.current = true; setDetail(null); }
+        setDetailError(errorMessage(err));
+      }
+      return false;
+    }
     finally { busyRef.current = false; setBusy(false); }
   }
   async function createCase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busyRef.current) return;
+    pollController.current?.abort();
+    inboxReadError.current = false;
     const data = new FormData(event.currentTarget); busyRef.current = true; setBusy(true); setError(""); setNotice(""); newRequestKey.current ||= crypto.randomUUID();
     try {
       const result = await api<{ id: string }>("/api/atencion", { method: "POST", body: JSON.stringify({ phone: data.get("phone"), name: data.get("name"), requestId: newRequestKey.current }) });
@@ -273,6 +373,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   }
   async function sync() {
     if (syncingRef.current || !syncRestored || !currentActor.central) return;
+    pollController.current?.abort();
     syncingRef.current = true; stopSync.current = false;
     setSyncing(true); setStoppingSync(false); setSyncWaitSeconds(0); setSyncError(""); setNotice("");
     let cursor = syncCursor;
@@ -333,6 +434,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
         </div>
         {error && <div className={styles.error} role="alert"><span>{error}</span><Button variant="secondary" onClick={() => void loadInbox()} disabled={loading || busy}>Reintentar</Button></div>}
         {notice && <div className={styles.notice} role="status"><Check aria-hidden="true" size={18} /><span>{notice}</span><Button variant="ghost" aria-label="Ocultar confirmación" onClick={() => setNotice("")}><X size={16} aria-hidden="true" /></Button></div>}
+        {refreshNotice && <p className={styles.muted} role="status">{refreshNotice}</p>}
         {(syncing || syncCursor || syncError) && <div className={styles.syncProgress}><div role="status" aria-live="polite"><strong>{syncing ? stoppingSync ? syncWaitSeconds ? "Deteniendo sincronización…" : "Terminando el lote actual…" : syncWaitSeconds ? `Esperando a Dapta… ${syncWaitSeconds} s` : "Actualizando conversaciones de WhatsApp…" : syncError ? "La sincronización necesita reanudarse" : "Sincronización detenida"}</strong><span>{syncProgress.imported} conversaciones procesadas · {syncProgress.batches} {syncProgress.batches === 1 ? "lote" : "lotes"}{syncProgress.skipped > 0 ? ` · ${syncProgress.skipped} registros omitidos` : ""}</span><small>{syncError || "Puedes seguir consultando la bandeja mientras se actualiza el historial."}</small></div>{syncing ? <Button variant="secondary" disabled={stoppingSync} onClick={() => { stopSync.current = true; setStoppingSync(true); }}>{syncWaitSeconds ? "Detener sincronización" : "Detener después de este lote"}</Button> : <Button variant="secondary" onClick={() => void sync()}>Reanudar sincronización</Button>}</div>}
         {inbox && !inbox.schemaReady && <div className={styles.setupNotice}><ShieldCheck aria-hidden="true" size={18} /><p>La preparación del módulo está pendiente. Las conversaciones se mostrarán cuando finalice la configuración.</p></div>}
 
@@ -373,7 +475,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
         {view === "team" && <Card className={styles.fullTeam}><div className={styles.cardHeading}><div><h2>Analistas de atención</h2><p>Las conversaciones solo se asignan a perfiles de analista activos.</p></div><Badge>{analysts.length} analistas</Badge></div><TeamRows team={team} loading={loading && !inbox} /><div className={styles.teamNote}><ShieldCheck aria-hidden="true" size={17} /><p>Administración asigna los chats. Cada analista consulta y gestiona únicamente las conversaciones de su bandeja.</p></div></Card>}
         {view === "settings" && <div className={styles.settingsGrid}>
           <Card className={styles.settingsCard}><div className={styles.cardHeading}><h2><MessageCircle aria-hidden="true" size={20} /> Canal de WhatsApp</h2><Badge tone={inbox?.integration.configured ? "positive" : "warning"}>{inbox?.integration.configured ? "Disponible" : "Pendiente"}</Badge></div><p>{inbox?.integration.message || "Consultando estado del canal…"}</p><div className={styles.integrationFacts}><div><Check aria-hidden="true" size={17} /><span>Historial y conversaciones reales desde Dapta</span></div><div><Users aria-hidden="true" size={17} /><span>Asignación exclusiva a analistas FINSER PAY</span></div><div><LockKeyhole aria-hidden="true" size={17} /><span>Historial de WhatsApp de solo lectura</span></div></div>{currentActor.central && <Button disabled={!syncRestored || syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Actualizar conversaciones"}</Button>}<p className={styles.settingFootnote}>La consulta no cambia el número, el proveedor ni la configuración de WhatsApp.</p></Card>
-          <Card className={styles.repliesPanel}><div className={styles.cardHeading}><h2>Respuestas rápidas</h2>{currentActor.central && <Button variant="ghost" disabled={!contentReady || busy} onClick={() => setShowReplies(value => !value)}>{showReplies ? "Cerrar" : "Aprobar respuesta"}</Button>}</div><p className={styles.muted}>Contenido aprobado por administración de FINSER PAY.</p>{inbox?.quickReplies.length ? <ul className={styles.replyList}>{inbox.quickReplies.map(reply => <li key={reply.id}><strong>{reply.title}</strong><p>{reply.text}</p><small>Aprobada por {reply.approvedBy} · {date(reply.approvedAt, true)}</small></li>)}</ul> : <DashboardEmpty icon={FileText} title="Una voz para todo el equipo" text="El equipo puede consultar aquí las respuestas aprobadas por administración." />}{showReplies && currentActor.central && <QuickReplyForm disabled={busy} saved={() => { setShowReplies(false); setNotice("Respuesta aprobada y guardada."); void loadInbox(); }} />}</Card>
+          <Card className={styles.repliesPanel}><div className={styles.cardHeading}><h2>Respuestas rápidas</h2>{currentActor.central && <Button variant="ghost" disabled={!contentReady || busy} onClick={() => setShowReplies(value => !value)}>{showReplies ? "Cerrar" : "Aprobar respuesta"}</Button>}</div><p className={styles.muted}>Contenido aprobado por administración de FINSER PAY.</p>{inbox?.quickReplies.length ? <ul className={styles.replyList}>{inbox.quickReplies.map(reply => <li key={reply.id}><strong>{reply.title}</strong><p>{reply.text}</p><small>Aprobada por {reply.approvedBy} · {date(reply.approvedAt, true)}</small></li>)}</ul> : <DashboardEmpty icon={FileText} title="Una voz para todo el equipo" text="El equipo puede consultar aquí las respuestas aprobadas por administración." />}{showReplies && currentActor.central && <QuickReplyForm disabled={busy} busyChanged={quickReplyBusyChanged} saved={() => { setShowReplies(false); setNotice("Respuesta aprobada y guardada."); void loadInbox(); }} />}</Card>
         </div>}
       </main>
     </div>
@@ -422,7 +524,7 @@ function CustomerPanel({ detail, busy, mutate, canOpenRecord }: { detail: Attent
   </div>;
 }
 
-function QuickReplyForm({ disabled, saved }: { disabled: boolean; saved: () => void }) {
+function QuickReplyForm({ disabled, saved, busyChanged }: { disabled: boolean; saved: () => void; busyChanged: (busy: boolean) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const requestKey = useRef<string | null>(null);
@@ -430,12 +532,12 @@ function QuickReplyForm({ disabled, saved }: { disabled: boolean; saved: () => v
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (submitting.current) return;
     const data = new FormData(event.currentTarget);
-    requestKey.current ||= crypto.randomUUID(); submitting.current = true; setBusy(true); setError("");
+    requestKey.current ||= crypto.randomUUID(); submitting.current = true; busyChanged(true); setBusy(true); setError("");
     try {
       await api("/api/atencion/quick-replies", { method: "POST", body: JSON.stringify({ title: data.get("title"), text: data.get("text"), requestId: requestKey.current }) });
       requestKey.current = null; saved();
     } catch (err) { setError(errorMessage(err)); }
-    finally { submitting.current = false; setBusy(false); }
+    finally { submitting.current = false; busyChanged(false); setBusy(false); }
   }
   return <form className={styles.compactForm} onSubmit={submit} onChange={() => { if (!busy) requestKey.current = null; }}>{error && <p role="alert" className={styles.error}>{error}</p>}<label>Título<Input name="title" required maxLength={80} disabled={disabled || busy} /></label><label>Texto aprobado<textarea name="text" required rows={4} maxLength={2000} disabled={disabled || busy} /></label><label className={styles.approval}><input type="checkbox" required disabled={disabled || busy} /> Confirmo que este contenido está aprobado para atención en FINSER PAY.</label><Button type="submit" disabled={disabled || busy}>{busy ? "Guardando…" : "Aprobar y guardar"}</Button></form>;
 }

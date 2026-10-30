@@ -107,8 +107,26 @@ La importación se ejecuta desde Atención por administración central, en una b
 
 El cursor y el progreso del listado se conservan en `sessionStorage`, separados por identidad del operador. Tras recargar, el operador puede continuar explícitamente. Las respuestas 429/502/503/504 se reintentan como máximo tres veces; se respeta `Retry-After`, y esperas mayores de 120 segundos se muestran al operador sin reintentar antes. Los errores de permisos no se reintentan. El contador de procesadas incluye conversaciones ya existentes; no se presenta como número de chats nuevos.
 
+La vista consulta las API locales cada veinte segundos mientras la pestaña está
+visible y tiene conexión, sin interrumpir lecturas, formularios ni gestiones en
+curso. Esto refleja asignaciones y datos ya importados por otros operadores;
+no consulta Dapta automáticamente ni constituye entrega de mensajes en tiempo
+real. La importación del proveedor sigue en «Actualizar WhatsApp».
+
 La comprobación adicional de 25 conversaciones y 2.725 mensajes encontró imágenes, audios y videos sin URL ni identificador de archivo en el contrato MCP: el contenido era vacío o una etiqueta. La bandeja incluye un acceso a `https://app.dapta.ai/agents-studio/inbox` y permite copiar el contacto para localizarlo allí. Este acceso abre la bandeja oficial, no una conversación o archivo específico, y requiere los permisos propios de Dapta. Las respuestas y archivos aún no están integrados de forma nativa en FINSER PAY. Se necesita un contrato autenticado del proveedor para envío humano, toma/liberación, correspondencia de operadores y acceso multimedia; crear otra clave MCP no aporta esas capacidades.
+## Solicitud de acceso a Inbox
+
+El 30 de octubre de 2026 se creó, con autorización del propietario, el ticket
+de soporte Dapta **#151382251**, «API de Inbox para integrar Atención FINSER PAY»,
+en Text Agents → inbox. Solicita autenticación y contratos para respuesta humana,
+toma/liberación, operadores, archivos, eventos hacia Flow Studio y estados de
+entrega. El formulario confirmó la creación y notificará al correo de la cuenta.
+La solicitud no contiene claves ni chats de clientes y no autoriza migrar el
+número, cambiar de proveedor, modificar Diana ni enviar mensajes a clientes.
+La creación del ticket no significa que Dapta haya concedido ese acceso.
+
 ## Webhook de análisis: alcance real
+
 
 Dapta documenta un POST HTTPS al finalizar una conversación, con tiempo límite de diez segundos y este conjunto de campos:
 
