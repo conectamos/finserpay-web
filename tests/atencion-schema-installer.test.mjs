@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import pg from "pg";
 
 const installerUrl = new URL("../scripts/ensure-atencion-schema.mjs", import.meta.url);
 const sqlUrl = new URL("../scripts/setup-atencion.sql", import.meta.url);
@@ -13,7 +14,7 @@ async function fixture(t, overrides = {}) {
   const database = new PGlite();
   t.after(() => database.close());
   await database.exec('CREATE TABLE public."Sede"(id integer PRIMARY KEY); CREATE TABLE public."Usuario"(id integer PRIMARY KEY); CREATE TABLE public."Vendedor"(id integer PRIMARY KEY); CREATE TABLE public."Credito"(id integer PRIMARY KEY)');
-  const calls = []; const logs = []; let ended = false;
+  const calls = []; const logs = []; const metadataFields = []; let ended = false;
   class Client {
     async connect() { calls.push("connect"); }
     async query(sql, values) {
@@ -26,11 +27,24 @@ async function fixture(t, overrides = {}) {
         if (overrides.afterSql) await overrides.afterSql(database);
         return { rows: [] };
       }
-      return database.query(sql, values);
+      const result = await database.query(sql, values);
+      if (sql.includes("FROM pg_catalog.pg_constraint c")) {
+        metadataFields.push(result.fields);
+        if (overrides.nodePgArrays) {
+          for (const field of result.fields.filter(field => ["columns", "foreignColumns"].includes(field.name))) {
+            const parser = pg.types.getTypeParser(field.dataTypeID, "text");
+            for (const row of result.rows) {
+              const wireValue = `{${row[field.name].map(value => JSON.stringify(value)).join(",")}}`;
+              row[field.name] = parser(wireValue);
+            }
+          }
+        }
+      }
+      return result;
     }
     async end() { ended = true; }
   }
-  return { database, calls, logs, ended: () => ended,
+  return { database, calls, logs, metadataFields, ended: () => ended,
     install: () => run(readFile, { Client }, { log: message => logs.push(message) },
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
@@ -78,4 +92,17 @@ test("SQL instala en public aunque el rol tenga un esquema de búsqueda distinto
   await install();
   const rows = (await database.query(`SELECT table_schema FROM information_schema.tables WHERE table_name='AttentionConversation'`)).rows;
   assert.deepEqual(rows, [{ table_schema: "public" }]);
+});
+
+test("metadatos usan text[] OID1009 y se verifican con los parsers reales de node-pg", async t => {
+  const { install, metadataFields } = await fixture(t, { nodePgArrays: true });
+  // Unlike PGlite, node-pg leaves the catalog's name[] (1003) as a raw string.
+  assert.equal(typeof pg.types.getTypeParser(1003, "text")('{"id"}'), "string");
+  assert.deepEqual(pg.types.getTypeParser(1009, "text")('{"id"}'), ["id"]);
+  await install();
+  await install();
+  assert.equal(metadataFields.length, 4, "preflight y postcheck de ambas ejecuciones");
+  for (const fields of metadataFields) {
+    for (const name of ["columns", "foreignColumns"]) assert.equal(fields.find(field => field.name === name)?.dataTypeID, 1009, name);
+  }
 });

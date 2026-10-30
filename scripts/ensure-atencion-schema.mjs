@@ -43,10 +43,10 @@ async function verifySchema(client, beforeInstallation) {
     }
   }
   const { rows: constraints } = await client.query(`SELECT t.relname AS "tableName",c.contype,c.convalidated,
-    ARRAY(SELECT a.attname FROM unnest(c.conkey) WITH ORDINALITY k(id,position)
+    ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(id,position)
       JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.id ORDER BY k.position) AS columns,
     ft.relname AS "foreignTable",fn.nspname AS "foreignSchema",
-    ARRAY(SELECT a.attname FROM unnest(c.confkey) WITH ORDINALITY k(id,position)
+    ARRAY(SELECT a.attname::text FROM unnest(c.confkey) WITH ORDINALITY k(id,position)
       JOIN pg_catalog.pg_attribute a ON a.attrelid=ft.oid AND a.attnum=k.id ORDER BY k.position) AS "foreignColumns"
     FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class t ON t.oid=c.conrelid
     JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace LEFT JOIN pg_catalog.pg_class ft ON ft.oid=c.confrelid
