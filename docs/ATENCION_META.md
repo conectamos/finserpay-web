@@ -1,6 +1,30 @@
 # Atención: operación del canal directo de Meta
 
-Revisión: 30 de octubre de 2026. El código está en validación. La aplicación Meta `1128613623424831` ya fue creada y confirmada en la interfaz, dentro del negocio Finser PAY `1109745271496382`, después de la aceptación de condiciones y reautenticación del propietario. Aún no se han configurado sus credenciales, webhook o suscripciones, ni se ha verificado la recepción real o el cambio de control de la IA. Este documento no acredita una activación. Las lecturas MCP de Dapta ya documentadas no equivalen a una API productiva de respuesta de IA verificada; esa integración sigue pendiente. No se ha realizado el corte de Dapta.
+Revisión: 30 de octubre de 2026. El código y las diez tablas de Atención están desplegados. La aplicación Meta `1128613623424831` está publicada, con credenciales dedicadas configuradas en Railway, callback verificado y suscripción a mensajes confirmada. Se comprobó la recepción real de texto, imagen, audio y video en el CRM, conservando el chat existente y su analista; los medios de prueba cargaron y se reprodujeron mediante rutas privadas. El envío y la confirmación de control de la IA siguen desactivados; Dapta conserva su suscripción y no se ha realizado el corte. Las lecturas MCP ya confirmadas no equivalen a una API productiva verificada de Dapta como motor de respuestas del CRM.
+
+## Estado operativo confirmado al 30 de octubre de 2026
+
+- **Aplicación y acceso:** Atención `1128613623424831`, publicada en el negocio Finser PAY `1109745271496382`. Usuario de sistema `61595750474386`, tipo Employee, con acceso Desarrollar a la aplicación y acceso Todo a la cuenta de mensajería vinculada `2148284059050848`, autorizados por el propietario.
+- **Credenciales:** token permanente con `whatsapp_business_messaging` y `whatsapp_business_management` guardado en Railway. `WHATSAPP_ATTENTION_ACCESS_TOKEN`, `WHATSAPP_ATTENTION_APP_SECRET` y `WHATSAPP_ATTENTION_VERIFY_TOKEN` están configuradas. Los IDs estrictos del número y de la cuenta de mensajería se conservaron; no se documentan valores secretos.
+- **Identidad comprobada:** las lecturas Graph v26 confirmaron Phone Number ID `1162059967000416`, número `+573124085562` y nombre verificado Finser PAY. La cuenta de mensajería `2148284059050848` devolvió únicamente ese número. La interfaz distingue la cuenta WhatsApp `1647162566997935` de su cuenta de mensajería vinculada `2148284059050848`; no deben intercambiarse esos IDs.
+- **Webhook y suscripciones:** Meta verificó `https://finserpay.com/api/integraciones/atencion/whatsapp` y quedó suscrito el campo `messages` en v26. La lectura de `subscribed_apps` mostró inicialmente Dapta `1109377124599528` y después Atención `1128613623424831` junto con Dapta, cuya suscripción se preservó.
+- **Enrutamiento:** la consulta `routing_roles` respondió HTTP 400, código 100, «Conversation routing is not enabled». No se habilitó ni se incorporó al contrato del CRM. La [documentación oficial de Conversation Routing de Meta](https://developers.facebook.com/documentation/business-messaging/whatsapp/conversation-routing/thread-control) queda como referencia de una alternativa, sin acreditar disponibilidad para esta línea ni control de la IA.
+- **Despliegues:** código y esquema de diez tablas en commit `fba3f60c69fe880e11c87696edc311e9e9ee538a`; actualización de privacidad en `34060e6e`. El último despliegue Railway comprobado, `c87ff0eb-233f-4d09-a812-0fec0f1d5f05`, figura como SUCCESS.
+- **Pendiente:** validar respuesta saliente, traspaso/control de la IA e histórico Dapta. `WHATSAPP_ATTENTION_SEND_ENABLED=false` y `WHATSAPP_ATTENTION_AI_CUTOVER_CONFIRMED=false` se mantienen hasta verificar el control de la IA. La integración de Dapta exclusivamente como motor de IA no está terminada; la prueba de recepción no acredita esas capacidades.
+
+## Prueba operativa de recepción y medios
+
+El 30 de octubre de 2026, un mensaje de prueba enviado por el propietario llegó al chat existente y conservó su asignación al analista. El diagnóstico productivo `GET /api/atencion/integration`, con sesión administrativa, devolvió `configured=true`, `webhookReady=true`, `missing=[]` y coincidencia exacta con la línea principal autorizada. `canSend=false` y ambos indicadores de envío/control de IA permanecieron en `false`.
+
+En el despliegue Railway `c87ff0eb-233f-4d09-a812-0fec0f1d5f05` se observaron POST del webhook con HTTP 200 desde `2026-10-30T16:30:36Z`. A las 11:33 de Bogotá se enviaron imagen, audio y video de prueba, con estos resultados en los elementos nativos del navegador:
+
+| Medio | Resultado comprobado |
+| --- | --- |
+| Imagen | Imagen de 1080 px cargada; `complete=true` |
+| Audio | Reproducción hasta completar 3,7465 segundos; `readyState=4`, `error=null` |
+| Video | Reproducción hasta completar 2,6 segundos, resolución 576 × 1024; `readyState=4`, `error=null` |
+
+Los medios se obtuvieron por `/api/atencion/{id}/messages/{messageId}/media`. Esta evidencia corresponde a los archivos de prueba recibidos; no incluye teléfonos personales, identificadores de clientes ni contenido de los medios. No acredita envío saliente, traspaso de IA o recuperación retroactiva de adjuntos del histórico Dapta, que siguen fuera de esta comprobación.
 
 ## Identidad y configuración
 
