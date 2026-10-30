@@ -193,6 +193,35 @@ test("importación global solo central deduplica mensajes y conserva sede/asigna
   await assert.rejects(store.importAttentionSnapshots(central,[snapshot({phone:"3009999999"})]),{status:409});
 });
 
+test("bandeja ordena por contacto real: historial, cursor y notas no adelantan un chat antiguo", async t => {
+  const {store,db,act,create}=await fixture(t);
+  const recent=snapshot({externalId:"recent-chat",name:"Contacto reciente",lastContactAt:"2026-10-30T10:00:00Z",
+    messages:[{...message("recent","2026-10-30T10:00:00Z"),text:"Último mensaje reciente"}]});
+  const older=snapshot({externalId:"older-chat",name:"Contacto anterior",lastContactAt:"2026-10-29T10:00:00Z",
+    messages:[{...message("older-latest","2026-10-29T10:00:00Z"),text:"Último mensaje anterior"}]});
+  await store.importAttentionSnapshots(central,[recent,older]);
+  const initial=(await store.getAttentionInbox(central,filters)).conversations;
+  const oldId=initial.find(chat=>chat.name===older.name).id;
+  await db.query(`UPDATE "AttentionConversation" SET "updatedAt"='2000-01-01T00:00:00Z' WHERE "externalId"=$1`,[recent.externalId]);
+  const check=async()=>{
+    const chats=(await store.getAttentionInbox(central,filters)).conversations;
+    assert.deepEqual(chats.slice(0,2).map(chat=>chat.name),[recent.name,older.name]);
+    assert.ok(new Date(chats[1].updatedAt)>new Date(chats[0].updatedAt),"la sincronización técnica del chat antiguo es más reciente");
+    assert.equal(chats[1].lastContactAt,"2026-10-29T10:00:00.000Z");
+    assert.equal(chats[1].preview,"Último mensaje anterior","una página histórica no reemplaza la vista previa más reciente");
+  };
+  await store.importAttentionSnapshots(central,[{...older,historyCursor:"historical-page",lastContactAt:"2026-10-01T10:00:00Z",
+    messages:[{...message("historical","2026-10-01T10:00:00Z"),text:"Mensaje histórico"}]}]);
+  await check();
+  await store.importAttentionSnapshots(central,[{...older,historyCursor:"next-page",messages:[]}]);
+  await check();
+  await act(central,oldId,"note",{text:"Nota interna posterior"});
+  await check();
+  const internal=await create();
+  await check();
+  assert.equal((await store.getAttentionInbox(central,filters)).conversations.at(-1).id,internal.id);
+});
+
 test("Meta opaco sin teléfono sigue siendo chat real sin identificar cliente y acepta teléfono verificable posterior", async t => {
   const {store,assign,act}=await fixture(t);
   await store.importAttentionSnapshots(central,[snapshot({phone:null,name:null,messages:[message("meta-inbound")]})]);

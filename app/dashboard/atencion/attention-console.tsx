@@ -240,6 +240,10 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     followLatest.current = true; setShowLatest(false);
   }
   function navigate(next: View) { setView(next); setMobileMenu(false); setShowNew(false); }
+  function refreshCurrentView() {
+    void loadInbox();
+    if (view === "conversations" && selectionRef.current) void loadDetail(selectionRef.current);
+  }
   function selectConversation(id: string | null) {
     selectionRef.current = id; ++detailRequest.current; setSelected(id); setDetail(null); setDetailError("");
     setDetailLoading(Boolean(id)); setShowCustomer(false); setShowLatest(false); displayedHistory.current = null; followLatest.current = true; mutationKey.current = null;
@@ -325,7 +329,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
       <main className={styles.main}>
         <div className={`${styles.pageHeading} ${view === "dashboard" ? styles.dashboardHeading : ""}`}>
           <div><h1>{viewTitles[view]}</h1><p>{viewDescriptions[view]}</p></div>
-          {view === "dashboard" ? <div className={styles.greeting}><div><h2><span>¡Hola,</span> {currentActor.name.trim().split(/\s+/)[0]}!</h2><p>Juntos hacemos que más<br />personas avancen.</p></div><Image src="/assets/clientes/mascot-welcome.webp" alt="Mascota FINSER PAY" width={154} height={228} /></div> : <div className={styles.headingActions}><Button variant="secondary" onClick={() => void loadInbox()} disabled={loading || busy}><RefreshCw aria-hidden="true" size={16} /> Actualizar</Button>{view === "conversations" && currentActor.central && <Button onClick={() => { setShowNew(value => !value); newRequestKey.current = null; }} disabled={!contentReady || busy}><Plus aria-hidden="true" size={17} /> Nueva gestión</Button>}</div>}
+          {view === "dashboard" ? <div className={styles.greeting}><div><h2><span>¡Hola,</span> {currentActor.name.trim().split(/\s+/)[0]}!</h2><p>Juntos hacemos que más<br />personas avancen.</p></div><Image src="/assets/clientes/mascot-welcome.webp" alt="Mascota FINSER PAY" width={154} height={228} /></div> : <div className={styles.headingActions}><Button variant="secondary" onClick={refreshCurrentView} disabled={loading || detailLoading || busy}><RefreshCw aria-hidden="true" size={16} /> Actualizar</Button>{view === "conversations" && currentActor.central && <Button onClick={() => { setShowNew(value => !value); newRequestKey.current = null; }} disabled={!contentReady || busy}><Plus aria-hidden="true" size={17} /> Nueva gestión</Button>}</div>}
         </div>
         {error && <div className={styles.error} role="alert"><span>{error}</span><Button variant="secondary" onClick={() => void loadInbox()} disabled={loading || busy}>Reintentar</Button></div>}
         {notice && <div className={styles.notice} role="status"><Check aria-hidden="true" size={18} /><span>{notice}</span><Button variant="ghost" aria-label="Ocultar confirmación" onClick={() => setNotice("")}><X size={16} aria-hidden="true" /></Button></div>}

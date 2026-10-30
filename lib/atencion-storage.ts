@@ -177,7 +177,7 @@ export function createAttentionStore(database: AttentionDatabase) {
         const rows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,
           (SELECT left(m.text,160) FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
           FROM "AttentionConversation" c WHERE ${filtered}
-          ORDER BY c."updatedAt" DESC,c.id LIMIT $7 OFFSET $8`, ...values, pageSize, (filters.page - 1) * pageSize);
+          ORDER BY c."lastContactAt" DESC NULLS LAST,c.id LIMIT $7 OFFSET $8`, ...values, pageSize, (filters.page - 1) * pageSize);
         const totals = await tx.$queryRawUnsafe<{total: number}[]>(`SELECT count(*)::integer AS total FROM "AttentionConversation" c WHERE ${filtered}`, ...values);
         const metricRows = await tx.$queryRawUnsafe<{pending: number; open: number; closed: number; mine: number}[]>(`SELECT
           count(*) FILTER (WHERE c.status='pending')::integer AS pending, count(*) FILTER (WHERE c.status='open')::integer AS open,
