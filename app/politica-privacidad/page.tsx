@@ -3,17 +3,17 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Politica de Privacidad | FINSER PAY",
   description:
-    "Politica de privacidad para la app FINSER PAY Clientes y el portal de clientes.",
+    "Politica de privacidad para FINSER PAY Clientes, el portal de clientes y la atencion por WhatsApp.",
 };
 
-const updatedAt = "19 de mayo de 2026";
+const updatedAt = "30 de octubre de 2026";
 
 export default function PrivacyPolicyPage() {
   return (
     <main className="min-h-screen bg-[#f6f8f6] px-5 py-10 text-slate-900 sm:px-8">
       <article className="mx-auto max-w-4xl rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm sm:p-10">
         <p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-700">
-          FINSER PAY Clientes
+          FINSER PAY
         </p>
         <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-5xl">
           Politica de Privacidad
@@ -26,7 +26,9 @@ export default function PrivacyPolicyPage() {
           <p>
             Esta Politica de Privacidad explica como FINSER PAY trata la
             informacion de los usuarios que utilizan la app FINSER PAY Clientes
-            y el portal de clientes disponible en finserpay.com/clientes.
+            y el portal de clientes disponible en finserpay.com/clientes, asi
+            como de quienes se comunican con nuestros canales de atencion por
+            WhatsApp.
           </p>
           <p>
             La app esta dirigida a clientes que desean consultar informacion
@@ -44,6 +46,12 @@ export default function PrivacyPolicyPage() {
               identificadores tecnicos del dispositivo y token de notificaciones
               push.
             </p>
+            <p>
+              En la atencion por WhatsApp podemos tratar el nombre y telefono de
+              contacto, mensajes, audios, imagenes, videos y documentos
+              compartidos, identificadores, fechas y estados de los mensajes,
+              asi como notas y registros internos de atencion.
+            </p>
           </PolicySection>
 
           <PolicySection title="2. Finalidades del tratamiento">
@@ -53,6 +61,11 @@ export default function PrivacyPolicyPage() {
               pagos, enviar avisos relacionados con el credito, mejorar la
               experiencia de la app, brindar soporte y cumplir obligaciones
               legales, contractuales y operativas.
+            </p>
+            <p>
+              En los canales de atencion usamos la informacion para responder
+              consultas, asignarlas al personal autorizado y dar seguimiento a
+              las solicitudes.
             </p>
           </PolicySection>
 
@@ -65,12 +78,19 @@ export default function PrivacyPolicyPage() {
             </p>
           </PolicySection>
 
-          <PolicySection title="4. Pagos y terceros">
+          <PolicySection title="4. Pagos, atencion y terceros">
             <p>
               Para facilitar pagos, la app puede mostrar o redirigir a medios de
               pago autorizados, incluyendo pasarelas o entidades externas. Los
               datos tratados por esos terceros se rigen tambien por sus propias
               politicas y terminos.
+            </p>
+            <p>
+              Para la atencion por WhatsApp utilizamos servicios de Meta y
+              Dapta, que permiten gestionar mensajes y apoyar la atencion
+              automatizada. El personal autorizado de FINSER PAY accede a la
+              informacion necesaria para responder y dar seguimiento a las
+              consultas.
             </p>
           </PolicySection>
 
@@ -104,9 +124,16 @@ export default function PrivacyPolicyPage() {
           <PolicySection title="8. Contacto">
             <p>
               Para preguntas sobre esta politica o sobre el tratamiento de datos,
-              puedes contactar a FINSER PAY a traves del sitio web
+              incluidos los asociados a la atencion por WhatsApp, puedes
+              escribir a{" "}
+              <a href="mailto:admin@finserpay.com" className="underline">
+                admin@finserpay.com
+              </a>
+              . Tambien puedes contactar a FINSER PAY a traves del sitio web
               finserpay.com o del telefono de soporte registrado en la ficha de
-              Google Play.
+              Google Play. Las instrucciones para solicitar eliminacion de
+              datos estan disponibles en
+              finserpay.com/solicitud-eliminacion-datos.
             </p>
           </PolicySection>
 
