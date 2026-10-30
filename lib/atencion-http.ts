@@ -9,7 +9,8 @@ export function attentionJson(body: unknown, status = 200) {
 }
 
 export function attentionHttpError(error: unknown) {
-  if (error instanceof AttentionError || error instanceof AttentionDaptaError) return attentionJson({ error: error.message }, error.status);
+  if (error instanceof AttentionError || error instanceof AttentionDaptaError) return attentionJson({ error: error.message,
+    ...(error instanceof AttentionDaptaError && error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}) }, error.status);
   // Never send SQL, provider payloads, tokens or customer data to logs/the browser.
   return attentionJson({ error: "No fue posible completar la operación de atención. Intenta nuevamente." }, 500);
 }

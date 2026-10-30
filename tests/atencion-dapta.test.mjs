@@ -16,12 +16,19 @@ const row = { id: "test-chat", text_agent_id: agent, channel_type: "meta_whatsap
 const message = { id: "test-message", created_at: "2026-10-29T10:00:00Z", direction: "inbound", kind: "lead", content_type: "text", content: "Consulta de prueba", status: "delivered" };
 const list = (rows = [row], extras = {}) => ({ workspace_id: workspace, conversations: rows, next_cursor: null, ...extras });
 const detail = (messages = [message], extras = {}) => ({ workspace_id: workspace, conversation: row, messages, messages_next_cursor: null, ...extras });
-function mock({ onTool = (name) => name === "list_conversations" ? list() : detail(), sse = false, fallback = false, protocol = "2025-06-18", direct } = {}) {
+function mock({ onTool = (name) => name === "list_conversations" ? list() : detail(), sse = false, fallback = false, protocol = "2025-06-18", direct, onClose } = {}) {
   const requests = [];
+  const closedSessions = [];
   const transport = async (url, init) => {
     assert.equal(url, "https://mcp.dapta.ai/mcp");
     assert.equal(init.redirect, "error");
     assert.equal(init.cache, "no-store");
+    if (init.method === "DELETE") {
+      assert.equal(init.body, undefined);
+      closedSessions.push(init.headers["Mcp-Session-Id"]);
+      if (onClose) return onClose(init);
+      return new Response(null, { status: 204 });
+    }
     const rpc = JSON.parse(init.body);
     requests.push({ rpc, headers: init.headers });
     if (direct) { const response = await direct(rpc); if (response) return response; }
@@ -45,7 +52,7 @@ function mock({ onTool = (name) => name === "list_conversations" ? list() : deta
       controller.close();
     } }), { headers: { "content-type": "text/event-stream", "Mcp-Session-Id": "test-session" } });
   };
-  return { adapter: createDaptaAttentionAdapter({ env, fetch: transport }), requests };
+  return { adapter: createDaptaAttentionAdapter({ env, fetch: transport }), requests, closedSessions };
 }
 
 test("missing/invalid configuration fails closed without a network request", async () => {
@@ -196,6 +203,89 @@ test("remote tool errors and unsupported protocol fail closed with sanitized mes
   const broken = mock({ direct: (rpc) => rpc.method === "tools/call" ? new Response(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: { isError: true, content: [{ type: "text", text: "secret-provider-error" }] } }), { headers: { "content-type": "application/json" } }) : null });
   await assert.rejects(broken.adapter.fetchDaptaConversationSnapshots(), (error) => error.code === "UNAVAILABLE" && !error.message.includes("secret-provider-error"));
   await assert.rejects(mock({ protocol: "2099-01-01" }).adapter.fetchDaptaConversationSnapshots(), { code: "INVALID_RESPONSE" });
+});
+
+test("provider rate limits retain Retry-After and authorization failures never look transient", async () => {
+  for (const retryAfter of ["45", new Date(Date.now() + 45000).toUTCString()]) {
+    const { adapter } = mock({ direct: rpc => rpc.method === "tools/call" ? new Response("private-provider-details", { status: 429, headers: { "retry-after": retryAfter } }) : null });
+    await assert.rejects(adapter.fetchDaptaConversationSnapshots(), error => error.code === "RATE_LIMITED" && error.status === 429
+      && error.retryAfterSeconds >= 44 && error.retryAfterSeconds <= 45 && !error.message.includes("private-provider-details"));
+  }
+  for (const status of [401, 403]) {
+    const { adapter } = mock({ direct: rpc => rpc.method === "tools/call" ? new Response("private-provider-details", { status }) : null });
+    await assert.rejects(adapter.fetchDaptaConversationSnapshots(), { code: "UNAUTHORIZED", status: 403 });
+  }
+});
+
+test("releases only its own MCP session after success and failed reads", async () => {
+  const successful = mock();
+  await successful.adapter.fetchDaptaConversationSnapshots();
+  assert.deepEqual(successful.closedSessions, ["test-session"]);
+  const failed = mock({ onTool: () => list([], { workspace_id: "foreign-workspace" }) });
+  await assert.rejects(failed.adapter.fetchDaptaConversationSnapshots(), { code: "SCOPE_MISMATCH" });
+  assert.deepEqual(failed.closedSessions, ["test-session"]);
+});
+
+test("failed parallel reads drain before cleanup and never start more pages or renewals", async () => {
+  for (const pendingResponse of ["next-page", "expired-session"]) {
+    const rows = Array.from({ length: 4 }, (_, index) => ({ ...row, id: `parallel-${index}` }));
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const { adapter, requests, closedSessions } = mock({
+      direct: async rpc => {
+        if (rpc.params?.name !== "get_conversation") return null;
+        if (rpc.params.arguments.conversation_id === rows[0].id) return new Response("private-provider-details", { status: 503 });
+        await gate;
+        return pendingResponse === "expired-session" ? new Response(null, { status: 404 }) : null;
+      },
+      onTool: (name, args) => name === "list_conversations" ? list(rows)
+        : detail([], { conversation: rows.find(candidate => candidate.id === args.conversation_id), messages_next_cursor: "unread-page" }),
+    });
+    let settled = false;
+    const pending = adapter.fetchDaptaConversationSnapshots().then(
+      () => { settled = true; return null; },
+      error => { settled = true; return error; },
+    );
+    await new Promise(resolve => setImmediate(resolve));
+    try {
+      assert.equal(settled, false, "the adapter must drain active workers before returning");
+      assert.deepEqual(closedSessions, [], "DELETE must not race pending detail reads");
+    } finally { release(); }
+    const error = await pending;
+    assert.equal(error?.status, 503, "the first failure must survive later sibling failures");
+    assert.doesNotMatch(error.message, /private-provider-details/);
+    assert.deepEqual(closedSessions, ["test-session"]);
+    assert.equal(requests.filter(request => request.rpc.method === "initialize").length, 1);
+    assert.equal(requests.filter(request => request.rpc.params?.name === "get_conversation").length, 3,
+      "no fourth conversation, second page, or expired-session retry may start after failure");
+  }
+});
+
+test("unsupported or failed session cleanup never replaces a completed read or its error", async () => {
+  for (const onClose of [() => new Response(null, { status: 405 }), () => { throw new Error("private-cleanup-token"); }]) {
+    const success = mock({ onClose });
+    assert.equal((await success.adapter.fetchDaptaConversationSnapshots()).snapshots.length, 1);
+    const failed = mock({ onClose, direct: rpc => rpc.params?.name === "list_conversations" ? new Response(null, { status: 429 }) : null });
+    await assert.rejects(failed.adapter.fetchDaptaConversationSnapshots(), { code: "RATE_LIMITED", status: 429 });
+  }
+});
+
+test("session cleanup has its own bounded cancellation deadline", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let notifyClose;
+  const reachedClose = new Promise(resolve => { notifyClose = resolve; });
+  let signal;
+  const { adapter } = mock({ onClose: init => {
+    signal = init.signal;
+    notifyClose();
+    return new Promise(() => {});
+  } });
+  const pending = adapter.fetchDaptaConversationSnapshots();
+  await reachedClose;
+  assert.equal(signal.aborted, false);
+  t.mock.timers.tick(2000);
+  assert.equal((await pending).snapshots.length, 1);
+  assert.equal(signal.aborted, true);
 });
 
 test("failed or pending outbound messages are omitted instead of presented as sent", async () => {

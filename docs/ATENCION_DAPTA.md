@@ -47,6 +47,8 @@ El endpoint es fijo: `https://mcp.dapta.ai/mcp`. La clave viaja únicamente en e
 
 El cliente implementa MCP Streamable HTTP: `initialize`, `notifications/initialized` y `tools/call`. Negocia 2025-06-18 o 2025-03-26, conserva `Mcp-Session-Id`, envía `MCP-Protocol-Version`, admite JSON y SSE fragmentado y no declara capacidades de sampling, roots ni ejecución de instrucciones remotas. Ante una sesión caducada (404) reinicializa y reintenta la lectura una sola vez, dentro del límite total. No sigue redirecciones. La lista de herramientas permitidas contiene solamente las dos consultas de lectura.
 
+Al terminar, cierra únicamente la sesión MCP creada para ese lote mediante `DELETE`, con un límite de dos segundos. Este cierre de transporte no borra conversaciones. Si una lectura concurrente falla, detiene nuevas lecturas y espera las peticiones ya iniciadas antes de cerrar la sesión, conservando el primer error. Un servidor que no admita el cierre no invalida una importación correcta.
+
 ### Listado
 
 Se consulta `list_conversations` con el agente configurado, canales WhatsApp reconocidos, ventana de hasta 365 días, límite de 25 y cursor opcional. La ventana filtra por última actividad y no incluye conversaciones sin mensajes. El servidor devuelve `conversations`, `next_cursor`, `count`, `total`, `window`, `workspace_id` e indicadores de paginación. El adaptador no presenta el total del proveedor como el total de toda la historia.
@@ -102,6 +104,10 @@ Para respuestas y traspasos desde FINSER PAY falta un contrato público de Dapta
 En Railway, entorno `production`, servicio `finserpay-web`, están configuradas las tres variables de lectura. La clave `FINSER PAY Atención producción` fue creada y guardada con autorización del propietario. El diagnóstico autenticado confirmó conversaciones del canal `meta_whatsapp` y mensajes reales; no faltan credenciales para estas dos consultas.
 
 La importación se ejecuta desde Atención por administración central, en una bandeja global sin obligar a elegir una sede. El navegador recorre los lotes y muestra su progreso; los responsables se asignan después, exclusivamente a usuarios nominales con rol `ANALISTA_APROBACION`. Un analista consulta solamente sus chats asignados. No se publica la clave en el navegador ni se cambian el número, el proveedor, los webhooks de Meta o las automatizaciones existentes.
+
+El cursor y el progreso del listado se conservan en `sessionStorage`, separados por identidad del operador. Tras recargar, el operador puede continuar explícitamente. Las respuestas 429/502/503/504 se reintentan como máximo tres veces; se respeta `Retry-After`, y esperas mayores de 120 segundos se muestran al operador sin reintentar antes. Los errores de permisos no se reintentan. El contador de procesadas incluye conversaciones ya existentes; no se presenta como número de chats nuevos.
+
+La comprobación adicional de 25 conversaciones y 2.725 mensajes encontró imágenes, audios y videos sin URL ni identificador de archivo en el contrato MCP: el contenido era vacío o una etiqueta. La bandeja incluye un acceso a `https://app.dapta.ai/agents-studio/inbox` y permite copiar el contacto para localizarlo allí. Este acceso abre la bandeja oficial, no una conversación o archivo específico, y requiere los permisos propios de Dapta. Las respuestas y archivos aún no están integrados de forma nativa en FINSER PAY. Se necesita un contrato autenticado del proveedor para envío humano, toma/liberación, correspondencia de operadores y acceso multimedia; crear otra clave MCP no aporta esas capacidades.
 ## Webhook de análisis: alcance real
 
 Dapta documenta un POST HTTPS al finalizar una conversación, con tiempo límite de diez segundos y este conjunto de campos:
@@ -163,7 +169,7 @@ Las respuestas rápidas requieren aprobación explícita de un usuario autorizad
 
 `node --test tests/atencion-dapta.test.mjs`
 
-20 pruebas con transportes simulados: configuración incompleta, protocolo MCP, JSON/SSE fragmentado, alcance de workspace/agente/canal/teléfono, paginación, deduplicación, límites de transporte y almacenamiento, fechas con zona explícita, secretos detectables, estados de envío, errores, cancelación por timeout, renovación limitada de sesión y continuidad de un historial de 650 mensajes con 75 nuevos posteriores. Incluyen BSUID de Meta y plantillas/adjuntos sin URLs privadas. No usan red ni datos de clientes.
+Pruebas con transportes simulados: configuración incompleta, protocolo MCP, JSON/SSE fragmentado, alcance de workspace/agente/canal/teléfono, paginación, deduplicación, límites de transporte y almacenamiento, fechas con zona explícita, secretos detectables, estados de envío, errores, cancelación por timeout, renovación limitada y cierre de sesión, errores concurrentes, limitación de consultas y continuidad de un historial de 650 mensajes con 75 nuevos posteriores. Incluyen BSUID de Meta y plantillas/adjuntos sin URLs privadas. No usan red ni datos de clientes.
 
 ## Fuentes oficiales
 

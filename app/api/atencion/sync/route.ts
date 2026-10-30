@@ -18,6 +18,6 @@ export async function POST(request: Request) {
     const historyCursors = await getAttentionHistoryCursors(actor);
     const page = await fetchDaptaConversationSnapshots({ cursor, historyCursors });
     const result = await importAttentionSnapshots(actor, page.snapshots);
-    return attentionJson({ ...result, skipped: page.skipped, nextCursor: page.nextCursor });
+    return attentionJson({ ...result, processed: page.snapshots.length, skipped: page.skipped, nextCursor: page.nextCursor });
   } catch (error) { return attentionHttpError(error); }
 }

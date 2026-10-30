@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, BarChart3, Bell, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Clock3, FileText, House, Inbox, LockKeyhole, Menu, MessageCircle, Plus, RefreshCw, Search, Settings, ShieldCheck, Tag, UserRound, Users, X, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, BarChart3, Bell, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Clock3, Copy, ExternalLink, FileText, House, Image as ImageIcon, Inbox, LockKeyhole, Menu, MessageCircle, Mic, Plus, RefreshCw, Search, Settings, ShieldCheck, Tag, UserRound, Users, Video, X, type LucideIcon } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
 import LogoutButton from "@/app/dashboard/_components/logout-button";
 import { Badge, Button, Card, EmptyState, Input, LoadingState, ProgressBar, Select, StatusPill } from "@/app/_components/finser-ui";
@@ -11,6 +11,7 @@ import type { AttentionActor, AttentionConversation, AttentionCustomer, Attentio
 import styles from "./attention.module.css";
 
 type View = "dashboard" | "conversations" | "team" | "settings";
+const DAPTA_INBOX_URL = "https://app.dapta.ai/agents-studio/inbox";
 const statusNames = { pending: "Pendiente", open: "En atención", closed: "Finalizada" } as const;
 const filters: { value: AttentionFilters["filter"]; label: string }[] = [
   { value: "all", label: "Todas" }, { value: "mine", label: "Mis conversaciones" },
@@ -29,17 +30,100 @@ function time(value: string | null) {
 }
 function initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase() || "C"; }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "No fue posible completar la solicitud. Intenta nuevamente."; }
+type SyncProgress = { batches: number; imported: number; skipped: number };
+type SyncBatch = { imported: number; processed?: number; skipped: number; nextCursor: string | null };
+type SyncCheckpoint = { cursor: string; progress: SyncProgress };
+class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly retryAfterSeconds?: number) {
+    super(message); this.name = "ApiError";
+  }
+}
+function safeRetrySeconds(value: unknown): number | undefined {
+  return typeof value === "number" && value > 0 && Number.isSafeInteger(Math.ceil(value)) ? Math.max(1, Math.ceil(value)) : undefined;
+}
+function headerRetrySeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  return safeRetrySeconds(/^\d+$/.test(value.trim()) ? Number(value) : (Date.parse(value) - Date.now()) / 1000);
+}
+function readSyncCheckpoint(key: string): SyncCheckpoint | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const value: unknown = raw.length <= 8192 ? JSON.parse(raw) : null;
+    if (typeof value === "object" && value !== null && "cursor" in value && "progress" in value) {
+      const { cursor, progress } = value;
+      if (typeof cursor === "string" && cursor.trim().length > 0 && cursor.length <= 4096 && typeof progress === "object" && progress !== null && "batches" in progress && "imported" in progress && "skipped" in progress) {
+        const { batches, imported, skipped } = progress;
+        if ([batches, imported, skipped].every(number => typeof number === "number" && Number.isSafeInteger(number) && number >= 0)) {
+          return { cursor, progress: { batches: batches as number, imported: imported as number, skipped: skipped as number } };
+        }
+      }
+    }
+    sessionStorage.removeItem(key);
+  } catch {
+    try { sessionStorage.removeItem(key); } catch { /* Storage can be unavailable. */ }
+  }
+  return null;
+}
+function saveSyncCheckpoint(key: string, cursor: string | null, progress: SyncProgress) {
+  try {
+    if (cursor) sessionStorage.setItem(key, JSON.stringify({ cursor, progress }));
+    else sessionStorage.removeItem(key);
+  } catch { /* Do not interrupt a successful import when browser storage is unavailable. */ }
+}
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...options, cache: "no-store", headers: { ...(options?.body ? { "Content-Type": "application/json" } : {}), ...options?.headers } });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error || "No fue posible completar la solicitud. Intenta nuevamente.");
+  if (!response.ok) throw new ApiError(typeof body?.error === "string" ? body.error : "No fue posible completar la solicitud. Intenta nuevamente.", response.status, safeRetrySeconds(body?.retryAfterSeconds) ?? headerRetrySeconds(response.headers.get("Retry-After")));
   return body as T;
+}
+async function requestSyncBatch(cursor: string | null, shouldStop: () => boolean, waiting: (seconds: number) => void): Promise<SyncBatch | null> {
+  for (let retries = 0; ; retries++) {
+    if (shouldStop()) return null;
+    try {
+      return await api<SyncBatch>("/api/atencion/sync", { method: "POST", body: JSON.stringify({ cursor }) });
+    } catch (error) {
+      if (shouldStop()) return null;
+      if (!(error instanceof ApiError) || ![429, 502, 503, 504].includes(error.status)) throw error;
+      if (error.retryAfterSeconds && error.retryAfterSeconds > 120) throw new ApiError(`Dapta solicita esperar al menos ${error.retryAfterSeconds} segundos antes de reanudar. El avance guardado se conserva.`, error.status, error.retryAfterSeconds);
+      if (retries >= 3) throw error;
+      const delay = error.retryAfterSeconds ?? [10, 20, 30][retries];
+      for (let remaining = delay; remaining > 0; remaining--) {
+        if (shouldStop()) { waiting(0); return null; }
+        waiting(remaining);
+        await new Promise<void>(resolve => setTimeout(resolve, 1000));
+      }
+      waiting(0);
+    }
+  }
 }
 function Status({ conversation }: { conversation: AttentionConversation }) {
   return <StatusPill tone={conversation.status === "pending" ? "warning" : conversation.status === "open" ? "positive" : "neutral"}>{statusNames[conversation.status]}</StatusPill>;
 }
 function Metric({ label, value, detail, icon: Icon, warning = false }: { label: string; value: number | string; detail: string; icon: LucideIcon; warning?: boolean }) {
   return <Card className={styles.metric}><span className={`${styles.metricIcon} ${warning ? styles.warningIcon : ""}`}><Icon aria-hidden="true" size={24} strokeWidth={1.8} /></span><div><p>{label}</p><strong>{value}</strong><small>{detail}</small></div></Card>;
+}
+function MessageContent({ text, dapta }: { text: string; dapta: boolean }) {
+  const attachment = dapta ? /^\[(Imagen|Audio|Video|Documento|Sticker) de WhatsApp(?: · [^\]]*)?\]$/.exec(text) : null;
+  if (!attachment) return <p>{text}</p>;
+  const kind = attachment[1];
+  const Icon = kind === "Audio" ? Mic : kind === "Video" ? Video : kind === "Imagen" || kind === "Sticker" ? ImageIcon : FileText;
+  return <div className={styles.mediaCard}><span className={styles.mediaIcon}><Icon aria-hidden="true" size={25} /></span><div><strong>{kind} de WhatsApp</strong><p>Consulta el archivo en la bandeja de Dapta.</p><a href={DAPTA_INBOX_URL} target="_blank" rel="noopener noreferrer">Ver en Dapta <ExternalLink aria-hidden="true" size={14} /></a></div></div>;
+}
+function DaptaConversationActions({ conversation }: { conversation: AttentionConversation }) {
+  const [copyResult, setCopyResult] = useState("");
+  const [copying, setCopying] = useState(false);
+  const identity = conversation.phone || conversation.externalId;
+  async function copyContact() {
+    if (!identity || copying) return;
+    setCopying(true); setCopyResult("");
+    try {
+      await navigator.clipboard.writeText(identity);
+      setCopyResult(conversation.phone ? "Teléfono copiado. Puedes buscarlo en Dapta." : "ID de conversación copiado.");
+    } catch { setCopyResult(`No fue posible copiar. Selecciona este dato para copiarlo manualmente: ${identity}`); }
+    finally { setCopying(false); }
+  }
+  return <footer className={styles.daptaFooter}><p>Respuestas y archivos disponibles en la bandeja de Dapta.</p>{!conversation.phone && identity && <small>ID de conversación: <span>{identity}</span></small>}<div><Button variant="secondary" onClick={() => void copyContact()} disabled={!identity || copying} title={identity || undefined}><Copy aria-hidden="true" size={16} />{copying ? "Copiando…" : conversation.phone ? "Copiar teléfono" : "Copiar ID"}</Button><a className="fp-ui-button is-primary" href={DAPTA_INBOX_URL} target="_blank" rel="noopener noreferrer">Responder en Dapta <ExternalLink aria-hidden="true" size={16} /></a></div>{copyResult && <small role="status">{copyResult}</small>}</footer>;
 }
 
 export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
@@ -58,13 +142,16 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [showCustomer, setShowCustomer] = useState(false);
+  const [showLatest, setShowLatest] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showReplies, setShowReplies] = useState(false);
   const [syncCursor, setSyncCursor] = useState<string | null>(null);
+  const [syncRestored, setSyncRestored] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncWaitSeconds, setSyncWaitSeconds] = useState(0);
   const [stoppingSync, setStoppingSync] = useState(false);
   const [syncError, setSyncError] = useState("");
-  const [syncProgress, setSyncProgress] = useState({ batches: 0, imported: 0, skipped: 0 });
+  const [syncProgress, setSyncProgress] = useState<SyncProgress>({ batches: 0, imported: 0, skipped: 0 });
   const [syncRevision, setSyncRevision] = useState(0);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
@@ -77,7 +164,11 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const mutationKey = useRef<{ payload: string; id: string } | null>(null);
   const chatHeading = useRef<HTMLHeadingElement>(null);
   const customerHeading = useRef<HTMLHeadingElement>(null);
+  const messageLog = useRef<HTMLDivElement>(null);
+  const displayedHistory = useRef<string | null>(null);
+  const followLatest = useRef(true);
   const currentActor = inbox?.actor ?? actor;
+  const syncStorageKey = `finser:attention:sync:${actor.key}`;
   const canSupervise = currentActor.central;
   const contentReady = Boolean(inbox?.schemaReady);
   const dashboard = inbox?.dashboard;
@@ -113,15 +204,45 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     return () => { mounted.current = false; stopSync.current = true; };
   }, []);
   useEffect(() => {
+    const timeout = setTimeout(() => {
+      const checkpoint = readSyncCheckpoint(syncStorageKey);
+      setSyncCursor(checkpoint?.cursor ?? null);
+      setSyncProgress(checkpoint?.progress ?? { batches: 0, imported: 0, skipped: 0 });
+      setSyncRestored(true);
+    }, 0);
+    return () => { clearTimeout(timeout); };
+  }, [syncStorageKey]);
+  useEffect(() => {
     if (!selected) return;
     const controller = new AbortController(); const timeout = setTimeout(() => { void loadDetail(selected, controller.signal); }, 0);
     return () => { clearTimeout(timeout); controller.abort(); };
   }, [selected, loadDetail]);
   useEffect(() => { if (selected) (showCustomer ? customerHeading : chatHeading).current?.focus({ preventScroll: true }); }, [selected, showCustomer, view]);
+  const historyId = detail?.conversation.id;
+  const historyLength = detail?.messages.length;
+  const historyTail = detail?.messages[detail.messages.length - 1]?.id;
+  useEffect(() => {
+    if (!historyId || view !== "conversations") return;
+    const frame = requestAnimationFrame(() => {
+      const log = messageLog.current;
+      if (!log || !log.clientHeight) return;
+      if (displayedHistory.current !== historyId || followLatest.current) log.scrollTop = log.scrollHeight;
+      displayedHistory.current = historyId;
+      const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100;
+      followLatest.current = !away; setShowLatest(away);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [historyId, historyLength, historyTail, showCustomer, view]);
+  function goToLatest() {
+    const log = messageLog.current;
+    if (!log) return;
+    log.scrollTop = log.scrollHeight;
+    followLatest.current = true; setShowLatest(false);
+  }
   function navigate(next: View) { setView(next); setMobileMenu(false); setShowNew(false); }
   function selectConversation(id: string | null) {
     selectionRef.current = id; ++detailRequest.current; setSelected(id); setDetail(null); setDetailError("");
-    setDetailLoading(Boolean(id)); setShowCustomer(false); mutationKey.current = null;
+    setDetailLoading(Boolean(id)); setShowCustomer(false); setShowLatest(false); displayedHistory.current = null; followLatest.current = true; mutationKey.current = null;
     if (id) { setView("conversations"); setMobileMenu(false); }
   }
   async function mutate(input: Omit<AttentionMutation, "version" | "requestId">) {
@@ -147,28 +268,33 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     finally { busyRef.current = false; setBusy(false); }
   }
   async function sync() {
-    if (syncingRef.current || !currentActor.central) return;
+    if (syncingRef.current || !syncRestored || !currentActor.central) return;
     syncingRef.current = true; stopSync.current = false;
-    setSyncing(true); setStoppingSync(false); setSyncError(""); setNotice("");
+    setSyncing(true); setStoppingSync(false); setSyncWaitSeconds(0); setSyncError(""); setNotice("");
     let cursor = syncCursor;
     let progress = cursor ? { ...syncProgress } : { batches: 0, imported: 0, skipped: 0 };
+    let completed = false;
+    let advanced = false;
     setSyncProgress(progress);
     try {
       do {
-        const result = await api<{ imported: number; skipped: number; nextCursor: string | null }>("/api/atencion/sync", { method: "POST", body: JSON.stringify({ cursor }) });
-        if (!mounted.current) break;
+        const result = await requestSyncBatch(cursor, () => stopSync.current || !mounted.current, seconds => { if (mounted.current) setSyncWaitSeconds(seconds); });
+        if (!result) break;
         const previousCursor = cursor;
         cursor = result.nextCursor;
-        progress = { batches: progress.batches + 1, imported: progress.imported + result.imported, skipped: progress.skipped + result.skipped };
+        progress = { batches: progress.batches + 1, imported: progress.imported + (result.processed ?? result.imported), skipped: progress.skipped + result.skipped };
+        completed = cursor === null; advanced = true;
+        saveSyncCheckpoint(syncStorageKey, cursor, progress);
+        if (!mounted.current) break;
         setSyncCursor(cursor); setSyncProgress(progress); setSyncRevision(value => value + 1);
         if (cursor && cursor === previousCursor) throw new Error("El canal no avanzó al siguiente lote. Puedes reanudar la consulta.");
       } while (cursor && !stopSync.current && mounted.current);
       if (mounted.current) {
-        setNotice(cursor ? "Sincronización detenida. Puedes reanudar desde el último lote guardado." : `WhatsApp actualizado: ${progress.imported} conversaciones procesadas en ${progress.batches} ${progress.batches === 1 ? "lote" : "lotes"}.`);
-        if (selectionRef.current) await loadDetail(selectionRef.current);
+        setNotice(completed ? `WhatsApp actualizado: ${progress.imported} conversaciones procesadas en ${progress.batches} ${progress.batches === 1 ? "lote" : "lotes"}.` : "Sincronización detenida. Puedes reanudar desde el último lote guardado.");
+        if (advanced && selectionRef.current) await loadDetail(selectionRef.current);
       }
     } catch (err) { if (mounted.current) setSyncError(errorMessage(err)); }
-    finally { syncingRef.current = false; if (mounted.current) { setSyncing(false); setStoppingSync(false); } }
+    finally { syncingRef.current = false; if (mounted.current) { setSyncing(false); setStoppingSync(false); setSyncWaitSeconds(0); } }
   }
   const viewTitles = { dashboard: "Dashboard de atención", conversations: "Conversaciones", team: "Equipo de analistas", settings: "Configuración de atención" };
   const viewDescriptions = { dashboard: "Resumen del equipo", conversations: "Todos tus clientes, una sola bandeja", team: "Asignación y seguimiento del equipo de atención", settings: "Canal de WhatsApp y respuestas aprobadas" };
@@ -203,7 +329,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
         </div>
         {error && <div className={styles.error} role="alert"><span>{error}</span><Button variant="secondary" onClick={() => void loadInbox()} disabled={loading || busy}>Reintentar</Button></div>}
         {notice && <div className={styles.notice} role="status"><Check aria-hidden="true" size={18} /><span>{notice}</span><Button variant="ghost" aria-label="Ocultar confirmación" onClick={() => setNotice("")}><X size={16} aria-hidden="true" /></Button></div>}
-        {(syncing || syncCursor || syncError) && <div className={styles.syncProgress}><div role="status" aria-live="polite"><strong>{syncing ? stoppingSync ? "Terminando el lote actual…" : "Actualizando conversaciones de WhatsApp…" : syncError ? "La sincronización necesita reanudarse" : "Sincronización detenida"}</strong><span>{syncProgress.imported} conversaciones procesadas · {syncProgress.batches} {syncProgress.batches === 1 ? "lote" : "lotes"}{syncProgress.skipped > 0 ? ` · ${syncProgress.skipped} registros omitidos` : ""}</span><small>{syncError || "Puedes seguir consultando la bandeja mientras se actualiza el historial."}</small></div>{syncing ? <Button variant="secondary" disabled={stoppingSync} onClick={() => { stopSync.current = true; setStoppingSync(true); }}>Detener después de este lote</Button> : <Button variant="secondary" onClick={() => void sync()}>Reanudar sincronización</Button>}</div>}
+        {(syncing || syncCursor || syncError) && <div className={styles.syncProgress}><div role="status" aria-live="polite"><strong>{syncing ? stoppingSync ? syncWaitSeconds ? "Deteniendo sincronización…" : "Terminando el lote actual…" : syncWaitSeconds ? `Esperando a Dapta… ${syncWaitSeconds} s` : "Actualizando conversaciones de WhatsApp…" : syncError ? "La sincronización necesita reanudarse" : "Sincronización detenida"}</strong><span>{syncProgress.imported} conversaciones procesadas · {syncProgress.batches} {syncProgress.batches === 1 ? "lote" : "lotes"}{syncProgress.skipped > 0 ? ` · ${syncProgress.skipped} registros omitidos` : ""}</span><small>{syncError || "Puedes seguir consultando la bandeja mientras se actualiza el historial."}</small></div>{syncing ? <Button variant="secondary" disabled={stoppingSync} onClick={() => { stopSync.current = true; setStoppingSync(true); }}>{syncWaitSeconds ? "Detener sincronización" : "Detener después de este lote"}</Button> : <Button variant="secondary" onClick={() => void sync()}>Reanudar sincronización</Button>}</div>}
         {inbox && !inbox.schemaReady && <div className={styles.setupNotice}><ShieldCheck aria-hidden="true" size={18} /><p>La preparación del módulo está pendiente. Las conversaciones se mostrarán cuando finalice la configuración.</p></div>}
 
         {view === "dashboard" && <>
@@ -223,17 +349,17 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
         </>}
 
         {view === "conversations" && <>
-          <div className={styles.crmToolbar}><div><span className={styles.whatsappIcon}><MessageCircle aria-hidden="true" size={18} /></span><strong>WhatsApp</strong><span>Conversaciones de Meta y seguimiento interno</span></div>{currentActor.central && <Button variant="secondary" disabled={syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Actualizar WhatsApp"}</Button>}</div>
+          <div className={styles.crmToolbar}><div><span className={styles.whatsappIcon}><MessageCircle aria-hidden="true" size={18} /></span><strong>WhatsApp</strong><span>Conversaciones de Meta y seguimiento interno</span></div>{currentActor.central && <Button variant="secondary" disabled={!syncRestored || syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Actualizar WhatsApp"}</Button>}</div>
           {showNew && <Card className={styles.formCard}><div className={styles.cardHeading}><div><h2>Nueva gestión interna</h2><p>No envía mensajes ni crea otro registro de cliente.</p></div><Button variant="ghost" aria-label="Cerrar nueva gestión" disabled={busy} onClick={() => setShowNew(false)}><X aria-hidden="true" size={18} /></Button></div><form className={styles.newForm} onSubmit={createCase} onChange={() => { if (!busy) newRequestKey.current = null; }}><label>Nombre del contacto<Input name="name" required maxLength={120} autoComplete="off" disabled={busy} /></label><label>Teléfono<Input name="phone" type="tel" required maxLength={24} placeholder="Con indicativo de país" autoComplete="off" disabled={busy} /></label><Button type="submit" disabled={busy}>{busy ? "Guardando…" : "Registrar gestión"}</Button></form></Card>}
           <section className={`${styles.workspace} ${selected ? styles.hasSelection : ""} ${showCustomer ? styles.showCustomer : ""}`} aria-label="Bandeja de atención">
             <aside className={styles.inbox} aria-label="Conversaciones"><div className={styles.inboxHeading}><h2>Bandeja de entrada</h2><Badge>{inbox?.total ?? "—"}</Badge></div><label className={styles.search}><Search aria-hidden="true" size={18} /><span className={styles.srOnly}>Buscar conversación</span><Input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Buscar conversación…" maxLength={100} /></label><div className={styles.filters} role="group" aria-label="Filtrar conversaciones">{filters.map(item => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => { setFilter(item.value); setPage(1); }}>{item.label}</button>)}</div><div className={styles.conversationList} aria-busy={loading}>{loading && !inbox ? <LoadingState label="Cargando conversaciones…" /> : error ? <EmptyState title="No se pudo abrir la bandeja" description="Vuelve a intentar la consulta." /> : !inbox?.conversations.length ? <DashboardEmpty icon={Inbox} title={search ? "Sin coincidencias" : "No hay conversaciones en este filtro"} text={search ? "Prueba con otro nombre o teléfono." : currentActor.central ? "Actualiza WhatsApp para consultar los chats del canal conectado." : "Las conversaciones asignadas a tu perfil aparecerán aquí."} /> : inbox.conversations.map(conversation => <button type="button" key={conversation.id} className={`${styles.conversation} ${selected === conversation.id ? styles.selected : ""}`} aria-pressed={selected === conversation.id} onClick={() => selectConversation(conversation.id)}><span className={styles.avatar}>{initials(conversation.name)}</span><span className={styles.conversationBody}><span className={styles.conversationTitle}><strong>{conversation.name || conversation.phone || "Contacto de WhatsApp"}</strong><time dateTime={conversation.lastContactAt || undefined}>{time(conversation.lastContactAt)}</time></span><span className={styles.phone}>{conversation.phone || "Teléfono no disponible"} · {conversation.channel === "whatsapp" ? "WhatsApp" : "Interna"}</span><span className={styles.preview}>{conversation.preview || "Sin mensajes sincronizados"}</span><span className={styles.conversationFooter}><Status conversation={conversation} /><small>{conversation.assigneeName || "Sin analista"}</small></span></span></button>)}</div><div className={styles.pagination}><Button variant="ghost" aria-label="Página anterior" disabled={page <= 1 || loading} onClick={() => setPage(value => value - 1)}><ChevronLeft aria-hidden="true" size={18} /></Button><span>{page} / {Math.max(1, Math.ceil((inbox?.total ?? 0) / (inbox?.pageSize || 40)))}</span><Button variant="ghost" aria-label="Página siguiente" disabled={loading || !inbox || page * inbox.pageSize >= inbox.total} onClick={() => setPage(value => value + 1)}><ChevronRight aria-hidden="true" size={18} /></Button></div></aside>
             <section className={styles.chat} aria-label="Historial de la conversación">{!selected ? <div className={styles.selectPrompt}><span><MessageCircle aria-hidden="true" size={37} /></span><h2>Una conversación.<br />Todo su contexto.</h2><p>Elige un chat para ver los mensajes de WhatsApp, su ficha y las gestiones del equipo.</p><div><LockKeyhole aria-hidden="true" size={15} /> Acceso exclusivo de administración y analistas</div></div> : <>
-              <div className={styles.chatHeader}><Button variant="ghost" className={styles.backButton} aria-label="Volver a conversaciones" onClick={() => selectConversation(null)}><ArrowLeft aria-hidden="true" size={18} /></Button><span className={styles.avatar}>{initials(detail?.conversation.name || "Contacto")}</span><div className={styles.chatIdentity}><h2 ref={chatHeading} tabIndex={-1}>{detail?.conversation.name || "Conversación"}</h2><span>{detail ? detail.conversation.phone || "Teléfono no disponible" : "Consultando historial…"}{detail && ` · ${detail.conversation.channel === "whatsapp" ? "WhatsApp" : "Gestión interna"}`}</span></div><Button variant="secondary" className={styles.customerToggle} onClick={() => setShowCustomer(true)}><UserRound aria-hidden="true" size={16} /> Ficha</Button></div>
+              <div className={styles.chatHeader}><Button variant="ghost" className={styles.backButton} aria-label="Volver a conversaciones" onClick={() => selectConversation(null)}><ArrowLeft aria-hidden="true" size={18} /></Button><span className={styles.avatar}>{initials(detail?.conversation.name || "Contacto")}</span><div className={styles.chatIdentity}><h2 ref={chatHeading} tabIndex={-1}>{detail?.conversation.name || "Conversación"}</h2><span>{detail ? detail.conversation.phone || "Teléfono no disponible" : "Consultando historial…"}{detail && ` · ${detail.conversation.channel === "whatsapp" ? "WhatsApp" : "Gestión interna"}`}</span></div><Button variant="secondary" className={styles.customerToggle} aria-expanded={showCustomer} onClick={() => setShowCustomer(value => !value)}><UserRound aria-hidden="true" size={16} /> Ficha</Button></div>
               {detailError && <div className={styles.error} role="alert"><span>{detailError}</span><Button variant="secondary" disabled={busy || detailLoading} onClick={() => void loadDetail(selected)}>Actualizar</Button></div>}
               {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <><div className={styles.chatActions}><Status conversation={detail.conversation} /><span className={styles.assignee}><UserRound aria-hidden="true" size={14} />{detail.conversation.assigneeName || "Sin analista asignado"}</span>{detail.permissions.claim && detail.conversation.status !== "open" && <Button disabled={busy} onClick={() => void mutate({ action: "claim" })}>Atender</Button>}{detail.permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => void mutate({ action: detail.conversation.status === "closed" ? "reopen" : "close" })}>{detail.conversation.status === "closed" ? "Reabrir" : "Finalizar"}</Button>}</div>
                 {detail.permissions.assign && <div className={styles.assignment}><label className={styles.srOnly} htmlFor="attention-transfer">Asignar analista</label><Select id="attention-transfer" value="" disabled={busy || !analysts.length} onChange={event => { if (event.target.value) void mutate({ action: "transfer", assigneeKey: event.target.value }); }}><option value="">{detail.conversation.assigneeKey ? "Cambiar analista…" : "Asignar analista…"}</option>{analysts.filter(person => person.key !== detail.conversation.assigneeKey).map(person => <option key={person.key} value={person.key}>{person.name}</option>)}</Select><span>Solo analistas activos</span></div>}
-                <div className={styles.messages} role="log" aria-label="Mensajes sincronizados">{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map(message => <article key={message.id} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}><span>{message.direction === "inbound" ? "Contacto" : message.author || "Dapta"}</span><p>{message.text}</p><time dateTime={message.sentAt}>{date(message.sentAt)}</time></article>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
-                <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>Historial de WhatsApp · asignación y seguimiento por analistas.</span></footer>
+                <div className={styles.historyViewport}><div ref={messageLog} className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map(message => <article key={message.id} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}><span>{message.direction === "inbound" ? "Contacto" : message.author || "Dapta"}</span><MessageContent text={message.text} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><time dateTime={message.sentAt}>{date(message.sentAt)}</time></article>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
+                {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" && detail.conversation.externalId ? <DaptaConversationActions key={detail.conversation.id} conversation={detail.conversation} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>Gestión interna · asignación y seguimiento por analistas.</span></footer>}
               </>}
             </>}</section>
             <aside className={styles.customer} aria-label="Ficha y seguimiento del cliente"><div className={styles.customerHeader}><Button className={styles.backButton} variant="ghost" aria-label="Volver al chat" onClick={() => setShowCustomer(false)}><ArrowLeft aria-hidden="true" size={18} /></Button><h2 ref={customerHeading} tabIndex={-1}>Ficha del cliente</h2><ShieldCheck aria-hidden="true" size={18} /></div>{detail ? <CustomerPanel key={detail.conversation.id} detail={detail} busy={busy} mutate={mutate} canOpenRecord={canSupervise} /> : <DashboardEmpty icon={UserRound} title="El cliente, en contexto" text="Datos, estudios, notas y tareas vinculados a la conversación seleccionada." />}</aside>
@@ -242,7 +368,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
 
         {view === "team" && <Card className={styles.fullTeam}><div className={styles.cardHeading}><div><h2>Analistas de atención</h2><p>Las conversaciones solo se asignan a perfiles de analista activos.</p></div><Badge>{analysts.length} analistas</Badge></div><TeamRows team={team} loading={loading && !inbox} /><div className={styles.teamNote}><ShieldCheck aria-hidden="true" size={17} /><p>Administración asigna los chats. Cada analista consulta y gestiona únicamente las conversaciones de su bandeja.</p></div></Card>}
         {view === "settings" && <div className={styles.settingsGrid}>
-          <Card className={styles.settingsCard}><div className={styles.cardHeading}><h2><MessageCircle aria-hidden="true" size={20} /> Canal de WhatsApp</h2><Badge tone={inbox?.integration.configured ? "positive" : "warning"}>{inbox?.integration.configured ? "Disponible" : "Pendiente"}</Badge></div><p>{inbox?.integration.message || "Consultando estado del canal…"}</p><div className={styles.integrationFacts}><div><Check aria-hidden="true" size={17} /><span>Historial y conversaciones reales desde Dapta</span></div><div><Users aria-hidden="true" size={17} /><span>Asignación exclusiva a analistas FINSER PAY</span></div><div><LockKeyhole aria-hidden="true" size={17} /><span>Historial de WhatsApp de solo lectura</span></div></div>{currentActor.central && <Button disabled={syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Actualizar conversaciones"}</Button>}<p className={styles.settingFootnote}>La consulta no cambia el número, el proveedor ni la configuración de WhatsApp.</p></Card>
+          <Card className={styles.settingsCard}><div className={styles.cardHeading}><h2><MessageCircle aria-hidden="true" size={20} /> Canal de WhatsApp</h2><Badge tone={inbox?.integration.configured ? "positive" : "warning"}>{inbox?.integration.configured ? "Disponible" : "Pendiente"}</Badge></div><p>{inbox?.integration.message || "Consultando estado del canal…"}</p><div className={styles.integrationFacts}><div><Check aria-hidden="true" size={17} /><span>Historial y conversaciones reales desde Dapta</span></div><div><Users aria-hidden="true" size={17} /><span>Asignación exclusiva a analistas FINSER PAY</span></div><div><LockKeyhole aria-hidden="true" size={17} /><span>Historial de WhatsApp de solo lectura</span></div></div>{currentActor.central && <Button disabled={!syncRestored || syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Actualizar conversaciones"}</Button>}<p className={styles.settingFootnote}>La consulta no cambia el número, el proveedor ni la configuración de WhatsApp.</p></Card>
           <Card className={styles.repliesPanel}><div className={styles.cardHeading}><h2>Respuestas rápidas</h2>{currentActor.central && <Button variant="ghost" disabled={!contentReady || busy} onClick={() => setShowReplies(value => !value)}>{showReplies ? "Cerrar" : "Aprobar respuesta"}</Button>}</div><p className={styles.muted}>Contenido aprobado por administración de FINSER PAY.</p>{inbox?.quickReplies.length ? <ul className={styles.replyList}>{inbox.quickReplies.map(reply => <li key={reply.id}><strong>{reply.title}</strong><p>{reply.text}</p><small>Aprobada por {reply.approvedBy} · {date(reply.approvedAt, true)}</small></li>)}</ul> : <DashboardEmpty icon={FileText} title="Una voz para todo el equipo" text="El equipo puede consultar aquí las respuestas aprobadas por administración." />}{showReplies && currentActor.central && <QuickReplyForm disabled={busy} saved={() => { setShowReplies(false); setNotice("Respuesta aprobada y guardada."); void loadInbox(); }} />}</Card>
         </div>}
       </main>

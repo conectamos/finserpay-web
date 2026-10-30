@@ -22,7 +22,7 @@ class ExpiredMcpSession extends Error {
 }
 
 export class AttentionDaptaError extends Error {
-  constructor(public code: "NOT_CONFIGURED" | "INVALID_CURSOR" | "UNAVAILABLE" | "INVALID_RESPONSE" | "SCOPE_MISMATCH", public status: number, message: string) {
+  constructor(public code: "NOT_CONFIGURED" | "INVALID_CURSOR" | "UNAVAILABLE" | "INVALID_RESPONSE" | "SCOPE_MISMATCH" | "RATE_LIMITED" | "UNAUTHORIZED", public status: number, message: string, public retryAfterSeconds?: number) {
     super(message);
     this.name = "AttentionDaptaError";
   }
@@ -161,7 +161,9 @@ function mcpClient(config: Config, transport: typeof fetch, deadline: number) {
   let session: string | null = null;
   let protocol = PROTOCOL_VERSION;
   let renewal: Promise<void> | null = null;
+  let stopped = false;
   async function send(method: string, params?: JsonObject, notification = false): Promise<JsonObject> {
+    if (stopped) unavailable();
     const remaining = deadline - Date.now();
     if (remaining <= 0) unavailable();
     const controller = new AbortController();
@@ -177,8 +179,17 @@ function mcpClient(config: Config, transport: typeof fetch, deadline: number) {
         body: JSON.stringify({ jsonrpc: "2.0", ...(id === undefined ? {} : { id }), method, ...(params ? { params } : {}) }),
       });
       if (!response.ok) {
+        const retryHeader = response.headers.get("retry-after");
         await response.body?.cancel().catch(() => {});
         if (response.status === 404 && requestSession) throw new ExpiredMcpSession(requestSession);
+        if (response.status === 401 || response.status === 403) throw new AttentionDaptaError("UNAUTHORIZED", 403, "Dapta no autorizó esta lectura. Revisa el acceso de la clave al espacio configurado.");
+        if (response.status === 429) {
+          const seconds = retryHeader && /^\d+$/.test(retryHeader) ? Number(retryHeader)
+            : retryHeader ? Math.ceil((Date.parse(retryHeader) - Date.now()) / 1000) : 60;
+          throw new AttentionDaptaError("RATE_LIMITED", 429, "Dapta limitó temporalmente las consultas. Se conservaron los lotes anteriores.",
+            Number.isFinite(seconds) ? Math.max(1, Math.min(seconds, 3600)) : 60);
+        }
+        if ([500, 502, 503, 504].includes(response.status)) throw new AttentionDaptaError("UNAVAILABLE", response.status, "Dapta no está disponible temporalmente. Se conservaron los lotes anteriores.");
         unavailable();
       }
       if (notification) {
@@ -206,6 +217,7 @@ function mcpClient(config: Config, transport: typeof fetch, deadline: number) {
     } finally { if (timeout) clearTimeout(timeout); }
   }
   async function initialize() {
+    if (stopped) unavailable();
     session = null;
     try {
       const result = await send("initialize", { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "finserpay-attention-reader", version: "1.0.0" } });
@@ -219,11 +231,31 @@ function mcpClient(config: Config, transport: typeof fetch, deadline: number) {
   }
   return {
     initialize,
+    stop() { stopped = true; },
+    async close() {
+      // End only the short-lived MCP transport session created by this reader.
+      // This is protocol cleanup, not a conversation or WhatsApp operation.
+      const ownedSession = session;
+      session = null;
+      if (!ownedSession) return;
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          transport(MCP_ENDPOINT, { method: "DELETE", cache: "no-store", redirect: "error", signal: controller.signal,
+            headers: { "x-api-key": config.key, "Mcp-Session-Id": ownedSession, "MCP-Protocol-Version": protocol } })
+            .then(async response => { await response.body?.cancel().catch(() => {}); }),
+          new Promise<void>(resolve => { timer = setTimeout(() => { controller.abort(); resolve(); }, 2000); }),
+        ]);
+      } catch { /* Servers may not support client session termination (HTTP 405). */ }
+      finally { if (timer) clearTimeout(timer); }
+    },
     async call(name: "list_conversations" | "get_conversation", args: JsonObject) {
       if (!READ_TOOLS.has(name)) invalidResponse();
       // API keys already bind a workspace. The workspace_id argument belongs to login-mode tools.
       try { return toolPayload(await send("tools/call", { name, arguments: args })); } catch (error) {
         if (!(error instanceof ExpiredMcpSession)) throw error;
+        if (stopped) unavailable();
         if (!renewal && session === error.sessionId) renewal = initialize().finally(() => { renewal = null; });
         if (renewal) await renewal;
         try { return toolPayload(await send("tools/call", { name, arguments: args })); } catch (retryError) {
@@ -273,6 +305,7 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
         throw new AttentionDaptaError("INVALID_CURSOR", 400, "El cursor de sincronización no es válido.");
       }
       const client = mcpClient(config, transport, Date.now() + 55000);
+      try {
       await client.initialize();
       const list = await client.call("list_conversations", { agent_id: config.agent,
         channel_type: [...WHATSAPP_CHANNELS], limit: LIST_LIMIT, window_days: 365,
@@ -285,9 +318,10 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
       const seen = new Set<string>();
       let skipped = 0;
       let index = 0;
+      const failures: unknown[] = [];
       const rows = list.conversations;
       async function worker() {
-        while (index < rows.length) {
+        while (failures.length === 0 && index < rows.length) {
           const row = object(rows[index++]);
           const identity = conversationIdentity(row, config);
           if (!identity || seen.has(identity.id)) { skipped++; continue; }
@@ -304,6 +338,7 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
           let historyTruncated = false;
           let detailRow: JsonObject | null = null;
           for (let page = 0; page < HISTORY_PAGES; page++) {
+            if (failures.length > 0) return;
             const inputCursor: string | null = pageCursor;
             const detail = await client.call("get_conversation", { agent_id: config.agent, conversation_id: identity.id,
               include_messages: true, include_state: false, include_tool_payloads: false, fresh: false,
@@ -350,9 +385,17 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
             historyTruncated: historyTruncated || pageCursor !== null, historyCursor });
         }
       }
-      await Promise.all(Array.from({ length: Math.min(3, rows.length) }, () => worker()));
+      // Drain the bounded reads already in flight before deleting their shared
+      // MCP session. Stop pagination and session renewals after the first error.
+      await Promise.allSettled(Array.from({ length: Math.min(3, rows.length) }, () => worker().catch(error => {
+        if (failures.length === 0) failures.push(error);
+        client.stop();
+        throw error;
+      })));
+      if (failures.length > 0) throw failures[0];
       snapshots.sort((a, b) => (b.lastContactAt ?? "").localeCompare(a.lastContactAt ?? "") || a.externalId.localeCompare(b.externalId));
       return { snapshots, nextCursor, skipped };
+      } finally { await client.close(); }
     },
   };
 }

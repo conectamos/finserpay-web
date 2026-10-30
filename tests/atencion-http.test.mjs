@@ -130,7 +130,7 @@ test("sync imports only confirmed provider data; failure never persists or leaks
   const response = await h.POST(request({ cursor: "previous" }));
   assert.equal(response.status, 200); assert.deepEqual(h.calls.fetch, [{ cursor: "previous", historyCursors: {} }]);
   assert.deepEqual(h.calls.import, [[actor, []]]);
-  assert.deepEqual(await response.json(), { imported: 0, skipped: 0, nextCursor: "opaque" });
+  assert.deepEqual(await response.json(), { imported: 0, processed: 0, skipped: 0, nextCursor: "opaque" });
   const failed = harness("app/api/atencion/sync/route.ts", { providerError: new Error("secret token SQL phone private") });
   const error = await failed.POST(request({ sedeId: 1 }));
   assert.equal(error.status, 500); assert.doesNotMatch(JSON.stringify(await error.json()), /secret|token|SQL|phone|private/);
