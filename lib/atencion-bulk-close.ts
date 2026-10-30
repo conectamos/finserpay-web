@@ -130,9 +130,9 @@ export function createAttentionBulkCloseStore(database: AttentionDatabase, optio
         const result={cutoff:review.cutoff,closedCount:closed.length,readCount:read.length,skippedCount:review.openCount-closed.length};
         await audit(db,nominal,"BULK_CLOSE_COMPLETED",{reviewToken:input.reviewToken,requestId:input.requestId,actorName:nominal.name,result,closedIds:closed.map(chat=>chat.id)});
         const changedIds=[...new Set(read.map(row=>row.conversationId))];
-        if(changedIds.length)await db.$queryRawUnsafe(`SELECT pg_notify('finserpay_attention_changes',json_build_object('conversationId',id,
+        if(changedIds.length)await db.$queryRawUnsafe(`SELECT 1 AS notified FROM unnest($1::uuid[]) AS id CROSS JOIN LATERAL pg_notify('finserpay_attention_changes',json_build_object('conversationId',id,
           'previousUserId',NULL,'previousKey',NULL,'previousSellerId',NULL,'currentUserId',$2::integer,'currentKey',$3::text,'currentSellerId',NULL,'readActorUserId',$2::integer)::text)
-          FROM unnest($1::uuid[]) AS id`,changedIds,actor.userId,actor.key);
+          `,changedIds,actor.userId,actor.key);
         return result;
       });
     },

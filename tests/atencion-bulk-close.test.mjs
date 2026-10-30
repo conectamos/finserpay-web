@@ -12,7 +12,7 @@ const bulk=await jiti.import("../lib/atencion-bulk-close.ts"),http=await jiti.im
 const admin={userId:1,sellerId:null,key:"admin:1",name:"Nombre en sesión desactualizado",central:true,admin:true,analyst:false,supervisor:false,aliadoId:1,sedeId:10};
 const other={...admin,userId:2,key:"admin:2"},analyst={...admin,userId:5,key:"analyst:5",central:false,admin:false,analyst:true};
 const clock="2030-10-30T21:20:00.000Z",cutoff="2030-10-30T21:19:13.000Z",older="2030-10-30T20:00:00.000Z",later="2030-10-30T21:19:14.000Z";
-function database(db){return {$queryRawUnsafe:async(sql,...args)=>(await db.query(sql,args)).rows,$transaction:run=>db.transaction(tx=>run(database(tx)))};}
+function database(db){return {$queryRawUnsafe:async(sql,...args)=>{const result=await db.query(sql,args);assert.ok(!result.fields.some(field=>field.dataTypeID===2278),"PrismaPg no puede deserializar columnas PostgreSQL void; las notificaciones deben devolver una columna escalar.");return result.rows;},$transaction:run=>db.transaction(tx=>run(database(tx)))};}
 async function fixture(t){
   const db=new PGlite();t.after(()=>db.close());let current=new Date(clock);
   await db.exec(`CREATE TABLE "Rol"(id integer PRIMARY KEY,nombre text);CREATE TABLE "Aliado"(id integer PRIMARY KEY,codigo text,activo boolean);
