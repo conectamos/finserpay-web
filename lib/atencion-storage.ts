@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { AttentionError, assertAttentionActor, attentionText, attentionUuid, normalizeAttentionPhone, parseAttentionMutation } from "./atencion-core";
 import { buildCreditPaymentPlan } from "./credit-payment-plan";
-import type { AttentionActor, AttentionAssignee, AttentionBranch, AttentionConversation, AttentionCustomer, AttentionDetail, AttentionFilters, AttentionInbox, AttentionMutation, AttentionQuickReply, DaptaConversationSnapshot } from "./atencion-types";
+import type { AttentionActor, AttentionAssignee, AttentionConversation, AttentionCustomer, AttentionDetail, AttentionFilters, AttentionInbox, AttentionMutation, AttentionQuickReply, DaptaConversationSnapshot } from "./atencion-types";
 
 export interface AttentionDb { $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>; }
 export interface AttentionDatabase extends AttentionDb {
@@ -10,6 +10,7 @@ export interface AttentionDatabase extends AttentionDb {
 type ConversationRow = Omit<AttentionConversation, "lastContactAt" | "updatedAt" | "preview"> & {
   lastContactAt: Date | string | null; updatedAt: Date | string; closedAt: Date | string | null;
   daptaMessagesCursor: string | null; preview?: string | null; historyTruncated: boolean;
+  assigneeUserId: number | null; assigneeSellerId: number | null;
 };
 type CreditRow = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; estado: string;
   referenciaEquipo: string | null; equipoMarca: string | null; equipoModelo: string | null;
@@ -31,10 +32,16 @@ function conversation(row: ConversationRow): AttentionConversation {
 }
 /** All access predicates are evaluated on the server from the current session. */
 function scope(actor: AttentionActor) {
-  return { sql: `($1::boolean OR s."aliadoId"=$2::integer)
-    AND ($3::boolean OR c."sedeId"=$4::integer)
-    AND ($5::boolean OR c."assigneeKey" IS NULL OR c."assigneeKey"=$6::text)`,
-    values: [actor.central, actor.aliadoId, actor.admin, actor.sedeId, actor.admin || actor.supervisor, actor.key] };
+  return { sql: `($1::boolean OR (c."assigneeUserId"=$2::integer AND c."assigneeKey"=$3::text AND c."assigneeSellerId" IS NULL))`,
+    values: [actor.central, actor.userId, actor.key] };
+}
+/** Revalidate role and account state inside every read/write transaction. */
+async function assertCurrentActor(tx: AttentionDb, actor: AttentionActor) {
+  const rows = await tx.$queryRawUnsafe<{role: string}[]>(`SELECT upper(trim(r.nombre)) AS role FROM "Usuario" u
+    JOIN "Rol" r ON r.id=u."rolId" JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId"
+    WHERE u.id=$1 AND u.activo=true AND s.activa=true AND a.activo=true AND upper(trim(a.codigo))='FINSERPAY'
+    AND u."sedeId"=$2 AND s."aliadoId"=$3 FOR SHARE OF u,r,s,a`, actor.userId, actor.sedeId, actor.aliadoId);
+  if (rows[0]?.role !== (actor.central ? "ADMIN" : "ANALISTA_APROBACION")) throw new AttentionError("La cuenta de atención ya no está autorizada.", 403);
 }
 async function schemaReady(tx: AttentionDb) {
   const rows = await tx.$queryRawUnsafe<{ ready: boolean }[]>(`SELECT
@@ -49,26 +56,17 @@ async function audit(tx: AttentionDb, actor: AttentionActor, action: string, id:
   await tx.$queryRawUnsafe(`INSERT INTO "AttentionAudit"("conversationId","userId","sellerId",action,metadata)
     VALUES ($1::uuid,$2,$3,$4,$5::jsonb) RETURNING id`, id, actor.userId, actor.sellerId, action, JSON.stringify(metadata));
 }
-async function branchList(tx: AttentionDb, actor: AttentionActor): Promise<AttentionBranch[]> {
-  return tx.$queryRawUnsafe(`SELECT s.id,s.nombre AS name FROM "Sede" s WHERE s.activa=true
-    AND ($1::boolean OR s."aliadoId"=$2::integer) AND ($3::boolean OR s.id=$4::integer) ORDER BY s.nombre,s.id`,
-    actor.central, actor.aliadoId, actor.admin, actor.sedeId);
-}
 async function teamList(tx: AttentionDb, actor: AttentionActor): Promise<AttentionAssignee[]> {
-  const allowed = await branchList(tx, actor);
-  const rows = await tx.$queryRawUnsafe<{key: string; name: string; sedeId: number}[]>(`
-    SELECT 'seller:'||v.id::text AS key,v.nombre AS name,sv."sedeId" FROM "Vendedor" v
-    JOIN "SedeVendedor" sv ON sv."vendedorId"=v.id WHERE v.activo=true AND sv.activo=true AND sv."sedeId"=ANY($1::integer[])
-    UNION ALL SELECT 'user:'||u.id::text,u.nombre,u."sedeId" FROM "Usuario" u JOIN "Rol" r ON r.id=u."rolId"
-    WHERE u.activo=true AND upper(trim(r.nombre))='ADMIN' AND u."sedeId"=ANY($1::integer[])`, allowed.map(b => b.id));
-  const grouped = new Map<string, AttentionAssignee>();
-  for (const row of rows) { const person = grouped.get(row.key) || { key: row.key, name: row.name, sedeIds: [] }; person.sedeIds.push(row.sedeId); grouped.set(row.key, person); }
-  return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const rows = await tx.$queryRawUnsafe<{key: string; name: string}[]>(`SELECT 'analyst:'||u.id::text AS key,u.nombre AS name
+    FROM "Usuario" u JOIN "Rol" r ON r.id=u."rolId" JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId"
+    WHERE u.activo=true AND s.activa=true AND a.activo=true AND upper(trim(a.codigo))='FINSERPAY'
+    AND upper(trim(r.nombre))='ANALISTA_APROBACION' AND ($1::boolean OR u.id=$2) ORDER BY u.nombre,u.id`, actor.central, actor.userId);
+  return rows.map(row => ({ ...row, sedeIds: [] }));
 }
 async function loadConversation(tx: AttentionDb, actor: AttentionActor, id: string, lock = false) {
   const access = scope(actor);
-  const rows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.* FROM "AttentionConversation" c JOIN "Sede" s ON s.id=c."sedeId"
-    WHERE ${access.sql} AND c.id=$7::uuid ${lock ? "FOR UPDATE OF c" : ""}`, ...access.values, attentionUuid(id));
+  const rows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.* FROM "AttentionConversation" c
+    WHERE ${access.sql} AND c.id=$4::uuid ${lock ? "FOR UPDATE OF c" : "FOR SHARE OF c"}`, ...access.values, attentionUuid(id));
   if (!rows[0]) throw new AttentionError("Conversación no encontrada o no autorizada.", 404);
   return rows[0];
 }
@@ -90,43 +88,42 @@ function phoneSql(alias: "c" | "k" | "d") {
   return `(CASE WHEN length(${digits})=10 AND ${digits} LIKE '3%' THEN '+57'||${digits} ELSE '+'||${digits} END)`;
 }
 async function candidateCredits(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<CreditRow[]> {
+  if (!row.phone || (!actor.central && !row.linkedCreditId)) return [];
   return tx.$queryRawUnsafe(`SELECT c.id,c.folio,c."clienteNombre",c."clienteDocumento",c.estado,c."referenciaEquipo",c."equipoMarca",c."equipoModelo",
     c."montoCredito",c."valorCuota",c."plazoMeses",c."frecuenciaPago",c."fechaPrimerPago",c."fechaProximoPago",c."pazYSalvoEmitidoAt",
-    to_jsonb(c)->'planCapitalVigente' AS "planCapitalVigente" FROM "Credito" c JOIN "Sede" s ON s.id=c."sedeId"
-    WHERE ${phoneSql("c")}=$1 AND c."sedeId"=$2 AND ($3::boolean OR s."aliadoId"=$4::integer)
-    AND ($5::boolean OR c."vendedorId"=$6::integer) ORDER BY c.id DESC LIMIT 101`,
-    row.phone, row.sedeId, actor.central, actor.aliadoId, actor.admin || actor.supervisor, actor.sellerId);
+    to_jsonb(c)->'planCapitalVigente' AS "planCapitalVigente" FROM "Credito" c
+    WHERE ${phoneSql("c")}=$1 AND ($2::boolean OR c.id=$3::integer) ORDER BY c.id DESC LIMIT 101`,
+    row.phone, actor.central, row.linkedCreditId);
 }
 async function candidateDrafts(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<DraftRow[]> {
+  if (!actor.central || !row.phone) return [];
   const presence = await tx.$queryRawUnsafe<{present: boolean}[]>(`SELECT to_regclass('public."CreditoBorrador"') IS NOT NULL AS present`);
   if (!presence[0]?.present) return [];
   return tx.$queryRawUnsafe(`SELECT d.id,d."clienteNombre",d."clienteDocumento",d.estado,d."dataCreditoAssessmentId",d."createdAt"
-    FROM "CreditoBorrador" d JOIN "Sede" s ON s.id=d."sedeId" WHERE d."creditoId" IS NULL
-    AND ${phoneSql("d")}=$1 AND d."sedeId"=$2 AND ($3::boolean OR s."aliadoId"=$4::integer)
-    AND ($5::boolean OR d."vendedorId"=$6::integer) ORDER BY d.id DESC LIMIT 101`,
-    row.phone, row.sedeId, actor.central, actor.aliadoId, actor.admin || actor.supervisor, actor.sellerId);
+    FROM "CreditoBorrador" d WHERE d."creditoId" IS NULL AND ${phoneSql("d")}=$1 ORDER BY d.id DESC LIMIT 101`, row.phone);
 }
 async function customerDetail(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<AttentionCustomer> {
+  if (!row.phone || (!actor.central && !row.linkedCreditId)) return { match: row.phone ? "restricted" : "none", name: null, documentMasked: null, candidates: [], credits: [], studies: [], financialAllowed: actor.central };
   const candidates = await candidateCredits(tx, actor, row);
   const drafts = await candidateDrafts(tx, actor, row);
   const keys = new Set([...candidates.map(c => documentKey(c.clienteDocumento) || `credit:${c.id}`), ...drafts.map(d => documentKey(d.clienteDocumento) || `draft:${d.id}`)]);
   const linked = row.linkedCreditId ? candidates.find(c => c.id === row.linkedCreditId) : null;
   const ambiguous = candidates.length > 100 || drafts.length > 100 || (!linked && keys.size > 1);
   const customer: AttentionCustomer = { match: row.linkedCreditId && !linked ? "restricted" : ambiguous ? "ambiguous" : candidates.length || drafts.length ? "linked" : "none",
-    name: null, documentMasked: null, candidates: candidates.slice(0, 100).map(c => ({ id: c.id, folio: c.folio, name: c.clienteNombre, documentMasked: maskDocument(c.clienteDocumento) })),
-    credits: [], studies: [], financialAllowed: actor.admin };
+    name: null, documentMasked: null, candidates: actor.central ? candidates.slice(0, 100).map(c => ({ id: c.id, folio: c.folio, name: c.clienteNombre, documentMasked: maskDocument(c.clienteDocumento) })) : [],
+    credits: [], studies: [], financialAllowed: actor.central };
   if (customer.match !== "linked") return customer;
   const identity = linked || candidates.at(0) || drafts[0];
   const credits = candidates.filter(c => identity.clienteDocumento ? documentKey(c.clienteDocumento) === documentKey(identity.clienteDocumento) : c === identity);
   const selectedDrafts = drafts.filter(d => identity.clienteDocumento ? documentKey(d.clienteDocumento) === documentKey(identity.clienteDocumento) : d === identity);
   customer.name = identity.clienteNombre; customer.documentMasked = maskDocument(identity.clienteDocumento);
-  const payments = actor.admin ? await tx.$queryRawUnsafe<{creditoId: number; valor: number; metodoPago: string; fechaAbono: Date | string}[]>(`
+  const payments = actor.central ? await tx.$queryRawUnsafe<{creditoId: number; valor: number; metodoPago: string; fechaAbono: Date | string}[]>(`
     SELECT "creditoId",valor,"metodoPago","fechaAbono" FROM "CreditoAbono"
     WHERE "creditoId"=ANY($1::integer[]) AND estado='ACTIVO' AND "anuladoAt" IS NULL ORDER BY "fechaAbono" DESC,id DESC`, credits.map(c => c.id)) : [];
   customer.credits = credits.map(c => {
     const abonos = payments.filter(p => p.creditoId === c.id);
     const complete = Boolean(c.fechaPrimerPago && Number(c.plazoMeses) > 0 && Number.isFinite(Number(c.montoCredito)) && Number(c.montoCredito) >= 0);
-    const plan = actor.admin && complete ? buildCreditPaymentPlan({ ...c, abonos, settled: Boolean(c.pazYSalvoEmitidoAt) }) : null;
+    const plan = actor.central && complete ? buildCreditPaymentPlan({ ...c, abonos, settled: Boolean(c.pazYSalvoEmitidoAt) }) : null;
     return { id: c.id, folio: c.folio, state: c.estado, equipment: c.referenciaEquipo || [c.equipoMarca, c.equipoModelo].filter(Boolean).join(" ") || "Sin equipo registrado",
       balance: plan?.saldoPendiente ?? null, nextDueAt: plan && plan.saldoPendiente > 0 ? plan.nextInstallment?.fechaVencimiento ?? null : null,
       nextAmount: plan && plan.saldoPendiente > 0 ? plan.nextInstallment?.saldoPendiente ?? null : null,
@@ -135,9 +132,8 @@ async function customerDetail(tx: AttentionDb, actor: AttentionActor, row: Conve
   const studiesPresent = await tx.$queryRawUnsafe<{present: boolean}[]>(`SELECT to_regclass('public."DataCreditoAssessment"') IS NOT NULL AS present`);
   if (studiesPresent[0]?.present) {
     const studies = await tx.$queryRawUnsafe<{id: string; state: string; createdAt: Date | string}[]>(`SELECT id,status AS state,"createdAt"
-      FROM "DataCreditoAssessment" WHERE ("creditId"=ANY($1::integer[]) OR id=ANY($7::uuid[])) AND "sedeId"=$2
-      AND ($3::boolean OR "aliadoId"=$4::integer) AND ($5::boolean OR "sellerId"=$6::integer)
-      ORDER BY "createdAt" DESC LIMIT 20`, credits.map(c => c.id), row.sedeId, actor.central, actor.aliadoId, actor.admin || actor.supervisor, actor.sellerId,
+      FROM "DataCreditoAssessment" WHERE ("creditId"=ANY($1::integer[]) OR id=ANY($2::uuid[]))
+      ORDER BY "createdAt" DESC LIMIT 20`, credits.map(c => c.id),
       selectedDrafts.flatMap(d => d.dataCreditoAssessmentId ? [d.dataCreditoAssessmentId] : []));
     customer.studies = studies.map(s => ({ ...s, createdAt: iso(s.createdAt) }));
   }
@@ -148,45 +144,73 @@ async function customerDetail(tx: AttentionDb, actor: AttentionActor, row: Conve
 }
 
 export function createAttentionStore(database: AttentionDatabase) {
+  const transaction = <T>(actor: AttentionActor, fn: (tx: AttentionDb) => Promise<T>, settings = options) => database.$transaction(async tx => {
+    await assertCurrentActor(tx, actor);
+    return fn(tx);
+  }, settings);
   return {
-    async getAttentionHistoryCursors(actor: AttentionActor, sedeId: number): Promise<Record<string, string | null>> {
+    async getAttentionHistoryCursors(actor: AttentionActor): Promise<Record<string, string | null>> {
       assertAttentionActor(actor); if (!actor.central) throw new AttentionError("Solo administración central puede leer los puntos de sincronización.", 403);
-      return database.$transaction(async tx => {
+      return transaction(actor, async tx => {
         await requireSchema(tx);
-        if (!(await branchList(tx, actor)).some(b => b.id === sedeId)) throw new AttentionError("Sede no autorizada.", 403);
         const rows = await tx.$queryRawUnsafe<{externalId: string; daptaMessagesCursor: string | null}[]>(`SELECT "externalId","daptaMessagesCursor"
-          FROM "AttentionConversation" WHERE "sedeId"=$1 AND channel='whatsapp' AND "externalId" IS NOT NULL`, sedeId);
-        await audit(tx, actor, "DAPTA_CHECKPOINTS_READ", null, { sedeId, count: rows.length });
+          FROM "AttentionConversation" WHERE channel='whatsapp' AND "externalId" IS NOT NULL`);
+        await audit(tx, actor, "DAPTA_CHECKPOINTS_READ", null, { count: rows.length });
         return Object.fromEntries(rows.map(row => [row.externalId, row.daptaMessagesCursor]));
       }, options);
     },
     async getAttentionInbox(actor: AttentionActor, filters: AttentionFilters): Promise<Omit<AttentionInbox, "integration">> {
       assertAttentionActor(actor);
-      return database.$transaction(async tx => {
+      return transaction(actor, async tx => {
         const empty = { schemaReady: false, conversations: [], total: 0, page: filters.page, pageSize,
           metrics: { pending: 0, open: 0, closed: 0, mine: 0 }, team: [], branches: [], quickReplies: [], actor };
         if (!await schemaReady(tx)) return empty;
         const access = scope(actor);
         const draftsPresent = await tx.$queryRawUnsafe<{present: boolean}[]>(`SELECT to_regclass('public."CreditoBorrador"') IS NOT NULL AS present`);
-        const draftSearch = draftsPresent[0]?.present ? `OR EXISTS(SELECT 1 FROM "CreditoBorrador" d WHERE d."sedeId"=c."sedeId" AND ${phoneSql("d")}=c.phone
-          AND ($5::boolean OR 'seller:'||d."vendedorId"::text=$6) AND d."clienteNombre" ILIKE $8)` : "";
-        const filtered = `${access.sql} AND ($7::text='' OR c.name ILIKE $8 OR c.phone LIKE $8
-          OR EXISTS(SELECT 1 FROM "Credito" k WHERE k."sedeId"=c."sedeId" AND ${phoneSql("k")}=c.phone
-            AND ($5::boolean OR 'seller:'||k."vendedorId"::text=$6) AND k."clienteNombre" ILIKE $8) ${draftSearch})
-          AND ($9::text='all' OR ($9='mine' AND c."assigneeKey"=$6) OR ($9='pending' AND c.status='pending') OR ($9='closed' AND c.status='closed'))`;
+        const draftSearch = actor.central && draftsPresent[0]?.present ? `OR EXISTS(SELECT 1 FROM "CreditoBorrador" d
+          WHERE ${phoneSql("d")}=c.phone AND d."clienteNombre" ILIKE $5)` : "";
+        const filtered = `${access.sql} AND ($4::text='' OR c.name ILIKE $5 OR c.phone LIKE $5
+          OR EXISTS(SELECT 1 FROM "Credito" k WHERE ${phoneSql("k")}=c.phone
+            AND ($1::boolean OR k.id=c."linkedCreditId") AND k."clienteNombre" ILIKE $5) ${draftSearch})
+          AND ($6::text='all' OR ($6='mine' AND c."assigneeKey"=$3) OR ($6='pending' AND c.status='pending') OR ($6='closed' AND c.status='closed'))`;
         const values = [...access.values, filters.search, `%${filters.search.replace(/[\\%_]/g, "\\$&")}%`, filters.filter];
         const rows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,
           (SELECT left(m.text,160) FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
-          FROM "AttentionConversation" c JOIN "Sede" s ON s.id=c."sedeId" WHERE ${filtered}
-          ORDER BY c."updatedAt" DESC,c.id LIMIT $10 OFFSET $11`, ...values, pageSize, (filters.page - 1) * pageSize);
-        const totals = await tx.$queryRawUnsafe<{total: number}[]>(`SELECT count(*)::integer AS total FROM "AttentionConversation" c JOIN "Sede" s ON s.id=c."sedeId" WHERE ${filtered}`, ...values);
+          FROM "AttentionConversation" c WHERE ${filtered}
+          ORDER BY c."updatedAt" DESC,c.id LIMIT $7 OFFSET $8`, ...values, pageSize, (filters.page - 1) * pageSize);
+        const totals = await tx.$queryRawUnsafe<{total: number}[]>(`SELECT count(*)::integer AS total FROM "AttentionConversation" c WHERE ${filtered}`, ...values);
         const metricRows = await tx.$queryRawUnsafe<{pending: number; open: number; closed: number; mine: number}[]>(`SELECT
           count(*) FILTER (WHERE c.status='pending')::integer AS pending, count(*) FILTER (WHERE c.status='open')::integer AS open,
-          count(*) FILTER (WHERE c.status='closed')::integer AS closed, count(*) FILTER (WHERE c."assigneeKey"=$6)::integer AS mine
-          FROM "AttentionConversation" c JOIN "Sede" s ON s.id=c."sedeId" WHERE ${access.sql}`, ...access.values);
+          count(*) FILTER (WHERE c.status='closed')::integer AS closed, count(*) FILTER (WHERE c."assigneeKey"=$3)::integer AS mine
+          FROM "AttentionConversation" c WHERE ${access.sql}`, ...access.values);
         const replies = await tx.$queryRawUnsafe<AttentionQuickReply[]>(`SELECT id,title,text,"approvedBy","approvedAt" FROM "AttentionQuickReply" ORDER BY title,id LIMIT 200`);
+        const team = await teamList(tx, actor);
+        const daily = await tx.$queryRawUnsafe<{date: string; count: number}[]>(`WITH days AS (
+          SELECT ((now() AT TIME ZONE 'America/Bogota')::date-i)::text AS date FROM generate_series(0,6) i
+        ), received AS (SELECT (m."sentAt" AT TIME ZONE 'America/Bogota')::date::text AS date,count(DISTINCT c.id)::integer AS count
+          FROM "AttentionMessage" m JOIN "AttentionConversation" c ON c.id=m."conversationId"
+          WHERE m.direction='inbound' AND ${access.sql}
+          AND m."sentAt">=((now() AT TIME ZONE 'America/Bogota')::date-6)::timestamp AT TIME ZONE 'America/Bogota'
+          GROUP BY (m."sentAt" AT TIME ZONE 'America/Bogota')::date)
+          SELECT days.date,COALESCE(received.count,0)::integer AS count FROM days LEFT JOIN received USING(date) ORDER BY days.date`, ...access.values);
+        const activeRows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,
+          (SELECT left(m.text,160) FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
+          FROM "AttentionConversation" c WHERE ${access.sql} AND c.status<>'closed' ORDER BY c."lastContactAt" DESC NULLS LAST,c."updatedAt" DESC,c.id LIMIT 5`, ...access.values);
+        const loads = await tx.$queryRawUnsafe<{key: string; assigned: number; pending: number}[]>(`SELECT c."assigneeKey" AS key,
+          count(*) FILTER(WHERE c.status<>'closed')::integer AS assigned,count(*) FILTER(WHERE c.status='pending')::integer AS pending
+          FROM "AttentionConversation" c WHERE ${access.sql} AND c."assigneeSellerId" IS NULL AND c."assigneeKey"='analyst:'||c."assigneeUserId"::text GROUP BY c."assigneeKey"`, ...access.values);
+        const activityRows = await tx.$queryRawUnsafe<{id: string; action: string; at: Date | string; conversationId: string; author: string}[]>(`SELECT a.id::text,a.action,a."createdAt" AS at,a."conversationId",u.nombre AS author
+          FROM "AttentionAudit" a JOIN "AttentionConversation" c ON c.id=a."conversationId" JOIN "Usuario" u ON u.id=a."userId"
+          WHERE ${access.sql} AND a.action=ANY($4::text[]) ORDER BY a."createdAt" DESC,a.id DESC LIMIT 12`, ...access.values,
+          ["CONVERSATION_TRANSFER", "CONVERSATION_CLAIM", "CONVERSATION_CLOSE", "CONVERSATION_REOPEN", "CONVERSATION_NOTE", "CONVERSATION_TASK", "CONVERSATION_COMPLETE_TASK", "CONVERSATION_LINK", "CONVERSATION_HUMAN_REQUEST", "DAPTA_SNAPSHOT_IMPORTED"]);
+        const titles: Record<string,string> = { CONVERSATION_TRANSFER: "Conversación asignada", CONVERSATION_CLAIM: "Atención iniciada", CONVERSATION_CLOSE: "Conversación finalizada", CONVERSATION_REOPEN: "Conversación reabierta", CONVERSATION_NOTE: "Nota añadida", CONVERSATION_TASK: "Recordatorio creado", CONVERSATION_COMPLETE_TASK: "Recordatorio completado", CONVERSATION_LINK: "Ficha vinculada", CONVERSATION_HUMAN_REQUEST: "Atención humana solicitada", DAPTA_SNAPSHOT_IMPORTED: "Conversación sincronizada" };
         const result = { schemaReady: true, conversations: rows.map(conversation), total: totals[0]?.total || 0, page: filters.page, pageSize,
-          metrics: metricRows[0], team: await teamList(tx, actor), branches: await branchList(tx, actor),
+          metrics: metricRows[0], team, branches: [], dashboard: {
+            daily: daily.map(day => ({ ...day, label: new Date(`${day.date}T12:00:00Z`).toLocaleDateString("es-CO", { weekday: "short", timeZone: "America/Bogota" }) })),
+            team: team.map(person => ({ key: person.key, name: person.name, assigned: loads.find(l => l.key === person.key)?.assigned || 0, pending: loads.find(l => l.key === person.key)?.pending || 0 })),
+            activeConversations: activeRows.map(conversation),
+            activity: activityRows.map(item => ({ id: item.id, title: titles[item.action], description: item.author, at: iso(item.at), conversationId: item.conversationId })),
+          },
           quickReplies: replies.map(reply => ({ ...reply, approvedAt: iso(reply.approvedAt) })), actor };
         await audit(tx, actor, "INBOX_VIEWED", null, { filter: filters.filter, page: filters.page, conversationIds: rows.map(r => r.id) });
         return result;
@@ -194,7 +218,7 @@ export function createAttentionStore(database: AttentionDatabase) {
     },
     async getAttentionDetail(actor: AttentionActor, id: string): Promise<AttentionDetail> {
       assertAttentionActor(actor);
-      return database.$transaction(async tx => {
+      return transaction(actor, async tx => {
         await requireSchema(tx); const row = await loadConversation(tx, actor, id);
         const messages = await tx.$queryRawUnsafe<{id: string; direction: "inbound" | "outbound"; text: string; sentAt: Date | string; author: string | null}[]>(`
           SELECT id,direction,text,"sentAt",author FROM "AttentionMessage" WHERE "conversationId"=$1::uuid ORDER BY "sentAt" DESC,id DESC LIMIT 501`, id);
@@ -204,32 +228,35 @@ export function createAttentionStore(database: AttentionDatabase) {
         await audit(tx, actor, "CONVERSATION_VIEWED", row.id, { financial: customer.financialAllowed, creditIds: customer.credits.map(c => c.id), studyIds: customer.studies.map(s => s.id) });
         return { conversation: conversation({ ...row, name: row.name === row.phone && customer.name ? customer.name : row.name }), messages: messages.slice(0,500).reverse().map(m => ({ ...m, sentAt: iso(m.sentAt) })),
           notes: notes.slice(0,300).reverse().map(n => ({ ...n, createdAt: iso(n.createdAt) })), tasks: tasks.slice(0,300).map(t => ({ ...t, dueAt: t.dueAt ? iso(t.dueAt) : null, completedAt: t.completedAt ? iso(t.completedAt) : null })),
-          customer, permissions: { manage: actor.admin || actor.supervisor || row.assigneeKey === actor.key,
-            claim: row.assigneeKey === null || row.assigneeKey === actor.key, canSend: false }, historyTruncated: row.historyTruncated || messages.length > 500,
+          customer, permissions: { manage: actor.central || row.assigneeKey === actor.key,
+            claim: actor.analyst && row.assigneeKey === actor.key, assign: actor.central, canSend: false }, historyTruncated: row.historyTruncated || messages.length > 500,
           notesTruncated: notes.length > 300, tasksTruncated: tasks.length > 300 };
       }, options);
     },
     async mutateAttentionConversation(actor: AttentionActor, id: string, input: AttentionMutation): Promise<void> {
       assertAttentionActor(actor); attentionUuid(id);
       const mutation = parseAttentionMutation(input as unknown as Record<string, unknown>);
-      await database.$transaction(async tx => {
+      await transaction(actor, async tx => {
         await requireSchema(tx); const row = await loadConversation(tx, actor, id, true);
         const request = await idempotent(tx, actor, mutation.requestId, { id, mutation });
         if (request.replay) return;
         if (row.version !== mutation.version) throw new AttentionError("La conversación cambió. Actualiza antes de continuar.", 409);
-        const manage = actor.admin || actor.supervisor || row.assigneeKey === actor.key;
-        if (mutation.action !== "claim" && !manage) throw new AttentionError("Toma la conversación antes de modificarla.", 403);
+        if (["transfer", "link", "unlink"].includes(mutation.action) && !actor.central) throw new AttentionError("La asignación y vinculación requieren administración central.", 403);
         const assignments: string[] = []; const values: unknown[] = [id];
         const set = (field: string, value: unknown, cast = "") => { values.push(value); assignments.push(`"${field}"=$${values.length}${cast}`); };
         if (mutation.action === "claim") {
-          if (row.assigneeKey && row.assigneeKey !== actor.key) throw new AttentionError("La conversación ya tiene asesor. Usa transferir.", 409);
+          if (!actor.analyst || row.assigneeKey !== actor.key || row.assigneeUserId !== actor.userId) throw new AttentionError("Solo el analista asignado puede iniciar la atención.", 403);
           set("assigneeKey", actor.key); set("assigneeName", actor.name); set("assigneeUserId", actor.userId); set("assigneeSellerId", actor.sellerId); set("status", "open"); set("closedAt", null);
         } else if (mutation.action === "transfer") {
-          const target = (await teamList(tx, actor)).find(person => person.key === mutation.assigneeKey && person.sedeIds.includes(row.sedeId));
-          if (!target) throw new AttentionError("El asesor no está activo en la sede de esta conversación.", 403);
+          const targets = await tx.$queryRawUnsafe<{key: string; name: string}[]>(`SELECT 'analyst:'||u.id::text AS key,u.nombre AS name
+            FROM "Usuario" u JOIN "Rol" r ON r.id=u."rolId" JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId"
+            WHERE u.id=$1 AND u.activo=true AND s.activa=true AND a.activo=true AND upper(trim(a.codigo))='FINSERPAY'
+            AND upper(trim(r.nombre))='ANALISTA_APROBACION' FOR SHARE OF u,r,s,a`, Number(mutation.assigneeKey!.split(":")[1]));
+          const target = targets[0];
+          if (!target) throw new AttentionError("El analista nominal no está activo o no está autorizado.", 403);
           set("assigneeKey", target.key); set("assigneeName", target.name);
-          set("assigneeUserId", target.key.startsWith("user:") ? Number(target.key.split(":")[1]) : null);
-          set("assigneeSellerId", target.key.startsWith("seller:") ? Number(target.key.split(":")[1]) : null); set("status", "open"); set("closedAt", null);
+          set("assigneeUserId", Number(target.key.split(":")[1]));
+          set("assigneeSellerId", null); set("status", "open"); set("closedAt", null);
         } else if (mutation.action === "close" || mutation.action === "reopen") {
           set("status", mutation.action === "close" ? "closed" : row.assigneeKey ? "open" : "pending");
           if (mutation.action === "close") assignments.push('"closedAt"=COALESCE("closedAt",now())');
@@ -252,17 +279,16 @@ export function createAttentionStore(database: AttentionDatabase) {
           ...(mutation.action === "transfer" ? { assigneeKey: mutation.assigneeKey } : {}), ...(mutation.action === "link" ? { creditId: mutation.creditId } : {}) });
       }, options);
     },
-    async createAttentionCase(actor: AttentionActor, input: {phone: string; name: string; sedeId: number; requestId: string}): Promise<{id: string}> {
+    async createAttentionCase(actor: AttentionActor, input: {phone: string; name: string; requestId: string}): Promise<{id: string}> {
       assertAttentionActor(actor); const phone = normalizeAttentionPhone(input.phone); const name = attentionText(input.name, 160);
-      if (!Number.isSafeInteger(input.sedeId) || input.sedeId < 1) throw new AttentionError("Sede inválida.");
-      return database.$transaction(async tx => {
+      if (!actor.central) throw new AttentionError("Solo administración central puede crear una gestión interna.", 403);
+      return transaction(actor, async tx => {
         await requireSchema(tx);
-        if (!(await branchList(tx, actor)).some(b => b.id === input.sedeId)) throw new AttentionError("Sede no autorizada.", 403);
-        const request = await idempotent(tx, actor, input.requestId, { action: "create", phone, name, sedeId: input.sedeId });
+        const request = await idempotent(tx, actor, input.requestId, { action: "create", phone, name });
         if (request.replay && request.resultId) { await loadConversation(tx, actor, request.resultId); return { id: request.resultId }; }
         const id = randomUUID();
-        await tx.$queryRawUnsafe(`INSERT INTO "AttentionConversation"(id,channel,phone,name,"sedeId",status,"assigneeKey","assigneeName","assigneeUserId","assigneeSellerId")
-          VALUES($1::uuid,'internal',$2,$3,$4,'open',$5,$6,$7,$8) RETURNING id`, id, phone, name, input.sedeId, actor.key, actor.name, actor.userId, actor.sellerId);
+        await tx.$queryRawUnsafe(`INSERT INTO "AttentionConversation"(id,channel,phone,name,status)
+          VALUES($1::uuid,'internal',$2,$3,'pending') RETURNING id`, id, phone, name);
         await tx.$queryRawUnsafe(`UPDATE "AttentionRequest" SET "resultId"=$3::uuid WHERE "actorKey"=$1 AND "requestId"=$2::uuid RETURNING "requestId"`, actor.key, input.requestId, id);
         await audit(tx, actor, "INTERNAL_CASE_CREATED", id, { requestId: input.requestId }); return { id };
       }, options);
@@ -270,23 +296,23 @@ export function createAttentionStore(database: AttentionDatabase) {
     async saveAttentionQuickReply(actor: AttentionActor, input: {title: string; text: string; requestId: string}): Promise<void> {
       assertAttentionActor(actor); if (!actor.central) throw new AttentionError("La aprobación de respuestas requiere administración central.", 403);
       const title = attentionText(input.title, 100); const text = attentionText(input.text, 4000);
-      await database.$transaction(async tx => {
+      await transaction(actor, async tx => {
         await requireSchema(tx); if ((await idempotent(tx, actor, input.requestId, { action: "approve_reply", title, text })).replay) return;
         const id = randomUUID();
         await tx.$queryRawUnsafe(`INSERT INTO "AttentionQuickReply"(id,title,text,"approvedBy","approvedByUserId") VALUES($1::uuid,$2,$3,$4,$5) RETURNING id`, id, title, text, actor.name, actor.userId);
         await audit(tx, actor, "QUICK_REPLY_APPROVED", null, { replyId: id, requestId: input.requestId });
       }, options);
     },
-    async importAttentionSnapshots(actor: AttentionActor, sedeId: number, snapshots: DaptaConversationSnapshot[]): Promise<{imported: number}> {
+    async importAttentionSnapshots(actor: AttentionActor, snapshots: DaptaConversationSnapshot[]): Promise<{imported: number; messagesImported: number}> {
       assertAttentionActor(actor); if (!actor.central) throw new AttentionError("Solo administración central puede sincronizar Dapta.", 403);
       if (!Array.isArray(snapshots) || snapshots.length > 100) throw new AttentionError("Sincroniza un máximo de cien conversaciones por solicitud.");
-      return database.$transaction(async tx => {
-        await requireSchema(tx); if (!(await branchList(tx, actor)).some(b => b.id === sedeId)) throw new AttentionError("Sede no autorizada.", 403);
-        let imported = 0;
+      return transaction(actor, async tx => {
+        await requireSchema(tx);
+        let imported = 0; let messagesImported = 0;
         // Stable lock ordering avoids two concurrent imports locking chats in opposite order.
         for (const snapshot of [...snapshots].sort((a, b) => a.externalId.localeCompare(b.externalId))) {
-          const externalId = attentionText(snapshot.externalId, 240); const phone = normalizeAttentionPhone(snapshot.phone);
-          const name = snapshot.name ? attentionText(snapshot.name, 160) : phone;
+          const externalId = attentionText(snapshot.externalId, 240); const phone = snapshot.phone === null ? null : normalizeAttentionPhone(snapshot.phone);
+          const name = snapshot.name ? attentionText(snapshot.name, 160) : phone || "Contacto de WhatsApp";
           if (!["unknown", "ai", "human"].includes(snapshot.mode) || !Array.isArray(snapshot.messages) || snapshot.messages.length > 1000) throw new AttentionError("Conversación de Dapta inválida.");
           const historyCursor = snapshot.historyCursor;
           if (historyCursor !== null && (typeof historyCursor !== "string" || !historyCursor || historyCursor.length > 4096 || [...historyCursor].some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127))) throw new AttentionError("Punto de sincronización de Dapta inválido.");
@@ -301,28 +327,30 @@ export function createAttentionStore(database: AttentionDatabase) {
           });
           await tx.$queryRawUnsafe(`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended($1::text,0::bigint))`, `attention:dapta:${externalId}`);
           const existing = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT * FROM "AttentionConversation" WHERE "externalId"=$1 FOR UPDATE`, externalId);
-          if (existing[0] && (existing[0].sedeId !== sedeId || existing[0].phone !== phone)) throw new AttentionError("La conversación ya está vinculada a otra sede o teléfono. Requiere revisión.", 409);
+          if (existing[0]?.phone && phone && existing[0].phone !== phone) throw new AttentionError("El teléfono de la conversación cambió. Requiere revisión.", 409);
           const id = existing[0]?.id || randomUUID();
-          if (!existing.length) await tx.$queryRawUnsafe(`INSERT INTO "AttentionConversation"(id,"externalId",channel,phone,name,"sedeId",mode,"lastContactAt","historyTruncated","daptaMessagesCursor")
-            VALUES($1::uuid,$2,'whatsapp',$3,$4,$5,$6,$7::timestamptz,$8,$9) RETURNING id`, id, externalId, phone, name, sedeId, snapshot.mode, contact, snapshot.historyTruncated, historyCursor);
+          if (!existing.length) await tx.$queryRawUnsafe(`INSERT INTO "AttentionConversation"(id,"externalId",channel,phone,name,mode,"lastContactAt","historyTruncated","daptaMessagesCursor")
+            VALUES($1::uuid,$2,'whatsapp',$3,$4,$5,$6::timestamptz,$7,$8) RETURNING id`, id, externalId, phone, name, snapshot.mode, contact, snapshot.historyTruncated, historyCursor);
           const inserted = normalizedMessages.length ? await tx.$queryRawUnsafe<{direction: string; sentAt: Date | string}[]>(`
             INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author)
             SELECT m.id,$1::uuid,m."externalId",m.direction,m.text,m."sentAt",m.author FROM jsonb_to_recordset($2::jsonb)
               AS m(id uuid,"externalId" text,direction text,text text,"sentAt" timestamptz,author text)
             ON CONFLICT("conversationId","externalId") DO NOTHING RETURNING direction,"sentAt"`, id, JSON.stringify(normalizedMessages)) : [];
           const newMessages = inserted.length;
+          messagesImported += newMessages;
           const reopen = Boolean(existing[0]?.status === "closed" && inserted.some(m => m.direction === "inbound" && new Date(m.sentAt).getTime() > new Date(existing[0].closedAt || existing[0].updatedAt).getTime()));
-          const mode = existing[0]?.mode === "human_requested" || snapshot.mode === "unknown" ? existing[0]?.mode || snapshot.mode : snapshot.mode;
+          const mode = existing[0]?.mode === "human_requested" ? "human_requested" : snapshot.mode;
           const newer = contact && (!existing[0]?.lastContactAt || contact.getTime() > new Date(existing[0].lastContactAt).getTime());
-          if (existing.length && (newMessages || newer || existing[0].historyTruncated !== snapshot.historyTruncated || mode !== existing[0].mode || existing[0].daptaMessagesCursor !== historyCursor)) {
+          const resolvedPhone = phone || existing[0]?.phone || null;
+          if (existing.length && (newMessages || newer || existing[0].phone !== resolvedPhone || existing[0].historyTruncated !== snapshot.historyTruncated || mode !== existing[0].mode || existing[0].daptaMessagesCursor !== historyCursor)) {
             await tx.$queryRawUnsafe(`UPDATE "AttentionConversation" SET "lastContactAt"=GREATEST("lastContactAt",$2::timestamptz),
               "historyTruncated"=$3,mode=$4,status=CASE WHEN $5::boolean THEN 'pending' ELSE status END,"closedAt"=CASE WHEN $5::boolean THEN NULL ELSE "closedAt" END,
-              "daptaMessagesCursor"=$6,version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`, id, contact, snapshot.historyTruncated, mode, reopen, historyCursor);
+              "daptaMessagesCursor"=$6,phone=$7,version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`, id, contact, snapshot.historyTruncated, mode, reopen, historyCursor, resolvedPhone);
           }
           if (!existing.length || newMessages || newer) imported++;
-          await audit(tx, actor, "DAPTA_SNAPSHOT_IMPORTED", id, { newMessages, sedeId });
+          await audit(tx, actor, "DAPTA_SNAPSHOT_IMPORTED", id, { newMessages });
         }
-        return { imported };
+        return { imported, messagesImported };
       }, options);
     },
   };
@@ -332,7 +360,7 @@ async function store() { const { default: prisma } = await import("./prisma"); r
 export async function getAttentionInbox(actor: AttentionActor, filters: AttentionFilters) { return (await store()).getAttentionInbox(actor, filters); }
 export async function getAttentionDetail(actor: AttentionActor, id: string) { return (await store()).getAttentionDetail(actor, id); }
 export async function mutateAttentionConversation(actor: AttentionActor, id: string, mutation: AttentionMutation) { return (await store()).mutateAttentionConversation(actor, id, mutation); }
-export async function createAttentionCase(actor: AttentionActor, input: {phone: string; name: string; sedeId: number; requestId: string}) { return (await store()).createAttentionCase(actor, input); }
+export async function createAttentionCase(actor: AttentionActor, input: {phone: string; name: string; requestId: string}) { return (await store()).createAttentionCase(actor, input); }
 export async function saveAttentionQuickReply(actor: AttentionActor, input: {title: string; text: string; requestId: string}) { return (await store()).saveAttentionQuickReply(actor, input); }
-export async function importAttentionSnapshots(actor: AttentionActor, sedeId: number, snapshots: DaptaConversationSnapshot[]) { return (await store()).importAttentionSnapshots(actor, sedeId, snapshots); }
-export async function getAttentionHistoryCursors(actor: AttentionActor, sedeId: number) { return (await store()).getAttentionHistoryCursors(actor, sedeId); }
+export async function importAttentionSnapshots(actor: AttentionActor, snapshots: DaptaConversationSnapshot[]) { return (await store()).importAttentionSnapshots(actor, snapshots); }
+export async function getAttentionHistoryCursors(actor: AttentionActor) { return (await store()).getAttentionHistoryCursors(actor); }

@@ -141,6 +141,7 @@ export default function AdminSidebar({
       label: "Aprobaciones",
       items: [
         { href: "/dashboard/aprobaciones", icon: LayoutDashboard, label: "Aprobaciones" },
+        { href: "/dashboard/atencion", icon: MessageCircle, label: "Atención" },
         { href: "/dashboard/aprobaciones/solicitudes", icon: ClipboardList, label: "Solicitudes" },
         { href: "/dashboard/aprobaciones/cambio-imei", icon: Smartphone, label: "Cambio de IMEI" },
         { href: "/dashboard/aprobaciones/enrolamiento", icon: ShieldCheck, label: "Enrolamiento iPhone" },
@@ -172,7 +173,9 @@ export default function AdminSidebar({
         ...(adminCentral ? [{ href: "/dashboard/aprobaciones", icon: ShieldCheck, label: "Aprobaciones" }] : []),
         ...(!adminCentral && isAdminRole(rolUsuario) ? [{ href: "/dashboard/pendientes", icon: ClipboardList, label: "PENDIENTES" }] : []),
         { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
-        { href: "/dashboard/atencion", icon: MessageCircle, label: "Atención" },
+        ...(adminCentral && isAdminRole(rolUsuario)
+          ? [{ href: "/dashboard/atencion", icon: MessageCircle, label: "Atención" }]
+          : []),
         { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
         ...(isAdminRole(rolUsuario)
           ? [{ href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" }]

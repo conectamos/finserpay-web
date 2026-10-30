@@ -106,3 +106,19 @@ test("metadatos usan text[] OID1009 y se verifican con los parsers reales de nod
     for (const name of ["columns", "foreignColumns"]) assert.equal(fields.find(field => field.name === name)?.dataTypeID, 1009, name);
   }
 });
+
+test("upgrade permite sede y teléfono nullable conservando chats y asignaciones históricas", async t => {
+  const { database, install } = await fixture(t);
+  await database.exec(setupSql);
+  await database.exec(`INSERT INTO "Sede" VALUES(1); INSERT INTO "Usuario" VALUES(1); INSERT INTO "Vendedor" VALUES(1);
+    INSERT INTO "AttentionConversation"(id,channel,phone,name,"sedeId","assigneeKey","assigneeUserId","assigneeSellerId")
+      VALUES('00000000-0000-4000-8000-000000000001','whatsapp','+573001234567','Histórico',1,'seller:1',1,1);
+    ALTER TABLE "AttentionConversation" ALTER COLUMN "sedeId" SET NOT NULL, ALTER COLUMN phone SET NOT NULL;`);
+  const before = (await database.query('SELECT * FROM "AttentionConversation"')).rows;
+  await install();
+  assert.deepEqual((await database.query('SELECT * FROM "AttentionConversation"')).rows, before);
+  await database.query(`INSERT INTO "AttentionConversation"(id,channel,phone,name,"sedeId") VALUES('00000000-0000-4000-8000-000000000002','whatsapp',null,'Contacto de WhatsApp',null)`);
+  const columns = (await database.query(`SELECT column_name,is_nullable FROM information_schema.columns WHERE table_schema='public'
+    AND table_name='AttentionConversation' AND column_name IN ('phone','sedeId') ORDER BY column_name`)).rows;
+  assert.deepEqual(columns,[{column_name:"phone",is_nullable:"YES"},{column_name:"sedeId",is_nullable:"YES"}]);
+});

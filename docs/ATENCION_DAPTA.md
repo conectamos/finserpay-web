@@ -51,7 +51,7 @@ El cliente implementa MCP Streamable HTTP: `initialize`, `notifications/initiali
 
 Se consulta `list_conversations` con el agente configurado, canales WhatsApp reconocidos, ventana de hasta 365 días, límite de 25 y cursor opcional. La ventana filtra por última actividad y no incluye conversaciones sin mensajes. El servidor devuelve `conversations`, `next_cursor`, `count`, `total`, `window`, `workspace_id` e indicadores de paginación. El adaptador no presenta el total del proveedor como el total de toda la historia.
 
-Campos utilizados: `id`, `text_agent_id`, `channel_type`, `channel_identifier`, `last_message_at`. Las filas de otro agente, canal, teléfono inválido o ID repetido se descartan y se cuentan en `skipped`. No se utiliza el matching aproximado del proveedor por últimos diez dígitos.
+Campos utilizados: `id`, `text_agent_id`, `channel_type`, `channel_identifier`, `last_message_at`. Los identificadores Meta opacos con formato BSUID (dos letras de país, punto e identificador alfanumérico) se importan con teléfono nulo; nunca se interpretan como números del cliente. Las filas de otro agente, canal, identificador inválido o ID repetido se descartan y se cuentan en `skipped`. No se utiliza el matching aproximado del proveedor por últimos diez dígitos.
 
 ### Historial
 
@@ -61,9 +61,9 @@ El proveedor entrega mensajes desde los más antiguos. Para no repetir perpetuam
 
 Los checkpoints no se muestran en el Inbox ni en la ficha. Ante un error opaco del proveedor no se borran ni se reinician automáticamente: podría ser un problema de autorización, no de cursor. Un reinicio por cursor rechazado requiere comprobar la causa y volver a leer desde el principio con deduplicación.
 
-Se admiten mensajes externos `lead`, `agent` y `followup`, exclusivamente de texto y con ID, dirección y fecha válidos. Las fechas deben indicar `Z` u offset explícito; se admiten el separador y microsegundos de PostgreSQL sin inferir la zona del servidor. Los textos mayores a 16.000 caracteres, incluso después del saneado, se omiten para respetar el límite de almacenamiento. Se eliminan duplicados por ID y se ordenan por fecha e ID. Los mensajes salientes pendientes, fallidos o con estado no confirmado se omiten, porque el modelo de pantalla no contiene un campo de entrega que permita representarlos de manera inequívoca.
+Se admiten mensajes externos `lead`, `agent` y `followup`, con texto o plantilla y con ID, dirección y fecha válidos. Los adjuntos de imagen, audio, video, documento y sticker se representan mediante una etiqueta visible, sin importar sus URLs privadas. Las fechas deben indicar `Z` u offset explícito; se admiten el separador y microsegundos de PostgreSQL sin inferir la zona del servidor. Los textos mayores a 16.000 caracteres, incluso después del saneado, se omiten para respetar el límite de almacenamiento. Se eliminan duplicados por ID y se ordenan por fecha e ID. Los mensajes salientes pendientes, fallidos o con estado no confirmado se omiten, porque el modelo de pantalla no contiene un campo de entrega que permita representarlos de manera inequívoca.
 
-`historyTruncated=true` indica páginas restantes, cursor repetido, adjuntos omitidos o contenido inválido/omitido. No se importan archivos, audios, fotos, herramientas, resultados de herramientas, estados de sesión, variables, URLs privadas de herramientas ni metadatos completos. El historial es de texto parcial y no constituye un archivo completo de WhatsApp.
+`historyTruncated=true` indica páginas restantes, cursor repetido o contenido inválido/omitido. No se importan archivos, audios, fotos, herramientas, resultados de herramientas, estados de sesión, variables, URLs privadas de herramientas ni metadatos completos. El historial es de texto parcial y no constituye un archivo completo de WhatsApp.
 
 No se inventa el nombre del contacto. `kind=agent` no distingue de forma fiable IA y asesor: el autor se deja sin identificar. `llmdisabled=true` no demuestra que una persona aceptó el chat; se representa como modo desconocido, nunca como transferencia confirmada.
 
@@ -72,10 +72,10 @@ No se inventa el nombre del contacto. `kind=agent` no distingue de forma fiable 
 - Respuestas limitadas a 2 MiB; 8 segundos por petición y 55 segundos por operación completa; máximo tres lecturas concurrentes de historial.
 - No hay mensajes, consultas ni credenciales en logs del adaptador. Los errores se traducen a mensajes controlados con `AttentionDaptaError`.
 - Los textos se reducen a campos permitidos y se ocultan patrones detectables: clave configurada, Bearer, parámetros de credenciales, contraseñas etiquetadas, OTP/PIN/CVV/códigos etiquetados y secuencias de 13–19 dígitos compatibles con números sensibles.
-- Este saneado es heurístico: no es un detector universal de secretos. Puede ocultar también secuencias largas legítimas. No se conservan los textos originales ocultados en tablas auxiliares. No habilita por sí solo el acceso: el módulo debe aplicar roles, ámbito de sede y auditoría antes de consultar la ficha o devolver mensajes.
+- Este saneado es heurístico: no es un detector universal de secretos. Puede ocultar también secuencias largas legítimas. No se conservan los textos originales ocultados en tablas auxiliares. No habilita por sí solo el acceso: el módulo debe aplicar roles, asignación nominal al analista y auditoría antes de consultar la ficha o devolver mensajes.
 - La sincronización nunca modifica registros financieros, clientes, contratos, cuotas ni pagos. La vinculación a una ficha debe reutilizar los identificadores existentes y verificar coincidencias de teléfono dentro del ámbito autorizado; una coincidencia ambigua necesita resolución humana.
 
-## Configuración pendiente de aplicación
+## Configuración de servidor
 
 Configurar exclusivamente en el entorno del servidor:
 
@@ -91,18 +91,17 @@ Antes de habilitar la sincronización en un despliegue:
 
 1. Crear o seleccionar una clave de servicio en el panel oficial Dapta y guardarla en el gestor de secretos del servidor. No revocar ni sustituir las claves de otros procesos.
 2. Confirmar workspace, agente y línea existentes. No reconectar la línea para obtener acceso de lectura.
-3. Verificar una consulta autenticada de lectura y una sin autenticación contra el módulo; verificar también aislamiento de sedes y vendedor.
+3. Verificar una consulta autenticada de lectura y una sin autenticación contra el módulo; verificar también aislamiento por analista asignado y rechazo de cuentas comerciales.
 4. Confirmar que el contrato de herramientas entregado a esa clave devuelve `workspace_id` y los campos validados. La aplicación falla cerrada ante diferencias; adaptar solo con evidencia oficial, no eliminando la verificación.
 5. Sincronizar por páginas. Un cursor solo vale para el mismo conjunto de filtros; ante un cursor rechazado, comenzar otra consulta desde la primera página. Esto no duplica mensajes si la persistencia conserva la clave externa única.
 
 Para respuestas y traspasos desde FINSER PAY falta un contrato público de Dapta para envío humano, asignación, cierre, confirmaciones e idempotencia. También falta una correspondencia autorizada entre usuarios FINSER PAY y miembros Dapta. Hasta confirmar estas capacidades, la acción real debe ejecutarse en la interfaz oficial del proveedor. No usar los tokens de OTP para saltarse Dapta.
 
-## Activación pendiente en producción
+## Activación en producción
 
-En Railway, entorno `production`, servicio `finserpay-web`, ya están guardados `DAPTA_ATTENTION_WORKSPACE_ID` y `DAPTA_ATTENTION_AGENT_ID`, correspondientes al workspace FINSERPAY y al agente Diana verificados. La única variable pendiente de esta integración es `DAPTA_MCP_API_KEY`. Esto no acredita una conexión probada ni una importación realizada.
+En Railway, entorno `production`, servicio `finserpay-web`, están configuradas las tres variables de lectura. La clave `FINSER PAY Atención producción` fue creada y guardada con autorización del propietario. El diagnóstico autenticado confirmó conversaciones del canal `meta_whatsapp` y mensajes reales; no faltan credenciales para estas dos consultas.
 
-Para obtenerla, el propietario del workspace debe abrir **Dapta → menú de cuenta (correo al pie de la barra lateral) → MCP Access → Advanced: connect with an API key → Workspace FINSERPAY → Create API key**. Puede nombrarla `FINSER PAY Atención producción`. La clave se muestra una sola vez: copiarla directamente a la variable privada `DAPTA_MCP_API_KEY` de ese servicio Railway y aplicar el cambio con un nuevo despliegue. No publicarla en el chat, repositorio ni variables `NEXT_PUBLIC_`. Después del despliegue, comprobar una sincronización autorizada de lectura; no reconectar ni cambiar la línea de WhatsApp. [Instrucciones oficiales para crear la clave](https://docs.dapta.ai/dapta-mcp/setup/mint-your-api-key).
-
+La importación se ejecuta desde Atención por administración central, en una bandeja global sin obligar a elegir una sede. El navegador recorre los lotes y muestra su progreso; los responsables se asignan después, exclusivamente a usuarios nominales con rol `ANALISTA_APROBACION`. Un analista consulta solamente sus chats asignados. No se publica la clave en el navegador ni se cambian el número, el proveedor, los webhooks de Meta o las automatizaciones existentes.
 ## Webhook de análisis: alcance real
 
 Dapta documenta un POST HTTPS al finalizar una conversación, con tiempo límite de diez segundos y este conjunto de campos:
@@ -164,7 +163,7 @@ Las respuestas rápidas requieren aprobación explícita de un usuario autorizad
 
 `node --test tests/atencion-dapta.test.mjs`
 
-17 pruebas con transportes simulados: configuración incompleta, protocolo MCP, JSON/SSE fragmentado, alcance de workspace/agente/canal/teléfono, paginación, deduplicación, límites de transporte y almacenamiento, fechas con zona explícita, secretos detectables, estados de envío, errores, cancelación por timeout, renovación limitada de sesión y continuidad de un historial de 650 mensajes con 75 nuevos posteriores. No usan red ni datos de clientes.
+20 pruebas con transportes simulados: configuración incompleta, protocolo MCP, JSON/SSE fragmentado, alcance de workspace/agente/canal/teléfono, paginación, deduplicación, límites de transporte y almacenamiento, fechas con zona explícita, secretos detectables, estados de envío, errores, cancelación por timeout, renovación limitada de sesión y continuidad de un historial de 650 mensajes con 75 nuevos posteriores. Incluyen BSUID de Meta y plantillas/adjuntos sin URLs privadas. No usan red ni datos de clientes.
 
 ## Fuentes oficiales
 

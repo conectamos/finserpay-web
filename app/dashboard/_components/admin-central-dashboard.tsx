@@ -69,7 +69,7 @@ export default function AdminCentralDashboard({ adminCentral, aliadoNombre, data
     const operation: [
         string,
         string
-    ][] = [...(adminCentral ? [["Aprobaciones", "/dashboard/aprobaciones"]] as [string,string][] : isAdminRole(rolUsuario) ? [["Pendientes", "/dashboard/pendientes"]] as [string,string][] : []), ...(isAdminRole(rolUsuario) ? [["Nueva venta", "/dashboard/creditos?mode=create-client"]] as [string,string][] : []), ["Solicitudes", "/dashboard/solicitudes"], ["Atención", "/dashboard/atencion"], ["Créditos", "/dashboard/creditos"], ...(isAdminRole(rolUsuario) ? [["Simulador", "/dashboard/creditos?mode=simulator"]] as [string,string][] : []), ...(adminCentral ? [["Créditos masivos", "/dashboard/creditos-masivos"]] as [
+    ][] = [...(adminCentral ? [["Aprobaciones", "/dashboard/aprobaciones"]] as [string,string][] : isAdminRole(rolUsuario) ? [["Pendientes", "/dashboard/pendientes"]] as [string,string][] : []), ...(isAdminRole(rolUsuario) ? [["Nueva venta", "/dashboard/creditos?mode=create-client"]] as [string,string][] : []), ["Solicitudes", "/dashboard/solicitudes"], ...(adminCentral && isAdminRole(rolUsuario) ? [["Atención", "/dashboard/atencion"]] as [string,string][] : []), ["Créditos", "/dashboard/creditos"], ...(isAdminRole(rolUsuario) ? [["Simulador", "/dashboard/creditos?mode=simulator"]] as [string,string][] : []), ...(adminCentral ? [["Créditos masivos", "/dashboard/creditos-masivos"]] as [
             string,
             string
         ][] : []), ["Recaudos", "/dashboard/abonos"], ["Pagos aliado", "/dashboard/pagos-aliados"], ["Clientes", "/dashboard/clientes"], ...(adminCentral ? [["Excepciones por mora", "/dashboard/excepciones-mora"]] as [

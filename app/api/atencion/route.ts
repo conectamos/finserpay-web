@@ -1,7 +1,7 @@
 import { getAttentionAccess, parseAttentionFilters } from "@/lib/atencion-core";
 import { createAttentionCase, getAttentionInbox } from "@/lib/atencion-storage";
 import { attentionIntegrationStatus } from "@/lib/atencion-dapta";
-import { assertAttentionOrigin, attentionHttpError, attentionId, attentionJson, attentionString, attentionUuid, readAttentionJson } from "@/lib/atencion-http";
+import { assertAttentionOrigin, attentionHttpError, attentionJson, attentionString, attentionUuid, readAttentionJson } from "@/lib/atencion-http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const result = await createAttentionCase(actor, {
       phone: attentionString(body.phone, "Teléfono", 40),
       name: attentionString(body.name, "Nombre", 120),
-      sedeId: attentionId(body.sedeId), requestId: attentionUuid(body.requestId),
+      requestId: attentionUuid(body.requestId),
     });
     return attentionJson(result, 201);
   } catch (error) { return attentionHttpError(error); }

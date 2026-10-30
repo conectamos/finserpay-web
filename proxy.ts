@@ -22,6 +22,7 @@ const LEGACY_PAGE_PREFIXES = [
 ];
 
 const ADMIN_ONLY_DASHBOARD_PREFIXES = [
+  "/dashboard/atencion",
   "/dashboard/comisiones",
   "/dashboard/cartera",
   "/dashboard/riesgo-referencia",
@@ -76,6 +77,7 @@ const PROTECTED_API_PREFIXES = [
 ];
 
 const ADMIN_ONLY_API_PREFIXES = [
+  "/api/atencion",
   "/api/admin/comisiones",
   "/api/alertas",
   "/api/arqueo",
@@ -146,6 +148,10 @@ export function proxy(request: NextRequest) {
   const hasSharedApprovalAccess = Boolean(request.cookies.get(APPROVAL_SHARED_COOKIE_NAME)?.value);
   const approvalApi = pathMatches(pathname, ["/api/aprobaciones"]);
   const approvalPage = pathMatches(pathname, ["/dashboard/aprobaciones"]);
+  // Attention keeps its own server-side nominal/central authorization. It is
+  // not an approval route: approval links must not inherit access to the CRM.
+  const attentionApi = pathMatches(pathname, ["/api/atencion"]);
+  const attentionPage = pathMatches(pathname, ["/dashboard/atencion"]);
   const approvalAnalystRetryReleaseApi =
     request.method === "POST" && (
       pathname === "/api/creditos/datacredito/admin/liberaciones/buscar" ||
@@ -157,6 +163,7 @@ export function proxy(request: NextRequest) {
     ["GET", "POST"].includes(request.method) && APPROVAL_ANALYST_WELCOME_VOICE_ROUTE.test(pathname);
   const approvalAnalystApi =
     approvalApi ||
+    attentionApi ||
     approvalAnalystRetryReleaseApi ||
     approvalAnalystSolicitudesApi ||
     approvalAnalystWelcomeVoiceApi ||
@@ -200,7 +207,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (hasApprovalAnalystSession && pathname !== "/aliados" && !approvalPage) {
+  if (hasApprovalAnalystSession && pathname !== "/aliados" && !approvalPage && !attentionPage) {
     return redirectToAnalystCenter(request);
   }
 
@@ -212,6 +219,7 @@ export function proxy(request: NextRequest) {
     if (
       !hasSession &&
       !(approvalPage && hasApprovalAnalystSession) &&
+      !(attentionPage && hasApprovalAnalystSession) &&
       !(approvalPage && hasApprovalAccess)
     ) {
       return redirectToLogin(request);

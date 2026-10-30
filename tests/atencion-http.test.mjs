@@ -88,7 +88,7 @@ test("create internal case ignores actor spoofing and never calls provider", asy
   const h = harness(); const requestId = randomUUID();
   const response = await h.POST(request({ phone: "3000000000", name: "Test fixture", sedeId: 1, requestId, userId: 999, central: true, channel: "whatsapp", text: "do not send" }));
   assert.equal(response.status, 201);
-  assert.deepEqual(h.calls.create, [[actor, { phone: "3000000000", name: "Test fixture", sedeId: 1, requestId }]]);
+  assert.deepEqual(h.calls.create, [[actor, { phone: "3000000000", name: "Test fixture", requestId }]]);
   assert.equal(h.calls.fetch.length, 0); privateResponse(response);
 });
 
@@ -119,7 +119,7 @@ test("only central may approve replies or synchronize; provider is not called on
     assert.equal((await h.POST(request({ sedeId: 1 }))).status, 403);
     assert.equal(h.calls.fetch.length + h.calls.quick.length, 0);
   }
-  for (const [customInbox, status] of [[{ ...inbox, schemaReady: false }, 503], [{ ...inbox, branches: [] }, 403]]) {
+  for (const [customInbox, status] of [[{ ...inbox, schemaReady: false }, 503]]) {
     const h = harness("app/api/atencion/sync/route.ts", { inbox: customInbox });
     assert.equal((await h.POST(request({ sedeId: 1 }))).status, status); assert.equal(h.calls.fetch.length, 0);
   }
@@ -127,9 +127,9 @@ test("only central may approve replies or synchronize; provider is not called on
 
 test("sync imports only confirmed provider data; failure never persists or leaks provider details", async () => {
   const h = harness("app/api/atencion/sync/route.ts");
-  const response = await h.POST(request({ sedeId: 1, cursor: "previous" }));
+  const response = await h.POST(request({ cursor: "previous" }));
   assert.equal(response.status, 200); assert.deepEqual(h.calls.fetch, [{ cursor: "previous", historyCursors: {} }]);
-  assert.deepEqual(h.calls.import, [[actor, 1, []]]);
+  assert.deepEqual(h.calls.import, [[actor, []]]);
   assert.deepEqual(await response.json(), { imported: 0, skipped: 0, nextCursor: "opaque" });
   const failed = harness("app/api/atencion/sync/route.ts", { providerError: new Error("secret token SQL phone private") });
   const error = await failed.POST(request({ sedeId: 1 }));

@@ -80,6 +80,9 @@ function visibleText(value: unknown, secret: string): string | null {
     .replace(/\bBearer\s+[^\s"<>]+/gi, "Bearer [credencial omitida]")
     .replace(/([?&](?:x-api-key|api[_-]?key|access[_-]?token|token|secret|password|signature)=)[^\s&#"<>]+/gi, "$1[credencial omitida]")
     .replace(/\b((?:api[_-]?key|access[_-]?token|password|contraseña)["']?\s*[:=]\s*["']?)[^\s,;"']+/gi, "$1[dato omitido]")
+    .replace(/\b((?:password|contraseña)\s+(?:es|:|=)\s*[*_"']?)[^\s,;"'*_]+/gi, "$1[dato omitido]")
+    .replace(/\b\d{3,10}\b(?=[*_"']?\s+(?:es|son)\s+(?:tu|su|el)\s+(?:otp|pin|c[oó]digo\s+de\s+(?:seguridad|verificaci[oó]n|validaci[oó]n|autenticaci[oó]n|acceso))\b)/gi, "[dato omitido]")
+    .replace(/\b((?:otp|pin|cvv|cvc|c[oó]digo\s+de\s+(?:seguridad|verificaci[oó]n|validaci[oó]n|autenticaci[oó]n|acceso))\s*(?:es|:|=)?\s*[*_"']+)[\d -]{3,12}\b/gi, "$1[dato omitido]")
     .replace(/\b((?:otp|pin|cvv|cvc|c[oó]digo(?:\s+de\s+(?:seguridad|verificaci[oó]n|validaci[oó]n|autenticaci[oó]n|acceso))?)(?:\s+del\s+contrato)?\s*(?:es|:|=)?\s*["']?)[\d -]{3,12}\b/gi, "$1[dato omitido]")
     .replace(/\b(?:\d[ -]?){12,18}\d\b/g, "[número sensible omitido]")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
@@ -241,7 +244,12 @@ function conversationIdentity(row: JsonObject | null, config: Config) {
   if (!row || row.text_agent_id !== config.agent || !WHATSAPP_CHANNELS.has(String(row.channel_type))) return null;
   const id = identifier(row.id);
   const normalizedPhone = phone(row.channel_identifier);
-  return id && normalizedPhone ? { id, phone: normalizedPhone, channel: row.channel_type } : null;
+  // Meta also supplies opaque WhatsApp identifiers. Preserve the conversation
+  // without ever interpreting that identifier as a customer's phone number.
+  const opaqueMeta = row.channel_type === "meta_whatsapp" && typeof row.channel_identifier === "string"
+    && /^[A-Z]{2}\.[A-Za-z0-9]{1,128}$/.test(row.channel_identifier);
+  return id && (normalizedPhone || opaqueMeta)
+    ? { id, phone: normalizedPhone, channel: row.channel_type, providerIdentity: row.channel_identifier } : null;
 }
 
 export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = {}) {
@@ -303,19 +311,25 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
             validateWorkspace(detail, config);
             detailRow = object(detail.conversation);
             const actual = conversationIdentity(detailRow, config);
-            if (!actual || actual.id !== identity.id || actual.phone !== identity.phone || actual.channel !== identity.channel) {
+            if (!actual || actual.id !== identity.id || actual.phone !== identity.phone || actual.channel !== identity.channel
+              || (identity.phone === null && actual.providerIdentity !== identity.providerIdentity)) {
               throw new AttentionDaptaError("SCOPE_MISMATCH", 502, "Dapta devolvió una conversación diferente a la solicitada. No se importaron los cambios.");
             }
             if (!Array.isArray(detail.messages) || detail.messages.length > MESSAGE_LIMIT) invalidResponse();
             for (const entry of detail.messages) {
               const message = object(entry);
               if (!message || !["lead", "agent", "followup"].includes(String(message.kind))) continue;
-              if (message.content_type !== "text") { historyTruncated = true; continue; }
               // The public UI model has no delivery-state field: do not portray a failed/pending send as a reply.
               if (message.direction === "outbound" && !["sent", "delivered", "read"].includes(String(message.status))) { historyTruncated = true; continue; }
               const id = identifier(message.id);
               const sentAt = date(message.created_at);
-              const text = visibleText(message.content, config.key);
+              const attachments: Record<string, string> = { image: "[Imagen de WhatsApp · consulta el adjunto en WhatsApp]",
+                audio: "[Audio de WhatsApp · consulta el adjunto en WhatsApp]", video: "[Video de WhatsApp · consulta el adjunto en WhatsApp]",
+                document: "[Documento de WhatsApp · consulta el adjunto en WhatsApp]", sticker: "[Sticker de WhatsApp]" };
+              const contentType = String(message.content_type);
+              const text = contentType === "text" || contentType === "template"
+                ? visibleText(message.content, config.key)
+                : Object.prototype.hasOwnProperty.call(attachments, contentType) ? attachments[contentType] : null;
               if (!id || !sentAt || !text || !["inbound", "outbound"].includes(String(message.direction))) { historyTruncated = true; continue; }
               messages.set(id, { id, sentAt, text, direction: message.direction as "inbound" | "outbound", author: null });
             }

@@ -10,14 +10,17 @@ const root = path.resolve(import.meta.dirname, "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 const { createAttentionStore } = await jiti.import("../lib/atencion-storage.ts");
 const migration = readFileSync(path.join(root, "scripts/setup-atencion.sql"), "utf8");
-const central = { userId: 1, sellerId: null, key: "user:1", name: "Central", central: true, admin: true, supervisor: false, aliadoId: 1, sedeId: 10 };
+const central = { userId: 1, sellerId: null, key: "admin:1", name: "Central", central: true, admin: true, analyst: false, supervisor: false, aliadoId: 1, sedeId: 10 };
 const ally = { ...central, userId: 2, key: "user:2", name: "Aliado", central: false, aliadoId: 2, sedeId: 20 };
 const seller = { ...ally, userId: 3, sellerId: 100, key: "seller:100", name: "Asesora", admin: false };
 const otherSeller = { ...seller, sellerId: 101, key: "seller:101", name: "Otro asesor" };
 const supervisor = { ...seller, sellerId: 102, key: "seller:102", name: "Supervisor", supervisor: true };
+const analyst = { ...central, userId: 5, key: "analyst:5", name: "Analista A", central: false, admin: false, analyst: true };
+const otherAnalyst = { ...analyst, userId: 6, key: "analyst:6", name: "Analista B" };
 const filters = { search: "", filter: "all", page: 1 };
 const fixtureSql = `
 CREATE TABLE "Rol"(id integer PRIMARY KEY,nombre text);
+CREATE TABLE "Aliado"(id integer PRIMARY KEY,codigo text,activo boolean DEFAULT true);
 CREATE TABLE "Sede"(id integer PRIMARY KEY,nombre text,"aliadoId" integer,activa boolean DEFAULT true);
 CREATE TABLE "Usuario"(id integer PRIMARY KEY,nombre text,activo boolean DEFAULT true,"sedeId" integer,"rolId" integer);
 CREATE TABLE "Vendedor"(id integer PRIMARY KEY,nombre text,activo boolean DEFAULT true);
@@ -30,9 +33,11 @@ CREATE TABLE "CreditoAbono"(id integer PRIMARY KEY,"creditoId" integer,valor flo
 CREATE TABLE "DataCreditoAssessment"(id uuid PRIMARY KEY,"creditId" integer,status text,"createdAt" timestamp,"sedeId" integer,"aliadoId" integer,"sellerId" integer);
 CREATE TABLE "CreditoBorrador"(id integer PRIMARY KEY,"creditoId" integer,"clienteNombre" text,"clienteDocumento" text,"clienteTelefono" text,
   "sedeId" integer,"vendedorId" integer,estado text,"dataCreditoAssessmentId" uuid,"createdAt" timestamp,payload jsonb);
-INSERT INTO "Rol" VALUES(1,'ADMIN'),(2,'VENDEDOR');
+INSERT INTO "Rol" VALUES(1,'ADMIN'),(2,'VENDEDOR'),(3,'ANALISTA_APROBACION');
+INSERT INTO "Aliado" VALUES(1,'FINSERPAY',true),(2,'ALIADO',true),(3,'OTRO',true);
 INSERT INTO "Sede" VALUES(10,'Central',1,true),(20,'Sede propia',2,true),(21,'Otra sede propia',2,true),(30,'Ajena',3,true);
 INSERT INTO "Usuario" VALUES(1,'Central',true,10,1),(2,'Aliado',true,20,1),(3,'Acceso sede',true,20,2),(4,'Admin ajeno',true,30,1);
+INSERT INTO "Usuario" VALUES(5,'Analista A',true,10,3),(6,'Analista B',true,10,3),(7,'Analista inactivo',false,10,3),(8,'Analista aliado',true,20,3);
 INSERT INTO "Vendedor" VALUES(100,'Asesora',true),(101,'Otro asesor',true),(102,'Supervisor',true),(200,'Ajeno',true),(300,'Inactivo',false);
 INSERT INTO "SedeVendedor" VALUES(20,100,true),(20,101,true),(20,102,true),(30,200,true),(20,300,true);
 INSERT INTO "Credito"(id,folio,"clienteNombre","clienteDocumento","clienteTelefono","sedeId","vendedorId",estado,"referenciaEquipo","montoCredito","valorCuota","plazoMeses","frecuenciaPago","fechaPrimerPago","contratoSnapshot") VALUES
@@ -51,175 +56,231 @@ async function fixture(t, install = true) {
   const db = new PGlite({ parsers: { 1114: value => new Date(`${value.replace(" ", "T")}Z`) } });
   t.after(() => db.close()); await db.exec(fixtureSql); if (install) await db.exec(migration);
   const store = createAttentionStore(adapter(db));
-  const create = (actor = seller, input = {}) => store.createAttentionCase(actor, { phone: "3001234567", name: "Contacto real", sedeId: actor.sedeId, requestId: randomUUID(), ...input });
+  const create = (actor = central, input = {}) => store.createAttentionCase(actor, { phone: "3001234567", name: "Contacto real", requestId: randomUUID(), ...input });
   const mutation = (action, data = {}) => ({ action, requestId: randomUUID(), version: 1, ...data });
-  return { db, store, create, mutation };
+  const act = async (actor, id, action, data = {}) => store.mutateAttentionConversation(actor, id, mutation(action, { version: (await store.getAttentionDetail(actor, id)).conversation.version, ...data }));
+  const assign = (id, target = analyst) => act(central, id, "transfer", { assigneeKey: target.key });
+  return { db, store, create, mutation, act, assign };
 }
-test("sin esquema: bandeja explícitamente pendiente y escrituras rechazadas", async t => {
+
+const snapshot = (data = {}) => ({ externalId: "provider-chat", phone: "+573001234567", name: "Contacto", mode: "ai",
+  lastContactAt: null, historyTruncated: false, historyCursor: null, messages: [], ...data });
+const message = (id, sentAt = new Date().toISOString()) => ({ id, direction: "inbound", text: "Consulta real", sentAt, author: null });
+
+test("sin esquema: bandeja pendiente y escrituras rechazadas sin DDL por solicitud", async t => {
   const { store, create } = await fixture(t, false);
   assert.equal((await store.getAttentionInbox(central, filters)).schemaReady, false);
   await assert.rejects(create(), { status: 503 });
 });
-test("bandeja aísla aliado, sede y asesor; un chat transferido desaparece del asesor anterior", async t => {
-  const { store, create, mutation } = await fixture(t);
-  const own = await create(); const other = await create(otherSeller); await create(central, { sedeId: 30 }); await create(central, { sedeId: 21 });
-  assert.equal((await store.getAttentionInbox(seller, filters)).total, 1);
-  assert.equal((await store.getAttentionInbox(supervisor, filters)).total, 2);
-  assert.equal((await store.getAttentionInbox(ally, filters)).total, 3);
-  assert.equal((await store.getAttentionInbox(central, filters)).total, 4);
-  await assert.rejects(store.getAttentionDetail(seller, other.id), { status: 404 });
-  await store.mutateAttentionConversation(seller, own.id, mutation("transfer", { assigneeKey: "seller:101" }));
-  await assert.rejects(store.getAttentionDetail(seller, own.id), { status: 404 });
-  assert.equal((await store.getAttentionDetail(otherSeller, own.id)).conversation.assigneeKey, "seller:101");
+
+test("central ve bandeja global; analista solo asignados y pierde acceso tras transferencia", async t => {
+  const { store, create, assign, act } = await fixture(t);
+  const own = await create(); const other = await create(); await create();
+  await assign(own.id); await assign(other.id, otherAnalyst);
+  assert.equal((await store.getAttentionInbox(central, filters)).total, 3);
+  assert.equal((await store.getAttentionInbox(analyst, filters)).total, 1);
+  await assert.rejects(store.getAttentionDetail(analyst, other.id), { status: 404 });
+  await assert.rejects(act(analyst, own.id, "transfer", { assigneeKey: otherAnalyst.key }), { status: 403 });
+  await assign(own.id, otherAnalyst);
+  await assert.rejects(store.getAttentionDetail(analyst, own.id), { status: 404 });
+  assert.equal((await store.getAttentionInbox(otherAnalyst, filters)).total, 2);
 });
-test("transferencias validan sede/perfil activo y ningún cliente cambia datos canónicos", async t => {
-  const { store, create, mutation, db } = await fixture(t); const { id } = await create();
-  const before = (await db.query('SELECT * FROM "Credito" ORDER BY id')).rows;
-  for (const key of ["seller:200", "seller:300", "user:4"]) await assert.rejects(store.mutateAttentionConversation(seller, id, mutation("transfer", { assigneeKey: key })), { status: 403 });
-  await store.mutateAttentionConversation(seller, id, mutation("note", { text: "Seguimiento interno" }));
-  assert.deepEqual((await db.query('SELECT * FROM "Credito" ORDER BY id')).rows, before);
+
+test("vendedor, supervisor y aliado denegados; legacy seller/user no concede acceso al analista", async t => {
+  const { store, create, db } = await fixture(t);
+  for (const denied of [seller, otherSeller, supervisor, ally]) {
+    await assert.rejects(store.getAttentionInbox(denied, filters), { status: 403 });
+    await assert.rejects(create(denied), { status: 403 });
+  }
+  const { id } = await create();
+  for (const key of ["user:5", "seller:100", null]) {
+    await db.query('UPDATE "AttentionConversation" SET "assigneeUserId"=5,"assigneeKey"=$2 WHERE id=$1', [id,key]);
+    await assert.rejects(store.getAttentionDetail(analyst,id), { status: 404 });
+  }
+  await db.query('UPDATE "AttentionConversation" SET "assigneeKey"=\'analyst:5\',"assigneeSellerId"=100 WHERE id=$1',[id]);
+  await assert.rejects(store.getAttentionDetail(analyst,id), { status: 404 });
+  assert.equal((await store.getAttentionInbox(central,filters)).total,1);
 });
+
+test("solo analistas nominales activos son asignables; revocación real invalida actores existentes", async t => {
+  const { store, create, mutation, db, assign } = await fixture(t); const { id } = await create();
+  const team = (await store.getAttentionInbox(central,filters)).team;
+  assert.deepEqual(team.map(p=>p.key),["analyst:5","analyst:6"]);
+  for (const key of ["analyst:1","analyst:2","analyst:7","analyst:8"]) await assert.rejects(store.mutateAttentionConversation(central,id,mutation("transfer",{assigneeKey:key})),{status:403});
+  for (const key of ["user:1","seller:100"]) await assert.rejects(store.mutateAttentionConversation(central,id,mutation("transfer",{assigneeKey:key})),{status:400});
+  await assign(id);
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=5');
+  await assert.rejects(store.getAttentionDetail(analyst,id),{status:403});
+  await db.query('UPDATE "Usuario" SET activo=true,"rolId"=1 WHERE id=5');
+  await assert.rejects(store.getAttentionInbox(analyst,filters),{status:403});
+  await db.query('UPDATE "Aliado" SET activo=false WHERE id=1');
+  await assert.rejects(store.getAttentionInbox(central,filters),{status:403});
+});
+
 test("crear/reintentar/notas son idempotentes y la versión evita sobrescribir cambios", async t => {
   const { store, create, mutation } = await fixture(t); const requestId = randomUUID();
-  const first = await create(seller, { requestId }); assert.deepEqual(await create(seller, { requestId }), first);
-  await assert.rejects(create(seller, { requestId, name: "Alterado" }), { status: 409 });
-  const note = mutation("note", { text: "Una sola nota" });
-  await store.mutateAttentionConversation(seller, first.id, note); await store.mutateAttentionConversation(seller, first.id, note);
-  const detail = await store.getAttentionDetail(seller, first.id); assert.equal(detail.notes.length, 1); assert.equal(detail.conversation.version, 2);
-  await assert.rejects(store.mutateAttentionConversation(seller, first.id, mutation("close")), { status: 409 });
+  const first=await create(central,{requestId}); assert.deepEqual(await create(central,{requestId}),first);
+  await assert.rejects(create(central,{requestId,name:"Alterado"}),{status:409});
+  const note=mutation("note",{text:"Una sola nota"});
+  await store.mutateAttentionConversation(central,first.id,note); await store.mutateAttentionConversation(central,first.id,note);
+  const detail=await store.getAttentionDetail(central,first.id);
+  assert.equal(detail.notes.length,1); assert.equal(detail.conversation.version,2);
+  assert.equal(detail.conversation.sedeId,null); assert.equal(detail.conversation.assigneeKey,null);
+  await assert.rejects(store.mutateAttentionConversation(central,first.id,mutation("close")),{status:409});
+  await assert.rejects(create(analyst),{status:403});
 });
-test("ficha usa créditos existentes, no expone finanzas a asesor y excluye abonos anulados", async t => {
-  const { store, create, db } = await fixture(t); const { id } = await create();
-  const own = await store.getAttentionDetail(seller, id);
-  assert.equal(own.customer.match, "linked"); assert.deepEqual(own.customer.credits.map(c => c.id), [2,1]);
-  assert.equal(own.customer.financialAllowed, false); assert.equal(own.customer.credits[1].balance, null); assert.deepEqual(own.customer.credits[1].payments, []);
+
+test("vínculo exacto explícito central permite ficha del analista sin importes ni ampliar cartera", async t => {
+  const { store, create, assign, act, db } = await fixture(t); const {id}=await create(); await assign(id);
+  const before=(await db.query('SELECT * FROM "Credito" ORDER BY id')).rows;
+  assert.equal((await store.getAttentionDetail(central,id)).customer.match,"ambiguous");
+  const restricted=await store.getAttentionDetail(analyst,id);
+  assert.equal(restricted.customer.match,"restricted"); assert.deepEqual(restricted.customer.candidates,[]);
+  assert.equal((await store.getAttentionInbox(analyst,{...filters,search:"Persona uno"})).total,0);
+  await assert.rejects(act(analyst,id,"link",{creditId:1}),{status:403});
+  await assert.rejects(act(central,id,"link",{creditId:4}),{status:403});
+  await act(central,id,"link",{creditId:1});
+  const own=await store.getAttentionDetail(analyst,id);
+  assert.deepEqual(own.customer.credits.map(c=>c.id),[1]); assert.deepEqual(own.customer.candidates,[]);
+  assert.equal(own.customer.financialAllowed,false); assert.equal(own.customer.credits[0].balance,null);
+  assert.deepEqual(own.customer.credits[0].payments,[]); assert.equal(own.customer.studies.length,1);
+  assert.equal((await store.getAttentionInbox(analyst,{...filters,search:"Persona uno"})).total,1);
+  const admin=await store.getAttentionDetail(central,id);
+  assert.deepEqual(admin.customer.credits.map(c=>c.id),[2,1]); assert.equal(admin.customer.credits.find(c=>c.id===1).balance,200);
   assert.ok(!JSON.stringify(own).includes("DO_NOT_EXPOSE"));
-  const admin = await store.getAttentionDetail(ally, id); assert.equal(admin.customer.credits.find(c => c.id === 1).balance, 200);
-  assert.equal(admin.customer.studies.length, 1);
-  assert.ok((await db.query('SELECT count(*)::integer AS n FROM "AttentionAudit" WHERE action=\'CONVERSATION_VIEWED\'')).rows[0].n >= 2);
+  assert.deepEqual((await db.query('SELECT * FROM "Credito" ORDER BY id')).rows,before);
+  await db.query('UPDATE "Credito" SET "clienteTelefono"=\'3009999999\' WHERE id=1');
+  assert.equal((await store.getAttentionDetail(analyst,id)).customer.match,"restricted");
   await assert.rejects(db.query('DELETE FROM "AttentionAudit"'));
 });
-test("teléfono compartido queda ambiguo y vinculación explícita nunca cruza sedes", async t => {
-  const { store, create, mutation, db } = await fixture(t); const { id } = await create();
-  await db.query('UPDATE "Credito" SET "clienteDocumento"=$1 WHERE id=2', ["87654321"]);
-  const detail = await store.getAttentionDetail(ally, id); assert.equal(detail.customer.match, "ambiguous"); assert.equal(detail.customer.credits.length, 0);
-  await assert.rejects(store.mutateAttentionConversation(ally, id, mutation("link", { creditId: 3 })), { status: 403 });
-  await store.mutateAttentionConversation(ally, id, mutation("link", { creditId: 1 }));
-  assert.deepEqual((await store.getAttentionDetail(ally, id)).customer.credits.map(c => c.id), [1]);
-});
-test("tareas/notas internas y solicitud humana no fabrican mensajes ni estados remotos", async t => {
-  const { store, create, mutation } = await fixture(t); const { id } = await create();
-  await store.mutateAttentionConversation(seller, id, mutation("task", { text: "Revisar documentación", dueAt: "2026-11-01T15:00:00Z" }));
-  const detail = await store.getAttentionDetail(seller, id);
-  await store.mutateAttentionConversation(seller, id, mutation("complete_task", { version: 2, taskId: detail.tasks[0].id }));
-  await store.mutateAttentionConversation(seller, id, mutation("human_request", { version: 3 }));
-  const after = await store.getAttentionDetail(seller, id); assert.equal(after.conversation.mode, "human_requested"); assert.equal(after.messages.length, 0); assert.ok(after.tasks[0].completedAt);
-});
-test("importación solo central deduplica mensajes, conserva gestión y bloquea cambio de sede", async t => {
-  const { store, mutation } = await fixture(t);
-  const snapshots = [{ externalId: "provider-chat-1", phone: "+573001234567", name: "Contacto", mode: "ai", lastContactAt: "2026-10-30T15:00:00Z", historyTruncated: false, historyCursor: null,
-    messages: [{ id: "provider-msg-1", direction: "inbound", text: "Consulta", sentAt: "2026-10-30T15:00:00Z", author: null }] }];
-  await assert.rejects(store.importAttentionSnapshots(ally, 20, snapshots), { status: 403 });
-  assert.equal((await store.importAttentionSnapshots(central, 20, snapshots)).imported, 1);
-  const { conversations } = await store.getAttentionInbox(seller, filters); assert.equal(conversations.length, 1);
-  const id = conversations[0].id; await store.mutateAttentionConversation(seller, id, mutation("claim"));
-  await store.mutateAttentionConversation(seller, id, mutation("close", { version: 2 }));
-  assert.equal((await store.importAttentionSnapshots(central, 20, snapshots)).imported, 0);
-  const detail = await store.getAttentionDetail(seller, id); assert.equal(detail.messages.length, 1); assert.equal(detail.conversation.status, "closed"); assert.equal(detail.conversation.version, 3);
-  await assert.rejects(store.importAttentionSnapshots(central, 21, snapshots), { status: 409 });
-});
-test("respuestas rápidas solo tras aprobación central y sin duplicación en reintentos", async t => {
-  const { store } = await fixture(t); const input = { title: "Saludo aprobado", text: "Texto aprobado explícitamente", requestId: randomUUID() };
-  await assert.rejects(store.saveAttentionQuickReply(ally, input), { status: 403 });
-  await store.saveAttentionQuickReply(central, input); await store.saveAttentionQuickReply(central, input);
-  assert.equal((await store.getAttentionInbox(seller, filters)).quickReplies.length, 1);
-});
-test("prospecto existente se resuelve desde borrador sin crédito, sin duplicar ni exponer payload", async t => {
-  const { store, create, db } = await fixture(t);
+
+test("prospecto global existente resuelve para central sin duplicar ni exponer payload al analista", async t => {
+  const {store,create,assign,db}=await fixture(t);
   await db.query(`INSERT INTO "CreditoBorrador" VALUES(1,null,'Prospecto oficial','123456','003001111111',20,100,'ABIERTO',null,'2026-10-30','{"secret":"DRAFT_PRIVATE"}')`);
-  const { id } = await create(seller, { phone: "3001111111", name: "+573001111111" });
-  const detail = await store.getAttentionDetail(seller, id);
-  assert.equal(detail.customer.match, "linked"); assert.equal(detail.customer.name, "Prospecto oficial");
-  assert.equal(detail.conversation.name, "Prospecto oficial"); assert.equal(detail.customer.credits.length, 0);
-  assert.equal(detail.customer.studies[0].id, "D-1"); assert.ok(!JSON.stringify(detail).includes("DRAFT_PRIVATE"));
-  assert.equal((await db.query('SELECT count(*)::integer AS n FROM "CreditoBorrador"')).rows[0].n, 1);
-  assert.equal((await store.getAttentionInbox(seller, { ...filters, search: "Prospecto oficial" })).total, 1);
+  const {id}=await create(central,{phone:"3001111111",name:"+573001111111"}); await assign(id);
+  const detail=await store.getAttentionDetail(central,id);
+  assert.equal(detail.customer.match,"linked"); assert.equal(detail.customer.name,"Prospecto oficial");
+  assert.equal(detail.conversation.name,"Prospecto oficial"); assert.equal(detail.customer.studies[0].id,"D-1");
+  assert.ok(!JSON.stringify(detail).includes("DRAFT_PRIVATE"));
+  assert.equal((await store.getAttentionInbox(central,{...filters,search:"Prospecto oficial"})).total,1);
+  assert.equal((await store.getAttentionInbox(analyst,{...filters,search:"Prospecto oficial"})).total,0);
+  assert.equal((await store.getAttentionDetail(analyst,id)).customer.match,"restricted");
+  assert.equal((await db.query('SELECT count(*)::integer AS n FROM "CreditoBorrador"')).rows[0].n,1);
 });
-test("búsqueda por nombre canónico no revela cliente de otro asesor, y draft de otra identidad hace ambiguo", async t => {
-  const { store, create, db } = await fixture(t); const { id } = await create(seller, { name: "3001234567" });
-  assert.equal((await store.getAttentionInbox(seller, { ...filters, search: "Persona uno" })).total, 1);
-  await db.query(`INSERT INTO "CreditoBorrador" VALUES(1,null,'Nombre privado ajeno','444444','3001234567',20,101,'ABIERTO',null,'2026-10-30','{}')`);
-  assert.equal((await store.getAttentionInbox(seller, { ...filters, search: "Nombre privado ajeno" })).total, 0);
-  assert.equal((await store.getAttentionDetail(seller, id)).customer.match, "linked");
-  assert.equal((await store.getAttentionDetail(ally, id)).customer.match, "ambiguous");
+
+test("tareas, notas y solicitud humana son locales y no fabrican mensajes ni disponibilidad", async t => {
+  const {store,create,assign,act}=await fixture(t); const {id}=await create(); await assign(id);
+  await act(analyst,id,"claim"); await act(analyst,id,"task",{text:"Revisar documentación",dueAt:"2026-11-01T15:00:00Z"});
+  const detail=await store.getAttentionDetail(analyst,id);
+  await act(analyst,id,"complete_task",{taskId:detail.tasks[0].id}); await act(analyst,id,"human_request");
+  const after=await store.getAttentionDetail(analyst,id);
+  assert.equal(after.conversation.mode,"human_requested"); assert.equal(after.messages.length,0); assert.ok(after.tasks[0].completedAt);
+  assert.equal(after.permissions.assign,false); assert.equal(after.permissions.canSend,false);
+  await assert.rejects(act(central,id,"claim"),{status:403});
 });
-test("batch de mensajes nuevos reabre finalizada y conserva solicitud humana local", async t => {
-  const { store, mutation } = await fixture(t);
-  const initial = [{ externalId: "chat-reopen", phone: "3001234567", name: null, mode: "ai", lastContactAt: "2026-10-01T10:00:00Z", historyTruncated: true, historyCursor: null, messages: [] }];
-  await store.importAttentionSnapshots(central, 20, initial);
-  const id = (await store.getAttentionInbox(seller, filters)).conversations[0].id;
-  await store.mutateAttentionConversation(seller, id, mutation("claim"));
-  await store.mutateAttentionConversation(seller, id, mutation("human_request", { version: 2 }));
-  await store.mutateAttentionConversation(seller, id, mutation("close", { version: 3 }));
-  const sentAt = new Date(Date.now() + 60000).toISOString();
-  const update = [{ ...initial[0], mode: "human", lastContactAt: sentAt, messages: Array.from({ length: 300 }, (_, i) => ({ id: `new-${i}`, direction: "inbound", text: `Texto ${i}`, sentAt, author: null })) }];
-  await store.importAttentionSnapshots(central, 20, update);
-  const detail = await store.getAttentionDetail(seller, id);
-  assert.equal(detail.conversation.status, "pending"); assert.equal(detail.conversation.mode, "human_requested"); assert.equal(detail.messages.length, 300);
-  assert.equal((await store.importAttentionSnapshots(central, 20, update)).imported, 0);
-  assert.equal((await store.getAttentionDetail(seller, id)).messages.length, 300);
+
+test("importación global solo central deduplica mensajes y conserva sede/asignación legacy sin inventar otra", async t => {
+  const {store,db}=await fixture(t); const initial=[snapshot({messages:[message("first")]})];
+  await assert.rejects(store.importAttentionSnapshots(analyst,initial),{status:403});
+  assert.deepEqual(await store.importAttentionSnapshots(central,initial),{imported:1,messagesImported:1});
+  const chat=(await store.getAttentionInbox(central,filters)).conversations[0];
+  assert.equal(chat.sedeId,null); assert.equal(chat.assigneeKey,null);
+  assert.equal((await store.getAttentionInbox(analyst,filters)).total,0);
+  await db.query('UPDATE "AttentionConversation" SET "sedeId"=20,"assigneeKey"=\'seller:100\',"assigneeSellerId"=100 WHERE id=$1',[chat.id]);
+  assert.deepEqual(await store.importAttentionSnapshots(central,initial),{imported:0,messagesImported:0});
+  const after=(await store.getAttentionDetail(central,chat.id)).conversation;
+  assert.equal(after.sedeId,20); assert.equal(after.assigneeKey,"seller:100");
+  await assert.rejects(store.importAttentionSnapshots(central,[snapshot({phone:"3009999999"})]),{status:409});
 });
-test("mensaje posterior al cierre reabre aunque una nota local posterior cambie updatedAt", async t => {
-  const { store, db, mutation } = await fixture(t);
-  const snapshots = [{ externalId: "closure-boundary", phone: "3001234567", name: null, mode: "ai", lastContactAt: "2026-10-30T09:00:00Z", historyTruncated: false, historyCursor: null, messages: [] }];
-  await store.importAttentionSnapshots(central, 20, snapshots);
-  const id = (await store.getAttentionInbox(seller, filters)).conversations[0].id;
-  await store.mutateAttentionConversation(seller, id, mutation("claim"));
-  await store.mutateAttentionConversation(seller, id, mutation("close", { version: 2 }));
-  await db.query(`UPDATE "AttentionConversation" SET "closedAt"='2026-10-30T10:00:00Z',"updatedAt"='2026-10-30T10:00:00Z' WHERE id=$1`, [id]);
-  await store.mutateAttentionConversation(seller, id, mutation("note", { version: 3, text: "Nota después del cierre" }));
-  await db.query(`UPDATE "AttentionConversation" SET "updatedAt"='2026-10-30T10:06:00Z' WHERE id=$1`, [id]);
-  const oldMessage = { id: "pre-close", direction: "inbound", text: "Anterior al cierre", sentAt: "2026-10-30T09:59:00Z", author: null };
-  await store.importAttentionSnapshots(central, 20, [{ ...snapshots[0], messages: [oldMessage] }]);
-  assert.equal((await store.getAttentionDetail(seller, id)).conversation.status, "closed");
-  const newMessage = { ...oldMessage, id: "post-close", sentAt: "2026-10-30T10:05:00Z" };
-  await store.importAttentionSnapshots(central, 20, [{ ...snapshots[0], messages: [oldMessage, newMessage] }]);
-  assert.equal((await store.getAttentionDetail(seller, id)).conversation.status, "pending");
-  assert.equal((await db.query('SELECT "closedAt" FROM "AttentionConversation" WHERE id=$1', [id])).rows[0].closedAt, null);
+
+test("Meta opaco sin teléfono sigue siendo chat real sin identificar cliente y acepta teléfono verificable posterior", async t => {
+  const {store,assign,act}=await fixture(t);
+  await store.importAttentionSnapshots(central,[snapshot({phone:null,name:null,messages:[message("meta-inbound")]})]);
+  const {id}=(await store.getAttentionInbox(central,filters)).conversations[0]; await assign(id);
+  const detail=await store.getAttentionDetail(analyst,id);
+  assert.equal(detail.conversation.phone,null); assert.equal(detail.conversation.name,"Contacto de WhatsApp");
+  assert.equal(detail.customer.match,"none"); assert.equal(detail.messages.length,1);
+  await assert.rejects(act(central,id,"link",{creditId:1}),{status:403});
+  await store.importAttentionSnapshots(central,[snapshot()]);
+  assert.equal((await store.getAttentionDetail(central,id)).conversation.phone,"+573001234567");
+  await store.importAttentionSnapshots(central,[snapshot({phone:null})]);
+  assert.equal((await store.getAttentionDetail(central,id)).conversation.phone,"+573001234567");
 });
-test("historial interno devuelve notas recientes y prioriza tareas pendientes con límite visible", async t => {
-  const { store, db, create, mutation } = await fixture(t); const { id } = await create();
-  const notes = Array.from({ length: 300 }, (_, i) => ({ id: randomUUID(), text: `Nota antigua ${i}`, createdAt: new Date(Date.UTC(2026,0,1,0,i)).toISOString() }));
-  await db.query(`INSERT INTO "AttentionNote"(id,"conversationId",text,author,"userId","sellerId","createdAt")
-    SELECT n.id,$1::uuid,n.text,'Asesora',3,100,n."createdAt" FROM jsonb_to_recordset($2::jsonb) AS n(id uuid,text text,"createdAt" timestamptz)`, [id, JSON.stringify(notes)]);
-  await store.mutateAttentionConversation(seller, id, mutation("note", { text: "Nota más reciente visible" }));
-  const tasks = Array.from({ length: 300 }, (_, i) => ({ id: randomUUID(), title: `Tarea finalizada ${i}` }));
-  await db.query(`INSERT INTO "AttentionTask"(id,"conversationId",title,author,"userId","sellerId","completedAt")
-    SELECT t.id,$1::uuid,t.title,'Asesora',3,100,now() FROM jsonb_to_recordset($2::jsonb) AS t(id uuid,title text)`, [id, JSON.stringify(tasks)]);
-  await store.mutateAttentionConversation(seller, id, mutation("task", { version: 2, text: "Pendiente prioritaria", dueAt: "2026-11-01T15:00:00Z" }));
-  const detail = await store.getAttentionDetail(seller, id);
-  assert.equal(detail.notesTruncated, true); assert.equal(detail.tasksTruncated, true);
-  assert.equal(detail.notes.length, 300); assert.equal(detail.notes.at(-1).text, "Nota más reciente visible");
-  assert.equal(detail.tasks[0].title, "Pendiente prioritaria");
+
+test("modo desconocido nuevo no deja una etiqueta IA obsoleta", async t => {
+  const {store}=await fixture(t);
+  await store.importAttentionSnapshots(central,[snapshot({mode:"ai"})]);
+  const {id}=(await store.getAttentionInbox(central,filters)).conversations[0];
+  await store.importAttentionSnapshots(central,[snapshot({mode:"unknown"})]);
+  assert.equal((await store.getAttentionDetail(central,id)).conversation.mode,"unknown");
 });
-test("checkpoint del historial avanza de forma atómica y permanece privado por sede", async t => {
-  const { store } = await fixture(t);
-  const snapshot = { externalId: "checkpoint", phone: "3001234567", name: null, mode: "ai", lastContactAt: null,
-    historyTruncated: true, historyCursor: "opaque-page-300", messages: [] };
-  await store.importAttentionSnapshots(central, 20, [snapshot]);
-  await store.importAttentionSnapshots(central, 30, [{ ...snapshot, externalId: "other-branch", historyCursor: "foreign-checkpoint" }]);
-  await assert.rejects(store.getAttentionHistoryCursors(ally, 20), { status: 403 });
-  assert.deepEqual(await store.getAttentionHistoryCursors(central, 20), { checkpoint: "opaque-page-300" });
-  await assert.rejects(store.importAttentionSnapshots(central, 20, [
-    { ...snapshot, historyCursor: "opaque-page-600" }, { ...snapshot, externalId: "zz-invalid", historyCursor: "bad cursor" },
-  ]), { status: 400 });
-  assert.deepEqual(await store.getAttentionHistoryCursors(central, 20), { checkpoint: "opaque-page-300" });
-  await store.importAttentionSnapshots(central, 20, [{ ...snapshot, historyCursor: "opaque-page-600" }]);
-  assert.deepEqual(await store.getAttentionHistoryCursors(central, 20), { checkpoint: "opaque-page-600" });
-  const inbox = await store.getAttentionInbox(central, filters);
-  const detail = await store.getAttentionDetail(central, inbox.conversations.find(c => c.externalId === "checkpoint").id);
-  for (const output of [inbox, detail]) {
-    assert.ok(!JSON.stringify(output).includes("opaque-page")); assert.ok(!JSON.stringify(output).includes("foreign-checkpoint"));
-    assert.ok(!JSON.stringify(output).includes("daptaMessagesCursor"));
-  }
+
+test("respuestas rápidas requieren aprobación central y reintentos no duplican", async t => {
+  const {store}=await fixture(t); const input={title:"Saludo",text:"Texto aprobado",requestId:randomUUID()};
+  await assert.rejects(store.saveAttentionQuickReply(analyst,input),{status:403});
+  await store.saveAttentionQuickReply(central,input); await store.saveAttentionQuickReply(central,input);
+  assert.equal((await store.getAttentionInbox(analyst,filters)).quickReplies.length,1);
+});
+
+test("batch reabre por nuevo inbound posterior a closedAt incluso si notas cambiaron updatedAt", async t => {
+  const {store,assign,act,db}=await fixture(t);
+  await store.importAttentionSnapshots(central,[snapshot()]);
+  const {id}=(await store.getAttentionInbox(central,filters)).conversations[0]; await assign(id);
+  await act(analyst,id,"human_request"); await act(analyst,id,"close");
+  await db.query(`UPDATE "AttentionConversation" SET "closedAt"='2026-10-30T10:00:00Z' WHERE id=$1`,[id]);
+  await act(analyst,id,"note",{text:"Nota tras cerrar"});
+  await db.query(`UPDATE "AttentionConversation" SET "updatedAt"='2026-10-30T10:06:00Z' WHERE id=$1`,[id]);
+  await store.importAttentionSnapshots(central,[snapshot({messages:[message("old","2026-10-30T09:59:00Z")]})]);
+  assert.equal((await store.getAttentionDetail(analyst,id)).conversation.status,"closed");
+  const messages=Array.from({length:300},(_,i)=>message(`new-${i}`,"2026-10-30T10:05:00Z"));
+  assert.equal((await store.importAttentionSnapshots(central,[snapshot({mode:"human",messages})])).messagesImported,300);
+  const after=await store.getAttentionDetail(analyst,id);
+  assert.equal(after.conversation.status,"pending"); assert.equal(after.conversation.mode,"human_requested"); assert.equal(after.messages.length,301);
+  assert.equal((await store.importAttentionSnapshots(central,[snapshot({mode:"human",messages})])).messagesImported,0);
+});
+
+test("notas recientes y tareas pendientes tienen prioridad con truncamiento visible", async t => {
+  const {store,create,act,db}=await fixture(t); const {id}=await create();
+  const notes=Array.from({length:300},(_,i)=>({id:randomUUID(),text:`Nota ${i}`,createdAt:new Date(Date.UTC(2026,0,1,0,i)).toISOString()}));
+  await db.query(`INSERT INTO "AttentionNote"(id,"conversationId",text,author,"userId","createdAt")
+    SELECT n.id,$1::uuid,n.text,'Central',1,n."createdAt" FROM jsonb_to_recordset($2::jsonb) AS n(id uuid,text text,"createdAt" timestamptz)`,[id,JSON.stringify(notes)]);
+  await act(central,id,"note",{text:"Nota reciente"});
+  const tasks=Array.from({length:300},(_,i)=>({id:randomUUID(),title:`Finalizada ${i}`}));
+  await db.query(`INSERT INTO "AttentionTask"(id,"conversationId",title,author,"userId","completedAt")
+    SELECT t.id,$1::uuid,t.title,'Central',1,now() FROM jsonb_to_recordset($2::jsonb) AS t(id uuid,title text)`,[id,JSON.stringify(tasks)]);
+  await act(central,id,"task",{text:"Pendiente",dueAt:"2026-11-01T15:00:00Z"});
+  const detail=await store.getAttentionDetail(central,id);
+  assert.equal(detail.notesTruncated,true); assert.equal(detail.tasksTruncated,true); assert.equal(detail.notes.length,300);
+  assert.equal(detail.notes.at(-1).text,"Nota reciente"); assert.equal(detail.tasks[0].title,"Pendiente");
+});
+
+test("checkpoint es global, transaccional y privado de central; errores revierten batch", async t => {
+  const {store}=await fixture(t);
+  await store.importAttentionSnapshots(central,[snapshot({historyCursor:"opaque-300"}),snapshot({externalId:"other-chat",historyCursor:"other-cursor"})]);
+  await assert.rejects(store.getAttentionHistoryCursors(analyst),{status:403});
+  const original={"provider-chat":"opaque-300","other-chat":"other-cursor"};
+  assert.deepEqual(await store.getAttentionHistoryCursors(central),original);
+  await assert.rejects(store.importAttentionSnapshots(central,[snapshot({historyCursor:"opaque-600"}),snapshot({externalId:"zz-invalid",historyCursor:"bad cursor"})]),{status:400});
+  assert.deepEqual(await store.getAttentionHistoryCursors(central),original);
+  await store.importAttentionSnapshots(central,[snapshot({historyCursor:"opaque-600"})]);
+  assert.equal((await store.getAttentionHistoryCursors(central))["provider-chat"],"opaque-600");
+  const inbox=await store.getAttentionInbox(central,filters); const detail=await store.getAttentionDetail(central,inbox.conversations[0].id);
+  for(const output of [inbox,detail]) assert.ok(!JSON.stringify(output).includes("opaque-")&&!JSON.stringify(output).includes("daptaMessagesCursor"));
+});
+
+test("dashboard usa conversaciones inbound únicas por día Bogotá y respeta asignación en todo dato", async t => {
+  const {store,assign,act}=await fixture(t);
+  const today=(new Date()).toLocaleDateString("en-CA",{timeZone:"America/Bogota"}); const midday=`${today}T17:00:00Z`;
+  await store.importAttentionSnapshots(central,[snapshot({messages:[message("a",midday),message("b",midday)]}),snapshot({externalId:"other-chat",messages:[message("c",midday)]})]);
+  const chats=(await store.getAttentionInbox(central,filters)).conversations;
+  const own=chats.find(c=>c.externalId==="provider-chat"); const other=chats.find(c=>c.externalId==="other-chat");
+  await assign(own.id); await assign(other.id,otherAnalyst); await act(analyst,own.id,"note",{text:"Seguimiento"});
+  const full=await store.getAttentionInbox(central,{...filters,search:"No existe"});
+  assert.equal(full.total,0); assert.equal(full.dashboard.daily.find(d=>d.date===today).count,2);
+  assert.equal(full.dashboard.team.find(p=>p.key===analyst.key).assigned,1);
+  const scoped=await store.getAttentionInbox(analyst,filters);
+  assert.equal(scoped.dashboard.daily.find(d=>d.date===today).count,1); assert.equal(scoped.dashboard.daily.length,7);
+  assert.deepEqual(scoped.dashboard.team.map(p=>p.key),[analyst.key]);
+  assert.ok(scoped.dashboard.activity.every(a=>a.conversationId===own.id));
+  assert.ok(scoped.dashboard.activeConversations.every(c=>c.id===own.id));
 });

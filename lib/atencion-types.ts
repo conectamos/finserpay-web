@@ -2,15 +2,15 @@ export type AttentionStatus = "pending" | "open" | "closed";
 export type AttentionMode = "unknown" | "ai" | "human_requested" | "human";
 export type AttentionActor = {
   userId: number; sellerId: number | null; key: string; name: string;
-  central: boolean; admin: boolean; supervisor: boolean;
+  central: boolean; admin: boolean; supervisor: boolean; analyst: boolean;
   aliadoId: number | null; sedeId: number | null;
 };
 export type AttentionAssignee = { key: string; name: string; sedeIds: number[] };
 export type AttentionBranch = { id: number; name: string };
 export type AttentionConversation = {
   id: string; externalId: string | null; channel: "whatsapp" | "internal";
-  phone: string; name: string; status: AttentionStatus; mode: AttentionMode;
-  assigneeKey: string | null; assigneeName: string | null; sedeId: number;
+  phone: string | null; name: string; status: AttentionStatus; mode: AttentionMode;
+  assigneeKey: string | null; assigneeName: string | null; sedeId: number | null;
   lastContactAt: string | null; updatedAt: string; preview: string | null;
   tags: string[]; version: number; linkedCreditId: number | null;
 };
@@ -40,11 +40,17 @@ export type AttentionInbox = {
   metrics: { pending: number; open: number; closed: number; mine: number };
   team: AttentionAssignee[]; branches: AttentionBranch[]; quickReplies: AttentionQuickReply[];
   actor: AttentionActor; integration: AttentionIntegration;
+  dashboard?: {
+    daily: { date: string; label: string; count: number }[];
+    activity: { id: string; title: string; description: string; at: string; conversationId: string | null }[];
+    activeConversations: AttentionConversation[];
+    team: { key: string; name: string; assigned: number; pending: number }[];
+  };
 };
 export type AttentionDetail = {
   conversation: AttentionConversation; messages: AttentionMessage[]; notes: AttentionNote[];
   tasks: AttentionTask[]; customer: AttentionCustomer;
-  permissions: { manage: boolean; claim: boolean; canSend: false };
+  permissions: { manage: boolean; claim: boolean; assign?: boolean; canSend: false };
   historyTruncated: boolean;
   notesTruncated?: boolean;
   tasksTruncated?: boolean;
@@ -57,7 +63,7 @@ export type AttentionMutation = {
 };
 /** Whitelisted fields from the official read-only MCP; never a raw provider payload. */
 export type DaptaConversationSnapshot = {
-  externalId: string; phone: string; name: string | null;
+  externalId: string; phone: string | null; name: string | null;
   lastContactAt: string | null; mode: "unknown" | "ai" | "human";
   messages: AttentionMessage[]; historyTruncated: boolean;
   /** Opaque forward checkpoint; at EOF re-read the last page to collect future messages. */

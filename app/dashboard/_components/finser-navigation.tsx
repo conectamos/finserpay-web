@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { isAdminRole } from "@/lib/roles";
 import { Bell, ChartNoAxesColumnIncreasing, ChevronDown, LayoutGrid, Settings, Timer, UserRound, Wallet, WalletCards, type LucideIcon } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
 import CentralDashboardMenu from "./central-dashboard-menu";
@@ -18,7 +19,9 @@ function NavigationMenu({ label, items, active = false, icon: Icon }: { label: s
 export default function FinserNavigation({admin,adminCentral,isSupervisor=false,nombreUsuario,rolUsuario,variant="sale",activeSection="operation",accountActions}:{admin:boolean;adminCentral:boolean;isSupervisor?:boolean;nombreUsuario:string;rolUsuario:string;variant?:"sale"|"requests"|"reports"|"settlement"|"administration";activeSection?:"operation"|"administration"|"reports"|"portfolio"|"integrations";accountActions?:ReactNode;}) {
   const operation: Item[] = [
     ...(admin ? [[adminCentral ? "Aprobaciones" : "Pendientes", adminCentral ? "/dashboard/aprobaciones" : "/dashboard/pendientes"]] as Item[] : []),
-    ["Nueva venta", "/dashboard/creditos"], ["Solicitudes", "/dashboard/solicitudes"], ["Atención", "/dashboard/atencion"], ["Simulador", "/dashboard/creditos?mode=simulator"],
+    ["Nueva venta", "/dashboard/creditos"], ["Solicitudes", "/dashboard/solicitudes"],
+    ...(admin && adminCentral && isAdminRole(rolUsuario) ? [["Atención", "/dashboard/atencion"]] as Item[] : []),
+    ["Simulador", "/dashboard/creditos?mode=simulator"],
     ...(admin || isSupervisor ? [["Clientes", "/dashboard/clientes"], ["Recaudos", "/dashboard/abonos"]] as Item[] : []),
     ...(admin ? [["Pagos aliado", "/dashboard/pagos-aliados"], ["Reportes", "/dashboard/reportes"]] as Item[] : []),
     ...(adminCentral ? [["Créditos masivos", "/dashboard/creditos-masivos"], ["Excepciones por mora", "/dashboard/excepciones-mora"]] as Item[] : []),

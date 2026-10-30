@@ -24,26 +24,24 @@ export function normalizeAttentionPhone(value: unknown): string {
 }
 export function assertAttentionActor(actor: AttentionActor) {
   if (!Number.isSafeInteger(actor.userId) || actor.userId <= 0 ||
-      actor.key !== (actor.sellerId ? `seller:${actor.sellerId}` : `user:${actor.userId}`) ||
-      (actor.central && !actor.admin) || (!actor.admin && (!Number.isSafeInteger(actor.sellerId) || Number(actor.sellerId) <= 0)) ||
-      (!actor.central && (!Number.isSafeInteger(actor.aliadoId) || Number(actor.aliadoId) <= 0)) ||
-      (!actor.admin && (!Number.isSafeInteger(actor.sedeId) || Number(actor.sedeId) <= 0))) {
+      actor.key !== (actor.central ? `admin:${actor.userId}` : `analyst:${actor.userId}`) ||
+      actor.sellerId !== null || actor.supervisor !== false ||
+      (!actor.central && !actor.analyst) || actor.central !== actor.admin || actor.central === actor.analyst) {
     throw new AttentionError("Perfil de atención no autorizado.", 403);
   }
 }
 export async function getAttentionAccess(): Promise<AttentionActor> {
-  const { getDashboardAccess } = await import("./dashboard-access");
-  const access = await getDashboardAccess();
-  if (!access) throw new AttentionError("Inicia sesión para acceder a atención.", 401);
-  if (!access.admin && !access.seller) throw new AttentionError("Abre primero tu perfil de asesor.", 403);
+  const { getApprovalSharedRequestActor } = await import("./approval-shared-session");
+  if ((await getApprovalSharedRequestActor()) !== undefined) throw new AttentionError("Usa tu cuenta personal de analista para acceder a atención.", 403);
+  const { getNominalApprovalWorkspaceSessionUser } = await import("./auth");
+  const user = await getNominalApprovalWorkspaceSessionUser();
+  if (!user) throw new AttentionError("Inicia sesión con tu cuenta de analista o administración central.", 401);
+  const central = user.rolNombre.trim().toUpperCase() === "ADMIN";
+  const analyst = user.rolNombre.trim().toUpperCase() === "ANALISTA_APROBACION";
+  if (user.aliadoAccesoCodigo?.trim().toUpperCase() !== "FINSERPAY" || !user.activo || !user.sedeAccesoActiva || !user.aliadoAccesoActivo || (!central && !analyst)) throw new AttentionError("Perfil de atención no autorizado.", 403);
   const actor: AttentionActor = {
-    userId: access.session.id, sellerId: access.admin ? null : access.seller!.id,
-    key: access.admin ? `user:${access.session.id}` : `seller:${access.seller!.id}`,
-    name: access.admin ? access.session.nombre : access.seller!.nombre,
-    central: access.admin && access.session.aliadoAccesoCodigo?.trim().toUpperCase() === "FINSERPAY",
-    admin: access.admin, supervisor: access.supervisor,
-    aliadoId: access.admin ? access.session.aliadoAccesoId : access.session.aliadoId,
-    sedeId: access.admin ? access.session.sedeAccesoId : access.seller!.sedeId,
+    userId: user.id, sellerId: null, key: `${central ? "admin" : "analyst"}:${user.id}`, name: user.nombre,
+    central, admin: central, analyst, supervisor: false, aliadoId: user.aliadoAccesoId, sedeId: user.sedeAccesoId,
   };
   assertAttentionActor(actor); return actor;
 }
@@ -61,7 +59,7 @@ export function parseAttentionMutation(body: Record<string, unknown>): Attention
   if (typeof body.version !== "number" || !Number.isSafeInteger(body.version) || body.version < 1) throw new AttentionError("Versión inválida.");
   const result: AttentionMutation = { action: body.action as AttentionMutation["action"], version: body.version, requestId: attentionUuid(body.requestId) };
   if (result.action === "transfer") {
-    if (typeof body.assigneeKey !== "string" || !/^(user|seller):[1-9]\d{0,9}$/.test(body.assigneeKey)) throw new AttentionError("Asesor inválido.");
+    if (typeof body.assigneeKey !== "string" || !/^analyst:[1-9]\d{0,9}$/.test(body.assigneeKey)) throw new AttentionError("Analista inválido.");
     result.assigneeKey = body.assigneeKey;
   }
   if (result.action === "note" || result.action === "task") result.text = attentionText(body.text, result.action === "note" ? 4000 : 240);

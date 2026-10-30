@@ -115,8 +115,46 @@ test("only external text survives; raw state/tool secrets and unsafe content are
   const result = await adapter.fetchDaptaConversationSnapshots();
   const serialized = JSON.stringify(result);
   for (const secret of ["database-password-secret", "private.example", "abc123", "provider-key", "test-only-secret", "no-share", "db-password", "123456", "4567", "987654", "987", "4111"]) assert.equal(serialized.includes(secret), false, secret);
-  assert.equal(result.snapshots[0].messages.length, 2);
+  assert.equal(result.snapshots[0].messages.length, 3);
   assert.equal(result.snapshots[0].historyTruncated, true);
+});
+
+test("imports opaque Meta identities without inventing phone numbers or matching different identities", async () => {
+  const opaque = { ...row, channel_identifier: "CO.1234567890123456" };
+  const { adapter } = mock({ onTool: name => name === "list_conversations" ? list([opaque]) : detail([message], { conversation: opaque }) });
+  const result = await adapter.fetchDaptaConversationSnapshots();
+  assert.equal(result.snapshots.length, 1);
+  assert.equal(result.snapshots[0].phone, null);
+  assert.equal(result.snapshots[0].messages.length, 1);
+  const mismatch = mock({ onTool: name => name === "list_conversations" ? list([opaque]) : detail([], { conversation: { ...opaque, channel_identifier: "CO.1234567890123457" } }) });
+  await assert.rejects(mismatch.adapter.fetchDaptaConversationSnapshots(), { code: "SCOPE_MISMATCH" });
+  const foreign = mock({ onTool: () => list([{ ...opaque, channel_type: "twilio_whatsapp" }]) });
+  assert.equal((await foreign.adapter.fetchDaptaConversationSnapshots()).snapshots.length, 0);
+});
+
+test("preserves delivered template text and media chronology without publishing attachment URLs", async () => {
+  const { adapter } = mock({ onTool: name => name === "list_conversations" ? list() : detail([
+    { ...message, id: "template", direction: "outbound", kind: "agent", content_type: "template", content: "Hola, tu solicitud está disponible.", status: "read" },
+    { ...message, id: "audio", content_type: "audio", content: "https://private.example/audio?token=secret" },
+    { ...message, id: "pending", direction: "outbound", content_type: "template", status: "pending" },
+  ]) });
+  const result = await adapter.fetchDaptaConversationSnapshots();
+  assert.equal(result.snapshots[0].messages.length, 2);
+  assert.ok(result.snapshots[0].messages.some(item => item.text.startsWith("[Audio de WhatsApp")));
+  assert.ok(result.snapshots[0].messages.some(item => item.text === "Hola, tu solicitud está disponible."));
+  assert.equal(JSON.stringify(result).includes("private.example"), false);
+});
+
+test("redacts authentication secrets in WhatsApp formatted templates", async () => {
+  const { adapter } = mock({ onTool: name => name === "list_conversations" ? list() : detail([
+    { ...message, id: "otp-prefix", content_type: "template", content: "123456 es tu código de verificación." },
+    { ...message, id: "otp-formatted", content_type: "template", content: "Tu código de verificación es *987654*." },
+    { ...message, id: "password", content: "Tu contraseña es EjemploInventado123" },
+  ]) });
+  const result = await adapter.fetchDaptaConversationSnapshots();
+  const serialized = JSON.stringify(result);
+  for (const sensitive of ["123456", "987654", "EjemploInventado123"]) assert.equal(serialized.includes(sensitive), false);
+  assert.equal(result.snapshots[0].messages.length, 3);
 });
 
 test("paginates, de-duplicates and orders messages; preserves list continuation", async () => {

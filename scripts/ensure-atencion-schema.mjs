@@ -4,7 +4,7 @@ import pg from "pg";
 // PostgreSQL native type names; "!" marks NOT NULL. Existing incompatible tables
 // are rejected instead of attempting an implicit repair or destructive migration.
 const expectedColumns = {
-  AttentionConversation: "id:uuid! externalId:text channel:text! phone:text! name:text! status:text! mode:text! sedeId:int4! assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz!",
+  AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz!",
   AttentionMessage: "id:uuid! conversationId:uuid! externalId:text! direction:text! text:text! sentAt:timestamptz! author:text",
   AttentionNote: "id:uuid! conversationId:uuid! text:text! author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
   AttentionTask: "id:uuid! conversationId:uuid! title:text! dueAt:timestamptz completedAt:timestamptz author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
@@ -39,7 +39,8 @@ async function verifySchema(client, beforeInstallation) {
       const [column, expected] = spec.split(":");
       const found = rows.find(row => row.tableName === table && row.columnName === column);
       if (beforeInstallation && !found && table === "AttentionConversation" && ["closedAt", "daptaMessagesCursor"].includes(column)) continue;
-      if (!found || found.typeName !== expected.replace("!", "") || found.notNull !== expected.endsWith("!")) throw new AttentionSchemaMismatch(`${table}.${column}`);
+      const nullableUpgrade = beforeInstallation && table === "AttentionConversation" && ["sedeId", "phone"].includes(column);
+      if (!found || found.typeName !== expected.replace("!", "") || (!nullableUpgrade && found.notNull !== expected.endsWith("!"))) throw new AttentionSchemaMismatch(`${table}.${column}`);
     }
   }
   const { rows: constraints } = await client.query(`SELECT t.relname AS "tableName",c.contype,c.convalidated,

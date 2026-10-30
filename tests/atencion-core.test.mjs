@@ -20,3 +20,13 @@ test("filtros y alcance fallan cerrados", () => {
   for (const text of ["filter=admin", "page=-1", "page=0", "page=1e3", "filter=all&filter=mine", "search=a&search=b"]) assert.throws(() => parseAttentionFilters(new URLSearchParams(text)));
   assert.throws(() => assertAttentionActor({ userId: 1, sellerId: null, key: "user:1", admin: false, central: true, aliadoId: 1, sedeId: 10 }));
 });
+
+test("actores requieren identidad explícita central o analista, sin compatibilidad con vendedores", () => {
+  const admin={userId:1,sellerId:null,key:"admin:1",central:true,admin:true,analyst:false,supervisor:false};
+  const analyst={...admin,key:"analyst:1",central:false,admin:false,analyst:true};
+  assert.doesNotThrow(()=>assertAttentionActor(admin)); assert.doesNotThrow(()=>assertAttentionActor(analyst));
+  for(const actor of [{...admin,key:"user:1"},{...analyst,key:"seller:1",sellerId:1},{...analyst,supervisor:true},{...analyst,central:true},{...admin,analyst:true}]) assert.throws(()=>assertAttentionActor(actor),{status:403});
+  const base={action:"transfer",version:1,requestId};
+  assert.equal(parseAttentionMutation({...base,assigneeKey:"analyst:5"}).assigneeKey,"analyst:5");
+  for(const assigneeKey of ["user:1","admin:1","seller:1","analyst:0"]) assert.throws(()=>parseAttentionMutation({...base,assigneeKey}));
+});

@@ -2,9 +2,9 @@ BEGIN;
 SET LOCAL search_path = public;
 CREATE TABLE IF NOT EXISTS "AttentionConversation" (
   id uuid PRIMARY KEY, "externalId" text UNIQUE, channel text NOT NULL CHECK (channel IN ('internal','whatsapp')),
-  phone text NOT NULL, name text NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','open','closed')),
+  phone text, name text NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','open','closed')),
   mode text NOT NULL DEFAULT 'unknown' CHECK (mode IN ('unknown','ai','human_requested','human')),
-  "sedeId" integer NOT NULL REFERENCES "Sede"(id) ON DELETE RESTRICT,
+  "sedeId" integer REFERENCES "Sede"(id) ON DELETE RESTRICT,
   "assigneeKey" text, "assigneeName" text, "assigneeUserId" integer REFERENCES "Usuario"(id) ON DELETE RESTRICT,
   "assigneeSellerId" integer REFERENCES "Vendedor"(id) ON DELETE RESTRICT,
   "linkedCreditId" integer REFERENCES "Credito"(id) ON DELETE RESTRICT,
@@ -14,7 +14,12 @@ CREATE TABLE IF NOT EXISTS "AttentionConversation" (
 );
 ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "closedAt" timestamptz;
 ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "daptaMessagesCursor" text;
+-- Global inbox: source conversations are not assigned to an arbitrary sales branch.
+ALTER TABLE "AttentionConversation" ALTER COLUMN "sedeId" DROP NOT NULL;
+-- A Meta channel identifier is not necessarily a verifiable telephone number.
+ALTER TABLE "AttentionConversation" ALTER COLUMN phone DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS "AttentionConversation_scope" ON "AttentionConversation"("sedeId","assigneeKey",status,"updatedAt" DESC);
+CREATE INDEX IF NOT EXISTS "AttentionConversation_analyst" ON "AttentionConversation"("assigneeUserId","assigneeKey",status,"updatedAt" DESC);
 CREATE INDEX IF NOT EXISTS "AttentionConversation_phone" ON "AttentionConversation"(phone);
 CREATE TABLE IF NOT EXISTS "AttentionMessage" (
   id uuid PRIMARY KEY, "conversationId" uuid NOT NULL REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
