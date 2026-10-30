@@ -350,6 +350,16 @@ test("prórroga doble clic registra una intención; un replay vencido no anuncia
   assert.doesNotMatch(f.financial().attempts.extension.message, /concedida/); f.unmount();
 });
 
+test("un 409 de prórroga exige revisar la cuota y conserva la intención rechazada sin reenvío automático", async () => {
+  const f = mount(); await f.ready(); await f.select();
+  f.financial().grant(extensionInput); await f.flush();
+  f.requests.at(-1).respond({ error: "La cuota pendiente cambió o no fue confirmada." }, 409); await f.flush();
+  const attempt = f.financial().attempts.extension;
+  assert.equal(attempt.phase, "failed"); assert.equal(attempt.requiresReview, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(attempt.input)), extensionInput);
+  assert.equal(f.requests.filter(r => r.init.method === "POST").length, 1); f.unmount();
+});
+
 test("reasignación durante una operación financiera retira contexto protegido sin borrar otro chat", async () => {
   const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Privado de A" });
   f.financial().sendReceipt(receiptInput); await f.flush(); const pending = f.requests.at(-1);
@@ -395,6 +405,26 @@ test("si cambia el último pago al confirmar, la ficha exige revisarlo y no abre
   assert.equal(financialDialog(f).props.open, false); assert.ok(f.all().some(node => text(node).includes("Cambió el último pago"))); f.unmount();
 });
 
+test("gestiones e historial enlaza solo el crédito autorizado elegido y sigue disponible al recargar", async () => {
+  const payload = financialFixture();
+  const actions = { attempts: {}, disabled: false, accessDenied: () => false };
+  const historyLink = f => f.all().find(node => node.type?.name === "next/link" && text(node).startsWith("Gestiones e historial"));
+  const f = mount({ component: "FinancialPanel", props: { detail, actions } });
+  assert.equal(historyLink(f), undefined);
+  await f.advance(0); f.requests.at(-1).respond(payload); await f.flush();
+  assert.equal(historyLink(f), undefined, "varios créditos requieren selección explícita");
+  for (const id of [32, 31]) {
+    f.all().find(node => node.type?.name === "Select").props.onChange({ target: { value: String(id) } }); await f.flush();
+    assert.equal(historyLink(f).props.href, `/dashboard/aprobaciones/gestion-cartera?creditId=${id}`);
+    assert.equal(historyLink(f).props.target, "_blank"); assert.equal(historyLink(f).props.rel, "noopener noreferrer");
+  }
+  f.unmount();
+  const reloaded = mount({ component: "FinancialPanel", props: { detail, actions } });
+  await reloaded.advance(0); reloaded.requests.at(-1).respond({ ...payload, credits: [payload.credits[0]] }); await reloaded.flush();
+  assert.equal(historyLink(reloaded).props.href, "/dashboard/aprobaciones/gestion-cartera?creditId=31");
+  assert.equal(reloaded.requests.filter(r => r.init.method === "POST").length, 0); reloaded.unmount();
+});
+
 test("prórroga exige compromiso explícito y una opción vigente del servidor antes del diálogo", async () => {
   const granted = [], payload = financialFixture(); payload.credits = [payload.credits[0]];
   const actions = { attempts: {}, disabled: false, accessDenied: () => false, grant: async input => { granted.push(input); return null; } };
@@ -416,10 +446,84 @@ test("prórroga exige compromiso explícito y una opción vigente del servidor a
   f.requests.at(-1).respond({ ...payload, version: 8 }); await f.flush();
   assert.equal(granted.length, 0); assert.equal(financialDialog(f).props.open, true);
   assert.match(financialDialog(f).props.description, /QA-031/); assert.match(financialDialog(f).props.description, /2 días/);
+  assert.match(financialDialog(f).props.description, /gestión de cartera como Acuerdo de pago/);
+  assert.match(financialDialog(f).props.description, /08:00 \(Bogotá\) del día siguiente al compromiso/);
   financialDialog(f).props.onConfirm(); await f.flush();
   assert.equal(granted.length, 1); assert.equal(granted[0].creditId, 31); assert.equal(granted[0].days, 2); assert.equal(granted[0].version, 8);
   assert.equal(granted[0].installmentNumber, payload.credits[0].extension.installmentNumber); assert.equal(granted[0].installmentDueDate, payload.credits[0].extension.dueDate);
   assert.equal(granted[0].promiseAmount, 30000); assert.equal(granted[0].promiseDate, payload.credits[0].extension.promise.date); f.unmount();
+});
+
+function financialField(f, label) {
+  return nodes(f.all().find(node => node.type === "label" && text(node).startsWith(label))).find(node => node.props.onChange);
+}
+async function prepareFinancialDraft(f) {
+  findButton(f, "Conceder prórroga").props.onClick(); await f.flush();
+  for (const [label, value] of [["Días autorizados", "2"], ["Motivo", "Acuerdo de pago verificado"], ["Observación", "Cliente confirmó la fecha por chat"]]) {
+    financialField(f, label).props.onChange({ target: { value } }); await f.flush();
+  }
+  f.all().find(node => node.type === "input" && node.props.type === "checkbox").props.onChange({ target: { checked: true } }); await f.flush();
+}
+
+test("si la cuota cambia durante la revisión, conserva el formulario y exige revisar la nueva antes del diálogo", async () => {
+  const payload = financialFixture(); payload.credits = [payload.credits[0]];
+  const actions = { attempts: {}, disabled: false, accessDenied: () => false, grant: async () => assert.fail("No debe conceder sin revisar") };
+  const f = mount({ component: "FinancialPanel", props: { detail, actions } });
+  await f.advance(0); f.requests.at(-1).respond(payload); await f.flush(); await prepareFinancialDraft(f);
+  f.all().find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); await f.flush();
+  const changed = { ...payload, version: 8, credits: [{ ...payload.credits[0], extension: { ...payload.credits[0].extension, installmentNumber: 3, dueDate: "2099-01-02" } }] };
+  f.requests.at(-1).respond(changed); await f.flush();
+  assert.equal(financialDialog(f).props.open, false);
+  assert.match(text(f.all()[0]), /Cambió la cuota pendiente/);
+  assert.equal(financialField(f, "Motivo").props.value, "Acuerdo de pago verificado");
+  assert.equal(financialField(f, "Observación").props.value, "Cliente confirmó la fecha por chat");
+  assert.equal(f.all().find(node => node.type === "input" && node.props.type === "checkbox").props.checked, false);
+  assert.equal(findButton(f, "Revisar y confirmar").props.disabled, true); f.unmount();
+});
+
+test("tras409 actualizar cuota conserva datos, no envía y requiere compromiso y nueva confirmación con otro UUID", async () => {
+  const payload = financialFixture(); payload.credits = [payload.credits[0]]; const granted = [];
+  const actions = { attempts: {}, disabled: false, accessDenied: () => false, grant: async input => {
+    granted.push(input); actions.attempts = { extension: { input, phase: "failed", requiresReview: true, message: "La cuota pendiente cambió." } }; return null;
+  } };
+  const f = mount({ component: "FinancialPanel", props: { detail, actions } });
+  await f.advance(0); f.requests.at(-1).respond(payload); await f.flush(); await prepareFinancialDraft(f);
+  f.all().find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); await f.flush(); f.requests.at(-1).respond(payload); await f.flush();
+  financialDialog(f).props.onConfirm(); await f.flush();
+  const first = granted[0]; assert.equal(granted.length, 1); assert.equal(financialDialog(f).props.open, false);
+  assert.equal(f.all().find(node => node.type === "input" && node.props.type === "checkbox").props.checked, false);
+  f.all().find(node => node.type === "input" && node.props.type === "checkbox").props.onChange({ target: { checked: true } }); await f.flush();
+  assert.equal(findButton(f, "Revisar y confirmar").props.disabled, true, "revisar requiere primero refrescar el409");
+  findButton(f, "Actualizar cuota y revisar").props.onClick(); await f.flush();
+  const fresh = { ...payload, version: 9, credits: [{ ...payload.credits[0], extension: { ...payload.credits[0].extension, installmentNumber: 3 } }] };
+  f.requests.at(-1).respond(fresh); await f.flush();
+  assert.equal(granted.length, 1, "refrescar nunca envía"); assert.equal(financialDialog(f).props.open, false);
+  for (const [label, expected] of [["Días autorizados", "2"], ["Motivo", first.reason], ["Observación", first.observation], ["Compromiso de pago", String(first.promiseAmount)], ["Fecha del compromiso", first.promiseDate]]) assert.equal(financialField(f, label).props.value, expected);
+  assert.equal(findButton(f, "Revisar y confirmar").props.disabled, true);
+  f.all().find(node => node.type === "input" && node.props.type === "checkbox").props.onChange({ target: { checked: true } }); await f.flush();
+  f.all().find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); await f.flush(); f.requests.at(-1).respond(fresh); await f.flush();
+  assert.equal(granted.length, 1); assert.equal(financialDialog(f).props.open, true); assert.match(financialDialog(f).props.description, /cuota 3/);
+  financialDialog(f).props.onConfirm(); await f.flush();
+  assert.equal(granted.length, 2); assert.notEqual(granted[1].requestId, first.requestId);
+  assert.equal(granted[1].installmentNumber, 3); assert.equal(granted[1].installmentDueDate, fresh.credits[0].extension.dueDate); assert.equal(granted[1].version, 9); f.unmount();
+});
+
+test("solo un resultado con gestión del mismo crédito anuncia el registro y enlaza al muro", async () => {
+  const management = { id: "mg-1", creditId: extensionInput.creditId, nextFollowUpAt: "2026-11-02T13:00:00.000Z" };
+  for (const supplied of [undefined, management, { ...management, creditId: 999 }]) {
+    const root = mount(); await root.ready(); await root.select(); root.financial().grant(extensionInput); await root.flush();
+    root.requests.at(-1).respond({ extension: { id: "ex-1", status: "APPROVED", expiresOn: "2026-11-02" }, unchanged: false, version: 5, management: supplied });
+    await root.flush(); await root.completeReads();
+    const expected = supplied?.creditId === extensionInput.creditId;
+    assert.equal(Boolean(root.financial().attempts.extension.management), expected);
+    assert.equal(root.financial().attempts.extension.message.includes("Gestión registrada en Gestión de cartera"), expected);
+    const panel = mount({ component: "FinancialPanel", props: { detail, actions: root.financial() } });
+    await panel.advance(0); panel.requests.at(-1).respond(financialFixture()); await panel.flush();
+    const link = panel.all().find(node => node.type?.name === "next/link" && text(node).includes("Ver en Gestión de cartera"));
+    assert.equal(Boolean(link), expected);
+    if (expected) { assert.equal(link.props.href, `/dashboard/aprobaciones/gestion-cartera?creditId=${extensionInput.creditId}`); assert.match(text(panel.all()[0]), /Próximo seguimiento/); }
+    panel.unmount(); root.unmount();
+  }
 });
 
 test("etiqueta FINSERPAY depende de clasificación automática y jamás de un texto manual", () => {

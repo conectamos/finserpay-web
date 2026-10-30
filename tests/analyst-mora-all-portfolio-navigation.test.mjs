@@ -48,14 +48,19 @@ test("Gestión de cartera exige el guard nominal antes de renderizar el listado 
     } },
     "../cartera-mora/mora-portfolio-client": { default: stub("Portfolio") },
   });
-  await assert.rejects(page.default(), error => error === denied);
+  await assert.rejects(page.default({ searchParams: Promise.resolve({ creditId: "44" }) }), error => error === denied);
   allowed = true;
-  const tree = await page.default();
+  const tree = await page.default({ searchParams: Promise.resolve({}) });
   assert.equal(guardCalls, 2);
   assert.equal(tree.type, "Shell");
   assert.equal(tree.props.activeHref, target);
   const portfolio = nodes(tree).find(item => item.type === "Portfolio");
   assert.equal(portfolio.props.scope, "all");
+  assert.equal(portfolio.props.initialCreditId, null);
+  for (const [creditId, expected] of [["44", 44], ["-1", null], ["1.5", null], [["44", "45"], null], ["9007199254740992", null]]) {
+    const linked = await page.default({ searchParams: Promise.resolve({ creditId }) });
+    assert.equal(nodes(linked).find(item => item.type === "Portfolio").props.initialCreditId, expected);
+  }
 });
 
 test("el menú nominal del analista conserva mora y añade todos los créditos", () => {

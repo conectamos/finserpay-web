@@ -247,7 +247,9 @@ function DetailValue({ label, value }: { label: string; value: string }) {
   return <div className="min-w-0"><dt className="text-xs font-bold uppercase tracking-[0.1em] text-[var(--fp-muted)]">{label}</dt><dd className="mt-1 break-words text-sm font-semibold">{value}</dd></div>;
 }
 
-export default function MoraPortfolioClient({ scope = "overdue" }: { scope?: "overdue" | "all" } = {}) {
+export default function MoraPortfolioClient({ scope = "overdue", initialCreditId = null }: {
+  scope?: "overdue" | "all"; initialCreditId?: number | null;
+} = {}) {
   const allCredits = scope === "all";
   const apiBase = allCredits ? "/api/aprobaciones/gestion-cartera" : "/api/aprobaciones/cartera-mora";
   const resultOptions = (action: ManagementForm["action"]) => allCredits ? CREDIT_MANAGEMENT_RESULTS : moraResultsForAction(action);
@@ -310,6 +312,37 @@ export default function MoraPortfolioClient({ scope = "overdue" }: { scope?: "ov
   }, [listUrl, refreshVersion]);
 
   useEffect(() => () => detailController.current?.abort(), []);
+
+  // The deep link only selects a record. The existing protected detail endpoint
+  // still authorizes the read; it does not submit a management or a communication.
+  useEffect(() => {
+    if (!allCredits || !initialCreditId || !Number.isSafeInteger(initialCreditId) || initialCreditId < 1) return;
+    detailController.current?.abort();
+    const controller = new AbortController();
+    detailController.current = controller;
+    selectedCreditId.current = initialCreditId;
+    setSelectedId(initialCreditId);
+    setDetail(null);
+    setLoadingDetail(true);
+    setDetailError("");
+    setSaveError("");
+    setNotice("");
+    setExtensionNotice(null);
+    setLastSavedFingerprint("");
+    idempotencyKey.current = null;
+    void requestJson<DetailResponse>(`${apiBase}/${initialCreditId}`, { signal: controller.signal })
+      .then(result => {
+        if (controller.signal.aborted || selectedCreditId.current !== initialCreditId) return;
+        if (result.credit.id !== initialCreditId) throw new Error("La respuesta no corresponde al crédito seleccionado. Actualiza la consulta.");
+        setDetail(result);
+        setManagement(freshManagement(String(result.currentResponsible.id)));
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setDetailError(error instanceof Error ? error.message : "No fue posible abrir el crédito.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoadingDetail(false); });
+    return () => controller.abort();
+  }, [allCredits, apiBase, initialCreditId]);
 
   function updateFilter(key: keyof Filters, value: string) {
     setFormFilters((current) => ({ ...current, [key]: value }));

@@ -25,5 +25,6 @@ export type AttentionReceiptSendInput = { creditId: number; paymentId: number; v
 export type AttentionExtensionResult = {
   extension: { id: string; creditId: number; status: "APPROVED" | "EXPIRED" | "CANCELLED" | "REPLACED" | "REJECTED" | "PENDING"; expiresOn: string; installmentNumber: number; installmentDueDate: string };
   version: number; unchanged: boolean;
+  management?: { id: string; creditId: number; nextFollowUpAt: string };
   moraSync?: { ok: boolean; message: string };
 };

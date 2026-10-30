@@ -144,7 +144,7 @@ function MessageDelivery({ message }: { message: AttentionMessage }) {
   return <span className={`${styles.deliveryStatus} ${status === "failed" || status === "uncertain" ? styles.deliveryAttention : ""}`} title={message.deliveryError || undefined}><Icon aria-hidden="true" size={14} />{deliveryNames[status]}{message.deliveryError && <span>{message.deliveryError}</span>}</span>;
 }
 type ReplyDraft = { text: string; file: File | null; requestId: string | null; version: number | null; locked: boolean; error: string; result: "failed" | "missing" | null };
-type ExtensionAttempt = { input: AttentionExtensionInput; phase: "pending" | "uncertain" | "failed" | "confirmed"; message: string };
+type ExtensionAttempt = { input: AttentionExtensionInput; phase: "pending" | "uncertain" | "failed" | "confirmed"; message: string; requiresReview?: boolean; management?: AttentionExtensionResult["management"] };
 type ReceiptAttempt = { input: AttentionReceiptSendInput; phase: "pending" | "uncertain" | "missing" | "failed" | "confirmed"; message: string };
 type FinancialAttempts = { extension?: ExtensionAttempt; receipt?: ReceiptAttempt };
 type FinancialActions = {
@@ -709,13 +709,14 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
         const result = await api<AttentionExtensionResult>(`/api/atencion/${encodeURIComponent(id)}/extensions`, { method: "POST", body: JSON.stringify(actual), signal });
         if (!result.extension?.id || !result.extension.status) throw new Error("El servidor no confirmó la prórroga. Revisa la misma solicitud.");
         const stateNames = { APPROVED: "aprobada", EXPIRED: "vencida", CANCELLED: "cancelada", REPLACED: "reemplazada", REJECTED: "rechazada", PENDING: "pendiente" };
-        const message = `${result.unchanged ? `Operación ya registrada: prórroga ${stateNames[result.extension.status]}` : result.extension.status === "APPROVED" ? "Prórroga concedida" : `Prórroga ${stateNames[result.extension.status]}`} · ${date(result.extension.expiresOn, true)}.${result.moraSync && !result.moraSync.ok ? ` ${result.moraSync.message}` : ""}`;
-        updateFinancialAttempt(id, { extension: { input: actual, phase: "confirmed", message } });
+        const management = result.management?.creditId === actual.creditId ? result.management : undefined;
+        const message = `${result.unchanged ? `Operación ya registrada: prórroga ${stateNames[result.extension.status]}` : result.extension.status === "APPROVED" ? "Prórroga concedida" : `Prórroga ${stateNames[result.extension.status]}`} · ${date(result.extension.expiresOn, true)}.${management ? " Gestión registrada en Gestión de cartera." : ""}${result.moraSync && !result.moraSync.ok ? ` ${result.moraSync.message}` : ""}`;
+        updateFinancialAttempt(id, { extension: { input: actual, phase: "confirmed", message, management } });
         await refreshAfterFinancialAction(id); return result;
       } catch (err) {
         if (!handleFinancialAccessError(id, err)) {
           const rejected = err instanceof ApiError && [400, 404, 409, 422].includes(err.status);
-          updateFinancialAttempt(id, { extension: { input: actual, phase: rejected ? "failed" : "uncertain", message: `${errorMessage(err)}${rejected ? " Actualiza los datos antes de revisar otra solicitud." : " Conservamos la solicitud para comprobarla sin duplicar la prórroga."}` } });
+          updateFinancialAttempt(id, { extension: { input: actual, phase: rejected ? "failed" : "uncertain", requiresReview: err instanceof ApiError && err.status === 409, message: `${errorMessage(err)}${rejected ? " Actualiza los datos antes de revisar otra solicitud." : " Conservamos la solicitud para comprobarla sin duplicar la prórroga."}` } });
         }
         return null;
       }
@@ -928,6 +929,7 @@ function FinancialPanel({ detail, actions }: { detail: AttentionDetail; actions:
   const [promiseAmount, setPromiseAmount] = useState("");
   const [promiseDate, setPromiseDate] = useState("");
   const [promiseConfirmed, setPromiseConfirmed] = useState(false);
+  const [reviewedFailure, setReviewedFailure] = useState("");
   const [confirmation, setConfirmation] = useState<FinancialConfirmation | null>(null);
   const alive = useRef(true);
   const accessDenied = useRef(actions.accessDenied);
@@ -960,12 +962,20 @@ function FinancialPanel({ detail, actions }: { detail: AttentionDetail; actions:
   const extensionAttempt = actions.attempts.extension;
   const receiptAttempt = actions.attempts.receipt;
   const extensionLocked = Boolean(extensionAttempt && ["pending", "uncertain"].includes(extensionAttempt.phase));
+  const extensionNeedsReview = extensionAttempt?.phase === "failed" && extensionAttempt.requiresReview && extensionAttempt.input.requestId !== reviewedFailure && extensionAttempt.input.creditId === credit?.id;
   const receiptLocked = Boolean(receiptAttempt && ["pending", "uncertain", "missing"].includes(receiptAttempt.phase));
   const disabled = actions.disabled || loading;
   const canSend = replyWindowOpen(detail);
   const sendReason = detail.messaging?.reason || (!detail.permissions.canSend ? "El envío por WhatsApp no está autorizado para esta conversación." : "La ventana de atención de WhatsApp está cerrada.");
   function selectCredit(value: string) {
     setCreditId(value); setExtensionOpen(false); setDays(""); setReason(""); setObservation(""); setPromiseAmount(""); setPromiseDate(""); setPromiseConfirmed(false); setConfirmation(null); setError("");
+  }
+  async function refreshExtensionReview() {
+    if (disabled || extensionLocked) return;
+    setConfirmation(null); setPromiseConfirmed(false);
+    const fresh = await load(); if (!fresh || !alive.current) return;
+    setReviewedFailure(extensionAttempt?.input.requestId || "");
+    if (extensionAttempt?.input.creditId === credit?.id) setExtensionOpen(true);
   }
   function openExtension() {
     if (!credit?.extension.canGrant || disabled || extensionLocked) return;
@@ -974,17 +984,20 @@ function FinancialPanel({ detail, actions }: { detail: AttentionDetail; actions:
     setExtensionOpen(value => !value);
   }
   async function prepareExtension(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!credit || disabled || extensionLocked || !promiseConfirmed) return;
+    event.preventDefault(); if (!credit || disabled || extensionLocked || extensionNeedsReview || !promiseConfirmed) return;
     const selectedId = credit.id; const fresh = await load(); if (!fresh || !alive.current) return;
     const current = fresh.credits.find(item => item.id === selectedId);
     const selectedChoice = current?.extension.choices.find(item => String(item.days) === days);
     if (!current?.extension.canGrant || !selectedChoice || !current.extension.installmentNumber || !current.extension.dueDate) { setError(current?.extension.blockedReason || "La opción cambió. Revisa los días disponibles antes de continuar."); return; }
+    if (current.extension.installmentNumber !== credit.extension.installmentNumber || current.extension.dueDate !== credit.extension.dueDate) {
+      setPromiseConfirmed(false); setError("Cambió la cuota pendiente. Conservamos tus datos; revisa la cuota y su vencimiento y vuelve a confirmar el compromiso."); return;
+    }
     const amount = Number(promiseAmount);
     if (reason.trim().length < 5 || observation.trim().length < 5 || !Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(promiseDate) || promiseDate < todayInColombia() || promiseDate > selectedChoice.expiresOn) {
       setError("Completa motivo y observación (mínimo 5 caracteres), un importe positivo y una fecha de compromiso vigente dentro de la prórroga."); return;
     }
     const input: AttentionExtensionInput = { creditId: selectedId, days: selectedChoice.days, version: fresh.version, requestId: crypto.randomUUID(), installmentNumber: current.extension.installmentNumber, installmentDueDate: current.extension.dueDate, reason: reason.trim(), observation: observation.trim(), promiseAmount: amount, promiseDate };
-    setConfirmation({ kind: "extension", input, description: `Crédito ${current.number}. ${selectedChoice.days} ${selectedChoice.days === 1 ? "día" : "días"} de prórroga para la cuota ${current.extension.installmentNumber}, hasta el ${financialDay(selectedChoice.expiresOn)}. Compromiso confirmado: ${money(amount)} para el ${financialDay(promiseDate)}. Esta acción registra la autorización y el compromiso de pago.` });
+    setConfirmation({ kind: "extension", input, description: `Crédito ${current.number}. ${selectedChoice.days} ${selectedChoice.days === 1 ? "día" : "días"} de prórroga para la cuota ${current.extension.installmentNumber}, hasta el ${financialDay(selectedChoice.expiresOn)}. Compromiso confirmado: ${money(amount)} para el ${financialDay(promiseDate)}. Se registra una gestión de cartera como Acuerdo de pago, con motivo y observación. El próximo seguimiento será a las 08:00 (Bogotá) del día siguiente al compromiso.` });
   }
   async function prepareReceipt() {
     if (!credit?.lastPayment?.receiptAvailable || disabled || receiptLocked) return;
@@ -1001,6 +1014,7 @@ function FinancialPanel({ detail, actions }: { detail: AttentionDetail; actions:
     if (!confirmation || disabled) return;
     const pending = confirmation; setConfirmation(null);
     if (pending.kind === "extension") {
+      setPromiseConfirmed(false);
       const result = await actions.grant(pending.input);
       if (result && alive.current) { setExtensionOpen(false); setPromiseConfirmed(false); await load(); }
     } else await actions.sendReceipt(pending.input);
@@ -1012,13 +1026,13 @@ function FinancialPanel({ detail, actions }: { detail: AttentionDetail; actions:
     {data && !data.credits.length && <p className={styles.financialEmpty}>{data.blockedReason || "Este contacto no tiene créditos autorizados para consultar."}</p>}
     {data && data.credits.length > 1 && <label className={styles.creditSelector}>Selecciona el crédito<Select value={creditId} disabled={disabled} onChange={event => selectCredit(event.target.value)}><option value="">Elige un crédito para continuar</option>{data.credits.map(item => <option value={item.id} key={item.id}>{item.number} · {creditStateNames[item.state]}</option>)}</Select></label>}
     {credit && <>
-      <div className={styles.financialSummary}><span>Crédito</span><div><strong>{credit.number}</strong><StatusPill tone={credit.state === "EN_MORA" ? "warning" : credit.state === "AL_DIA" || credit.state === "PAGADO" ? "positive" : "neutral"}>{creditStateNames[credit.state]}</StatusPill></div>{credit.extension.installmentNumber && <p>Cuota {credit.extension.installmentNumber} · vence {financialDay(credit.extension.dueDate)}</p>}</div>
+      <div className={styles.financialSummary}><span>Crédito</span><div><strong>{credit.number}</strong><StatusPill tone={credit.state === "EN_MORA" ? "warning" : credit.state === "AL_DIA" || credit.state === "PAGADO" ? "positive" : "neutral"}>{creditStateNames[credit.state]}</StatusPill></div>{credit.extension.installmentNumber && <p>Cuota {credit.extension.installmentNumber} · vence {financialDay(credit.extension.dueDate)}</p>}<Link className={styles.textLink} href={`/dashboard/aprobaciones/gestion-cartera?creditId=${credit.id}`} target="_blank" rel="noopener noreferrer">Gestiones e historial <ExternalLink aria-hidden="true" size={15} /></Link></div>
       <div className={styles.financialSection}><h4><CalendarClock aria-hidden="true" size={18} /> Prórroga de pago</h4>{credit.extension.active && <p className={styles.extensionActive}>Prórroga vigente{credit.extension.active.expiresOn ? ` hasta el ${financialDay(credit.extension.active.expiresOn)}` : ""}.</p>}<p>Puede concederse antes de vencer la cuota pendiente. De 1 a 4 días desde su vencimiento, con límite en los días 06 y 21.</p><Button variant="secondary" disabled={disabled || !credit.extension.canGrant || extensionLocked} onClick={openExtension}>{extensionOpen ? "Cerrar formulario" : "Conceder prórroga"}</Button>{!credit.extension.canGrant && <p className={styles.actionReason}>{credit.extension.blockedReason || "Esta prórroga no está disponible para el crédito seleccionado."}</p>}
-        {extensionOpen && <form className={styles.extensionForm} onSubmit={prepareExtension}><label>Días autorizados<Select required value={days} disabled={disabled || extensionLocked} onChange={event => { setDays(event.target.value); setPromiseConfirmed(false); }}><option value="">Selecciona los días</option>{credit.extension.choices.map(item => <option value={item.days} key={item.days}>{item.days} {item.days === 1 ? "día" : "días"} · hasta {financialDay(item.expiresOn)}</option>)}</Select></label><label>Motivo<textarea rows={2} required minLength={5} maxLength={500} value={reason} disabled={disabled || extensionLocked} onChange={event => setReason(event.target.value)} placeholder="Motivo de la prórroga" /></label><label>Observación de la gestión<textarea rows={2} required minLength={5} maxLength={2000} value={observation} disabled={disabled || extensionLocked} onChange={event => setObservation(event.target.value)} placeholder="Acuerdo y contexto de la atención" /></label><label>Compromiso de pago (COP)<Input type="number" min="0.01" step="0.01" required value={promiseAmount} disabled={disabled || extensionLocked} onChange={event => { setPromiseAmount(event.target.value); setPromiseConfirmed(false); }} /></label><label>Fecha del compromiso<Input type="date" required min={todayInColombia()} max={choice?.expiresOn} value={promiseDate} disabled={disabled || extensionLocked} onChange={event => { setPromiseDate(event.target.value); setPromiseConfirmed(false); }} /></label><label className={styles.commitmentCheck}><input type="checkbox" checked={promiseConfirmed} disabled={disabled || extensionLocked} onChange={event => setPromiseConfirmed(event.target.checked)} />He confirmado con el cliente el valor y la fecha del compromiso.</label><Button type="submit" disabled={disabled || extensionLocked || !choice || !promiseConfirmed}>Revisar y confirmar</Button></form>}
+        {extensionOpen && <form className={styles.extensionForm} onSubmit={prepareExtension}><label>Días autorizados<Select required value={days} disabled={disabled || extensionLocked} onChange={event => { setDays(event.target.value); setPromiseConfirmed(false); }}><option value="">Selecciona los días</option>{credit.extension.choices.map(item => <option value={item.days} key={item.days}>{item.days} {item.days === 1 ? "día" : "días"} · hasta {financialDay(item.expiresOn)}</option>)}</Select></label><label>Motivo<textarea rows={2} required minLength={5} maxLength={500} value={reason} disabled={disabled || extensionLocked} onChange={event => setReason(event.target.value)} placeholder="Motivo de la prórroga" /></label><label>Observación de la gestión<textarea rows={2} required minLength={5} maxLength={2000} value={observation} disabled={disabled || extensionLocked} onChange={event => setObservation(event.target.value)} placeholder="Acuerdo y contexto de la atención" /></label><label>Compromiso de pago (COP)<Input type="number" min="0.01" step="0.01" required value={promiseAmount} disabled={disabled || extensionLocked} onChange={event => { setPromiseAmount(event.target.value); setPromiseConfirmed(false); }} /></label><label>Fecha del compromiso<Input type="date" required min={todayInColombia()} max={choice?.expiresOn} value={promiseDate} disabled={disabled || extensionLocked} onChange={event => { setPromiseDate(event.target.value); setPromiseConfirmed(false); }} /></label><label className={styles.commitmentCheck}><input type="checkbox" checked={promiseConfirmed} disabled={disabled || extensionLocked} onChange={event => setPromiseConfirmed(event.target.checked)} />He confirmado con el cliente el valor y la fecha del compromiso.</label><Button type="submit" disabled={disabled || extensionLocked || extensionNeedsReview || !choice || !promiseConfirmed}>Revisar y confirmar</Button></form>}
       </div>
       <div className={styles.financialSection}><h4><FileText aria-hidden="true" size={18} /> Último recibo de pago</h4>{credit.lastPayment ? <><div className={styles.lastPayment}><strong>{money(credit.lastPayment.amount)}</strong><span>{financialDay(credit.lastPayment.date)}</span><small>{credit.lastPayment.method}</small></div><div className={styles.receiptActions}>{credit.lastPayment.receiptAvailable ? <a className="fp-ui-button is-secondary" href={`/api/atencion/${encodeURIComponent(id)}/receipts/latest?creditId=${credit.id}`} target="_blank" rel="noopener noreferrer"><Download aria-hidden="true" size={17} /> Ver PDF</a> : <p className={styles.actionReason}>El PDF de este pago no está disponible.</p>}<Button disabled={disabled || receiptLocked || !credit.lastPayment.receiptAvailable || !canSend} onClick={() => void prepareReceipt()}><Send aria-hidden="true" size={17} /> Enviar recibo</Button></div>{!canSend && <p className={styles.actionReason}>{sendReason}</p>}</> : <p>Aún no hay pagos registrados para este crédito.</p>}</div>
     </>}
-    {extensionAttempt && <div className={`${styles.operationResult} ${extensionAttempt.phase === "confirmed" ? styles.operationConfirmed : ""}`} role="status"><strong>Crédito {data?.credits.find(item => item.id === extensionAttempt.input.creditId)?.number || extensionAttempt.input.creditId}</strong><p>{extensionAttempt.message}</p>{extensionAttempt.phase === "uncertain" && <Button variant="secondary" disabled={disabled} onClick={async () => { const result = await actions.grant(extensionAttempt.input); if (result && alive.current) { setExtensionOpen(false); await load(); } }}>Reintentar misma solicitud</Button>}</div>}
+    {extensionAttempt && <div className={`${styles.operationResult} ${extensionAttempt.phase === "confirmed" ? styles.operationConfirmed : ""}`} role="status"><strong>Crédito {data?.credits.find(item => item.id === extensionAttempt.input.creditId)?.number || extensionAttempt.input.creditId}</strong><p>{extensionAttempt.phase === "failed" && extensionAttempt.input.requestId === reviewedFailure ? "Datos actualizados. Conservamos el motivo, la observación y el compromiso; revisa la cuota antes de una nueva confirmación." : extensionAttempt.message}</p>{extensionAttempt.phase === "confirmed" && extensionAttempt.management && <><p>Próximo seguimiento: {date(extensionAttempt.management.nextFollowUpAt)} (Bogotá).</p><Link className={styles.textLink} href={`/dashboard/aprobaciones/gestion-cartera?creditId=${extensionAttempt.management.creditId}`} target="_blank" rel="noopener noreferrer">Ver en Gestión de cartera <ExternalLink aria-hidden="true" size={15} /></Link></>}{extensionAttempt.phase === "failed" && <Button variant="secondary" disabled={disabled} onClick={() => void refreshExtensionReview()}><RefreshCw aria-hidden="true" size={16} /> Actualizar cuota y revisar</Button>}{extensionAttempt.phase === "uncertain" && <Button variant="secondary" disabled={disabled} onClick={async () => { const result = await actions.grant(extensionAttempt.input); if (result && alive.current) { setExtensionOpen(false); await load(); } }}>Reintentar misma solicitud</Button>}</div>}
     {receiptAttempt && <div className={`${styles.operationResult} ${receiptAttempt.phase === "confirmed" ? styles.operationConfirmed : ""}`} role="status"><strong>Crédito {data?.credits.find(item => item.id === receiptAttempt.input.creditId)?.number || receiptAttempt.input.creditId}</strong><p>{receiptAttempt.message}</p>{receiptLocked && <Button variant="secondary" disabled={disabled} onClick={() => void actions.resolveReceipt()}><RefreshCw aria-hidden="true" size={16} /> Consultar estado del recibo</Button>}{receiptAttempt.phase === "missing" && <><Button variant="secondary" disabled={disabled} onClick={() => void actions.discardReceipt()}>Descartar intento</Button><Button disabled={disabled || !canSend} onClick={() => void actions.sendReceipt(receiptAttempt.input, true)}>Reintentar misma solicitud</Button></>}</div>}
     <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.kind === "extension" ? "Confirmar prórroga" : "Enviar último recibo"} description={confirmation?.description || ""} confirmLabel={confirmation?.kind === "extension" ? "Conceder prórroga" : "Enviar PDF por WhatsApp"} busy={actions.disabled} onCancel={() => { if (!actions.disabled) setConfirmation(null); }} onConfirm={() => void confirmAction()} />
   </section>;

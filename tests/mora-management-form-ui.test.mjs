@@ -13,7 +13,7 @@ const typeModule = { exports: {} };
 runInNewContext(compile("../lib/analyst-mora-types.ts"), { module: typeModule, exports: typeModule.exports });
 
 function harness({ firstReference = "3001112233", secondReference = "3014445566", currentUserId = 17,
-  creditOverrides = {}, detailOverrides = {}, deferSave = false, listTotal = 1, scope = "overdue",
+  creditOverrides = {}, detailOverrides = {}, deferSave = false, listTotal = 1, scope = "overdue", initialCreditId = null,
   extensionActions = { canEdit: true, canCancel: true, centralAdmin: false, minExpiresOn: "2026-10-09", maxExpiresOn: "2026-10-10", editBlockedReason: null } } = {}) {
   const componentNames = ["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "PageHeader", "Select", "StatusPill"];
   const components = Object.fromEntries(componentNames.map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
@@ -143,7 +143,7 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
   const render = () => {
     let count = 0;
     do {
-      dirty = false; cursor = 0; tree = loaded.exports.default({ scope });
+      dirty = false; cursor = 0; tree = loaded.exports.default({ scope, initialCreditId });
       effects.splice(0).forEach(callback => callback());
       if (++count > 20) throw new Error("Render did not settle");
     } while (dirty);
@@ -191,6 +191,28 @@ function harness({ firstReference = "3001112233", secondReference = "3014445566"
     communications: () => find(item => item.type === CreditCommunications),
   };
 }
+
+test("el enlace desde Atención abre el muro del crédito sin registrar otra gestión y permite cerrarlo", async () => {
+  const ui = harness({ scope: "all", initialCreditId: 44 });
+  ui.render(); await ui.settle();
+  assert.ok(ui.sidePanel()?.props.open);
+  assert.match(ui.text(), /Registro histórico que debe conservarse/);
+  assert.equal(ui.fetchRequests.filter(item => item.url === "/api/aprobaciones/gestion-cartera/44").length, 1);
+  assert.ok(ui.fetchRequests.every(item => item.method === "GET"));
+  assert.equal(ui.requests.length, 0);
+  ui.sidePanel().props.onClose(); ui.render(); await ui.settle();
+  assert.ok(!ui.sidePanel());
+  assert.equal(ui.fetchRequests.filter(item => item.url === "/api/aprobaciones/gestion-cartera/44").length, 1);
+});
+
+test("un enlace inválido o una cartera de mora no abre automáticamente otro expediente", async () => {
+  for (const options of [{ scope: "all", initialCreditId: -1 }, { scope: "all", initialCreditId: 1.5 }, { scope: "overdue", initialCreditId: 44 }]) {
+    const ui = harness(options); ui.render(); await ui.settle();
+    assert.ok(!ui.sidePanel());
+    assert.ok(ui.fetchRequests.every(item => item.url.includes("?")));
+    assert.equal(ui.requests.length, 0);
+  }
+});
 
 test("la nueva gestión conserva los dos medios de contacto, los resultados actuales y seis estados", async () => {
   const ui = harness(); await ui.open();

@@ -163,6 +163,11 @@ La prórroga puede concederse antes de vencer la primera cuota regular pendiente
 sus 1 a 4 días se cuentan desde el vencimiento 02/17, con límite 06/21. La
 confirmación identifica la cuota y su fecha; un pago que cambie esa cuota obliga
 a revisar los datos nuevamente. Los créditos pagados no habilitan esta acción.
+Al aprobar desde Atención, la misma operación añade una gestión al muro de
+Gestión de cartera con responsable, motivo, observación y compromiso confirmado.
+La revisión anuncia el seguimiento a las 08:00 de Bogotá del día siguiente al
+compromiso. El resultado enlaza al historial del crédito. Un conflicto ofrece
+«Actualizar cuota y revisar», conserva el borrador y exige confirmar de nuevo.
 En móvil se pasa de bandeja a chat, con ficha superpuesta y desplazamiento sin
 cortar mensajes ni controles de envío.
 

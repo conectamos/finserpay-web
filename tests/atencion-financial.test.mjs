@@ -6,6 +6,8 @@ import test from "node:test";
 import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
 import { installMoraExceptionRequestSchema } from "../scripts/mora-exception-requests-schema.mjs";
+import { installAnalystMoraSchema } from "../scripts/analyst-mora-schema.mjs";
+import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
@@ -14,6 +16,9 @@ const { createAttentionFinancialReceiptSender } = await jiti.import("../lib/aten
 const { createAttentionMetaStore } = await jiti.import("../lib/atencion-meta-storage.ts");
 const { parseAttentionExtension, parseAttentionReceiptSend } = await jiti.import("../lib/atencion-financial-core.ts");
 const { buildClientPaymentReceiptPdf } = await jiti.import("../lib/client-payment-receipt-pdf.ts");
+const managementTypes = await jiti.import("../lib/analyst-mora-types.ts");
+const approvalErrors = await jiti.import("../lib/credit-approval-errors.ts");
+const colombiaDate = await jiti.import("../lib/colombia-date.ts");
 const migration = readFileSync(path.join(root, "scripts/setup-atencion.sql"), "utf8");
 const scope = { phoneNumberId: "1162059967000416", wabaId: "2148284059050848" };
 const phone = "+573001234567", instant = "2026-10-03T17:00:00.000Z";
@@ -40,6 +45,7 @@ async function fixture(t) {
     INSERT INTO "Credito"(id,folio,"clienteNombre","clienteDocumento","clienteTelefono") VALUES(77,'FC-77','Cliente sintético','100000077','3001234567');`);
   await db.exec(migration);
   await installMoraExceptionRequestSchema({ query: (sql, params = []) => db.query(sql, params) });
+  await installAnalystMoraSchema({ query: (sql, params = []) => db.query(sql, params) });
   let clock = new Date(instant); const database = wrap(db), now = () => clock;
   const meta = createAttentionMetaStore(database, { scope, sendingEnabled: true, cutoverConfirmed: true, now });
   await meta.ingest({ scope, messages: [{ id: "wamid.test-inbound", from: phone.slice(1), phone, name: "Cliente sintético", timestamp: instant, type: "text", text: "Solicitud" }], statuses: [], ignored: 0 });
@@ -50,7 +56,16 @@ async function fixture(t) {
     requestId: randomUUID(), installmentNumber: 1, installmentDueDate: "2026-10-02", reason: "Compromiso confirmado", observation: "Cliente confirma las condiciones", promiseAmount: 100, promiseDate: "2026-10-06", ...patch });
   const pay = async (paymentId = 1, patch = {}) => db.query(`INSERT INTO "CreditoAbono"(id,"creditoId",valor,"fechaAbono",estado,"anuladoAt") VALUES($1,77,$2,$3,$4,$5)`, [paymentId, patch.amount ?? 25, patch.at ?? "2026-10-03T12:00:00Z", patch.status ?? "ACTIVO", patch.annulled ?? null]);
   const sendInput = async (patch = {}) => ({ creditId: 77, paymentId: 1, version: (await financial.get(analyst, id)).version, requestId: randomUUID(), ...patch });
-  return { db, database, meta, financial, id, now, input, pay, sendInput, setNow: value => { clock = new Date(value); } };
+  const wall = loadReissueModule("lib/analyst-mora-management.ts", {
+    "@/lib/prisma": { default: database }, "@/lib/credit-approval-errors": approvalErrors,
+    "@/lib/analyst-mora-access": {},
+    "@/lib/analyst-mora-credit": { readMoraCredit: async creditId => ({ id: creditId, estadoCartera: "EN_MORA" }), moraCreditSummary: credit => credit },
+    "@/lib/analyst-mora-schema": { ensureAnalystMoraSchema: async () => {} },
+    "@/lib/analyst-mora-types": managementTypes,
+    "@/lib/analyst-mora-extension": { readActiveMoraExtensions: async () => new Map() },
+    "@/lib/colombia-date": colombiaDate,
+  });
+  return { db, database, meta, financial, wall, id, now, input, pay, sendInput, setNow: value => { clock = new Date(value); } };
 }
 
 test("parsers reject extra fields, invalid days/dates/money and mismatched request payloads", () => {
@@ -93,6 +108,118 @@ test("analyst grants approved due+4, preserves loan terms, real actor, immutable
   await assert.rejects(f.financial.grant(analyst, f.id, await f.input()), { status: 409 });
   await f.db.exec(`UPDATE "CreditMoraExceptionRequest" SET status='CANCELLED'`);
   assert.equal((await f.financial.grant(analyst, f.id, input)).extension.status, "CANCELLED", "replay reports current status, not a new approval");
+});
+
+test("Attention grant appears in the existing portfolio wall with verified actor, original agreement and linked audit", async t => {
+  const f = await fixture(t), input = await f.input();
+  const result = await f.financial.grant(analyst, f.id, input);
+  assert.equal(result.unchanged, false); assert.equal(result.management.creditId, 77);
+  assert.equal(result.management.nextFollowUpAt, "2026-10-07T13:00:00.000Z");
+  const wall = await f.wall.getCreditManagement(77, f.now());
+  assert.equal(wall.history.length, 1); const event = wall.history[0];
+  assert.equal(event.id, result.management.id); assert.equal(event.action, "MSJ_TEXTO");
+  assert.equal(event.resultCode, "ACUERDO_PAGO"); assert.equal(event.managementStatus, "ACUERDO_PAGO");
+  assert.equal(event.agreementAmount, input.promiseAmount); assert.equal(event.agreementDate, input.promiseDate);
+  assert.equal(event.actorUserId, 5); assert.equal(event.responsibleUserId, 5);
+  assert.equal(event.actorName, "Analista real"); assert.equal(event.responsibleName, "Analista real");
+  assert.equal(event.actedAt, instant); assert.equal(event.nextFollowUpAt, result.management.nextFollowUpAt);
+  assert.match(event.result, /^Prórroga aprobada · 4 días · cuota 1 · vencimiento 02\/10\/2026 · hasta 06\/10\/2026 · compromiso/);
+  assert.match(event.result, /\$\s*100 el 06\/10\/2026$/);
+  assert.equal(event.comment, `Desde Atención\nMotivo: ${input.reason}\nObservación: ${input.observation}`);
+  assert.notEqual(event.idempotencyKey, input.requestId); assert.notEqual(event.idempotencyKey, result.extension.id);
+  assert.match(event.idempotencyKey, /^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  const extensionEvent = (await f.db.query(`SELECT payload FROM "CreditMoraExceptionEvent" WHERE "requestId"=$1 AND action='APPROVED'`, [result.extension.id])).rows[0];
+  const audit = (await f.db.query(`SELECT metadata FROM "AttentionAudit" WHERE action='EXTENSION_GRANTED'`)).rows[0];
+  assert.equal(extensionEvent.payload.managementId, event.id); assert.equal(audit.metadata.managementId, event.id);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage" WHERE direction=\'outbound\'')).rows[0].n, 0);
+  await assert.rejects(f.db.exec('DELETE FROM "CreditMoraManagementEvent"'), /inmutable/);
+});
+
+test("concurrent grant replays return one portfolio entry and rejected new attempts never duplicate it", async t => {
+  const f = await fixture(t), input = await f.input();
+  const results = await Promise.all([f.financial.grant(analyst, f.id, input), f.financial.grant(analyst, f.id, input)]);
+  assert.equal(results.filter(result => !result.unchanged).length, 1);
+  assert.deepEqual(results[0].management, results[1].management);
+  const replay = await f.financial.grant(analyst, f.id, input); assert.deepEqual(replay.management, results[0].management);
+  await assert.rejects(f.financial.grant(analyst, f.id, { ...input, reason: "Otra intención" }), { status: 409 });
+  await assert.rejects(f.financial.grant(other, f.id, await f.input()), { status: 404 });
+  await assert.rejects(f.financial.grant(analyst, f.id, await f.input()), { status: 409 });
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraManagementEvent"')).rows[0].n, 1);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraExceptionRequest"')).rows[0].n, 1);
+});
+
+test("failure inserting portfolio history rolls back the extension, UUID ledger, audit and conversation version", async t => {
+  const f = await fixture(t), input = await f.input();
+  await f.db.exec(`CREATE FUNCTION reject_management_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic management insert failure'; END $$;
+    CREATE TRIGGER reject_management_insert BEFORE INSERT ON "CreditMoraManagementEvent" FOR EACH ROW EXECUTE FUNCTION reject_management_insert()`);
+  await assert.rejects(f.financial.grant(analyst, f.id, input), /synthetic management insert failure/);
+  for (const table of ["CreditMoraManagementEvent", "CreditMoraExceptionRequest", "CreditMoraExceptionEvent", "AttentionRequest"])
+    assert.equal((await f.db.query(`SELECT count(*)::int n FROM "${table}"`)).rows[0].n, 0, table);
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='EXTENSION_GRANTED'`)).rows[0].n, 0);
+  assert.equal((await f.db.query('SELECT version FROM "AttentionConversation" WHERE id=$1', [f.id])).rows[0].version, input.version);
+  await f.db.exec('DROP TRIGGER reject_management_insert ON "CreditMoraManagementEvent"');
+  assert.equal((await f.financial.grant(analyst, f.id, input)).unchanged, false, "the rolled-back intent can safely be submitted again");
+});
+
+test("full 500-character reason and 2000-character observation survive without expanding manual management limits", async t => {
+  const f = await fixture(t), reason = "R".repeat(500), observation = "O".repeat(2000);
+  const result = await f.financial.grant(central, f.id, await f.input({ reason, observation }));
+  const row = (await f.db.query('SELECT * FROM "CreditMoraManagementEvent" WHERE id=$1', [result.management.id])).rows[0];
+  assert.equal(row.comment, `Desde Atención\nMotivo: ${reason}\nObservación: ${observation}`);
+  assert.ok(row.comment.length > 2500 && row.comment.length < 3000);
+  assert.equal(row.actorUserId, 1); assert.equal(row.actorName, "Administrador real"); assert.equal(row.responsibleName, "Administrador real");
+  const manual = { action: "MSJ_TEXTO", actedAt: instant, responsibleUserId: 1, result: "ACUERDO_PAGO",
+    agreementDate: "2026-10-06", agreementAmount: 100, comment: "M".repeat(2001), nextFollowUpAt: result.management.nextFollowUpAt,
+    managementStatus: "ACUERDO_PAGO", idempotencyKey: randomUUID() };
+  assert.throws(() => f.wall.parseCreditManagement(manual, f.now()));
+  assert.equal(f.wall.parseCreditManagement({ ...manual, comment: "M".repeat(2000) }, f.now()).comment.length, 2000);
+});
+
+test("portfolio follow-up is 08:00 Bogotá after the agreed payment date, independently of the extension end", async t => {
+  const f = await fixture(t); f.setNow("2026-10-03T23:30:00Z");
+  const result = await f.financial.grant(analyst, f.id, await f.input({ promiseDate: "2026-10-03" }));
+  assert.equal(result.extension.expiresOn, "2026-10-06");
+  assert.equal(result.management.nextFollowUpAt, "2026-10-04T13:00:00.000Z");
+  const row = (await f.db.query('SELECT "actedAt",to_char("nextFollowUpAt" AT TIME ZONE \'America/Bogota\',\'YYYY-MM-DD HH24:MI\') AS local FROM "CreditMoraManagementEvent"')).rows[0];
+  assert.equal(new Date(row.actedAt).toISOString(), "2026-10-03T23:30:00.000Z");
+  assert.equal(row.local, "2026-10-04 08:00");
+});
+
+test("legacy replay returns its extension without manufacturing a historical portfolio entry", async t => {
+  const f = await fixture(t), raw = await f.input(), extensionId = randomUUID();
+  const input = parseAttentionExtension({ ...raw, installmentNumber: undefined, installmentDueDate: undefined });
+  const fingerprint = createHash("sha256").update(JSON.stringify({ conversationId: f.id, input, actorKey: analyst.key })).digest("hex");
+  await f.db.query(`INSERT INTO "CreditMoraExceptionRequest"(id,"creditoId",type,status,source,"installmentNumber","installmentDueDate","expiresOn","promiseAmount","promiseDate",reason,observation,"createdByUserId","createdByName","decidedAt","createIdempotencyKey","createRequestHash")
+    VALUES($1,77,'PRORROGA','APPROVED','ANALYST_REQUEST',1,'2026-10-02','2026-10-06',100,'2026-10-06','Histórico','Observación histórica',5,'Analista real',$2,$3,$4)`, [extensionId, instant, input.requestId, fingerprint]);
+  await f.db.query('INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint,"resultId") VALUES($1,$2,$3,$4)', [analyst.key, input.requestId, fingerprint, extensionId]);
+  const replay = await f.financial.grant(analyst, f.id, input);
+  assert.equal(replay.unchanged, true); assert.equal(replay.extension.id, extensionId); assert.equal(replay.management, undefined);
+  assert.equal((await f.wall.getCreditManagement(77, f.now())).history.length, 0);
+});
+
+test("new grants fail with 503 before writing when portfolio history schema is missing or not upgraded", async t => {
+  for (const alter of ['DROP TABLE "CreditMoraManagementEvent"', 'ALTER TABLE "CreditMoraManagementEvent" ALTER COLUMN comment TYPE VARCHAR(2000)', 'ALTER TABLE "CreditMoraManagementEvent" DROP COLUMN "agreementAmount"']) {
+    await t.test(alter, async child => {
+      const f = await fixture(child), input = await f.input(); await f.db.exec(alter);
+      await assert.rejects(f.financial.grant(analyst, f.id, input), { status: 503 });
+      assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraExceptionRequest"')).rows[0].n, 0);
+      assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionRequest"')).rows[0].n, 0);
+      assert.equal((await f.db.query('SELECT version FROM "AttentionConversation" WHERE id=$1', [f.id])).rows[0].version, input.version);
+    });
+  }
+});
+
+test("portfolio schema upgrade widens comment additively, preserves old rows and remains repeatable", async t => {
+  const f = await fixture(t); await f.financial.grant(analyst, f.id, await f.input());
+  const original = (await f.db.query('SELECT * FROM "CreditMoraManagementEvent"')).rows;
+  await f.db.exec('ALTER TABLE "CreditMoraManagementEvent" ALTER COLUMN comment TYPE VARCHAR(2000)');
+  const installer = { query: (sql, params = []) => f.db.query(sql, params) };
+  await installAnalystMoraSchema(installer); await installAnalystMoraSchema(installer);
+  assert.equal((await f.db.query(`SELECT character_maximum_length n FROM information_schema.columns WHERE table_name='CreditMoraManagementEvent' AND column_name='comment'`)).rows[0].n, 3000);
+  assert.deepEqual((await f.db.query('SELECT * FROM "CreditMoraManagementEvent"')).rows, original);
+  await f.db.exec('ALTER TABLE "CreditMoraManagementEvent" ALTER COLUMN comment TYPE VARCHAR(4000)'); await installAnalystMoraSchema(installer);
+  assert.equal((await f.db.query(`SELECT character_maximum_length n FROM information_schema.columns WHERE table_name='CreditMoraManagementEvent' AND column_name='comment'`)).rows[0].n, 4000);
+  await assert.rejects(f.db.exec('UPDATE "CreditMoraManagementEvent" SET comment=\'No modificar\''), /inmutable/);
 });
 
 test("02/06 and 17/21 boundaries apply equally to central and analyst, never four days from today", async t => {
@@ -146,7 +273,8 @@ test("a paid or cancelled credit stays ineligible; a cancelled payment does not 
 test("new grants require the reviewed installment, while an old recorded request can still be replayed", async t => {
   const f = await fixture(t), input = await f.input();
   const legacy = parseAttentionExtension({ ...input, installmentNumber: undefined, installmentDueDate: undefined });
-  await assert.rejects(f.financial.grant(analyst, f.id, legacy), { status: 409 });
+  await assert.rejects(f.financial.grant(analyst, f.id, legacy), error => error.status === 409 && error.message === "Actualiza esta pestaña de Atención y revisa la cuota antes de confirmar la prórroga.");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraManagementEvent"')).rows[0].n, 0);
   const result = await f.financial.grant(analyst, f.id, input);
   // Model the fingerprint stored by the prior release without installment fields.
   const fingerprint = createHash("sha256").update(JSON.stringify({ conversationId: f.id, input: legacy, actorKey: analyst.key })).digest("hex");
@@ -158,6 +286,8 @@ test("new grants require the reviewed installment, while an old recorded request
 test("stale versions, unagreed promise dates/amounts, paid credits and incomplete calendars cannot grant", async t => {
   const f = await fixture(t);
   for (const patch of [{ version: 99 }, { promiseAmount: 401 }, { promiseDate: "2026-10-07" }, { promiseDate: "2026-10-02" }]) await assert.rejects(f.financial.grant(analyst, f.id, await f.input(patch)), { status: 409 });
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraManagementEvent"')).rows[0].n, 0);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionRequest"')).rows[0].n, 0);
   await f.db.exec('UPDATE "Credito" SET "fechaPrimerPago"=NULL WHERE id=77');
   const incomplete = (await f.financial.get(analyst, f.id)).credits[0]; assert.equal(incomplete.state, "NO_VERIFICADO"); assert.equal(incomplete.extension.canGrant, false);
   await f.db.exec(`UPDATE "Credito" SET "planCapitalVigente"='{"broken":true}' WHERE id=77`);

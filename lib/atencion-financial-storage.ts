@@ -71,6 +71,33 @@ async function financialAudit(db: AttentionDb, actor: AttentionActor, conversati
 async function requireMoraSchema(db: AttentionDb) {
   if (!await optionalTable(db, "CreditMoraExceptionRequest") || !await optionalTable(db, "CreditMoraExceptionEvent")) throw new AttentionError("La preparación de prórrogas está pendiente.", 503);
 }
+const managementColumns = ["id", "creditoId", "action", "actedAt", "responsibleUserId", "responsibleName", "result", "comment", "nextFollowUpAt", "managementStatus", "actorUserId", "actorName", "idempotencyKey", "requestHash", "resultCode", "agreementDate", "agreementAmount"];
+async function requireManagementSchema(db: AttentionDb) {
+  const [schema] = await db.$queryRawUnsafe<{ count: number; commentReady: boolean }[]>(`SELECT count(*)::int AS count,
+    bool_or(column_name='comment' AND (data_type='text' OR character_maximum_length>=3000)) AS "commentReady"
+    FROM information_schema.columns WHERE table_schema='public' AND table_name='CreditMoraManagementEvent' AND column_name=ANY($1::text[])`, managementColumns);
+  if (schema?.count !== managementColumns.length || schema.commentReady !== true) throw new AttentionError("La preparación del historial de Gestión de cartera está pendiente.", 503);
+}
+/** UUIDv5 in a private namespace, independent of the user-supplied request UUID. */
+function extensionManagementKey(extensionId: string) {
+  const namespace = Buffer.from("24479c456599491296a0c02d30796cd9", "hex");
+  const bytes = createHash("sha1").update(namespace).update(`attention:extension-management:${extensionId}`).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50; bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+async function recordedManagement(db: AttentionDb, extensionId: string, creditId: number): Promise<AttentionExtensionResult["management"]> {
+  if (!await optionalTable(db, "CreditMoraManagementEvent")) return undefined;
+  const [event] = await db.$queryRawUnsafe<{ id: string; creditoId: number; nextFollowUpAt: Date | string }[]>(`SELECT id,"creditoId","nextFollowUpAt" FROM "CreditMoraManagementEvent" WHERE "idempotencyKey"=$1::uuid AND "creditoId"=$2`, extensionManagementKey(extensionId), creditId);
+  return event ? { id: event.id, creditId: event.creditoId, nextFollowUpAt: iso(event.nextFollowUpAt) } : undefined;
+}
+function extensionFollowUp(promiseDate: string) {
+  // Colombia is UTC-05:00. Start at 08:00 local, then advance the calendar day.
+  const date = new Date(`${promiseDate}T13:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date;
+}
+const managementDate = (value: string) => value.split("-").reverse().join("/");
 async function receiptData(db: AttentionDb, actor: AttentionActor, conversationId: string, creditId: number, expectedPaymentId?: number, expectedVersion?: number) {
   const scope = await scoped(db, actor, conversationId);
   if (expectedVersion !== undefined && scope.conversation.version !== expectedVersion) throw new AttentionError("La conversación cambió. Actualiza antes de enviar.", 409);
@@ -121,13 +148,17 @@ export function createAttentionFinancialStore(database: AttentionDatabase, setti
           const [prior] = await db.$queryRawUnsafe<{ id: string; status: AttentionExtensionResult["extension"]["status"]; expiresOn: Date | string; installmentNumber: number; installmentDueDate: Date | string }[]>(`SELECT id,status,"expiresOn","installmentNumber","installmentDueDate" FROM "CreditMoraExceptionRequest" WHERE id=$1::uuid AND "creditoId"=$2`, ledger.resultId, input.creditId);
           if (!prior) throw new AttentionError("No se pudo recuperar la prórroga registrada.", 409);
           const status = prior.status === "APPROVED" && financialDay(prior.expiresOn) < colombiaDateKey(now()) ? "EXPIRED" : prior.status;
-          return { extension: { id: prior.id, creditId: input.creditId, status, expiresOn: financialDay(prior.expiresOn), installmentNumber: prior.installmentNumber, installmentDueDate: financialDay(prior.installmentDueDate) }, version: scope.conversation.version, unchanged: true };
+          const management = await recordedManagement(db, prior.id, input.creditId);
+          return { extension: { id: prior.id, creditId: input.creditId, status, expiresOn: financialDay(prior.expiresOn), installmentNumber: prior.installmentNumber, installmentDueDate: financialDay(prior.installmentDueDate) }, version: scope.conversation.version, unchanged: true, ...(management ? { management } : {}) };
         }
+        if (input.installmentNumber === undefined || input.installmentDueDate === undefined)
+          throw new AttentionError("Actualiza esta pestaña de Atención y revisa la cuota antes de confirmar la prórroga.", 409);
         if (await optionalTable(db, "AttentionMetaOutbox")) {
           const existing = await db.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM "AttentionMetaOutbox" WHERE "actorKey"=$1 AND "requestId"=$2::uuid`, actor.key, input.requestId);
           if (existing.length) throw new AttentionError("La solicitud ya corresponde a un mensaje.", 409);
         }
         if (scope.conversation.version !== input.version) throw new AttentionError("La conversación cambió. Actualiza antes de conceder la prórroga.", 409);
+        await requireManagementSchema(db);
         const today = colombiaDateKey(now());
         const expired = await db.$queryRawUnsafe<{ id: string; version: number }[]>(`UPDATE "CreditMoraExceptionRequest" SET status='EXPIRED',version=version+1,"updatedAt"=CURRENT_TIMESTAMP WHERE "creditoId"=$1 AND status='APPROVED' AND "expiresOn"<$2::date RETURNING id,version`, input.creditId, today);
         for (const row of expired) {
@@ -151,20 +182,31 @@ export function createAttentionFinancialStore(database: AttentionDatabase, setti
           if (error instanceof CreditApprovalError) throw new AttentionError(error.message, error.status);
           throw error;
         }
-        const id = randomUUID(), eventId = randomUUID();
+        const id = randomUUID(), eventId = randomUUID(), managementId = randomUUID();
+        const actedAt = now(), nextFollowUpAt = extensionFollowUp(input.promiseDate);
+        if (input.promiseDate < colombiaDateKey(actedAt) || nextFollowUpAt <= actedAt) throw new AttentionError("El compromiso cambió de vigencia. Revisa la fecha antes de conceder la prórroga.", 409);
         // This narrowly scoped permission never impersonates ADMIN or uses CENTRAL_DIRECT.
         await db.$queryRawUnsafe(`INSERT INTO "CreditMoraExceptionRequest"(id,"creditoId",type,status,version,source,"installmentNumber","installmentDueDate","expiresOn","promiseAmount","promiseDate",reason,observation,
           "createdByUserId","createdByName","decidedByUserId","decidedByName","decidedAt","decisionReason","createIdempotencyKey","createRequestHash")
           VALUES($1::uuid,$2,'PRORROGA','APPROVED',1,'ANALYST_REQUEST',$3,$4::date,$5::date,$6,$7::date,$8,$9,$10,$11,$10,$11,$12::timestamptz,$8,$13::uuid,$14) RETURNING id`,
-        id, credit.id, eligibility.installmentNumber, eligibility.dueDate, choice.expiresOn, input.promiseAmount, input.promiseDate, input.reason, input.observation, actor.userId, scope.actor.name, now(), input.requestId, fingerprint);
+        id, credit.id, eligibility.installmentNumber, eligibility.dueDate, choice.expiresOn, input.promiseAmount, input.promiseDate, input.reason, input.observation, actor.userId, scope.actor.name, actedAt, input.requestId, fingerprint);
+        const amount = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(input.promiseAmount);
+        const result = `Prórroga aprobada · ${input.days} ${input.days === 1 ? "día" : "días"} · cuota ${eligibility.installmentNumber} · vencimiento ${managementDate(eligibility.dueDate)} · hasta ${managementDate(choice.expiresOn)} · compromiso ${amount} el ${managementDate(input.promiseDate)}`;
+        const comment = `Desde Atención\nMotivo: ${input.reason}\nObservación: ${input.observation}`;
+        await db.$queryRawUnsafe(`INSERT INTO "CreditMoraManagementEvent"
+          (id,"creditoId",action,"actedAt","responsibleUserId","responsibleName",result,comment,"nextFollowUpAt","managementStatus","actorUserId","actorName","idempotencyKey","requestHash","resultCode","agreementDate","agreementAmount")
+          VALUES($1::uuid,$2,'MSJ_TEXTO',$3::timestamptz,$4,$5,$6,$7,$8::timestamptz,'ACUERDO_PAGO',$4,$5,$9::uuid,$10,'ACUERDO_PAGO',$11::date,$12::numeric) RETURNING id`,
+        managementId, credit.id, actedAt, scope.actor.userId, scope.actor.name, result, comment, nextFollowUpAt, extensionManagementKey(id),
+        digest({ source: "ATTENTION_EXTENSION", extensionId: id, conversationId, input, actorKey: scope.actor.key }), input.promiseDate, input.promiseAmount);
         const payload = { source: "ATTENTION", policy: "ASSIGNED_ANALYST_EXTENSION_1_4", conversationId, days: input.days, expiresOn: choice.expiresOn,
-          installmentNumber: eligibility.installmentNumber, installmentDueDate: eligibility.dueDate, promiseAmount: input.promiseAmount, promiseDate: input.promiseDate, reason: input.reason, observation: input.observation };
+          installmentNumber: eligibility.installmentNumber, installmentDueDate: eligibility.dueDate, promiseAmount: input.promiseAmount, promiseDate: input.promiseDate, reason: input.reason, observation: input.observation, managementId };
         await db.$queryRawUnsafe(`INSERT INTO "CreditMoraExceptionEvent"(id,"requestId","creditoId",version,action,"fromStatus","toStatus",payload,"actorUserId","actorName","idempotencyKey","requestHash")
           VALUES($1::uuid,$2::uuid,$3,1,'APPROVED',NULL,'APPROVED',$4::jsonb,$5,$6,$7::uuid,$8) RETURNING id`, eventId, id, credit.id, JSON.stringify(payload), actor.userId, scope.actor.name, input.requestId, fingerprint);
         await db.$queryRawUnsafe(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint,"resultId") VALUES($1,$2::uuid,$3,$4::uuid) RETURNING "requestId"`, actor.key, input.requestId, fingerprint, id);
         const [updated] = await db.$queryRawUnsafe<{ version: number }[]>(`UPDATE "AttentionConversation" SET version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING version`, conversationId);
-        await financialAudit(db, scope.actor, conversationId, "EXTENSION_GRANTED", { creditId: credit.id, extensionId: id, requestId: input.requestId, expiresOn: choice.expiresOn, days: input.days });
-        return { extension: { id, creditId: credit.id, status: "APPROVED", expiresOn: choice.expiresOn, installmentNumber: eligibility.installmentNumber, installmentDueDate: eligibility.dueDate }, version: updated.version, unchanged: false };
+        await financialAudit(db, scope.actor, conversationId, "EXTENSION_GRANTED", { creditId: credit.id, extensionId: id, requestId: input.requestId, expiresOn: choice.expiresOn, days: input.days, managementId });
+        return { extension: { id, creditId: credit.id, status: "APPROVED", expiresOn: choice.expiresOn, installmentNumber: eligibility.installmentNumber, installmentDueDate: eligibility.dueDate }, version: updated.version, unchanged: false,
+          management: { id: managementId, creditId: credit.id, nextFollowUpAt: nextFollowUpAt.toISOString() } };
       });
     },
     async receipt(actor: AttentionActor, conversationId: string, creditId: number, expectedPaymentId?: number, expectedVersion?: number) {

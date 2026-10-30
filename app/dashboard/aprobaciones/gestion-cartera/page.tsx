@@ -10,8 +10,14 @@ export const metadata = {
   description: "Gestiona todos los créditos y conserva su historial de contacto y seguimiento.",
 };
 
-export default async function ApprovalCollectionPortfolioPage() {
+export default async function ApprovalCollectionPortfolioPage({ searchParams }: {
+  searchParams: Promise<{ creditId?: string | string[] }>;
+}) {
   const { user } = await requireMoraDashboardAccess();
+  const query = await searchParams;
+  const rawCreditId = query.creditId;
+  const candidate = typeof rawCreditId === "string" && /^[1-9]\d*$/.test(rawCreditId) ? Number(rawCreditId) : null;
+  const initialCreditId = candidate !== null && Number.isSafeInteger(candidate) ? candidate : null;
 
   return (
     <ApprovalDashboardShell activeHref="/dashboard/aprobaciones/gestion-cartera" user={user}>
@@ -21,7 +27,7 @@ export default async function ApprovalCollectionPortfolioPage() {
         userName={user.nombre}
         userRole={user.rolNombre}
       />
-      <MoraPortfolioClient scope="all" />
+      <MoraPortfolioClient scope="all" initialCreditId={initialCreditId} />
     </ApprovalDashboardShell>
   );
 }

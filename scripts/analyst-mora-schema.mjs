@@ -4,11 +4,19 @@ export function analystMoraSchemaStatements() {
       "id" UUID PRIMARY KEY, "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
       "action" VARCHAR(32) NOT NULL CHECK ("action" IN ('LLAMADA','MSJ_TEXTO','WHATSAPP','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','VISITA_PENDIENTE')),
       "actedAt" TIMESTAMPTZ NOT NULL, "responsibleUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT,
-      "responsibleName" VARCHAR(180) NOT NULL, "result" VARCHAR(500) NOT NULL CHECK (LENGTH(BTRIM("result"))>=3), "comment" VARCHAR(2000) NOT NULL CHECK (LENGTH(BTRIM("comment"))>=5),
+      "responsibleName" VARCHAR(180) NOT NULL, "result" VARCHAR(500) NOT NULL CHECK (LENGTH(BTRIM("result"))>=3), "comment" VARCHAR(3000) NOT NULL CHECK (LENGTH(BTRIM("comment"))>=5),
       "nextFollowUpAt" TIMESTAMPTZ NOT NULL CHECK ("nextFollowUpAt">"actedAt"), "managementStatus" VARCHAR(32) NOT NULL CHECK ("managementStatus" IN ('PENDIENTE','CONTACTADO','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','CERRADO','SOLUCIONADO','SEGUIMIENTO')),
       "actorUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT, "actorName" VARCHAR(180) NOT NULL,
       "idempotencyKey" UUID NOT NULL UNIQUE, "requestHash" CHAR(64) NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
     // Add structured results without changing append-only historical records.
+    // Attention combines its existing 500-character reason and 2000-character
+    // observation. Manual management keeps its own 2000-character input limit.
+    `DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='CreditMoraManagementEvent'
+        AND column_name='comment' AND data_type='character varying' AND character_maximum_length<3000) THEN
+        ALTER TABLE "CreditMoraManagementEvent" ALTER COLUMN "comment" TYPE VARCHAR(3000);
+      END IF;
+    END $$`,
     `ALTER TABLE "CreditMoraManagementEvent" ADD COLUMN IF NOT EXISTS "resultCode" VARCHAR(32)`,
     `ALTER TABLE "CreditMoraManagementEvent" ADD COLUMN IF NOT EXISTS "agreementDate" DATE`,
     `ALTER TABLE "CreditMoraManagementEvent" ADD COLUMN IF NOT EXISTS "agreementAmount" NUMERIC(14,2)`,
