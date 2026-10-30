@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Pencil, XCircle } from "lucide-react";
 import { Button, Input, LoadingState } from "@/app/_components/finser-ui";
+import { colombiaDateKey } from "@/lib/colombia-date";
 import type { MoraActiveExtension } from "@/lib/analyst-mora-types";
 import type { MoraExceptionRequestItem, MoraExtensionActions } from "@/lib/mora-exception-types";
 import styles from "./mora-portfolio.module.css";
@@ -117,7 +118,7 @@ export default function MoraPortfolioExtensionActions({ creditId, extension, cap
       }
       if (!detail.item.centralDirect && (!validDate(draft.promiseDate) ||
         (!noExpiry && draft.promiseDate > draft.expiresOn) ||
-        (rights.minExpiresOn && draft.promiseDate < rights.minExpiresOn))) {
+        (!rights.centralAdmin && draft.promiseDate < colombiaDateKey(new Date())))) {
         setError("Revisa la fecha del compromiso de pago y el vencimiento de la prórroga."); return;
       }
       if (rights.centralAdmin && !detail.item.centralDirect &&
@@ -187,7 +188,7 @@ export default function MoraPortfolioExtensionActions({ creditId, extension, cap
             {!(rights.centralAdmin && detail.item.centralDirect && draft.noExpiry) && <label><span>Vencimiento</span><Input id="mora-extension-expires-on" type="date" required value={draft.expiresOn} min={rights.minExpiresOn || undefined} max={rights.maxExpiresOn || undefined} onChange={event => update({ expiresOn: event.target.value, noExpiry: false })} /></label>}
             {!rights.centralAdmin && rights.maxExpiresOn && <p className={styles.extensionHelp}>Fecha máxima permitida: <strong>{dateLabel(rights.maxExpiresOn)}</strong>. Hasta 4 días calendario desde la fecha regular de pago.</p>}
             {!detail.item.centralDirect && <div className={styles.extensionCommitment}>
-              <label><span>Fecha del compromiso</span><Input id="mora-extension-promise-date" type="date" required value={draft.promiseDate} min={rights.minExpiresOn || undefined} max={draft.expiresOn || rights.maxExpiresOn || undefined} onChange={event => update({ promiseDate: event.target.value })} /></label>
+              <label><span>Fecha del compromiso</span><Input id="mora-extension-promise-date" type="date" required value={draft.promiseDate} min={rights.centralAdmin ? undefined : colombiaDateKey(new Date())} max={draft.expiresOn || rights.maxExpiresOn || undefined} onChange={event => update({ promiseDate: event.target.value })} /></label>
               <label><span>Valor del compromiso (COP)</span><Input id="mora-extension-promise-amount" type="number" min="0.01" step="0.01" required readOnly={!rights.centralAdmin} value={draft.promiseAmount} onChange={event => update({ promiseAmount: event.target.value })} /></label>
             </div>}
             <label><span>Motivo de la prórroga</span><textarea id="mora-extension-reason" required={!rights.centralAdmin} minLength={rights.centralAdmin ? undefined : 5} value={draft.reason} maxLength={500} rows={2} className="fp-ui-input" onChange={event => update({ reason: event.target.value })} /></label>

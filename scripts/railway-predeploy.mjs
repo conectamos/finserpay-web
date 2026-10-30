@@ -43,3 +43,4 @@ await import("./ensure-credit-welcome-voice-schema.mjs");
 await import("./ensure-cut-collection-schema.mjs");
 
 await import("./ensure-atencion-schema.mjs");
+await import("./ensure-whatsapp-automation-meta-schema.mjs");

@@ -154,6 +154,7 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
   const allowed = selectedCreditLoaded && (centralAdmin || (kind === "PRORROGA" ? eligibility?.prorroga.canRequest : eligibility?.excepcion.canRequest));
   const blockedReason = kind === "PRORROGA" ? eligibility?.prorroga.blockedReason : eligibility?.excepcion.blockedReason;
   const maxDate = !centralAdmin && kind === "PRORROGA" ? eligibility?.maxExpiresOn || undefined : undefined;
+  const minDate = !centralAdmin && kind === "PRORROGA" ? eligibility?.minExpiresOn || today : today;
 
   function filterStatus(value: string) { setStatus(value); setPage(1); }
   function tabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -305,9 +306,9 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
               <Button type="submit" disabled={saving || !allowed}>{saving ? "Guardando…" : "Guardar excepción"}</Button>
             </> : <>
               {eligibility?.regularInstallment && <p>Cuota {eligibility.regularInstallment.number} · Fecha regular {date(eligibility.regularInstallment.dueDate)}</p>}
-              {kind === "PRORROGA" && <p className={styles.notice}>Fecha máxima permitida: <strong>{date(eligibility?.maxExpiresOn || null)}</strong>. La prórroga se solicita después del 02 o 17 y admite máximo 4 días calendario.</p>}
+              {kind === "PRORROGA" && <p className={styles.notice}>Fecha máxima permitida: <strong>{date(eligibility?.maxExpiresOn || null)}</strong>. Puede solicitarse antes de vencer la cuota pendiente. Autoriza de 1 a 4 días desde su vencimiento del 02 o 17.</p>}
               {blockedReason && <p className={styles.warning} role="status">{blockedReason}</p>}
-              <label>Vencimiento<Input type="date" value={expiresOn} onChange={event => setExpiresOn(event.target.value)} min={today} max={maxDate} required disabled={saving} /></label>
+              <label>Vencimiento<Input type="date" value={expiresOn} onChange={event => setExpiresOn(event.target.value)} min={minDate} max={maxDate} required disabled={saving} /></label>
               <label>Valor que se compromete a pagar<Input type="number" min="1" step="0.01" value={promiseAmount} onChange={event => setPromiseAmount(event.target.value)} required disabled={saving} /></label>
               <label>Fecha del compromiso<Input type="date" min={today} max={expiresOn || maxDate} value={promiseDate} onChange={event => setPromiseDate(event.target.value)} required disabled={saving} /></label>
               <label>Motivo<Input value={reason} onChange={event => setReason(event.target.value)} minLength={5} maxLength={500} required disabled={saving} /></label>

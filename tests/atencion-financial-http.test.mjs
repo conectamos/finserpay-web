@@ -38,7 +38,7 @@ function route(suffix, patches = {}) {
   return { api: loaded.exports, calls, result };
 }
 const post = (suffix, body, headers = {}) => new Request(`${origin}/api/atencion/${id}/${suffix}`, { method: "POST", headers: { origin, "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
-const extension = { creditId: 77, days: 4, version: 1, requestId, reason: "Motivo confirmado", observation: "Compromiso confirmado", promiseAmount: 100, promiseDate: "2026-10-06" };
+const extension = { creditId: 77, days: 4, version: 1, requestId, installmentNumber: 1, installmentDueDate: "2026-10-02", reason: "Motivo confirmado", observation: "Compromiso confirmado", promiseAmount: 100, promiseDate: "2026-10-06" };
 
 test("all financial endpoints authenticate before database or rendering", async () => {
   for (const [suffix, method] of [["financial", "GET"], ["extensions", "POST"], ["receipts/latest", "GET"], ["receipts/latest/send", "POST"]]) {

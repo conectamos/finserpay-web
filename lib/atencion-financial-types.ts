@@ -17,6 +17,8 @@ export type AttentionFinancialCredit = {
 export type AttentionFinancial = { credits: AttentionFinancialCredit[]; version: number; blockedReason: string | null };
 export type AttentionExtensionInput = {
   creditId: number; days: AttentionExtensionDays; version: number; requestId: string;
+  /** Required for a new grant; optional only to replay an already recorded legacy request. */
+  installmentNumber?: number; installmentDueDate?: string;
   reason: string; observation: string; promiseAmount: number; promiseDate: string;
 };
 export type AttentionReceiptSendInput = { creditId: number; paymentId: number; version: number; requestId: string };

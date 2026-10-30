@@ -3,6 +3,7 @@ import { AttentionError, assertAttentionActor, attentionText, attentionUuid, nor
 import type { AttentionActor, AttentionMessage } from "./atencion-types";
 import type { AttentionDatabase, AttentionDb } from "./atencion-storage";
 import type { MetaScope, MetaWebhookEvents, MetaDeliveryStatus } from "./atencion-meta";
+import { applyWhatsAppAutomationDelivery } from "./whatsapp-automation-meta-storage";
 
 export type MetaReplyAttachment = {
   kind: "image" | "audio" | "video" | "document" | "sticker";
@@ -242,7 +243,7 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
           await db.$queryRawUnsafe(`INSERT INTO "AttentionMetaDelivery"(id,"phoneNumberId","wabaId",wamid,recipient,status,"eventAt","errorCode","requestId")
             VALUES($1::uuid,$2,$3,$4,$5,$6,$7::timestamptz,$8,$9::uuid) ON CONFLICT("phoneNumberId",wamid,status,"eventAt") DO NOTHING RETURNING id`,
           randomUUID(),scope.phoneNumberId,scope.wabaId,event.id,event.recipient,event.status,event.timestamp,event.errorCodes?.[0]?.toString() ?? null,event.requestId ?? null);
-          if(await applyDelivery(db,event)) statusesApplied++;
+          if(await applyDelivery(db,event) || await applyWhatsAppAutomationDelivery(db,scope,event)) statusesApplied++;
         }
         return {messagesImported,statusesApplied};
       });

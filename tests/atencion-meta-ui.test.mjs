@@ -18,7 +18,7 @@ function text(tree) { return Array.isArray(tree) ? tree.map(text).join("") : tre
 // Deliberately allow responses after abort to cover navigation and late replies.
 function mount(options = {}) {
   let cursor = 0, dirty = false, effects = [], tree, timerId = 0, now = 0, uuid = 10;
-  const slots = [], timers = new Map(), requests = [];
+  const slots = [], timers = new Map(), requests = [], objectUrls = [], revokedUrls = [], mediaElements = [];
   const epoch = Date.now();
   class ClockDate extends Date { constructor(...args) { super(...(args.length ? args : [epoch + now])); } static now() { return epoch + now; } }
   const changed = (a, b) => !a || !b || a.length !== b.length || b.some((v, i) => !Object.is(v, a[i]));
@@ -30,7 +30,7 @@ function mount(options = {}) {
     useEffect(effect, deps) { const n = cursor++; if (!slots[n] || changed(slots[n].deps, deps)) effects.push(() => { slots[n]?.cleanup?.(); slots[n] = { deps, cleanup: effect() }; }); },
   };
   const component = name => Object.defineProperty(() => null, "name", { value: name });
-  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag };";
+  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag, ReplyComposer, ChatDropSurface, ReplyAudioPreview };";
   const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } });
   const loaded = { exports: {} };
   const sources = [], events = new Map();
@@ -45,6 +45,7 @@ function mount(options = {}) {
 
   runInNewContext(outputText, {
     module: loaded, exports: loaded.exports, FormData, File, AbortController, URLSearchParams, Date: ClockDate,
+    URL: { createObjectURL(file) { const value = `blob:synthetic-${objectUrls.length + 1}`; objectUrls.push({ file, value }); return value; }, revokeObjectURL(value) { revokedUrls.push(value); } },
     document: { get visibilityState() { return environment.visibilityState; }, ...eventTarget("document") }, navigator: { get onLine() { return environment.onLine; } }, window: eventTarget("window"),
     ...(options.sse ? { EventSource: FakeEventSource } : {}),
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` }, sessionStorage: { getItem: () => null, removeItem() {}, setItem() {} },
@@ -62,7 +63,14 @@ function mount(options = {}) {
       return { default: component(name) };
     },
   });
-  function render() { cursor = 0; effects = []; dirty = false; tree = options.component ? loaded.exports.testUi[options.component](options.props) : loaded.exports.default({ actor: options.actor || actor }); for (const run of effects) run(); }
+  function render() {
+    cursor = 0; effects = []; dirty = false; tree = options.component ? loaded.exports.testUi[options.component](options.props) : loaded.exports.default({ actor: options.actor || actor });
+    if (options.mediaRefs) for (const node of nodes(tree)) if (["img", "video", "audio"].includes(node.type) && node.props.ref && !node.props.ref.current) {
+      const element = { tag: node.type, src: "", pauses: 0, pause() { this.pauses++; }, removeAttribute(name) { if (name === "src") this.src = ""; } };
+      node.props.ref.current = element; mediaElements.push(element);
+    }
+    for (const run of effects) run();
+  }
   async function flush() { for (let i = 0; i < 18; i++) { await Promise.resolve(); if (dirty) render(); } }
   async function advance(ms) {
     const until = now + ms;
@@ -75,7 +83,9 @@ function mount(options = {}) {
   const all = () => nodes(tree);
   const composer = () => all().find(node => node.type?.name === "ReplyComposer");
   render();
-  return { requests, flush, advance, all, composer, ui: loaded.exports.testUi, sources, environment,
+  return { requests, flush, advance, all, composer, ui: loaded.exports.testUi, sources, environment, objectUrls, revokedUrls, mediaElements,
+    dropSurface: () => all().find(node => node.type?.name === "ChatDropSurface"),
+    setProps(patch) { options.props = { ...options.props, ...patch }; render(); },
     dispatch(target, name) { events.get(`${target}:${name}`)?.(); },
     financial: () => all().find(node => node.type?.name === "CustomerPanel")?.props.financial,
     rerender() { render(); },
@@ -155,7 +165,7 @@ test("permiso, ventana y validación de archivos impiden llamar el envío", asyn
   const base = { text: "", file: null };
   assert.match(f.ui.replyValidation({ ...base, file: new File(["<svg>"], "a.svg", { type: "image/svg+xml" }) }), /formato/);
   assert.match(f.ui.replyValidation({ ...base, file: { type: "image/png", size: 5 * 1024 * 1024 + 1 } }), /5 MB/);
-  assert.match(f.ui.replyValidation({ text: "Texto", file: new File(["audio"], "a.ogg", { type: "audio/ogg" }) }), /sin texto/);
+  assert.equal(f.ui.replyValidation({ text: "Texto conservado como borrador", file: new File(["audio"], "a.ogg", { type: "audio/ogg" }) }), null);
   assert.match(f.ui.replyValidation({ ...base, text: "x".repeat(4097) }), /4.096/);
   await f.change({ file: new File(["html"], "a.html", { type: "text/html" }) }); f.composer().props.send(); await f.flush(); assert.equal(f.requests.length, 2); f.unmount();
 });
@@ -175,6 +185,134 @@ test("reproductores y descargas solo usan URLs locales del mensaje; estados no a
     assert.equal(text(f.ui.MessageDelivery({ message: { ...outbound, deliveryStatus: status } })), label);
   }
   assert.equal(f.ui.MessageDelivery({ message: outbound }), null); f.unmount();
+});
+
+const makeDragEvent = (files = [], types = ["Files"]) => ({ dataTransfer: { files, types, dropEffect: "none" }, prevented: false, preventDefault() { this.prevented = true; } });
+const dropSection = surface => surface.all().find(node => node.type === "section");
+function connectedDropSurface(parent) {
+  return mount({ component: "ChatDropSurface", props: { children: "Historial", receive: files => parent.dropSurface().props.receive(files) } });
+}
+
+test("arrastrar al historial prepara un archivo sin enviarlo y mantiene el overlay entre elementos hijos", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Pie de foto" });
+  const surface = connectedDropSurface(f); const file = new File(["imagen"], "foto.png", { type: "image/png" });
+  const unrelated = makeDragEvent([], ["text/plain"]); dropSection(surface).props.onDragEnter(unrelated); await surface.flush();
+  assert.equal(unrelated.prevented, false); assert.equal(surface.all().some(n => n.props.role === "status"), false);
+  dropSection(surface).props.onDragEnter(makeDragEvent([file])); dropSection(surface).props.onDragEnter(makeDragEvent([file])); await surface.flush();
+  assert.match(text(surface.all().find(n => n.props.role === "status")), /revisarlo antes de enviarlo/);
+  dropSection(surface).props.onDragLeave(makeDragEvent()); await surface.flush();
+  assert.ok(surface.all().some(n => n.props.role === "status"), "entrar a un hijo no debe ocultar el destino de drop");
+  const over = makeDragEvent([file]); dropSection(surface).props.onDragOver(over);
+  assert.equal(over.prevented, true); assert.equal(over.dataTransfer.dropEffect, "copy");
+  const drop = makeDragEvent([file]); dropSection(surface).props.onDrop(drop); await surface.flush(); await f.flush();
+  assert.equal(drop.prevented, true); assert.equal(f.composer().props.draft.file, file); assert.equal(f.composer().props.draft.text, "Pie de foto");
+  assert.equal(surface.all().some(n => n.props.role === "status"), false);
+  assert.equal(f.requests.filter(r => r.init.method === "POST").length, 0);
+  surface.unmount(); f.unmount();
+});
+
+test("drop conserva el archivo preparado, rechaza varios archivos y muestra un aviso sin enviar", async () => {
+  const f = mount(); await f.ready(); await f.select(); const surface = connectedDropSurface(f);
+  const original = new File(["pdf"], "original.pdf", { type: "application/pdf" });
+  const replacement = new File(["foto"], "otra.jpg", { type: "image/jpeg" });
+  dropSection(surface).props.onDrop(makeDragEvent([original, replacement])); await surface.flush(); await f.flush();
+  assert.match(text(surface.all().find(n => n.props.role === "alert")), /un archivo a la vez/);
+  assert.equal(f.composer().props.draft.file, null);
+  await f.change({ file: original });
+  dropSection(surface).props.onDrop(makeDragEvent([replacement])); await surface.flush(); await f.flush();
+  assert.match(text(surface.all().find(n => n.props.role === "alert")), /Ya tienes un archivo preparado/);
+  assert.equal(f.composer().props.draft.file, original);
+  surface.all().find(n => n.props["aria-label"] === "Cerrar aviso de archivo").props.onClick(); await surface.flush();
+  assert.equal(surface.all().some(n => n.props.role === "alert"), false);
+  assert.equal(f.requests.filter(r => r.init.method === "POST").length, 0); surface.unmount(); f.unmount();
+});
+
+test("drop deniega permiso, ventana vencida, chat interno y solicitud bloqueada sin modificar el borrador", async () => {
+  const file = new File(["foto"], "foto.jpg", { type: "image/jpeg" });
+  for (const restricted of [
+    { ...detail, permissions: { canSend: false }, messaging: { ...detail.messaging, reason: "Sin permiso de respuesta" } },
+    { ...detail, messaging: { ...detail.messaging, canReply: false, reason: "Envío pendiente" } },
+    { ...detail, messaging: { ...detail.messaging, windowExpiresAt: "2000-01-01T00:00:00Z" } },
+    { ...detail, conversation: { ...chat, channel: "internal" } },
+  ]) {
+    const f = mount(); await f.ready(); await f.select(restricted);
+    const surface = connectedDropSurface(f); dropSection(surface).props.onDrop(makeDragEvent([file])); await surface.flush(); await f.flush();
+    assert.ok(surface.all().some(n => n.props.role === "alert")); assert.equal(f.composer()?.props.draft.file ?? null, null);
+    assert.equal(f.requests.filter(r => r.init.method === "POST").length, 0); surface.unmount(); f.unmount();
+  }
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Intención conservada" });
+  f.composer().props.send(); await f.flush(); f.requests.at(-1).fail(); await f.flush();
+  const surface = connectedDropSurface(f); dropSection(surface).props.onDrop(makeDragEvent([file])); await surface.flush(); await f.flush();
+  assert.match(text(surface.all().find(n => n.props.role === "alert")), /consulta su estado/);
+  assert.equal(f.composer().props.draft.file, null); assert.equal(f.composer().props.draft.text, "Intención conservada");
+  assert.equal(f.composer().props.draft.locked, true); assert.equal(f.requests.filter(r => r.init.method === "POST").length, 1);
+  surface.unmount(); f.unmount();
+});
+
+test("micrófono sigue habilitado con texto escrito y el selector de sticker acepta WEBP", async () => {
+  const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Mensaje para después del audio" });
+  const f = mount({ component: "ReplyComposer", props: root.composer().props });
+  const tools = () => f.all().find(n => n.type?.name?.endsWith("attention-composer-tools"));
+  assert.equal(tools().props.disabled, false); assert.equal(tools().props.audioDisabled, false);
+  const audio = new File(["audio"], "grabacion.ogg", { type: "audio/ogg" });
+  tools().props.onAudio(audio); await root.flush(); f.setProps(root.composer().props);
+  assert.equal(tools().props.audioDisabled, true); assert.equal(root.composer().props.draft.file, audio);
+  assert.equal(root.composer().props.draft.text, "Mensaje para después del audio");
+  assert.match(text(f.all().find(n => n.type === "p" && text(n).includes("borrador"))), /quedará como borrador/);
+  const picker = f.all().find(n => n.type === "input" && n.props["aria-label"] === "Adjuntar sticker");
+  assert.equal(picker.props.accept, "image/webp,.webp");
+  assert.equal(root.requests.filter(r => r.init.method === "POST").length, 0);
+  f.unmount(); root.unmount();
+});
+
+for (const [kind, mime, name] of [["audio", "audio/ogg", "grabacion.ogg"], ["sticker", "image/webp", "sticker.webp"]]) {
+  test(`${kind} se envía sin caption y la aceptación conserva íntegro el texto borrador`, async () => {
+    const f = mount(); await f.ready(); await f.select(); const draftText = "  Texto para enviar después  ";
+    const file = new File([kind], name, { type: mime }); await f.change({ text: draftText, file });
+    assert.equal(f.ui.replyValidation(f.composer().props.draft), null);
+    f.composer().props.send(); await f.flush(); const sent = f.requests.at(-1);
+    assert.equal(sent.init.body.get("text"), ""); assert.equal(sent.init.body.get("file").name, name);
+    assert.equal(f.composer().props.draft.text, draftText); assert.equal(f.composer().props.draft.file, file);
+    sent.respond({ message: { ...outbound, text: "", deliveryStatus: "accepted", attachment: { kind } } }); await f.flush();
+    assert.equal(f.composer().props.draft.text, draftText); assert.equal(f.composer().props.draft.file, null);
+    assert.equal(f.composer().props.draft.locked, false); await f.completeReads();
+    assert.equal(f.requests.filter(r => r.init.method === "POST").length, 1, "el texto conservado no se envía automáticamente"); f.unmount();
+  });
+}
+
+for (const [tag, mime] of [["img", "image/png"], ["video", "video/mp4"], ["audio", "audio/ogg"]]) {
+  test(`vista previa ${tag} utiliza un blob local y lo libera al sustituir el archivo y desmontar`, () => {
+    const first = new File(["primero"], "primero", { type: mime }); const second = new File(["segundo"], "segundo", { type: mime });
+    const f = mount({ component: "ReplyAudioPreview", mediaRefs: true, props: { file: first } });
+    assert.equal(f.all()[0].type, tag); assert.equal(f.mediaElements[0].src, "blob:synthetic-1");
+    if (tag !== "img") assert.equal(f.all()[0].props.controls, true);
+    f.setProps({ file: second }); assert.deepEqual(f.revokedUrls, ["blob:synthetic-1"]); assert.equal(f.mediaElements[0].src, "blob:synthetic-2");
+    f.unmount(); assert.deepEqual(f.revokedUrls, ["blob:synthetic-1", "blob:synthetic-2"]); assert.equal(f.mediaElements[0].src, "");
+    if (tag !== "img") assert.equal(f.mediaElements[0].pauses, 2); assert.equal(f.requests.length, 0);
+  });
+}
+
+test("alias MP3/M4A de Windows y application/ogg admiten preview de audio, caption vacío y borrador separado", async () => {
+  for (const [mime, name] of [["audio/mp3", "nota.mp3"], ["audio/x-m4a", "nota.m4a"], ["audio/m4a", "grabacion.m4a"], ["application/ogg", "nota.ogg"]]) {
+    const f = mount(); await f.ready(); await f.select();
+    const file = new File(["audio sintético"], name, { type: mime }); const draftText = "Texto pendiente ".repeat(100);
+    await f.change({ text: draftText, file });
+    assert.equal(f.ui.replyValidation(f.composer().props.draft), null, `${mime} no debe usar el límite de caption de 1024 caracteres`);
+    const composer = mount({ component: "ReplyComposer", props: f.composer().props });
+    const picker = composer.all().find(n => n.type === "input" && n.props["aria-label"] === "Adjuntar archivo");
+    assert.ok(picker.props.accept.split(",").includes(mime));
+    const preview = mount({ component: "ReplyAudioPreview", mediaRefs: true, props: { file } });
+    assert.equal(preview.all()[0].type, "audio"); assert.equal(preview.all()[0].props.controls, true);
+    assert.equal(preview.mediaElements[0].src, "blob:synthetic-1");
+    assert.equal(f.requests.filter(r => r.init.method === "POST").length, 0);
+    f.composer().props.send(); await f.flush(); const sent = f.requests.at(-1);
+    assert.equal(sent.init.body.get("text"), ""); assert.equal(sent.init.body.get("file").name, name);
+    assert.equal(sent.init.body.get("file").type, mime);
+    sent.respond({ message: { ...outbound, text: "", deliveryStatus: "accepted", attachment: { kind: "audio" } } }); await f.flush();
+    assert.equal(f.composer().props.draft.text, draftText); assert.equal(f.composer().props.draft.file, null);
+    await f.completeReads(); assert.equal(f.requests.filter(r => r.init.method === "POST").length, 1);
+    composer.unmount(); preview.unmount(); f.unmount(); assert.deepEqual(preview.revokedUrls, ["blob:synthetic-1"]);
+  }
 });
 
 const receiptInput = { creditId: 31, paymentId: 51, version: 4, requestId: "00000000-0000-4000-8000-000000000091" };
@@ -280,6 +418,7 @@ test("prórroga exige compromiso explícito y una opción vigente del servidor a
   assert.match(financialDialog(f).props.description, /QA-031/); assert.match(financialDialog(f).props.description, /2 días/);
   financialDialog(f).props.onConfirm(); await f.flush();
   assert.equal(granted.length, 1); assert.equal(granted[0].creditId, 31); assert.equal(granted[0].days, 2); assert.equal(granted[0].version, 8);
+  assert.equal(granted[0].installmentNumber, payload.credits[0].extension.installmentNumber); assert.equal(granted[0].installmentDueDate, payload.credits[0].extension.dueDate);
   assert.equal(granted[0].promiseAmount, 30000); assert.equal(granted[0].promiseDate, payload.credits[0].extension.promise.date); f.unmount();
 });
 

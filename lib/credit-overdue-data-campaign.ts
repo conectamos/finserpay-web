@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { colombiaDateKey } from "@/lib/colombia-date";
+import { hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
+import { isMetaAutomationConfigured, sendMetaAutomation, whatsAppAutomationProvider, type MetaAutomationSender } from "@/lib/whatsapp-automation-provider";
 import {
   getCreditOverdueDataCandidate,
   groupCreditOverdueDataCandidates,
@@ -14,7 +16,7 @@ const PAGE_SIZE = 250;
 const CLAIM_LIFETIME_MS = 90_000;
 const SEND_TIMEOUT_MS = 8_000;
 const creditSelect = {
-  id: true, clienteNombre: true, clienteTelefono: true, estado: true,
+  id: true, clienteNombre: true, clienteTelefono: true, clienteDocumento: true, estado: true,
   pazYSalvoEmitidoAt: true, planCapitalVigente: true, montoCredito: true,
   valorCuota: true, plazoMeses: true, frecuenciaPago: true,
   fechaPrimerPago: true, fechaProximoPago: true,
@@ -24,6 +26,7 @@ const creditSelect = {
 export type CreditOverdueDataOptions = { dryRun?: boolean; previewDate?: Date | string };
 export type CreditOverdueDataReport = {
   campaign: "datos"; templateKey: string; ok: boolean; dryRun: boolean;
+  provider: "meta" | "dapta" | null;
   enabled: boolean; configured: boolean; inWindow: boolean; startsOn: string | null;
   initialBatchDate: string | null; generatedAt: string; today: string;
   summary: { scanned: number; eligibleCredits: number; eligibleClients: number; excluded: number;
@@ -80,26 +83,30 @@ async function dispatch(webhook: URL, candidate: CreditOverdueDataCandidate, fet
 export function createCreditOverdueDataRunner(deps: {
   database?: typeof prisma; now?: () => Date; fetcher?: typeof fetch;
   enabled?: () => boolean; webhookUrl?: () => string | undefined;
+  env?: NodeJS.ProcessEnv; sendMeta?: MetaAutomationSender;
 } = {}) {
   const database = deps.database ?? prisma;
   const now = deps.now ?? (() => new Date());
   return async function run(options: CreditOverdueDataOptions = {}): Promise<CreditOverdueDataReport> {
+    const env = { ...(deps.env ?? process.env) };
+    const provider = whatsAppAutomationProvider(env);
     const liveNow = now();
     const dryRun = options.dryRun !== false;
     const today = dryRun && options.previewDate ? options.previewDate : liveNow;
     const todayKey = colombiaDateKey(today);
-    const enabled = deps.enabled ? deps.enabled() : process.env.DAPTA_DATOS_ENABLED === "true";
-    const webhook = configuredWebhook(deps.webhookUrl ? deps.webhookUrl() : process.env.DAPTA_DATOS_WEBHOOK_URL);
-    const startDate = String(process.env.DAPTA_DATOS_START_DATE || "").trim();
-    const initialDate = String(process.env.DAPTA_DATOS_INITIAL_BATCH_DATE || "").trim();
+    const enabled = deps.enabled ? deps.enabled() : env.DAPTA_DATOS_ENABLED === "true";
+    const webhook = configuredWebhook(deps.webhookUrl ? deps.webhookUrl() : env.DAPTA_DATOS_WEBHOOK_URL);
+    const configured = provider === "meta" ? isMetaAutomationConfigured(env, "data") : provider === "dapta" && Boolean(webhook);
+    const startDate = String(env.DAPTA_DATOS_START_DATE || "").trim();
+    const initialDate = String(env.DAPTA_DATOS_INITIAL_BATCH_DATE || "").trim();
     const validStart = !startDate || validStartDate(startDate);
     // The old first-batch date is informational only. New day-20 notices must
     // respect the normal window, even when that legacy setting remains present.
     const isSendingAllowed = (date: Date) => validStart && (!startDate || colombiaDateKey(date) >= startDate)
       && isCreditOverdueDataWindow(date);
     const report: CreditOverdueDataReport = {
-      campaign: "datos", templateKey: CREDIT_OVERDUE_DATA_TEMPLATE_KEY, ok: true, dryRun,
-      enabled, configured: Boolean(webhook) && validStart,
+      campaign: "datos", provider, templateKey: CREDIT_OVERDUE_DATA_TEMPLATE_KEY, ok: true, dryRun,
+      enabled, configured: Boolean(configured) && validStart,
       inWindow: isSendingAllowed(liveNow),
       startsOn: startDate && validStart ? startDate : null,
       initialBatchDate: initialDate && validStartDate(initialDate) ? initialDate : null,
@@ -108,7 +115,7 @@ export function createCreditOverdueDataRunner(deps: {
         waiting: 0, ready: 0, claimed: 0, accepted: 0, failed: 0, unknown: 0,
         duplicates: 0, staleClaims: 0, revalidatedOut: 0 },
     };
-    if (!dryRun && (!enabled || !webhook || !report.inWindow)) return report;
+    if (!dryRun && (!enabled || !report.configured || !report.inWindow)) return report;
     if (!dryRun) {
       report.summary.staleClaims = await database.$executeRawUnsafe(
         `UPDATE "CreditOverdueDataAttempt" SET "status"='UNKNOWN', "resultCode"='CLAIM_EXPIRED', "finishedAt"=$1
@@ -271,7 +278,38 @@ export function createCreditOverdueDataRunner(deps: {
           if (!await releaseKnownUnsent()) report.summary.unknown += 1;
           continue;
         }
-        result = await dispatch(webhook!, prepared.candidate, deps.fetcher ?? fetch);
+        if (provider === "meta") {
+          try {
+            const native = await (deps.sendMeta ?? sendMetaAutomation)({
+              operationKey: `data:${claimId}`, template: "data", phone: prepared.candidate.phone, body: [prepared.candidate.name],
+            }, { env, fetcher: deps.fetcher, withSendGuard: async <T>(send: () => Promise<T>): Promise<T> => database.$transaction(async tx => {
+              // Keep the established Datos order: recipient, own attempt, then
+              // covered credits. No CRM/outbox transaction runs under these locks.
+              await tx.$queryRawUnsafe(`SELECT "recipientKey" FROM "CreditOverdueDataRecipient" WHERE "recipientKey"=$1 FOR UPDATE`, key);
+              const [owned] = await tx.$queryRawUnsafe<Array<{ claimExpiresAt: Date | string }>>(
+                `SELECT "claimExpiresAt" FROM "CreditOverdueDataAttempt" WHERE "id"=$1::uuid AND "status"='CLAIMED' FOR UPDATE`, claimId);
+              const coverage = await tx.$queryRawUnsafe<Array<{ creditoId: number }>>(
+                `SELECT "creditoId" FROM "CreditOverdueDataCoverage" WHERE "attemptId"=$1::uuid ORDER BY "creditoId"`, claimId);
+              for (const { creditoId } of coverage) await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, creditoId);
+              const currentCandidates: CreditOverdueDataCandidate[] = [];
+              for (const { creditoId } of coverage) {
+                const credit = await tx.credito.findUnique({ where: { id: creditoId }, select: creditSelect });
+                const current = credit && getCreditOverdueDataCandidate(credit, now());
+                if (!current || current.phone !== phone || await hasActiveMoraMessageProtection(creditoId, credit!.clienteDocumento, tx))
+                  throw new Error("DATA_CREDIT_CHANGED_BEFORE_SEND");
+                currentCandidates.push(current);
+              }
+              const at = now(); const current = groupCreditOverdueDataCandidates(currentCandidates)[0];
+              if (!owned || new Date(owned.claimExpiresAt).getTime() <= at.getTime() || !isSendingAllowed(at)
+                || colombiaDateKey(at) !== todayKey || !current || current.creditId !== prepared.candidate.creditId
+                || current.name !== prepared.candidate.name || current.phone !== prepared.candidate.phone)
+                throw new Error("DATA_CHANGED_BEFORE_SEND");
+              return send();
+            }, { timeout: 15_000 }) });
+            result = { status: native.status === "accepted" ? "ACCEPTED" : native.status === "failed" ? "FAILED" : "UNKNOWN",
+              code: native.code, httpStatus: native.httpStatus ?? null };
+          } catch { result = { status: "UNKNOWN", code: "META_OUTCOME_UNKNOWN", httpStatus: null }; }
+        } else result = await dispatch(webhook!, prepared.candidate, deps.fetcher ?? fetch);
       }
       const finalized = await database.$executeRawUnsafe(
         `UPDATE "CreditOverdueDataAttempt" SET "status"=$2,"resultCode"=$3,"httpStatus"=$4,"finishedAt"=$5

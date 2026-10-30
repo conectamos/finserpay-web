@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
+import { hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
+import { isMetaAutomationConfigured, sendMetaAutomation, whatsAppAutomationProvider, type MetaAutomationSender, type MetaAutomationTemplate } from "@/lib/whatsapp-automation-provider";
 import {
   getCreditDueReminder,
   isCreditDueReminderWindow,
@@ -17,16 +19,19 @@ const campaignConfig = {
     templateKey: CREDIT_DUE_REMINDER_TEMPLATE_KEY,
     enabledEnv: "DAPTA_RECORDATORIO_1_DIA_ENABLED",
     webhookEnv: "DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL",
+    template: "1_dia_falta",
   },
   due_today: {
     templateKey: CREDIT_DUE_TODAY_REMINDER_TEMPLATE_KEY,
     enabledEnv: "DAPTA_HOYVENCE_ENABLED",
     webhookEnv: "DAPTA_HOYVENCE_WEBHOOK_URL",
+    template: "hoyvence",
   },
   two_days_before_due: {
     templateKey: CREDIT_DUE_TWO_DAYS_REMINDER_TEMPLATE_KEY,
     enabledEnv: "DAPTA_RECORDATORIO_2_DIAS_ENABLED",
     webhookEnv: "DAPTA_RECORDATORIO_2_DIAS_WEBHOOK_URL",
+    template: "2dias",
   },
 } as const;
 const PAGE_SIZE = 250;
@@ -36,6 +41,7 @@ const creditSelect = {
   id: true,
   clienteNombre: true,
   clienteTelefono: true,
+  clienteDocumento: true,
   estado: true,
   pazYSalvoEmitidoAt: true,
   planCapitalVigente: true,
@@ -59,6 +65,7 @@ export type CreditDueReminderOptions = {
 };
 export type CreditDueReminderReport = {
   campaign: CreditDueReminderCampaign;
+  provider: "meta" | "dapta" | null;
   ok: boolean;
   dryRun: boolean;
   enabled: boolean;
@@ -96,11 +103,44 @@ function configuredWebhook(value: string | undefined) {
 }
 
 /** Shared, validated transport configuration for a selected-credit reminder. */
-export function creditDueReminderConfiguration(campaign: CreditDueReminderCampaign, env: NodeJS.ProcessEnv = process.env) {
+export type CreditDueReminderTransport = {
+  provider: "dapta" | "meta"; webhook: URL | null; templateKey: string;
+  template: MetaAutomationTemplate; env: NodeJS.ProcessEnv;
+};
+export function creditDueReminderConfiguration(campaign: CreditDueReminderCampaign, inputEnv: NodeJS.ProcessEnv = process.env): CreditDueReminderTransport | null {
+  const env = { ...inputEnv };
   const config = campaignConfig[campaign];
   if (!config || env[config.enabledEnv] !== "true") return null;
+  const provider = whatsAppAutomationProvider(env);
+  if (!provider) return null;
+  if (provider === "meta") return isMetaAutomationConfigured(env, config.template)
+    ? { provider, webhook: null, templateKey: config.templateKey, template: config.template, env } : null;
   const webhook = configuredWebhook(env[config.webhookEnv]);
-  return webhook ? { webhook, templateKey: config.templateKey } : null;
+  return webhook ? { provider, webhook, templateKey: config.templateKey, template: config.template, env } : null;
+}
+
+export async function sendConfiguredCreditDueReminderOnce(
+  config: CreditDueReminderTransport,
+  reminder: NonNullable<ReturnType<typeof getCreditDueReminder>>,
+  claimId: string,
+  options: { fetcher?: typeof fetch; sendMeta?: MetaAutomationSender; beforeSend?: () => Promise<void>;
+    withSendGuard?: <T>(send: () => Promise<T>) => Promise<T>; deadlineAt?: number } = {},
+): Promise<DispatchResult> {
+  if (config.provider === "dapta") {
+    await options.beforeSend?.();
+    return sendCreditDueReminderOnce(config.webhook!, reminder, options.fetcher ?? fetch);
+  }
+  try {
+    const result = await (options.sendMeta ?? sendMetaAutomation)({
+      operationKey: `reminder:${claimId}`, template: config.template, phone: reminder.phone,
+      body: config.template === "2dias" ? [reminder.name] : [reminder.name, "FINSER PAY"],
+    }, { env: config.env, fetcher: options.fetcher, beforeSend: options.beforeSend,
+      withSendGuard: options.withSendGuard, deadlineAt: options.deadlineAt });
+    return { status: result.status === "accepted" ? "ACCEPTED" : result.status === "failed" ? "FAILED" : "UNKNOWN",
+      code: result.code, httpStatus: result.httpStatus ?? null };
+  } catch {
+    return { status: "UNKNOWN", code: "META_OUTCOME_UNKNOWN", httpStatus: null };
+  }
 }
 
 function hasDaptaExecutionError(value: unknown): boolean {
@@ -158,6 +198,8 @@ export function createCreditDueReminderRunner(deps: {
   fetcher?: typeof fetch;
   enabled?: (campaign: CreditDueReminderCampaign) => boolean;
   webhookUrl?: (campaign: CreditDueReminderCampaign) => string | undefined;
+  env?: NodeJS.ProcessEnv;
+  sendMeta?: MetaAutomationSender;
 } = {}) {
   const database = deps.database ?? prisma;
   const now = deps.now ?? (() => new Date());
@@ -165,18 +207,21 @@ export function createCreditDueReminderRunner(deps: {
     const campaign = options.campaign ?? "before_due";
     if (campaign !== "before_due" && campaign !== "due_today" && campaign !== "two_days_before_due") throw new Error("Invalid reminder campaign");
     const config = campaignConfig[campaign];
+    const env = { ...(deps.env ?? process.env) };
+    const provider = whatsAppAutomationProvider(env);
     const liveNow = now();
     const dryRun = options.dryRun !== false;
     const today = dryRun && options.previewDate ? options.previewDate : liveNow;
-    const enabled = deps.enabled ? deps.enabled(campaign) : process.env[config.enabledEnv] === "true";
-    const webhook = configuredWebhook(deps.webhookUrl ? deps.webhookUrl(campaign) : process.env[config.webhookEnv]);
+    const enabled = deps.enabled ? deps.enabled(campaign) : env[config.enabledEnv] === "true";
+    const transport = creditDueReminderConfiguration(campaign, { ...env,
+      [config.enabledEnv]: "true", [config.webhookEnv]: deps.webhookUrl ? deps.webhookUrl(campaign) : env[config.webhookEnv] });
     const report: CreditDueReminderReport = {
-      campaign, ok: true, dryRun, enabled, configured: Boolean(webhook), inWindow: isCreditDueReminderWindow(liveNow, campaign),
+      campaign, provider, ok: true, dryRun, enabled, configured: Boolean(transport), inWindow: isCreditDueReminderWindow(liveNow, campaign),
       generatedAt: liveNow.toISOString(), today: colombiaDateKey(today), templateKey: config.templateKey,
       summary: { scanned: 0, eligible: 0, invalidPhone: 0, excluded: 0, claimed: 0,
         accepted: 0, failed: 0, unknown: 0, duplicates: 0, staleClaims: 0, revalidatedOut: 0 },
     };
-    if (!dryRun && (!enabled || !webhook || !report.inWindow)) return report;
+    if (!dryRun && (!enabled || !transport || !report.inWindow)) return report;
 
     if (!dryRun) {
       // A crashed claimant can never be selected for another attempt.
@@ -254,7 +299,24 @@ export function createCreditDueReminderRunner(deps: {
             if (!released) report.summary.unknown += 1;
             continue;
           }
-          result = await sendCreditDueReminderOnce(webhook!, reminder, deps.fetcher ?? fetch);
+          result = await sendConfiguredCreditDueReminderOnce(transport!, reminder, claimId, {
+            fetcher: deps.fetcher, sendMeta: deps.sendMeta,
+            ...(provider === "meta" ? { withSendGuard: async <T>(send: () => Promise<T>): Promise<T> => database.$transaction(async tx => {
+              // Native outbox.start has committed before entering this guard.
+              // Serialize the final policy check and HTTP with payments/prórrogas.
+              await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
+              const [owned] = await tx.$queryRawUnsafe<Array<{ claimExpiresAt: Date | string }>>(
+                `SELECT "claimExpiresAt" FROM "CreditDueReminder" WHERE "id"=$1::uuid AND "status"='CLAIMED' FOR UPDATE`, claimId);
+              const latest = await tx.credito.findUnique({ where: { id: credit.id }, select: creditSelect });
+              const protectedCredit = latest && await hasActiveMoraMessageProtection(credit.id, latest.clienteDocumento, tx);
+              const at = now(); const current = latest && getCreditDueReminder(latest, at, campaign);
+              if (!owned || protectedCredit || new Date(owned.claimExpiresAt).getTime() <= at.getTime() || !isCreditDueReminderWindow(at, campaign)
+                || !current || current.phone !== reminder.phone || current.name !== reminder.name
+                || current.installmentNumber !== reminder.installmentNumber || current.dueDate !== reminder.dueDate)
+                throw new Error("REMINDER_CHANGED_BEFORE_SEND");
+              return send();
+            }, { timeout: 15_000 }) } : {}),
+          });
         }
         const finishedAt = now();
         // A competing restart may have expired the claim. Keep UNKNOWN conservative.

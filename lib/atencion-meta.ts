@@ -1,5 +1,6 @@
 import "server-only";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { readAttentionSticker } from "./atencion-meta-sticker";
 
 // Dedicated Attention credentials. Never fall back to OTP or settlement tokens.
 // Meta contracts: https://www.postman.com/meta/whatsapp-business-platform
@@ -73,7 +74,11 @@ function safeEqual(a: string, b: string): boolean {
   const x = createHash("sha256").update(a).digest(); const y = createHash("sha256").update(b).digest();
   return timingSafeEqual(x, y);
 }
-function mime(value: unknown): string { return str(value).split(";")[0].trim().toLowerCase(); }
+function mime(value: unknown): string {
+  const type=str(value).split(";")[0].trim().toLowerCase();
+  const aliases:Record<string,string>={"audio/mp3":"audio/mpeg","audio/x-m4a":"audio/mp4","audio/m4a":"audio/mp4","application/ogg":"audio/ogg"};
+  return Object.hasOwn(aliases,type)?aliases[type]:type;
+}
 function mediaRule(type: string) { return Object.hasOwn(MIME, type) ? MIME[type] : undefined; }
 function recipient(value: unknown): string {
   const result = str(value).replace(/^\+/, "");
@@ -142,7 +147,12 @@ export function validateMetaAttentionMedia(input: { bytes: Uint8Array; mimeType:
   if (!(input.bytes instanceof Uint8Array) || input.bytes.length === 0 || input.bytes.length > rule.max) fail("MEDIA_TOO_LARGE", "El archivo está vacío o excede el límite permitido.", 413);
   if (input.fileName !== undefined && (!fileName(input.fileName) || !rule.extensions.includes(input.fileName.split(".").pop()?.toLowerCase() || ""))) fail("INVALID_MEDIA_NAME", "El nombre y la extensión del archivo no corresponden al formato.");
   if (!validateMagic(input.bytes, type)) fail("INVALID_MEDIA_CONTENT", "El contenido del archivo no corresponde al formato declarado.", 415);
-  if (type === "image/webp" && input.bytes.length > 100 * 1024 && !Buffer.from(input.bytes).includes(Buffer.from("ANIM"))) fail("MEDIA_TOO_LARGE", "El sticker estático excede el límite permitido.", 413);
+  if (type === "image/webp") {
+    const sticker=readAttentionSticker(input.bytes);
+    if(!sticker)fail("INVALID_MEDIA_CONTENT","El archivo no contiene un sticker WebP válido.",415);
+    if(sticker.width!==512 || sticker.height!==512)fail("INVALID_STICKER_DIMENSIONS","El sticker debe medir 512 × 512 píxeles.",415);
+    if(input.bytes.length>(sticker.animated?500:100)*1024)fail("MEDIA_TOO_LARGE",sticker.animated?"El sticker animado excede 500 KB.":"El sticker estático excede 100 KB.",413);
+  }
   return { mimeType: type, kind: rule.kind, size: input.bytes.length };
 }
 

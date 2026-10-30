@@ -9,9 +9,9 @@ import ts from "typescript";
 const root = path.resolve(import.meta.dirname, "..");
 function compile(file, mocks) {
   const source = ts.transpileModule(readFileSync(path.join(root, file), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const module = { exports: {} };
-  new Function("require", "module", "exports", source)(name => { assert.ok(name in mocks, `Unexpected dependency: ${name}`); return mocks[name]; }, module, module.exports);
-  return module.exports;
+  const loaded = { exports: {} };
+  new Function("require", "module", "exports", source)(name => { assert.ok(name in mocks, `Unexpected dependency: ${name}`); return mocks[name]; }, loaded, loaded.exports);
+  return loaded.exports;
 }
 class AttentionError extends Error { constructor(message, status = 400) { super(message); this.status = status; } }
 const webm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...Array(20).fill(0)]);
@@ -21,7 +21,7 @@ function harness(mode = "success") {
   const audio = compile("lib/atencion-audio.ts", {
     "server-only": {}, "./atencion-core": { AttentionError },
     "./atencion-meta-http": { readAttentionBody: async (request, max) => { const bytes = new Uint8Array(await request.arrayBuffer()); if (bytes.length > max) throw new AttentionError("Too big", 413); return bytes; } },
-    "./atencion-meta": { validateMetaAttentionMedia: input => { assert.equal(input.mimeType, "audio/ogg"); assert.deepEqual(Buffer.from(input.bytes), ogg); } },
+    "./atencion-meta": { validateMetaAttentionMedia: input => { if(input.mimeType==="audio/mp4"){assert.equal(Buffer.from(input.bytes).toString("ascii",4,8),"ftyp");return;}assert.equal(input.mimeType, "audio/ogg"); assert.deepEqual(Buffer.from(input.bytes), ogg); } },
     "node:child_process": { spawn: (...args) => {
       calls.push(args); const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
       child.kill = () => { child.killed = true; queueMicrotask(() => child.emit("close", -1)); };
@@ -39,13 +39,24 @@ function request(bytes = webm, type = "audio/webm", extras) {
   const body = new FormData(); body.set("file", new File([bytes], "voice.webm", { type })); extras?.(body);
   return new Request("https://finser.example/api/atencion/id/audio", { method: "POST", body });
 }
-test("recordings require one bounded WebM audio, reject forged types and fields", async () => {
+test("recordings require one bounded browser audio, reject forged types and fields", async () => {
   const h = harness(); assert.deepEqual(Buffer.from(await h.readAttentionRecording(request())), webm);
   await assert.rejects(h.readAttentionRecording(request(webm, "video/webm")), { status: 415 });
   await assert.rejects(h.readAttentionRecording(request(Buffer.from("not a webm recording"))), { status: 415 });
   await assert.rejects(h.readAttentionRecording(request(webm, "audio/webm", form => form.append("file", new File([webm], "extra.webm", { type: "audio/webm" })))), { status: 400 });
   await assert.rejects(h.readAttentionRecording(request(webm, "audio/webm", form => form.set("url", "file:///etc/passwd"))), { status: 400 });
   await assert.rejects(h.readAttentionRecording(request(Buffer.alloc(8 * 1024 * 1024 + 1))), { status: 413 });
+});
+
+test("WebM,OGG yMP4 grabados se convierten con demuxerfijo aOGGOpus sin confiar en extensión",async()=>{
+  const mp4=Buffer.concat([Buffer.from([0,0,0,20]),Buffer.from("ftypisom00000000")]);
+  for(const [bytes,type,format] of [[webm,"audio/webm","matroska"],[ogg,"audio/ogg;codecs=opus","ogg"],[mp4,"audio/mp4","mov"]]) {
+    const h=harness();assert.deepEqual(Buffer.from(await h.readAttentionRecording(request(bytes,type))),bytes);
+    assert.deepEqual(Buffer.from(await h.convertAttentionRecording(bytes)),ogg);
+    const args=h.calls[0][1];assert.equal(args[args.indexOf("-f")+1],format);assert.equal(args[args.indexOf("-protocol_whitelist")+1],"pipe");
+  }
+  await assert.rejects(harness().readAttentionRecording(request(webm,"audio/mp4")),{status:415});
+  await assert.rejects(harness().convertAttentionRecording(Buffer.from("playlist https://outside.invalid/file")),{status:415});
 });
 test("conversion uses pipe-only forced WebM, Opus mono, bounded duration, no shell", async () => {
   const h = harness(); assert.deepEqual(Buffer.from(await h.convertAttentionRecording(webm)), ogg);

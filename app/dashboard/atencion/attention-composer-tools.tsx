@@ -74,8 +74,8 @@ export default function AttentionComposerTools({ conversationId, disabled, audio
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setError("Este navegador no puede grabar. Puedes adjuntar un audio MP3, M4A u OGG desde Archivos."); return;
     }
-    // Specify codecs: MP4 with Opus is not a WhatsApp audio format.
-    const mime = ["audio/ogg;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/webm;codecs=opus"]
+    // All browser formats are normalized server-side to OGG/Opus before attachment.
+    const mime = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/mp4"]
       .find(type => MediaRecorder.isTypeSupported(type));
     if (!mime) { setError("La grabación no está disponible en este navegador. Adjunta un archivo de audio."); return; }
     active.current = true; const currentEpoch = ++epoch.current;
@@ -99,7 +99,9 @@ export default function AttentionComposerTools({ conversationId, disabled, audio
         if (timer.current) { clearInterval(timer.current); timer.current = null; }
         recorder.current = null; stream.current = null; active.current = false;
         if (!chunks.length) { setPhase("idle"); setError("No se registró audio. Intenta nuevamente."); return; }
-        const type = mime.split(";")[0]; const extension = type === "audio/mp4" ? "m4a" : type === "audio/ogg" ? "ogg" : "webm";
+        const type = (device.mimeType || chunks[0].type || mime).split(";")[0].trim().toLowerCase();
+        if(!["audio/webm","audio/ogg","audio/mp4"].includes(type)) {setPhase("idle");setError("El navegador no produjo un formato de audio compatible.");return;}
+        const extension = type === "audio/mp4" ? "m4a" : type === "audio/ogg" ? "ogg" : "webm";
         const file = new File(chunks, `audio-${Date.now()}.${extension}`, { type });
         const url = URL.createObjectURL(file); previewUrl.current = url;
         setRecording({ file, url }); setPhase("idle");
@@ -122,7 +124,7 @@ export default function AttentionComposerTools({ conversationId, disabled, audio
     const currentEpoch = epoch.current; active.current = true; setError(""); setPhase("preparing");
     try {
       let file = recording.file;
-      if (file.type === "audio/webm") {
+      if (["audio/webm","audio/ogg","audio/mp4"].includes(file.type)) {
         const abort = new AbortController(); controller.current = abort;
         const timeout = setTimeout(() => abort.abort(), 60_000);
         try {

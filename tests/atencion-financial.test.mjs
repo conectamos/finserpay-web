@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -47,7 +47,7 @@ async function fixture(t) {
   await db.query('UPDATE "AttentionConversation" SET "assigneeUserId"=5,"assigneeKey"=\'analyst:5\',"assigneeName"=\'Analista real\' WHERE id=$1', [id]);
   const financial = createAttentionFinancialStore(database, { now });
   const input = async (patch = {}) => ({ creditId: 77, days: 4, version: (await db.query('SELECT version FROM "AttentionConversation" WHERE id=$1', [id])).rows[0].version,
-    requestId: randomUUID(), reason: "Compromiso confirmado", observation: "Cliente confirma las condiciones", promiseAmount: 100, promiseDate: "2026-10-06", ...patch });
+    requestId: randomUUID(), installmentNumber: 1, installmentDueDate: "2026-10-02", reason: "Compromiso confirmado", observation: "Cliente confirma las condiciones", promiseAmount: 100, promiseDate: "2026-10-06", ...patch });
   const pay = async (paymentId = 1, patch = {}) => db.query(`INSERT INTO "CreditoAbono"(id,"creditoId",valor,"fechaAbono",estado,"anuladoAt") VALUES($1,77,$2,$3,$4,$5)`, [paymentId, patch.amount ?? 25, patch.at ?? "2026-10-03T12:00:00Z", patch.status ?? "ACTIVO", patch.annulled ?? null]);
   const sendInput = async (patch = {}) => ({ creditId: 77, paymentId: 1, version: (await financial.get(analyst, id)).version, requestId: randomUUID(), ...patch });
   return { db, database, meta, financial, id, now, input, pay, sendInput, setNow: value => { clock = new Date(value); } };
@@ -56,7 +56,7 @@ async function fixture(t) {
 test("parsers reject extra fields, invalid days/dates/money and mismatched request payloads", () => {
   const data = { creditId: 77, days: 4, version: 1, requestId: randomUUID(), reason: "Motivo válido", observation: "Observación válida", promiseAmount: 100, promiseDate: "2026-10-06" };
   assert.equal(parseAttentionExtension(data).days, 4);
-  for (const patch of [{ days: 5 }, { days: "4" }, { promiseDate: "2026-02-30" }, { promiseAmount: 0 }, { promiseAmount: 1.001 }, { centralAdmin: true }, { observation: "" }]) assert.throws(() => parseAttentionExtension({ ...data, ...patch }));
+  for (const patch of [{ days: 5 }, { days: "4" }, { promiseDate: "2026-02-30" }, { promiseAmount: 0 }, { promiseAmount: 1.001 }, { centralAdmin: true }, { observation: "" }, { installmentNumber: 1 }, { installmentDueDate: "2026-10-02" }, { installmentNumber: 0, installmentDueDate: "2026-10-02" }]) assert.throws(() => parseAttentionExtension({ ...data, ...patch }));
   assert.throws(() => parseAttentionReceiptSend({ creditId: 77, paymentId: 1, version: 1, requestId: randomUUID(), url: "https://example.com" }));
 });
 
@@ -97,13 +97,62 @@ test("analyst grants approved due+4, preserves loan terms, real actor, immutable
 
 test("02/06 and 17/21 boundaries apply equally to central and analyst, never four days from today", async t => {
   const f = await fixture(t);
-  f.setNow("2026-10-02T17:00:00Z"); assert.equal((await f.financial.get(analyst, f.id)).credits[0].extension.canGrant, false);
+  f.setNow("2026-10-02T17:00:00Z"); assert.equal((await f.financial.get(analyst, f.id)).credits[0].extension.canGrant, true);
   f.setNow("2026-10-05T17:00:00Z"); assert.deepEqual((await f.financial.get(central, f.id)).credits[0].extension.choices.map(c => c.days), [3, 4]);
   await assert.rejects(f.financial.grant(central, f.id, await f.input({ days: 1 })), { status: 409 });
   f.setNow("2026-10-07T17:00:00Z"); await assert.rejects(f.financial.grant(central, f.id, await f.input({ promiseDate: "2026-10-07" })), { status: 409 });
   await f.db.exec(`UPDATE "Credito" SET "fechaPrimerPago"='2026-10-17 12:00:00' WHERE id=77`);
   f.setNow("2026-10-21T17:00:00Z"); assert.deepEqual((await f.financial.get(analyst, f.id)).credits[0].extension.choices, [{ days: 4, expiresOn: "2026-10-21" }]);
-  const result = await f.financial.grant(analyst, f.id, await f.input({ promiseDate: "2026-10-21" })); assert.equal(result.extension.expiresOn, "2026-10-21");
+  const result = await f.financial.grant(analyst, f.id, await f.input({ promiseDate: "2026-10-21", installmentDueDate: "2026-10-17" })); assert.equal(result.extension.expiresOn, "2026-10-21");
+});
+
+test("future and due-today pending installments can be extended from their regular due date", async t => {
+  for (const [today, actor] of [["2026-10-01T17:00:00Z", analyst], ["2026-10-02T17:00:00Z", central]]) {
+    await t.test(today, async child => {
+      const f = await fixture(child); f.setNow(today);
+      const before = (await f.financial.get(actor, f.id)).credits[0];
+      assert.equal(before.state, "AL_DIA"); assert.equal(before.extension.canGrant, true);
+      assert.deepEqual(before.extension.choices.map(c => c.expiresOn), ["2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06"]);
+      const result = await f.financial.grant(actor, f.id, await f.input({ days: 1, promiseDate: "2026-10-03" }));
+      assert.equal(result.extension.installmentDueDate, "2026-10-02"); assert.equal(result.extension.expiresOn, "2026-10-03");
+    });
+  }
+});
+
+test("a newly paid installment cannot silently move a confirmed extension to the next future installment", async t => {
+  const f = await fixture(t), input = await f.input();
+  await f.pay(1, { amount: 100 });
+  const next = (await f.financial.get(analyst, f.id)).credits[0].extension;
+  assert.equal(next.installmentNumber, 2); assert.equal(next.dueDate, "2026-10-17"); assert.equal(next.canGrant, true);
+  await assert.rejects(f.financial.grant(analyst, f.id, input), error => error.status === 409 && /cuota pendiente cambió/.test(error.message));
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraExceptionRequest"')).rows[0].n, 0);
+  const result = await f.financial.grant(analyst, f.id, await f.input({ installmentNumber: 2, installmentDueDate: "2026-10-17", promiseDate: "2026-10-21" }));
+  assert.equal(result.extension.installmentNumber, 2); assert.equal(result.extension.expiresOn, "2026-10-21");
+});
+
+test("a paid or cancelled credit stays ineligible; a cancelled payment does not remove the pending installment", async t => {
+  const f = await fixture(t); f.setNow("2026-10-01T17:00:00Z");
+  await f.pay(1, { amount: 400, at: "2026-10-01T12:00:00Z" });
+  assert.equal((await f.financial.get(analyst, f.id)).credits[0].extension.canGrant, false);
+  await assert.rejects(f.financial.grant(analyst, f.id, await f.input()), { status: 409 });
+  await f.db.exec(`UPDATE "CreditoAbono" SET estado='ANULADO',"anuladoAt"='2026-10-01' WHERE id=1`);
+  assert.equal((await f.financial.get(analyst, f.id)).credits[0].extension.installmentNumber, 1);
+  assert.equal((await f.financial.get(analyst, f.id)).credits[0].extension.canGrant, true);
+  await f.db.exec(`UPDATE "Credito" SET estado='ANULADO' WHERE id=77`);
+  assert.deepEqual((await f.financial.get(analyst, f.id)).credits, []);
+  await assert.rejects(f.financial.grant(analyst, f.id, await f.input()), { status: 404 });
+});
+
+test("new grants require the reviewed installment, while an old recorded request can still be replayed", async t => {
+  const f = await fixture(t), input = await f.input();
+  const legacy = parseAttentionExtension({ ...input, installmentNumber: undefined, installmentDueDate: undefined });
+  await assert.rejects(f.financial.grant(analyst, f.id, legacy), { status: 409 });
+  const result = await f.financial.grant(analyst, f.id, input);
+  // Model the fingerprint stored by the prior release without installment fields.
+  const fingerprint = createHash("sha256").update(JSON.stringify({ conversationId: f.id, input: legacy, actorKey: analyst.key })).digest("hex");
+  await f.db.query('UPDATE "AttentionRequest" SET fingerprint=$1 WHERE "actorKey"=$2 AND "requestId"=$3', [fingerprint, analyst.key, input.requestId]);
+  const replay = await f.financial.grant(analyst, f.id, legacy);
+  assert.equal(replay.unchanged, true); assert.equal(replay.extension.id, result.extension.id);
 });
 
 test("stale versions, unagreed promise dates/amounts, paid credits and incomplete calendars cannot grant", async t => {

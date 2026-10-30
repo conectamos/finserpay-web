@@ -5,12 +5,14 @@ import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { creditDueReminderSchemaStatements } from "../scripts/credit-due-reminders-schema.mjs";
+import { automationProtectionFixture } from "./whatsapp-automation-protection-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 const policy = await jiti.import("../lib/credit-due-reminder-policy.ts");
 const dates = await jiti.import("../lib/colombia-date.ts");
 const welcome = await jiti.import("../lib/dapta-welcome.ts");
+const automation = await jiti.import("../lib/whatsapp-automation-provider.ts");
 export const sampleCredit = (id = 1, overrides = {}) => ({
   id, clienteNombre: "CLIENTE PRUEBA", clienteTelefono: "3000000001", estado: "INSCRITO",
   montoCredito: 300, valorCuota: 100, plazoMeses: 3, frecuenciaPago: "MENSUAL",
@@ -22,6 +24,7 @@ export async function reminderFixture(t, options = {}) {
   const database = new PGlite();
   t.after(() => database.close());
   await database.exec('CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "data" JSONB NOT NULL)');
+  await database.exec('CREATE TABLE "CreditMoraExceptionRequest" ("creditoId" integer,"status" text,"expiresOn" date); CREATE TABLE "ExcepcionBloqueoMora" ("documento" text,"activa" boolean,"fechaFin" timestamp)');
   for (const sql of creditDueReminderSchemaStatements) await database.exec(sql);
   const credits = options.credits || [sampleCredit()];
   for (const credit of credits) await database.query('INSERT INTO "Credito" ("id","data") VALUES ($1,$2::jsonb)', [credit.id, JSON.stringify(credit)]);
@@ -31,6 +34,7 @@ export async function reminderFixture(t, options = {}) {
   let clock = new Date(options.now || "2026-10-07T15:00:00Z");
   const payloads = [];
   const webhooks = [];
+  let transactionDepth = 0;
   function adapter(connection, inTransaction = false) {
     return {
       $queryRawUnsafe: async (sql, ...values) => {
@@ -68,13 +72,16 @@ export async function reminderFixture(t, options = {}) {
     ...adapter(database),
     $transaction: (work) => database.transaction(async connection => {
       counts.transactions += 1;
-      const result = await work(adapter(connection, true));
-      if (failTransactionOnce) {
-        failTransactionOnce = false;
-        // An actual PostgreSQL error aborts and rolls back the claim transaction.
-        await connection.query("SELECT 'injected transaction failure'::integer");
-      }
-      return result;
+      transactionDepth++;
+      try {
+        const result = await work(adapter(connection, true));
+        if (failTransactionOnce) {
+          failTransactionOnce = false;
+          // An actual PostgreSQL error aborts and rolls back the claim transaction.
+          await connection.query("SELECT 'injected transaction failure'::integer");
+        }
+        return result;
+      } finally { transactionDepth--; }
     }),
   };
   const core = loadReissueModule("lib/credit-due-reminders.ts", {
@@ -82,9 +89,11 @@ export async function reminderFixture(t, options = {}) {
     "@/lib/colombia-date": dates,
     "@/lib/dapta-welcome": welcome,
     "@/lib/credit-due-reminder-policy": policy,
+    "@/lib/whatsapp-automation-provider": automation,
+    "@/lib/mora-message-protection": automationProtectionFixture(client),
   }, { AbortSignal, fetch: () => assert.fail("Unexpected real network"), Error, process: { env: options.env || {} } });
   const runnerDependencies = {
-    database: client, now: () => new Date(clock),
+    database: client, now: () => new Date(clock), env: options.env, sendMeta: options.sendMeta,
     ...(!options.useEnvironmentConfig ? {
       enabled: campaign => options.enabledByCampaign?.[campaign] ?? options.enabled !== false,
       webhookUrl: campaign => options.urls?.[campaign] ?? options.url ?? "https://api.dapta.ai/api/test-only-" + campaign,
@@ -103,7 +112,7 @@ export async function reminderFixture(t, options = {}) {
   };
   const run = core.createCreditDueReminderRunner(runnerDependencies);
   const rows = async () => (await database.query('SELECT * FROM "CreditDueReminder" ORDER BY "creditoId"')).rows;
-  return { run, database, client, counts, rows, core, payloads, webhooks,
+  return { run, database, client, counts, rows, core, payloads, webhooks, inTransaction: () => transactionDepth > 0,
     restart: () => core.createCreditDueReminderRunner(runnerDependencies),
     setClock: value => { clock = new Date(value); },
     updateCredit: async (id, overrides) => database.query('UPDATE "Credito" SET "data"="data" || $2::jsonb WHERE "id"=$1', [id, JSON.stringify(overrides)]),

@@ -6,11 +6,13 @@ import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { creditOverdueDataSchemaStatements } from "../scripts/credit-overdue-data-schema.mjs";
+import { automationProtectionFixture } from "./whatsapp-automation-protection-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 const policy = await jiti.import("../lib/credit-overdue-data-policy.ts");
 const dates = await jiti.import("../lib/colombia-date.ts");
+const automation = await jiti.import("../lib/whatsapp-automation-provider.ts");
 
 export const sampleOverdueDataCredit = (id = 1, overrides = {}) => ({
   id, clienteNombre: "CLIENTE PRUEBA", clienteTelefono: "3000000001", estado: "INSCRITO",
@@ -26,6 +28,7 @@ export async function overdueDataFixture(t, options = {}) {
   const database = new PGlite();
   t.after(() => database.close());
   await database.exec('CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "data" JSONB NOT NULL)');
+  await database.exec('CREATE TABLE "CreditMoraExceptionRequest" ("creditoId" integer,"status" text,"expiresOn" date); CREATE TABLE "ExcepcionBloqueoMora" ("documento" text,"activa" boolean,"fechaFin" timestamp)');
   for (const statement of creditOverdueDataSchemaStatements) await database.exec(statement);
   for (const credit of options.credits || [sampleOverdueDataCredit()]) {
     await database.query('INSERT INTO "Credito" ("id","data") VALUES ($1,$2::jsonb)', [credit.id, JSON.stringify(credit)]);
@@ -85,19 +88,23 @@ export async function overdueDataFixture(t, options = {}) {
     };
   }
 
+  let transactionDepth = 0;
   const client = {
     ...adapter(database),
     $transaction: async work => {
       const transactionState = {};
       const result = await database.transaction(async connection => {
         counts.transactions += 1;
-        const outcome = await work(adapter(connection, true, transactionState));
-        if (failTransactionOnce) {
-          failTransactionOnce = false;
-          // A real PostgreSQL error proves the claim and all credit coverages roll back.
-          await connection.query("SELECT 'injected transaction failure'::integer");
-        }
-        return outcome;
+        transactionDepth++;
+        try {
+          const outcome = await work(adapter(connection, true, transactionState));
+          if (failTransactionOnce) {
+            failTransactionOnce = false;
+            // A real PostgreSQL error proves the claim and all credit coverages roll back.
+            await connection.query("SELECT 'injected transaction failure'::integer");
+          }
+          return outcome;
+        } finally { transactionDepth--; }
       });
       if (transactionState.createdClaim) {
         await options.afterClaimTransaction?.(hookArguments());
@@ -110,9 +117,11 @@ export async function overdueDataFixture(t, options = {}) {
     "@/lib/prisma": { default: client },
     "@/lib/colombia-date": dates,
     "@/lib/credit-overdue-data-policy": policy,
+    "@/lib/whatsapp-automation-provider": automation,
+    "@/lib/mora-message-protection": automationProtectionFixture(client),
   }, { AbortSignal, Error, process: { env: options.env || {} }, fetch: () => assert.fail("Unexpected real network") });
   const runnerDependencies = {
-    database: client, now: () => new Date(clock),
+    database: client, now: () => new Date(clock), env: options.env, sendMeta: options.sendMeta,
     ...(!options.useEnvironmentConfig ? {
       enabled: () => options.enabled !== false,
       webhookUrl: () => options.url ?? "https://api.dapta.ai/api/test-only-datos",
@@ -153,6 +162,6 @@ export async function overdueDataFixture(t, options = {}) {
     }
     return seed;
   };
-  return { run, core, database, client, counts, rows, recipients, coverages, payloads, webhooks, requests, setClock, updateCredit, insertCredit, seedClaim,
+  return { run, core, database, client, counts, rows, recipients, coverages, payloads, webhooks, requests, setClock, updateCredit, insertCredit, seedClaim, inTransaction: () => transactionDepth > 0,
     restart: () => core.createCreditOverdueDataRunner(runnerDependencies) };
 }

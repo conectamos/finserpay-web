@@ -6,6 +6,14 @@ import { validateMetaAttentionMedia } from "./atencion-meta";
 
 const MAX_RECORDING_BYTES = 8 * 1024 * 1024;
 let activeConversions = 0;
+function recordingFormat(bytes:Uint8Array):"matroska"|"ogg"|"mov"|null {
+  if(bytes.length<16)return null;
+  const b=Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  if([0x1a,0x45,0xdf,0xa3].every((value,index)=>b[index]===value))return "matroska";
+  if(b.toString("ascii",0,4)==="OggS")return "ogg";
+  if(b.toString("ascii",4,8)==="ftyp")return "mov";
+  return null;
+}
 
 export async function readAttentionRecording(request: Request) {
   const type = request.headers.get("content-type") || "";
@@ -16,22 +24,28 @@ export async function readAttentionRecording(request: Request) {
   catch { throw new AttentionError("No se pudo leer la grabación.", 400); }
   if ([...form.keys()].some(key => key !== "file") || form.getAll("file").length !== 1) throw new AttentionError("Adjunta una única grabación.");
   const file = form.get("file");
-  if (!file || typeof file === "string" || file.type.split(";")[0] !== "audio/webm") throw new AttentionError("El formato de la grabación no es válido.", 415);
+  if (!file || typeof file === "string") throw new AttentionError("El formato de la grabación no es válido.", 415);
+  const mime=file.type.split(";")[0].trim().toLowerCase();
+  const formats:Record<string,string>={"audio/webm":"matroska","audio/ogg":"ogg","audio/mp4":"mov"};
+  if(!Object.hasOwn(formats,mime))throw new AttentionError("Graba el audio en formato WebM, OGG o MP4.",415);
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (!bytes.length || bytes.length > MAX_RECORDING_BYTES) throw new AttentionError("El audio supera el límite de 8 MB.", 413);
-  if (bytes.length < 16 || ![0x1a, 0x45, 0xdf, 0xa3].every((value, index) => bytes[index] === value)) throw new AttentionError("El contenido no corresponde a una grabación WebM.", 415);
+  if(recordingFormat(bytes)!==formats[mime])throw new AttentionError("El contenido no corresponde al formato de la grabación.",415);
+  if(mime==="audio/mp4")validateMetaAttentionMedia({bytes,mimeType:mime,kind:"audio"});
   return bytes;
 }
 
-/** In-memory, bounded conversion. Only the WebM demuxer and pipe protocol are allowed. */
+/** Normalize browser recordings to Opus. Only three forced demuxers and pipe input are allowed. */
 export async function convertAttentionRecording(bytes: Uint8Array, signal?: AbortSignal): Promise<Uint8Array> {
   if (signal?.aborted) throw new AttentionError("Grabación cancelada.", 408);
+  const format=recordingFormat(bytes);
+  if(!format || bytes.length>MAX_RECORDING_BYTES)throw new AttentionError("El contenido de la grabación no es válido.",415);
   if (activeConversions >= 2) throw new AttentionError("Hay otros audios en preparación. Intenta de nuevo en unos segundos.", 429);
   activeConversions++;
   try {
     return await new Promise<Uint8Array>((resolve, reject) => {
       const child = spawn("ffmpeg", ["-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1",
-        "-protocol_whitelist", "pipe", "-f", "matroska", "-i", "pipe:0", "-map", "0:a:0", "-vn",
+        "-protocol_whitelist", "pipe", "-f", format, "-i", "pipe:0", "-map", "0:a:0", "-vn",
         "-t", "300", "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "48k", "-threads", "1", "-f", "ogg", "pipe:1"],
       { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       const parts: Buffer[] = []; let size = 0; let settled = false;

@@ -5,11 +5,13 @@ import { PGlite } from "@electric-sql/pglite";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 import { analystMoraSchemaStatements } from "../scripts/analyst-mora-schema.mjs";
 import { creditDueReminderSchemaStatements } from "../scripts/credit-due-reminders-schema.mjs";
+import { automationProtectionFixture } from "./whatsapp-automation-protection-fixture.mjs";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": new URL("../", import.meta.url).pathname.replace(/^\/(.:\/)/, "$1") } });
 const reminderPolicy = await jiti.import("../lib/credit-due-reminder-policy.ts");
 const datePolicy = await jiti.import("../lib/colombia-date.ts");
 const collectionPolicy = await jiti.import("../lib/collection-voice-policy.ts");
+const automation = await jiti.import("../lib/whatsapp-automation-provider.ts");
 const normalize = value => typeof value === "string" && /^(?:57)?3\d{9}$/.test(value) ? value.length === 10 ? "57" + value : value : null;
 class BusinessError extends Error { constructor(code, message, status = 400) { super(message); this.code = code; this.status = status; } }
 const key = "00000000-0000-4000-8000-000000000081";
@@ -42,15 +44,20 @@ async function fixture(t, options = {}) {
       credito: { findUnique: async ({ where }) => (await connection.query(`SELECT "data" FROM "Credito" WHERE "id"=$1`, [where.id])).rows[0]?.data || null },
     };
   }
-  let transactions = 0;
+  let transactions = 0, transactionDepth = 0;
   const database = { ...adapter(db), $transaction: async work => {
     transactions++;
     if (options.revokeAtTransaction === transactions) active = false;
-    return db.transaction(tx => work(adapter(tx)));
+    return db.transaction(async tx => {
+      transactionDepth++;
+      try { return await work(adapter(tx)); } finally { transactionDepth--; }
+    });
   } };
   const transport = loadReissueModule("lib/credit-due-reminders.ts", {
     "@/lib/prisma": { default: database }, "@/lib/colombia-date": datePolicy,
     "@/lib/dapta-welcome": { normalizeColombianMobile: normalize }, "@/lib/credit-due-reminder-policy": reminderPolicy,
+    "@/lib/whatsapp-automation-provider": automation,
+    "@/lib/mora-message-protection": automationProtectionFixture(database),
   }, { AbortSignal, fetch: () => assert.fail("No real network in tests") });
   const modules = {
     "@/lib/prisma": { default: database },
@@ -79,16 +86,45 @@ async function fixture(t, options = {}) {
     } },
   };
   const loaded = loadReissueModule("lib/credit-collection-communications.ts", modules, { AbortSignal, fetch: () => assert.fail("No real network in tests") });
-  const service = loaded.createCreditCommunicationService({ database, env: { ...environment, ...options.env }, now: () => new Date(clock), schema: async () => {}, fetcher: async (url, init) => {
+  const service = loaded.createCreditCommunicationService({ database, env: { ...environment, ...options.env }, sendMeta: options.sendMeta, now: () => new Date(clock), schema: async () => {}, fetcher: async (url, init) => {
     sends.push({ url: String(url), body: JSON.parse(init.body), assertions: assertions.length });
     if (options.networkError) throw new Error("private transport detail must not leak");
     return new Response(options.rawResponse ?? JSON.stringify(options.providerResponse ?? { ok: true }), { status: 200, headers: { "content-type": "application/json" } });
   } });
-  return { db, service, loaded, sends, calls, assertions, setClock: value => { clock = new Date(value); },
+  return { db, service, loaded, sends, calls, assertions, inTransaction: () => transactionDepth > 0, setClock: value => { clock = new Date(value); },
     update: (id, values) => db.query(`UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1`, [id, JSON.stringify(values)]),
     rows: () => db.query(`SELECT * FROM "CreditCollectionCommunicationEvent" ORDER BY "createdAt","id"`) };
 }
 const input = (overrides = {}) => ({ action: "REMINDER", expectedPhone: "573001234567", idempotencyKey: key, ...overrides });
+const nativeEnvironment = { WHATSAPP_AUTOMATIONS_PROVIDER: "meta", WHATSAPP_ATTENTION_SEND_ENABLED: "true",
+  WHATSAPP_ATTENTION_AI_CUTOVER_CONFIRMED: "true", WHATSAPP_GRAPH_API_VERSION: "v25.0",
+  WHATSAPP_ATTENTION_PHONE_NUMBER_ID: "1162059967000416", WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID: "2148284059050848",
+  WHATSAPP_ATTENTION_ACCESS_TOKEN: "synthetic-not-a-real-token", DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL: "" };
+
+test("selected-credit native reminder keeps the same ledger and guards only HTTP under finance locks", async t => {
+  const native = []; let f;
+  f = await fixture(t, { env: nativeEnvironment, sendMeta: async (request, options) => {
+    assert.equal(f.inTransaction(), false);
+    await options.withSendGuard(async () => { assert.equal(f.inTransaction(), true); native.push(request); });
+    return { status: "accepted", code: "META_ACCEPTED", providerMessageId: "wamid.synthetic-selected" };
+  } });
+  const response = await f.service.dispatch(81, input(), actor);
+  assert.equal(response.state.history[0].status, "ACCEPTED");
+  assert.match(response.state.history[0].message, /Meta aceptó/);
+  assert.equal(native.length, 1); assert.equal(native[0].template, "1_dia_falta");
+  assert.equal(native[0].phone, input().expectedPhone); assert.match(native[0].operationKey, /^reminder:/);
+  assert.equal(f.sends.length, 0); assert.equal(f.calls.length, 0);
+  await f.service.dispatch(81, input(), actor); assert.equal(native.length, 1);
+});
+
+test("selected-credit native guard stops a prórroga approved after the claim", async t => {
+  let posts = 0;
+  const f = await fixture(t, { env: nativeEnvironment, extensionAtRead: 2, sendMeta: async (_request, options) => {
+    try { await options.withSendGuard(async () => { posts++; }); return { status: "accepted", code: "META_ACCEPTED" }; }
+    catch { return { status: "failed", code: "REVALIDATION_FAILED" }; }
+  } });
+  await f.service.dispatch(81, input(), actor); assert.equal(posts, 0); assert.equal(f.sends.length, 0);
+});
 
 test("manual reminder sends exactly selected credit outside cron hour and preserves audit when paid", async t => {
   const f = await fixture(t);

@@ -65,6 +65,7 @@ export type MoraExceptionCreditSummary = {
 
 export type MoraExceptionEligibility = {
   regularInstallment: { number: number; dueDate: string; balance: number } | null;
+  minExpiresOn?: string | null;
   maxExpiresOn: string | null;
   prorroga: { canRequest: boolean; blockedReason: string | null };
   excepcion: { canRequest: boolean; blockedReason: string | null; cooldownEnabledOn: string | null };

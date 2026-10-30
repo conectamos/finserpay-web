@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 import ts from "typescript";
+import sharp from "sharp";
 
 const root = path.resolve(import.meta.dirname, "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
@@ -34,12 +35,13 @@ const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
 function box(type, payload) { const out = Buffer.alloc(8 + payload.length); out.writeUInt32BE(out.length); out.write(type, 4); payload.copy(out, 8); return out; }
 const hdlr = Buffer.alloc(12); hdlr.write("vide", 8);
 const mp4 = Buffer.concat([box("ftyp", Buffer.from("isom0000")), box("moov", box("trak", box("mdia", box("hdlr", hdlr))))]);
+const sticker = await sharp({create:{width:512,height:512,channels:4,background:{r:0,g:120,b:30,alpha:0.8}}}).webp({lossless:true}).toBuffer();
 const formats = [
   { kind: "image", mimeType: "image/png", fileName: "prueba.png", bytes: png },
   { kind: "audio", mimeType: "audio/amr", fileName: "prueba.amr", bytes: Buffer.from("#!AMR\nsynthetic-audio") },
   { kind: "video", mimeType: "video/mp4", fileName: "prueba.mp4", bytes: mp4 },
   { kind: "document", mimeType: "application/pdf", fileName: "prueba.pdf", bytes: Buffer.from("%PDF-1.7\nsynthetic-document\n%%EOF\n") },
-  { kind: "sticker", mimeType: "image/webp", fileName: "prueba.webp", bytes: Buffer.from("RIFF0000WEBPVP8 synthetic-sticker") },
+  { kind: "sticker", mimeType: "image/webp", fileName: "prueba.webp", bytes: sticker },
 ];
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }); }
 function multipart({ file, text = "Respuesta de prueba", extra, headers = {}, signal } = {}) {
@@ -67,7 +69,7 @@ function harness(options = {}) {
     async beforeSend(who, rowId, lease) { calls.before++; assert.equal(rowId, outboxId); assert.equal(lease, leaseToken); if (options.beforeError) throw options.beforeError; row = { ...row, status: "sending", sendStartedAt: new Date(now).toISOString() }; },
     async acceptReply(rowId, lease, providerId) { calls.accepted++; assert.equal(rowId, outboxId); assert.equal(lease, leaseToken); assert.equal(providerId, wamid); if (options.ackError) throw options.ackError; row = { ...row, status: "accepted", messageId, wamid, acceptedAt: new Date(now).toISOString(), leaseToken: null }; return { ...row }; },
     async failReply(rowId, lease, failure) { calls.failed.push(failure); if (options.callbackAccepted) row = { ...row, status: "delivered", messageId, wamid, acceptedAt: new Date(now).toISOString() }; else row = { ...row, status: failure.uncertain ? "uncertain" : "failed", leaseToken: null }; return { ...row }; },
-    async findReply(who, conversationId, key) { calls.find++; return options.missing ? null : { ...row }; },
+    async findReply(who, conversationId, key) { calls.find++; assert.equal(who,actor); assert.equal(conversationId,id); assert.equal(key,requestId); return options.missing ? null : { ...row }; },
     async cancelReply(who, conversationId, key) { calls.cancel.push({ actor: who, conversationId, requestId: key }); if (options.cancelError) throw options.cancelError; cancelled = true; return { cancelled: true }; },
     async getMedia(who, conversationId, requestedMessageId) { calls.media++; assert.equal(conversationId, id); assert.equal(requestedMessageId, messageId); if (options.mediaError && calls.media === (options.mediaErrorAt ?? 1)) throw options.mediaError; return calls.media === 2 && options.changedMedia ? { ...descriptor, mediaId: "9999999999" } : descriptor; },
     async getMessaging() { calls.messaging++; if (options.messagingError) throw options.messagingError; return { canReply: true }; },
@@ -178,6 +180,7 @@ test("multipart rejects duplicates, extra fields, false file fields and audio ca
     await assert.rejects(mediaHttp.readAttentionMetaReply(multipart({ extra })), { status: 400 });
   }
   await assert.rejects(mediaHttp.readAttentionMetaReply(multipart({ file: formats[1], text: "Caption not supported" })), { status: 400 });
+  await assert.rejects(mediaHttp.readAttentionMetaReply(multipart({ file: formats[4], text: "Sticker caption not supported" })), { status: 400 });
   await assert.rejects(mediaHttp.readAttentionMetaReply(multipart({ file: formats[0], text: "x".repeat(1025) })), { status: 400 });
   await assert.rejects(mediaHttp.readAttentionMetaReply(multipart({ text: "" })), { status: 400 });
 });

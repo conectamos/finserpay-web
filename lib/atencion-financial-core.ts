@@ -18,12 +18,14 @@ export function addFinancialDays(value: string, days: number) {
 function version(value: unknown) { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw new AttentionError("Versión inválida."); return value; }
 function exactFields(body: Record<string, unknown>, keys: string[]) { if (Object.keys(body).some(key => !keys.includes(key))) throw new AttentionError("La solicitud contiene campos no admitidos."); }
 export function parseAttentionExtension(body: Record<string, unknown>): AttentionExtensionInput {
-  exactFields(body, ["creditId", "days", "version", "requestId", "reason", "observation", "promiseAmount", "promiseDate"]);
+  exactFields(body, ["creditId", "days", "version", "requestId", "installmentNumber", "installmentDueDate", "reason", "observation", "promiseAmount", "promiseDate"]);
   if (typeof body.days !== "number" || ![1, 2, 3, 4].includes(body.days)) throw new AttentionError("Selecciona entre uno y cuatro días.");
   if (typeof body.promiseAmount !== "number" || !Number.isFinite(body.promiseAmount) || body.promiseAmount <= 0 || body.promiseAmount > 1e12 || Math.round(body.promiseAmount * 100) / 100 !== body.promiseAmount) throw new AttentionError("Indica un compromiso de pago válido.");
   const reason = attentionText(body.reason, 500), observation = attentionText(body.observation, 2000);
   if (reason.length < 5 || observation.length < 5) throw new AttentionError("El motivo y la observación requieren al menos cinco caracteres.");
-  return { creditId: attentionId(body.creditId), days: body.days as AttentionExtensionInput["days"], version: version(body.version), requestId: attentionUuid(body.requestId), reason, observation, promiseAmount: body.promiseAmount, promiseDate: financialDate(body.promiseDate) };
+  const installment = body.installmentNumber === undefined && body.installmentDueDate === undefined ? {}
+    : { installmentNumber: attentionId(body.installmentNumber), installmentDueDate: financialDate(body.installmentDueDate) };
+  return { creditId: attentionId(body.creditId), days: body.days as AttentionExtensionInput["days"], version: version(body.version), requestId: attentionUuid(body.requestId), reason, observation, promiseAmount: body.promiseAmount, promiseDate: financialDate(body.promiseDate), ...installment };
 }
 export function parseAttentionReceiptSend(body: Record<string, unknown>): AttentionReceiptSendInput {
   exactFields(body, ["creditId", "paymentId", "version", "requestId"]);
@@ -49,8 +51,8 @@ export function extensionEligibility(credit: FinancialPlanCredit, open: { id: st
   const blockedReason = ["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.estado.trim().toUpperCase()) ? "El crédito está anulado."
     : !plan ? "El crédito no tiene un calendario completo verificado."
     : pending ? "Ya existe una solicitud pendiente o una excepción vigente para este crédito."
-    : !installment || plan.estadoPago !== "MORA" ? "El crédito no tiene una cuota regular vencida."
-    : !dueDate || ![2, 17].includes(Number(dueDate.slice(8, 10))) || today <= dueDate || today > addFinancialDays(dueDate, 4) ? "La prórroga solo está disponible después del vencimiento 02/17 y hasta el día 06/21." : null;
+    : !installment ? "El crédito no tiene una cuota regular pendiente."
+    : !dueDate || ![2, 17].includes(Number(dueDate.slice(8, 10))) || today > addFinancialDays(dueDate, 4) ? "La prórroga admite de 1 a 4 días desde el vencimiento 02/17, hasta el día 06/21." : null;
   const choices = blockedReason || !dueDate ? [] : ([1, 2, 3, 4] as const).map(days => ({ days, expiresOn: addFinancialDays(dueDate, days) })).filter(choice => choice.expiresOn >= today);
   return { canGrant: !blockedReason && choices.length > 0, blockedReason, installmentNumber: installment?.numero ?? null, dueDate, choices, active,
     promise: { amount: installment ? Math.min(installment.saldoPendiente, Number(credit.valorCuota || installment.saldoPendiente)) : 0, date: choices.at(-1)?.expiresOn || today } };

@@ -9,7 +9,8 @@ import { readActiveMoraExtensions } from "@/lib/analyst-mora-extension";
 import { CreditApprovalError } from "@/lib/credit-approval-errors";
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { getCreditDueReminder, type CreditDueReminderCampaign } from "@/lib/credit-due-reminder-policy";
-import { creditDueReminderConfiguration, sendCreditDueReminderOnce } from "@/lib/credit-due-reminders";
+import { creditDueReminderConfiguration, sendConfiguredCreditDueReminderOnce } from "@/lib/credit-due-reminders";
+import type { MetaAutomationSender } from "@/lib/whatsapp-automation-provider";
 import { collectionCallingAllowed, colombiaClock } from "@/lib/collection-voice-policy";
 import { ensureCollectionVoiceSchema, runCollectionVoice } from "@/lib/collection-voice-runtime";
 import type { CreditCommunicationInput, CreditCommunicationItem, CreditCommunicationStatus, CreditCommunicationState } from "@/lib/credit-collection-communication-types";
@@ -51,6 +52,7 @@ export function createCreditCommunicationService(deps: {
   database?: typeof prisma; now?: () => Date; env?: NodeJS.ProcessEnv; fetcher?: typeof fetch;
   read?: typeof getCreditManagement; schema?: typeof ensureAnalystMoraSchema;
   call?: typeof runCollectionVoice;
+  sendMeta?: MetaAutomationSender;
 } = {}) {
   const database = deps.database ?? prisma;
   const now = deps.now ?? (() => new Date());
@@ -163,7 +165,7 @@ export function createCreditCommunicationService(deps: {
     let started = false;
     try {
       await validateCurrent(request.creditoId, request.phone, actor);
-      const sent = await database.$transaction(async db => {
+      const withCurrentCredit = async <T>(send: (current: NonNullable<ReturnType<typeof getCreditDueReminder>>) => Promise<T>) => database.$transaction(async db => {
         await assertMoraActor(db, actor);
         await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, request.creditoId);
         const credit = await db.credito.findUnique({ where: { id: request.creditoId }, select: moraCreditSelect });
@@ -171,8 +173,25 @@ export function createCreditCommunicationService(deps: {
         if (!current || current.phone !== request.phone || current.installmentNumber !== candidate.reminder.installmentNumber || current.dueDate !== candidate.reminder.dueDate || !collectionCallingAllowed(now()) ||
           (await readActiveMoraExtensions([request.creditoId], now(), db)).has(request.creditoId)) return null;
         started = true;
-        return sendCreditDueReminderOnce(candidate.config!.webhook, current, deps.fetcher ?? fetch);
+        return send(current);
       }, { timeout: 15_000 });
+      let sent;
+      if (candidate.config.provider === "meta") {
+        // Native outbox and CRM transactions cannot run while the financial
+        // transaction holds credit locks. Only the final HTTP call is guarded.
+        started = true;
+        sent = await sendConfiguredCreditDueReminderOnce(candidate.config, candidate.reminder, claimId, {
+          fetcher: deps.fetcher, sendMeta: deps.sendMeta,
+          withSendGuard: async <T>(send: () => Promise<T>): Promise<T> => {
+            const guarded = await withCurrentCredit(async current => {
+              if (current.name !== candidate.reminder.name) throw new Error("CONTACT_CHANGED_BEFORE_SEND");
+              return { value: await send() };
+            });
+            if (!guarded) throw new Error("CREDIT_CHANGED_BEFORE_SEND");
+            return guarded.value;
+          },
+        });
+      } else sent = await withCurrentCredit(current => sendConfiguredCreditDueReminderOnce(candidate.config!, current, claimId, { fetcher: deps.fetcher }));
       if (!sent) {
         await database.$executeRawUnsafe(`DELETE FROM "CreditDueReminder" WHERE "id"=$1::uuid AND "status"='CLAIMED'`, claimId);
         return { status: "SKIPPED", message: "El crédito cambió antes del envío. No se envió el mensaje." };
@@ -180,7 +199,7 @@ export function createCreditCommunicationService(deps: {
       await database.$executeRawUnsafe(`UPDATE "CreditDueReminder" SET "status"=$2,"resultCode"=$3,"httpStatus"=$4,"finishedAt"=$5,"updatedAt"=$5 WHERE "id"=$1::uuid AND "status"='CLAIMED'`,
         claimId, sent.status, sent.code, sent.httpStatus, now());
       return { status: sent.status, providerReference: claimId, message: sent.status === "ACCEPTED" ?
-        "Dapta aceptó el recordatorio por WhatsApp. La aceptación no confirma entrega ni lectura." : sent.status === "FAILED" ?
+        `${candidate.config.provider === "meta" ? "Meta" : "Dapta"} aceptó el recordatorio por WhatsApp. La aceptación no confirma entrega ni lectura.` : sent.status === "FAILED" ?
           "El proveedor rechazó el recordatorio. El intento quedó registrado." : "No se pudo confirmar el envío por WhatsApp. Revisa el proveedor antes de repetir." };
     } catch {
       if (!started) {

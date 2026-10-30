@@ -76,6 +76,7 @@ function harness({ item = {}, permissions = {}, initialCapabilities = {}, deferG
       if (name === "react/jsx-runtime") return { jsx: node, jsxs: node, Fragment: "fragment" };
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "@/app/_components/finser-ui") return components;
+      if (name === "@/lib/colombia-date") return { colombiaDateKey: () => "2026-10-18" };
       if (name.endsWith(".module.css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error("Unexpected import: " + name);
     },
@@ -144,6 +145,18 @@ test("el analista debe justificar el cambio y no puede revisar fechas fuera de p
     assert.match(ui.text(), /vencimiento dentro del plazo permitido/); assert.equal(ui.button("Confirmar cambios"), undefined);
   }
   assert.equal(ui.patchRequests().length, 0);
+});
+
+test("una prórroga anticipada conserva compromisos vigentes anteriores al vencimiento de la cuota", async () => {
+  const ui = harness({ item: { expiresOn: "2026-11-06", promiseDate: "2026-10-20", installmentDueDate: "2026-11-02" },
+    permissions: { minExpiresOn: "2026-11-03", maxExpiresOn: "2026-11-06" } });
+  await editable(ui);
+  assert.equal(ui.field("mora-extension-expires-on").props.min, "2026-11-03");
+  assert.equal(ui.field("mora-extension-promise-date").props.min, "2026-10-18");
+  await ui.submit("Editar prórroga"); assert.ok(ui.button("Confirmar cambios"));
+  await ui.click("Confirmar cambios");
+  assert.equal(ui.patchRequests()[0].body.promiseDate, "2026-10-20");
+  assert.equal(ui.patchRequests()[0].body.expiresOn, "2026-11-06");
 });
 
 test("el motivo de la prórroga se valida antes de revisar y un guardado manual impide nuevas operaciones", async () => {

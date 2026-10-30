@@ -159,6 +159,10 @@ se agrupan en Seguimiento. `ConfirmDialog` muestra crédito, destinatario y fech
 o importe antes de actuar. El grabador ofrece escucha previa y los emojis se
 insertan en el borrador. La recepción en tiempo real conserva texto y posición
 de lectura; los fallos de conexión muestran su estado y activan consulta local.
+La prórroga puede concederse antes de vencer la primera cuota regular pendiente:
+sus 1 a 4 días se cuentan desde el vencimiento 02/17, con límite 06/21. La
+confirmación identifica la cuota y su fecha; un pago que cambie esa cuota obliga
+a revisar los datos nuevamente. Los créditos pagados no habilitan esta acción.
 En móvil se pasa de bandeja a chat, con ficha superpuesta y desplazamiento sin
 cortar mensajes ni controles de envío.
 

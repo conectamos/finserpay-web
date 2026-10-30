@@ -10,6 +10,7 @@ const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 export const policy = await jiti.import("../lib/cuotavencida-whatsapp-policy.ts");
 const dates = await jiti.import("../lib/colombia-date.ts");
 const phone = await jiti.import("../lib/dapta-welcome.ts");
+const automation = await jiti.import("../lib/whatsapp-automation-provider.ts");
 export const requestId = "1df2ddc9-b0bb-4148-baa0-050000000001";
 export const requestId2 = "1df2ddc9-b0bb-4148-baa0-050000000002";
 export const credit = (id = 1, overrides = {}) => ({ id, clienteNombre: "CLIENTE SINTETICO " + id,
@@ -72,7 +73,8 @@ export async function fixture(t, { credits = [credit()], enabled = true, campaig
   });
   const storeFor = selectedCampaign => loaded.createCuotaVencidaWhatsAppStore({ database, enabled: () => enabled, now: () => at, campaign: selectedCampaign });
   const store = storeFor(campaign);
-  const dispatcher = loadReissueModule("lib/cuotavencida-whatsapp-dispatch.ts", { "@/lib/cuotavencida-whatsapp-store": loaded, "@/lib/colombia-date": dates }, { AbortSignal, Buffer, process: { env: {} } });
+  const dispatcher = loadReissueModule("lib/cuotavencida-whatsapp-dispatch.ts", { "@/lib/cuotavencida-whatsapp-store": loaded, "@/lib/colombia-date": dates,
+    "@/lib/whatsapp-automation-provider": automation }, { AbortSignal, Buffer, process: { env: {} } });
   const eventsFor = selectedCampaign => db.query(`SELECT * FROM "${selectedCampaign === "BLOQUEO" ? "Bloqueo" : "CuotaVencida"}WhatsAppEvent" ORDER BY "createdAt","id"`).then(result => result.rows);
   const events = () => eventsFor(campaign);
   const update = (id, fields) => db.query('UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1', [id, JSON.stringify(fields)]);

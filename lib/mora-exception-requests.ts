@@ -282,10 +282,11 @@ function analystExtensionWindow(row: StoredRequest, credit: RuleCredit, now: Dat
       && item.numero === row.installmentNumber && item.fechaVencimiento === nullableDateKey(row.installmentDueDate));
   const dueDate = installment?.fechaVencimiento || null;
   const maxExpiresOn = dueDate ? addCalendarDays(dueDate, 4) : null;
-  const allowed = Boolean(installment && plan.estadoPago === "MORA" && dueDate && [2, 17].includes(Number(dueDate.slice(8, 10)))
-    && today > dueDate && maxExpiresOn && today <= maxExpiresOn);
-  return { minExpiresOn: today, maxExpiresOn, allowed,
-    reason: allowed ? null : "La prórroga solo se puede editar después del vencimiento 02/17 y hasta el día 06/21." };
+  const allowed = Boolean(installment && dueDate && [2, 17].includes(Number(dueDate.slice(8, 10)))
+    && maxExpiresOn && today <= maxExpiresOn);
+  const firstExtensionDay = dueDate ? addCalendarDays(dueDate, 1) : today;
+  return { minExpiresOn: firstExtensionDay > today ? firstExtensionDay : today, maxExpiresOn, allowed,
+    reason: allowed ? null : "La prórroga requiere una cuota regular pendiente y admite de 1 a 4 días desde el vencimiento 02/17, hasta el día 06/21." };
 }
 
 async function extensionActions(db: Pick<typeof prisma, "$queryRawUnsafe" | "credito">, row: StoredRequest | null, actor: MoraActor, now: Date): Promise<MoraExtensionActions> {
@@ -316,15 +317,16 @@ export function evaluateMoraExceptionRule(credit: RuleCredit, input: Pick<Create
   const today = colombiaDateKey(now);
   const plan = buildCreditPaymentPlan({ ...credit, fechaProximoPago: null, today, settled: Boolean(credit.pazYSalvoEmitidoAt) });
   const installment = plan.installments.find(row => !row.eliminada && row.saldoPendiente > 0) || null;
-  if (!installment || plan.estadoPago !== "MORA") throw new CreditApprovalError("NOT_OVERDUE", "El crédito no tiene una cuota regular vencida.", 409);
+  if (!installment) throw new CreditApprovalError("NO_PENDING_INSTALLMENT", "El crédito no tiene una cuota regular pendiente.", 409);
+  if (input.type === "EXCEPCION" && plan.estadoPago !== "MORA") throw new CreditApprovalError("NOT_OVERDUE", "El crédito no tiene una cuota regular vencida.", 409);
   if (input.promiseAmount > plan.saldoPendiente) throw invalid("El pago prometido no puede superar el saldo pendiente.");
   if (input.promiseDate < today || input.expiresOn < today) throw new CreditApprovalError("REQUEST_WINDOW_CLOSED", "La fecha solicitada ya venció.", 409);
   const dueDate = installment.fechaVencimiento;
   const maxExpiresOn = addCalendarDays(dueDate, 4);
   if (input.type === "PRORROGA") {
     const day = Number(dueDate.slice(8, 10));
-    if (![2,17].includes(day) || today <= dueDate || today > maxExpiresOn || input.expiresOn > maxExpiresOn) {
-      throw new CreditApprovalError("EXTENSION_WINDOW_CLOSED", "La prórroga solo se solicita después del vencimiento 02/17 y hasta el día 06/21.", 409);
+    if (![2,17].includes(day) || today > maxExpiresOn || input.expiresOn <= dueDate || input.expiresOn > maxExpiresOn) {
+      throw new CreditApprovalError("EXTENSION_WINDOW_CLOSED", "La prórroga admite de 1 a 4 días desde el vencimiento 02/17, hasta el día 06/21, incluso si la cuota aún no ha vencido.", 409);
     }
   }
   return {
@@ -445,21 +447,25 @@ export async function getMoraExceptionPreflight(creditoId: number, actor: MoraAc
   const installment = plan.installments.find(row=>!row.eliminada&&row.saldoPendiente>0)||null;
   const dueDate = installment?.fechaVencimiento || null;
   const maxExpiresOn = dueDate ? addCalendarDays(dueDate,4) : null;
+  const firstExtensionDay = dueDate ? addCalendarDays(dueDate,1) : today;
+  const minExpiresOn = firstExtensionDay > today ? firstExtensionDay : today;
   const dueDay = dueDate ? Number(dueDate.slice(8,10)) : 0;
   const cooldownEnabledOn = lastExpiry ? moraCooldownEnabledOn(lastExpiry) : null;
   const commonBlocked = openRequest ? "Ya existe una solicitud pendiente o una excepción vigente para este crédito."
-    : !installment || plan.estadoPago!=="MORA" ? "El crédito no tiene una cuota regular vencida." : null;
-  const extensionBlocked = commonBlocked || (![2,17].includes(dueDay)||today<=String(dueDate)||today>String(maxExpiresOn)
-    ? "La prórroga solo está disponible después del vencimiento 02/17 y hasta el día 06/21." : null);
+    : !installment ? "El crédito no tiene una cuota regular pendiente." : null;
+  const extensionBlocked = commonBlocked || (![2,17].includes(dueDay)||today>String(maxExpiresOn)
+    ? "La prórroga admite de 1 a 4 días desde el vencimiento 02/17, hasta el día 06/21." : null);
+  const exceptionBlocked = commonBlocked || (plan.estadoPago!=="MORA" ? "El crédito no tiene una cuota regular vencida." : null);
   const cooldownBlocked = cooldownEnabledOn && today<cooldownEnabledOn
     ? moraCooldownMessage(cooldownEnabledOn) : null;
   return {
     credit:{...moraCreditSummary(credit,now),numeroSadmin:confirmedSadminNumber(credit.registroSadmin)},
     eligibility:{
       regularInstallment:installment?{number:installment.numero,dueDate,balance:installment.saldoPendiente}:null,
+      minExpiresOn:centralAdmin?null:minExpiresOn,
       maxExpiresOn:centralAdmin?null:maxExpiresOn,
       prorroga:{canRequest:centralAdmin||!extensionBlocked,blockedReason:centralAdmin?null:extensionBlocked},
-      excepcion:{canRequest:centralAdmin||!(commonBlocked||cooldownBlocked),blockedReason:centralAdmin?null:commonBlocked||cooldownBlocked,cooldownEnabledOn:centralAdmin?null:cooldownEnabledOn},
+      excepcion:{canRequest:centralAdmin||!(exceptionBlocked||cooldownBlocked),blockedReason:centralAdmin?null:exceptionBlocked||cooldownBlocked,cooldownEnabledOn:centralAdmin?null:cooldownEnabledOn},
       canBypassCooldown,
       promise:{amount:installment?Math.min(installment.saldoPendiente,Number(credit.valorCuota||installment.saldoPendiente)):0,date:today},
     },
@@ -761,7 +767,7 @@ export async function amendMoraExceptionRequest(id: string, input: AmendmentInpu
         if (input.promiseAmount !== undefined)
           throw invalid("El valor del compromiso no se modifica desde esta gestión.");
         if (input.expiresOn === null || input.expiresOn < allowed.minExpiresOn! || input.expiresOn > allowed.maxExpiresOn!)
-          throw new CreditApprovalError("EXTENSION_WINDOW_CLOSED", "El vencimiento debe estar entre hoy y el máximo de cuatro días desde la cuota regular.", 409);
+          throw new CreditApprovalError("EXTENSION_WINDOW_CLOSED", "Selecciona una fecha vigente entre uno y cuatro días después del vencimiento de la cuota regular.", 409);
         const effectivePromiseDate = input.promiseDate === undefined ? nullableDateKey(current.promiseDate) : input.promiseDate;
         if (current.source !== "CENTRAL_DIRECT" && (effectivePromiseDate === null || effectivePromiseDate < colombiaDateKey(now)))
           throw invalid("El compromiso de pago debe tener una fecha vigente.");

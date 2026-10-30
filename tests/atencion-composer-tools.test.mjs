@@ -46,7 +46,7 @@ test("emojis edit the draft without sending; audio-specific disable allows emoji
   const h=mount();await h.update({audioDisabled:true});assert.equal(h.button("Grabar audio").props.disabled,true);await h.click("Elegir emoji");await h.click("Pulgar arriba");assert.deepEqual(h.emojis,["👍"]);assert.equal(h.requests.length,0);h.unmount();
 });
 test("explicit recording previews before attachment; double stop is harmless and never sends",async()=>{
-  const h=mount();assert.equal(h.devices.length,0);await h.click("Grabar audio");await h.capture();const stop=h.button("Detener y escuchar");stop.props.onClick();stop.props.onClick();await h.flush();assert.equal(h.audio.length,0);assert.ok(h.stopped);await h.click("Usar audio");assert.equal(h.audio[0].type,"audio/ogg");assert.equal(h.requests.length,0);assert.ok(h.revoked.length);h.unmount();
+  const h=mount();assert.equal(h.devices.length,0);await h.click("Grabar audio");await h.capture();const stop=h.button("Detener y escuchar");stop.props.onClick();stop.props.onClick();await h.flush();assert.equal(h.audio.length,0);assert.ok(h.stopped);await h.click("Usar audio");assert.equal(h.audio.length,0);assert.equal(h.requests.length,1);await h.resolveConversion();assert.equal(h.audio[0].type,"audio/ogg");assert.ok(h.revoked.length);h.unmount();
 });
 test("late microphone permission after navigation releases tracks without recording",async()=>{
   const h=mount();await h.click("Grabar audio");h.unmount();await h.capture();assert.equal(h.devices.length,0);assert.equal(h.stopped,1);assert.equal(h.audio.length,0);

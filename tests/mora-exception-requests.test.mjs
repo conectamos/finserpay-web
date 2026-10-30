@@ -106,10 +106,7 @@ test("valida DTO, ventanas 02/06 y 17/21, y el enfriamiento de 20 días completo
     "Este crédito tuvo una excepción vencida. Podrá solicitar una nueva excepción a partir del 27/10/2026."
   );
 
-  assert.throws(
-    () => service.evaluateMoraExceptionRule({}, parsed, new Date("2026-10-02T17:00:00.000Z")),
-    { code: "EXTENSION_WINDOW_CLOSED" }
-  );
+  assert.equal(service.evaluateMoraExceptionRule({}, parsed, new Date("2026-10-02T17:00:00.000Z")).maxExpiresOn, "2026-10-06");
   assert.throws(
     () => service.evaluateMoraExceptionRule({}, { ...parsed, expiresOn: "2026-10-07" }, new Date("2026-10-03T17:00:00.000Z")),
     { code: "EXTENSION_WINDOW_CLOSED" }
@@ -121,6 +118,20 @@ test("valida DTO, ventanas 02/06 y 17/21, y el enfriamiento de 20 días completo
   };
   const service17 = loadService({ plan: day17 });
   assert.equal(service17.evaluateMoraExceptionRule({}, { ...parsed, expiresOn: "2026-10-21", promiseDate: "2026-10-21" }, new Date("2026-10-21T17:00:00.000Z")).maxExpiresOn, "2026-10-21");
+});
+
+test("prórroga anticipada conserva cuota pendiente y días desde vencimiento; excepción sigue exigiendo mora", () => {
+  const future = loadService({ plan: { ...basePlan, estadoPago: "AL_DIA" } });
+  for (const at of ["2026-09-30T17:00:00Z", "2026-10-02T17:00:00Z"]) {
+    for (const expiresOn of ["2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06"]) {
+      const rule = future.evaluateMoraExceptionRule({}, { ...validCreate, expiresOn, promiseDate: expiresOn }, new Date(at));
+      assert.equal(rule.installmentNumber, 3); assert.equal(rule.installmentDueDate, "2026-10-02");
+    }
+    for (const expiresOn of ["2026-10-02", "2026-10-07"]) assert.throws(() => future.evaluateMoraExceptionRule({}, { ...validCreate, expiresOn, promiseDate: expiresOn }, new Date(at)), { code: "EXTENSION_WINDOW_CLOSED" });
+    assert.throws(() => future.evaluateMoraExceptionRule({}, { ...validCreate, type: "EXCEPCION" }, new Date(at)), { code: "NOT_OVERDUE" });
+  }
+  const paid = loadService({ plan: { ...basePlan, estadoPago: "PAGADO", saldoPendiente: 0, installments: [{ ...basePlan.installments[0], saldoPendiente: 0 }] } });
+  assert.throws(() => paid.evaluateMoraExceptionRule({}, validCreate, new Date("2026-10-01T17:00:00Z")), { code: "NO_PENDING_INSTALLMENT" });
 });
 
 test("bypass y observaciones exigen intención explícita, razón e idempotencia", () => {

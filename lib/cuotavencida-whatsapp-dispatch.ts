@@ -1,5 +1,6 @@
 import "server-only";
 import { colombiaDateKey } from "@/lib/colombia-date";
+import { isMetaAutomationConfigured, sendMetaAutomation, whatsAppAutomationProvider, type MetaAutomationSender } from "@/lib/whatsapp-automation-provider";
 import {
   claimCuotaVencidaWhatsApp, prepareCuotaVencidaWhatsAppDispatch, releaseCuotaVencidaWhatsAppClaim,
   markCuotaVencidaWhatsAppAccepted, markCuotaVencidaWhatsAppFailed, markCuotaVencidaWhatsAppUnknown,
@@ -7,13 +8,17 @@ import {
   createCuotaVencidaWhatsAppStore, type PortfolioWhatsAppCampaign,
 } from "@/lib/cuotavencida-whatsapp-store";
 
-type Config = { webhookUrl: string };
+type Config = { provider: "meta" | "dapta"; webhookUrl?: string; env: NodeJS.ProcessEnv };
 function configuration(env: NodeJS.ProcessEnv, campaign: PortfolioWhatsAppCampaign = "CUOTAVENCIDA"): Config | null {
   if (!["CUOTAVENCIDA", "BLOQUEO"].includes(campaign) || env[`DAPTA_${campaign}_ENABLED`] !== "true") return null;
+  const provider = whatsAppAutomationProvider(env);
+  if (!provider) return null;
+  if (provider === "meta") return isMetaAutomationConfigured(env, campaign === "BLOQUEO" ? "bloqueo" : "cuotavencida")
+    ? { provider, env: { ...env } } : null;
   try {
     const url = new URL(env[`DAPTA_${campaign}_WEBHOOK_URL`] || "");
     if (url.protocol !== "https:" || url.hostname !== "api.dapta.ai" || url.username || url.password || url.port || url.hash) return null;
-    return { webhookUrl: url.toString() };
+    return { provider, webhookUrl: url.toString(), env: { ...env } };
   } catch { return null; }
 }
 export function isCuotaVencidaWhatsAppConfigured(env: NodeJS.ProcessEnv = process.env, campaign: PortfolioWhatsAppCampaign = "CUOTAVENCIDA"): boolean {
@@ -50,6 +55,7 @@ export function cuotaVencidaWhatsAppReceipt(payload: unknown, eventId: string):
 type Dependencies = {
   campaign?: PortfolioWhatsAppCampaign;
   env?: NodeJS.ProcessEnv; now?: () => Date; fetcher?: typeof fetch;
+  sendMeta?: MetaAutomationSender;
   claim?: typeof claimCuotaVencidaWhatsApp; prepare?: typeof prepareCuotaVencidaWhatsAppDispatch;
   release?: typeof releaseCuotaVencidaWhatsAppClaim; accepted?: typeof markCuotaVencidaWhatsAppAccepted;
   failed?: typeof markCuotaVencidaWhatsAppFailed; unknown?: typeof markCuotaVencidaWhatsAppUnknown;
@@ -63,8 +69,9 @@ export function createCuotaVencidaWhatsAppDispatcher(deps: Dependencies = {}) {
   const now = deps.now ?? (() => new Date());
   let running = false;
   return async function runCuotaVencidaWhatsApp(input: { limit?: number } = {}) {
-    const config = configuration(deps.env ?? process.env, campaign);
-    const report = { configured: Boolean(config), selected: 0, accepted: 0, failed: 0, unknown: 0, skipped: 0, deferred: 0 };
+    const env = { ...(deps.env ?? process.env) };
+    const config = configuration(env, campaign);
+    const report = { provider: whatsAppAutomationProvider(env), configured: Boolean(config), selected: 0, accepted: 0, failed: 0, unknown: 0, skipped: 0, deferred: 0 };
     if (!config || running) return report;
     const limit = Math.min(10, Math.max(1, Math.trunc(input.limit ?? 10)));
     if (!Number.isFinite(limit)) throw new RangeError("Invalid dispatch limit");
@@ -78,12 +85,46 @@ export function createCuotaVencidaWhatsAppDispatcher(deps: Dependencies = {}) {
         if (!claim) break;
         report.selected++;
         let deferred = false;
+        let nativeGuardSkipped = false;
         const outcome: { result: ReturnType<typeof cuotaVencidaWhatsAppReceipt> } = { result: { status: "UNKNOWN" } };
-        const prepared = await (deps.prepare ?? defaults.prepareCuotaVencidaWhatsAppDispatch)(claim.eventId, async current => {
+        const prepare = deps.prepare ?? defaults.prepareCuotaVencidaWhatsAppDispatch;
+        let prepared: Awaited<ReturnType<typeof prepare>>;
+        if (config.provider === "meta") {
+          prepared = await prepare(claim.eventId);
+          const snapshot = prepared;
+          if (snapshot) {
+            if (deadline - now().getTime() <= 0 || colombiaDateKey(now()) !== snapshot.campaignDate) deferred = true;
+            else try {
+              const native = await (deps.sendMeta ?? sendMetaAutomation)({
+                operationKey: `${campaign === "BLOQUEO" ? "bloqueo" : "cuotavencida"}:${snapshot.eventId}`,
+                template: campaign === "BLOQUEO" ? "bloqueo" : "cuotavencida", phone: snapshot.phone,
+                body: campaign === "BLOQUEO" ? [] : [snapshot.name],
+              }, { env: config.env, fetcher: deps.fetcher, deadlineAt: deadline,
+                withSendGuard: async <T>(send: () => Promise<T>): Promise<T> => {
+                  let receipt: { value: T } | undefined;
+                  const current = await prepare(claim.eventId, async validated => {
+                    if (validated.phone !== snapshot.phone || validated.name !== snapshot.name
+                      || deadline - now().getTime() <= 0 || colombiaDateKey(now()) !== validated.campaignDate)
+                      throw new Error("BATCH_CHANGED_BEFORE_SEND");
+                    // Only Graph HTTP runs while the original financial locks
+                    // are held. Native outbox/CRM writes happen outside them.
+                    receipt = { value: await send() };
+                  });
+                  if (!current) nativeGuardSkipped = true;
+                  if (!current || !receipt) throw new Error("BATCH_NOT_ELIGIBLE_BEFORE_SEND");
+                  return receipt.value;
+                },
+              });
+              outcome.result = native.status === "accepted" && safeCuotaVencidaProviderMessageId(native.providerMessageId)
+                ? { status: "ACCEPTED", providerMessageId: native.providerMessageId! }
+                : { status: native.status === "failed" ? "FAILED" : "UNKNOWN" };
+            } catch { /* Native durable state reconciles uncertain outcomes; never fall back. */ }
+          }
+        } else prepared = await prepare(claim.eventId, async current => {
           const remaining = deadline - now().getTime();
           if (remaining <= 0 || colombiaDateKey(now()) !== current.campaignDate) { deferred = true; return; }
           try {
-            const response = await (deps.fetcher ?? fetch)(config!.webhookUrl, {
+            const response = await (deps.fetcher ?? fetch)(config!.webhookUrl!, {
               method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", redirect: "error",
               signal: AbortSignal.timeout(Math.max(1, Math.min(8_000, Math.floor(remaining)))),
               body: JSON.stringify({ telefono: current.phone, nombre: current.name, event_id: current.eventId }),
@@ -96,6 +137,7 @@ export function createCuotaVencidaWhatsAppDispatcher(deps: Dependencies = {}) {
           } catch { /* Never retry an outcome after HTTP has begun. */ }
         });
         if (!prepared) { report.skipped++; continue; }
+        if (nativeGuardSkipped) { report.skipped++; continue; }
         if (deferred) {
           await (deps.release ?? defaults.releaseCuotaVencidaWhatsAppClaim)(claim.eventId); report.deferred++; break;
         }

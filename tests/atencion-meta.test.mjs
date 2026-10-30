@@ -4,6 +4,7 @@ import test from "node:test";
 import { createHash, createHmac } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
+import sharp from "sharp";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
@@ -228,4 +229,28 @@ test("audio/video MP4 requires corresponding container track, not just filename"
   assert.equal(validateMetaAttentionMedia({ bytes: track("soun"), mimeType: "audio/mp4", fileName: "audio.m4a" }).kind, "audio");
   assert.equal(validateMetaAttentionMedia({ bytes: track("vide"), mimeType: "video/mp4", fileName: "video.mp4" }).kind, "video");
   assert.throws(() => validateMetaAttentionMedia({ bytes: track("vide"), mimeType: "audio/mp4", fileName: "audio.m4a" }), { code: "INVALID_MEDIA_CONTENT" });
+});
+
+test("stickers reales WEBP512 requieren estructura válida y límites diferenciados100/500KB",async()=>{
+  const staticWebp=await sharp({create:{width:512,height:512,channels:4,background:{r:12,g:180,b:70,alpha:0.5}}}).webp({lossless:true}).toBuffer();
+  const pixels=Buffer.alloc(512*1024*4);for(let i=0;i<pixels.length;i+=4){pixels[i]=i<512*512*4?255:0;pixels[i+1]=i<512*512*4?0:255;pixels[i+3]=255;}
+  const animated=await sharp(pixels,{raw:{width:512,height:1024,channels:4,pageHeight:512}}).webp({lossless:true,delay:[150,150],loop:0}).toBuffer();
+  const check=bytes=>validateMetaAttentionMedia({bytes,mimeType:"image/webp",fileName:"prueba.webp",kind:"sticker"});
+  assert.equal(check(staticWebp).kind,"sticker");assert.equal(check(animated).kind,"sticker");
+  const padding=(bytes,size)=>{const length=size-bytes.length-8;const chunk=Buffer.alloc(length+8);chunk.write("JUNK");chunk.writeUInt32LE(length,4);chunk.write("ANIM",8);const out=Buffer.concat([bytes,chunk]);out.writeUInt32LE(out.length-8,4);return out;};
+  assert.equal(check(padding(staticWebp,100*1024)).size,100*1024);
+  assert.throws(()=>check(padding(staticWebp,100*1024+2)),{code:"MEDIA_TOO_LARGE"});
+  assert.equal(check(padding(animated,500*1024)).size,500*1024);
+  assert.throws(()=>check(padding(animated,500*1024+2)),{code:"MEDIA_TOO_LARGE"});
+  const wrongSize=await sharp({create:{width:128,height:512,channels:3,background:"red"}}).webp().toBuffer();
+  assert.throws(()=>check(wrongSize),{code:"INVALID_STICKER_DIMENSIONS"});
+  assert.throws(()=>check(Buffer.from("RIFF0000WEBPVP8 fake ANIM")),{code:"INVALID_MEDIA_CONTENT"});
+  const truncated=staticWebp.subarray(0,staticWebp.length-2);assert.throws(()=>check(truncated),{code:"INVALID_MEDIA_CONTENT"});
+  const corrupted=Buffer.from(animated);corrupted[20]&=~2;assert.throws(()=>check(corrupted),{code:"INVALID_MEDIA_CONTENT"});
+});
+
+test("tipos habituales de audio se normalizan sin aceptar archivo incompatible",()=>{
+  assert.equal(validateMetaAttentionMedia({bytes:Buffer.from("ID3synthetic"),mimeType:"audio/mp3",fileName:"audio.mp3"}).mimeType,"audio/mpeg");
+  assert.equal(validateMetaAttentionMedia({bytes:Buffer.from("OggS synthetic OpusHead"),mimeType:"application/ogg",fileName:"audio.ogg"}).mimeType,"audio/ogg");
+  assert.throws(()=>validateMetaAttentionMedia({bytes:Buffer.from("not opus"),mimeType:"application/ogg",fileName:"audio.ogg"}),{code:"INVALID_MEDIA_CONTENT"});
 });

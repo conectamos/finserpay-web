@@ -1,10 +1,12 @@
+import { isMetaAutomationConfigured, sendMetaAutomation, whatsAppAutomationProvider, type MetaAutomationSender } from "./whatsapp-automation-provider";
+
 type CreditWelcome = {
   creditId: number;
   phone: string | null | undefined;
   name: string;
 };
 
-type WelcomeResult = "disabled" | "invalid_contact" | "accepted" | "failed";
+type WelcomeResult = "disabled" | "invalid_contact" | "accepted" | "failed" | "unknown";
 
 function hasDaptaExecutionError(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
@@ -31,26 +33,41 @@ export async function sendDaptaWelcome(
     enabled?: boolean;
     webhookUrl?: string;
     fetcher?: typeof fetch;
+    env?: NodeJS.ProcessEnv;
+    sendMeta?: MetaAutomationSender;
   } = {},
 ): Promise<WelcomeResult> {
-  const enabled = options.enabled ?? process.env.DAPTA_BIENVENIDA_ENABLED === "true";
-  const webhookUrl = options.webhookUrl ?? process.env.DAPTA_BIENVENIDA_WEBHOOK_URL;
-  if (!enabled || !webhookUrl) return "disabled";
+  const env = { ...(options.env ?? process.env) };
+  const provider = whatsAppAutomationProvider(env);
+  const enabled = options.enabled ?? env.DAPTA_BIENVENIDA_ENABLED === "true";
+  const webhookUrl = options.webhookUrl ?? env.DAPTA_BIENVENIDA_WEBHOOK_URL;
+  if (!enabled || !provider || (provider === "dapta" && !webhookUrl)) return "disabled";
+
+  const phone = normalizeColombianMobile(credit.phone);
+  const name = credit.name.trim().slice(0, 100);
+  if (!phone || !name || !Number.isSafeInteger(credit.creditId) || credit.creditId < 1) return "invalid_contact";
+  if (provider === "meta") {
+    if (!isMetaAutomationConfigured(env, "bienvenida")) return "disabled";
+    try {
+      const result = await (options.sendMeta ?? sendMetaAutomation)({
+        operationKey: `bienvenida:credito:${credit.creditId}`, template: "bienvenida", phone, body: [name],
+      }, { env, fetcher: options.fetcher });
+      return result.status;
+    } catch {
+      // The durable native outbox owns reconciliation. Never try Dapta after an
+      // uncertain Meta call, nor turn an uncertain outcome into a fresh intent.
+      return "unknown";
+    }
+  }
 
   // The URL contains Dapta's webhook credential. Never include it in logs.
   let url: URL;
   try {
-    url = new URL(webhookUrl);
+    url = new URL(webhookUrl!);
   } catch {
     return "failed";
   }
   if (url.protocol !== "https:" || url.hostname !== "api.dapta.ai") return "failed";
-
-  const phone = normalizeColombianMobile(credit.phone);
-  const name = credit.name.trim().slice(0, 100);
-  if (!phone || !name || !Number.isSafeInteger(credit.creditId) || credit.creditId < 1) {
-    return "invalid_contact";
-  }
 
   try {
     const response = await (options.fetcher ?? fetch)(url, {

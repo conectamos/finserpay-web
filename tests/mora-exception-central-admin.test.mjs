@@ -285,6 +285,25 @@ test("cuota del 02 admite hasta el 06 y una cuota irregular no habilita edición
     analystAmendment(f.service, edited.item, { expiresOn: "2026-10-04" }), analyst, early), { code: "MORA_EXTENSION_NOT_EDITABLE" });
 });
 
+test("cuota futura habilita prórroga y edición con mínimo vencimiento+1, sin habilitar excepción de mora", async t => {
+  const f = await harness(t, { plan: { ...overduePlan, estadoPago: "AL_DIA" } });
+  const early = new Date("2026-10-01T17:00:00Z");
+  const preflight = await f.service.getMoraExceptionPreflight(77, analyst, early);
+  assert.equal(preflight.eligibility.prorroga.canRequest, true);
+  assert.equal(preflight.eligibility.excepcion.canRequest, false);
+  assert.equal(preflight.eligibility.minExpiresOn, "2026-10-03");
+  assert.equal(preflight.eligibility.maxExpiresOn, "2026-10-06");
+  const item = (await f.service.createMoraExceptionRequest(centralInput(f.service, { type: "PRORROGA", expiresOn: "2026-10-06" }), central, early)).item;
+  const caps = await f.service.getMoraExtensionActions(item.id, analyst, early);
+  assert.equal(caps.canEdit, true); assert.equal(caps.minExpiresOn, "2026-10-03");
+  for (const expiresOn of ["2026-10-01", "2026-10-02", "2026-10-07"]) await assert.rejects(f.service.amendMoraExceptionRequest(item.id,
+    analystAmendment(f.service, item, { expiresOn }), analyst, early), { code: "EXTENSION_WINDOW_CLOSED" });
+  const edited = await f.service.amendMoraExceptionRequest(item.id, analystAmendment(f.service, item, { expiresOn: "2026-10-04" }), analyst, early);
+  assert.equal(edited.item.expiresOn, "2026-10-04");
+  f.credits.get(77).plan = { ...overduePlan, estadoPago: "PAGADO", saldoPendiente: 0, installments: [{ ...overduePlan.installments[0], saldoPendiente: 0 }] };
+  assert.equal((await f.service.getMoraExtensionActions(item.id, analyst, early)).canEdit, false);
+});
+
 test("central edita plazo, motivo y observación sin recrear la excepción ni alterar el crédito", async t => {
   const f = await harness(t, { plan: { estadoPago: "AL_DIA", saldoPendiente: 900, installments: [] } });
   const created = await f.service.createMoraExceptionRequest(centralInput(f.service, { type: "PRORROGA", expiresOn: "2026-10-09" }), central, now);

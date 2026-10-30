@@ -66,6 +66,9 @@ COPY --from=builder \
   /app/scripts/ensure-cut-collection-schema.mjs \
   /app/scripts/setup-atencion.sql \
   /app/scripts/ensure-atencion-schema.mjs \
+  /app/scripts/setup-whatsapp-automation-meta.sql \
+  /app/scripts/whatsapp-automation-meta-schema.mjs \
+  /app/scripts/ensure-whatsapp-automation-meta-schema.mjs \
   /app/scripts/railway-predeploy.mjs \
   /app/scripts/ensure-approval-operations-schema.mjs \
   /app/scripts/analyst-mora-schema.mjs \

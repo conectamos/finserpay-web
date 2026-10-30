@@ -138,6 +138,8 @@ export function createAttentionFinancialStore(database: AttentionDatabase, setti
         const planCredit = { ...credit, abonos: await payments(db, [credit.id], true) }, eligibility = extensionEligibility(planCredit, open || null, now());
         const choice = eligibility.choices.find(c => c.days === input.days);
         if (!eligibility.canGrant || !choice || !eligibility.dueDate || !eligibility.installmentNumber) throw new AttentionError(eligibility.blockedReason || "El plazo solicitado ya venció.", 409);
+        if (input.installmentNumber !== eligibility.installmentNumber || input.installmentDueDate !== eligibility.dueDate)
+          throw new AttentionError("La cuota pendiente cambió o no fue confirmada. Actualiza y revisa su vencimiento antes de conceder la prórroga.", 409);
         const plan = financialPlan(planCredit, now())!;
         if (input.promiseAmount > plan.saldoPendiente || input.promiseDate < today || input.promiseDate > choice.expiresOn) throw new AttentionError("El compromiso debe ser vigente, no superar el saldo y vencer dentro de la prórroga.", 409);
         // The portfolio evaluator remains the authoritative policy at commit time.
