@@ -254,6 +254,7 @@ test("micrófono sigue habilitado con texto escrito y el selector de sticker ace
   const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Mensaje para después del audio" });
   const f = mount({ component: "ReplyComposer", props: root.composer().props });
   const tools = () => f.all().find(n => n.type?.name?.endsWith("attention-composer-tools"));
+  assert.notEqual(tools().key, f.all().find(n => n.type?.name?.endsWith("attention-template-composer")).key, "herramientas y plantillas hermanas necesitan claves distintas");
   assert.equal(tools().props.disabled, false); assert.equal(tools().props.audioDisabled, false);
   const audio = new File(["audio"], "grabacion.ogg", { type: "audio/ogg" });
   tools().props.onAudio(audio); await root.flush(); f.setProps(root.composer().props);
