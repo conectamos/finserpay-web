@@ -40,7 +40,7 @@ function routeFixture(overrides = {}) {
     "@/lib/auth": { getSessionUser: async () => ({ id: 1, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSER", sedeId: 3, aliadoId: 7 }) },
     "@/lib/aliados": { isFinserPayCentralAlly: () => true },
     "@/lib/roles": { isAdminRole: () => true },
-    "@/lib/solicitud-operation-access": { canOperateSolicitud: () => overrides.authorized !== false, isDirectSalesProfile: () => true },
+    "@/lib/solicitud-operation-access": { canOperateSolicitud: () => overrides.authorized !== false, canOriginateSolicitud: () => true, canActAsAllySalesAdmin: () => false },
     "@/lib/datacredito": { getDataCreditoPublicConfig: () => ({ enabled: true, configured: true, productionReady: true, environment: "PRODUCTION" }),
       allowsDataCreditoNonProductionProvider: () => false, DataCreditoError: StubError,
       queryDataCreditoNaturalPerson: async () => { events.provider++; throw new Error("Paid provider must not run"); } },
@@ -59,6 +59,7 @@ function routeFixture(overrides = {}) {
       DataCreditoStorageConfigurationError: StubError,
     },
     "@/lib/datacredito/resume-gate": { canRecoverAssessmentIdentityMismatch: () => false, canRecoverPendingAssessment: () => false },
+    "@/lib/datacredito/admin-rejection-storage": { findRecentDataCreditoAdministrativeRejection: async () => null },
     "@/lib/datacredito/customer-identity": { getDataCreditoCustomerIdentityForDisplay: async () => null },
     "@/lib/datacredito/secure-record": { DataCreditoSecureRecordConfigurationError: StubError, DataCreditoSecureRecordValidationError: StubError },
     "@/lib/firmaseguro-storage": {

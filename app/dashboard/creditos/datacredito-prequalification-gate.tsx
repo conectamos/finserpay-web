@@ -236,6 +236,7 @@ function getAssessmentConflictMessage(payload: JsonRecord, response: Response) {
   }
   if (response.status !== 409) return null;
   const messages: Record<string, string> = {
+    ADMINISTRATIVE_REJECTION: "Solicitud rechazada por revisión administrativa de FINSER: información insuficiente para evaluar. La respuesta de DataCrédito se conserva sin cambios.",
     ASSESSMENT_REQUIRES_REVIEW: "La cédula tiene una consulta pendiente de revisión. Solicita la revisión administrativa antes de consultar nuevamente.",
     ASSESSMENT_IDENTITY_MISMATCH: "El primer apellido no coincide con la consulta vigente de esta cédula. Revisa el apellido antes de continuar.",
     SOLICITUD_IDENTITY_MISMATCH: "El documento o el primer apellido no coincide con la identidad de la solicitud. Retoma la solicitud correspondiente.",
@@ -489,6 +490,7 @@ function TechnicalErrorPanel({
   onRetry: () => void;
 }) {
   const requiresReview = conflictCode === "ASSESSMENT_REQUIRES_REVIEW";
+  const administrativelyRejected = conflictCode === "ADMINISTRATIVE_REJECTION";
   const responseRequiresReview = conflictCode === "NO_EVALUABLE_INFORMATION";
   const evaluationInProgress = conflictCode === "EVALUATION_IN_PROGRESS";
   const operationInProgress = conflictCode === "SOLICITUD_OPERATION_IN_PROGRESS";
@@ -547,7 +549,7 @@ function TechnicalErrorPanel({
             id="datacredito-technical-error-title"
             className="text-xl font-black text-[var(--fp-graphite)]"
           >
-            {responseRequiresReview ? "Respuesta pendiente de revisión" : requiresReview ? "Consulta pendiente de revisión" : evaluationInProgress ? "Consulta en proceso" : operationInProgress ? "Solicitud en proceso" : conflictMessage ? "La consulta requiere atención" : "No se pudo evaluar"}
+            {administrativelyRejected ? "Solicitud rechazada por FINSER" : responseRequiresReview ? "Respuesta pendiente de revisión" : requiresReview ? "Consulta pendiente de revisión" : evaluationInProgress ? "Consulta en proceso" : operationInProgress ? "Solicitud en proceso" : conflictMessage ? "La consulta requiere atención" : "No se pudo evaluar"}
           </h2>
           <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
             {conflictMessage || "Ocurrió un inconveniente técnico. Esta situación no significa que la solicitud haya sido rechazada."}
@@ -576,7 +578,7 @@ function TechnicalErrorPanel({
         </div>
       </div>
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        {responseRequiresReview ? (
+        {responseRequiresReview || administrativelyRejected ? (
           <Link href={solicitudWallHref} className="fp-ui-button is-secondary focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]">
             Volver a solicitudes
           </Link>
@@ -1193,7 +1195,7 @@ export default function DatacreditoPrequalificationGate({
 
   const submitAssessment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (conflictCode === "NO_EVALUABLE_INFORMATION") return;
+    if (conflictCode === "NO_EVALUABLE_INFORMATION" || conflictCode === "ADMINISTRATIVE_REJECTION") return;
     if (financialTermsRecovery && financialReuseUnavailable) return;
     if (view === "daily-limit-reached") {
       // Reabre la explicación mediante una lectura, nunca una consulta pagada.
@@ -1325,7 +1327,7 @@ export default function DatacreditoPrequalificationGate({
   };
 
   const retryTechnicalFailure = () => {
-    if (conflictCode === "NO_EVALUABLE_INFORMATION") return;
+    if (conflictCode === "NO_EVALUABLE_INFORMATION" || conflictCode === "ADMINISTRATIVE_REJECTION") return;
     if (retryMode === "bootstrap") {
       void loadInitialState();
       return;

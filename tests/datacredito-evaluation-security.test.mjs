@@ -298,6 +298,9 @@ function evaluationFixture(options = {}) {
     },
   };
   const dependencies = {
+    "@/lib/datacredito/admin-rejection-storage": {
+      findRecentDataCreditoAdministrativeRejection: async () => options.administrativeRejection || null,
+    },
     "node:crypto": { randomUUID },
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/auth": { getSessionUser: async () => options.authenticated === false ? null : user },
@@ -390,6 +393,20 @@ function evaluationFixture(options = {}) {
     })),
   };
 }
+
+test("el rechazo administrativo vigente se muestra sin reservar ni consultar y no altera el resultado del proveedor", async () => {
+  const api = evaluationFixture({ administrativeRejection: { source: "FINSER_ADMIN", status: "RECHAZADA", reason: "Revisión interna privada" } });
+  const response = await api.request({});
+  assert.equal(response.status, 409);
+  const body = await response.json();
+  assert.equal(body.code, "ADMINISTRATIVE_REJECTION");
+  assert.equal(body.status, "NO_EVALUADO");
+  assert.deepEqual(body.administrativeDecision, { source: "FINSER_ADMIN", status: "RECHAZADA" });
+  assert.ok(!JSON.stringify(body).includes("Revisión interna privada"));
+  for (const name of ["solicitud", "provider", "provider-dispatch", "complete", "technical", "attach"]) {
+    assert.equal(api.calls.filter(call => call.name === name).length, 0, name);
+  }
+});
 
 test("el endpoint exige autorización expresa e identidad válida antes de reservar o consultar", async t => {
   for (const [body, code] of [

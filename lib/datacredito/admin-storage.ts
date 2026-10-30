@@ -205,7 +205,7 @@ function serializeOffer(
 }
 
 function serializeAdminAssessment(row: AdminAssessmentRow) {
-  const score = finiteInteger(row.score);
+  const score = row.score === null || row.score === undefined ? null : finiteInteger(row.score);
   return {
     id: row.id,
     documentLabel:

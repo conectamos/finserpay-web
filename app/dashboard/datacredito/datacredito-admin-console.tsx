@@ -114,6 +114,10 @@ type DetailResponse = {
   summary?: DataCreditoAdminRiskSummary | null;
   providerData?: DataCreditoSanitizedProviderPayload | null;
   historicWithoutDossier?: boolean;
+  administrativeRejection?: {
+    source: "FINSER_ADMIN"; status: "RECHAZADA"; solicitudId: number;
+    reason: string; rejectedAt: string; actorUserId: number;
+  } | null;
 };
 
 type Filters = {
@@ -569,6 +573,16 @@ export default function DataCreditoAdminConsole() {
               />
             ) : (
               <div className={styles.dossierContent}>
+                {detail.administrativeRejection ? (
+                  <div role="status" className="rounded-xl border border-[var(--fp-border)] bg-[var(--fp-bg)] p-4">
+                    <StatusPill tone="danger">Rechazo administrativo de FINSER</StatusPill>
+                    <p className="mt-2 text-sm">{detail.administrativeRejection.reason}</p>
+                    <p className="mt-2 text-sm text-[var(--fp-muted)]">
+                      Solicitud #{detail.administrativeRejection.solicitudId} · Responsable #{detail.administrativeRejection.actorUserId} · {new Intl.DateTimeFormat("es-CO", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Bogota" }).format(new Date(detail.administrativeRejection.rejectedAt))}
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--fp-muted)]">La respuesta original de DataCrédito se conserva como no evaluada.</p>
+                  </div>
+                ) : null}
                 <div className={styles.identityHeading}>
                   <div>
                     <p className={styles.identityLabel}>CLIENTE</p>

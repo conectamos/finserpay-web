@@ -464,6 +464,7 @@ const REQUIRED_ADMIN_AUDIT_COLUMNS = [
   "userAgentHash",
   "retainedUntil",
   "createdAt",
+  "metadata",
 ] as const;
 
 const REQUIRED_POLICY_NOT_NULL_COLUMNS = REQUIRED_POLICY_COLUMNS;
@@ -499,6 +500,7 @@ const REQUIRED_ADMIN_AUDIT_NOT_NULL_COLUMNS = [
   "requestCorrelationId",
   "retainedUntil",
   "createdAt",
+  "metadata",
 ] as const;
 
 const REQUIRED_ASSESSMENT_INDEXES = [

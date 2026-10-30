@@ -1,4 +1,5 @@
 import { getDataCreditoCustomerIdentityForDisplay } from "@/lib/datacredito/customer-identity";
+import { findRecentDataCreditoAdministrativeRejection } from "@/lib/datacredito/admin-rejection-storage";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
@@ -78,6 +79,14 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function administrativeRejectionResponse(correlationId: string) {
+  return NextResponse.json({
+    ok: false, status: "NO_EVALUADO", code: "ADMINISTRATIVE_REJECTION", correlationId,
+    error: "Solicitud rechazada por revisión administrativa de FINSER: información insuficiente para evaluar. La respuesta de DataCrédito se conserva sin cambios.",
+    administrativeDecision: { source: "FINSER_ADMIN", status: "RECHAZADA" },
+  }, { status: 409, headers: { "Cache-Control": "private, no-store, max-age=0" } });
+}
 
 type EvaluationBody = {
   solicitudId?: unknown;
@@ -370,7 +379,7 @@ export async function POST(request: Request) {
 
     const solicitudContext =
       requestedSolicitudId
-        ? await getActiveSolicitudCreditContext(requestedSolicitudId)
+        ? await getActiveSolicitudCreditContext(requestedSolicitudId, true)
         : null;
     if (requestedSolicitudId && !solicitudContext) {
       return technicalResponse({
@@ -442,15 +451,6 @@ export async function POST(request: Request) {
       requested: financialTermsRefreshRequested, reuseOnly, context: solicitudContext,
       documentNumber, firstSurname, platform,
     });
-    if ((financialTermsRefreshRequested && !financialTermsRecovery) ||
-        (reuseOnly && !identityMismatchRecovery && !pendingAssessmentRecovery && !financialTermsRecovery)) {
-      return technicalResponse({
-        correlationId,
-        code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",
-        error: "Esta solicitud no admite recuperación de una consulta vigente",
-        status: 409,
-      });
-    }
     if (
       solicitudContext &&
       (normalizeDataCreditoDocument(solicitudContext.clienteDocumento) !==
@@ -479,6 +479,20 @@ export async function POST(request: Request) {
       aliadoId: solicitudOwner.aliadoId,
     };
     const hashes = buildDataCreditoIdentityHashes({ documentNumber, firstSurname });
+    // Human-reviewed internal closures retain the provider's NO_EVALUADO
+    // response. Resolve the closure before allocating another draft or query.
+    if (await findRecentDataCreditoAdministrativeRejection({
+      documentHash: hashes.documentHash, providerEnvironment: provider.environment,
+    })) return administrativeRejectionResponse(correlationId);
+    if ((financialTermsRefreshRequested && !financialTermsRecovery) ||
+        (reuseOnly && !identityMismatchRecovery && !pendingAssessmentRecovery && !financialTermsRecovery)) {
+      return technicalResponse({
+        correlationId,
+        code: "ASSESSMENT_RECOVERY_NOT_ALLOWED",
+        error: "Esta solicitud no admite recuperación de una consulta vigente",
+        status: 409,
+      });
+    }
     const metadata = extractRequestMetadata(request);
     const consentAt = new Date();
 
@@ -716,6 +730,9 @@ export async function POST(request: Request) {
       });
     }
     if (cached?.kind === "REQUIRES_REVIEW") {
+      if (await findRecentDataCreditoAdministrativeRejection({
+        documentHash: hashes.documentHash, providerEnvironment: provider.environment,
+      })) return administrativeRejectionResponse(correlationId);
       return solicitudTechnicalResponse({
         correlationId,
         solicitudId,
@@ -825,6 +842,9 @@ export async function POST(request: Request) {
       });
     }
     if (reservation.kind === "REQUIRES_REVIEW") {
+      if (await findRecentDataCreditoAdministrativeRejection({
+        documentHash: hashes.documentHash, providerEnvironment: provider.environment,
+      })) return administrativeRejectionResponse(correlationId);
       return solicitudTechnicalResponse({
         correlationId,
         solicitudId,

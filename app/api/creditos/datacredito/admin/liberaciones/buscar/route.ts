@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
-import { getDataCreditoRetryReleaseActor } from "@/lib/datacredito/admin-access";
+import { getDataCreditoCentralAdmin, getDataCreditoRetryReleaseActor } from "@/lib/datacredito/admin-access";
+import { getDataCreditoAdministrativeRejectionCandidate } from "@/lib/datacredito/admin-rejection-storage";
 import {
   DataCreditoAdminRetryError,
   findDataCreditoAdminRetryCandidate,
@@ -70,7 +71,16 @@ export async function POST(request: Request) {
         404
       );
     }
-    return json({ ok: true, result, correlationId });
+    const centralAccess = await getDataCreditoCentralAdmin();
+    const adminRejection = centralAccess.ok
+      ? { canReject: true, ...await getDataCreditoAdministrativeRejectionCandidate({
+          assessmentId: result.assessmentId,
+          documentNumber: String(body.documentNumber || ""),
+          providerEnvironment: getDataCreditoPublicConfig().environment,
+          ...(result.draftId ? { solicitudId: result.draftId } : {}),
+        }) }
+      : { canReject: false, eligible: false, eligibilityMessage: "Revisión exclusiva del administrador central.", decision: null, solicitudId: null };
+    return json({ ok: true, result: { ...result, adminRejection }, correlationId });
   } catch (error) {
     if (error instanceof DataCreditoAdminRetryError) {
       return json(

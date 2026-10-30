@@ -5,6 +5,7 @@ import {
   sanitizeDataCreditoProviderPayload,
 } from "@/lib/datacredito/admin-report";
 import { getDataCreditoCentralAdmin } from "@/lib/datacredito/admin-access";
+import { getDataCreditoAdministrativeRejection } from "@/lib/datacredito/admin-rejection-storage";
 import { getDataCreditoAssessmentDossierForAdmin } from "@/lib/datacredito/admin-storage";
 import { hashDataCreditoRequestMetadata } from "@/lib/datacredito/storage";
 
@@ -66,6 +67,7 @@ export async function GET(
       {
         ok: true,
         assessment: dossier.assessment,
+        administrativeRejection: await getDataCreditoAdministrativeRejection({ assessmentId: id }),
         identity: dossier.secureRecord
           ? {
               documentNumber: dossier.secureRecord.documentNumber,

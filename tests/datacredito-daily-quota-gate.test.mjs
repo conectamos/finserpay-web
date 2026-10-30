@@ -791,6 +791,25 @@ function renderTechnicalErrorState(harness) {
   return renderToStaticMarkup(element);
 }
 
+test("un rechazo administrativo muestra su origen y detiene los reintentos del asesor", async () => {
+  const harness = createGateHarness({
+    responses: [{ status: 409, body: { ok: false, code: "ADMINISTRATIVE_REJECTION", status: "NO_EVALUADO" } }],
+    callbacks: ["submitAssessment", "retryTechnicalFailure"],
+    overrides: { documentNumber: "00123456789", firstSurname: "PRUEBA" },
+  });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.state.view, "technical-error");
+  assert.equal(harness.state.conflictCode, "ADMINISTRATIVE_REJECTION");
+  const html = renderTechnicalErrorState(harness);
+  assert.ok(html.includes("Solicitud rechazada por FINSER"));
+  assert.ok(html.includes("información insuficiente"));
+  for (const action of ["Continuar solicitud", "Corregir datos", "Revisar disponibilidad", "Revisar resultado guardado"]) assert.ok(!html.includes(action));
+  harness.functions.retryTechnicalFailure();
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.requests.length, 1);
+  assert.equal(harness.state.view, "technical-error");
+});
+
 test("a generic submission error offers manual correction with preserved data and no automatic request", async () => {
   for (const response of [
     { status: 400, body: { ok: false, code: "INVALID_SURNAME" } },

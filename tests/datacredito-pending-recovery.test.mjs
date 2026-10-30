@@ -31,7 +31,7 @@ test("la recuperación pendiente exige borrador de paso 1 sin evaluación enlaza
 });
 
 function fixture(overrides = {}) {
-  const events = { provider: 0, reservation: 0, reuse: 0, released: 0, attached: [], marked: [] };
+  const events = { provider: 0, reservation: 0, reuse: 0, released: 0, locks: 0, drafts: 0, administrativeReads: 0, attached: [], marked: [] };
   const context = {
     id: 530, currentStep: 1, usuarioId: 1, vendedorId: null, sedeId: 3, aliadoId: 7,
     clienteDocumento: "1193536562", clientePrimerApellido: "PEREZ", plataforma: "IPHONE",
@@ -45,6 +45,14 @@ function fixture(overrides = {}) {
     "node:crypto": require("node:crypto"),
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/datacredito/resume-gate": resumeGate,
+    "@/lib/datacredito/admin-rejection-storage": {
+      findRecentDataCreditoAdministrativeRejection: async input => {
+        events.administrativeReads++;
+        assert.equal(input.documentHash, context.clienteDocumento);
+        assert.equal(input.providerEnvironment, "PRODUCTION");
+        return overrides.administrativeRejection || null;
+      },
+    },
     "@/lib/datacredito/customer-identity": { getDataCreditoCustomerIdentityForDisplay: async () => null },
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async () => {} },
     "@/lib/document-blacklist-response": { documentBlacklistErrorResponse: () => null },
@@ -71,10 +79,10 @@ function fixture(overrides = {}) {
       DataCreditoStorageConfigurationError: StubError,
     },
     "@/lib/datacredito/secure-record": { DataCreditoSecureRecordConfigurationError: StubError, DataCreditoSecureRecordValidationError: StubError },
-    "@/lib/firmaseguro-storage": { tryAcquireSolicitudOperationLock: async () => ({ release: async () => { events.released++; } }) },
+    "@/lib/firmaseguro-storage": { tryAcquireSolicitudOperationLock: async () => { events.locks++; return { release: async () => { events.released++; } }; } },
     "@/lib/solicitudes-storage": {
       getActiveSolicitudCreditContext: async () => { contextReads++; return contextReads > 1 && overrides.contextAfterLock ? { ...context, ...overrides.contextAfterLock } : context; },
-      reserveSolicitudForIdentity: async () => ({ id: context.id }),
+      reserveSolicitudForIdentity: async () => { events.drafts++; return { id: context.id }; },
       attachDataCreditoToSolicitud: async input => events.attached.push(input),
       markSolicitudDataCreditoTechnicalError: async input => events.marked.push({ ...input, status: "NO_EVALUADO" }),
       markSolicitudDataCreditoRecoverablePending: async input => events.marked.push({ ...input, status: "PENDING" }),
@@ -143,4 +151,67 @@ test("la recuperación pendiente mantiene consentimiento, propietario, apellido 
     assert.equal(f.events.reservation, 0);
     assert.deepEqual(f.events.attached, []);
   }
+});
+
+const administrativeRejection = {
+  id: "audit-decision", assessmentId: "linked-assessment", solicitudId: 530,
+  status: "RECHAZADA", source: "FINSER_ADMIN", actorUserId: 1,
+  reason: "Motivo privado de revisión administrativa",
+};
+const closedReviewContext = {
+  estado: "CERRADO", closedReason: "RECHAZADA", currentStep: 1,
+  dataCreditoAssessmentId: "linked-assessment", dataCreditoErrorCode: "NO_EVALUABLE_INFORMATION",
+};
+
+test("reuseOnly devuelve la resolución administrativa antes del bloqueo de recuperación y sin operaciones nuevas", async () => {
+  const f = fixture({ context: closedReviewContext, administrativeRejection });
+  const response = await f.submit();
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, "ADMINISTRATIVE_REJECTION");
+  assert.equal(response.body.status, "NO_EVALUADO");
+  assert.deepEqual(response.body.administrativeDecision, { source: "FINSER_ADMIN", status: "RECHAZADA" });
+  assert.doesNotMatch(JSON.stringify(response.body), /Motivo privado|actorUserId/);
+  assert.equal(f.events.administrativeReads, 1);
+  assert.equal(f.events.provider, 0);
+  assert.equal(f.events.reservation, 0);
+  assert.equal(f.events.reuse, 0);
+  assert.equal(f.events.drafts, 0);
+  assert.equal(f.events.locks, 0);
+  assert.deepEqual(f.events.attached, []);
+  assert.deepEqual(f.events.marked, []);
+});
+
+test("la resolución administrativa no omite permisos, consentimiento ni identidad de la solicitud", async () => {
+  for (const [invalid, code] of [
+    [{ authorized: false }, "SOLICITUD_NOT_AUTHORIZED"],
+    [{ body: { consentAccepted: false } }, "CONSENT_REQUIRED"],
+    [{ body: { documentNumber: "1193536563" } }, "SOLICITUD_IDENTITY_MISMATCH"],
+    [{ body: { firstSurname: "GOMEZ" } }, "SOLICITUD_IDENTITY_MISMATCH"],
+    [{ body: { platform: "ANDROID" } }, "SOLICITUD_PLATAFORMA_DIFERENTE"],
+  ]) {
+    const f = fixture({ context: closedReviewContext, administrativeRejection, ...invalid });
+    const response = await f.submit();
+    assert.ok(response.status >= 400);
+    assert.equal(response.body.code, code);
+    assert.equal(response.body.administrativeDecision, undefined);
+    assert.equal(f.events.administrativeReads, 0);
+    assert.equal(f.events.provider, 0);
+    assert.equal(f.events.reservation, 0);
+    assert.equal(f.events.drafts, 0);
+    assert.equal(f.events.locks, 0);
+    assert.deepEqual(f.events.marked, []);
+  }
+});
+
+test("un TX07 sin decisión humana conserva el bloqueo de recuperación", async () => {
+  const f = fixture({ context: closedReviewContext });
+  const response = await f.submit();
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, "ASSESSMENT_RECOVERY_NOT_ALLOWED");
+  assert.equal(response.body.administrativeDecision, undefined);
+  assert.equal(f.events.administrativeReads, 1);
+  assert.equal(f.events.provider, 0);
+  assert.equal(f.events.reservation, 0);
+  assert.equal(f.events.drafts, 0);
+  assert.equal(f.events.locks, 0);
 });

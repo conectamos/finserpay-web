@@ -1,4 +1,5 @@
 import { completeMissingDataCreditoIdentity, getDataCreditoCustomerIdentityForDisplay } from "@/lib/datacredito/customer-identity";
+import { getDataCreditoAdministrativeRejection } from "@/lib/datacredito/admin-rejection-storage";
 import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
@@ -82,7 +83,7 @@ export async function GET(request: Request, context: RouteContext) {
   try {
     const row = await getDataCreditoAssessmentById(id);
     const requestedDraft =
-      row && draftId ? await getActiveSolicitudCreditContext(draftId) : null;
+      row && draftId ? await getActiveSolicitudCreditContext(draftId, true) : null;
     const authorizedDraft = Boolean(
       canOperateSolicitud({
         central,
@@ -299,6 +300,17 @@ export async function GET(request: Request, context: RouteContext) {
         },
         { status: 202 }
       );
+    }
+
+    if (row.status === "NO_EVALUADO" && await getDataCreditoAdministrativeRejection({
+      assessmentId: row.id,
+    })) {
+      return NextResponse.json({
+        ok: false, status: "NO_EVALUADO", code: "ADMINISTRATIVE_REJECTION",
+        error: "Solicitud rechazada por revisión administrativa de FINSER: información insuficiente para evaluar. La respuesta de DataCrédito se conserva sin cambios.",
+        correlationId: row.correlationId,
+        administrativeDecision: { source: "FINSER_ADMIN", status: "RECHAZADA" },
+      }, { status: 409, headers: { "Cache-Control": "private, no-store, max-age=0" } });
     }
 
     if (row.status === "NO_EVALUADO" && draftId && requestedDraft) {

@@ -61,6 +61,26 @@
 .surnameField input { min-height: 44px; }
 .fieldHelp { color: var(--fp-muted); font-size: 12px; line-height: 1.6; font-weight: 400; }
 .fieldError { color: var(--fp-danger); font-size: 13px; line-height: 1.6; }
+.rejectionSection, .rejectionRecorded { border-top: 1px solid var(--fp-border); margin: 0 24px 24px; }
+.rejectionSection > summary { display: flex; align-items: center; gap: 12px; min-height: 52px; cursor: pointer; list-style: none; font-size: 14px; font-weight: 650; }
+.rejectionSection > summary::-webkit-details-marker { display: none; }
+.rejectionSection > summary svg:first-child { color: var(--fp-danger); }
+.rejectionSection > summary svg:last-child { margin-left: auto; }
+.rejectionSection[open] > summary svg:last-child { transform: rotate(180deg); }
+.rejectionBody { padding: 8px 0 0; }
+.rejectionBody > p, .rejectionRecorded > p { font-size: 13px; line-height: 1.6; margin-top: 8px; }
+.rejectionBody > p { color: var(--fp-muted); }
+.reviewHistoryLink { display: inline-flex; align-items: center; min-height: 44px; margin-top: 4px; font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.rejectionForm { display: grid; gap: 10px; margin-top: 20px; }
+.rejectionForm > label:first-child { font-size: 14px; font-weight: 650; }
+.rejectionForm textarea { width: 100%; min-height: 96px; resize: vertical; padding: 12px; font: inherit; }
+.rejectionForm > button { justify-self: start; margin-top: 8px; }
+.rejectionAcknowledgement { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; font-size: 13px; line-height: 1.6; cursor: pointer; }
+.rejectionAcknowledgement input { width: 18px; height: 18px; flex-shrink: 0; margin-top: 3px; accent-color: var(--fp-graphite); }
+.rejectionRecorded { padding-top: 20px; }
+.rejectionHeading { display: flex; align-items: center; gap: 10px; }
+.rejectionHeading svg { color: var(--fp-danger); flex-shrink: 0; }
+.rejectionHeading h3 { font-size: 16px; font-weight: 750; }
 .page :global(.fp-ui-dialog-backdrop) { backdrop-filter: blur(5px); }
 @media (max-width: 1199px) {
   .page { padding: 24px; }
@@ -91,4 +111,6 @@
   .authorization { padding: 20px; }
   .authorizationForm { grid-template-columns: minmax(0,1fr); gap: 16px; }
   .authorizationForm > button { margin-top: 0; }
+  .rejectionSection, .rejectionRecorded { margin-left: 20px; margin-right: 20px; }
+  .rejectionForm > button { justify-self: stretch; }
 }

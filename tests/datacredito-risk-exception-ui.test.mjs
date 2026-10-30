@@ -27,6 +27,7 @@ function fixture(options = {}) {
     "@/lib/solicitud-operation-access": { canOperateSolicitud: ({ owner }) => !!owner && options.authorized !== false, canActAsAllySalesAdmin: () => false, isDirectSalesProfile: () => false },
     "@/lib/solicitudes-storage": { getActiveSolicitudCreditContext: async id => id === 12 ? draft : null },
     "@/lib/datacredito": { getDataCreditoPublicConfig: () => ({ environment: "production" }) },
+    "@/lib/datacredito/admin-rejection-storage": { getDataCreditoAdministrativeRejection: async () => null },
     "@/lib/datacredito/policy": { normalizeDataCreditoPlatform: value => ["IPHONE", "ANDROID"].includes(value) ? value : null },
     "@/lib/datacredito/storage": {
       buildDataCreditoIdentityHashes: ({ documentNumber, firstSurname }) => ({ documentHash: `document:${documentNumber}`, surnameHash: `surname:${firstSurname}` }),

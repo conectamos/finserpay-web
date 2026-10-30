@@ -16,6 +16,7 @@ import {
   LockKeyholeOpen,
   Search,
   ShieldCheck,
+  ShieldX,
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
@@ -53,6 +54,34 @@ type ReleaseLookupResult = {
   draftId: number | null;
   authorizedAt: string | null;
   requiresNewSolicitud: boolean;
+  adminRejection?: {
+    canReject: boolean;
+    eligible: boolean;
+    eligibilityMessage: string;
+    solicitudId: number | null;
+    decision: AdministrativeRejection | null;
+  };
+};
+
+type AdministrativeRejection = {
+  id: string;
+  assessmentId: string;
+  solicitudId: number;
+  actorUserId: number;
+  reason: string;
+  rejectedAt: string;
+  expiresAt: string;
+  source: "FINSER_ADMIN";
+  status: "RECHAZADA";
+};
+
+type PendingRejection = {
+  assessmentId: string;
+  documentLabel: string;
+  documentNumber: string;
+  solicitudId: number;
+  reason: string;
+  mutationId: string;
 };
 
 type ReleaseMutationResult = Partial<ReleaseLookupResult> & {
@@ -217,6 +246,12 @@ export default function Tx06ReleaseConsole({
   const [successNotice, setSuccessNotice] = useState<SuccessNotice | null>(null);
   const [pendingAuthorization, setPendingAuthorization] =
     useState<PendingAuthorization | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [rejectionReviewed, setRejectionReviewed] = useState(false);
+  const [rejectionError, setRejectionError] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const [pendingRejection, setPendingRejection] = useState<PendingRejection | null>(null);
+  const lastRejectionMutationRef = useRef<{ signature: string; mutationId: string } | null>(null);
   const submittingRef = useRef(false);
   const lastMutationRef = useRef<{
     signature: string;
@@ -226,6 +261,9 @@ export default function Tx06ReleaseConsole({
   const lookupErrorRef = useRef<HTMLDivElement>(null);
   const mutationErrorRef = useRef<HTMLDivElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
+  const rejectionDecisionRef = useRef<HTMLElement>(null);
+  const mutationBusy = authorizing || rejecting;
+  const confirmationOpen = Boolean(pendingAuthorization || pendingRejection);
 
   useEffect(() => {
     if (successNotice) {
@@ -239,7 +277,12 @@ export default function Tx06ReleaseConsole({
     if (lookupError) lookupErrorRef.current?.focus();
   }, [lookupError, mutationError, successNotice]);
 
+  useEffect(() => {
+    if (lookupResult?.adminRejection?.decision) rejectionDecisionRef.current?.focus();
+  }, [lookupResult?.adminRejection?.decision]);
+
   function resetResultForDocument(nextDocument: string) {
+    if (mutationBusy || confirmationOpen || submittingRef.current) return;
     setDocumentNumber(nextDocument);
     if (nextDocument === searchedDocument) return;
     lookupSequenceRef.current += 1;
@@ -251,11 +294,20 @@ export default function Tx06ReleaseConsole({
     setSuccessNotice(null);
     setPendingAuthorization(null);
     lastMutationRef.current = null;
+    resetRejection();
+  }
+
+  function resetRejection() {
+    setRejectionReason("");
+    setRejectionReviewed(false);
+    setRejectionError("");
+    setPendingRejection(null);
+    lastRejectionMutationRef.current = null;
   }
 
   async function searchDocument(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (searching || authorizing) return;
+    if (searching || mutationBusy || confirmationOpen || submittingRef.current) return;
 
     const normalizedDocument = onlyDigits(documentNumber);
     if (!/^\d{3,13}$/.test(normalizedDocument)) {
@@ -275,6 +327,7 @@ export default function Tx06ReleaseConsole({
     setSuccessNotice(null);
     setPendingAuthorization(null);
     lastMutationRef.current = null;
+    resetRejection();
     setSearching(true);
 
     try {
@@ -304,7 +357,7 @@ export default function Tx06ReleaseConsole({
 
   function prepareAuthorization(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!lookupResult?.eligible || lookupResult.alreadyAuthorized || authorizing) {
+    if (!lookupResult?.eligible || lookupResult.alreadyAuthorized || mutationBusy || confirmationOpen) {
       return;
     }
 
@@ -413,9 +466,102 @@ export default function Tx06ReleaseConsole({
     }, 0);
   }
 
+  function prepareRejection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const review = lookupResult?.adminRejection;
+    if (!lookupResult || !review?.canReject || !review.eligible || review.decision ||
+      !review.solicitudId || mutationBusy || confirmationOpen || submittingRef.current ||
+      documentNumber !== searchedDocument) return;
+
+    const reason = rejectionReason.trim().replace(/\s+/g, " ");
+    if (reason.length < 10 || reason.length > 500) {
+      setRejectionError("Escribe un motivo de entre 10 y 500 caracteres.");
+      return;
+    }
+    if (!rejectionReviewed) {
+      setRejectionError("Confirma que revisaste la respuesta guardada y los datos del titular.");
+      return;
+    }
+    const signature = JSON.stringify([lookupResult.assessmentId, searchedDocument, review.solicitudId, reason]);
+    if (lastRejectionMutationRef.current?.signature !== signature) {
+      lastRejectionMutationRef.current = { signature, mutationId: crypto.randomUUID() };
+    }
+    setRejectionReason(reason);
+    setRejectionError("");
+    setMutationError("");
+    setPendingRejection({
+      assessmentId: lookupResult.assessmentId,
+      documentLabel: lookupResult.documentLabel,
+      documentNumber: searchedDocument,
+      solicitudId: review.solicitudId,
+      reason,
+      mutationId: lastRejectionMutationRef.current.mutationId,
+    });
+  }
+
+  async function rejectAdministratively() {
+    const pending = pendingRejection;
+    if (!pending || submittingRef.current) return;
+    submittingRef.current = true;
+    setRejecting(true);
+    setMutationError("");
+    try {
+      const result = await postForResult<{ rejection: AdministrativeRejection; idempotent: boolean }>(
+        `/api/creditos/datacredito/admin/evaluaciones/${encodeURIComponent(pending.assessmentId)}/rechazo-administrativo`,
+        {
+          documentNumber: pending.documentNumber,
+          solicitudId: pending.solicitudId,
+          reason: pending.reason,
+          reviewed: true,
+          confirmed: true,
+          mutationId: pending.mutationId,
+        },
+        {
+          fallback: "No se pudo registrar el rechazo administrativo.",
+          network: "No fue posible conectar con el servicio. Se conserva el motivo para reintentar.",
+          timeout: "No se recibió confirmación en 15 segundos. Reintenta: se conservará el mismo identificador para evitar duplicados.",
+        }
+      );
+      if (result.rejection?.assessmentId !== pending.assessmentId ||
+        result.rejection.solicitudId !== pending.solicitudId ||
+        result.rejection.source !== "FINSER_ADMIN" || result.rejection.status !== "RECHAZADA") {
+        throw new Error("No se recibió una confirmación válida para esta solicitud. Conservamos el motivo para que puedas comprobar el resultado y reintentar.");
+      }
+      setLookupResult((current) => {
+        if (!current || current.assessmentId !== pending.assessmentId || !current.adminRejection) return current;
+        return {
+          ...current,
+          eligible: false,
+          adminRejection: {
+            ...current.adminRejection,
+            eligible: false,
+            decision: result.rejection,
+          },
+        };
+      });
+      setPendingRejection(null);
+      setRejectionError("");
+    } catch (error) {
+      setPendingRejection(null);
+      setMutationError(error instanceof Error ? error.message : "No se pudo registrar el rechazo administrativo.");
+    } finally {
+      submittingRef.current = false;
+      setRejecting(false);
+    }
+  }
+
+  function cancelRejection() {
+    if (rejecting || submittingRef.current) return;
+    setPendingRejection(null);
+    window.setTimeout(() => document.getElementById("dc-rejection-reason")?.focus(), 0);
+  }
+
   const canAuthorize = Boolean(
     lookupResult?.eligible && !lookupResult.alreadyAuthorized
   );
+  const administrativeRejection = lookupResult?.adminRejection?.decision;
+  const canReviewRejection = Boolean(lookupResult?.adminRejection?.canReject &&
+    lookupResult.adminRejection.eligible && lookupResult.adminRejection.solicitudId && !administrativeRejection);
   const eligibilityTone = lookupResult?.alreadyAuthorized
     ? ("positive" as const)
     : lookupResult?.eligible
@@ -450,7 +596,9 @@ export default function Tx06ReleaseConsole({
 
         <div className={styles.scopeBar}>
           <span><ShieldCheck size={17} aria-hidden="true" />Operación auditada</span>
-          <Badge tone="neutral">Solo TX06 sin puntaje</Badge>
+          <Badge tone="neutral">{lookupResult?.adminRejection?.canReject
+            ? "TX06 · Revisión administrativa TX07"
+            : "Solo TX06 sin puntaje"}</Badge>
         </div>
 
         <Card className={styles.searchCard}>
@@ -480,13 +628,13 @@ export default function Tx06ReleaseConsole({
                     resetResultForDocument(onlyDigits(event.target.value))
                   }
                   placeholder="Número de cédula"
-                  disabled={searching || authorizing}
+                  disabled={searching || mutationBusy || confirmationOpen}
                   aria-invalid={Boolean(lookupError)}
                   aria-describedby={
                     lookupError ? "tx06-lookup-error" : "tx06-document-help"
                   }
                 />
-              <Button type="submit" disabled={searching || authorizing}>
+              <Button type="submit" disabled={searching || mutationBusy || confirmationOpen}>
                 <Search className="h-4 w-4" aria-hidden="true" />
                 {searching ? "Buscando..." : "Buscar"}
               </Button>
@@ -536,7 +684,7 @@ export default function Tx06ReleaseConsole({
             tabIndex={-1}
             className={styles.errorNotice}
           >
-            <strong>Error de liberación:</strong> {mutationError}
+            <strong>No se completó la operación:</strong> {mutationError}
           </div>
         ) : null}
 
@@ -598,6 +746,7 @@ export default function Tx06ReleaseConsole({
                   <StatusPill tone={statusTone(lookupResult.status)}>
                     {humanStatus(lookupResult.status)}
                   </StatusPill>
+                  {administrativeRejection ? <StatusPill tone="danger">Rechazo administrativo</StatusPill> : null}
                   <StatusPill tone={eligibilityTone}>
                     {lookupResult.alreadyAuthorized
                       ? "Liberación autorizada"
@@ -676,7 +825,7 @@ export default function Tx06ReleaseConsole({
                         autoComplete="off"
                         maxLength={80}
                         placeholder="Primer apellido del titular"
-                        disabled={authorizing}
+                        disabled={mutationBusy || confirmationOpen}
                         aria-invalid={Boolean(surnameError)}
                         aria-describedby={
                           surnameError
@@ -703,7 +852,7 @@ export default function Tx06ReleaseConsole({
                     </label>
                     <Button
                       type="submit"
-                      disabled={authorizing}
+                      disabled={mutationBusy || confirmationOpen}
                       aria-describedby="tx06-action-help"
                     >
                       <ShieldCheck className="h-4 w-4" aria-hidden="true" />
@@ -712,6 +861,53 @@ export default function Tx06ReleaseConsole({
                   </form>
                 ) : null}
               </div>
+
+              {administrativeRejection ? (
+                <section ref={rejectionDecisionRef} tabIndex={-1} className={styles.rejectionRecorded} aria-label="Decisión administrativa" role="status">
+                  <div className={styles.rejectionHeading}>
+                    <ShieldX size={20} aria-hidden="true" />
+                    <h3>Rechazo administrativo de FINSER</h3>
+                  </div>
+                  <p>Solicitud #{administrativeRejection.solicitudId} cerrada el {dateTime(administrativeRejection.rejectedAt)}.</p>
+                  <p><strong>Motivo:</strong> {administrativeRejection.reason}</p>
+                  <p className={styles.fieldHelp}>La evaluación del proveedor conserva su estado original. La decisión, su responsable y la respuesta guardada quedan en el historial.</p>
+                </section>
+              ) : canReviewRejection ? (
+                <details className={styles.rejectionSection}>
+                  <summary><ShieldX size={20} aria-hidden="true" /><span>Revisar rechazo administrativo</span><ChevronDown size={18} aria-hidden="true" /></summary>
+                  <div className={styles.rejectionBody}>
+                    <p>{lookupResult.adminRejection?.eligibilityMessage}</p>
+                    <p>Solo la administración central puede cerrar esta solicitud tras revisar la respuesta y confirmar los datos del titular. Se conserva el resultado original de DataCrédito.</p>
+                    <Link href="/dashboard/datacredito" target="_blank" rel="noopener noreferrer" className={styles.reviewHistoryLink}>Ver historial y respuesta guardada</Link>
+                    <form className={styles.rejectionForm} onSubmit={prepareRejection} noValidate>
+                      <label htmlFor="dc-rejection-reason">Motivo del rechazo administrativo</label>
+                      <textarea
+                        id="dc-rejection-reason"
+                        className="fp-ui-input"
+                        value={rejectionReason}
+                        onChange={(event) => { setRejectionReason(event.target.value); setRejectionError(""); }}
+                        minLength={10}
+                        maxLength={500}
+                        rows={3}
+                        disabled={mutationBusy || confirmationOpen}
+                        aria-invalid={Boolean(rejectionError)}
+                        aria-describedby={rejectionError ? "dc-rejection-help dc-rejection-error" : "dc-rejection-help"}
+                      />
+                      <p id="dc-rejection-help" className={styles.fieldHelp}>Entre 10 y 500 caracteres. El motivo y tu usuario quedarán registrados.</p>
+                      <label className={styles.rejectionAcknowledgement}>
+                        <input type="checkbox" checked={rejectionReviewed}
+                          onChange={(event) => { setRejectionReviewed(event.target.checked); setRejectionError(""); }}
+                          disabled={mutationBusy || confirmationOpen} />
+                        <span>Revisé la respuesta guardada, confirmé la cédula y el primer apellido, y no es posible resolver la evaluación con la información disponible.</span>
+                      </label>
+                      {rejectionError ? <p id="dc-rejection-error" role="alert" className={styles.fieldError}>{rejectionError}</p> : null}
+                      <Button type="submit" variant="danger" disabled={mutationBusy || confirmationOpen}>
+                        Revisar rechazo
+                      </Button>
+                    </form>
+                  </div>
+                </details>
+              ) : null}
             </Card>
           )}
         </section>
@@ -729,6 +925,18 @@ export default function Tx06ReleaseConsole({
         busy={authorizing}
         onCancel={cancelConfirmation}
         onConfirm={() => void authorizeRetry()}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingRejection)}
+        title="Rechazo administrativo de FINSER"
+        description={pendingRejection
+          ? `Vas a rechazar la solicitud #${pendingRejection.solicitudId} de ${pendingRejection.documentLabel}. Motivo: ${pendingRejection.reason}. Es una decisión administrativa de FINSER; DataCrédito conservará su resultado original sin evaluar. Se registrarán tu usuario y la fecha. Esta acción no realiza otra consulta al proveedor.`
+          : "Revisa la solicitud y el motivo antes de registrar la decisión administrativa."}
+        confirmLabel="Registrar rechazo administrativo"
+        danger
+        busy={rejecting}
+        onCancel={cancelRejection}
+        onConfirm={() => void rejectAdministratively()}
       />
     </main>
   );

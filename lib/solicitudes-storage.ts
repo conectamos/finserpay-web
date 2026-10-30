@@ -396,10 +396,24 @@ export type ActiveSolicitudCreditContext = {
 };
 
 export async function getActiveSolicitudCreditContext(
-  solicitudId: number
+  solicitudId: number,
+  includeAdministrativeRejection = false
 ) {
   await ensureSolicitudSchema();
+  if (includeAdministrativeRejection) await ensureDataCreditoSchema();
   await expireStaleSolicitudes();
+  const stateCondition = includeAdministrativeRejection
+    ? `(d."estado" = 'ABIERTO' OR (
+        d."estado" = 'CERRADO' AND d."closedReason" = 'RECHAZADA'
+        AND EXISTS (
+          SELECT 1 FROM "DataCreditoAdminAccessAudit" resolution
+          WHERE resolution."assessmentId" = d."dataCreditoAssessmentId"
+            AND resolution."action" = 'ADMIN_REJECT_NO_EVALUABLE'
+            AND resolution."outcome" = 'REJECTED_BY_FINSER'
+            AND resolution."metadata"->>'solicitudId' = d."id"::text
+        )
+      ))`
+    : `d."estado" = 'ABIERTO'`;
   const rows = await prisma.$queryRawUnsafe<ActiveSolicitudCreditContext[]>(
     `
       SELECT d."id", d."currentStep", d."usuarioId", d."vendedorId", d."sedeId",
@@ -415,7 +429,7 @@ export async function getActiveSolicitudCreditContext(
       FROM "CreditoBorrador" d
       LEFT JOIN "Sede" s ON s."id" = d."sedeId"
       WHERE d."id" = $1
-        AND d."estado" = 'ABIERTO'
+        AND ${stateCondition}
         AND COALESCE(d."expiresAt", d."createdAt" + INTERVAL '15 days') > CURRENT_TIMESTAMP
       LIMIT 1
     `,
