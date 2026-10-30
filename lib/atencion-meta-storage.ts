@@ -352,7 +352,8 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
       const requestId=attentionUuid(input.requestId), text=attentionText(compiled?.text??input.text,template?16000:4096,false), attachment=attachmentInput(input.attachment);
       if(template&&attachment)throw new AttentionError("La plantilla no admite un archivo adicional.");
       if ((!text&&!attachment)||!Number.isSafeInteger(input.version)||input.version<1) throw new AttentionError("Respuesta inválida.");
-      const fingerprint=template?templateIntentFingerprint(conversationId,{version:input.version,templateKey:template.definition.key,revision:template.definition.revision,parameters:template.parameters})
+      const fingerprint=template?templateIntentFingerprint(conversationId,{version:input.version,templateKey:template.definition.key,revision:template.definition.revision,parameters:template.parameters,
+        ...(template.financial?{creditId:template.financial.creditId,financialRevision:template.financial.reviewHash}:{})})
         :createHash("sha256").update(JSON.stringify({conversationId,text,attachment,version:input.version})).digest("hex");
       return transact(async db=>{
         // Match provider import lock order while establishing a historical chat's binding.
@@ -414,6 +415,19 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
       const {row}=await ownedReply(db,actor,id,leaseToken);if(row.status!=='queued'||!row.attachment||row.sendStartedAt)throw new AttentionError("El envío no admite un adjunto nuevo.",409);
       const [updated]=await db.$queryRawUnsafe<MetaReply[]>(`UPDATE "AttentionMetaOutbox" SET "uploadedMediaId"=$2,"updatedAt"=now() WHERE id=$1::uuid RETURNING *`,id,strictId(mediaId));
       await userAudit(db,actor,"META_MEDIA_UPLOADED",row.conversationId,{outboxId:id});return updated;
+    });},
+    async setTemplateMedia(actor:AttentionActor,id:string,leaseToken:string,input:{mediaId:string;attachment:MetaReplyAttachment}){return transact(async db=>{
+      const {row}=await ownedReply(db,actor,id,leaseToken);
+      if(row.status!=="queued"||row.sendStartedAt||row.template?.definition.name!=="2dias"||row.template.financial?.templateName!=="2dias"
+        || row.template.definition.headerImageUrl!=="/whatsapp/templates/2dias.png")throw new AttentionError("El envío no admite esta imagen de plantilla.",409);
+      const attachment=attachmentInput(input.attachment);
+      if(!attachment||attachment.kind!=="image"||attachment.mimeType!=="image/png"||attachment.fileName!=="2dias.png"||!/^\d{5,30}$/.test(input.mediaId))throw new AttentionError("La imagen de la plantilla no es válida.");
+      if(row.uploadedMediaId){
+        if(row.uploadedMediaId!==input.mediaId||row.attachment?.sha256!==attachment.sha256)throw new AttentionError("La imagen del envío ya fue preparada.",409);
+        return row;
+      }
+      const [updated]=await db.$queryRawUnsafe<MetaReply[]>(`UPDATE "AttentionMetaOutbox" SET attachment=$2::jsonb,"uploadedMediaId"=$3,"updatedAt"=now() WHERE id=$1::uuid RETURNING *`,id,JSON.stringify(attachment),input.mediaId);
+      await userAudit(db,actor,"META_TEMPLATE_MEDIA_UPLOADED",row.conversationId,{outboxId:id});return updated;
     });},
     async beforeSend(actor:AttentionActor,id:string,leaseToken:string){return transact(async db=>{
       const {row,conversation}=await ownedReply(db,actor,id,leaseToken);

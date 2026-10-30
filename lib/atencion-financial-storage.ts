@@ -65,6 +65,10 @@ async function numbers(db: AttentionDb, credits: Credit[]) {
   }
   return result;
 }
+// Reuse the same nominal actor, exact financial identity and active payment
+// boundary in credit-backed template operations; no generic credit capability.
+export { scoped as attentionFinancialScope, matchedCredits as attentionFinancialCredits,
+  payments as attentionFinancialPayments, numbers as attentionFinancialCreditNumbers };
 async function financialAudit(db: AttentionDb, actor: AttentionActor, conversationId: string, action: string, metadata: object) {
   await db.$queryRawUnsafe(`INSERT INTO "AttentionAudit"("conversationId","userId","sellerId",action,metadata) VALUES($1::uuid,$2,NULL,$3,$4::jsonb) RETURNING id`, conversationId, actor.userId, action, JSON.stringify(metadata));
 }

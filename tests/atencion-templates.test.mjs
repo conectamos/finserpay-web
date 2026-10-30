@@ -32,9 +32,17 @@ async function fixture(t,options={}){
     INSERT INTO "Usuario" VALUES(1,'Central',true,10,1),(5,'Analista real',true,10,2),(6,'Otro analista',true,10,2);`);
   await db.exec(readFileSync(path.join(root,"scripts/setup-atencion.sql"),"utf8"));
   const id=randomUUID();await db.query(`INSERT INTO "AttentionConversation"(id,"externalId",channel,phone,name,status,mode,"assigneeUserId","assigneeKey","assigneeName","closedAt") VALUES($1,'dapta-historical','whatsapp',$2,'Contacto','closed','human',5,'analyst:5','Analista real',$3)`,[id,`+${phone}`,"2026-10-29T18:00:00Z"]);
-  const calls={get:0,post:[],catalogue:0},runtimeEnv={...env,...options.env};
+  const calls={get:0,post:[],catalogue:0,assets:0,uploads:0},runtimeEnv={...env,...options.env};
   const adapter=createMetaAttentionAdapter({env:runtimeEnv,now:()=>Date.parse(now),fetch:async(url,init)=>{
-    const u=new URL(url);assert.equal(u.origin,"https://graph.facebook.com");assert.equal(init.headers.Authorization,`Bearer ${runtimeEnv.WHATSAPP_ATTENTION_ACCESS_TOKEN}`);assert.equal(init.redirect,"error");
+    const u=new URL(url);assert.equal(init.redirect,"error");
+    if(u.origin==="https://finserpay.com"){
+      assert.equal(u.pathname,"/whatsapp/templates/2dias.png");assert.equal(init.method,"GET");assert.equal(new Headers(init.headers).has("Authorization"),false);calls.assets++;
+      return options.asset?.()??new Response(Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]),{headers:{"Content-Type":"image/png"}});
+    }
+    assert.equal(u.origin,"https://graph.facebook.com");assert.equal(init.headers.Authorization,`Bearer ${runtimeEnv.WHATSAPP_ATTENTION_ACCESS_TOKEN}`);
+    if(u.pathname.endsWith("/media")&&init.method==="POST"){
+      assert.ok(init.body instanceof FormData);assert.equal(init.body.get("file").type,"image/png");calls.uploads++;await options.onUpload?.(db,id);return json({id:"987654321987654"});
+    }
     if(init.method==="POST"){
       const payload=JSON.parse(init.body);calls.post.push(payload);if(options.post)return options.post(payload);
       return json({messaging_product:"whatsapp",contacts:[{input:phone,wa_id:phone}],messages:[{id:`wamid.template-${payload.biz_opaque_callback_data}`}]});
@@ -44,9 +52,10 @@ async function fixture(t,options={}){
     if(u.pathname.endsWith("/phone_numbers"))return json({data:[{id:scope.phoneNumberId,display_phone_number:META_ATTENTION_LINE.displayPhone}]});
     return json({id:scope.phoneNumberId,display_phone_number:options.wrongLine?"+573000000000":META_ATTENTION_LINE.displayPhone});
   }});
-  const store=createAttentionMetaStore(database(db),{scope,sendingEnabled:adapter.status().canSend,cutoverConfirmed:adapter.status().cutoverConfirmed,now:()=>new Date(now)});
-  const service=createAttentionMetaService(store,adapter);
-  return {db,id,calls,adapter,store,service};
+  const store=createAttentionMetaStore(database(db),{scope,sendingEnabled:adapter.status().canSend,cutoverConfirmed:adapter.status().cutoverConfirmed,now:()=>new Date(now),beforeReplySend:options.beforeReplySend});
+  const collection=options.collection?.({db,id,calls,store});
+  const service=createAttentionMetaService(store,adapter,collection);
+  return {db,id,calls,adapter,store,service,collection};
 }
 
 test("catálogo aprobado sanea identidad privada, razones de disponibilidad y preview exacto",()=>{
@@ -137,6 +146,148 @@ test("competencia sobre mismo UUID produce un solo POST; ausencia de migración 
   assert.equal(f.calls.post.length,1);assert.ok(responses.some(result=>result.message.deliveryStatus==="accepted"));
   await f.db.exec('ALTER TABLE "AttentionMetaOutbox" DROP COLUMN template');
   await assert.rejects(f.service.templates(actor,f.id),{status:503});await assert.rejects(f.service.sendTemplate(actor,f.id,intent()),{status:503});
+});
+
+const financialRaw=(name="2dias")=>raw({name,language:name==="fechap"?"es_MX":"es",components:[
+  ...(name==="2dias"?[{type:"HEADER",format:"IMAGE"}]:name==="fechap"?[{type:"HEADER",format:"TEXT",text:"FINSER PAY"}]:[]),
+  {type:"BODY",text:["1_dia_falta","hoyvence","fechap"].includes(name)?"Hola {{1}}, revisa {{2}}.":"Hola {{1}}, revisa tu cuota."},
+]});
+const financialDefinition=(name="2dias")=>templates.readMetaManualTemplate(financialRaw(name));
+const financialIntent=(name="2dias",patch={})=>intent({templateKey:financialDefinition(name).key,revision:financialDefinition(name).revision,
+  parameters:{},creditId:77,financialRevision:"a".repeat(64),...patch});
+function collectionMock(f,{name="2dias",...options}={}){
+  const review={creditId:77,creditNumber:"FP-77",templateName:name,reviewHash:"a".repeat(64),phone:`+${phone}`,
+    parameters:{"body:1":"María registrada",...(["1_dia_falta","hoyvence"].includes(name)?{"body:2":"FINSER PAY"}:name==="fechap"?{"body:2":"30/10/2026"}:{})},
+    installmentNumber:3,dueDate:name==="2dias"?"2026-11-01":"2026-10-30",day:"2026-10-30",coveredCredits:[{id:77,number:"FP-77"}],...options.review};
+  const state={claims:0,guards:0,finishes:[],lists:0,insideGuard:false};
+  return {review,state,
+    async list(){state.lists++;await options.list?.(state,review);return {version:1,blockedReason:options.blockedReason??null,credits:options.noCredits?[]:[{id:77,number:"FP-77",options:[{templateName:name,eligible:options.eligible!==false,reason:options.reason??null,review:options.eligible===false?null:review}]}]};},
+    async claim(_actor,_id,input){
+      state.claims++;const row=(await f.db.query('SELECT * FROM "AttentionMetaOutbox" WHERE id=$1',[input.requestId])).rows[0];
+      assert.equal(row.status,"queued");assert.equal(row.conversationId,f.id);assert.equal(row.template.financial.reviewHash,review.reviewHash);
+      assert.deepEqual(row.template.parameters,review.parameters);assert.equal(row.template.financial.creditId,77);
+      if(name==="2dias")assert.equal(row.uploadedMediaId,"987654321987654");
+      await options.claim?.(input,row);
+      return {...review,...input,conversationId:f.id,actorKey:actor.key,claimId:input.requestId,kind:name==="data"?"data":"reminder"};
+    },
+    async withSendGuard(_actor,_id,reservation,send){
+      state.guards++;const row=(await f.db.query('SELECT * FROM "AttentionMetaOutbox" WHERE id=$1',[reservation.requestId])).rows[0];
+      assert.equal(row.status,"sending");assert.ok(row.sendStartedAt);await options.guard?.(row);
+      state.insideGuard=true;try{const response=await send();await options.afterPost?.();return response;}finally{state.insideGuard=false;}
+    },
+    async finish(reservation,result){assert.equal(state.insideGuard,false);state.finishes.push({reservation,result});await options.finish?.(result,state.finishes.length);},
+  };
+}
+const financialOptions=(extra={})=>({env:{WHATSAPP_AUTOMATIONS_2DIAS_HEADER_IMAGE_URL:"https://finserpay.com/whatsapp/templates/2dias.png"},catalogue:()=>[financialRaw()],collection:f=>collectionMock(f),...extra});
+
+test("cartera habilita solo estructura conocida con revisión, valores ineditables y prohibiciones financieras precisas",()=>{
+  for(const name of ["2dias","1_dia_falta","hoyvence","fechap","data"]){
+    const d=financialDefinition(name);assert.equal(d.available,true);assert.throws(()=>templates.compileMetaTemplate({definition:d,parameters:{}}),{status:409});
+    const parsed=templates.parseAttentionTemplateIntent(financialIntent(name));assert.equal(parsed.creditId,77);assert.deepEqual(parsed.parameters,{});
+    assert.throws(()=>templates.parseAttentionTemplateIntent(financialIntent(name,{parameters:{"body:1":"Nombre inventado"}})),{status:400});
+  }
+  for(const name of ["cuotavencida","vencido"])assert.match(templates.readMetaManualTemplate(financialRaw(name)).reason,/restricción ya programada/);
+  assert.match(templates.readMetaManualTemplate(financialRaw("bloqueo")).reason,/bloqueo.*verificado/);
+  assert.equal(templates.readMetaManualTemplate({...financialRaw(),language:"es_AR"}).available,false);
+  assert.equal(templates.readMetaManualTemplate({...financialRaw(),components:[{type:"BODY",text:"Hola {{1}}"}]}).available,false);
+  assert.equal(financialDefinition("fechap").header,"FINSER PAY");
+  assert.equal(templates.readMetaManualTemplate({...financialRaw("fechap"),components:[{type:"HEADER",format:"TEXT",text:"Nombre {{1}}"},{type:"BODY",text:"Hola {{1}}, fecha {{2}}."}]}).available,false);
+});
+
+test("2dias usa candidato servidor, imagen fija sin credenciales externas, guard final y adjunto privado con autor real",async t=>{
+  let f;f=await fixture(t,financialOptions({beforeReplySend:()=>assert.equal(f.collection.state.insideGuard,false),post:payload=>{
+    assert.equal(f.collection.state.insideGuard,true);return json({messaging_product:"whatsapp",contacts:[{input:phone,wa_id:phone}],messages:[{id:`wamid.financial-${payload.biz_opaque_callback_data}`}]});
+  }}));
+  const catalogue=await f.service.templates(actor,f.id),template=catalogue.templates[0],candidate=template.financial.candidates[0];
+  assert.equal(template.available,true);assert.equal(template.headerImageUrl,"/whatsapp/templates/2dias.png");assert.equal(candidate.eligible,true);
+  assert.equal(candidate.revision,"a".repeat(64));assert.equal(candidate.checkedOn,"2026-10-30");assert.equal(candidate.installmentNumber,3);assert.equal(candidate.dueDate,"2026-11-01");
+  assert.deepEqual(candidate.coveredCredits,[{id:77,number:"FP-77"}]);assert.equal(candidate.parameters["body:1"],"María registrada");
+  const input=financialIntent(),sent=await f.service.sendTemplate(actor,f.id,input);
+  assert.equal(sent.message.deliveryStatus,"accepted");assert.equal(sent.message.author,actor.name);assert.match(sent.message.text,/María registrada/);
+  assert.match(sent.message.attachment.url,new RegExp(`^/api/atencion/${f.id}/messages/[^/]+/media$`));assert.equal(sent.message.attachment.kind,"image");
+  assert.equal(f.calls.assets,1);assert.equal(f.calls.uploads,1);assert.equal(f.calls.post.length,1);assert.equal(f.collection.state.claims,1);assert.equal(f.collection.state.guards,1);
+  assert.deepEqual(f.calls.post[0].template.components,[{type:"header",parameters:[{type:"image",image:{id:"987654321987654"}}]},{type:"body",parameters:[{type:"text",text:"María registrada"}]}]);
+  assert.equal(f.collection.state.finishes[0].result.status,"ACCEPTED");assert.equal(f.collection.state.finishes[0].result.started,true);
+  await f.service.sendTemplate(actor,f.id,input);assert.equal(f.calls.post.length,1);assert.equal(f.calls.uploads,1);assert.equal(f.collection.state.claims,1);
+  await assert.rejects(f.service.sendTemplate(actor,f.id,{...input,creditId:78}),{status:409});
+});
+
+test("revisión vencida, crédito ajeno y valores libres no crean outbox; ausencia de crédito deja razones visibles",async t=>{
+  const f=await fixture(t,financialOptions());
+  for(const patch of [{financialRevision:"b".repeat(64)},{creditId:78},{version:2},{creditId:undefined,financialRevision:undefined}]){
+    await assert.rejects(f.service.sendTemplate(actor,f.id,financialIntent("2dias",patch)),{status:409});
+  }
+  await assert.rejects(f.service.sendTemplate(actor,f.id,financialIntent("2dias",{parameters:{"body:1":"Inventado"}})),{status:400});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);assert.equal(f.calls.assets,0);assert.equal(f.calls.post.length,0);
+  const empty=await fixture(t,financialOptions({collection:f=>collectionMock(f,{noCredits:true,blockedReason:"Identidad ambigua."})}));
+  const template=(await empty.service.templates(actor,empty.id)).templates[0];assert.equal(template.available,true);assert.deepEqual(template.financial.candidates,[]);assert.equal(template.financial.blockedReason,"Identidad ambigua.");
+});
+
+test("cambio de cuota tras subir imagen se rechaza antes de reservar y sin Graph messages POST",async t=>{
+  let changed=false;const f=await fixture(t,financialOptions({onUpload:()=>{changed=true;},collection:f=>collectionMock(f,{claim:()=>{assert.equal(changed,true);throw new core.AttentionError("La cuota cambió por un pago o una prórroga.",409);}})}));
+  await assert.rejects(f.service.sendTemplate(actor,f.id,financialIntent()),{status:409});assert.equal(f.calls.uploads,1);assert.equal(f.calls.post.length,0);
+  assert.equal((await f.db.query('SELECT status FROM "AttentionMetaOutbox"')).rows[0].status,"failed");assert.equal(f.collection.state.guards,0);assert.equal(f.collection.state.finishes.length,0);
+});
+
+test("pago, prórroga o reasignación después de persistir sending son fallos definitivos sin POST",async t=>{
+  for(const [label,status] of [["Pago registrado",409],["Prórroga aprobada",409],["Chat reasignado",404]])await t.test(label,async t=>{
+    const f=await fixture(t,financialOptions({collection:f=>collectionMock(f,{guard:()=>{throw new core.AttentionError(label,status);}})}));
+    await assert.rejects(f.service.sendTemplate(actor,f.id,financialIntent()),{status});assert.equal(f.calls.post.length,0);
+    const row=(await f.db.query('SELECT status,"sendStartedAt" FROM "AttentionMetaOutbox"')).rows[0];assert.ok(row.sendStartedAt);assert.equal(row.status,"failed");
+    assert.equal(f.collection.state.finishes[0].result.status,"FAILED");assert.equal(f.collection.state.finishes[0].result.started,false);
+  });
+});
+
+test("resultado financiero incierto y fallo posterior al POST conservan UUID; rechazo Graph es definitivo",async t=>{
+  for(const mode of ["timeout","guard-commit","rejected"])await t.test(mode,async t=>{
+    const f=await fixture(t,financialOptions({collection:f=>collectionMock(f,{afterPost:mode==="guard-commit"?()=>{throw new core.AttentionError("Commit no confirmado",409);}:undefined}),
+      ...(mode==="timeout"?{post:()=>{throw new TypeError("Private failure");}}:mode==="rejected"?{post:()=>json({error:{code:132000}},400)}:{})}));
+    const input=financialIntent(),result=await f.service.sendTemplate(actor,f.id,input);
+    assert.equal(result.uncertain,mode!=="rejected");assert.equal(result.message.deliveryStatus,mode==="rejected"?"failed":"uncertain");assert.equal(f.calls.post.length,1);
+    assert.equal(f.collection.state.finishes[0].result.status,mode==="rejected"?"FAILED":"UNKNOWN");assert.equal(f.collection.state.finishes[0].result.started,true);
+    await f.service.sendTemplate(actor,f.id,input);assert.equal(f.calls.post.length,1);assert.equal(f.collection.state.claims,1);
+  });
+});
+
+test("cancelación después de reservar cartera limpia su claim aun cuando la lease del outbox ya no existe",async t=>{
+  const input=financialIntent();let f;
+  f=await fixture(t,financialOptions({onCatalogue:async count=>{if(count===2)await f.store.cancelReply(actor,f.id,input.requestId);}}));
+  await assert.rejects(f.service.sendTemplate(actor,f.id,input),{status:409});assert.equal(f.calls.post.length,0);assert.equal(f.collection.state.claims,1);
+  assert.equal(f.collection.state.finishes.length,1);assert.equal(f.collection.state.finishes[0].result.status,"FAILED");assert.equal(f.collection.state.finishes[0].result.started,false);
+  const row=(await f.db.query('SELECT status,"leaseToken" FROM "AttentionMetaOutbox"')).rows[0];assert.equal(row.status,"failed");assert.equal(row.leaseToken,null);
+});
+
+test("callback firmado que llega antes de persistir timeout acredita también el ledger financiero",async t=>{
+  const f=await fixture(t,financialOptions({post:()=>{throw new TypeError("Lost ACK");}}));
+  const service=createAttentionMetaService({...f.store,failReply:async(id,lease,input)=>{
+    assert.equal(f.collection.state.insideGuard,false);
+    await f.store.ingest({scope,messages:[],statuses:[{id:"wamid.callback-first",recipient:phone,timestamp:now,status:"read",errorCodes:[],requestId:id}],ignored:0});
+    return f.store.failReply(id,lease,input);
+  }},f.adapter,f.collection);
+  const result=await service.sendTemplate(actor,f.id,financialIntent());assert.equal(result.uncertain,false);assert.equal(result.message.deliveryStatus,"read");
+  assert.equal(f.collection.state.finishes[0].result.status,"ACCEPTED");assert.equal(f.collection.state.finishes[0].result.providerReference,"wamid.callback-first");assert.equal(f.calls.post.length,1);
+});
+
+test("destinatario financiero distinto al chat y assets inválidos jamás llegan a Graph messages",async t=>{
+  const mismatch=await fixture(t,financialOptions({collection:f=>collectionMock(f,{review:{phone:"+12025550199"}})}));
+  await assert.rejects(mismatch.service.sendTemplate(actor,mismatch.id,financialIntent()),{status:409});assert.equal(mismatch.calls.post.length,0);
+  assert.equal(mismatch.collection.state.finishes[0].result.started,false);
+  const badAsset=await fixture(t,financialOptions({asset:()=>new Response("not png",{headers:{"Content-Type":"image/png"}})}));
+  assert.equal((await badAsset.service.sendTemplate(actor,badAsset.id,financialIntent())).message.deliveryStatus,"failed");assert.equal(badAsset.calls.uploads,0);assert.equal(badAsset.calls.post.length,0);assert.equal(badAsset.collection.state.claims,0);
+  const unconfigured=await fixture(t,financialOptions({env:{WHATSAPP_AUTOMATIONS_2DIAS_HEADER_IMAGE_URL:"https://evil.example/2dias.png"}}));
+  const definition=(await unconfigured.service.templates(actor,unconfigured.id)).templates[0];assert.equal(definition.available,false);assert.match(definition.reason,/imagen aprobada/);
+  await assert.rejects(unconfigured.service.sendTemplate(actor,unconfigured.id,financialIntent()),{status:409});assert.equal(unconfigured.calls.assets,0);assert.equal(unconfigured.calls.post.length,0);
+});
+
+test("fechap conserva encabezado estático sin parámetro; preview y envío usan fecha y cohorte verificadas",async t=>{
+  for(const name of ["fechap","data"])await t.test(name,async t=>{
+    const f=await fixture(t,{catalogue:()=>[financialRaw(name)],collection:f=>collectionMock(f,{name,review:{coveredCredits:name==="data"?[{id:77,number:"FP-77"},{id:78,number:"FP-78"}]:[{id:77,number:"FP-77"}]}})});
+    const candidate=(await f.service.templates(actor,f.id)).templates[0].financial.candidates[0];assert.equal(candidate.coveredCredits.length,name==="data"?2:1);
+    const result=await f.service.sendTemplate(actor,f.id,financialIntent(name));assert.equal(result.message.deliveryStatus,"accepted");assert.equal(f.calls.assets,0);assert.equal(f.calls.uploads,0);
+    assert.equal(f.calls.post[0].template.language.code,name==="fechap"?"es_MX":"es");
+    assert.deepEqual(f.calls.post[0].template.components,[{type:"body",parameters:Object.values(f.collection.review.parameters).map(text=>({type:"text",text}))}]);
+    if(name==="fechap")assert.match(result.message.text,/30\/10\/2026/);
+  });
 });
 
 function endpoint(service,store,who=actor){

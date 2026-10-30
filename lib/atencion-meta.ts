@@ -2,6 +2,7 @@ import "server-only";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readAttentionSticker } from "./atencion-meta-sticker";
 import { compileMetaTemplate, readMetaManualTemplate, type MetaManualTemplate, type MetaTemplateSnapshot } from "./atencion-meta-templates";
+import { metaAutomationHeaderUrl } from "./whatsapp-automation-meta-config";
 
 // Dedicated Attention credentials. Never fall back to OTP or settlement tokens.
 // Meta contracts: https://www.postman.com/meta/whatsapp-business-platform
@@ -353,21 +354,54 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     let after=""; const seen=new Set<string>(), templates:MetaManualTemplate[]=[];
     for(let page=0;page<10;page++){
       const result=await graph(`${scope().wabaId}/message_templates`,{fields:"id,name,status,language,category,parameter_format,components",limit:"100",...(name?{name}:{}),...(after?{after}:{})});
-      for(const raw of list(result.data)){const template=readMetaManualTemplate(raw);if(template)templates.push(template);}
+      for(const raw of list(result.data)){const template=readMetaManualTemplate(raw);if(template){
+        if(template.headerImageUrl && !metaAutomationHeaderUrl(env.WHATSAPP_AUTOMATIONS_2DIAS_HEADER_IMAGE_URL||"","2dias")){
+          template.available=false;template.reason="La imagen aprobada de esta plantilla todavía no está configurada.";
+        }
+        templates.push(template);
+      }}
       const paging=dict(result.paging),next=str(dict(paging.cursors).after);
       if(!paging.next)return templates.sort((a,b)=>a.name.localeCompare(b.name)||a.language.localeCompare(b.language));
       if(!next||next.length>2048||seen.has(next))break;seen.add(next);after=next;
     }
     fail("TEMPLATE_CATALOGUE_INCOMPLETE","No fue posible obtener el catálogo completo de plantillas. Inténtalo nuevamente.",503);
   }
-  async function sendTemplate(input: Omit<MetaSendInput,"lastInboundAt"> & {snapshot:MetaTemplateSnapshot},beforeSend:BeforeSend): Promise<MetaSendReceipt> {
+  async function prepareTemplateMedia(snapshot:MetaTemplateSnapshot){
+    compileMetaTemplate(snapshot);config();enabled();
+    if(snapshot.definition.name!=="2dias" || snapshot.definition.headerImageUrl!=="/whatsapp/templates/2dias.png" || snapshot.financial?.templateName!=="2dias")
+      fail("INVALID_TEMPLATE_IMAGE","Esta plantilla no admite una imagen manual.",409);
+    const url=metaAutomationHeaderUrl(env.WHATSAPP_AUTOMATIONS_2DIAS_HEADER_IMAGE_URL||"","2dias");
+    if(!url)fail("INVALID_TEMPLATE_IMAGE","La imagen aprobada de esta plantilla todavía no está configurada.",503);
+    // Fixed first-party asset, no Authorization header and no redirects.
+    const downloaded=await request(new URL(url),{method:"GET"},5*1024*1024);
+    const mimeType=mime(downloaded.response.headers.get("content-type"));
+    const validated=validateMetaAttentionMedia({bytes:downloaded.bytes,mimeType,fileName:"2dias.png",kind:"image"});
+    const uploaded=await uploadMedia({bytes:downloaded.bytes,mimeType:validated.mimeType,fileName:"2dias.png",kind:"image"});
+    return {mediaId:uploaded.mediaId,attachment:{kind:"image" as const,mimeType:validated.mimeType,fileName:"2dias.png",
+      sha256:createHash("sha256").update(downloaded.bytes).digest("hex"),size:downloaded.bytes.length}};
+  }
+  async function sendTemplate(input: Omit<MetaSendInput,"lastInboundAt"> & {snapshot:MetaTemplateSnapshot;headerMediaId?:string},beforeSend:BeforeSend,
+    withSendGuard?:<T>(send:()=>Promise<T>)=>Promise<T>,onPost?:()=>void): Promise<MetaSendReceipt> {
     const to=validateSendBase(input,beforeSend), expected=input.snapshot.definition;
     const matches=(await listManualTemplates(expected.name)).filter(t=>t.key===expected.key);
     if(matches.length!==1||matches[0].revision!==expected.revision)fail("TEMPLATE_CHANGED","La plantilla cambió o dejó de estar aprobada. Actualiza el catálogo y revísala antes de confirmar.",409);
-    const compiled=compileMetaTemplate({definition:matches[0],parameters:input.snapshot.parameters});
+    const compiled=compileMetaTemplate({...input.snapshot,definition:matches[0]});
+    if(matches[0].headerImageUrl){
+      if(!ID.test(input.headerMediaId||""))fail("INVALID_TEMPLATE_IMAGE","Hace falta la imagen aprobada de la plantilla.",409);
+      compiled.template.components=[{type:"header",parameters:[{type:"image",image:{id:input.headerMediaId}}]},...(compiled.template.components||[])];
+    }else if(input.headerMediaId)fail("INVALID_TEMPLATE_IMAGE","Esta plantilla no admite una imagen.",409);
+    if(input.snapshot.financial&&!withSendGuard)fail("FINANCIAL_GUARD_REQUIRED","Falta validar el crédito antes del envío.",409);
     validateSendBase(input,beforeSend);await beforeSend();validateSendBase(input,beforeSend);
-    const result=await graph(`${scope().phoneNumberId}/messages`,{},{messaging_product:"whatsapp",recipient_type:"individual",to,
-      type:"template",template:compiled.template,biz_opaque_callback_data:input.attemptId},true);
+    let attempted=false;
+    const send=async()=>{
+      if(attempted)fail("SEND_ALREADY_STARTED","Este envío ya se inició.",409);attempted=true;
+      validateSendBase(input,beforeSend);
+      onPost?.();
+      return graph(`${scope().phoneNumberId}/messages`,{},{messaging_product:"whatsapp",recipient_type:"individual",to,
+        type:"template",template:compiled.template,biz_opaque_callback_data:input.attemptId},true);
+    };
+    const result=withSendGuard?await withSendGuard(send):await send();
+    if(!attempted)fail("FINANCIAL_GUARD_REQUIRED","No se confirmó la validación financiera del envío.",409);
     const message=dict(list(result.messages)[0]),contact=dict(list(result.contacts)[0]);
     if(result.messaging_product!=="whatsapp"||!WAMID.test(str(message.id))||str(contact.wa_id)!==to||str(contact.input).replace(/^\+/,"")!==to)
       throw new AttentionMetaError("INVALID_SEND_RECEIPT","Meta no confirmó de forma verificable el envío. No lo reenvíes automáticamente.",502,true);
@@ -431,5 +465,5 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     if (![start, end].every(Number.isSafeInteger) || start >= bytes.length || end < start || (!a && Number(b) === 0)) fail("INVALID_RANGE", "El rango solicitado está fuera del archivo.", 416);
     return { bytes: bytes.slice(start, end + 1), mimeType: metadata.mimeType, totalBytes: bytes.length, status: 206, contentRange: `bytes ${start}-${end}/${bytes.length}` };
   }
-  return { status, verifyWebhookChallenge, parseWebhook, verifyConnection, sendText, uploadMedia, sendMedia, downloadMedia, listManualTemplates, sendTemplate };
+  return { status, verifyWebhookChallenge, parseWebhook, verifyConnection, sendText, uploadMedia, sendMedia, downloadMedia, listManualTemplates, prepareTemplateMedia, sendTemplate };
 }

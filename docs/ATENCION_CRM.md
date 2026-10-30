@@ -1,8 +1,8 @@
 # Operación del CRM de Atención
 
-## Fase operativa preparada
+## Fase operativa
 
-La fase de bandeja, lecturas por usuario, agenda y plantillas manuales está implementada y en validación local; este documento no acredita todavía su despliegue. Mantiene el acceso global de administración central y el acceso del analista nominal únicamente a sus chats asignados.
+La fase de bandeja, lecturas por usuario, agenda y plantillas manuales se desplegó el 30 de octubre de 2026, con once tablas de Atención. El despliegue Railway `2806377b-7260-4ba6-9af6-bceb820f3c12`, commit `463fe910e5cac6ca9a2a712684665a1426f5d019`, confirmó ese estado base. La ampliación de plantillas de cartera descrita aquí requiere su propia validación de despliegue. Mantiene el acceso global de administración central y el acceso del analista nominal únicamente a sus chats asignados.
 
 La interfaz organiza la bandeja y el chat con una disposición similar a WhatsApp Web: lista lateral, historial y editor de respuesta, con la ficha y las gestiones en paneles secundarios. Conserva la navegación, los componentes y los colores compartidos de FINSER PAY. Las actualizaciones conservan la selección, los borradores y la posición de lectura.
 
@@ -59,7 +59,9 @@ El botón Plantilla consulta las definiciones aprobadas en la cuenta Meta de est
 
 Una plantilla aprobada puede iniciar el contacto fuera de la ventana de 24 horas, sin habilitar por ello texto libre. Un chat histórico sin vínculo Meta requiere un teléfono exacto y único, sin vínculo contradictorio, y confirmación del operador. Se conservan el responsable, el cierre y el historial; el envío no inventa un mensaje entrante ni amplía la ventana de respuesta.
 
-Las plantillas financieras de bienvenida, recordatorios, cartera y liquidaciones continúan sujetas a sus procesos de elegibilidad; no se pueden despachar desde este selector. Tampoco se habilitan autenticación, variables con nombre, encabezados multimedia ni otros formatos no admitidos. El catálogo y la revisión de la definición se comprueban de nuevo antes de enviar.
+Las plantillas de cartera se habilitan según el crédito verificado y su calendario: `2dias` dos días antes, `1_dia_falta` el día anterior, `hoyvence` y `fechap` el día del vencimiento. `data` conserva la regla existente del día exacto veinte de mora y muestra los créditos incluidos en el aviso. El analista selecciona el crédito y revisa el mensaje; el servidor completa el nombre, la empresa y la fecha, sin aceptar parámetros financieros escritos por el navegador. Se comprueban pagos, prórrogas, protecciones, horario de contacto y registros anteriores de envío. Si cambian los datos tras la revisión, se exige revisar de nuevo.
+
+Los recordatorios manuales comparten el registro de envíos con las campañas, incluido el mismo registro para `hoyvence` y `fechap`. El encabezado de imagen de `2dias` usa el recurso configurado para esa plantilla; no admite una imagen o URL elegida por el operador. Las plantillas de bienvenida y liquidaciones permanecen en sus procesos correspondientes. `cuotavencida` y `vencido` afirman que existe una restricción programada dentro de treinta minutos: estar en mora por sí solo no permite enviarlas ni programa un bloqueo. Tampoco se habilitan autenticación, variables con nombre ni formatos no admitidos. El catálogo y la revisión de la definición se comprueban de nuevo antes de enviar.
 
 Cada confirmación conserva una intención persistida con UUID y contenido fijo. Un resultado incierto se consulta sin repetir el envío; una solicitud ausente se cancela de forma persistente antes de preparar una sustituta. Cambiar el mensaje o reutilizar el UUID con otro contenido produce conflicto. Estas reglas comparten el outbox humano y sus comprobaciones de permisos, destinatario e indicadores de Meta. Véase [la operación técnica de Meta](ATENCION_META.md#plantillas-manuales-aprobadas).
 
