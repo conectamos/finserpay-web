@@ -4,7 +4,8 @@ import pg from "pg";
 // PostgreSQL native type names; "!" marks NOT NULL. Existing incompatible tables
 // are rejected instead of attempting an implicit repair or destructive migration.
 const expectedColumns = {
-  AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz! metaManaged:bool! metaLastInboundAt:timestamptz",
+  AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz! metaManaged:bool! metaLastInboundAt:timestamptz sectionId:uuid boardVersion:int4!",
+  AttentionBoardSection: "id:uuid! name:text! color:text! position:int4! version:int4! archivedAt:timestamptz createdByUserId:int4 createdAt:timestamptz! updatedAt:timestamptz!",
   AttentionMessage: "id:uuid! conversationId:uuid! externalId:text! direction:text! text:text! sentAt:timestamptz! author:text metaWamid:text metaPhoneNumberId:text attachment:jsonb deliveryStatus:text deliveryAt:timestamptz replyToWamid:text",
   AttentionNote: "id:uuid! conversationId:uuid! text:text! author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
   AttentionTask: "id:uuid! conversationId:uuid! title:text! dueAt:timestamptz completedAt:timestamptz author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
@@ -17,14 +18,15 @@ const expectedColumns = {
   AttentionMetaDelivery: "id:uuid! phoneNumberId:text! wabaId:text! wamid:text! recipient:text! status:text! eventAt:timestamptz! errorCode:text requestId:uuid createdAt:timestamptz!",
 };
 const additiveColumns = {
-  AttentionConversation: ["closedAt", "daptaMessagesCursor", "metaManaged", "metaLastInboundAt"],
+  AttentionConversation: ["closedAt", "daptaMessagesCursor", "metaManaged", "metaLastInboundAt", "sectionId", "boardVersion"],
   AttentionMessage: ["metaWamid", "metaPhoneNumberId", "attachment", "deliveryStatus", "deliveryAt", "replyToWamid"],
   AttentionAudit: ["actorKind", "actorKey"],
   AttentionMetaOutbox: ["template"],
 };
 const tableNames = Object.keys(expectedColumns);
 const foreignKeys = {
-  AttentionConversation: { sedeId: "Sede", assigneeUserId: "Usuario", assigneeSellerId: "Vendedor", linkedCreditId: "Credito" },
+  AttentionConversation: { sedeId: "Sede", assigneeUserId: "Usuario", assigneeSellerId: "Vendedor", linkedCreditId: "Credito", sectionId: "AttentionBoardSection" },
+  AttentionBoardSection: { createdByUserId: "Usuario" },
   AttentionMessage: { conversationId: "AttentionConversation" },
   AttentionReadState: { conversationId: "AttentionConversation", userId: "Usuario", messageId: "AttentionMessage" },
   AttentionNote: { conversationId: "AttentionConversation", userId: "Usuario", sellerId: "Vendedor" },
@@ -71,6 +73,7 @@ async function verifySchema(client, beforeInstallation) {
     if (beforeInstallation && !present.has(table)) continue;
     if (!hasConstraint(table, "p", table === "AttentionRequest" ? ["actorKey", "requestId"] : table === "AttentionReadState" ? ["userId", "messageId"] : ["id"])) throw new AttentionSchemaMismatch(`${table}.PRIMARY_KEY`);
     for (const [column, target] of Object.entries(foreignKeys[table] || {})) {
+      if(beforeInstallation && additiveColumns[table]?.includes(column) && !rows.some(row=>row.tableName===table&&row.columnName===column))continue;
       if (!constraints.some(row => row.tableName === table && row.contype === "f" && row.convalidated &&
           row.columns.length === 1 && row.columns[0] === column && row.foreignSchema === "public" && row.foreignTable === target &&
           row.foreignColumns.length === 1 && row.foreignColumns[0] === "id")) throw new AttentionSchemaMismatch(`${table}.${column}.FOREIGN_KEY`);
@@ -104,6 +107,18 @@ async function verifySchema(client, beforeInstallation) {
       (c.relname,t.tgname) IN (('AttentionConversation','attention_realtime_conversation'),
         ('AttentionMessage','attention_realtime_message'),('AttentionMetaOutbox','attention_realtime_outbox'))`);
     if (realtime[0]?.active !== true) throw new AttentionSchemaMismatch("AttentionConversation.REALTIME_TRIGGERS");
+    const {rows:board}=await client.query(`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger t
+      JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+      JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid JOIN pg_catalog.pg_namespace pn ON pn.oid=p.pronamespace
+      WHERE n.nspname='public' AND c.relname='AttentionBoardSection' AND t.tgname='attention_realtime_board'
+      AND NOT t.tgisinternal AND t.tgenabled IN ('O','A') AND (t.tgtype::integer & 23)=21
+      AND pn.nspname='public' AND p.proname='attention_board_notify' AND NOT p.prosecdef) AS active`);
+    if(board[0]?.active!==true)throw new AttentionSchemaMismatch("AttentionBoardSection.REALTIME_TRIGGER");
+    const {rows:boardIndex}=await client.query(`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_class t ON t.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+      WHERE n.nspname='public' AND t.relname='AttentionBoardSection' AND i.indisunique AND i.indisvalid AND i.indnatts=1
+      AND pg_get_expr(i.indexprs,i.indrelid)='lower(name)' AND pg_get_expr(i.indpred,i.indrelid)='("archivedAt" IS NULL)') AS active`);
+    if(boardIndex[0]?.active!==true)throw new AttentionSchemaMismatch("AttentionBoardSection.ACTIVE_NAME_UNIQUE");
   }
 }
 
@@ -120,7 +135,7 @@ try {
   await verifySchema(client, true);
   await client.query(await readFile(new URL("./setup-atencion.sql", import.meta.url), "utf8"));
   await verifySchema(client, false);
-  console.log("Esquema de atención verificado: 11 tablas, columnas y claves compatibles; lectura nominal, closedAt, daptaMessagesCursor, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.");
+  console.log("Esquema de atención verificado: 12 tablas, columnas y claves compatibles; tablero con versión independiente, lectura nominal, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.");
 } catch (error) {
   if (error instanceof AttentionSchemaMismatch) throw error;
   const code = String(error?.code || "").replace(/[^A-Z0-9_]/gi, "").slice(0, 24);

@@ -15,7 +15,7 @@ export type AttentionRealtimeChange = {
   currentSellerId: number | null;
   readActorUserId?: number;
 };
-type BrokerEvent = { kind: "connected" } | { kind: "disconnected" } | { kind: "change"; change: AttentionRealtimeChange };
+type BrokerEvent = { kind: "connected" } | { kind: "disconnected" } | { kind: "board" } | { kind: "change"; change: AttentionRealtimeChange };
 type Subscriber = (event: BrokerEvent) => void;
 type ListenClient = {
   connect(): Promise<unknown>; query(sql: string): Promise<unknown>; end(): Promise<unknown>;
@@ -38,6 +38,16 @@ export function parseAttentionRealtimeChange(payload: string | undefined): Atten
       previousSellerId: value.previousSellerId, currentUserId: value.currentUserId, currentKey: value.currentKey, currentSellerId: value.currentSellerId,
       ...(value.readActorUserId !== undefined ? { readActorUserId: value.readActorUserId } : {}) };
   } catch { return null; }
+}
+
+/** Configuration invalidation is global to Attention, with no section or chat data. */
+export function isAttentionRealtimeBoardChange(payload: string | undefined): boolean {
+  if (!payload || payload.length > 128) return false;
+  try {
+    const value = JSON.parse(payload);
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      && Object.keys(value).length === 1 && value.type === "board";
+  } catch { return false; }
 }
 
 /** One PostgreSQL connection per process; NOTIFY is delivered only after commit. */
@@ -76,6 +86,7 @@ export function createAttentionRealtimeBroker(options: { createClient: () => Lis
     next.on("error", lost); next.on("end", lost);
     next.on("notification", message => {
       if (client !== next || !ready || message.channel !== ATTENTION_REALTIME_CHANNEL) return;
+      if (isAttentionRealtimeBoardChange(message.payload)) { emit({ kind: "board" }); return; }
       const change = parseAttentionRealtimeChange(message.payload);
       if (change) emit({ kind: "change", change });
     });
@@ -124,11 +135,12 @@ export function getAttentionRealtimeBroker(): AttentionRealtimeBroker {
 }
 
 export async function attentionRealtimeSchemaReady(database: AttentionDb): Promise<boolean> {
-  const rows = await database.$queryRawUnsafe<{ ready: boolean }[]>(`SELECT count(*)=3 AS ready FROM pg_catalog.pg_trigger t
+  const rows = await database.$queryRawUnsafe<{ ready: boolean }[]>(`SELECT count(*)=4 AS ready FROM pg_catalog.pg_trigger t
     JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND NOT t.tgisinternal AND t.tgenabled IN ('O','A') AND
     (c.relname,t.tgname) IN (('AttentionConversation','attention_realtime_conversation'),
-      ('AttentionMessage','attention_realtime_message'),('AttentionMetaOutbox','attention_realtime_outbox'))`);
+      ('AttentionMessage','attention_realtime_message'),('AttentionMetaOutbox','attention_realtime_outbox'),
+      ('AttentionBoardSection','attention_realtime_board'))`);
   return rows[0]?.ready === true;
 }
 
@@ -164,7 +176,7 @@ export function createAttentionRealtimeStream(options: {
   let cleanup: () => void = () => undefined;
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      let closed = false; let flushing = false; let readyPending = false; let degradedPending = false; let heartbeatPending = false;
+      let closed = false; let flushing = false; let readyPending = false; let degradedPending = false; let heartbeatPending = false; let boardPending = false;
       const changes = new Map<string, AttentionRealtimeChange>();
       let overflow = false; let scheduled: ReturnType<typeof setTimeout> | null = null;
       let unsubscribe: () => void = () => undefined;
@@ -187,13 +199,16 @@ export function createAttentionRealtimeStream(options: {
         if (closed || flushing) return;
         flushing = true;
         const pending = [...changes.values()]; changes.clear();
-        const ready = readyPending; const degraded = degradedPending; const beat = heartbeatPending; const force = overflow;
-        readyPending = false; degradedPending = false; heartbeatPending = false; overflow = false;
+        const ready = readyPending; const degraded = degradedPending; const beat = heartbeatPending; const force = overflow; const board = boardPending;
+        readyPending = false; degradedPending = false; heartbeatPending = false; overflow = false; boardPending = false;
         try {
           const relevant = await options.authorize(pending);
           if (closed) return;
           if (degraded || !options.broker.connected()) event("degraded", { reason: "connection_lost" });
           if (ready && options.broker.connected()) { event("ready", { connected: true }); event("invalidate", { reason: "reconnected" }); }
+          // authorize() always revalidates the nominal account. Its relevance
+          // boolean only concerns scoped chat changes; board metadata is shared.
+          else if (board) event("invalidate", { reason: "board_configuration_changed" });
           else if ((relevant && pending.length) || force) event("invalidate", { reason: "conversation_changed" });
           if (beat) event("heartbeat", { at: new Date().toISOString(), connected: options.broker.connected() });
         } catch (error) {
@@ -201,7 +216,7 @@ export function createAttentionRealtimeStream(options: {
           close();
         } finally {
           flushing = false;
-          if (changes.size || readyPending || degradedPending || heartbeatPending || overflow) schedule();
+          if (changes.size || readyPending || degradedPending || heartbeatPending || boardPending || overflow) schedule();
         }
       }
       const heartbeat = setInterval(() => { heartbeatPending = true; schedule(); }, options.heartbeatMs ?? 15_000);
@@ -214,6 +229,7 @@ export function createAttentionRealtimeStream(options: {
         unsubscribe = options.broker.subscribe(message => {
           if (message.kind === "connected") readyPending = true;
           else if (message.kind === "disconnected") degradedPending = true;
+          else if (message.kind === "board") boardPending = true;
           else {
             if (!recipient(options.actor, message.change)) return;
             if (changes.size < 100 || changes.has(message.change.conversationId)) {

@@ -6,6 +6,7 @@ import { attentionMetaSchemaReady, attentionMetaMessage, attentionMetaPendingMes
 import { attentionDocumentKey, attentionPhoneOrNull, attentionPhoneSql, resolveAttentionCreditIdentity } from "./atencion-classification";
 import type { AttentionCreditIdentityRecord, AttentionCreditResolution } from "./atencion-classification";
 import type { AttentionActor, AttentionAgenda, AttentionAgendaFilters, AttentionAssignee, AttentionConversation, AttentionCustomer, AttentionDetail, AttentionFilters, AttentionInbox, AttentionMutation, AttentionQuickReply, DaptaConversationSnapshot } from "./atencion-types";
+import type { AttentionBoardCards } from "./atencion-board-types";
 
 export interface AttentionDb { $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>; }
 export interface AttentionDatabase extends AttentionDb {
@@ -70,6 +71,31 @@ async function assertCurrentActor(tx: AttentionDb, actor: AttentionActor) {
     WHERE u.id=$1 AND u.activo=true AND s.activa=true AND a.activo=true AND upper(trim(a.codigo))='FINSERPAY'
     AND u."sedeId"=$2 AND s."aliadoId"=$3 FOR SHARE OF u,r,s,a`, actor.userId, actor.sedeId, actor.aliadoId);
   if (rows[0]?.role !== (actor.central ? "ADMIN" : "ANALISTA_APROBACION")) throw new AttentionError("La cuenta de atención ya no está autorizada.", 403);
+}
+export { assertCurrentActor as assertAttentionCurrentActor, scope as attentionConversationScope };
+
+/** Shared inbox/board search: linked-credit names only for nominal analysts. */
+export async function attentionConversationSearch(tx: AttentionDb, actor: AttentionActor, search: string) {
+  const access=scope(actor);
+  const [drafts]=await tx.$queryRawUnsafe<{present:boolean}[]>(`SELECT to_regclass('public."CreditoBorrador"') IS NOT NULL AS present`);
+  const draftSearch=actor.central&&drafts?.present?`OR EXISTS(SELECT 1 FROM "CreditoBorrador" d WHERE ${attentionPhoneSql("d")}=c.phone AND d."clienteNombre" ILIKE $5)`:"";
+  return {sql:`${access.sql} AND ($4::text='' OR c.name ILIKE $5 OR c.phone LIKE $5
+    OR EXISTS(SELECT 1 FROM "Credito" k WHERE ${attentionPhoneSql("k")}=c.phone AND ($1::boolean OR k.id=c."linkedCreditId") AND k."clienteNombre" ILIKE $5) ${draftSearch})`,
+    values:[...access.values,search,`%${search.replace(/[\\%_]/g,"\\$&")}%`]};
+}
+
+/** Read only the requested board page using the existing scoped card serializer. */
+export async function readAttentionBoardCards(tx: AttentionDb, actor: AttentionActor, filters:{sectionId:string|null;search:string;page:number}):Promise<AttentionBoardCards> {
+  await requireSchema(tx);
+  const search=await attentionConversationSearch(tx,actor,filters.search),size=20;
+  const where=`${search.sql} AND c."sectionId" IS NOT DISTINCT FROM $6::uuid`;
+  const rows=await tx.$queryRawUnsafe<(ConversationRow&{sectionId:string|null;boardVersion:number})[]>(`SELECT c.*,${operationSelect},
+    (SELECT ${messagePreviewSql} FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
+    FROM "AttentionConversation" c ${operationJoin} WHERE ${where} ORDER BY c."lastContactAt" DESC NULLS LAST,c.id LIMIT $7 OFFSET $8 FOR SHARE OF c`,
+    ...search.values,filters.sectionId,size,(filters.page-1)*size);
+  const [total]=await tx.$queryRawUnsafe<{count:number}[]>(`SELECT count(*)::integer AS count FROM "AttentionConversation" c WHERE ${where}`,...search.values,filters.sectionId);
+  const identities=await conversationIdentities(tx,rows);
+  return {sectionId:filters.sectionId,conversations:rows.map(row=>({...conversation(row,identities.get(row.id)!),sectionId:row.sectionId,boardVersion:row.boardVersion})),total:total.count,page:filters.page,pageSize:size};
 }
 async function schemaReady(tx: AttentionDb) {
   const rows = await tx.$queryRawUnsafe<{ ready: boolean }[]>(`SELECT
@@ -210,16 +236,12 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
           .map(tag => [tag.toLocaleLowerCase("es-CO"),tag])).values()].sort((a,b)=>a.localeCompare(b,"es-CO"));
         const tag = filters.tag?.normalize("NFKC").trim().toLocaleLowerCase("es-CO");
         const tagIds = tag ? tagRows.filter(row => [...row.tags.filter(value=>!isAttentionSystemTag(value)), ...identities.get(row.id)!.autoTags].some(value=>value.toLocaleLowerCase("es-CO")===tag)).map(row=>row.id) : null;
-        const draftsPresent = await tx.$queryRawUnsafe<{present: boolean}[]>(`SELECT to_regclass('public."CreditoBorrador"') IS NOT NULL AS present`);
-        const draftSearch = actor.central && draftsPresent[0]?.present ? `OR EXISTS(SELECT 1 FROM "CreditoBorrador" d
-          WHERE ${phoneSql("d")}=c.phone AND d."clienteNombre" ILIKE $5)` : "";
-        const filtered = `${access.sql} AND ($4::text='' OR c.name ILIKE $5 OR c.phone LIKE $5
-          OR EXISTS(SELECT 1 FROM "Credito" k WHERE ${phoneSql("k")}=c.phone
-            AND ($1::boolean OR k.id=c."linkedCreditId") AND k."clienteNombre" ILIKE $5) ${draftSearch})
+        const searchQuery=await attentionConversationSearch(tx,actor,filters.search);
+        const filtered = `${searchQuery.sql}
           AND ($6::text='all' OR ($6='mine' AND c."assigneeKey"=$3) OR ($6='pending' AND c.status='pending') OR ($6='closed' AND c.status='closed')
             OR ($6='unassigned' AND ${unassignedSql}) OR ($6='unread' AND op."unreadCount">0) OR ($6='unanswered' AND op."waitingSince" IS NOT NULL))
           AND ($7::uuid[] IS NULL OR c.id=ANY($7::uuid[]))`;
-        const values = [...access.values, filters.search, `%${filters.search.replace(/[\\%_]/g, "\\$&")}%`, filters.filter, tagIds];
+        const values = [...searchQuery.values, filters.filter, tagIds];
         const rows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,${operationSelect},
           (SELECT ${messagePreviewSql} FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
           FROM "AttentionConversation" c ${operationJoin} WHERE ${filtered}

@@ -215,7 +215,7 @@
 .moduleIdentity { display:flex; align-items:center; gap:16px; }
 .moduleIdentity h1 { font-size:26px; line-height:1.2; letter-spacing:-.7px; font-weight:700; }
 .moduleIdentity a { display:flex; align-items:center; gap:5px; min-height:44px; font-size:14px; color:var(--fp-muted); }
-.moduleTabs { display:flex; align-self:stretch; gap:24px; min-width:0; }
+.moduleTabs { display:flex; align-self:stretch; gap:24px; min-width:0; overflow-x:auto; scrollbar-width:thin; }
 .moduleTabs button { position:relative; min-height:44px; padding:0 2px; white-space:nowrap; font-size:16px; color:var(--fp-muted); }
 .moduleTabs .activeNav { color:var(--fp-graphite); font-weight:700; }
 .navCount { display:inline-flex; align-items:center; justify-content:center; min-width:20px; height:20px; margin-left:6px; padding:0 5px; border-radius:10px; background:var(--fp-amber-soft); color:var(--fp-graphite); font-size:12px; font-weight:700; }
@@ -232,6 +232,9 @@
 .crmMain { display:flex; flex:1; flex-direction:column; min-height:0; max-width:none; padding:12px 24px 16px; overflow-y:auto; gap:8px; }
 .crmMain > :not(.workspace) { flex-shrink:0; }
 .crmMain .notice,.crmMain .error,.crmMain .setupNotice,.crmMain .syncProgress { margin-bottom:0; }
+.boardMain { overflow:hidden; }
+.boardMain > .boardPane { display:flex; flex:1 1 0; min-width:0; min-height:0; }
+.boardPane[hidden] { display:none; }
 .pageHeading { margin-bottom:24px; }
 .pageHeading h2 { font-size:30px; line-height:1.2; letter-spacing:-.7px; font-weight:700; }
 .pageHeading p { margin-top:8px; font-size:16px; color:var(--fp-muted); }

@@ -2,7 +2,7 @@
 
 ## Fase operativa
 
-La fase de bandeja, lecturas por usuario, agenda y plantillas manuales se desplegó el 30 de octubre de 2026, con once tablas de Atención. El despliegue Railway `2806377b-7260-4ba6-9af6-bceb820f3c12`, commit `463fe910e5cac6ca9a2a712684665a1426f5d019`, confirmó ese estado base. La ampliación de plantillas de cartera descrita aquí requiere su propia validación de despliegue. Mantiene el acceso global de administración central y el acceso del analista nominal únicamente a sus chats asignados.
+La fase de bandeja, lecturas por usuario, agenda y plantillas manuales se desplegó el 30 de octubre de 2026, con once tablas de Atención. El despliegue Railway `2806377b-7260-4ba6-9af6-bceb820f3c12`, commit `463fe910e5cac6ca9a2a712684665a1426f5d019`, confirmó ese estado base. La ampliación de plantillas de cartera conserva su validación de despliegue separada. El tablero y el cierre conjunto descritos a continuación están implementados para validación; esta documentación no acredita todavía su ejecución en producción. El esquema ampliado tiene doce tablas. Se mantiene el acceso global de administración central y el acceso del analista nominal únicamente a sus chats asignados.
 
 La interfaz organiza la bandeja y el chat con una disposición similar a WhatsApp Web: lista lateral, historial y editor de respuesta, con la ficha y las gestiones en paneles secundarios. Conserva la navegación, los componentes y los colores compartidos de FINSER PAY. Las actualizaciones conservan la selección, los borradores y la posición de lectura.
 
@@ -12,9 +12,27 @@ Los filtros No leídos, Sin responder y, para administración central, Sin asign
 
 No leído es un estado propio de cada usuario nominal. Abrir una conversación no basta: la interfaz confirma los identificadores entrantes que ha cargado cuando el chat está visible y desplazado hasta el final. El servidor valida esos mensajes y el acceso actual; un mensaje que llega simultáneamente queda sin leer si no estaba incluido en la confirmación. Leer un chat no lo modifica para otro analista, no cambia su versión de negocio ni envía un recibo de lectura a WhatsApp.
 
-La confirmación admite hasta 500 mensajes entrantes observados. El histórico anterior que no esté cargado no se marca automáticamente: puede seguir contando como no leído. No se presume una lectura inicial ni se marca todo el historial por la hora del navegador.
+La confirmación normal admite hasta 500 mensajes entrantes observados. El histórico anterior que no esté cargado no se marca automáticamente: puede seguir contando como no leído. No se presume una lectura inicial ni se marca todo el historial por la hora del navegador. El cierre conjunto administrativo tiene una revisión y confirmación explícitas del histórico que se marcará, descritas más adelante.
 
 Sin responder significa que existe una entrada posterior a la última salida acreditada. La espera comienza en la primera entrada todavía sin respuesta; una salida pendiente, fallida o incierta no la elimina. Una respuesta aceptada por Meta o una salida registrada en el histórico sí cuenta como respuesta, incluida la automatizada. Leer o añadir una nota no responde al cliente. Se muestra el tiempo transcurrido sin imponer un umbral de servicio ficticio.
+
+## Tablero de conversaciones
+
+El tablero organiza los mismos chats en columnas compartidas. Sin sección es permanente. Las cinco secciones iniciales elegidas por el propietario son FINSER PAY, SUMASPAY, BOGOTA, ADDI y OTROS. Se crean únicamente cuando la tabla está vacía; repetir la instalación no restaura secciones renombradas o archivadas. Los chats existentes permanecen en Sin sección hasta que una persona los mueva.
+
+Administración central puede crear, renombrar, cambiar el color, reordenar y archivar secciones vacías, hasta veinte secciones configurables. Archivar conserva el registro y requiere que no exista ningún chat en la sección, aunque la búsqueda no lo muestre. Los colores pertenecen a la paleta compartida de FINSER PAY. No se elimina ni renombra Sin sección.
+
+Central puede mover cualquier conversación; el analista nominal solo las que tiene asignadas en ese momento. Se puede arrastrar una tarjeta o usar Mover a. La búsqueda y los conteos respetan ese mismo alcance, con páginas de veinte tarjetas por columna. El total de una sección sin búsqueda se conserva por separado para revisar si está vacía.
+
+Mover un chat solo cambia su sección y su versión de organización. No cambia asignación, estado, etiquetas, fecha del último contacto ni versión de negocio; tampoco invalida un envío humano reservado. La columna FINSER PAY es una organización manual y no acredita ni modifica la etiqueta automática `FINSERPAY` de los créditos. Ante otro movimiento o cambio de configuración simultáneo, se exige actualizar antes de sobrescribirlo. Cada operación conserva su UUID y auditoría.
+
+## Cierre conjunto con revisión
+
+Solo administración central puede revisar y confirmar un cierre conjunto. Se fija una fecha y hora de corte dentro de las últimas 24 horas y se presenta el número de chats que podrían finalizarse, los que deben conservarse y los mensajes que se marcarían como leídos para ese administrador. La revisión vence a los diez minutos y pertenece únicamente a la cuenta que la solicitó.
+
+Al confirmar, el servidor vuelve a comprobar la revisión. Conserva abiertos los chats con actividad posterior al corte, cambios de versión o de mensajes entrantes desde la revisión, o envíos pendientes, en curso o inciertos. Los chats creados después del corte quedan fuera. Las lecturas se limitan a los identificadores entrantes incluidos en la revisión y anteriores o iguales al corte: un mensaje concurrente no se marca por suposición, y la lectura de otros analistas no cambia.
+
+El cierre, las lecturas y la auditoría se guardan juntos. Repetir el mismo UUID devuelve el resultado confirmado, sin repetir la operación. Se conservan secciones, responsables, etiquetas e historial; no se envían mensajes ni recibos de lectura a WhatsApp. Una nueva entrada posterior al corte puede reabrir el chat conforme al flujo normal de recepción. Finalizar no equivale a haber respondido al cliente.
 
 ## Agenda y avisos internos
 
@@ -71,6 +89,6 @@ Meta sigue recibiendo mensajes y archivos en el número empresarial actual. La i
 
 La conexión en tiempo real usa eventos del servidor y notificaciones transaccionales de PostgreSQL: los mensajes, sus estados y las asignaciones invalidan la bandeja cuando se confirma el cambio. Cada conexión revalida el usuario y su alcance. Si se interrumpe, se reconecta y vuelve a consultar; la actualización periódica queda como respaldo. No hace falta importar Dapta para recibir los nuevos mensajes de Meta.
 
-El instalador prepara los tres disparadores de actualización mediante `scripts/ensure-atencion-schema.mjs`. Las consultas y las entradas de auditoría no producen notificaciones. Una confirmación de lectura que añade mensajes genera un único aviso dirigido al mismo usuario nominal; repetirla sin cambios no genera otro aviso ni otra entrada de lectura en auditoría. Un único canal PostgreSQL por proceso sirve a las conexiones autorizadas; los eventos que llegan al navegador no contienen nombres, teléfonos ni mensajes.
+El instalador ampliado prepara cuatro disparadores de actualización mediante `scripts/ensure-atencion-schema.mjs`: conversaciones, mensajes, outbox y configuración del tablero. Un cambio de sección invalida los chats dentro de su alcance; un cambio de columnas comunica únicamente que cambió la configuración, tras revalidar la cuenta. Las consultas y las entradas de auditoría no producen notificaciones. Una confirmación normal de lectura que añade mensajes genera un único aviso dirigido al mismo usuario nominal; repetirla sin cambios no genera otro aviso ni otra entrada de lectura en auditoría. El cierre conjunto también avisa al administrador de las lecturas que añadió. Un único canal PostgreSQL por proceso sirve a las conexiones autorizadas; los eventos que llegan al navegador no contienen nombres, teléfonos ni mensajes.
 
 No se cambia el número ni el proveedor. Diana permanece pausada conforme a la operación autorizada; esta entrega no la reactiva.

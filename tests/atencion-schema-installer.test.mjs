@@ -49,14 +49,14 @@ async function fixture(t, overrides = {}) {
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
 
-test("instalación aditiva verifica once tablas y se puede repetir sin pérdida de datos", async t => {
+test("instalación aditiva verifica doce tablas y se puede repetir sin pérdida de datos", async t => {
   const { database, install, calls, logs, ended } = await fixture(t);
   await install();
   await database.query(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES('user:1','00000000-0000-4000-8000-000000000001','retained')`);
   await install();
   assert.equal((await database.query('SELECT fingerprint FROM "AttentionRequest"')).rows[0].fingerprint, "retained");
   assert.ok(calls.findIndex(sql => sql.startsWith("SELECT pg_advisory_lock(")) < calls.indexOf(setupSql));
-  assert.ok(logs.every(message => message.includes("11 tablas") && message.includes("auditoría inmutable")));
+  assert.ok(logs.every(message => message.includes("12 tablas") && message.includes("auditoría inmutable")));
   assert.ok(ended());
 });
 
@@ -69,6 +69,23 @@ test("upgrade operativo añade lecturas y template sin cambiar mensajes existent
   assert.equal((await database.query('SELECT count(*)::int n FROM "AttentionReadState"')).rows[0].n,0);
   assert.equal((await database.query('SELECT text FROM "AttentionMessage"')).rows[0].text,'Conservar');
   assert.equal((await database.query(`SELECT is_nullable FROM information_schema.columns WHERE table_name='AttentionMetaOutbox' AND column_name='template'`)).rows[0].is_nullable,'YES');
+});
+
+test("upgrade tablero añade sección y versión independiente, conserva chats y no restaura columnas archivadas",async t=>{
+  const {database,install}=await fixture(t);await database.exec(setupSql);
+  await database.exec(`ALTER TABLE "AttentionConversation" DROP COLUMN "sectionId",DROP COLUMN "boardVersion"; DROP TABLE "AttentionBoardSection";
+    INSERT INTO "AttentionConversation"(id,channel,name,version) VALUES('00000000-0000-4000-8000-000000000099','internal','Conservar',7);`);
+  await install();
+  assert.deepEqual((await database.query('SELECT "sectionId","boardVersion",version FROM "AttentionConversation"')).rows,[{sectionId:null,boardVersion:1,version:7}]);
+  assert.equal((await database.query('SELECT count(*)::int n FROM "AttentionBoardSection"')).rows[0].n,5);
+  await database.exec(`UPDATE "AttentionBoardSection" SET name='Renombrada',"archivedAt"=now() WHERE position=1`);await install();
+  assert.equal((await database.query('SELECT count(*)::int n FROM "AttentionBoardSection"')).rows[0].n,5);
+  assert.equal((await database.query(`SELECT count(*)::int n FROM "AttentionBoardSection" WHERE name='Renombrada' AND "archivedAt" IS NOT NULL`)).rows[0].n,1);
+});
+
+test("postcheck rechaza índice homónimo incompatible de nombres del tablero",async t=>{
+  const {install}=await fixture(t,{afterSql:db=>db.exec('DROP INDEX "AttentionBoardSection_active_name"; CREATE INDEX "AttentionBoardSection_active_name" ON "AttentionBoardSection"(name)')});
+  await assert.rejects(install(),/ACTIVE_NAME_UNIQUE/);
 });
 
 test("schema previo incompatible se rechaza antes de aplicar SQL y sin tocar la tabla", async t => {

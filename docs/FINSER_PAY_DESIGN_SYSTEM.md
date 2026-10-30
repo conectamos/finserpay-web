@@ -288,6 +288,20 @@ dentro del panel nativo para mantenerla visible y accesible en su misma capa.
 Los cambios actualizan la cartera y el detalle conservando el borrador de gestión;
 un conflicto de versión exige consultar la autorización antes de reintentar.
 
+## Atención: tablero de conversaciones
+
+El tablero comparte la cabecera y navegación de Atención. Las columnas usan
+superficies porcelana, tarjetas blancas y acentos de los tokens existentes;
+los colores identifican secciones, sin sustituir los estados ni la etiqueta
+automática FINSERPAY. La búsqueda y los controles permanecen visibles mientras
+cada columna desplaza sus tarjetas. El tablero desplaza horizontalmente las
+secciones en pantallas pequeñas, sin ampliar el ancho del documento.
+
+Cada tarjeta permite abrir el chat, arrastrarlo o usar «Mover a» con teclado o
+pantalla táctil. La administración de nombres, colores y orden reutiliza el
+panel lateral compartido. El cierre conjunto permanece en Configuración con
+revisión explícita del corte y los conteos antes de confirmar.
+
 ## Nueva venta: enrolamiento y entrega
 
 El cierre reutiliza la cabecera blanca compacta de Nueva venta y conserva sus

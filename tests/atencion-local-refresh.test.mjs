@@ -101,6 +101,33 @@ function mount() {
   };
 }
 
+test("tablero abre el chat y conserva su montaje inactivo al volver a conversaciones", async () => {
+  const f = mount(); await f.ready();
+  assert.equal(f.all().some(node => node.type?.name === "./attention-board"), false);
+  f.button("Tablero").props.onClick(); await f.flush();
+  let board = f.all().find(node => node.type?.name === "./attention-board");
+  assert.equal(board.props.active, true);
+  board.props.onOpenConversation(chat.id); await f.flush(); await f.advance(0);
+  f.requests.at(-1).respond(detail); await f.flush();
+  board = f.all().find(node => node.type?.name === "./attention-board");
+  assert.equal(board.props.active, false);
+  assert.ok(f.all().some(node => node.props.hidden === true && nodes(node).includes(board)));
+  f.button("Tablero").props.onClick(); await f.flush();
+  assert.equal(f.all().find(node => node.type?.name === "./attention-board").props.active, true);
+  f.unmount();
+});
+
+test("la actualización local invalida el tablero y la revocación retira sus datos protegidos", async () => {
+  const f = mount(); await f.ready(); f.button("Tablero").props.onClick(); await f.flush();
+  const previous = f.all().find(node => node.type?.name === "./attention-board").props.onRefresh;
+  await f.advance(20_000); f.requests.at(-1).respond(inbox); await f.flush();
+  const board = f.all().find(node => node.type?.name === "./attention-board");
+  assert.ok(board.props.onRefresh > previous);
+  board.props.onAccessDenied("Acceso revocado"); await f.flush();
+  assert.equal(f.all().some(node => node.type?.name === "./attention-board"), false);
+  assert.match(f.text(), /Acceso revocado/); f.unmount();
+});
+
 test("consulta local cada20s solo visible/online y limpia timer y peticiones al desmontar", async () => {
   const f = mount(); await f.ready();
   await f.advance(19_749); assert.equal(f.requests.length, 1);

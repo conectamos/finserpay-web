@@ -1,5 +1,23 @@
 BEGIN;
 SET LOCAL search_path = public;
+CREATE TABLE IF NOT EXISTS "AttentionBoardSection" (
+  id uuid PRIMARY KEY, name text NOT NULL CHECK(length(btrim(name)) BETWEEN 1 AND 60),
+  color text NOT NULL CHECK(color IN ('green','lime','amber','slate','navy')),
+  position integer NOT NULL CHECK(position>0), version integer NOT NULL DEFAULT 1 CHECK(version>0),
+  "archivedAt" timestamptz, "createdByUserId" integer REFERENCES "Usuario"(id) ON DELETE RESTRICT,
+  "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "AttentionBoardSection_active_name" ON "AttentionBoardSection"(lower(name)) WHERE "archivedAt" IS NULL;
+-- Initial organization only. Archived/renamed rows prevent reseeding, and no
+-- conversation is classified or moved automatically.
+INSERT INTO "AttentionBoardSection"(id,name,color,position)
+SELECT id::uuid,name,color,position FROM (VALUES
+  ('f15e0001-0c30-5000-8000-000000000001','FINSER PAY','green',1),
+  ('f15e0001-0c30-5000-8000-000000000002','SUMASPAY','lime',2),
+  ('f15e0001-0c30-5000-8000-000000000003','BOGOTA','navy',3),
+  ('f15e0001-0c30-5000-8000-000000000004','ADDI','amber',4),
+  ('f15e0001-0c30-5000-8000-000000000005','OTROS','slate',5)
+) AS initial(id,name,color,position) WHERE NOT EXISTS(SELECT 1 FROM "AttentionBoardSection");
 CREATE TABLE IF NOT EXISTS "AttentionConversation" (
   id uuid PRIMARY KEY, "externalId" text UNIQUE, channel text NOT NULL CHECK (channel IN ('internal','whatsapp')),
   phone text, name text NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','open','closed')),
@@ -16,6 +34,9 @@ ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "closedAt" timestam
 ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "daptaMessagesCursor" text;
 ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "metaManaged" boolean NOT NULL DEFAULT false;
 ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "metaLastInboundAt" timestamptz;
+ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "sectionId" uuid REFERENCES "AttentionBoardSection"(id) ON DELETE RESTRICT;
+ALTER TABLE "AttentionConversation" ADD COLUMN IF NOT EXISTS "boardVersion" integer NOT NULL DEFAULT 1 CHECK("boardVersion">0);
+CREATE INDEX IF NOT EXISTS "AttentionConversation_section" ON "AttentionConversation"("sectionId","lastContactAt" DESC,id);
 -- Global inbox: source conversations are not assigned to an arbitrary sales branch.
 ALTER TABLE "AttentionConversation" ALTER COLUMN "sedeId" DROP NOT NULL;
 -- A Meta channel identifier is not necessarily a verifiable telephone number.
@@ -151,4 +172,12 @@ DROP TRIGGER IF EXISTS attention_realtime_message ON "AttentionMessage";
 CREATE TRIGGER attention_realtime_message AFTER INSERT OR UPDATE OF text,attachment,"deliveryStatus" ON "AttentionMessage" FOR EACH ROW EXECUTE FUNCTION attention_realtime_notify();
 DROP TRIGGER IF EXISTS attention_realtime_outbox ON "AttentionMetaOutbox";
 CREATE TRIGGER attention_realtime_outbox AFTER INSERT OR UPDATE OF status,"messageId","errorCode" ON "AttentionMetaOutbox" FOR EACH ROW EXECUTE FUNCTION attention_realtime_notify();
+CREATE OR REPLACE FUNCTION attention_board_notify() RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF TG_OP='UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+  PERFORM pg_notify('finserpay_attention_changes','{"type":"board"}');
+  RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS attention_realtime_board ON "AttentionBoardSection";
+CREATE TRIGGER attention_realtime_board AFTER INSERT OR UPDATE ON "AttentionBoardSection" FOR EACH ROW EXECUTE FUNCTION attention_board_notify();
 COMMIT;

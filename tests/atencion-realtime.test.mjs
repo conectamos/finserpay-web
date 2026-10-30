@@ -8,7 +8,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const root=path.resolve(import.meta.dirname,"..");
 const jiti=createJiti(import.meta.url,{alias:{"@":root,"server-only":path.join(root,"node_modules/next/dist/compiled/server-only/empty.js")}});
-const { ATTENTION_REALTIME_CHANNEL, createAttentionRealtimeBroker, createAttentionRealtimeStream, authorizeAttentionRealtime, attentionRealtimeSchemaReady, parseAttentionRealtimeChange }=await jiti.import("../lib/atencion-realtime.ts");
+const { ATTENTION_REALTIME_CHANNEL, createAttentionRealtimeBroker, createAttentionRealtimeStream, authorizeAttentionRealtime, attentionRealtimeSchemaReady, parseAttentionRealtimeChange, isAttentionRealtimeBoardChange }=await jiti.import("../lib/atencion-realtime.ts");
 const {AttentionError}=await jiti.import("../lib/atencion-core.ts");
 const migration=readFileSync(path.join(root,"scripts/setup-atencion.sql"),"utf8");
 const id="10000000-0000-4000-8000-000000000001";
@@ -73,6 +73,44 @@ test("outbox notifica cambios visibles y no actualizaciones de lease",async t=>{
   assert.ok(!JSON.stringify(events).includes("PRIVATE"));
 });
 
+test("configuración del tablero notifica sólo después de commit, agrupa reordenamiento y omite identidad de secciones",async t=>{
+  const {db,events,adapter}=await fixture(t);
+  assert.equal(await attentionRealtimeSchemaReady(adapter),true);
+  await assert.rejects(db.transaction(async tx=>{
+    await tx.query(`INSERT INTO "AttentionBoardSection"(id,name,color,position) VALUES($1,'PRIVATE_SECTION','green',6)`,[id]);
+    assert.equal(events.length,0);throw new Error("rollback");
+  }));assert.equal(events.length,0);
+  await db.transaction(async tx=>{
+    await tx.query(`UPDATE "AttentionBoardSection" SET position=position+1`);assert.equal(events.length,0);
+  });assert.deepEqual(events,[{type:"board"}]);
+  await db.query('UPDATE "AttentionBoardSection" SET name=name');assert.equal(events.length,1);
+  await db.query(`INSERT INTO "AttentionBoardSection"(id,name,color,position) VALUES($1,'PRIVATE_SECTION','green',6)`,[id]);
+  assert.deepEqual(events,[{type:"board"},{type:"board"}]);assert.ok(!JSON.stringify(events).includes("PRIVATE"));
+  await db.exec('DROP TRIGGER attention_realtime_board ON "AttentionBoardSection"');assert.equal(await attentionRealtimeSchemaReady(adapter),false);
+});
+
+test("movimiento independiente conserva versión de mensajes y emite evento scoped con el analista vigente",async t=>{
+  const {db,events,adapter,insert}=await fixture(t);await insert();
+  const before=(await db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[id])).rows[0];
+  await db.query('UPDATE "AttentionConversation" SET "sectionId"=$2,"boardVersion"="boardVersion"+1 WHERE id=$1',[id,"f15e0001-0c30-5000-8000-000000000001"]);
+  const after=(await db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[id])).rows[0];
+  assert.equal(after.version,before.version);assert.equal(after.boardVersion,before.boardVersion+1);
+  for(const key of ["assigneeUserId","assigneeKey","status","mode","lastContactAt","closedAt","metaLastInboundAt"])assert.deepEqual(after[key],before[key]);
+  assert.deepEqual(after.tags,before.tags);assert.equal(events.length,2);assert.equal(events[1].conversationId,id);assert.ok(!Object.hasOwn(events[1],"sectionId"));
+  assert.equal(await authorizeAttentionRealtime(adapter,analyst,[events[1]]),true);assert.equal(await authorizeAttentionRealtime(adapter,second,[events[1]]),false);
+});
+
+test("reinstalar esquema no restaura nombres archivados ni duplica semillas o mueve chats",async t=>{
+  const {db,events,insert}=await fixture(t);await insert();
+  assert.deepEqual((await db.query('SELECT name FROM "AttentionBoardSection" ORDER BY position')).rows.map(row=>row.name),["FINSER PAY","SUMASPAY","BOGOTA","ADDI","OTROS"]);
+  await db.query(`UPDATE "AttentionBoardSection" SET name='PERSONALIZADA',"archivedAt"=now(),version=2 WHERE id='f15e0001-0c30-5000-8000-000000000001'`);
+  const before=(await db.query('SELECT * FROM "AttentionBoardSection" ORDER BY id')).rows,count=events.length;
+  await db.exec(migration);
+  assert.deepEqual((await db.query('SELECT * FROM "AttentionBoardSection" ORDER BY id')).rows,before);assert.equal(events.length,count);
+  const row=(await db.query('SELECT "sectionId","boardVersion",version FROM "AttentionConversation" WHERE id=$1',[id])).rows[0];
+  assert.deepEqual(row,{sectionId:null,boardVersion:1,version:1});
+});
+
 test("broker comparte LISTEN y reconecta después de perder PostgreSQL",async t=>{
   const clients=[];
   class FakeClient extends EventEmitter {calls=[];async connect(){this.calls.push("connect");}async query(sql){this.calls.push(sql);}async end(){this.calls.push("end");}}
@@ -81,10 +119,21 @@ test("broker comparte LISTEN y reconecta después de perder PostgreSQL",async t=
   const off=broker.subscribe(event=>first.push(event));broker.subscribe(event=>second.push(event));await wait(20);
   assert.equal(clients.length,1);assert.equal(clients[0].calls.filter(value=>value.startsWith("LISTEN")).length,1);
   clients[0].emit("notification",{channel:ATTENTION_REALTIME_CHANNEL,payload:JSON.stringify(change())});assert.equal(first.at(-1).kind,"change");
+  clients[0].emit("notification",{channel:ATTENTION_REALTIME_CHANNEL,payload:'{"type":"board"}'});assert.deepEqual(first.at(-1),{kind:"board"});
+  const before=first.length;
+  for(const payload of ['{"type":"board","name":"PRIVATE_SECTION"}','{"type":"board","conversationId":"PRIVATE_CHAT"}','{"type":"unknown"}'])clients[0].emit("notification",{channel:ATTENTION_REALTIME_CHANNEL,payload});
+  clients[0].emit("notification",{channel:"other_channel",payload:'{"type":"board"}'});assert.equal(first.length,before);
   clients[0].emit("error",new Error("private-db-error"));await wait(30);
   assert.equal(clients.length,2);assert.equal(broker.connected(),true);assert.ok(first.some(event=>event.kind==="disconnected"));
   off();clients[1].emit("notification",{channel:ATTENTION_REALTIME_CHANNEL,payload:JSON.stringify(change())});assert.equal(second.at(-1).kind,"change");
   assert.equal(parseAttentionRealtimeChange('{"conversationId":"invalid"}'),null);
+});
+
+test("evento de configuración acepta sólo marcador exacto sin nombres, identificadores ni contenido",()=>{
+  assert.equal(isAttentionRealtimeBoardChange('{"type":"board"}'),true);
+  for(const value of [null,[],"board",{type:"BOARD"},{type:"board",name:"FINSER PAY"},{type:"board",count:1},{type:"board",conversationId:id},{type:"board",readActorUserId:2}])assert.equal(isAttentionRealtimeBoardChange(JSON.stringify(value)),false);
+  for(const payload of [undefined,"",' {"type":"board"} '+" ".repeat(128),"invalid-json"])assert.equal(isAttentionRealtimeBoardChange(payload),false);
+  assert.equal(parseAttentionRealtimeChange('{"type":"board"}'),null);
 });
 
 function fakeBroker(){let listener;return {connected:()=>true,subscribe(fn){listener=fn;queueMicrotask(()=>fn({kind:"connected"}));return()=>{listener=null;};},close(){listener=null;},emit(event){listener?.(event);}};}
@@ -134,6 +183,33 @@ test("SSE cancela suscripción al cerrar consumidor y vence para reconectar",asy
   const reader=stream.getReader();const text=await collect(reader,()=>false);assert.ok(text.includes("retry:"));
   const another=createAttentionRealtimeStream({actor:admin,signal:abort.signal,broker,authorize:async()=>true,lifetimeMs:1000});
   const next=another.getReader();await next.read();abort.abort();assert.equal((await next.read()).done,true);
+});
+
+test("secciones invalidan a usuarios nominales aunque no tengan chats, sin ampliar alcance ni exponer datos",async()=>{
+  for(const actor of [admin,analyst,second]){
+    const broker=fakeBroker(),abort=new AbortController();let checks=0;
+    const reader=createAttentionRealtimeStream({actor,signal:abort.signal,broker,heartbeatMs:2000,lifetimeMs:3000,
+      authorize:async changes=>{checks++;assert.deepEqual(changes,[]);return false;}}).getReader();
+    await collect(reader,text=>text.includes("event: ready"));const initial=checks;
+    // Configuration is global, but an unrelated conversation still never reaches
+    // the analyst's database authorization query or response stream.
+    if(!actor.central)broker.emit({kind:"change",change:change({currentUserId:99,currentKey:"analyst:99"})});
+    for(let n=0;n<20;n++)broker.emit({kind:"board"});
+    const text=await collect(reader,text=>text.includes("board_configuration_changed"));
+    assert.equal(checks,initial+1);assert.equal((text.match(/board_configuration_changed/g)||[]).length,1);
+    assert.ok(!text.includes(id));assert.ok(!text.includes("analyst:"));assert.ok(!text.includes("sectionId"));
+    abort.abort();await collect(reader,()=>false);
+  }
+});
+
+test("cambio global de secciones revalida rol y cierra una cuenta revocada antes de invalidar",async t=>{
+  const {db,adapter}=await fixture(t);const broker=fakeBroker(),abort=new AbortController();
+  const reader=createAttentionRealtimeStream({actor:analyst,signal:abort.signal,broker,heartbeatMs:2000,lifetimeMs:3000,
+    authorize:changes=>authorizeAttentionRealtime(adapter,analyst,changes)}).getReader();
+  await collect(reader,text=>text.includes("event: ready"));
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=2');broker.emit({kind:"board"});
+  const text=await collect(reader,()=>false);assert.ok(text.includes("event: unauthorized"));assert.ok(!text.includes("board_configuration_changed"));
+  assert.equal((await reader.read()).done,true);
 });
 
 test("cien chats ajenos no consultan autorización ni notifican al analista",async()=>{

@@ -1,0 +1,15 @@
+.card { padding:24px; display:flex; flex-direction:column; gap:16px; align-items:flex-start; }
+.card h2 { display:flex; align-items:center; gap:8px; font-size:20px; font-weight:700; }
+.card p { font-size:16px; line-height:1.55; }
+.card label { display:grid; gap:8px; font-size:16px; font-weight:600; width:100%; }
+.note { color:var(--fp-muted); }
+.error { color:var(--fp-danger); }
+.pending,.result { width:100%; padding:16px; border:1px solid var(--fp-border); border-radius:var(--fp-radius-md); }
+.pending { background:var(--fp-amber-soft); }
+.pending button { margin-top:12px; }
+.result { background:var(--fp-lime-soft); }
+.result strong { font-size:20px; }
+.result small { display:block; margin-top:8px; color:var(--fp-muted); font-size:14px; }
+.confirmation :global(.fp-ui-dialog) { display:flex; flex-direction:column; max-height:calc(100dvh - 32px); }
+.confirmation :global(.fp-ui-dialog)>p { min-height:0; overflow-y:auto; white-space:pre-wrap; font-size:16px; }
+.confirmation :global(.fp-ui-dialog)>div { flex-shrink:0; }

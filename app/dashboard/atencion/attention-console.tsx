@@ -13,10 +13,12 @@ import type { AttentionActor, AttentionConversation, AttentionCustomer, Attentio
 import type { AttentionExtensionInput, AttentionExtensionResult, AttentionFinancial, AttentionFinancialCredit, AttentionReceiptSendInput } from "@/lib/atencion-financial-types";
 import AttentionComposerTools from "./attention-composer-tools";
 import AttentionTemplateComposer from "./attention-template-composer";
+import AttentionBoard from "./attention-board";
+import AttentionCloseAll from "./attention-close-all";
 import { AttentionAgendaView, AttentionConversationIndicators, AttentionObservedRead, AttentionQuickReplies, AttentionWorkFilters } from "./attention-operational";
 import styles from "./attention.module.css";
 
-type View = "dashboard" | "conversations" | "agenda" | "team" | "settings";
+type View = "dashboard" | "conversations" | "board" | "agenda" | "team" | "settings";
 const DAPTA_INBOX_URL = "https://app.dapta.ai/agents-studio/inbox";
 const statusNames = { pending: "Pendiente", open: "En atención", closed: "Finalizada" } as const;
 const money = (value: number | null) => value === null ? "No disponible" : new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value);
@@ -245,6 +247,8 @@ function ReplyComposer({ detail, draft, busy, change, send, resolve, restart, re
 
 export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const [view, setView] = useState<View>("conversations");
+  const [boardOpened, setBoardOpened] = useState(false);
+  const [boardRevision, setBoardRevision] = useState(0);
   const [inbox, setInbox] = useState<AttentionInbox | null>(null);
   const [detail, setDetail] = useState<AttentionDetail | null>(null);
   const [search, setSearch] = useState("");
@@ -310,7 +314,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     ++listRequest.current; ++detailRequest.current; liveAccessBlocked.current = true;
     inboxReadError.current = true; detailReadError.current = false;
     selectionRef.current = null;
-    setInbox(null); setDetail(null); setSelected(null); setShowCustomer(false);
+    setInbox(null); setDetail(null); setSelected(null); setShowCustomer(false); setBoardOpened(false);
     setReplyDrafts({}); setFinancialAttempts({});
     setLoading(false); setDetailLoading(false); setDetailError(""); setError(message);
   }, []);
@@ -326,7 +330,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     try {
       const query = new URLSearchParams({ search, filter, page: String(page), ...(tag ? { tag } : {}) });
       const result = await api<AttentionInbox>(`/api/atencion?${query}`, { signal });
-      if (mounted.current && !signal?.aborted && request === listRequest.current) { liveAccessBlocked.current = false; setInbox(result); }
+      if (mounted.current && !signal?.aborted && request === listRequest.current) { liveAccessBlocked.current = false; setInbox(result); setBoardRevision(value => value + 1); }
     } catch (err) {
       if (mounted.current && !signal?.aborted && request === listRequest.current) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
@@ -411,6 +415,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
           api<AttentionInbox>(`/api/atencion?${query}`, { signal: controller.signal })
             .then(result => { if (current()) {
               setInbox(result);
+              setBoardRevision(value => value + 1);
               if (inboxReadError.current) { inboxReadError.current = false; setError(""); }
             } }).catch(err => failed(err, false)),
           id ? api<AttentionDetail>(`/api/atencion/${encodeURIComponent(id)}`, { signal: controller.signal })
@@ -538,7 +543,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     log.scrollTop = log.scrollHeight;
     followLatest.current = true; setShowLatest(false);
   }
-  function navigate(next: View) { setView(next); setShowNew(false); setShowCustomer(false); }
+  function navigate(next: View) { if (next === "board") setBoardOpened(true); setView(next); setShowNew(false); setShowCustomer(false); }
   function refreshCurrentView() {
     void loadInbox();
     if (view === "conversations" && selectionRef.current) void loadDetail(selectionRef.current);
@@ -821,23 +826,23 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     } catch (err) { if (mounted.current) setSyncError(errorMessage(err)); }
     finally { syncingRef.current = false; if (mounted.current) { setSyncing(false); setStoppingSync(false); setSyncWaitSeconds(0); } }
   }
-  const viewTitles = { dashboard: "Resumen del equipo", conversations: "Conversaciones", agenda: "Agenda", team: "Equipo de analistas", settings: "Configuración" };
+  const viewTitles = { dashboard: "Resumen del equipo", conversations: "Conversaciones", board: "Tablero de conversaciones", agenda: "Agenda", team: "Equipo de analistas", settings: "Configuración" };
   const agendaCount = (inbox?.agendaCounts?.today || 0) + (inbox?.agendaCounts?.overdue || 0);
   const agendaAlertKey = `${inbox?.agendaCounts?.today || 0}:${inbox?.agendaCounts?.overdue || 0}`;
   function navButton(target: View, label: string, count = 0) {
     return <button type="button" className={view === target ? styles.activeNav : undefined} aria-current={view === target ? "page" : undefined} onClick={() => navigate(target)}>{label}{count > 0 && <span className={styles.navCount} aria-label={`${count} seguimientos para hoy o vencidos`}>{count}</span>}</button>;
   }
-  return <div className={`${styles.shell} ${view === "conversations" ? styles.crmShell : ""}`}>
+  return <div className={`${styles.shell} ${view === "conversations" || view === "board" ? styles.crmShell : ""}`}>
     {currentActor.central
       ? <FinserNavigation admin adminCentral nombreUsuario={currentActor.name} rolUsuario="ADMIN" variant="administration" activeSection="operation" />
       : <AnalystNavigation userName={currentActor.name} userRole="ANALISTA_APROBACION" compact centralAdmin={false} />}
     <div className={styles.moduleBar}>
       <div className={styles.moduleIdentity}><h1>Atención</h1>{!currentActor.central && <Link href="/dashboard/aprobaciones/centro" aria-label="Volver al Centro del analista"><ArrowLeft aria-hidden="true" size={16} /> Centro</Link>}</div>
-      <nav className={styles.moduleTabs} aria-label="Navegación de atención">{navButton("conversations", "Conversaciones")}{navButton("agenda", "Agenda", agendaCount)}{navButton("dashboard", "Resumen")}{navButton("team", "Equipo")}{navButton("settings", "Configuración")}</nav>
+      <nav className={styles.moduleTabs} aria-label="Navegación de atención">{navButton("conversations", "Conversaciones")}{navButton("board", "Tablero")}{navButton("agenda", "Agenda", agendaCount)}{navButton("dashboard", "Resumen")}{navButton("team", "Equipo")}{navButton("settings", "Configuración")}</nav>
       <div className={styles.moduleActions}><span className={`${styles.liveConnection} ${liveStatus === "connected" ? styles.liveConnected : ""}`} role="status"><i aria-hidden="true" />{{ connected: "Conectado", connecting: "Conectando…", reconnecting: "Reconectando…", offline: "Sin conexión", paused: "En pausa", polling: "Actualización periódica" }[liveStatus]}</span><Button variant="ghost" aria-label="Actualizar" title="Actualizar vista" onClick={refreshCurrentView} disabled={loading || detailLoading || busy}><RefreshCw aria-hidden="true" size={18} /></Button></div>
     </div>
-    <main className={`${styles.main} ${view === "conversations" ? styles.crmMain : ""}`}>
-      {view !== "conversations" && <div className={styles.pageHeading}><h2>{viewTitles[view]}</h2>{view === "dashboard" && <p>Actividad y seguimiento del equipo de atención</p>}</div>}
+    <main className={`${styles.main} ${view === "conversations" || view === "board" ? styles.crmMain : ""} ${view === "board" ? styles.boardMain : ""}`}>
+      {view !== "conversations" && view !== "board" && <div className={styles.pageHeading}><h2>{viewTitles[view]}</h2>{view === "dashboard" && <p>Actividad y seguimiento del equipo de atención</p>}</div>}
         {error && <div className={styles.error} role="alert"><span>{error}</span><Button variant="secondary" onClick={() => void loadInbox()} disabled={loading || busy}>Reintentar</Button></div>}
         {notice && <div className={styles.notice} role="status"><Check aria-hidden="true" size={18} /><span>{notice}</span><Button variant="ghost" aria-label="Ocultar confirmación" onClick={() => setNotice("")}><X size={16} aria-hidden="true" /></Button></div>}
         {agendaCount > 0 && view !== "agenda" && dismissedAgendaAlert !== agendaAlertKey && <div className={styles.agendaAlert} role="status"><CalendarClock aria-hidden="true" size={17} /><span>{inbox?.agendaCounts?.overdue || 0} tareas vencidas · {inbox?.agendaCounts?.today || 0} para hoy</span><button type="button" onClick={() => navigate("agenda")}>Ver agenda</button><Button variant="ghost" aria-label="Ocultar aviso de agenda" onClick={() => setDismissedAgendaAlert(agendaAlertKey)}><X size={15} aria-hidden="true" /></Button></div>}
@@ -890,10 +895,13 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
           <FinserSidePanel open={showCustomer && Boolean(detail)} keepMounted title="Ficha del contacto" closeLabel="Volver al chat" busy={busy} onClose={() => setShowCustomer(false)}><div className={styles.customer}>{detail && <CustomerPanel key={detail.conversation.id} detail={detail} busy={busy} mutate={mutate} canOpenRecord={canSupervise} financial={{ attempts: financialAttempts[detail.conversation.id] || {}, disabled: busy || syncing, accessDenied: error => handleFinancialAccessError(detail.conversation.id, error), grant: input => grantExtension(detail.conversation.id, input), sendReceipt: (input, retry) => sendReceipt(detail.conversation.id, input, retry), resolveReceipt: () => resolveReceipt(detail.conversation.id), discardReceipt: () => discardReceipt(detail.conversation.id) }} />}</div></FinserSidePanel>
         </>}
 
+        {boardOpened && contentReady && <div className={styles.boardPane} hidden={view !== "board"}><AttentionBoard key={currentActor.key} actor={currentActor} active={view === "board"} onRefresh={boardRevision} onOpenConversation={selectConversation} onAccessDenied={clearInaccessibleData} busyChanged={quickReplyBusyChanged} /></div>}
+
         {view === "agenda" && contentReady && <AttentionAgendaView request={api} revision={inbox} disabled={busy || syncing} openChat={selectConversation} busyChanged={quickReplyBusyChanged} saved={() => { void loadInbox(); if (selectionRef.current) void loadDetail(selectionRef.current); }} accessDenied={(error, id) => { if (id) return handleFinancialAccessError(id, error); if (error instanceof ApiError && [401, 403].includes(error.status)) { clearInaccessibleData(errorMessage(error)); return true; } return false; }} /> }
 
         {view === "team" && <Card className={styles.fullTeam}><div className={styles.cardHeading}><div><h2>Analistas de atención</h2><p>Las conversaciones solo se asignan a perfiles de analista activos.</p></div><Badge>{analysts.length} analistas</Badge></div><TeamRows team={team} loading={loading && !inbox} /><div className={styles.teamNote}><ShieldCheck aria-hidden="true" size={17} /><p>Administración asigna los chats. Cada analista consulta y gestiona únicamente las conversaciones de su bandeja.</p></div></Card>}
         {view === "settings" && <div className={styles.settingsGrid}>
+          {currentActor.central && contentReady && <AttentionCloseAll key={currentActor.key} actorKey={currentActor.key} request={api} onDone={() => { void loadInbox(); if (selectionRef.current) void loadDetail(selectionRef.current); }} busyChanged={quickReplyBusyChanged} accessDenied={failure => { if (failure instanceof ApiError && [401, 403].includes(failure.status)) { clearInaccessibleData(errorMessage(failure)); return true; } return false; }} />}
           <Card className={styles.settingsCard}><div className={styles.cardHeading}><h2><MessageCircle aria-hidden="true" size={20} /> Canal de WhatsApp</h2><Badge tone={inbox?.integration.canSend ? "positive" : "warning"}>{inbox?.integration.canSend ? "Meta conectado" : "Envío pendiente"}</Badge></div><p>{inbox?.integration.message || "Consultando estado del canal…"}</p><div className={styles.integrationFacts}><div><Check aria-hidden="true" size={17} /><span>Historial importado y mensajes recibidos en FINSER PAY</span></div><div><Users aria-hidden="true" size={17} /><span>Asignación exclusiva a analistas FINSER PAY</span></div><div><LockKeyhole aria-hidden="true" size={17} /><span>{inbox?.integration.canSend ? "Respuestas por Meta según permisos y ventana de atención" : "La lectura está disponible; el envío requiere completar la conexión Meta"}</span></div></div>{currentActor.central && <Button disabled={!syncRestored || syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Importar historial Dapta"}</Button>}<p className={styles.settingFootnote}>Las credenciales del canal se guardan únicamente en el servidor.</p></Card>
           <Card className={styles.repliesPanel}><div className={styles.cardHeading}><h2>Respuestas rápidas</h2>{currentActor.central && <Button variant="ghost" disabled={!contentReady || busy} onClick={() => setShowReplies(value => !value)}>{showReplies ? "Cerrar" : "Aprobar respuesta"}</Button>}</div><p className={styles.muted}>Contenido aprobado por administración de FINSER PAY.</p>{inbox?.quickReplies.length ? <ul className={styles.replyList}>{inbox.quickReplies.map(reply => <li key={reply.id}><strong>{reply.title}</strong><p>{reply.text}</p><small>Aprobada por {reply.approvedBy} · {date(reply.approvedAt, true)}</small></li>)}</ul> : <DashboardEmpty icon={FileText} title="Una voz para todo el equipo" text="El equipo puede consultar aquí las respuestas aprobadas por administración." />}{showReplies && currentActor.central && <QuickReplyForm disabled={busy} busyChanged={quickReplyBusyChanged} saved={() => { setShowReplies(false); setNotice("Respuesta aprobada y guardada."); void loadInbox(); }} />}</Card>
         </div>}
