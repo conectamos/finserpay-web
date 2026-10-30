@@ -346,6 +346,10 @@
   .workspace.showCustomer > .chat { display: none; }
   .message { max-width: 92%; }
 }
+@media (max-width:820px) {
+  .workspace > .chat { overflow-y: auto; }
+  .historyViewport { flex: 1 0 160px; }
+}
 @media (max-width:767px) {
   .shell:has(.workspace) .main { padding: 14px 12px; }
   .shell:has(.workspace) .pageHeading { gap: 10px; }
