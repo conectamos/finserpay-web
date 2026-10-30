@@ -385,7 +385,7 @@
  .hasSelection .inbox { display:none; } .hasSelection .chat { display:flex; } .chatHeader { padding:12px 14px 8px; gap:8px; } .chatHeader .backButton { display:inline-flex; width:40px; padding:8px; }
  .chatTitle { flex-wrap:wrap; gap:5px; } .chatTitle h2 { font-size:17px; } .chatIdentity > span { font-size:13px; } .chatHeader .customerToggle { padding:8px 10px; font-size:14px; }
  .chatActions { padding:0 14px 8px; gap:6px; } .chatActions button,.assignmentMenu > summary { font-size:13px; padding:7px 8px; } .assignee { font-size:13px; }
- .historyViewport { flex:1 0 200px; min-height:200px; } .messages { padding:20px 16px; gap:16px; } .message { max-width:90%; padding:10px 13px; }
+ .historyViewport { flex:1 1 0; min-height:0; } .messages { padding:20px 16px; gap:16px; } .message { max-width:90%; padding:10px 13px; }
  .replyComposer { padding:10px 12px; max-height:min(48%,320px); } .replyComposer textarea { min-height:54px; } .replyActions > button { font-size:15px; }
  .metrics { grid-template-columns:1fr 1fr; padding:0; } .metric { padding:22px; } .metric:nth-child(3) { border-left:0; } .metric:nth-child(n+3) { border-top:1px solid color-mix(in srgb,var(--fp-surface) 25%,transparent); }
  .dashboardGrid,.settingsGrid { grid-template-columns:1fr; } .newForm { grid-template-columns:1fr; } .notice,.error,.setupNotice,.syncProgress { flex-wrap:wrap; }
