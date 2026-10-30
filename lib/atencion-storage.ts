@@ -1,36 +1,49 @@
 import { createHash, randomUUID } from "node:crypto";
-import { AttentionError, assertAttentionActor, attentionText, attentionUuid, normalizeAttentionPhone, parseAttentionMutation } from "./atencion-core";
+import { AttentionError, assertAttentionActor, attentionText, attentionUuid, isAttentionSystemTag, normalizeAttentionPhone, parseAttentionMutation } from "./atencion-core";
 import { buildCreditPaymentPlan } from "./credit-payment-plan";
 import { attentionMetaSchemaReady, attentionMetaMessage, attentionMetaPendingMessages } from "./atencion-meta-storage";
+import { attentionDocumentKey, attentionPhoneOrNull, attentionPhoneSql, resolveAttentionCreditIdentity } from "./atencion-classification";
+import type { AttentionCreditIdentityRecord, AttentionCreditResolution } from "./atencion-classification";
 import type { AttentionActor, AttentionAssignee, AttentionConversation, AttentionCustomer, AttentionDetail, AttentionFilters, AttentionInbox, AttentionMutation, AttentionQuickReply, DaptaConversationSnapshot } from "./atencion-types";
 
 export interface AttentionDb { $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>; }
 export interface AttentionDatabase extends AttentionDb {
   $transaction<T>(fn: (tx: AttentionDb) => Promise<T>, options: { isolationLevel: "ReadCommitted"; timeout: number; maxWait: number }): Promise<T>;
 }
-type ConversationRow = Omit<AttentionConversation, "lastContactAt" | "updatedAt" | "preview"> & {
+type ConversationRow = Omit<AttentionConversation, "lastContactAt" | "updatedAt" | "preview" | "autoTags" | "creditClassification"> & {
   lastContactAt: Date | string | null; updatedAt: Date | string; closedAt: Date | string | null;
   daptaMessagesCursor: string | null; preview?: string | null; historyTruncated: boolean;
   assigneeUserId: number | null; assigneeSellerId: number | null;
   metaManaged?: boolean; metaLastInboundAt?: Date | string | null;
 };
-type CreditRow = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; estado: string;
+type CreditRow = AttentionCreditIdentityRecord & { folio: string; clienteNombre: string;
   referenciaEquipo: string | null; equipoMarca: string | null; equipoModelo: string | null;
   montoCredito: number; valorCuota: number; plazoMeses: number | null; frecuenciaPago: string;
   fechaPrimerPago: Date | string | null; fechaProximoPago: Date | string | null; pazYSalvoEmitidoAt: Date | string | null; planCapitalVigente: unknown;
 };
-type DraftRow = { id: number; clienteNombre: string | null; clienteDocumento: string | null; estado: string;
+type DraftRow = { id: number; clienteNombre: string | null; clienteDocumento: string | null; clienteTipoDocumento?: string | null; estado: string;
   dataCreditoAssessmentId: string | null; createdAt: Date | string };
 const options = { isolationLevel: "ReadCommitted" as const, timeout: 30000, maxWait: 10000 };
 const pageSize = 40;
+const messagePreviewSql = `CASE WHEN NULLIF(btrim(m.text),'') IS NOT NULL THEN left(m.text,160)
+  ELSE CASE to_jsonb(m)->'attachment'->>'kind' WHEN 'image' THEN 'Imagen' WHEN 'audio' THEN 'Audio'
+    WHEN 'video' THEN 'Video' WHEN 'document' THEN 'Documento' WHEN 'sticker' THEN 'Sticker' ELSE left(m.text,160) END END`;
 const iso = (value: Date | string) => new Date(value).toISOString();
-const documentKey = (value: string | null) => (value || "").replace(/\D/g, "");
-const maskDocument = (value: string | null) => value ? `••••${documentKey(value).slice(-4)}` : "Sin documento";
-function conversation(row: ConversationRow): AttentionConversation {
+const maskDocument = (value: string | null) => value ? `••••${value.replace(/[\s.-]/g, "").slice(-4)}` : "Sin documento";
+function conversation(row: ConversationRow, identity: AttentionCreditResolution): AttentionConversation {
   return { id: row.id, externalId: row.externalId, channel: row.channel, phone: row.phone, name: row.name,
     status: row.status, mode: row.mode, assigneeKey: row.assigneeKey, assigneeName: row.assigneeName,
     sedeId: row.sedeId, lastContactAt: row.lastContactAt ? iso(row.lastContactAt) : null, updatedAt: iso(row.updatedAt),
-    preview: row.preview ?? null, tags: row.tags, version: row.version, linkedCreditId: row.linkedCreditId };
+    preview: row.preview ?? null, tags: row.tags.filter(tag => !isAttentionSystemTag(tag)),
+    autoTags: identity.autoTags, creditClassification: identity.classification, version: row.version, linkedCreditId: row.linkedCreditId };
+}
+
+/** One minimal, exact-phone query for the visible page; no financial records enter the inbox DTO. */
+async function conversationIdentities(tx: AttentionDb, rows: readonly ConversationRow[]): Promise<Map<string, AttentionCreditResolution>> {
+  const phones = [...new Set(rows.map(row => attentionPhoneOrNull(row.phone)).filter((phone): phone is string => phone !== null))];
+  const records = phones.length ? await tx.$queryRawUnsafe<AttentionCreditIdentityRecord[]>(`SELECT c.id,c."clienteTelefono",c."clienteDocumento",
+    to_jsonb(c)->>'clienteTipoDocumento' AS "clienteTipoDocumento",c.estado FROM "Credito" c WHERE ${attentionPhoneSql("c")}=ANY($1::text[])`, phones) : [];
+  return new Map(rows.map(row => [row.id, resolveAttentionCreditIdentity(row, records)]));
 }
 /** All access predicates are evaluated on the server from the current session. */
 function scope(actor: AttentionActor) {
@@ -85,13 +98,11 @@ async function idempotent(tx: AttentionDb, actor: AttentionActor, requestId: str
   await tx.$queryRawUnsafe(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES($1,$2::uuid,$3) RETURNING "requestId"`, actor.key, id, fingerprint);
   return { replay: false, resultId: null };
 }
-function phoneSql(alias: "c" | "k" | "d") {
-  const digits = `regexp_replace(regexp_replace(COALESCE(${alias}."clienteTelefono",''),'[^0-9]','','g'),'^00','')`;
-  return `(CASE WHEN length(${digits})=10 AND ${digits} LIKE '3%' THEN '+57'||${digits} ELSE '+'||${digits} END)`;
-}
+const phoneSql = attentionPhoneSql;
 async function candidateCredits(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<CreditRow[]> {
   if (!row.phone || (!actor.central && !row.linkedCreditId)) return [];
-  return tx.$queryRawUnsafe(`SELECT c.id,c.folio,c."clienteNombre",c."clienteDocumento",c.estado,c."referenciaEquipo",c."equipoMarca",c."equipoModelo",
+  return tx.$queryRawUnsafe(`SELECT c.id,c.folio,c."clienteNombre",c."clienteDocumento",c."clienteTelefono",
+    to_jsonb(c)->>'clienteTipoDocumento' AS "clienteTipoDocumento",c.estado,c."referenciaEquipo",c."equipoMarca",c."equipoModelo",
     c."montoCredito",c."valorCuota",c."plazoMeses",c."frecuenciaPago",c."fechaPrimerPago",c."fechaProximoPago",c."pazYSalvoEmitidoAt",
     to_jsonb(c)->'planCapitalVigente' AS "planCapitalVigente" FROM "Credito" c
     WHERE ${phoneSql("c")}=$1 AND ($2::boolean OR c.id=$3::integer) ORDER BY c.id DESC LIMIT 101`,
@@ -101,14 +112,14 @@ async function candidateDrafts(tx: AttentionDb, actor: AttentionActor, row: Conv
   if (!actor.central || !row.phone) return [];
   const presence = await tx.$queryRawUnsafe<{present: boolean}[]>(`SELECT to_regclass('public."CreditoBorrador"') IS NOT NULL AS present`);
   if (!presence[0]?.present) return [];
-  return tx.$queryRawUnsafe(`SELECT d.id,d."clienteNombre",d."clienteDocumento",d.estado,d."dataCreditoAssessmentId",d."createdAt"
+  return tx.$queryRawUnsafe(`SELECT d.id,d."clienteNombre",d."clienteDocumento",to_jsonb(d)->>'clienteTipoDocumento' AS "clienteTipoDocumento",d.estado,d."dataCreditoAssessmentId",d."createdAt"
     FROM "CreditoBorrador" d WHERE d."creditoId" IS NULL AND ${phoneSql("d")}=$1 ORDER BY d.id DESC LIMIT 101`, row.phone);
 }
 async function customerDetail(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<AttentionCustomer> {
   if (!row.phone || (!actor.central && !row.linkedCreditId)) return { match: row.phone ? "restricted" : "none", name: null, documentMasked: null, candidates: [], credits: [], studies: [], financialAllowed: actor.central };
   const candidates = await candidateCredits(tx, actor, row);
   const drafts = await candidateDrafts(tx, actor, row);
-  const keys = new Set([...candidates.map(c => documentKey(c.clienteDocumento) || `credit:${c.id}`), ...drafts.map(d => documentKey(d.clienteDocumento) || `draft:${d.id}`)]);
+  const keys = new Set([...candidates.map(c => attentionDocumentKey(c) || `credit:${c.id}`), ...drafts.map(d => attentionDocumentKey(d) || `draft:${d.id}`)]);
   const linked = row.linkedCreditId ? candidates.find(c => c.id === row.linkedCreditId) : null;
   const ambiguous = candidates.length > 100 || drafts.length > 100 || (!linked && keys.size > 1);
   const customer: AttentionCustomer = { match: row.linkedCreditId && !linked ? "restricted" : ambiguous ? "ambiguous" : candidates.length || drafts.length ? "linked" : "none",
@@ -116,8 +127,8 @@ async function customerDetail(tx: AttentionDb, actor: AttentionActor, row: Conve
     credits: [], studies: [], financialAllowed: actor.central };
   if (customer.match !== "linked") return customer;
   const identity = linked || candidates.at(0) || drafts[0];
-  const credits = candidates.filter(c => identity.clienteDocumento ? documentKey(c.clienteDocumento) === documentKey(identity.clienteDocumento) : c === identity);
-  const selectedDrafts = drafts.filter(d => identity.clienteDocumento ? documentKey(d.clienteDocumento) === documentKey(identity.clienteDocumento) : d === identity);
+  const credits = candidates.filter(c => attentionDocumentKey(identity) ? attentionDocumentKey(c) === attentionDocumentKey(identity) : c === identity);
+  const selectedDrafts = drafts.filter(d => attentionDocumentKey(identity) ? attentionDocumentKey(d) === attentionDocumentKey(identity) : d === identity);
   customer.name = identity.clienteNombre; customer.documentMasked = maskDocument(identity.clienteDocumento);
   const payments = actor.central ? await tx.$queryRawUnsafe<{creditoId: number; valor: number; metodoPago: string; fechaAbono: Date | string}[]>(`
     SELECT "creditoId",valor,"metodoPago","fechaAbono" FROM "CreditoAbono"
@@ -177,7 +188,7 @@ export function createAttentionStore(database: AttentionDatabase) {
           AND ($6::text='all' OR ($6='mine' AND c."assigneeKey"=$3) OR ($6='pending' AND c.status='pending') OR ($6='closed' AND c.status='closed'))`;
         const values = [...access.values, filters.search, `%${filters.search.replace(/[\\%_]/g, "\\$&")}%`, filters.filter];
         const rows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,
-          (SELECT left(m.text,160) FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
+          (SELECT ${messagePreviewSql} FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
           FROM "AttentionConversation" c WHERE ${filtered}
           ORDER BY c."lastContactAt" DESC NULLS LAST,c.id LIMIT $7 OFFSET $8`, ...values, pageSize, (filters.page - 1) * pageSize);
         const totals = await tx.$queryRawUnsafe<{total: number}[]>(`SELECT count(*)::integer AS total FROM "AttentionConversation" c WHERE ${filtered}`, ...values);
@@ -196,7 +207,7 @@ export function createAttentionStore(database: AttentionDatabase) {
           GROUP BY (m."sentAt" AT TIME ZONE 'America/Bogota')::date)
           SELECT days.date,COALESCE(received.count,0)::integer AS count FROM days LEFT JOIN received USING(date) ORDER BY days.date`, ...access.values);
         const activeRows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,
-          (SELECT left(m.text,160) FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
+          (SELECT ${messagePreviewSql} FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
           FROM "AttentionConversation" c WHERE ${access.sql} AND c.status<>'closed' ORDER BY c."lastContactAt" DESC NULLS LAST,c."updatedAt" DESC,c.id LIMIT 5`, ...access.values);
         const loads = await tx.$queryRawUnsafe<{key: string; assigned: number; pending: number}[]>(`SELECT c."assigneeKey" AS key,
           count(*) FILTER(WHERE c.status<>'closed')::integer AS assigned,count(*) FILTER(WHERE c.status='pending')::integer AS pending
@@ -206,11 +217,12 @@ export function createAttentionStore(database: AttentionDatabase) {
           WHERE ${access.sql} AND a.action=ANY($4::text[]) ORDER BY a."createdAt" DESC,a.id DESC LIMIT 12`, ...access.values,
           ["CONVERSATION_TRANSFER", "CONVERSATION_CLAIM", "CONVERSATION_CLOSE", "CONVERSATION_REOPEN", "CONVERSATION_NOTE", "CONVERSATION_TASK", "CONVERSATION_COMPLETE_TASK", "CONVERSATION_LINK", "CONVERSATION_HUMAN_REQUEST", "DAPTA_SNAPSHOT_IMPORTED"]);
         const titles: Record<string,string> = { CONVERSATION_TRANSFER: "Conversación asignada", CONVERSATION_CLAIM: "Atención iniciada", CONVERSATION_CLOSE: "Conversación finalizada", CONVERSATION_REOPEN: "Conversación reabierta", CONVERSATION_NOTE: "Nota añadida", CONVERSATION_TASK: "Recordatorio creado", CONVERSATION_COMPLETE_TASK: "Recordatorio completado", CONVERSATION_LINK: "Ficha vinculada", CONVERSATION_HUMAN_REQUEST: "Atención humana solicitada", DAPTA_SNAPSHOT_IMPORTED: "Conversación sincronizada" };
-        const result = { schemaReady: true, conversations: rows.map(conversation), total: totals[0]?.total || 0, page: filters.page, pageSize,
+        const identities = await conversationIdentities(tx, [...rows, ...activeRows]);
+        const result = { schemaReady: true, conversations: rows.map(row => conversation(row, identities.get(row.id)!)), total: totals[0]?.total || 0, page: filters.page, pageSize,
           metrics: metricRows[0], team, branches: [], dashboard: {
             daily: daily.map(day => ({ ...day, label: new Date(`${day.date}T12:00:00Z`).toLocaleDateString("es-CO", { weekday: "short", timeZone: "America/Bogota" }) })),
             team: team.map(person => ({ key: person.key, name: person.name, assigned: loads.find(l => l.key === person.key)?.assigned || 0, pending: loads.find(l => l.key === person.key)?.pending || 0 })),
-            activeConversations: activeRows.map(conversation),
+            activeConversations: activeRows.map(row => conversation(row, identities.get(row.id)!)),
             activity: activityRows.map(item => ({ id: item.id, title: titles[item.action], description: item.author, at: iso(item.at), conversationId: item.conversationId })),
           },
           quickReplies: replies.map(reply => ({ ...reply, approvedAt: iso(reply.approvedAt) })), actor };
@@ -230,8 +242,9 @@ export function createAttentionStore(database: AttentionDatabase) {
         const notes = await tx.$queryRawUnsafe<{id: string; text: string; author: string; createdAt: Date | string}[]>(`SELECT id,text,author,"createdAt" FROM "AttentionNote" WHERE "conversationId"=$1::uuid ORDER BY "createdAt" DESC,id DESC LIMIT 301`, id);
         const tasks = await tx.$queryRawUnsafe<{id: string; title: string; author: string; dueAt: Date | string | null; completedAt: Date | string | null}[]>(`SELECT id,title,author,"dueAt","completedAt" FROM "AttentionTask" WHERE "conversationId"=$1::uuid ORDER BY ("completedAt" IS NOT NULL),"dueAt" ASC NULLS LAST,"createdAt" DESC,id LIMIT 301`, id);
         const customer = await customerDetail(tx, actor, row);
+        const identity = (await conversationIdentities(tx, [row])).get(row.id)!;
         await audit(tx, actor, "CONVERSATION_VIEWED", row.id, { financial: customer.financialAllowed, creditIds: customer.credits.map(c => c.id), studyIds: customer.studies.map(s => s.id) });
-        return { conversation: conversation({ ...row, name: row.name === row.phone && customer.name ? customer.name : row.name }), messages: displayMessages.slice(-500),
+        return { conversation: conversation({ ...row, name: row.name === row.phone && customer.name ? customer.name : row.name }, identity), messages: displayMessages.slice(-500),
           notes: notes.slice(0,300).reverse().map(n => ({ ...n, createdAt: iso(n.createdAt) })), tasks: tasks.slice(0,300).map(t => ({ ...t, dueAt: t.dueAt ? iso(t.dueAt) : null, completedAt: t.completedAt ? iso(t.completedAt) : null })),
           customer, permissions: { manage: actor.central || row.assigneeKey === actor.key,
             claim: actor.analyst && row.assigneeKey === actor.key, assign: actor.central, canSend: false }, historyTruncated: row.historyTruncated || displayMessages.length > 500,

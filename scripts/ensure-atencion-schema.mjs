@@ -93,6 +93,14 @@ async function verifySchema(client, beforeInstallation) {
       AND NOT t.tgisinternal AND t.tgenabled IN ('O','A') AND (t.tgtype::integer & 27)=27
       AND pn.nspname='public' AND p.proname='attention_audit_immutable') AS active`);
     if (triggers[0]?.active !== true) throw new AttentionSchemaMismatch("AttentionAudit.APPEND_ONLY_TRIGGER");
+    const { rows: realtime } = await client.query(`SELECT count(*)=3 AS active FROM pg_catalog.pg_trigger t
+      JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+      JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid JOIN pg_catalog.pg_namespace pn ON pn.oid=p.pronamespace
+      WHERE n.nspname='public' AND NOT t.tgisinternal AND t.tgenabled IN ('O','A') AND (t.tgtype::integer & 23)=21
+      AND pn.nspname='public' AND p.proname='attention_realtime_notify' AND NOT p.prosecdef AND
+      (c.relname,t.tgname) IN (('AttentionConversation','attention_realtime_conversation'),
+        ('AttentionMessage','attention_realtime_message'),('AttentionMetaOutbox','attention_realtime_outbox'))`);
+    if (realtime[0]?.active !== true) throw new AttentionSchemaMismatch("AttentionConversation.REALTIME_TRIGGERS");
   }
 }
 
@@ -109,7 +117,7 @@ try {
   await verifySchema(client, true);
   await client.query(await readFile(new URL("./setup-atencion.sql", import.meta.url), "utf8"));
   await verifySchema(client, false);
-  console.log("Esquema de atención verificado: 10 tablas, columnas y claves compatibles; closedAt, daptaMessagesCursor, persistencia Meta y auditoría inmutable activos. No se conectó ni modificó ningún proveedor.");
+  console.log("Esquema de atención verificado: 10 tablas, columnas y claves compatibles; closedAt, daptaMessagesCursor, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.");
 } catch (error) {
   if (error instanceof AttentionSchemaMismatch) throw error;
   const code = String(error?.code || "").replace(/[^A-Z0-9_]/gi, "").slice(0, 24);

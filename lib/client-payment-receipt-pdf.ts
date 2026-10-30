@@ -1,6 +1,8 @@
 import PDFDocument from "pdfkit";
 
 export type ClientPaymentReceiptPdfInput = {
+  /** Optional stable metadata for the same server-generated receipt in concurrent retries. */
+  documentCreatedAt?: Date;
   receiptNumber: string;
   paymentDate: Date;
   paymentMethod: string | null;
@@ -235,7 +237,8 @@ export async function buildClientPaymentReceiptPdf(input: ClientPaymentReceiptPd
   const doc = new PDFDocument({
     autoFirstPage: false, margin: 0, compress: true,
     info: { Title: `Recibo de pago ${textValue(input.receiptNumber)}`, Author: "FINSER PAY",
-      Subject: "Comprobante de abono registrado", Keywords: "FINSER PAY, recibo, abono" },
+      Subject: "Comprobante de abono registrado", Keywords: "FINSER PAY, recibo, abono",
+      ...(input.documentCreatedAt ? { CreationDate: input.documentCreatedAt, ModDate: input.documentCreatedAt } : {}) },
   });
   const bufferPromise = toBuffer(doc);
   function configureFont(size: number, bold = false) {

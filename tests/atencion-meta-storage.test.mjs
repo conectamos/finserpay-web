@@ -35,7 +35,7 @@ async function fixture(t,opts={}){
     CREATE TABLE "Sede"(id integer PRIMARY KEY,nombre text,"aliadoId" integer,activa boolean);
     CREATE TABLE "Usuario"(id integer PRIMARY KEY,nombre text,activo boolean,"sedeId" integer,"rolId" integer);
     CREATE TABLE "Vendedor"(id integer PRIMARY KEY);
-    CREATE TABLE "Credito"(id integer PRIMARY KEY,"clienteTelefono" text,"clienteNombre" text,"clienteDocumento" text);
+    CREATE TABLE "Credito"(id integer PRIMARY KEY,"clienteTelefono" text,"clienteNombre" text,"clienteDocumento" text,estado text DEFAULT 'ACTIVO');
     CREATE TABLE "CreditoBorrador"(id integer PRIMARY KEY,"creditoId" integer,"clienteNombre" text,"clienteDocumento" text,"clienteTelefono" text);
     INSERT INTO "Rol" VALUES(1,'ADMIN'),(3,'ANALISTA_APROBACION');
     INSERT INTO "Aliado" VALUES(1,'FINSERPAY',true);
@@ -222,7 +222,10 @@ test("auditoría exige usuario real o SYSTEM_META explícito y sigue inmutable",
 test("detalle y capacidad siguen leyendo el esquema anterior sin Meta ni DDL en requests",async t=>{
   const f=await fixture(t);await f.legacy.importAttentionSnapshots(central,[snapshot({phone:null})]);
   const id=(await f.db.query('SELECT id FROM "AttentionConversation"')).rows[0].id;
-  await f.db.exec(`DROP TABLE "AttentionMetaDelivery","AttentionMetaOutbox","AttentionMetaBinding";
+  // Recreate the pre-Meta schema, which also predates realtime triggers.
+  await f.db.exec(`DROP TRIGGER attention_realtime_conversation ON "AttentionConversation";
+    DROP TRIGGER attention_realtime_message ON "AttentionMessage";
+    DROP TABLE "AttentionMetaDelivery","AttentionMetaOutbox","AttentionMetaBinding";
     ALTER TABLE "AttentionConversation" DROP COLUMN "metaManaged",DROP COLUMN "metaLastInboundAt";
     ALTER TABLE "AttentionMessage" DROP COLUMN "metaWamid",DROP COLUMN "metaPhoneNumberId",DROP COLUMN attachment,DROP COLUMN "deliveryStatus",DROP COLUMN "deliveryAt",DROP COLUMN "replyToWamid";
     ALTER TABLE "AttentionAudit" DROP CONSTRAINT "AttentionAudit_actor",DROP COLUMN "actorKind",DROP COLUMN "actorKey";`);

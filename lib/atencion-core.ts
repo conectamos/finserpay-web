@@ -13,9 +13,12 @@ export function attentionText(value: unknown, max: number, required = true): str
   if ((required && !text) || text.length > max) throw new AttentionError(`El texto debe contener entre ${required ? 1 : 0} y ${max} caracteres.`);
   return text;
 }
+export function isAttentionSystemTag(value: string): boolean {
+  return value.normalize("NFKC").replace(/[\s\p{Cf}]+/gu, "").toUpperCase() === "FINSERPAY";
+}
 /** Exact E.164 comparison; Colombia's local ten-digit mobile format is the only inferred country. */
 export function normalizeAttentionPhone(value: unknown): string {
-  if (typeof value !== "string" || !/^[+\d\s().-]+$/.test(value.trim())) throw new AttentionError("Ingresa un teléfono válido con indicativo de país.");
+  if (typeof value !== "string" || !/^(?:\+|00)?[\d\s().-]+$/.test(value.trim())) throw new AttentionError("Ingresa un teléfono válido con indicativo de país.");
   let digits = value.replace(/\D/g, "");
   if (digits.startsWith("00")) digits = digits.slice(2);
   if (/^3\d{9}$/.test(digits)) digits = `57${digits}`;
@@ -65,7 +68,9 @@ export function parseAttentionMutation(body: Record<string, unknown>): Attention
   if (result.action === "note" || result.action === "task") result.text = attentionText(body.text, result.action === "note" ? 4000 : 240);
   if (result.action === "tags") {
     if (!Array.isArray(body.tags) || body.tags.length > 8) throw new AttentionError("Puedes usar hasta ocho etiquetas.");
-    result.tags = [...new Set(body.tags.map(tag => attentionText(tag, 40)))];
+    const tags = body.tags.map(tag => attentionText(attentionText(tag, 40).normalize("NFKC").replace(/\s+/g, " "), 40));
+    if (tags.some(isAttentionSystemTag)) throw new AttentionError("La etiqueta FINSERPAY se asigna automáticamente al identificar un crédito.");
+    result.tags = [...new Map(tags.map(tag => [tag.toLocaleLowerCase("es-CO"), tag])).values()];
   }
   if (result.action === "task") {
     if (body.dueAt === null || body.dueAt === undefined || body.dueAt === "") result.dueAt = null;

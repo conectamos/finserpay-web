@@ -7,7 +7,14 @@ const requestId = "10000000-0000-4000-8000-000000000001";
 test("teléfonos colombianos coinciden exactamente sin igualar sufijos extranjeros", () => {
   for (const value of ["3001234567", "+57 (300) 123-4567", "00573001234567"]) assert.equal(normalizeAttentionPhone(value), "+573001234567");
   assert.notEqual(normalizeAttentionPhone("+13001234567"), normalizeAttentionPhone("3001234567"));
-  for (const value of ["", "300", "a3001234567", "+", 3001234567]) assert.throws(() => normalizeAttentionPhone(value));
+  for (const value of ["", "300", "a3001234567", "+", "++573001234567", "57+3001234567", 3001234567]) assert.throws(() => normalizeAttentionPhone(value));
+});
+
+test("etiquetas manuales son independientes y FINSERPAY está reservada al servidor", () => {
+  const base = { action: "tags", version: 1, requestId };
+  assert.deepEqual(parseAttentionMutation({ ...base, tags: [" Prospecto ", "prospecto", "Consulta"] }).tags, ["prospecto", "Consulta"]);
+  for (const tag of ["FINSERPAY", "finserpay", "FINSER PAY", "ＦＩＮＳＥＲＰＡＹ", "FINSER\u200bPAY"]) assert.throws(() => parseAttentionMutation({ ...base, tags: [tag] }), { status: 400 });
+  assert.throws(() => parseAttentionMutation({ ...base, tags: Array.from({ length: 9 }, (_, i) => `Etiqueta ${i}`) }));
 });
 test("mutaciones exigen UUID, versión, texto y fechas inequívocas", () => {
   const base = { action: "note", text: "Nota real", version: 1, requestId };

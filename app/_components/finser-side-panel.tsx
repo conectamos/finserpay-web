@@ -5,11 +5,14 @@ import { X } from "lucide-react";
 import { Button } from "./finser-ui";
 import styles from "./finser-side-panel.module.css";
 
-export default function FinserSidePanel({ open, title, closeLabel = "Cerrar panel", busy = false, onClose, children }: {
-  open: boolean; title: string; closeLabel?: string; busy?: boolean; onClose: () => void; children: ReactNode;
+export default function FinserSidePanel({ open, title, closeLabel = "Cerrar panel", busy = false, keepMounted = false, onClose, children }: {
+  open: boolean; title: string; closeLabel?: string; busy?: boolean; keepMounted?: boolean; onClose: () => void; children: ReactNode;
 }) {
   const panel = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const requestClose = () => {
+    if (!busy && !panel.current?.querySelector('[role="alertdialog"][aria-modal="true"]')) onClose();
+  };
   useEffect(() => {
     if (!open || !panel.current) return;
     const element = panel.current;
@@ -24,15 +27,15 @@ export default function FinserSidePanel({ open, title, closeLabel = "Cerrar pane
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!open && !keepMounted) return null;
   return <dialog ref={panel} className={styles.panel} aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
+    onCancel={event => { event.preventDefault(); requestClose(); }}
     onClick={event => {
       if (busy || event.target !== event.currentTarget) return;
       const rect = event.currentTarget.getBoundingClientRect();
-      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) requestClose();
     }}>
-    <header className={styles.header}><h2 id={titleId}>{title}</h2><Button variant="ghost" aria-label={closeLabel} disabled={busy} onClick={onClose}><X aria-hidden="true" /></Button></header>
+    <header className={styles.header}><h2 id={titleId}>{title}</h2><Button variant="ghost" aria-label={closeLabel} disabled={busy} onClick={requestClose}><X aria-hidden="true" /></Button></header>
     <div className={styles.content}>{children}</div>
   </dialog>;
 }

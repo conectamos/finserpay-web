@@ -85,6 +85,8 @@ test("upgrade desde siete tablas conserva historial y atribución y agrega almac
   await database.exec(`INSERT INTO "Usuario" VALUES(1);
     INSERT INTO "AttentionConversation"(id,channel,phone,name,"assigneeKey","assigneeUserId") VALUES('00000000-0000-4000-8000-000000000010','whatsapp','+573001234567','Histórico','analyst:1',1);
     INSERT INTO "AttentionAudit"("conversationId","userId",action) VALUES('00000000-0000-4000-8000-000000000010',1,'HISTORIC');
+    DROP TRIGGER attention_realtime_conversation ON "AttentionConversation";
+    DROP TRIGGER attention_realtime_message ON "AttentionMessage";
     DROP TABLE "AttentionMetaDelivery","AttentionMetaOutbox","AttentionMetaBinding";
     ALTER TABLE "AttentionConversation" DROP COLUMN "metaManaged",DROP COLUMN "metaLastInboundAt";
     ALTER TABLE "AttentionMessage" DROP COLUMN "metaWamid",DROP COLUMN "metaPhoneNumberId",DROP COLUMN attachment,DROP COLUMN "deliveryStatus",DROP COLUMN "deliveryAt",DROP COLUMN "replyToWamid";
@@ -107,6 +109,12 @@ test("postverificación rechaza auditoría desactivada en lugar de anunciar éxi
   const { install, logs, ended } = await fixture(t, { afterSql: database => database.exec('ALTER TABLE "AttentionAudit" DISABLE TRIGGER attention_audit_immutable') });
   await assert.rejects(install(), /AttentionAudit\.APPEND_ONLY_TRIGGER/);
   assert.deepEqual(logs, []); assert.ok(ended());
+});
+
+test("postverificación rechaza eventos en vivo desactivados en lugar de anunciar éxito", async t => {
+  const { install, logs } = await fixture(t, { afterSql: database => database.exec('ALTER TABLE "AttentionMessage" DISABLE TRIGGER attention_realtime_message') });
+  await assert.rejects(install(), /REALTIME_TRIGGERS/);
+  assert.deepEqual(logs, []);
 });
 
 test("SQL instala en public aunque el rol tenga un esquema de búsqueda distinto", async t => {

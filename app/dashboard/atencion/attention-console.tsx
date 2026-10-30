@@ -3,18 +3,22 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, BarChart3, Bell, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Download, ExternalLink, FileText, House, Image as ImageIcon, Inbox, LockKeyhole, Menu, MessageCircle, Mic, Paperclip, Plus, RefreshCw, Search, Send, Settings, ShieldCheck, Tag, UserRound, Users, Video, X, type LucideIcon } from "lucide-react";
-import FinserBrand from "@/app/_components/finser-brand";
-import LogoutButton from "@/app/dashboard/_components/logout-button";
+import { ArrowDown, ArrowLeft, ArrowRight, CalendarClock, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Download, ExternalLink, FileText, Image as ImageIcon, Inbox, LockKeyhole, MessageCircle, Mic, Paperclip, Plus, RefreshCw, Search, Send, ShieldCheck, Tag, UserRound, Users, Video, Wallet, X, type LucideIcon } from "lucide-react";
+import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
+import AnalystNavigation from "@/app/dashboard/aprobaciones/analyst-navigation";
+import FinserSidePanel from "@/app/_components/finser-side-panel";
+import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { Badge, Button, Card, EmptyState, Input, LoadingState, ProgressBar, Select, StatusPill } from "@/app/_components/finser-ui";
 import type { AttentionActor, AttentionConversation, AttentionCustomer, AttentionDetail, AttentionFilters, AttentionInbox, AttentionMessage, AttentionMutation } from "@/lib/atencion-types";
+import type { AttentionExtensionInput, AttentionExtensionResult, AttentionFinancial, AttentionFinancialCredit, AttentionReceiptSendInput } from "@/lib/atencion-financial-types";
+import AttentionComposerTools from "./attention-composer-tools";
 import styles from "./attention.module.css";
 
 type View = "dashboard" | "conversations" | "team" | "settings";
 const DAPTA_INBOX_URL = "https://app.dapta.ai/agents-studio/inbox";
 const statusNames = { pending: "Pendiente", open: "En atención", closed: "Finalizada" } as const;
 const filters: { value: AttentionFilters["filter"]; label: string }[] = [
-  { value: "all", label: "Todas" }, { value: "mine", label: "Mis conversaciones" },
+  { value: "all", label: "Todas" }, { value: "mine", label: "Mías" },
   { value: "pending", label: "Pendientes" }, { value: "closed", label: "Finalizadas" },
 ];
 const money = (value: number | null) => value === null ? "No disponible" : new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value);
@@ -103,6 +107,15 @@ function Status({ conversation }: { conversation: AttentionConversation }) {
 function Metric({ label, value, detail, icon: Icon, warning = false }: { label: string; value: number | string; detail: string; icon: LucideIcon; warning?: boolean }) {
   return <Card className={styles.metric}><span className={`${styles.metricIcon} ${warning ? styles.warningIcon : ""}`}><Icon aria-hidden="true" size={24} strokeWidth={1.8} /></span><div><p>{label}</p><strong>{value}</strong><small>{detail}</small></div></Card>;
 }
+function isReservedTag(value: string) { return value.normalize("NFKC").replace(/\s+/g, "").toUpperCase() === "FINSERPAY"; }
+function CustomerBadge({ conversation }: { conversation: AttentionConversation }) {
+  return conversation.autoTags?.includes("FINSERPAY") ? <span className={styles.finserBadge} title="Cliente con crédito vigente o pagado; clasificación automática"><ShieldCheck aria-hidden="true" size={14} />FINSERPAY</span> : null;
+}
+function ConversationLabels({ conversation }: { conversation: AttentionConversation }) {
+  const manual = conversation.tags.filter(tag => !isReservedTag(tag));
+  if (!conversation.autoTags?.length && !manual.length) return null;
+  return <span className={styles.conversationLabels}><CustomerBadge conversation={conversation} />{manual.slice(0, 2).map(tag => <span className={styles.manualTag} key={tag}>{tag}</span>)}{manual.length > 2 && <span className={styles.moreTags}>+{manual.length - 2}</span>}</span>;
+}
 function privateMediaUrl(value: string | null | undefined) {
   return typeof value === "string" && /^\/api\/atencion\/[0-9a-f-]{36}\/messages\/[0-9a-f-]{36}\/media$/i.test(value) ? value : null;
 }
@@ -131,6 +144,18 @@ function MessageDelivery({ message }: { message: AttentionMessage }) {
   return <span className={`${styles.deliveryStatus} ${status === "failed" || status === "uncertain" ? styles.deliveryAttention : ""}`} title={message.deliveryError || undefined}><Icon aria-hidden="true" size={14} />{deliveryNames[status]}{message.deliveryError && <span>{message.deliveryError}</span>}</span>;
 }
 type ReplyDraft = { text: string; file: File | null; requestId: string | null; version: number | null; locked: boolean; error: string; result: "failed" | "missing" | null };
+type ExtensionAttempt = { input: AttentionExtensionInput; phase: "pending" | "uncertain" | "failed" | "confirmed"; message: string };
+type ReceiptAttempt = { input: AttentionReceiptSendInput; phase: "pending" | "uncertain" | "missing" | "failed" | "confirmed"; message: string };
+type FinancialAttempts = { extension?: ExtensionAttempt; receipt?: ReceiptAttempt };
+type FinancialActions = {
+  attempts: FinancialAttempts;
+  disabled: boolean;
+  accessDenied: (error: unknown) => boolean;
+  grant: (input: AttentionExtensionInput) => Promise<AttentionExtensionResult | null>;
+  sendReceipt: (input: AttentionReceiptSendInput, retrySame?: boolean) => Promise<void>;
+  resolveReceipt: () => Promise<void>;
+  discardReceipt: () => Promise<void>;
+};
 const emptyReply: ReplyDraft = { text: "", file: null, requestId: null, version: null, locked: false, error: "", result: null };
 const replyMimeTypes = ["image/jpeg", "image/png", "audio/aac", "audio/mp4", "audio/mpeg", "audio/amr", "audio/ogg", "video/mp4", "video/3gpp", "application/pdf"];
 function replyValidation(draft: ReplyDraft) {
@@ -148,6 +173,16 @@ function replyWindowOpen(detail: AttentionDetail, now = Date.now()) {
   const expires = Date.parse(detail.messaging?.windowExpiresAt || "");
   return Boolean(detail.permissions.canSend && detail.messaging?.canReply && Number.isFinite(expires) && expires > now);
 }
+function ReplyAudioPreview({ file }: { file: File }) {
+  const player = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    if (!file.type.startsWith("audio/")) return;
+    const url = URL.createObjectURL(file); const audio = player.current;
+    if (audio) audio.src = url;
+    return () => { audio?.pause(); audio?.removeAttribute("src"); URL.revokeObjectURL(url); };
+  }, [file]);
+  return file.type.startsWith("audio/") ? <audio ref={player} controls preload="metadata" className={styles.replyAudioPreview} aria-label={`Escuchar antes de enviar: ${file.name}`} /> : null;
+}
 function ReplyComposer({ detail, draft, busy, change, send, resolve, restart, retry, discard, fallbackDapta }: { detail: AttentionDetail; draft: ReplyDraft; busy: boolean; change: (patch: Partial<ReplyDraft>) => void; send: () => void; resolve: () => void; restart: () => void; retry: () => void; discard: () => void; fallbackDapta: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -162,23 +197,25 @@ function ReplyComposer({ detail, draft, busy, change, send, resolve, restart, re
     : "La ventana de 24 horas terminó. Se necesita una plantilla aprobada para volver a contactar al cliente.";
   const invalid = replyValidation(draft);
   return <form className={styles.replyComposer} aria-label="Responder por WhatsApp" onSubmit={event => { event.preventDefault(); if (canReply && !busy && !draft.locked && !invalid) send(); }}>
-    <div className={styles.replyHeading}><label htmlFor={`reply-${detail.conversation.id}`}>Responder al cliente</label><span><LockKeyhole aria-hidden="true" size={13} /> WhatsApp</span></div>
+    <label className={styles.srOnly} htmlFor={`reply-${detail.conversation.id}`}>Responder al cliente</label>
     {!canReply && <p className={styles.replyUnavailable} role="status">{blockedReason}</p>}
     <textarea id={`reply-${detail.conversation.id}`} rows={2} value={draft.text} disabled={busy || draft.locked || !canReply} onChange={event => change({ text: event.target.value })} maxLength={draft.file ? 1024 : 4096} placeholder={canReply ? "Escribe tu respuesta…" : "El envío aún no está disponible"} />
     {draft.file && <div className={styles.replyAttachment}><FileText aria-hidden="true" size={19} /><span><strong>{draft.file.name}</strong><small>{(draft.file.size / 1024 / 1024).toFixed(2)} MB</small></span><Button type="button" variant="ghost" aria-label="Quitar archivo" disabled={busy || draft.locked} onClick={() => change({ file: null })}><X aria-hidden="true" size={17} /></Button></div>}
+    {draft.file && <ReplyAudioPreview file={draft.file} />}
     {draft.error && <p className={styles.replyError} role="alert">{draft.error}</p>}
     {!draft.error && invalid && (draft.text || draft.file) && <p className={styles.replyError} role="status">{invalid}</p>}
-    <div className={styles.replyActions}><label className={`${styles.attachButton} ${busy || draft.locked || !canReply ? styles.attachDisabled : ""}`}><Paperclip aria-hidden="true" size={17} /><span>Adjuntar</span><input type="file" aria-label="Adjuntar archivo" accept={replyMimeTypes.join(",")} disabled={busy || draft.locked || !canReply} onChange={event => { const file = event.target.files?.[0] || null; if (file) change({ file }); event.target.value = ""; }} /></label>
-      <span className={styles.replyLimit}>{draft.locked ? "Comprueba el estado antes de otro envío." : "JPG/PNG: 5 MB · Otros archivos: 16 MB"}</span>
+
+    <div className={styles.replyActions}><AttentionComposerTools key={detail.conversation.id} conversationId={detail.conversation.id} disabled={busy || draft.locked || !canReply} audioDisabled={Boolean(draft.file || draft.text.trim())} onAudio={file => { if (!draft.text.trim() && !draft.file) change({ file }); }} onEmoji={emoji => { if (!draft.file?.type.startsWith("audio/") && draft.text.length + emoji.length <= (draft.file ? 1024 : 4096)) change({ text: `${draft.text}${emoji}` }); }} /><label title="Adjuntar archivo · JPG/PNG hasta 5 MB; otros formatos hasta 16 MB" className={`${styles.attachButton} ${busy || draft.locked || !canReply ? styles.attachDisabled : ""}`}><Paperclip aria-hidden="true" size={20} /><span className={styles.srOnly}>Adjuntar archivo</span><input type="file" aria-label="Adjuntar archivo" accept={replyMimeTypes.join(",")} disabled={busy || draft.locked || !canReply} onChange={event => { const file = event.target.files?.[0] || null; if (file) change({ file }); event.target.value = ""; }} /></label>
+
       {draft.locked ? <><Button type="button" variant="secondary" disabled={busy} onClick={resolve}><RefreshCw aria-hidden="true" size={16} />{busy ? "Consultando…" : "Consultar estado"}</Button>{draft.result === "missing" && <><Button type="button" variant="secondary" disabled={busy} onClick={discard}>Descartar intento</Button><Button type="button" disabled={busy || !canReply} onClick={retry}>Reintentar misma solicitud</Button></>}{draft.result === "failed" && <Button type="button" disabled={busy || !canReply} onClick={restart}>Preparar nuevo intento</Button>}</> : <Button type="submit" disabled={busy || !canReply || Boolean(invalid)}><Send aria-hidden="true" size={16} />{busy ? "Enviando…" : "Enviar"}</Button>}
     </div>
+    {draft.locked && <p className={styles.replyLimit}>Comprueba el estado antes de otro envío.</p>}
     {fallbackDapta && <a className={styles.daptaFallback} href={DAPTA_INBOX_URL} target="_blank" rel="noopener noreferrer">Responder en Dapta <ExternalLink aria-hidden="true" size={14} /></a>}
   </form>;
 }
 
 export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
-  const [view, setView] = useState<View>("dashboard");
-  const [mobileMenu, setMobileMenu] = useState(false);
+  const [view, setView] = useState<View>("conversations");
   const [inbox, setInbox] = useState<AttentionInbox | null>(null);
   const [detail, setDetail] = useState<AttentionDetail | null>(null);
   const [search, setSearch] = useState("");
@@ -190,7 +227,9 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [refreshNotice, setRefreshNotice] = useState("");
+  const [liveStatus, setLiveStatus] = useState<"connecting" | "connected" | "reconnecting" | "offline" | "paused" | "polling">("connecting");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraft>>({});
+  const [financialAttempts, setFinancialAttempts] = useState<Record<string, FinancialAttempts>>({});
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [showCustomer, setShowCustomer] = useState(false);
@@ -214,14 +253,16 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const syncingRef = useRef(false);
   const foregroundReads = useRef(0);
   const pollController = useRef<AbortController | null>(null);
+  const liveAccessBlocked = useRef(false);
   const replyController = useRef<AbortController | null>(null);
   const replyDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const financialController = useRef<AbortController | null>(null);
+  const financialDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopSync = useRef(false);
   const mounted = useRef(true);
   const newRequestKey = useRef<string | null>(null);
   const mutationKey = useRef<{ payload: string; id: string } | null>(null);
   const chatHeading = useRef<HTMLHeadingElement>(null);
-  const customerHeading = useRef<HTMLHeadingElement>(null);
   const messageLog = useRef<HTMLDivElement>(null);
   const displayedHistory = useRef<string | null>(null);
   const followLatest = useRef(true);
@@ -233,14 +274,13 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   const analysts = inbox?.team.filter(person => person.key.startsWith("analyst:")) ?? [];
   const team = dashboard?.team.filter(person => person.key.startsWith("analyst:")) ?? [];
   const activeConversations = dashboard?.activeConversations ?? [];
-  const role = currentActor.central ? "Administración de atención" : "Analista de atención";
 
   const clearInaccessibleData = useCallback((message: string) => {
-    ++listRequest.current; ++detailRequest.current;
+    ++listRequest.current; ++detailRequest.current; liveAccessBlocked.current = true;
     inboxReadError.current = true; detailReadError.current = false;
     selectionRef.current = null;
     setInbox(null); setDetail(null); setSelected(null); setShowCustomer(false);
-    setReplyDrafts({});
+    setReplyDrafts({}); setFinancialAttempts({});
     setLoading(false); setDetailLoading(false); setDetailError(""); setError(message);
   }, []);
   const quickReplyBusyChanged = useCallback((value: boolean) => {
@@ -255,7 +295,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     try {
       const query = new URLSearchParams({ search, filter, page: String(page) });
       const result = await api<AttentionInbox>(`/api/atencion?${query}`, { signal });
-      if (mounted.current && !signal?.aborted && request === listRequest.current) setInbox(result);
+      if (mounted.current && !signal?.aborted && request === listRequest.current) { liveAccessBlocked.current = false; setInbox(result); }
     } catch (err) {
       if (mounted.current && !signal?.aborted && request === listRequest.current) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
@@ -283,7 +323,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   }, [loadInbox, syncRevision]);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; stopSync.current = true; replyController.current?.abort(); if (replyDeadline.current) clearTimeout(replyDeadline.current); };
+    return () => { mounted.current = false; stopSync.current = true; replyController.current?.abort(); if (replyDeadline.current) clearTimeout(replyDeadline.current); financialController.current?.abort(); if (financialDeadline.current) clearTimeout(financialDeadline.current); };
   }, []);
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -302,9 +342,18 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
   useEffect(() => {
     let disposed = false;
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    let source: EventSource | null = null;
+    let streamReady = false;
+    let retryCount = 0;
+    let lastFrameAt = 0;
+    let invalidated = false;
+    let refreshing = false;
+    let queued: ReturnType<typeof setTimeout> | undefined;
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    const supported = typeof EventSource !== "undefined";
     const readable = () => document.visibilityState === "visible" && navigator.onLine;
     const refresh = async () => {
-      if (disposed || !mounted.current || !readable() || foregroundReads.current || busyRef.current || syncingRef.current || pollController.current) return;
+      if (disposed || !mounted.current || liveAccessBlocked.current || !readable() || foregroundReads.current || busyRef.current || syncingRef.current || pollController.current) return false;
       const controller = new AbortController(); pollController.current = controller;
       const listVersion = listRequest.current; const detailVersion = detailRequest.current;
       const id = view === "conversations" ? selectionRef.current : null;
@@ -317,11 +366,12 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
       const failed = (err: unknown, detailRead: boolean) => {
         if (!current()) return;
         if (err instanceof ApiError && [401, 403].includes(err.status)) {
-          clearInaccessibleData(errorMessage(err)); controller.abort();
+          clearInaccessibleData(errorMessage(err)); closeStream(); controller.abort();
         } else if (detailRead && err instanceof ApiError && err.status === 404) {
           // Reassignment is deliberately reported as 404 by the scoped API.
           detailReadError.current = true;
-          setDetail(null); setDetailError("Esta conversación ya no está disponible para tu cuenta.");
+          setDetail(null); setShowCustomer(false); setDetailError("Esta conversación ya no está disponible para tu cuenta.");
+          if (id) { setReplyDrafts(value => { const next = { ...value }; delete next[id]; return next; }); setFinancialAttempts(value => { const next = { ...value }; delete next[id]; return next; }); }
         } else temporaryFailure = true;
       };
       try {
@@ -341,24 +391,95 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
         if (current() || timedOut && !disposed && mounted.current && listVersion === listRequest.current && detailVersion === detailRequest.current) {
           setRefreshNotice(temporaryFailure || timedOut ? "No se pudo actualizar la vista. Conservamos los últimos datos cargados y volveremos a intentarlo." : "");
         }
+        return !temporaryFailure && !timedOut && current();
       } finally {
         clearTimeout(timeout);
         if (deadline === timeout) deadline = undefined;
         if (pollController.current === controller) pollController.current = null;
       }
     };
-    const environmentChanged = () => { if (!readable()) pollController.current?.abort(); };
-    const timer = setInterval(() => { void refresh(); }, 20_000);
+    function closeStream() {
+      streamReady = false;
+      if (source) { source.close(); source = null; }
+      if (reconnect) { clearTimeout(reconnect); reconnect = undefined; }
+    }
+    function queueRefresh(delay = 250) {
+      invalidated = true;
+      if (disposed || queued || refreshing || liveAccessBlocked.current || !readable()) return;
+      queued = setTimeout(async () => {
+        queued = undefined;
+        if (disposed || !invalidated || liveAccessBlocked.current || !readable()) return;
+        invalidated = false; refreshing = true;
+        const deferred = Boolean(foregroundReads.current || busyRef.current || syncingRef.current || pollController.current);
+        const completed = await refresh();
+        refreshing = false;
+        if (!completed) invalidated = true;
+        if (invalidated && !disposed) queueRefresh(completed ? 250 : deferred ? 1_000 : 5_000);
+      }, delay);
+    }
+    function connect() {
+      if (disposed || source || !readable() || liveAccessBlocked.current) return;
+      if (!supported) { setLiveStatus("polling"); return; }
+      setLiveStatus(retryCount ? "reconnecting" : "connecting");
+      const connection = new EventSource("/api/atencion/events");
+      source = connection; lastFrameAt = Date.now();
+      const active = () => !disposed && source === connection && !liveAccessBlocked.current;
+      connection.addEventListener("ready", () => {
+        if (!active()) return;
+        lastFrameAt = Date.now(); streamReady = true; retryCount = 0; setLiveStatus("connected");
+      });
+      connection.addEventListener("invalidate", () => { if (active()) { lastFrameAt = Date.now(); queueRefresh(); } });
+      connection.addEventListener("degraded", () => {
+        if (!active()) return;
+        lastFrameAt = Date.now(); streamReady = false; setLiveStatus("reconnecting");
+      });
+      connection.addEventListener("heartbeat", event => {
+        if (!active()) return;
+        lastFrameAt = Date.now();
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as { connected?: boolean };
+          if (typeof payload.connected === "boolean") { streamReady = payload.connected; setLiveStatus(streamReady ? "connected" : "reconnecting"); }
+        } catch { /* A malformed heartbeat never claims a live connection. */ }
+      });
+      connection.addEventListener("unauthorized", () => {
+        if (!active()) return;
+        closeStream(); clearInaccessibleData("Tu acceso a Atención cambió. Actualiza la página para volver a consultar tus permisos.");
+        setLiveStatus("paused");
+      });
+      connection.onerror = () => {
+        if (!active()) return;
+        closeStream(); setLiveStatus(navigator.onLine ? "reconnecting" : "offline");
+        if (!readable()) return;
+        const delay = Math.min(30_000, 1_000 * 2 ** Math.min(retryCount++, 5)) + Math.floor(Math.random() * 1_000);
+        reconnect = setTimeout(() => { reconnect = undefined; connect(); }, delay);
+      };
+    }
+    const environmentChanged = () => {
+      if (!readable()) {
+        pollController.current?.abort(); closeStream();
+        if (queued) { clearTimeout(queued); queued = undefined; }
+        setLiveStatus(navigator.onLine ? "paused" : "offline");
+      } else { connect(); queueRefresh(); }
+    };
+    const initial = setTimeout(() => { if (readable()) connect(); else setLiveStatus(navigator.onLine ? "paused" : "offline"); }, 0);
+    const timer = setInterval(() => {
+      if (source && Date.now() - lastFrameAt > 45_000) { closeStream(); retryCount++; setLiveStatus("reconnecting"); }
+      if (!streamReady) void refresh();
+      if (!source && !reconnect && !liveAccessBlocked.current) connect();
+    }, 20_000);
     document.addEventListener("visibilitychange", environmentChanged);
     window.addEventListener("offline", environmentChanged);
+    window.addEventListener("online", environmentChanged);
     return () => {
-      disposed = true; clearInterval(timer); pollController.current?.abort();
+      disposed = true; clearInterval(timer); clearTimeout(initial); closeStream(); pollController.current?.abort();
+      if (queued) clearTimeout(queued);
       if (deadline) clearTimeout(deadline);
       document.removeEventListener("visibilitychange", environmentChanged);
       window.removeEventListener("offline", environmentChanged);
+      window.removeEventListener("online", environmentChanged);
     };
   }, [filter, page, search, selected, view, clearInaccessibleData]);
-  useEffect(() => { if (selected) (showCustomer ? customerHeading : chatHeading).current?.focus({ preventScroll: true }); }, [selected, showCustomer, view]);
+  useEffect(() => { if (selected && !showCustomer) chatHeading.current?.focus({ preventScroll: true }); }, [selected, showCustomer, view]);
   const historyId = detail?.conversation.id;
   const historyLength = detail?.messages.length;
   const historyTail = detail?.messages[detail.messages.length - 1]?.id;
@@ -386,7 +507,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     log.scrollTop = log.scrollHeight;
     followLatest.current = true; setShowLatest(false);
   }
-  function navigate(next: View) { setView(next); setMobileMenu(false); setShowNew(false); }
+  function navigate(next: View) { setView(next); setShowNew(false); setShowCustomer(false); }
   function refreshCurrentView() {
     void loadInbox();
     if (view === "conversations" && selectionRef.current) void loadDetail(selectionRef.current);
@@ -396,7 +517,7 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     detailReadError.current = false;
     selectionRef.current = id; ++detailRequest.current; setSelected(id); setDetail(null); setDetailError("");
     setDetailLoading(Boolean(id)); setShowCustomer(false); setShowLatest(false); displayedHistory.current = null; followLatest.current = true; mutationKey.current = null;
-    if (id) { setView("conversations"); setMobileMenu(false); }
+    if (id) { setView("conversations"); }
   }
   async function mutate(input: Omit<AttentionMutation, "version" | "requestId">) {
     if (!detail || busyRef.current) return false;
@@ -521,6 +642,112 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
       busyRef.current = false; if (mounted.current) setBusy(false);
     }
   }
+  function updateFinancialAttempt(id: string, patch: Partial<FinancialAttempts>) {
+    if (mounted.current) setFinancialAttempts(current => ({ ...current, [id]: { ...current[id], ...patch } }));
+  }
+  function handleFinancialAccessError(id: string, error: unknown) {
+    if (!(error instanceof ApiError)) return false;
+    if ([401, 403].includes(error.status)) { clearInaccessibleData(errorMessage(error)); return true; }
+    if (error.status !== 404) return false;
+    if (selectionRef.current === id) {
+      pollController.current?.abort(); ++detailRequest.current; detailReadError.current = true;
+      setDetail(null); setDetailLoading(false); setShowCustomer(false); setDetailError("Esta conversación ya no está disponible para tu cuenta.");
+      setReplyDrafts(current => { const next = { ...current }; delete next[id]; return next; });
+      setFinancialAttempts(current => { const next = { ...current }; delete next[id]; return next; });
+      void loadInbox();
+    }
+    return true;
+  }
+  async function withFinancialOperation<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    pollController.current?.abort(); busyRef.current = true; setBusy(true);
+    const controller = new AbortController(); financialController.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 60_000); financialDeadline.current = timeout;
+    try { return await operation(controller.signal); }
+    finally {
+      clearTimeout(timeout); if (financialDeadline.current === timeout) financialDeadline.current = null;
+      if (financialController.current === controller) financialController.current = null;
+      busyRef.current = false; if (mounted.current) setBusy(false);
+    }
+  }
+  async function refreshAfterFinancialAction(id: string) {
+    if (mounted.current) await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]);
+  }
+  async function grantExtension(id: string, input: AttentionExtensionInput) {
+    if (busyRef.current || syncingRef.current || selectionRef.current !== id) return null;
+    const previous = financialAttempts[id]?.extension;
+    if (previous && ["pending", "uncertain"].includes(previous.phase) && previous.input.requestId !== input.requestId) return null;
+    const actual = previous && ["pending", "uncertain"].includes(previous.phase) ? previous.input : input;
+    updateFinancialAttempt(id, { extension: { input: actual, phase: "pending", message: "Registrando la prórroga…" } });
+    return withFinancialOperation(async signal => {
+      try {
+        const result = await api<AttentionExtensionResult>(`/api/atencion/${encodeURIComponent(id)}/extensions`, { method: "POST", body: JSON.stringify(actual), signal });
+        if (!result.extension?.id || !result.extension.status) throw new Error("El servidor no confirmó la prórroga. Revisa la misma solicitud.");
+        const stateNames = { APPROVED: "aprobada", EXPIRED: "vencida", CANCELLED: "cancelada", REPLACED: "reemplazada", REJECTED: "rechazada", PENDING: "pendiente" };
+        const message = `${result.unchanged ? `Operación ya registrada: prórroga ${stateNames[result.extension.status]}` : result.extension.status === "APPROVED" ? "Prórroga concedida" : `Prórroga ${stateNames[result.extension.status]}`} · ${date(result.extension.expiresOn, true)}.${result.moraSync && !result.moraSync.ok ? ` ${result.moraSync.message}` : ""}`;
+        updateFinancialAttempt(id, { extension: { input: actual, phase: "confirmed", message } });
+        await refreshAfterFinancialAction(id); return result;
+      } catch (err) {
+        if (!handleFinancialAccessError(id, err)) {
+          const rejected = err instanceof ApiError && [400, 404, 409, 422].includes(err.status);
+          updateFinancialAttempt(id, { extension: { input: actual, phase: rejected ? "failed" : "uncertain", message: `${errorMessage(err)}${rejected ? " Actualiza los datos antes de revisar otra solicitud." : " Conservamos la solicitud para comprobarla sin duplicar la prórroga."}` } });
+        }
+        return null;
+      }
+    });
+  }
+  function recordReceiptResult(id: string, input: AttentionReceiptSendInput, message: AttentionMessage | null, uncertain = false) {
+    const status = uncertain ? "uncertain" : message?.deliveryStatus;
+    const confirmed = status && ["accepted", "sent", "delivered", "read"].includes(status);
+    updateFinancialAttempt(id, { receipt: { input,
+      phase: confirmed ? "confirmed" : message === null ? "missing" : status === "failed" ? "failed" : "uncertain",
+      message: confirmed ? `Recibo: ${deliveryNames[status as keyof typeof deliveryNames].toLowerCase()}.`
+        : message === null ? "El envío no aparece registrado. Puedes repetir únicamente esta misma solicitud o descartarla tras confirmación del servidor."
+        : status === "failed" ? message?.deliveryError || "WhatsApp confirmó que el recibo no fue enviado."
+        : "El envío del recibo está pendiente de confirmación. Consulta su estado antes de volver a enviarlo.",
+    } });
+  }
+  async function sendReceipt(id: string, input: AttentionReceiptSendInput, retrySame = false) {
+    if (busyRef.current || syncingRef.current || selectionRef.current !== id || !detail || detail.conversation.id !== id || !replyWindowOpen(detail)) return;
+    const previous = financialAttempts[id]?.receipt;
+    const locked = previous && ["pending", "uncertain", "missing"].includes(previous.phase);
+    if (locked && !(retrySame && previous.phase === "missing" && input.requestId === previous.input.requestId)) return;
+    const actual = retrySame && previous ? previous.input : input;
+    updateFinancialAttempt(id, { receipt: { input: actual, phase: "pending", message: "Enviando el recibo…" } });
+    await withFinancialOperation(async signal => {
+      try {
+        const result = await api<{ message: AttentionMessage; uncertain?: boolean }>(`/api/atencion/${encodeURIComponent(id)}/receipts/latest/send`, { method: "POST", body: JSON.stringify(actual), signal });
+        recordReceiptResult(id, actual, result.message, result.uncertain);
+        await refreshAfterFinancialAction(id);
+      } catch (err) {
+        if (!handleFinancialAccessError(id, err)) updateFinancialAttempt(id, { receipt: { input: actual, phase: "uncertain", message: `${errorMessage(err)} Consulta el estado del recibo antes de otro envío.` } });
+      }
+    });
+  }
+  async function resolveReceipt(id: string) {
+    const attempt = financialAttempts[id]?.receipt;
+    if (!attempt || busyRef.current || syncingRef.current || selectionRef.current !== id) return;
+    await withFinancialOperation(async signal => {
+      try {
+        const result = await api<{ message: AttentionMessage | null }>(`/api/atencion/${encodeURIComponent(id)}/messages?requestId=${encodeURIComponent(attempt.input.requestId)}`, { signal });
+        recordReceiptResult(id, attempt.input, result.message); await refreshAfterFinancialAction(id);
+      } catch (err) {
+        if (!handleFinancialAccessError(id, err)) updateFinancialAttempt(id, { receipt: { ...attempt, message: `No se pudo comprobar el envío. ${errorMessage(err)}` } });
+      }
+    });
+  }
+  async function discardReceipt(id: string) {
+    const attempt = financialAttempts[id]?.receipt;
+    if (!attempt || attempt.phase !== "missing" || busyRef.current || syncingRef.current || selectionRef.current !== id) return;
+    await withFinancialOperation(async signal => {
+      try {
+        const result = await api<{ cancelled: boolean }>(`/api/atencion/${encodeURIComponent(id)}/messages?requestId=${encodeURIComponent(attempt.input.requestId)}`, { method: "DELETE", signal });
+        if (result.cancelled !== true) throw new Error("No se confirmó el descarte. El intento sigue pendiente.");
+        updateFinancialAttempt(id, { receipt: undefined }); await refreshAfterFinancialAction(id);
+      } catch (err) {
+        if (!handleFinancialAccessError(id, err)) updateFinancialAttempt(id, { receipt: { ...attempt, message: errorMessage(err) } });
+      }
+    });
+  }
   async function createCase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busyRef.current) return;
     pollController.current?.abort();
@@ -562,37 +789,21 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
     } catch (err) { if (mounted.current) setSyncError(errorMessage(err)); }
     finally { syncingRef.current = false; if (mounted.current) { setSyncing(false); setStoppingSync(false); setSyncWaitSeconds(0); } }
   }
-  const viewTitles = { dashboard: "Dashboard de atención", conversations: "Conversaciones", team: "Equipo de analistas", settings: "Configuración de atención" };
-  const viewDescriptions = { dashboard: "Resumen del equipo", conversations: "Todos tus clientes, una sola bandeja", team: "Asignación y seguimiento del equipo de atención", settings: "Canal de WhatsApp y respuestas aprobadas" };
-  function navButton(target: View, label: string, Icon: LucideIcon, count?: number) {
-    return <button type="button" className={view === target ? styles.activeNav : undefined} aria-current={view === target ? "page" : undefined} onClick={() => navigate(target)}><Icon aria-hidden="true" size={21} strokeWidth={1.8} /><span>{label}</span>{typeof count === "number" && count > 0 && <small>{count}</small>}</button>;
+  const viewTitles = { dashboard: "Resumen del equipo", conversations: "Conversaciones", team: "Equipo de analistas", settings: "Configuración" };
+  function navButton(target: View, label: string) {
+    return <button type="button" className={view === target ? styles.activeNav : undefined} aria-current={view === target ? "page" : undefined} onClick={() => navigate(target)}>{label}</button>;
   }
-  return <div className={styles.shell}>
-    <aside className={`${styles.sidebar} ${mobileMenu ? styles.sidebarOpen : ""}`}>
-      <Link className={styles.brand} href="/dashboard" aria-label="FINSER PAY, plataforma"><FinserBrand accentFinser wordmarkOnly showTagline={false} /></Link>
-      <nav aria-label="Navegación de atención" className={styles.sideNav}>
-        {navButton("dashboard", "Dashboard", House)}
-        {navButton("conversations", "Conversaciones", MessageCircle, inbox?.metrics.pending)}
-        {currentActor.central && <Link href="/dashboard/clientes"><Users aria-hidden="true" size={21} strokeWidth={1.8} /><span>Clientes</span></Link>}
-        <Link href={currentActor.central ? "/dashboard/solicitudes" : "/dashboard/aprobaciones/solicitudes"}><FileText aria-hidden="true" size={21} strokeWidth={1.8} /><span>Estudios de crédito</span></Link>
-        {currentActor.central && <Link href="/dashboard/reportes"><BarChart3 aria-hidden="true" size={21} strokeWidth={1.8} /><span>Reportes</span></Link>}
-        {navButton("team", "Equipo", Users)}
-        {navButton("settings", "Configuración", Settings)}
-      </nav>
-      <div className={styles.sidebarBottom}><div className={styles.supportCard}><strong>¡Estamos<br />para ayudarte!</strong><p>Brinda la mejor<br />experiencia a<br />nuestros clientes.</p><Image src="/assets/clientes/mascot-welcome.webp" alt="" width={128} height={190} /></div><Link href={currentActor.central ? "/dashboard" : "/dashboard/aprobaciones"} className={styles.returnLink}><ArrowLeft aria-hidden="true" size={15} /> Volver a la plataforma</Link></div>
-    </aside>
-    <div className={styles.content}>
-      <header className={styles.topbar}>
-        <Button variant="ghost" className={styles.menuButton} onClick={() => setMobileMenu(value => !value)} aria-label={mobileMenu ? "Cerrar navegación" : "Abrir navegación"} aria-expanded={mobileMenu}><Menu aria-hidden="true" size={22} /></Button>
-        <form className={styles.globalSearch} onSubmit={event => { event.preventDefault(); navigate("conversations"); }}><Search aria-hidden="true" size={21} /><label className={styles.srOnly} htmlFor="attention-global-search">Buscar clientes, conversaciones o teléfonos</label><Input id="attention-global-search" value={search} maxLength={100} onChange={event => { setSearch(event.target.value); setPage(1); if (event.target.value) setView("conversations"); }} placeholder="Buscar clientes, conversaciones o teléfonos…" /></form>
-        <button className={styles.notifications} type="button" aria-label="Ver conversaciones pendientes" onClick={() => { setFilter("pending"); setPage(1); navigate("conversations"); }}><Bell aria-hidden="true" size={23} />{Boolean(inbox?.metrics.pending) && <i />}</button>
-        <details className={styles.profile}><summary><span className={styles.profileAvatar}>{initials(currentActor.name)}</span><span><strong>{currentActor.name}</strong><small>{role}</small></span><ChevronDown aria-hidden="true" size={16} /></summary><div className={styles.profileMenu}><p>{currentActor.name}<small>{role}</small></p><LogoutButton showIcon className={styles.logout} /></div></details>
-      </header>
-      <main className={styles.main}>
-        <div className={`${styles.pageHeading} ${view === "dashboard" ? styles.dashboardHeading : ""}`}>
-          <div><h1>{viewTitles[view]}</h1><p>{viewDescriptions[view]}</p></div>
-          {view === "dashboard" ? <div className={styles.greeting}><div><h2><span>¡Hola,</span> {currentActor.name.trim().split(/\s+/)[0]}!</h2><p>Juntos hacemos que más<br />personas avancen.</p></div><Image src="/assets/clientes/mascot-welcome.webp" alt="Mascota FINSER PAY" width={154} height={228} /></div> : <div className={styles.headingActions}><Button variant="secondary" onClick={refreshCurrentView} disabled={loading || detailLoading || busy}><RefreshCw aria-hidden="true" size={16} /> Actualizar</Button>{view === "conversations" && currentActor.central && <Button onClick={() => { setShowNew(value => !value); newRequestKey.current = null; }} disabled={!contentReady || busy}><Plus aria-hidden="true" size={17} /> Nueva gestión</Button>}</div>}
-        </div>
+  return <div className={`${styles.shell} ${view === "conversations" ? styles.crmShell : ""}`}>
+    {currentActor.central
+      ? <FinserNavigation admin adminCentral nombreUsuario={currentActor.name} rolUsuario="ADMIN" variant="administration" activeSection="operation" />
+      : <AnalystNavigation userName={currentActor.name} userRole="ANALISTA_APROBACION" compact centralAdmin={false} />}
+    <div className={styles.moduleBar}>
+      <div className={styles.moduleIdentity}><h1>Atención</h1>{!currentActor.central && <Link href="/dashboard/aprobaciones/centro" aria-label="Volver al Centro del analista"><ArrowLeft aria-hidden="true" size={16} /> Centro</Link>}</div>
+      <nav className={styles.moduleTabs} aria-label="Navegación de atención">{navButton("conversations", "Conversaciones")}{navButton("dashboard", "Resumen")}{navButton("team", "Equipo")}{navButton("settings", "Configuración")}</nav>
+      <div className={styles.moduleActions}><span className={`${styles.liveConnection} ${liveStatus === "connected" ? styles.liveConnected : ""}`} role="status"><i aria-hidden="true" />{{ connected: "Conectado", connecting: "Conectando…", reconnecting: "Reconectando…", offline: "Sin conexión", paused: "En pausa", polling: "Actualización periódica" }[liveStatus]}</span><Button variant="ghost" aria-label="Actualizar" title="Actualizar vista" onClick={refreshCurrentView} disabled={loading || detailLoading || busy}><RefreshCw aria-hidden="true" size={18} /></Button></div>
+    </div>
+    <main className={`${styles.main} ${view === "conversations" ? styles.crmMain : ""}`}>
+      {view !== "conversations" && <div className={styles.pageHeading}><h2>{viewTitles[view]}</h2>{view === "dashboard" && <p>Actividad y seguimiento del equipo de atención</p>}</div>}
         {error && <div className={styles.error} role="alert"><span>{error}</span><Button variant="secondary" onClick={() => void loadInbox()} disabled={loading || busy}>Reintentar</Button></div>}
         {notice && <div className={styles.notice} role="status"><Check aria-hidden="true" size={18} /><span>{notice}</span><Button variant="ghost" aria-label="Ocultar confirmación" onClick={() => setNotice("")}><X size={16} aria-hidden="true" /></Button></div>}
         {refreshNotice && <p className={styles.muted} role="status">{refreshNotice}</p>}
@@ -610,36 +821,36 @@ export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
             <Card className={styles.chartCard}><div className={styles.cardHeading}><h2>Conversaciones por día</h2><span className={styles.period}>Últimos 7 días <ChevronDown aria-hidden="true" size={15} /></span></div><ConversationChart days={dashboard?.daily ?? []} loading={loading && !inbox} /><p className={styles.chartCaption}>Conversaciones con mensajes recibidos · hora de Colombia</p></Card>
             <Card className={styles.teamCard}><div className={styles.cardHeading}><h2>Atención del equipo</h2><button className={styles.linkButton} onClick={() => navigate("team")}>Ver equipo <ArrowRight aria-hidden="true" size={15} /></button></div><TeamRows team={team.slice(0, 4)} loading={loading && !inbox} compact /><p className={styles.teamCaption}>Carga de conversaciones abiertas por analista</p></Card>
             <Card className={styles.activityCard}><div className={styles.cardHeading}><h2>Actividad reciente</h2><button className={styles.linkButton} onClick={() => navigate("conversations")}>Ver conversaciones <ArrowRight aria-hidden="true" size={15} /></button></div>{dashboard?.activity.length ? <div className={styles.activityList}>{dashboard.activity.slice(0, 4).map(activity => <div key={activity.id}><span className={styles.activityIcon}><ClipboardList aria-hidden="true" size={18} /></span><div><strong>{activity.title}</strong><p>{activity.description}</p></div><time dateTime={activity.at}>{time(activity.at)}</time>{activity.conversationId && <button type="button" aria-label={`Abrir conversación: ${activity.title}`} className={styles.rowOpen} onClick={() => selectConversation(activity.conversationId)} />}</div>)}</div> : <DashboardEmpty icon={ClipboardList} title="Todo el seguimiento, en un lugar" text={loading ? "Consultando actividad…" : "Las asignaciones, notas y gestiones del equipo aparecerán aquí."} />}</Card>
-            <Card className={styles.currentCard}><div className={styles.cardHeading}><h2>Conversaciones en curso</h2><button className={styles.linkButton} onClick={() => navigate("conversations")}>Ver todas <ArrowRight aria-hidden="true" size={15} /></button></div>{activeConversations.length ? <div className={styles.activeList}>{activeConversations.slice(0, 4).map(conversation => <button type="button" key={conversation.id} onClick={() => selectConversation(conversation.id)}><span className={styles.avatar}>{initials(conversation.name)}</span><span><strong>{conversation.name || "Contacto de WhatsApp"}</strong><small>{conversation.preview || conversation.phone || "Contacto de WhatsApp"}</small></span><time dateTime={conversation.lastContactAt || undefined}>{time(conversation.lastContactAt)}</time><span className={`${styles.statusDot} ${conversation.status === "pending" ? styles.pendingDot : ""}`} aria-label={statusNames[conversation.status]} /></button>)}</div> : <DashboardEmpty icon={MessageCircle} title={loading ? "Consultando conversaciones…" : "Tu bandeja de WhatsApp"} text={currentActor.central ? "Actualiza el canal para consultar las conversaciones reales de Meta." : "Aquí aparecerán los chats que te asigne administración."} action={<Button variant="secondary" onClick={() => navigate("conversations")}>Abrir bandeja <ArrowRight aria-hidden="true" size={15} /></Button>} />}</Card>
+            <Card className={styles.currentCard}><div className={styles.cardHeading}><h2>Conversaciones en curso</h2><button className={styles.linkButton} onClick={() => navigate("conversations")}>Ver todas <ArrowRight aria-hidden="true" size={15} /></button></div>{activeConversations.length ? <div className={styles.activeList}>{activeConversations.slice(0, 4).map(conversation => <button type="button" key={conversation.id} onClick={() => selectConversation(conversation.id)}><span className={styles.avatar}>{initials(conversation.name)}</span><span><strong>{conversation.name || "Contacto de WhatsApp"}</strong><small>{conversation.preview || conversation.phone || "Contacto de WhatsApp"}</small></span><time dateTime={conversation.lastContactAt || undefined}>{time(conversation.lastContactAt)}</time><span className={`${styles.statusDot} ${conversation.status === "pending" ? styles.pendingDot : ""}`} aria-label={statusNames[conversation.status]} /></button>)}</div> : <DashboardEmpty icon={MessageCircle} title={loading ? "Consultando conversaciones…" : "Tu bandeja de WhatsApp"} text={currentActor.central ? "Aquí aparecerán las conversaciones del canal conectado." : "Aquí aparecerán los chats que te asigne administración."} action={<Button variant="secondary" onClick={() => navigate("conversations")}>Abrir bandeja <ArrowRight aria-hidden="true" size={15} /></Button>} />}</Card>
           </div>
           <div className={styles.dashboardFooter}><span><span className={`${styles.channelDot} ${inbox?.integration.configured ? styles.connectedDot : ""}`} /> WhatsApp {inbox?.integration.configured ? "· canal disponible" : "· configuración pendiente"}</span><button className={styles.linkButton} disabled={loading} onClick={() => void loadInbox()}><RefreshCw aria-hidden="true" size={14} /> Actualizar resumen</button></div>
         </>}
 
         {view === "conversations" && <>
-          <div className={styles.crmToolbar}><div><span className={styles.whatsappIcon}><MessageCircle aria-hidden="true" size={18} /></span><strong>WhatsApp</strong><span>Conversaciones de Meta y seguimiento interno</span></div>{currentActor.central && <Button variant="secondary" disabled={!syncRestored || syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Actualizar WhatsApp"}</Button>}</div>
+
           {showNew && <Card className={styles.formCard}><div className={styles.cardHeading}><div><h2>Nueva gestión interna</h2><p>No envía mensajes ni crea otro registro de cliente.</p></div><Button variant="ghost" aria-label="Cerrar nueva gestión" disabled={busy} onClick={() => setShowNew(false)}><X aria-hidden="true" size={18} /></Button></div><form className={styles.newForm} onSubmit={createCase} onChange={() => { if (!busy) newRequestKey.current = null; }}><label>Nombre del contacto<Input name="name" required maxLength={120} autoComplete="off" disabled={busy} /></label><label>Teléfono<Input name="phone" type="tel" required maxLength={24} placeholder="Con indicativo de país" autoComplete="off" disabled={busy} /></label><Button type="submit" disabled={busy}>{busy ? "Guardando…" : "Registrar gestión"}</Button></form></Card>}
-          <section className={`${styles.workspace} ${selected ? styles.hasSelection : ""} ${showCustomer ? styles.showCustomer : ""}`} aria-label="Bandeja de atención">
-            <aside className={styles.inbox} aria-label="Conversaciones"><div className={styles.inboxHeading}><h2>Bandeja de entrada</h2><Badge>{inbox?.total ?? "—"}</Badge></div><label className={styles.search}><Search aria-hidden="true" size={18} /><span className={styles.srOnly}>Buscar conversación</span><Input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Buscar conversación…" maxLength={100} /></label><div className={styles.filters} role="group" aria-label="Filtrar conversaciones">{filters.map(item => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => { setFilter(item.value); setPage(1); }}>{item.label}</button>)}</div><div className={styles.conversationList} aria-busy={loading}>{loading && !inbox ? <LoadingState label="Cargando conversaciones…" /> : error ? <EmptyState title="No se pudo abrir la bandeja" description="Vuelve a intentar la consulta." /> : !inbox?.conversations.length ? <DashboardEmpty icon={Inbox} title={search ? "Sin coincidencias" : "No hay conversaciones en este filtro"} text={search ? "Prueba con otro nombre o teléfono." : currentActor.central ? "Actualiza WhatsApp para consultar los chats del canal conectado." : "Las conversaciones asignadas a tu perfil aparecerán aquí."} /> : inbox.conversations.map(conversation => <button type="button" key={conversation.id} className={`${styles.conversation} ${selected === conversation.id ? styles.selected : ""}`} aria-pressed={selected === conversation.id} onClick={() => selectConversation(conversation.id)}><span className={styles.avatar}>{initials(conversation.name)}</span><span className={styles.conversationBody}><span className={styles.conversationTitle}><strong>{conversation.name || conversation.phone || "Contacto de WhatsApp"}</strong><time dateTime={conversation.lastContactAt || undefined}>{time(conversation.lastContactAt)}</time></span><span className={styles.phone}>{conversation.phone || "Teléfono no disponible"} · {conversation.channel === "whatsapp" ? "WhatsApp" : "Interna"}</span><span className={styles.preview}>{conversation.preview || "Sin mensajes sincronizados"}</span><span className={styles.conversationFooter}><Status conversation={conversation} /><small>{conversation.assigneeName || "Sin analista"}</small></span></span></button>)}</div><div className={styles.pagination}><Button variant="ghost" aria-label="Página anterior" disabled={page <= 1 || loading} onClick={() => setPage(value => value - 1)}><ChevronLeft aria-hidden="true" size={18} /></Button><span>{page} / {Math.max(1, Math.ceil((inbox?.total ?? 0) / (inbox?.pageSize || 40)))}</span><Button variant="ghost" aria-label="Página siguiente" disabled={loading || !inbox || page * inbox.pageSize >= inbox.total} onClick={() => setPage(value => value + 1)}><ChevronRight aria-hidden="true" size={18} /></Button></div></aside>
-            <section className={styles.chat} aria-label="Historial de la conversación">{!selected ? <div className={styles.selectPrompt}><span><MessageCircle aria-hidden="true" size={37} /></span><h2>Una conversación.<br />Todo su contexto.</h2><p>Elige un chat para ver los mensajes de WhatsApp, su ficha y las gestiones del equipo.</p><div><LockKeyhole aria-hidden="true" size={15} /> Acceso exclusivo de administración y analistas</div></div> : <>
-              <div className={styles.chatHeader}><Button variant="ghost" className={styles.backButton} aria-label="Volver a conversaciones" onClick={() => selectConversation(null)}><ArrowLeft aria-hidden="true" size={18} /></Button><span className={styles.avatar}>{initials(detail?.conversation.name || "Contacto")}</span><div className={styles.chatIdentity}><h2 ref={chatHeading} tabIndex={-1}>{detail?.conversation.name || "Conversación"}</h2><span>{detail ? detail.conversation.phone || "Teléfono no disponible" : "Consultando historial…"}{detail && ` · ${detail.conversation.channel === "whatsapp" ? "WhatsApp" : "Gestión interna"}`}</span></div><Button variant="secondary" className={styles.customerToggle} aria-expanded={showCustomer} onClick={() => setShowCustomer(value => !value)}><UserRound aria-hidden="true" size={16} /> Ficha</Button></div>
+          <section className={`${styles.workspace} ${selected ? styles.hasSelection : ""}`} aria-label="Bandeja de atención">
+            <aside className={styles.inbox} aria-label="Conversaciones"><div className={styles.inboxHeading}><h2>Conversaciones <span>{inbox?.total ?? "—"}</span></h2><div>{currentActor.central && <Button variant="ghost" aria-label="Nueva gestión" title="Nueva gestión interna" disabled={!contentReady || busy} onClick={() => { setShowNew(value => !value); newRequestKey.current = null; }}><Plus aria-hidden="true" size={20} /></Button>}</div></div><label className={styles.search}><Search aria-hidden="true" size={18} /><span className={styles.srOnly}>Buscar conversación</span><Input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Buscar nombre o teléfono…" maxLength={100} /></label><div className={styles.filters} role="group" aria-label="Filtrar conversaciones">{filters.map(item => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => { setFilter(item.value); setPage(1); }}>{item.label}</button>)}</div><div className={styles.conversationList} aria-busy={loading}>{loading && !inbox ? <LoadingState label="Cargando conversaciones…" /> : error ? <EmptyState title="No se pudo abrir la bandeja" description="Vuelve a intentar la consulta." /> : !inbox?.conversations.length ? <DashboardEmpty icon={Inbox} title={search ? "Sin coincidencias" : "No hay conversaciones en este filtro"} text={search ? "Prueba con otro nombre o teléfono." : currentActor.central ? "Las conversaciones aparecerán al recibir mensajes en el canal conectado." : "Las conversaciones asignadas a tu perfil aparecerán aquí."} /> : inbox.conversations.map(conversation => <button type="button" key={conversation.id} className={`${styles.conversation} ${selected === conversation.id ? styles.selected : ""}`} aria-pressed={selected === conversation.id} onClick={() => selectConversation(conversation.id)}><span className={styles.avatar}>{initials(conversation.name)}</span><span className={styles.conversationBody}><span className={styles.conversationTitle}><strong>{conversation.name || conversation.phone || "Contacto de WhatsApp"}</strong><time dateTime={conversation.lastContactAt || undefined}>{time(conversation.lastContactAt)}</time></span><span className={styles.preview}>{conversation.preview || "Abre la conversación para consultar su historial"}</span><ConversationLabels conversation={conversation} /><span className={styles.conversationFooter}><small>{conversation.assigneeName || "Sin asignar"}</small><small>{statusNames[conversation.status]}</small></span></span></button>)}</div><div className={styles.pagination}><Button variant="ghost" aria-label="Página anterior" disabled={page <= 1 || loading} onClick={() => setPage(value => value - 1)}><ChevronLeft aria-hidden="true" size={18} /></Button><span>{page} / {Math.max(1, Math.ceil((inbox?.total ?? 0) / (inbox?.pageSize || 40)))}</span><Button variant="ghost" aria-label="Página siguiente" disabled={loading || !inbox || page * inbox.pageSize >= inbox.total} onClick={() => setPage(value => value + 1)}><ChevronRight aria-hidden="true" size={18} /></Button></div></aside>
+            <section className={styles.chat} aria-label="Historial de la conversación">{!selected ? <div className={styles.selectPrompt}><span><MessageCircle aria-hidden="true" size={37} /></span><h2>Tu espacio de atención</h2><p>Selecciona una conversación para responder y consultar su seguimiento.</p></div> : <>
+              <div className={styles.chatHeader}><Button variant="ghost" className={styles.backButton} aria-label="Volver a conversaciones" onClick={() => selectConversation(null)}><ArrowLeft aria-hidden="true" size={18} /></Button><span className={styles.avatar}>{initials(detail?.conversation.name || "Contacto")}</span><div className={styles.chatIdentity}><div className={styles.chatTitle}><h2 ref={chatHeading} tabIndex={-1}>{detail?.conversation.name || "Conversación"}</h2>{detail && <CustomerBadge conversation={detail.conversation} />}</div><span>{detail ? detail.conversation.phone || "Teléfono no disponible" : "Consultando historial…"}{detail && ` · ${detail.conversation.channel === "whatsapp" ? "WhatsApp" : "Gestión interna"}`}</span></div><Button variant="secondary" className={styles.customerToggle} aria-expanded={showCustomer} onClick={() => setShowCustomer(value => !value)}><UserRound aria-hidden="true" size={16} /> Ficha</Button></div>
               {detailError && <div className={styles.error} role="alert"><span>{detailError}</span><Button variant="secondary" disabled={busy || detailLoading} onClick={() => void loadDetail(selected)}>Actualizar</Button></div>}
-              {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <><div className={styles.chatActions}><Status conversation={detail.conversation} /><span className={styles.assignee}><UserRound aria-hidden="true" size={14} />{detail.conversation.assigneeName || "Sin analista asignado"}</span>{detail.permissions.claim && detail.conversation.status !== "open" && <Button disabled={busy} onClick={() => void mutate({ action: "claim" })}>Atender</Button>}{detail.permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => void mutate({ action: detail.conversation.status === "closed" ? "reopen" : "close" })}>{detail.conversation.status === "closed" ? "Reabrir" : "Finalizar"}</Button>}</div>
-                {detail.permissions.assign && <div className={styles.assignment}><label className={styles.srOnly} htmlFor="attention-transfer">Asignar analista</label><Select id="attention-transfer" value="" disabled={busy || !analysts.length} onChange={event => { if (event.target.value) void mutate({ action: "transfer", assigneeKey: event.target.value }); }}><option value="">{detail.conversation.assigneeKey ? "Cambiar analista…" : "Asignar analista…"}</option>{analysts.filter(person => person.key !== detail.conversation.assigneeKey).map(person => <option key={person.key} value={person.key}>{person.name}</option>)}</Select><span>Solo analistas activos</span></div>}
+              {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <><div className={styles.chatActions}><Status conversation={detail.conversation} /><span className={styles.assignee}><UserRound aria-hidden="true" size={14} />{detail.conversation.assigneeName || "Sin analista asignado"}</span>{detail.permissions.claim && detail.conversation.status !== "open" && <Button disabled={busy} onClick={() => void mutate({ action: "claim" })}>Atender</Button>}{detail.permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => void mutate({ action: detail.conversation.status === "closed" ? "reopen" : "close" })}>{detail.conversation.status === "closed" ? "Reabrir" : "Finalizar"}</Button>}{detail.permissions.assign && <details className={styles.assignmentMenu}><summary><Users aria-hidden="true" size={17} /> Asignar</summary><div className={styles.assignment}><label className={styles.srOnly} htmlFor="attention-transfer">Asignar analista</label><Select id="attention-transfer" value="" disabled={busy || !analysts.length} onChange={event => { if (event.target.value) { event.currentTarget.closest("details")?.removeAttribute("open"); void mutate({ action: "transfer", assigneeKey: event.target.value }); } }}><option value="">{detail.conversation.assigneeKey ? "Cambiar analista…" : "Asignar analista…"}</option>{analysts.filter(person => person.key !== detail.conversation.assigneeKey).map(person => <option key={person.key} value={person.key}>{person.name}</option>)}</Select><span>Solo analistas activos</span></div></details>}</div>
+
                 <div className={styles.historyViewport}><div ref={messageLog} className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map(message => <article key={message.id} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}><span>{message.direction === "inbound" ? "Contacto" : message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span><MessageContent text={message.text} media={message.attachment} mediaReady={keepLatestAfterMedia} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div className={styles.messageMeta}><time dateTime={message.sentAt}>{date(message.sentAt)}</time><MessageDelivery message={message} /></div></article>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
                 {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={detail.conversation.id} detail={detail} draft={replyDrafts[detail.conversation.id] || emptyReply} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>Gestión interna · asignación y seguimiento por analistas.</span></footer>}
               </>}
             </>}</section>
-            <aside className={styles.customer} aria-label="Ficha y seguimiento del cliente"><div className={styles.customerHeader}><Button className={styles.backButton} variant="ghost" aria-label="Volver al chat" onClick={() => setShowCustomer(false)}><ArrowLeft aria-hidden="true" size={18} /></Button><h2 ref={customerHeading} tabIndex={-1}>Ficha del cliente</h2><ShieldCheck aria-hidden="true" size={18} /></div>{detail ? <CustomerPanel key={detail.conversation.id} detail={detail} busy={busy} mutate={mutate} canOpenRecord={canSupervise} /> : <DashboardEmpty icon={UserRound} title="El cliente, en contexto" text="Datos, estudios, notas y tareas vinculados a la conversación seleccionada." />}</aside>
+
           </section>
+          <FinserSidePanel open={showCustomer && Boolean(detail)} keepMounted title="Ficha del contacto" closeLabel="Volver al chat" busy={busy} onClose={() => setShowCustomer(false)}><div className={styles.customer}>{detail && <CustomerPanel key={detail.conversation.id} detail={detail} busy={busy} mutate={mutate} canOpenRecord={canSupervise} financial={{ attempts: financialAttempts[detail.conversation.id] || {}, disabled: busy || syncing, accessDenied: error => handleFinancialAccessError(detail.conversation.id, error), grant: input => grantExtension(detail.conversation.id, input), sendReceipt: (input, retry) => sendReceipt(detail.conversation.id, input, retry), resolveReceipt: () => resolveReceipt(detail.conversation.id), discardReceipt: () => discardReceipt(detail.conversation.id) }} />}</div></FinserSidePanel>
         </>}
 
         {view === "team" && <Card className={styles.fullTeam}><div className={styles.cardHeading}><div><h2>Analistas de atención</h2><p>Las conversaciones solo se asignan a perfiles de analista activos.</p></div><Badge>{analysts.length} analistas</Badge></div><TeamRows team={team} loading={loading && !inbox} /><div className={styles.teamNote}><ShieldCheck aria-hidden="true" size={17} /><p>Administración asigna los chats. Cada analista consulta y gestiona únicamente las conversaciones de su bandeja.</p></div></Card>}
         {view === "settings" && <div className={styles.settingsGrid}>
-          <Card className={styles.settingsCard}><div className={styles.cardHeading}><h2><MessageCircle aria-hidden="true" size={20} /> Canal de WhatsApp</h2><Badge tone={inbox?.integration.canSend ? "positive" : "warning"}>{inbox?.integration.canSend ? "Meta conectado" : "Envío pendiente"}</Badge></div><p>{inbox?.integration.message || "Consultando estado del canal…"}</p><div className={styles.integrationFacts}><div><Check aria-hidden="true" size={17} /><span>Historial importado y mensajes recibidos en FINSER PAY</span></div><div><Users aria-hidden="true" size={17} /><span>Asignación exclusiva a analistas FINSER PAY</span></div><div><LockKeyhole aria-hidden="true" size={17} /><span>{inbox?.integration.canSend ? "Respuestas por Meta según permisos y ventana de atención" : "La lectura está disponible; el envío requiere completar la conexión Meta"}</span></div></div>{currentActor.central && <Button disabled={!syncRestored || syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Actualizar historial importado"}</Button>}<p className={styles.settingFootnote}>Las credenciales del canal se guardan únicamente en el servidor.</p></Card>
+          <Card className={styles.settingsCard}><div className={styles.cardHeading}><h2><MessageCircle aria-hidden="true" size={20} /> Canal de WhatsApp</h2><Badge tone={inbox?.integration.canSend ? "positive" : "warning"}>{inbox?.integration.canSend ? "Meta conectado" : "Envío pendiente"}</Badge></div><p>{inbox?.integration.message || "Consultando estado del canal…"}</p><div className={styles.integrationFacts}><div><Check aria-hidden="true" size={17} /><span>Historial importado y mensajes recibidos en FINSER PAY</span></div><div><Users aria-hidden="true" size={17} /><span>Asignación exclusiva a analistas FINSER PAY</span></div><div><LockKeyhole aria-hidden="true" size={17} /><span>{inbox?.integration.canSend ? "Respuestas por Meta según permisos y ventana de atención" : "La lectura está disponible; el envío requiere completar la conexión Meta"}</span></div></div>{currentActor.central && <Button disabled={!syncRestored || syncing || !contentReady || !inbox?.integration.canSync} onClick={() => void sync()}><RefreshCw aria-hidden="true" size={16} />{syncing ? "Actualizando…" : syncCursor ? "Continuar importación" : "Importar historial Dapta"}</Button>}<p className={styles.settingFootnote}>Las credenciales del canal se guardan únicamente en el servidor.</p></Card>
           <Card className={styles.repliesPanel}><div className={styles.cardHeading}><h2>Respuestas rápidas</h2>{currentActor.central && <Button variant="ghost" disabled={!contentReady || busy} onClick={() => setShowReplies(value => !value)}>{showReplies ? "Cerrar" : "Aprobar respuesta"}</Button>}</div><p className={styles.muted}>Contenido aprobado por administración de FINSER PAY.</p>{inbox?.quickReplies.length ? <ul className={styles.replyList}>{inbox.quickReplies.map(reply => <li key={reply.id}><strong>{reply.title}</strong><p>{reply.text}</p><small>Aprobada por {reply.approvedBy} · {date(reply.approvedAt, true)}</small></li>)}</ul> : <DashboardEmpty icon={FileText} title="Una voz para todo el equipo" text="El equipo puede consultar aquí las respuestas aprobadas por administración." />}{showReplies && currentActor.central && <QuickReplyForm disabled={busy} busyChanged={quickReplyBusyChanged} saved={() => { setShowReplies(false); setNotice("Respuesta aprobada y guardada."); void loadInbox(); }} />}</Card>
         </div>}
-      </main>
-    </div>
+    </main>
   </div>;
 }
 
@@ -658,32 +869,153 @@ function TeamRows({ team, loading, compact = false }: { team: { key: string; nam
 
 
 type Mutate = (input: Omit<AttentionMutation, "version" | "requestId">) => Promise<boolean>;
-function CustomerPanel({ detail, busy, mutate, canOpenRecord }: { detail: AttentionDetail; busy: boolean; mutate: Mutate; canOpenRecord: boolean }) {
-  const [note, setNote] = useState("");
-  const [task, setTask] = useState("");
-  const [dueAt, setDueAt] = useState("");
-  const [tag, setTag] = useState("");
-  const [candidate, setCandidate] = useState("");
+function financialDay(value: string | null) {
+  if (!value) return "No disponible";
+  const parsed = new Date(value.length === 10 ? `${value}T12:00:00-05:00` : value);
+  return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "long", year: "numeric" }).format(parsed) : "No disponible";
+}
+function todayInColombia() {
+  const parts = new Intl.DateTimeFormat("en", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  return ["year", "month", "day"].map(type => parts.find(part => part.type === type)?.value || "").join("-");
+}
+const creditStateNames: Record<AttentionFinancialCredit["state"], string> = { AL_DIA: "Al día", EN_MORA: "En mora", PAGADO: "Pagado", ANULADO: "Anulado", NO_VERIFICADO: "Estado por verificar" };
+type FinancialConfirmation = { kind: "extension"; input: AttentionExtensionInput; description: string } | { kind: "receipt"; input: AttentionReceiptSendInput; description: string };
+function FinancialPanel({ detail, actions }: { detail: AttentionDetail; actions: FinancialActions }) {
+  const [data, setData] = useState<AttentionFinancial | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [creditId, setCreditId] = useState("");
+  const [extensionOpen, setExtensionOpen] = useState(false);
+  const [days, setDays] = useState("");
+  const [reason, setReason] = useState("");
+  const [observation, setObservation] = useState("");
+  const [promiseAmount, setPromiseAmount] = useState("");
+  const [promiseDate, setPromiseDate] = useState("");
+  const [promiseConfirmed, setPromiseConfirmed] = useState(false);
+  const [confirmation, setConfirmation] = useState<FinancialConfirmation | null>(null);
+  const alive = useRef(true);
+  const accessDenied = useRef(actions.accessDenied);
+  const readController = useRef<AbortController | null>(null);
+  const readVersion = useRef(0);
+  const id = detail.conversation.id;
+  useEffect(() => { accessDenied.current = actions.accessDenied; }, [actions.accessDenied]);
+  const load = useCallback(async () => {
+    readController.current?.abort(); const controller = new AbortController(); readController.current = controller;
+    const version = ++readVersion.current; setLoading(true); setError("");
+    try {
+      const result = await api<AttentionFinancial>(`/api/atencion/${encodeURIComponent(id)}/financial`, { signal: controller.signal });
+      if (!alive.current || controller.signal.aborted || version !== readVersion.current) return null;
+      setData(result); setCreditId(current => result.credits.some(credit => String(credit.id) === current) ? current : result.credits.length === 1 ? String(result.credits[0].id) : "");
+      return result;
+    } catch (err) {
+      if (alive.current && !controller.signal.aborted && version === readVersion.current) {
+        if (accessDenied.current(err)) return null;
+        setData(null); setError(errorMessage(err));
+      }
+      return null;
+    } finally { if (alive.current && !controller.signal.aborted && version === readVersion.current) setLoading(false); }
+  }, [id]);
+  useEffect(() => {
+    alive.current = true; const timer = setTimeout(() => { void load(); }, 0);
+    return () => { alive.current = false; clearTimeout(timer); readController.current?.abort(); };
+  }, [load, detail.conversation.linkedCreditId, detail.conversation.creditClassification?.status]);
+  const credit = data?.credits.find(item => String(item.id) === creditId);
+  const choice = credit?.extension.choices.find(item => String(item.days) === days);
+  const extensionAttempt = actions.attempts.extension;
+  const receiptAttempt = actions.attempts.receipt;
+  const extensionLocked = Boolean(extensionAttempt && ["pending", "uncertain"].includes(extensionAttempt.phase));
+  const receiptLocked = Boolean(receiptAttempt && ["pending", "uncertain", "missing"].includes(receiptAttempt.phase));
+  const disabled = actions.disabled || loading;
+  const canSend = replyWindowOpen(detail);
+  const sendReason = detail.messaging?.reason || (!detail.permissions.canSend ? "El envío por WhatsApp no está autorizado para esta conversación." : "La ventana de atención de WhatsApp está cerrada.");
+  function selectCredit(value: string) {
+    setCreditId(value); setExtensionOpen(false); setDays(""); setReason(""); setObservation(""); setPromiseAmount(""); setPromiseDate(""); setPromiseConfirmed(false); setConfirmation(null); setError("");
+  }
+  function openExtension() {
+    if (!credit?.extension.canGrant || disabled || extensionLocked) return;
+    if (!promiseAmount) setPromiseAmount(String(credit.extension.promise.amount));
+    if (!promiseDate) setPromiseDate(credit.extension.promise.date);
+    setExtensionOpen(value => !value);
+  }
+  async function prepareExtension(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!credit || disabled || extensionLocked || !promiseConfirmed) return;
+    const selectedId = credit.id; const fresh = await load(); if (!fresh || !alive.current) return;
+    const current = fresh.credits.find(item => item.id === selectedId);
+    const selectedChoice = current?.extension.choices.find(item => String(item.days) === days);
+    if (!current?.extension.canGrant || !selectedChoice) { setError(current?.extension.blockedReason || "La opción cambió. Revisa los días disponibles antes de continuar."); return; }
+    const amount = Number(promiseAmount);
+    if (reason.trim().length < 5 || observation.trim().length < 5 || !Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(promiseDate) || promiseDate < todayInColombia() || promiseDate > selectedChoice.expiresOn) {
+      setError("Completa motivo y observación (mínimo 5 caracteres), un importe positivo y una fecha de compromiso vigente dentro de la prórroga."); return;
+    }
+    const input: AttentionExtensionInput = { creditId: selectedId, days: selectedChoice.days, version: fresh.version, requestId: crypto.randomUUID(), reason: reason.trim(), observation: observation.trim(), promiseAmount: amount, promiseDate };
+    setConfirmation({ kind: "extension", input, description: `Crédito ${current.number}. ${selectedChoice.days} ${selectedChoice.days === 1 ? "día" : "días"} de prórroga para la cuota ${current.extension.installmentNumber}, hasta el ${financialDay(selectedChoice.expiresOn)}. Compromiso confirmado: ${money(amount)} para el ${financialDay(promiseDate)}. Esta acción registra la autorización y el compromiso de pago.` });
+  }
+  async function prepareReceipt() {
+    if (!credit?.lastPayment?.receiptAvailable || disabled || receiptLocked) return;
+    if (!replyWindowOpen(detail)) { setError(sendReason); return; }
+    const selectedId = credit.id; const observedPayment = credit.lastPayment.id;
+    const fresh = await load(); if (!fresh || !alive.current) return;
+    const current = fresh.credits.find(item => item.id === selectedId);
+    if (!current?.lastPayment?.receiptAvailable) { setError("El último recibo ya no está disponible. Revisa el crédito seleccionado."); return; }
+    if (current.lastPayment.id !== observedPayment) { setError("Cambió el último pago. Revisa el recibo actualizado antes de enviarlo."); return; }
+    const input: AttentionReceiptSendInput = { creditId: selectedId, paymentId: current.lastPayment.id, version: fresh.version, requestId: crypto.randomUUID() };
+    setConfirmation({ kind: "receipt", input, description: `Se enviará por WhatsApp a ${detail.conversation.phone || "este contacto"} el PDF del último recibo del crédito ${current.number}: pago de ${money(current.lastPayment.amount)} del ${financialDay(current.lastPayment.date)}. Revisa el documento y confirma el destinatario antes de enviarlo.` });
+  }
+  async function confirmAction() {
+    if (!confirmation || disabled) return;
+    const pending = confirmation; setConfirmation(null);
+    if (pending.kind === "extension") {
+      const result = await actions.grant(pending.input);
+      if (result && alive.current) { setExtensionOpen(false); setPromiseConfirmed(false); await load(); }
+    } else await actions.sendReceipt(pending.input);
+  }
+  return <section className={styles.financialPanel} aria-label="Información financiera autorizada">
+    <div className={styles.financialHeading}><h3><Wallet aria-hidden="true" size={18} /> Crédito y pagos</h3><Button variant="ghost" aria-label="Actualizar información financiera" disabled={disabled} onClick={() => void load()}><RefreshCw aria-hidden="true" size={17} /></Button></div>
+    {error && <div className={styles.panelError} role="alert">{error}<Button variant="secondary" disabled={disabled} onClick={() => void load()}>Reintentar consulta</Button></div>}
+    {loading && !data && <LoadingState label="Consultando créditos autorizados…" />}
+    {data && !data.credits.length && <p className={styles.financialEmpty}>{data.blockedReason || "Este contacto no tiene créditos autorizados para consultar."}</p>}
+    {data && data.credits.length > 1 && <label className={styles.creditSelector}>Selecciona el crédito<Select value={creditId} disabled={disabled} onChange={event => selectCredit(event.target.value)}><option value="">Elige un crédito para continuar</option>{data.credits.map(item => <option value={item.id} key={item.id}>{item.number} · {creditStateNames[item.state]}</option>)}</Select></label>}
+    {credit && <>
+      <div className={styles.financialSummary}><span>Crédito</span><div><strong>{credit.number}</strong><StatusPill tone={credit.state === "EN_MORA" ? "warning" : credit.state === "AL_DIA" || credit.state === "PAGADO" ? "positive" : "neutral"}>{creditStateNames[credit.state]}</StatusPill></div>{credit.extension.installmentNumber && <p>Cuota {credit.extension.installmentNumber} · vence {financialDay(credit.extension.dueDate)}</p>}</div>
+      <div className={styles.financialSection}><h4><CalendarClock aria-hidden="true" size={18} /> Prórroga de pago</h4>{credit.extension.active && <p className={styles.extensionActive}>Prórroga vigente{credit.extension.active.expiresOn ? ` hasta el ${financialDay(credit.extension.active.expiresOn)}` : ""}.</p>}<p>De 1 a 4 días desde el vencimiento de la cuota, respetando el límite vigente de los días 06 y 21.</p><Button variant="secondary" disabled={disabled || !credit.extension.canGrant || extensionLocked} onClick={openExtension}>{extensionOpen ? "Cerrar formulario" : "Conceder prórroga"}</Button>{!credit.extension.canGrant && <p className={styles.actionReason}>{credit.extension.blockedReason || "Esta prórroga no está disponible para el crédito seleccionado."}</p>}
+        {extensionOpen && <form className={styles.extensionForm} onSubmit={prepareExtension}><label>Días autorizados<Select required value={days} disabled={disabled || extensionLocked} onChange={event => { setDays(event.target.value); setPromiseConfirmed(false); }}><option value="">Selecciona los días</option>{credit.extension.choices.map(item => <option value={item.days} key={item.days}>{item.days} {item.days === 1 ? "día" : "días"} · hasta {financialDay(item.expiresOn)}</option>)}</Select></label><label>Motivo<textarea rows={2} required minLength={5} maxLength={500} value={reason} disabled={disabled || extensionLocked} onChange={event => setReason(event.target.value)} placeholder="Motivo de la prórroga" /></label><label>Observación de la gestión<textarea rows={2} required minLength={5} maxLength={2000} value={observation} disabled={disabled || extensionLocked} onChange={event => setObservation(event.target.value)} placeholder="Acuerdo y contexto de la atención" /></label><label>Compromiso de pago (COP)<Input type="number" min="0.01" step="0.01" required value={promiseAmount} disabled={disabled || extensionLocked} onChange={event => { setPromiseAmount(event.target.value); setPromiseConfirmed(false); }} /></label><label>Fecha del compromiso<Input type="date" required min={todayInColombia()} max={choice?.expiresOn} value={promiseDate} disabled={disabled || extensionLocked} onChange={event => { setPromiseDate(event.target.value); setPromiseConfirmed(false); }} /></label><label className={styles.commitmentCheck}><input type="checkbox" checked={promiseConfirmed} disabled={disabled || extensionLocked} onChange={event => setPromiseConfirmed(event.target.checked)} />He confirmado con el cliente el valor y la fecha del compromiso.</label><Button type="submit" disabled={disabled || extensionLocked || !choice || !promiseConfirmed}>Revisar y confirmar</Button></form>}
+      </div>
+      <div className={styles.financialSection}><h4><FileText aria-hidden="true" size={18} /> Último recibo de pago</h4>{credit.lastPayment ? <><div className={styles.lastPayment}><strong>{money(credit.lastPayment.amount)}</strong><span>{financialDay(credit.lastPayment.date)}</span><small>{credit.lastPayment.method}</small></div><div className={styles.receiptActions}>{credit.lastPayment.receiptAvailable ? <a className="fp-ui-button is-secondary" href={`/api/atencion/${encodeURIComponent(id)}/receipts/latest?creditId=${credit.id}`} target="_blank" rel="noopener noreferrer"><Download aria-hidden="true" size={17} /> Ver PDF</a> : <p className={styles.actionReason}>El PDF de este pago no está disponible.</p>}<Button disabled={disabled || receiptLocked || !credit.lastPayment.receiptAvailable || !canSend} onClick={() => void prepareReceipt()}><Send aria-hidden="true" size={17} /> Enviar recibo</Button></div>{!canSend && <p className={styles.actionReason}>{sendReason}</p>}</> : <p>Aún no hay pagos registrados para este crédito.</p>}</div>
+    </>}
+    {extensionAttempt && <div className={`${styles.operationResult} ${extensionAttempt.phase === "confirmed" ? styles.operationConfirmed : ""}`} role="status"><strong>Crédito {data?.credits.find(item => item.id === extensionAttempt.input.creditId)?.number || extensionAttempt.input.creditId}</strong><p>{extensionAttempt.message}</p>{extensionAttempt.phase === "uncertain" && <Button variant="secondary" disabled={disabled} onClick={async () => { const result = await actions.grant(extensionAttempt.input); if (result && alive.current) { setExtensionOpen(false); await load(); } }}>Reintentar misma solicitud</Button>}</div>}
+    {receiptAttempt && <div className={`${styles.operationResult} ${receiptAttempt.phase === "confirmed" ? styles.operationConfirmed : ""}`} role="status"><strong>Crédito {data?.credits.find(item => item.id === receiptAttempt.input.creditId)?.number || receiptAttempt.input.creditId}</strong><p>{receiptAttempt.message}</p>{receiptLocked && <Button variant="secondary" disabled={disabled} onClick={() => void actions.resolveReceipt()}><RefreshCw aria-hidden="true" size={16} /> Consultar estado del recibo</Button>}{receiptAttempt.phase === "missing" && <><Button variant="secondary" disabled={disabled} onClick={() => void actions.discardReceipt()}>Descartar intento</Button><Button disabled={disabled || !canSend} onClick={() => void actions.sendReceipt(receiptAttempt.input, true)}>Reintentar misma solicitud</Button></>}</div>}
+    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.kind === "extension" ? "Confirmar prórroga" : "Enviar último recibo"} description={confirmation?.description || ""} confirmLabel={confirmation?.kind === "extension" ? "Conceder prórroga" : "Enviar PDF por WhatsApp"} busy={actions.disabled} onCancel={() => { if (!actions.disabled) setConfirmation(null); }} onConfirm={() => void confirmAction()} />
+  </section>;
+}
+function CustomerPanel({ detail, busy, mutate, canOpenRecord, financial }: { detail: AttentionDetail; busy: boolean; mutate: Mutate; canOpenRecord: boolean; financial: FinancialActions }) {
+  const [tab, setTab] = useState<"summary" | "followup">("summary");
+  const [note, setNote] = useState(""); const [task, setTask] = useState(""); const [dueAt, setDueAt] = useState(""); const [tag, setTag] = useState(""); const [candidate, setCandidate] = useState("");
   const { customer, conversation, permissions } = detail;
-  const matchMessages: Record<AttentionCustomer["match"], string> = {
-    linked: "Vinculada a la ficha existente", none: "Contacto nuevo · sin coincidencia autorizada",
-    ambiguous: "El teléfono coincide con varias fichas. Verifica la identidad antes de vincular.",
-    restricted: "La ficha no está disponible para tu alcance de acceso.",
-  };
+  const matchMessages: Record<AttentionCustomer["match"], string> = { linked: "Vinculada a la ficha existente", none: "No hay una ficha vinculada a este contacto.", ambiguous: "Hay varias coincidencias. Confirma la identidad antes de vincular un crédito.", restricted: "La ficha requiere autorización dentro de esta conversación." };
+  const classification = conversation.creditClassification?.status;
+  const classificationText = classification === "finserpay" ? "Cliente con crédito vigente o pagado" : classification === "no_credit" ? "Contacto sin crédito identificado" : classification === "ambiguous" ? "Identidad por confirmar" : "Clasificación pendiente de verificar";
+  const manualTags = conversation.tags.filter(value => !isReservedTag(value));
   return <div className={styles.customerContent}>
-    <section className={styles.customerSection}><div className={styles.customerIdentity}><span className={styles.avatar}>{initials(customer.name || conversation.name)}</span><div><h3>{customer.name || conversation.name}</h3><span>{customer.documentMasked || conversation.phone || "Teléfono no disponible"}</span></div></div><p className={styles.matchMessage}>{matchMessages[customer.match]}</p>{customer.match === "none" && canOpenRecord && <Link href="/dashboard/creditos" className={styles.textLink}>Completar en el flujo de solicitudes <ArrowRight aria-hidden="true" size={14} /></Link>}
-      {permissions.assign && customer.candidates.length > 0 && customer.match !== "linked" && <div className={styles.compactForm}><label>Ficha autorizada<Select value={candidate} disabled={busy} onChange={event => setCandidate(event.target.value)}><option value="">Seleccionar ficha</option>{customer.candidates.map(item => <option key={item.id} value={item.id}>{item.name} · {item.documentMasked} · {item.folio}</option>)}</Select></label><Button variant="secondary" disabled={busy || !candidate} onClick={() => void mutate({ action: "link", creditId: Number(candidate) })}>Vincular ficha</Button></div>}
-      {permissions.assign && conversation.linkedCreditId && <Button variant="ghost" disabled={busy} onClick={() => void mutate({ action: "unlink" })}>Quitar vínculo manual</Button>}
-      <dl className={styles.keyValues}><div><dt>Último contacto</dt><dd>{date(conversation.lastContactAt)}</dd></div><div><dt>Responsable</dt><dd>{conversation.assigneeName || "Sin asignar"}</dd></div></dl>
-    </section>
-    <section className={styles.customerSection}><h3><FileText aria-hidden="true" size={16} /> Créditos y pagos</h3>{!customer.financialAllowed && <p className={styles.muted}>Tu rol no permite consultar importes ni pagos desde atención.</p>}{customer.credits.length ? customer.credits.map(credit => <div className={styles.credit} key={credit.id}><div><strong>{credit.folio}</strong><Badge>{credit.state}</Badge></div><p>{credit.equipment || "Equipo sin referencia"}</p>{customer.financialAllowed && <dl className={styles.keyValues}><div><dt>Saldo</dt><dd>{money(credit.balance)}</dd></div><div><dt>Próxima cuota</dt><dd>{credit.nextDueAt ? date(credit.nextDueAt, true) : "No disponible"}</dd></div><div><dt>Valor pendiente</dt><dd>{money(credit.nextAmount)}</dd></div></dl>}{customer.financialAllowed && credit.payments.length > 0 && <details><summary>Pagos registrados ({credit.payments.length})</summary>{credit.payments.map((payment, index) => <p className={styles.payment} key={`${payment.date}-${index}`}><span>{date(payment.date, true)} · {payment.method}</span><strong>{money(payment.amount)}</strong></p>)}</details>}{canOpenRecord && <Link className={styles.textLink} href={`/dashboard/clientes?selected=${credit.id}`}>Ver expediente <ArrowRight aria-hidden="true" size={13} /></Link>}</div>) : <p className={styles.muted}>Sin créditos vinculados dentro de tu alcance.</p>}</section>
-    <section className={styles.customerSection}><h3><ClipboardList aria-hidden="true" size={16} /> Estudios de crédito</h3>{customer.studies.length ? customer.studies.map(study => <div className={styles.study} key={study.id}><Badge>{study.state}</Badge><time dateTime={study.createdAt}>{date(study.createdAt, true)}</time></div>) : <p className={styles.muted}>Sin estudios disponibles para esta ficha.</p>}</section>
-    <section className={styles.customerSection}><h3><ShieldCheck aria-hidden="true" size={16} /> Atención humana</h3><p className={styles.muted}>{conversation.mode === "human_requested" ? "Hay una solicitud interna de atención humana. Falta confirmar el traspaso en Dapta." : "Solicitar apoyo registra una gestión interna. No pausa la IA ni transfiere automáticamente el chat en Dapta."}</p>{permissions.manage && <Button variant="secondary" disabled={busy || conversation.mode === "human_requested" || conversation.status === "closed"} onClick={() => void mutate({ action: "human_request" })}>Solicitar apoyo humano</Button>}</section>
-    <section className={styles.customerSection}><h3><Tag aria-hidden="true" size={16} /> Etiquetas</h3><div className={styles.tags}>{conversation.tags.length ? conversation.tags.map(value => <span key={value}><Badge>{value}</Badge>{permissions.manage && <button type="button" aria-label={`Quitar etiqueta ${value}`} disabled={busy} onClick={() => void mutate({ action: "tags", tags: conversation.tags.filter(item => item !== value) })}><X aria-hidden="true" size={13} /></button>}</span>) : <p className={styles.muted}>Sin etiquetas</p>}</div>{permissions.manage && <form className={styles.tagForm} onSubmit={async event => { event.preventDefault(); const value = tag.trim(); if (value && await mutate({ action: "tags", tags: [...conversation.tags, value] })) setTag(""); }}><Input aria-label="Nueva etiqueta" value={tag} disabled={busy} onChange={event => setTag(event.target.value)} maxLength={30} placeholder="Añadir etiqueta" /><Button variant="secondary" type="submit" aria-label="Guardar etiqueta" disabled={busy || !tag.trim() || conversation.tags.length >= 8}><Plus aria-hidden="true" size={16} /></Button></form>}</section>
-    <section className={styles.customerSection}><h3><MessageCircle aria-hidden="true" size={16} /> Notas internas</h3><p className={styles.muted}>Visibles para el equipo autorizado. No se envían al cliente.</p>{detail.notesTruncated && <p className={styles.historyNotice}>Se muestran las 300 notas más recientes; hay notas anteriores registradas.</p>}{detail.notes.map(item => <article className={styles.note} key={item.id}><p>{item.text}</p><small>{item.author} · {date(item.createdAt)}</small></article>)}{permissions.manage && <form className={styles.compactForm} onSubmit={async event => { event.preventDefault(); if (await mutate({ action: "note", text: note.trim() })) setNote(""); }}><label className={styles.srOnly} htmlFor="attention-note">Texto de la nota interna</label><textarea id="attention-note" rows={3} maxLength={2000} required value={note} disabled={busy} onChange={event => setNote(event.target.value)} placeholder="Registrar una gestión…" /><Button variant="secondary" type="submit" disabled={busy || !note.trim()}>Guardar nota</Button></form>}</section>
-    <section className={styles.customerSection}><h3><Clock3 aria-hidden="true" size={16} /> Tareas y recordatorios</h3>{detail.tasksTruncated && <p className={styles.historyNotice}>Se muestran hasta 300 tareas, con prioridad para las pendientes.</p>}{detail.tasks.length ? detail.tasks.map(item => <div className={styles.task} key={item.id}><div><strong className={item.completedAt ? styles.completed : undefined}>{item.title}</strong><small>{item.completedAt ? `Completada · ${date(item.completedAt)}` : item.dueAt ? `Recordatorio · ${date(item.dueAt)}` : "Sin fecha"}</small></div>{permissions.manage && !item.completedAt && <Button variant="ghost" aria-label={`Completar tarea: ${item.title}`} disabled={busy} onClick={() => void mutate({ action: "complete_task", taskId: item.id })}><Check aria-hidden="true" size={17} /></Button>}</div>) : <p className={styles.muted}>Sin tareas registradas.</p>}{permissions.manage && <form className={styles.compactForm} onSubmit={async event => { event.preventDefault(); if (await mutate({ action: "task", text: task.trim(), dueAt: dueAt ? new Date(`${dueAt}:00-05:00`).toISOString() : null })) { setTask(""); setDueAt(""); } }}><label>Tarea<Input value={task} disabled={busy} maxLength={240} required onChange={event => setTask(event.target.value)} placeholder="Próxima gestión" /></label><label>Recordatorio (hora de Colombia)<Input type="datetime-local" value={dueAt} disabled={busy} onChange={event => setDueAt(event.target.value)} /></label><Button variant="secondary" type="submit" disabled={busy || !task.trim()}>Crear tarea</Button><small className={styles.muted}>El recordatorio queda en esta ficha; no envía avisos externos.</small></form>}</section>
+    <div className={styles.customerOverview}><div className={styles.customerIdentity}><span className={styles.avatar}>{initials(customer.name || conversation.name)}</span><div><h3>{customer.name || conversation.name}</h3><span>{customer.documentMasked || conversation.phone || "Teléfono no disponible"}</span></div></div><p>{classificationText}</p></div>
+    <div className={styles.customerTabs} role="group" aria-label="Secciones de la ficha"><button type="button" aria-pressed={tab === "summary"} onClick={() => setTab("summary")}><Wallet aria-hidden="true" size={17} /> Resumen</button><button type="button" aria-pressed={tab === "followup"} onClick={() => setTab("followup")}><ClipboardList aria-hidden="true" size={17} /> Seguimiento</button></div>
+    <div className={styles.customerTabBody}>
+      <div hidden={tab !== "summary"}>
+        {customer.match !== "linked" && <section className={styles.customerSection}><p className={styles.matchMessage}>{matchMessages[customer.match]}</p>{permissions.assign && customer.candidates.length > 0 && <div className={styles.compactForm}><label>Vincular ficha autorizada<Select value={candidate} disabled={busy} onChange={event => setCandidate(event.target.value)}><option value="">Selecciona la ficha correcta</option>{customer.candidates.map(item => <option key={item.id} value={item.id}>{item.name} · {item.documentMasked} · {item.folio}</option>)}</Select></label><Button variant="secondary" disabled={busy || !candidate} onClick={() => void mutate({ action: "link", creditId: Number(candidate) })}>Vincular ficha</Button></div>}{customer.match === "none" && canOpenRecord && <Link href="/dashboard/creditos" className={styles.textLink}>Completar solicitud <ArrowRight aria-hidden="true" size={15} /></Link>}</section>}
+        <FinancialPanel detail={detail} actions={financial} />
+        {classification !== "finserpay" && permissions.manage && <div className={styles.contactFollowup}><Button variant="secondary" onClick={() => setTab("followup")}><Tag aria-hidden="true" size={17} /> Etiquetar y dar seguimiento</Button></div>}
+        {customer.studies.length > 0 && <section className={styles.customerSection}><details><summary className={styles.panelDisclosure}>Estudios de crédito ({customer.studies.length})</summary>{customer.studies.map(study => <div className={styles.study} key={study.id}><Badge>{study.state}</Badge><time dateTime={study.createdAt}>{date(study.createdAt, true)}</time></div>)}</details></section>}
+        {canOpenRecord && customer.financialAllowed && customer.credits.length > 0 && <section className={styles.customerSection}>{customer.credits.map(credit => <Link className={styles.textLink} key={credit.id} href={`/dashboard/clientes?selected=${credit.id}`}>Expediente {credit.folio} <ArrowRight aria-hidden="true" size={15} /></Link>)}</section>}
+      </div>
+      <div hidden={tab !== "followup"}>
+        <section className={styles.customerSection}><h3><Tag aria-hidden="true" size={17} /> Etiquetas de seguimiento</h3><p className={styles.muted}>Las etiquetas manuales organizan el contacto. FINSERPAY se identifica automáticamente y no se puede editar.</p><div className={styles.tags}>{manualTags.length ? manualTags.map(value => <span key={value}><Badge>{value}</Badge>{permissions.manage && <button type="button" aria-label={`Quitar etiqueta ${value}`} disabled={busy} onClick={() => void mutate({ action: "tags", tags: manualTags.filter(item => item !== value) })}><X aria-hidden="true" size={15} /></button>}</span>) : <p className={styles.muted}>Sin etiquetas manuales</p>}</div>{permissions.manage && <form className={styles.tagForm} onSubmit={async event => { event.preventDefault(); const value = tag.trim(); if (value && !isReservedTag(value) && await mutate({ action: "tags", tags: [...manualTags, value] })) setTag(""); }}><Input aria-label="Nueva etiqueta manual" value={tag} disabled={busy} onChange={event => setTag(event.target.value)} maxLength={30} placeholder="Ej. Interesado, seguimiento" /><Button variant="secondary" type="submit" aria-label="Guardar etiqueta" disabled={busy || !tag.trim() || isReservedTag(tag) || manualTags.length >= 8}><Plus aria-hidden="true" size={18} /></Button></form>}{isReservedTag(tag) && <p className={styles.panelValidation} role="status">FINSERPAY es una etiqueta automática reservada.</p>}</section>
+        <section className={styles.customerSection}><h3><MessageCircle aria-hidden="true" size={17} /> Notas internas</h3><p className={styles.muted}>Visibles para el equipo autorizado; no se envían al cliente.</p>{permissions.manage && <form className={styles.compactForm} onSubmit={async event => { event.preventDefault(); if (await mutate({ action: "note", text: note.trim() })) setNote(""); }}><label className={styles.srOnly} htmlFor="attention-note">Texto de la nota interna</label><textarea id="attention-note" rows={3} maxLength={2000} required value={note} disabled={busy} onChange={event => setNote(event.target.value)} placeholder="Registra el resultado de la atención…" /><Button variant="secondary" type="submit" disabled={busy || !note.trim()}>Guardar nota</Button></form>}{detail.notesTruncated && <p className={styles.historyNotice}>Se muestran las 300 notas más recientes.</p>}{detail.notes.map(item => <article className={styles.note} key={item.id}><p>{item.text}</p><small>{item.author} · {date(item.createdAt)}</small></article>)}</section>
+        <section className={styles.customerSection}><h3><Clock3 aria-hidden="true" size={17} /> Tareas y recordatorios</h3>{detail.tasksTruncated && <p className={styles.historyNotice}>Se muestran hasta 300 tareas, priorizando las pendientes.</p>}{detail.tasks.length ? detail.tasks.map(item => <div className={styles.task} key={item.id}><div><strong className={item.completedAt ? styles.completed : undefined}>{item.title}</strong><small>{item.completedAt ? `Completada · ${date(item.completedAt)}` : item.dueAt ? `Recordatorio · ${date(item.dueAt)}` : "Sin fecha"}</small></div>{permissions.manage && !item.completedAt && <Button variant="ghost" aria-label={`Completar tarea: ${item.title}`} disabled={busy} onClick={() => void mutate({ action: "complete_task", taskId: item.id })}><Check aria-hidden="true" size={18} /></Button>}</div>) : <p className={styles.muted}>Sin tareas registradas.</p>}{permissions.manage && <form className={styles.compactForm} onSubmit={async event => { event.preventDefault(); if (await mutate({ action: "task", text: task.trim(), dueAt: dueAt ? new Date(`${dueAt}:00-05:00`).toISOString() : null })) { setTask(""); setDueAt(""); } }}><label>Tarea<Input value={task} disabled={busy} maxLength={240} required onChange={event => setTask(event.target.value)} placeholder="Próxima gestión" /></label><label>Recordatorio (hora de Colombia)<Input type="datetime-local" value={dueAt} disabled={busy} onChange={event => setDueAt(event.target.value)} /></label><Button variant="secondary" type="submit" disabled={busy || !task.trim()}>Crear tarea</Button><small className={styles.muted}>El recordatorio queda en la ficha; no envía avisos externos.</small></form>}</section>
+        <section className={styles.customerSection}><details><summary className={styles.panelDisclosure}>Datos y coordinación interna</summary><dl className={styles.keyValues}><div><dt>Último contacto</dt><dd>{date(conversation.lastContactAt)}</dd></div><div><dt>Analista</dt><dd>{conversation.assigneeName || "Sin asignar"}</dd></div></dl><p className={styles.muted}>{conversation.mode === "human_requested" ? "Hay una solicitud interna de atención humana; falta confirmar el traspaso en Dapta." : "Solicitar apoyo registra una gestión interna. No pausa la IA ni transfiere el chat en Dapta."}</p>{permissions.manage && <Button variant="secondary" disabled={busy || conversation.mode === "human_requested" || conversation.status === "closed"} onClick={() => void mutate({ action: "human_request" })}>Solicitar apoyo humano</Button>}{permissions.assign && conversation.linkedCreditId && <Button variant="ghost" disabled={busy} onClick={() => void mutate({ action: "unlink" })}>Quitar vínculo manual</Button>}</details></section>
+      </div>
+    </div>
   </div>;
 }
+
 
 function QuickReplyForm({ disabled, saved, busyChanged }: { disabled: boolean; saved: () => void; busyChanged: (busy: boolean) => void }) {
   const [busy, setBusy] = useState(false);

@@ -7,12 +7,19 @@ export type AttentionActor = {
 };
 export type AttentionAssignee = { key: string; name: string; sedeIds: number[] };
 export type AttentionBranch = { id: number; name: string };
+export type AttentionCreditClassification = {
+  status: "finserpay" | "no_credit" | "ambiguous" | "unverified";
+  source: "manual_link" | "exact_phone" | null;
+  creditCount: number | null;
+};
 export type AttentionConversation = {
   id: string; externalId: string | null; channel: "whatsapp" | "internal";
   phone: string | null; name: string; status: AttentionStatus; mode: AttentionMode;
   assigneeKey: string | null; assigneeName: string | null; sedeId: number | null;
   lastContactAt: string | null; updatedAt: string; preview: string | null;
   tags: string[]; version: number; linkedCreditId: number | null;
+  autoTags: "FINSERPAY"[];
+  creditClassification: AttentionCreditClassification;
 };
 export type AttentionMessage = {
   id: string; direction: "inbound" | "outbound"; text: string; sentAt: string;

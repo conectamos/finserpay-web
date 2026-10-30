@@ -154,6 +154,56 @@ test("vínculo exacto explícito central permite ficha del analista sin importes
   await assert.rejects(db.query('DELETE FROM "AttentionAudit"'));
 });
 
+test("clasificación automática coherente en bandeja y chat, etiquetas manuales y vínculo seguro", async t => {
+  const { store, create, assign, act, db } = await fixture(t);
+  const { id } = await create(); await assign(id);
+  const before = await store.getAttentionDetail(analyst, id);
+  assert.equal(before.conversation.creditClassification.status, "ambiguous");
+  assert.deepEqual(before.conversation.autoTags, []);
+  await act(analyst, id, "tags", { tags: ["Consulta general"] });
+  await act(central, id, "link", { creditId: 1 });
+  await db.query('UPDATE "Credito" SET estado=\'PAGADO\' WHERE id=2');
+  const detail = await store.getAttentionDetail(analyst, id);
+  const inbox = await store.getAttentionInbox(analyst, filters);
+  assert.deepEqual(detail.conversation.autoTags, ["FINSERPAY"]);
+  assert.deepEqual(detail.conversation.creditClassification, { status: "finserpay", source: "manual_link", creditCount: 2 });
+  assert.deepEqual(inbox.conversations[0].creditClassification, detail.conversation.creditClassification);
+  assert.deepEqual(inbox.dashboard.activeConversations[0].autoTags, ["FINSERPAY"]);
+  assert.deepEqual(detail.conversation.tags, ["Consulta general"]);
+  assert.equal(detail.customer.financialAllowed, false);
+  assert.deepEqual(detail.customer.credits[0].payments, []);
+  await assert.rejects(act(analyst, id, "tags", { tags: ["FINSERPAY"] }), { status: 400 });
+  await db.query('UPDATE "Credito" SET "clienteTelefono"=\'3009999999\' WHERE id=1');
+  assert.equal((await store.getAttentionDetail(analyst, id)).conversation.creditClassification.status, "unverified");
+});
+
+test("clasificación nunca confunde un teléfono malformado o un borrador con un crédito", async t => {
+  const { store, create, act, db } = await fixture(t);
+  await db.query('UPDATE "Credito" SET "clienteTelefono"=\'abc3001234567\' WHERE id IN (1,2,3)');
+  const { id } = await create();
+  const detail = await store.getAttentionDetail(central, id);
+  assert.equal(detail.customer.match, "none");
+  assert.equal(detail.conversation.creditClassification.status, "no_credit");
+  await assert.rejects(act(central, id, "link", { creditId: 1 }), { status: 403 });
+  await db.query(`INSERT INTO "CreditoBorrador" VALUES(1,null,'Prospecto','12345678','3001234567',20,100,'ABIERTO',null,'2026-10-30','{}')`);
+  assert.deepEqual((await store.getAttentionDetail(central, id)).conversation.autoTags, []);
+});
+
+test("bandeja y dashboard muestran el último archivo real y conservan su texto cuando existe", async t => {
+  const { store, create, db } = await fixture(t); const { id } = await create();
+  const messageId = randomUUID();
+  await db.query(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",attachment)
+    VALUES($1,$2,'native-latest-media','inbound','','2026-10-30T16:00:00Z','{"kind":"image","id":"private-media"}')`, [messageId,id]);
+  for (const [kind,label] of [["image","Imagen"],["audio","Audio"],["video","Video"],["document","Documento"],["sticker","Sticker"]]) {
+    await db.query('UPDATE "AttentionMessage" SET attachment=$2::jsonb WHERE id=$1', [messageId,JSON.stringify({ kind,id:"private-media" })]);
+    const inbox=await store.getAttentionInbox(central,filters);
+    assert.equal(inbox.conversations[0].preview,label);
+    assert.equal(inbox.dashboard.activeConversations[0].preview,label);
+  }
+  await db.query('UPDATE "AttentionMessage" SET text=\'Comprobante enviado por el cliente\' WHERE id=$1',[messageId]);
+  assert.equal((await store.getAttentionInbox(central,filters)).conversations[0].preview,"Comprobante enviado por el cliente");
+});
+
 test("prospecto global existente resuelve para central sin duplicar ni exponer payload al analista", async t => {
   const {store,create,assign,db}=await fixture(t);
   await db.query(`INSERT INTO "CreditoBorrador" VALUES(1,null,'Prospecto oficial','123456','003001111111',20,100,'ABIERTO',null,'2026-10-30','{"secret":"DRAFT_PRIVATE"}')`);

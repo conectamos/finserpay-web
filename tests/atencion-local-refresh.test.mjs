@@ -194,7 +194,7 @@ test("404 tardío de una mutación no retira el chat diferente que acaba de sele
 
 test("sincronización manual cancela el refresco local y bloquea nuevos polls", async () => {
   const f = mount(); await f.ready(); await f.select(); await f.advance(20_000);
-  f.button("Actualizar WhatsApp").props.onClick(); await f.flush();
+  f.button("Configuración").props.onClick(); await f.flush(); f.button("Importar historial Dapta").props.onClick(); await f.flush();
   assert.equal(f.requests[4].url, "/api/atencion/sync");
   assert.ok(f.requests.slice(2, 4).every(request => request.init.signal.aborted));
   f.requests[2].respond(inbox); f.requests[3].respond(detail); await f.flush();
@@ -205,7 +205,7 @@ test("sincronización manual cancela el refresco local y bloquea nuevos polls", 
 
 test("un poll correcto recupera errores de lectura manual sin dejar la bandeja bloqueada", async () => {
   const f = mount(); await f.ready(); await f.select();
-  f.all().find(node => node.type?.name === "Button" && text(node).trim() === "Actualizar").props.onClick();
+  f.button("Actualizar").props.onClick();
   await f.flush();
   f.requests[2].respond({ error: "Lectura manual fallida" }, 503);
   f.requests[3].respond({ error: "Detalle manual fallido" }, 503); await f.flush();

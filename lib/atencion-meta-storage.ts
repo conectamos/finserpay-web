@@ -20,7 +20,8 @@ export type MetaReply = {
   acceptedAt: Date | string | null; deliveryAt: Date | string | null; errorCode: string | null;
   createdAt: Date | string; updatedAt: Date | string; attempts: number;
 };
-export type AttentionMetaStorageOptions = { scope: MetaScope; sendingEnabled?: boolean; cutoverConfirmed?: boolean; now?: () => Date };
+export type AttentionMetaStorageOptions = { scope: MetaScope; sendingEnabled?: boolean; cutoverConfirmed?: boolean; now?: () => Date;
+  beforeReplySend?: (db: AttentionDb, actor: AttentionActor, reply: MetaReply) => Promise<void> };
 const transactionOptions = { isolationLevel: "ReadCommitted" as const, timeout: 30000, maxWait: 10000 };
 const rank: Record<string, number> = { queued: 0, sending: 0, uncertain: 0, failed: 0, accepted: 1, sent: 2, delivered: 3, read: 4 };
 const date = (value: Date | string) => new Date(value).toISOString();
@@ -308,6 +309,7 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
       if(row.status!=='queued'||row.sendStartedAt||conversation.version!==row.conversationVersion)throw new AttentionError("La conversación o el envío cambió. No se envió el mensaje.",409);
       const recipient=await binding(db,conversation.id);if(recipient.contactId!==row.contactId)throw new AttentionError("El contacto cambió.",409);
       if(row.attachment&&!row.uploadedMediaId)throw new AttentionError("El adjunto no fue cargado.",409);
+      await options.beforeReplySend?.(db,actor,row);
       const [updated]=await db.$queryRawUnsafe<MetaReply[]>(`UPDATE "AttentionMetaOutbox" SET status='sending',"sendStartedAt"=$2::timestamptz,"updatedAt"=now() WHERE id=$1::uuid RETURNING *`,id,now());
       await userAudit(db,actor,"META_REPLY_SENDING",row.conversationId,{outboxId:id});return updated;
     });},

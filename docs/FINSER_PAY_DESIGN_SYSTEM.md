@@ -137,6 +137,31 @@ vigentes, y los recibos anteriores conservan las condiciones de su registro.
 - Iconos decorativos se ocultan a lectores de pantalla; acciones solo con icono
   requieren una etiqueta accesible.
 
+## CRM de Atención
+
+Atención reutiliza la cabecera horizontal de la plataforma: `FinserNavigation`
+en su variante administrativa para central y `AnalystNavigation` para el perfil
+nominal. Usa porcelana, grafito y acentos lima; no añade una navegación lateral,
+mascotas ni una segunda barra de búsqueda. Una franja compacta agrupa las vistas
+del módulo y el estado real de conexión.
+
+La vista inicial es Conversaciones, con bandeja y chat amplio en dos columnas.
+La ficha se abre bajo demanda en `FinserSidePanel`, sin comprimir el historial.
+El panel conserva formularios al cerrarse y restituye el foco al control de origen;
+la pérdida de acceso retira los datos protegidos. Las confirmaciones financieras
+permanecen dentro del panel nativo y se cierran antes que él.
+
+La tipografía operativa usa 16 px y los controles frecuentes tienen al menos
+44 px. La identidad es compacta; la etiqueta automática FINSERPAY se distingue de
+las etiquetas manuales de seguimiento. El resumen financiero pide seleccionar
+crédito si hay varios y presenta estado, prórroga y último recibo. Notas y tareas
+se agrupan en Seguimiento. `ConfirmDialog` muestra crédito, destinatario y fecha
+o importe antes de actuar. El grabador ofrece escucha previa y los emojis se
+insertan en el borrador. La recepción en tiempo real conserva texto y posición
+de lectura; los fallos de conexión muestran su estado y activan consulta local.
+En móvil se pasa de bandeja a chat, con ficha superpuesta y desplazamiento sin
+cortar mensajes ni controles de envío.
+
 ## Inicio de FINSER PAY Clientes
 
 La referencia móvil aprobada usa los tokens compartidos `--fp-client-bg` (marfil),

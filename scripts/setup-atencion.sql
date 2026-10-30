@@ -103,4 +103,43 @@ CREATE OR REPLACE FUNCTION attention_audit_immutable() RETURNS trigger LANGUAGE 
 BEGIN RAISE EXCEPTION 'Attention audit is append-only'; END; $$;
 DROP TRIGGER IF EXISTS attention_audit_immutable ON "AttentionAudit";
 CREATE TRIGGER attention_audit_immutable BEFORE UPDATE OR DELETE ON "AttentionAudit" FOR EACH ROW EXECUTE FUNCTION attention_audit_immutable();
+
+-- Transactional invalidation only: no names, phones, message text, documents or
+-- financial values enter NOTIFY. Role/assignment checks still run on each SSE.
+CREATE OR REPLACE FUNCTION attention_realtime_notify() RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+DECLARE
+  chat_id uuid;
+  current_user_id integer;
+  current_key text;
+  current_seller_id integer;
+  previous_user_id integer := NULL;
+  previous_key text := NULL;
+  previous_seller_id integer := NULL;
+BEGIN
+  IF TG_OP='UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+  IF TG_TABLE_NAME='AttentionConversation' THEN
+    chat_id := NEW.id;
+    current_user_id := NEW."assigneeUserId"; current_key := NEW."assigneeKey"; current_seller_id := NEW."assigneeSellerId";
+    IF TG_OP='UPDATE' THEN
+      previous_user_id := OLD."assigneeUserId"; previous_key := OLD."assigneeKey"; previous_seller_id := OLD."assigneeSellerId";
+    END IF;
+  ELSE
+    IF TG_TABLE_NAME='AttentionMetaOutbox' AND TG_OP='UPDATE' THEN
+      IF (NEW.status,NEW."messageId",NEW."errorCode") IS NOT DISTINCT FROM (OLD.status,OLD."messageId",OLD."errorCode") THEN RETURN NEW; END IF;
+    END IF;
+    chat_id := NEW."conversationId";
+    SELECT c."assigneeUserId",c."assigneeKey",c."assigneeSellerId" INTO current_user_id,current_key,current_seller_id
+      FROM public."AttentionConversation" c WHERE c.id=chat_id;
+  END IF;
+  PERFORM pg_notify('finserpay_attention_changes', json_build_object(
+    'conversationId',chat_id,'previousUserId',previous_user_id,'previousKey',previous_key,'previousSellerId',previous_seller_id,
+    'currentUserId',current_user_id,'currentKey',current_key,'currentSellerId',current_seller_id)::text);
+  RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS attention_realtime_conversation ON "AttentionConversation";
+CREATE TRIGGER attention_realtime_conversation AFTER INSERT OR UPDATE ON "AttentionConversation" FOR EACH ROW EXECUTE FUNCTION attention_realtime_notify();
+DROP TRIGGER IF EXISTS attention_realtime_message ON "AttentionMessage";
+CREATE TRIGGER attention_realtime_message AFTER INSERT OR UPDATE OF text,attachment,"deliveryStatus" ON "AttentionMessage" FOR EACH ROW EXECUTE FUNCTION attention_realtime_notify();
+DROP TRIGGER IF EXISTS attention_realtime_outbox ON "AttentionMetaOutbox";
+CREATE TRIGGER attention_realtime_outbox AFTER INSERT OR UPDATE OF status,"messageId","errorCode" ON "AttentionMetaOutbox" FOR EACH ROW EXECUTE FUNCTION attention_realtime_notify();
 COMMIT;
