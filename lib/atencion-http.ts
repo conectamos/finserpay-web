@@ -36,11 +36,11 @@ export function assertAttentionOrigin(request: Request) {
   } catch { throw new AttentionError("Origen de solicitud no permitido.", 403); }
 }
 
-export async function readAttentionJson(request: Request): Promise<Record<string, unknown>> {
+export async function readAttentionJson(request: Request, options: { maxBytes?: number } = {}): Promise<Record<string, unknown>> {
   if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
     throw new AttentionError("Envía los datos en formato JSON.", 415);
   }
-  const maxBytes = 16384;
+  const maxBytes = Math.min(options.maxBytes ?? 16384, 24000);
   const reader = request.body?.getReader();
   if (!reader) throw new AttentionError("Solicitud vacía.", 400);
   const chunks: Uint8Array[] = [];

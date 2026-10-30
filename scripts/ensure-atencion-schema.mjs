@@ -11,19 +11,22 @@ const expectedColumns = {
   AttentionQuickReply: "id:uuid! title:text! text:text! approvedBy:text! approvedByUserId:int4! approvedAt:timestamptz!",
   AttentionAudit: "id:int8! conversationId:uuid userId:int4 sellerId:int4 action:text! metadata:jsonb! createdAt:timestamptz! actorKind:text! actorKey:text",
   AttentionRequest: "actorKey:text! requestId:uuid! fingerprint:text! resultId:uuid createdAt:timestamptz!",
+  AttentionReadState: "userId:int4! messageId:uuid! conversationId:uuid! readAt:timestamptz!",
   AttentionMetaBinding: "id:uuid! conversationId:uuid! phoneNumberId:text! wabaId:text! contactId:text! createdAt:timestamptz!",
-  AttentionMetaOutbox: "id:uuid! conversationId:uuid! userId:int4! actorKey:text! authorName:text! requestId:uuid! fingerprint:text! conversationVersion:int4! phoneNumberId:text! wabaId:text! contactId:text! text:text! attachment:jsonb uploadedMediaId:text status:text! messageId:uuid wamid:text leaseToken:uuid leaseUntil:timestamptz sendStartedAt:timestamptz acceptedAt:timestamptz deliveryAt:timestamptz errorCode:text attempts:int4! createdAt:timestamptz! updatedAt:timestamptz!",
+  AttentionMetaOutbox: "id:uuid! conversationId:uuid! userId:int4! actorKey:text! authorName:text! requestId:uuid! fingerprint:text! conversationVersion:int4! phoneNumberId:text! wabaId:text! contactId:text! text:text! attachment:jsonb uploadedMediaId:text status:text! messageId:uuid wamid:text leaseToken:uuid leaseUntil:timestamptz sendStartedAt:timestamptz acceptedAt:timestamptz deliveryAt:timestamptz errorCode:text attempts:int4! createdAt:timestamptz! updatedAt:timestamptz! template:jsonb",
   AttentionMetaDelivery: "id:uuid! phoneNumberId:text! wabaId:text! wamid:text! recipient:text! status:text! eventAt:timestamptz! errorCode:text requestId:uuid createdAt:timestamptz!",
 };
 const additiveColumns = {
   AttentionConversation: ["closedAt", "daptaMessagesCursor", "metaManaged", "metaLastInboundAt"],
   AttentionMessage: ["metaWamid", "metaPhoneNumberId", "attachment", "deliveryStatus", "deliveryAt", "replyToWamid"],
   AttentionAudit: ["actorKind", "actorKey"],
+  AttentionMetaOutbox: ["template"],
 };
 const tableNames = Object.keys(expectedColumns);
 const foreignKeys = {
   AttentionConversation: { sedeId: "Sede", assigneeUserId: "Usuario", assigneeSellerId: "Vendedor", linkedCreditId: "Credito" },
   AttentionMessage: { conversationId: "AttentionConversation" },
+  AttentionReadState: { conversationId: "AttentionConversation", userId: "Usuario", messageId: "AttentionMessage" },
   AttentionNote: { conversationId: "AttentionConversation", userId: "Usuario", sellerId: "Vendedor" },
   AttentionTask: { conversationId: "AttentionConversation", userId: "Usuario", sellerId: "Vendedor" },
   AttentionQuickReply: { approvedByUserId: "Usuario" },
@@ -66,7 +69,7 @@ async function verifySchema(client, beforeInstallation) {
   const hasConstraint = (table, kind, columns) => constraints.some(row => row.tableName === table && row.contype === kind && row.convalidated && JSON.stringify(row.columns) === JSON.stringify(columns));
   for (const table of tableNames) {
     if (beforeInstallation && !present.has(table)) continue;
-    if (!hasConstraint(table, "p", table === "AttentionRequest" ? ["actorKey", "requestId"] : ["id"])) throw new AttentionSchemaMismatch(`${table}.PRIMARY_KEY`);
+    if (!hasConstraint(table, "p", table === "AttentionRequest" ? ["actorKey", "requestId"] : table === "AttentionReadState" ? ["userId", "messageId"] : ["id"])) throw new AttentionSchemaMismatch(`${table}.PRIMARY_KEY`);
     for (const [column, target] of Object.entries(foreignKeys[table] || {})) {
       if (!constraints.some(row => row.tableName === table && row.contype === "f" && row.convalidated &&
           row.columns.length === 1 && row.columns[0] === column && row.foreignSchema === "public" && row.foreignTable === target &&
@@ -117,7 +120,7 @@ try {
   await verifySchema(client, true);
   await client.query(await readFile(new URL("./setup-atencion.sql", import.meta.url), "utf8"));
   await verifySchema(client, false);
-  console.log("Esquema de atención verificado: 10 tablas, columnas y claves compatibles; closedAt, daptaMessagesCursor, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.");
+  console.log("Esquema de atención verificado: 11 tablas, columnas y claves compatibles; lectura nominal, closedAt, daptaMessagesCursor, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.");
 } catch (error) {
   if (error instanceof AttentionSchemaMismatch) throw error;
   const code = String(error?.code || "").replace(/[^A-Z0-9_]/gi, "").slice(0, 24);

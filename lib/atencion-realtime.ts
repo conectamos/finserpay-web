@@ -13,6 +13,7 @@ export type AttentionRealtimeChange = {
   currentUserId: number | null;
   currentKey: string | null;
   currentSellerId: number | null;
+  readActorUserId?: number;
 };
 type BrokerEvent = { kind: "connected" } | { kind: "disconnected" } | { kind: "change"; change: AttentionRealtimeChange };
 type Subscriber = (event: BrokerEvent) => void;
@@ -31,9 +32,11 @@ export function parseAttentionRealtimeChange(payload: string | undefined): Atten
     const number = (item: unknown) => item === null || Number.isSafeInteger(item) && Number(item) > 0;
     const key = (item: unknown) => item === null || typeof item === "string" && item.length <= 80;
     if (![value.previousUserId, value.previousSellerId, value.currentUserId, value.currentSellerId].every(number) ||
-        ![value.previousKey, value.currentKey].every(key)) return null;
+        ![value.previousKey, value.currentKey].every(key) ||
+        (value.readActorUserId !== undefined && (!Number.isSafeInteger(value.readActorUserId) || value.readActorUserId <= 0))) return null;
     return { conversationId: value.conversationId, previousUserId: value.previousUserId, previousKey: value.previousKey,
-      previousSellerId: value.previousSellerId, currentUserId: value.currentUserId, currentKey: value.currentKey, currentSellerId: value.currentSellerId };
+      previousSellerId: value.previousSellerId, currentUserId: value.currentUserId, currentKey: value.currentKey, currentSellerId: value.currentSellerId,
+      ...(value.readActorUserId !== undefined ? { readActorUserId: value.readActorUserId } : {}) };
   } catch { return null; }
 }
 
@@ -130,6 +133,7 @@ export async function attentionRealtimeSchemaReady(database: AttentionDb): Promi
 }
 
 function recipient(actor: AttentionActor, change: AttentionRealtimeChange): boolean {
+  if (change.readActorUserId !== undefined && change.readActorUserId !== actor.userId) return false;
   return actor.central || (change.currentUserId === actor.userId && change.currentKey === actor.key && change.currentSellerId === null) ||
     (change.previousUserId === actor.userId && change.previousKey === actor.key && change.previousSellerId === null);
 }
@@ -137,6 +141,7 @@ function recipient(actor: AttentionActor, change: AttentionRealtimeChange): bool
 /** Recheck active nominal account and current assignment before every frame batch. */
 export async function authorizeAttentionRealtime(database: AttentionDb, actor: AttentionActor, changes: readonly AttentionRealtimeChange[] = []): Promise<boolean> {
   assertAttentionActor(actor);
+  const relevantChanges = changes.filter(change => change.readActorUserId === undefined || change.readActorUserId === actor.userId);
   const rows = await database.$queryRawUnsafe<{ authorized: boolean; relevant: boolean }[]>(`SELECT
     EXISTS(SELECT 1 FROM "Usuario" u JOIN "Rol" r ON r.id=u."rolId" JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId"
       WHERE u.id=$1 AND u.activo=true AND s.activa=true AND a.activo=true AND upper(trim(a.codigo))='FINSERPAY'
@@ -144,8 +149,8 @@ export async function authorizeAttentionRealtime(database: AttentionDb, actor: A
     ($5::boolean OR EXISTS(SELECT 1 FROM "AttentionConversation" c WHERE c.id=ANY($6::uuid[])
       AND c."assigneeUserId"=$1 AND c."assigneeKey"=$7 AND c."assigneeSellerId" IS NULL)) AS relevant`,
   actor.userId, actor.central ? "ADMIN" : "ANALISTA_APROBACION", actor.sedeId, actor.aliadoId,
-  actor.central || changes.some(change => change.previousUserId === actor.userId && change.previousKey === actor.key && change.previousSellerId === null),
-  changes.map(change => change.conversationId), actor.key);
+  (actor.central && (!changes.length || relevantChanges.length > 0)) || relevantChanges.some(change => change.previousUserId === actor.userId && change.previousKey === actor.key && change.previousSellerId === null),
+  relevantChanges.map(change => change.conversationId), actor.key);
   if (!rows[0]?.authorized) throw new AttentionError("La cuenta de atención ya no está autorizada.", 403);
   return rows[0].relevant;
 }

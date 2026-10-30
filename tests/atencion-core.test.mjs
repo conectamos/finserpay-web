@@ -2,12 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
-const { normalizeAttentionPhone, parseAttentionMutation, parseAttentionFilters, assertAttentionActor } = await jiti.import("../lib/atencion-core.ts");
+const { normalizeAttentionPhone, parseAttentionMutation, parseAttentionFilters, parseAttentionAgendaFilters, parseAttentionRead, assertAttentionActor } = await jiti.import("../lib/atencion-core.ts");
 const requestId = "10000000-0000-4000-8000-000000000001";
 test("teléfonos colombianos coinciden exactamente sin igualar sufijos extranjeros", () => {
   for (const value of ["3001234567", "+57 (300) 123-4567", "00573001234567"]) assert.equal(normalizeAttentionPhone(value), "+573001234567");
   assert.notEqual(normalizeAttentionPhone("+13001234567"), normalizeAttentionPhone("3001234567"));
   for (const value of ["", "300", "a3001234567", "+", "++573001234567", "57+3001234567", 3001234567]) assert.throws(() => normalizeAttentionPhone(value));
+});
+
+test("filtros operativos y ACK aceptan solo mensajes explícitos y límites acotados",()=>{
+  for(const filter of ['unread','unanswered','unassigned'])assert.equal(parseAttentionFilters(new URLSearchParams({filter,tag:'Consulta'})).filter,filter);
+  assert.equal(parseAttentionFilters(new URLSearchParams({tag:'ＦＩＮＳＥＲ ＰＡＹ'})).tag,'FINSERPAY');
+  assert.throws(()=>parseAttentionFilters(new URLSearchParams('tag=a&tag=b')));
+  assert.deepEqual(parseAttentionAgendaFilters(new URLSearchParams()),{filter:'today',page:1});
+  for(const query of ['filter=done','filter=today&filter=all','page=0'])assert.throws(()=>parseAttentionAgendaFilters(new URLSearchParams(query)));
+  assert.deepEqual(parseAttentionRead({messageIds:[requestId,requestId]}),{messageIds:[requestId]});
+  for(const body of [{messageIds:[]},{messageIds:['bad']},{messageIds:Array(501).fill(requestId)},{messageIds:[requestId],readThrough:'now'}])assert.throws(()=>parseAttentionRead(body));
 });
 
 test("etiquetas manuales son independientes y FINSERPAY está reservada al servidor", () => {

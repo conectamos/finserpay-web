@@ -25,13 +25,15 @@ const core = compile("lib/atencion-core.ts", {});
 class AttentionDaptaError extends Error { constructor(message, status) { super(message); this.status = status; } }
 class AttentionMetaError extends Error { constructor(code, message, status = 502, uncertain = false) { super(message); this.code = code; this.status = status; this.uncertain = uncertain; } }
 function harness(file = "app/api/atencion/route.ts", options = {}) {
-  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [], readIntegration: [], readDetail: [] };
+  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [], readIntegration: [], readDetail: [], read: [], agenda: [] };
   const access = { ...core, getAttentionAccess: async () => {
     calls.access++; if (options.accessError) throw options.accessError; return options.actor || actor;
   } };
   const provider = { AttentionDaptaError, attentionIntegrationStatus: () => integration,
     fetchDaptaConversationSnapshots: async input => { calls.fetch.push(input); if (options.providerError) throw options.providerError; return { snapshots: [], nextCursor: "opaque", skipped: 0 }; } };
   const storage = {
+    markAttentionRead: async (...args) => { calls.read.push(args); if(options.storeError)throw options.storeError;return {unreadCount:1,changed:true}; },
+    getAttentionAgenda: async (...args) => { calls.agenda.push(args); if(options.storeError)throw options.storeError;return {items:[],counts:{today:0,overdue:0,upcoming:0,undated:0,total:0}}; },
     getAttentionHistoryCursors: async () => ({}),
     getAttentionInbox: async (...args) => { calls.inbox.push(args); if (options.storeError) throw options.storeError; return options.inbox || inbox; },
     createAttentionCase: async (...args) => { calls.create.push(args); return { id }; },
@@ -65,6 +67,27 @@ test("every attention handler requires authentication before data access", async
     assert.equal(response.status, 401); privateResponse(response);
     for (const key of ["inbox", "create", "detail", "mutate", "quick", "fetch", "import", "readIntegration", "readDetail"]) assert.equal(h.calls[key].length, 0);
   }
+});
+
+test("lectura observada exige sesión, origen, UUIDs y nunca invoca mutación de chat",async()=>{
+  const file='app/api/atencion/[id]/read/route.ts';
+  for(const options of [{accessError:new core.AttentionError('Sesión',401)},{storeError:new core.AttentionError('Asignación',404)}]){
+    const h=harness(file,options),response=await h.POST(request({messageIds:[randomUUID()]}),context);
+    assert.equal(response.status,options.accessError?401:404);privateResponse(response);
+  }
+  const h=harness(file),messageIds=Array.from({length:500},()=>randomUUID());
+  let response=await h.POST(request({messageIds}),context);assert.equal(response.status,200);assert.equal(h.calls.read[0][2].messageIds.length,500);assert.equal(h.calls.mutate.length,0);
+  response=await h.POST(request({messageIds},'POST',{origin:'https://evil.invalid'}),context);assert.equal(response.status,403);
+  for(const body of [{messageIds:[randomUUID()],readThrough:'now'},{messageIds:[]},{messageIds:[...messageIds,randomUUID()]},{messageIds:['not-uuid']}])assert.equal((await h.POST(request(body),context)).status,400);
+  assert.equal(h.calls.read.length,1);
+});
+
+test("agenda usa sesión nominal y filtros estrictos sin aceptar un actor del cliente",async()=>{
+  const file='app/api/atencion/agenda/route.ts';
+  const denied=harness(file,{accessError:new core.AttentionError('Sesión',401)});assert.equal((await denied.GET(new Request(`${origin}/api/atencion/agenda`))).status,401);assert.equal(denied.calls.agenda.length,0);
+  const h=harness(file),response=await h.GET(new Request(`${origin}/api/atencion/agenda?filter=overdue&page=2&userId=999`));
+  assert.equal(response.status,200);privateResponse(response);assert.equal(h.calls.agenda[0][0],actor);assert.deepEqual(h.calls.agenda[0][1],{filter:'overdue',page:2});
+  assert.equal((await h.GET(new Request(`${origin}/api/atencion/agenda?filter=today&filter=all`))).status,400);
 });
 
 test("CSRF blocks absent, malformed and cross-site Origin before session", async () => {

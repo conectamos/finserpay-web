@@ -66,6 +66,86 @@ async function fixture(t, install = true) {
 const snapshot = (data = {}) => ({ externalId: "provider-chat", phone: "+573001234567", name: "Contacto", mode: "ai",
   lastContactAt: null, historyTruncated: false, historyCursor: null, messages: [], ...data });
 const message = (id, sentAt = new Date().toISOString()) => ({ id, direction: "inbound", text: "Consulta real", sentAt, author: null });
+async function nativeMessage(db,conversationId,{direction='inbound',at='2026-10-30T15:00:00Z',status=null}={}){
+  const id=randomUUID();await db.query(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt","deliveryStatus") VALUES($1::uuid,$2,$1::text,$3,'Prueba',$4,$5)`,[id,conversationId,direction,at,status]);return id;
+}
+
+test("lectura nominal confirma solo IDs observados, conserva concurrentes y versión; audita/notifica solo cambios",async t=>{
+  const f=await fixture(t),{id}=await f.create();await f.assign(id);
+  const first=await nativeMessage(f.db,id),sameTime=await nativeMessage(f.db,id);
+  const before=(await f.store.getAttentionDetail(analyst,id)).conversation;
+  const laterHistory=await nativeMessage(f.db,id,{at:'2026-10-29T15:00:00Z'});
+  const notifications=[];await f.db.listen('finserpay_attention_changes',value=>notifications.push(JSON.parse(value)));
+  assert.deepEqual(await f.store.markAttentionRead(analyst,id,{messageIds:[first]}),{unreadCount:2,changed:true});
+  assert.deepEqual(await f.store.markAttentionRead(analyst,id,{messageIds:[first]}),{unreadCount:2,changed:false});
+  const after=(await f.store.getAttentionDetail(analyst,id)).conversation;
+  assert.equal(after.version,before.version);assert.equal(after.unreadCount,2);
+  assert.equal((await f.store.getAttentionDetail(central,id)).conversation.unreadCount,3);
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='MESSAGES_READ'`)).rows[0].n,1);
+  assert.deepEqual(notifications.map(value=>value.readActorUserId),[analyst.userId]);
+  assert.ok(!JSON.stringify(notifications).includes('Prueba'));
+  assert.deepEqual(await f.store.markAttentionRead(analyst,id,{messageIds:[sameTime,laterHistory]}),{unreadCount:0,changed:true});
+  const out=await nativeMessage(f.db,id,{direction:'outbound'});
+  await assert.rejects(f.store.markAttentionRead(analyst,id,{messageIds:[out]}),{status:400});
+  await f.assign(id,otherAnalyst);
+  await assert.rejects(f.store.markAttentionRead(analyst,id,{messageIds:[first]}),{status:404});
+  assert.equal((await f.store.getAttentionDetail(otherAnalyst,id)).conversation.unreadCount,3);
+  await f.db.query('UPDATE "Usuario" SET activo=false WHERE id=6');
+  await assert.rejects(f.store.markAttentionRead(otherAnalyst,id,{messageIds:[first]}),{status:403});
+});
+
+test("espera usa primer entrante posterior a respuesta confirmada; leer o fallar no responde",async t=>{
+  const f=await fixture(t),{id}=await f.create();await f.assign(id);
+  await nativeMessage(f.db,id,{at:'2026-10-30T14:00:00Z'});
+  await nativeMessage(f.db,id,{direction:'outbound',at:'2026-10-30T14:01:00Z',status:'delivered'});
+  const first=await nativeMessage(f.db,id,{at:'2026-10-30T14:02:00Z'});
+  await nativeMessage(f.db,id,{at:'2026-10-30T14:03:00Z'});
+  for(const status of ['queued','sending','uncertain','failed'])await nativeMessage(f.db,id,{direction:'outbound',at:'2026-10-30T14:04:00Z',status});
+  await f.store.markAttentionRead(analyst,id,{messageIds:[first]});
+  const get=async()=>(await f.store.getAttentionInbox(analyst,{...filters,filter:'unanswered'}));
+  assert.equal((await get()).conversations[0].waitingSince,'2026-10-30T14:02:00.000Z');
+  assert.equal((await get()).conversations[0].lastInboundAt,'2026-10-30T14:03:00.000Z');
+  await nativeMessage(f.db,id,{direction:'outbound',at:'2026-10-30T14:05:00Z',status:'accepted'});
+  assert.equal((await get()).total,0);
+  await nativeMessage(f.db,id,{at:'2026-10-30T14:06:00Z'});
+  assert.equal((await get()).conversations[0].waitingSince,'2026-10-30T14:06:00.000Z');
+});
+
+test("filtros, totales y etiquetas operativas solo incluyen alcance nominal actual",async t=>{
+  const f=await fixture(t),own=await f.create(),other=await f.create(),unassigned=await f.create();await f.assign(own.id);await f.assign(other.id,otherAnalyst);
+  await f.act(analyst,own.id,'tags',{tags:['Consulta']});await f.act(otherAnalyst,other.id,'tags',{tags:['Privado']});
+  await f.act(central,own.id,'link',{creditId:1});
+  const first=await nativeMessage(f.db,own.id);await nativeMessage(f.db,other.id);await nativeMessage(f.db,unassigned.id);
+  const scoped=await f.store.getAttentionInbox(analyst,filters);
+  assert.deepEqual(scoped.operational,{unassigned:0,unread:1,unanswered:1});assert.deepEqual(scoped.availableTags,['Consulta','FINSERPAY']);
+  assert.equal((await f.store.getAttentionInbox(analyst,{...filters,filter:'unassigned'})).total,0);
+  assert.equal((await f.store.getAttentionInbox(central,{...filters,filter:'unassigned'})).total,1);
+  assert.equal((await f.store.getAttentionInbox(analyst,{...filters,tag:'privado'})).total,0);
+  assert.equal((await f.store.getAttentionInbox(analyst,{...filters,tag:'consulta'})).total,1);
+  assert.equal((await f.store.getAttentionInbox(central,{...filters,tag:'FINSERPAY'})).total,1);
+  await f.store.markAttentionRead(analyst,own.id,{messageIds:[first]});
+  assert.equal((await f.store.getAttentionInbox(analyst,{...filters,filter:'unread'})).total,0);
+  assert.equal((await f.store.getAttentionInbox(central,{...filters,filter:'unread'})).total,3);
+  await assert.rejects(f.store.markAttentionRead(otherAnalyst,own.id,{messageIds:[first]}),{status:404});
+});
+
+test("agenda separa días Bogotá, omite completadas y pagina solo chats autorizados",async t=>{
+  const f=await fixture(t),own=await f.create(),other=await f.create();await f.assign(own.id);await f.assign(other.id,otherAnalyst);
+  const store=createAttentionStore(adapter(f.db),{now:()=>new Date('2026-10-30T17:00:00Z')});
+  for(const [title,dueAt] of [['Vencida','2026-10-30T04:59:59Z'],['Hoy','2026-10-30T05:00:00Z'],['Hoy noche','2026-10-31T04:59:59Z'],['Próxima','2026-10-31T05:00:00Z'],['Sin fecha',null]])await f.act(analyst,own.id,'task',{text:title,dueAt});
+  await f.act(otherAnalyst,other.id,'task',{text:'Privada',dueAt:'2026-10-30T17:00:00Z'});
+  let agenda=await store.getAttentionAgenda(analyst,{filter:'today',page:1});
+  assert.deepEqual(agenda.counts,{today:2,overdue:1,upcoming:1,undated:1,total:5});assert.equal(agenda.total,2);assert.equal(agenda.today,'2026-10-30');
+  assert.ok(agenda.items.every(item=>item.conversation.id===own.id));
+  assert.deepEqual((await store.getAttentionInbox(analyst,filters)).agendaCounts,agenda.counts);
+  await f.act(analyst,own.id,'complete_task',{taskId:agenda.items[0].id});
+  assert.equal((await store.getAttentionAgenda(analyst,{filter:'today',page:1})).total,1);
+  await assert.rejects(f.act(otherAnalyst,own.id,'complete_task',{taskId:agenda.items[1].id}),{status:404});
+  const rows=Array.from({length:42},(_,i)=>({id:randomUUID(),title:`Pendiente ${i}`}));
+  await f.db.query(`INSERT INTO "AttentionTask"(id,"conversationId",title,author,"userId") SELECT r.id,$1,r.title,'Analista A',5 FROM jsonb_to_recordset($2::jsonb) r(id uuid,title text)`,[own.id,JSON.stringify(rows)]);
+  agenda=await store.getAttentionAgenda(analyst,{filter:'all',page:2});assert.equal(agenda.items.length,6);assert.equal(agenda.total,46);
+  await f.assign(own.id,otherAnalyst);assert.equal((await store.getAttentionAgenda(analyst,{filter:'all',page:1})).total,0);
+});
 
 test("sin esquema: bandeja pendiente y escrituras rechazadas sin DDL por solicitud", async t => {
   const { store, create } = await fixture(t, false);

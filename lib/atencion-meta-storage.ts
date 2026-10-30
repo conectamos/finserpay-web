@@ -5,6 +5,7 @@ import type { AttentionDatabase, AttentionDb } from "./atencion-storage";
 import type { MetaScope, MetaWebhookEvents, MetaDeliveryStatus } from "./atencion-meta";
 import { META_ATTENTION_LINE } from "./atencion-meta";
 import { applyWhatsAppAutomationDelivery } from "./whatsapp-automation-meta-storage";
+import { compileMetaTemplate, templateIntentFingerprint, type MetaTemplateSnapshot } from "./atencion-meta-templates";
 
 export type MetaReplyAttachment = {
   kind: "image" | "audio" | "video" | "document" | "sticker";
@@ -12,11 +13,12 @@ export type MetaReplyAttachment = {
 };
 type StoredAttachment = { kind: MetaReplyAttachment["kind"]; mediaId: string; mimeType: string; fileName: string | null; sha256?: string };
 type MetaConversation = { id: string; phone: string | null; version: number; metaManaged: boolean; metaLastInboundAt: Date | string | null;
-  lastContactAt: Date | string | null; closedAt: Date | string | null; status: string; assigneeKey: string | null };
+  channel: string; lastContactAt: Date | string | null; closedAt: Date | string | null; status: string; assigneeKey: string | null };
 export type MetaReply = {
   id: string; conversationId: string; userId: number; actorKey: string; authorName: string; requestId: string;
   fingerprint: string; conversationVersion: number; phoneNumberId: string; wabaId: string; contactId: string;
   text: string; attachment: MetaReplyAttachment | null; uploadedMediaId: string | null;
+  template?: MetaTemplateSnapshot | null;
   status: NonNullable<AttentionMessage["deliveryStatus"]>; messageId: string | null; wamid: string | null;
   leaseToken: string | null; leaseUntil: Date | string | null; sendStartedAt: Date | string | null;
   acceptedAt: Date | string | null; deliveryAt: Date | string | null; errorCode: string | null;
@@ -115,6 +117,30 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     if (!rows[0]) throw new AttentionError("La conversación no corresponde al canal Meta configurado.", 409);
     return rows[0];
   }
+  async function templateCapability(db: AttentionDb, conversation: MetaConversation, createBinding=false) {
+    const [schema]=await db.$queryRawUnsafe<{ready:boolean}[]>(`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='AttentionMetaOutbox' AND column_name='template' AND data_type='jsonb') AS ready`);
+    if(!schema?.ready)throw new AttentionError("La preparación del envío de plantillas está pendiente.",503);
+    let reason: string|null = !options.sendingEnabled || !options.cutoverConfirmed ? "El envío está pendiente de validar Meta y el control de la IA." : null;
+    if(conversation.channel!=="whatsapp"||!/^\+[1-9]\d{6,14}$/.test(conversation.phone||""))reason="Este chat no tiene un destinatario de WhatsApp verificable.";
+    const contactId=conversation.phone?.slice(1)||"";
+    const bindings=await db.$queryRawUnsafe<{conversationId:string;phoneNumberId:string;wabaId:string;contactId:string}[]>(`SELECT "conversationId","phoneNumberId","wabaId","contactId" FROM "AttentionMetaBinding"
+      WHERE "conversationId"=$1::uuid OR ("phoneNumberId"=$2 AND "contactId"=$3)`,conversation.id,scope.phoneNumberId,contactId);
+    if(bindings.some(b=>b.conversationId!==conversation.id||b.phoneNumberId!==scope.phoneNumberId||b.wabaId!==scope.wabaId||b.contactId!==contactId))reason="El vínculo de WhatsApp no coincide de forma única con este contacto.";
+    const requiresBindingConfirmation=bindings.length===0;
+    if(requiresBindingConfirmation && conversation.channel==='whatsapp' && /^\+[1-9]\d{6,14}$/.test(conversation.phone||"")){
+      const matches=await db.$queryRawUnsafe<{id:string}[]>(`SELECT id FROM "AttentionConversation" WHERE channel='whatsapp' AND phone=$1 ORDER BY id LIMIT 2`,conversation.phone);
+      if(matches.length!==1||matches[0].id!==conversation.id)reason="Hay varias conversaciones para este teléfono. Revisa la identidad antes de enviar.";
+    }
+    if(createBinding){
+      if(reason)throw new AttentionError(reason,409);
+      if(requiresBindingConfirmation){
+        await db.$queryRawUnsafe(`INSERT INTO "AttentionMetaBinding"(id,"conversationId","phoneNumberId","wabaId","contactId") VALUES($1::uuid,$2::uuid,$3,$4,$5) RETURNING id`,randomUUID(),conversation.id,scope.phoneNumberId,scope.wabaId,contactId);
+        await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET "metaManaged"=true WHERE id=$1::uuid RETURNING id`,conversation.id);
+        await systemAudit(db,"META_TEMPLATE_CONTACT_LINKED",conversation.id);
+      }
+    }
+    return {canSend:reason===null,reason,conversationVersion:conversation.version,requiresBindingConfirmation,contactId};
+  }
   async function reply(db: AttentionDb, actor: AttentionActor, conversationId: string, requestId: string) {
     await scopedConversation(db, actor, conversationId);
     const [row] = await db.$queryRawUnsafe<MetaReply[]>(`SELECT * FROM "AttentionMetaOutbox" WHERE "actorKey"=$1 AND "requestId"=$2::uuid FOR UPDATE`, actor.key, attentionUuid(requestId));
@@ -205,6 +231,13 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     await systemAudit(db,"META_REPLY_RECOVERED",row.conversationId,{outboxId:row.id,status:updated.status});return updated;
   }
   return {
+    async getTemplateAccess(actor: AttentionActor, conversationId: string) {
+      return transact(async db=>{
+        const conversation=await scopedConversation(db,actor,conversationId);
+        const {contactId:_contact,...capability}=await templateCapability(db,conversation);void _contact;
+        await userAudit(db,actor,"META_TEMPLATES_READ",conversationId);return capability;
+      });
+    },
     async getMessaging(actor: AttentionActor, conversationId: string) {
       return database.$transaction(async db => {
         const row = await scopedConversation(db, actor, conversationId);
@@ -314,11 +347,20 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
         return {messagesImported,echoesImported,statusesApplied};
       });
     },
-    async queueReply(actor: AttentionActor, conversationId: string, input: {requestId:string;version:number;text:string;attachment?:MetaReplyAttachment}) {
-      const requestId=attentionUuid(input.requestId), text=attentionText(input.text,4096,false), attachment=attachmentInput(input.attachment);
+    async queueReply(actor: AttentionActor, conversationId: string, input: {requestId:string;version:number;text:string;attachment?:MetaReplyAttachment;template?:MetaTemplateSnapshot}) {
+      const template=input.template??null, compiled=template?compileMetaTemplate(template):null;
+      const requestId=attentionUuid(input.requestId), text=attentionText(compiled?.text??input.text,template?16000:4096,false), attachment=attachmentInput(input.attachment);
+      if(template&&attachment)throw new AttentionError("La plantilla no admite un archivo adicional.");
       if ((!text&&!attachment)||!Number.isSafeInteger(input.version)||input.version<1) throw new AttentionError("Respuesta inválida.");
-      const fingerprint=createHash("sha256").update(JSON.stringify({conversationId,text,attachment,version:input.version})).digest("hex");
+      const fingerprint=template?templateIntentFingerprint(conversationId,{version:input.version,templateKey:template.definition.key,revision:template.definition.revision,parameters:template.parameters})
+        :createHash("sha256").update(JSON.stringify({conversationId,text,attachment,version:input.version})).digest("hex");
       return transact(async db=>{
+        // Match provider import lock order while establishing a historical chat's binding.
+        if(template){
+          await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended('attention:provider-import',0))`);
+          const [location]=await db.$queryRawUnsafe<{phone:string|null}[]>(`SELECT phone FROM "AttentionConversation" WHERE id=$1::uuid`,attentionUuid(conversationId));
+          if(location?.phone)await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`,`attention:phone:${location.phone}`);
+        }
         const conversation=await scopedConversation(db,actor,conversationId);
         await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`, `attention:meta:request:${actor.key}:${requestId}`);
         const [reserved]=await db.$queryRawUnsafe<{fingerprint:string}[]>(`SELECT fingerprint FROM "AttentionRequest" WHERE "actorKey"=$1 AND "requestId"=$2::uuid`,actor.key,requestId);
@@ -327,11 +369,14 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
         if(existing){ if(existing.fingerprint!==fingerprint)throw new AttentionError("La solicitud ya se usó con otro contenido.",409); return existing; }
         const [unresolved]=await db.$queryRawUnsafe<{id:string}[]>(`SELECT id FROM "AttentionMetaOutbox" WHERE "conversationId"=$1::uuid AND status IN ('queued','sending','uncertain') LIMIT 1`,conversationId);
         if(unresolved)throw new AttentionError("Hay un envío pendiente de confirmación. Revisa su estado antes de escribir otro mensaje.",409);
-        const capability=messaging(conversation); if(!capability.canReply)throw new AttentionError(capability.reason!,409);
         if(conversation.version!==input.version)throw new AttentionError("La conversación cambió. Actualiza antes de responder.",409);
+        if(template)await templateCapability(db,conversation,true);
+        else {const capability=messaging(conversation);if(!capability.canReply)throw new AttentionError(capability.reason!,409);}
         const recipient=await binding(db,conversationId);
-        const [row]=await db.$queryRawUnsafe<MetaReply[]>(`INSERT INTO "AttentionMetaOutbox"(id,"conversationId","userId","actorKey","authorName","requestId",fingerprint,"conversationVersion","phoneNumberId","wabaId","contactId",text,attachment)
-          VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,$12,$13::jsonb) RETURNING *`,randomUUID(),conversationId,actor.userId,actor.key,actor.name,requestId,fingerprint,input.version,scope.phoneNumberId,scope.wabaId,recipient.contactId,text,JSON.stringify(attachment));
+        const values=[randomUUID(),conversationId,actor.userId,actor.key,actor.name,requestId,fingerprint,input.version,scope.phoneNumberId,scope.wabaId,recipient.contactId,text,JSON.stringify(attachment)];
+        if(template)values.push(JSON.stringify(template));
+        const [row]=await db.$queryRawUnsafe<MetaReply[]>(`INSERT INTO "AttentionMetaOutbox"(id,"conversationId","userId","actorKey","authorName","requestId",fingerprint,"conversationVersion","phoneNumberId","wabaId","contactId",text,attachment${template?',template':''})
+          VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,$12,$13::jsonb${template?',$14::jsonb':''}) RETURNING *`,...values);
         await userAudit(db,actor,"META_REPLY_QUEUED",conversationId,{outboxId:row.id,requestId}); return row;
       });
     },
@@ -371,8 +416,9 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
       await userAudit(db,actor,"META_MEDIA_UPLOADED",row.conversationId,{outboxId:id});return updated;
     });},
     async beforeSend(actor:AttentionActor,id:string,leaseToken:string){return transact(async db=>{
-      const {row,conversation}=await ownedReply(db,actor,id,leaseToken);const capability=messaging(conversation);
-      if(!capability.canReply)throw new AttentionError(capability.reason!,409);
+      const {row,conversation}=await ownedReply(db,actor,id,leaseToken);
+      if(row.template){compileMetaTemplate(row.template);const capability=await templateCapability(db,conversation);if(!capability.canSend)throw new AttentionError(capability.reason!,409);}
+      else {const capability=messaging(conversation);if(!capability.canReply)throw new AttentionError(capability.reason!,409);}
       if(row.status!=='queued'||row.sendStartedAt||conversation.version!==row.conversationVersion)throw new AttentionError("La conversación o el envío cambió. No se envió el mensaje.",409);
       const recipient=await binding(db,conversation.id);if(recipient.contactId!==row.contactId)throw new AttentionError("El contacto cambió.",409);
       if(row.attachment&&!row.uploadedMediaId)throw new AttentionError("El adjunto no fue cargado.",409);

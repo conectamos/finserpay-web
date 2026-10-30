@@ -89,6 +89,32 @@ test("broker comparte LISTEN y reconecta después de perder PostgreSQL",async t=
 
 function fakeBroker(){let listener;return {connected:()=>true,subscribe(fn){listener=fn;queueMicrotask(()=>fn({kind:"connected"}));return()=>{listener=null;};},close(){listener=null;},emit(event){listener?.(event);}};}
 async function collect(reader,until){let text="";const decoder=new TextDecoder();while(!until(text)){const part=await reader.read();if(part.done)break;text+=decoder.decode(part.value);}return text;}
+
+test("confirmaciones de lectura solo invalidan pestañas del mismo usuario",async()=>{
+  for(const actor of [admin,analyst]) {
+    const broker=fakeBroker(),abort=new AbortController();let checks=0;
+    const reader=createAttentionRealtimeStream({actor,signal:abort.signal,broker,heartbeatMs:2000,lifetimeMs:3000,
+      authorize:async()=>{checks++;return true;}}).getReader();
+    await collect(reader,text=>text.includes("event: ready"));const initial=checks;
+    broker.emit({kind:"change",change:change({readActorUserId:3})});await wait(90);assert.equal(checks,initial);
+    broker.emit({kind:"change",change:change({readActorUserId:actor.userId})});
+    const text=await collect(reader,text=>text.includes("conversation_changed"));
+    assert.ok(!text.includes("readActorUserId"));abort.abort();await collect(reader,()=>false);
+  }
+  for(const readActorUserId of [null,0,-1,1.5,"1"])assert.equal(parseAttentionRealtimeChange(JSON.stringify(change({readActorUserId}))),null);
+  assert.equal(parseAttentionRealtimeChange(JSON.stringify(change({readActorUserId:2}))).readActorUserId,2);
+});
+
+test("autorización de lectura privada conserva rol y asignación vigentes",async t=>{
+  const {db,adapter,insert}=await fixture(t);await insert();
+  assert.equal(await authorizeAttentionRealtime(adapter,admin,[change({readActorUserId:2})]),false);
+  assert.equal(await authorizeAttentionRealtime(adapter,admin,[change({readActorUserId:1})]),true);
+  assert.equal(await authorizeAttentionRealtime(adapter,analyst,[change({readActorUserId:2})]),true);
+  await db.query('UPDATE "AttentionConversation" SET "assigneeUserId"=3,"assigneeKey"=\'analyst:3\' WHERE id=$1',[id]);
+  assert.equal(await authorizeAttentionRealtime(adapter,analyst,[change({readActorUserId:2})]),false);
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=2');
+  await assert.rejects(authorizeAttentionRealtime(adapter,analyst,[change({readActorUserId:2})]),{status:403});
+});
 test("SSE envía invalidaciones sin PII, coalesce y cierra al revocar rol en heartbeat",async()=>{
   const broker=fakeBroker();const abort=new AbortController();let allowed=true;let checks=0;
   const stream=createAttentionRealtimeStream({actor:analyst,signal:abort.signal,broker,heartbeatMs:80,lifetimeMs:1000,retryMs:5,

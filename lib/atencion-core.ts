@@ -1,4 +1,4 @@
-import type { AttentionActor, AttentionFilters, AttentionMutation } from "./atencion-types";
+import type { AttentionActor, AttentionAgendaFilters, AttentionFilters, AttentionMutation } from "./atencion-types";
 
 export class AttentionError extends Error {
   constructor(message: string, public status = 400) { super(message); this.name = "AttentionError"; }
@@ -49,12 +49,23 @@ export async function getAttentionAccess(): Promise<AttentionActor> {
   assertAttentionActor(actor); return actor;
 }
 export function parseAttentionFilters(params: URLSearchParams): AttentionFilters {
-  if (["search", "filter", "page"].some(key => params.getAll(key).length > 1)) throw new AttentionError("No repitas parámetros de búsqueda.");
+  if (["search", "filter", "page", "tag"].some(key => params.getAll(key).length > 1)) throw new AttentionError("No repitas parámetros de búsqueda.");
   const filter = params.get("filter") || "mine";
-  if (!["mine", "all", "pending", "closed"].includes(filter)) throw new AttentionError("Filtro inválido.");
+  if (!["mine", "all", "pending", "closed", "unassigned", "unread", "unanswered"].includes(filter)) throw new AttentionError("Filtro inválido.");
   const pageText = params.get("page") || "1";
   if (!/^\d+$/.test(pageText) || Number(pageText) < 1 || Number(pageText) > 10000) throw new AttentionError("Página inválida.");
-  return { search: attentionText(params.get("search") || "", 120, false), filter: filter as AttentionFilters["filter"], page: Number(pageText) };
+  const tag = attentionText(params.get("tag") || "", 40, false).normalize("NFKC").replace(/\s+/g, " ");
+  return { search: attentionText(params.get("search") || "", 120, false), filter: filter as AttentionFilters["filter"], page: Number(pageText), ...(tag ? { tag: isAttentionSystemTag(tag) ? "FINSERPAY" : tag } : {}) };
+}
+export function parseAttentionAgendaFilters(params: URLSearchParams): AttentionAgendaFilters {
+  if (["filter", "page"].some(key => params.getAll(key).length > 1)) throw new AttentionError("No repitas parámetros de agenda.");
+  const filter = params.get("filter") || "today", page = params.get("page") || "1";
+  if (!["today", "overdue", "upcoming", "all"].includes(filter) || !/^\d+$/.test(page) || Number(page) < 1 || Number(page) > 10000) throw new AttentionError("Filtro de agenda inválido.");
+  return { filter: filter as AttentionAgendaFilters["filter"], page: Number(page) };
+}
+export function parseAttentionRead(body: Record<string, unknown>): { messageIds: string[] } {
+  if (Object.keys(body).some(key => key !== "messageIds") || !Array.isArray(body.messageIds) || !body.messageIds.length || body.messageIds.length > 500) throw new AttentionError("Selecciona entre 1 y 500 mensajes observados.");
+  return { messageIds: [...new Set(body.messageIds.map(attentionUuid))] };
 }
 export function parseAttentionMutation(body: Record<string, unknown>): AttentionMutation {
   const actions = ["claim", "transfer", "close", "reopen", "note", "tags", "task", "complete_task", "link", "unlink", "human_request"];

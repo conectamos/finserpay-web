@@ -1,5 +1,27 @@
 # Operación del CRM de Atención
 
+## Fase operativa preparada
+
+La fase de bandeja, lecturas por usuario, agenda y plantillas manuales está implementada y en validación local; este documento no acredita todavía su despliegue. Mantiene el acceso global de administración central y el acceso del analista nominal únicamente a sus chats asignados.
+
+La interfaz organiza la bandeja y el chat con una disposición similar a WhatsApp Web: lista lateral, historial y editor de respuesta, con la ficha y las gestiones en paneles secundarios. Conserva la navegación, los componentes y los colores compartidos de FINSER PAY. Las actualizaciones conservan la selección, los borradores y la posición de lectura.
+
+## Bandeja, lecturas y espera
+
+Los filtros No leídos, Sin responder y, para administración central, Sin asignar se combinan con la búsqueda y las etiquetas. Se conservan Todas, Mías, Pendientes y Finalizadas. Solo se ofrecen etiquetas de conversaciones accesibles al usuario, incluida `FINSERPAY` cuando la clasificación financiera la acredita.
+
+No leído es un estado propio de cada usuario nominal. Abrir una conversación no basta: la interfaz confirma los identificadores entrantes que ha cargado cuando el chat está visible y desplazado hasta el final. El servidor valida esos mensajes y el acceso actual; un mensaje que llega simultáneamente queda sin leer si no estaba incluido en la confirmación. Leer un chat no lo modifica para otro analista, no cambia su versión de negocio ni envía un recibo de lectura a WhatsApp.
+
+La confirmación admite hasta 500 mensajes entrantes observados. El histórico anterior que no esté cargado no se marca automáticamente: puede seguir contando como no leído. No se presume una lectura inicial ni se marca todo el historial por la hora del navegador.
+
+Sin responder significa que existe una entrada posterior a la última salida acreditada. La espera comienza en la primera entrada todavía sin respuesta; una salida pendiente, fallida o incierta no la elimina. Una respuesta aceptada por Meta o una salida registrada en el histórico sí cuenta como respuesta, incluida la automatizada. Leer o añadir una nota no responde al cliente. Se muestra el tiempo transcurrido sin imponer un umbral de servicio ficticio.
+
+## Agenda y avisos internos
+
+La Agenda reúne las tareas pendientes de los chats permitidos: Hoy, Vencidas, Próximas y Todas. Los cortes usan el día calendario de `America/Bogota`; Vencidas corresponde a días anteriores y Todas incluye las tareas sin fecha. Los totales siguen el mismo alcance de acceso y la lista se pagina en grupos de cuarenta.
+
+Desde cada tarea se puede abrir el chat o completar el seguimiento. El servidor vuelve a comprobar la asignación y la versión del chat antes de guardar. El aviso de tareas vencidas o para hoy aparece dentro del CRM; esta fase no envía notificaciones externas ni mensajes automáticos al cliente.
+
 ## Contactos y créditos
 
 - La etiqueta automática `FINSERPAY` incluye créditos vigentes y pagados. Se calcula en el servidor a partir de los créditos registrados y del teléfono exacto del chat; no es una etiqueta editable.
@@ -31,12 +53,22 @@ Las grabaciones WebM se convierten en memoria a OGG/Opus mediante FFmpeg instala
 
 Los audios se envían sin texto adjunto. El texto que se está preparando se conserva y se envía por separado.
 
+## Plantillas manuales de WhatsApp
+
+El botón Plantilla consulta las definiciones aprobadas en la cuenta Meta de esta línea. Permite completar variables posicionales de texto, consultar la vista previa y confirmar expresamente el destinatario y el mensaje. Admite cuerpo y encabezado de texto, pie, botones de respuesta rápida y enlaces estáticos o con un sufijo validado. Las estructuras no compatibles se muestran deshabilitadas con su motivo.
+
+Una plantilla aprobada puede iniciar el contacto fuera de la ventana de 24 horas, sin habilitar por ello texto libre. Un chat histórico sin vínculo Meta requiere un teléfono exacto y único, sin vínculo contradictorio, y confirmación del operador. Se conservan el responsable, el cierre y el historial; el envío no inventa un mensaje entrante ni amplía la ventana de respuesta.
+
+Las plantillas financieras de bienvenida, recordatorios, cartera y liquidaciones continúan sujetas a sus procesos de elegibilidad; no se pueden despachar desde este selector. Tampoco se habilitan autenticación, variables con nombre, encabezados multimedia ni otros formatos no admitidos. El catálogo y la revisión de la definición se comprueban de nuevo antes de enviar.
+
+Cada confirmación conserva una intención persistida con UUID y contenido fijo. Un resultado incierto se consulta sin repetir el envío; una solicitud ausente se cancela de forma persistente antes de preparar una sustituta. Cambiar el mensaje o reutilizar el UUID con otro contenido produce conflicto. Estas reglas comparten el outbox humano y sus comprobaciones de permisos, destinatario e indicadores de Meta. Véase [la operación técnica de Meta](ATENCION_META.md#plantillas-manuales-aprobadas).
+
 ## Actualización y acceso
 
 Meta sigue recibiendo mensajes y archivos en el número empresarial actual. La interfaz conserva el historial que el analista está leyendo y sus borradores cuando se actualiza. El estado de entrega proviene de los eventos de WhatsApp.
 
 La conexión en tiempo real usa eventos del servidor y notificaciones transaccionales de PostgreSQL: los mensajes, sus estados y las asignaciones invalidan la bandeja cuando se confirma el cambio. Cada conexión revalida el usuario y su alcance. Si se interrumpe, se reconecta y vuelve a consultar; la actualización periódica queda como respaldo. No hace falta importar Dapta para recibir los nuevos mensajes de Meta.
 
-El despliegue instala los tres disparadores de actualización mediante `scripts/ensure-atencion-schema.mjs`. Las consultas y las entradas de auditoría no producen notificaciones. Un único canal PostgreSQL por proceso sirve a las conexiones autorizadas; los eventos que llegan al navegador no contienen nombres, teléfonos ni mensajes.
+El instalador prepara los tres disparadores de actualización mediante `scripts/ensure-atencion-schema.mjs`. Las consultas y las entradas de auditoría no producen notificaciones. Una confirmación de lectura que añade mensajes genera un único aviso dirigido al mismo usuario nominal; repetirla sin cambios no genera otro aviso ni otra entrada de lectura en auditoría. Un único canal PostgreSQL por proceso sirve a las conexiones autorizadas; los eventos que llegan al navegador no contienen nombres, teléfonos ni mensajes.
 
 No se cambia el número ni el proveedor. Diana permanece pausada conforme a la operación autorizada; esta entrega no la reactiva.

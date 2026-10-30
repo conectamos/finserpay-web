@@ -20,6 +20,7 @@ export type AttentionConversation = {
   tags: string[]; version: number; linkedCreditId: number | null;
   autoTags: "FINSERPAY"[];
   creditClassification: AttentionCreditClassification;
+  unreadCount: number; lastInboundAt: string | null; waitingSince: string | null;
 };
 export type AttentionMessage = {
   id: string; direction: "inbound" | "outbound"; text: string; sentAt: string;
@@ -51,6 +52,9 @@ export type AttentionIntegration = {
 export type AttentionInbox = {
   schemaReady: boolean; conversations: AttentionConversation[]; total: number; page: number; pageSize: number;
   metrics: { pending: number; open: number; closed: number; mine: number };
+  operational: { unassigned: number; unread: number; unanswered: number };
+  availableTags: string[];
+  agendaCounts: AttentionAgenda["counts"];
   team: AttentionAssignee[]; branches: AttentionBranch[]; quickReplies: AttentionQuickReply[];
   actor: AttentionActor; integration: AttentionIntegration;
   dashboard?: {
@@ -69,7 +73,13 @@ export type AttentionDetail = {
   notesTruncated?: boolean;
   tasksTruncated?: boolean;
 };
-export type AttentionFilters = { search: string; filter: "mine" | "all" | "pending" | "closed"; page: number };
+export type AttentionFilters = { search: string; filter: "mine" | "all" | "pending" | "closed" | "unassigned" | "unread" | "unanswered"; page: number; tag?: string };
+export type AttentionAgendaFilters = { filter: "today" | "overdue" | "upcoming" | "all"; page: number };
+export type AttentionAgenda = {
+  items: (AttentionTask & { conversation: { id: string; name: string; phone: string | null; version: number } })[];
+  counts: { today: number; overdue: number; upcoming: number; undated: number; total: number };
+  today: string; total: number; page: number; pageSize: number;
+};
 export type AttentionMutation = {
   action: "claim" | "transfer" | "close" | "reopen" | "note" | "tags" | "task" | "complete_task" | "link" | "unlink" | "human_request";
   version: number; requestId: string; assigneeKey?: string; text?: string; tags?: string[];

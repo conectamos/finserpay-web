@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readAttentionSticker } from "./atencion-meta-sticker";
+import { compileMetaTemplate, readMetaManualTemplate, type MetaManualTemplate, type MetaTemplateSnapshot } from "./atencion-meta-templates";
 
 // Dedicated Attention credentials. Never fall back to OTP or settlement tokens.
 // Meta contracts: https://www.postman.com/meta/whatsapp-business-platform
@@ -115,6 +116,15 @@ function messageContent(message: Dict): Pick<MetaInboundMessage, "type" | "text"
   if (message.type === "text") {
     const text = safeText(dict(message.text).body, 16_000);
     return text ? { ...context, type: "text", text } : null;
+  }
+  // Display the customer's visible reply only. Button payloads/IDs never become
+  // commands, actor identity or application actions.
+  if (message.type === "button" || message.type === "interactive") {
+    const interactive=dict(message.interactive),kind=str(interactive.type);
+    const label=message.type === "button" ? dict(message.button).text
+      : ["button_reply","list_reply"].includes(kind) ? dict(interactive[kind]).title : undefined;
+    const text=safeText(label,4096);
+    return text ? {...context,type:"text",text} : null;
   }
   if (!["image", "audio", "video", "document", "sticker"].includes(str(message.type))) return null;
   const type = message.type as MetaMediaKind, media = dict(message[type]), mimeType = mime(media.mime_type);
@@ -314,15 +324,44 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     }
     fail("META_SCOPE_MISMATCH", "Meta no confirmó que la línea pertenezca a la cuenta autorizada.", 503);
   }
-  function validateSend(input: MetaSendInput, beforeSend: BeforeSend) {
+  function validateSendBase(input: Omit<MetaSendInput,"lastInboundAt">, beforeSend: BeforeSend) {
     config(); enabled();
     if (!status().configured) fail("META_NOT_CONFIGURED", "Falta completar la configuración privada del canal de Atención.", 503);
     if (input.cutoverConfirmed !== true) fail("META_CUTOVER_REQUIRED", "La conversación no está habilitada para respuesta humana.", 409);
     if (!UUID.test(input.attemptId) || typeof beforeSend !== "function") fail("INVALID_ATTEMPT", "Falta un intento de envío autorizado.");
+    return recipient(input.recipient);
+  }
+  function validateSend(input: MetaSendInput, beforeSend: BeforeSend) {
+    const to=validateSendBase(input,beforeSend);
     if (typeof input.lastInboundAt !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/.test(input.lastInboundAt)) fail("SERVICE_WINDOW_CLOSED", "La conversación no tiene una ventana de respuesta válida.", 409);
     const incoming = Date.parse(input.lastInboundAt); const age = now() - incoming;
     if (!Number.isFinite(age) || age < 0 || age >= 24 * 60 * 60_000) fail("SERVICE_WINDOW_CLOSED", "La ventana de 24 horas está cerrada; se necesita una plantilla aprobada.", 409);
-    return recipient(input.recipient);
+    return to;
+  }
+  async function listManualTemplates(name?: string): Promise<MetaManualTemplate[]> {
+    config(); await verifyConnection();
+    let after=""; const seen=new Set<string>(), templates:MetaManualTemplate[]=[];
+    for(let page=0;page<10;page++){
+      const result=await graph(`${scope().wabaId}/message_templates`,{fields:"id,name,status,language,category,parameter_format,components",limit:"100",...(name?{name}:{}),...(after?{after}:{})});
+      for(const raw of list(result.data)){const template=readMetaManualTemplate(raw);if(template)templates.push(template);}
+      const paging=dict(result.paging),next=str(dict(paging.cursors).after);
+      if(!paging.next)return templates.sort((a,b)=>a.name.localeCompare(b.name)||a.language.localeCompare(b.language));
+      if(!next||next.length>2048||seen.has(next))break;seen.add(next);after=next;
+    }
+    fail("TEMPLATE_CATALOGUE_INCOMPLETE","No fue posible obtener el catálogo completo de plantillas. Inténtalo nuevamente.",503);
+  }
+  async function sendTemplate(input: Omit<MetaSendInput,"lastInboundAt"> & {snapshot:MetaTemplateSnapshot},beforeSend:BeforeSend): Promise<MetaSendReceipt> {
+    const to=validateSendBase(input,beforeSend), expected=input.snapshot.definition;
+    const matches=(await listManualTemplates(expected.name)).filter(t=>t.key===expected.key);
+    if(matches.length!==1||matches[0].revision!==expected.revision)fail("TEMPLATE_CHANGED","La plantilla cambió o dejó de estar aprobada. Actualiza el catálogo y revísala antes de confirmar.",409);
+    const compiled=compileMetaTemplate({definition:matches[0],parameters:input.snapshot.parameters});
+    validateSendBase(input,beforeSend);await beforeSend();validateSendBase(input,beforeSend);
+    const result=await graph(`${scope().phoneNumberId}/messages`,{},{messaging_product:"whatsapp",recipient_type:"individual",to,
+      type:"template",template:compiled.template,biz_opaque_callback_data:input.attemptId},true);
+    const message=dict(list(result.messages)[0]),contact=dict(list(result.contacts)[0]);
+    if(result.messaging_product!=="whatsapp"||!WAMID.test(str(message.id))||str(contact.wa_id)!==to||str(contact.input).replace(/^\+/,"")!==to)
+      throw new AttentionMetaError("INVALID_SEND_RECEIPT","Meta no confirmó de forma verificable el envío. No lo reenvíes automáticamente.",502,true);
+    return {providerMessageId:str(message.id),recipient:to};
   }
   async function send(input: MetaSendInput, body: Dict, beforeSend: BeforeSend): Promise<MetaSendReceipt> {
     const to = validateSend(input, beforeSend); await verifyConnection();
@@ -382,5 +421,5 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     if (![start, end].every(Number.isSafeInteger) || start >= bytes.length || end < start || (!a && Number(b) === 0)) fail("INVALID_RANGE", "El rango solicitado está fuera del archivo.", 416);
     return { bytes: bytes.slice(start, end + 1), mimeType: metadata.mimeType, totalBytes: bytes.length, status: 206, contentRange: `bytes ${start}-${end}/${bytes.length}` };
   }
-  return { status, verifyWebhookChallenge, parseWebhook, verifyConnection, sendText, uploadMedia, sendMedia, downloadMedia };
+  return { status, verifyWebhookChallenge, parseWebhook, verifyConnection, sendText, uploadMedia, sendMedia, downloadMedia, listManualTemplates, sendTemplate };
 }

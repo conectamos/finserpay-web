@@ -30,6 +30,14 @@ CREATE TABLE IF NOT EXISTS "AttentionMessage" (
   UNIQUE("conversationId","externalId")
 );
 CREATE INDEX IF NOT EXISTS "AttentionMessage_timeline" ON "AttentionMessage"("conversationId","sentAt",id);
+CREATE TABLE IF NOT EXISTS "AttentionReadState" (
+  "userId" integer NOT NULL REFERENCES "Usuario"(id) ON DELETE RESTRICT,
+  "messageId" uuid NOT NULL REFERENCES "AttentionMessage"(id) ON DELETE RESTRICT,
+  "conversationId" uuid NOT NULL REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
+  "readAt" timestamptz NOT NULL DEFAULT now(), PRIMARY KEY("userId","messageId")
+);
+CREATE INDEX IF NOT EXISTS "AttentionReadState_conversation" ON "AttentionReadState"("conversationId","userId");
+CREATE INDEX IF NOT EXISTS "AttentionMessage_inbound" ON "AttentionMessage"("conversationId","sentAt",id) WHERE direction='inbound';
 ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "metaWamid" text;
 ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "metaPhoneNumberId" text;
 ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "attachment" jsonb;
@@ -89,6 +97,7 @@ CREATE TABLE IF NOT EXISTS "AttentionMetaOutbox" (
   UNIQUE("actorKey","requestId"), UNIQUE("phoneNumberId",wamid)
 );
 CREATE INDEX IF NOT EXISTS "AttentionMetaOutbox_conversation" ON "AttentionMetaOutbox"("conversationId","createdAt");
+ALTER TABLE "AttentionMetaOutbox" ADD COLUMN IF NOT EXISTS template jsonb;
 CREATE TABLE IF NOT EXISTS "AttentionMetaDelivery" (
   id uuid PRIMARY KEY, "phoneNumberId" text NOT NULL, "wabaId" text NOT NULL, wamid text NOT NULL,
   recipient text NOT NULL, status text NOT NULL CHECK(status IN ('sent','delivered','read','failed')),

@@ -113,6 +113,22 @@ test("unsupported identifiers, formats, timestamps and marked secrets are not ex
   assert.equal(events.messages[0].text.includes("123456"), false); assert.equal(events.messages[0].text.includes("prueba123"), false);
 });
 
+test("signed quick replies and list replies become visible text without executing payloads or inventing sender",()=>{
+  const content=[{type:"button",button:{text:"Continuar",payload:"RUN_COMMAND_ASSIGN_ADMIN"}},
+    {type:"interactive",interactive:{type:"button_reply",button_reply:{id:"RUN_COMMAND_SEND_PAYMENT",title:"Necesito ayuda"}}},
+    {type:"interactive",interactive:{type:"list_reply",list_reply:{id:"RUN_COMMAND_CLOSE_CHAT",title:"Otra consulta",description:"Private payload"}}}];
+  const body=envelope(content.map((value,index)=>({...inbound,...value,id:`wamid.button-${index}`,context:{id:"wamid.template-origin"}})));
+  const [bytes,signature]=sign(body),events=adapter().parseWebhook(bytes,signature);
+  assert.deepEqual(events.messages.map(message=>message.text),["Continuar","Necesito ayuda","Otra consulta"]);
+  assert.ok(events.messages.every(message=>message.type==="text"&&message.from===phone&&message.phone===`+${phone}`&&message.replyToId==="wamid.template-origin"));
+  assert.ok(!JSON.stringify(events).includes("RUN_COMMAND"));assert.ok(!JSON.stringify(events).includes("Private payload"));
+  assert.throws(()=>adapter().parseWebhook(Buffer.concat([bytes,Buffer.from(" ")]),signature),{code:"INVALID_SIGNATURE"});
+  const invalid=adapter().parseWebhook(...sign(envelope([{...inbound,type:"button",button:{payload:"not text"}},
+    {...inbound,type:"interactive",interactive:{type:"flow_reply",flow_reply:{title:"unsupported"}}},
+    {...inbound,...content[0],from:"ADMIN"}])));
+  assert.equal(invalid.messages.length,0);assert.equal(invalid.ignored,3);
+});
+
 test("business-app echoes are separate outbound content with recipient identity and no attributed name", () => {
   const events = adapter({ env: { ...env, WHATSAPP_ATTENTION_SEND_ENABLED: "false", WHATSAPP_ATTENTION_AI_CUTOVER_CONFIRMED: "false" } })
     .parseWebhook(...sign(echoEnvelope([{ ...echo, context: { id: inbound.id }, author: "Untrusted operator" }])));

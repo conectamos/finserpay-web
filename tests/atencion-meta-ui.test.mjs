@@ -59,6 +59,7 @@ function mount(options = {}) {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
       if (name === "lucide-react" || name === "@/app/_components/finser-ui") return new Proxy({}, { get: (_, key) => component(String(key)) });
+      if (name === "./attention-operational") return new Proxy({}, { get: (_, key) => component(String(key)) });
       if (name.endsWith(".css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       return { default: component(name) };
     },
@@ -596,6 +597,7 @@ test("la navegación compartida respeta central y analista nominal sin simular p
 
 test("abrir y cerrar ficha conserva el chat, el borrador y la instancia de seguimiento", async () => {
   const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Borrador conservado al consultar el crédito" });
+  assert.notEqual(f.all().find(node => node.type?.name === "AttentionObservedRead").key, f.composer().key, "el lector y composer hermanos necesitan claves distintas");
   const sidePanel = () => f.all().find(node => node.type?.name === "@/app/_components/finser-side-panel");
   const contact = () => f.all().find(node => node.type?.name === "CustomerPanel");
   assert.equal(sidePanel().props.open, false); assert.equal(sidePanel().props.keepMounted, true);
@@ -605,4 +607,18 @@ test("abrir y cerrar ficha conserva el chat, el borrador y la instancia de segui
   sidePanel().props.onClose(); await f.flush();
   assert.equal(sidePanel().props.open, false); assert.equal(contact().key, instance);
   assert.equal(f.composer().props.draft.text, "Borrador conservado al consultar el crédito"); f.unmount();
+});
+
+test("colas y etiqueta conservan página y borrador durante invalidaciones SSE", async () => {
+  const f = mount({ sse: true }); await f.ready(); await f.select(); await f.change({ text: "Borrador antes del filtro" });
+  const filters = () => f.all().find(node => node.type?.name === "AttentionWorkFilters");
+  filters().props.change("unread", "Seguimiento"); await f.flush(); await f.advance(250);
+  let read = f.requests.at(-1); assert.match(read.url, /filter=unread/); assert.match(read.url, /tag=Seguimiento/); assert.match(read.url, /page=1/);
+  read.respond({ ...inbox, total: 81 }); await f.flush();
+  f.all().find(node => node.props["aria-label"] === "Página siguiente").props.onClick(); await f.flush(); await f.advance(250);
+  read = f.requests.at(-1); assert.match(read.url, /page=2/); read.respond({ ...inbox, total: 81, page: 2 }); await f.flush();
+  const stream = f.sources.at(-1); stream.emit("ready", { connected: true }); stream.emit("invalidate"); await f.advance(250);
+  const refresh = f.requests.filter(request => !request.done && request.url.includes("?")).at(-1);
+  assert.match(refresh.url, /filter=unread/); assert.match(refresh.url, /page=2/); assert.match(refresh.url, /tag=Seguimiento/);
+  await f.completeReads(); assert.equal(f.composer().props.draft.text, "Borrador antes del filtro"); assert.equal(filters().props.filter, "unread"); assert.equal(filters().props.tag, "Seguimiento"); f.unmount();
 });
