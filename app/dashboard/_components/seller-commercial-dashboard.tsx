@@ -14,6 +14,7 @@ import {
   FileText,
   LayoutDashboard,
   Menu,
+  MessageCircle,
   Package,
   Plus,
   ReceiptText,
@@ -70,6 +71,7 @@ type ActionItem = NavItem & {
 const CORE_NAV_ITEMS: NavItem[] = [
   { href: "/dashboard/creditos", icon: Plus, label: "Nueva venta" },
   { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
+  { href: "/dashboard/atencion", icon: MessageCircle, label: "Atención" },
   { href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" },
   { href: "/dashboard/pin", icon: ShieldCheck, label: "Cambiar PIN" },
 ];

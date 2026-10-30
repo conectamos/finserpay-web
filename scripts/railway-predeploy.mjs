@@ -41,3 +41,5 @@ await import("./ensure-credit-overdue-data-schema.mjs");
 await import("./ensure-cuotavencida-whatsapp-schema.mjs");
 await import("./ensure-credit-welcome-voice-schema.mjs");
 await import("./ensure-cut-collection-schema.mjs");
+
+await import("./ensure-atencion-schema.mjs");

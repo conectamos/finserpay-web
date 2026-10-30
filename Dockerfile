@@ -63,6 +63,8 @@ COPY --from=builder \
   /app/scripts/ally-payment-central-collection-adjustment-schema.mjs \
   /app/scripts/setup-cut-collection.sql \
   /app/scripts/ensure-cut-collection-schema.mjs \
+  /app/scripts/setup-atencion.sql \
+  /app/scripts/ensure-atencion-schema.mjs \
   /app/scripts/railway-predeploy.mjs \
   /app/scripts/ensure-approval-operations-schema.mjs \
   /app/scripts/analyst-mora-schema.mjs \

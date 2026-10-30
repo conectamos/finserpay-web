@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   MapPin,
   Menu,
+  MessageCircle,
   PieChart,
   Plug,
   RefreshCcw,
@@ -171,6 +172,7 @@ export default function AdminSidebar({
         ...(adminCentral ? [{ href: "/dashboard/aprobaciones", icon: ShieldCheck, label: "Aprobaciones" }] : []),
         ...(!adminCentral && isAdminRole(rolUsuario) ? [{ href: "/dashboard/pendientes", icon: ClipboardList, label: "PENDIENTES" }] : []),
         { href: "/dashboard/solicitudes", icon: ClipboardList, label: "Solicitudes" },
+        { href: "/dashboard/atencion", icon: MessageCircle, label: "Atención" },
         { href: "/dashboard/creditos", icon: FileText, label: "Creditos" },
         ...(isAdminRole(rolUsuario)
           ? [{ href: "/dashboard/creditos?mode=simulator", icon: Calculator, label: "Simulador" }]
