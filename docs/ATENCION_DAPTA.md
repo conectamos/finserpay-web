@@ -2,6 +2,8 @@
 
 Revisión: 30 de octubre de 2026. Este documento distingue las capacidades de la aplicación local de las capacidades confirmadas del proveedor. No representa una activación, migración ni autorización para enviar mensajes.
 
+La evolución a recepción y respuesta directa por la misma línea de Meta está descrita en [ATENCION_META.md](ATENCION_META.md). Ese código sigue en validación y preparación de la aplicación; no acredita credenciales productivas ni un corte de la IA. Dapta mantiene las capacidades de lectura confirmadas aquí, y su uso futuro como motor de respuestas requiere una verificación productiva independiente.
+
 ## Hallazgos de la revisión inicial
 
 - La aplicación usa Next.js 16.2.3 con App Router, React 19, TypeScript, Prisma y PostgreSQL. El módulo de atención conserva a FINSER PAY como fuente de clientes, estudios, créditos, equipos, cuotas y pagos.

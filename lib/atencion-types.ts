@@ -17,6 +17,12 @@ export type AttentionConversation = {
 export type AttentionMessage = {
   id: string; direction: "inbound" | "outbound"; text: string; sentAt: string;
   author: string | null;
+  deliveryStatus?: "queued" | "sending" | "accepted" | "sent" | "delivered" | "read" | "failed" | "uncertain";
+  deliveryError?: string | null;
+  attachment?: {
+    id: string; kind: "image" | "audio" | "video" | "document" | "sticker";
+    url: string | null; fileName: string | null; mimeType: string | null;
+  };
 };
 export type AttentionNote = { id: string; text: string; author: string; createdAt: string };
 export type AttentionTask = { id: string; title: string; dueAt: string | null; completedAt: string | null; author: string };
@@ -32,8 +38,8 @@ export type AttentionCustomer = {
   financialAllowed: boolean;
 };
 export type AttentionIntegration = {
-  configured: boolean; canSync: boolean; canSend: false; canHandoff: false;
-  status: "not_configured" | "read_only"; message: string;
+  configured: boolean; canSync: boolean; canSend: boolean; canHandoff: boolean;
+  status: "not_configured" | "read_only" | "meta_ready" | "meta_pending"; message: string;
 };
 export type AttentionInbox = {
   schemaReady: boolean; conversations: AttentionConversation[]; total: number; page: number; pageSize: number;
@@ -50,7 +56,8 @@ export type AttentionInbox = {
 export type AttentionDetail = {
   conversation: AttentionConversation; messages: AttentionMessage[]; notes: AttentionNote[];
   tasks: AttentionTask[]; customer: AttentionCustomer;
-  permissions: { manage: boolean; claim: boolean; assign?: boolean; canSend: false };
+  permissions: { manage: boolean; claim: boolean; assign?: boolean; canSend: boolean };
+  messaging?: { windowExpiresAt: string | null; canReply: boolean; reason: string | null };
   historyTruncated: boolean;
   notesTruncated?: boolean;
   tasksTruncated?: boolean;

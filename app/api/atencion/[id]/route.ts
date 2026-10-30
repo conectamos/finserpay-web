@@ -1,5 +1,6 @@
 import { getAttentionAccess, parseAttentionMutation } from "@/lib/atencion-core";
 import { getAttentionDetail, mutateAttentionConversation } from "@/lib/atencion-storage";
+import { attentionReadDetail } from "@/lib/atencion-read-model";
 import { assertAttentionOrigin, attentionHttpError, attentionJson, attentionUuid, readAttentionJson } from "@/lib/atencion-http";
 
 export const runtime = "nodejs";
@@ -9,7 +10,8 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, context: Context) {
   try {
     const actor = await getAttentionAccess();
-    return attentionJson(await getAttentionDetail(actor, attentionUuid((await context.params).id)));
+    const detail = await getAttentionDetail(actor, attentionUuid((await context.params).id));
+    return attentionJson(await attentionReadDetail(actor, detail));
   } catch (error) { return attentionHttpError(error); }
 }
 

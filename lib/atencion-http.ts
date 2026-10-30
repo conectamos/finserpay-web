@@ -1,5 +1,6 @@
 import { AttentionError } from "./atencion-core";
 import { AttentionDaptaError } from "./atencion-dapta";
+import { AttentionMetaError } from "./atencion-meta";
 
 export function attentionJson(body: unknown, status = 200) {
   return Response.json(body, { status, headers: {
@@ -9,7 +10,8 @@ export function attentionJson(body: unknown, status = 200) {
 }
 
 export function attentionHttpError(error: unknown) {
-  if (error instanceof AttentionError || error instanceof AttentionDaptaError) return attentionJson({ error: error.message,
+  if (error instanceof AttentionError || error instanceof AttentionDaptaError || error instanceof AttentionMetaError) return attentionJson({ error: error.message,
+    ...(error instanceof AttentionMetaError ? { code: error.code, uncertain: error.uncertain } : {}),
     ...(error instanceof AttentionDaptaError && error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}) }, error.status);
   // Never send SQL, provider payloads, tokens or customer data to logs/the browser.
   return attentionJson({ error: "No fue posible completar la operación de atención. Intenta nuevamente." }, 500);

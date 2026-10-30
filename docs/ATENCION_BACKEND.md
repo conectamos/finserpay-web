@@ -6,7 +6,7 @@ El CRM recibe conversaciones reales de WhatsApp y Meta mediante el conector de l
 
 El predeploy de Railway ejecuta scripts/ensure-atencion-schema.mjs. También puede ejecutarse mediante npm run db:setup-atencion, con DATABASE_URL disponible exclusivamente en el entorno del servidor.
 
-El instalador toma un bloqueo de aplicación, verifica la estructura existente, aplica scripts/setup-atencion.sql en una transacción con search_path public y comprueba las siete tablas, claves y trigger de auditoría. Los arrays de metadatos usan text[] para ser compatibles con node-pg. Una estructura incompatible falla sin intentar reparaciones destructivas. No se ejecuta DDL durante las solicitudes.
+El instalador toma un bloqueo de aplicación, verifica la estructura existente, aplica scripts/setup-atencion.sql en una transacción con search_path public y comprueba diez tablas, claves y trigger de auditoría: las siete originales y tres nuevas de Meta. Los arrays de metadatos usan text[] para ser compatibles con node-pg. Una estructura incompatible falla sin intentar reparaciones destructivas. No se ejecuta DDL durante las solicitudes. La configuración, activación pendiente y operación del canal directo se detallan en [ATENCION_META.md](ATENCION_META.md).
 
 La actualización permite nulos en AttentionConversation.sedeId y phone. Acepta el esquema anterior con NOT NULL durante la verificación previa y exige las columnas nullable después del SQL. Conserva íntegramente chats, mensajes, responsables y sedes históricos. Las tablas financieras no se modifican.
 

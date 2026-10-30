@@ -23,8 +23,9 @@ function compile(file, mocks) {
 }
 const core = compile("lib/atencion-core.ts", {});
 class AttentionDaptaError extends Error { constructor(message, status) { super(message); this.status = status; } }
+class AttentionMetaError extends Error { constructor(code, message, status = 502, uncertain = false) { super(message); this.code = code; this.status = status; this.uncertain = uncertain; } }
 function harness(file = "app/api/atencion/route.ts", options = {}) {
-  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [] };
+  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [], readIntegration: [], readDetail: [] };
   const access = { ...core, getAttentionAccess: async () => {
     calls.access++; if (options.accessError) throw options.accessError; return options.actor || actor;
   } };
@@ -39,8 +40,10 @@ function harness(file = "app/api/atencion/route.ts", options = {}) {
     saveAttentionQuickReply: async (...args) => { calls.quick.push(args); },
     importAttentionSnapshots: async (...args) => { calls.import.push(args); return { imported: 0 }; },
   };
-  const http = compile("lib/atencion-http.ts", { "./atencion-core": core, "./atencion-dapta": provider });
-  const route = compile(file, { "@/lib/atencion-core": access, "@/lib/atencion-storage": storage, "@/lib/atencion-dapta": provider, "@/lib/atencion-http": http });
+  const http = compile("lib/atencion-http.ts", { "./atencion-core": core, "./atencion-dapta": provider, "./atencion-meta": { AttentionMetaError } });
+  const readModel={attentionReadIntegration:async ready=>{calls.readIntegration.push(ready);return options.integration||integration;},
+    attentionReadDetail:async(actor,detail)=>{calls.readDetail.push([actor,detail]);if(options.messagingError)throw options.messagingError;return {...detail,...options.detailEnrichment};}};
+  const route = compile(file, { "@/lib/atencion-core": access, "@/lib/atencion-storage": storage, "@/lib/atencion-dapta": provider, "@/lib/atencion-http": http, "@/lib/atencion-read-model":readModel });
   return { ...route, ...http, calls };
 }
 function request(body = {}, method = "POST", headers = {}, url = `${origin}/api/atencion`) {
@@ -60,7 +63,7 @@ test("every attention handler requires authentication before data access", async
     const h = harness(`app/api/atencion/${file}`, { accessError: new core.AttentionError("Inicia sesión", 401) });
     const response = await h[method](method === "GET" ? new Request(`${origin}/api/atencion`) : request({}, method), context);
     assert.equal(response.status, 401); privateResponse(response);
-    for (const key of ["inbox", "create", "detail", "mutate", "quick", "fetch", "import"]) assert.equal(h.calls[key].length, 0);
+    for (const key of ["inbox", "create", "detail", "mutate", "quick", "fetch", "import", "readIntegration", "readDetail"]) assert.equal(h.calls[key].length, 0);
   }
 });
 
@@ -100,6 +103,19 @@ test("list validates filters and uses authenticated actor, detail validates UUID
   const detail = harness("app/api/atencion/[id]/route.ts");
   assert.equal((await detail.GET(new Request(origin), { params: Promise.resolve({ id: "1' OR true" }) })).status, 400);
   assert.equal(detail.calls.detail.length, 0);
+});
+
+test("GET connects Meta capability to inbox/detail and rejects access lost during enrichment",async()=>{
+  const connected={...integration,configured:true,canSend:true,status:"meta_ready",message:"Meta"};
+  const list=harness(undefined,{integration:connected});
+  const response=await list.GET(new Request(`${origin}/api/atencion`));assert.deepEqual((await response.json()).integration,connected);assert.deepEqual(list.calls.readIntegration,[true]);
+  const messaging={windowExpiresAt:"2026-10-31T15:00:00Z",canReply:true,reason:null};
+  const detail=harness("app/api/atencion/[id]/route.ts",{detailEnrichment:{messaging,permissions:{canSend:true}}});
+  const result=await detail.GET(new Request(origin),context);assert.equal(result.status,200);assert.deepEqual((await result.json()).messaging,messaging);assert.equal(detail.calls.readDetail[0][0],actor);
+  for(const status of [401,403,404]){
+    const denied=harness("app/api/atencion/[id]/route.ts",{messagingError:new core.AttentionError("Acceso revocado",status)});
+    const result=await denied.GET(new Request(origin),context);assert.equal(result.status,status);assert.equal((await result.json()).conversation,undefined);privateResponse(result);
+  }
 });
 
 test("mutations validate actions, version, idempotency key and never accept send", async () => {

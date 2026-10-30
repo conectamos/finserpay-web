@@ -4,13 +4,21 @@ import pg from "pg";
 // PostgreSQL native type names; "!" marks NOT NULL. Existing incompatible tables
 // are rejected instead of attempting an implicit repair or destructive migration.
 const expectedColumns = {
-  AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz!",
-  AttentionMessage: "id:uuid! conversationId:uuid! externalId:text! direction:text! text:text! sentAt:timestamptz! author:text",
+  AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz! metaManaged:bool! metaLastInboundAt:timestamptz",
+  AttentionMessage: "id:uuid! conversationId:uuid! externalId:text! direction:text! text:text! sentAt:timestamptz! author:text metaWamid:text metaPhoneNumberId:text attachment:jsonb deliveryStatus:text deliveryAt:timestamptz replyToWamid:text",
   AttentionNote: "id:uuid! conversationId:uuid! text:text! author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
   AttentionTask: "id:uuid! conversationId:uuid! title:text! dueAt:timestamptz completedAt:timestamptz author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
   AttentionQuickReply: "id:uuid! title:text! text:text! approvedBy:text! approvedByUserId:int4! approvedAt:timestamptz!",
-  AttentionAudit: "id:int8! conversationId:uuid userId:int4! sellerId:int4 action:text! metadata:jsonb! createdAt:timestamptz!",
+  AttentionAudit: "id:int8! conversationId:uuid userId:int4 sellerId:int4 action:text! metadata:jsonb! createdAt:timestamptz! actorKind:text! actorKey:text",
   AttentionRequest: "actorKey:text! requestId:uuid! fingerprint:text! resultId:uuid createdAt:timestamptz!",
+  AttentionMetaBinding: "id:uuid! conversationId:uuid! phoneNumberId:text! wabaId:text! contactId:text! createdAt:timestamptz!",
+  AttentionMetaOutbox: "id:uuid! conversationId:uuid! userId:int4! actorKey:text! authorName:text! requestId:uuid! fingerprint:text! conversationVersion:int4! phoneNumberId:text! wabaId:text! contactId:text! text:text! attachment:jsonb uploadedMediaId:text status:text! messageId:uuid wamid:text leaseToken:uuid leaseUntil:timestamptz sendStartedAt:timestamptz acceptedAt:timestamptz deliveryAt:timestamptz errorCode:text attempts:int4! createdAt:timestamptz! updatedAt:timestamptz!",
+  AttentionMetaDelivery: "id:uuid! phoneNumberId:text! wabaId:text! wamid:text! recipient:text! status:text! eventAt:timestamptz! errorCode:text requestId:uuid createdAt:timestamptz!",
+};
+const additiveColumns = {
+  AttentionConversation: ["closedAt", "daptaMessagesCursor", "metaManaged", "metaLastInboundAt"],
+  AttentionMessage: ["metaWamid", "metaPhoneNumberId", "attachment", "deliveryStatus", "deliveryAt", "replyToWamid"],
+  AttentionAudit: ["actorKind", "actorKey"],
 };
 const tableNames = Object.keys(expectedColumns);
 const foreignKeys = {
@@ -20,6 +28,8 @@ const foreignKeys = {
   AttentionTask: { conversationId: "AttentionConversation", userId: "Usuario", sellerId: "Vendedor" },
   AttentionQuickReply: { approvedByUserId: "Usuario" },
   AttentionAudit: { conversationId: "AttentionConversation", userId: "Usuario", sellerId: "Vendedor" },
+  AttentionMetaBinding: { conversationId: "AttentionConversation" },
+  AttentionMetaOutbox: { conversationId: "AttentionConversation", userId: "Usuario", messageId: "AttentionMessage" },
 };
 class AttentionSchemaMismatch extends Error {
   constructor(objectName) { super(`Esquema de atención incompatible: ${objectName}. Revisa la estructura existente; no se intentó una reparación destructiva.`); }
@@ -38,8 +48,8 @@ async function verifySchema(client, beforeInstallation) {
     for (const spec of specs.split(" ")) {
       const [column, expected] = spec.split(":");
       const found = rows.find(row => row.tableName === table && row.columnName === column);
-      if (beforeInstallation && !found && table === "AttentionConversation" && ["closedAt", "daptaMessagesCursor"].includes(column)) continue;
-      const nullableUpgrade = beforeInstallation && table === "AttentionConversation" && ["sedeId", "phone"].includes(column);
+      if (beforeInstallation && !found && additiveColumns[table]?.includes(column)) continue;
+      const nullableUpgrade = beforeInstallation && (table === "AttentionConversation" && ["sedeId", "phone"].includes(column) || table === "AttentionAudit" && column === "userId");
       if (!found || found.typeName !== expected.replace("!", "") || (!nullableUpgrade && found.notNull !== expected.endsWith("!"))) throw new AttentionSchemaMismatch(`${table}.${column}`);
     }
   }
@@ -63,10 +73,19 @@ async function verifySchema(client, beforeInstallation) {
           row.foreignColumns.length === 1 && row.foreignColumns[0] === "id")) throw new AttentionSchemaMismatch(`${table}.${column}.FOREIGN_KEY`);
     }
   }
-  for (const [table, columns] of [["AttentionConversation", ["externalId"]], ["AttentionMessage", ["conversationId", "externalId"]]]) {
+  for (const [table, columns] of [["AttentionConversation", ["externalId"]], ["AttentionMessage", ["conversationId", "externalId"]],
+    ["AttentionMetaBinding", ["phoneNumberId", "contactId"]], ["AttentionMetaOutbox", ["actorKey", "requestId"]],
+    ["AttentionMetaOutbox", ["phoneNumberId", "wamid"]], ["AttentionMetaDelivery", ["phoneNumberId", "wamid", "status", "eventAt"]]]) {
     if ((!beforeInstallation || present.has(table)) && !hasConstraint(table, "u", columns)) throw new AttentionSchemaMismatch(`${table}.EXTERNAL_ID_UNIQUE`);
   }
   if (!beforeInstallation) {
+    if (!constraints.some(row => row.tableName === "AttentionAudit" && row.contype === "c" && row.convalidated && row.columns.includes("actorKind") && row.columns.includes("userId"))) throw new AttentionSchemaMismatch("AttentionAudit.SYSTEM_ACTOR_CHECK");
+    const { rows: indexes } = await client.query(`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_class t ON t.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+      WHERE n.nspname='public' AND t.relname='AttentionMessage' AND i.indisunique AND i.indisvalid AND i.indpred IS NULL
+      AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(id,position)
+        JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.id ORDER BY k.position)=ARRAY['metaPhoneNumberId','metaWamid']::text[]) AS active`);
+    if (indexes[0]?.active !== true) throw new AttentionSchemaMismatch("AttentionMessage.META_ID_UNIQUE");
     const { rows: triggers } = await client.query(`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger t
       JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
       JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid JOIN pg_catalog.pg_namespace pn ON pn.oid=p.pronamespace
@@ -90,7 +109,7 @@ try {
   await verifySchema(client, true);
   await client.query(await readFile(new URL("./setup-atencion.sql", import.meta.url), "utf8"));
   await verifySchema(client, false);
-  console.log("Esquema de atención verificado: 7 tablas, columnas y claves compatibles; closedAt, daptaMessagesCursor y auditoría inmutable activos. No se conectó ni modificó ningún proveedor.");
+  console.log("Esquema de atención verificado: 10 tablas, columnas y claves compatibles; closedAt, daptaMessagesCursor, persistencia Meta y auditoría inmutable activos. No se conectó ni modificó ningún proveedor.");
 } catch (error) {
   if (error instanceof AttentionSchemaMismatch) throw error;
   const code = String(error?.code || "").replace(/[^A-Z0-9_]/gi, "").slice(0, 24);

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { AttentionError, assertAttentionActor, attentionText, attentionUuid, normalizeAttentionPhone, parseAttentionMutation } from "./atencion-core";
 import { buildCreditPaymentPlan } from "./credit-payment-plan";
+import { attentionMetaSchemaReady, attentionMetaMessage, attentionMetaPendingMessages } from "./atencion-meta-storage";
 import type { AttentionActor, AttentionAssignee, AttentionConversation, AttentionCustomer, AttentionDetail, AttentionFilters, AttentionInbox, AttentionMutation, AttentionQuickReply, DaptaConversationSnapshot } from "./atencion-types";
 
 export interface AttentionDb { $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>; }
@@ -11,6 +12,7 @@ type ConversationRow = Omit<AttentionConversation, "lastContactAt" | "updatedAt"
   lastContactAt: Date | string | null; updatedAt: Date | string; closedAt: Date | string | null;
   daptaMessagesCursor: string | null; preview?: string | null; historyTruncated: boolean;
   assigneeUserId: number | null; assigneeSellerId: number | null;
+  metaManaged?: boolean; metaLastInboundAt?: Date | string | null;
 };
 type CreditRow = { id: number; folio: string; clienteNombre: string; clienteDocumento: string | null; estado: string;
   referenciaEquipo: string | null; equipoMarca: string | null; equipoModelo: string | null;
@@ -220,16 +222,19 @@ export function createAttentionStore(database: AttentionDatabase) {
       assertAttentionActor(actor);
       return transaction(actor, async tx => {
         await requireSchema(tx); const row = await loadConversation(tx, actor, id);
-        const messages = await tx.$queryRawUnsafe<{id: string; direction: "inbound" | "outbound"; text: string; sentAt: Date | string; author: string | null}[]>(`
-          SELECT id,direction,text,"sentAt",author FROM "AttentionMessage" WHERE "conversationId"=$1::uuid ORDER BY "sentAt" DESC,id DESC LIMIT 501`, id);
+        const metaReady = await attentionMetaSchemaReady(tx);
+        const messages = await tx.$queryRawUnsafe<Parameters<typeof attentionMetaMessage>[0][]>(`
+          SELECT id,"conversationId",direction,text,"sentAt",author${metaReady ? ',attachment,"deliveryStatus"' : ''} FROM "AttentionMessage" WHERE "conversationId"=$1::uuid ORDER BY "sentAt" DESC,id DESC LIMIT 501`, id);
+        const pending = metaReady ? await attentionMetaPendingMessages(tx,id) : [];
+        const displayMessages = [...messages.map(attentionMetaMessage),...pending].sort((a,b) => Date.parse(a.sentAt)-Date.parse(b.sentAt)||a.id.localeCompare(b.id));
         const notes = await tx.$queryRawUnsafe<{id: string; text: string; author: string; createdAt: Date | string}[]>(`SELECT id,text,author,"createdAt" FROM "AttentionNote" WHERE "conversationId"=$1::uuid ORDER BY "createdAt" DESC,id DESC LIMIT 301`, id);
         const tasks = await tx.$queryRawUnsafe<{id: string; title: string; author: string; dueAt: Date | string | null; completedAt: Date | string | null}[]>(`SELECT id,title,author,"dueAt","completedAt" FROM "AttentionTask" WHERE "conversationId"=$1::uuid ORDER BY ("completedAt" IS NOT NULL),"dueAt" ASC NULLS LAST,"createdAt" DESC,id LIMIT 301`, id);
         const customer = await customerDetail(tx, actor, row);
         await audit(tx, actor, "CONVERSATION_VIEWED", row.id, { financial: customer.financialAllowed, creditIds: customer.credits.map(c => c.id), studyIds: customer.studies.map(s => s.id) });
-        return { conversation: conversation({ ...row, name: row.name === row.phone && customer.name ? customer.name : row.name }), messages: messages.slice(0,500).reverse().map(m => ({ ...m, sentAt: iso(m.sentAt) })),
+        return { conversation: conversation({ ...row, name: row.name === row.phone && customer.name ? customer.name : row.name }), messages: displayMessages.slice(-500),
           notes: notes.slice(0,300).reverse().map(n => ({ ...n, createdAt: iso(n.createdAt) })), tasks: tasks.slice(0,300).map(t => ({ ...t, dueAt: t.dueAt ? iso(t.dueAt) : null, completedAt: t.completedAt ? iso(t.completedAt) : null })),
           customer, permissions: { manage: actor.central || row.assigneeKey === actor.key,
-            claim: actor.analyst && row.assigneeKey === actor.key, assign: actor.central, canSend: false }, historyTruncated: row.historyTruncated || messages.length > 500,
+            claim: actor.analyst && row.assigneeKey === actor.key, assign: actor.central, canSend: false }, historyTruncated: row.historyTruncated || displayMessages.length > 500,
           notesTruncated: notes.length > 300, tasksTruncated: tasks.length > 300 };
       }, options);
     },
@@ -308,6 +313,8 @@ export function createAttentionStore(database: AttentionDatabase) {
       if (!Array.isArray(snapshots) || snapshots.length > 100) throw new AttentionError("Sincroniza un máximo de cien conversaciones por solicitud.");
       return transaction(actor, async tx => {
         await requireSchema(tx);
+        const metaReady = await attentionMetaSchemaReady(tx);
+        if(metaReady) await tx.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended('attention:provider-import',0))`);
         let imported = 0; let messagesImported = 0;
         // Stable lock ordering avoids two concurrent imports locking chats in opposite order.
         for (const snapshot of [...snapshots].sort((a, b) => a.externalId.localeCompare(b.externalId))) {
@@ -318,7 +325,7 @@ export function createAttentionStore(database: AttentionDatabase) {
           if (historyCursor !== null && (typeof historyCursor !== "string" || !historyCursor || historyCursor.length > 4096 || [...historyCursor].some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127))) throw new AttentionError("Punto de sincronización de Dapta inválido.");
           let contact = snapshot.lastContactAt ? new Date(snapshot.lastContactAt) : null;
           if (contact && !Number.isFinite(contact.getTime())) throw new AttentionError("Fecha de Dapta inválida.");
-          const normalizedMessages = snapshot.messages.map(message => {
+          let normalizedMessages = snapshot.messages.map(message => {
             const externalId = attentionText(message.id, 240); const text = attentionText(message.text, 16000, false);
             if (!["inbound", "outbound"].includes(message.direction) || !Number.isFinite(Date.parse(message.sentAt))) throw new AttentionError("Mensaje de Dapta inválido.");
             const sentAt = new Date(message.sentAt);
@@ -326,9 +333,24 @@ export function createAttentionStore(database: AttentionDatabase) {
             return { id: randomUUID(), externalId, direction: message.direction, text, sentAt: sentAt.toISOString(), author: message.author ? attentionText(message.author, 160) : null };
           });
           await tx.$queryRawUnsafe(`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended($1::text,0::bigint))`, `attention:dapta:${externalId}`);
-          const existing = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT * FROM "AttentionConversation" WHERE "externalId"=$1 FOR UPDATE`, externalId);
+          let existing = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT * FROM "AttentionConversation" WHERE "externalId"=$1 FOR UPDATE`, externalId);
+          if(metaReady && !existing.length && phone) {
+            const native = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT * FROM "AttentionConversation" WHERE channel='whatsapp' AND phone=$1 ORDER BY id LIMIT 2 FOR UPDATE`,phone);
+            if(native.length===1 && native[0].metaManaged && !native[0].externalId) {
+              existing=native;
+              await tx.$queryRawUnsafe(`UPDATE "AttentionConversation" SET "externalId"=$2 WHERE id=$1::uuid RETURNING id`,native[0].id,externalId);
+            }
+          }
           if (existing[0]?.phone && phone && existing[0].phone !== phone) throw new AttentionError("El teléfono de la conversación cambió. Requiere revisión.", 409);
           const id = existing[0]?.id || randomUUID();
+          if(metaReady && existing[0]?.metaManaged) {
+            // Native inbound owns the timeline after capture begins. Keep Dapta
+            // outbound for AI context: its UUIDs cannot be guessed into wamids.
+            const [boundary] = await tx.$queryRawUnsafe<{at:Date|string|null}[]>(`SELECT min("sentAt") AS at FROM "AttentionMessage" WHERE "conversationId"=$1::uuid AND "metaWamid" IS NOT NULL`,id);
+            normalizedMessages = normalizedMessages.filter(m=>m.direction==='outbound'||(boundary?.at && Date.parse(m.sentAt)<new Date(boundary.at).getTime()));
+            contact = existing[0].lastContactAt ? new Date(existing[0].lastContactAt) : null;
+            for(const message of normalizedMessages)if(!contact||Date.parse(message.sentAt)>contact.getTime())contact=new Date(message.sentAt);
+          }
           if (!existing.length) await tx.$queryRawUnsafe(`INSERT INTO "AttentionConversation"(id,"externalId",channel,phone,name,mode,"lastContactAt","historyTruncated","daptaMessagesCursor")
             VALUES($1::uuid,$2,'whatsapp',$3,$4,$5,$6::timestamptz,$7,$8) RETURNING id`, id, externalId, phone, name, snapshot.mode, contact, snapshot.historyTruncated, historyCursor);
           const inserted = normalizedMessages.length ? await tx.$queryRawUnsafe<{direction: string; sentAt: Date | string}[]>(`
@@ -338,8 +360,8 @@ export function createAttentionStore(database: AttentionDatabase) {
             ON CONFLICT("conversationId","externalId") DO NOTHING RETURNING direction,"sentAt"`, id, JSON.stringify(normalizedMessages)) : [];
           const newMessages = inserted.length;
           messagesImported += newMessages;
-          const reopen = Boolean(existing[0]?.status === "closed" && inserted.some(m => m.direction === "inbound" && new Date(m.sentAt).getTime() > new Date(existing[0].closedAt || existing[0].updatedAt).getTime()));
-          const mode = existing[0]?.mode === "human_requested" ? "human_requested" : snapshot.mode;
+          const reopen = Boolean(!existing[0]?.metaManaged && existing[0]?.status === "closed" && inserted.some(m => m.direction === "inbound" && new Date(m.sentAt).getTime() > new Date(existing[0].closedAt || existing[0].updatedAt).getTime()));
+          const mode = existing[0]?.metaManaged || existing[0]?.mode === "human_requested" ? existing[0].mode : snapshot.mode;
           const newer = contact && (!existing[0]?.lastContactAt || contact.getTime() > new Date(existing[0].lastContactAt).getTime());
           const resolvedPhone = phone || existing[0]?.phone || null;
           if (existing.length && (newMessages || newer || existing[0].phone !== resolvedPhone || existing[0].historyTruncated !== snapshot.historyTruncated || mode !== existing[0].mode || existing[0].daptaMessagesCursor !== historyCursor)) {

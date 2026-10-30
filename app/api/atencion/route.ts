@@ -1,6 +1,6 @@
 import { getAttentionAccess, parseAttentionFilters } from "@/lib/atencion-core";
 import { createAttentionCase, getAttentionInbox } from "@/lib/atencion-storage";
-import { attentionIntegrationStatus } from "@/lib/atencion-dapta";
+import { attentionReadIntegration } from "@/lib/atencion-read-model";
 import { assertAttentionOrigin, attentionHttpError, attentionJson, attentionString, attentionUuid, readAttentionJson } from "@/lib/atencion-http";
 
 export const runtime = "nodejs";
@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   try {
     const actor = await getAttentionAccess();
     const inbox = await getAttentionInbox(actor, parseAttentionFilters(new URL(request.url).searchParams));
-    return attentionJson({ ...inbox, integration: attentionIntegrationStatus() });
+    return attentionJson({ ...inbox, integration: await attentionReadIntegration(inbox.schemaReady) });
   } catch (error) { return attentionHttpError(error); }
 }
 

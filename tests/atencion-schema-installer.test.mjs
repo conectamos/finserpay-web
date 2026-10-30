@@ -49,14 +49,14 @@ async function fixture(t, overrides = {}) {
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
 
-test("instalación aditiva verifica siete tablas y se puede repetir sin pérdida de datos", async t => {
+test("instalación aditiva verifica diez tablas y se puede repetir sin pérdida de datos", async t => {
   const { database, install, calls, logs, ended } = await fixture(t);
   await install();
   await database.query(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES('user:1','00000000-0000-4000-8000-000000000001','retained')`);
   await install();
   assert.equal((await database.query('SELECT fingerprint FROM "AttentionRequest"')).rows[0].fingerprint, "retained");
   assert.ok(calls.findIndex(sql => sql.startsWith("SELECT pg_advisory_lock(")) < calls.indexOf(setupSql));
-  assert.ok(logs.every(message => message.includes("7 tablas") && message.includes("auditoría inmutable")));
+  assert.ok(logs.every(message => message.includes("10 tablas") && message.includes("auditoría inmutable")));
   assert.ok(ended());
 });
 
@@ -69,7 +69,7 @@ test("schema previo incompatible se rechaza antes de aplicar SQL y sin tocar la 
   assert.equal((await database.query(`SELECT to_regclass('public."AttentionMessage"') AS table_name`)).rows[0].table_name, null);
 });
 
-test("actualización permite solo las dos columnas aditivas previstas y rechaza claves ausentes", async t => {
+test("actualización permite columnas aditivas previstas y rechaza claves ausentes", async t => {
   const { database, install } = await fixture(t);
   await database.exec(setupSql);
   await database.exec('ALTER TABLE "AttentionConversation" DROP COLUMN "closedAt", DROP COLUMN "daptaMessagesCursor"');
@@ -78,6 +78,29 @@ test("actualización permite solo las dos columnas aditivas previstas y rechaza 
   assert.ok(columns.includes("closedAt")); assert.ok(columns.includes("daptaMessagesCursor"));
   await database.exec('ALTER TABLE "AttentionMessage" DROP CONSTRAINT "AttentionMessage_conversationId_externalId_key"');
   await assert.rejects(install(), /AttentionMessage\.EXTERNAL_ID_UNIQUE/);
+});
+
+test("upgrade desde siete tablas conserva historial y atribución y agrega almacenamiento Meta",async t=>{
+  const {database,install}=await fixture(t);await database.exec(setupSql);
+  await database.exec(`INSERT INTO "Usuario" VALUES(1);
+    INSERT INTO "AttentionConversation"(id,channel,phone,name,"assigneeKey","assigneeUserId") VALUES('00000000-0000-4000-8000-000000000010','whatsapp','+573001234567','Histórico','analyst:1',1);
+    INSERT INTO "AttentionAudit"("conversationId","userId",action) VALUES('00000000-0000-4000-8000-000000000010',1,'HISTORIC');
+    DROP TABLE "AttentionMetaDelivery","AttentionMetaOutbox","AttentionMetaBinding";
+    ALTER TABLE "AttentionConversation" DROP COLUMN "metaManaged",DROP COLUMN "metaLastInboundAt";
+    ALTER TABLE "AttentionMessage" DROP COLUMN "metaWamid",DROP COLUMN "metaPhoneNumberId",DROP COLUMN attachment,DROP COLUMN "deliveryStatus",DROP COLUMN "deliveryAt",DROP COLUMN "replyToWamid";
+    ALTER TABLE "AttentionAudit" DROP CONSTRAINT "AttentionAudit_actor",DROP COLUMN "actorKind",DROP COLUMN "actorKey",ALTER COLUMN "userId" SET NOT NULL;`);
+  await install();
+  assert.deepEqual((await database.query('SELECT "assigneeKey","assigneeUserId","metaManaged" FROM "AttentionConversation"')).rows,[{assigneeKey:'analyst:1',assigneeUserId:1,metaManaged:false}]);
+  assert.deepEqual((await database.query('SELECT "actorKind","userId",action FROM "AttentionAudit"')).rows,[{actorKind:'user',userId:1,action:'HISTORIC'}]);
+  await assert.rejects(database.query(`INSERT INTO "AttentionAudit"("actorKind",action) VALUES('system','ANONYMOUS')`));
+  await database.query(`INSERT INTO "AttentionAudit"("actorKind","actorKey",action) VALUES('system','SYSTEM_META','META_TEST')`);
+});
+
+test("postcheck rechaza identificadores Meta sin unicidad y constraint de actor ausente",async t=>{
+  const missingIndex=await fixture(t,{afterSql:db=>db.exec('DROP INDEX "AttentionMessage_meta_identity"')});
+  await assert.rejects(missingIndex.install(),/META_ID_UNIQUE/);
+  const missingActor=await fixture(t,{afterSql:db=>db.exec('ALTER TABLE "AttentionAudit" DROP CONSTRAINT "AttentionAudit_actor"')});
+  await assert.rejects(missingActor.install(),/SYSTEM_ACTOR_CHECK/);
 });
 
 test("postverificación rechaza auditoría desactivada en lugar de anunciar éxito", async t => {
