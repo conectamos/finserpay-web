@@ -25,7 +25,7 @@ const core = compile("lib/atencion-core.ts", {});
 class AttentionDaptaError extends Error { constructor(message, status) { super(message); this.status = status; } }
 class AttentionMetaError extends Error { constructor(code, message, status = 502, uncertain = false) { super(message); this.code = code; this.status = status; this.uncertain = uncertain; } }
 function harness(file = "app/api/atencion/route.ts", options = {}) {
-  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [], readIntegration: [], readDetail: [], read: [], agenda: [] };
+  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [], readIntegration: [], readDetail: [], read: [], agenda: [], work: [] };
   const access = { ...core, getAttentionAccess: async () => {
     calls.access++; if (options.accessError) throw options.accessError; return options.actor || actor;
   } };
@@ -37,7 +37,7 @@ function harness(file = "app/api/atencion/route.ts", options = {}) {
     getAttentionHistoryCursors: async () => ({}),
     getAttentionInbox: async (...args) => { calls.inbox.push(args); if (options.storeError) throw options.storeError; return options.inbox || inbox; },
     createAttentionCase: async (...args) => { calls.create.push(args); return { id }; },
-    getAttentionDetail: async (...args) => { calls.detail.push(args); if (options.storeError) throw options.storeError; return { conversation: { id }, messages: [] }; },
+    getAttentionDetail: async (...args) => { calls.detail.push(args); if (options.storeError) throw options.storeError; return options.detail || { conversation: { id }, messages: [] }; },
     mutateAttentionConversation: async (...args) => { calls.mutate.push(args); if (options.storeError) throw options.storeError; },
     saveAttentionQuickReply: async (...args) => { calls.quick.push(args); },
     importAttentionSnapshots: async (...args) => { calls.import.push(args); return { imported: 0 }; },
@@ -45,7 +45,10 @@ function harness(file = "app/api/atencion/route.ts", options = {}) {
   const http = compile("lib/atencion-http.ts", { "./atencion-core": core, "./atencion-dapta": provider, "./atencion-meta": { AttentionMetaError } });
   const readModel={attentionReadIntegration:async ready=>{calls.readIntegration.push(ready);return options.integration||integration;},
     attentionReadDetail:async(actor,detail)=>{calls.readDetail.push([actor,detail]);if(options.messagingError)throw options.messagingError;return {...detail,...options.detailEnrichment};}};
-  const route = compile(file, { "@/lib/atencion-core": access, "@/lib/atencion-storage": storage, "@/lib/atencion-dapta": provider, "@/lib/atencion-http": http, "@/lib/atencion-read-model":readModel });
+  const workStorage = { attentionWorkStore: async () => ({ forConversation: async (...args) => {
+    calls.work.push(args); if (options.workError) throw options.workError; return options.work || null;
+  } }) };
+  const route = compile(file, { "@/lib/atencion-core": access, "@/lib/atencion-storage": storage, "@/lib/atencion-dapta": provider, "@/lib/atencion-http": http, "@/lib/atencion-read-model":readModel, "@/lib/atencion-work-storage":workStorage });
   return { ...route, ...http, calls };
 }
 function request(body = {}, method = "POST", headers = {}, url = `${origin}/api/atencion`) {
@@ -65,7 +68,7 @@ test("every attention handler requires authentication before data access", async
     const h = harness(`app/api/atencion/${file}`, { accessError: new core.AttentionError("Inicia sesión", 401) });
     const response = await h[method](method === "GET" ? new Request(`${origin}/api/atencion`) : request({}, method), context);
     assert.equal(response.status, 401); privateResponse(response);
-    for (const key of ["inbox", "create", "detail", "mutate", "quick", "fetch", "import", "readIntegration", "readDetail"]) assert.equal(h.calls[key].length, 0);
+    for (const key of ["inbox", "create", "detail", "mutate", "quick", "fetch", "import", "readIntegration", "readDetail", "work"]) assert.equal(h.calls[key].length, 0);
   }
 });
 
@@ -182,4 +185,24 @@ test("version conflicts are explicit and no storage error is serialized", async 
     const response = await h.PATCH(request({ action: "close", version: 1, requestId: randomUUID() }, "PATCH"), context);
     assert.equal(response.status, status); assert.doesNotMatch(JSON.stringify(await response.json()), /database|secret|password/); privateResponse(response);
   }
+});
+
+test("internal work chats use scoped files and reject generic mutations without touching Meta", async () => {
+  const work = { item: { id: randomUUID(), kind: "enrollment", state: "pending", advisor: "Asesor", ally: "Aliado", target: { id: 1 } }, messages: [{ id: randomUUID(), mediaUrl: "/api/atencion/solicitudes/private/file" }], historyTruncated: false };
+  const h = harness("app/api/atencion/[id]/route.ts", { detail: { conversation: { id, channel: "internal" }, messages: [] }, work });
+  const response = await h.GET(new Request(origin), context), body = await response.json();
+  assert.equal(response.status, 200); privateResponse(response);
+  assert.deepEqual(body.messages, work.messages); assert.equal(body.workRequest.id, work.item.id);
+  assert.deepEqual(body.permissions, { manage: false, claim: false, assign: false, canSend: false });
+  assert.deepEqual(h.calls.work[0], [{ type: "attention", actor }, id]); assert.equal(h.calls.readDetail.length, 0);
+  const mutation = await h.PATCH(request({ action: "close", version: 1, requestId: randomUUID() }, "PATCH"), context);
+  assert.equal(mutation.status, 409); privateResponse(mutation); assert.equal(h.calls.mutate.length, 0);
+  assert.equal(h.calls.fetch.length, 0);
+});
+
+test("work lookup rechecks authorization and never falls through after access is revoked", async () => {
+  const h = harness("app/api/atencion/[id]/route.ts", { detail: { conversation: { id, channel: "internal" }, messages: [] }, workError: new core.AttentionError("Acceso revocado", 404) });
+  assert.equal((await h.GET(new Request(origin), context)).status, 404);
+  assert.equal((await h.PATCH(request({ action: "close", version: 1, requestId: randomUUID() }, "PATCH"), context)).status, 404);
+  assert.equal(h.calls.mutate.length, 0); assert.equal(h.calls.readDetail.length, 0);
 });
