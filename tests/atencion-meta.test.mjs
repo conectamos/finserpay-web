@@ -28,6 +28,14 @@ function envelope(messages = [inbound], statuses = []) {
     contacts: [{ wa_id: phone, profile: { name: "Persona de prueba" } }], messages, statuses,
   } }] }] };
 }
+const businessPhone = META_ATTENTION_LINE.displayPhone.slice(1);
+const echo = { ...inbound, id: "wamid.APP_REPLY", from: businessPhone, to: phone, text: { body: "Respuesta desde la app" } };
+function echoEnvelope(echoes = [echo]) {
+  const body = envelope([], []), change = body.entry[0].changes[0];
+  change.field = "smb_message_echoes";
+  change.value.message_echoes = echoes;
+  return body;
+}
 function sign(body) { const raw = Buffer.from(typeof body === "string" ? body : JSON.stringify(body)); return [raw, `sha256=${createHmac("sha256", env.WHATSAPP_ATTENTION_APP_SECRET).update(raw).digest("hex")}`]; }
 function adapter(overrides = {}) { return createMetaAttentionAdapter({ env: { ...env }, now: () => now, fetch: async () => { throw new Error("Unexpected network request"); }, ...overrides }); }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }); }
@@ -103,6 +111,99 @@ test("unsupported identifiers, formats, timestamps and marked secrets are not ex
   ])));
   assert.equal(events.messages.length, 1); assert.equal(events.ignored, 3);
   assert.equal(events.messages[0].text.includes("123456"), false); assert.equal(events.messages[0].text.includes("prueba123"), false);
+});
+
+test("business-app echoes are separate outbound content with recipient identity and no attributed name", () => {
+  const events = adapter({ env: { ...env, WHATSAPP_ATTENTION_SEND_ENABLED: "false", WHATSAPP_ATTENTION_AI_CUTOVER_CONFIRMED: "false" } })
+    .parseWebhook(...sign(echoEnvelope([{ ...echo, context: { id: inbound.id }, author: "Untrusted operator" }])));
+  assert.deepEqual(events.messages, []); assert.deepEqual(events.statuses, []); assert.equal(events.ignored, 0);
+  assert.deepEqual(events.echoes, [{ id: echo.id, from: businessPhone, to: phone, phone: `+${phone}`, name: null,
+    timestamp: "2026-10-30T17:59:00.000Z", type: "text", text: echo.text.body, replyToId: inbound.id }]);
+});
+
+test("echoes still require the exact raw-body signature, WABA, phone and WhatsApp product", () => {
+  const [raw, signature] = sign(echoEnvelope());
+  assert.throws(() => adapter().parseWebhook(Buffer.concat([raw, Buffer.from(" ")]), signature), { code: "INVALID_SIGNATURE" });
+  assert.throws(() => adapter().parseWebhook(raw, null), { code: "INVALID_SIGNATURE" });
+  assert.throws(() => adapter().parseWebhook(raw, `sha256=${"0".repeat(64)}`), { code: "INVALID_SIGNATURE" });
+  for (const alter of [
+    body => { body.entry[0].id = "9999999999999999"; },
+    body => { body.entry[0].changes[0].value.metadata.phone_number_id = "9999999999999999"; },
+    body => { body.entry[0].changes[0].value.messaging_product = "messenger"; },
+    body => { body.entry[0].changes[0].field = "message_echoes"; },
+  ]) {
+    const body = echoEnvelope(); alter(body);
+    const events = adapter().parseWebhook(...sign(body));
+    assert.deepEqual(events.echoes, []); assert.deepEqual(events.messages, []); assert.equal(events.ignored, 1);
+  }
+});
+
+test("echoes reject foreign senders, self recipients, groups and non-phone identities", () => {
+  const invalid = [
+    { from: phone }, { from: `+${businessPhone}` }, { from: Number(businessPhone) }, { from: undefined },
+    { to: businessPhone }, { to: `+${phone}` }, { to: `${phone}@g.us` }, { to: `${phone}@s.whatsapp.net` },
+    { to: "CO.12345678901234567" }, { to: "1234567890123456" }, { to: "0123456789" }, { to: undefined },
+    { recipient_type: "group" }, { group_id: "123456789" },
+  ];
+  const events = adapter().parseWebhook(...sign(echoEnvelope(invalid.map(fields => ({ ...echo, ...fields })))));
+  assert.deepEqual(events.echoes, []); assert.equal(events.ignored, invalid.length);
+  const grouped = echoEnvelope(); grouped.entry[0].changes[0].value.group_id = "123456789";
+  assert.equal(adapter().parseWebhook(...sign(grouped)).echoes.length, 0);
+});
+
+test("malformed echo IDs, timestamps and content are ignored without manufacturing inbound messages", () => {
+  const invalid = [
+    { id: "not-a-wamid" }, { id: "wamid." }, { timestamp: "bad" }, { timestamp: 1793383140 },
+    { timestamp: String(now / 1000 + 301) }, { timestamp: "1577836799" },
+    { type: "edit" }, { type: "revoke" }, { text: { body: " " } }, { text: { body: "x".repeat(16001) } },
+    { type: "image", image: { id: "https://untrusted.invalid/image", mime_type: "image/png" } },
+    { type: "image", image: { id: "123456789", mime_type: "image/svg+xml" } },
+    { type: "audio", audio: { id: "123456789", mime_type: "video/mp4" } },
+  ];
+  const events = adapter().parseWebhook(...sign(echoEnvelope([null, [], ...invalid.map(fields => ({ ...echo, ...fields }))])));
+  assert.deepEqual(events.echoes, []); assert.deepEqual(events.messages, []); assert.equal(events.ignored, invalid.length + 2);
+  const wrongShape = echoEnvelope({ ...echo });
+  assert.deepEqual(adapter().parseWebhook(...sign(wrongShape)).echoes, []);
+});
+
+test("echo media uses the same allowlist and strips external URLs and unsafe optional fields", () => {
+  const cases = [["image", "image/png"], ["audio", "audio/ogg; codecs=opus"], ["video", "video/mp4"],
+    ["document", "application/pdf"], ["sticker", "image/webp"]];
+  const echoes = cases.map(([type, mimeType], i) => ({ ...echo, id: `${echo.id}_${i}`, type, text: undefined,
+    context: { id: "not-a-wamid" }, [type]: { id: "1234567890", mime_type: mimeType, sha256: "a".repeat(64),
+      filename: type === "document" ? "Recibo prueba.pdf" : "../unsafe", caption: "OTP: 123456", url: "https://untrusted.invalid/private" } }));
+  const events = adapter().parseWebhook(...sign(echoEnvelope(echoes)));
+  assert.equal(events.echoes.length, 5); assert.equal(events.ignored, 0); assert.deepEqual(events.messages, []);
+  for (const [index, item] of events.echoes.entries()) {
+    assert.equal(item.type, cases[index][0]); assert.equal(item.media.mimeType, cases[index][1].split(";")[0]);
+    assert.equal(item.media.id, "1234567890"); assert.equal(item.media.sha256, "a".repeat(64));
+    assert.equal(item.replyToId, undefined); assert.equal(item.media.fileName, item.type === "document" ? "Recibo prueba.pdf" : undefined);
+    assert.equal(item.media.caption.includes("123456"), false); assert.equal(item.media.url, undefined);
+  }
+  assert.equal(JSON.stringify(events).includes("untrusted.invalid"), false);
+});
+
+test("mixed signed batches keep app echoes, customer inbound and API receipts distinct", () => {
+  const body = envelope([inbound], [{ id: "wamid.CRM_REPLY", recipient_id: phone, timestamp: inbound.timestamp, status: "read", biz_opaque_callback_data: input.attemptId }]);
+  body.entry[0].changes.unshift(echoEnvelope().entry[0].changes[0]);
+  // Arrays under the wrong webhook field must never cross into another direction.
+  body.entry[0].changes[0].value.messages = [{ ...inbound, id: "wamid.WRONG_INBOUND" }];
+  body.entry[0].changes[0].value.statuses = [{ id: echo.id, recipient_id: phone, timestamp: inbound.timestamp, status: "read" }];
+  body.entry[0].changes[1].value.message_echoes = [{ ...echo, id: "wamid.WRONG_ECHO" }];
+  const events = adapter().parseWebhook(...sign(body));
+  assert.deepEqual(events.messages.map(item => item.id), [inbound.id]);
+  assert.deepEqual(events.echoes.map(item => item.id), [echo.id]);
+  assert.deepEqual(events.statuses.map(item => item.id), ["wamid.CRM_REPLY"]);
+  assert.equal(events.statuses[0].requestId, input.attemptId);
+});
+
+test("echo parsing preserves wamid across redelivery for storage deduplication and has no parser state", () => {
+  const client = adapter(), signed = sign(echoEnvelope());
+  const first = client.parseWebhook(...signed), replay = client.parseWebhook(...signed);
+  assert.deepEqual(first, replay); assert.equal(replay.echoes[0].id, echo.id);
+  const repeated = client.parseWebhook(...sign(echoEnvelope([echo, echo])));
+  assert.deepEqual(repeated.echoes.map(item => item.id), [echo.id, echo.id]);
+  assert.deepEqual(client.parseWebhook(...sign(envelope())).echoes, []);
 });
 test("send checks flags, cutover, 24-hour window, UUID and beforeSend before any network", async () => {
   for (const [key, code] of [["WHATSAPP_ATTENTION_SEND_ENABLED", "META_SEND_DISABLED"], ["WHATSAPP_ATTENTION_AI_CUTOVER_CONFIRMED", "META_CUTOVER_REQUIRED"]]) {

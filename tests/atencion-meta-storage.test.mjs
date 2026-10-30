@@ -11,6 +11,7 @@ const jiti=createJiti(import.meta.url,{alias:{"@":root,"server-only":path.join(r
 const {createAttentionMetaStore,attentionMetaReplyMessage}=await jiti.import("../lib/atencion-meta-storage.ts");
 const {createAttentionStore}=await jiti.import("../lib/atencion-storage.ts");
 const {createAttentionReadModel}=await jiti.import("../lib/atencion-read-model.ts");
+const {createWhatsAppAutomationMetaStore}=await jiti.import("../lib/whatsapp-automation-meta-storage.ts");
 const migration=readFileSync(path.join(root,"scripts/setup-atencion.sql"),"utf8");
 const scope={phoneNumberId:"1162059967000416",wabaId:"2148284059050848"};
 const central={userId:1,sellerId:null,key:"admin:1",name:"Central",central:true,admin:true,analyst:false,supervisor:false,aliadoId:1,sedeId:10};
@@ -18,7 +19,8 @@ const analyst={...central,userId:5,key:"analyst:5",name:"Analista A",central:fal
 const other={...analyst,userId:6,key:"analyst:6",name:"Analista B"};
 const phone="+573001234567",contact="573001234567",instant="2026-10-30T15:00:00.000Z";
 const inbound=(data={})=>({id:`wamid.${randomUUID()}`,from:contact,phone,name:"Contacto",timestamp:instant,type:"text",text:"Consulta",...data});
-const events=(messages=[],statuses=[])=>({scope,messages,statuses,ignored:0});
+const echo=(data={})=>({...inbound(),from:"573124085562",to:contact,name:null,text:"Respuesta desde el teléfono",...data});
+const events=(messages=[],statuses=[],echoes=[])=>({scope,messages,statuses,echoes,ignored:0});
 const snapshot=(data={})=>({externalId:"dapta-chat",phone,name:"Contacto Dapta",mode:"ai",lastContactAt:null,historyTruncated:false,historyCursor:null,messages:[],...data});
 const delivery=(id,data={})=>({id,recipient:contact,timestamp:instant,status:"delivered",errorCodes:[],...data});
 const attachment={kind:"image",mimeType:"image/png",fileName:"imagen.png",sha256:"a".repeat(64),size:128};
@@ -56,8 +58,8 @@ test("webhook enlaza solo teléfono exacto único, preserva asignación y dedupl
   const f=await fixture(t);await f.legacy.importAttentionSnapshots(central,[snapshot()]);
   const id=(await f.db.query('SELECT id FROM "AttentionConversation"')).rows[0].id;await f.assign(id);
   const msg=inbound({type:"image",text:undefined,media:{id:"987654321",mimeType:"image/png",fileName:"foto.png",caption:"Consulta"}});
-  assert.deepEqual(await f.meta.ingest(events([msg])),{messagesImported:1,statusesApplied:0});
-  assert.deepEqual(await f.meta.ingest(events([msg])),{messagesImported:0,statusesApplied:0});
+  assert.deepEqual(await f.meta.ingest(events([msg])),{messagesImported:1,echoesImported:0,statusesApplied:0});
+  assert.deepEqual(await f.meta.ingest(events([msg])),{messagesImported:0,echoesImported:0,statusesApplied:0});
   const rows=(await f.db.query('SELECT * FROM "AttentionConversation"')).rows;
   assert.equal(rows.length,1);assert.equal(rows[0].externalId,"dapta-chat");assert.equal(rows[0].assigneeKey,analyst.key);assert.equal(rows[0].metaManaged,true);
   const detail=await f.legacy.getAttentionDetail(analyst,id);
@@ -258,4 +260,175 @@ test("lecturas Meta sin migración conservan detalle y no anuncian envío habili
   const model=createAttentionReadModel({database:f.database,env:{...daptaEnv,...metaEnv},now:()=>new Date(instant)});
   const status=await model.integration(true);assert.equal(status.canSend,false);assert.equal(status.canSync,true);assert.equal(status.status,"meta_pending");
   const enriched=await model.detail(analyst,detail);assert.equal(enriched.permissions.canSend,false);assert.deepEqual(enriched.messages,detail.messages);
+});
+
+test("eco de WhatsApp conserva chat cerrado, analista, modo y ventana; duplica cero y no retrocede actividad",async t=>{
+  const f=await fixture(t);const row=await f.ingest();await f.assign(row.id);
+  await f.db.query(`UPDATE "AttentionConversation" SET status='closed',mode='human',"closedAt"=$2 WHERE id=$1`,[row.id,instant]);
+  const before=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0];
+  const notifications=[];await f.db.listen("finserpay_attention_changes",payload=>notifications.push(JSON.parse(payload)));
+  const msg=echo({timestamp:"2026-10-31T16:00:00.000Z",text:"Mensaje reciente"});
+  assert.deepEqual(await f.meta.ingest(events([],[],[msg])),{messagesImported:0,echoesImported:1,statusesApplied:0});
+  const newest=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0];
+  for(const key of ["status","mode","assigneeUserId","assigneeKey","assigneeName","closedAt","metaLastInboundAt","externalId","sedeId"])assert.deepEqual(newest[key],before[key],key);
+  assert.equal(new Date(newest.lastContactAt).toISOString(),msg.timestamp);
+  assert.ok(notifications.some(event=>event.conversationId===row.id&&event.currentUserId===analyst.userId));
+  assert.ok(!JSON.stringify(notifications).includes("Mensaje reciente"));assert.ok(!JSON.stringify(notifications).includes(phone));
+  await f.meta.ingest(events([],[],[echo({timestamp:"2026-10-29T15:00:00.000Z",text:"Historia anterior"})]));
+  const historical=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0];
+  assert.deepEqual(historical,newest);
+  const repeated=await Promise.all([f.meta.ingest(events([],[],[msg])),f.meta.ingest(events([],[],[msg]))]);
+  assert.deepEqual(repeated.map(result=>result.echoesImported),[0,0]);
+  const detail=await f.legacy.getAttentionDetail(analyst,row.id);
+  const inbox=await f.legacy.getAttentionInbox(analyst,{filter:"all",search:"",page:1});
+  assert.equal(inbox.conversations[0].preview,"Mensaje reciente");assert.equal(detail.messages.filter(m=>m.direction==="outbound").length,2);
+  assert.equal(detail.messages.at(-1).author,"WhatsApp Business");assert.equal(detail.messages.at(-1).deliveryStatus,"sent");
+  f.advance(25*3600000);assert.equal((await f.meta.getMessaging(analyst,row.id)).canReply,false);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);
+});
+
+test("primer eco crea contacto sin inventar nombre, entrante, asignación ni ventana de 24 horas",async t=>{
+  const f=await fixture(t);const msg=echo();await f.meta.ingest(events([],[],[msg]));
+  const row=(await f.db.query('SELECT * FROM "AttentionConversation"')).rows[0];
+  assert.equal(row.phone,phone);assert.equal(row.name,phone);assert.equal(row.metaManaged,true);
+  assert.equal(row.metaLastInboundAt,null);assert.equal(row.assigneeKey,null);assert.equal(row.mode,"unknown");
+  assert.deepEqual(await f.meta.getMessaging(central,row.id),{windowExpiresAt:null,canReply:false,reason:"Aún no se ha recibido un mensaje del cliente que habilite la ventana de respuesta de 24 horas."});
+  await assert.rejects(f.queue(row.id),{status:409});
+  const bindings=(await f.db.query('SELECT "contactId","phoneNumberId","wabaId" FROM "AttentionMetaBinding"')).rows;
+  assert.deepEqual(bindings,[{contactId:contact,...scope}]);
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionMessage" WHERE direction='inbound'`)).rows[0].n,0);
+  const audit=(await f.db.query(`SELECT "actorKind","actorKey","userId" FROM "AttentionAudit" WHERE action='META_MESSAGE_ECHOED'`)).rows;
+  assert.deepEqual(audit,[{actorKind:"system",actorKey:"SYSTEM_META",userId:null}]);
+});
+
+test("ecos reutilizan solo teléfono exacto único y no eligen arbitrariamente entre chats compartidos",async t=>{
+  const f=await fixture(t);await f.legacy.importAttentionSnapshots(central,[snapshot()]);
+  const original=(await f.db.query('SELECT id FROM "AttentionConversation"')).rows[0].id;await f.assign(original);
+  assert.equal((await f.meta.getMessaging(analyst,original)).reason,"Este chat aún no está vinculado a la línea de WhatsApp de FINSER PAY. La respuesta por este canal todavía no está disponible.");
+  await f.meta.ingest(events([],[],[echo()]));
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,1);
+  assert.equal((await f.db.query('SELECT "assigneeKey" FROM "AttentionConversation" WHERE id=$1',[original])).rows[0].assigneeKey,analyst.key);
+  const otherPhone="+573009999999";
+  await f.legacy.importAttentionSnapshots(central,[snapshot({externalId:"shared-a",phone:otherPhone}),snapshot({externalId:"shared-b",phone:otherPhone})]);
+  await f.meta.ingest(events([],[],[echo({to:otherPhone.slice(1),phone:otherPhone})]));
+  const shared=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE phone=$1',[otherPhone])).rows;
+  assert.equal(shared.length,3);const created=shared.find(row=>row.metaManaged);assert.equal(created.externalId,null);assert.equal(created.assigneeKey,null);assert.equal(created.sedeId,null);
+});
+
+test("adjuntos de ecos usan medios privados y autorización actual, nunca URL ni media ID públicos",async t=>{
+  const f=await fixture(t);const row=await f.ingest();await f.assign(row.id);
+  const kinds={image:"image/jpeg",audio:"audio/ogg",video:"video/mp4",document:"application/pdf",sticker:"image/webp"};
+  const messages=Object.entries(kinds).map(([kind,mimeType],index)=>echo({type:kind,text:undefined,replyToId:"wamid.parent",
+    timestamp:`2026-10-30T15:00:0${index+1}.000Z`,media:{id:`12345678${index}`,mimeType,fileName:`archivo-${index}`,sha256:"a".repeat(64)}}));
+  assert.equal((await f.meta.ingest(events([],[],messages))).echoesImported,5);
+  const detail=await f.legacy.getAttentionDetail(analyst,row.id),outbound=detail.messages.filter(m=>m.direction==="outbound");
+  const inbox=await f.legacy.getAttentionInbox(analyst,{filter:"all",search:"",page:1});
+  assert.equal(outbound.length,5);assert.equal(inbox.conversations[0].preview,"Sticker");
+  for(const [index,message] of outbound.entries()){
+    assert.equal(message.text,"");assert.equal(message.author,"WhatsApp Business");assert.equal(message.attachment.kind,messages[index].type);
+    assert.equal(message.attachment.url,`/api/atencion/${row.id}/messages/${message.id}/media`);
+    assert.ok(!JSON.stringify(message).includes(messages[index].media.id));assert.ok(!JSON.stringify(message).includes(messages[index].id));
+    assert.equal((await f.meta.getMedia(analyst,row.id,message.id)).mediaId,messages[index].media.id);
+    await assert.rejects(f.meta.getMedia(other,row.id,message.id),{status:404});
+  }
+  await f.assign(row.id,other);await assert.rejects(f.meta.getMedia(analyst,row.id,outbound[0].id),{status:404});
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionMessage" WHERE "replyToWamid"='wamid.parent'`)).rows[0].n,5);
+});
+
+test("ingest revalida negocio, destinatario, teléfono y scope de ecos aun sin pasar por parser",async t=>{
+  const f=await fixture(t);
+  for(const patch of [{from:"573000000000"},{from:"+573124085562"},{to:"573124085562",phone:"+573124085562"},
+    {to:"573009999999"},{phone:"+573009999999"},{to:"+573001234567"},{to:"abc"},{name:"Nombre inventado"}]){
+    await assert.rejects(f.meta.ingest(events([],[],[echo(patch)])),{status:403});
+  }
+  await assert.rejects(f.meta.ingest({...events([],[],[echo()]),scope:{...scope,phoneNumberId:"wrong"}}),{status:403});
+  await assert.rejects(f.meta.ingest({...events(),echoes:{}}),{status:400});
+  await assert.rejects(f.meta.ingest(events([],[],Array.from({length:1001},()=>echo()))),{status:400});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,0);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,0);
+});
+
+test("contactos internacionales de eco y entrante se conservan exactos sin inferir un número colombiano ajeno",async t=>{
+  const f=await fixture(t);await f.legacy.importAttentionSnapshots(central,[snapshot({phone:"+573612345678"})]);
+  const local=(await f.db.query('SELECT id FROM "AttentionConversation"')).rows[0].id;await f.assign(local);
+  for(const destination of ["3612345678","1234567"]){
+    await f.meta.ingest(events([],[],[echo({to:destination,phone:`+${destination}`})]));
+    await f.meta.ingest(events([inbound({from:destination,phone:`+${destination}`})]));
+  }
+  const chats=(await f.db.query('SELECT id,phone,"assigneeKey" FROM "AttentionConversation" ORDER BY phone')).rows;
+  assert.equal(chats.length,3);assert.equal(chats.find(row=>row.id===local).assigneeKey,analyst.key);
+  for(const destination of ["3612345678","1234567"]){const created=chats.find(row=>row.phone===`+${destination}`);assert.ok(created);assert.equal(created.assigneeKey,null);}
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage" WHERE "conversationId"=$1',[local])).rows[0].n,0);
+  await assert.rejects(f.meta.ingest(events([inbound({from:"3612345678",phone:"+573612345678"})])),{status:403});
+});
+
+test("colisión de eco con mensaje CRM conserva autor, texto, estado y propiedad; otro destinatario se rechaza",async t=>{
+  const f=await fixture(t);const row=await f.ingest();await f.assign(row.id);
+  const q=await f.queue(row.id,analyst),claim=await f.meta.claimReply(analyst,row.id,q.requestId);
+  await f.meta.beforeSend(analyst,q.id,claim.reply.leaseToken);await f.meta.acceptReply(q.id,claim.reply.leaseToken,"wamid.crm-echo");
+  await f.meta.ingest(events([],[delivery("wamid.crm-echo",{status:"read"})]));
+  const before=(await f.db.query('SELECT * FROM "AttentionMessage" WHERE "metaWamid"=$1',["wamid.crm-echo"])).rows[0];
+  const conversation=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0];
+  assert.equal((await f.meta.ingest(events([],[],[echo({id:"wamid.crm-echo",text:"No sobreescribir",timestamp:"2026-11-01T15:00:00.000Z"})]))).echoesImported,0);
+  assert.deepEqual((await f.db.query('SELECT * FROM "AttentionMessage" WHERE id=$1',[before.id])).rows[0],before);
+  assert.deepEqual((await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0],conversation);
+  await assert.rejects(f.meta.ingest(events([],[],[echo({id:"wamid.crm-echo",to:"573009999999",phone:"+573009999999"})])),{status:409});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,1);
+});
+
+test("eco de plantilla ya confirmada no duplica ni sustituye el registro de automatización",async t=>{
+  const f=await fixture(t);await f.db.exec(readFileSync(path.join(root,"scripts/setup-whatsapp-automation-meta.sql"),"utf8"));
+  const automation=createWhatsAppAutomationMetaStore(f.database,{now:()=>new Date(instant)});
+  const {row}=await automation.reserve({operationKey:"bienvenida:credito:123",template:"bienvenida",phone:contact,body:["Cliente de prueba"]});
+  await automation.prepare(row.id,row.leaseToken,{text:"Bienvenida aprobada",metadata:{}});await automation.start(row.id,row.leaseToken);await automation.accept(row.id,"wamid.automation-echo");
+  await f.meta.ingest(events([],[delivery("wamid.automation-echo",{status:"read"})]));
+  const before=(await f.db.query('SELECT * FROM "AttentionMessage" WHERE id=$1',[row.messageId])).rows[0];
+  assert.equal((await f.meta.ingest(events([],[],[echo({id:"wamid.automation-echo"})]))).echoesImported,0);
+  assert.deepEqual((await f.db.query('SELECT * FROM "AttentionMessage" WHERE id=$1',[row.messageId])).rows[0],before);
+  assert.equal(before.author,"Automatización FINSER PAY");assert.equal(before.deliveryStatus,"read");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,1);
+});
+
+test("recibos de ecos coinciden con destinatario, reconcilian llegada anticipada y nunca inventan outbox",async t=>{
+  const f=await fixture(t);const msg=echo({id:"wamid.echo-receipts"});
+  const early=delivery(msg.id,{status:"delivered",timestamp:"2026-10-30T15:01:00.000Z"});
+  assert.equal((await f.meta.ingest(events([],[early]))).statusesApplied,0);
+  assert.equal((await f.meta.ingest(events([],[],[msg]))).statusesApplied,1);
+  const get=async()=>(await f.db.query('SELECT * FROM "AttentionMessage" WHERE "metaWamid"=$1',[msg.id])).rows[0];
+  assert.equal((await get()).deliveryStatus,"delivered");
+  for(const patch of [{recipient:"573009999999"},{requestId:randomUUID()}])assert.equal((await f.meta.ingest(events([],[delivery(msg.id,{status:"read",timestamp:"2026-10-30T15:02:00Z",...patch})]))).statusesApplied,0);
+  assert.equal((await get()).deliveryStatus,"delivered");
+  await f.meta.ingest(events([],[delivery(msg.id,{status:"read",timestamp:"2026-10-30T15:03:00Z"})]));
+  const read=await get();assert.equal(read.deliveryStatus,"read");
+  await f.meta.ingest(events([],[early,delivery(msg.id,{status:"failed",timestamp:"2026-10-30T15:04:00Z"})]));
+  assert.equal((await get()).deliveryStatus,"read");
+  await f.meta.ingest(events([],[],[msg]));assert.equal((await get()).deliveryStatus,"read");
+  const failed=echo({id:"wamid.echo-failed"});await f.meta.ingest(events([],[],[failed]));
+  await f.meta.ingest(events([],[delivery(failed.id,{status:"failed",timestamp:"2026-10-30T15:02:00Z"}),delivery(failed.id,{status:"sent",timestamp:"2026-10-30T15:01:00Z"})]));
+  assert.equal((await f.db.query('SELECT "deliveryStatus" FROM "AttentionMessage" WHERE "metaWamid"=$1',[failed.id])).rows[0].deliveryStatus,"failed");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);
+});
+
+test("fallo de eco en el mismo segundo prevalece sobre sent antes o después de importar el eco",async t=>{
+  const f=await fixture(t);
+  for(const before of [false,true]){
+    const msg=echo(),receipt=delivery(msg.id,{status:"failed"});
+    if(before)await f.meta.ingest(events([],[receipt]));
+    await f.meta.ingest(events([],[],[msg]));
+    if(!before)await f.meta.ingest(events([],[receipt]));
+    await f.meta.ingest(events([],[delivery(msg.id,{status:"sent"})]));
+    assert.equal((await f.db.query('SELECT "deliveryStatus" FROM "AttentionMessage" WHERE "metaWamid"=$1',[msg.id])).rows[0].deliveryStatus,"failed");
+  }
+});
+
+test("identificador externo ya existente se conserva y un eco inválido revierte todo el lote",async t=>{
+  const f=await fixture(t);const row=await f.ingest();const id=randomUUID(),msg=echo({id:"wamid.external-existing"});
+  await f.db.query(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author) VALUES($1,$2,$3,'outbound','Histórico',$4,'Autor anterior')`,[id,row.id,`meta:${msg.id}`,instant]);
+  const before=(await f.db.query('SELECT * FROM "AttentionMessage" WHERE id=$1',[id])).rows[0];
+  assert.equal((await f.meta.ingest(events([],[],[msg]))).echoesImported,0);
+  assert.deepEqual((await f.db.query('SELECT * FROM "AttentionMessage" WHERE id=$1',[id])).rows[0],before);
+  const invalid=echo({to:"573009999999",phone:"+573009999999",id:"wamid.z-invalid",text:"",type:"image",media:{id:"bad id",mimeType:"image/jpeg"}});
+  await assert.rejects(f.meta.ingest(events([],[],[echo({id:"wamid.a-valid"}),invalid])),{status:400});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,2);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,1);
 });

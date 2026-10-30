@@ -7,7 +7,7 @@ import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
 
 const root = path.resolve(import.meta.dirname, "..");
-const jiti = createJiti(import.meta.url, { alias: { "@": root } });
+const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
 const { createAttentionStore } = await jiti.import("../lib/atencion-storage.ts");
 const migration = readFileSync(path.join(root, "scripts/setup-atencion.sql"), "utf8");
 const central = { userId: 1, sellerId: null, key: "admin:1", name: "Central", central: true, admin: true, analyst: false, supervisor: false, aliadoId: 1, sedeId: 10 };

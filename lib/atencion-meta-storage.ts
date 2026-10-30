@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { AttentionError, assertAttentionActor, attentionText, attentionUuid, normalizeAttentionPhone } from "./atencion-core";
+import { AttentionError, assertAttentionActor, attentionText, attentionUuid } from "./atencion-core";
 import type { AttentionActor, AttentionMessage } from "./atencion-types";
 import type { AttentionDatabase, AttentionDb } from "./atencion-storage";
 import type { MetaScope, MetaWebhookEvents, MetaDeliveryStatus } from "./atencion-meta";
+import { META_ATTENTION_LINE } from "./atencion-meta";
 import { applyWhatsAppAutomationDelivery } from "./whatsapp-automation-meta-storage";
 
 export type MetaReplyAttachment = {
@@ -104,7 +105,8 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     const expiresAt = row.metaLastInboundAt ? new Date(new Date(row.metaLastInboundAt).getTime() + 24 * 3600000) : null;
     const reason = !row.metaManaged ? "Esta conversación todavía no está conectada a Meta."
       : !options.sendingEnabled || !options.cutoverConfirmed ? "El envío está pendiente de validar Meta y el control de la IA."
-        : !expiresAt || expiresAt.getTime() <= now().getTime() ? "La ventana de respuesta de 24 horas está cerrada." : null;
+        : !expiresAt ? "Aún no se ha recibido un mensaje del cliente que habilite la ventana de respuesta de 24 horas."
+          : expiresAt.getTime() <= now().getTime() ? "La ventana de respuesta de 24 horas está cerrada." : null;
     return { windowExpiresAt: expiresAt?.toISOString() ?? null, canReply: reason === null, reason };
   }
   async function binding(db: AttentionDb, conversationId: string) {
@@ -174,6 +176,27 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     await systemAudit(db, "META_DELIVERY_UPDATED", outbox.conversationId, { outboxId: outbox.id, status: next });
     return true;
   }
+  // Business-app echoes have no CRM sending intent. Receipts can advance only an
+  // already imported echo for the same business channel and exact recipient.
+  async function applyEchoDelivery(db: AttentionDb, event: MetaDeliveryStatus) {
+    if (event.requestId) return false;
+    const [location] = await db.$queryRawUnsafe<{id: string; conversationId: string}[]>(`SELECT m.id,m."conversationId" FROM "AttentionMessage" m
+      JOIN "AttentionMetaBinding" b ON b."conversationId"=m."conversationId" AND b."phoneNumberId"=m."metaPhoneNumberId"
+      JOIN "AttentionConversation" c ON c.id=m."conversationId"
+      WHERE m."metaPhoneNumberId"=$1 AND m."metaWamid"=$2 AND m.direction='outbound' AND m.author='WhatsApp Business'
+      AND b."wabaId"=$3 AND b."contactId"=$4 AND c.phone=$5`, scope.phoneNumberId,event.id,scope.wabaId,event.recipient,`+${event.recipient}`);
+    if (!location) return false;
+    await db.$queryRawUnsafe(`SELECT id FROM "AttentionConversation" WHERE id=$1::uuid FOR UPDATE`,location.conversationId);
+    const [message] = await db.$queryRawUnsafe<{deliveryStatus: string; deliveryAt: Date | string | null}[]>(`SELECT "deliveryStatus","deliveryAt" FROM "AttentionMessage" WHERE id=$1::uuid FOR UPDATE`,location.id);
+    const older = message.deliveryAt && new Date(event.timestamp) <= new Date(message.deliveryAt);
+    if (message.deliveryStatus === "failed" && event.status === "sent" && older) return false;
+    const staleFailure = event.status === "failed" && message.deliveryAt && new Date(event.timestamp) < new Date(message.deliveryAt);
+    const next = staleFailure ? message.deliveryStatus : statusAfter(message.deliveryStatus,event.status);
+    if (next === message.deliveryStatus && older) return false;
+    await db.$queryRawUnsafe(`UPDATE "AttentionMessage" SET "deliveryStatus"=$2,"deliveryAt"=GREATEST("deliveryAt",$3::timestamptz) WHERE id=$1::uuid RETURNING id`,location.id,next,event.timestamp);
+    await systemAudit(db,"META_ECHO_DELIVERY_UPDATED",location.conversationId,{messageId:location.id,status:next});
+    return true;
+  }
   async function recoverExpired(db: AttentionDb,row:MetaReply) {
     const expires = row.leaseUntil ? new Date(row.leaseUntil).getTime() : new Date(row.createdAt).getTime()+120000;
     if(expires>now().getTime() || !['queued','sending'].includes(row.status))return row;
@@ -188,21 +211,45 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
         await db.$queryRawUnsafe(`INSERT INTO "AttentionAudit"("conversationId","userId",action) VALUES($1::uuid,$2,'META_MESSAGING_READ') RETURNING id`,row.id,actor.userId);
         if (!await attentionMetaSchemaReady(db)) return {windowExpiresAt:null,canReply:false,reason:"La preparación de Meta está pendiente."};
         const [channel] = await db.$queryRawUnsafe<{id:string}[]>(`SELECT id FROM "AttentionMetaBinding" WHERE "conversationId"=$1::uuid AND "phoneNumberId"=$2 AND "wabaId"=$3 LIMIT 1`,row.id,scope.phoneNumberId,scope.wabaId);
-        return channel ? messaging(row) : {windowExpiresAt:null,canReply:false,reason:"Esta conversación todavía no está conectada al canal Meta configurado."};
+        return channel ? messaging(row) : {windowExpiresAt:null,canReply:false,reason:"Este chat aún no está vinculado a la línea de WhatsApp de FINSER PAY. La respuesta por este canal todavía no está disponible."};
       }, transactionOptions);
     },
     async ingest(events: MetaWebhookEvents) {
       if (events.scope.phoneNumberId !== scope.phoneNumberId || events.scope.wabaId !== scope.wabaId) throw new AttentionError("El evento no pertenece al canal configurado.", 403);
-      if (!Array.isArray(events.messages) || !Array.isArray(events.statuses) || events.messages.length + events.statuses.length > 1000) throw new AttentionError("Lote Meta inválido.");
+      const echoes = events.echoes ?? [];
+      if (!Array.isArray(events.messages) || !Array.isArray(events.statuses) || !Array.isArray(echoes)
+        || events.messages.length + events.statuses.length + echoes.length > 1000) throw new AttentionError("Lote Meta inválido.");
+      for (const message of events.messages) {
+        if (!message || typeof message.from !== "string" || !/^[1-9]\d{6,14}$/.test(message.from)
+          || message.phone !== `+${message.from}`) throw new AttentionError("La identidad del mensaje de WhatsApp no coincide.",403);
+      }
+      for (const echo of echoes) {
+        if (!echo || scope.phoneNumberId !== META_ATTENTION_LINE.phoneNumberId || scope.wabaId !== META_ATTENTION_LINE.wabaId
+          || echo.from !== META_ATTENTION_LINE.displayPhone.slice(1) || typeof echo.to !== "string" || !/^[1-9]\d{6,14}$/.test(echo.to)
+          || echo.to === echo.from || echo.phone !== `+${echo.to}` || echo.name !== null) throw new AttentionError("La identidad del eco de WhatsApp no coincide.",403);
+        if (!["text","image","audio","video","document","sticker"].includes(echo.type)) throw new AttentionError("Tipo de eco inválido.");
+      }
       return transact(async db => {
         await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended('attention:provider-import',0))`);
-        let messagesImported = 0, statusesApplied = 0;
-        for (const message of [...events.messages].sort((a,b) => a.from.localeCompare(b.from) || a.id.localeCompare(b.id))) {
-          const providerId = wamid(message.id), contactId = strictId(message.from), sentAt = timestamp(message.timestamp);
-          const phone = message.phone ? normalizeAttentionPhone(message.phone) : null;
+        let messagesImported = 0, echoesImported = 0, statusesApplied = 0;
+        const incoming = [...events.messages.map(message => ({message,echo:false,contactId:message.from})),
+          ...echoes.map(message => ({message,echo:true,contactId:message.to}))];
+        for (const entry of incoming.sort((a,b) => a.contactId.localeCompare(b.contactId) || a.message.id.localeCompare(b.message.id))) {
+          const {message,echo} = entry;
+          const providerId = wamid(message.id), contactId = strictId(entry.contactId), sentAt = timestamp(message.timestamp);
+          // Native contacts are already exact international IDs from Meta.
+          // Local-number inference could turn a different country's +3… into +573….
+          const phone = `+${contactId}`;
           await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`, `attention:phone:${phone || `${scope.phoneNumberId}:${contactId}`}`);
-          const [duplicate] = await db.$queryRawUnsafe<{id: string}[]>(`SELECT id FROM "AttentionMessage" WHERE "metaPhoneNumberId"=$1 AND "metaWamid"=$2`, scope.phoneNumberId, providerId);
-          if (duplicate) continue;
+          const [duplicate] = await db.$queryRawUnsafe<{id: string; conversationId: string}[]>(`SELECT id,"conversationId" FROM "AttentionMessage" WHERE "metaPhoneNumberId"=$1 AND "metaWamid"=$2`, scope.phoneNumberId, providerId);
+          if (duplicate) {
+            if (echo) {
+              const [identity] = await db.$queryRawUnsafe<{id: string}[]>(`SELECT c.id FROM "AttentionConversation" c JOIN "AttentionMetaBinding" b ON b."conversationId"=c.id
+                WHERE c.id=$1::uuid AND c.phone=$2 AND b."phoneNumberId"=$3 AND b."wabaId"=$4 AND b."contactId"=$5`, duplicate.conversationId,phone,scope.phoneNumberId,scope.wabaId,contactId);
+              if (!identity) throw new AttentionError("El mensaje de Meta pertenece a otro contacto.",409);
+            }
+            continue;
+          }
           const bindings = await db.$queryRawUnsafe<{conversationId: string; wabaId: string}[]>(`SELECT "conversationId","wabaId" FROM "AttentionMetaBinding" WHERE "phoneNumberId"=$1 AND "contactId"=$2 FOR UPDATE`, scope.phoneNumberId, contactId);
           if (bindings[0] && bindings[0].wabaId !== scope.wabaId) throw new AttentionError("La cuenta Meta no coincide.", 409);
           let conversationId = bindings[0]?.conversationId;
@@ -219,6 +266,10 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
           if (!bindings.length) await db.$queryRawUnsafe(`INSERT INTO "AttentionMetaBinding"(id,"conversationId","phoneNumberId","wabaId","contactId") VALUES($1::uuid,$2::uuid,$3,$4,$5) RETURNING id`, randomUUID(), conversationId, scope.phoneNumberId, scope.wabaId, contactId);
           const [conversation] = await db.$queryRawUnsafe<MetaConversation[]>(`SELECT * FROM "AttentionConversation" WHERE id=$1::uuid FOR UPDATE`, conversationId);
           if (conversation.phone && phone && conversation.phone !== phone) throw new AttentionError("La identidad del contacto cambió.",409);
+          if (echo) {
+            const [externalDuplicate] = await db.$queryRawUnsafe<{id: string}[]>(`SELECT id FROM "AttentionMessage" WHERE "conversationId"=$1::uuid AND "externalId"=$2`,conversationId,`meta:${providerId}`);
+            if (externalDuplicate) continue;
+          }
           let attachment: StoredAttachment | null = null;
           if (message.media) {
             if (!["image","audio","video","document","sticker"].includes(message.type)) throw new AttentionError("Tipo de adjunto inválido.");
@@ -227,6 +278,21 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
           }
           const text = attentionText(message.text || message.media?.caption || "",16000,false);
           if (!text && !attachment) throw new AttentionError("Mensaje vacío.");
+          if (echo) {
+            await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,"metaWamid","metaPhoneNumberId",attachment,"replyToWamid","deliveryStatus","deliveryAt")
+              VALUES($1::uuid,$2::uuid,$3,'outbound',$4,$5::timestamptz,'WhatsApp Business',$6,$7,$8::jsonb,$9,'sent',$5::timestamptz) RETURNING id`,randomUUID(),conversationId,`meta:${providerId}`,text,sentAt,providerId,scope.phoneNumberId,JSON.stringify(attachment),message.replyToId ? wamid(message.replyToId) : null);
+            // An outgoing echo does not reopen chats, claim an analyst or extend
+            // the customer-service window. Old history must not reorder the inbox.
+            await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET "metaManaged"=true,phone=COALESCE(phone,$2),
+              "lastContactAt"=GREATEST("lastContactAt",$3::timestamptz),version=version+1,"updatedAt"=now()
+              WHERE id=$1::uuid AND (NOT "metaManaged" OR phone IS NULL OR "lastContactAt" IS NULL OR "lastContactAt"<$3::timestamptz) RETURNING id`,conversationId,phone,sentAt);
+            await systemAudit(db,"META_MESSAGE_ECHOED",conversationId,{attachment:Boolean(attachment)});
+            const receipts = await db.$queryRawUnsafe<{id: string; recipient: string; timestamp: Date | string; status: MetaDeliveryStatus["status"]}[]>(`SELECT wamid AS id,recipient,"eventAt" AS timestamp,status
+              FROM "AttentionMetaDelivery" WHERE "phoneNumberId"=$1 AND "wabaId"=$2 AND wamid=$3 AND "requestId" IS NULL ORDER BY "eventAt",id`,scope.phoneNumberId,scope.wabaId,providerId);
+            for (const event of receipts) if (await applyEchoDelivery(db,{...event,timestamp:date(event.timestamp),errorCodes:[]})) statusesApplied++;
+            echoesImported++;
+            continue;
+          }
           await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt","metaWamid","metaPhoneNumberId",attachment,"replyToWamid")
             VALUES($1::uuid,$2::uuid,$3,'inbound',$4,$5::timestamptz,$6,$7,$8::jsonb,$9) RETURNING id`,randomUUID(),conversationId,`meta:${providerId}`,text,sentAt,providerId,scope.phoneNumberId,JSON.stringify(attachment),message.replyToId ? wamid(message.replyToId) : null);
           await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET "metaManaged"=true,phone=COALESCE(phone,$2),
@@ -243,9 +309,9 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
           await db.$queryRawUnsafe(`INSERT INTO "AttentionMetaDelivery"(id,"phoneNumberId","wabaId",wamid,recipient,status,"eventAt","errorCode","requestId")
             VALUES($1::uuid,$2,$3,$4,$5,$6,$7::timestamptz,$8,$9::uuid) ON CONFLICT("phoneNumberId",wamid,status,"eventAt") DO NOTHING RETURNING id`,
           randomUUID(),scope.phoneNumberId,scope.wabaId,event.id,event.recipient,event.status,event.timestamp,event.errorCodes?.[0]?.toString() ?? null,event.requestId ?? null);
-          if(await applyDelivery(db,event) || await applyWhatsAppAutomationDelivery(db,scope,event)) statusesApplied++;
+          if(await applyDelivery(db,event) || await applyWhatsAppAutomationDelivery(db,scope,event) || await applyEchoDelivery(db,event)) statusesApplied++;
         }
-        return {messagesImported,statusesApplied};
+        return {messagesImported,echoesImported,statusesApplied};
       });
     },
     async queueReply(actor: AttentionActor, conversationId: string, input: {requestId:string;version:number;text:string;attachment?:MetaReplyAttachment}) {

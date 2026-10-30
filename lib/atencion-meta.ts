@@ -17,11 +17,15 @@ export type MetaInboundMessage = {
   type: "text" | MetaMediaKind; text?: string; replyToId?: string;
   media?: { id: string; mimeType: string; sha256?: string; fileName?: string; caption?: string };
 };
+/** A message sent from the business app, not a customer message or a CRM actor. */
+export type MetaMessageEcho = Omit<MetaInboundMessage, "phone" | "name"> & {
+  to: string; phone: string; name: null;
+};
 export type MetaDeliveryStatus = {
   id: string; recipient: string; timestamp: string;
   status: "sent" | "delivered" | "read" | "failed"; errorCodes: number[]; requestId?: string;
 };
-export type MetaWebhookEvents = { scope: MetaScope; messages: MetaInboundMessage[]; statuses: MetaDeliveryStatus[]; ignored: number };
+export type MetaWebhookEvents = { scope: MetaScope; messages: MetaInboundMessage[]; echoes?: MetaMessageEcho[]; statuses: MetaDeliveryStatus[]; ignored: number };
 export type MetaSendInput = {
   recipient: string; attemptId: string; cutoverConfirmed: boolean; lastInboundAt: string;
 };
@@ -105,6 +109,20 @@ function isoTimestamp(value: unknown, now: number): string | undefined {
 function mediaHash(value: unknown): string | undefined {
   const hash = str(value);
   return /^(?:[a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i.test(hash) ? hash : undefined;
+}
+function messageContent(message: Dict): Pick<MetaInboundMessage, "type" | "text" | "media" | "replyToId"> | null {
+  const context = WAMID.test(str(dict(message.context).id)) ? { replyToId: str(dict(message.context).id) } : {};
+  if (message.type === "text") {
+    const text = safeText(dict(message.text).body, 16_000);
+    return text ? { ...context, type: "text", text } : null;
+  }
+  if (!["image", "audio", "video", "document", "sticker"].includes(str(message.type))) return null;
+  const type = message.type as MetaMediaKind, media = dict(message[type]), mimeType = mime(media.mime_type);
+  if (!ID.test(str(media.id)) || mediaRule(mimeType)?.kind !== type) return null;
+  return { ...context, type, media: { id: str(media.id), mimeType,
+    ...(mediaHash(media.sha256) ? { sha256: mediaHash(media.sha256) } : {}),
+    ...(fileName(media.filename) ? { fileName: fileName(media.filename) } : {}),
+    ...(safeText(media.caption, 1024) ? { caption: safeText(media.caption, 1024) } : {}) } };
 }
 function validateMagic(bytes: Uint8Array, type: string): boolean {
   const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -203,31 +221,34 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     if (!timingSafeEqual(digest, Buffer.from(signature.slice(7), "hex"))) fail("INVALID_SIGNATURE", "Firma de evento no válida.", 401);
     let parsed: unknown;
     try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)); } catch { fail("INVALID_WEBHOOK", "El evento no tiene un formato válido."); }
-    const body = dict(parsed); const events: MetaWebhookEvents = { scope: selected, messages: [], statuses: [], ignored: 0 };
+    const body = dict(parsed); const events: MetaWebhookEvents & { echoes: MetaMessageEcho[] } = { scope: selected, messages: [], echoes: [], statuses: [], ignored: 0 };
     if (body.object !== "whatsapp_business_account") { events.ignored++; return events; }
     for (const item of list(body.entry)) {
       const entry = dict(item);
       if (entry.id !== selected.wabaId) { events.ignored++; continue; }
       for (const changeRaw of list(entry.changes)) {
         const change = dict(changeRaw); const value = dict(change.value);
-        if (change.field !== "messages" || value.messaging_product !== "whatsapp" || dict(value.metadata).phone_number_id !== selected.phoneNumberId) { events.ignored++; continue; }
+        if (!["messages", "smb_message_echoes"].includes(str(change.field)) || value.messaging_product !== "whatsapp" || dict(value.metadata).phone_number_id !== selected.phoneNumberId) { events.ignored++; continue; }
+        if (change.field === "smb_message_echoes") {
+          const businessPhone = META_ATTENTION_LINE.displayPhone.slice(1);
+          for (const raw of list(value.message_echoes)) {
+            const message = dict(raw), from = str(message.from), to = str(message.to), id = str(message.id), timestamp = isoTimestamp(message.timestamp, now());
+            if (from !== businessPhone || !PHONE.test(to) || to === businessPhone || !WAMID.test(id) || !timestamp
+              || (message.recipient_type !== undefined && message.recipient_type !== "individual")
+              || message.group_id !== undefined || value.group_id !== undefined) { events.ignored++; continue; }
+            const content = messageContent(message);
+            if (!content) { events.ignored++; continue; }
+            events.echoes.push({ id, from, to, phone: `+${to}`, name: null, timestamp, ...content });
+          }
+          continue;
+        }
         for (const raw of list(value.messages)) {
           const message = dict(raw); const from = str(message.from); const id = str(message.id); const timestamp = isoTimestamp(message.timestamp, now());
           if (!PHONE.test(from) || !WAMID.test(id) || !timestamp) { events.ignored++; continue; }
           const matching = list(value.contacts).map(dict).find(contact => contact.wa_id === from);
-          const base = { id, from, phone: `+${from}`, name: safeText(dict(matching?.profile).name, 120) ?? null, timestamp,
-            ...(WAMID.test(str(dict(message.context).id)) ? { replyToId: str(dict(message.context).id) } : {}) };
-          if (message.type === "text") {
-            const text = safeText(dict(message.text).body, 16_000);
-            if (text) events.messages.push({ ...base, type: "text", text }); else events.ignored++;
-          } else if (["image", "audio", "video", "document", "sticker"].includes(str(message.type))) {
-            const type = message.type as MetaMediaKind; const media = dict(message[type]); const mimeType = mime(media.mime_type);
-            if (!ID.test(str(media.id)) || mediaRule(mimeType)?.kind !== type) { events.ignored++; continue; }
-            events.messages.push({ ...base, type, media: { id: str(media.id), mimeType,
-              ...(mediaHash(media.sha256) ? { sha256: mediaHash(media.sha256) } : {}),
-              ...(fileName(media.filename) ? { fileName: fileName(media.filename) } : {}),
-              ...(safeText(media.caption, 1024) ? { caption: safeText(media.caption, 1024) } : {}) } });
-          } else events.ignored++;
+          const content = messageContent(message);
+          if (content) events.messages.push({ id, from, phone: `+${from}`, name: safeText(dict(matching?.profile).name, 120) ?? null, timestamp, ...content });
+          else events.ignored++;
         }
         for (const raw of list(value.statuses)) {
           const event = dict(raw); const timestamp = isoTimestamp(event.timestamp, now());

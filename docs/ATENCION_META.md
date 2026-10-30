@@ -78,6 +78,14 @@ El token necesita los permisos de Meta `whatsapp_business_messaging` para mensaj
 
 `GET /api/atencion/integration`, con sesión de administración central, muestra faltantes sin devolver secretos. Cuando la configuración está completa, realiza lecturas Graph del número y de los números de la WABA, y exige coincidencia del ID, la pertenencia a la WABA y el número visible. `configured` solo describe configuración; la comprobación de red y la recepción real deben verificarse por separado.
 
+## Mensajes enviados desde WhatsApp Business del celular
+
+El webhook procesa `smb_message_echoes` por separado de `messages`. Un eco válido guarda el mensaje como saliente con autor «WhatsApp Business», incluyendo los adjuntos admitidos por Meta. No atribuye al analista los mensajes que escribió alguien desde el celular, no los vuelve a enviar y no abre ni prolonga la ventana de respuesta de 24 horas.
+
+Se verifica la firma, WABA, Phone Number ID, remitente empresarial y destinatario individual. La deduplicación utiliza el ámbito del canal y el identificador de WhatsApp; si el mensaje ya existe, conserva su autor y contenido. Para vincular un historial anterior se exige un único chat con el teléfono exacto y sin un vínculo contradictorio. Se conservan la asignación, el estado de cierre y el modo de atención. Los cambios alimentan el canal de actualización en tiempo real existente.
+
+Además del despliegue se debe comprobar la suscripción `smb_message_echoes` en la aplicación de Atención, junto a `messages`. La prueba de aceptación requiere enviar un mensaje nuevo desde WhatsApp Business del celular y observarlo en su chat del CRM. Este soporte no recupera retroactivamente mensajes que Meta no haya entregado, ni habilita grupos. Un historial importado de Dapta sin vínculo muestra ese estado; un chat vinculado sin mensaje entrante muestra por separado que aún no existe una ventana de respuesta.
+
 ## Webhook y activación gradual
 
 La ruta implementada es `GET/POST /api/integraciones/atencion/whatsapp`. En el dominio principal, el callback es:
@@ -86,7 +94,7 @@ La ruta implementada es `GET/POST /api/integraciones/atencion/whatsapp`. En el d
 https://finserpay.com/api/integraciones/atencion/whatsapp
 ```
 
-Debe apuntar directamente al despliegue HTTPS correcto. El GET responde al desafío `hub.mode=subscribe`, valida el verify token y rechaza parámetros repetidos. El POST verifica `X-Hub-Signature-256` con HMAC SHA-256 sobre los bytes originales antes de interpretar JSON, limita el cuerpo a 1 MiB y procesa únicamente `object=whatsapp_business_account`, campo `messages`, WABA y Phone Number ID autorizados. Un error de persistencia no recibe un éxito ficticio.
+Debe apuntar directamente al despliegue HTTPS correcto. El GET responde al desafío `hub.mode=subscribe`, valida el verify token y rechaza parámetros repetidos. El POST verifica `X-Hub-Signature-256` con HMAC SHA-256 sobre los bytes originales antes de interpretar JSON, limita el cuerpo a 1 MiB y procesa únicamente `object=whatsapp_business_account`, campos `messages` y `smb_message_echoes`, WABA y Phone Number ID autorizados. Un error de persistencia no recibe un éxito ficticio, también cuando el evento contiene solo ecos.
 
 Preparar el callback de la aplicación y su suscripción a la WABA son pasos distintos. El mecanismo documentado es `/{WABA-ID}/subscribed_apps`; comprobar primero la aplicación y las suscripciones existentes evita confundir la aplicación de Atención con Dapta. No eliminar suscripciones ajenas ni sobrescribir su callback como parte de esta preparación. La aplicación no ejecuta automáticamente esos cambios. Referencia: [suscripción de aplicación a WABA, Meta](https://www.postman.com/meta/whatsapp-business-platform/request/26gui66/subscribe-to-a-waba?sideView=variables&tab=overview).
 

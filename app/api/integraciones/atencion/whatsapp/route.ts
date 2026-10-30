@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     const adapter = createMetaAttentionAdapter();
     const raw = await readAttentionBody(request, META_ATTENTION_MAX_WEBHOOK_BYTES);
     const events = adapter.parseWebhook(raw, request.headers.get("x-hub-signature-256"));
-    if (!events.messages.length && !events.statuses.length) return attentionJson({ ok: true });
+    if (!events.messages.length && !events.statuses.length && !events.echoes?.length) return attentionJson({ ok: true });
     const { store } = await attentionMetaRuntime();
     await store.ingest(events);
     return attentionJson({ ok: true });

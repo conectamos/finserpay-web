@@ -229,10 +229,11 @@ test("media route returns authenticated 206 with private headers and no provider
   const denied = harness(); const deniedRoute = route(mediaPath, denied, { authError: new core.AttentionError("Sin sesión", 401) });
   assert.equal((await deniedRoute.GET(new Request(origin), context)).status, 401); assert.equal(denied.calls.network.length, 0);
 });
-function webhookRequest({ tampered = false, signature = true } = {}) {
-  const payload = { object: "whatsapp_business_account", entry: [{ id: env.WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID, changes: [{ field: "messages", value: {
+function webhookRequest({ tampered = false, signature = true, field = "messages" } = {}) {
+  const payload = { object: "whatsapp_business_account", entry: [{ id: env.WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID, changes: [{ field, value: {
     messaging_product: "whatsapp", metadata: { phone_number_id: env.WHATSAPP_ATTENTION_PHONE_NUMBER_ID },
     messages: [{ id: wamid, from: phone, timestamp: String(now / 1000 - 60), type: "text", text: { body: "Mensaje de prueba" } }],
+    ...(field === "smb_message_echoes" ? { message_echoes: [{ id: wamid, from: "573124085562", to: phone, timestamp: String(now / 1000 - 60), type: "text", text: { body: "Respuesta desde el celular" } }] } : {}),
   } }] }] };
   const raw = Buffer.from(`${JSON.stringify(payload, null, 2)}\r\n`);
   const signed = `sha256=${createHmac("sha256", env.WHATSAPP_ATTENTION_APP_SECRET).update(raw).digest("hex")}`;
@@ -251,6 +252,27 @@ test("webhook database failure is not acknowledged; challenge performs no import
   const params = new URLSearchParams({ "hub.mode": "subscribe", "hub.verify_token": env.WHATSAPP_ATTENTION_VERIFY_TOKEN, "hub.challenge": "123456" });
   const response = await endpoint.GET(new Request(`${origin}/api/integraciones/atencion/whatsapp?${params}`));
   assert.equal(response.status, 200); assert.equal(await response.text(), "123456"); assert.equal(h.calls.ingest.length, 1); assert.equal(h.calls.network.length, 0);
+});
+
+test("echo-only webhook reaches storage without fabricating an inbound or provider send", async () => {
+  const h = harness(); const endpoint = route(webhookPath, h);
+  assert.equal((await endpoint.POST(webhookRequest({ field: "smb_message_echoes" }))).status, 200);
+  assert.equal(h.calls.runtime, 1); assert.equal(h.calls.ingest.length, 1);
+  assert.equal(h.calls.ingest[0].messages.length, 0); assert.equal(h.calls.ingest[0].statuses.length, 0);
+  assert.equal(h.calls.ingest[0].echoes[0].id, wamid); assert.equal(h.calls.ingest[0].echoes[0].to, phone);
+  for (const options of [{ tampered: true }, { signature: false }]) {
+    assert.equal((await endpoint.POST(webhookRequest({ ...options, field: "smb_message_echoes" }))).status, 401);
+  }
+  assert.equal(h.calls.ingest.length, 1); assert.equal(h.calls.network.length, 0);
+});
+
+test("echo database failure returns retryable 500; unrelated fields do not touch storage", async () => {
+  const h = harness({ ingestError: new Error("private echo database diagnostic") }); const endpoint = route(webhookPath, h);
+  const failed = await endpoint.POST(webhookRequest({ field: "smb_message_echoes" }));
+  assert.equal(failed.status, 500); assert.equal((await failed.text()).includes("private echo database diagnostic"), false);
+  assert.equal(h.calls.ingest.length, 1);
+  assert.equal((await endpoint.POST(webhookRequest({ field: "unrelated_field" }))).status, 200);
+  assert.equal(h.calls.runtime, 1); assert.equal(h.calls.network.length, 0);
 });
 
 function cancellationRequest({ headers = {}, query = `requestId=${requestId}` } = {}) {
