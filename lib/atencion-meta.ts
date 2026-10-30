@@ -298,6 +298,16 @@ export function createMetaAttentionAdapter(options: Options = {}) {
         if (sending && !error.uncertain && error.code !== "META_HTTP_ERROR") throw new AttentionMetaError(error.code, error.message, error.status, true, false);
         throw error;
       }
+      // Transport diagnostics must never include raw errors, signed URLs,
+      // headers, credentials or customer identifiers.
+      const cause=dict(dict(error).cause),code=str(cause.code)||str(dict(error).code);
+      const safeCodes=new Set(["ENOTFOUND","EAI_AGAIN","ENETUNREACH","EHOSTUNREACH","ECONNRESET","ECONNREFUSED","ETIMEDOUT","EPIPE","ERR_INVALID_URL","ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_CHAR","ERR_INVALID_HTTP_TOKEN","ERR_SSL_WRONG_VERSION_NUMBER","ERR_TLS_CERT_ALTNAME_INVALID","CERT_HAS_EXPIRED","DEPTH_ZERO_SELF_SIGNED_CERT",
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE","UND_ERR_CONNECT_TIMEOUT","UND_ERR_HEADERS_TIMEOUT","UND_ERR_BODY_TIMEOUT","UND_ERR_SOCKET"]);
+      const name=str(dict(error).name),operation=sending?"send":url.origin!==GRAPH?"private_media":url.pathname.endsWith("/message_templates")?"templates"
+        :url.pathname.endsWith("/phone_numbers")?"waba_phones":url.pathname.endsWith(`/${META_ATTENTION_LINE.phoneNumberId}`)?"phone":"graph";
+      console.warn("[attention-meta-transport]",{operation,error:["TypeError","ReferenceError","AbortError","TimeoutError","Error"].includes(name)?name:"UnknownError",
+        cause:safeCodes.has(code)?code:"UNKNOWN",aborted:controller.signal.aborted});
       throw new AttentionMetaError("META_UNAVAILABLE", "No fue posible completar la conexión con Meta.", 502, sending, !sending);
     } finally { clearTimeout(timer); }
   }

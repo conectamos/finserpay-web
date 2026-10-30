@@ -333,6 +333,16 @@ test("real AbortSignal deadline aborts one send and reports ambiguous without re
   await assert.rejects(adapter({ fetch: mock.transport, timeoutMs: 100 }).sendText(input, async () => {}), { code: "META_UNAVAILABLE", uncertain: true, retryable: false });
   assert.equal(mock.requests.filter(x => x.init.method === "POST").length, 1);
 });
+
+test("transport diagnostics expose only stage and allowlisted name/code without credentials or raw provider errors",async t=>{
+  const logs=[];t.mock.method(console,"warn",(...args)=>logs.push(args));
+  const failure=new TypeError("private token signed-url client information",{cause:Object.assign(new Error("private cause"),{code:"ECONNRESET"})});
+  await assert.rejects(adapter({fetch:async()=>{throw failure;}}).verifyConnection(),{code:"META_UNAVAILABLE",uncertain:false});
+  assert.deepEqual(logs[0],["[attention-meta-transport]",{operation:"phone",error:"TypeError",cause:"ECONNRESET",aborted:false}]);
+  await assert.rejects(adapter({fetch:async()=>{throw {name:"secret name",code:"secret code",message:"private message"};}}).verifyConnection(),{code:"META_UNAVAILABLE"});
+  assert.deepEqual(logs[1],["[attention-meta-transport]",{operation:"phone",error:"UnknownError",cause:"UNKNOWN",aborted:false}]);
+  assert.ok(!JSON.stringify(logs).includes("private"));assert.ok(!JSON.stringify(logs).includes("secret"));assert.ok(!JSON.stringify(logs).includes(env.WHATSAPP_ATTENTION_ACCESS_TOKEN));
+});
 test("send window is rechecked after a delayed transactional claim", async () => {
   const mock = transportMock(); let current = now;
   const client = adapter({ fetch: mock.transport, now: () => current });
