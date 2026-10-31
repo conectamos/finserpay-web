@@ -65,6 +65,8 @@ El analista puede abrir el PDF privado y confirmar el envío al mismo teléfono 
 
 ## Audios y emojis
 
+En el campo de respuesta, Enter envía el borrador por el flujo habitual y Shift + Enter agrega una línea. La confirmación de escritura con IME y la repetición de una tecla mantenida no despachan mensajes. Ctrl + V pega una imagen del portapapeles como adjunto con vista previa, conservando el texto; todavía requiere confirmar el envío con Enter o Enviar. Reutiliza las validaciones del arrastre: permisos, ventana de respuesta, estado de envío, un solo archivo, formato y tamaño. Un archivo preparado se conserva hasta enviarlo o quitarlo. El texto del portapapeles se pega normalmente; el CRM no descarga imágenes desde el HTML o las URLs copiadas.
+
 Las imágenes y stickers recibidos se abren al tocarlos en un visor dentro del CRM, con ampliación a dos veces el tamaño visible, ajuste a la pantalla y descarga. El visor utiliza las mismas rutas privadas del mensaje y conserva los permisos de acceso. Cerrar o pulsar Escape vuelve al chat y su borrador sin desplazar el historial; cambiar de chat retira el visor. Los documentos, audios y videos conservan sus controles actuales.
 
 El editor permite insertar emojis, adjuntar audios compatibles y grabar hasta cinco minutos. El micrófono solo se activa tras pulsar Grabar audio y permitirlo en el navegador. Detener permite escuchar, descartar o adjuntar; adjuntar todavía requiere pulsar Enviar.

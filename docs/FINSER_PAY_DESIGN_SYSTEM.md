@@ -196,6 +196,9 @@ se agrupan en Seguimiento. `ConfirmDialog` muestra crédito, destinatario y fech
 o importe antes de actuar. El grabador ofrece escucha previa y los emojis se
 insertan en el borrador. La recepción en tiempo real conserva texto y posición
 de lectura; los fallos de conexión muestran su estado y activan consulta local.
+El campo de respuesta envía con Enter y conserva Shift + Enter para una nueva
+línea. El pegado de imágenes con Ctrl + V prepara el adjunto y su vista previa,
+manteniendo el texto y las validaciones actuales; el pegado de texto sigue siendo nativo.
 Las imágenes y stickers del historial se amplían en un visor modal dentro del
 CRM, con ajuste a pantalla, zoom y descarga privada. Escape o Cerrar vuelve al
 mismo chat y devuelve el foco a la miniatura; se conservan el borrador y la
