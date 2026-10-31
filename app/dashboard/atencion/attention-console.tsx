@@ -14,6 +14,7 @@ import type { AttentionExtensionInput, AttentionExtensionResult, AttentionFinanc
 import { attentionWorkKinds, attentionWorkStates, type AttentionWorkKind } from "@/lib/atencion-work-types";
 import AttentionComposerTools from "./attention-composer-tools";
 import AttentionImageViewer from "./attention-image-viewer";
+import AttentionMessageText, { type AttentionPhoneLookupResult } from "./attention-message-text";
 import AttentionTemplateComposer from "./attention-template-composer";
 import AttentionBoard from "./attention-board";
 import AttentionCloseAll from "./attention-close-all";
@@ -130,7 +131,13 @@ function ConversationLabels({ conversation }: { conversation: AttentionConversat
 function privateMediaUrl(value: string | null | undefined) {
   return typeof value === "string" && (/^\/api\/atencion\/[0-9a-f-]{36}\/messages\/[0-9a-f-]{36}\/media$/i.test(value) || /^\/api\/atencion\/solicitudes\/[0-9a-f-]{36}\/files\/[0-9a-f-]{36}$/i.test(value)) ? value : null;
 }
-function MessageContent({ text, dapta, media, mediaReady }: { text: string; dapta: boolean; media?: AttentionMessage["attachment"]; mediaReady?: () => void }) {
+type MessagePhoneActions = {
+  onOpenPhone: (phone: string, signal?: AbortSignal) => Promise<AttentionPhoneLookupResult>;
+  onOpenConversation: (id: string) => void;
+  disabled: boolean;
+  contextKey: string;
+};
+function MessageContent({ text, dapta, media, mediaReady, phoneActions }: { text: string; dapta: boolean; media?: AttentionMessage["attachment"]; mediaReady?: () => void; phoneActions?: MessagePhoneActions }) {
   if (media) {
     const url = privateMediaUrl(media.url);
     const name = media.fileName || ({ image: "Imagen", sticker: "Sticker", audio: "Audio", video: "Video", document: "Documento" }[media.kind]);
@@ -139,10 +146,10 @@ function MessageContent({ text, dapta, media, mediaReady }: { text: string; dapt
       {media.kind === "audio" && <audio controls preload="none" src={url} onLoadedMetadata={mediaReady} aria-label={name}>Tu navegador no puede reproducir este audio.</audio>}
       {media.kind === "video" && <video controls preload="none" playsInline src={url} onLoadedMetadata={mediaReady} aria-label={name}>Tu navegador no puede reproducir este video.</video>}
       <a href={url} target={media.kind === "image" || media.kind === "sticker" ? undefined : "_blank"} download={media.kind === "image" || media.kind === "sticker" ? name : undefined} rel="noopener noreferrer" className={styles.mediaDownload}><Download aria-hidden="true" size={16} />{media.kind === "document" ? name : media.kind === "image" || media.kind === "sticker" ? "Descargar imagen" : "Abrir o descargar archivo"}</a>
-    </> : <div className={styles.mediaUnavailable}><FileText aria-hidden="true" size={20} /><span>{name}<small>El archivo todavía no está disponible.</small></span></div>}{text && <p>{text}</p>}</div>;
+    </> : <div className={styles.mediaUnavailable}><FileText aria-hidden="true" size={20} /><span>{name}<small>El archivo todavía no está disponible.</small></span></div>}{text && <p><AttentionMessageText text={text} {...phoneActions} /></p>}</div>;
   }
   const attachment = dapta ? /^\[(Imagen|Audio|Video|Documento|Sticker) de WhatsApp(?: · [^\]]*)?\]$/.exec(text) : null;
-  if (!attachment) return <p>{text}</p>;
+  if (!attachment) return <p><AttentionMessageText text={text} {...phoneActions} /></p>;
   const kind = attachment[1];
   const Icon = kind === "Audio" ? Mic : kind === "Video" ? Video : kind === "Imagen" || kind === "Sticker" ? ImageIcon : FileText;
   return <div className={styles.mediaCard}><span className={styles.mediaIcon}><Icon aria-hidden="true" size={25} /></span><div><strong>{kind} de WhatsApp</strong><p>Consulta el archivo en la bandeja de Dapta.</p><a href={DAPTA_INBOX_URL} target="_blank" rel="noopener noreferrer">Ver en Dapta <ExternalLink aria-hidden="true" size={14} /></a></div></div>;
@@ -350,7 +357,9 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const messageLog = useRef<HTMLDivElement>(null);
   const displayedHistory = useRef<string | null>(null);
   const followLatest = useRef(true);
+  const phoneLookupBinding = useRef("");
   const currentActor = inbox?.actor ?? actor;
+  phoneLookupBinding.current = `${currentActor.key}:${view}:${selected ?? ""}`;
   const syncStorageKey = `finser:attention:sync:${actor.key}`;
   const canSupervise = currentActor.central;
   const contentReady = Boolean(inbox?.schemaReady);
@@ -606,6 +615,21 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     selectionRef.current = id; ++detailRequest.current; setSelected(id); setDetail(null); setDetailError("");
     setDetailLoading(Boolean(id)); setShowCustomer(false); setShowLatest(false); displayedHistory.current = null; followLatest.current = true; mutationKey.current = null;
     if (id) { setView("conversations"); }
+  }
+  async function lookupPhoneChat(phone: string, signal?: AbortSignal): Promise<AttentionPhoneLookupResult> {
+    const binding = phoneLookupBinding.current;
+    const sourceId = selectionRef.current;
+    if (busyRef.current || syncingRef.current || workBusy || liveAccessBlocked.current) throw new Error("Espera a que termine la gestión actual para abrir otro chat.");
+    try {
+      return await api<AttentionPhoneLookupResult>(`/api/atencion/phone?${new URLSearchParams({ phone })}`, { signal });
+    } catch (error) {
+      if (mounted.current && !signal?.aborted && sourceId === selectionRef.current && binding === phoneLookupBinding.current && error instanceof ApiError && [401, 403].includes(error.status)) clearInaccessibleData(errorMessage(error));
+      throw error;
+    }
+  }
+  function openPhoneChat(id: string, sourceId: string) {
+    if (!mounted.current || selectionRef.current !== sourceId || busyRef.current || syncingRef.current || workBusy || liveAccessBlocked.current) return;
+    selectConversation(id);
   }
   async function mutate(input: Omit<AttentionMutation, "version" | "requestId">) {
     if (!detail || busyRef.current) return false;
@@ -973,7 +997,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
               {detailError && <div data-attention="error" className={styles.error} role="alert"><span>{detailError}</span><Button variant="secondary" disabled={busy || detailLoading} onClick={() => void loadDetail(selected)}>Actualizar</Button></div>}
               {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <>
 
-                <AttentionObservedRead key={`read:${detail.conversation.id}`} detail={detail} active={!showCustomer && !busy && !syncing} log={messageLog} request={api} onRead={() => void loadInbox()} onError={error => { handleFinancialAccessError(detail.conversation.id, error); }} /><div data-attention="history" className={styles.historyViewport}><div ref={messageLog} data-attention="messages" className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map((message, index) => <Fragment key={message.id}>{(index === 0 || messageDay(message.sentAt) !== messageDay(detail.messages[index - 1].sentAt)) && <p data-attention="day" className={styles.daySeparator}>{date(message.sentAt, true)}</p>}<article data-attention="message" data-direction={message.direction} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}>{message.direction === "outbound" && (index === 0 || detail.messages[index - 1].direction !== "outbound" || detail.messages[index - 1].author !== message.author) && <span>{message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span>}<MessageContent text={message.text} media={message.attachment} mediaReady={keepLatestAfterMedia} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div data-attention="message-meta" className={styles.messageMeta}><time dateTime={message.sentAt} title={date(message.sentAt)}>{time(message.sentAt)}</time><MessageDelivery message={message} /></div></article></Fragment>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
+                <AttentionObservedRead key={`read:${detail.conversation.id}`} detail={detail} active={!showCustomer && !busy && !syncing} log={messageLog} request={api} onRead={() => void loadInbox()} onError={error => { handleFinancialAccessError(detail.conversation.id, error); }} /><div data-attention="history" className={styles.historyViewport}><div ref={messageLog} data-attention="messages" className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map((message, index) => <Fragment key={message.id}>{(index === 0 || messageDay(message.sentAt) !== messageDay(detail.messages[index - 1].sentAt)) && <p data-attention="day" className={styles.daySeparator}>{date(message.sentAt, true)}</p>}<article data-attention="message" data-direction={message.direction} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}>{message.direction === "outbound" && (index === 0 || detail.messages[index - 1].direction !== "outbound" || detail.messages[index - 1].author !== message.author) && <span>{message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span>}<MessageContent text={message.text} media={message.attachment} mediaReady={keepLatestAfterMedia} phoneActions={{ onOpenPhone: lookupPhoneChat, onOpenConversation: id => openPhoneChat(id, detail.conversation.id), disabled: busy || syncing || workBusy || view !== "conversations", contextKey: `${currentActor.key}:${view}:${detail.conversation.id}:${message.id}` }} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div data-attention="message-meta" className={styles.messageMeta}><time dateTime={message.sentAt} title={date(message.sentAt)}>{time(message.sentAt)}</time><MessageDelivery message={message} /></div></article></Fragment>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
                 {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={detail.conversation.id} detail={detail} actorKey={currentActor.key} quickReplies={inbox?.quickReplies || []} templateSent={() => refreshAfterFinancialAction(detail.conversation.id)} templateBusyChanged={quickReplyBusyChanged} draft={replyDrafts[detail.conversation.id] || emptyReply} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} receiveFiles={receiveReplyFiles} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>{detail.workRequest ? `${detail.workRequest.ally} · ${detail.workRequest.advisor}` : "Gestión interna · asignación y seguimiento por analistas."}</span>{detail.workRequest && <Button variant="secondary" onClick={()=>continueWork(detail.workRequest!.id,detail.workRequest!.kind)}>Continuar solicitud</Button>}</footer>}
               </>}
             </>}</ChatDropSurface>

@@ -76,6 +76,15 @@ mantiene trazabilidad inmutable de los cambios.
 
 ## Piloto antes del traslado de operación
 
+El chat del asesor ofrece «Tomar foto» para solicitar la cámara trasera del
+celular, «Adjuntar fotos» para elegir JPG/PNG hasta 5 MB y «Adjuntar PDF»
+(hasta 16 MB). La cámara depende del selector nativo del dispositivo.
+Tomar o seleccionar un archivo solo prepara una vista previa local:
+«Enviar foto» o «Enviar PDF» lo adjunta a la solicitud mediante el acceso privado
+vigente. Se conserva un archivo pendiente por caso y se envía uno por vez; puede
+quitarse o reemplazarse antes de enviarlo. El mensaje de texto tiene su propio
+botón. Esto no sustituye las evidencias obligatorias de entrega del crédito.
+
 1. Elegir dos asesores con perfil nominal y PIN actualizado, un analista y un
    administrador central. Mantener los grupos actuales durante el piloto.
 2. Cada asesor continúa un iPhone propio hasta Enrolamiento y entrega y pulsa

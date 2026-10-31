@@ -91,3 +91,24 @@
 .singleCase .singleStatus{padding:16px;color:var(--fp-muted);font-size:16px}
 .singleCase .composer{flex-shrink:0}
 @media(max-width:699px){.singleCase .chat>header{padding:12px}.singleCase .composer{gap:8px}.singleCase .composer>textarea{min-width:0}.singleCase .chatActions button{padding-left:12px;padding-right:12px}}
+.attachmentTools{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
+.attachmentTools>button{min-height:44px;gap:8px;white-space:normal}
+.attachmentTools .hiddenFile{display:none}
+.attachmentPreview{grid-column:1/-1;display:flex;flex-direction:column;gap:12px;padding:12px;border:1px solid var(--fp-border);border-radius:var(--fp-radius-md);background:var(--fp-bg);min-width:0}
+.previewContent{display:flex;gap:12px;align-items:center;min-width:0}
+.previewContent>svg{flex-shrink:0;color:var(--fp-muted)}
+.previewContent>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.previewContent strong{overflow-wrap:anywhere;font-size:15px;font-weight:600}
+.previewContent span,.previewContent small{font-size:14px;color:var(--fp-muted)}
+.previewContent a{display:inline-flex;align-items:center;min-height:40px;color:var(--fp-client-green);text-decoration:underline;text-underline-offset:3px}
+.previewPhoto{display:block;flex-shrink:0;width:96px;height:96px;object-fit:contain;border-radius:var(--fp-radius-sm);background:var(--fp-surface)}
+.previewActions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.previewActions button{min-height:44px}
+.embedded .composer{grid-template-columns:minmax(0,1fr) auto}
+.embedded .composer>textarea{grid-column:1}
+.embedded .composer>button{grid-column:2}
+.embedded .attachmentPreview{border-color:var(--fp-chat-border);background:var(--fp-chat-surface);color:var(--fp-chat-text)}
+.embedded .previewContent span,.embedded .previewContent small,.embedded .previewContent>svg{color:var(--fp-chat-muted)}
+.embedded .previewContent a{color:var(--fp-chat-accent)}
+.embedded .previewPhoto{background:var(--fp-chat-bg)}
+@media(max-width:480px){.previewPhoto{width:76px;height:76px}.previewContent{gap:10px}.previewActions>button{flex:1}.attachmentTools>button{font-size:14px;padding-left:12px;padding-right:12px}}

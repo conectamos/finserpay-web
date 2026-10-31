@@ -10,7 +10,7 @@ const text=tree=>Array.isArray(tree)?tree.map(text).join(""):tree&&typeof tree==
 function mount(options={}){
   let cursor=0,dirty=false,effects=[],tree,clockId=0,now=0;
   let props={kind:"enrollment",mode:"seller",sellerId:7,...options};
-  const slots=[],requests=[],timers=new Map(),sources=[];
+  const slots=[],requests=[],timers=new Map(),sources=[],createdUrls=[],revokedUrls=[];
   const schedule=(fn,delay=0,interval=0)=>{const id=++clockId;timers.set(id,{fn,at:now+delay,interval});return id;};
   const changed=(a,b)=>!a||!b||a.length!==b.length||b.some((v,i)=>!Object.is(v,a[i]));
   const react={
@@ -26,6 +26,7 @@ function mount(options={}){
   class FakeEventSource{constructor(url){this.url=url;this.events=new Map();this.closed=false;sources.push(this);}addEventListener(name,fn){this.events.set(name,fn);}close(){this.closed=true;}emit(name){this.events.get(name)?.();}}
   runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{
     module:loaded,exports:loaded.exports,Error,FormData,AbortController,URLSearchParams,
+    URL:{createObjectURL(file){const url=`blob:preview-${createdUrls.length+1}`;createdUrls.push({url,file});return url;},revokeObjectURL(url){revokedUrls.push(url);}},
     crypto:{randomUUID:()=>"00000000-0000-4000-8000-000000000001"},
     document:{visibilityState:"visible"},window:{addEventListener(){},removeEventListener(){}},
     setTimeout:(fn,delay)=>schedule(fn,delay),clearTimeout:id=>timers.delete(id),setInterval:(fn,delay)=>schedule(fn,delay,delay),clearInterval:id=>timers.delete(id),
@@ -45,7 +46,7 @@ function mount(options={}){
   async function flush(){for(let i=0;i<25;i++){await Promise.resolve();if(dirty)render();}}
   const all=()=>nodes(tree),button=label=>all().find(n=>n.type?.name==="Button"&&(text(n)===label||n.props["aria-label"]===label));
   render();
-  return{requests,flush,all,button,sources,get tree(){return tree;},query:()=>all().find(n=>n.type?.name==="Input"&&!n.props.type),setProps(patch){props={...props,...patch};render();},
+  return{requests,flush,all,button,sources,createdUrls,revokedUrls,get tree(){return tree;},query:()=>all().find(n=>n.type?.name==="Input"&&!n.props.type),setProps(patch){props={...props,...patch};render();},
     async advance(ms){const until=now+ms;for(;;){const next=[...timers].filter(([,entry])=>entry.at<=until).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;const[id,entry]=next;now=entry.at;if(entry.interval)entry.at+=entry.interval;else timers.delete(id);entry.fn();await flush();}now=until;await flush();},
     unmount(){for(const slot of slots)slot?.cleanup?.();}};
 }
@@ -236,7 +237,7 @@ test("un caso único bloquea y retira datos si cambian id, tipo o venta en cualq
   }
   for(const upload of [false,true]){
     const busy=[];const f=mount({...singleOptions,onBusyChange:value=>busy.push(value)});await resolveReads(f,sellerCase());
-    if(upload){const file=new File(["imagen artificial"],"soporte-prueba.png",{type:"image/png"});f.all().find(n=>n.type?.name==="Input"&&n.props.type==="file").props.onChange({target:{files:[file],value:""}});await f.flush();f.button("Enviar soporte").props.onClick();}
+    if(upload){const file=new File(["imagen artificial"],"soporte-prueba.png",{type:"image/png"});f.all().find(n=>n.type?.name==="Input"&&n.props.type==="file").props.onChange({target:{files:[file],value:""}});await f.flush();f.button("Enviar foto").props.onClick();}
     else{messageField(f).props.onChange({target:{value:"Texto de prueba"}});await f.flush();f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});}
     await f.flush();f.requests.find(r=>r.init.method).respond({...sellerCase(),item:{...itemA,target:"D-999"}});await f.flush();
     assert.equal(messageField(f),undefined);assert.equal(f.button("Consultar / reintentar mismo intento"),undefined);assert.match(text(f.tree),/ya no corresponde al enrolamiento de esta venta/);assert.equal(busy.at(-1),false);f.unmount();
@@ -345,4 +346,62 @@ test("las solicitudes únicas y del asesor conservan su historial finalizado",as
   for(const options of [singleOptions,{...singleOptions,mode:"attention"},{mode:"seller",initialId:itemA.id}]){
     const f=mount(options);await resolveReads(f,completed,[completed.item]);assert.ok(messageField(f));assert.equal(messageField(f).props.disabled,true);assert.equal(stateSelect(f),undefined);assert.doesNotMatch(text(f.tree),/Solicitud finalizada\. Puedes consultar/);f.unmount();
   }
+});
+
+const photoSelector=f=>f.all().find(n=>n.props["aria-label"]==="Seleccionar foto JPG o PNG");
+const pdfSelector=f=>f.all().find(n=>n.props["aria-label"]==="Seleccionar documento PDF");
+const localPhoto=f=>f.all().find(n=>n.type?.name==="next/image"&&String(n.props.alt).startsWith("Vista previa de "));
+async function pickPhoto(f,file){const target={files:file?[file]:[],value:"selección-local"};photoSelector(f).props.onChange({target});await f.flush();assert.equal(target.value,"");}
+
+test("el asesor dispone de botones claros para elegir fotos o PDF sin enviar al seleccionar",async()=>{
+  const f=mount(singleOptions);await resolveReads(f,sellerCase());let photoClicks=0,pdfClicks=0;
+  photoSelector(f).props.ref.current={click(){photoClicks++;}};pdfSelector(f).props.ref.current={click(){pdfClicks++;}};
+  assert.equal(photoSelector(f).props.accept,"image/jpeg,image/png");assert.equal(pdfSelector(f).props.accept,"application/pdf");assert.equal(photoSelector(f).props.capture,undefined);assert.equal(photoSelector(f).props.multiple,undefined);
+  f.button("Adjuntar fotos").props.onClick();f.button("Adjuntar PDF").props.onClick();assert.equal(photoClicks,1);assert.equal(pdfClicks,1);assert.equal(f.requests.some(r=>r.init.method),false);
+  messageField(f).props.onChange({target:{value:"Mensaje conservado al adjuntar"}});await f.flush();const photo=new File(["imagen artificial"],"equipo-prueba.jpg",{type:"image/jpeg"});await pickPhoto(f,photo);
+  assert.ok(localPhoto(f));assert.equal(localPhoto(f).props.src,"blob:preview-1");assert.match(text(f.tree),/equipo-prueba.jpg/);assert.match(text(f.tree),/Sin enviar/);assert.equal(messageField(f).props.value,"Mensaje conservado al adjuntar");assert.equal(f.requests.some(r=>r.init.method),false);
+  await pickPhoto(f,null);assert.equal(localPhoto(f).props.src,"blob:preview-1","cancelar el selector conserva la foto pendiente");f.unmount();assert.deepEqual(f.revokedUrls,["blob:preview-1"]);
+});
+
+test("Enviar foto usa el soporte privado existente y conserva el texto hasta confirmación",async()=>{
+  const f=mount(singleOptions);await resolveReads(f,sellerCase());messageField(f).props.onChange({target:{value:"Texto todavía no enviado"}});await f.flush();
+  const photo=new File(["imagen artificial"],"equipo-prueba.png",{type:"image/png"});await pickPhoto(f,photo);const click=f.button("Enviar foto").props.onClick;click();click();await f.flush();
+  const uploads=f.requests.filter(r=>r.init.method==="POST");assert.equal(uploads.length,1);assert.equal(uploads[0].url,`/api/ventas/atencion/${itemA.id}/files`);assert.equal(uploads[0].init.body.get("version"),"2");assert.equal(uploads[0].init.body.get("file").name,"equipo-prueba.png");assert.equal(uploads[0].init.body.get("file").type,"image/png");assert.equal(f.button("Enviar foto").props.disabled,true);assert.equal(f.button("Adjuntar fotos").props.disabled,true);
+  const attachment={id:"00000000-0000-4000-8000-000000000088",kind:"image",fileName:"equipo-prueba.png"},saved=sellerCase();saved.item={...saved.item,version:3};saved.messages=[...saved.messages,{id:"00000000-0000-4000-8000-000000000089",direction:"inbound",text:"",sentAt:"2026-10-31T13:02:00Z",author:"Asesor de prueba",attachment}];
+  uploads[0].respond(saved);await f.flush();assert.equal(localPhoto(f),undefined);assert.equal(f.button("Enviar foto"),undefined);assert.equal(messageField(f).props.value,"Texto todavía no enviado");assert.ok(f.revokedUrls.includes("blob:preview-1"));assert.ok(f.all().some(n=>n.props.src===`/api/ventas/atencion/${itemA.id}/files/${attachment.id}`));f.unmount();
+});
+
+test("el PDF conserva su selector, previsualización y envío separados de las fotos",async()=>{
+  const f=mount(singleOptions);await resolveReads(f,sellerCase());const file=new File(["%PDF-1.7\nprueba\n%%EOF"],"cedula-prueba.pdf",{type:"application/pdf"});
+  pdfSelector(f).props.onChange({target:{files:[file],value:""}});await f.flush();assert.equal(localPhoto(f),undefined);const link=f.all().find(n=>n.type==="a"&&text(n)==="Ver PDF antes de enviar");assert.equal(link.props.href,"blob:preview-1");assert.equal(link.props.rel,"noopener noreferrer");assert.equal(f.requests.some(r=>r.init.method),false);
+  f.button("Enviar PDF").props.onClick();await f.flush();const request=f.requests.find(r=>r.init.method==="POST");assert.equal(request.init.body.get("file").type,"application/pdf");assert.equal(request.url,`/api/ventas/atencion/${itemA.id}/files`);f.unmount();assert.ok(f.revokedUrls.includes("blob:preview-1"));
+});
+
+test("formatos y tamaños no admitidos se explican sin sustituir la foto ni enviar nada",async()=>{
+  const f=mount(singleOptions);await resolveReads(f,sellerCase());await pickPhoto(f,new File(["foto artificial"],"correcta.jpg",{type:"image/jpeg"}));
+  for(const file of [{name:"iphone.heic",type:"image/heic",size:100},{name:"grande.png",type:"image/png",size:5*1024*1024+1},{name:"vacia.jpg",type:"image/jpeg",size:0}]){await pickPhoto(f,file);assert.equal(localPhoto(f).props.src,"blob:preview-1");assert.ok(f.all().some(n=>n.props.role==="alert"));}
+  pdfSelector(f).props.onChange({target:{files:[{name:"grande.pdf",type:"application/pdf",size:16*1024*1024+1}],value:""}});await f.flush();assert.match(text(f.tree),/16 MB/);assert.equal(f.createdUrls.length,1);assert.equal(f.requests.some(r=>r.init.method),false);
+  f.button("Quitar archivo").props.onClick();await f.flush();assert.equal(localPhoto(f),undefined);assert.deepEqual(f.revokedUrls,["blob:preview-1"]);f.unmount();
+});
+
+test("el reemplazo, cambio de caso y cierre liberan previews, conservando el archivo de cada caso",async()=>{
+  const{f,a}=await staffWork();await pickPhoto(f,new File(["foto uno"],"uno.png",{type:"image/png"}));await pickPhoto(f,new File(["foto dos"],"dos.jpg",{type:"image/jpeg"}));assert.ok(f.revokedUrls.includes("blob:preview-1"));assert.equal(localPhoto(f).props.src,"blob:preview-2");
+  await selectWork(f,itemB);assert.equal(localPhoto(f),undefined);assert.ok(f.revokedUrls.includes("blob:preview-2"));await selectWork(f,a);assert.equal(localPhoto(f).props.src,"blob:preview-3");assert.match(text(f.tree),/dos.jpg/);
+  f.setProps({active:false});await f.flush();assert.equal(localPhoto(f),undefined);assert.ok(f.revokedUrls.includes("blob:preview-3"));f.setProps({active:true});await f.flush();assert.equal(localPhoto(f),undefined);await resolveReads(f,detailFor(a));assert.equal(localPhoto(f).props.src,"blob:preview-4");
+  f.unmount();assert.equal(f.createdUrls.length,f.revokedUrls.length);
+});
+
+test("una carga incierta conserva foto y UUID para reintentar; consulta o acceso revocado no permiten adjuntar",async()=>{
+  const f=mount(singleOptions);await resolveReads(f,sellerCase());await pickPhoto(f,new File(["foto artificial"],"equipo.jpg",{type:"image/jpeg"}));f.button("Enviar foto").props.onClick();await f.flush();const sent=f.requests.find(r=>r.init.method==="POST"),requestId=sent.init.body.get("requestId");sent.respond({error:"Carga sin confirmar"},500);await f.flush();await resolveReads(f,sellerCase());
+  assert.ok(localPhoto(f));assert.equal(f.button("Quitar archivo").props.disabled,true);assert.equal(f.revokedUrls.length,0);f.button("Consultar / reintentar mismo intento").props.onClick();await f.flush();const retried=f.requests.filter(r=>r.init.method==="POST").at(-1);assert.equal(retried.init.body.get("requestId"),requestId);assert.equal(retried.init.body.get("file").name,"equipo.jpg");retried.respond({error:"Acceso denegado"},403);await f.flush();assert.equal(localPhoto(f),undefined);assert.ok(f.revokedUrls.includes("blob:preview-1"));f.unmount();
+  const readOnly=mount(singleOptions);await resolveReads(readOnly,{...sellerCase(),canWrite:false});assert.equal(readOnly.button("Adjuntar fotos").props.disabled,true);assert.equal(readOnly.button("Adjuntar PDF").props.disabled,true);await pickPhoto(readOnly,new File(["foto artificial"],"equipo.jpg",{type:"image/jpeg"}));assert.equal(readOnly.createdUrls.length,0);assert.equal(readOnly.requests.some(r=>r.init.method),false);readOnly.unmount();
+});
+
+test("Tomar foto solicita la cámara trasera y conserva el flujo de revisión y envío privado",async()=>{
+  const f=mount(singleOptions);await resolveReads(f,sellerCase());const camera=f.all().find(n=>n.props["aria-label"]==="Tomar foto con la cámara");let clicks=0;camera.props.ref.current={click(){clicks++;}};
+  assert.equal(camera.props.accept,"image/jpeg,image/png");assert.equal(camera.props.capture,"environment");assert.equal(photoSelector(f).props.capture,undefined);assert.equal(pdfSelector(f).props.accept,"application/pdf");
+  f.button("Tomar foto").props.onClick();assert.equal(clicks,1);assert.equal(f.requests.some(r=>r.init.method),false);
+  const photo=new File(["foto de cámara artificial"],"camara-equipo.jpg",{type:"image/jpeg"}),target={files:[photo],value:"foto-local"};camera.props.onChange({target});await f.flush();assert.equal(target.value,"");assert.ok(localPhoto(f));assert.match(text(f.tree),/camara-equipo.jpg/);assert.equal(f.requests.some(r=>r.init.method),false);
+  f.button("Enviar foto").props.onClick();await f.flush();const request=f.requests.find(r=>r.init.method==="POST");assert.equal(request.url,`/api/ventas/atencion/${itemA.id}/files`);assert.equal(request.init.body.get("file").name,"camara-equipo.jpg");assert.equal(request.init.body.get("version"),"2");assert.equal(f.button("Tomar foto").props.disabled,true);request.respond({...sellerCase(),item:{...itemA,version:3}});await f.flush();assert.equal(localPhoto(f),undefined);assert.ok(f.revokedUrls.includes("blob:preview-1"));f.unmount();
+  const readOnly=mount(singleOptions);await resolveReads(readOnly,{...sellerCase(),canWrite:false});assert.equal(readOnly.button("Tomar foto").props.disabled,true);readOnly.unmount();
 });

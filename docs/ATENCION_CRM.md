@@ -6,6 +6,8 @@ La fase de bandeja, lecturas por usuario, agenda y plantillas manuales se desple
 
 La interfaz organiza la bandeja y el chat con una disposición similar a WhatsApp Web: lista lateral, historial y editor de respuesta, con la ficha y las gestiones en paneles secundarios. Conserva la navegación, los componentes y los colores compartidos de FINSER PAY. Las actualizaciones conservan la selección, los borradores y la posición de lectura.
 
+Los teléfonos reconocibles en mensajes y pies de archivos ofrecen un menú al pulsarlos. «Abrir chat» consulta `GET /api/atencion/phone?phone=...` y abre una coincidencia exacta autorizada; si hay varias exige elegir. La consulta vuelve a validar el perfil y excluye solicitudes y chats internos. Si no hay una conversación disponible, el usuario puede elegir «Abrir en WhatsApp» sin mensaje prellenado. Ninguna de estas acciones crea conversaciones, cambia asignaciones ni envía mensajes. Las cédulas identificadas, los IMEI, los importes y las URLs permanecen como texto. Cerrar el menú o cambiar de conversación invalida las consultas pendientes y conserva el borrador de cada chat.
+
 ## Bandeja, lecturas y espera
 
 Los filtros No leídos, Sin responder y, para administración central, Sin asignar se combinan con la búsqueda y las etiquetas. Se conservan Todas, Mías, Pendientes y Finalizadas. Solo se ofrecen etiquetas de conversaciones accesibles al usuario, incluida `FINSERPAY` cuando la clasificación financiera la acredita.
