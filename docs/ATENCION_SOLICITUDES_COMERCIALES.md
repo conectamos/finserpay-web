@@ -9,6 +9,10 @@ volver a buscar o seleccionar otra venta. El chat con el analista se abre en
 un panel dentro del crédito, con los mensajes y soportes privados existentes.
 No se ofrece la creación independiente de enrolamientos desde el dashboard.
 Los enlaces de notificaciones e historial siguen abriendo sus casos originales.
+El administrador central también puede solicitar desde esa misma tarjeta, usando
+su sesión y la API de Atención. El asesor, la sede y el aliado siguen siendo los
+de la operación; el mensaje y la auditoría identifican al administrador real.
+No se inventa un asesor cuando la operación no tiene titular nominal válido.
 
 Cada solicitud crea una conversación interna, sin emitir WhatsApp ni iniciar
 llamadas. La relación se hace con el identificador de la operación existente y

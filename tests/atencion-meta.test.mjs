@@ -5,6 +5,7 @@ import { createHash, createHmac } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 import sharp from "sharp";
+import ExcelJS from "exceljs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
@@ -22,6 +23,22 @@ const wamid = "wamid.TEST_MESSAGE";
 const inbound = { id: wamid, from: phone, timestamp: String(now / 1000 - 60), type: "text", text: { body: "Consulta de prueba" } };
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
 const pdf = Buffer.from("%PDF-1.7\nexample\n%%EOF\n");
+const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const workbook = new ExcelJS.Workbook(); workbook.addWorksheet("Ventas").addRow(["Informe artificial", 215]);
+const xlsx = Buffer.from(await workbook.xlsx.writeBuffer());
+// Small stored ZIP fixtures exercise malicious package metadata without extracting any content.
+function zipFixture(names = ["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/worksheets/sheet1.xml"]) {
+  const locals = [], records = []; let offset = 0;
+  for (const name of names) {
+    const filename = Buffer.from(name), data = Buffer.from("<fixture/>"); let crc = 0xffffffff;
+    for (const byte of data) { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); } crc = (crc ^ 0xffffffff) >>> 0;
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50); local.writeUInt16LE(20, 4); local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(filename.length, 26);
+    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt32LE(crc, 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(filename.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, filename, data); records.push(central, filename); offset += local.length + filename.length + data.length;
+  }
+  const directory = Buffer.concat(records), end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50); end.writeUInt16LE(names.length, 8); end.writeUInt16LE(names.length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
 function envelope(messages = [inbound], statuses = []) {
   return { object: "whatsapp_business_account", entry: [{ id: META_ATTENTION_LINE.wabaId, changes: [{ field: "messages", value: {
     messaging_product: "whatsapp", metadata: { phone_number_id: META_ATTENTION_LINE.phoneNumberId },
@@ -109,8 +126,32 @@ test("unsupported identifiers, formats, timestamps and marked secrets are not ex
     { ...inbound, from: "US.0000000000000000" }, { ...inbound, timestamp: "bad" },
     { ...inbound, type: "document", document: { id: "1234567890", mime_type: "text/html" } },
   ])));
-  assert.equal(events.messages.length, 1); assert.equal(events.ignored, 3);
+  assert.equal(events.messages.length, 2); assert.equal(events.ignored, 2);
   assert.equal(events.messages[0].text.includes("123456"), false); assert.equal(events.messages[0].text.includes("prueba123"), false);
+  assert.match(events.messages[1].text, /Documento recibido no compatible/); assert.equal(events.messages[1].media, undefined);
+});
+
+test("Excel recibido conserva el documento y su caption tanto entrante como desde WhatsApp Business", () => {
+  for (const [base, wrap, property] of [[inbound, envelope, "messages"], [echo, echoEnvelope, "echoes"]]) {
+    const message = { ...base, type: "document", text: undefined, document: { id: "1234567890", mime_type: xlsxMime, filename: "VENTAS.xlsx", caption: "Informe artificial de cierre", url: "https://untrusted.invalid/private" } };
+    const events = adapter().parseWebhook(...sign(wrap([message]))), received = events[property][0];
+    assert.equal(events.ignored, 0); assert.equal(received.id, base.id); assert.equal(received.type, "document");
+    assert.equal(received.media.fileName, "VENTAS.xlsx"); assert.equal(received.media.mimeType, xlsxMime);
+    assert.equal(received.media.caption, message.document.caption); assert.equal(received.media.url, undefined);
+  }
+});
+
+test("otros documentos conservan ID y texto con aviso real, sin inventar un adjunto descargable", () => {
+  for (const [type, name] of [["application/vnd.ms-excel", "VENTAS.xls"], ["application/vnd.ms-excel.sheet.macroEnabled.12", "VENTAS.xlsm"], ["text/html", "pagina.html"], ["application/zip", "archivo.zip"], [xlsxMime, "VENTAS.xlsm"]]) {
+    for (const [base, wrap, property] of [[inbound, envelope, "messages"], [echo, echoEnvelope, "echoes"]]) {
+      const message = { ...base, type: "document", text: undefined, document: { id: "1234567890", mime_type: type, filename: name, caption: "Informe de cierre. OTP: 123456" } };
+      const events = adapter().parseWebhook(...sign(wrap([message]))), received = events[property][0];
+      assert.equal(events.ignored, 0); assert.equal(received.id, base.id); assert.equal(received.type, "text"); assert.equal(received.media, undefined);
+      assert.match(received.text, /Informe de cierre/); assert.match(received.text, /Documento recibido no compatible/); assert.ok(received.text.includes(name)); assert.ok(!received.text.includes("123456"));
+    }
+  }
+  const invalid = { ...inbound, type: "document", text: undefined, document: { id: "fake", mime_type: xlsxMime, filename: "VENTAS.xlsx", caption: "No crear identidad ficticia" } };
+  assert.equal(adapter().parseWebhook(...sign(envelope([invalid]))).messages.length, 0);
 });
 
 test("signed quick replies and list replies become visible text without executing payloads or inventing sender",()=>{
@@ -306,6 +347,30 @@ test("download checks metadata, auth, magic and hash then supplies local byte ra
   assert.equal(mock.requests[1].init.headers.Range, undefined);
   const suffix = await adapter({ fetch: mediaMock().transport }).downloadMedia({ mediaId: "1234567890", range: "bytes=-3" });
   assert.deepEqual(Buffer.from(suffix.bytes), png.subarray(-3));
+});
+test("XLSX real se descarga privado con autenticación, hash y rango sin habilitar envío de Office", async () => {
+  const mock = mediaMock({ bytes: xlsx, type: xlsxMime }), result = await adapter({ fetch: mock.transport }).downloadMedia({ mediaId: "1234567890" });
+  assert.equal(result.status, 200); assert.equal(result.mimeType, xlsxMime); assert.deepEqual(Buffer.from(result.bytes), xlsx);
+  assert.equal(mock.requests.length, 2); assert.equal(mock.requests[1].init.headers.Authorization, `Bearer ${env.WHATSAPP_ATTENTION_ACCESS_TOKEN}`);
+  const ranged = await adapter({ fetch: mediaMock({ bytes: xlsx, type: xlsxMime }).transport }).downloadMedia({ mediaId: "1234567890", range: "bytes=2-15" });
+  assert.equal(ranged.status, 206); assert.deepEqual(Buffer.from(ranged.bytes), xlsx.subarray(2, 16));
+  assert.throws(() => validateMetaAttentionMedia({ bytes: xlsx, mimeType: xlsxMime, fileName: "VENTAS.xlsx" }), { code: "UNSUPPORTED_MEDIA" });
+  await assert.rejects(adapter({ fetch: mock.transport }).uploadMedia({ bytes: xlsx, mimeType: xlsxMime, fileName: "VENTAS.xlsx" }), { code: "UNSUPPORTED_MEDIA" });
+  await assert.rejects(adapter({ fetch: mock.transport }).sendMedia({ ...input, mediaId: "1234567890", kind: "document", fileName: "VENTAS.xlsx" }, async () => {}), { code: "UNSUPPORTED_MEDIA" });
+  const printable = zipFixture(["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/worksheets/sheet1.xml", "xl/printerSettings/printerSettings1.bin", "xl/media/image1.emf", "xl/media/image2.wmf", "xl/drawings/vmlDrawing1.vml"]);
+  const printableResult = await adapter({ fetch: mediaMock({ bytes: printable, type: xlsxMime }).transport }).downloadMedia({ mediaId: "1234567890" });
+  assert.deepEqual(Buffer.from(printableResult.bytes), printable, "printer settings and normal Office drawings stay opaque download-only parts");
+});
+test("recepción XLSX rechaza ZIP arbitrario, rutas peligrosas, macros, cifrado, solapamientos y expansión excesiva", async () => {
+  const base = ["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/worksheets/sheet1.xml"];
+  const encrypted = zipFixture(); encrypted.writeUInt16LE(1, 6); encrypted.writeUInt16LE(1, encrypted.readUInt32LE(encrypted.length - 6) + 8);
+  const bomb = zipFixture(); bomb.writeUInt32LE(0x10000000, bomb.readUInt32LE(bomb.length - 6) + 24);
+  const overlap = zipFixture(); overlap.writeUInt32LE(0, overlap.readUInt32LE(overlap.length - 6) + 46 + Buffer.byteLength(base[0]) + 42);
+  const bad = [Buffer.from("<html>VENTAS.xlsx</html>"), zipFixture(["unrelated.txt"]), zipFixture(base.slice(0, -1)), encrypted, bomb, overlap, zipFixture([...base, "../archivo.xml"]), zipFixture([...base, "xl/vbaProject.bin"]), zipFixture([...base, "xl/macrosheets/sheet1.xml"]), zipFixture([...base, "xl/embeddings/oleObject1.bin"]), zipFixture([...base, "xl/printerSettings/payload.bin"]), zipFixture([...base, "xl/worksheets/SHEET1.XML"]), Buffer.concat([xlsx, Buffer.from("trailing")]), xlsx.subarray(0, xlsx.length - 2)];
+  for (const bytes of bad) await assert.rejects(adapter({ fetch: mediaMock({ bytes, type: xlsxMime }).transport }).downloadMedia({ mediaId: "1234567890" }), { code: "INVALID_MEDIA_CONTENT" });
+  const oversized = mediaMock({ bytes: xlsx, type: xlsxMime, metadata: { file_size: 16 * 1024 * 1024 + 1 } });
+  await assert.rejects(adapter({ fetch: oversized.transport }).downloadMedia({ mediaId: "1234567890" }), { code: "UNSUPPORTED_MEDIA" }); assert.equal(oversized.requests.length, 1);
+  await assert.rejects(adapter({ fetch: mediaMock({ bytes: xlsx, type: xlsxMime, metadata: { sha256: "0".repeat(64) } }).transport }).downloadMedia({ mediaId: "1234567890" }), { code: "INVALID_MEDIA_HASH" });
 });
 test("download rejects non-Meta URLs, redirects, mismatched metadata and excess bytes", async () => {
   for (const url of ["http://lookaside.fbsbx.com/whatsapp_business/attachments/", "https://lookaside.fbsbx.com.evil.invalid/whatsapp_business/attachments/", "https://127.0.0.1/whatsapp_business/attachments/", "https://lookaside.fbsbx.com:444/whatsapp_business/attachments/", "https://lookaside.fbsbx.com/other/"]) {

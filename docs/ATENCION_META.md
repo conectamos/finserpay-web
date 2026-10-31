@@ -197,7 +197,7 @@ El envío de una plantilla no exige una ventana de 24 horas, pero tampoco la abr
 
 ## Archivos e histórico
 
-Estos son los formatos y límites de esta aplicación; pueden ser más restrictivos que los admitidos por Meta:
+Estos son los formatos y límites de envío de esta aplicación; pueden ser más restrictivos que los admitidos por Meta:
 
 | Tipo | Formatos admitidos | Máximo |
 | --- | --- | --- |
@@ -207,9 +207,19 @@ Estos son los formatos y límites de esta aplicación; pueden ser más restricti
 | Video | MP4, 3GPP | 16 MiB |
 | Documento | PDF | 16 MiB |
 
-Se comprueban tamaño, MIME, extensión y firmas del contenido; MP4 requiere la estructura y pista correspondiente. HTML, SVG, ejecutables y archivos Office no están habilitados. El formulario recibe bytes y calcula su huella en el servidor: no acepta un `mediaId` ni una URL arbitrarios del navegador.
+Se comprueban tamaño, MIME, extensión y firmas del contenido; MP4 requiere la estructura y pista correspondiente. HTML, SVG, ejecutables y archivos Office no están habilitados para envío. El formulario recibe bytes y calcula su huella en el servidor: no acepta un `mediaId` ni una URL arbitrarios del navegador.
 
 El DTO expone únicamente `/api/atencion/{id}/messages/{messageId}/media`, autenticada y sin caché pública. El servidor obtiene una URL temporal de Meta, valida su host/ruta y no sigue redirecciones. Los identificadores de descarga, tokens y URLs firmadas no se entregan al cliente. El soporte de rango para reproducción sigue sujeto al límite total del archivo.
+
+En recepción y ecos de WhatsApp Business se admite también XLSX hasta 16 MiB,
+conservando su nombre, caption e identificador original. Se verifica la estructura
+ZIP de forma acotada, sin descomprimir, interpretar ni mostrar hojas de cálculo
+en el servidor. La descarga es privada, forzada como adjunto y con `nosniff`.
+Esto no amplía los formatos habilitados para envío. Otros documentos recibidos
+mantienen su texto y un aviso de formato no compatible, en lugar de desaparecer
+del historial. Un evento descartado y confirmado antes de esta corrección solo
+puede recuperarse desde el original o una fuente histórica verificada; no se
+reconstruyen identificadores, archivos o fechas a partir de capturas.
 
 La lectura MCP histórica de Dapta conserva texto parcial y no recupera imágenes, audios o videos anteriores. Un chat nativo se vincula a un chat WhatsApp existente solo cuando su teléfono normalizado coincide exactamente y el resultado es único; conserva `externalId`, responsable y notas. Ante ambigüedad se crea un chat nativo sin responsable, sin elegir una identidad o sede arbitrarias. No se duplican clientes financieros.
 

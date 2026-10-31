@@ -62,6 +62,10 @@ const MIME: Record<string, { kind: MetaMediaKind; extensions: string[]; max: num
   // Deliberately narrower than Meta: no executable, HTML, SVG or Office archive.
   "application/pdf": { kind: "document", extensions: ["pdf"], max: META_ATTENTION_MAX_MEDIA_BYTES },
 };
+// Receive-only: Meta supports Excel documents. Do not expand the CRM's upload/send formats.
+// https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/messages/document/
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const RECEIVED_MIME = { [XLSX_MIME]: { kind: "document" as const, extensions: ["xlsx"], max: META_ATTENTION_MAX_MEDIA_BYTES } };
 
 export class AttentionMetaError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 502,
@@ -86,6 +90,7 @@ function mime(value: unknown): string {
   return Object.hasOwn(aliases,type)?aliases[type]:type;
 }
 function mediaRule(type: string) { return Object.hasOwn(MIME, type) ? MIME[type] : undefined; }
+function receivedMediaRule(type: string) { return mediaRule(type) ?? (Object.hasOwn(RECEIVED_MIME, type) ? RECEIVED_MIME[type as keyof typeof RECEIVED_MIME] : undefined); }
 function recipient(value: unknown): string {
   const result = str(value).replace(/^\+/, "");
   if (!PHONE.test(result)) fail("INVALID_RECIPIENT", "El destinatario de WhatsApp no es válido.");
@@ -129,16 +134,68 @@ function messageContent(message: Dict): Pick<MetaInboundMessage, "type" | "text"
   }
   if (!["image", "audio", "video", "document", "sticker"].includes(str(message.type))) return null;
   const type = message.type as MetaMediaKind, media = dict(message[type]), mimeType = mime(media.mime_type);
-  if (!ID.test(str(media.id)) || mediaRule(mimeType)?.kind !== type) return null;
+  if (!ID.test(str(media.id))) return null;
+  const name = fileName(media.filename), rule = receivedMediaRule(mimeType);
+  if (rule?.kind !== type || (mimeType === XLSX_MIME && media.filename !== undefined && (!name || !name.toLowerCase().endsWith(".xlsx")))) {
+    if (type !== "document") return null;
+    // Preserve the actual message ID, sender and caption without inventing a downloadable attachment.
+    const caption = safeText(media.caption, 1024);
+    return { ...context, type: "text", text: `${caption ? `${caption}\n\n` : ""}[Documento recibido no compatible${name ? `: ${name}` : ""}]` };
+  }
   return { ...context, type, media: { id: str(media.id), mimeType,
     ...(mediaHash(media.sha256) ? { sha256: mediaHash(media.sha256) } : {}),
     ...(fileName(media.filename) ? { fileName: fileName(media.filename) } : {}),
     ...(safeText(media.caption, 1024) ? { caption: safeText(media.caption, 1024) } : {}) } };
 }
+/** Inspect ZIP records only: never inflate, parse worksheets, render Office or execute workbook content. */
+function isReceivedXlsx(b: Buffer): boolean {
+  if (b.length < 22 || b.readUInt32LE(0) !== 0x04034b50) return false;
+  let end = -1;
+  for (let p = b.length - 22; p >= Math.max(0, b.length - 65557); p--) {
+    if (b.readUInt32LE(p) === 0x06054b50 && p + 22 + b.readUInt16LE(p + 20) === b.length) { end = p; break; }
+  }
+  if (end < 0 || b.readUInt16LE(end + 4) || b.readUInt16LE(end + 6)) return false;
+  const count = b.readUInt16LE(end + 10), central = b.readUInt32LE(end + 16), size = b.readUInt32LE(end + 12);
+  if (!count || count > 4096 || b.readUInt16LE(end + 8) !== count || central + size !== end) return false;
+  const names = new Set<string>(), ranges: {start: number; end: number}[] = [];
+  let p = central, expanded = 0;
+  for (let i = 0; i < count; i++) {
+    if (p + 46 > end || b.readUInt32LE(p) !== 0x02014b50) return false;
+    const flags = b.readUInt16LE(p + 8), method = b.readUInt16LE(p + 10), crc = b.readUInt32LE(p + 16);
+    const compressed = b.readUInt32LE(p + 20), uncompressed = b.readUInt32LE(p + 24), length = b.readUInt16LE(p + 28);
+    const extra = b.readUInt16LE(p + 30), comment = b.readUInt16LE(p + 32), offset = b.readUInt32LE(p + 42);
+    if ((flags & ~0x080e) || ![0, 8].includes(method) || !length || length > 1024 || p + 46 + length + extra + comment > end || b.readUInt16LE(p + 34)) return false;
+    const rawName = b.subarray(p + 46, p + 46 + length), name = rawName.toString("utf8"), lower = name.toLowerCase();
+    const parts = name.replace(/\/$/, "").split("/");
+    if (!/^[A-Za-z0-9_().\[\] /-]+$/.test(name) || parts.some(part => !part || part === "." || part === "..") || names.has(lower)) return false;
+    if (!(name === "[Content_Types].xml" || /^(?:_rels|docProps|xl)\//.test(name)) || /(?:^|\/)(?:vba[^/]*|macrosheets|dialogsheets|activex|embeddings|customui)(?:\/|\.|$)/i.test(name)) return false;
+    const printerSettings = /^xl\/printerSettings\/printerSettings[1-9]\d*\.bin$/i.test(name);
+    const drawing = /^xl\/(?:media\/[^/]+\.(?:emf|wmf)|drawings\/vmlDrawing[1-9]\d*\.vml)$/i.test(name);
+    if (!name.endsWith("/") && !/\.(?:xml|rels|png|jpe?g|gif|bmp|tiff?)$/i.test(name) && !printerSettings && !drawing) return false;
+    if (((b.readUInt32LE(p + 38) >>> 16) & 0xf000) === 0xa000) return false;
+    expanded += uncompressed;
+    if (compressed === 0xffffffff || uncompressed === 0xffffffff || expanded > 64 * 1024 * 1024 || uncompressed > Math.max(1024 * 1024, compressed * 200) || (method === 0 && compressed !== uncompressed)) return false;
+    if (offset + 30 > central || b.readUInt32LE(offset) !== 0x04034b50 || b.readUInt16LE(offset + 6) !== flags || b.readUInt16LE(offset + 8) !== method || b.readUInt16LE(offset + 26) !== length) return false;
+    const data = offset + 30 + length + b.readUInt16LE(offset + 28);
+    if (data + compressed > central || !b.subarray(offset + 30, offset + 30 + length).equals(rawName)) return false;
+    let stop = data + compressed;
+    if (flags & 8) {
+      if (stop + 12 > central) return false;
+      if (b.readUInt32LE(stop) === 0x08074b50) stop += 4;
+      if (stop + 12 > central || b.readUInt32LE(stop) !== crc || b.readUInt32LE(stop + 4) !== compressed || b.readUInt32LE(stop + 8) !== uncompressed) return false;
+      stop += 12;
+    } else if (b.readUInt32LE(offset + 14) !== crc || b.readUInt32LE(offset + 18) !== compressed || b.readUInt32LE(offset + 22) !== uncompressed) return false;
+    names.add(lower); ranges.push({start: offset, end: stop}); p += 46 + length + extra + comment;
+  }
+  ranges.sort((a, c) => a.start - c.start);
+  if (p !== end || ranges[0]?.start !== 0 || ranges.at(-1)?.end !== central || ranges.some((range, index) => index > 0 && range.start !== ranges[index - 1].end)) return false;
+  return names.has("[content_types].xml") && names.has("_rels/.rels") && names.has("xl/workbook.xml") && [...names].some(name => /^xl\/worksheets\/[^/]+\.xml$/.test(name));
+}
 function validateMagic(bytes: Uint8Array, type: string): boolean {
   const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const head = b.subarray(0, 32).toString("latin1");
   switch (type) {
+    case XLSX_MIME: return isReceivedXlsx(b);
     case "image/jpeg": return b.length >= 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
     case "image/png": return b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     case "image/webp": return head.startsWith("RIFF") && head.slice(8, 12) === "WEBP";
@@ -170,8 +227,8 @@ function validateMagic(bytes: Uint8Array, type: string): boolean {
     default: return false;
   }
 }
-export function validateMetaAttentionMedia(input: { bytes: Uint8Array; mimeType: string; fileName?: string; kind?: MetaMediaKind }) {
-  const type = mime(input.mimeType); const rule = mediaRule(type);
+function validateMedia(input: { bytes: Uint8Array; mimeType: string; fileName?: string; kind?: MetaMediaKind }, received = false) {
+  const type = mime(input.mimeType); const rule = received ? receivedMediaRule(type) : mediaRule(type);
   if (!rule || (input.kind && input.kind !== rule.kind)) fail("UNSUPPORTED_MEDIA", "Este formato de archivo no está habilitado.", 415);
   if (!(input.bytes instanceof Uint8Array) || input.bytes.length === 0 || input.bytes.length > rule.max) fail("MEDIA_TOO_LARGE", "El archivo está vacío o excede el límite permitido.", 413);
   if (input.fileName !== undefined && (!fileName(input.fileName) || !rule.extensions.includes(input.fileName.split(".").pop()?.toLowerCase() || ""))) fail("INVALID_MEDIA_NAME", "El nombre y la extensión del archivo no corresponden al formato.");
@@ -184,6 +241,7 @@ export function validateMetaAttentionMedia(input: { bytes: Uint8Array; mimeType:
   }
   return { mimeType: type, kind: rule.kind, size: input.bytes.length };
 }
+export function validateMetaAttentionMedia(input: { bytes: Uint8Array; mimeType: string; fileName?: string; kind?: MetaMediaKind }) { return validateMedia(input); }
 
 export function createMetaAttentionAdapter(options: Options = {}) {
   const env = options.env ?? process.env; const transport = options.fetch ?? fetch; const now = options.now ?? Date.now;
@@ -429,10 +487,10 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     if (!ID.test(str(result.id))) fail("INVALID_MEDIA_RECEIPT", "Meta no confirmó la carga del archivo.", 502);
     return { mediaId: str(result.id) };
   }
-  async function mediaMetadata(mediaId: string) {
+  async function mediaMetadata(mediaId: string, received = false) {
     if (!ID.test(mediaId)) fail("INVALID_MEDIA_ID", "El identificador del archivo no es válido.");
     const result = await graph(mediaId, { phone_number_id: scope().phoneNumberId });
-    const type = mime(result.mime_type); const rule = mediaRule(type); const size = result.file_size;
+    const type = mime(result.mime_type); const rule = received ? receivedMediaRule(type) : mediaRule(type); const size = result.file_size;
     if (result.id !== mediaId || !rule || typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0 || size > rule.max) fail("UNSUPPORTED_MEDIA", "El archivo de Meta excede los límites o no tiene un formato habilitado.", 415);
     let url: URL;
     try { url = new URL(str(result.url)); } catch { fail("INVALID_MEDIA_URL", "Meta no devolvió una ubicación válida para el archivo.", 502); }
@@ -450,10 +508,10 @@ export function createMetaAttentionAdapter(options: Options = {}) {
   async function downloadMedia(input: { mediaId: string; range?: string | null }): Promise<MetaMediaDownload> {
     const cfg = config();
     if (input.range != null && (input.range.length > 100 || !/^bytes=(?:\d+-\d*|-\d+)$/.test(input.range))) fail("INVALID_RANGE", "El rango solicitado no es válido.", 416);
-    const metadata = await mediaMetadata(input.mediaId);
-    const { bytes, response } = await request(metadata.url, { method: "GET", headers: { Authorization: `Bearer ${cfg.token}` } }, Math.min(metadata.size, MIME[metadata.mimeType].max));
+    const metadata = await mediaMetadata(input.mediaId, true);
+    const { bytes, response } = await request(metadata.url, { method: "GET", headers: { Authorization: `Bearer ${cfg.token}` } }, Math.min(metadata.size, receivedMediaRule(metadata.mimeType)!.max));
     if (response.status !== 200 || bytes.length !== metadata.size || mime(response.headers.get("content-type")) !== metadata.mimeType) fail("INVALID_MEDIA_CONTENT", "El archivo recibido no coincide con los metadatos de Meta.", 502);
-    validateMetaAttentionMedia({ bytes, mimeType: metadata.mimeType });
+    validateMedia({ bytes, mimeType: metadata.mimeType }, true);
     if (metadata.sha256) {
       const expected = Buffer.from(metadata.sha256, /^[a-f0-9]{64}$/i.test(metadata.sha256) ? "hex" : "base64");
       if (!timingSafeEqual(createHash("sha256").update(bytes).digest(), expected)) fail("INVALID_MEDIA_HASH", "El archivo recibido no pasó la verificación de integridad.", 502);

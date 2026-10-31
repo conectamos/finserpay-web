@@ -14,7 +14,7 @@ const detail = { conversation: { id: id(1) }, messages: [inbound(10), { ...inbou
 function mount(component, initial = {}) {
   let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, uuid = 20, props;
   const slots = [], timers = new Map(), requests = [], events = new Map();
-  const environment = { visibilityState: "visible", onLine: true, modal: false };
+  const environment = { visibilityState: "visible", onLine: true, modal: false, containingModal: false, otherModal: false };
   const target = name => ({ addEventListener(event, fn) { events.set(`${name}:${event}`, fn); }, removeEventListener(event) { events.delete(`${name}:${event}`); } });
   const element = { clientHeight: 400, scrollHeight: 1000, scrollTop: 600, ...target("log"), getBoundingClientRect: () => ({ top: 120, bottom: 520, left: 350, right: 1000 }) };
   const react = {
@@ -27,7 +27,7 @@ function mount(component, initial = {}) {
   const schedule = (fn, delay, interval = 0) => { const key = ++timerId; timers.set(key, { fn, at: now + delay, interval }); return key; };
   runInNewContext(outputText, { module: loaded, exports: loaded.exports, URLSearchParams, AbortController,
     crypto: { randomUUID: () => id(++uuid) },
-    document: { get visibilityState() { return environment.visibilityState; }, querySelector: () => environment.modal ? {} : null, ...target("document") },
+    document: { get visibilityState() { return environment.visibilityState; }, querySelector: () => environment.modal ? {} : null, querySelectorAll: () => environment.modal ? [{ contains: () => environment.containingModal }, ...(environment.otherModal ? [{ contains: () => false }] : [])] : [], ...target("document") },
     navigator: { get onLine() { return environment.onLine; } }, window: { innerHeight: 900, innerWidth: 1440, ...target("window") },
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: key => timers.delete(key), setInterval: (fn, delay) => schedule(fn, delay, delay), clearInterval: key => timers.delete(key),
     require(name) { if (name === "react") return react; if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props: props || {} }), jsxs: (type, props) => ({ type, props: props || {} }) }; if (name.endsWith(".css")) return { default: new Proxy({}, { get: (_, key) => key }) }; return new Proxy({}, { get: (_, key) => key }); },
@@ -52,6 +52,17 @@ test("ACK envía solo IDs inbound observados al fondo y no un reloj ni un mensaj
   f.dispatch("log", "scroll"); await f.advance(200); assert.equal(f.requests.length, 1);
   f.setProps({ detail: { ...detail, messages: [...detail.messages, inbound(12)] } }); await f.advance(200);
   assert.deepEqual(JSON.parse(f.requests[1].init.body), { messageIds: [id(12)] }); f.unmount();
+});
+
+test("el chat del crédito observa lectura dentro de su panel, pero un diálogo adicional la bloquea", async () => {
+  const f = mount("AttentionObservedRead", { allowContainingDialog: true });
+  f.environment.modal = true; f.environment.containingModal = true;
+  await f.advance(200); assert.equal(f.requests.length, 1); f.unmount();
+  for (const additional of [false, true]) {
+    const blocked = mount("AttentionObservedRead", { allowContainingDialog: true });
+    blocked.environment.modal = true; blocked.environment.containingModal = additional; blocked.environment.otherModal = additional;
+    await blocked.advance(200); assert.equal(blocked.requests.length, 0); blocked.unmount();
+  }
 });
 
 test("chat oculto, lectura anterior, modal y scroll lejos del fondo jamás marcan leído", async () => {

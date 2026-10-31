@@ -22,6 +22,8 @@ El asesor solicita el enrolamiento desde la tarjeta Enrolamiento del paso de
 Enrolamiento y entrega del crédito iPhone. El chat se abre en `FinserSidePanel`
 sin salir del crédito y sin mostrar selectores de otras ventas. La ficha empieza
 colapsada. El acceso no se duplica como acción rápida del dashboard comercial.
+El administrador central ve la misma acción dentro de la tarjeta 2, con su actor
+nominal de Atención y sin asumir el perfil del asesor titular.
 
 Las solicitudes de bienvenida y enrolamiento se gestionan desde la cabecera del
 chat con `FinserSidePanel`. El panel muestra la identidad de la venta vinculada,

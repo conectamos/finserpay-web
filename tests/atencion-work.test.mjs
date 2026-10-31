@@ -33,6 +33,8 @@ async function fixture(t){const db=new PGlite();t.after(()=>db.close());await db
   INSERT INTO "CreditoBorrador" VALUES(100,'Cliente real','12345','123456789012345','IPHONE','PROCESO',11,20),(101,'Otro cliente','67890','123456789012346','ANDROID','PROCESO',11,20),(102,'No autorizado','98765','123456789012347','IPHONE','PROCESO',12,20);
   INSERT INTO "Credito" VALUES(200,'Cliente bienvenida','12345','123456789012345','IPHONE','ACTIVO',11,20);
 `);await db.exec(migration);const store=createAttentionWorkStore(adapter(db));const create=(extra={})=>store.create(seller,{requestId:randomUUID(),kind:"enrollment",target:"D-100",text:"Revisar pruebas",...extra});return {db,store,create};}
+async function centralFixture(t){const f=await fixture(t);await f.db.exec('ALTER TABLE "CreditoBorrador" ADD COLUMN "usuarioId" integer; UPDATE "CreditoBorrador" SET "usuarioId"=2;');return f;}
+const centralInput=(extra={})=>({requestId:randomUUID(),kind:"enrollment",target:"D-100",text:"Solicitado por administración central",...extra});
 test("asesor crea chat interno con datos reales y reintentos no duplican solicitud ni mensaje",async t=>{const {db,create}=await fixture(t);const id=randomUUID(),a=await create({requestId:id}),b=await create({requestId:id}),c=await create();assert.equal(a.item.id,b.item.id);assert.equal(a.item.id,c.item.id);assert.equal(a.item.name,"Cliente real");assert.equal(a.messages.length,1);assert.equal((await db.query('SELECT channel,phone FROM "AttentionConversation"')).rows[0].channel,"internal");assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});
 
 test("consulta de bandejas valida búsqueda, estado, filtros y parámetros repetidos",()=>{
@@ -83,7 +85,90 @@ test("no leídos de solicitudes respetan al analista nominal y no exponen lectur
   assert.equal((await store.detail(analyst,d.item.id)).item.unreadCount,1);
   await assert.rejects(store.list(admin,"enrollment",1,{state:"inventado"}),{status:400});
 });
-test("creación rechaza ventas ajenas, Android, bienvenida de borrador y roles de analista",async t=>{const {create,store}=await fixture(t);await assert.rejects(create({target:"D-102"}),{status:403});await assert.rejects(create({target:"D-101"}),/iPhone/);await assert.rejects(create({kind:"welcome"}),/crédito/);await assert.rejects(store.create(admin,{requestId:randomUUID(),kind:"enrollment",target:"D-100"}),{status:403});});
+test("creación rechaza ventas ajenas, Android, bienvenida de borrador y roles de analista",async t=>{const {create,store}=await fixture(t);await assert.rejects(create({target:"D-102"}),{status:403});await assert.rejects(create({target:"D-101"}),/iPhone/);await assert.rejects(create({kind:"welcome"}),/crédito/);await assert.rejects(store.create(analyst,{requestId:randomUUID(),kind:"enrollment",target:"D-100"}),{status:403});});
+
+test("central solicita enrolamiento sin suplantar al titular, conserva cuenta comercial y deduplica entre actores",async t=>{
+  const {db,store,create}=await centralFixture(t),input=centralInput(),d=await store.create(admin,input);
+  assert.equal(d.item.advisor,"Asesor");assert.equal(d.item.ally,"Tienda");assert.equal(d.messages[0].author,"Central");
+  assert.deepEqual((await db.query('SELECT "sellerId","userId","sedeId","aliadoId" FROM "AttentionWorkRequest"')).rows,[{sellerId:11,userId:2,sedeId:20,aliadoId:2}]);
+  assert.deepEqual((await db.query('SELECT "userId","sellerId","actorKey",metadata->>\'author\' AS author FROM "AttentionAudit" WHERE action=\'WORK_CREATED\'')).rows,[{userId:1,sellerId:null,actorKey:"admin:1",author:"Central"}]);
+  assert.equal((await store.create(admin,input)).item.id,d.item.id);assert.equal((await create()).item.id,d.item.id);
+  assert.deepEqual((await db.query('SELECT "recipientKey",kind FROM "AttentionWorkNotification" ORDER BY "recipientKey"')).rows,[{recipientKey:"user:5",kind:"created"},{recipientKey:"user:6",kind:"created"}]);
+  let current=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:1,action:"assign",assigneeKey:analyst.actor.key});
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=1');
+  await store.mutate(analyst,d.item.id,{requestId:randomUUID(),version:current.item.version,action:"message",text:"Respuesta interna del analista"});
+  const notifications=createAttentionWorkNotificationStore(adapter(db));assert.equal((await notifications.list(seller)).items.filter(n=>n.kind==="reply").length,1,"el aviso del titular no depende de la cuenta del administrador que abrió el caso");
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionWorkRequest"')).rows[0].n,1);assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);
+  assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");
+});
+
+test("central reutiliza la solicitud previa del asesor sin reemplazar autor ni repetir mensajes o avisos",async t=>{
+  const {db,store,create}=await centralFixture(t),original=await create(),before=(await db.query('SELECT count(*)::int n FROM "AttentionWorkNotification"')).rows[0].n;
+  const reused=await store.create(admin,centralInput());assert.equal(reused.item.id,original.item.id);assert.equal(reused.messages.length,1);assert.equal(reused.messages[0].author,"Asesor");
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionWorkNotification"')).rows[0].n,before);
+  assert.equal((await db.query('SELECT "userId" FROM "AttentionWorkRequest"')).rows[0].userId,2);
+});
+
+test("central conserva otro acceso comercial explícito del titular y rechaza su revocación sin escoger uno distinto",async t=>{
+  const {db,store}=await centralFixture(t);await db.exec('INSERT INTO "Sede" VALUES(21,\'Otra sede del mismo aliado\',2,true); INSERT INTO "Usuario" VALUES(4,\'Otro acceso comercial válido\',21,2,true);');
+  const anotherAccount={...seller,userId:4,userSedeId:21,key:"seller:4:11"};
+  const original=await store.create(anotherAccount,centralInput()),reused=await store.create(admin,centralInput());
+  assert.equal(reused.item.id,original.item.id);assert.equal((await db.query('SELECT "userId" FROM "AttentionWorkRequest"')).rows[0].userId,4);
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=4');await assert.rejects(store.create(admin,centralInput()),{status:409});
+  assert.equal((await db.query('SELECT "userId" FROM "AttentionWorkRequest"')).rows[0].userId,4);assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionWorkRequest"')).rows[0].n,1);
+});
+
+test("un borrador del admin central resuelve solo el acceso USUARIO único de su sede y conserva autoría nominal",async t=>{
+  const {db,store}=await centralFixture(t);await db.exec('UPDATE "CreditoBorrador" SET "usuarioId"=1 WHERE id=100; INSERT INTO "Rol" VALUES(4,\'USUARIO\'); INSERT INTO "Usuario" VALUES(4,\'Acceso comercial de sede\',20,4,true),(7,\'Otra administración\',10,1,true);');
+  const d=await store.create(admin,centralInput());assert.equal(d.messages[0].author,"Central");
+  assert.equal((await db.query('SELECT "userId" FROM "AttentionWorkRequest"')).rows[0].userId,4);
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=1');
+  const another={type:"attention",actor:{...admin.actor,userId:7,key:"admin:7",name:"Otra administración"}};
+  assert.equal((await store.create(another,centralInput())).item.id,d.item.id,"desactivar al autor central no retira la cuenta comercial real ni provoca otro caso");
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionWorkRequest"')).rows[0].n,1);
+});
+
+test("creación central limita tipo y fuente antes del intento y no habilita otras gestiones ni analistas",async t=>{
+  const {db,store}=await centralFixture(t);
+  for(const input of [centralInput({kind:"welcome",target:"C-200"}),centralInput({kind:"welcome"}),centralInput({target:"C-200"})])await assert.rejects(store.create(admin,input),{status:403});
+  await assert.rejects(store.create(admin,centralInput({target:"D-101"})),/iPhone/);
+  await assert.rejects(store.create(analyst,centralInput()),{status:403});
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionRequest"')).rows[0].n,0);
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionWorkRequest"')).rows[0].n,0);
+});
+
+test("central no inventa titular ni cuenta: vínculos ausentes, ambiguos o revocados fallan sin crear ni avisar",async t=>{
+  const {db,store}=await centralFixture(t);await db.exec('INSERT INTO "Rol" VALUES(4,\'USUARIO\'); INSERT INTO "Usuario" VALUES(4,\'Acceso comercial uno\',20,4,true),(8,\'Acceso comercial dos\',20,4,false);');
+  const reset='UPDATE "CreditoBorrador" SET "vendedorId"=11,"usuarioId"=2,"sedeId"=20 WHERE id=100; UPDATE "Vendedor" SET activo=true,"debeCambiarPin"=false WHERE id=11; UPDATE "SedeVendedor" SET activo=true WHERE "vendedorId"=11; UPDATE "Usuario" SET activo=true WHERE id=2; UPDATE "Usuario" SET activo=false WHERE id=8; UPDATE "Sede" SET activa=true WHERE id=20;';
+  for(const mutation of [
+    'UPDATE "CreditoBorrador" SET "vendedorId"=NULL WHERE id=100',
+    'UPDATE "Vendedor" SET activo=false WHERE id=11',
+    'UPDATE "Vendedor" SET "debeCambiarPin"=true WHERE id=11',
+    'UPDATE "SedeVendedor" SET activo=false WHERE "vendedorId"=11',
+    'UPDATE "CreditoBorrador" SET "usuarioId"=999 WHERE id=100',
+    'UPDATE "Usuario" SET activo=false WHERE id=2',
+    'UPDATE "CreditoBorrador" SET "usuarioId"=5 WHERE id=100',
+    'UPDATE "Sede" SET activa=false WHERE id=20',
+    'UPDATE "CreditoBorrador" SET "usuarioId"=1 WHERE id=100; UPDATE "Usuario" SET activo=false WHERE id=4',
+    'UPDATE "CreditoBorrador" SET "usuarioId"=1 WHERE id=100; UPDATE "Usuario" SET activo=true WHERE id IN (4,8)',
+  ]){
+    await db.exec(reset+' UPDATE "Usuario" SET activo=true WHERE id=4; '+mutation);
+    await assert.rejects(store.create(admin,centralInput()),{status:409});
+    for(const table of ["AttentionWorkRequest","AttentionConversation","AttentionMessage","AttentionWorkNotification","AttentionRequest"])assert.equal((await db.query(`SELECT count(*)::int n FROM "${table}"`)).rows[0].n,0,table);
+  }
+});
+
+test("central revalida transferencias y revocaciones sin reasignar ni sobrescribir el caso activo",async t=>{
+  const {db,store}=await centralFixture(t),input=centralInput(),d=await store.create(admin,input);
+  await db.query('UPDATE "CreditoBorrador" SET "vendedorId"=12 WHERE id=100');
+  await assert.rejects(store.create(admin,centralInput()),{status:409});await assert.rejects(store.create(admin,input),{status:409});
+  assert.equal((await store.list(seller,"enrollment")).total,0);await assert.rejects(store.detail(seller,d.item.id),{status:404});
+  await db.query('UPDATE "CreditoBorrador" SET "vendedorId"=11 WHERE id=100');
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=2');await assert.rejects(store.create(admin,centralInput()),{status:409});
+  await db.query('UPDATE "Usuario" SET activo=true WHERE id=2');await db.query('UPDATE "Usuario" SET activo=false WHERE id=1');await assert.rejects(store.create(admin,centralInput()),{status:403});
+  assert.deepEqual((await db.query('SELECT "sellerId","userId",version FROM "AttentionWorkRequest"')).rows,[{sellerId:11,userId:2,version:1}]);
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,1);
+});
 test("asignación mantiene alcance nominal y auditoría; vendedor no puede asignar ni ver notas",async t=>{const {create,store}=await fixture(t);let d=await create();await assert.rejects(store.detail(analyst,d.item.id),{status:404});await assert.rejects(store.mutate(seller,d.item.id,{requestId:randomUUID(),version:1,action:"assign",assigneeKey:"analyst:5"}),{status:403});d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:1,action:"assign",assigneeKey:"analyst:5"});assert.equal((await store.list(analyst,"enrollment")).total,1);d=await store.mutate(analyst,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"note",text:"Nota reservada"});assert.equal(d.notes[0].text,"Nota reservada");assert.equal((await store.detail(seller,d.item.id)).notes.length,0);assert.ok(d.events.some(e=>e.action==="WORK_ASSIGNED"));});
 test("mensaje repetido es idempotente; conflicto de versión no pierde mensajes y cierre genérico no omite gestión",async t=>{const {create,store,db}=await fixture(t);let d=await create();const input={requestId:randomUUID(),version:1,action:"message",text:"Aquí está el contexto"};d=await store.mutate(seller,d.item.id,input);await store.mutate(seller,d.item.id,input);assert.equal(d.messages.length,2);await assert.rejects(store.mutate(seller,d.item.id,{...input,requestId:randomUUID()}),{status:409});await assert.rejects(store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"state",state:"completed",text:"Intento de omitir checklist"}),{status:409});assert.equal((await store.detail(admin,d.item.id)).item.state,"pending");assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});
 test("una reasignación de venta retira inmediatamente lista, detalle y archivos al asesor anterior",async t=>{const {create,store,db}=await fixture(t);const d=await create();await db.query('UPDATE "CreditoBorrador" SET "vendedorId"=12 WHERE id=100');assert.equal((await store.list(seller,"enrollment")).items.length,0);await assert.rejects(store.detail(seller,d.item.id),{status:404});});

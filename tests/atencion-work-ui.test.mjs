@@ -128,6 +128,7 @@ test("filtros globales usan search/filter/state y descartan una respuesta anteri
 test("la lectura observada usa conversationId real y JSON; no equivale a leer una notificación",async()=>{
   const f=mount({mode:"attention",embedded:true});await resolveReads(f);await selectWork(f);
   assert.equal(observer(f).props.detail.conversation.id,itemA.conversationId);assert.equal(observer(f).props.detail.messages[0].id,detailFor().messages[0].id);
+  assert.equal(observer(f).props.allowContainingDialog,false);
   const pending=observer(f).props.request(`/api/atencion/${itemA.conversationId}/read`,{method:"POST",body:JSON.stringify({messageIds:[detailFor().messages[0].id]})});await f.flush();
   const request=f.requests.at(-1);assert.equal(request.url,`/api/atencion/${itemA.conversationId}/read`);assert.equal(request.init.headers["Content-Type"],"application/json");
   assert.equal(f.requests.some(r=>/notifications/.test(r.url)),false);request.respond({unreadCount:0,changed:true});await pending;
@@ -246,4 +247,34 @@ test("sin id el chat único no consulta una bandeja; revocar acceso elimina sus 
   const empty=mount({...singleOptions,initialId:null});await empty.flush();assert.equal(empty.requests.length,0);assert.match(text(empty.tree),/No hay una solicitud vinculada/);empty.unmount();
   const f=mount({...singleOptions,sse:true});await resolveReads(f,sellerCase());messageField(f).props.onChange({target:{value:"Borrador protegido"}});await f.flush();f.button("Ficha").props.onClick();await f.flush();
   f.sources.find(source=>!source.closed).emit("access_revoked");await f.flush();assert.equal(messageField(f),undefined);assert.equal(f.button("Ficha"),undefined);assert.match(text(f.tree),/Vuelve a iniciar sesión/);assert.ok(f.sources.every(source=>source.closed));f.unmount();
+});
+
+test("el equipo central abre solo el caso de la venta y gestiona con ficha inline y tema claro",async()=>{
+  const f=mount({...singleOptions,mode:"attention",embedded:true,sse:true});await resolveReads(f);
+  assert.ok(f.tree.props.className.includes("singleCase"));assert.equal(f.tree.props.className.includes("embedded"),false);
+  assert.equal(f.all().some(n=>n.type==="aside"&&n.props.className==="inbox"),false);assert.equal(f.button("Volver a la bandeja"),undefined);assert.equal(panel(f),undefined);
+  assert.equal(f.requests.length,1);assert.equal(f.requests[0].url,`/api/atencion/solicitudes/${itemA.id}`);assert.equal(f.sources.find(source=>!source.closed).url,"/api/atencion/events");
+  const profile=()=>f.all().find(n=>n.type==="section"&&n.props.className==="singleProfile");assert.equal(profile().props.hidden,true);assert.equal(observer(f).props.active,true);
+  assert.equal(observer(f).props.allowContainingDialog,true);
+  messageField(f).props.onChange({target:{value:"Respuesta central preparada"}});noteField(f).props.onChange({target:{value:"Nota del analista"}});await f.flush();
+  f.button("Ficha").props.onClick();await f.flush();assert.equal(profile().props.hidden,false);assert.equal(observer(f).props.active,false);assert.ok(f.button("Asignar"));
+  f.button("Ficha").props.onClick();await f.flush();assert.equal(observer(f).props.active,true);assert.equal(messageField(f).props.value,"Respuesta central preparada");assert.equal(noteField(f).props.value,"Nota del analista");
+  f.button("Validar enrolamiento").props.onClick();await f.flush();const management=f.all().find(n=>n.type?.name==="./attention-work-management");assert.equal(management.props.open,true);assert.equal(management.props.chatTheme,undefined);assert.equal(observer(f).props.active,false);
+  management.props.onClose();await f.flush();assert.equal(observer(f).props.active,true);await f.advance(5000);await resolveReads(f);
+  assert.ok(f.requests.every(r=>r.url===`/api/atencion/solicitudes/${itemA.id}`));assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
+});
+
+test("el caso central respeta los permisos del analista y no envía con acceso solo de consulta",async()=>{
+  const f=mount({...singleOptions,mode:"attention"});await resolveReads(f,{...detailFor(),canWrite:false,canManage:false,canAssign:false,team:[]});
+  assert.equal(messageField(f).props.disabled,true);assert.equal(f.button("Enviar").props.disabled,true);assert.equal(f.button("Validar enrolamiento"),undefined);assert.equal(f.button("Asignar"),undefined);assert.equal(f.button("Guardar solo nota interna"),undefined);
+  messageField(f).props.onChange({target:{value:"No se debe enviar"}});await f.flush();f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});await f.flush();
+  assert.equal(f.requests.some(r=>r.init.method),false);assert.match(text(f.tree),/Tu perfil tiene acceso de consulta/);f.unmount();
+});
+
+test("el caso central retira datos ante otra vinculación, incluso al recibir la gestión del analista",async()=>{
+  for(const mismatch of [{id:itemB.id},{kind:"welcome"},{target:"D-999"}]){
+    const f=mount({...singleOptions,mode:"attention"});await resolveReads(f,{...detailFor(),item:{...itemA,...mismatch}});assert.equal(messageField(f),undefined);assert.match(text(f.tree),/ya no corresponde al enrolamiento de esta venta/);f.unmount();
+  }
+  const f=mount({...singleOptions,mode:"attention"});await resolveReads(f);f.button("Validar enrolamiento").props.onClick();await f.flush();
+  f.all().find(n=>n.type?.name==="./attention-work-management").props.onUpdated({...detailFor(),item:{...itemA,target:"D-999"}});await f.flush();assert.equal(messageField(f),undefined);assert.equal(observer(f),undefined);assert.equal(f.button("Ficha"),undefined);assert.match(text(f.tree),/ya no corresponde al enrolamiento de esta venta/);assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
 });
