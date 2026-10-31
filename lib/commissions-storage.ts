@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readCommissionBags } from "./commission-portfolio";
 import {
-  COMMISSION_STARTS_AT, COMMISSION_RECEIPT_MAX_BYTES, CommissionError,
+  COMMISSION_STARTS_AT, COMMISSION_FIRST_PERIOD, COMMISSION_RECEIPT_MAX_BYTES, CommissionError,
   calculateCommissionPeriod, commissionPeriodAt, commissionsAreActive, validateCommissionRequest,
   type AdminCommissionBag, type AdminCommissionRequest, type CommissionPeriod, type CommissionRequest,
+  type AdminCommissionBalance, type AdminCommissionBalances, type AdminCommissionBalanceFilters, type AdminCommissionBalanceTotals,
   type CommissionReceiptInput, type CreateCommissionRequestInput, type SellerCommissionDashboard,
 } from "./commissions";
 
@@ -76,10 +77,11 @@ async function lockSeller(tx: CommissionDbClient, sellerId: number, requireActiv
   if (!sellers.length) throw new CommissionError("Vendedor no disponible.", 403);
 }
 
-async function assertAdmin(tx: CommissionDbClient, actorId: number) {
+async function assertAdmin(tx: CommissionDbClient, actorId: number, requireActiveScope=false) {
   const rows = await tx.$queryRawUnsafe<{ id: number }[]>(`SELECT u.id FROM "Usuario" u
     JOIN "Rol" r ON r.id=u."rolId" JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId"
-    WHERE u.id=$1 AND u.activo=true AND upper(trim(r.nombre))='ADMIN' AND upper(trim(a.codigo))='FINSERPAY'`, actorId);
+    WHERE u.id=$1 AND u.activo=true AND upper(trim(r.nombre))='ADMIN' AND upper(trim(a.codigo))='FINSERPAY'
+    ${requireActiveScope?"AND s.activa=true AND a.activo=true":""}`, actorId);
   if (!rows.length) throw new CommissionError("Solo el administrador central FINSER PAY puede gestionar pagos.", 403);
 }
 
@@ -90,8 +92,8 @@ async function audit(tx: CommissionDbClient, sellerId: number, period: string, a
 
 /** Canonical credits are ranked globally before filtering seller, so replays
  * assigned to another seller cannot create a second commission. */
-async function readCredits(tx: CommissionDbClient, sellerId: number, now: Date) {
-  return tx.$queryRawUnsafe<(Credit & { period: string })[]>(`
+async function readCredits(tx: CommissionDbClient, sellerId: number|null, now: Date) {
+  return tx.$queryRawUnsafe<(Credit & { period: string; sellerId:number })[]>(`
     WITH candidates AS (
       SELECT c.id, c.folio AS code, c."vendedorId", origin_s.nombre AS "branchName",origin_s.id AS "branchId",
         COALESCE((j.snapshot->>'originAllyId')::integer,origin_s."aliadoId") AS "allyId",
@@ -121,9 +123,80 @@ async function readCredits(tx: CommissionDbClient, sellerId: number, now: Date) 
     ), ranked AS (
       SELECT *,row_number() OVER(PARTITION BY operation ORDER BY "createdAt",id) AS operation_rank,
         row_number() OVER(PARTITION BY identity ORDER BY "createdAt",id) AS identity_rank FROM candidates
-    ) SELECT id,code,"branchName","branchId","allyId",finalized AS "finalizedAt",to_char(finalized AT TIME ZONE 'America/Bogota','YYYY-MM') AS period
-      FROM ranked WHERE "vendedorId"=$1 AND eligible=true AND operation_rank=1 AND identity_rank=1 AND finalized >= $2::timestamptz AND finalized <= $3::timestamptz
+    ) SELECT id,code,"branchName","branchId","allyId","vendedorId" AS "sellerId",finalized AS "finalizedAt",to_char(finalized AT TIME ZONE 'America/Bogota','YYYY-MM') AS period
+      FROM ranked WHERE ($1::integer IS NULL OR "vendedorId"=$1) AND eligible=true AND operation_rank=1 AND identity_rank=1 AND finalized >= $2::timestamptz AND finalized <= $3::timestamptz
       ORDER BY finalized,id`, sellerId, COMMISSION_STARTS_AT, now.toISOString());
+}
+
+function balanceFilters(input:Partial<AdminCommissionBalanceFilters>,now:Date):AdminCommissionBalanceFilters{
+  if(!input||typeof input!=="object"||Array.isArray(input)||Object.keys(input).some(key=>!["period","search","page"].includes(key)))throw new CommissionError("Filtros de saldos inválidos.");
+  const period=input.period??"all_pending",search=input.search??"",page=input.page??1,current=commissionPeriodAt(now);
+  if(typeof period!=="string"||period!=="all_pending"&&(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)||period<COMMISSION_FIRST_PERIOD||period>current))throw new CommissionError("El periodo de comisión no es válido.");
+  if(typeof search!=="string"||search.length>120||/[\x00-\x1f\x7f]/.test(search))throw new CommissionError("La búsqueda de asesor o sede no es válida.");
+  const normalized=search.normalize("NFKC").trim();if(normalized.length>120)throw new CommissionError("La búsqueda de asesor o sede no es válida.");
+  if(!Number.isSafeInteger(page)||page<1||page>10000)throw new CommissionError("Página de saldos inválida.");
+  return {period,search:normalized,page};
+}
+export function parseAdminCommissionBalancesQuery(params:URLSearchParams,now=new Date()):AdminCommissionBalanceFilters{
+  for(const key of params.keys())if(!["period","search","page"].includes(key)||params.getAll(key).length!==1)throw new CommissionError("Parámetros de saldos inválidos.");
+  const page=params.get("page")??"1";if(!/^[1-9]\d{0,4}$/.test(page))throw new CommissionError("Página de saldos inválida.");
+  return balanceFilters({period:params.get("period")??"all_pending",search:params.get("search")??"",page:Number(page)},now);
+}
+const balanceTotals=():AdminCommissionBalanceTotals=>({sellers:0,validCreditCount:0,generated:0,paid:0,reserved:0,available:0,adjustment:0,outstanding:0});
+
+/** Project every advisor/month from canonical sources without materializing periods or releasing reservations. */
+async function projectAdminCommissionBalances(tx:CommissionDbClient,now:Date,filters:AdminCommissionBalanceFilters):Promise<AdminCommissionBalances>{
+  const currentPeriod=commissionPeriodAt(now),base={currentPeriod,serverNow:now.toISOString(),page:filters.page,pageSize:40};
+  if(!commissionsAreActive(now))return {...base,periods:[],rows:[],total:0,totals:balanceTotals()};
+  const [credits,sellers,storedPeriods,requests,branches,assignments,bags]=await Promise.all([
+    readCredits(tx,null,now),
+    tx.$queryRawUnsafe<{id:number;name:string;active:boolean}[]>(`SELECT id,nombre AS name,activo AS active FROM "Vendedor" ORDER BY id`),
+    tx.$queryRawUnsafe<(Pick<PeriodRow,"period"|"credits">&{sellerId:number})[]>(`SELECT "sellerId",period,credits FROM "CommissionPeriod" WHERE period>=$1 AND period<=$2`,COMMISSION_FIRST_PERIOD,currentPeriod),
+    tx.$queryRawUnsafe<Pick<RequestRow,"sellerId"|"period"|"amount"|"status"|"credits">[]>(`SELECT "sellerId",period,amount,status,credits FROM "CommissionRequest" WHERE period>=$1 AND period<=$2`,COMMISSION_FIRST_PERIOD,currentPeriod),
+    tx.$queryRawUnsafe<{id:number;name:string;allyId:number}[]>(`SELECT id,nombre AS name,"aliadoId" AS "allyId" FROM "Sede"`),
+    tx.$queryRawUnsafe<{sellerId:number;allyId:number}[]>(`SELECT sv."vendedorId" AS "sellerId",s."aliadoId" AS "allyId" FROM "SedeVendedor" sv JOIN "Sede" s ON s.id=sv."sedeId" WHERE sv.activo=true`),
+    readCommissionBags(tx,now),
+  ]);
+  const positive=(n:unknown):n is number=>Number.isSafeInteger(n)&&Number(n)>0;
+  const sellerDirectory=new Map(sellers.map(s=>[s.id,s])),branchDirectory=new Map(branches.map(s=>[s.id,s]));
+  const canonicalById=new Map(credits.map(c=>[c.id,c]));
+  const snapshots=[...storedPeriods.flatMap(p=>Array.isArray(p.credits)?p.credits:[]),...requests.flatMap(r=>Array.isArray(r.credits)?r.credits:[])];
+  const unresolved=[...new Set(snapshots.filter(c=>!positive(c.branchId)&&!canonicalById.has(c.id)&&positive(c.id)).map(c=>c.id))];
+  const references=unresolved.length?await tx.$queryRawUnsafe<{id:number;branchId:number}[]>(`SELECT c.id,COALESCE((j.snapshot->>'originBranchId')::integer,(j.snapshot->>'branchId')::integer,c."sedeId") AS "branchId" FROM "Credito" c LEFT JOIN "CommissionCreditSource" j ON j."creditId"=c.id WHERE c.id=ANY($1::integer[])`,unresolved):[];
+  const referenceDirectory=new Map(references.map(c=>[c.id,c.branchId]));
+  type Projection={sellerId:number;period:string;creditCount:number;paid:number;reserved:number;branches:Map<number,{id:number;name:string}>;allies:Set<number>};
+  const projected=new Map<string,Projection>(),periods=new Set([currentPeriod]);
+  function entry(sellerId:number,period:string){
+    if(!sellerDirectory.has(sellerId))throw new Error("Commission seller relation unavailable");
+    const key=`${sellerId}:${period}`;let row=projected.get(key);
+    if(!row){row={sellerId,period,creditCount:0,paid:0,reserved:0,branches:new Map(),allies:new Set()};projected.set(key,row);periods.add(period);}return row;
+  }
+  function origins(row:Projection,c:Credit,current=false){
+    const canonical=canonicalById.get(c.id),id=positive(c.branchId)?c.branchId:canonical?.branchId??referenceDirectory.get(c.id),branch=id?branchDirectory.get(id):undefined;
+    if(id&&(branch?.name||c.branchName))row.branches.set(id,{id,name:branch?.name||c.branchName});
+    const ally=positive(c.allyId)?c.allyId:canonical?.allyId??branch?.allyId;
+    if(current&&positive(ally))row.allies.add(ally);
+  }
+  for(const c of credits){const row=entry(c.sellerId,c.period);row.creditCount++;origins(row,c,true);}
+  for(const p of storedPeriods){const row=entry(p.sellerId,p.period);for(const c of Array.isArray(p.credits)?p.credits:[])origins(row,c);}
+  for(const r of requests){const row=entry(r.sellerId,r.period);if(r.status==="PAID")row.paid+=Number(r.amount);if(r.status==="PENDING")row.reserved+=Number(r.amount);for(const c of Array.isArray(r.credits)?r.credits:[])origins(row,c);}
+  const sellerAllies=new Map<number,Set<number>>();
+  const remember=(sellerId:number,allyId:number)=>{let set=sellerAllies.get(sellerId);if(!set){set=new Set();sellerAllies.set(sellerId,set);}set.add(allyId);};
+  for(const a of assignments)remember(a.sellerId,a.allyId);
+  for(const row of projected.values())if(calculateCommissionPeriod(row.period,row.creditCount,row.paid,row.reserved).generated>row.paid)for(const allyId of row.allies)remember(row.sellerId,allyId);
+  const pausedAllies=new Set(bags.filter(b=>b.paused).map(b=>b.allyId)),term=filters.search.toLocaleLowerCase("es-CO");
+  const rows:AdminCommissionBalance[]=[];
+  for(const p of projected.values()){
+    const seller=sellerDirectory.get(p.sellerId)!,amounts=calculateCommissionPeriod(p.period,p.creditCount,p.paid,p.reserved),outstanding=Math.max(0,amounts.generated-amounts.paid);
+    const row:AdminCommissionBalance={...amounts,sellerId:p.sellerId,sellerName:seller.name,sellerActive:seller.active,branches:[...p.branches.values()].sort((a,b)=>a.name.localeCompare(b.name,"es")||a.id-b.id),outstanding,payoutsPaused:[...(sellerAllies.get(p.sellerId)||[])].some(id=>pausedAllies.has(id))};
+    if(filters.period==="all_pending"?!(row.outstanding>0||row.reserved>0||row.adjustment>0):row.period!==filters.period)continue;
+    if(term&&!`${row.sellerName} ${row.branches.map(b=>b.name).join(" ")}`.toLocaleLowerCase("es-CO").includes(term))continue;
+    rows.push(row);
+  }
+  rows.sort((a,b)=>b.period.localeCompare(a.period)||b.outstanding-a.outstanding||a.sellerName.localeCompare(b.sellerName,"es")||a.sellerId-b.sellerId);
+  const totals=balanceTotals();totals.sellers=new Set(rows.map(r=>r.sellerId)).size;
+  for(const row of rows)for(const key of ["validCreditCount","generated","paid","reserved","available","adjustment","outstanding"] as const)totals[key]+=row[key];
+  return {...base,periods:[...periods].sort().reverse(),rows:rows.slice((filters.page-1)*40,filters.page*40),total:rows.length,totals};
 }
 
 async function syncPeriods(tx: CommissionDbClient, sellerId: number, now: Date): Promise<CommissionPeriod[]> {
@@ -173,6 +246,15 @@ export function createCommissionStore(db: CommissionDatabase, clock: () => Date 
     return rows[0];
   }
   return {
+    async listAdminCommissionBalances(actorId:number,input:Partial<AdminCommissionBalanceFilters>={}):Promise<AdminCommissionBalances>{
+      const now=clock(),filters=balanceFilters(input,now);
+      return transaction(async tx=>{
+        // This endpoint is a stable snapshot and PostgreSQL itself rejects accidental data writes.
+        await tx.$executeRawUnsafe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+        await assertAdmin(tx,actorId,true);
+        return projectAdminCommissionBalances(tx,now,filters);
+      });
+    },
     async getSellerCommissionDashboard(sellerId: number): Promise<SellerCommissionDashboard> {
       const now = clock();
       const base = { active: commissionsAreActive(now), startsAt: COMMISSION_STARTS_AT, serverNow: now.toISOString(), currentPeriod: commissionPeriodAt(now), payoutsPaused: false };
@@ -304,6 +386,7 @@ export async function getSellerCommissionDashboard(sellerId: number) {
 export async function createCommissionRequest(sellerId: number, input: CreateCommissionRequestInput) { return (await defaultStore()).createCommissionRequest(sellerId, input); }
 export async function listAdminCommissionRequests(actorId: number) { return (await defaultStore()).listAdminCommissionRequests(actorId); }
 export async function listAdminCommissionBags(actorId: number) { return (await defaultStore()).listAdminCommissionBags(actorId); }
+export async function listAdminCommissionBalances(actorId:number,filters:Partial<AdminCommissionBalanceFilters>={}){return(await defaultStore()).listAdminCommissionBalances(actorId,filters);}
 export async function rejectCommissionRequest(id: string, actorId: number, reason: string) { return (await defaultStore()).rejectCommissionRequest(id, actorId, reason); }
 export async function confirmCommissionPayment(id: string, actorId: number, receipt: CommissionReceiptInput) { return (await defaultStore()).confirmCommissionPayment(id, actorId, receipt); }
 export async function getCommissionReceipt(id: string, scope: { sellerId: number } | { adminUserId: number }) { return (await defaultStore()).getCommissionReceipt(id, scope); }

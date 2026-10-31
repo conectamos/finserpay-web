@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { CheckCircle2, Download, FileCheck2, RefreshCw, Search, ShieldCheck, X } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, MetricCard, PageHeader, Select } from "@/app/_components/finser-ui";
@@ -195,8 +196,8 @@ export default function CommissionAdminConsole() {
   return (
     <main className={styles.main}>
       <PageHeader eyebrow="Administración central" title="Comisiones de vendedores"
-        description="Revisa los créditos que respaldan cada solicitud y registra el pago después de consignar."
-        actions={<Button variant="secondary" onClick={() => void refresh()} disabled={loading || locked}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button>} />
+        description="Consulta los saldos mensuales por asesor y revisa las solicitudes de cobro."
+        actions={<><Link className="fp-ui-button is-primary" href="/dashboard/comisiones/saldos">Saldos por asesor</Link><Button variant="secondary" onClick={() => void refresh()} disabled={loading || locked}><RefreshCw size={16} aria-hidden="true" />Actualizar</Button></>} />
 
       {error ? <div className={styles.error} role="alert">{error}</div> : null}
       {notice ? <div className={styles.notice} role="status"><CheckCircle2 size={19} aria-hidden="true" />{notice}</div> : null}

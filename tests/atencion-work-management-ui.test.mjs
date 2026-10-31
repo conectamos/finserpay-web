@@ -41,7 +41,7 @@ function mount(file, initialProps = {}) {
         if (name === "react-dom") return { createPortal: value => value };
         if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
         if (name === "./attention-work-action") return load("attention-work-action.ts");
-        if (name === "@/lib/atencion-work-enrollment-types" || name === "@/lib/atencion-work-welcome-types") return load(`../../../lib/${name.split("/").at(-1)}.ts`);
+        if (name === "@/lib/atencion-work-enrollment-types" || name === "@/lib/atencion-work-welcome-types" || name === "@/lib/atencion-work-links") return load(`../../../lib/${name.split("/").at(-1)}.ts`);
         if (name.endsWith(".css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
         if (name === "lucide-react" || name === "@/app/_components/finser-ui") return new Proxy({}, { get: (_, key) => component(String(key)) });
         return { default: component(name) };
@@ -191,4 +191,16 @@ test("panel de gestión no se monta para asesor y separa bloqueo propio del bloq
   assert.equal(allowed.named("finser-side-panel").props.busy, true);
   assert.equal(allowed.named("attention-enrollment-management").props.disabled, false);
   allowed.setProps({ disabled: true }); assert.equal(allowed.named("attention-enrollment-management").props.disabled, true); allowed.unmount();
+});
+
+test("bienvenida ofrece el muro vinculado sin descartar la gestión; inconsistencias y bloqueo no exponen otro crédito", () => {
+  const linked={...detail("welcome"),item:{...detail("welcome").item,target:"C-101"},operationHref:"/dashboard/aprobaciones?credito=101"};
+  const f=mount("attention-work-management.tsx",{open:true,detail:linked,busy:false});
+  const link=()=>f.all().find(n=>n.type==="a"&&text(n)==="Abrir muro del crédito");
+  assert.equal(link().props.href,linked.operationHref);assert.equal(link().props.target,"_blank");assert.equal(link().props.rel,"noopener noreferrer");
+  assert.ok(f.named("attention-welcome-management"));assert.match(text(f.tree),/Vuelve a este chat para registrar el resultado/);assert.equal(f.requests.length,0);
+  f.setProps({busy:true});assert.equal(link(),undefined);assert.equal(f.button("Abrir muro del crédito").props.disabled,true);
+  f.setProps({busy:false,detail:{...linked,operationHref:"/dashboard/aprobaciones?credito=999"}});assert.equal(link(),undefined);assert.match(text(f.tree),/El muro no está disponible/);
+  f.setProps({detail:{...linked,canManage:false}});assert.equal(f.tree,null);
+  f.setProps({detail:detail("enrollment")});assert.equal(link(),undefined);assert.ok(f.named("attention-enrollment-management"));f.unmount();
 });
