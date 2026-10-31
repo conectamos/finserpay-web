@@ -11,7 +11,7 @@ import type { AttentionDetail, AttentionMessage } from "@/lib/atencion-types";
 import { renderAttentionTemplatePreview, type AttentionTemplate, type AttentionTemplateCatalogue, type AttentionTemplateIntent } from "@/lib/atencion-template-types";
 import styles from "./attention-template-composer.module.css";
 
-type Props = { detail: AttentionDetail; actorKey: string; disabled: boolean; onSent: () => void | Promise<void>; onBusyChange?: (busy: boolean) => void };
+type Props = { detail: AttentionDetail; actorKey: string; disabled: boolean; chatTheme?: "dark"; onSent: () => void | Promise<void>; onBusyChange?: (busy: boolean) => void };
 const accepted = new Set(["accepted", "sent", "delivered", "read"]);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type TemplateReview = { intent: AttentionTemplateIntent; phone: string | null; name: string; preview: string; templateName: string; financialSummary: string | null };
@@ -26,7 +26,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export default function AttentionTemplateComposer({ detail, actorKey, disabled, onSent, onBusyChange }: Props) {
+export default function AttentionTemplateComposer({ detail, actorKey, disabled, chatTheme, onSent, onBusyChange }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [catalogue, setCatalogue] = useState<AttentionTemplateCatalogue | null>(null);
@@ -169,7 +169,7 @@ export default function AttentionTemplateComposer({ detail, actorKey, disabled, 
   if (!permitted) return null;
   return <>
     <Button type="button" variant="ghost" disabled={disabled || busy} onClick={launch} title="Enviar una plantilla aprobada por Meta"><FileText aria-hidden="true" size={18} /><span>Plantilla</span></Button>
-    {open && createPortal(<FinserSidePanel open={open} title="Enviar plantilla" closeLabel="Cerrar plantillas" busy={busy} onClose={() => { setOpen(false); setReview(null); }}>
+    {open && createPortal(<div data-chat-theme={chatTheme} className={chatTheme === "dark" ? styles.portalTheme : undefined}><FinserSidePanel open={open} title="Enviar plantilla" closeLabel="Cerrar plantillas" busy={busy} onClose={() => { setOpen(false); setReview(null); }}>
       <div className={styles.content}>
         <div className={styles.recipient}><span>Destinatario</span><strong>{detail.conversation.name}</strong><span>{detail.conversation.phone || "Teléfono no disponible"}</span></div>
         <p>Elige una plantilla y revisa el mensaje. Los datos de cartera se validan automáticamente con el crédito seleccionado.</p>
@@ -203,6 +203,6 @@ export default function AttentionTemplateComposer({ detail, actorKey, disabled, 
         <Button variant="ghost" disabled={busy || Boolean(pending)} onClick={() => { setReview(null); setConfirmedRecipient(false); void run(async () => { await loadCatalogue(); }); }}><RefreshCw aria-hidden="true" size={16} />Actualizar plantillas</Button>
         <ConfirmDialog open={Boolean(review)} title="Confirmar envío de plantilla" description={review ? `Enviar ${review.templateName} a ${review.name} (${review.phone || "sin teléfono"}).\n\n${review.financialSummary ? `${review.financialSummary}\n\n` : ""}${review.preview}` : ""} confirmLabel="Enviar plantilla" busy={busy} onCancel={() => setReview(null)} onConfirm={() => void send()} />
       </div>
-    </FinserSidePanel>, document.body)}
+    </FinserSidePanel></div>, document.body)}
   </>;
 }

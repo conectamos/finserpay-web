@@ -85,6 +85,8 @@ Cada confirmación conserva una intención persistida con UUID y contenido fijo.
 
 ## Actualización y acceso
 
+Conversaciones usa la variante oscura aprobada del diseño FINSER PAY: bandeja y chat amplios, accesos laterales a las vistas existentes y barra compacta de respuesta. El menú `+` reúne archivos, stickers, respuestas rápidas y plantillas; los emojis y el micrófono permanecen junto al campo. La ficha se abre bajo demanda e incluye el estado y responsable de la conversación, el tipo y estado real de la solicitud cuando existe y los archivos recibidos del historial autorizado. En celular se alterna entre bandeja y chat, conservando los borradores. Este rediseño no modifica los permisos ni las integraciones.
+
 Meta sigue recibiendo mensajes y archivos en el número empresarial actual. La interfaz conserva el historial que el analista está leyendo y sus borradores cuando se actualiza. El estado de entrega proviene de los eventos de WhatsApp.
 
 La conexión en tiempo real usa eventos del servidor y notificaciones transaccionales de PostgreSQL: los mensajes, sus estados y las asignaciones invalidan la bandeja cuando se confirma el cambio. Cada conexión revalida el usuario y su alcance. Si se interrumpe, se reconecta y vuelve a consultar; la actualización periódica queda como respaldo. No hace falta importar Dapta para recibir los nuevos mensajes de Meta.

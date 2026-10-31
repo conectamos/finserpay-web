@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { CalendarClock, Check, ChevronLeft, ChevronRight, MessageCircle, RefreshCw } from "lucide-react";
+import { CalendarClock, Check, ChevronLeft, ChevronRight, MessageCircle, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { Button, EmptyState, LoadingState, Select } from "@/app/_components/finser-ui";
 import type { AttentionAgenda, AttentionAgendaFilters, AttentionConversation, AttentionDetail, AttentionFilters, AttentionInbox, AttentionQuickReply } from "@/lib/atencion-types";
 import styles from "./attention-operational.module.css";
@@ -11,16 +11,29 @@ const date = (value: string) => new Intl.DateTimeFormat("es-CO", { timeZone: "Am
 const message = (error: unknown) => error instanceof Error ? error.message : "No fue posible actualizar la agenda.";
 function errorStatus(error: unknown) { return typeof error === "object" && error && "status" in error ? Number(error.status) : 0; }
 
-export function AttentionWorkFilters({ filter, tag, central, inbox, change }: { filter: AttentionFilters["filter"]; tag: string; central: boolean; inbox: AttentionInbox | null; change: (filter: AttentionFilters["filter"], tag: string) => void }) {
+export function AttentionWorkFilters({ filter, tag, central, inbox, change, compact = false }: { filter: AttentionFilters["filter"]; tag: string; central: boolean; inbox: AttentionInbox | null; change: (filter: AttentionFilters["filter"], tag: string) => void; compact?: boolean }) {
   const items: { value: AttentionFilters["filter"]; label: string; count?: number }[] = [
     { value: "unread", label: "No leídos", count: inbox?.operational?.unread },
     { value: "unanswered", label: "Sin responder", count: inbox?.operational?.unanswered },
     ...(central ? [{ value: "unassigned" as const, label: "Sin asignar", count: inbox?.operational?.unassigned }] : []),
   ];
-  return <div className={styles.filters}>
-    <div className={styles.queueFilters} role="group" aria-label="Pendientes de conversación">{items.map(item => <button type="button" key={item.value} aria-pressed={filter === item.value} onClick={() => change(filter === item.value ? "all" : item.value, tag)}>{item.label}{typeof item.count === "number" && item.count > 0 && <span>{item.count}</span>}</button>)}</div>
-    <div className={styles.selectFilters}><label><span className={styles.srOnly}>Estado de conversaciones</span><Select aria-label="Estado de conversaciones" value={["all", "mine", "pending", "closed"].includes(filter) ? filter : "queue"} onChange={event => change(event.target.value as AttentionFilters["filter"], tag)}>{items.some(item => item.value === filter) && <option value="queue">{items.find(item => item.value === filter)?.label}</option>}<option value="all">Todas</option><option value="mine">Mías</option><option value="pending">Pendientes</option><option value="closed">Finalizadas</option></Select></label>
-      <label><span className={styles.srOnly}>Filtrar por etiqueta</span><Select aria-label="Filtrar por etiqueta" value={tag} onChange={event => change(filter, event.target.value)}><option value="">Todas las etiquetas</option>{Array.from(new Set([...(inbox?.availableTags || []), ...(tag ? [tag] : [])])).map(value => <option key={value} value={value}>{value}</option>)}</Select></label></div>
+  const selections = <div data-attention="select-filters" className={styles.selectFilters}><label><span className={styles.srOnly}>Estado de conversaciones</span><Select aria-label="Estado de conversaciones" value={["all", "mine", "pending", "closed"].includes(filter) ? filter : "queue"} onChange={event => change(event.target.value as AttentionFilters["filter"], tag)}>{items.some(item => item.value === filter) && <option value="queue">{items.find(item => item.value === filter)?.label}</option>}<option value="all">Todas</option><option value="mine">Mías</option><option value="pending">Pendientes</option><option value="closed">Finalizadas</option></Select></label>
+      <label><span className={styles.srOnly}>Filtrar por etiqueta</span><Select aria-label="Filtrar por etiqueta" value={tag} onChange={event => change(filter, event.target.value)}><option value="">Todas las etiquetas</option>{Array.from(new Set([...(inbox?.availableTags || []), ...(tag ? [tag] : [])])).map(value => <option key={value} value={value}>{value}</option>)}</Select></label></div>;
+  if (compact) return <div data-attention="filters" className={`${styles.filters} ${styles.compactFilters}`}>
+    <div data-attention="queue-filters" className={styles.queueFilters} role="group" aria-label="Filtrar conversaciones">
+      <button type="button" aria-pressed={filter === "all" && !tag} onClick={() => change("all", "")}>Todos</button>
+      <button type="button" aria-pressed={filter === "unread"} onClick={() => change(filter === "unread" ? "all" : "unread", tag)}>No leídos{Boolean(inbox?.operational?.unread) && <span>{inbox!.operational.unread}</span>}</button>
+      <button type="button" aria-pressed={tag === "FINSERPAY"} onClick={() => change("all", tag === "FINSERPAY" ? "" : "FINSERPAY")}>Clientes</button>
+      {central && <button type="button" aria-pressed={filter === "unassigned"} onClick={() => change(filter === "unassigned" ? "all" : "unassigned", tag)}>Sin asignar</button>}
+    </div>
+    <details className={styles.filterDetails} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}>
+      <summary aria-label="Más filtros de conversación" title="Más filtros"><SlidersHorizontal aria-hidden="true" size={17} />{(filter === "unanswered" || ["mine", "pending", "closed"].includes(filter) || Boolean(tag && tag !== "FINSERPAY")) && <i aria-label="Filtros adicionales activos" />}</summary>
+      <div className={styles.filterOptions}><button type="button" aria-pressed={filter === "unanswered"} onClick={() => change(filter === "unanswered" ? "all" : "unanswered", tag)}>Sin responder{Boolean(inbox?.operational?.unanswered) && <span>{inbox!.operational.unanswered}</span>}</button>{selections}</div>
+    </details>
+  </div>;
+  return <div data-attention="filters" className={styles.filters}>
+    <div data-attention="queue-filters" className={styles.queueFilters} role="group" aria-label="Pendientes de conversación">{items.map(item => <button type="button" key={item.value} aria-pressed={filter === item.value} onClick={() => change(filter === item.value ? "all" : item.value, tag)}>{item.label}{typeof item.count === "number" && item.count > 0 && <span>{item.count}</span>}</button>)}</div>
+    {selections}
   </div>;
 }
 
@@ -38,7 +51,7 @@ export function AttentionConversationIndicators({ conversation }: { conversation
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(timer); }, []);
   const waiting = waitingDuration(conversation.waitingSince, now);
   if (!conversation.unreadCount && !waiting) return null;
-  return <span className={styles.indicators}>{waiting && <span className={styles.waiting} title={`Sin respuesta desde ${date(conversation.waitingSince!)}`}><CalendarClock aria-hidden="true" size={13} />Espera {waiting}</span>}{conversation.unreadCount > 0 && <span className={styles.unread} aria-label={`${conversation.unreadCount} mensajes no leídos`}>{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</span>}</span>;
+  return <span data-attention="indicators" className={styles.indicators}>{waiting && <span data-attention="waiting" className={styles.waiting} title={`Sin respuesta desde ${date(conversation.waitingSince!)}`}><CalendarClock aria-hidden="true" size={13} />Espera {waiting}</span>}{conversation.unreadCount > 0 && <span data-attention="unread" className={styles.unread} aria-label={`${conversation.unreadCount} mensajes no leídos`}>{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</span>}</span>;
 }
 
 /** Acknowledges only the exact inbound IDs rendered in a visible, bottom-scrolled log. */
@@ -76,7 +89,7 @@ export function AttentionObservedRead({ detail, active, log, request, onRead, on
 
 export function AttentionQuickReplies({ replies, disabled, insert }: { replies: AttentionQuickReply[]; disabled: boolean; insert: (text: string) => void }) {
   if (!replies.length) return null;
-  return <label className={styles.quickReplies}><span className={styles.srOnly}>Insertar respuesta rápida</span><Select aria-label="Insertar respuesta rápida" value="" disabled={disabled} onChange={event => { const reply = replies.find(item => item.id === event.target.value); if (reply) insert(reply.text); }}><option value="">Respuesta rápida</option>{replies.map(reply => <option key={reply.id} value={reply.id}>{reply.title}</option>)}</Select></label>;
+  return <label data-attention="quick-replies" className={styles.quickReplies}><span className={styles.srOnly}>Insertar respuesta rápida</span><Select aria-label="Insertar respuesta rápida" value="" disabled={disabled} onChange={event => { const reply = replies.find(item => item.id === event.target.value); if (reply) insert(reply.text); }}><option value="">Respuesta rápida</option>{replies.map(reply => <option key={reply.id} value={reply.id}>{reply.title}</option>)}</Select></label>;
 }
 
 export function AttentionAgendaView({ request, revision, disabled, openChat, busyChanged, saved, accessDenied }: { request: Request; revision: unknown; disabled: boolean; openChat: (id: string) => void; busyChanged: (value: boolean) => void; saved: () => void; accessDenied: (error: unknown, conversationId?: string) => boolean }) {

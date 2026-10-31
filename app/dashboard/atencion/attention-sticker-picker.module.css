@@ -17,3 +17,12 @@
 .selectedFile { display:flex; justify-content:space-between; gap:12px; overflow-wrap:anywhere; }
 .error { padding:12px; background:var(--fp-danger-soft); color:var(--fp-danger); border-radius:var(--fp-radius-sm); }
 @media(max-width:420px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+:global([data-chat-theme='dark']) .library { color:var(--fp-chat-text); }
+:global([data-chat-theme='dark']) .library > p,:global([data-chat-theme='dark']) .add small { color:var(--fp-chat-muted); }
+:global([data-chat-theme='dark']) .tabs,:global([data-chat-theme='dark']) .add { border-color:var(--fp-chat-border); }
+:global([data-chat-theme='dark']) .tabs button[aria-pressed=true] { color:var(--fp-chat-accent); border-bottom-color:var(--fp-chat-accent); }
+:global([data-chat-theme='dark']) .grid article { background:var(--fp-chat-bg); border-color:var(--fp-chat-border); }
+:global([data-chat-theme='dark']) .grid article:hover { border-color:var(--fp-chat-muted); }
+:global([data-chat-theme='dark']) .select { color:var(--fp-chat-text); border-radius:var(--fp-radius-sm); }
+:global([data-chat-theme='dark']) .select:hover:not(:disabled) { background:var(--fp-chat-selected); }
+:global([data-chat-theme='dark']) .actions button[aria-pressed=true] { color:var(--fp-chat-accent); }
