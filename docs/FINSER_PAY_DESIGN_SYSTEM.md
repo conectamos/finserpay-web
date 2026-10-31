@@ -37,6 +37,11 @@ la confirmación del resultado de la gestión.
 Las bandejas de Enrolamientos y Aprobaciones muestran pendientes de gestión por
 defecto. Los casos finalizados se consultan expresamente desde el historial;
 no se mezclan con la cola activa ni se eliminan sus mensajes o documentos.
+Los teléfonos dentro de mensajes conservan la tipografía de la burbuja y usan
+un subrayado discreto. Sus opciones se abren en un menú compacto con foco de
+teclado y cierre con Escape; la navegación al chat requiere una acción explícita.
+En el chat del asesor, «Tomar foto», «Adjuntar fotos» y «Adjuntar PDF» son botones visibles;
+la miniatura y el nombre del archivo pendiente preceden al envío explícito.
 
 ## Principios
 

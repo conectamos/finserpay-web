@@ -14,6 +14,7 @@ export interface AttentionDb { $queryRawUnsafe<T = unknown>(sql: string, ...valu
 export interface AttentionDatabase extends AttentionDb {
   $transaction<T>(fn: (tx: AttentionDb) => Promise<T>, options: { isolationLevel: "ReadCommitted"; timeout: number; maxWait: number }): Promise<T>;
 }
+export type AttentionPhoneLookup = { matches: { id: string; name: string; phone: string; status: AttentionConversation["status"] }[]; total: number };
 type ConversationRow = Omit<AttentionConversation, "lastContactAt" | "updatedAt" | "preview" | "autoTags" | "creditClassification" | "customerIdentity" | "unreadCount" | "lastInboundAt" | "waitingSince"> & {
   lastContactAt: Date | string | null; updatedAt: Date | string; closedAt: Date | string | null;
   daptaMessagesCursor: string | null; preview?: string | null; historyTruncated: boolean;
@@ -230,6 +231,24 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
     return fn(tx);
   }, settings);
   return {
+    async findAttentionConversationsByPhone(actor: AttentionActor, input: unknown): Promise<AttentionPhoneLookup> {
+      assertAttentionActor(actor);
+      if (typeof input !== "string" || input.length > 40) throw new AttentionError("Ingresa un teléfono válido con indicativo de país.");
+      const phone = normalizeAttentionPhone(input);
+      return transaction(actor, async tx => {
+        await requireSchema(tx);
+        const [workSchema] = await tx.$queryRawUnsafe<{ready: boolean}[]>(`SELECT to_regclass('public."AttentionWorkRequest"') IS NOT NULL AS ready`);
+        if (!workSchema?.ready) throw new AttentionError("Atención requiere preparar su esquema de solicitudes.", 503);
+        const access = scope(actor);
+        const where = `${access.sql} AND c.channel='whatsapp' AND c.phone=$4::text
+          AND NOT EXISTS(SELECT 1 FROM "AttentionWorkRequest" w WHERE w."conversationId"=c.id)`;
+        const values = [...access.values, phone];
+        const matches = await tx.$queryRawUnsafe<AttentionPhoneLookup["matches"]>(`SELECT c.id,c.name,c.phone,c.status FROM "AttentionConversation" c
+          WHERE ${where} ORDER BY c."lastContactAt" DESC NULLS LAST,c.id LIMIT 10 FOR SHARE OF c`, ...values);
+        const [total] = await tx.$queryRawUnsafe<{count: number}[]>(`SELECT count(*)::integer AS count FROM "AttentionConversation" c WHERE ${where}`, ...values);
+        return {matches,total:total.count};
+      });
+    },
     async getAttentionHistoryCursors(actor: AttentionActor): Promise<Record<string, string | null>> {
       assertAttentionActor(actor); if (!actor.central) throw new AttentionError("Solo administración central puede leer los puntos de sincronización.", 403);
       return transaction(actor, async tx => {
@@ -555,3 +574,4 @@ export async function getAttentionHistoryCursors(actor: AttentionActor) { return
 export async function markAttentionRead(actor: AttentionActor, id: string, input: {messageIds:string[]}) { return (await store()).markAttentionRead(actor,id,input); }
 export async function markAttentionTeamRead(actor: AttentionActor, id: string, input: {version:number;requestId:string}) { return (await store()).markAttentionTeamRead(actor,id,input); }
 export async function getAttentionAgenda(actor: AttentionActor, filters: AttentionAgendaFilters) { return (await store()).getAttentionAgenda(actor,filters); }
+export async function findAttentionConversationsByPhone(actor: AttentionActor, phone: unknown) { return (await store()).findAttentionConversationsByPhone(actor,phone); }

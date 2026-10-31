@@ -1,0 +1,20 @@
+.text{white-space:pre-wrap;overflow-wrap:anywhere}
+.phone{display:inline;padding:0;border:0;background:transparent;color:inherit;font:inherit;line-height:inherit;vertical-align:baseline;white-space:inherit;text-decoration:underline;text-decoration-color:var(--fp-chat-accent,var(--fp-client-green));text-underline-offset:3px;cursor:pointer}
+.phone:disabled{color:inherit;cursor:default;text-decoration:none}
+.phone:focus-visible{outline:2px solid var(--fp-chat-accent,var(--fp-client-green));outline-offset:3px;border-radius:2px}
+.popover{--fp-graphite:var(--fp-chat-text);--fp-muted:var(--fp-chat-muted);--fp-surface:var(--fp-chat-surface);--fp-border:var(--fp-chat-border);position:fixed;z-index:1000;box-sizing:border-box;overflow:auto;padding:12px;border:1px solid var(--fp-chat-border);border-radius:var(--fp-radius-md);background:var(--fp-chat-surface);color:var(--fp-chat-text);color-scheme:dark;box-shadow:0 8px 24px rgb(0 0 0 / 25%);font-size:15px;line-height:1.5;overscroll-behavior:contain;white-space:normal}
+.popover header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.popover header>strong{min-width:0;overflow-wrap:anywhere;font-weight:600}
+.close{display:grid;place-items:center;flex-shrink:0;width:40px;height:40px;padding:8px;border:0;border-radius:var(--fp-radius-sm);background:transparent;color:var(--fp-chat-muted);cursor:pointer}
+.close:hover{background:var(--fp-chat-raised);color:var(--fp-chat-text)}
+.popover .openAction{width:100%;min-height:44px;background:var(--fp-chat-outbound);border-color:var(--fp-chat-outbound);color:var(--fp-chat-text)}
+.popover .openAction:hover:not(:disabled){background:var(--fp-chat-outbound-hover)}
+.muted{margin:10px 0 0;color:var(--fp-chat-muted);font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.error{margin:10px 0 0;color:#ffaaa2;overflow-wrap:anywhere}
+.external{display:flex;align-items:center;min-height:44px;margin-top:8px;color:var(--fp-chat-accent);font-weight:500;text-decoration:underline;text-underline-offset:3px}
+.matches{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.matches>button{display:flex;flex-direction:column;gap:3px;min-height:52px;width:100%;padding:8px 10px;text-align:left;border:1px solid var(--fp-chat-border);border-radius:var(--fp-radius-sm);background:transparent;color:var(--fp-chat-text);font:inherit;cursor:pointer;overflow-wrap:anywhere}
+.matches>button:hover{background:var(--fp-chat-raised)}
+.matches strong{font-size:15px;font-weight:600}
+.matches span{color:var(--fp-chat-muted);font-size:14px}
+.popover button:focus-visible,.popover a:focus-visible{outline:2px solid var(--fp-chat-accent);outline-offset:2px}
