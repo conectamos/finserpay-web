@@ -13,6 +13,7 @@ import type { AttentionActor, AttentionConversation, AttentionCustomer, Attentio
 import type { AttentionExtensionInput, AttentionExtensionResult, AttentionFinancial, AttentionFinancialCredit, AttentionReceiptSendInput } from "@/lib/atencion-financial-types";
 import { attentionWorkKinds, attentionWorkStates } from "@/lib/atencion-work-types";
 import AttentionComposerTools from "./attention-composer-tools";
+import AttentionImageViewer from "./attention-image-viewer";
 import AttentionTemplateComposer from "./attention-template-composer";
 import AttentionBoard from "./attention-board";
 import AttentionCloseAll from "./attention-close-all";
@@ -137,7 +138,7 @@ function MessageContent({ text, dapta, media, mediaReady }: { text: string; dapt
       {(media.kind === "image" || media.kind === "sticker") && <MediaImage key={url} url={url} name={name} onLoad={mediaReady} />}
       {media.kind === "audio" && <audio controls preload="none" src={url} onLoadedMetadata={mediaReady} aria-label={name}>Tu navegador no puede reproducir este audio.</audio>}
       {media.kind === "video" && <video controls preload="none" playsInline src={url} onLoadedMetadata={mediaReady} aria-label={name}>Tu navegador no puede reproducir este video.</video>}
-      <a href={url} target="_blank" rel="noopener noreferrer" className={styles.mediaDownload}><Download aria-hidden="true" size={16} />{media.kind === "document" ? name : "Abrir o descargar archivo"}</a>
+      <a href={url} target={media.kind === "image" || media.kind === "sticker" ? undefined : "_blank"} download={media.kind === "image" || media.kind === "sticker" ? name : undefined} rel="noopener noreferrer" className={styles.mediaDownload}><Download aria-hidden="true" size={16} />{media.kind === "document" ? name : media.kind === "image" || media.kind === "sticker" ? "Descargar imagen" : "Abrir o descargar archivo"}</a>
     </> : <div className={styles.mediaUnavailable}><FileText aria-hidden="true" size={20} /><span>{name}<small>El archivo todavía no está disponible.</small></span></div>}{text && <p>{text}</p>}</div>;
   }
   const attachment = dapta ? /^\[(Imagen|Audio|Video|Documento|Sticker) de WhatsApp(?: · [^\]]*)?\]$/.exec(text) : null;
@@ -149,8 +150,9 @@ function MessageContent({ text, dapta, media, mediaReady }: { text: string; dapt
 function MediaImage({ url, name, onLoad }: { url: string; name: string; onLoad?: () => void }) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [viewing, setViewing] = useState(false);
   if (failed) return <div className={styles.mediaUnavailable}><ImageIcon aria-hidden="true" size={20} /><div><span role="status">{name}<small>No se pudo cargar la imagen. Puedes reintentar o abrir el archivo.</small></span><Button type="button" variant="secondary" onClick={() => { setAttempt(value => value + 1); setFailed(false); }}><RefreshCw aria-hidden="true" size={16} />Reintentar imagen</Button></div></div>;
-  return <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir ${name}`}><Image key={attempt} src={url} unoptimized width={640} height={480} alt={name} onLoad={onLoad} onError={() => { setFailed(true); onLoad?.(); }} className={styles.messageImage} /></a>;
+  return <><button type="button" className={styles.imageTrigger} aria-label={`Abrir ${name}`} aria-haspopup="dialog" aria-expanded={viewing} onClick={() => setViewing(true)}><Image key={attempt} src={url} unoptimized width={640} height={480} alt={name} onLoad={onLoad} onError={() => { setFailed(true); onLoad?.(); }} className={styles.messageImage} /></button>{viewing && <AttentionImageViewer url={url} name={name} onClose={() => setViewing(false)} />}</>;
 }
 const deliveryNames = { pending: "Pendiente", queued: "En cola", sending: "En proceso", accepted: "Aceptado por WhatsApp", sent: "Enviado", delivered: "Entregado", read: "Leído", failed: "No enviado", uncertain: "Envío por confirmar" } as const;
 function MessageDelivery({ message }: { message: AttentionMessage }) {

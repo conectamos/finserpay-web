@@ -65,6 +65,8 @@ El analista puede abrir el PDF privado y confirmar el envío al mismo teléfono 
 
 ## Audios y emojis
 
+Las imágenes y stickers recibidos se abren al tocarlos en un visor dentro del CRM, con ampliación a dos veces el tamaño visible, ajuste a la pantalla y descarga. El visor utiliza las mismas rutas privadas del mensaje y conserva los permisos de acceso. Cerrar o pulsar Escape vuelve al chat y su borrador sin desplazar el historial; cambiar de chat retira el visor. Los documentos, audios y videos conservan sus controles actuales.
+
 El editor permite insertar emojis, adjuntar audios compatibles y grabar hasta cinco minutos. El micrófono solo se activa tras pulsar Grabar audio y permitirlo en el navegador. Detener permite escuchar, descartar o adjuntar; adjuntar todavía requiere pulsar Enviar.
 
 Las grabaciones WebM se convierten en memoria a OGG/Opus mediante FFmpeg instalado en la imagen de producción. La conversión está autenticada y limitada a ocho MB, dos procesos simultáneos por instancia y cuarenta y cinco segundos. No usa archivos públicos ni servicios externos. Cambiar de chat o perder el permiso de respuesta cancela la captura.
