@@ -56,14 +56,14 @@ async function fixture(t, overrides = {}) {
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
 
-test("instalación aditiva verifica diecinueve tablas y se puede repetir sin pérdida de datos", async t => {
+test("instalación aditiva verifica veinte tablas y se puede repetir sin pérdida de datos", async t => {
   const { database, install, calls, logs, ended } = await fixture(t);
   await install();
   await database.query(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES('user:1','00000000-0000-4000-8000-000000000001','retained')`);
   await install();
   assert.equal((await database.query('SELECT fingerprint FROM "AttentionRequest"')).rows[0].fingerprint, "retained");
   assert.ok(calls.findIndex(sql => sql.startsWith("SELECT pg_advisory_lock(")) < calls.indexOf(setupSql));
-  assert.ok(logs.every(message => message.includes("19 tablas") && message.includes("auditoría inmutable")));
+  assert.ok(logs.every(message => message.includes("20 tablas") && message.includes("auditoría inmutable")));
   assert.ok(ended());
 });
 
@@ -76,6 +76,27 @@ test("upgrade operativo añade lecturas y template sin cambiar mensajes existent
   assert.equal((await database.query('SELECT count(*)::int n FROM "AttentionReadState"')).rows[0].n,0);
   assert.equal((await database.query('SELECT text FROM "AttentionMessage"')).rows[0].text,'Conservar');
   assert.equal((await database.query(`SELECT is_nullable FROM information_schema.columns WHERE table_name='AttentionMetaOutbox' AND column_name='template'`)).rows[0].is_nullable,'YES');
+});
+
+test("captura QR se instala sin alterar mensajes y conserva sesiones en una reinstalación",async t=>{
+  const {database,install}=await fixture(t);await database.exec(setupSql);
+  await database.exec(`DROP TABLE "AttentionWorkCaptureSession";
+    INSERT INTO "Sede" VALUES(1);INSERT INTO "Usuario" VALUES(1);INSERT INTO "Vendedor" VALUES(1);
+    INSERT INTO "AttentionConversation"(id,channel,name) VALUES('00000000-0000-4000-8000-000000000031','internal','Conservar');
+    INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt") VALUES('00000000-0000-4000-8000-000000000032','00000000-0000-4000-8000-000000000031','old','inbound','Mensaje previo',now());
+    INSERT INTO "AttentionWorkRequest"(id,"conversationId",kind,"targetSource","targetId","sellerId","userId","sedeId","aliadoId") VALUES('00000000-0000-4000-8000-000000000033','00000000-0000-4000-8000-000000000031','enrollment','D',1,1,1,1,1);`);
+  await install();
+  await database.query(`INSERT INTO "AttentionWorkCaptureSession"(id,"workId","actorKey",actor,"requestId","requestVersion","tokenHash","bindingHash","expiresAt") VALUES($1,$2,'admin:1','{}',$3,1,$4,$5,now()+interval '20 minutes')`,['00000000-0000-4000-8000-000000000034','00000000-0000-4000-8000-000000000033','00000000-0000-4000-8000-000000000035','a'.repeat(64),'b'.repeat(64)]);
+  await install();
+  assert.equal((await database.query('SELECT text FROM "AttentionMessage"')).rows[0].text,'Mensaje previo');
+  assert.equal((await database.query('SELECT "tokenHash","uploadedCount" FROM "AttentionWorkCaptureSession"')).rows[0].tokenHash,'a'.repeat(64));
+  const columns=(await database.query(`SELECT column_name FROM information_schema.columns WHERE table_name='AttentionWorkCaptureSession'`)).rows.map(r=>r.column_name);
+  assert.equal(columns.some(c=>['token','secret','mobileUrl','content'].includes(c)),false);
+});
+
+test("postcheck rechaza captura QR sin restricción de hash",async t=>{
+  const {install}=await fixture(t,{afterSql:db=>db.exec('ALTER TABLE "AttentionWorkCaptureSession" DROP CONSTRAINT "AttentionWorkCaptureSession_tokenHash_check"')});
+  await assert.rejects(install(),/AttentionWorkCaptureSession.tokenHash.CHECK/);
 });
 
 test("lectura compartida es aditiva, conserva ecos previos sin backfill y exige conversación/procedencia coherentes",async t=>{

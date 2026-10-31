@@ -12,6 +12,8 @@ import { attentionUnreadPredicate } from "./atencion-team-read";
 type Row = AttentionWorkItem & { targetSource: "D" | "C"; targetId: number; sellerId: number; userId: number; sedeId: number; aliadoId: number };
 type Target = { id:number; name:string; document:string|null; imei:string|null; platform:string|null; state:string; sellerId:number|null; sedeId:number; aliadoId:number; advisor:string; ally:string; branch:string };
 export type AttentionWorkWorkflowContext = {db:AttentionDb;actor:AttentionActor;work:Row;target:Target};
+type WorkFileInput={requestId:string;version?:number;fileName:string;mimeType:string;content:Uint8Array;captureSessionId?:string};
+export type AttentionWorkCaptureContext={db:AttentionDb;actor:AttentionWorkActor;workId:string;conversationId:string;version:number;closed:boolean;bindingHash:string;attach:(input:WorkFileInput)=>Promise<{fileId:string;alreadyApplied:boolean}>};
 const identity = (a:AttentionWorkActor) => a.type === "attention" ? {userId:a.actor.userId,sellerId:null,key:a.actor.key,name:a.actor.name} : a;
 const iso = (value:unknown) => new Date(value as string).toISOString();
 const currentNameSql = `COALESCE(CASE w."targetSource" WHEN 'D' THEN
@@ -77,11 +79,11 @@ async function centralEnrollmentOwner(db:AttentionDb,t:Target):Promise<{sellerId
   return {sellerId:seller.id,userId:accounts[0].id};
 }
 export function createAttentionWorkStore(database:AttentionDatabase){
-  async function transaction<T>(a:AttentionWorkActor,run:(db:AttentionDb)=>Promise<T>){return database.$transaction(async db=>{
+  async function transaction<T>(a:AttentionWorkActor,run:(db:AttentionDb,current:AttentionWorkActor)=>Promise<T>){return database.$transaction(async db=>{
     a=await assertAttentionWorkCurrentActor(db,a);
     const [schema]=await db.$queryRawUnsafe<{ready:boolean}[]>(`SELECT to_regclass('public."AttentionWorkRequest"') IS NOT NULL AS ready`);
     if(!schema?.ready)throw new AttentionError("La bandeja de solicitudes está pendiente de instalar.",503);
-    return run(db);
+    return run(db,a);
   },{isolationLevel:"ReadCommitted",timeout:20000,maxWait:10000});}
   async function row(db:AttentionDb,a:AttentionWorkActor,id:string){const access=scope(a);const [r]=await db.$queryRawUnsafe<Row[]>(`SELECT ${selected},${unreadSql(a)} AS "unreadCount" ${join} WHERE ${access.sql} AND w.id=$${access.values.length+1}::uuid FOR UPDATE OF w,c`,...access.values,attentionUuid(id));if(!r)throw new AttentionError("Solicitud no encontrada o no autorizada.",404);
     if(a.type==="seller"){const t=await target(db,r.targetSource,r.targetId);if(t.aliadoId!==a.aliadoId||!(t.sellerId===a.sellerId||a.supervisor&&t.sedeId===a.sedeId))throw new AttentionError("La operación ya no pertenece a tu alcance.",403);}return r;}
@@ -109,7 +111,43 @@ export function createAttentionWorkStore(database:AttentionDatabase){
     if(t.sellerId!==work.sellerId||t.sedeId!==work.sedeId||t.aliadoId!==work.aliadoId)throw new AttentionError("La venta cambió de asesor o sede. Revisa la vinculación antes de continuar.",409);
     return {db,actor:a.actor,work,target:t};
   }
+  /** Same atomic file/message/quota path for authenticated uploads and scoped QR captures. */
+  async function attachInTransaction(db:AttentionDb,a:AttentionWorkActor,r:Row,input:WorkFileInput){
+    const id=r.id,who=identity(a),staff=a.type==="attention";
+    if(!staff&&a.sellerId!==r.sellerId)throw new AttentionError("Solo el asesor titular puede enviar soportes.",403);
+    if(!["image/jpeg","image/png","application/pdf"].includes(input.mimeType))throw new AttentionError("Adjunta JPG, PNG o PDF.",415);
+    const kind=input.mimeType==="application/pdf"?"document":"image",fileName=attentionText(input.fileName,180);
+    validateMetaAttentionMedia({bytes:input.content,mimeType:input.mimeType,fileName,kind});
+    const hash=createHash("sha256").update(input.content).digest("hex");
+    const req=await intent(db,a,input.requestId,input.captureSessionId
+      ?{action:"WORK_CAPTURE_FILE",id,captureSessionId:input.captureSessionId,fileName,mimeType:input.mimeType,hash}
+      :{action:"WORK_FILE",id,version:input.version,fileName,mimeType:input.mimeType,hash});
+    const externalId=input.captureSessionId?`capture:${input.captureSessionId}:${req.id}`:`work:${req.id}`;
+    if(req.replay){
+      const [message]=await db.$queryRawUnsafe<{fileId:string}[]>(`SELECT attachment->>'id' AS "fileId" FROM "AttentionMessage" WHERE "conversationId"=$1::uuid AND "externalId"=$2`,r.conversationId,externalId);
+      if(req.replay!==r.id||!message?.fileId)throw new AttentionError("No se encontró el archivo de este intento. Actualiza la solicitud.",409);
+      return {fileId:message.fileId,alreadyApplied:true};
+    }
+    if(r.state==="completed"||(!input.captureSessionId&&r.version!==input.version))throw new AttentionError("La solicitud cambió o está finalizada. Actualiza antes de adjuntar.",409);
+    const [quota]=await db.$queryRawUnsafe<{n:number;size:number}[]>(`SELECT count(*)::int AS n,COALESCE(sum(octet_length(content)),0)::int AS size FROM "AttentionWorkFile" WHERE "workId"=$1::uuid`,id);
+    if(quota.n>=100||quota.size+input.content.length>100*1024*1024)throw new AttentionError("Esta solicitud alcanzó el límite de soportes (100 archivos / 100 MB).",409);
+    const fileId=randomUUID();await db.$queryRawUnsafe(`INSERT INTO "AttentionWorkFile"(id,"workId",content,"mimeType") VALUES($1::uuid,$2::uuid,$3,$4) RETURNING id`,fileId,id,Buffer.from(input.content),input.mimeType);
+    await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,attachment) VALUES($1::uuid,$2::uuid,$3,$4,'',now(),$5,$6::jsonb) RETURNING id`,randomUUID(),r.conversationId,externalId,staff?"outbound":"inbound",who.name,JSON.stringify({id:fileId,kind,fileName,mimeType:input.mimeType,url:`/api/${staff?"atencion/solicitudes":"ventas/atencion"}/${id}/files/${fileId}`}));
+    await db.$queryRawUnsafe(`UPDATE "AttentionWorkRequest" SET version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`,id);
+    await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET version=version+1,"updatedAt"=now(),"lastContactAt"=now() WHERE id=$1::uuid RETURNING id`,r.conversationId);
+    await audit(db,a,r,req.id,"WORK_FILE",input.captureSessionId?{source:"qr_capture",captureSessionId:input.captureSessionId}:{});
+    await notifyAttentionWork(db,a,r,`file:${req.id}`,staff?"reply":"followup");
+    return {fileId,alreadyApplied:false};
+  }
   return {
+    captureAccess:<T>(a:AttentionWorkActor,id:string,run:(context:AttentionWorkCaptureContext)=>Promise<T>)=>transaction(a,async(db,current)=>{
+      const r=await row(db,current,id),t=await target(db,r.targetSource,r.targetId);
+      if(current.type==="seller"&&current.sellerId!==t.sellerId)throw new AttentionError("Solo el asesor titular puede enviar soportes.",403);
+      if(t.sellerId!==r.sellerId||t.sedeId!==r.sedeId||t.aliadoId!==r.aliadoId)throw new AttentionError("La venta cambió de asesor o sede. Abre una nueva captura desde la solicitud vigente.",409);
+      const [assignment]=await db.$queryRawUnsafe<{revision:string}[]>(`SELECT COALESCE(max(id),0)::text AS revision FROM "AttentionAudit" WHERE "conversationId"=$1::uuid AND (action='WORK_ASSIGNED' OR (action IN ('WORK_STATE','WORK_WORKFLOW') AND metadata->>'state'='completed'))`,r.conversationId);
+      const bindingHash=createHash("sha256").update(JSON.stringify([r.id,r.targetSource,r.targetId,r.sellerId,r.userId,r.sedeId,r.aliadoId,t.document,t.imei,t.platform,r.assigneeKey,assignment.revision])).digest("hex");
+      return run({db,actor:current,workId:r.id,conversationId:r.conversationId,version:r.version,closed:r.state==="completed",bindingHash,attach:input=>attachInTransaction(db,current,r,input)});
+    }),
     workflowRead:<T>(a:AttentionWorkActor,id:string,kind:AttentionWorkKind,run:(context:AttentionWorkWorkflowContext)=>Promise<T>)=>transaction(a,async db=>{
       const context=await workflowContext(db,a,id,kind,false),result=await run(context),finalContext=await workflowContext(db,a,id,kind);
       if(finalContext.target.document!==context.target.document||finalContext.target.imei!==context.target.imei)throw new AttentionError("La identidad de la operación cambió. Actualiza antes de continuar.",409);
@@ -143,22 +181,7 @@ export function createAttentionWorkStore(database:AttentionDatabase){
     forConversation:(a:AttentionWorkActor,conversationId:string)=>transaction(a,async db=>{const access=scope(a),[found]=await db.$queryRawUnsafe<{id:string}[]>(`SELECT w.id ${join} WHERE ${access.sql} AND w."conversationId"=$${access.values.length+1}::uuid`,...access.values,attentionUuid(conversationId));return found?detail(db,a,await row(db,a,found.id)):null;}),
     media:(a:AttentionWorkActor,id:string,fileId:string)=>transaction(a,async db=>{await row(db,a,id);const [file]=await db.$queryRawUnsafe<{content:Uint8Array;mimeType:string}[]>(`SELECT content,"mimeType" FROM "AttentionWorkFile" WHERE id=$1::uuid AND "workId"=$2::uuid`,attentionUuid(fileId),id);if(!file)throw new AttentionError("Archivo no encontrado.",404);return file;}),
     attach:(a:AttentionWorkActor,id:string,input:{requestId:string;version:number;fileName:string;mimeType:string;content:Uint8Array})=>transaction(a,async db=>{
-      const r=await row(db,a,id),who=identity(a),staff=a.type==="attention";
-      if(!staff&&a.sellerId!==r.sellerId)throw new AttentionError("Solo el asesor titular puede enviar soportes.",403);
-      if(!["image/jpeg","image/png","application/pdf"].includes(input.mimeType))throw new AttentionError("Adjunta JPG, PNG o PDF.",415);
-      const kind=input.mimeType==="application/pdf"?"document":"image",fileName=attentionText(input.fileName,180);
-      validateMetaAttentionMedia({bytes:input.content,mimeType:input.mimeType,fileName,kind});
-      const req=await intent(db,a,input.requestId,{action:"WORK_FILE",id,version:input.version,fileName,mimeType:input.mimeType,hash:createHash("sha256").update(input.content).digest("hex")});
-      if(req.replay)return detail(db,a,await row(db,a,req.replay));
-      if(r.state==="completed"||r.version!==input.version)throw new AttentionError("La solicitud cambió o está finalizada. Actualiza antes de adjuntar.",409);
-      const [quota]=await db.$queryRawUnsafe<{n:number;size:number}[]>(`SELECT count(*)::int AS n,COALESCE(sum(octet_length(content)),0)::int AS size FROM "AttentionWorkFile" WHERE "workId"=$1::uuid`,id);
-      if(quota.n>=100||quota.size+input.content.length>100*1024*1024)throw new AttentionError("Esta solicitud alcanzó el límite de soportes (100 archivos / 100 MB).",409);
-      const fileId=randomUUID();await db.$queryRawUnsafe(`INSERT INTO "AttentionWorkFile"(id,"workId",content,"mimeType") VALUES($1::uuid,$2::uuid,$3,$4) RETURNING id`,fileId,id,Buffer.from(input.content),input.mimeType);
-      await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,attachment) VALUES($1::uuid,$2::uuid,$3,$4,'',now(),$5,$6::jsonb) RETURNING id`,randomUUID(),r.conversationId,`work:${req.id}`,staff?"outbound":"inbound",who.name,JSON.stringify({id:fileId,kind,fileName,mimeType:input.mimeType,url:`/api/${staff?"atencion/solicitudes":"ventas/atencion"}/${id}/files/${fileId}`}));
-      await db.$queryRawUnsafe(`UPDATE "AttentionWorkRequest" SET version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`,id);
-      await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET version=version+1,"updatedAt"=now(),"lastContactAt"=now() WHERE id=$1::uuid RETURNING id`,r.conversationId);
-      await audit(db,a,r,req.id,"WORK_FILE");
-      await notifyAttentionWork(db,a,r,`file:${req.id}`,staff?"reply":"followup");
+      const r=await row(db,a,id);await attachInTransaction(db,a,r,input);
       return detail(db,a,await row(db,a,id));
     }),
     list:(a:AttentionWorkActor,kind:AttentionWorkKind,page=1,rawFilters:Partial<AttentionWorkListFilters>={})=>transaction(a,async db=>{parseWorkKind(kind);if(!Number.isSafeInteger(page)||page<1||page>10000)throw new AttentionError("Página inválida.");const access=scope(a),n=access.values.length,filters=workListFilters(rawFilters);

@@ -113,6 +113,8 @@ function isSellerAttentionApi(pathname: string, method: string) {
   const id = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
   if (new RegExp(`^/api/ventas/atencion/${id}$`, "i").test(pathname)) return method === "GET" || method === "PATCH";
   if (new RegExp(`^/api/ventas/atencion/${id}/files$`, "i").test(pathname)) return method === "POST";
+  if (new RegExp(`^/api/ventas/atencion/${id}/capture$`, "i").test(pathname)) return method === "POST";
+  if (new RegExp(`^/api/ventas/atencion/${id}/capture/${id}$`, "i").test(pathname)) return method === "GET" || method === "DELETE";
   return method === "GET" && new RegExp(`^/api/ventas/atencion/${id}/files/${id}$`, "i").test(pathname);
 }
 
@@ -155,6 +157,9 @@ function usesDedicatedBearerAuth(request: NextRequest, pathname: string) {
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  // This exact upload-only endpoint validates its own temporary bearer grant.
+  // It must also work on a phone carrying unrelated commercial/analyst cookies.
+  if (pathname === "/api/atencion/captura" && ["GET", "POST"].includes(request.method)) return NextResponse.next();
   // These public assets contain no session data and must update after logout.
   if ((request.method === "GET" || request.method === "HEAD") &&
       (pathname === "/dashboard/notifications-sw.js" || pathname === "/dashboard/manifest.webmanifest")) {

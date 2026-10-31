@@ -42,6 +42,11 @@ un subrayado discreto. Sus opciones se abren en un menú compacto con foco de
 teclado y cierre con Escape; la navegación al chat requiere una acción explícita.
 En el chat del asesor, «Tomar foto», «Adjuntar fotos» y «Adjuntar PDF» son botones visibles;
 la miniatura y el nombre del archivo pendiente preceden al envío explícito.
+«Tomar foto» abre un QR temporal vinculado a la solicitud, sin abrir el selector
+de archivos del computador. El celular muestra una página sencilla de cámara,
+vista previa y envío. El contador confirma las fotos recibidas; el chat conserva
+sus mensajes y borradores. Cancelar la captura revoca el enlace y conserva las
+fotos ya enviadas. La captura de documentos del crédito mantiene su propio flujo.
 
 ## Principios
 

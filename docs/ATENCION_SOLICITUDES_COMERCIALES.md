@@ -76,14 +76,29 @@ mantiene trazabilidad inmutable de los cambios.
 
 ## Piloto antes del traslado de operación
 
-El chat del asesor ofrece «Tomar foto» para solicitar la cámara trasera del
-celular, «Adjuntar fotos» para elegir JPG/PNG hasta 5 MB y «Adjuntar PDF»
-(hasta 16 MB). La cámara depende del selector nativo del dispositivo.
-Tomar o seleccionar un archivo solo prepara una vista previa local:
+El chat del asesor ofrece «Tomar foto» para abrir un QR temporal. Al escanearlo
+con el celular se abre `/atencion-captura`, con cámara trasera, galería y vista
+previa. «Enviar foto» la guarda en el mismo chat y el computador actualiza el
+historial. Se pueden enviar varias fotos sucesivas, una por envío. El QR vence
+a los 20 minutos y «Cerrar captura» revoca el enlace, conservando lo ya enviado.
+El enlace solo permite adjuntar a esa solicitud: no muestra datos del cliente,
+mensajes previos ni archivos. Cada carga vuelve a validar el acceso nominal y
+la vinculación del caso. Cambio de titular, asignación o finalización lo invalida.
+
+«Adjuntar fotos» conserva el selector del computador para JPG/PNG hasta 5 MB;
+«Adjuntar PDF» permite hasta 16 MB. Seleccionar un archivo prepara una vista previa local:
 «Enviar foto» o «Enviar PDF» lo adjunta a la solicitud mediante el acceso privado
 vigente. Se conserva un archivo pendiente por caso y se envía uno por vez; puede
 quitarse o reemplazarse antes de enviarlo. El mensaje de texto tiene su propio
 botón. Esto no sustituye las evidencias obligatorias de entrega del crédito.
+
+La sesión QR se almacena en `AttentionWorkCaptureSession` con hash del token,
+caso, creador nominal, vigencia y contador. El token viaja en el fragmento del
+enlace y en la cabecera Authorization, sin guardarse en texto ni incluirse en
+consultas de URL o logs. Los adjuntos, mensajes, auditoría y avisos usan la misma
+transacción y almacenamiento privado de la solicitud. Los reintentos conservan
+el identificador de la foto para no duplicarla. Este flujo no llama a Meta ni
+Dapta ni cambia el número de WhatsApp.
 
 1. Elegir dos asesores con perfil nominal y PIN actualizado, un analista y un
    administrador central. Mantener los grupos actuales durante el piloto.

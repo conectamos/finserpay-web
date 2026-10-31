@@ -8,6 +8,7 @@ const expectedColumns = {
   AttentionPushDelivery: "id:uuid! notificationId:uuid! subscriptionId:uuid! attempts:int4! nextAttemptAt:timestamptz! leaseToken:uuid leaseUntil:timestamptz deliveredAt:timestamptz errorCode:text createdAt:timestamptz!",
   AttentionWorkNotification: "id:uuid! recipientKey:text! workId:uuid! eventKey:text! kind:text! workKind:text! createdAt:timestamptz! readAt:timestamptz",
   AttentionWorkFile: "id:uuid! workId:uuid! content:bytea! mimeType:text!",
+  AttentionWorkCaptureSession: "id:uuid! workId:uuid! actorKey:text! actor:jsonb! requestId:uuid! requestVersion:int4! tokenHash:text! bindingHash:text! expiresAt:timestamptz! revokedAt:timestamptz uploadedCount:int4! lastUploadedAt:timestamptz createdAt:timestamptz!",
   AttentionWorkRequest: "id:uuid! conversationId:uuid! kind:text! targetSource:text! targetId:int4! sellerId:int4! userId:int4! sedeId:int4! aliadoId:int4! state:text! callMode:text! version:int4! createdAt:timestamptz! updatedAt:timestamptz!",
   AttentionSticker: "id:uuid! userId:int4! name:text! content:bytea! sha256:text! size:int4! animated:bool! favorite:bool! archivedAt:timestamptz version:int4! createdAt:timestamptz!",
   AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz! metaManaged:bool! metaLastInboundAt:timestamptz sectionId:uuid boardVersion:int4!",
@@ -35,6 +36,7 @@ const foreignKeys = {
   AttentionPushDelivery: {notificationId:"AttentionWorkNotification",subscriptionId:"AttentionPushSubscription"},
   AttentionWorkNotification: {workId:"AttentionWorkRequest"},
   AttentionWorkFile: {workId:"AttentionWorkRequest"},
+  AttentionWorkCaptureSession: {workId:"AttentionWorkRequest"},
   AttentionWorkRequest: {conversationId:"AttentionConversation",sellerId:"Vendedor",userId:"Usuario",sedeId:"Sede"},
   AttentionSticker: { userId: "Usuario" },
   AttentionConversation: { sedeId: "Sede", assigneeUserId: "Usuario", assigneeSellerId: "Vendedor", linkedCreditId: "Credito", sectionId: "AttentionBoardSection" },
@@ -93,11 +95,15 @@ async function verifySchema(client, beforeInstallation) {
     }
   }
   for (const [table, columns] of [["AttentionPushSubscription",["endpoint"]],["AttentionPushDelivery",["notificationId","subscriptionId"]],["AttentionWorkNotification", ["recipientKey", "eventKey"]], ["AttentionConversation", ["externalId"]], ["AttentionMessage", ["conversationId", "externalId"]],
+    ["AttentionWorkCaptureSession", ["actorKey", "requestId"]], ["AttentionWorkCaptureSession", ["tokenHash"]],
     ["AttentionMetaBinding", ["phoneNumberId", "contactId"]], ["AttentionMetaOutbox", ["actorKey", "requestId"]],
     ["AttentionMetaOutbox", ["phoneNumberId", "wamid"]], ["AttentionMetaDelivery", ["phoneNumberId", "wamid", "status", "eventAt"]]]) {
     if ((!beforeInstallation || present.has(table)) && !hasConstraint(table, "u", columns)) throw new AttentionSchemaMismatch(`${table}.EXTERNAL_ID_UNIQUE`);
   }
   if (!beforeInstallation) {
+    for (const column of ["actor","requestVersion","tokenHash","bindingHash","uploadedCount"]) {
+      if (!constraints.some(row => row.tableName === "AttentionWorkCaptureSession" && row.contype === "c" && row.convalidated && row.columns.includes(column))) throw new AttentionSchemaMismatch(`AttentionWorkCaptureSession.${column}.CHECK`);
+    }
     for(const columns of [["messageId","conversationId"],["replyMessageId","conversationId"]]){
       if(!constraints.some(row=>row.tableName==="AttentionTeamReadState"&&row.contype==="f"&&row.convalidated&&
         JSON.stringify(row.columns)===JSON.stringify(columns)&&row.foreignSchema==="public"&&row.foreignTable==="AttentionMessage"&&
