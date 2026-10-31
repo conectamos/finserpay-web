@@ -12,20 +12,21 @@ const expectedColumns = {
   AttentionSticker: "id:uuid! userId:int4! name:text! content:bytea! sha256:text! size:int4! animated:bool! favorite:bool! archivedAt:timestamptz version:int4! createdAt:timestamptz!",
   AttentionConversation: "id:uuid! externalId:text channel:text! phone:text name:text! status:text! mode:text! sedeId:int4 assigneeKey:text assigneeName:text assigneeUserId:int4 assigneeSellerId:int4 linkedCreditId:int4 lastContactAt:timestamptz closedAt:timestamptz daptaMessagesCursor:text historyTruncated:bool! tags:jsonb! version:int4! createdAt:timestamptz! updatedAt:timestamptz! metaManaged:bool! metaLastInboundAt:timestamptz sectionId:uuid boardVersion:int4!",
   AttentionBoardSection: "id:uuid! name:text! color:text! position:int4! version:int4! archivedAt:timestamptz createdByUserId:int4 createdAt:timestamptz! updatedAt:timestamptz!",
-  AttentionMessage: "id:uuid! conversationId:uuid! externalId:text! direction:text! text:text! sentAt:timestamptz! author:text metaWamid:text metaPhoneNumberId:text attachment:jsonb deliveryStatus:text deliveryAt:timestamptz replyToWamid:text",
+  AttentionMessage: "id:uuid! conversationId:uuid! externalId:text! direction:text! text:text! sentAt:timestamptz! author:text metaWamid:text metaPhoneNumberId:text attachment:jsonb deliveryStatus:text deliveryAt:timestamptz replyToWamid:text teamReadReply:bool!",
   AttentionNote: "id:uuid! conversationId:uuid! text:text! author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
   AttentionTask: "id:uuid! conversationId:uuid! title:text! dueAt:timestamptz completedAt:timestamptz author:text! userId:int4! sellerId:int4 createdAt:timestamptz!",
   AttentionQuickReply: "id:uuid! title:text! text:text! approvedBy:text! approvedByUserId:int4! approvedAt:timestamptz!",
   AttentionAudit: "id:int8! conversationId:uuid userId:int4 sellerId:int4 action:text! metadata:jsonb! createdAt:timestamptz! actorKind:text! actorKey:text",
   AttentionRequest: "actorKey:text! requestId:uuid! fingerprint:text! resultId:uuid createdAt:timestamptz!",
   AttentionReadState: "userId:int4! messageId:uuid! conversationId:uuid! readAt:timestamptz!",
+  AttentionTeamReadState: "messageId:uuid! conversationId:uuid! source:text! actorUserId:int4 replyMessageId:uuid readAt:timestamptz!",
   AttentionMetaBinding: "id:uuid! conversationId:uuid! phoneNumberId:text! wabaId:text! contactId:text! createdAt:timestamptz!",
   AttentionMetaOutbox: "id:uuid! conversationId:uuid! userId:int4! actorKey:text! authorName:text! requestId:uuid! fingerprint:text! conversationVersion:int4! phoneNumberId:text! wabaId:text! contactId:text! text:text! attachment:jsonb uploadedMediaId:text status:text! messageId:uuid wamid:text leaseToken:uuid leaseUntil:timestamptz sendStartedAt:timestamptz acceptedAt:timestamptz deliveryAt:timestamptz errorCode:text attempts:int4! createdAt:timestamptz! updatedAt:timestamptz! template:jsonb",
   AttentionMetaDelivery: "id:uuid! phoneNumberId:text! wabaId:text! wamid:text! recipient:text! status:text! eventAt:timestamptz! errorCode:text requestId:uuid createdAt:timestamptz!",
 };
 const additiveColumns = {
   AttentionConversation: ["closedAt", "daptaMessagesCursor", "metaManaged", "metaLastInboundAt", "sectionId", "boardVersion"],
-  AttentionMessage: ["metaWamid", "metaPhoneNumberId", "attachment", "deliveryStatus", "deliveryAt", "replyToWamid"],
+  AttentionMessage: ["metaWamid", "metaPhoneNumberId", "attachment", "deliveryStatus", "deliveryAt", "replyToWamid", "teamReadReply"],
   AttentionAudit: ["actorKind", "actorKey"],
   AttentionMetaOutbox: ["template"],
 };
@@ -40,6 +41,7 @@ const foreignKeys = {
   AttentionBoardSection: { createdByUserId: "Usuario" },
   AttentionMessage: { conversationId: "AttentionConversation" },
   AttentionReadState: { conversationId: "AttentionConversation", userId: "Usuario", messageId: "AttentionMessage" },
+  AttentionTeamReadState: { conversationId: "AttentionConversation", actorUserId: "Usuario", messageId: "AttentionMessage", replyMessageId: "AttentionMessage" },
   AttentionNote: { conversationId: "AttentionConversation", userId: "Usuario", sellerId: "Vendedor" },
   AttentionTask: { conversationId: "AttentionConversation", userId: "Usuario", sellerId: "Vendedor" },
   AttentionQuickReply: { approvedByUserId: "Usuario" },
@@ -82,7 +84,7 @@ async function verifySchema(client, beforeInstallation) {
   const hasConstraint = (table, kind, columns) => constraints.some(row => row.tableName === table && row.contype === kind && row.convalidated && JSON.stringify(row.columns) === JSON.stringify(columns));
   for (const table of tableNames) {
     if (beforeInstallation && !present.has(table)) continue;
-    if (!hasConstraint(table, "p", table === "AttentionRequest" ? ["actorKey", "requestId"] : table === "AttentionReadState" ? ["userId", "messageId"] : ["id"])) throw new AttentionSchemaMismatch(`${table}.PRIMARY_KEY`);
+    if (!hasConstraint(table, "p", table === "AttentionRequest" ? ["actorKey", "requestId"] : table === "AttentionReadState" ? ["userId", "messageId"] : table === "AttentionTeamReadState" ? ["messageId"] : ["id"])) throw new AttentionSchemaMismatch(`${table}.PRIMARY_KEY`);
     for (const [column, target] of Object.entries(foreignKeys[table] || {})) {
       if(beforeInstallation && additiveColumns[table]?.includes(column) && !rows.some(row=>row.tableName===table&&row.columnName===column))continue;
       if (!constraints.some(row => row.tableName === table && row.contype === "f" && row.convalidated &&
@@ -96,6 +98,12 @@ async function verifySchema(client, beforeInstallation) {
     if ((!beforeInstallation || present.has(table)) && !hasConstraint(table, "u", columns)) throw new AttentionSchemaMismatch(`${table}.EXTERNAL_ID_UNIQUE`);
   }
   if (!beforeInstallation) {
+    for(const columns of [["messageId","conversationId"],["replyMessageId","conversationId"]]){
+      if(!constraints.some(row=>row.tableName==="AttentionTeamReadState"&&row.contype==="f"&&row.convalidated&&
+        JSON.stringify(row.columns)===JSON.stringify(columns)&&row.foreignSchema==="public"&&row.foreignTable==="AttentionMessage"&&
+        JSON.stringify(row.foreignColumns)===JSON.stringify(["id","conversationId"])))throw new AttentionSchemaMismatch("AttentionTeamReadState.CONVERSATION_FOREIGN_KEY");
+    }
+    if(!constraints.some(row=>row.tableName==="AttentionTeamReadState"&&row.contype==="c"&&row.convalidated&&row.columns.includes("source")&&row.columns.includes("actorUserId")&&row.columns.includes("replyMessageId")))throw new AttentionSchemaMismatch("AttentionTeamReadState.PROVENANCE_CHECK");
     if (!constraints.some(row => row.tableName === "AttentionAudit" && row.contype === "c" && row.convalidated && row.columns.includes("actorKind") && row.columns.includes("userId"))) throw new AttentionSchemaMismatch("AttentionAudit.SYSTEM_ACTOR_CHECK");
     const { rows: indexes } = await client.query(`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_index i
       JOIN pg_catalog.pg_class t ON t.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace

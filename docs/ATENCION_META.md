@@ -132,6 +132,14 @@ Los contadores de no leídos y sin responder cuentan chats; cada chat incluye ad
 
 `GET /api/atencion/agenda?filter=today|overdue|upcoming|all&page=1` devuelve tareas pendientes y sus totales, con páginas de cuarenta. Las fechas se clasifican por día calendario de Bogotá; Todas incluye las tareas sin fecha. Completar utiliza la mutación existente con versión y UUID. Los avisos de agenda son internos, sin notificaciones externas. La confirmación de lecturas registra auditoría y un único `pg_notify` solo cuando añade filas; el evento incorpora `readActorUserId` para refrescar únicamente conexiones del mismo usuario. Se conserva la auditoría existente de consultas.
 
+### Lectura compartida del equipo
+
+La bandeja combina las lecturas nominales anteriores con `AttentionTeamReadState`, sin atribuir a cada analista una lectura personal que no realizó. Una respuesta nueva confirmada mediante `smb_message_echoes` del celular despeja para el equipo únicamente los mensajes entrantes anteriores a su fecha. Un estado `read` de salida, un mensaje de IA o una salida originada en el propio CRM no equivalen a esa evidencia. Leer el chat en el celular sin responder no activa esta regla. Las entradas del mismo segundo se conservan sin leer cuando no es posible acreditar su orden.
+
+El menú «Gestionar conversación» incluye «Marcar como leído para el equipo». `POST /api/atencion/{id}/read/team` recibe exclusivamente `version` y `requestId`; comprueba usuario, alcance, versión y la reserva idempotente bajo bloqueo. Marca los mensajes entrantes existentes al confirmar, incluidos los de un historial no cargado completo; una nueva entrada que cambie la versión exige revisar el chat antes de volver a pulsar. Un replay no absorbe mensajes nuevos. La acción no envía mensajes ni recibos a Meta, no finaliza ni reasigna y no modifica la versión de negocio.
+
+Ambos orígenes conservan auditoría e invalidan la bandeja de los usuarios actualmente autorizados. La instalación es aditiva y no marca retrospectivamente todo el histórico como leído. El cierre conjunto excluye las lecturas compartidas de su revisión y recuento.
+
 ## Tablero y eventos de configuración
 
 `GET /api/atencion/board?search=` devuelve Sin sección permanente y las secciones activas, con conteos dentro del alcance nominal. `count` aplica la búsqueda; `totalCount` mantiene el mismo alcance sin búsqueda. `GET /api/atencion/board/cards?sectionId=none|UUID&search=&page=1` devuelve veinte tarjetas por página, ordenadas por contacto real. No carga el histórico completo para construir el tablero.

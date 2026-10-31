@@ -56,14 +56,14 @@ async function fixture(t, overrides = {}) {
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
 
-test("instalación aditiva verifica dieciocho tablas y se puede repetir sin pérdida de datos", async t => {
+test("instalación aditiva verifica diecinueve tablas y se puede repetir sin pérdida de datos", async t => {
   const { database, install, calls, logs, ended } = await fixture(t);
   await install();
   await database.query(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES('user:1','00000000-0000-4000-8000-000000000001','retained')`);
   await install();
   assert.equal((await database.query('SELECT fingerprint FROM "AttentionRequest"')).rows[0].fingerprint, "retained");
   assert.ok(calls.findIndex(sql => sql.startsWith("SELECT pg_advisory_lock(")) < calls.indexOf(setupSql));
-  assert.ok(logs.every(message => message.includes("18 tablas") && message.includes("auditoría inmutable")));
+  assert.ok(logs.every(message => message.includes("19 tablas") && message.includes("auditoría inmutable")));
   assert.ok(ended());
 });
 
@@ -76,6 +76,27 @@ test("upgrade operativo añade lecturas y template sin cambiar mensajes existent
   assert.equal((await database.query('SELECT count(*)::int n FROM "AttentionReadState"')).rows[0].n,0);
   assert.equal((await database.query('SELECT text FROM "AttentionMessage"')).rows[0].text,'Conservar');
   assert.equal((await database.query(`SELECT is_nullable FROM information_schema.columns WHERE table_name='AttentionMetaOutbox' AND column_name='template'`)).rows[0].is_nullable,'YES');
+});
+
+test("lectura compartida es aditiva, conserva ecos previos sin backfill y exige conversación/procedencia coherentes",async t=>{
+  const {database,install}=await fixture(t);await database.exec(setupSql);
+  await database.exec(`DROP TABLE "AttentionTeamReadState"; ALTER TABLE "AttentionMessage" DROP COLUMN "teamReadReply";
+    INSERT INTO "Usuario" VALUES(1);
+    INSERT INTO "AttentionConversation"(id,channel,name) VALUES('00000000-0000-4000-8000-000000000021','whatsapp','Viejo'),('00000000-0000-4000-8000-000000000022','whatsapp','Otro');
+    INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author) VALUES('00000000-0000-4000-8000-000000000023','00000000-0000-4000-8000-000000000021','old-echo','outbound','Conservar',now(),'WhatsApp Business');`);
+  await install();await install();
+  assert.deepEqual((await database.query('SELECT text,"teamReadReply" FROM "AttentionMessage"')).rows,[{text:'Conservar',teamReadReply:false}]);
+  assert.equal((await database.query('SELECT count(*)::int n FROM "AttentionTeamReadState"')).rows[0].n,0);
+  assert.equal((await database.query(`SELECT count(*)::int n FROM pg_indexes WHERE indexname='AttentionMessage_team_reply'`)).rows[0].n,1);
+  await assert.rejects(database.query(`INSERT INTO "AttentionTeamReadState"("messageId","conversationId",source,"actorUserId")
+    VALUES('00000000-0000-4000-8000-000000000023','00000000-0000-4000-8000-000000000022','manual',1)`),{code:'23503'});
+  await assert.rejects(database.query(`INSERT INTO "AttentionTeamReadState"("messageId","conversationId",source,"actorUserId","replyMessageId")
+    VALUES('00000000-0000-4000-8000-000000000023','00000000-0000-4000-8000-000000000021','business_reply',1,'00000000-0000-4000-8000-000000000023')`),{code:'23514'});
+});
+
+test("postcheck rechaza lectura compartida sin clave compuesta de conversación",async t=>{
+  const {install}=await fixture(t,{afterSql:db=>db.exec('ALTER TABLE "AttentionTeamReadState" DROP CONSTRAINT "AttentionTeamReadState_messageId_conversationId_fkey"')});
+  await assert.rejects(install(),/CONVERSATION_FOREIGN_KEY/);
 });
 
 test("upgrade tablero añade sección y versión independiente, conserva chats y no restaura columnas archivadas",async t=>{

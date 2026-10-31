@@ -56,6 +56,19 @@ test("corte excluye actividad y chats posteriores; marca sólo mensajes anterior
   assert.equal((await f.db.query('SELECT status FROM "AttentionConversation" WHERE id=$1',[newChat])).rows[0].status,"open");
   const reads=(await f.db.query('SELECT "messageId" FROM "AttentionReadState"')).rows.map(row=>row.messageId);assert.ok(reads.includes(old));assert.ok(!reads.includes(fresh));assert.ok(!reads.includes(newId));
 });
+test("cierre conjunto respeta lecturas compartidas anteriores y posteriores a la revisión", async t => {
+  const f = await fixture(t), id = await f.chat();
+  const alreadyShared = await f.message(id), sharedAfterReview = await f.message(id), remaining = await f.message(id);
+  const share = messageId => f.db.query(`INSERT INTO "AttentionTeamReadState"("messageId","conversationId",source,"actorUserId") VALUES($1,$2,'manual',2)`, [messageId, id]);
+  await share(alreadyShared);
+  const review = await f.store.preview(admin, cutoff);
+  assert.equal(review.unreadCount, 2);
+  await share(sharedAfterReview);
+  const result = await f.store.close(admin, f.input(review));
+  assert.equal(result.closedCount, 1); assert.equal(result.readCount, 1);
+  assert.deepEqual((await f.db.query(`SELECT "messageId" FROM "AttentionReadState" WHERE "userId"=1`)).rows, [{ messageId: remaining }]);
+  assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM "AttentionTeamReadState"`)).rows[0].n, 2);
+});
 test("entrante posterior a revisión, incluso atrasado de fecha, impide cierre y queda sin leer",async t=>{
   const f=await fixture(t),id=await f.chat(),observed=await f.message(id),review=await f.store.preview(admin,cutoff);
   const delayed=await f.message(id,older);const result=await f.store.close(admin,f.input(review));assert.deepEqual([result.closedCount,result.readCount,result.skippedCount],[0,1,1]);

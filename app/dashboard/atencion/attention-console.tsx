@@ -308,6 +308,8 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const mounted = useRef(true);
   const newRequestKey = useRef<string | null>(null);
   const mutationKey = useRef<{ payload: string; id: string } | null>(null);
+  const teamReadAttempts = useRef<Record<string, { version: number; requestId: string }>>({});
+  const teamReadController = useRef<AbortController | null>(null);
   const chatHeading = useRef<HTMLHeadingElement>(null);
   const messageLog = useRef<HTMLDivElement>(null);
   const displayedHistory = useRef<string | null>(null);
@@ -323,6 +325,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
 
   const clearInaccessibleData = useCallback((message: string) => {
     ++listRequest.current; ++detailRequest.current; liveAccessBlocked.current = true;
+    teamReadController.current?.abort(); teamReadAttempts.current = {};
     inboxReadError.current = true; detailReadError.current = false;
     selectionRef.current = null;
     setInbox(null); setDetail(null); setSelected(null); setShowCustomer(false); setBoardOpened(false);
@@ -369,7 +372,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   }, [loadInbox, syncRevision]);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; stopSync.current = true; replyController.current?.abort(); if (replyDeadline.current) clearTimeout(replyDeadline.current); financialController.current?.abort(); if (financialDeadline.current) clearTimeout(financialDeadline.current); };
+    return () => { mounted.current = false; stopSync.current = true; replyController.current?.abort(); if (replyDeadline.current) clearTimeout(replyDeadline.current); financialController.current?.abort(); if (financialDeadline.current) clearTimeout(financialDeadline.current); teamReadController.current?.abort(); };
   }, []);
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -587,6 +590,32 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
       return false;
     }
     finally { busyRef.current = false; setBusy(false); }
+  }
+  async function markTeamRead() {
+    if (!detail || !detail.permissions.manage || busyRef.current || syncingRef.current || detailLoading) return;
+    const id = detail.conversation.id;
+    const input = teamReadAttempts.current[id] ||= { version: detail.conversation.version, requestId: crypto.randomUUID() };
+    pollController.current?.abort(); busyRef.current = true; setBusy(true); setDetailError(""); setNotice("");
+    const controller = new AbortController(); teamReadController.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      await api<{ unreadCount: number; changed: boolean }>(`/api/atencion/${encodeURIComponent(id)}/read/team`, { method: "POST", body: JSON.stringify(input), signal: controller.signal });
+      delete teamReadAttempts.current[id];
+      if (!mounted.current) return;
+      if (selectionRef.current === id) setNotice("Mensajes marcados como leídos para el equipo. La conversación conserva su estado.");
+      await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]);
+    } catch (err) {
+      if (!mounted.current) return;
+      if (handleFinancialAccessError(id, err)) { delete teamReadAttempts.current[id]; return; }
+      if (err instanceof ApiError && err.status === 409) {
+        delete teamReadAttempts.current[id];
+        await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]);
+        if (selectionRef.current === id) setDetailError("La conversación cambió. Revisa los mensajes actualizados y vuelve a pulsar «Marcar como leído».");
+      } else if (selectionRef.current === id) setDetailError(errorMessage(err));
+    } finally {
+      clearTimeout(timeout); if (teamReadController.current === controller) teamReadController.current = null;
+      busyRef.current = false; if (mounted.current) setBusy(false);
+    }
   }
   function changeReply(id: string, patch: Partial<ReplyDraft>) {
     if (busyRef.current) return;
@@ -893,7 +922,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
               if (invalid) return invalid;
               changeReply(detail.conversation.id, { file: files[0] }); return null;
             }}>{!selected ? <div className={styles.selectPrompt}><span><MessageCircle aria-hidden="true" size={37} /></span><h2>Tu espacio de atención</h2><p>Selecciona una conversación para responder y consultar su seguimiento.</p></div> : <>
-              <div className={styles.chatHeader}><Button variant="ghost" className={styles.backButton} aria-label="Volver a conversaciones" onClick={() => selectConversation(null)}><ArrowLeft aria-hidden="true" size={18} /></Button><span className={styles.avatar}>{initials(detail ? contactName(detail.conversation) : "Contacto")}</span><div className={styles.chatIdentity}><div className={styles.chatTitle}><h2 ref={chatHeading} tabIndex={-1}>{detail ? contactName(detail.conversation) : "Conversación"}</h2>{detail && <CustomerBadge conversation={detail.conversation} />}</div>{detail?.conversation.customerIdentity && <span className={styles.contactDocument}>{detail.conversation.customerIdentity.documentLabel || "Cédula"} {detail.conversation.customerIdentity.document}</span>}<span>{detail ? detail.conversation.phone || "Teléfono no disponible" : "Consultando historial…"}{detail && ` · ${detail.conversation.channel === "whatsapp" ? "WhatsApp" : "Gestión interna"}`}</span></div><Button variant="secondary" className={styles.customerToggle} aria-expanded={showCustomer} onClick={() => setShowCustomer(value => !value)}><UserRound aria-hidden="true" size={16} /> Ficha</Button>{detail && <details className={styles.chatMenu} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}><summary aria-label="Gestionar conversación" title="Gestionar conversación"><MoreVertical aria-hidden="true" size={21} /></summary><div className={styles.chatActions}><Status conversation={detail.conversation} /><span className={styles.assignee}><UserRound aria-hidden="true" size={14} />{detail.conversation.assigneeName || "Sin analista asignado"}</span>{detail.permissions.claim && detail.conversation.status !== "open" && <Button disabled={busy} onClick={() => void mutate({ action: "claim" })}>Atender</Button>}{detail.permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => void mutate({ action: detail.conversation.status === "closed" ? "reopen" : "close" })}>{detail.conversation.status === "closed" ? "Reabrir" : "Finalizar"}</Button>}{detail.permissions.assign && <details className={styles.assignmentMenu}><summary><Users aria-hidden="true" size={17} /> Asignar</summary><div className={styles.assignment}><label className={styles.srOnly} htmlFor="attention-transfer">Asignar analista</label><Select id="attention-transfer" value="" disabled={busy || !analysts.length} onChange={event => { if (event.target.value) { event.currentTarget.closest("details")?.removeAttribute("open"); void mutate({ action: "transfer", assigneeKey: event.target.value }); } }}><option value="">{detail.conversation.assigneeKey ? "Cambiar analista…" : "Asignar analista…"}</option>{analysts.filter(person => person.key !== detail.conversation.assigneeKey).map(person => <option key={person.key} value={person.key}>{person.name}</option>)}</Select><span>Solo analistas activos</span></div></details>}</div></details>}</div>
+              <div className={styles.chatHeader}><Button variant="ghost" className={styles.backButton} aria-label="Volver a conversaciones" onClick={() => selectConversation(null)}><ArrowLeft aria-hidden="true" size={18} /></Button><span className={styles.avatar}>{initials(detail ? contactName(detail.conversation) : "Contacto")}</span><div className={styles.chatIdentity}><div className={styles.chatTitle}><h2 ref={chatHeading} tabIndex={-1}>{detail ? contactName(detail.conversation) : "Conversación"}</h2>{detail && <CustomerBadge conversation={detail.conversation} />}</div>{detail?.conversation.customerIdentity && <span className={styles.contactDocument}>{detail.conversation.customerIdentity.documentLabel || "Cédula"} {detail.conversation.customerIdentity.document}</span>}<span>{detail ? detail.conversation.phone || "Teléfono no disponible" : "Consultando historial…"}{detail && ` · ${detail.conversation.channel === "whatsapp" ? "WhatsApp" : "Gestión interna"}`}</span></div><Button variant="secondary" className={styles.customerToggle} aria-expanded={showCustomer} onClick={() => setShowCustomer(value => !value)}><UserRound aria-hidden="true" size={16} /> Ficha</Button>{detail && <details className={styles.chatMenu} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}><summary aria-label="Gestionar conversación" title="Gestionar conversación"><MoreVertical aria-hidden="true" size={21} /></summary><div className={styles.chatActions}><Status conversation={detail.conversation} /><span className={styles.assignee}><UserRound aria-hidden="true" size={14} />{detail.conversation.assigneeName || "Sin analista asignado"}</span>{detail.permissions.claim && detail.conversation.status !== "open" && <Button disabled={busy} onClick={() => void mutate({ action: "claim" })}>Atender</Button>}{detail.permissions.manage && <Button variant="secondary" aria-label="Marcar como leído para el equipo" title="Marcar los mensajes actuales como leídos para el equipo" disabled={busy || syncing || detailLoading} onClick={() => void markTeamRead()}><CheckCheck aria-hidden="true" size={16} />Marcar como leído</Button>}{detail.permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => void mutate({ action: detail.conversation.status === "closed" ? "reopen" : "close" })}>{detail.conversation.status === "closed" ? "Reabrir" : "Finalizar"}</Button>}{detail.permissions.assign && <details className={styles.assignmentMenu}><summary><Users aria-hidden="true" size={17} /> Asignar</summary><div className={styles.assignment}><label className={styles.srOnly} htmlFor="attention-transfer">Asignar analista</label><Select id="attention-transfer" value="" disabled={busy || !analysts.length} onChange={event => { if (event.target.value) { event.currentTarget.closest("details")?.removeAttribute("open"); void mutate({ action: "transfer", assigneeKey: event.target.value }); } }}><option value="">{detail.conversation.assigneeKey ? "Cambiar analista…" : "Asignar analista…"}</option>{analysts.filter(person => person.key !== detail.conversation.assigneeKey).map(person => <option key={person.key} value={person.key}>{person.name}</option>)}</Select><span>Solo analistas activos</span></div></details>}</div></details>}</div>
               {detailError && <div className={styles.error} role="alert"><span>{detailError}</span><Button variant="secondary" disabled={busy || detailLoading} onClick={() => void loadDetail(selected)}>Actualizar</Button></div>}
               {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <>
 

@@ -10,6 +10,7 @@ const root=path.resolve(import.meta.dirname,"..");
 const jiti=createJiti(import.meta.url,{alias:{"@":root,"server-only":path.join(root,"node_modules/next/dist/compiled/server-only/empty.js")}});
 const { ATTENTION_REALTIME_CHANNEL, createAttentionRealtimeBroker, createAttentionRealtimeStream, authorizeAttentionRealtime, attentionRealtimeSchemaReady, parseAttentionRealtimeChange, isAttentionRealtimeBoardChange }=await jiti.import("../lib/atencion-realtime.ts");
 const {AttentionError}=await jiti.import("../lib/atencion-core.ts");
+const {createAttentionStore}=await jiti.import("../lib/atencion-storage.ts");
 const migration=readFileSync(path.join(root,"scripts/setup-atencion.sql"),"utf8");
 const id="10000000-0000-4000-8000-000000000001";
 const admin={userId:1,key:"admin:1",name:"Central",sellerId:null,central:true,admin:true,analyst:false,supervisor:false,aliadoId:1,sedeId:1};
@@ -164,6 +165,46 @@ test("autorización de lectura privada conserva rol y asignación vigentes",asyn
   await db.query('UPDATE "Usuario" SET activo=false WHERE id=2');
   await assert.rejects(authorizeAttentionRealtime(adapter,analyst,[change({readActorUserId:2})]),{status:403});
 });
+
+test("lectura de equipo desde central invalida central y analista asignado sin suplantar lectura nominal ni avisar a ajenos",async t=>{
+  const {db,events,adapter,insert}=await fixture(t);await insert();
+  await db.query(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt")
+    VALUES('20000000-0000-4000-8000-000000000001',$1,'team-read-inbound','inbound','PRIVATE_TEXT',now())`,[id]);
+  events.length=0;
+  const streams=[];
+  for(const actor of [admin,analyst,second]){
+    const broker=fakeBroker(),abort=new AbortController(),checked=[];
+    const reader=createAttentionRealtimeStream({actor,signal:abort.signal,broker,heartbeatMs:2000,lifetimeMs:3000,
+      authorize:async changes=>{checked.push(changes);return authorizeAttentionRealtime(adapter,actor,changes);}}).getReader();
+    await collect(reader,text=>text.includes("event: ready"));
+    streams.push({actor,broker,abort,reader,checked,initial:checked.length});
+  }
+  t.after(()=>{for(const stream of streams)stream.abort.abort();});
+  const wrap=target=>({$queryRawUnsafe:async(sql,...values)=>(await target.query(sql,values)).rows});
+  const store=createAttentionStore({...wrap(db),$transaction:fn=>db.transaction(async tx=>{
+    const result=await fn(wrap(tx));assert.equal(events.length,0,"la lectura compartida no se publica antes de commit");return result;
+  })});
+  assert.deepEqual(await store.markAttentionTeamRead(admin,id,{version:1,requestId:"40000000-0000-4000-8000-000000000001"}),{unreadCount:0,changed:true});
+  assert.equal(events.length,1);const event=events[0];
+  assert.equal(event.currentUserId,analyst.userId);assert.equal(event.currentKey,analyst.key);assert.equal(event.currentSellerId,null);
+  assert.equal(Object.hasOwn(event,"readActorUserId"),false,"el evento debe alcanzar al equipo autorizado y no sólo al actor central");
+  assert.deepEqual(parseAttentionRealtimeChange(JSON.stringify(event)),event);
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionReadState"')).rows[0].n,0);
+  assert.deepEqual((await db.query('SELECT source,"actorUserId" FROM "AttentionTeamReadState"')).rows,[{source:"manual",actorUserId:admin.userId}]);
+  assert.equal(await authorizeAttentionRealtime(adapter,admin,[event]),true);
+  assert.equal(await authorizeAttentionRealtime(adapter,analyst,[event]),true);
+  assert.equal(await authorizeAttentionRealtime(adapter,second,[event]),false);
+  for(const stream of streams)stream.broker.emit({kind:"change",change:event});
+  for(const stream of streams.slice(0,2)){
+    const text=await collect(stream.reader,value=>value.includes("conversation_changed"));
+    assert.equal(stream.checked.length,stream.initial+1);assert.deepEqual(stream.checked.at(-1),[event]);
+    assert.doesNotMatch(text,/PRIVATE|analyst:|readActorUserId|10000000-/);
+  }
+  const unrelated=streams[2];await wait(90);assert.equal(unrelated.checked.length,unrelated.initial);
+  for(const stream of streams)stream.abort.abort();
+  const remaining=await collect(unrelated.reader,()=>false);assert.ok(!remaining.includes("conversation_changed"));
+});
+
 test("SSE envía invalidaciones sin PII, coalesce y cierra al revocar rol en heartbeat",async()=>{
   const broker=fakeBroker();const abort=new AbortController();let allowed=true;let checks=0;
   const stream=createAttentionRealtimeStream({actor:analyst,signal:abort.signal,broker,heartbeatMs:80,lifetimeMs:1000,retryMs:5,

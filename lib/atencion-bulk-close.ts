@@ -37,6 +37,7 @@ export function parseAttentionBulkCloseCutoff(params: URLSearchParams, now = new
 async function schema(db: AttentionDb) {
   const required={AttentionConversation:["id","version","status","lastContactAt","closedAt","createdAt","updatedAt"],
     AttentionMessage:["id","conversationId","direction","sentAt"],AttentionReadState:["userId","messageId","conversationId","readAt"],
+    AttentionTeamReadState:["messageId","conversationId"],
     AttentionAudit:["userId","actorKey","action","metadata","createdAt"],AttentionRequest:["actorKey","requestId","fingerprint","resultId"],
     AttentionMetaOutbox:["actorKey","requestId","conversationId","status"]};
   const [row]=await db.$queryRawUnsafe<{ready:boolean}[]>(`SELECT NOT EXISTS(SELECT 1 FROM jsonb_to_recordset($1::jsonb) AS expected("table" text,"column" text)
@@ -73,7 +74,9 @@ export function createAttentionBulkCloseStore(database: AttentionDatabase, optio
         const stats=await db.$queryRawUnsafe<{id:string;inboundHash:string;newActivity:boolean;activeOutbox:boolean}[]>(statsSql,chats.map(chat=>chat.id),cutoff);
         const unread=await db.$queryRawUnsafe<{id:string;conversationId:string}[]>(`SELECT m.id,m."conversationId" FROM "AttentionMessage" m
           WHERE m."conversationId"=ANY($1::uuid[]) AND m.direction='inbound' AND m."sentAt"<=$2::timestamptz
-          AND NOT EXISTS(SELECT 1 FROM "AttentionReadState" r WHERE r."userId"=$3 AND r."messageId"=m.id) ORDER BY m.id LIMIT 250001`,chats.map(chat=>chat.id),cutoff,actor.userId);
+          AND NOT EXISTS(SELECT 1 FROM "AttentionReadState" r WHERE r."userId"=$3 AND r."messageId"=m.id)
+          AND NOT EXISTS(SELECT 1 FROM "AttentionTeamReadState" r WHERE r."conversationId"=m."conversationId" AND r."messageId"=m.id)
+          ORDER BY m.id LIMIT 250001`,chats.map(chat=>chat.id),cutoff,actor.userId);
         if(unread.length>250000)throw new AttentionError("Hay demasiados mensajes para esta revisión conjunta.",503);
         const byChat=new Map(stats.map(row=>[row.id,row])),idsByChat=new Map<string,string[]>();
         for(const message of unread){const values=idsByChat.get(message.conversationId)||[];values.push(message.id);idsByChat.set(message.conversationId,values);}
@@ -126,6 +129,7 @@ export function createAttentionBulkCloseStore(database: AttentionDatabase, optio
           SELECT $1,m.id,m."conversationId" FROM jsonb_to_recordset($2::jsonb) AS observed("messageId" uuid,"conversationId" uuid)
           JOIN "AttentionMessage" m ON m.id=observed."messageId" AND m."conversationId"=observed."conversationId"
           WHERE m.direction='inbound' AND m."sentAt"<=$3::timestamptz AND m."conversationId"=ANY($4::uuid[])
+          AND NOT EXISTS(SELECT 1 FROM "AttentionTeamReadState" r WHERE r."conversationId"=m."conversationId" AND r."messageId"=m.id)
           ON CONFLICT("userId","messageId") DO NOTHING RETURNING "conversationId"`,actor.userId,JSON.stringify(observedReads),review.cutoff,chats.map(chat=>chat.id));
         const result={cutoff:review.cutoff,closedCount:closed.length,readCount:read.length,skippedCount:review.openCount-closed.length};
         await audit(db,nominal,"BULK_CLOSE_COMPLETED",{reviewToken:input.reviewToken,requestId:input.requestId,actorName:nominal.name,result,closedIds:closed.map(chat=>chat.id)});

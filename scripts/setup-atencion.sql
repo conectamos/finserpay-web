@@ -100,7 +100,25 @@ ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "attachment" jsonb;
 ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "deliveryStatus" text;
 ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "deliveryAt" timestamptz;
 ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "replyToWamid" text;
+-- Only newly imported, validated app echoes become shared read evidence.
+-- DEFAULT false intentionally avoids backfilling historical conversations.
+ALTER TABLE "AttentionMessage" ADD COLUMN IF NOT EXISTS "teamReadReply" boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS "AttentionMessage_team_reply" ON "AttentionMessage"("conversationId","metaPhoneNumberId","sentAt",id) WHERE "teamReadReply"=true;
 CREATE UNIQUE INDEX IF NOT EXISTS "AttentionMessage_meta_identity" ON "AttentionMessage"("metaPhoneNumberId","metaWamid");
+CREATE UNIQUE INDEX IF NOT EXISTS "AttentionMessage_id_conversation" ON "AttentionMessage"(id,"conversationId");
+CREATE TABLE IF NOT EXISTS "AttentionTeamReadState" (
+  "messageId" uuid PRIMARY KEY REFERENCES "AttentionMessage"(id) ON DELETE RESTRICT,
+  "conversationId" uuid NOT NULL REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
+  source text NOT NULL CHECK(source IN ('manual','business_reply')),
+  "actorUserId" integer REFERENCES "Usuario"(id) ON DELETE RESTRICT,
+  "replyMessageId" uuid REFERENCES "AttentionMessage"(id) ON DELETE RESTRICT,
+  "readAt" timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY("messageId","conversationId") REFERENCES "AttentionMessage"(id,"conversationId") ON DELETE RESTRICT,
+  FOREIGN KEY("replyMessageId","conversationId") REFERENCES "AttentionMessage"(id,"conversationId") ON DELETE RESTRICT,
+  CHECK((source='manual' AND "actorUserId" IS NOT NULL AND "replyMessageId" IS NULL)
+    OR (source='business_reply' AND "actorUserId" IS NULL AND "replyMessageId" IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS "AttentionTeamReadState_conversation" ON "AttentionTeamReadState"("conversationId");
 CREATE TABLE IF NOT EXISTS "AttentionNote" (
   id uuid PRIMARY KEY, "conversationId" uuid NOT NULL REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
   text text NOT NULL, author text NOT NULL, "userId" integer NOT NULL REFERENCES "Usuario"(id), "sellerId" integer REFERENCES "Vendedor"(id),

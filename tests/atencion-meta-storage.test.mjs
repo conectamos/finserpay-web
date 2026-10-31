@@ -79,6 +79,54 @@ test("teléfono compartido entre chats no selecciona identidad ni analista arbit
   assert.equal(row.externalId,null);assert.equal(row.assigneeKey,null);assert.equal(row.sedeId,null);
 });
 
+test("respuesta móvil limpia solo entrantes anteriores para equipo y conserva recientes, misma fecha y estado",async t=>{
+  const f=await fixture(t);const old=inbound({timestamp:'2026-10-30T14:59:59Z'}),row=await f.ingest(old);await f.assign(row.id);
+  const same=inbound(),later=inbound({timestamp:'2026-10-30T15:01:00Z'});
+  await f.meta.ingest(events([same,later]));
+  await f.db.query(`UPDATE "AttentionConversation" SET status='closed',"closedAt"='2026-10-30T15:02:00Z' WHERE id=$1`,[row.id]);
+  const before=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0];
+  const notices=[];await f.db.listen('finserpay_attention_changes',value=>notices.push(JSON.parse(value)));
+  const response=echo();await f.meta.ingest(events([],[],[response]));
+  await f.meta.ingest(events([],[],[response]));
+  const reads=(await f.db.query(`SELECT m."metaWamid",r.source,r."actorUserId",reply."metaWamid" AS reply FROM "AttentionTeamReadState" r
+    JOIN "AttentionMessage" m ON m.id=r."messageId" JOIN "AttentionMessage" reply ON reply.id=r."replyMessageId"`)).rows;
+  assert.deepEqual(reads,[{metaWamid:old.id,source:'business_reply',actorUserId:null,reply:response.id}]);
+  for(const actor of [central,analyst])assert.equal((await f.legacy.getAttentionInbox(actor,{search:'',filter:'all',page:1})).conversations[0].unreadCount,2);
+  const after=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0];
+  for(const key of ['version','status','assigneeKey','lastContactAt','closedAt'])assert.deepEqual(after[key],before[key]);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionReadState"')).rows[0].n,0);
+  const audit=(await f.db.query(`SELECT "actorKind","actorKey","userId",metadata FROM "AttentionAudit" WHERE action='MESSAGES_TEAM_READ_BUSINESS_REPLY'`)).rows;
+  assert.deepEqual(audit,[{actorKind:'system',actorKey:'SYSTEM_META',userId:null,metadata:{count:1}}]);
+  assert.ok(notices.some(n=>n.conversationId===row.id&&n.currentUserId===analyst.userId&&n.currentKey===analyst.key&&!('readActorUserId' in n)));
+});
+
+test("eco nuevo cubre entradas retrasadas y Dapta anterior, pero eco histórico ni recibos de salida generan lectura compartida",async t=>{
+  const f=await fixture(t),row=await f.ingest(inbound({timestamp:'2026-10-30T14:00:00Z'}));
+  const response=echo({timestamp:'2026-10-30T15:00:00Z'});await f.meta.ingest(events([],[],[response]));
+  const late=inbound({timestamp:'2026-10-30T14:30:00Z'});await f.meta.ingest(events([late]));
+  await f.legacy.importAttentionSnapshots(central,[snapshot({messages:[{id:'dapta-late-old',direction:'inbound',text:'Antiguo',sentAt:'2026-10-29T12:00:00Z',author:null}]})]);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionTeamReadState"')).rows[0].n,3);
+  const current=inbound({timestamp:'2026-10-30T16:00:00Z'});await f.meta.ingest(events([current]));
+  await f.meta.ingest(events([], [delivery(response.id,{timestamp:'2026-10-30T16:05:00Z',status:'read'})]));
+  assert.equal((await f.legacy.getAttentionInbox(central,{search:'',filter:'all',page:1})).conversations[0].unreadCount,1);
+  // Simulate an app echo from a pre-upgrade binary; the additive default is false.
+  await f.db.query(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,"metaWamid","metaPhoneNumberId","deliveryStatus")
+    VALUES($1,$2,'meta:wamid.legacy-echo','outbound','Viejo','2026-10-30T18:00:00Z','WhatsApp Business','wamid.legacy-echo',$3,'sent')`,[randomUUID(),row.id,scope.phoneNumberId]);
+  await f.meta.ingest(events([inbound({timestamp:'2026-10-30T17:00:00Z'})]));
+  assert.equal((await f.legacy.getAttentionInbox(central,{search:'',filter:'all',page:1})).conversations[0].unreadCount,2);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionTeamReadState"')).rows[0].n,3);
+});
+
+test("lectura compartida no puede reutilizar UUID del outbox humano y su propia reserva bloquea un envío posterior",async t=>{
+  const f=await fixture(t),row=await f.ingest(),input=await f.input(row.id);
+  await f.meta.queueReply(central,row.id,input);
+  await assert.rejects(f.legacy.markAttentionTeamRead(central,row.id,{requestId:input.requestId,version:input.version}),{status:409});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionTeamReadState"')).rows[0].n,0);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionRequest" WHERE "requestId"=$1',[input.requestId])).rows[0].n,0);
+  const mark={requestId:randomUUID(),version:input.version};await f.legacy.markAttentionTeamRead(central,row.id,mark);
+  await assert.rejects(f.meta.queueReply(central,row.id,{...input,requestId:mark.requestId}),{status:409});
+});
+
 test("Meta primero reutiliza chat único para Dapta y conserva actividad, modo e historial nativo",async t=>{
   const f=await fixture(t);const row=await f.ingest();await f.assign(row.id);
   await f.db.query(`UPDATE "AttentionConversation" SET mode='human_requested' WHERE id=$1`,[row.id]);
