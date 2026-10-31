@@ -49,7 +49,7 @@ function fixture(options = {}) {
     "@/lib/iphone-enrollment": enrollment,
     "@/lib/prisma": { default: { $executeRawUnsafe: async () => 0, $transaction: work => work(transaction) } },
     "@/lib/analyst-mora-access": actors,
-    "@/lib/datacredito/storage": {},
+    "@/lib/datacredito/storage": { hmacDataCreditoValue:(_kind,value)=>`test-hash:${value}` },
     "@/lib/firmaseguro-storage": { ensureFirmaSeguroSchema: async () => {}, FIRMASEGURO_DRAFT_LOCK_NAMESPACE: 1 },
     "@/lib/solicitudes-storage": { ensureSolicitudSchema: async () => {}, expireStaleSolicitudes: async () => {} },
     "@/lib/veriff-identity": {},
@@ -132,4 +132,12 @@ test("todo el namespace nominal queda reservado y el identificador externo tradi
     assert.equal(f.service.isNominalIphoneEnrollmentGrant({ analyst: { externalId } }), true);
   }
   assert.equal(f.service.isNominalIphoneEnrollmentGrant({ analyst: { externalId: "EXTERNAL-ANALYST" } }), false);
+});
+
+test("lookup transaccional de Atención limita todas las consultas al borrador exacto y no busca garantías",async()=>{
+  const f=fixture(),calls=[];
+  const db={$queryRawUnsafe:async(sql,...values)=>{calls.push({sql,values});return [];}};
+  const result=await f.service.findIphoneEnrollmentApplicationInTransaction({solicitudId:28,document,imei},db);
+  assert.equal(result.kind,"NOT_FOUND");assert.equal(calls.length,2);
+  for(const {sql,values} of calls){assert.match(sql,/\(\$4::integer IS NULL OR d\."id"=\$4\)/);assert.equal(values[3],28);}
 });

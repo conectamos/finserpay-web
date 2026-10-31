@@ -269,13 +269,14 @@ export async function verifyApprovalNovelty(id: number, input: VerifyApprovalNov
 
 export async function uploadApprovalCallRecording(id: number, input: {
   file: File; revision: number; reviewHash: string; idempotencyKey: string;
-}) {
-  const response = await fetch(`/api/aprobaciones/${id}/grabaciones`, {
+}, options: { endpoint?: string; workVersion?: number; contextHash?: string } = {}) {
+  const response = await fetch(options.endpoint || `/api/aprobaciones/${id}/grabaciones`, {
     method: "POST", headers: {
       "Content-Type": "application/octet-stream",
       "x-recording-file-name": encodeURIComponent(input.file.name),
       "x-review-revision": String(input.revision), "x-review-hash": input.reviewHash,
       "idempotency-key": input.idempotencyKey,
+      ...(options.endpoint ? { "x-work-version": String(options.workVersion), "x-work-context": options.contextHash || "" } : {}),
     }, body: input.file,
   });
   const result = await readResult<{ ok: boolean; state: ApprovalCallRecordingState; unchanged: boolean }>(response,

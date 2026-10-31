@@ -35,7 +35,7 @@ const requestId = "f2c3a440-73de-49e3-8901-fdef75132504";
 const secondRequestId = "06b6f7b1-0aa6-4078-9651-fc50a72fce7c";
 const eventId = "cf372fb9-89ac-48c7-aaf4-14abc7ac6206";
 const flush = () => new Promise(resolve => setImmediate(resolve));
-function fixture({ items = [call()], loading = false, error = "", manualCall, fetch, storage = new Map(), timers = { setTimeout, clearTimeout }, globals = {} } = {}) {
+function fixture({ items = [call()], loading = false, error = "", manualCall, fetch, storage = new Map(), timers = { setTimeout, clearTimeout }, globals = {}, props = {} } = {}) {
   const states = [loading ? null : { creditId: 72, revision: 0, items, error, manualCall }, 0, null];
   const effects = []; const changes = []; const refs = []; const effectSlots = [];
   let index = 0; let refIndex = 0; let effectIndex = 0; let idIndex = 0; let uuidCalls = 0;
@@ -58,7 +58,7 @@ function fixture({ items = [call()], loading = false, error = "", manualCall, fe
   }, { fetch, ...timers, ...globals, crypto: { randomUUID: () => { uuidCalls++; return uuidCalls === 1 ? requestId : secondRequestId; } }, sessionStorage: {
     getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key),
   } }).default;
-  const tree = (creditId = 72) => { index = 0; refIndex = 0; effectIndex = 0; idIndex = 0; return Component({ creditId }); };
+  const tree = (creditId = 72) => { index = 0; refIndex = 0; effectIndex = 0; idIndex = 0; return Component({ creditId, ...props }); };
   const render = (creditId = 72) => renderToStaticMarkup(tree(creditId));
   const walk = node => {
     if (!node || typeof node !== "object") return [];
@@ -78,7 +78,7 @@ function fixture({ items = [call()], loading = false, error = "", manualCall, fe
   const phone = (value, creditId = 72) => control("tel", creditId).onChange({ target: { value } });
   return { render, tree, click, action, control, other, phone, effects, changes, storage, states, refs,
     nodes: (creditId = 72) => walk(tree(creditId)), get uuidCalls() { return uuidCalls; },
-    read: async () => { effectSlots[0].callback(); await flush(); }, auto: () => effectSlots[2].callback(), modal: () => effectSlots[3].callback() };
+    read: async () => { effectSlots[0].callback(); await flush(); }, busy: () => effectSlots[1].callback(), abort: () => effectSlots[3].callback(), auto: () => effectSlots[4].callback(), modal: () => effectSlots[5].callback() };
 }
 
 test("voice panel renders only the latest compact call and reveals conversation and protected recording on demand", () => {
@@ -170,7 +170,7 @@ test("native history modal locks scrolling and restores the previously focused c
   const f = fixture({ globals: { document, HTMLElement: FakeHTMLElement } });
   f.click("Ver historial (1)"); f.render();
   const dialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };
-  f.refs[1].current = dialog;
+  f.refs[2].current = dialog;
   const cleanup = f.modal();
   assert.equal(dialog.open, true); assert.equal(document.body.style.overflow, "hidden");
   f.click("Cerrar historial de llamadas"); f.render(); cleanup();
@@ -359,7 +359,7 @@ test("changing the credit aborts the manual request and a late receipt cannot up
   const f = fixture({ manualCall: { canCall: true, phone: "+573001234567" }, fetch: (_url, supplied) => {
     options = supplied; return new Promise(resolve => { resolvePost = resolve; });
   } });
-  f.render(); const close = f.effects[1]();
+  f.render(); const close = f.abort();
   f.click("Llamar ahora al celular registrado"); const previousChanges = f.changes.length;
   close(); assert.equal(options.signal.aborted, true); f.render(99);
   resolvePost({ ok: true, json: async () => ({ ok: true, eventId, status: "ACCEPTED" }) }); await flush();
@@ -618,4 +618,47 @@ test("a legacy UUID preserves the registered destination until its authoritative
   assert.equal(f.storage.size, 0); assert.equal(f.control("checkbox").disabled, false);
   f.other(true); f.phone("3012345678");
   assert.equal(f.control("tel").value, "3012345678");
+});
+
+test("a work-scoped call freezes the displayed context and releases parent navigation once its event is durable", async () => {
+  const endpoint = "/api/atencion/solicitudes/work-one/bienvenida/voz", contextHash = "a".repeat(64);
+  const locks = [], posts = []; let resolvePost;
+  const f = fixture({ items: [], manualCall: { canCall: true, phone: "+573001234567" },
+    props: { endpoint, scopeVersion: 4, contextHash, onBusyChange: value => locks.push(value) },
+    fetch: async (url, options) => { posts.push({ url, body: JSON.parse(options.body) }); return new Promise(resolve => { resolvePost = resolve; }); },
+  });
+  f.render(); f.busy(); assert.equal(locks.at(-1), false);
+  f.click("Llamar ahora al celular registrado"); f.render(); f.busy(); assert.equal(locks.at(-1), true);
+  resolvePost({ ok: true, json: async () => ({ ok: true, eventId, status: "UNKNOWN" }) }); await flush();
+  f.render(); f.busy(); assert.equal(locks.at(-1), false, "A durable event is recoverable after closing the panel");
+  assert.match(f.render(), /disabled=""[^>]*aria-label="Llamar ahora al celular registrado"/, "The local duplicate-call guard remains active");
+  assert.deepEqual(posts, [{ url: endpoint, body: { requestId, version: 4, contextHash } }]);
+  assert.deepEqual(JSON.parse([...f.storage.values()][0]), { requestId, work: { version: 4, contextHash } });
+  assert.ok([...f.storage.keys()][0].endsWith(encodeURIComponent(endpoint)));
+});
+
+test("a work call with no confirmed receipt continues to block abandonment until its GET recovers the event", async () => {
+  const locks = []; const manualCall = { canCall: true, phone: "+573001234567" };
+  const f = fixture({ items: [], manualCall, props: { endpoint: "/api/atencion/solicitudes/work-one/bienvenida/voz",
+    scopeVersion: 4, contextHash: "a".repeat(64), onBusyChange: value => locks.push(value) },
+    fetch: async (_url, options) => {
+      if (options.method === "POST") throw new Error("Response lost");
+      return { ok: true, json: async () => ({ ok: true, items: [], manualCall,
+        request: { requestId, found: true, eventId, status: "ACCEPTED" } }) };
+    },
+  });
+  f.click("Llamar ahora al celular registrado"); await flush(); f.render(); f.busy(); assert.equal(locks.at(-1), true);
+  await f.read(); f.render(); f.busy(); assert.equal(locks.at(-1), false); assert.equal(f.storage.size, 1);
+});
+
+test("a newly terminal polled result refreshes the work evidence once without making another call", async () => {
+  let status = "ACCEPTED", updates = 0; const requests = [];
+  const f = fixture({ items: [], props: { onUpdated: () => { updates++; } }, fetch: async (url, options) => {
+    requests.push({ url, method: options.method });
+    return { ok: true, json: async () => ({ ok: true, items: [call({ id: eventId, status })] }) };
+  } });
+  f.render(); await f.read(); assert.equal(updates, 0);
+  status = "COMPLETED"; f.render(); await f.read(); assert.equal(updates, 1);
+  f.render(); await f.read(); assert.equal(updates, 1);
+  assert.equal(requests.length, 3); assert.ok(requests.every(request => request.method !== "POST"));
 });

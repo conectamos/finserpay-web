@@ -7,10 +7,11 @@ import { uploadApprovalCallRecording, type ApprovalDetail } from "./approval-cli
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const dates = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" });
-type PendingRecording = { file: File; revision: number; reviewHash: string; idempotencyKey: string };
+type PendingRecording = { file: File; revision: number; reviewHash: string; idempotencyKey: string; workVersion?: number; contextHash?: string };
 
-export default function ApprovalCallRecording({ detail, disabled, readOnly = false, compact = false, onUpdated, onBusyChange }: {
-  detail: ApprovalDetail; disabled: boolean; readOnly?: boolean; compact?: boolean;
+export default function ApprovalCallRecording({ detail, disabled, readOnly = false, compact = false, onUpdated, onBusyChange, uploadEndpoint, workVersion, contextHash, context = "approval" }: {
+  detail: Pick<ApprovalDetail, "id" | "clienteTelefono" | "callRecording" | "review">; disabled: boolean; readOnly?: boolean; compact?: boolean;
+  uploadEndpoint?: string; workVersion?: number; contextHash?: string; context?: "approval" | "welcome";
   onUpdated: () => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
   const [pending, setPending] = useState<PendingRecording | null>(null);
@@ -44,20 +45,20 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
       setError("Selecciona una grabación MP3, M4A, MP4 de audio, OGG (Opus) o WAV de hasta 10 MB.");
       clearSelection(); return;
     }
-    setPending({ file, revision: detail.review.revision, reviewHash: detail.review.reviewHash, idempotencyKey: crypto.randomUUID() });
+    setPending({ file, revision: detail.review.revision, reviewHash: detail.review.reviewHash, idempotencyKey: crypto.randomUUID(), workVersion, contextHash });
     onBusyChange(true);
   }
 
   async function save() {
     if (!pending || !canUpload || disabled || submitting.current) return;
-    if (detail.review.revision !== pending.revision || detail.review.reviewHash !== pending.reviewHash) {
+    if (detail.review.revision !== pending.revision || detail.review.reviewHash !== pending.reviewHash || (uploadEndpoint && (pending.workVersion !== workVersion || pending.contextHash !== contextHash))) {
       setError("El expediente cambió. Actualízalo y selecciona la grabación para la revisión vigente.");
       clearSelection(); return;
     }
     submitting.current = true; setSaving(true); setError("");
     let saved = false;
     try {
-      await uploadApprovalCallRecording(detail.id, pending);
+      await uploadApprovalCallRecording(detail.id, pending, { endpoint: uploadEndpoint, workVersion: pending.workVersion, contextHash: pending.contextHash });
       saved = true;
       setPending(null);
       if (input.current) input.current.value = "";
@@ -78,7 +79,7 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
         {<Badge tone={error ? "danger" : compact && pending ? "warning" : recording ? "positive" : required ? "warning" : "neutral"}>{compact ? saving ? "Cargando" : error ? "Error" : pending ? "Por guardar" : recording ? "Guardada" : required ? "Pendiente" : "No requerida" : recording ? "Grabación cargada" : required ? "Obligatoria" : "No requerida"}</Badge>}
       </div>
       <>
-        {!compact && !readOnly ? <p className="mt-3 text-sm text-[var(--fp-muted)]">{required ? "Llama al cliente y guarda la grabación antes de dar el OK para liquidación." : "La grabación no es requerida para dar el OK a este expediente."}</p> : null}
+        {!compact && !readOnly ? <p className="mt-3 text-sm text-[var(--fp-muted)]">{context === "welcome" ? required ? "Llama al cliente y guarda la grabación antes de registrar la bienvenida realizada." : "Puedes adjuntar la grabación de la llamada. Después registra su resultado en esta solicitud." : required ? "Llama al cliente y guarda la grabación antes de dar el OK para liquidación." : "La grabación no es requerida para dar el OK a este expediente."}</p> : null}
         <div className="mt-3 rounded-lg border border-[var(--fp-border)] px-3 py-2 text-base"> {phoneHref ? <a href={phoneHref} className="inline-flex min-h-10 items-center break-all font-semibold underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-graphite)]">{detail.clienteTelefono}</a> : <span>{detail.clienteTelefono || "No disponible"}</span>}</div>
       </>
       {recording ? <div className="mt-4 space-y-2">
@@ -91,7 +92,7 @@ export default function ApprovalCallRecording({ detail, disabled, readOnly = fal
       {canUpload ? <div className="mt-4 space-y-3">
         <label className="block text-sm font-medium" htmlFor={"call-recording-" + detail.id}>{recording ? required ? "Cargar otra grabación" : "Cargar otra grabación (opcional)" : required ? "Subir grabación" : "Subir grabación (opcional)"}</label>
         <input ref={input} id={"call-recording-" + detail.id} type="file" accept=".mp3,.m4a,.mp4,.ogg,.wav,audio/mpeg,audio/mp4,video/mp4,audio/ogg,application/ogg,audio/wav" disabled={disabled || saving} onChange={(event) => select(event.target.files?.[0])} className="block min-h-10 w-full min-w-0 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] p-2 text-sm file:mr-2 file:rounded-[var(--fp-radius-sm)] file:border-0 file:bg-[var(--fp-bg)] file:p-2 file:text-[var(--fp-graphite)] disabled:opacity-50" />
-        <p className="text-sm text-[var(--fp-muted)]">MP3, M4A, MP4 de audio, OGG (Opus) o WAV · Máximo 10 MB.{!required ? " La grabación es opcional y su ausencia no bloquea el OK." : !compact ? " Guardar la grabación mantiene el crédito pendiente de aprobación." : ""}</p>
+        <p className="text-sm text-[var(--fp-muted)]">MP3, M4A, MP4 de audio, OGG (Opus) o WAV · Máximo 10 MB.{context === "welcome" ? " Guardar el audio no finaliza la gestión ni aprueba el crédito." : !required ? " La grabación es opcional y su ausencia no bloquea el OK." : !compact ? " Guardar la grabación mantiene el crédito pendiente de aprobación." : ""}</p>
 
       </div> : null}
       {pending ? <div className="mt-3 flex flex-wrap gap-2">{canUpload ? <Button variant="secondary" disabled={disabled || saving} onClick={() => void save()}><Upload className="h-4 w-4" aria-hidden="true" />{saving ? "Guardando..." : "Guardar grabación"}</Button> : null}<Button variant="ghost" disabled={saving} onClick={clearSelection}>Cancelar</Button></div> : null}

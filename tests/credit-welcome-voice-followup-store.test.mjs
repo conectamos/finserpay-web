@@ -70,6 +70,24 @@ async function fixture(t, { count = 1, enabled = true, env = {} } = {}) {
     now: () => time, time: value => { time = new Date(value); }, advance: ms => { time = new Date(time.getTime() + ms); }, rollback: () => { rollback = true; } };
 }
 
+test("a human work result stops an unsent automatic welcome and opt-out also blocks explicit calls", async t => {
+  for (const outcome of ["HUMAN_CONTACT", "OPT_OUT"]) {
+    const f = await fixture(t); await f.enqueue(); const [claimed] = await f.store.claimPendingCreditWelcomeVoice({ limit: 1 });
+    assert.ok(claimed);
+    await f.db.exec(`CREATE TABLE "AttentionWorkRequest" (kind text,"targetSource" text,"targetId" integer,"conversationId" integer);
+      CREATE TABLE "AttentionAudit" ("conversationId" integer,action text,metadata jsonb);
+      INSERT INTO "AttentionWorkRequest" VALUES ('welcome','C',1,1);`);
+    await f.db.query('INSERT INTO "AttentionAudit" VALUES (1,\'WORK_WORKFLOW\',$1::jsonb)', [JSON.stringify({ result: { action: "WELCOME_RESULT", mode: "human", outcome } })]);
+    assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(claimed.eventId), null);
+    assert.equal((await f.events()).length, 1, "Human evidence does not become an invented provider call");
+    assert.equal((await f.followups())[0].reason, outcome);
+    const availability = await f.store.getCreditWelcomeVoiceOperatorAvailability(1);
+    assert.equal(availability.canCall, outcome !== "OPT_OUT");
+    if (outcome === "OPT_OUT") await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall({ creditId: 1, actorId: 51,
+      requestId: "98a7dfb4-a20d-482c-9411-8bff948ab001" }), error => error.code === "OPT_OUT");
+  }
+});
+
 test("saved recording from any approval revision prevents new initial queues and stops already pending automatic sources", async t => {
   const f = await fixture(t, { count: 4 });
   await f.enqueue(1, "NORMAL"); await f.enqueue(2, "INDIVIDUAL_IMPORT"); await f.enqueue(3);

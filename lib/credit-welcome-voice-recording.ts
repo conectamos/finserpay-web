@@ -7,6 +7,21 @@ type RecordingDatabase = RecordingReader & {
   $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
 };
 
+/** Human case results remain human evidence; never synthesize a provider call. */
+export async function readSavedHumanWelcomeOutcome(db: RecordingReader, creditId: number): Promise<"HUMAN_CONTACT" | "OPT_OUT" | null> {
+  if (!Number.isSafeInteger(creditId) || creditId < 1 || creditId > 2_147_483_647) return null;
+  const [schema] = await db.$queryRawUnsafe<Array<{ ready: boolean }>>(`SELECT
+    to_regclass('public."AttentionWorkRequest"') IS NOT NULL AND to_regclass('public."AttentionAudit"') IS NOT NULL AS ready`);
+  if (!schema?.ready) return null;
+  const [result] = await db.$queryRawUnsafe<Array<{ outcome: string }>>(`SELECT a.metadata->'result'->>'outcome' AS outcome
+    FROM "AttentionWorkRequest" w JOIN "AttentionAudit" a ON a."conversationId"=w."conversationId"
+    WHERE w.kind='welcome' AND w."targetSource"='C' AND w."targetId"=$1 AND a.action='WORK_WORKFLOW'
+      AND a.metadata->'result'->>'action'='WELCOME_RESULT' AND a.metadata->'result'->>'mode'='human'
+      AND a.metadata->'result'->>'outcome' IN ('HUMAN_CONTACT','OPT_OUT')
+    ORDER BY CASE WHEN a.metadata->'result'->>'outcome'='OPT_OUT' THEN 0 ELSE 1 END LIMIT 1`, creditId);
+  return result?.outcome === "OPT_OUT" || result?.outcome === "HUMAN_CONTACT" ? result.outcome : null;
+}
+
 /** A manually saved approval recording is evidence even after a review changes. */
 export async function hasSavedCreditApprovalCallRecording(db: RecordingReader, creditId: number): Promise<boolean> {
   if (!Number.isSafeInteger(creditId) || creditId < 1 || creditId > 2_147_483_647) return false;

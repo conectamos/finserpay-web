@@ -1203,10 +1203,7 @@ export async function validateIphoneEnrollmentPortalSession(
   return readActivePortalAccessForSession(session);
 }
 
-export async function findIphoneEnrollmentCase(input: {
-  document: string;
-  imei: string;
-}): Promise<IphoneEnrollmentLookupResult> {
+export async function prepareIphoneEnrollmentWorkflow() {
   await ensureIphoneEnrollmentSchema();
   await ensureCreditDeviceReplacementSchema();
   await Promise.all([
@@ -1214,9 +1211,22 @@ export async function findIphoneEnrollmentCase(input: {
     ensureVeriffSchema(),
     expireStaleSolicitudes(),
   ]);
+}
+
+export async function findIphoneEnrollmentCase(input: {document:string;imei:string}):Promise<IphoneEnrollmentLookupResult> {
+  await prepareIphoneEnrollmentWorkflow();
+  return findIphoneEnrollmentCaseInDatabase(input,prisma);
+}
+
+/** Caller authorizes and locks this exact application before calling. Never searches warranty or other applications. */
+export async function findIphoneEnrollmentApplicationInTransaction(input:{solicitudId:number;document:string;imei:string},database:Prisma.TransactionClient) {
+  if(!Number.isSafeInteger(input.solicitudId)||input.solicitudId<1)throw new IphoneEnrollmentApprovalError("CASE_NOT_AVAILABLE","Solicitud inválida.");
+  return findIphoneEnrollmentCaseInDatabase(input,database);
+}
+async function findIphoneEnrollmentCaseInDatabase(input:{document:string;imei:string;solicitudId?:number},database:Database):Promise<IphoneEnrollmentLookupResult> {
   const documentHash = hashIphoneEnrollmentDocument(input.document);
   const imeiHash = hashIphoneEnrollmentImei(input.imei);
-  const replacementCase =
+  const replacementCase = input.solicitudId ? null :
     await findCreditDeviceReplacementEnrollmentCase({
       document: input.document,
       imei: input.imei,
@@ -1226,7 +1236,7 @@ export async function findIphoneEnrollmentCase(input: {
   if (replacementCase) {
     return { kind: "FOUND", item: replacementCase };
   }
-  const rows = await prisma.$queryRawUnsafe<EnrollmentCaseRow[]>(
+  const rows = await database.$queryRawUnsafe<EnrollmentCaseRow[]>(
     `
       SELECT d."id" AS "solicitudId", d."currentStep", d."usuarioId",
         d."vendedorId", d."sedeId", aliado."id" AS "aliadoId", d."clienteNombre",
@@ -1246,12 +1256,13 @@ export async function findIphoneEnrollmentCase(input: {
         AND regexp_replace(COALESCE(d."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
         AND regexp_replace(COALESCE(d."imei", ''), '[^0-9]', '', 'g') = $2
         AND dc."documentHash" = $3
+        AND ($4::integer IS NULL OR d."id"=$4)
       ORDER BY d."createdAt" DESC, d."id" DESC
       LIMIT 2
     `,
     input.document,
     input.imei,
-    hmacDataCreditoValue("document", input.document)
+    hmacDataCreditoValue("document", input.document), input.solicitudId ?? null
   );
   if (rows.length > 1) return { kind: "AMBIGUOUS" };
   const eligibleRows: EnrollmentCaseRow[] = [];
@@ -1263,14 +1274,14 @@ export async function findIphoneEnrollmentCase(input: {
       sedeId: candidate.sedeId,
       aliadoId: candidate.aliadoId,
       document: input.document,
-    });
+    },database);
     if (veriffApproved) eligibleRows.push(candidate);
   }
   if (rows.length > 0 && eligibleRows.length === 0) {
     return { kind: "NOT_READY" };
   }
   if (!rows.length) {
-    const availability = await prisma.$queryRawUnsafe<
+    const availability = await database.$queryRawUnsafe<
       Array<{ finalized: boolean; waitingForStepFour: boolean }>
     >(
       `
@@ -1290,12 +1301,13 @@ export async function findIphoneEnrollmentCase(input: {
           AND regexp_replace(COALESCE(d."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
           AND regexp_replace(COALESCE(d."imei", ''), '[^0-9]', '', 'g') = $2
           AND dc."documentHash" = $3
+        AND ($4::integer IS NULL OR d."id"=$4)
         ORDER BY d."createdAt" DESC, d."id" DESC
         LIMIT 1
       `,
       input.document,
       input.imei,
-      hmacDataCreditoValue("document", input.document)
+      hmacDataCreditoValue("document", input.document), input.solicitudId ?? null
     );
     if (availability[0]?.waitingForStepFour) {
       return { kind: "NOT_READY" };
@@ -1309,11 +1321,11 @@ export async function findIphoneEnrollmentCase(input: {
 
   const row = eligibleRows[0];
   const review = row.reviewId
-    ? await getIphoneEnrollmentReviewForSolicitud({
+    ? await readIphoneEnrollmentReviewForSolicitud({
         solicitudId: row.solicitudId,
         document: input.document,
         imei: input.imei,
-      })
+      },database)
     : null;
   return {
     kind: "FOUND",
@@ -1346,6 +1358,9 @@ export async function getIphoneEnrollmentReviewForSolicitud(
     ensureFirmaSeguroSchema(),
     ensureVeriffSchema(),
   ]);
+  return readIphoneEnrollmentReviewForSolicitud(input,database);
+}
+async function readIphoneEnrollmentReviewForSolicitud(input:{solicitudId:number;document:string;imei:string},database:Database) {
   const rows = await database.$queryRawUnsafe<ReviewWithDraftScopeRow[]>(
     `
       SELECT review."id"::text, review."solicitudId", review."decision",
@@ -1410,21 +1425,20 @@ export function isNominalIphoneEnrollmentGrant(
   return grant.analyst.externalId.startsWith("FINSER-USER:");
 }
 
-export async function approveIphoneEnrollmentCase(input: {
+type IphoneEnrollmentApprovalInput = {
   caseToken: IphoneEnrollmentCaseTokenPayload;
   grant: IphoneEnrollmentGrantSession;
   checklist: IphoneEnrollmentChecklist;
   /** Server-only identity: never populated from the request body. */
   nominalActor?: { id: number };
-}) {
-  await ensureIphoneEnrollmentSchema();
-  await ensureCreditDeviceReplacementSchema();
-  await Promise.all([
-    ensureFirmaSeguroSchema(),
-    ensureVeriffSchema(),
-    expireStaleSolicitudes(),
-  ]);
-  return prisma.$transaction(async (transaction) => {
+};
+export async function approveIphoneEnrollmentCase(input:IphoneEnrollmentApprovalInput) {
+  await prepareIphoneEnrollmentWorkflow();
+  return prisma.$transaction(transaction=>approveIphoneEnrollmentCaseInTransaction(input,transaction));
+}
+/** Executes the unchanged canonical checks/write in the caller's already authorized transaction. */
+export async function approveIphoneEnrollmentCaseInTransaction(input:IphoneEnrollmentApprovalInput,transaction:Prisma.TransactionClient) {
+
     // Lock the current nominal account before the grant and case, so revoking
     // its role/activity cannot race a confirmation through the private portal.
     if (input.nominalActor) {
@@ -1620,7 +1634,6 @@ export async function approveIphoneEnrollmentCase(input: {
       input.caseToken.correlationId
     );
     return { review: serializeReview(inserted[0]), alreadyApproved: false };
-  });
 }
 
 export async function consumeIphoneEnrollmentRateLimit(input: {

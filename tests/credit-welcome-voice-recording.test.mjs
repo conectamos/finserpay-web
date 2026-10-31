@@ -10,6 +10,21 @@ const adapter = connection => ({
   $executeRawUnsafe: async (sql, ...values) => (await connection.query(sql, values)).affectedRows,
 });
 
+test("human welcome gates use only real welcome case results; opt-out prevails without fabricating provider evidence", async t => {
+  const db = new PGlite(); t.after(() => db.close()); const client = adapter(db);
+  assert.equal(await recording.readSavedHumanWelcomeOutcome(client, 1), null);
+  await db.exec(`CREATE TABLE "AttentionWorkRequest" (kind text,"targetSource" text,"targetId" integer,"conversationId" integer);
+    CREATE TABLE "AttentionAudit" ("conversationId" integer,action text,metadata jsonb);
+    INSERT INTO "AttentionWorkRequest" VALUES ('welcome','C',1,1),('enrollment','C',2,2),('welcome','D',3,3);`);
+  const add = (conversation, mode, outcome, action = "WELCOME_RESULT") => db.query('INSERT INTO "AttentionAudit" VALUES ($1,\'WORK_WORKFLOW\',$2::jsonb)', [conversation, JSON.stringify({ result: { action, mode, outcome } })]);
+  await add(1, "human", "NO_ANSWER"); await add(1, "human", "UNCERTAIN"); await add(1, "dapta", "OPT_OUT");
+  await add(1, "human", "OPT_OUT", "WELCOME_RECORDING"); await add(2, "human", "OPT_OUT"); await add(3, "human", "OPT_OUT");
+  for (const id of [1, 2, 3, 4]) assert.equal(await recording.readSavedHumanWelcomeOutcome(client, id), null);
+  await add(1, "human", "HUMAN_CONTACT"); assert.equal(await recording.readSavedHumanWelcomeOutcome(client, 1), "HUMAN_CONTACT");
+  await add(1, "human", "OPT_OUT"); await add(1, "human", "HUMAN_CONTACT");
+  assert.equal(await recording.readSavedHumanWelcomeOutcome(client, 1), "OPT_OUT");
+});
+
 test("only a saved approval recording row is evidence, regardless of revision, and old schemas remain safe", async t => {
   const db = new PGlite(); t.after(() => db.close());
   const client = adapter(db);

@@ -5,11 +5,12 @@ import { type AttentionDatabase, type AttentionDb } from "./atencion-storage";
 import { assertAttentionWorkCurrentActor } from "./atencion-work-actor";
 import { notifyAttentionWork } from "./atencion-work-notifications";
 import { attentionWorkKinds, attentionWorkStates, type AttentionWorkActor, type AttentionWorkDetail, type AttentionWorkItem, type AttentionWorkKind } from "./atencion-work-types";
-import type { AttentionMessage, AttentionNote } from "./atencion-types";
+import type { AttentionActor, AttentionMessage, AttentionNote } from "./atencion-types";
 import { validateMetaAttentionMedia } from "./atencion-meta";
 
 type Row = AttentionWorkItem & { targetSource: "D" | "C"; targetId: number; sellerId: number; userId: number; sedeId: number; aliadoId: number };
 type Target = { id:number; name:string; document:string|null; imei:string|null; platform:string|null; state:string; sellerId:number|null; sedeId:number; aliadoId:number; advisor:string; ally:string; branch:string };
+export type AttentionWorkWorkflowContext = {db:AttentionDb;actor:AttentionActor;work:Row;target:Target};
 const identity = (a:AttentionWorkActor) => a.type === "attention" ? {userId:a.actor.userId,sellerId:null,key:a.actor.key,name:a.actor.name} : a;
 const iso = (value:unknown) => new Date(value as string).toISOString();
 const selected = `w.*,c.name,c."assigneeName" AS assignee,c."assigneeKey",v.nombre AS advisor,a.nombre AS ally,s.nombre AS branch`;
@@ -18,9 +19,9 @@ function dto(r:Row):AttentionWorkItem{return {id:r.id,conversationId:r.conversat
 function scope(a:AttentionWorkActor){return a.type === "attention" ? {sql:`($1::boolean OR (c."assigneeUserId"=$2 AND c."assigneeKey"=$3 AND c."assigneeSellerId" IS NULL))`,values:[a.actor.central,a.actor.userId,a.actor.key]} : {sql:`w."aliadoId"=$1 AND (w."sellerId"=$2 OR ($3::boolean AND w."sedeId"=$4)) AND EXISTS(SELECT 1 FROM (SELECT 'D' AS source,id,"vendedorId","sedeId" FROM "CreditoBorrador" UNION ALL SELECT 'C',id,"vendedorId","sedeId" FROM "Credito") owner JOIN "Sede" os ON os.id=owner."sedeId" WHERE owner.source=w."targetSource" AND owner.id=w."targetId" AND os."aliadoId"=$1 AND (owner."vendedorId"=$2 OR ($3::boolean AND owner."sedeId"=$4)))`,values:[a.aliadoId,a.sellerId,a.supervisor,a.sedeId]};}
 export function parseWorkTarget(value:unknown){const match=typeof value==="string"?/^([DC])-([1-9]\d{0,9})$/.exec(value):null;if(!match)throw new AttentionError("Selecciona una solicitud o crédito existente.");return {source:match[1] as "D"|"C",id:Number(match[2])};}
 export function parseWorkKind(value:unknown):AttentionWorkKind{if(value!=="enrollment"&&value!=="welcome")throw new AttentionError("Tipo de solicitud inválido.");return value;}
-async function target(db:AttentionDb,source:"D"|"C",id:number):Promise<Target>{
+async function target(db:AttentionDb,source:"D"|"C",id:number,lock=true):Promise<Target>{
   const table=source==="D"?'"CreditoBorrador"':'"Credito"';
-  const [r]=await db.$queryRawUnsafe<Target[]>(`SELECT d.id,d."clienteNombre" AS name,d."clienteDocumento" AS document,d.imei,upper(COALESCE(to_jsonb(d)->>'plataforma',to_jsonb(d)->'contratoSnapshot'->>'plataforma','')) AS platform,d.estado AS state,d."vendedorId" AS "sellerId",d."sedeId",s."aliadoId",v.nombre AS advisor,a.nombre AS ally,s.nombre AS branch FROM ${table} d JOIN "Sede" s ON s.id=d."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" LEFT JOIN "Vendedor" v ON v.id=d."vendedorId" WHERE d.id=$1 FOR SHARE OF d,s,a`,id);
+  const [r]=await db.$queryRawUnsafe<Target[]>(`SELECT d.id,d."clienteNombre" AS name,d."clienteDocumento" AS document,d.imei,upper(COALESCE(to_jsonb(d)->>'plataforma',to_jsonb(d)->'contratoSnapshot'->>'plataforma','')) AS platform,d.estado AS state,d."vendedorId" AS "sellerId",d."sedeId",s."aliadoId",v.nombre AS advisor,a.nombre AS ally,s.nombre AS branch FROM ${table} d JOIN "Sede" s ON s.id=d."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" LEFT JOIN "Vendedor" v ON v.id=d."vendedorId" WHERE d.id=$1 ${lock?"FOR SHARE OF d,s,a":""}`,id);
   if(!r)throw new AttentionError("La operación vinculada ya no está disponible.",404);return r;
 }
 export function createAttentionWorkStore(database:AttentionDatabase){
@@ -44,12 +45,48 @@ export function createAttentionWorkStore(database:AttentionDatabase){
     const t=await target(db,r.targetSource,r.targetId),isStaff=a.type==="attention";
     const messages=await db.$queryRawUnsafe<AttentionMessage[]>(`SELECT id,direction,text,"sentAt",author,attachment FROM "AttentionMessage" WHERE "conversationId"=$1::uuid ORDER BY "sentAt" DESC,id DESC LIMIT 201`,r.conversationId);
     const notes=isStaff?await db.$queryRawUnsafe<AttentionNote[]>(`SELECT id,text,author,"createdAt" FROM "AttentionNote" WHERE "conversationId"=$1::uuid ORDER BY "createdAt" DESC,id DESC LIMIT 100`,r.conversationId):[];
-    const events=await db.$queryRawUnsafe<{id:string;action:string;author:string;at:string;state:string|null}[]>(`SELECT id::text,action,metadata->>'author' AS author,"createdAt" AS at,metadata->>'state' AS state FROM "AttentionAudit" WHERE "conversationId"=$1::uuid AND action IN ('WORK_CREATED','WORK_STATE','WORK_ASSIGNED','WORK_CALL_MODE') ORDER BY "createdAt" DESC,id DESC LIMIT 100`,r.conversationId);
+    const events=await db.$queryRawUnsafe<{id:string;action:string;author:string;at:string;state:string|null}[]>(`SELECT id::text,action,metadata->>'author' AS author,"createdAt" AS at,metadata->>'state' AS state FROM "AttentionAudit" WHERE "conversationId"=$1::uuid AND action IN ('WORK_CREATED','WORK_STATE','WORK_ASSIGNED','WORK_CALL_MODE','WORK_WORKFLOW') ORDER BY "createdAt" DESC,id DESC LIMIT 100`,r.conversationId);
     const team=isStaff&&a.actor.central?await db.$queryRawUnsafe<{key:string;name:string}[]>(`SELECT 'analyst:'||u.id AS key,u.nombre AS name FROM "Usuario" u JOIN "Rol" r ON r.id=u."rolId" JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" WHERE u.activo AND s.activa AND a.activo AND upper(trim(a.codigo))='FINSERPAY' AND upper(trim(r.nombre))='ANALISTA_APROBACION' ORDER BY u.nombre`):[];
     const operationHref=isStaff?(r.kind==="enrollment"?`/dashboard/aprobaciones/enrolamiento?documento=${encodeURIComponent(t.document||"")}&imei=${encodeURIComponent(t.imei||"")}`:`/dashboard/aprobaciones?credito=${r.targetId}`):(r.targetSource==="D"?`/dashboard/creditos?draft=${r.targetId}&mode=create-client`:`/dashboard/solicitudes?id=C-${r.targetId}`);
     return {item:dto({...r,name:t.name}),messages:messages.slice(0,200).reverse().map(m=>({...m,sentAt:iso(m.sentAt),...(m.attachment?{attachment:{...m.attachment,url:`/api/${isStaff?"atencion/solicitudes":"ventas/atencion"}/${r.id}/files/${m.attachment.id}`}}:{})})),notes:notes.map(n=>({...n,createdAt:iso(n.createdAt)})),canManage:isStaff,canWrite:r.state!=="completed"&&(isStaff||a.sellerId===t.sellerId),canAssign:isStaff&&a.actor.central,historyTruncated:messages.length>200,document:t.document,imei:t.imei,operationHref,team,events:events.map(e=>({...e,at:iso(e.at)}))};
   }
+  async function workflowContext(db:AttentionDb,a:AttentionWorkActor,id:string,kind:AttentionWorkKind,lockTarget=true):Promise<AttentionWorkWorkflowContext>{
+    if(a.type!=="attention")throw new AttentionError("Solo el equipo autorizado puede completar esta gestión.",403);
+    const work=await row(db,a,id);if(work.kind!==kind||work.targetSource!==(kind==="enrollment"?"D":"C"))throw new AttentionError("La solicitud no corresponde a esta gestión.",409);
+    const t=await target(db,work.targetSource,work.targetId,lockTarget);
+    if(t.sellerId!==work.sellerId||t.sedeId!==work.sedeId||t.aliadoId!==work.aliadoId)throw new AttentionError("La venta cambió de asesor o sede. Revisa la vinculación antes de continuar.",409);
+    return {db,actor:a.actor,work,target:t};
+  }
   return {
+    workflowRead:<T>(a:AttentionWorkActor,id:string,kind:AttentionWorkKind,run:(context:AttentionWorkWorkflowContext)=>Promise<T>)=>transaction(a,async db=>{
+      const context=await workflowContext(db,a,id,kind,false),result=await run(context),finalContext=await workflowContext(db,a,id,kind);
+      if(finalContext.target.document!==context.target.document||finalContext.target.imei!==context.target.imei)throw new AttentionError("La identidad de la operación cambió. Actualiza antes de continuar.",409);
+      return result;
+    }),
+    workflowMutate:<T extends Record<string,unknown>>(a:AttentionWorkActor,id:string,kind:AttentionWorkKind,input:Record<string,unknown>,run:(context:AttentionWorkWorkflowContext)=>Promise<{result:T;summary:string;complete:boolean;nextState?:"review"|"information"}>)=>transaction(a,async db=>{
+      const context=await workflowContext(db,a,id,kind,false),r=context.work;
+      if(!Number.isSafeInteger(input.version)||Number(input.version)<1)throw new AttentionError("Versión inválida.");
+      const req=await intent(db,a,input.requestId,{action:"WORK_WORKFLOW",workId:id,kind,input});
+      if(req.replay){
+        await workflowContext(db,a,id,kind);
+        const [event]=await db.$queryRawUnsafe<{result:T}[]>(`SELECT metadata->'result' AS result FROM "AttentionAudit" WHERE "conversationId"=$1::uuid AND action='WORK_WORKFLOW' AND "actorKey"=$2 AND metadata->>'requestId'=$3 ORDER BY id DESC LIMIT 1`,r.conversationId,identity(a).key,req.id);
+        if(!event)throw new AttentionError("No se encontró el resultado de este intento. Actualiza la solicitud.",409);
+        return {detail:await detail(db,a,r),result:event.result,alreadyApplied:true};
+      }
+      if(r.state==="completed"||r.version!==input.version)throw new AttentionError("La solicitud cambió o está finalizada. Actualiza antes de continuar.",409);
+      const outcome=await run(context),summary=attentionText(outcome.summary,4000);
+      // Domain helpers acquire their own canonical locks first. Recheck ownership/identity under row locks before commit.
+      const finalContext=await workflowContext(db,a,id,kind);
+      if(finalContext.target.document!==context.target.document||finalContext.target.imei!==context.target.imei)throw new AttentionError("La identidad de la operación cambió. Actualiza antes de continuar.",409);
+      const nextState=outcome.complete?"completed":outcome.nextState??r.state;
+      if(!Object.hasOwn(attentionWorkStates,nextState))throw new AttentionError("Estado de gestión inválido.");
+      await db.$queryRawUnsafe(`UPDATE "AttentionWorkRequest" SET state=$2,version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`,r.id,nextState);
+      await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET status=CASE WHEN $2 THEN 'closed' ELSE status END,"closedAt"=CASE WHEN $2 THEN now() ELSE "closedAt" END,version=version+1,"updatedAt"=now(),"lastContactAt"=now() WHERE id=$1::uuid RETURNING id`,r.conversationId,outcome.complete);
+      await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author) VALUES($1::uuid,$2::uuid,$3,'outbound',$4,now(),$5) RETURNING id`,randomUUID(),r.conversationId,`workflow:${identity(a).key}:${req.id}`,summary,identity(a).name);
+      await audit(db,a,r,req.id,"WORK_WORKFLOW",{state:nextState,kind,result:outcome.result});
+      await notifyAttentionWork(db,a,r,`workflow:${identity(a).key}:${req.id}`,"reply");
+      return {detail:await detail(db,a,await row(db,a,id)),result:outcome.result,alreadyApplied:false};
+    }),
     authorizeEvents:(a:AttentionWorkActor,ids:readonly string[])=>transaction(a,async db=>{if(!ids.length)return false;const access=scope(a),[result]=await db.$queryRawUnsafe<{relevant:boolean}[]>(`SELECT EXISTS(SELECT 1 ${join} WHERE ${access.sql} AND w."conversationId"=ANY($${access.values.length+1}::uuid[])) AS relevant`,...access.values,ids.slice(0,100));return result.relevant;}),
     forConversation:(a:AttentionWorkActor,conversationId:string)=>transaction(a,async db=>{const access=scope(a),[found]=await db.$queryRawUnsafe<{id:string}[]>(`SELECT w.id ${join} WHERE ${access.sql} AND w."conversationId"=$${access.values.length+1}::uuid`,...access.values,attentionUuid(conversationId));return found?detail(db,a,await row(db,a,found.id)):null;}),
     media:(a:AttentionWorkActor,id:string,fileId:string)=>transaction(a,async db=>{await row(db,a,id);const [file]=await db.$queryRawUnsafe<{content:Uint8Array;mimeType:string}[]>(`SELECT content,"mimeType" FROM "AttentionWorkFile" WHERE id=$1::uuid AND "workId"=$2::uuid`,attentionUuid(fileId),id);if(!file)throw new AttentionError("Archivo no encontrado.",404);return file;}),
@@ -111,6 +148,7 @@ export function createAttentionWorkStore(database:AttentionDatabase){
         event=action==="note"?"WORK_NOTE":"WORK_MESSAGE";
       }else if(action==="state"){
         if(!Object.hasOwn(attentionWorkStates,String(input.state)))throw new AttentionError("Estado no válido.");
+        if(input.state==="completed")throw new AttentionError("Completa la gestión de bienvenida o el checklist de enrolamiento para finalizar esta solicitud.",409);
         const text=attentionText(input.text,4000);
         await db.$queryRawUnsafe(`UPDATE "AttentionWorkRequest" SET state=$2 WHERE id=$1::uuid RETURNING id`,id,input.state);
         await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET status=$2,"closedAt"=CASE WHEN $2='closed' THEN now() ELSE NULL END WHERE id=$1::uuid RETURNING id`,r.conversationId,input.state==="completed"?"closed":r.assigneeKey?"open":"pending");

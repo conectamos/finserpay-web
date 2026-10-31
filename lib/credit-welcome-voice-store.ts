@@ -13,7 +13,7 @@ import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } fr
 import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
 import { isWelcomeVoiceDocumentFragment, parseWelcomeVoiceDocumentDictation } from "@/lib/credit-welcome-voice-document";
 import { planCreditWelcomeVoiceFollowup, WELCOME_VOICE_AUTOMATIC_LIMIT_REASON, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
-import { hasSavedCreditApprovalCallRecording, stopAutomaticCreditWelcomeCallsForRecording } from "@/lib/credit-welcome-voice-recording";
+import { hasSavedCreditApprovalCallRecording, readSavedHumanWelcomeOutcome, stopAutomaticCreditWelcomeCallsForRecording } from "@/lib/credit-welcome-voice-recording";
 
 export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN" | "AUTOMATIC_RETRY" | "OPERATOR_REQUEST";
 export type CreditWelcomeVoiceStatus = "PENDING" | "DISPATCHING" | "ACCEPTED" | "COMPLETED" |
@@ -371,6 +371,8 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     return true;
   }
   async function globalWelcomeBlock(db: WelcomeVoiceTransaction, creditId: number, currentEventId: string | null = null) {
+    const human = await readSavedHumanWelcomeOutcome(db, creditId);
+    if (human) return { phase: human === "OPT_OUT" ? "STOPPED" as const : "CONTACTED" as const, reason: human };
     const excluded = await db.$queryRawUnsafe<Array<{ creditoId: number }>>(`SELECT "creditoId" FROM "VoiceReviewCampaignMember"
       WHERE "creditoId"=$1 AND "stopReason"='OPERATOR_EXCLUDED' LIMIT 1`, creditId);
     if (excluded.length) return { phase: "STOPPED" as const, reason: "OPERATOR_EXCLUDED" };
@@ -401,6 +403,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (event.campaignId) await setMemberState(db, event.campaignId, event.creditoId, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
   }
   async function operatorCallBlock(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, creditId: number, currentEventId: string | null = null) {
+    if (await readSavedHumanWelcomeOutcome(db, creditId) === "OPT_OUT") return "OPT_OUT";
     const excluded = await db.$queryRawUnsafe<Array<{ creditoId: number }>>(`SELECT "creditoId" FROM "VoiceReviewCampaignMember"
       WHERE "creditoId"=$1 AND "stopReason"='OPERATOR_EXCLUDED' LIMIT 1`, creditId);
     if (excluded.length) return "OPERATOR_EXCLUDED";
@@ -1051,6 +1054,15 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       return { eventId: event.id, unchanged: false };
     });
   }
+  /** Reuse the domain snapshot comparison when a work case selects a completed call as evidence. */
+  async function creditWelcomeVoiceEvidenceIsCurrent(creditId: number, eventId: string): Promise<boolean> {
+    if (!validCreditId(creditId) || !uuid.test(eventId)) return false;
+    const event = await readEvent(database, eventId, false);
+    if (!event || event.creditoId !== creditId || !event.snapshot) return false;
+    const credit = await readCredit(database, creditId);
+    const current = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
+    return Boolean(current && sameSnapshot(event.snapshot, current));
+  }
   async function listCreditWelcomeVoiceCallsForCredit(creditId: number): Promise<VoiceCallRecord[]> {
     if (!validCreditId(creditId)) throw new CreditWelcomeVoiceStoreError("INVALID_CREDIT", "Crédito inválido.", 400);
     const rows = await database.$queryRawUnsafe<Array<Omit<VoiceCallRecord, "creditId" | "identityVerified" | "audioStorage"> & {
@@ -1074,7 +1086,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     getCreditWelcomeVoiceOperatorAvailability, getCreditWelcomeVoiceOperatorRequest, prepareCreditWelcomeVoiceDispatch,
     ensureVoiceReviewCampaign, getVoiceReviewCampaignDispatchSlot, claimVoiceReviewCampaign, prepareVoiceReviewCampaign,
     markCreditWelcomeVoiceDispatchAccepted, markCreditWelcomeVoiceDispatchUnknown, markCreditWelcomeVoiceDispatchFailed,
-    verifyCreditWelcomeVoiceIdentity, saveCreditWelcomeVoiceResult, listCreditWelcomeVoiceCallsForCredit };
+    verifyCreditWelcomeVoiceIdentity, saveCreditWelcomeVoiceResult, listCreditWelcomeVoiceCallsForCredit, creditWelcomeVoiceEvidenceIsCurrent };
 }
 
 const store = createCreditWelcomeVoiceStore();

@@ -16,6 +16,18 @@ instalación en Inicio en iPhone, permisos bloqueados, incompatibilidad y fallas
 La pantalla bloqueada muestra únicamente el tipo de trámite, sin datos del cliente.
 La suscripción pertenece al perfil nominal y se desactiva al salir o cambiarlo.
 
+## Gestión desde el chat de Atención
+
+Las solicitudes de bienvenida y enrolamiento se gestionan desde la cabecera del
+chat con `FinserSidePanel`. El panel muestra la identidad de la venta vinculada,
+las acciones reales y una sola confirmación principal. Conserva el historial y
+el borrador del chat al abrir y cerrar; en celular ocupa el ancho disponible.
+El checklist de enrolamiento reutiliza las cuatro pruebas existentes y comienza
+sin selecciones. Una autorización previa muestra su responsable y fecha, sin
+atribuir sus pruebas al analista actual. Las notas internas tienen su propio
+campo, separado del mensaje al asesor. Los estados de seguimiento no sustituyen
+la confirmación del resultado de la gestión.
+
 ## Principios
 
 - La interfaz debe sentirse financiera, premium, sobria y profesional.

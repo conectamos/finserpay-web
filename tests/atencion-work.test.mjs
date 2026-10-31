@@ -36,7 +36,7 @@ async function fixture(t){const db=new PGlite();t.after(()=>db.close());await db
 test("asesor crea chat interno con datos reales y reintentos no duplican solicitud ni mensaje",async t=>{const {store,db,create}=await fixture(t);const id=randomUUID(),a=await create({requestId:id}),b=await create({requestId:id}),c=await create();assert.equal(a.item.id,b.item.id);assert.equal(a.item.id,c.item.id);assert.equal(a.item.name,"Cliente real");assert.equal(a.messages.length,1);assert.equal((await db.query('SELECT channel,phone FROM "AttentionConversation"')).rows[0].channel,"internal");assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});
 test("creación rechaza ventas ajenas, Android, bienvenida de borrador y roles de analista",async t=>{const {create,store}=await fixture(t);await assert.rejects(create({target:"D-102"}),{status:403});await assert.rejects(create({target:"D-101"}),/iPhone/);await assert.rejects(create({kind:"welcome"}),/crédito/);await assert.rejects(store.create(admin,{requestId:randomUUID(),kind:"enrollment",target:"D-100"}),{status:403});});
 test("asignación mantiene alcance nominal y auditoría; vendedor no puede asignar ni ver notas",async t=>{const {create,store}=await fixture(t);let d=await create();await assert.rejects(store.detail(analyst,d.item.id),{status:404});await assert.rejects(store.mutate(seller,d.item.id,{requestId:randomUUID(),version:1,action:"assign",assigneeKey:"analyst:5"}),{status:403});d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:1,action:"assign",assigneeKey:"analyst:5"});assert.equal((await store.list(analyst,"enrollment")).total,1);d=await store.mutate(analyst,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"note",text:"Nota reservada"});assert.equal(d.notes[0].text,"Nota reservada");assert.equal((await store.detail(seller,d.item.id)).notes.length,0);assert.ok(d.events.some(e=>e.action==="WORK_ASSIGNED"));});
-test("mensaje repetido es idempotente; conflicto de versión no pierde mensajes ni aprueba la operación",async t=>{const {create,store,db}=await fixture(t);let d=await create();const input={requestId:randomUUID(),version:1,action:"message",text:"Aquí está el contexto"};d=await store.mutate(seller,d.item.id,input);await store.mutate(seller,d.item.id,input);assert.equal(d.messages.length,2);await assert.rejects(store.mutate(seller,d.item.id,{...input,requestId:randomUUID()}),{status:409});d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"state",state:"completed",text:"Gestión terminada; revisar resultado en expediente"});assert.equal(d.item.state,"completed");assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");await assert.rejects(store.mutate(seller,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"message",text:"nuevo"}),{status:409});});
+test("mensaje repetido es idempotente; conflicto de versión no pierde mensajes y cierre genérico no omite gestión",async t=>{const {create,store,db}=await fixture(t);let d=await create();const input={requestId:randomUUID(),version:1,action:"message",text:"Aquí está el contexto"};d=await store.mutate(seller,d.item.id,input);await store.mutate(seller,d.item.id,input);assert.equal(d.messages.length,2);await assert.rejects(store.mutate(seller,d.item.id,{...input,requestId:randomUUID()}),{status:409});await assert.rejects(store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"state",state:"completed",text:"Intento de omitir checklist"}),{status:409});assert.equal((await store.detail(admin,d.item.id)).item.state,"pending");assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});
 test("una reasignación de venta retira inmediatamente lista, detalle y archivos al asesor anterior",async t=>{const {create,store,db}=await fixture(t);const d=await create();await db.query('UPDATE "CreditoBorrador" SET "vendedorId"=12 WHERE id=100');assert.equal((await store.list(seller,"enrollment")).items.length,0);await assert.rejects(store.detail(seller,d.item.id),{status:404});});
 test("supervisor ve la sede pero no envía en nombre del titular ni crea solicitudes ajenas",async t=>{const {create,store}=await fixture(t);const d=await create(),supervisor={...seller,sellerId:13,key:"seller:2:13",supervisor:true};assert.equal((await store.list(supervisor,"enrollment")).total,1);assert.equal((await store.detail(supervisor,d.item.id)).canWrite,false);await assert.rejects(store.mutate(supervisor,d.item.id,{requestId:randomUUID(),version:1,action:"message",text:"no"}),{status:403});await assert.rejects(store.create(supervisor,{requestId:randomUUID(),kind:"enrollment",target:"D-100"}),{status:403});});
 test("bienvenida humana o Dapta solo registra modalidad sin iniciar llamadas",async t=>{const {create,store,db}=await fixture(t);let d=await create({kind:"welcome",target:"C-200"});d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:1,action:"call_mode",callMode:"dapta"});assert.equal(d.item.callMode,"dapta");assert.equal(d.operationHref,"/dashboard/aprobaciones?credito=200");assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);});
@@ -110,4 +110,44 @@ test("fallo de notificaciones revierte la respuesta completa en su misma transac
   await assert.rejects(store.mutate(admin,d.item.id,{requestId,version:1,action:"message",text:"No debe persistir"}),/test rollback/);
   const after=await store.detail(admin,d.item.id);assert.equal(after.messages.length,before);assert.equal(after.item.version,1);
   assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionRequest" WHERE "requestId"=$1::uuid',[requestId])).rows[0].n,0);
+});
+
+test("gestión autorizada guarda resultado, cierre, mensaje y aviso atómicos; replay no repite dominio",async t=>{
+  const {db,store,create}=await fixture(t),d=await create();let calls=0;
+  const input={requestId:randomUUID(),version:1,action:"test_domain"};
+  const apply=ctx=>{calls++;assert.equal(ctx.work.targetId,100);assert.equal(ctx.target.document,"12345");return Promise.resolve({result:{reviewId:"test-review"},summary:"Confirmación de prueba",complete:true});};
+  const first=await store.workflowMutate(admin,d.item.id,"enrollment",input,apply);
+  const replay=await store.workflowMutate(admin,d.item.id,"enrollment",input,apply);
+  assert.equal(calls,1);assert.equal(first.detail.item.state,"completed");assert.equal(first.detail.messages.length,2);
+  assert.equal(replay.alreadyApplied,true);assert.deepEqual(replay.result,first.result);
+  assert.equal((await db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='WORK_WORKFLOW'`)).rows[0].n,1);
+  assert.equal((await db.query(`SELECT count(*)::int n FROM "AttentionWorkNotification" WHERE kind='reply'`)).rows[0].n,1);
+  await assert.rejects(store.mutate(seller,d.item.id,{requestId:randomUUID(),version:first.detail.item.version,action:"message",text:"nuevo"}),{status:409});
+});
+
+test("gestión bloquea roles, asignación, tipo y operación transferida sin ejecutar dominio",async t=>{
+  const {db,store,create}=await fixture(t),d=await create();const input={requestId:randomUUID(),version:1};let calls=0;
+  const apply=async()=>{calls++;return {result:{},summary:"No debe ocurrir",complete:true};};
+  await assert.rejects(store.workflowMutate(seller,d.item.id,"enrollment",input,apply),{status:403});
+  await assert.rejects(store.workflowMutate(analyst,d.item.id,"enrollment",input,apply),{status:404});
+  await assert.rejects(store.workflowMutate(admin,d.item.id,"welcome",input,apply),{status:409});
+  await db.query('UPDATE "CreditoBorrador" SET "vendedorId"=12 WHERE id=100');
+  await assert.rejects(store.workflowRead(admin,d.item.id,"enrollment",apply),{status:409});
+  await assert.rejects(store.workflowMutate(admin,d.item.id,"enrollment",input,apply),{status:409});assert.equal(calls,0);
+});
+
+test("cambio de titular o identidad durante dominio revierte todo y seguimiento mantiene revisión",async t=>{
+  const {db,store,create}=await fixture(t),d=await create();
+  await assert.rejects(store.workflowMutate(admin,d.item.id,"enrollment",{requestId:randomUUID(),version:1},async ctx=>{
+    await ctx.db.$queryRawUnsafe('UPDATE "CreditoBorrador" SET "vendedorId"=12 WHERE id=100 RETURNING id');
+    return {result:{},summary:"Nunca se publica",complete:true};
+  }),{status:409});
+  assert.equal((await db.query('SELECT "vendedorId" FROM "CreditoBorrador" WHERE id=100')).rows[0].vendedorId,11);
+  await assert.rejects(store.workflowMutate(admin,d.item.id,"enrollment",{requestId:randomUUID(),version:1},async ctx=>{
+    await ctx.db.$queryRawUnsafe('UPDATE "CreditoBorrador" SET imei=\'999999999999999\' WHERE id=100 RETURNING id');
+    return {result:{},summary:"Nunca se publica",complete:true};
+  }),{status:409});
+  assert.equal((await store.detail(admin,d.item.id)).messages.length,1);
+  const followup=await store.workflowMutate(admin,d.item.id,"enrollment",{requestId:randomUUID(),version:1},async()=>({result:{reason:"test"},summary:"Seguimiento",complete:false,nextState:"review"}));
+  assert.equal(followup.detail.item.state,"review");
 });

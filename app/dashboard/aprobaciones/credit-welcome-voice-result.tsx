@@ -32,30 +32,32 @@ function privateCallLink(value: string | null) {
 type ManualCall = { canCall: boolean; phone: string | null; reason?: string };
 type CallRequest = { creditId: number; requestId: string; eventId?: string; busy: boolean;
   pending: boolean; message: string; error: boolean };
-type PendingRequest = { creditId: number; requestId: string; phone?: string; eventId?: string; controller?: AbortController; busy: boolean };
-type SavedRequest = { requestId: string; phone?: string };
+type WorkScope = { version: number; contextHash: string };
+type PendingRequest = { creditId: number; requestId: string; phone?: string; eventId?: string; controller?: AbortController; busy: boolean; work?: WorkScope };
+type SavedRequest = { requestId: string; phone?: string; work?: WorkScope };
 type Destination = { creditId: number; other: boolean; value: string };
 type RequestLookup = { requestId: string; found: boolean; eventId?: string; status?: string };
 type VoiceOverlay = { creditId: number; view: "history" | "detail"; page: number; callId?: string; fromHistory?: boolean };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const closedStates = new Set(["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"]);
-function rememberRequest(creditId: number, requestId: string | null, phone?: string) {
+function rememberRequest(creditId: number, requestId: string | null, phone?: string, scope = "", work?: WorkScope) {
   try {
     if (typeof sessionStorage === "undefined") return;
-    const key = `finserpay:welcome-voice:request:${creditId}`;
-    if (requestId) sessionStorage.setItem(key, JSON.stringify({ requestId, ...(phone ? { phone } : {}) }));
+    const key = `finserpay:welcome-voice:request:${creditId}${scope ? `:${encodeURIComponent(scope)}` : ""}`;
+    if (requestId) sessionStorage.setItem(key, JSON.stringify({ requestId, ...(phone ? { phone } : {}), ...(work ? { work } : {}) }));
     else sessionStorage.removeItem(key);
   } catch { /* The in-memory guard still applies when storage is unavailable. */ }
 }
-function savedRequest(creditId: number): SavedRequest | null {
+function savedRequest(creditId: number, scope = ""): SavedRequest | null {
   try {
-    const value = typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(`finserpay:welcome-voice:request:${creditId}`);
+    const value = typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(`finserpay:welcome-voice:request:${creditId}${scope ? `:${encodeURIComponent(scope)}` : ""}`);
     if (!value) return null;
     if (uuid.test(value)) return { requestId: value };
     const saved = JSON.parse(value) as SavedRequest | null;
     if (!saved || typeof saved.requestId !== "string" || !uuid.test(saved.requestId) ||
       (saved.phone !== undefined && (typeof saved.phone !== "string" || normalizeManualVoicePhone(saved.phone) !== saved.phone))) return null;
-    return { requestId: saved.requestId, ...(saved.phone ? { phone: saved.phone } : {}) };
+    if (scope && (!saved.work || !Number.isSafeInteger(saved.work.version) || saved.work.version < 1 || !/^[a-f0-9]{64}$/.test(saved.work.contextHash))) return null;
+    return { requestId: saved.requestId, ...(saved.phone ? { phone: saved.phone } : {}), ...(saved.work ? { work: saved.work } : {}) };
   } catch { return null; }
 }
 function requestMessage(status: string) {
@@ -65,14 +67,21 @@ function requestMessage(status: string) {
   return `Resultado del intento: ${states[status] || "Por confirmar"}.`;
 }
 
-export default function CreditWelcomeVoiceResult({ creditId }: { creditId: number }) {
-  const [read, setRead] = useState<{ creditId: number; revision: number; items: WelcomeVoiceCallView[]; error: string; manualCall?: ManualCall } | null>(null);
+export default function CreditWelcomeVoiceResult({ creditId, endpoint, scopeVersion, contextHash, disabled = false, readOnly = false, onBusyChange, onUpdated }: {
+  creditId: number; endpoint?: string; scopeVersion?: number; contextHash?: string; disabled?: boolean; readOnly?: boolean;
+  onBusyChange?: (busy: boolean) => void; onUpdated?: () => Promise<void> | void;
+}) {
+  const apiEndpoint = endpoint || `/api/creditos/${creditId}/bienvenida-voz`;
+  const storageScope = endpoint || "";
+  const callbacks = useRef({ onBusyChange, onUpdated }); callbacks.current = { onBusyChange, onUpdated };
+  const [read, setRead] = useState<{ creditId: number; revision: number; items: WelcomeVoiceCallView[]; error: string; manualCall?: ManualCall; workVersion?: number; contextHash?: string } | null>(null);
   const [revision, setRevision] = useState(0);
   const [request, setRequest] = useState<CallRequest | null>(null);
   const [destination, setDestination] = useState<Destination | null>(null);
   const [overlay, setOverlay] = useState<VoiceOverlay | null>(null);
   const pendingRequest = useRef<PendingRequest | null>(null);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const observedResults = useRef<{ endpoint: string; signature: string } | null>(null);
   const phoneFieldId = useId();
   const dialogTitleId = useId();
   const current = read?.creditId === creditId ? read : null;
@@ -88,7 +97,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   const retainedRequest = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
   const currentDestination = destination?.creditId === creditId ? destination : { creditId, other: false, value: "" };
   const alternatePhone = currentDestination.other ? normalizeManualVoicePhone(currentDestination.value) : null;
-  const destinationLocked = refreshing || busy || activeAttempt || Boolean(retainedRequest) || !manualCall?.canCall;
+  const destinationLocked = disabled || readOnly || refreshing || busy || activeAttempt || Boolean(retainedRequest) || !manualCall?.canCall;
   const currentOverlay = overlay?.creditId === creditId ? overlay : null;
   const selectedCall = currentOverlay?.view === "detail" ? items.find(call => call.id === currentOverlay.callId) : null;
   const history = welcomeVoiceHistoryPage(items, currentOverlay?.page || 1);
@@ -96,25 +105,32 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   useEffect(() => {
     const controller = new AbortController();
     const requestedPending = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
-    const requestId = requestedPending?.requestId || savedRequest(creditId)?.requestId;
+    const requestId = requestedPending?.requestId || savedRequest(creditId, storageScope)?.requestId;
     const query = requestId ? `?requestId=${encodeURIComponent(requestId)}` : "";
-    void fetch(`/api/creditos/${creditId}/bienvenida-voz${query}`, { cache: "no-store", signal: controller.signal })
+    void fetch(`${apiEndpoint}${query}`, { cache: "no-store", signal: controller.signal })
       .then(async response => {
         const body = await response.json().catch(() => null) as {
-          ok?: boolean; items?: WelcomeVoiceCallView[]; manualCall?: ManualCall; request?: RequestLookup;
+          ok?: boolean; items?: WelcomeVoiceCallView[]; manualCall?: ManualCall; request?: RequestLookup; workVersion?: number; contextHash?: string;
         } | null;
         if (!response.ok || !body?.ok || !Array.isArray(body.items)) throw new Error("No se pudo consultar la bienvenida por voz.");
         if (controller.signal.aborted) return;
         const items = body.items.filter(item => item.creditId === creditId);
+        const signature = JSON.stringify(items.filter(item => closedStates.has(item.status)).map(item =>
+          [item.id, item.status, item.communicationOutcome, item.completedAt]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+        const previousResults = observedResults.current;
+        observedResults.current = { endpoint: apiEndpoint, signature };
+        if (previousResults?.endpoint === apiEndpoint && previousResults.signature !== signature) {
+          void Promise.resolve(callbacks.current.onUpdated?.()).catch(() => { /* Keep polling the authoritative call status. */ });
+        }
         const supplied = body.manualCall;
         const manualCall = supplied && typeof supplied.canCall === "boolean" &&
           (supplied.phone === null || (typeof supplied.phone === "string" && supplied.phone.length <= 32))
           ? { canCall: supplied.canCall, phone: supplied.phone,
             reason: typeof supplied.reason === "string" ? supplied.reason.slice(0, 240) : undefined } : undefined;
-        setRead({ creditId, revision, items, error: "", manualCall });
+        setRead({ creditId, revision, items, error: "", manualCall, workVersion: body.workVersion, contextHash: body.contextHash });
         let pending = pendingRequest.current;
         if (!pending || pending.creditId !== creditId) {
-          const saved = savedRequest(creditId);
+          const saved = savedRequest(creditId, storageScope);
           pending = saved ? { creditId, ...saved, busy: false } : null;
           pendingRequest.current = pending;
           if (pending) setRequest({ ...pending, pending: true, error: false,
@@ -140,7 +156,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
           !Object.prototype.hasOwnProperty.call(states, lookup.status)) return;
         pending.eventId = lookup.eventId;
         if (closedStates.has(lookup.status)) {
-          rememberRequest(creditId, null);
+          rememberRequest(creditId, null, undefined, storageScope);
           pendingRequest.current = null;
           setDestination({ creditId, other: false, value: "" });
           setRequest({ creditId, requestId, eventId: lookup.eventId, busy: false, pending: false,
@@ -152,7 +168,9 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
       })
       .catch(() => { if (!controller.signal.aborted) setRead({ creditId, revision, items: [], error: "No se pudo consultar la bienvenida por voz. Intenta actualizarla." }); });
     return () => controller.abort();
-  }, [creditId, revision]);
+  }, [creditId, revision, apiEndpoint, storageScope]);
+  useEffect(() => { callbacks.current.onBusyChange?.(busy || Boolean(currentRequest?.pending && !currentRequest.eventId)); }, [busy, currentRequest?.pending, currentRequest?.eventId]);
+  useEffect(() => () => callbacks.current.onBusyChange?.(false), []);
   useEffect(() => () => {
     const pending = pendingRequest.current;
     if (pending?.creditId === creditId) {
@@ -197,30 +215,32 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
   }, [dialogOpen, creditId]);
 
   async function callNow() {
-    if (!manualCall || refreshing || error || activeAttempt) return;
+    if (disabled || readOnly || !manualCall || refreshing || error || activeAttempt) return;
     const previous = pendingRequest.current?.creditId === creditId ? pendingRequest.current : null;
-    const retained = previous || savedRequest(creditId);
+    const retained = previous || savedRequest(creditId, storageScope);
     if (previous?.busy || currentRequest?.pending || !manualCall.canCall || !manualCall.phone ||
       (!retained && currentDestination.other && !alternatePhone)) return;
     const requestId = retained?.requestId || crypto.randomUUID();
     const phone = retained ? retained.phone : currentDestination.other && alternatePhone ? alternatePhone : undefined;
+    const work = retained?.work || (endpoint ? { version: current?.workVersion ?? scopeVersion ?? 0, contextHash: current?.contextHash ?? contextHash ?? "" } : undefined);
+    if (endpoint && (!work || !Number.isSafeInteger(work.version) || work.version < 1 || !/^[a-f0-9]{64}$/.test(work.contextHash))) return;
     const controller = new AbortController();
-    const pending: PendingRequest = { creditId, requestId, phone, eventId: previous?.eventId, busy: true, controller };
+    const pending: PendingRequest = { creditId, requestId, phone, eventId: previous?.eventId, busy: true, controller, work };
     pendingRequest.current = pending;
-    rememberRequest(creditId, requestId, phone);
+    rememberRequest(creditId, requestId, phone, storageScope, work);
     setRequest({ creditId, requestId, eventId: pending.eventId, busy: true, pending: true, error: false,
       message: "Solicitando la llamada..." });
     const timeout = setTimeout(() => controller.abort(), 60_000);
     try {
-      const response = await fetch(`/api/creditos/${creditId}/bienvenida-voz`, { method: "POST", cache: "no-store",
+      const response = await fetch(apiEndpoint, { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ requestId, ...(phone ? { phone } : {}) }) });
+        body: JSON.stringify({ requestId, ...(phone ? { phone } : {}), ...(work ? { version: work.version, contextHash: work.contextHash } : {}) }) });
       const body = await response.json().catch(() => null) as {
         ok?: boolean; eventId?: string; status?: string; requestCreated?: boolean; error?: string;
       } | null;
       if (body?.ok === false && body.requestCreated === false) {
         if (controller.signal.aborted || pendingRequest.current !== pending) return;
-        rememberRequest(creditId, null);
+        rememberRequest(creditId, null, undefined, storageScope);
         pendingRequest.current = null;
         setDestination({ creditId, other: false, value: "" });
         const rejection = typeof body.error === "string" ? body.error.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 240) : "";
@@ -235,7 +255,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
       pending.eventId = body.eventId;
       const closed = closedStates.has(body.status);
       if (closed) {
-        rememberRequest(creditId, null); pendingRequest.current = null;
+        rememberRequest(creditId, null, undefined, storageScope); pendingRequest.current = null;
         setDestination({ creditId, other: false, value: "" });
       }
       setRequest({ creditId, requestId, eventId: body.eventId, busy: false, pending: !closed,
@@ -249,6 +269,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
     } finally {
       clearTimeout(timeout);
       pending.busy = false;
+      try { await callbacks.current.onUpdated?.(); } catch { /* Status recovery remains available in the call panel. */ }
     }
   }
 
@@ -256,7 +277,7 @@ export default function CreditWelcomeVoiceResult({ creditId }: { creditId: numbe
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><Headphones size={20} aria-hidden="true" />Bienvenida por voz</h2>
       <div className="flex flex-wrap items-center gap-2">
-      {manualCall ? <Button disabled={refreshing || Boolean(error) || busy || activeAttempt || currentRequest?.pending || !manualCall.canCall || !manualCall.phone || (currentDestination.other && !alternatePhone)}
+      {manualCall && !readOnly ? <Button disabled={disabled || refreshing || Boolean(error) || busy || activeAttempt || currentRequest?.pending || !manualCall.canCall || !manualCall.phone || (currentDestination.other && !alternatePhone)}
         onClick={() => { void callNow(); }} aria-label={currentDestination.other ? "Llamar ahora al número indicado" : "Llamar ahora al celular registrado"}>
         <Phone size={16} aria-hidden="true" />Llamar ahora
       </Button> : null}
