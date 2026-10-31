@@ -67,6 +67,32 @@ const snapshot = (data = {}) => ({ externalId: "provider-chat", phone: "+5730012
   lastContactAt: null, historyTruncated: false, historyCursor: null, messages: [], ...data });
 const message = (id, sentAt = new Date().toISOString()) => ({ id, direction: "inbound", text: "Consulta real", sentAt, author: null });
 
+test("colección Clientes separa solicitudes globalmente y conserva potenciales, etiquetas y alcance", async t => {
+  const f = await fixture(t);
+  await f.db.exec('DELETE FROM "Credito" WHERE id=3');
+  const client = await f.create(central, { name: "Cliente registrado" });
+  const prospect = await f.create(central, { name: "Contacto potencial", phone: "3000000098" });
+  const work = await f.create(central, { name: "Solicitud iPhone", phone: "3000000099" });
+  await f.db.query('UPDATE "AttentionConversation" SET tags=$2 WHERE id=$1', [client.id, ["General"]]);
+  await f.db.query('UPDATE "AttentionConversation" SET tags=$2 WHERE id=$1', [work.id, ["Solo solicitud"]]);
+  await f.db.query('INSERT INTO "AttentionWorkRequest"(id,"conversationId",kind,"targetSource","targetId","sellerId","userId","sedeId","aliadoId") VALUES($1,$2,\'enrollment\',\'D\',901,100,3,20,2)', [randomUUID(), work.id]);
+  for (const id of [client.id, work.id]) await f.db.query('INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt") VALUES($1,$2,\'client-fixture\',\'inbound\',\'Consulta recibida\',now())', [randomUUID(), id]);
+  const legacy = await f.store.getAttentionInbox(central, filters);
+  assert.equal(legacy.total, 3); assert.equal(legacy.operational.unread, 2);
+  const clients = await f.store.getAttentionInbox(central, { ...filters, collection: "clients" });
+  assert.equal(clients.total, 2); assert.equal(clients.metrics.pending, 2); assert.equal(clients.operational.unread, 1);
+  assert.deepEqual(clients.conversations.map(item => item.id).sort(), [client.id, prospect.id].sort());
+  assert.ok(clients.availableTags.includes("FINSERPAY")); assert.ok(clients.availableTags.includes("General"));
+  assert.equal(clients.availableTags.includes("Solo solicitud"), false);
+  assert.equal(clients.conversations.find(item => item.id === prospect.id).creditClassification.status, "no_credit");
+  assert.equal((await f.store.getAttentionInbox(central, { ...filters, collection: "clients", search: "Solicitud iPhone" })).total, 0);
+  assert.equal((await f.store.getAttentionInbox(central, { ...filters, collection: "clients", tag: "FINSERPAY" })).total, 1);
+  await f.assign(client.id); await f.assign(work.id);
+  assert.equal((await f.store.getAttentionInbox(analyst, filters)).total, 2);
+  assert.equal((await f.store.getAttentionInbox(analyst, { ...filters, collection: "clients" })).total, 1);
+  assert.equal((await f.store.getAttentionInbox(otherAnalyst, { ...filters, collection: "clients" })).total, 0);
+});
+
 test("identidad real de FINSERPAY muestra documento en bandeja, tablero y chat sin alterar el contacto", async t => {
   const f = await fixture(t), { id } = await f.create(central, { name: "+573001234567" });
   await f.db.exec(`DELETE FROM "Credito" WHERE id=3; ALTER TABLE "Credito" ADD COLUMN "clienteTipoDocumento" text;

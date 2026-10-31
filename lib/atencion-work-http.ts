@@ -1,5 +1,5 @@
 import { getAttentionWorkAccess } from "./atencion-work-access";
-import { attentionWorkStore, parseWorkKind } from "./atencion-work-storage";
+import { attentionWorkStore, parseWorkListQuery } from "./atencion-work-storage";
 import { assertAttentionOrigin, attentionHttpError, attentionJson, readAttentionJson } from "./atencion-http";
 import { readAttentionBody } from "./atencion-meta-http";
 import { AttentionError, attentionUuid } from "./atencion-core";
@@ -14,8 +14,8 @@ export function attentionWorkHandlers(mode:"seller"|"attention"){
       return attentionJson(await (await attentionWorkStore()).attach(a,(await context.params).id,{requestId:attentionUuid(form.get("requestId")),version,fileName:file.name,mimeType:file.type,content:new Uint8Array(await file.arrayBuffer())}));
     }catch(error){return attentionHttpError(error);}},
     media:async(_request:Request,context:{params:Promise<{id:string;fileId:string}>})=>{try{const a=await getAttentionWorkAccess(mode),p=await context.params,file=await(await attentionWorkStore()).media(a,p.id,p.fileId);return new Response(Buffer.from(file.content),{headers:{"Content-Type":file.mimeType,"Content-Disposition":file.mimeType==="application/pdf"?'attachment; filename="soporte.pdf"':'inline',"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff",Vary:"Cookie"}});}catch(error){return attentionHttpError(error);}},
-    list:async(request:Request)=>{try{const a=await getAttentionWorkAccess(mode),p=new URL(request.url).searchParams;
-      return attentionJson(await (await attentionWorkStore()).list(a,parseWorkKind(p.get("kind")||"enrollment"),Number(p.get("page")||1)));
+    list:async(request:Request)=>{try{const a=await getAttentionWorkAccess(mode),query=parseWorkListQuery(new URL(request.url).searchParams);
+      return attentionJson(await (await attentionWorkStore()).list(a,query.kind,query.page,query.filters));
     }catch(error){return attentionHttpError(error);}},
     create:async(request:Request)=>{try{assertAttentionOrigin(request);const a=await getAttentionWorkAccess(mode);
       return attentionJson(await (await attentionWorkStore()).create(a,await readAttentionJson(request)),201);

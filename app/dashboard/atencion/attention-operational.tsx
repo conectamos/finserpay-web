@@ -11,7 +11,7 @@ const date = (value: string) => new Intl.DateTimeFormat("es-CO", { timeZone: "Am
 const message = (error: unknown) => error instanceof Error ? error.message : "No fue posible actualizar la agenda.";
 function errorStatus(error: unknown) { return typeof error === "object" && error && "status" in error ? Number(error.status) : 0; }
 
-export function AttentionWorkFilters({ filter, tag, central, inbox, change, compact = false }: { filter: AttentionFilters["filter"]; tag: string; central: boolean; inbox: AttentionInbox | null; change: (filter: AttentionFilters["filter"], tag: string) => void; compact?: boolean }) {
+export function AttentionWorkFilters({ filter, tag, central, inbox, change, compact = false, showClientTag = true }: { filter: AttentionFilters["filter"]; tag: string; central: boolean; inbox: AttentionInbox | null; change: (filter: AttentionFilters["filter"], tag: string) => void; compact?: boolean; showClientTag?: boolean }) {
   const items: { value: AttentionFilters["filter"]; label: string; count?: number }[] = [
     { value: "unread", label: "No leídos", count: inbox?.operational?.unread },
     { value: "unanswered", label: "Sin responder", count: inbox?.operational?.unanswered },
@@ -23,7 +23,7 @@ export function AttentionWorkFilters({ filter, tag, central, inbox, change, comp
     <div data-attention="queue-filters" className={styles.queueFilters} role="group" aria-label="Filtrar conversaciones">
       <button type="button" aria-pressed={filter === "all" && !tag} onClick={() => change("all", "")}>Todos</button>
       <button type="button" aria-pressed={filter === "unread"} onClick={() => change(filter === "unread" ? "all" : "unread", tag)}>No leídos{Boolean(inbox?.operational?.unread) && <span>{inbox!.operational.unread}</span>}</button>
-      <button type="button" aria-pressed={tag === "FINSERPAY"} onClick={() => change("all", tag === "FINSERPAY" ? "" : "FINSERPAY")}>Clientes</button>
+      {showClientTag && <button type="button" aria-pressed={tag === "FINSERPAY"} onClick={() => change("all", tag === "FINSERPAY" ? "" : "FINSERPAY")}>Clientes</button>}
       {central && <button type="button" aria-pressed={filter === "unassigned"} onClick={() => change(filter === "unassigned" ? "all" : "unassigned", tag)}>Sin asignar</button>}
     </div>
     <details className={styles.filterDetails} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}>
@@ -55,7 +55,7 @@ export function AttentionConversationIndicators({ conversation }: { conversation
 }
 
 /** Acknowledges only the exact inbound IDs rendered in a visible, bottom-scrolled log. */
-export function AttentionObservedRead({ detail, active, log, request, onRead, onError }: { detail: AttentionDetail; active: boolean; log: RefObject<HTMLDivElement | null>; request: Request; onRead: () => void; onError: (error: unknown) => void }) {
+export function AttentionObservedRead({ detail, active, log, request, onRead, onError }: { detail: Pick<AttentionDetail, "messages"> & { conversation: Pick<AttentionDetail["conversation"], "id"> }; active: boolean; log: RefObject<HTMLDivElement | null>; request: Request; onRead: () => void; onError: (error: unknown) => void }) {
   const acknowledged = useRef(new Set<string>());
   const callbacks = useRef({ onRead, onError });
   useEffect(() => { callbacks.current = { onRead, onError }; }, [onRead, onError]);
