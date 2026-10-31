@@ -131,7 +131,7 @@ function MessageContent({ text, dapta, media, mediaReady }: { text: string; dapt
     const url = privateMediaUrl(media.url);
     const name = media.fileName || ({ image: "Imagen", sticker: "Sticker", audio: "Audio", video: "Video", document: "Documento" }[media.kind]);
     return <div className={styles.nativeMedia}>{url ? <>
-      {(media.kind === "image" || media.kind === "sticker") && <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir ${name}`}><Image src={url} unoptimized width={640} height={480} alt={name} onLoad={mediaReady} className={styles.messageImage} /></a>}
+      {(media.kind === "image" || media.kind === "sticker") && <MediaImage key={url} url={url} name={name} onLoad={mediaReady} />}
       {media.kind === "audio" && <audio controls preload="none" src={url} onLoadedMetadata={mediaReady} aria-label={name}>Tu navegador no puede reproducir este audio.</audio>}
       {media.kind === "video" && <video controls preload="none" playsInline src={url} onLoadedMetadata={mediaReady} aria-label={name}>Tu navegador no puede reproducir este video.</video>}
       <a href={url} target="_blank" rel="noopener noreferrer" className={styles.mediaDownload}><Download aria-hidden="true" size={16} />{media.kind === "document" ? name : "Abrir o descargar archivo"}</a>
@@ -142,6 +142,12 @@ function MessageContent({ text, dapta, media, mediaReady }: { text: string; dapt
   const kind = attachment[1];
   const Icon = kind === "Audio" ? Mic : kind === "Video" ? Video : kind === "Imagen" || kind === "Sticker" ? ImageIcon : FileText;
   return <div className={styles.mediaCard}><span className={styles.mediaIcon}><Icon aria-hidden="true" size={25} /></span><div><strong>{kind} de WhatsApp</strong><p>Consulta el archivo en la bandeja de Dapta.</p><a href={DAPTA_INBOX_URL} target="_blank" rel="noopener noreferrer">Ver en Dapta <ExternalLink aria-hidden="true" size={14} /></a></div></div>;
+}
+function MediaImage({ url, name, onLoad }: { url: string; name: string; onLoad?: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  if (failed) return <div className={styles.mediaUnavailable}><ImageIcon aria-hidden="true" size={20} /><div><span role="status">{name}<small>No se pudo cargar la imagen. Puedes reintentar o abrir el archivo.</small></span><Button type="button" variant="secondary" onClick={() => { setAttempt(value => value + 1); setFailed(false); }}><RefreshCw aria-hidden="true" size={16} />Reintentar imagen</Button></div></div>;
+  return <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir ${name}`}><Image key={attempt} src={url} unoptimized width={640} height={480} alt={name} onLoad={onLoad} onError={() => { setFailed(true); onLoad?.(); }} className={styles.messageImage} /></a>;
 }
 const deliveryNames = { pending: "Pendiente", queued: "En cola", sending: "En proceso", accepted: "Aceptado por WhatsApp", sent: "Enviado", delivered: "Entregado", read: "Leído", failed: "No enviado", uncertain: "Envío por confirmar" } as const;
 function MessageDelivery({ message }: { message: AttentionMessage }) {
