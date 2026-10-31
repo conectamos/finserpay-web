@@ -30,7 +30,7 @@ function mount(options = {}) {
     useEffect(effect, deps) { const n = cursor++; if (!slots[n] || changed(slots[n].deps, deps)) effects.push(() => { slots[n]?.cleanup?.(); slots[n] = { deps, cleanup: effect() }; }); },
   };
   const component = name => Object.defineProperty(() => null, "name", { value: name });
-  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag, ReplyComposer, ChatDropSurface, ReplyAudioPreview };";
+  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MediaImage, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag, ReplyComposer, ChatDropSurface, ReplyAudioPreview };";
   const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } });
   const loaded = { exports: {} };
   const sources = [], events = new Map();
@@ -186,6 +186,29 @@ test("reproductores y descargas solo usan URLs locales del mensaje; estados no a
     assert.equal(text(f.ui.MessageDelivery({ message: { ...outbound, deliveryStatus: status } })), label);
   }
   assert.equal(f.ui.MessageDelivery({ message: outbound }), null); f.unmount();
+});
+
+test("imagen fallida ofrece reintento accesible sobre la misma ruta privada y conserva una sola descarga", async () => {
+  for (const url of [`/api/atencion/${chat.id}/messages/${outbound.id}/media`, `/api/atencion/solicitudes/${chat.id}/files/${outbound.id}`]) {
+    let layouts = 0;
+    const f = mount({ component: "MediaImage", props: { url, name: "Soporte recibido", onLoad: () => layouts++ } });
+    const first = f.all().find(n => n.props.src === url);
+    assert.equal(first.props.unoptimized, true);
+    assert.equal(first.props.width, 640); assert.equal(first.props.height, 480);
+    first.props.onError(); await f.flush();
+    const status = f.all().find(n => n.props.role === "status");
+    assert.match(text(status), /No se pudo cargar la imagen/); assert.doesNotMatch(text(status), /Meta/);
+    assert.equal(f.all().some(n => n.props.src), false, "no debe conservar una imagen rota");
+    const retry = f.all().find(n => n.props.type === "button" && text(n) === "Reintentar imagen");
+    assert.ok(retry); retry.props.onClick(); await f.flush();
+    const replacement = f.all().find(n => n.props.src === url);
+    assert.ok(replacement); assert.notEqual(replacement.key, first.key);
+    assert.equal(f.ui.privateMediaUrl(replacement.props.src), url, "el reintento no añade query ni expone la URL de proveedor");
+    replacement.props.onLoad(); assert.equal(layouts, 2);
+    const message = f.ui.MessageContent({ text: "", dapta: false, media: { kind: "image", url } });
+    assert.equal(nodes(message).filter(n => n.type === "a" && text(n) === "Abrir o descargar archivo").length, 1);
+    f.unmount();
+  }
 });
 
 const makeDragEvent = (files = [], types = ["Files"]) => ({ dataTransfer: { files, types, dropEffect: "none" }, prevented: false, preventDefault() { this.prevented = true; } });
