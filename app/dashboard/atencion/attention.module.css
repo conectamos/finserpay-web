@@ -141,6 +141,8 @@
 .nativeMedia audio { width: min(340px,100%); max-width: 100%; }
 .nativeMedia video { display: block; width: min(440px,100%); max-height: 340px; border-radius: var(--fp-radius-md); background: var(--fp-graphite); }
 .messageImage { display: block; width: min(440px,100%); height: auto; max-height: 340px; object-fit: contain; border-radius: var(--fp-radius-md); }
+.imageTrigger { display: block; width: fit-content; max-width: 100%; padding: 0; border: 0; border-radius: var(--fp-radius-md); background: transparent; cursor: zoom-in; }
+.imageTrigger:focus-visible { outline: 2px solid var(--attention-green); outline-offset: 3px; }
 .mediaDownload { display: flex; align-items: center; gap: 8px; color: var(--attention-green); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; min-height: 32px; }
 .mediaDownload svg { flex-shrink: 0; }
 .mediaUnavailable { display: flex; gap: 9px; align-items: center; padding: 9px 0; color: var(--fp-muted); font-size: 14px; }

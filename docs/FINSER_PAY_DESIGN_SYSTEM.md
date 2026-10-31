@@ -196,6 +196,10 @@ se agrupan en Seguimiento. `ConfirmDialog` muestra crédito, destinatario y fech
 o importe antes de actuar. El grabador ofrece escucha previa y los emojis se
 insertan en el borrador. La recepción en tiempo real conserva texto y posición
 de lectura; los fallos de conexión muestran su estado y activan consulta local.
+Las imágenes y stickers del historial se amplían en un visor modal dentro del
+CRM, con ajuste a pantalla, zoom y descarga privada. Escape o Cerrar vuelve al
+mismo chat y devuelve el foco a la miniatura; se conservan el borrador y la
+posición del historial. La lectura observada se pausa mientras el visor está abierto.
 La prórroga puede concederse antes de vencer la primera cuota regular pendiente:
 sus 1 a 4 días se cuentan desde el vencimiento 02/17, con límite 06/21. La
 confirmación identifica la cuota y su fecha; un pago que cambie esa cuota obliga

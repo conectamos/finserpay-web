@@ -262,8 +262,22 @@ test("imagen fallida ofrece reintento accesible sobre la misma ruta privada y co
     assert.ok(replacement); assert.notEqual(replacement.key, first.key);
     assert.equal(f.ui.privateMediaUrl(replacement.props.src), url, "el reintento no añade query ni expone la URL de proveedor");
     replacement.props.onLoad(); assert.equal(layouts, 2);
+    const openImage = () => f.all().find(n => n.props["aria-haspopup"] === "dialog");
+    assert.equal(openImage().props["aria-expanded"], false);
+    assert.equal(openImage().props.href, undefined, "la miniatura no navega a otra pestaña");
+    openImage().props.onClick(); await f.flush();
+    const viewer = f.all().find(n => n.type?.name === "./attention-image-viewer");
+    assert.ok(viewer); assert.equal(viewer.props.url, url);
+    assert.equal(openImage().props["aria-expanded"], true);
+    viewer.props.onClose(); await f.flush();
+    assert.equal(openImage().props["aria-expanded"], false);
+    assert.equal(f.all().some(n => n.type?.name === "./attention-image-viewer"), false);
+    assert.equal(layouts, 2, "abrir y cerrar el visor no mueve el historial");
     const message = f.ui.MessageContent({ text: "", dapta: false, media: { kind: "image", url } });
-    assert.equal(nodes(message).filter(n => n.type === "a" && text(n) === "Abrir o descargar archivo").length, 1);
+    const download = nodes(message).filter(n => n.type === "a" && text(n) === "Descargar imagen");
+    assert.equal(download.length, 1);
+    assert.equal(download[0].props.target, undefined);
+    assert.equal(download[0].props.download, "Imagen");
     f.unmount();
   }
 });
