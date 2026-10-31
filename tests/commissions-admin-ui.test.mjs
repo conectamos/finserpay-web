@@ -75,6 +75,32 @@ test("la página de comisiones exige el guard central antes de devolver contenid
   assert.equal(calls, 1);
 });
 
+test("saldos exige el acceso central y se monta sin la consola que sincroniza solicitudes", async () => {
+  const dependencies = [];
+  let allowed = false;
+  const Page = load("app/dashboard/comisiones/saldos/page.tsx", {
+    "@/lib/dashboard-access": { requireCentralAdminDashboardAccess: async () => {
+      if (!allowed) throw new Error("CENTRAL_ONLY");
+      return { session: { nombre: "Administrador", rolNombre: "ADMIN" } };
+    } },
+    "@/app/dashboard/_components/admin-sidebar": { __esModule: true, default: empty },
+    "@/app/dashboard/_components/admin-workspace-topbar": { __esModule: true, default: empty },
+    "../commission-balances": { __esModule: true, default: (props) => {
+      dependencies.push(props);
+      return jsx("section", { "aria-label": "Consulta de saldos" });
+    } },
+  }).default;
+  await assert.rejects(Page(), /CENTRAL_ONLY/);
+  assert.deepEqual(dependencies, []);
+  allowed = true;
+  const html = renderToStaticMarkup(await Page());
+  assert.match(html, /Consulta de saldos/);
+  assert.deepEqual(dependencies, [{ revision: 0 }]);
+  assert.match(html, /href="\/dashboard\/comisiones"/);
+  assert.ok(!html.includes("Confirmar pago"));
+  assert.ok(!html.includes("Rechazar"));
+});
+
 const { CommissionBagsTable } = load("app/dashboard/comisiones/commission-admin-console.tsx");
 
 test("las bolsas muestran la cartera y el estado de aliados incluso sin solicitudes", () => {

@@ -21,6 +21,8 @@ Solo una autorización vigente permite finalizar el enrolamiento. La autorizaci�
 
 Esta bandeja gestiona la llamada solicitada por el asesor; no cambia las reglas de aprobación financiera del crédito.
 
+**Gestionar bienvenida** abre el muro de aprobaciones del crédito vinculado en una pestaña nueva, con sus datos, evidencias, contrato e historial reales. El chat conserva el panel de gestión para registrar el resultado al regresar. El enlace solo está disponible cuando la persona puede gestionar el caso y el identificador del crédito coincide con la ruta canónica del expediente; no se sustituye por una búsqueda ni se abre otro crédito. Si falta ese vínculo, se indica la limitación y se mantiene el panel de seguimiento. Abrir el muro no inicia llamadas ni aprueba el crédito.
+
 El analista selecciona la modalidad humana o Dapta. En modalidad humana puede cargar y consultar la grabación mediante los controles existentes. La finalización exige la evidencia que corresponda según la regla vigente del crédito.
 
 En modalidad Dapta se utiliza el servicio de voz ya configurado. Solicitar una llamada es una acción explícita; abrir la ficha o consultar el resultado no inicia llamadas. Una solicitud de llamada pendiente o de resultado incierto no se registra como una bienvenida realizada.

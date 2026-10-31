@@ -7,6 +7,8 @@ import ts from "typescript";
 const jsx=(type,props,key)=>({type,props:props||{},key});
 const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==="object"?[tree,...nodes(tree.props?.children)]:[];
 const text=tree=>Array.isArray(tree)?tree.map(text).join(""):tree&&typeof tree==="object"?text(tree.props?.children):typeof tree==="string"?tree:"";
+const workLinks={exports:{}};
+runInNewContext(ts.transpileModule(readFileSync(new URL("../lib/atencion-work-links.ts",import.meta.url),"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{module:workLinks,exports:workLinks.exports});
 function mount(options={}){
   let cursor=0,dirty=false,effects=[],tree,clockId=0,now=0;
   let props={kind:"enrollment",mode:"seller",sellerId:7,...options};
@@ -36,6 +38,7 @@ function mount(options={}){
       if(name==="react")return react;
       if(name==="react/jsx-runtime")return{jsx,jsxs:jsx};
       if(name==="@/lib/atencion-work-types")return{attentionWorkKinds:{enrollment:"Enrolamiento iPhone",welcome:"Aprobación · bienvenida"},attentionWorkStates:{pending:"Pendiente",review:"En revisión",information:"Información pendiente",completed:"Finalizada"}};
+      if(name==="@/lib/atencion-work-links")return workLinks.exports;
       if(name==="./attention-operational")return{AttentionObservedRead:component("AttentionObservedRead")};
       if(name.endsWith(".css"))return{default:new Proxy({},{get:(_,key)=>String(key)})};
       if(name==="lucide-react"||name==="@/app/_components/finser-ui")return new Proxy({},{get:(_,key)=>component(String(key))});
@@ -283,6 +286,29 @@ test("el caso central retira datos ante otra vinculación, incluso al recibir la
 const stateSelect=f=>f.all().find(n=>n.props["aria-label"]==="Estado de solicitudes");
 const workRow=(f,id)=>f.all().find(n=>n.type==="button"&&n.key===id);
 const workManager=f=>f.all().find(n=>n.type?.name==="./attention-work-management");
+for(const [profile,canAssign] of [["central",true],["analista asignado",false]])test(`${profile}: Gestionar bienvenida abre el muro exacto y conserva el chat para registrar el resultado`,async()=>{
+  const item={...itemA,kind:"welcome",target:"C-101"};
+  const current={...detailFor(item),canAssign,operationHref:"/dashboard/aprobaciones?credito=101"};
+  const f=mount({kind:"welcome",mode:"attention",embedded:true,initialId:item.id});
+  await resolveReads(f,current,[item]);
+  messageField(f).props.onChange({target:{value:"Respuesta en preparación"}});await f.flush();
+  const link=f.all().find(n=>n.type==="a"&&text(n)==="Gestionar bienvenida");
+  assert.equal(link.props.href,"/dashboard/aprobaciones?credito=101");assert.equal(link.props.target,"_blank");assert.equal(link.props.rel,"noopener noreferrer");
+  let prevented=false;link.props.onClick({preventDefault(){prevented=true;}});await f.flush();
+  assert.equal(prevented,false);assert.equal(workManager(f).props.open,true);assert.equal(messageField(f).props.value,"Respuesta en preparación");
+  assert.equal(f.requests.some(r=>r.init.method),false,"abrir el muro no aprueba ni inicia llamadas");
+  workManager(f).props.onBusyChange(true);await f.flush();
+  assert.equal(f.all().find(n=>n.type==="a"&&text(n)==="Gestionar bienvenida"),undefined);assert.equal(f.button("Gestionar bienvenida").props.disabled,true);
+  link.props.onClick({preventDefault(){prevented=true;}});assert.equal(prevented,true,"un evento anterior no abre otro muro durante una gestión en curso");f.unmount();
+});
+
+test("una bienvenida sin vínculo consistente conserva el panel y no apunta al crédito de otro cliente",async()=>{
+  const item={...itemA,kind:"welcome",target:"C-101"},current={...detailFor(item),operationHref:"/dashboard/aprobaciones?credito=999"};
+  const f=mount({kind:"welcome",mode:"attention",embedded:true,initialId:item.id});await resolveReads(f,current,[item]);
+  assert.equal(f.all().some(n=>n.props.href?.includes("credito=")),false);f.button("Gestionar bienvenida").props.onClick();await f.flush();
+  assert.equal(workManager(f).props.open,true);assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
+});
+
 async function staffWork(kind="enrollment",options={}){
   const a={...itemA,kind},b={...itemB,kind},f=mount({mode:"attention",embedded:true,canAssignFilter:true,kind,...options});
   await resolveReads(f,detailFor(a),[a,b],0,41);

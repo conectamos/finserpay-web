@@ -38,6 +38,22 @@ export type AdminCommissionBag = {
   allyId: number; allyName: string; overdueBalance: number; totalBalance: number;
   overduePercent: number; paused: boolean;
 };
+export type AdminCommissionBalance = CommissionPeriod & {
+  sellerId: number; sellerName: string; sellerActive: boolean;
+  branches: { id: number; name: string }[];
+  /** Generated less paid, calculated independently for each month. Reservations are already part of this amount. */
+  outstanding: number; payoutsPaused: boolean;
+};
+export type AdminCommissionBalanceTotals = {
+  sellers: number; validCreditCount: number; generated: number; paid: number;
+  reserved: number; available: number; adjustment: number; outstanding: number;
+};
+export type AdminCommissionBalances = {
+  currentPeriod: string; serverNow: string; periods: string[];
+  rows: AdminCommissionBalance[]; total: number; page: number; pageSize: number;
+  totals: AdminCommissionBalanceTotals;
+};
+export type AdminCommissionBalanceFilters = { period: string; search: string; page: number };
 export type CreateCommissionRequestInput = {
   period: string; amount: number; nequi: string; idempotencyKey: string;
 };

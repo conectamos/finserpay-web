@@ -5,6 +5,10 @@ Integrado sobre el dashboard publicado de `conectamos/finserpay-web`, base
 indicadores y las acciones rápidas, preservando la navegación y las funciones
 actuales. La bandeja central está en `/dashboard/comisiones`.
 
+La consulta independiente de [saldos por asesor](COMISIONES_SALDOS_ASESORES.md)
+está en `/dashboard/comisiones/saldos`. Incluye saldos aún no solicitados y meses
+anteriores, sin ejecutar el recálculo operativo de la bandeja de solicitudes.
+
 ## Reglas del programa
 
 - Inicio: `2026-10-01T00:00:00-05:00`, zona `America/Bogota`.
