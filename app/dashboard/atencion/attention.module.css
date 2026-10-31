@@ -441,3 +441,4 @@
 @media(max-width:699px){.crmMain>.workPane{overflow:auto;display:block}.workPane>section{height:auto;min-height:0}}
 
 .conversationBody{grid-template-columns:minmax(0,1fr)}.conversationBody>*{min-width:0}.conversationList{overflow-x:hidden}
+.contactDocument,.chatIdentity > .contactDocument,.customerIdentity span.contactDocument { display:block; color:var(--fp-graphite); font-size:15px; font-weight:500; line-height:1.4; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }

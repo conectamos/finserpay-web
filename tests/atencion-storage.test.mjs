@@ -8,7 +8,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const root = path.resolve(import.meta.dirname, "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
-const { createAttentionStore } = await jiti.import("../lib/atencion-storage.ts");
+const { createAttentionStore, readAttentionBoardCards } = await jiti.import("../lib/atencion-storage.ts");
 const migration = readFileSync(path.join(root, "scripts/setup-atencion.sql"), "utf8");
 const central = { userId: 1, sellerId: null, key: "admin:1", name: "Central", central: true, admin: true, analyst: false, supervisor: false, aliadoId: 1, sedeId: 10 };
 const ally = { ...central, userId: 2, key: "user:2", name: "Aliado", central: false, aliadoId: 2, sedeId: 20 };
@@ -66,6 +66,73 @@ async function fixture(t, install = true) {
 const snapshot = (data = {}) => ({ externalId: "provider-chat", phone: "+573001234567", name: "Contacto", mode: "ai",
   lastContactAt: null, historyTruncated: false, historyCursor: null, messages: [], ...data });
 const message = (id, sentAt = new Date().toISOString()) => ({ id, direction: "inbound", text: "Consulta real", sentAt, author: null });
+
+test("identidad real de FINSERPAY muestra documento en bandeja, tablero y chat sin alterar el contacto", async t => {
+  const f = await fixture(t), { id } = await f.create(central, { name: "+573001234567" });
+  await f.db.exec(`DELETE FROM "Credito" WHERE id=3; ALTER TABLE "Credito" ADD COLUMN "clienteTipoDocumento" text;
+    UPDATE "Credito" SET "clienteTipoDocumento"='CC',estado='PAGADO' WHERE id IN (1,2)`);
+  const identity = { name: "Persona uno", document: "12345678", documentLabel: "C.C." };
+  const inbox = await f.store.getAttentionInbox(central, filters);
+  assert.deepEqual(inbox.conversations[0].customerIdentity, identity);
+  assert.deepEqual(inbox.dashboard.activeConversations[0].customerIdentity, identity);
+  assert.deepEqual((await f.store.getAttentionDetail(central, id)).conversation.customerIdentity, identity);
+  const board = await readAttentionBoardCards(adapter(f.db), central, { sectionId: null, search: "", page: 1 });
+  assert.deepEqual(board.conversations[0].customerIdentity, identity);
+  assert.equal(inbox.conversations[0].phone, "+573001234567");
+  assert.equal((await f.db.query('SELECT name FROM "AttentionConversation" WHERE id=$1', [id])).rows[0].name, "+573001234567");
+  assert.doesNotMatch(JSON.stringify(inbox.conversations), /DO_NOT_EXPOSE|montoCredito|contratoSnapshot/);
+});
+
+test("documento nominal requiere ficha vinculada y se retira al desvincular o transferir el chat", async t => {
+  const f = await fixture(t), { id } = await f.create(); await f.assign(id);
+  await f.db.exec('DELETE FROM "Credito" WHERE id=3');
+  assert.equal((await f.store.getAttentionInbox(analyst, filters)).conversations[0].customerIdentity, null);
+  assert.equal((await f.store.getAttentionDetail(analyst, id)).conversation.customerIdentity, null);
+  await f.act(central, id, "link", { creditId: 1 });
+  assert.deepEqual((await f.store.getAttentionInbox(analyst, filters)).conversations[0].customerIdentity,
+    { name: "Persona uno", document: "12345678", documentLabel: "Documento" });
+  await f.act(central, id, "unlink");
+  assert.equal((await f.store.getAttentionInbox(analyst, filters)).conversations[0].customerIdentity, null);
+  await f.act(central, id, "link", { creditId: 1 }); await f.assign(id, otherAnalyst);
+  assert.equal((await f.store.getAttentionInbox(analyst, filters)).conversations.length, 0);
+  await assert.rejects(f.store.getAttentionDetail(analyst, id), { status: 404 });
+  await f.db.exec('UPDATE "Usuario" SET activo=false WHERE id=6');
+  await assert.rejects(f.store.getAttentionInbox(otherAnalyst, filters), { status: 403 });
+});
+
+test("teléfono ambiguo, crédito anulado o vínculo que perdió coincidencia no revela documento", async t => {
+  const f = await fixture(t), { id } = await f.create();
+  assert.equal((await f.store.getAttentionInbox(central, filters)).conversations[0].customerIdentity, null);
+  await f.act(central, id, "link", { creditId: 1 });
+  assert.equal((await f.store.getAttentionDetail(central, id)).conversation.customerIdentity.document, "12345678");
+  await f.db.exec(`UPDATE "Credito" SET "clienteTelefono"='3000000009' WHERE id=1`);
+  assert.equal((await f.store.getAttentionInbox(central, filters)).conversations[0].customerIdentity, null);
+  await f.act(central, id, "unlink");
+  await f.db.exec(`DELETE FROM "Credito" WHERE id=3; UPDATE "Credito" SET estado='ANULADO' WHERE id=2`);
+  assert.equal((await f.store.getAttentionInbox(central, filters)).conversations[0].customerIdentity, null);
+  await f.db.exec(`UPDATE "Credito" SET estado='ACTIVO',"clienteDocumento"=null WHERE id=2`);
+  assert.equal((await f.store.getAttentionDetail(central, id)).conversation.customerIdentity, null);
+});
+
+test("desvinculación entre descubrimiento de etiquetas y página visible retira la cédula anterior", async t => {
+  const f = await fixture(t), { id } = await f.create(); await f.assign(id); await f.act(central, id, "link", { creditId: 1 });
+  let changed = false;
+  const store = createAttentionStore({ ...adapter(f.db), $transaction: fn => f.db.transaction(tx => fn({
+    $queryRawUnsafe: async (sql, ...values) => {
+      if (!changed && sql.includes("SELECT c.*") && sql.includes("AS preview")) {
+        changed = true;
+        await tx.query('UPDATE "AttentionConversation" SET "linkedCreditId"=null WHERE id=$1', [id]);
+      }
+      return (await tx.query(sql, values)).rows;
+    },
+  })) });
+  const inbox = await store.getAttentionInbox(analyst, filters);
+  assert.equal(changed, true);
+  assert.equal(inbox.conversations[0].linkedCreditId, null);
+  assert.equal(inbox.conversations[0].customerIdentity, null);
+  assert.equal(inbox.dashboard.activeConversations[0].customerIdentity, null);
+  assert.doesNotMatch(JSON.stringify(inbox.conversations), /12345678/);
+});
 async function nativeMessage(db,conversationId,{direction='inbound',at='2026-10-30T15:00:00Z',status=null}={}){
   const id=randomUUID();await db.query(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt","deliveryStatus") VALUES($1::uuid,$2,$1::text,$3,'Prueba',$4,$5)`,[id,conversationId,direction,at,status]);return id;
 }

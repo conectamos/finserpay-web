@@ -15,6 +15,8 @@ export type AttentionCreditClassification = {
 export type AttentionConversation = {
   id: string; externalId: string | null; channel: "whatsapp" | "internal";
   phone: string | null; name: string; status: AttentionStatus; mode: AttentionMode;
+  /** Real credit identity, only when uniquely resolved and authorized for this chat. */
+  customerIdentity?: { name: string; document: string; documentLabel: string } | null;
   assigneeKey: string | null; assigneeName: string | null; sedeId: number | null;
   lastContactAt: string | null; updatedAt: string; preview: string | null;
   tags: string[]; version: number; linkedCreditId: number | null;

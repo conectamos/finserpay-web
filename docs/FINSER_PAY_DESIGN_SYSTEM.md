@@ -157,7 +157,12 @@ permanecen dentro del panel nativo y se cierran antes que él.
 
 La tipografía operativa usa 16 px y los controles frecuentes tienen al menos
 44 px. La identidad es compacta; la etiqueta automática FINSERPAY se distingue de
-las etiquetas manuales de seguimiento. El resumen financiero pide seleccionar
+las etiquetas manuales de seguimiento. Los clientes FINSERPAY identificados muestran
+nombre y documento completo en bandeja, tablero, cabecera y ficha; el teléfono
+de WhatsApp permanece separado. La identidad proviene del crédito autorizado:
+central puede resolver coincidencias únicas y el analista conserva el vínculo
+explícito de su chat asignado. Una coincidencia ambigua no muestra documento.
+El resumen financiero pide seleccionar
 crédito si hay varios y presenta estado, prórroga y último recibo. Notas y tareas
 se agrupan en Seguimiento. `ConfirmDialog` muestra crédito, destinatario y fecha
 o importe antes de actuar. El grabador ofrece escucha previa y los emojis se
