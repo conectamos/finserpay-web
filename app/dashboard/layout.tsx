@@ -25,7 +25,7 @@ export default async function DashboardLayout({
 
   return <AttentionNotifications key={profileKey || "no-notification-profile"} actorKey={actorKey} endpoint={endpoint}>
     {children}
-    {canReviewCreditApprovals(access.session)
+    {!access.admin && canReviewCreditApprovals(access.session)
       ? <WelcomePendingAlerts key={access.session.id} actorKey={`user-${access.session.id}`} />
       : null}
   </AttentionNotifications>;
