@@ -32,6 +32,7 @@ function load(file, extra = {}, globals = {}) {
     "./central-dashboard-menu": component(Menu),
     "./central-dashboard-filters": component(Empty),
     "./logout-button": component(Empty),
+    "./attention-notifications": { AttentionNotificationBell: Empty },
     ...extra,
   };
   execute(read(file), { module: loaded, exports: loaded.exports, ...globals, require: name => {

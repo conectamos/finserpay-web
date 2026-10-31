@@ -29,6 +29,7 @@ function load(path, mocks = {}) {
       if (name.endsWith("finser-brand")) return { default: stub("FinserBrand") };
       if (name.endsWith("central-dashboard-menu")) return { default: stub("CentralDashboardMenu") };
       if (name.endsWith("logout-button")) return { default: stub("LogoutButton") };
+      if (name === "./attention-notifications") return { AttentionNotificationBell: stub("AttentionNotificationBell") };
       throw new Error(`Unexpected import ${name}`);
     },
   });

@@ -30,6 +30,7 @@ function load(file, extra = {}) {
     "./central-dashboard-menu": component(Menu),
     "./central-dashboard-filters": component(Empty),
     "./logout-button": component(Empty),
+    "./attention-notifications": { AttentionNotificationBell: Empty },
     "./seller-client-app-dialog": component(Empty),
     "./seller-commissions": component(Empty),
     "./seller-dashboard-refresh": component(Empty),
@@ -58,13 +59,14 @@ function menu(html, name) {
 }
 
 for (const variant of ["sale", "requests", "reports", "settlement"]) {
-  test(`Cartera coloca Recaudo por corte inmediatamente después de Riesgo en ${variant}`, () => {
+  test(`Cartera conserva Recaudo después de Riesgo y Gestión de cartera central en ${variant}`, () => {
     for (const adminCentral of [false, true]) {
       const html = render(Navigation, { admin: true, adminCentral, nombreUsuario: "Administrador", rolUsuario: "ADMIN", variant, activeSection: "portfolio" });
       const portfolio = menu(html, "Cartera");
       assert.ok(portfolio);
       const links = hrefs(portfolio);
-      assert.equal(links.indexOf(route), links.indexOf("/dashboard/riesgo-referencia") + 1);
+      assert.deepEqual(links.slice(links.indexOf("/dashboard/riesgo-referencia") + 1),
+        adminCentral ? ["/dashboard/aprobaciones/gestion-cartera", route] : [route]);
       assert.equal(links.filter(href => href === route).length, 1);
       assert.ok(!hrefs(menu(html, "Operación")).includes(route));
       assert.match(html, /class="active"><details><summary>[\s\S]*?Cartera/);
