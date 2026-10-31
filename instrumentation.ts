@@ -13,4 +13,6 @@ export async function register() {
   startSolicitudExportWorker();
   const { startSettlementDeliveryWorker } = await import("./lib/ally-settlement-delivery-service");
   startSettlementDeliveryWorker();
+  const { startAttentionPushWorker } = await import("./lib/atencion-push-worker");
+  startAttentionPushWorker();
 }

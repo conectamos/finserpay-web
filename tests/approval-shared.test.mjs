@@ -88,6 +88,7 @@ test("logout general revoca solo la sesión compartida actual y limpia cookies a
   const calls=[];
   const db={};
   const route=loadSharedModule("app/api/logout/route.ts",{
+    "@/lib/atencion-push-device":{revokeAttentionPushDevice:async()=>{}},
     "next/headers":{cookies:async()=>({get:()=>token?{value:token}:undefined})},
     "next/server":{NextResponse:TestResponse},"@/lib/prisma":{default:db},
     "@/lib/session":session,"@/lib/financial-access":{clearFinancialAccessCookie:()=>{}},

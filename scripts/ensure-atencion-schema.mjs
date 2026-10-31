@@ -4,6 +4,9 @@ import pg from "pg";
 // PostgreSQL native type names; "!" marks NOT NULL. Existing incompatible tables
 // are rejected instead of attempting an implicit repair or destructive migration.
 const expectedColumns = {
+  AttentionPushSubscription: "id:uuid! recipientKey:text! endpoint:text! keys:jsonb! createdAt:timestamptz! updatedAt:timestamptz! expiresAt:timestamptz!",
+  AttentionPushDelivery: "id:uuid! notificationId:uuid! subscriptionId:uuid! attempts:int4! nextAttemptAt:timestamptz! leaseToken:uuid leaseUntil:timestamptz deliveredAt:timestamptz errorCode:text createdAt:timestamptz!",
+  AttentionWorkNotification: "id:uuid! recipientKey:text! workId:uuid! eventKey:text! kind:text! workKind:text! createdAt:timestamptz! readAt:timestamptz",
   AttentionWorkFile: "id:uuid! workId:uuid! content:bytea! mimeType:text!",
   AttentionWorkRequest: "id:uuid! conversationId:uuid! kind:text! targetSource:text! targetId:int4! sellerId:int4! userId:int4! sedeId:int4! aliadoId:int4! state:text! callMode:text! version:int4! createdAt:timestamptz! updatedAt:timestamptz!",
   AttentionSticker: "id:uuid! userId:int4! name:text! content:bytea! sha256:text! size:int4! animated:bool! favorite:bool! archivedAt:timestamptz version:int4! createdAt:timestamptz!",
@@ -28,6 +31,8 @@ const additiveColumns = {
 };
 const tableNames = Object.keys(expectedColumns);
 const foreignKeys = {
+  AttentionPushDelivery: {notificationId:"AttentionWorkNotification",subscriptionId:"AttentionPushSubscription"},
+  AttentionWorkNotification: {workId:"AttentionWorkRequest"},
   AttentionWorkFile: {workId:"AttentionWorkRequest"},
   AttentionWorkRequest: {conversationId:"AttentionConversation",sellerId:"Vendedor",userId:"Usuario",sedeId:"Sede"},
   AttentionSticker: { userId: "Usuario" },
@@ -85,7 +90,7 @@ async function verifySchema(client, beforeInstallation) {
           row.foreignColumns.length === 1 && row.foreignColumns[0] === "id")) throw new AttentionSchemaMismatch(`${table}.${column}.FOREIGN_KEY`);
     }
   }
-  for (const [table, columns] of [["AttentionConversation", ["externalId"]], ["AttentionMessage", ["conversationId", "externalId"]],
+  for (const [table, columns] of [["AttentionPushSubscription",["endpoint"]],["AttentionPushDelivery",["notificationId","subscriptionId"]],["AttentionWorkNotification", ["recipientKey", "eventKey"]], ["AttentionConversation", ["externalId"]], ["AttentionMessage", ["conversationId", "externalId"]],
     ["AttentionMetaBinding", ["phoneNumberId", "contactId"]], ["AttentionMetaOutbox", ["actorKey", "requestId"]],
     ["AttentionMetaOutbox", ["phoneNumberId", "wamid"]], ["AttentionMetaDelivery", ["phoneNumberId", "wamid", "status", "eventAt"]]]) {
     if ((!beforeInstallation || present.has(table)) && !hasConstraint(table, "u", columns)) throw new AttentionSchemaMismatch(`${table}.EXTERNAL_ID_UNIQUE`);
@@ -140,6 +145,7 @@ try {
   await client.query("SELECT pg_advisory_lock(hashtext('finserpay-attention-schema'))");
   await verifySchema(client, true);
   await client.query(await readFile(new URL("./setup-atencion.sql", import.meta.url), "utf8"));
+  await client.query(await readFile(new URL("./setup-atencion-push.sql", import.meta.url), "utf8"));
   await verifySchema(client, false);
   console.log(`Esquema de atención verificado: ${tableNames.length} tablas, columnas y claves compatibles; tablero con versión independiente, lectura nominal, persistencia Meta, auditoría inmutable y eventos transaccionales activos. No se conectó ni modificó ningún proveedor.`);
 } catch (error) {

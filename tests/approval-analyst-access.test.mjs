@@ -281,6 +281,7 @@ function loginApi(overrides = {}) {
   };
   const cookies = new Map();
   const api = load("app/api/login/route.ts", {
+    "@/lib/atencion-push-device": { revokeAttentionPushDevice: async () => {} },
     "next/server": { NextResponse: { json(body, options) {
       const response = Response.json(body, options);
       response.cookies = {
@@ -546,6 +547,7 @@ test("financiero conserva su acceso por clave y deuda de sedes exige el guard ad
 test("logout elimina también la cookie nominal del analista", async () => {
   const deleted = new Map();
   const logout = load("app/api/logout/route.ts", {
+    "@/lib/atencion-push-device": { revokeAttentionPushDevice: async () => {} },
     "next/headers": { cookies: async () => ({ get: () => undefined }) },
     "@/lib/prisma": { default: {} },
     "@/lib/approval-shared-access": { revokeSharedApprovalSession: async () => {} },

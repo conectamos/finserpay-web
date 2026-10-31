@@ -30,6 +30,7 @@ function load(file, mocks = {}) {
       if (name === "@/lib/cartera-export") return { isExcludedCarteraCreditState: () => false };
       if (name.endsWith(".module.css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       if (name.endsWith("finser-ui")) return new Proxy({}, { get: (_, key) => stub(String(key)) });
+      if (name.endsWith("attention-notifications")) return { AttentionNotificationBell: stub("AttentionNotificationBell") };
       if (/finser-brand|central-dashboard-menu|logout-button|seller-client-app-dialog|seller-commissions|seller-dashboard-refresh|central-dashboard-filters|credit-welcome-voice-result/.test(name)) return { default: stub(name) };
       throw new Error(`Unexpected import ${name}`);
     },
@@ -43,7 +44,7 @@ function request(pathname, cookieValues = {}, method = "GET") {
 }
 const { proxy } = load("proxy.ts", { "next/server": { NextResponse: {
   next: () => ({ kind: "next" }), json: (body, options) => ({ kind: "json", body, status: options?.status ?? 200 }),
-  redirect: url => ({ kind: "redirect", pathname: url.pathname }),
+  redirect: url => ({ kind: "redirect", pathname: url.pathname, search: url.search }),
 } } });
 
 test("nominal analyst reaches only the attention route family in addition to existing permissions", () => {
@@ -77,6 +78,8 @@ const workId = "a0000000-0000-4000-8000-000000000001";
 const fileId = "b0000000-0000-4000-8000-000000000002";
 const sellerWorkRoutes = [
   ["/api/ventas/atencion", "GET"], ["/api/ventas/atencion", "POST"], ["/api/ventas/atencion/events", "GET"],
+  ["/api/ventas/atencion/notificaciones", "GET"], ["/api/ventas/atencion/notificaciones", "PATCH"],
+  ["/api/ventas/atencion/notificaciones/push", "GET"], ["/api/ventas/atencion/notificaciones/push", "POST"], ["/api/ventas/atencion/notificaciones/push", "DELETE"],
   [`/api/ventas/atencion/${workId}`, "GET"], [`/api/ventas/atencion/${workId}`, "PATCH"],
   [`/api/ventas/atencion/${workId}/files`, "POST"], [`/api/ventas/atencion/${workId}/files/${fileId}`, "GET"],
 ];
@@ -89,6 +92,8 @@ test("commercial inbox exception never opens administrative sales or unsupported
   const cookies = { session: "regular-cookie", seller_session: "seller-cookie" };
   for (const [path, method] of [["/api/ventas", "GET"], ["/api/ventas/123", "PATCH"], ["/api/ventas/atencion-extra", "GET"],
     ["/api/ventas/atencion", "DELETE"], ["/api/ventas/atencion/events", "POST"], [`/api/ventas/atencion/${workId}`, "DELETE"],
+    ["/api/ventas/atencion/notificaciones", "POST"], ["/api/ventas/atencion/notificaciones/push", "PATCH"],
+    ["/api/ventas/atencion/notificaciones/push-extra", "GET"],
     [`/api/ventas/atencion/${workId}/files`, "GET"], [`/api/ventas/atencion/${workId}/files/${fileId}`, "POST"],
     [`/api/ventas/atencion/${workId}/admin`, "GET"], ["/api/ventas/atencion/not-a-uuid", "GET"], ["/api/atencion", "GET"]]) {
     assert.equal(proxy(request(path, cookies, method)).status, 403, `${method} ${path}`);
@@ -100,6 +105,24 @@ test("seller work routes still require the account session and reject approval-l
       assert.equal(proxy(request(path, cookies, method)).status, 401, path);
     assert.equal(proxy(request(path, { approval_analyst_session: "analyst-cookie" }, method)).status, 403, path);
   }
+});
+
+test("dashboard push assets are publicly updateable only at the exact GET/HEAD paths", () => {
+  for(const cookies of [{},{approval_analyst_session:"nominal"},{session:"user",seller_session:"seller"}]) {
+    for(const path of ["/dashboard/notifications-sw.js","/dashboard/manifest.webmanifest"])
+      for(const method of ["GET","HEAD"]) assert.equal(proxy(request(path,cookies,method)).kind,"next");
+  }
+  for(const path of ["/dashboard/notifications-sw.js/extra","/dashboard/manifest.webmanifest/extra","/dashboard/private-sw.js"])
+    assert.equal(proxy(request(path,{})).pathname,"/aliados");
+  for(const path of ["/dashboard/notifications-sw.js","/dashboard/manifest.webmanifest"])
+    assert.equal(proxy(request(path,{},"POST")).pathname,"/aliados");
+});
+
+test("nominal analyst push landing preserves only the notification panel flag", () => {
+  const req=request("/dashboard",{approval_analyst_session:"nominal"});
+  req.nextUrl.search="?notifications=1&other=discard";
+  const response=proxy(req);assert.equal(response.pathname,"/dashboard/aprobaciones/centro");assert.equal(response.search,"?notifications=1");
+  req.nextUrl.search="?notifications=0";assert.equal(proxy(req).search,"");
 });
 
 test("sidebar offers attention to central administrators and analysts, not ally administrators", () => {

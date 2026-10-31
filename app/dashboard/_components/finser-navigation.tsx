@@ -1,10 +1,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { isAdminRole } from "@/lib/roles";
-import { Bell, ChartNoAxesColumnIncreasing, ChevronDown, LayoutGrid, Settings, Timer, UserRound, Wallet, WalletCards, type LucideIcon } from "lucide-react";
+import { ClipboardList, ChartNoAxesColumnIncreasing, ChevronDown, LayoutGrid, Settings, Timer, UserRound, Wallet, WalletCards, type LucideIcon } from "lucide-react";
 import FinserBrand from "@/app/_components/finser-brand";
 import CentralDashboardMenu from "./central-dashboard-menu";
 import LogoutButton from "./logout-button";
+import { AttentionNotificationBell } from "./attention-notifications";
 import styles from "./finser-navigation.module.css";
 type Item = [string, string];
 
@@ -52,6 +53,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
         {admin && <Link href="/dashboard/reportes"><ChartNoAxesColumnIncreasing aria-hidden="true" />Reportes</Link>}
       </nav>
       <div className={styles.account}>
+        <AttentionNotificationBell />
         {admin && <CentralDashboardMenu summaryClassName={styles.settings} label={<><Settings aria-hidden="true" /><span className={styles.srOnly}>Administración e integraciones</span></>}>
           <strong className={styles.menuHeading}>Administración</strong>
           {administration.map(([name, href]) => <Link href={href} key={href}>{name}</Link>)}
@@ -77,9 +79,10 @@ return (<header className={`${styles.topbar} ${variant === "requests" ? styles.r
         {(variant === "requests" || variant === "reports" || variant === "administration") && adminCentral && <NavigationMenu label="Integraciones" items={integrations} active={activeSection === "integrations"} />}
       </nav>
       <div className={styles.account}>
+        <AttentionNotificationBell />
         {accountActions && <div className={styles.support}>{accountActions}</div>}
-        {variant === "reports" && adminCentral && <Link className={styles.notification} href="/dashboard/aprobaciones" aria-label="Consultar bienvenidas y aprobaciones"><Bell aria-hidden="true" /></Link>}
-        {variant === "requests" && <Link className={styles.notification} href="/dashboard/solicitudes?estado=PROCESO" aria-label="Consultar solicitudes en proceso"><Bell aria-hidden="true" /></Link>}
+        {variant === "reports" && adminCentral && <Link className={styles.notification} href="/dashboard/aprobaciones" aria-label="Consultar bienvenidas y aprobaciones"><ClipboardList aria-hidden="true" /></Link>}
+        {variant === "requests" && <Link className={styles.notification} href="/dashboard/solicitudes?estado=PROCESO" aria-label="Consultar solicitudes en proceso"><ClipboardList aria-hidden="true" /></Link>}
         <CentralDashboardMenu summaryClassName={variant !== "sale" ? styles.requestProfile : styles.profile} label={variant !== "sale" ? <><span className={styles.avatar}>{nombreUsuario.trim().split(/\s+/).slice(0,2).map(part => part[0]).join("").toUpperCase()}</span><span className={styles.profileName}>{nombreUsuario}</span><ChevronDown aria-hidden="true" /></> : <><UserRound aria-hidden="true" /><span className={styles.srOnly}>Perfil de {nombreUsuario}</span></>}>
           <div className={styles.identity}><strong>{nombreUsuario}</strong><span>{rolUsuario}</span></div>
           {!admin && <Link href="/dashboard/pin">Cambiar PIN</Link>}

@@ -249,9 +249,9 @@ function ReplyComposer({ detail, draft, busy, change, send, resolve, restart, re
   </form>;
 }
 
-export default function AttentionConsole({ actor }: { actor: AttentionActor }) {
-  const [view, setView] = useState<View>("conversations");
-  const [workSelection, setWorkSelection] = useState<string|null>(null);
+export default function AttentionConsole({ actor, initialWorkKind = null, initialWorkId = null }: { actor: AttentionActor; initialWorkKind?: "welcome" | "enrollment" | null; initialWorkId?: string | null }) {
+  const [view, setView] = useState<View>(initialWorkKind || "conversations");
+  const [workSelection, setWorkSelection] = useState<string|null>(initialWorkId);
   const [boardOpened, setBoardOpened] = useState(false);
   const [boardRevision, setBoardRevision] = useState(0);
   const [inbox, setInbox] = useState<AttentionInbox | null>(null);

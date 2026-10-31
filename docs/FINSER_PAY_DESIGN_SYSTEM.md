@@ -4,6 +4,18 @@ Este documento define la linea visual oficial de FINSER PAY. Aplica a cualquier
 pantalla nueva y a todo rediseño posterior, incluso cuando la solicitud no repita
 estas reglas.
 
+## Avisos de solicitudes de Atención
+
+La campana de solicitudes se integra en las cabeceras existentes del equipo y
+los asesores. Abre `FinserSidePanel`, con contador de pendientes, enlaces a las
+solicitudes autorizadas y lectura explícita de los avisos mostrados. Los avisos
+sin leer usan lima suave; no se añade otra burbuja flotante sobre el chat.
+El panel se adapta al ancho del celular y conserva el borrador de la conversación.
+La activación de avisos del dispositivo es voluntaria desde el panel; distingue
+instalación en Inicio en iPhone, permisos bloqueados, incompatibilidad y fallas.
+La pantalla bloqueada muestra únicamente el tipo de trámite, sin datos del cliente.
+La suscripción pertenece al perfil nominal y se desactiva al salir o cambiarlo.
+
 ## Principios
 
 - La interfaz debe sentirse financiera, premium, sobria y profesional.

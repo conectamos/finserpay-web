@@ -1,4 +1,5 @@
 import { APPROVAL_SHARED_COOKIE_NAME } from "@/lib/session";
+import { revokeAttentionPushDevice } from "@/lib/atencion-push-device";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { hashPassword, isPasswordHash, verifyPassword } from "@/lib/password";
@@ -98,6 +99,7 @@ export async function POST(req: Request) {
       credentialUpdatedAt = updatedUser.updatedAt;
     }
 
+    await revokeAttentionPushDevice();
     const response = NextResponse.json({
       mensaje: "Login correcto",
       destination: approvalAnalyst ? "/dashboard/aprobaciones/centro" : "/dashboard",

@@ -65,6 +65,7 @@ async function fixture({ user = baseUser, temp = false } = {}) {
     } },
   };
   const route = loadApprovalModule("app/api/vendedores/session/route.ts", {
+    "@/lib/atencion-push-device": { revokeAttentionPushDevice: async () => {} },
     "next/server": { NextResponse: JsonResponse }, "@/lib/prisma": { default: prisma },
     "@/lib/auth": { getSessionUser: async () => user }, "@/lib/seller-auth": { getSellerSessionUser: async () => null, resolveSellerProfileType: () => "VENDEDOR" },
     "@/lib/password": password, "@/lib/profile-avatars": { normalizarAvatarPerfil: () => "seller", normalizarTipoPerfilVendedor: value => value || "VENDEDOR" },

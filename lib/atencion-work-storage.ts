@@ -1,7 +1,9 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { AttentionError, attentionText, attentionUuid } from "./atencion-core";
-import { assertAttentionCurrentActor, type AttentionDatabase, type AttentionDb } from "./atencion-storage";
+import { type AttentionDatabase, type AttentionDb } from "./atencion-storage";
+import { assertAttentionWorkCurrentActor } from "./atencion-work-actor";
+import { notifyAttentionWork } from "./atencion-work-notifications";
 import { attentionWorkKinds, attentionWorkStates, type AttentionWorkActor, type AttentionWorkDetail, type AttentionWorkItem, type AttentionWorkKind } from "./atencion-work-types";
 import type { AttentionMessage, AttentionNote } from "./atencion-types";
 import { validateMetaAttentionMedia } from "./atencion-meta";
@@ -23,11 +25,7 @@ async function target(db:AttentionDb,source:"D"|"C",id:number):Promise<Target>{
 }
 export function createAttentionWorkStore(database:AttentionDatabase){
   async function transaction<T>(a:AttentionWorkActor,run:(db:AttentionDb)=>Promise<T>){return database.$transaction(async db=>{
-    if(a.type==="attention")await assertAttentionCurrentActor(db,a.actor);else{
-      const [current]=await db.$queryRawUnsafe<{name:string;supervisor:boolean}[]>(`SELECT v.nombre AS name,upper(v."tipoPerfil")='SUPERVISOR' AS supervisor FROM "Usuario" u JOIN "Sede" us ON us.id=u."sedeId" JOIN "Aliado" ua ON ua.id=us."aliadoId" JOIN "Vendedor" v ON v.id=$2 JOIN "SedeVendedor" sv ON sv."vendedorId"=v.id AND sv."sedeId"=$3 JOIN "Sede" s ON s.id=$4 JOIN "Aliado" a ON a.id=s."aliadoId" WHERE u.id=$1 AND u."sedeId"=$5 AND u.activo AND us.activa AND ua.activo AND v.activo AND NOT v."debeCambiarPin" AND sv.activo AND s.activa AND a.activo AND a.id=$6 AND upper(v."tipoPerfil") IN ('VENDEDOR','SUPERVISOR') FOR SHARE OF u,us,ua,v,sv,s,a`,a.userId,a.sellerId,a.accessSedeId,a.sedeId,a.userSedeId,a.aliadoId);
-      if(!current||current.supervisor!==a.supervisor||a.key!==`seller:${a.userId}:${a.sellerId}`)throw new AttentionError("El perfil comercial ya no está autorizado.",403);
-      a={...a,name:current.name};
-    }
+    a=await assertAttentionWorkCurrentActor(db,a);
     const [schema]=await db.$queryRawUnsafe<{ready:boolean}[]>(`SELECT to_regclass('public."AttentionWorkRequest"') IS NOT NULL AS ready`);
     if(!schema?.ready)throw new AttentionError("La bandeja de solicitudes está pendiente de instalar.",503);
     return run(db);
@@ -70,7 +68,9 @@ export function createAttentionWorkStore(database:AttentionDatabase){
       await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,attachment) VALUES($1::uuid,$2::uuid,$3,$4,'',now(),$5,$6::jsonb) RETURNING id`,randomUUID(),r.conversationId,`work:${req.id}`,staff?"outbound":"inbound",who.name,JSON.stringify({id:fileId,kind,fileName,mimeType:input.mimeType,url:`/api/${staff?"atencion/solicitudes":"ventas/atencion"}/${id}/files/${fileId}`}));
       await db.$queryRawUnsafe(`UPDATE "AttentionWorkRequest" SET version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`,id);
       await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET version=version+1,"updatedAt"=now(),"lastContactAt"=now() WHERE id=$1::uuid RETURNING id`,r.conversationId);
-      await audit(db,a,r,req.id,"WORK_FILE");return detail(db,a,await row(db,a,id));
+      await audit(db,a,r,req.id,"WORK_FILE");
+      await notifyAttentionWork(db,a,r,`file:${req.id}`,staff?"reply":"followup");
+      return detail(db,a,await row(db,a,id));
     }),
     list:(a:AttentionWorkActor,kind:AttentionWorkKind,page=1)=>transaction(a,async db=>{parseWorkKind(kind);if(!Number.isSafeInteger(page)||page<1||page>10000)throw new AttentionError("Página inválida.");const access=scope(a),n=access.values.length;
       const rows=await db.$queryRawUnsafe<Row[]>(`SELECT ${selected} ${join} WHERE ${access.sql} AND w.kind=$${n+1} ORDER BY w."updatedAt" DESC,w.id LIMIT 40 OFFSET $${n+2}`,...access.values,kind,(page-1)*40);
@@ -92,7 +92,8 @@ export function createAttentionWorkStore(database:AttentionDatabase){
       await db.$queryRawUnsafe(`INSERT INTO "AttentionConversation"(id,channel,name,"sedeId",mode,"lastContactAt") VALUES($1::uuid,'internal',$2,$3,'human',now()) RETURNING id`,conversationId,t.name||"Solicitud comercial",t.sedeId);
       await db.$queryRawUnsafe(`INSERT INTO "AttentionWorkRequest"(id,"conversationId",kind,"targetSource","targetId","sellerId","userId","sedeId","aliadoId") VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,id,conversationId,kind,ref.source,ref.id,a.sellerId,a.userId,t.sedeId,t.aliadoId);
       await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author) VALUES($1::uuid,$2::uuid,$3,'inbound',$4,now(),$5) RETURNING id`,randomUUID(),conversationId,`work:${request.id}`,`${attentionWorkKinds[kind]}${text?`\n${text}`:""}`,a.name);
-      const r=await row(db,a,id);await audit(db,a,r,request.id,"WORK_CREATED",{state:"pending"});return detail(db,a,r);
+      const r=await row(db,a,id);await audit(db,a,r,request.id,"WORK_CREATED",{state:"pending"});
+      await notifyAttentionWork(db,a,r,`created:${request.id}`,"created");return detail(db,a,r);
     }),
     mutate:(a:AttentionWorkActor,id:string,input:Record<string,unknown>)=>transaction(a,async db=>{
       const r=await row(db,a,id),who=identity(a);if(Object.keys(input).some(k=>!["requestId","version","action","text","state","assigneeKey","callMode"].includes(k)))throw new AttentionError("Cambio no válido.");
@@ -129,7 +130,10 @@ export function createAttentionWorkStore(database:AttentionDatabase){
       }
       await db.$queryRawUnsafe(`UPDATE "AttentionWorkRequest" SET version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`,id);
       await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET version=version+1,"updatedAt"=now(),"lastContactAt"=CASE WHEN $2 THEN now() ELSE "lastContactAt" END WHERE id=$1::uuid RETURNING id`,r.conversationId,action==="message");
-      await audit(db,a,r,req.id,event,meta);return detail(db,a,await row(db,a,id));
+      await audit(db,a,r,req.id,event,meta);
+      if(action==="message")await notifyAttentionWork(db,a,r,`message:${req.id}`,staff?"reply":"followup");
+      if(action==="assign" && r.assigneeKey!==input.assigneeKey)await notifyAttentionWork(db,a,r,`assigned:${req.id}`,"assigned");
+      return detail(db,a,await row(db,a,id));
     }),
   };
 }

@@ -4,7 +4,6 @@ import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
-  Bell,
   Calculator,
   CalendarDays,
   ChevronDown,
@@ -27,6 +26,7 @@ import LogoutButton from "./logout-button";
 import SellerClientAppDialog from "./seller-client-app-dialog";
 import SellerCommissions from "./seller-commissions";
 import SellerDashboardRefresh from "./seller-dashboard-refresh";
+import { AttentionNotificationBell } from "./attention-notifications";
 
 type RecentCredit = {
   clienteNombre: string;
@@ -492,13 +492,7 @@ export default function SellerCommercialDashboard({
 
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <SellerClientAppDialog />
-            <span
-              className="grid h-11 w-11 place-items-center border-l border-[var(--fp-border)] text-[var(--fp-graphite)]"
-              role="img"
-              aria-label="Notificaciones"
-            >
-              <Bell className="h-[19px] w-[19px]" strokeWidth={1.8} aria-hidden="true" />
-            </span>
+            <AttentionNotificationBell />
             <div className="flex min-h-11 items-center gap-3 border-l border-[var(--fp-border)] pl-3">
               <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-[var(--fp-border)] bg-white">
                 {avatarSrc ? (

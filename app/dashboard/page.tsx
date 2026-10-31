@@ -21,6 +21,7 @@ type DashboardSearchParams = Promise<{
   month?: string | string[];
   aliadoId?: string | string[];
   scope?: string | string[];
+  notifications?: string;
 }>;
 
 export default async function DashboardPage({
@@ -37,7 +38,8 @@ export default async function DashboardPage({
   }
 
   if (isApprovalAnalystRole(session.rolNombre)) {
-    redirect(await getNominalApprovalAnalystSessionUser() ? "/dashboard/aprobaciones/centro" : "/dashboard/aprobaciones");
+    const destination = await getNominalApprovalAnalystSessionUser() ? "/dashboard/aprobaciones/centro" : "/dashboard/aprobaciones";
+    redirect(`${destination}${params.notifications === "1" ? "?notifications=1" : ""}`);
   }
 
   const usuario = await prisma.usuario.findUnique({

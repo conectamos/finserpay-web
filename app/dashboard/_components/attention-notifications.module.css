@@ -1,0 +1,23 @@
+.bell { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-surface); color: var(--fp-graphite); cursor: pointer; }
+.bell:hover { background: var(--fp-lime-soft); }
+.bell:focus-visible, .item:focus-visible { outline: 2px solid var(--fp-lime-strong); outline-offset: 3px; }
+.count { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 12px; background: var(--fp-graphite); color: white; font-size: .6875rem; font-weight: 700; }
+.summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.summary p { margin: 0; color: var(--fp-muted); font-size: .9375rem; }
+.list { display: flex; flex-direction: column; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.item { display: grid; grid-template-columns: 9px minmax(0, 1fr) 18px; gap: 10px; align-items: start; padding: 15px 12px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); color: var(--fp-graphite); text-decoration: none; }
+.item:hover { background: var(--fp-bg); }
+.unread { background: var(--fp-lime-soft); }
+.dot { width: 7px; height: 7px; margin-top: 7px; border-radius: 50%; background: transparent; }
+.unread .dot { background: var(--fp-lime-strong); }
+.item strong { display: block; font-size: .9375rem; line-height: 1.45; }
+.item p { margin: 5px 0 7px; font-size: .875rem; line-height: 1.5; }
+.item time { color: var(--fp-muted); font-size: .75rem; }
+.empty { padding: 26px 12px; text-align: center; color: var(--fp-muted); line-height: 1.55; }
+.error { color: var(--fp-danger, #b42318); font-size: .875rem; line-height: 1.5; }
+.push { margin-top: 25px; border-top: 1px solid var(--fp-border); padding-top: 22px; }
+.push h3 { display: flex; gap: 9px; align-items: center; margin: 0 0 10px; font-size: 1rem; }
+.push p { color: var(--fp-muted); font-size: .875rem; line-height: 1.55; }
+.push button { margin-top: 5px; }
+.help { padding: 12px; background: var(--fp-bg); border-radius: var(--fp-radius-md); }
+.live { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

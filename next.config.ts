@@ -34,6 +34,14 @@ const nextConfig: NextConfig = {
 
     return [
       {
+        source: "/dashboard/notifications-sw.js",
+        headers: [...noStoreHeaders, {key:"Content-Type",value:"application/javascript; charset=utf-8"}, {key:"X-Content-Type-Options",value:"nosniff"}],
+      },
+      {
+        source: "/dashboard/manifest.webmanifest",
+        headers: noStoreHeaders,
+      },
+      {
         source: "/sw.js",
         headers: noStoreHeaders,
       },

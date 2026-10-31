@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { revokeSharedApprovalSession } from "@/lib/approval-shared-access";
 import { NextResponse } from "next/server";
 import { clearFinancialAccessCookie } from "@/lib/financial-access";
+import { revokeAttentionPushDevice } from "@/lib/atencion-push-device";
 import {
   SELLER_SESSION_COOKIE_NAME,
   SESSION_COOKIE_NAME,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/session";
 
 export async function POST() {
+  await revokeAttentionPushDevice();
   try {
     const token = (await cookies()).get(APPROVAL_SHARED_COOKIE_NAME)?.value;
     const sharedSession = verifyApprovalSharedSessionToken(token);

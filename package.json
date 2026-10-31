@@ -86,7 +86,8 @@
     "react-dom": "19.2.4",
     "sharp": "^0.34.5",
     "ssh2-sftp-client": "^12.1.1",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "web-push": "3.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.4.1",
@@ -95,6 +96,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ssh2-sftp-client": "^9.0.6",
+    "@types/web-push": "3.6.4",
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "jiti": "2.6.1",

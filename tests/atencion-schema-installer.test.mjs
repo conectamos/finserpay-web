@@ -9,6 +9,7 @@ const sqlUrl = new URL("../scripts/setup-atencion.sql", import.meta.url);
 const source = (await readFile(installerUrl, "utf8")).replace(/^import .+;\r?\n/gm, "").replaceAll("import.meta.url", "scriptUrl");
 const run = new (Object.getPrototypeOf(async function() {}).constructor)("readFile", "pg", "console", "process", "scriptUrl", source);
 const setupSql = await readFile(sqlUrl, "utf8");
+const setupPushSql = await readFile(new URL("../scripts/setup-atencion-push.sql", import.meta.url), "utf8");
 
 async function fixture(t, overrides = {}) {
   const database = new PGlite();
@@ -22,9 +23,10 @@ async function fixture(t, overrides = {}) {
       // PGlite is single-process; test lock ordering, and delegate all schema/metadata
       // operations to real PostgreSQL execution instead of mocking their results.
       if (sql.startsWith("SELECT pg_advisory_lock(")) return { rows: [] };
-      if (sql === setupSql) {
+      if (sql === setupSql || sql === setupPushSql) {
         await database.exec(sql);
-        if (overrides.afterSql) await overrides.afterSql(database);
+        if (sql === setupSql && overrides.afterSql) await overrides.afterSql(database);
+        if (sql === setupPushSql && overrides.afterPushSql) await overrides.afterPushSql(database);
         return { rows: [] };
       }
       const result = await database.query(sql, values);
@@ -45,18 +47,23 @@ async function fixture(t, overrides = {}) {
     async end() { ended = true; }
   }
   return { database, calls, logs, metadataFields, ended: () => ended,
-    install: () => run(readFile, { Client }, { log: message => logs.push(message) },
+    install: () => run(async url => {
+      const name=new URL(url).pathname.split("/").pop();
+      if(name==="setup-atencion.sql")return setupSql;
+      if(name==="setup-atencion-push.sql")return setupPushSql;
+      throw new Error(`Unexpected migration ${name}`);
+    }, { Client }, { log: message => logs.push(message) },
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
 
-test("instalación aditiva verifica quince tablas y se puede repetir sin pérdida de datos", async t => {
+test("instalación aditiva verifica dieciocho tablas y se puede repetir sin pérdida de datos", async t => {
   const { database, install, calls, logs, ended } = await fixture(t);
   await install();
   await database.query(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES('user:1','00000000-0000-4000-8000-000000000001','retained')`);
   await install();
   assert.equal((await database.query('SELECT fingerprint FROM "AttentionRequest"')).rows[0].fingerprint, "retained");
   assert.ok(calls.findIndex(sql => sql.startsWith("SELECT pg_advisory_lock(")) < calls.indexOf(setupSql));
-  assert.ok(logs.every(message => message.includes("15 tablas") && message.includes("auditoría inmutable")));
+  assert.ok(logs.every(message => message.includes("18 tablas") && message.includes("auditoría inmutable")));
   assert.ok(ended());
 });
 
@@ -151,6 +158,15 @@ test("SQL instala en public aunque el rol tenga un esquema de búsqueda distinto
   await install();
   const rows = (await database.query(`SELECT table_schema FROM information_schema.tables WHERE table_name='AttentionConversation'`)).rows;
   assert.deepEqual(rows, [{ table_schema: "public" }]);
+  const pushRows=(await database.query(`SELECT table_schema,table_name FROM information_schema.tables WHERE table_name IN ('AttentionWorkNotification','AttentionPushSubscription','AttentionPushDelivery') ORDER BY table_name`)).rows;
+  assert.deepEqual(pushRows,[{table_schema:"public",table_name:"AttentionPushDelivery"},{table_schema:"public",table_name:"AttentionPushSubscription"},{table_schema:"public",table_name:"AttentionWorkNotification"}]);
+});
+
+test("notificaciones y entregas push rechazan unicidad incompatible y no anuncian éxito",async t=>{
+  const notifications=await fixture(t,{afterSql:db=>db.exec('ALTER TABLE "AttentionWorkNotification" DROP CONSTRAINT "AttentionWorkNotification_recipientKey_eventKey_key"')});
+  await assert.rejects(notifications.install(),/AttentionWorkNotification\.EXTERNAL_ID_UNIQUE/);
+  const deliveries=await fixture(t,{afterPushSql:db=>db.exec('ALTER TABLE "AttentionPushDelivery" DROP CONSTRAINT "AttentionPushDelivery_notificationId_subscriptionId_key"')});
+  await assert.rejects(deliveries.install(),/AttentionPushDelivery\.EXTERNAL_ID_UNIQUE/);
 });
 
 test("metadatos usan text[] OID1009 y se verifican con los parsers reales de node-pg", async t => {

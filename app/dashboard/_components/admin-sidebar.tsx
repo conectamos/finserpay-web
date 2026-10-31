@@ -33,6 +33,7 @@ import {
 import FinserBrand from "@/app/_components/finser-brand";
 import { isAdminRole, isApprovalAnalystRole } from "@/lib/roles";
 import LogoutButton from "./logout-button";
+import { AttentionNotificationBell } from "./attention-notifications";
 
 type IconType = ComponentType<{
   className?: string;
@@ -295,6 +296,7 @@ export default function AdminSidebar({
     <aside className={`${analystNavigation || portfolioNavigation ? "bg-[var(--fp-graphite)]" : "bg-[#071827]"} text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col`}>
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 lg:block lg:border-0 lg:px-5 lg:py-6">
         <FinserBrand compact dark accentPay={analystNavigation || portfolioNavigation} wordmarkOnly={analystNavigation || portfolioNavigation} showTagline={false} />
+        <div className="lg:mt-4"><AttentionNotificationBell /></div>
         <LogoutButton className="!rounded-lg !border-white/15 !px-3 lg:hidden" />
       </div>
 

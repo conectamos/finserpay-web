@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revokeAttentionPushDevice } from "@/lib/atencion-push-device";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { getSellerSessionUser, resolveSellerProfileType } from "@/lib/seller-auth";
@@ -448,6 +449,9 @@ export async function POST(req: Request) {
       });
     }
 
+    // A successful profile opening (including recovery) requires a fresh device
+    // opt-in; the incoming browser might still belong to a different advisor.
+    await revokeAttentionPushDevice();
     const response = NextResponse.json({
       ok: true,
       seller: serializeSeller(assignment.vendedor),
@@ -478,6 +482,7 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE() {
+  await revokeAttentionPushDevice();
   const response = NextResponse.json({ ok: true });
 
   response.cookies.set(SELLER_SESSION_COOKIE_NAME, "", {

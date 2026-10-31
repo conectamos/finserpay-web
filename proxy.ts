@@ -108,6 +108,8 @@ function pathMatches(pathname: string, prefixes: string[]) {
 function isSellerAttentionApi(pathname: string, method: string) {
   if (pathname === "/api/ventas/atencion") return method === "GET" || method === "POST";
   if (pathname === "/api/ventas/atencion/events") return method === "GET";
+  if (pathname === "/api/ventas/atencion/notificaciones") return method === "GET" || method === "PATCH";
+  if (pathname === "/api/ventas/atencion/notificaciones/push") return method === "GET" || method === "POST" || method === "DELETE";
   const id = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
   if (new RegExp(`^/api/ventas/atencion/${id}$`, "i").test(pathname)) return method === "GET" || method === "PATCH";
   if (new RegExp(`^/api/ventas/atencion/${id}/files$`, "i").test(pathname)) return method === "POST";
@@ -125,7 +127,8 @@ function redirectToDashboard(request: NextRequest) {
 function redirectToAnalystCenter(request: NextRequest) {
   const url = request.nextUrl.clone();
   url.pathname = "/dashboard/aprobaciones/centro";
-  url.search = "";
+  url.search = request.nextUrl.pathname === "/dashboard" && /(?:^\?|&)notifications=1(?:&|$)/.test(request.nextUrl.search)
+    ? "?notifications=1" : "";
 
   return NextResponse.redirect(url);
 }
@@ -152,6 +155,11 @@ function usesDedicatedBearerAuth(request: NextRequest, pathname: string) {
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  // These public assets contain no session data and must update after logout.
+  if ((request.method === "GET" || request.method === "HEAD") &&
+      (pathname === "/dashboard/notifications-sw.js" || pathname === "/dashboard/manifest.webmanifest")) {
+    return NextResponse.next();
+  }
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
   const hasApprovalAnalystSession = Boolean(
     request.cookies.get(APPROVAL_ANALYST_SESSION_COOKIE_NAME)?.value

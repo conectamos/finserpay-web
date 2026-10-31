@@ -95,6 +95,7 @@ function harness({ central = true } = {}) {
     "@/lib/aliados": { ensureAliadoSchema: async () => {}, ensureFinserPayCentralAdmin: async () => {} },
   });
   const login = load("app/api/login/route.ts", {
+    "@/lib/atencion-push-device": { revokeAttentionPushDevice: async () => {} },
     "next/server": { NextResponse }, "@/lib/prisma": { default: prisma },
     "@/lib/password": password, "@/lib/session": session, "@/lib/roles": roles,
   });

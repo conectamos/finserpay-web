@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
+import { stopAttentionDevicePush } from "@/lib/atencion-notification-browser";
 
 type LogoutButtonProps = {
   className?: string;
@@ -19,6 +20,7 @@ export default function LogoutButton({
   const cerrarSesion = async () => {
     try {
       setCerrando(true);
+      await stopAttentionDevicePush();
 
       const res = await fetch("/api/logout", {
         method: "POST",

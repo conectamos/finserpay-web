@@ -8,6 +8,7 @@ import {PGlite} from "@electric-sql/pglite";
 const root=path.resolve(import.meta.dirname,"..");
 const jiti=createJiti(import.meta.url,{alias:{"@":root,"server-only":path.join(root,"node_modules/next/dist/compiled/server-only/empty.js")}});
 const {createAttentionWorkStore}=await jiti.import("../lib/atencion-work-storage.ts");
+const {createAttentionWorkNotificationStore,attentionWorkNotificationEligibleSql}=await jiti.import("../lib/atencion-work-notifications.ts");
 const {createAttentionStickerLibrary,readStickerUpload}=await jiti.import("../lib/atencion-sticker-library.ts");
 const sharp=(await import("sharp")).default;
 const migration=readFileSync(path.join(root,"scripts/setup-atencion.sql"),"utf8");
@@ -43,3 +44,70 @@ test("revocación de perfil comercial o analista se revalida en cada acceso",asy
 test("soportes privados conservan archivo y autor, deduplican reintentos y excluyen usuarios ajenos",async t=>{const {create,store}=await fixture(t);let d=await create();const content=await sharp({create:{width:40,height:40,channels:3,background:"white"}}).png().toBuffer();const input={requestId:randomUUID(),version:1,fileName:"equipo.png",mimeType:"image/png",content};d=await store.attach(seller,d.item.id,input);await store.attach(seller,d.item.id,input);assert.equal(d.messages.length,2);const fileId=d.messages[1].attachment.id;assert.deepEqual(Buffer.from((await store.media(seller,d.item.id,fileId)).content),content);const staff=await store.detail(admin,d.item.id);assert.match(staff.messages[1].attachment.url,/^\/api\/atencion\/solicitudes\//);await assert.rejects(store.media(analyst,d.item.id,fileId),{status:404});await assert.rejects(store.attach(seller,d.item.id,{...input,requestId:randomUUID(),version:2,content:Buffer.from("not png")}),/archivo|contenido|formato/i);});
 test("biblioteca personal valida WebP, propiedad, favoritos, archivo y reintentos sin enviar a Meta",async t=>{const {db}=await fixture(t),library=createAttentionStickerLibrary(adapter(db));const content=await sharp({create:{width:512,height:512,channels:4,background:{r:50,g:100,b:0,alpha:1}}}).webp().toBuffer();const input={requestId:randomUUID(),name:"Gracias",content};let sticker=await library.save(admin.actor,input);assert.equal((await library.save(admin.actor,input)).id,sticker.id);assert.equal((await library.save(admin.actor,{...input,requestId:randomUUID()})).id,sticker.id);assert.equal((await library.list(admin.actor)).items.length,1);await assert.rejects(library.media(analyst.actor,sticker.id),{status:404});sticker=await library.update(admin.actor,sticker.id,{requestId:randomUUID(),version:1,action:"favorite",favorite:true});assert.equal(sticker.favorite,true);await assert.rejects(library.update(admin.actor,sticker.id,{requestId:randomUUID(),version:1,action:"archive"}),{status:409});sticker=await library.update(admin.actor,sticker.id,{requestId:randomUUID(),version:2,action:"archive"});assert.equal(sticker.archived,true);sticker=await library.update(admin.actor,sticker.id,{requestId:randomUUID(),version:3,action:"restore"});assert.equal(sticker.archived,false);assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);});
 test("imagen subida se convierte a sticker; formato falso y campos repetidos se rechazan",async()=>{const png=await sharp({create:{width:100,height:60,channels:3,background:"white"}}).png().toBuffer();const form=()=>{const f=new FormData();f.set("requestId",randomUUID());f.set("name","Prueba");f.set("file",new Blob([png],{type:"image/png"}),"foto.png");return f;};const input=await readStickerUpload(new Request("https://example.invalid",{method:"POST",body:form()}));const meta=await sharp(input.content).metadata();assert.equal(meta.format,"webp");assert.equal(meta.width,512);assert.equal(meta.height,512);const bad=form();bad.set("file",new Blob(["not image"],{type:"image/png"}),"foto.png");await assert.rejects(readStickerUpload(new Request("https://example.invalid",{method:"POST",body:bad})),{status:415});const repeated=form();repeated.append("name","Otro");await assert.rejects(readStickerUpload(new Request("https://example.invalid",{method:"POST",body:repeated})),/campos/);});
+
+test("nueva solicitud notifica al equipo activo sin datos privados; reintentos y reutilización no duplican",async t=>{
+  const {db,store,create}=await fixture(t),notifications=createAttentionWorkNotificationStore(adapter(db));
+  await db.exec(`INSERT INTO "Usuario" VALUES(7,'Inactivo',10,3,false),(8,'Externo',20,3,true),(9,'Cajero',10,2,true)`);
+  const requestId=randomUUID(),d=await create({requestId});await create({requestId});await create();
+  const rows=(await db.query('SELECT "recipientKey",kind FROM "AttentionWorkNotification" ORDER BY "recipientKey"')).rows;
+  assert.deepEqual(rows,[{recipientKey:"user:1",kind:"created"},{recipientKey:"user:5",kind:"created"},{recipientKey:"user:6",kind:"created"}]);
+  const team=await notifications.list(analyst),central=await notifications.list(admin);
+  assert.equal(team.unreadCount,1);assert.equal(team.items[0].href,"/dashboard/atencion?tipo=enrollment");
+  assert.match(central.items[0].href,new RegExp(`solicitud=${d.item.id}$`));
+  assert.doesNotMatch(JSON.stringify(team),/Cliente real|12345|Revisar pruebas/);
+  await assert.rejects(store.detail(analyst,d.item.id),{status:404});
+  await notifications.acknowledge(analyst,{ids:[central.items[0].id]});
+  assert.equal((await notifications.list(admin)).unreadCount,1,"cannot acknowledge somebody else's alert");
+  await notifications.acknowledge(analyst,{ids:[team.items[0].id]});
+  assert.equal((await notifications.list(analyst)).unreadCount,0);
+  assert.equal((await notifications.list(admin)).unreadCount,1);
+  await store.create({...seller,sellerId:12,key:"seller:2:12"},{requestId,kind:"enrollment",target:"D-102",text:"Otra solicitud"});
+  assert.equal((await notifications.list(admin)).unreadCount,2,"a different advisor may use the same client request UUID without suppressing this new case");
+});
+
+test("solo respuestas y archivos del analista notifican al titular; las notas y cambios internos no",async t=>{
+  const {db,store,create}=await fixture(t),notifications=createAttentionWorkNotificationStore(adapter(db));let d=await create();
+  d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"note",text:"Información privada"});
+  d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"state",state:"review",text:"Control interno"});
+  assert.equal((await notifications.list(seller)).unreadCount,0);
+  const reply={requestId:randomUUID(),version:d.item.version,action:"message",text:"Respuesta privada"};
+  d=await store.mutate(admin,d.item.id,reply);await store.mutate(admin,d.item.id,reply);
+  const content=await sharp({create:{width:20,height:20,channels:3,background:"white"}}).png().toBuffer();
+  const file={requestId:randomUUID(),version:d.item.version,fileName:"prueba.png",mimeType:"image/png",content};
+  d=await store.attach(admin,d.item.id,file);await store.attach(admin,d.item.id,file);
+  const result=await notifications.list(seller);assert.equal(result.unreadCount,2);assert.equal(result.actorKey,"seller:11");
+  assert.ok(result.items.every(n=>n.kind==="reply" && n.href===`/dashboard/gestion-comercial?tipo=enrollment&solicitud=${d.item.id}`));
+  assert.doesNotMatch(JSON.stringify(result),/Respuesta privada|Información privada|Cliente real|12345|prueba.png/);
+  const other={...seller,sellerId:12,key:"seller:2:12"};assert.equal((await notifications.list(other)).items.length,0);
+  await notifications.acknowledge(other,{ids:result.items.map(n=>n.id)});assert.equal((await notifications.list(seller)).unreadCount,2);
+  await db.query('UPDATE "CreditoBorrador" SET "vendedorId"=12 WHERE id=100');
+  assert.equal((await notifications.list(seller)).unreadCount,0);
+  assert.equal((await db.query(`SELECT count(*)::int n FROM "AttentionWorkNotification" n WHERE n.kind='reply' AND ${attentionWorkNotificationEligibleSql()}`)).rows[0].n,0,"push also loses eligibility after ownership transfer");
+});
+
+test("asignación y seguimiento notifican solo al responsable actual y revocan entrega al transferir",async t=>{
+  const {db,store,create}=await fixture(t),notifications=createAttentionWorkNotificationStore(adapter(db));let d=await create({kind:"welcome",target:"C-200"});
+  const assigned={requestId:randomUUID(),version:1,action:"assign",assigneeKey:"analyst:5"};
+  d=await store.mutate(admin,d.item.id,assigned);await store.mutate(admin,d.item.id,assigned);
+  const followup={requestId:randomUUID(),version:d.item.version,action:"message",text:"Necesito la llamada"};
+  d=await store.mutate(seller,d.item.id,followup);await store.mutate(seller,d.item.id,followup);
+  let result=await notifications.list(analyst);assert.equal(result.unreadCount,3);
+  assert.deepEqual(result.items.map(n=>n.kind).sort(),["assigned","created","followup"]);
+  assert.ok(result.items.every(n=>n.href.endsWith(`solicitud=${d.item.id}`)));
+  d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"assign",assigneeKey:"analyst:6"});
+  result=await notifications.list(analyst);assert.deepEqual(result.items.map(n=>n.kind),["created"]);
+  assert.equal(result.items[0].href,"/dashboard/atencion?tipo=welcome");
+  assert.equal((await db.query(`SELECT count(*)::int n FROM "AttentionWorkNotification" n WHERE n."recipientKey"='user:5' AND n.kind<>'created' AND ${attentionWorkNotificationEligibleSql()}`)).rows[0].n,0);
+  await db.query('UPDATE "Usuario" SET activo=false WHERE id=5');await assert.rejects(notifications.list(analyst),{status:403});
+  assert.equal((await db.query(`SELECT count(*)::int n FROM "AttentionWorkNotification" n WHERE n."recipientKey"='user:5' AND ${attentionWorkNotificationEligibleSql()}`)).rows[0].n,0);
+});
+
+test("fallo de notificaciones revierte la respuesta completa en su misma transacción",async t=>{
+  const {db,store,create}=await fixture(t),d=await create();
+  await db.exec(`CREATE FUNCTION reject_work_notification() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test rollback'; END; $$;
+    CREATE TRIGGER reject_work_notification BEFORE INSERT ON "AttentionWorkNotification" FOR EACH ROW EXECUTE FUNCTION reject_work_notification()`);
+  const before=(await store.detail(admin,d.item.id)).messages.length,requestId=randomUUID();
+  await assert.rejects(store.mutate(admin,d.item.id,{requestId,version:1,action:"message",text:"No debe persistir"}),/test rollback/);
+  const after=await store.detail(admin,d.item.id);assert.equal(after.messages.length,before);assert.equal(after.item.version,1);
+  assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionRequest" WHERE "requestId"=$1::uuid',[requestId])).rows[0].n,0);
+});

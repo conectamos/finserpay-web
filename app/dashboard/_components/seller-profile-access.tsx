@@ -16,6 +16,7 @@ import {
   obtenerAvatarPerfilSrc,
 } from "@/lib/profile-avatars";
 import LogoutButton from "./logout-button";
+import { stopAttentionDevicePush } from "@/lib/atencion-notification-browser";
 
 type SellerAccessItem = {
   id: number;
@@ -124,6 +125,7 @@ export default function SellerProfileAccess({
     try {
       setAbriendo(true);
       setMensaje("");
+      await stopAttentionDevicePush();
 
       const response = await fetch("/api/vendedores/session", {
         method: "POST",

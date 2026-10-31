@@ -63,6 +63,17 @@ CREATE TABLE IF NOT EXISTS "AttentionWorkRequest" (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "AttentionWorkRequest_active_target" ON "AttentionWorkRequest"(kind,"targetSource","targetId") WHERE state<>'completed';
 CREATE INDEX IF NOT EXISTS "AttentionWorkRequest_queue" ON "AttentionWorkRequest"(kind,"updatedAt" DESC,id);
+CREATE TABLE IF NOT EXISTS "AttentionWorkNotification" (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "recipientKey" text NOT NULL CHECK("recipientKey" ~ '^(user|seller):[1-9][0-9]*$'),
+  "workId" uuid NOT NULL REFERENCES "AttentionWorkRequest"(id) ON DELETE RESTRICT,
+  "eventKey" text NOT NULL CHECK(length("eventKey") BETWEEN 1 AND 180),
+  kind text NOT NULL CHECK(kind IN ('created','reply','assigned','followup')),
+  "workKind" text NOT NULL CHECK("workKind" IN ('enrollment','welcome')),
+  "createdAt" timestamptz NOT NULL DEFAULT now(), "readAt" timestamptz,
+  UNIQUE("recipientKey","eventKey")
+);
+CREATE INDEX IF NOT EXISTS "AttentionWorkNotification_recipient" ON "AttentionWorkNotification"("recipientKey","createdAt" DESC,id);
+CREATE INDEX IF NOT EXISTS "AttentionWorkNotification_unread" ON "AttentionWorkNotification"("recipientKey","createdAt" DESC) WHERE "readAt" IS NULL;
 CREATE TABLE IF NOT EXISTS "AttentionWorkFile" (
   id uuid PRIMARY KEY, "workId" uuid NOT NULL REFERENCES "AttentionWorkRequest"(id) ON DELETE RESTRICT,
   content bytea NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 16777216),
