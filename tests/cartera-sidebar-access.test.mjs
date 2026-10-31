@@ -60,6 +60,7 @@ function loadSidebar() {
             __esModule: true,
             default: EmptyComponent,
           },
+          "./attention-notifications": { AttentionNotificationBell: EmptyComponent },
         };
 
         assert.ok(name in dependencies, `Dependencia inesperada: ${name}`);

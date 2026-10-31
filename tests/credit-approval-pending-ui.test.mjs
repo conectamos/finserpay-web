@@ -182,6 +182,7 @@ test("el menú PENDIENTES solo aparece para administradores de aliado externo", 
     "next/link": { default: ({ children, ...props }) => React.createElement("a", props, children) },
     "@/app/_components/finser-brand": { default: () => null }, "@/lib/roles": roles,
     "./logout-button": { default: () => null },
+    "./attention-notifications": { AttentionNotificationBell: () => null },
   }).default;
   for (const [adminCentral, rolUsuario, expected] of [[false, "ADMIN", true], [true, "ADMIN", false], [false, "VENDEDOR", false], [true, "ANALISTA_APROBACION", false]]) {
     const html = renderToStaticMarkup(React.createElement(Sidebar, { activeHref: "/dashboard/pendientes", adminCentral, rolUsuario, nombreUsuario: "QA" }));

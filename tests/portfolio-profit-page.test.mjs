@@ -20,11 +20,13 @@ const styles = new Proxy({}, { get: (_, name) => String(name) });
 const Link = ({ children, href, ...props }) => jsxRuntime.jsx("a", { ...props, href, children });
 const Icon = () => jsxRuntime.jsx("svg", {});
 const FinserNavigation = load("../app/dashboard/_components/finser-navigation.tsx", {
+ "@/lib/roles": await jiti.import("../lib/roles.ts"),
  "next/link": { default: Link },
  "lucide-react": new Proxy({}, { get: () => Icon }),
  "@/app/_components/finser-brand": { default: () => jsxRuntime.jsx("span", { children: "FINSER PAY" }) },
  "./central-dashboard-menu": { default: ({ children, label }) => jsxRuntime.jsxs("details", { children: [jsxRuntime.jsx("summary", { children: label }), children] }) },
  "./logout-button": { default: () => jsxRuntime.jsx("button", { children: "Cerrar sesión" }) },
+ "./attention-notifications": { AttentionNotificationBell: () => null },
  "./finser-navigation.module.css": { default: styles },
 }).default;
 function credit(id,{paid=false,historical=false,late=false,ally=1,platform="IPHONE",annulled=false}={}){

@@ -33,6 +33,7 @@ function load(file, extra = {}) {
     "./central-dashboard-menu": component(Menu),
     "./central-dashboard-filters": component(Empty),
     "./logout-button": component(Empty),
+    "./attention-notifications": { AttentionNotificationBell: Empty },
     ...extra,
   };
   runInNewContext(source, {

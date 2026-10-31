@@ -21,6 +21,7 @@ function load(file, overrides = {}) {
     if (name in overrides) return overrides[name];
     if (name === "next/link") return { __esModule: true, default: Link };
     if (name.endsWith("finser-brand") || name === "./logout-button") return { __esModule: true, default: empty };
+    if (name === "./attention-notifications") return { AttentionNotificationBell: empty };
     if (name.endsWith(".module.css")) return {};
     if (name === "@/lib/roles") return load("lib/roles.ts");
     if (name === "@/lib/commissions") return load("lib/commissions.ts");

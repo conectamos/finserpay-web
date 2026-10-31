@@ -98,6 +98,8 @@ test("las herramientas comparten cabecera analista con identidad central y retor
 test("navegación central ofrece Analistas; ambos administradores tienen contraseña y vendedor conserva PIN", () => {
   const navigation = load("app/dashboard/_components/finser-navigation.tsx", {
     "@/app/_components/finser-brand": { default: "Brand" },
+    "@/lib/roles": roles,
+    "./attention-notifications": { AttentionNotificationBell: "AttentionNotificationBell" },
     "./central-dashboard-menu": { default: "Menu" },
     "./logout-button": { default: "Logout" },
   }).default;
