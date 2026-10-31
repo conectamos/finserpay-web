@@ -73,6 +73,35 @@ test("regular session reaches the server role guard while seller-profile session
   assert.equal(proxy(request("/api/atencion", seller)).status, 403);
 });
 
+const workId = "a0000000-0000-4000-8000-000000000001";
+const fileId = "b0000000-0000-4000-8000-000000000002";
+const sellerWorkRoutes = [
+  ["/api/ventas/atencion", "GET"], ["/api/ventas/atencion", "POST"], ["/api/ventas/atencion/events", "GET"],
+  [`/api/ventas/atencion/${workId}`, "GET"], [`/api/ventas/atencion/${workId}`, "PATCH"],
+  [`/api/ventas/atencion/${workId}/files`, "POST"], [`/api/ventas/atencion/${workId}/files/${fileId}`, "GET"],
+];
+test("seller can open, create and continue own work requests through their guarded handlers", () => {
+  const cookies = { session: "regular-cookie", seller_session: "seller-cookie" };
+  assert.equal(proxy(request("/dashboard/gestion-comercial", cookies)).kind, "next");
+  for (const [path, method] of sellerWorkRoutes) assert.equal(proxy(request(path, cookies, method)).kind, "next", `${method} ${path}`);
+});
+test("commercial inbox exception never opens administrative sales or unsupported actions", () => {
+  const cookies = { session: "regular-cookie", seller_session: "seller-cookie" };
+  for (const [path, method] of [["/api/ventas", "GET"], ["/api/ventas/123", "PATCH"], ["/api/ventas/atencion-extra", "GET"],
+    ["/api/ventas/atencion", "DELETE"], ["/api/ventas/atencion/events", "POST"], [`/api/ventas/atencion/${workId}`, "DELETE"],
+    [`/api/ventas/atencion/${workId}/files`, "GET"], [`/api/ventas/atencion/${workId}/files/${fileId}`, "POST"],
+    [`/api/ventas/atencion/${workId}/admin`, "GET"], ["/api/ventas/atencion/not-a-uuid", "GET"], ["/api/atencion", "GET"]]) {
+    assert.equal(proxy(request(path, cookies, method)).status, 403, `${method} ${path}`);
+  }
+});
+test("seller work routes still require the account session and reject approval-link or analyst credentials", () => {
+  for (const [path, method] of sellerWorkRoutes) {
+    for (const cookies of [{}, { seller_session: "profile-only" }, { approval_access_session: "personal-link" }, { approval_shared_session: "shared-link" }])
+      assert.equal(proxy(request(path, cookies, method)).status, 401, path);
+    assert.equal(proxy(request(path, { approval_analyst_session: "analyst-cookie" }, method)).status, 403, path);
+  }
+});
+
 test("sidebar offers attention to central administrators and analysts, not ally administrators", () => {
   const Sidebar = load("app/dashboard/_components/admin-sidebar.tsx").default;
   for (const [role, central, allowed] of [["ADMIN", true, true], ["ADMIN", false, false], ["ANALISTA_APROBACION", false, true], ["VENDEDOR", false, false]]) {

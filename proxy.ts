@@ -102,6 +102,18 @@ function pathMatches(pathname: string, prefixes: string[]) {
   );
 }
 
+// The commercial inbox has its own nominal seller/ownership checks in every
+// handler. Keep this exception limited to its supported routes and methods;
+// the rest of /api/ventas remains administrative.
+function isSellerAttentionApi(pathname: string, method: string) {
+  if (pathname === "/api/ventas/atencion") return method === "GET" || method === "POST";
+  if (pathname === "/api/ventas/atencion/events") return method === "GET";
+  const id = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  if (new RegExp(`^/api/ventas/atencion/${id}$`, "i").test(pathname)) return method === "GET" || method === "PATCH";
+  if (new RegExp(`^/api/ventas/atencion/${id}/files$`, "i").test(pathname)) return method === "POST";
+  return method === "GET" && new RegExp(`^/api/ventas/atencion/${id}/files/${id}$`, "i").test(pathname);
+}
+
 function redirectToDashboard(request: NextRequest) {
   const url = request.nextUrl.clone();
   url.pathname = "/dashboard";
@@ -200,7 +212,7 @@ export function proxy(request: NextRequest) {
       return unauthorizedApi();
     }
 
-    if (hasSellerProfile && pathMatches(pathname, ADMIN_ONLY_API_PREFIXES)) {
+    if (hasSellerProfile && pathMatches(pathname, ADMIN_ONLY_API_PREFIXES) && !isSellerAttentionApi(pathname, request.method)) {
       return NextResponse.json({ error: "Acceso no autorizado" }, { status: 403 });
     }
 
