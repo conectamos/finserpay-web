@@ -88,7 +88,6 @@ const SUPERVISOR_PORTFOLIO_ITEMS: NavItem[] = [
 
 const QUICK_ACTIONS: ActionItem[] = [
   { href: "/dashboard/gestion-comercial?tipo=welcome", icon: ShieldCheck, label: "Solicitar aprobación" },
-  { href: "/dashboard/gestion-comercial?tipo=enrollment", icon: ClipboardList, label: "Solicitar enrolamiento" },
   {
     href: "/dashboard/creditos",
     icon: Plus,
