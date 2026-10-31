@@ -167,6 +167,143 @@ test("envío humano usa multipart con versión y requestId; no borra el borrador
   assert.equal(f.composer().props.draft.text, ""); await f.completeReads(); f.unmount();
 });
 
+const replyInput = composer => composer.all().find(node => node.type === "textarea");
+const connectedComposer = parent => mount({ component: "ReplyComposer", props: parent.composer().props });
+function replyKeyEvent(composer, patch = {}) {
+  const event = {
+    key: "Enter", keyCode: 13, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, repeat: false,
+    nativeEvent: { isComposing: false, keyCode: 13 }, prevented: false, submits: 0,
+    preventDefault() { this.prevented = true; },
+    currentTarget: { form: { requestSubmit() { event.submits++; composer.all().find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); } } },
+    ...patch,
+  };
+  return event;
+}
+function replyPasteEvent(files = [], items = []) {
+  return {
+    clipboardData: { files, items, getData() { assert.fail("el pegado de imagen no debe leer ni interpretar HTML o URLs"); } },
+    prevented: false, preventDefault() { this.prevented = true; },
+  };
+}
+
+test("Enter envía por el submit existente una sola intención y conserva el adjunto hasta la aceptación", async () => {
+  const root = mount(); await root.ready(); await root.select();
+  const file = new File(["imagen"], "pegada.png", { type: "image/png" });
+  await root.change({ text: "  Pie confirmado  ", file });
+  const composer = connectedComposer(root);
+  const first = replyKeyEvent(composer), second = replyKeyEvent(composer);
+  replyInput(composer).props.onKeyDown(first); replyInput(composer).props.onKeyDown(second); await root.flush();
+  assert.equal(first.prevented, true); assert.equal(first.submits, 1);
+  const writes = root.requests.filter(request => request.init.method === "POST");
+  assert.equal(writes.length, 1, "el segundo Enter no puede eludir el bloqueo síncrono del envío");
+  assert.equal(writes[0].url, `/api/atencion/${chat.id}/messages`);
+  assert.equal(writes[0].init.body.get("text"), "Pie confirmado");
+  assert.equal(writes[0].init.body.get("file").name, file.name);
+  assert.equal(root.composer().props.draft.file, file); assert.equal(root.composer().props.draft.locked, true);
+  writes[0].respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await root.flush();
+  assert.equal(root.composer().props.draft.file, null); assert.equal(root.composer().props.draft.text, "");
+  await root.completeReads(); composer.unmount(); root.unmount();
+});
+
+test("Shift Enter, modificadores, composición IME y Enter repetido no envían", async () => {
+  const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Borrador íntegro" });
+  const composer = connectedComposer(root);
+  for (const patch of [{ shiftKey: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true }, { nativeEvent: { isComposing: true, keyCode: 13 } }, { nativeEvent: { isComposing: false, keyCode: 229 } }, { key: "a" }, { repeat: true }]) {
+    const event = replyKeyEvent(composer, patch); replyInput(composer).props.onKeyDown(event);
+    assert.equal(event.submits, 0); assert.equal(event.prevented, Boolean(patch.repeat), JSON.stringify(patch));
+  }
+  await root.flush(); assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0);
+  assert.equal(root.composer().props.draft.text, "Borrador íntegro"); composer.unmount(); root.unmount();
+});
+
+test("Enter respeta permisos, vencimiento, validación y bloqueo del borrador", () => {
+  const base = { detail, draft: { text: "Mensaje", file: null, locked: false }, busy: false, change() {}, send() { assert.fail("el atajo no debe enviar un borrador restringido"); } };
+  for (const patch of [
+    { detail: { ...detail, permissions: { canSend: false } } },
+    { detail: { ...detail, messaging: { ...detail.messaging, canReply: false } } },
+    { detail: { ...detail, messaging: { ...detail.messaging, windowExpiresAt: "2000-01-01T00:00:00Z" } } },
+    { busy: true }, { draft: { ...base.draft, locked: true } }, { draft: { ...base.draft, text: "  " } }, { draft: { ...base.draft, text: "x".repeat(4097) } },
+  ]) {
+    const composer = mount({ component: "ReplyComposer", props: { ...base, ...patch } });
+    const event = replyKeyEvent(composer); replyInput(composer).props.onKeyDown(event);
+    assert.equal(event.prevented, true); assert.equal(event.submits, 0); composer.unmount();
+  }
+});
+
+test("pegar una imagen prepara vista previa sin enviar, mantiene texto y deduplica files frente a items", async () => {
+  for (const viaItems of [false, true]) {
+    const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Pie conservado" });
+    const composer = connectedComposer(root), file = new File(["imagen"], "portapapeles.png", { type: "image/png" });
+    const item = { kind: "file", type: "image/png", getAsFile: () => file };
+    const event = replyPasteEvent(viaItems ? [] : [file], [item]);
+    replyInput(composer).props.onPaste(event); await root.flush(); composer.setProps(root.composer().props);
+    assert.equal(event.prevented, true); assert.equal(root.composer().props.draft.file, file);
+    assert.equal(root.composer().props.draft.text, "Pie conservado");
+    assert.ok(composer.all().some(node => node.type?.name === "ReplyAudioPreview" && node.props.file === file));
+    assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0);
+    composer.unmount(); root.unmount();
+  }
+});
+
+test("el pegado de texto o HTML permanece nativo y una imagen ilegible produce aviso sin adjuntar", async () => {
+  const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Texto original" });
+  const composer = connectedComposer(root);
+  const textOnly = replyPasteEvent([], [{ kind: "string", type: "text/html", getAsFile() { assert.fail("no es un archivo"); } }]);
+  replyInput(composer).props.onPaste(textOnly); await root.flush();
+  assert.equal(textOnly.prevented, false); assert.equal(root.composer().props.draft.text, "Texto original");
+  const unreadable = replyPasteEvent([], [{ kind: "file", type: "image/png", getAsFile: () => null }]);
+  replyInput(composer).props.onPaste(unreadable); await root.flush();
+  assert.equal(unreadable.prevented, true); assert.equal(root.composer().props.draft.file, null);
+  assert.match(root.composer().props.draft.error, /No se pudo leer/);
+  assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0);
+  composer.unmount(); root.unmount();
+});
+
+test("pegar rechaza varias imágenes, formato o tamaño inválido y conserva un archivo ya preparado", async () => {
+  const photo = new File(["foto"], "foto.png", { type: "image/png" });
+  for (const [files, original, error] of [
+    [[photo, photo], null, /un archivo a la vez/],
+    [[new File([new Uint8Array(5 * 1024 * 1024 + 1)], "grande.png", { type: "image/png" })], null, /5 MB/],
+    [[new File(["gif"], "imagen.gif", { type: "image/gif" })], null, /formato/],
+    [[photo], new File(["pdf"], "preparado.pdf", { type: "application/pdf" }), /Ya tienes un archivo preparado/],
+  ]) {
+    const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Pie preservado", file: original });
+    const composer = connectedComposer(root), event = replyPasteEvent(files);
+    replyInput(composer).props.onPaste(event); await root.flush();
+    assert.equal(event.prevented, true); assert.equal(root.composer().props.draft.file, original);
+    assert.equal(root.composer().props.draft.text, "Pie preservado"); assert.match(root.composer().props.draft.error, error);
+    assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0); composer.unmount(); root.unmount();
+  }
+});
+
+test("pegar no modifica un borrador sin permiso, vencido, ocupado o bloqueado", async () => {
+  const photo = new File(["foto"], "foto.png", { type: "image/png" });
+  for (const restriction of ["permission", "window", "busy", "locked"]) {
+    const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Texto privado" });
+    let props = root.composer().props;
+    if (restriction === "permission") props = { ...props, detail: { ...detail, permissions: { canSend: false } } };
+    if (restriction === "window") props = { ...props, detail: { ...detail, messaging: { ...detail.messaging, windowExpiresAt: "2000-01-01T00:00:00Z" } } };
+    if (restriction === "busy") props = { ...props, busy: true };
+    if (restriction === "locked") props = { ...props, draft: { ...props.draft, locked: true } };
+    const composer = mount({ component: "ReplyComposer", props }), event = replyPasteEvent([photo]);
+    replyInput(composer).props.onPaste(event); await root.flush();
+    assert.equal(event.prevented, true); assert.equal(root.composer().props.draft.file, null);
+    assert.equal(root.composer().props.draft.text, "Texto privado"); assert.equal(root.composer().props.draft.error, "");
+    assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0); composer.unmount(); root.unmount();
+  }
+});
+
+test("la imagen pegada pertenece al borrador de su chat y se conserva al volver", async () => {
+  const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Borrador A" });
+  const composer = connectedComposer(root), photo = new File(["foto A"], "chat-a.png", { type: "image/png" });
+  replyInput(composer).props.onPaste(replyPasteEvent([photo])); await root.flush(); composer.unmount();
+  await root.select({ ...detail, conversation: other }); assert.equal(root.composer().props.draft.file, null);
+  await root.change({ text: "Borrador B" });
+  await root.select(); assert.equal(root.composer().props.draft.file, photo); assert.equal(root.composer().props.draft.text, "Borrador A");
+  await root.select({ ...detail, conversation: other }); assert.equal(root.composer().props.draft.text, "Borrador B");
+  assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0); root.unmount();
+});
+
 test("archivo e incertidumbre conservan solicitud y borrador; consultar estado no vuelve a enviar", async () => {
   const f = mount(); await f.ready(); await f.select(); const file = new File(["imagen"], "imagen.jpg", { type: "image/jpeg" });
   await f.change({ file }); f.composer().props.send(); await f.flush(); const sent = f.requests.at(-1);
