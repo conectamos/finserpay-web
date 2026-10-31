@@ -137,13 +137,12 @@ export default function AttentionWorkPhotoCapture(props: Props) {
   const busy = phase === "creating" || phase === "cancelling", ended = session && session.state !== "open";
   const mobileUrl = validated && session?.state === "open" && !blocked && !closing.current && secret.current ? `${window.location.origin}/atencion-captura#token=${secret.current}` : "";
   return <section className={styles.capture} aria-label="Fotos desde el celular" aria-busy={busy}>
-    <header><div><h3>Fotos desde el celular</h3><p className={styles.muted}>Escanea el QR para tomar y enviar fotos a este mismo chat.</p></div></header>
+    <header><div><h3>Fotos desde el celular</h3><p className={styles.muted}>Escanea el QR para tomar y enviar fotos a este mismo chat.</p></div><Button type="button" variant="ghost" className={styles.closeCapture} disabled={props.disabled || busy} onClick={() => void cancel()}>{phase === "cancelling" ? "Cerrando QR…" : "Cerrar captura"}</Button></header>
     {phase === "creating" && <p role="status">Preparando QR…</p>}
     {session && <div className={styles.qrLayout}>{qr && validated && !blocked && !closing.current ? <Image unoptimized width={320} height={320} src={qr} alt="QR para enviar fotos a este chat" className={styles.qr}/> : <p className={styles.muted}>{ended ? session.state === "expired" ? "Este QR venció." : "Este QR ya está cerrado." : "El QR aparecerá al confirmar la sesión."}</p>}<div className={styles.status}><strong>{session.uploadedCount} {session.uploadedCount === 1 ? "foto recibida" : "fotos recibidas"}</strong><p className={styles.muted}>{session.state === "open" ? `Vence a las ${new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" }).format(new Date(session.expiresAt))}.` : "Las fotos enviadas permanecen en el historial del chat."}</p>{mobileUrl && <a href={mobileUrl} target="_blank" rel="noopener noreferrer">Abrir captura en este dispositivo</a>}</div></div>}
     {error && <p className={styles.error} role="alert">{error}</p>}
     <div className={styles.actions}>
       {!blocked && (phase === "uncertain" ? <Button type="button" disabled={props.disabled || busy} onClick={() => void create()}>Consultar / reintentar mismo QR</Button> : phase === "cancel-uncertain" ? <Button type="button" disabled={props.disabled || busy} onClick={() => void cancel()}>Reintentar cierre</Button> : ended || (!session && !busy) ? <Button type="button" disabled={props.disabled || busy} onClick={() => void create(true)}>Generar nuevo QR</Button> : error ? <Button type="button" variant="secondary" disabled={props.disabled || busy} onClick={() => { setValidated(false); void load(); }}>Actualizar QR</Button> : null)}
-      <Button type="button" variant="ghost" disabled={props.disabled || busy} onClick={() => void cancel()}>{phase === "cancelling" ? "Cerrando QR…" : "Cerrar captura"}</Button>
     </div>
   </section>;
 }
