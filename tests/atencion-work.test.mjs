@@ -7,7 +7,7 @@ import {createJiti} from "jiti";
 import {PGlite} from "@electric-sql/pglite";
 const root=path.resolve(import.meta.dirname,"..");
 const jiti=createJiti(import.meta.url,{alias:{"@":root,"server-only":path.join(root,"node_modules/next/dist/compiled/server-only/empty.js")}});
-const {createAttentionWorkStore}=await jiti.import("../lib/atencion-work-storage.ts");
+const {createAttentionWorkStore,parseWorkListQuery}=await jiti.import("../lib/atencion-work-storage.ts");
 const {createAttentionWorkNotificationStore,attentionWorkNotificationEligibleSql}=await jiti.import("../lib/atencion-work-notifications.ts");
 const {createAttentionStickerLibrary,readStickerUpload}=await jiti.import("../lib/atencion-sticker-library.ts");
 const sharp=(await import("sharp")).default;
@@ -33,7 +33,56 @@ async function fixture(t){const db=new PGlite();t.after(()=>db.close());await db
   INSERT INTO "CreditoBorrador" VALUES(100,'Cliente real','12345','123456789012345','IPHONE','PROCESO',11,20),(101,'Otro cliente','67890','123456789012346','ANDROID','PROCESO',11,20),(102,'No autorizado','98765','123456789012347','IPHONE','PROCESO',12,20);
   INSERT INTO "Credito" VALUES(200,'Cliente bienvenida','12345','123456789012345','IPHONE','ACTIVO',11,20);
 `);await db.exec(migration);const store=createAttentionWorkStore(adapter(db));const create=(extra={})=>store.create(seller,{requestId:randomUUID(),kind:"enrollment",target:"D-100",text:"Revisar pruebas",...extra});return {db,store,create};}
-test("asesor crea chat interno con datos reales y reintentos no duplican solicitud ni mensaje",async t=>{const {store,db,create}=await fixture(t);const id=randomUUID(),a=await create({requestId:id}),b=await create({requestId:id}),c=await create();assert.equal(a.item.id,b.item.id);assert.equal(a.item.id,c.item.id);assert.equal(a.item.name,"Cliente real");assert.equal(a.messages.length,1);assert.equal((await db.query('SELECT channel,phone FROM "AttentionConversation"')).rows[0].channel,"internal");assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});
+test("asesor crea chat interno con datos reales y reintentos no duplican solicitud ni mensaje",async t=>{const {db,create}=await fixture(t);const id=randomUUID(),a=await create({requestId:id}),b=await create({requestId:id}),c=await create();assert.equal(a.item.id,b.item.id);assert.equal(a.item.id,c.item.id);assert.equal(a.item.name,"Cliente real");assert.equal(a.messages.length,1);assert.equal((await db.query('SELECT channel,phone FROM "AttentionConversation"')).rows[0].channel,"internal");assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});
+
+test("consulta de bandejas valida búsqueda, estado, filtros y parámetros repetidos",()=>{
+  assert.deepEqual(parseWorkListQuery(new URLSearchParams()),{kind:"enrollment",page:1,filters:{search:"",filter:"all",state:""}});
+  assert.deepEqual(parseWorkListQuery(new URLSearchParams("kind=welcome&page=2&search=  Tienda  &filter=unassigned&state=information")),
+    {kind:"welcome",page:2,filters:{search:"Tienda",filter:"unassigned",state:"information"}});
+  for(const query of ["kind=credit","page=1e3","page=0","page=10001","filter=mine","state=approved","kind=welcome&kind=welcome","search=a&search=b","filter=all&filter=unread","state=pending&state=review",`search=${"a".repeat(121)}`])
+    assert.throws(()=>parseWorkListQuery(new URLSearchParams(query)),{status:400});
+});
+
+test("búsqueda y conteo de solicitudes abarcan toda la cola antes de paginar y usan nombres actuales",async t=>{
+  const {db,store,create}=await fixture(t);await create();
+  const uuid=(base,i)=>`00000000-0000-4000-8000-${String(base+i).padStart(12,"0")}`;
+  for(let i=0;i<45;i++){
+    await db.query('INSERT INTO "CreditoBorrador" VALUES($1,$2,$3,$4,\'IPHONE\',\'PROCESO\',11,20)',[1000+i,`Cliente actual ${i}`,String(100000+i),String(123456789010000+i)]);
+    await db.query('INSERT INTO "AttentionConversation"(id,channel,name,"sedeId",mode,"lastContactAt") VALUES($1,\'internal\',$2,20,\'human\',$3)',[uuid(1000,i),`Nombre anterior ${i}`,new Date(Date.UTC(2026,9,31,12,0)-i*60000).toISOString()]);
+    await db.query('INSERT INTO "AttentionWorkRequest"(id,"conversationId",kind,"targetSource","targetId","sellerId","userId","sedeId","aliadoId",state,"updatedAt") VALUES($1,$2,\'enrollment\',\'D\',$3,11,2,20,2,$4,$5)',[uuid(2000,i),uuid(1000,i),1000+i,i===44?"information":"pending",new Date(Date.UTC(2026,9,31,12,0)-i*60000).toISOString()]);
+    await db.query('INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",attachment) VALUES($1,$2,\'queue-fixture\',\'inbound\',$3,$4,$5)',[uuid(3000,i),uuid(1000,i),i===44?"":`Mensaje ${i}`,new Date(Date.UTC(2026,9,31,12,0)-i*60000).toISOString(),i===44?{kind:"image",id:uuid(4000,i)}:null]);
+  }
+  const first=await store.list(admin,"enrollment"),second=await store.list(admin,"enrollment",2);
+  assert.equal(first.total,46);assert.equal(first.items.length,40);assert.equal(second.total,46);assert.equal(second.items.length,6);
+  assert.equal(first.items.some(item=>item.id===uuid(2000,44)),false);
+  const filtered=await store.list(admin,"enrollment",1,{search:"Cliente actual 44",filter:"unassigned",state:"information"});
+  assert.equal(filtered.total,1);assert.equal(filtered.items[0].name,"Cliente actual 44");assert.equal(filtered.items[0].preview,"Imagen");
+  assert.equal(filtered.items[0].unreadCount,1);assert.equal(filtered.items[0].conversationStatus,"pending");assert.equal(filtered.items[0].lastMessageAt,"2026-10-31T11:16:00.000Z");
+  assert.equal((await store.detail(admin,filtered.items[0].id)).item.lastMessageAt,filtered.items[0].lastMessageAt);
+  for(const search of ["Tienda","Asesor","Sede tienda"])assert.equal((await store.list(admin,"enrollment",1,{search})).total,46);
+  await db.query('UPDATE "CreditoBorrador" SET "clienteNombre"=\'Nombre 100% real\' WHERE id=1044');
+  assert.equal((await store.list(admin,"enrollment",1,{search:"%"})).total,1);
+  assert.equal((await store.list(admin,"enrollment",1,{search:"' OR true --"})).total,0);
+  assert.equal((await store.list(analyst,"enrollment",1,{search:"Cliente"})).total,0,"search cannot expose unassigned cases to an analyst");
+});
+
+test("no leídos de solicitudes respetan al analista nominal y no exponen lecturas al asesor",async t=>{
+  const {db,store,create}=await fixture(t);let d=await create();
+  d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"assign",assigneeKey:analyst.actor.key});
+  assert.equal((await store.list(analyst,"enrollment",1,{filter:"unread"})).total,1);
+  assert.equal((await store.list(admin,"enrollment",1,{filter:"unassigned"})).total,0);
+  await db.query('INSERT INTO "AttentionReadState"("userId","messageId","conversationId") VALUES($1,$2,$3)',[analyst.actor.userId,d.messages[0].id,d.item.conversationId]);
+  assert.equal((await store.list(analyst,"enrollment",1,{filter:"unread"})).total,0);
+  assert.equal((await store.list(admin,"enrollment",1,{filter:"unread"})).items[0].unreadCount,1);
+  const commercial=await store.list(seller,"enrollment");assert.equal(Object.hasOwn(commercial.items[0],"unreadCount"),false);
+  assert.equal(Object.hasOwn((await store.detail(seller,d.item.id)).item,"unreadCount"),false);
+  await assert.rejects(store.list(seller,"enrollment",1,{filter:"unread"}),{status:403});
+  d=await store.mutate(seller,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"message",text:"Información nueva del asesor"});
+  const nominal=await store.list(analyst,"enrollment",1,{filter:"unread"});
+  assert.equal(nominal.total,1);assert.equal(nominal.items[0].unreadCount,1);assert.equal(nominal.items[0].preview,"Información nueva del asesor");
+  assert.equal((await store.detail(analyst,d.item.id)).item.unreadCount,1);
+  await assert.rejects(store.list(admin,"enrollment",1,{state:"inventado"}),{status:400});
+});
 test("creación rechaza ventas ajenas, Android, bienvenida de borrador y roles de analista",async t=>{const {create,store}=await fixture(t);await assert.rejects(create({target:"D-102"}),{status:403});await assert.rejects(create({target:"D-101"}),/iPhone/);await assert.rejects(create({kind:"welcome"}),/crédito/);await assert.rejects(store.create(admin,{requestId:randomUUID(),kind:"enrollment",target:"D-100"}),{status:403});});
 test("asignación mantiene alcance nominal y auditoría; vendedor no puede asignar ni ver notas",async t=>{const {create,store}=await fixture(t);let d=await create();await assert.rejects(store.detail(analyst,d.item.id),{status:404});await assert.rejects(store.mutate(seller,d.item.id,{requestId:randomUUID(),version:1,action:"assign",assigneeKey:"analyst:5"}),{status:403});d=await store.mutate(admin,d.item.id,{requestId:randomUUID(),version:1,action:"assign",assigneeKey:"analyst:5"});assert.equal((await store.list(analyst,"enrollment")).total,1);d=await store.mutate(analyst,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"note",text:"Nota reservada"});assert.equal(d.notes[0].text,"Nota reservada");assert.equal((await store.detail(seller,d.item.id)).notes.length,0);assert.ok(d.events.some(e=>e.action==="WORK_ASSIGNED"));});
 test("mensaje repetido es idempotente; conflicto de versión no pierde mensajes y cierre genérico no omite gestión",async t=>{const {create,store,db}=await fixture(t);let d=await create();const input={requestId:randomUUID(),version:1,action:"message",text:"Aquí está el contexto"};d=await store.mutate(seller,d.item.id,input);await store.mutate(seller,d.item.id,input);assert.equal(d.messages.length,2);await assert.rejects(store.mutate(seller,d.item.id,{...input,requestId:randomUUID()}),{status:409});await assert.rejects(store.mutate(admin,d.item.id,{requestId:randomUUID(),version:d.item.version,action:"state",state:"completed",text:"Intento de omitir checklist"}),{status:409});assert.equal((await store.detail(admin,d.item.id)).item.state,"pending");assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});

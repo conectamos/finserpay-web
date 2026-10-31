@@ -4,19 +4,44 @@ import { AttentionError, attentionText, attentionUuid } from "./atencion-core";
 import { type AttentionDatabase, type AttentionDb } from "./atencion-storage";
 import { assertAttentionWorkCurrentActor } from "./atencion-work-actor";
 import { notifyAttentionWork } from "./atencion-work-notifications";
-import { attentionWorkKinds, attentionWorkStates, type AttentionWorkActor, type AttentionWorkDetail, type AttentionWorkItem, type AttentionWorkKind } from "./atencion-work-types";
+import { attentionWorkKinds, attentionWorkStates, type AttentionWorkActor, type AttentionWorkDetail, type AttentionWorkItem, type AttentionWorkKind, type AttentionWorkListFilters } from "./atencion-work-types";
 import type { AttentionActor, AttentionMessage, AttentionNote } from "./atencion-types";
 import { validateMetaAttentionMedia } from "./atencion-meta";
+import { attentionUnreadPredicate } from "./atencion-team-read";
 
 type Row = AttentionWorkItem & { targetSource: "D" | "C"; targetId: number; sellerId: number; userId: number; sedeId: number; aliadoId: number };
 type Target = { id:number; name:string; document:string|null; imei:string|null; platform:string|null; state:string; sellerId:number|null; sedeId:number; aliadoId:number; advisor:string; ally:string; branch:string };
 export type AttentionWorkWorkflowContext = {db:AttentionDb;actor:AttentionActor;work:Row;target:Target};
 const identity = (a:AttentionWorkActor) => a.type === "attention" ? {userId:a.actor.userId,sellerId:null,key:a.actor.key,name:a.actor.name} : a;
 const iso = (value:unknown) => new Date(value as string).toISOString();
-const selected = `w.*,c.name,c."assigneeName" AS assignee,c."assigneeKey",v.nombre AS advisor,a.nombre AS ally,s.nombre AS branch`;
+const currentNameSql = `COALESCE(CASE w."targetSource" WHEN 'D' THEN
+  (SELECT NULLIF(t."clienteNombre",'') FROM "CreditoBorrador" t WHERE t.id=w."targetId")
+  WHEN 'C' THEN (SELECT NULLIF(t."clienteNombre",'') FROM "Credito" t WHERE t.id=w."targetId") END,c.name)`;
+const previewSql = `CASE WHEN NULLIF(btrim(m.text),'') IS NOT NULL THEN left(m.text,160)
+  ELSE CASE m.attachment->>'kind' WHEN 'image' THEN 'Imagen' WHEN 'audio' THEN 'Audio' WHEN 'video' THEN 'Video'
+    WHEN 'document' THEN 'Documento' WHEN 'sticker' THEN 'Sticker' ELSE NULL END END`;
+const selected = `w.*,${currentNameSql} AS name,c."assigneeName" AS assignee,c."assigneeKey",c.status AS "conversationStatus",
+  v.nombre AS advisor,a.nombre AS ally,s.nombre AS branch,
+  (SELECT ${previewSql} FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview,
+  (SELECT m."sentAt" FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS "lastMessageAt"`;
 const join = `FROM "AttentionWorkRequest" w JOIN "AttentionConversation" c ON c.id=w."conversationId" JOIN "Vendedor" v ON v.id=w."sellerId" JOIN "Sede" s ON s.id=w."sedeId" JOIN "Aliado" a ON a.id=w."aliadoId"`;
-function dto(r:Row):AttentionWorkItem{return {id:r.id,conversationId:r.conversationId,kind:r.kind,target:`${r.targetSource}-${r.targetId}`,state:r.state,callMode:r.callMode,name:r.name,advisor:r.advisor,ally:r.ally,branch:r.branch,assignee:r.assignee,assigneeKey:r.assigneeKey,version:r.version,createdAt:iso(r.createdAt),updatedAt:iso(r.updatedAt)};}
+function dto(r:Row):AttentionWorkItem{return {id:r.id,conversationId:r.conversationId,kind:r.kind,target:`${r.targetSource}-${r.targetId}`,state:r.state,callMode:r.callMode,name:r.name,advisor:r.advisor,ally:r.ally,branch:r.branch,assignee:r.assignee,assigneeKey:r.assigneeKey,version:r.version,createdAt:iso(r.createdAt),updatedAt:iso(r.updatedAt),
+  preview:r.preview??null,lastMessageAt:r.lastMessageAt?iso(r.lastMessageAt):null,conversationStatus:r.conversationStatus,
+  ...(typeof r.unreadCount==="number"?{unreadCount:r.unreadCount}:{})};}
 function scope(a:AttentionWorkActor){return a.type === "attention" ? {sql:`($1::boolean OR (c."assigneeUserId"=$2 AND c."assigneeKey"=$3 AND c."assigneeSellerId" IS NULL))`,values:[a.actor.central,a.actor.userId,a.actor.key]} : {sql:`w."aliadoId"=$1 AND (w."sellerId"=$2 OR ($3::boolean AND w."sedeId"=$4)) AND EXISTS(SELECT 1 FROM (SELECT 'D' AS source,id,"vendedorId","sedeId" FROM "CreditoBorrador" UNION ALL SELECT 'C',id,"vendedorId","sedeId" FROM "Credito") owner JOIN "Sede" os ON os.id=owner."sedeId" WHERE owner.source=w."targetSource" AND owner.id=w."targetId" AND os."aliadoId"=$1 AND (owner."vendedorId"=$2 OR ($3::boolean AND owner."sedeId"=$4)))`,values:[a.aliadoId,a.sellerId,a.supervisor,a.sedeId]};}
+function unreadSql(a:AttentionWorkActor){return a.type==="attention"?`(SELECT count(*)::integer FROM "AttentionMessage" m WHERE m."conversationId"=c.id AND m.direction='inbound' AND ${attentionUnreadPredicate})`:"NULL::integer";}
+function workListFilters(input:Partial<AttentionWorkListFilters>={}):AttentionWorkListFilters{
+  if(!input||typeof input!=="object"||Array.isArray(input))throw new AttentionError("Filtros de solicitud inválidos.");
+  const search=attentionText(input.search??"",120,false).normalize("NFKC"),filter=input.filter??"all",state=input.state??"";
+  if(!["all","unread","unassigned"].includes(filter)||state!==""&&!Object.hasOwn(attentionWorkStates,state))throw new AttentionError("Filtros de solicitud inválidos.");
+  return {search,filter,state};
+}
+export function parseWorkListQuery(params:URLSearchParams){
+  if(["kind","page","search","filter","state"].some(key=>params.getAll(key).length>1))throw new AttentionError("No repitas parámetros de solicitudes.");
+  const page=params.get("page")||"1";
+  if(!/^\d+$/.test(page)||Number(page)<1||Number(page)>10000)throw new AttentionError("Página inválida.");
+  return {kind:parseWorkKind(params.get("kind")||"enrollment"),page:Number(page),filters:workListFilters({search:params.get("search")||"",filter:(params.get("filter")||"all") as AttentionWorkListFilters["filter"],state:(params.get("state")||"") as AttentionWorkListFilters["state"]})};
+}
 export function parseWorkTarget(value:unknown){const match=typeof value==="string"?/^([DC])-([1-9]\d{0,9})$/.exec(value):null;if(!match)throw new AttentionError("Selecciona una solicitud o crédito existente.");return {source:match[1] as "D"|"C",id:Number(match[2])};}
 export function parseWorkKind(value:unknown):AttentionWorkKind{if(value!=="enrollment"&&value!=="welcome")throw new AttentionError("Tipo de solicitud inválido.");return value;}
 async function target(db:AttentionDb,source:"D"|"C",id:number,lock=true):Promise<Target>{
@@ -31,7 +56,7 @@ export function createAttentionWorkStore(database:AttentionDatabase){
     if(!schema?.ready)throw new AttentionError("La bandeja de solicitudes está pendiente de instalar.",503);
     return run(db);
   },{isolationLevel:"ReadCommitted",timeout:20000,maxWait:10000});}
-  async function row(db:AttentionDb,a:AttentionWorkActor,id:string){const access=scope(a);const [r]=await db.$queryRawUnsafe<Row[]>(`SELECT ${selected} ${join} WHERE ${access.sql} AND w.id=$${access.values.length+1}::uuid FOR UPDATE OF w,c`,...access.values,attentionUuid(id));if(!r)throw new AttentionError("Solicitud no encontrada o no autorizada.",404);
+  async function row(db:AttentionDb,a:AttentionWorkActor,id:string){const access=scope(a);const [r]=await db.$queryRawUnsafe<Row[]>(`SELECT ${selected},${unreadSql(a)} AS "unreadCount" ${join} WHERE ${access.sql} AND w.id=$${access.values.length+1}::uuid FOR UPDATE OF w,c`,...access.values,attentionUuid(id));if(!r)throw new AttentionError("Solicitud no encontrada o no autorizada.",404);
     if(a.type==="seller"){const t=await target(db,r.targetSource,r.targetId);if(t.aliadoId!==a.aliadoId||!(t.sellerId===a.sellerId||a.supervisor&&t.sedeId===a.sedeId))throw new AttentionError("La operación ya no pertenece a tu alcance.",403);}return r;}
   async function intent(db:AttentionDb,a:AttentionWorkActor,requestId:unknown,input:unknown){const who=identity(a),id=attentionUuid(requestId),fingerprint=createHash("sha256").update(JSON.stringify(input)).digest("hex");
     for(const ns of ["attention:","attention:meta:request:"])await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`,`${ns}${who.key}:${id}`);
@@ -109,9 +134,15 @@ export function createAttentionWorkStore(database:AttentionDatabase){
       await notifyAttentionWork(db,a,r,`file:${req.id}`,staff?"reply":"followup");
       return detail(db,a,await row(db,a,id));
     }),
-    list:(a:AttentionWorkActor,kind:AttentionWorkKind,page=1)=>transaction(a,async db=>{parseWorkKind(kind);if(!Number.isSafeInteger(page)||page<1||page>10000)throw new AttentionError("Página inválida.");const access=scope(a),n=access.values.length;
-      const rows=await db.$queryRawUnsafe<Row[]>(`SELECT ${selected} ${join} WHERE ${access.sql} AND w.kind=$${n+1} ORDER BY w."updatedAt" DESC,w.id LIMIT 40 OFFSET $${n+2}`,...access.values,kind,(page-1)*40);
-      const [total]=await db.$queryRawUnsafe<{count:number}[]>(`SELECT count(*)::int AS count ${join} WHERE ${access.sql} AND w.kind=$${n+1}`,...access.values,kind);return {items:rows.map(dto),total:total.count,page,pageSize:40};}),
+    list:(a:AttentionWorkActor,kind:AttentionWorkKind,page=1,rawFilters:Partial<AttentionWorkListFilters>={})=>transaction(a,async db=>{parseWorkKind(kind);if(!Number.isSafeInteger(page)||page<1||page>10000)throw new AttentionError("Página inválida.");const access=scope(a),n=access.values.length,filters=workListFilters(rawFilters);
+      if(filters.filter==="unread"&&a.type!=="attention")throw new AttentionError("La lectura de mensajes de esta bandeja corresponde al equipo de Atención.",403);
+      const search=filters.search?`%${filters.search.replace(/[!%_]/g,char=>`!${char}`)}%`:null;
+      const where=`${access.sql} AND w.kind=$${n+1} AND ($${n+2}::text IS NULL OR ${currentNameSql} ILIKE $${n+2} ESCAPE '!' OR a.nombre ILIKE $${n+2} ESCAPE '!' OR v.nombre ILIKE $${n+2} ESCAPE '!' OR s.nombre ILIKE $${n+2} ESCAPE '!')
+        AND ($${n+3}::text='all' OR ($${n+3}='unread' AND ${unreadSql(a)}>0) OR ($${n+3}='unassigned' AND c."assigneeKey" IS NULL AND c."assigneeUserId" IS NULL AND c."assigneeSellerId" IS NULL))
+        AND ($${n+4}::text='' OR w.state=$${n+4})`;
+      const values=[...access.values,kind,search,filters.filter,filters.state];
+      const rows=await db.$queryRawUnsafe<Row[]>(`SELECT ${selected},${unreadSql(a)} AS "unreadCount" ${join} WHERE ${where} ORDER BY w."updatedAt" DESC,w.id LIMIT 40 OFFSET $${n+5}`,...values,(page-1)*40);
+      const [total]=await db.$queryRawUnsafe<{count:number}[]>(`SELECT count(*)::int AS count ${join} WHERE ${where}`,...values);return {items:rows.map(dto),total:total.count,page,pageSize:40};}),
     detail:(a:AttentionWorkActor,id:string)=>transaction(a,async db=>detail(db,a,await row(db,a,id))),
     create:(a:AttentionWorkActor,input:Record<string,unknown>)=>transaction(a,async db=>{
       if(a.type!=="seller")throw new AttentionError("La solicitud debe iniciarse desde el perfil del asesor titular.",403);

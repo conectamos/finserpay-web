@@ -166,10 +166,18 @@ vigentes, y los recibos anteriores conservan las condiciones de su registro.
 Atención reutiliza la cabecera horizontal de la plataforma: `FinserNavigation`
 en su variante administrativa para central y `AnalystNavigation` para el perfil
 nominal. La referencia oscura de WhatsApp Web aprobada el 31 de octubre se aplica
-solo a Conversaciones mediante los tokens compartidos `--fp-chat-*`: grafito,
+a Conversaciones, Enrolamientos y Aprobaciones mediante los tokens compartidos `--fp-chat-*`: grafito,
 texto claro, grises suaves y verde bosque. La cabecera se compacta y una barra
 estrecha de iconos conserva los accesos del módulo, con nombre accesible y ayuda.
 Las otras vistas conservan la variante porcelana de la plataforma.
+
+La bandeja distingue los tipos Clientes, Enrolamientos y Aprobaciones mediante
+selectores propios, separados de los filtros Todos, No leídos y Sin asignar.
+Clientes conserva contactos potenciales y la etiqueta FINSERPAY como clasificación
+independiente; las solicitudes comerciales se consultan en sus bandejas reales.
+La búsqueda, los filtros y los totales se aplican en el servidor antes de paginar.
+La ficha de cada tipo permanece cerrada por defecto. Cambiar de tipo conserva
+los borradores; las bandejas ocultas suspenden sus lecturas y revalidan al volver.
 
 La vista inicial es Conversaciones. En escritorio usa una bandeja y un chat
 amplio junto a la barra de accesos; la ficha y sus archivos reales se abren bajo

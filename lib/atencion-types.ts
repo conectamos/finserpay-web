@@ -76,7 +76,7 @@ export type AttentionDetail = {
   notesTruncated?: boolean;
   tasksTruncated?: boolean;
 };
-export type AttentionFilters = { search: string; filter: "mine" | "all" | "pending" | "closed" | "unassigned" | "unread" | "unanswered"; page: number; tag?: string };
+export type AttentionFilters = { search: string; filter: "mine" | "all" | "pending" | "closed" | "unassigned" | "unread" | "unanswered"; page: number; tag?: string; collection?: "clients" };
 export type AttentionAgendaFilters = { filter: "today" | "overdue" | "upcoming" | "all"; page: number };
 export type AttentionAgenda = {
   items: (AttentionTask & { conversation: { id: string; name: string; phone: string | null; version: number } })[];

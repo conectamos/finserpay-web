@@ -248,6 +248,12 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
           agendaCounts: { today: 0, overdue: 0, upcoming: 0, undated: 0, total: 0 }, availableTags: [], team: [], branches: [], quickReplies: [], actor };
         if (!await schemaReady(tx)) return empty;
         const access = scope(actor);
+        const collectionSql = filters.collection === "clients" ? ` AND NOT EXISTS(SELECT 1 FROM "AttentionWorkRequest" work WHERE work."conversationId"=c.id)` : "";
+        if (collectionSql) {
+          const [workSchema] = await tx.$queryRawUnsafe<{ready:boolean}[]>(`SELECT to_regclass('public."AttentionWorkRequest"') IS NOT NULL AS ready`);
+          if (!workSchema?.ready) return empty;
+          access.sql += collectionSql;
+        }
         const tagRows = await tx.$queryRawUnsafe<Pick<ConversationRow,"id"|"phone"|"linkedCreditId"|"tags">[]>(`SELECT c.id,c.phone,c."linkedCreditId",c.tags FROM "AttentionConversation" c WHERE ${access.sql} ORDER BY c.id`,...access.values);
         const identities = await conversationIdentities(tx,actor,tagRows);
         const availableTags = [...new Map(tagRows.flatMap(row => [...row.tags.filter(tag => !isAttentionSystemTag(tag)), ...identities.get(row.id)!.autoTags])
@@ -255,7 +261,7 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
         const tag = filters.tag?.normalize("NFKC").trim().toLocaleLowerCase("es-CO");
         const tagIds = tag ? tagRows.filter(row => [...row.tags.filter(value=>!isAttentionSystemTag(value)), ...identities.get(row.id)!.autoTags].some(value=>value.toLocaleLowerCase("es-CO")===tag)).map(row=>row.id) : null;
         const searchQuery=await attentionConversationSearch(tx,actor,filters.search);
-        const filtered = `${searchQuery.sql}
+        const filtered = `${searchQuery.sql}${collectionSql}
           AND ($6::text='all' OR ($6='mine' AND c."assigneeKey"=$3) OR ($6='pending' AND c.status='pending') OR ($6='closed' AND c.status='closed')
             OR ($6='unassigned' AND ${unassignedSql}) OR ($6='unread' AND op."unreadCount">0) OR ($6='unanswered' AND op."waitingSince" IS NOT NULL))
           AND ($7::uuid[] IS NULL OR c.id=ANY($7::uuid[]))`;

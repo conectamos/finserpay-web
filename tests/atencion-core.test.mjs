@@ -38,6 +38,13 @@ test("filtros y alcance fallan cerrados", () => {
   assert.throws(() => assertAttentionActor({ userId: 1, sellerId: null, key: "user:1", admin: false, central: true, aliadoId: 1, sedeId: 10 }));
 });
 
+test("Clientes es una colección independiente de etiquetas y rechaza parámetros ambiguos", () => {
+  assert.deepEqual(parseAttentionFilters(new URLSearchParams("collection=clients&filter=unread&tag=Consulta")),
+    { search: "", filter: "unread", page: 1, tag: "Consulta", collection: "clients" });
+  for (const query of ["collection=", "collection=all", "collection=welcome", "collection=clients&collection=clients"])
+    assert.throws(() => parseAttentionFilters(new URLSearchParams(query)), { status: 400 });
+});
+
 test("actores requieren identidad explícita central o analista, sin compatibilidad con vendedores", () => {
   const admin={userId:1,sellerId:null,key:"admin:1",central:true,admin:true,analyst:false,supervisor:false};
   const analyst={...admin,key:"analyst:1",central:false,admin:false,analyst:true};

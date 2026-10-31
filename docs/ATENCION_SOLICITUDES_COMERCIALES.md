@@ -28,6 +28,16 @@ crédito. El resultado real conserva los módulos existentes:
 - Bienvenida Dapta: componente y API existentes de bienvenida de voz, con su
   confirmación explícita antes de llamar. Elegir modalidad no inicia llamadas.
 
+En Atención, las bandejas comparten la navegación oscura y los selectores de tipo
+con Clientes. La ficha se abre bajo demanda; conserva asignación, notas,
+documentos e historial de gestión. La búsqueda y los filtros de lectura,
+asignación y estado se consultan globalmente en el servidor, antes de paginar.
+Los mensajes pendientes se calculan con las mismas marcas nominales de Atención,
+sin confundirlos con la lectura de las notificaciones. Solo los mensajes entrantes
+realmente mostrados al fondo del chat se confirman como leídos. Las vistas ocultas
+pausan sus lecturas y vuelven a comprobar el acceso al regresar; los borradores
+permanecen durante la navegación entre tipos.
+
 Los participantes pueden escribir y adjuntar JPG/PNG o PDF. Los archivos son
 privados, conservados con su mensaje y autor, sin enlaces públicos. Los límites
 son 5 MB por imagen, 16 MB por PDF y 100 archivos/100 MB por caso. Los demás

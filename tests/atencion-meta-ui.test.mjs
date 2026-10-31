@@ -14,6 +14,44 @@ const jsx = (type, props, key) => ({ type, props: props || {}, key });
 function nodes(tree) { return Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === "object" ? [tree, ...nodes(tree.props?.children)] : []; }
 function text(tree) { return Array.isArray(tree) ? tree.map(text).join("") : tree && typeof tree === "object" ? text(tree.props?.children) : typeof tree === "string" ? tree : ""; }
 
+const activeTypes = fixture => {
+  const workspace = nodes(fixture.all().find(node => node.type === "section" && node.props["data-attention"] === "workspace" && !node.props.hidden));
+  return workspace.find(node => node.props["data-attention"] === "type-filters") || workspace.find(node => node.type?.name?.endsWith("attention-work-queues") && node.props.active)?.props.navigation;
+};
+const chooseType = (fixture, label) => nodes(activeTypes(fixture)).find(node => node.type === "button" && text(node) === label).props.onClick();
+
+test("los tres tipos usan bandejas separadas y conservan el borrador al volver a Clientes", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Mensaje que sigo preparando" });
+  assert.deepEqual(nodes(activeTypes(f)).filter(node => node.type === "button").map(text), ["Clientes", "Enrolamientos", "Aprobaciones"]);
+  assert.equal(new URL(f.requests[0].url, "https://finserpay.test").searchParams.get("collection"), "clients");
+  assert.equal(f.all().find(node => node.type?.name === "AttentionWorkFilters").props.showClientTag, false);
+  chooseType(f, "Enrolamientos"); await f.flush();
+  const queues = () => f.all().filter(node => node.type?.name?.endsWith("attention-work-queues"));
+  assert.equal(queues().find(node => node.props.kind === "enrollment").props.active, true);
+  assert.equal(queues()[0].props.embedded, true);
+  chooseType(f, "Aprobaciones"); await f.flush();
+  assert.equal(queues().length, 2, "se conserva montada la bandeja anterior para sus borradores");
+  assert.equal(queues().find(node => node.props.kind === "enrollment").props.active, false);
+  assert.equal(queues().find(node => node.props.kind === "welcome").props.active, true);
+  chooseType(f, "Clientes"); await f.flush();
+  assert.equal(f.composer().props.draft.text, "Mensaje que sigo preparando");
+  assert.ok(queues().every(node => node.props.active === false));
+  assert.equal(f.requests.filter(request => request.init.method === "POST").length, 0);
+  f.unmount();
+});
+
+test("una gestión de solicitud pendiente bloquea el cambio de tipo hasta resolver el intento", async () => {
+  const f = mount(); await f.ready(); chooseType(f, "Enrolamientos"); await f.flush();
+  const queue = f.all().find(node => node.type?.name?.endsWith("attention-work-queues"));
+  queue.props.onBusyChange(true); await f.flush();
+  assert.ok(nodes(activeTypes(f)).filter(node => node.type === "button").every(node => node.props.disabled));
+  chooseType(f, "Aprobaciones"); await f.flush();
+  assert.equal(f.all().filter(node => node.type?.name?.endsWith("attention-work-queues")).length, 1);
+  queue.props.onBusyChange(false); await f.flush(); chooseType(f, "Aprobaciones"); await f.flush();
+  assert.equal(f.all().find(node => node.type?.name?.endsWith("attention-work-queues") && node.props.kind === "welcome").props.active, true);
+  f.unmount();
+});
+
 // Execute the real UI with deterministic React lifecycle and an inert transport.
 // Deliberately allow responses after abort to cover navigation and late replies.
 function mount(options = {}) {
