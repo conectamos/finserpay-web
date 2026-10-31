@@ -278,3 +278,71 @@ test("el caso central retira datos ante otra vinculación, incluso al recibir la
   const f=mount({...singleOptions,mode:"attention"});await resolveReads(f);f.button("Validar enrolamiento").props.onClick();await f.flush();
   f.all().find(n=>n.type?.name==="./attention-work-management").props.onUpdated({...detailFor(),item:{...itemA,target:"D-999"}});await f.flush();assert.equal(messageField(f),undefined);assert.equal(observer(f),undefined);assert.equal(f.button("Ficha"),undefined);assert.match(text(f.tree),/ya no corresponde al enrolamiento de esta venta/);assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
 });
+
+const stateSelect=f=>f.all().find(n=>n.props["aria-label"]==="Estado de solicitudes");
+const workRow=(f,id)=>f.all().find(n=>n.type==="button"&&n.key===id);
+const workManager=f=>f.all().find(n=>n.type?.name==="./attention-work-management");
+async function staffWork(kind="enrollment",options={}){
+  const a={...itemA,kind},b={...itemB,kind},f=mount({mode:"attention",embedded:true,canAssignFilter:true,kind,...options});
+  await resolveReads(f,detailFor(a),[a,b],0,41);
+  if(!options.initialId){workRow(f,a.id).props.onClick();await f.flush();await resolveReads(f,detailFor(a),[a,b],0,41);}
+  return{f,a,b,completed:{...detailFor({...a,state:"completed",version:3}),canWrite:false}};
+}
+
+for(const kind of ["enrollment","welcome"])test(`${kind}: la gestión confirmada sale de pendientes, libera navegación y conserva sus borradores en historial`,async()=>{
+  const busy=[];const{f,a,b,completed}=await staffWork(kind,{onBusyChange:value=>busy.push(value)});
+  assert.equal(stateSelect(f).props.value,"active");assert.equal(new URL(f.requests[0].url,"https://local.invalid").searchParams.get("state"),"active");
+  assert.equal(f.button("Página siguiente").props.disabled,false);
+  messageField(f).props.onChange({target:{value:"Borrador que permanece en historial"}});noteField(f).props.onChange({target:{value:"Nota que permanece"}});
+  const file=new File(["soporte artificial"],"soporte-pendiente.png",{type:"image/png"});f.all().find(n=>n.type?.name==="Input"&&n.props.type==="file").props.onChange({target:{files:[file],value:""}});await f.flush();
+  f.button("Ficha").props.onClick();await f.flush();f.button(kind==="enrollment"?"Validar enrolamiento":"Gestionar bienvenida").props.onClick();await f.flush();
+  const management=workManager(f);management.props.onBusyChange(true);await f.flush();assert.equal(busy.at(-1),true);management.props.onUpdated(completed);await f.flush();
+  assert.equal(workRow(f,a.id),undefined);assert.ok(workRow(f,b.id));assert.equal(messageField(f),undefined);assert.equal(panel(f).props.open,false);assert.equal(workManager(f),undefined);assert.equal(f.tree.props.className.includes("showDetail"),false);assert.equal(busy.at(-1),false);assert.equal(f.button("Página siguiente").props.disabled,true);
+  assert.ok(f.all().some(n=>n.props.role==="status"&&/Solicitud finalizada/.test(text(n))));
+  await resolveReads(f,null,[b],0,80);assert.equal(f.button("Página siguiente").props.disabled,false,"el total siguiente vuelve a ser el del servidor");
+  stateSelect(f).props.onChange({target:{value:"completed"}});await f.flush();await resolveReads(f,null,[completed.item]);workRow(f,a.id).props.onClick();await f.flush();await resolveReads(f,completed,[completed.item]);
+  assert.equal(messageField(f).props.value,"Borrador que permanece en historial");assert.equal(noteField(f).props.value,"Nota que permanece");assert.match(text(f.tree),/soporte-pendiente.png/);assert.equal(f.requests.some(r=>r.init.method==="DELETE"),false);f.unmount();
+});
+
+for(const kind of ["enrollment","welcome"])test(`${kind}: una finalización de otro analista retira el caso con el siguiente evento real`,async()=>{
+  const{f,a,b,completed}=await staffWork(kind,{sse:true});f.sources.find(source=>!source.closed).emit("invalidate");await f.flush();await resolveReads(f,completed,[b],0,41);
+  assert.equal(messageField(f),undefined);assert.equal(workRow(f,a.id),undefined);assert.ok(workRow(f,b.id));assert.equal(f.button("Página siguiente").props.disabled,false,"no resta otra vez al total recibido del servidor");
+  assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
+});
+
+test("todos, no leídos y sin asignar conservan el filtro de pendientes de gestión",async()=>{
+  const{f,a,b}=await staffWork();
+  for(const [label,filter]of[["No leídos","unread"],["Sin asignar","unassigned"],["Todos","all"]]){
+    plainButton(f,label).props.onClick();await f.flush();const request=f.requests.filter(r=>!r.done&&r.url.includes("?")).at(-1),params=new URL(request.url,"https://local.invalid").searchParams;
+    assert.equal(params.get("filter"),filter);assert.equal(params.get("state"),"active");await resolveReads(f,detailFor(a),[a,b]);
+  }
+  assert.equal(nodes(stateSelect(f)).some(n=>n.type==="option"&&n.props.value===""),false);assert.ok(nodes(stateSelect(f)).some(n=>n.type==="option"&&text(n)==="Finalizadas (historial)"));f.unmount();
+});
+
+test("finalizar también retira el caso de los filtros pendiente, revisión e información pendiente",async()=>{
+  for(const state of ["pending","review","information"]){
+    const{f,a,b,completed}=await staffWork();stateSelect(f).props.onChange({target:{value:state}});await f.flush();await resolveReads(f,detailFor({...a,state}),[{...a,state},b]);workManager(f).props.onUpdated(completed);await f.flush();
+    assert.equal(messageField(f),undefined);assert.equal(workRow(f,a.id),undefined);assert.equal(stateSelect(f).props.value,state);f.unmount();
+  }
+});
+
+test("un enlace nuevo a un caso finalizado abre historial; el filtro histórico conserva la consulta",async()=>{
+  const completed={...detailFor({...itemA,state:"completed"}),canWrite:false};const f=mount({mode:"attention",embedded:true,initialId:itemA.id});await resolveReads(f,completed,[]);
+  assert.equal(stateSelect(f).props.value,"completed");assert.ok(messageField(f));assert.equal(messageField(f).props.disabled,true);await resolveReads(f,completed,[completed.item]);assert.ok(workRow(f,itemA.id));
+  workManager(f).props.onUpdated(completed);await f.flush();assert.ok(messageField(f));assert.ok(workRow(f,itemA.id));assert.doesNotMatch(text(f.tree),/Solicitud finalizada\. Puedes consultar/);f.unmount();
+  const history=await staffWork();stateSelect(history.f).props.onChange({target:{value:"completed"}});await history.f.flush();await resolveReads(history.f,history.completed,[history.completed.item]);assert.ok(messageField(history.f));assert.ok(workRow(history.f,history.a.id));history.f.unmount();
+});
+
+test("la consulta externa de un caso finalizado no abandona una escritura incierta; el reintento confirmado sí",async()=>{
+  const busy=[];const{f,a,b,completed}=await staffWork("enrollment",{onBusyChange:value=>busy.push(value)});messageField(f).props.onChange({target:{value:"Mensaje de resultado incierto"}});await f.flush();
+  f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});await f.flush();const sent=f.requests.find(r=>r.init.method==="PATCH"),body=sent.init.body;sent.respond({error:"Resultado sin confirmar"},500);await f.flush();await resolveReads(f,completed,[b]);
+  assert.ok(messageField(f));assert.equal(messageField(f).props.value,"Mensaje de resultado incierto");assert.equal(messageField(f).props.disabled,true);assert.ok(f.button("Consultar / reintentar mismo intento"));assert.equal(busy.at(-1),true);
+  f.button("Consultar / reintentar mismo intento").props.onClick();await f.flush();const retried=f.requests.filter(r=>r.init.method==="PATCH").at(-1);assert.equal(retried.init.body,body);retried.respond(completed);await f.flush();assert.equal(messageField(f),undefined);assert.equal(workRow(f,a.id),undefined);assert.equal(busy.at(-1),false);f.unmount();
+});
+
+test("las solicitudes únicas y del asesor conservan su historial finalizado",async()=>{
+  const completed={...sellerCase(),item:{...itemA,state:"completed"},canWrite:false};
+  for(const options of [singleOptions,{...singleOptions,mode:"attention"},{mode:"seller",initialId:itemA.id}]){
+    const f=mount(options);await resolveReads(f,completed,[completed.item]);assert.ok(messageField(f));assert.equal(messageField(f).props.disabled,true);assert.equal(stateSelect(f),undefined);assert.doesNotMatch(text(f.tree),/Solicitud finalizada\. Puedes consultar/);f.unmount();
+  }
+});

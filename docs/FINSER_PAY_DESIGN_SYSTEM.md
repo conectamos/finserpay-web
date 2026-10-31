@@ -34,6 +34,9 @@ sin selecciones. Una autorización previa muestra su responsable y fecha, sin
 atribuir sus pruebas al analista actual. Las notas internas tienen su propio
 campo, separado del mensaje al asesor. Los estados de seguimiento no sustituyen
 la confirmación del resultado de la gestión.
+Las bandejas de Enrolamientos y Aprobaciones muestran pendientes de gestión por
+defecto. Los casos finalizados se consultan expresamente desde el historial;
+no se mezclan con la cola activa ni se eliminan sus mensajes o documentos.
 
 ## Principios
 
