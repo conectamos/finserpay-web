@@ -6,6 +6,7 @@ import type { MetaScope, MetaWebhookEvents, MetaDeliveryStatus } from "./atencio
 import { META_ATTENTION_LINE } from "./atencion-meta";
 import { applyWhatsAppAutomationDelivery } from "./whatsapp-automation-meta-storage";
 import { compileMetaTemplate, templateIntentFingerprint, type MetaTemplateSnapshot } from "./atencion-meta-templates";
+import { reconcileAttentionBusinessReads } from "./atencion-team-read";
 
 export type MetaReplyAttachment = {
   kind: "image" | "audio" | "video" | "document" | "sticker";
@@ -41,7 +42,9 @@ function timestamp(value: unknown) {
 }
 export async function attentionMetaSchemaReady(db: AttentionDb) {
   const [row] = await db.$queryRawUnsafe<{ready: boolean}[]>(`SELECT to_regclass('public."AttentionMetaBinding"') IS NOT NULL
-    AND to_regclass('public."AttentionMetaOutbox"') IS NOT NULL AND to_regclass('public."AttentionMetaDelivery"') IS NOT NULL AS ready`);
+    AND to_regclass('public."AttentionMetaOutbox"') IS NOT NULL AND to_regclass('public."AttentionMetaDelivery"') IS NOT NULL
+    AND to_regclass('public."AttentionTeamReadState"') IS NOT NULL
+    AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='AttentionMessage' AND column_name='teamReadReply' AND data_type='boolean') AS ready`);
   return row?.ready === true;
 }
 async function systemAudit(db: AttentionDb, action: string, conversationId: string | null, metadata: object = {}) {
@@ -312,14 +315,15 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
           const text = attentionText(message.text || message.media?.caption || "",16000,false);
           if (!text && !attachment) throw new AttentionError("Mensaje vacío.");
           if (echo) {
-            await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,"metaWamid","metaPhoneNumberId",attachment,"replyToWamid","deliveryStatus","deliveryAt")
-              VALUES($1::uuid,$2::uuid,$3,'outbound',$4,$5::timestamptz,'WhatsApp Business',$6,$7,$8::jsonb,$9,'sent',$5::timestamptz) RETURNING id`,randomUUID(),conversationId,`meta:${providerId}`,text,sentAt,providerId,scope.phoneNumberId,JSON.stringify(attachment),message.replyToId ? wamid(message.replyToId) : null);
+            await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,"metaWamid","metaPhoneNumberId",attachment,"replyToWamid","deliveryStatus","deliveryAt","teamReadReply")
+              VALUES($1::uuid,$2::uuid,$3,'outbound',$4,$5::timestamptz,'WhatsApp Business',$6,$7,$8::jsonb,$9,'sent',$5::timestamptz,true) RETURNING id`,randomUUID(),conversationId,`meta:${providerId}`,text,sentAt,providerId,scope.phoneNumberId,JSON.stringify(attachment),message.replyToId ? wamid(message.replyToId) : null);
             // An outgoing echo does not reopen chats, claim an analyst or extend
             // the customer-service window. Old history must not reorder the inbox.
             await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET "metaManaged"=true,phone=COALESCE(phone,$2),
               "lastContactAt"=GREATEST("lastContactAt",$3::timestamptz),version=version+1,"updatedAt"=now()
               WHERE id=$1::uuid AND (NOT "metaManaged" OR phone IS NULL OR "lastContactAt" IS NULL OR "lastContactAt"<$3::timestamptz) RETURNING id`,conversationId,phone,sentAt);
             await systemAudit(db,"META_MESSAGE_ECHOED",conversationId,{attachment:Boolean(attachment)});
+            await reconcileAttentionBusinessReads(db,conversationId,scope.phoneNumberId);
             const receipts = await db.$queryRawUnsafe<{id: string; recipient: string; timestamp: Date | string; status: MetaDeliveryStatus["status"]}[]>(`SELECT wamid AS id,recipient,"eventAt" AS timestamp,status
               FROM "AttentionMetaDelivery" WHERE "phoneNumberId"=$1 AND "wabaId"=$2 AND wamid=$3 AND "requestId" IS NULL ORDER BY "eventAt",id`,scope.phoneNumberId,scope.wabaId,providerId);
             for (const event of receipts) if (await applyEchoDelivery(db,{...event,timestamp:date(event.timestamp),errorCodes:[]})) statusesApplied++;
@@ -334,6 +338,7 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
             "closedAt"=CASE WHEN status='closed' AND $3::timestamptz>COALESCE("closedAt","updatedAt") THEN NULL ELSE "closedAt" END,
             version=version+1,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`, conversationId,phone,sentAt);
           await systemAudit(db,"META_MESSAGE_RECEIVED",conversationId,{attachment:Boolean(attachment)}); messagesImported++;
+          await reconcileAttentionBusinessReads(db,conversationId,scope.phoneNumberId);
         }
         for (const event of events.statuses) {
           wamid(event.id); strictId(event.recipient); timestamp(event.timestamp);

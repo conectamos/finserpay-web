@@ -98,6 +98,63 @@ function mount(options = {}) {
   };
 }
 
+test("marcar leído para el equipo usa revisión y UUID, conserva borrador y filtros, y no responde ni finaliza", async () => {
+  const f = mount(); await f.ready();
+  const closed = { ...detail, conversation: { ...chat, status: "closed", unreadCount: 0 } };
+  await f.select(closed);
+  const file = new File(["archivo"], "borrador.jpg", { type: "image/jpeg" });
+  await f.change({ text: "Respuesta que sigo preparando", file });
+  const filters = () => f.all().find(node => node.type?.name === "AttentionWorkFilters");
+  filters().props.change("unread", "Seguimiento"); await f.flush(); await f.advance(250); f.requests.at(-1).respond(inbox); await f.flush();
+  const button = () => f.all().find(node => node.props["aria-label"] === "Marcar como leído para el equipo");
+  assert.ok(button(), "la lectura nominal previa no debe ocultar la acción compartida");
+  button().props.onClick(); button().props.onClick(); await f.flush();
+  const writes = f.requests.filter(request => request.init.method === "POST"); assert.equal(writes.length, 1);
+  assert.equal(writes[0].url, `/api/atencion/${chat.id}/read/team`);
+  const payload = JSON.parse(writes[0].init.body); assert.equal(payload.version, chat.version); assert.match(payload.requestId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(Object.keys(payload).sort(), ["requestId", "version"]); assert.equal(button().props.disabled, true);
+  writes[0].respond({ unreadCount: 0, changed: true }); await f.flush(); await f.completeReads(closed);
+  assert.equal(f.composer().props.draft.text, "Respuesta que sigo preparando"); assert.equal(f.composer().props.draft.file, file);
+  assert.equal(f.composer().props.detail.conversation.status, "closed"); assert.equal(filters().props.filter, "unread"); assert.equal(filters().props.tag, "Seguimiento");
+  assert.ok(f.all().some(node => node.props.role === "status" && text(node).includes("leídos para el equipo")));
+  assert.ok(!f.requests.some(request => request.init.method === "PATCH" || request.url.endsWith("/messages"))); f.unmount();
+});
+
+test("conflicto al compartir lectura actualiza el chat y exige otra pulsación sin borrar el borrador", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "No perder mi respuesta" });
+  const button = () => f.all().find(node => node.props["aria-label"] === "Marcar como leído para el equipo");
+  button().props.onClick(); await f.flush(); const first = f.requests.at(-1), original = JSON.parse(first.init.body);
+  first.respond({ error: "La conversación cambió" }, 409); await f.flush();
+  const updated = { ...detail, conversation: { ...chat, version: chat.version + 1, unreadCount: 1 } };
+  await f.completeReads(updated);
+  assert.equal(f.requests.filter(request => request.init.method === "POST").length, 1);
+  assert.equal(f.composer().props.draft.text, "No perder mi respuesta");
+  assert.ok(f.all().some(node => node.props.role === "alert" && text(node).includes("vuelve a pulsar")));
+  button().props.onClick(); await f.flush(); const retry = f.requests.at(-1), refreshed = JSON.parse(retry.init.body);
+  assert.equal(refreshed.version, chat.version + 1); assert.notEqual(refreshed.requestId, original.requestId);
+  retry.respond({ unreadCount: 0, changed: true }); await f.flush(); await f.completeReads(updated); f.unmount();
+});
+
+test("reintento de lectura tras fallo de red conserva intención y respuesta tardía de otro chat no modifica el actual", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Borrador A" });
+  const button = () => f.all().find(node => node.props["aria-label"] === "Marcar como leído para el equipo");
+  button().props.onClick(); await f.flush(); const first = f.requests.at(-1); first.fail(); await f.flush();
+  button().props.onClick(); await f.flush(); const retry = f.requests.at(-1); assert.equal(retry.init.body, first.init.body);
+  await f.select({ ...detail, conversation: other }); retry.respond({ unreadCount: 0, changed: true }); await f.flush(); await f.completeReads({ ...detail, conversation: other });
+  assert.equal(f.composer().props.detail.conversation.id, other.id);
+  assert.ok(!f.all().some(node => node.props.role === "status" && text(node).includes("leídos para el equipo")));
+  await f.select(); assert.equal(f.composer().props.draft.text, "Borrador A"); f.unmount();
+});
+
+test("lectura compartida se oculta sin permiso y un404 retira el chat que dejó de estar autorizado", async () => {
+  const restricted = mount(); await restricted.ready(); await restricted.select({ ...detail, permissions: { manage: false } });
+  assert.equal(restricted.all().some(node => node.props["aria-label"] === "Marcar como leído para el equipo"), false); restricted.unmount();
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Dato protegido" });
+  f.all().find(node => node.props["aria-label"] === "Marcar como leído para el equipo").props.onClick(); await f.flush();
+  f.requests.at(-1).respond({ error: "No autorizado" }, 404); await f.flush();
+  assert.equal(f.composer(), undefined); assert.equal(f.financial(), undefined); f.unmount();
+});
+
 test("envío humano usa multipart con versión y requestId; no borra el borrador antes de aceptación", async () => {
   const f = mount(); await f.ready(); await f.select(); await f.change({ text: "  Respuesta humana  " });
   f.composer().props.send(); f.composer().props.send(); await f.flush();

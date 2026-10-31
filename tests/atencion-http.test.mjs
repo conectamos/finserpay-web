@@ -25,13 +25,14 @@ const core = compile("lib/atencion-core.ts", {});
 class AttentionDaptaError extends Error { constructor(message, status) { super(message); this.status = status; } }
 class AttentionMetaError extends Error { constructor(code, message, status = 502, uncertain = false) { super(message); this.code = code; this.status = status; this.uncertain = uncertain; } }
 function harness(file = "app/api/atencion/route.ts", options = {}) {
-  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [], readIntegration: [], readDetail: [], read: [], agenda: [], work: [] };
+  const calls = { access: 0, inbox: [], create: [], detail: [], mutate: [], quick: [], fetch: [], import: [], readIntegration: [], readDetail: [], read: [], teamRead: [], agenda: [], work: [] };
   const access = { ...core, getAttentionAccess: async () => {
     calls.access++; if (options.accessError) throw options.accessError; return options.actor || actor;
   } };
   const provider = { AttentionDaptaError, attentionIntegrationStatus: () => integration,
     fetchDaptaConversationSnapshots: async input => { calls.fetch.push(input); if (options.providerError) throw options.providerError; return { snapshots: [], nextCursor: "opaque", skipped: 0 }; } };
   const storage = {
+    markAttentionTeamRead: async (...args) => { calls.teamRead.push(args); if(options.storeError)throw options.storeError;return {unreadCount:0,changed:true}; },
     markAttentionRead: async (...args) => { calls.read.push(args); if(options.storeError)throw options.storeError;return {unreadCount:1,changed:true}; },
     getAttentionAgenda: async (...args) => { calls.agenda.push(args); if(options.storeError)throw options.storeError;return {items:[],counts:{today:0,overdue:0,upcoming:0,undated:0,total:0}}; },
     getAttentionHistoryCursors: async () => ({}),
@@ -91,6 +92,33 @@ test("agenda usa sesión nominal y filtros estrictos sin aceptar un actor del cl
   const h=harness(file),response=await h.GET(new Request(`${origin}/api/atencion/agenda?filter=overdue&page=2&userId=999`));
   assert.equal(response.status,200);privateResponse(response);assert.equal(h.calls.agenda[0][0],actor);assert.deepEqual(h.calls.agenda[0][1],{filter:'overdue',page:2});
   assert.equal((await h.GET(new Request(`${origin}/api/atencion/agenda?filter=today&filter=all`))).status,400);
+});
+
+test("lectura del equipo exige sesión, origen, versión y UUID sin enviar ni cerrar el chat", async () => {
+  const file = "app/api/atencion/[id]/read/team/route.ts";
+  const input = { version: 4, requestId: randomUUID() };
+  const h = harness(file);
+  const response = await h.POST(request(input), context);
+  assert.equal(response.status, 200); privateResponse(response);
+  assert.deepEqual(await response.json(), { unreadCount: 0, changed: true });
+  assert.deepEqual(h.calls.teamRead, [[actor, id, input]]);
+  assert.equal(h.calls.mutate.length + h.calls.fetch.length + h.calls.import.length + h.calls.read.length, 0);
+  const csrf = harness(file);
+  assert.equal((await csrf.POST(request(input, "POST", { origin: "https://evil.invalid" }), context)).status, 403);
+  assert.equal(csrf.calls.access, 0); assert.equal(csrf.calls.teamRead.length, 0);
+  const denied = harness(file, { accessError: new core.AttentionError("Sesión", 401) });
+  assert.equal((await denied.POST(request(input), context)).status, 401); assert.equal(denied.calls.teamRead.length, 0);
+  for (const status of [403, 404, 409]) {
+    const scoped = harness(file, { storeError: new core.AttentionError("Acceso o revisión pendiente", status) });
+    const result = await scoped.POST(request(input), context);
+    assert.equal(result.status, status); privateResponse(result);
+  }
+  for (const body of [{ ...input, version: 0 }, { ...input, version: "4" }, { ...input, version: 1.5 },
+    { ...input, version: 2147483648 }, { ...input, requestId: "bad" }, { ...input, userId: 99 }, { ...input, readThrough: "now" }]) {
+    const invalid = harness(file);
+    assert.equal((await invalid.POST(request(body), context)).status, 400);
+    assert.equal(invalid.calls.teamRead.length, 0);
+  }
 });
 
 test("CSRF blocks absent, malformed and cross-site Origin before session", async () => {

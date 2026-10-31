@@ -204,6 +204,14 @@ compromiso. El resultado enlaza al historial del crédito. Un conflicto ofrece
 En móvil se pasa de bandeja a chat, con ficha superpuesta y desplazamiento sin
 cortar mensajes ni controles de envío.
 
+La acción «Marcar como leído para el equipo» vive en el menú de gestión del chat,
+con el mismo estilo de sus acciones secundarias. Permanece disponible al abrir
+la conversación aunque su lectura personal ya esté registrada. Conserva el
+borrador, la asignación y el estado del caso. Una respuesta confirmada desde
+WhatsApp Business despeja las entradas anteriores para el equipo; los mensajes
+nuevos mantienen su indicador. La marca compartida no se presenta como una
+lectura personal de cada analista ni como una conversación finalizada.
+
 ## Inicio de FINSER PAY Clientes
 
 La referencia móvil aprobada usa los tokens compartidos `--fp-client-bg` (marfil),

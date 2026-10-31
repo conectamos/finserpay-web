@@ -178,6 +178,46 @@ test("espera usa primer entrante posterior a respuesta confirmada; leer o fallar
   assert.equal((await get()).conversations[0].waitingSince,'2026-10-30T14:06:00.000Z');
 });
 
+test("marcar para equipo cubre historial completo, conserva gestión y notifica a la asignación real",async t=>{
+  const f=await fixture(t),{id}=await f.create();await f.assign(id);
+  await f.db.query(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt")
+    SELECT gen_random_uuid(),$1::uuid,'full-history-'||n,'inbound','Consulta','2026-10-30T14:00:00Z'::timestamptz+n*interval '1 second' FROM generate_series(1,502) n`,[id]);
+  const before=(await f.store.getAttentionDetail(central,id)).conversation;
+  const notices=[];await f.db.listen('finserpay_attention_changes',value=>notices.push(JSON.parse(value)));
+  const input={version:before.version,requestId:randomUUID()};
+  assert.deepEqual(await f.store.markAttentionTeamRead(central,id,input),{unreadCount:0,changed:true});
+  assert.deepEqual(await f.store.markAttentionTeamRead(central,id,input),{unreadCount:0,changed:false});
+  const after=(await f.store.getAttentionDetail(analyst,id)).conversation;
+  for(const key of ['status','version','assigneeKey','lastContactAt','updatedAt'])assert.equal(after[key],before[key]);
+  assert.equal(after.unreadCount,0);assert.equal((await f.store.getAttentionInbox(analyst,{...filters,filter:'unread'})).total,0);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionTeamReadState"')).rows[0].n,502);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionReadState"')).rows[0].n,0);
+  assert.deepEqual(notices,[{conversationId:id,previousUserId:null,previousKey:null,previousSellerId:null,currentUserId:analyst.userId,currentKey:analyst.key,currentSellerId:null}]);
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='MESSAGES_TEAM_READ'`)).rows[0].n,1);
+});
+
+test("lectura compartida valida alcance/versión; replay nunca absorbe entradas posteriores ni atribuye lectura personal",async t=>{
+  const f=await fixture(t),{id}=await f.create();await f.assign(id);
+  const observed=await nativeMessage(f.db,id),version=(await f.store.getAttentionDetail(analyst,id)).conversation.version;
+  await f.store.markAttentionRead(analyst,id,{messageIds:[observed]});
+  const input={version,requestId:randomUUID()};
+  await assert.rejects(f.store.markAttentionTeamRead(otherAnalyst,id,input),{status:404});
+  await assert.rejects(f.store.markAttentionTeamRead(seller,id,input),{status:403});
+  await assert.rejects(f.store.markAttentionTeamRead(analyst,id,{...input,version:0}),{status:400});
+  assert.deepEqual(await f.store.markAttentionTeamRead(analyst,id,input),{unreadCount:0,changed:true});
+  const later=await nativeMessage(f.db,id,{at:'2026-10-30T15:01:00Z'});
+  await f.db.query('UPDATE "AttentionConversation" SET version=version+1 WHERE id=$1',[id]);
+  assert.deepEqual(await f.store.markAttentionTeamRead(analyst,id,input),{unreadCount:1,changed:false});
+  const stale={version,requestId:randomUUID()};
+  await assert.rejects(f.store.markAttentionTeamRead(analyst,id,stale),{status:409});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionRequest" WHERE "requestId"=$1',[stale.requestId])).rows[0].n,0);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionTeamReadState" WHERE "messageId"=$1',[later])).rows[0].n,0);
+  assert.equal((await f.store.markAttentionRead(analyst,id,{messageIds:[observed]})).unreadCount,1);
+  await f.assign(id,otherAnalyst);await assert.rejects(f.store.markAttentionTeamRead(analyst,id,input),{status:404});
+  assert.equal((await f.store.getAttentionDetail(otherAnalyst,id)).conversation.unreadCount,1);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionReadState"')).rows[0].n,1);
+});
+
 test("filtros, totales y etiquetas operativas solo incluyen alcance nominal actual",async t=>{
   const f=await fixture(t),own=await f.create(),other=await f.create(),unassigned=await f.create();await f.assign(own.id);await f.assign(other.id,otherAnalyst);
   await f.act(analyst,own.id,'tags',{tags:['Consulta']});await f.act(otherAnalyst,other.id,'tags',{tags:['Privado']});

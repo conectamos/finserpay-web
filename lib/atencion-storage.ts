@@ -7,6 +7,8 @@ import { attentionDocumentKey, attentionPhoneOrNull, attentionPhoneSql, resolveA
 import type { AttentionCreditIdentityRecord, AttentionCreditResolution } from "./atencion-classification";
 import type { AttentionActor, AttentionAgenda, AttentionAgendaFilters, AttentionAssignee, AttentionConversation, AttentionCustomer, AttentionDetail, AttentionFilters, AttentionInbox, AttentionMutation, AttentionQuickReply, DaptaConversationSnapshot } from "./atencion-types";
 import type { AttentionBoardCards } from "./atencion-board-types";
+import { attentionUnreadPredicate, notifyAttentionTeamRead, reconcileAttentionBusinessReads } from "./atencion-team-read";
+import { META_ATTENTION_LINE } from "./atencion-meta";
 
 export interface AttentionDb { $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>; }
 export interface AttentionDatabase extends AttentionDb {
@@ -37,7 +39,7 @@ const unassignedSql = `c."assigneeKey" IS NULL AND c."assigneeUserId" IS NULL AN
 // Provider history and acknowledged API/app sends count as replies. Pending,
 // uncertain and failed sends never clear a customer's unanswered message.
 const operationJoin = `LEFT JOIN LATERAL (
-  SELECT count(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM "AttentionReadState" rs WHERE rs."userId"=$2 AND rs."messageId"=m.id))::integer AS "unreadCount",
+  SELECT count(*) FILTER(WHERE ${attentionUnreadPredicate})::integer AS "unreadCount",
     max(m."sentAt") AS "lastInboundAt",min(m."sentAt") FILTER(WHERE m."sentAt">COALESCE((SELECT max(o."sentAt") FROM "AttentionMessage" o
       WHERE o."conversationId"=c.id AND o.direction='outbound' AND (to_jsonb(o)->>'deliveryStatus' IS NULL OR to_jsonb(o)->>'deliveryStatus' IN ('accepted','sent','delivered','read'))),'-infinity'::timestamptz)) AS "waitingSince"
   FROM "AttentionMessage" m WHERE m."conversationId"=c.id AND m.direction='inbound'
@@ -117,7 +119,8 @@ async function schemaReady(tx: AttentionDb) {
     to_regclass('public."AttentionConversation"') IS NOT NULL AND to_regclass('public."AttentionMessage"') IS NOT NULL
     AND to_regclass('public."AttentionNote"') IS NOT NULL AND to_regclass('public."AttentionTask"') IS NOT NULL
     AND to_regclass('public."AttentionQuickReply"') IS NOT NULL AND to_regclass('public."AttentionAudit"') IS NOT NULL
-    AND to_regclass('public."AttentionRequest"') IS NOT NULL AND to_regclass('public."AttentionReadState"') IS NOT NULL AS ready`);
+    AND to_regclass('public."AttentionRequest"') IS NOT NULL AND to_regclass('public."AttentionReadState"') IS NOT NULL
+    AND to_regclass('public."AttentionTeamReadState"') IS NOT NULL AS ready`);
   return rows[0]?.ready === true;
 }
 async function requireSchema(tx: AttentionDb) { if (!await schemaReady(tx)) throw new AttentionError("Atención requiere preparar su esquema de base de datos.", 503); }
@@ -345,8 +348,39 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
             currentUserId:actor.userId,currentKey:actor.key,currentSellerId:null,readActorUserId:actor.userId}));
         }
         const [row] = await tx.$queryRawUnsafe<{unreadCount:number}[]>(`SELECT count(*)::integer AS "unreadCount" FROM "AttentionMessage" m WHERE m."conversationId"=$1::uuid AND m.direction='inbound'
-          AND NOT EXISTS(SELECT 1 FROM "AttentionReadState" rs WHERE rs."userId"=$2 AND rs."messageId"=m.id)`,id,actor.userId);
+          AND ${attentionUnreadPredicate}`,id,actor.userId);
         return {unreadCount:row.unreadCount,changed:changed.length>0};
+      });
+    },
+    async markAttentionTeamRead(actor: AttentionActor, id: string, raw: { version: number; requestId: string }): Promise<{unreadCount:number;changed:boolean}> {
+      assertAttentionActor(actor); attentionUuid(id);
+      if(!raw||typeof raw!=="object"||Array.isArray(raw)||Object.keys(raw).some(key=>!["version","requestId"].includes(key)))throw new AttentionError("Lectura de equipo inválida.");
+      const requestId=attentionUuid(raw.requestId),version=raw.version;
+      if(!Number.isSafeInteger(version)||version<1||version>2147483647)throw new AttentionError("Versión de conversación inválida.");
+      return transaction(actor,async tx=>{
+        await requireSchema(tx);const conversation=await loadConversation(tx,actor,id,true);
+        const request=await idempotent(tx,actor,requestId,{action:"team_read",id,version});
+        // Share Meta's request namespace without reusing an existing send UUID.
+        // Conversation -> generic request -> Meta request matches the bulk-read lock order.
+        await tx.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`,`attention:meta:request:${actor.key}:${requestId}`);
+        const [metaTable]=await tx.$queryRawUnsafe<{present:boolean}[]>(`SELECT to_regclass('public."AttentionMetaOutbox"') IS NOT NULL AS present`);
+        if(metaTable?.present){
+          const [outbox]=await tx.$queryRawUnsafe<{id:string}[]>(`SELECT id FROM "AttentionMetaOutbox" WHERE "actorKey"=$1 AND "requestId"=$2::uuid`,actor.key,requestId);
+          if(outbox)throw new AttentionError("Esta solicitud ya corresponde a un envío de WhatsApp.",409);
+        }
+        let changed=false;
+        if(!request.replay){
+          if(conversation.version!==version)throw new AttentionError("La conversación cambió. Actualiza antes de marcarla como leída.",409);
+          const rows=await tx.$queryRawUnsafe<{messageId:string}[]>(`INSERT INTO "AttentionTeamReadState"("messageId","conversationId",source,"actorUserId")
+            SELECT m.id,m."conversationId",'manual',$2 FROM "AttentionMessage" m WHERE m."conversationId"=$1::uuid AND m.direction='inbound'
+            ON CONFLICT("messageId") DO NOTHING RETURNING "messageId"`,id,actor.userId);
+          changed=rows.length>0;
+          await audit(tx,actor,"MESSAGES_TEAM_READ",id,{requestId,count:rows.length});
+          if(changed)await notifyAttentionTeamRead(tx,id);
+        }
+        const [row]=await tx.$queryRawUnsafe<{unreadCount:number}[]>(`SELECT count(*)::integer AS "unreadCount" FROM "AttentionMessage" m
+          WHERE m."conversationId"=$1::uuid AND m.direction='inbound' AND ${attentionUnreadPredicate}`,id,actor.userId);
+        return {unreadCount:row.unreadCount,changed};
       });
     },
     async getAttentionAgenda(actor: AttentionActor, filters: AttentionAgendaFilters): Promise<AttentionAgenda> {
@@ -484,6 +518,7 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
               AS m(id uuid,"externalId" text,direction text,text text,"sentAt" timestamptz,author text)
             ON CONFLICT("conversationId","externalId") DO NOTHING RETURNING direction,"sentAt"`, id, JSON.stringify(normalizedMessages)) : [];
           const newMessages = inserted.length;
+          if(newMessages&&metaReady)await reconcileAttentionBusinessReads(tx,id,META_ATTENTION_LINE.phoneNumberId);
           messagesImported += newMessages;
           const reopen = Boolean(!existing[0]?.metaManaged && existing[0]?.status === "closed" && inserted.some(m => m.direction === "inbound" && new Date(m.sentAt).getTime() > new Date(existing[0].closedAt || existing[0].updatedAt).getTime()));
           const mode = existing[0]?.metaManaged || existing[0]?.mode === "human_requested" ? existing[0].mode : snapshot.mode;
@@ -512,4 +547,5 @@ export async function saveAttentionQuickReply(actor: AttentionActor, input: {tit
 export async function importAttentionSnapshots(actor: AttentionActor, snapshots: DaptaConversationSnapshot[]) { return (await store()).importAttentionSnapshots(actor, snapshots); }
 export async function getAttentionHistoryCursors(actor: AttentionActor) { return (await store()).getAttentionHistoryCursors(actor); }
 export async function markAttentionRead(actor: AttentionActor, id: string, input: {messageIds:string[]}) { return (await store()).markAttentionRead(actor,id,input); }
+export async function markAttentionTeamRead(actor: AttentionActor, id: string, input: {version:number;requestId:string}) { return (await store()).markAttentionTeamRead(actor,id,input); }
 export async function getAttentionAgenda(actor: AttentionActor, filters: AttentionAgendaFilters) { return (await store()).getAttentionAgenda(actor,filters); }
