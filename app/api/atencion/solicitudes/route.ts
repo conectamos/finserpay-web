@@ -2,3 +2,4 @@ import { attentionWorkHandlers } from "@/lib/atencion-work-http";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 export const GET=attentionWorkHandlers("attention").list;
+export const POST=attentionWorkHandlers("attention").create;

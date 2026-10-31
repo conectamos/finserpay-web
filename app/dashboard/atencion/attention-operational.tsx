@@ -55,7 +55,7 @@ export function AttentionConversationIndicators({ conversation }: { conversation
 }
 
 /** Acknowledges only the exact inbound IDs rendered in a visible, bottom-scrolled log. */
-export function AttentionObservedRead({ detail, active, log, request, onRead, onError }: { detail: Pick<AttentionDetail, "messages"> & { conversation: Pick<AttentionDetail["conversation"], "id"> }; active: boolean; log: RefObject<HTMLDivElement | null>; request: Request; onRead: () => void; onError: (error: unknown) => void }) {
+export function AttentionObservedRead({ detail, active, log, request, onRead, onError, allowContainingDialog = false }: { detail: Pick<AttentionDetail, "messages"> & { conversation: Pick<AttentionDetail["conversation"], "id"> }; active: boolean; log: RefObject<HTMLDivElement | null>; request: Request; onRead: () => void; onError: (error: unknown) => void; allowContainingDialog?: boolean }) {
   const acknowledged = useRef(new Set<string>());
   const callbacks = useRef({ onRead, onError });
   useEffect(() => { callbacks.current = { onRead, onError }; }, [onRead, onError]);
@@ -67,7 +67,9 @@ export function AttentionObservedRead({ detail, active, log, request, onRead, on
     let pending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const observe = () => {
-      if (pending || controller.signal.aborted || document.visibilityState !== "visible" || !navigator.onLine || !element.clientHeight || document.querySelector("dialog[open], [role=alertdialog][aria-modal=true]") || element.scrollHeight - element.scrollTop - element.clientHeight > 16) return;
+      const dialogSelector = "dialog[open], [role=dialog][aria-modal=true], [role=alertdialog][aria-modal=true]";
+      const obscured = allowContainingDialog ? [...document.querySelectorAll(dialogSelector)].some(dialog => !dialog.contains(element)) : Boolean(document.querySelector(dialogSelector));
+      if (pending || controller.signal.aborted || document.visibilityState !== "visible" || !navigator.onLine || !element.clientHeight || obscured || element.scrollHeight - element.scrollTop - element.clientHeight > 16) return;
       const bounds = element.getBoundingClientRect();
       if (bounds.bottom <= 0 || bounds.top >= window.innerHeight || bounds.right <= 0 || bounds.left >= window.innerWidth) return;
       const messageIds = detail.messages.filter(item => item.direction === "inbound" && !acknowledged.current.has(item.id)).map(item => item.id).slice(-500);
@@ -83,7 +85,7 @@ export function AttentionObservedRead({ detail, active, log, request, onRead, on
     schedule(); element.addEventListener("scroll", schedule, { passive: true });
     document.addEventListener("visibilitychange", schedule); window.addEventListener("online", schedule);
     return () => { controller.abort(); if (timer) clearTimeout(timer); element.removeEventListener("scroll", schedule); document.removeEventListener("visibilitychange", schedule); window.removeEventListener("online", schedule); };
-  }, [active, detail, log, request]);
+  }, [active, detail, log, request, allowContainingDialog]);
   return null;
 }
 

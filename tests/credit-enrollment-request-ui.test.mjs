@@ -74,6 +74,21 @@ test("un guardado rechazado no crea casos y permite corregir la solicitud", asyn
   f.setSave(() => Promise.resolve(12)); requestButton(f).props.onClick(); await f.flush(); assert.equal(f.saves.length, 2); assert.equal(f.requests.length, 1); f.unmount();
 });
 
+test("el administrador central solicita y abre el chat con su API nominal de Atención", async () => {
+  const f = mount({ mode: "attention" }); await create(f);
+  assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, "/api/atencion/solicitudes");
+  assert.equal(chat(f).props.mode, "attention"); assert.equal(chat(f).props.singleCase, true);
+  assert.equal(chat(f).props.expectedTarget, "D-12"); assert.equal(panel(f).props.open, true); f.unmount();
+});
+
+test("cambiar entre perfil comercial y central descarta la respuesta del actor anterior", async () => {
+  const f = mount(); requestButton(f).props.onClick(); await f.flush(); const old = f.requests[0];
+  f.setProps({ mode: "attention" }); await f.flush(); old.respond(caseFor()); await f.flush();
+  assert.equal(chat(f), undefined); requestButton(f).props.onClick(); await f.flush();
+  assert.equal(f.requests[1].url, "/api/atencion/solicitudes");
+  f.requests[1].respond(caseFor()); await f.flush(); assert.equal(chat(f).props.mode, "attention"); f.unmount();
+});
+
 test("un guardado que devuelve otro borrador no permite solicitar su enrolamiento", async () => {
   const f = mount({ beforeCreate: () => Promise.resolve(13) }); requestButton(f).props.onClick(); await f.flush();
   assert.equal(f.requests.length, 0); assert.match(text(f.tree), /solicitud cambió/); assert.equal(chat(f), undefined); f.unmount();

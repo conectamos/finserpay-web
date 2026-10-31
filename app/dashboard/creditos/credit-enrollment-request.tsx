@@ -12,7 +12,7 @@ import styles from "./credit-enrollment-request.module.css";
 
 type Attempt = { requestId: string; kind: "enrollment"; target: string; text: string };
 
-export default function CreditEnrollmentRequest({ draftId, contextKey, ready, disabled = false, approved, beforeCreate, onBusyChange }: {
+export default function CreditEnrollmentRequest({ draftId, contextKey, ready, disabled = false, approved, beforeCreate, onBusyChange, mode = "seller" }: {
   draftId: number | null;
   contextKey: string;
   ready: boolean;
@@ -20,7 +20,9 @@ export default function CreditEnrollmentRequest({ draftId, contextKey, ready, di
   approved: boolean;
   beforeCreate: () => Promise<number>;
   onBusyChange?: (busy: boolean) => void;
+  mode?: "seller" | "attention";
 }) {
+  const bindingKey = `${mode}:${contextKey}`;
   const [workId, setWorkId] = useState<string | null>(null);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,8 +30,8 @@ export default function CreditEnrollmentRequest({ draftId, contextKey, ready, di
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const alive = useRef(true), lock = useRef(false), controller = useRef<AbortController | null>(null);
-  const currentContext = useRef(contextKey), context = useRef(contextKey), busyCallback = useRef(onBusyChange);
-  currentContext.current = contextKey;
+  const currentContext = useRef(bindingKey), context = useRef(bindingKey), busyCallback = useRef(onBusyChange);
+  currentContext.current = bindingKey;
   busyCallback.current = onBusyChange;
   const pending = busy || Boolean(attempt) || chatBusy;
 
@@ -39,18 +41,18 @@ export default function CreditEnrollmentRequest({ draftId, contextKey, ready, di
     return () => { alive.current = false; controller.current?.abort(); busyCallback.current?.(false); };
   }, []);
   useEffect(() => {
-    if (context.current === contextKey) return;
-    context.current = contextKey;
+    if (context.current === bindingKey) return;
+    context.current = bindingKey;
     controller.current?.abort();
     setWorkId(null); setAttempt(null); setOpen(false); setError(""); setChatBusy(false); setBusy(false);
-  }, [contextKey]);
+  }, [bindingKey]);
 
   async function requestEnrollment() {
     if (lock.current || chatBusy || disabled || (!attempt && (!ready || approved || !draftId))) return;
     lock.current = true;
     busyCallback.current?.(true);
     setBusy(true); setError("");
-    const binding = contextKey, expectedDraftId = draftId;
+    const binding = bindingKey, expectedDraftId = draftId;
     const active = () => alive.current && currentContext.current === binding;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -65,7 +67,7 @@ export default function CreditEnrollmentRequest({ draftId, contextKey, ready, di
       if (!active()) return;
       const request = new AbortController(); controller.current = request;
       timeout = setTimeout(() => request.abort(), 20_000);
-      const response = await fetch("/api/ventas/atencion", {
+      const response = await fetch(mode === "attention" ? "/api/atencion/solicitudes" : "/api/ventas/atencion", {
         method: "POST", credentials: "same-origin", cache: "no-store", signal: request.signal,
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
       });
@@ -97,7 +99,7 @@ export default function CreditEnrollmentRequest({ draftId, contextKey, ready, di
     {workId && <p>Solicitud vinculada a este crédito. Continúa con el analista desde el chat.</p>}
     {error && <p className={styles.error} role="alert">{error}</p>}
     {workId && typeof document !== "undefined" && createPortal(<FinserSidePanel open={open} keepMounted title="Chat de enrolamiento" closeLabel="Volver al crédito" busy={pending} onClose={() => setOpen(false)}>
-      <div className={styles.chat}><AttentionWorkQueues key={`${contextKey}:${workId}`} kind="enrollment" mode="seller" initialId={workId} singleCase expectedTarget={`D-${draftId}`} allowCreate={false} active={open} onBusyChange={setChatBusy} /></div>
+      <div className={styles.chat}><AttentionWorkQueues key={`${bindingKey}:${workId}`} kind="enrollment" mode={mode} initialId={workId} singleCase expectedTarget={`D-${draftId}`} allowCreate={false} active={open} onBusyChange={setChatBusy} /></div>
     </FinserSidePanel>, document.body)}
   </div>;
 }

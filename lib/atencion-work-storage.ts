@@ -49,6 +49,33 @@ async function target(db:AttentionDb,source:"D"|"C",id:number,lock=true):Promise
   const [r]=await db.$queryRawUnsafe<Target[]>(`SELECT d.id,d."clienteNombre" AS name,d."clienteDocumento" AS document,d.imei,upper(COALESCE(to_jsonb(d)->>'plataforma',to_jsonb(d)->'contratoSnapshot'->>'plataforma','')) AS platform,d.estado AS state,d."vendedorId" AS "sellerId",d."sedeId",s."aliadoId",v.nombre AS advisor,a.nombre AS ally,s.nombre AS branch FROM ${table} d JOIN "Sede" s ON s.id=d."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" LEFT JOIN "Vendedor" v ON v.id=d."vendedorId" WHERE d.id=$1 ${lock?"FOR SHARE OF d,s,a":""}`,id);
   if(!r)throw new AttentionError("La operación vinculada ya no está disponible.",404);return r;
 }
+/** Resolve the real commercial notification account; the acting administrator remains the audit author. */
+async function centralEnrollmentOwner(db:AttentionDb,t:Target):Promise<{sellerId:number;userId:number}>{
+  const invalidSeller="Asigna un asesor titular activo a la sede de la venta antes de solicitar el enrolamiento.";
+  if(!Number.isSafeInteger(t.sellerId)||Number(t.sellerId)<1)throw new AttentionError(invalidSeller,409);
+  const [seller]=await db.$queryRawUnsafe<{id:number}[]>(`SELECT v.id FROM "Vendedor" v
+    JOIN "SedeVendedor" sv ON sv."vendedorId"=v.id JOIN "Sede" s ON s.id=sv."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId"
+    WHERE v.id=$1 AND s.id=$2 AND a.id=$3 AND v.activo AND NOT v."debeCambiarPin"
+    AND upper(trim(v."tipoPerfil")) IN ('VENDEDOR','SUPERVISOR') AND sv.activo AND s.activa AND a.activo
+    FOR SHARE OF v,sv,s,a`,t.sellerId,t.sedeId,t.aliadoId);
+  if(!seller)throw new AttentionError(invalidSeller,409);
+  const [origin]=await db.$queryRawUnsafe<{id:number;active:boolean;siteActive:boolean;allyActive:boolean;allyId:number;role:string;allyCode:string}[]>(`SELECT u.id,u.activo AS active,
+    s.activa AS "siteActive",a.activo AS "allyActive",a.id AS "allyId",upper(trim(r.nombre)) AS role,upper(trim(a.codigo)) AS "allyCode"
+    FROM "CreditoBorrador" d JOIN "Usuario" u ON u.id=d."usuarioId" JOIN "Rol" r ON r.id=u."rolId"
+    JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" WHERE d.id=$1 FOR SHARE OF u,r,s,a`,t.id);
+  const invalidAccount="La venta no tiene una cuenta comercial activa vinculada. Revisa el acceso de la sede antes de solicitar el enrolamiento.";
+  if(!origin)throw new AttentionError(invalidAccount,409);
+  if(origin.role!=="ADMIN"||origin.allyCode!=="FINSERPAY"){
+    if(!origin.active||!origin.siteActive||!origin.allyActive||origin.allyId!==t.aliadoId||origin.role==="ANALISTA_APROBACION")throw new AttentionError(invalidAccount,409);
+    return {sellerId:seller.id,userId:origin.id};
+  }
+  // Sede administration provisions its commercial access with role USUARIO. An ambiguous site has no canonical fallback.
+  const accounts=await db.$queryRawUnsafe<{id:number}[]>(`SELECT u.id FROM "Usuario" u JOIN "Rol" r ON r.id=u."rolId"
+    JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" WHERE s.id=$1 AND a.id=$2
+    AND upper(trim(r.nombre))='USUARIO' AND u.activo AND s.activa AND a.activo ORDER BY u.id LIMIT 2 FOR SHARE OF u,r,s,a`,t.sedeId,t.aliadoId);
+  if(accounts.length!==1)throw new AttentionError(accounts.length?"La sede tiene varios accesos comerciales activos. Define su cuenta de acceso antes de solicitar el enrolamiento.":invalidAccount,409);
+  return {sellerId:seller.id,userId:accounts[0].id};
+}
 export function createAttentionWorkStore(database:AttentionDatabase){
   async function transaction<T>(a:AttentionWorkActor,run:(db:AttentionDb)=>Promise<T>){return database.$transaction(async db=>{
     a=await assertAttentionWorkCurrentActor(db,a);
@@ -145,21 +172,39 @@ export function createAttentionWorkStore(database:AttentionDatabase){
       const [total]=await db.$queryRawUnsafe<{count:number}[]>(`SELECT count(*)::int AS count ${join} WHERE ${where}`,...values);return {items:rows.map(dto),total:total.count,page,pageSize:40};}),
     detail:(a:AttentionWorkActor,id:string)=>transaction(a,async db=>detail(db,a,await row(db,a,id))),
     create:(a:AttentionWorkActor,input:Record<string,unknown>)=>transaction(a,async db=>{
-      if(a.type!=="seller")throw new AttentionError("La solicitud debe iniciarse desde el perfil del asesor titular.",403);
+      const central=a.type==="attention"&&a.actor.central;
+      if(a.type!=="seller"&&!central)throw new AttentionError("La solicitud debe iniciarse desde el perfil del asesor titular o administración central.",403);
       if(Object.keys(input).some(k=>!["requestId","kind","target","text"].includes(k)))throw new AttentionError("La solicitud contiene campos no admitidos.");
-      const kind=parseWorkKind(input.kind),ref=parseWorkTarget(input.target),text=attentionText(input.text||"",4000,false),t=await target(db,ref.source,ref.id);
-      if(t.sellerId!==a.sellerId||t.aliadoId!==a.aliadoId)throw new AttentionError("Solo el asesor titular puede solicitar la gestión de esta venta.",403);
+      const kind=parseWorkKind(input.kind),ref=parseWorkTarget(input.target),text=attentionText(input.text||"",4000,false);
+      if(central&&(kind!=="enrollment"||ref.source!=="D"))throw new AttentionError("Administración central solo puede solicitar el enrolamiento de un borrador de iPhone.",403);
+      const t=await target(db,ref.source,ref.id);
+      if(a.type==="seller"&&(t.sellerId!==a.sellerId||t.aliadoId!==a.aliadoId))throw new AttentionError("Solo el asesor titular puede solicitar la gestión de esta venta.",403);
       if(kind==="enrollment"&&(ref.source!=="D"||t.platform!=="IPHONE"))throw new AttentionError("Selecciona una solicitud de iPhone para pedir enrolamiento.");
       if(kind==="welcome"&&ref.source!=="C")throw new AttentionError("Selecciona el crédito del cliente para solicitar su bienvenida.");
       if(["CANCELADA","ANULADO","ANULADA","RECHAZADA","RECHAZADO"].includes(t.state.toUpperCase()))throw new AttentionError("La operación está cancelada o rechazada.",409);
-      const request=await intent(db,a,input.requestId,{action:"WORK_CREATE",kind,target:input.target,text});if(request.replay)return detail(db,a,await row(db,a,request.replay));
+      const owner=a.type==="seller"?{sellerId:a.sellerId,userId:a.userId}:await centralEnrollmentOwner(db,t),who=identity(a);
+      const verifyOwner=async(r:Row)=>{
+        if(central){
+          const changed="La solicitud activa conserva otro asesor, cuenta o sede. Revisa su vinculación antes de solicitar nuevamente el enrolamiento.";
+          if(r.sellerId!==owner.sellerId||r.sedeId!==t.sedeId||r.aliadoId!==t.aliadoId)throw new AttentionError(changed,409);
+          if(r.userId!==owner.userId){
+            const [linked]=await db.$queryRawUnsafe<{id:number}[]>(`SELECT u.id FROM "Usuario" u JOIN "Rol" role ON role.id=u."rolId"
+              JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" WHERE u.id=$1 AND a.id=$2
+              AND u.activo AND s.activa AND a.activo AND upper(trim(role.nombre))<>'ANALISTA_APROBACION'
+              AND NOT(upper(trim(role.nombre))='ADMIN' AND upper(trim(a.codigo))='FINSERPAY') FOR SHARE OF u,role,s,a`,r.userId,t.aliadoId);
+            if(!linked)throw new AttentionError(changed,409);
+          }
+        }
+        return r;
+      };
+      const request=await intent(db,a,input.requestId,{action:"WORK_CREATE",kind,target:input.target,text});if(request.replay)return detail(db,a,await verifyOwner(await row(db,a,request.replay)));
       await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`,`attention:work:${kind}:${input.target}`);
       const [existing]=await db.$queryRawUnsafe<{id:string}[]>(`SELECT id FROM "AttentionWorkRequest" WHERE kind=$1 AND "targetSource"=$2 AND "targetId"=$3 AND state<>'completed'`,kind,ref.source,ref.id);
-      if(existing){const r=await row(db,a,existing.id);await audit(db,a,r,request.id,"WORK_REUSED");return detail(db,a,r);}
+      if(existing){const r=await verifyOwner(await row(db,a,existing.id));await audit(db,a,r,request.id,"WORK_REUSED");return detail(db,a,r);}
       const id=randomUUID(),conversationId=randomUUID();
       await db.$queryRawUnsafe(`INSERT INTO "AttentionConversation"(id,channel,name,"sedeId",mode,"lastContactAt") VALUES($1::uuid,'internal',$2,$3,'human',now()) RETURNING id`,conversationId,t.name||"Solicitud comercial",t.sedeId);
-      await db.$queryRawUnsafe(`INSERT INTO "AttentionWorkRequest"(id,"conversationId",kind,"targetSource","targetId","sellerId","userId","sedeId","aliadoId") VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,id,conversationId,kind,ref.source,ref.id,a.sellerId,a.userId,t.sedeId,t.aliadoId);
-      await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author) VALUES($1::uuid,$2::uuid,$3,'inbound',$4,now(),$5) RETURNING id`,randomUUID(),conversationId,`work:${request.id}`,`${attentionWorkKinds[kind]}${text?`\n${text}`:""}`,a.name);
+      await db.$queryRawUnsafe(`INSERT INTO "AttentionWorkRequest"(id,"conversationId",kind,"targetSource","targetId","sellerId","userId","sedeId","aliadoId") VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,id,conversationId,kind,ref.source,ref.id,owner.sellerId,owner.userId,t.sedeId,t.aliadoId);
+      await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author) VALUES($1::uuid,$2::uuid,$3,'inbound',$4,now(),$5) RETURNING id`,randomUUID(),conversationId,`work:${request.id}`,`${attentionWorkKinds[kind]}${text?`\n${text}`:""}`,who.name);
       const r=await row(db,a,id);await audit(db,a,r,request.id,"WORK_CREATED",{state:"pending"});
       await notifyAttentionWork(db,a,r,`created:${request.id}`,"created");return detail(db,a,r);
     }),

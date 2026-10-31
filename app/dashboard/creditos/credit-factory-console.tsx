@@ -17634,10 +17634,11 @@ export default function CreditFactoryConsole({
                               )}
                               {deliveryEnrollmentReady ? "Completado" : "En proceso"}
                             </span>
-                            {createClientMode && !canAdmin && initialSeller && <CreditEnrollmentRequest
-                              key={`${initialSession.id}:${initialSeller.id}:${draftId}:${clienteDocumento}:${imeiDigits}`}
+                            {createClientMode && (canSeeInternalPricing || (!canAdmin && initialSeller)) && <CreditEnrollmentRequest
+                              key={`${canSeeInternalPricing ? "central" : initialSeller?.id}:${initialSession.id}:${draftId}:${clienteDocumento}:${imeiDigits}`}
                               draftId={draftId}
-                              contextKey={`${initialSession.id}:${initialSeller.id}:${initialSession.sedeId}:${draftId}:${clienteDocumento}:${imeiDigits}`}
+                              contextKey={`${initialSession.id}:${initialSeller?.id || "central"}:${initialSession.sedeId}:${draftId}:${clienteDocumento}:${imeiDigits}`}
+                              mode={canSeeInternalPricing ? "attention" : "seller"}
                               ready={stepIdentityContractReady && firmaSeguroProcessSigned && equipmentImeiConfirmed}
                               approved={deliveryEnrollmentReady}
                               disabled={draftResumeHydrating || draftResumeLoadFailed || draftStatus === "loading" || draftStatus === "saving" || creating || Boolean(completedCredit) || firmaSeguroSubmitting || signedTermsCorrectionBusy || wizardStepTransitioning}
