@@ -18,6 +18,11 @@ La suscripción pertenece al perfil nominal y se desactiva al salir o cambiarlo.
 
 ## Gestión desde el chat de Atención
 
+El asesor solicita el enrolamiento desde la tarjeta Enrolamiento del paso de
+Enrolamiento y entrega del crédito iPhone. El chat se abre en `FinserSidePanel`
+sin salir del crédito y sin mostrar selectores de otras ventas. La ficha empieza
+colapsada. El acceso no se duplica como acción rápida del dashboard comercial.
+
 Las solicitudes de bienvenida y enrolamiento se gestionan desde la cabecera del
 chat con `FinserSidePanel`. El panel muestra la identidad de la venta vinculada,
 las acciones reales y una sola confirmación principal. Conserva el historial y

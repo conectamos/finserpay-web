@@ -1,9 +1,14 @@
 # Solicitudes comerciales en Atención
 
-El asesor entra desde su dashboard a **Solicitar aprobación** o **Solicitar
-enrolamiento**, selecciona una operación propia y crea un caso. La segunda
-bandeja admite solicitudes de iPhone. La primera solicita la llamada de
-bienvenida de un crédito existente; no aprueba el crédito ni su liquidación.
+El asesor entra desde su dashboard a **Solicitar aprobación**, selecciona un
+crédito propio y solicita la llamada de bienvenida; esto no aprueba el crédito
+ni su liquidación. **Solicitar enrolamiento** está en la tarjeta Enrolamiento
+del paso visible 4, Enrolamiento y entrega, del crédito iPhone (paso interno 5).
+Guarda primero el borrador actual y vincula el caso a ese identificador, sin
+volver a buscar o seleccionar otra venta. El chat con el analista se abre en
+un panel dentro del crédito, con los mensajes y soportes privados existentes.
+No se ofrece la creación independiente de enrolamientos desde el dashboard.
+Los enlaces de notificaciones e historial siguen abriendo sus casos originales.
 
 Cada solicitud crea una conversación interna, sin emitir WhatsApp ni iniciar
 llamadas. La relación se hace con el identificador de la operación existente y
@@ -65,9 +70,10 @@ mantiene trazabilidad inmutable de los cambios.
 
 1. Elegir dos asesores con perfil nominal y PIN actualizado, un analista y un
    administrador central. Mantener los grupos actuales durante el piloto.
-2. Cada asesor selecciona una operación propia: iPhone para enrolamiento y un
-   crédito existente para bienvenida. Confirmar cliente, aliado e IMEI antes de
-   crear. Un segundo clic/intento debe abrir el mismo caso activo.
+2. Cada asesor continúa un iPhone propio hasta Enrolamiento y entrega y pulsa
+   Solicitar enrolamiento. Para bienvenida, selecciona un crédito existente en
+   Solicitar aprobación. Confirmar cliente, aliado e IMEI antes de crear. Un
+   segundo clic/intento debe abrir el mismo caso activo, sin duplicar avisos.
 3. Central asigna los casos. Verificar que el analista asignado los ve y que otro
    analista, otro aliado y un asesor ajeno no pueden abrirlos ni descargar soportes.
 4. Intercambiar un mensaje interno y un soporte de prueba autorizado. Comprobar

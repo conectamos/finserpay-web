@@ -181,6 +181,7 @@ import type { DraftSignatureDispatchSummary } from "@/lib/firmaseguro-draft-disp
 import CreditAmortizationTable from "@/app/dashboard/creditos/credit-amortization-table";
 import CreditEvidenceGallery from "@/app/dashboard/creditos/credit-evidence-gallery";
 import CreditRemissionNote from "@/app/dashboard/creditos/credit-remission-note";
+import CreditEnrollmentRequest from "./credit-enrollment-request";
 import type { CreditRemissionClosureData } from "@/lib/credit-remission";
 import stepFourStyles from "@/app/dashboard/creditos/step-four-delivery.module.css";
 import {
@@ -3240,6 +3241,7 @@ export default function CreditFactoryConsole({
   const registeringPaymentRef = useRef(false);
   const factoryClosingOperationInFlightRef = useRef(false);
   const [wizardStep, setWizardStep] = useState(simulatorMode ? 2 : 1);
+  const [enrollmentRequestBusy, setEnrollmentRequestBusy] = useState(false);
   const deliveryWorkspace = createClientMode && wizardStep === 5;
   const equipmentSignatureWorkspace = createClientMode && !simulatorMode && (wizardStep === 2 || wizardStep === 4);
   const compactSaleWorkspace = deliveryWorkspace || equipmentSignatureWorkspace;
@@ -9239,6 +9241,7 @@ export default function CreditFactoryConsole({
   };
 
   const persistWizardStep = async (targetStep: number) => {
+    if (enrollmentRequestBusy) return false;
     const nextStep = clampWizardStep(targetStep);
     if (nextStep === wizardStep) return true;
     if (wizardStepTransitionInFlightRef.current) return false;
@@ -17615,6 +17618,7 @@ export default function CreditFactoryConsole({
                           </div>
 
                           {iphoneFactory ? (
+                            <>
                             <span
                               className={[
                                 stepFourStyles.statePill,
@@ -17630,6 +17634,36 @@ export default function CreditFactoryConsole({
                               )}
                               {deliveryEnrollmentReady ? "Completado" : "En proceso"}
                             </span>
+                            {createClientMode && !canAdmin && initialSeller && <CreditEnrollmentRequest
+                              key={`${initialSession.id}:${initialSeller.id}:${draftId}:${clienteDocumento}:${imeiDigits}`}
+                              draftId={draftId}
+                              contextKey={`${initialSession.id}:${initialSeller.id}:${initialSession.sedeId}:${draftId}:${clienteDocumento}:${imeiDigits}`}
+                              ready={stepIdentityContractReady && firmaSeguroProcessSigned && equipmentImeiConfirmed}
+                              approved={deliveryEnrollmentReady}
+                              disabled={draftResumeHydrating || draftResumeLoadFailed || draftStatus === "loading" || draftStatus === "saving" || creating || Boolean(completedCredit) || firmaSeguroSubmitting || signedTermsCorrectionBusy || wizardStepTransitioning}
+                              onBusyChange={setEnrollmentRequestBusy}
+                              beforeCreate={async () => {
+                                const expectedId = draftId;
+                                const expectedDocument = currentDraftDocumentRef.current;
+                                const expectedImei = currentEquipmentImeiRef.current;
+                                if (!expectedId || !stepIdentityContractReady || !firmaSeguroProcessSigned || !equipmentImeiConfirmed || draftResumeHydrating || draftResumeLoadFailed || creating || completedCredit) {
+                                  throw new Error("Completa y guarda este crédito antes de solicitar el enrolamiento.");
+                                }
+                                setDraftStatus("saving");
+                                try {
+                                  const savedId = await saveCurrentDraft(5);
+                                  if (savedId !== expectedId || currentEquipmentDraftIdRef.current !== expectedId || currentDraftDocumentRef.current !== expectedDocument || currentEquipmentImeiRef.current !== expectedImei) {
+                                    throw new Error("La solicitud, la cédula o el IMEI cambiaron durante el guardado. Revisa el crédito actual.");
+                                  }
+                                  return savedId;
+                                } catch (failure) {
+                                  setDraftStatus("error");
+                                  setDraftErrorMessage(failure instanceof Error ? failure.message : "No se pudo guardar la solicitud.");
+                                  throw failure;
+                                }
+                              }}
+                            />}
+                            </>
                           ) : (
                             <div className={stepFourStyles.androidActions}>
                               {androidEnrollment.status === "error" ? (

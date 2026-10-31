@@ -196,3 +196,54 @@ test("la imagen interna abre el visor privado y se retira al cambiar de caso, ba
   const pending=f.requests.filter(r=>!r.done);pending[0].respond({error:"Acceso denegado"},403);for(const request of pending.slice(1))request.respond(imageDetail);await f.flush();
   assert.equal(viewer(),undefined);assert.equal(messageField(f),undefined);assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
 });
+
+test("allowCreate=false conserva la bandeja del asesor sin crear ni buscar otras ventas",async()=>{
+  const f=mount({allowCreate:false});await resolveReads(f);
+  assert.ok(f.all().some(n=>n.type==="aside"&&n.props.className==="inbox"));assert.equal(f.button("Crear solicitud"),undefined);assert.equal(f.query(),undefined);
+  assert.equal(f.all().some(n=>n.type==="details"&&n.props.className==="create"),false);assert.equal(f.requests.some(r=>r.url.startsWith("/api/solicitudes")),false);f.unmount();
+});
+
+const sellerCase=()=>({...detailFor(),canManage:false,canAssign:false});
+const singleOptions={mode:"seller",singleCase:true,allowCreate:false,initialId:itemA.id,expectedTarget:itemA.target};
+test("el chat de una venta consulta solo su caso; la ficha colapsable conserva el borrador y los soportes",async()=>{
+  const current=sellerCase();current.messages[0].attachment={id:"00000000-0000-4000-8000-000000000041",kind:"image",fileName:"soporte-privado.png"};
+  const f=mount({...singleOptions,sse:true});assert.equal(f.requests.length,1);assert.equal(f.requests[0].url,`/api/ventas/atencion/${itemA.id}`);await resolveReads(f,current);
+  assert.ok(f.tree.props.className.includes("singleCase"));assert.equal(f.all().some(n=>n.type==="aside"&&n.props.className==="inbox"),false);assert.equal(f.button("Volver a la bandeja"),undefined);assert.equal(f.button("Crear solicitud"),undefined);assert.equal(panel(f),undefined);
+  const profile=()=>f.all().find(n=>n.type==="section"&&n.props.className==="singleProfile");assert.equal(profile().props.hidden,true);
+  messageField(f).props.onChange({target:{value:"Consulta privada del asesor"}});await f.flush();f.button("Ficha").props.onClick();await f.flush();assert.equal(profile().props.hidden,false);assert.equal(f.button("Ficha").props["aria-expanded"],true);
+  f.button("Ficha").props.onClick();await f.flush();assert.equal(profile().props.hidden,true);assert.equal(messageField(f).props.value,"Consulta privada del asesor");
+  assert.ok(f.all().some(n=>n.type==="a"&&n.props.href===`/api/ventas/atencion/${itemA.id}/files/${current.messages[0].attachment.id}`));
+  const before=f.requests.length;await f.advance(5000);assert.equal(f.requests.length,before+1);await resolveReads(f,current);f.sources.find(source=>!source.closed).emit("invalidate");await f.flush();await resolveReads(f,current);
+  assert.ok(f.requests.every(r=>r.url===`/api/ventas/atencion/${itemA.id}`));assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
+});
+
+test("un caso único conserva el intento de mensaje hasta confirmar y no permite crear otro caso",async()=>{
+  const busy=[];const f=mount({...singleOptions,onBusyChange:value=>busy.push(value)});await resolveReads(f,sellerCase());
+  messageField(f).props.onChange({target:{value:"¿Puede revisar el equipo?"}});await f.flush();
+  f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});await f.flush();
+  const sent=f.requests.find(r=>r.init.method==="PATCH"),body=sent.init.body;assert.equal(sent.url,`/api/ventas/atencion/${itemA.id}`);sent.respond({error:"Resultado sin confirmar"},500);await f.flush();await resolveReads(f,sellerCase());
+  assert.equal(messageField(f).props.disabled,true);assert.equal(busy.at(-1),true);assert.match(text(f.tree),/Consultar \/ reintentar mismo intento/);
+  f.button("Consultar / reintentar mismo intento").props.onClick();await f.flush();const retried=f.requests.filter(r=>r.init.method==="PATCH").at(-1);assert.equal(retried.init.body,body);retried.respond({...sellerCase(),item:{...itemA,version:3}});await f.flush();
+  assert.equal(messageField(f).props.value,"");assert.equal(busy.at(-1),false);assert.equal(f.requests.some(r=>r.init.method==="POST"),false);f.unmount();
+});
+
+test("un caso único bloquea y retira datos si cambian id, tipo o venta en cualquier respuesta",async()=>{
+  const mismatches=[{id:itemB.id},{kind:"welcome"},{target:"D-999"}];
+  for(const mismatch of mismatches){
+    const f=mount(singleOptions);await resolveReads(f,{...sellerCase(),item:{...itemA,...mismatch}});
+    assert.equal(messageField(f),undefined);assert.match(text(f.tree),/ya no corresponde al enrolamiento de esta venta/);const count=f.requests.length;await f.advance(5000);assert.equal(f.requests.length,count);f.unmount();
+  }
+  for(const upload of [false,true]){
+    const busy=[];const f=mount({...singleOptions,onBusyChange:value=>busy.push(value)});await resolveReads(f,sellerCase());
+    if(upload){const file=new File(["imagen artificial"],"soporte-prueba.png",{type:"image/png"});f.all().find(n=>n.type?.name==="Input"&&n.props.type==="file").props.onChange({target:{files:[file],value:""}});await f.flush();f.button("Enviar soporte").props.onClick();}
+    else{messageField(f).props.onChange({target:{value:"Texto de prueba"}});await f.flush();f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});}
+    await f.flush();f.requests.find(r=>r.init.method).respond({...sellerCase(),item:{...itemA,target:"D-999"}});await f.flush();
+    assert.equal(messageField(f),undefined);assert.equal(f.button("Consultar / reintentar mismo intento"),undefined);assert.match(text(f.tree),/ya no corresponde al enrolamiento de esta venta/);assert.equal(busy.at(-1),false);f.unmount();
+  }
+});
+
+test("sin id el chat único no consulta una bandeja; revocar acceso elimina sus datos y archivos",async()=>{
+  const empty=mount({...singleOptions,initialId:null});await empty.flush();assert.equal(empty.requests.length,0);assert.match(text(empty.tree),/No hay una solicitud vinculada/);empty.unmount();
+  const f=mount({...singleOptions,sse:true});await resolveReads(f,sellerCase());messageField(f).props.onChange({target:{value:"Borrador protegido"}});await f.flush();f.button("Ficha").props.onClick();await f.flush();
+  f.sources.find(source=>!source.closed).emit("access_revoked");await f.flush();assert.equal(messageField(f),undefined);assert.equal(f.button("Ficha"),undefined);assert.match(text(f.tree),/Vuelve a iniciar sesión/);assert.ok(f.sources.every(source=>source.closed));f.unmount();
+});

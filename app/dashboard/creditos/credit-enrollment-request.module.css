@@ -1,0 +1,6 @@
+.request { display: grid; gap: 10px; margin-top: 16px; }
+.request > button { width: 100%; min-height: 44px; justify-content: center; gap: 8px; white-space: normal; }
+.request > p { margin: 0; font-size: 14px; line-height: 1.5; }
+.request > .error { color: var(--fp-danger); }
+.chat { --fp-work-case-height: 100%; min-height: 340px; height: calc(100dvh - 148px); }
+@media (max-width: 600px) { .chat { height: calc(100dvh - 132px); } }
