@@ -4,7 +4,7 @@ export const attentionWorkKinds = { enrollment: "Enrolamiento iPhone", welcome: 
 export const attentionWorkStates = { pending: "Pendiente", review: "En revisión", information: "Información pendiente", completed: "Finalizada" } as const;
 export type AttentionWorkKind = keyof typeof attentionWorkKinds;
 export type AttentionWorkState = keyof typeof attentionWorkStates;
-export type AttentionWorkListFilters = { search: string; filter: "all" | "unread" | "unassigned"; state: AttentionWorkState | "" };
+export type AttentionWorkListFilters = { search: string; filter: "all" | "unread" | "unassigned"; state: AttentionWorkState | "active" | "" };
 export type AttentionWorkActor = { type: "attention"; actor: AttentionActor } | {
   type: "seller"; userId: number; userSedeId: number; sellerId: number; sedeId: number; accessSedeId: number;
   aliadoId: number; supervisor: boolean; name: string; key: string;

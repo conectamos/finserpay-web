@@ -33,7 +33,7 @@ function unreadSql(a:AttentionWorkActor){return a.type==="attention"?`(SELECT co
 function workListFilters(input:Partial<AttentionWorkListFilters>={}):AttentionWorkListFilters{
   if(!input||typeof input!=="object"||Array.isArray(input))throw new AttentionError("Filtros de solicitud inválidos.");
   const search=attentionText(input.search??"",120,false).normalize("NFKC"),filter=input.filter??"all",state=input.state??"";
-  if(!["all","unread","unassigned"].includes(filter)||state!==""&&!Object.hasOwn(attentionWorkStates,state))throw new AttentionError("Filtros de solicitud inválidos.");
+  if(!["all","unread","unassigned"].includes(filter)||state!==""&&state!=="active"&&!Object.hasOwn(attentionWorkStates,state))throw new AttentionError("Filtros de solicitud inválidos.");
   return {search,filter,state};
 }
 export function parseWorkListQuery(params:URLSearchParams){
@@ -166,7 +166,7 @@ export function createAttentionWorkStore(database:AttentionDatabase){
       const search=filters.search?`%${filters.search.replace(/[!%_]/g,char=>`!${char}`)}%`:null;
       const where=`${access.sql} AND w.kind=$${n+1} AND ($${n+2}::text IS NULL OR ${currentNameSql} ILIKE $${n+2} ESCAPE '!' OR a.nombre ILIKE $${n+2} ESCAPE '!' OR v.nombre ILIKE $${n+2} ESCAPE '!' OR s.nombre ILIKE $${n+2} ESCAPE '!')
         AND ($${n+3}::text='all' OR ($${n+3}='unread' AND ${unreadSql(a)}>0) OR ($${n+3}='unassigned' AND c."assigneeKey" IS NULL AND c."assigneeUserId" IS NULL AND c."assigneeSellerId" IS NULL))
-        AND ($${n+4}::text='' OR w.state=$${n+4})`;
+        AND ($${n+4}::text='' OR ($${n+4}='active' AND w.state<>'completed') OR w.state=$${n+4})`;
       const values=[...access.values,kind,search,filters.filter,filters.state];
       const rows=await db.$queryRawUnsafe<Row[]>(`SELECT ${selected},${unreadSql(a)} AS "unreadCount" ${join} WHERE ${where} ORDER BY w."updatedAt" DESC,w.id LIMIT 40 OFFSET $${n+5}`,...values,(page-1)*40);
       const [total]=await db.$queryRawUnsafe<{count:number}[]>(`SELECT count(*)::int AS count ${join} WHERE ${where}`,...values);return {items:rows.map(dto),total:total.count,page,pageSize:40};}),

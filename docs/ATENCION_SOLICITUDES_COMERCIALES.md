@@ -41,6 +41,10 @@ En Atención, las bandejas comparten la navegación oscura y los selectores de t
 con Clientes. La ficha se abre bajo demanda; conserva asignación, notas,
 documentos e historial de gestión. La búsqueda y los filtros de lectura,
 asignación y estado se consultan globalmente en el servidor, antes de paginar.
+Enrolamientos y Aprobaciones abren en **Pendientes de gestión**, que incluye
+pendiente, en revisión e información pendiente. Al finalizar un caso deja esa
+bandeja; **Finalizadas (historial)** conserva la consulta del caso y sus soportes.
+El filtro activo también se aplica al conteo y la paginación del servidor.
 Los mensajes pendientes se calculan con las mismas marcas nominales de Atención,
 sin confundirlos con la lectura de las notificaciones. Solo los mensajes entrantes
 realmente mostrados al fondo del chat se confirman como leídos. Las vistas ocultas

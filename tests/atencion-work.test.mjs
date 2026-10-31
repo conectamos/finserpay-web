@@ -41,7 +41,8 @@ test("consulta de bandejas valida búsqueda, estado, filtros y parámetros repet
   assert.deepEqual(parseWorkListQuery(new URLSearchParams()),{kind:"enrollment",page:1,filters:{search:"",filter:"all",state:""}});
   assert.deepEqual(parseWorkListQuery(new URLSearchParams("kind=welcome&page=2&search=  Tienda  &filter=unassigned&state=information")),
     {kind:"welcome",page:2,filters:{search:"Tienda",filter:"unassigned",state:"information"}});
-  for(const query of ["kind=credit","page=1e3","page=0","page=10001","filter=mine","state=approved","kind=welcome&kind=welcome","search=a&search=b","filter=all&filter=unread","state=pending&state=review",`search=${"a".repeat(121)}`])
+  assert.deepEqual(parseWorkListQuery(new URLSearchParams("state=active")),{kind:"enrollment",page:1,filters:{search:"",filter:"all",state:"active"}});
+  for(const query of ["kind=credit","page=1e3","page=0","page=10001","filter=mine","state=approved","state=Active","state=done","kind=welcome&kind=welcome","search=a&search=b","filter=all&filter=unread","state=pending&state=review","state=active&state=completed",`search=${"a".repeat(121)}`])
     assert.throws(()=>parseWorkListQuery(new URLSearchParams(query)),{status:400});
 });
 
@@ -66,6 +67,43 @@ test("búsqueda y conteo de solicitudes abarcan toda la cola antes de paginar y 
   assert.equal((await store.list(admin,"enrollment",1,{search:"%"})).total,1);
   assert.equal((await store.list(admin,"enrollment",1,{search:"' OR true --"})).total,0);
   assert.equal((await store.list(analyst,"enrollment",1,{search:"Cliente"})).total,0,"search cannot expose unassigned cases to an analyst");
+  await db.exec('UPDATE "AttentionWorkRequest" SET state=\'completed\' WHERE "targetId" IN (100,1000,1001,1002)');
+  const activeFirst=await store.list(admin,"enrollment",1,{state:"active"}),activeSecond=await store.list(admin,"enrollment",2,{state:"active"});
+  assert.equal(activeFirst.total,42);assert.equal(activeFirst.items.length,40);assert.equal(activeSecond.total,42);assert.equal(activeSecond.items.length,2);
+  assert.ok([...activeFirst.items,...activeSecond.items].every(item=>item.state!=="completed"));
+  assert.equal((await store.list(admin,"enrollment",1,{state:"completed"})).total,4);
+  assert.equal((await store.list(admin,"enrollment")).total,46,"el consumidor anterior conserva el listado completo por defecto");
+  assert.equal((await store.list(admin,"enrollment",1,{state:"active",search:"Cliente actual 0"})).total,0);
+  assert.equal((await store.list(admin,"enrollment",1,{state:"active",search:"%",filter:"unassigned"})).total,1);
+  assert.equal((await store.list(admin,"enrollment",1,{state:"active",filter:"unread"})).total,42);
+  await store.mutate(admin,uuid(2000,5),{requestId:randomUUID(),version:1,action:"assign",assigneeKey:analyst.actor.key});
+  await db.query('UPDATE "AttentionConversation" SET "assigneeKey"=$2,"assigneeUserId"=$3,"assigneeName"=\'Analista\' WHERE id=$1::uuid',[uuid(1000,0),analyst.actor.key,analyst.actor.userId]);
+  assert.equal((await store.list(admin,"enrollment",1,{state:"active",filter:"unassigned"})).total,41);
+  assert.equal((await store.list(analyst,"enrollment",1,{state:"active"})).total,1);
+  assert.equal((await store.list(analyst,"enrollment",1,{state:"completed"})).total,1);
+  assert.equal((await store.list(analyst,"enrollment")).total,2);
+  const anotherAnalyst={type:"attention",actor:{...analyst.actor,userId:6,key:"analyst:6"}};
+  assert.equal((await store.list(anotherAnalyst,"enrollment",1,{state:"active"})).total,0);
+  assert.equal((await store.list(seller,"enrollment",1,{state:"active"})).total,42);
+  const anotherSeller={...seller,sellerId:12,key:"seller:2:12"};
+  assert.equal((await store.list(anotherSeller,"enrollment",1,{state:"active"})).total,0);
+});
+
+test("bandejas activas de enrolamiento y bienvenida excluyen finalizadas sin cambiar historial ni estados reales",async t=>{
+  const {db,store,create}=await fixture(t),enrollment=await create(),welcome=await create({kind:"welcome",target:"C-200"});
+  await db.exec('INSERT INTO "Credito" VALUES(201,\'Bienvenida pendiente\',\'77777\',\'123456789012349\',\'IPHONE\',\'ACTIVO\',11,20);');
+  const pendingWelcome=await create({kind:"welcome",target:"C-201"});
+  await db.query('UPDATE "AttentionWorkRequest" SET state=\'completed\' WHERE id=ANY($1::uuid[])',[[enrollment.item.id,welcome.item.id]]);
+  const before=(await db.query('SELECT id,state,version FROM "AttentionWorkRequest" ORDER BY id')).rows;
+  for(const actor of [admin,seller]){
+    assert.equal((await store.list(actor,"enrollment",1,{state:"active"})).total,0);
+    const active=await store.list(actor,"welcome",1,{state:"active"});assert.equal(active.total,1);assert.equal(active.items[0].id,pendingWelcome.item.id);
+    assert.equal((await store.list(actor,"welcome",1,{state:"completed"})).total,1);
+    assert.equal((await store.list(actor,"welcome")).total,2);
+  }
+  assert.equal((await store.detail(seller,enrollment.item.id)).item.state,"completed","el histórico sigue accesible por enlace autorizado");
+  await assert.rejects(store.mutate(admin,pendingWelcome.item.id,{requestId:randomUUID(),version:1,action:"state",state:"active",text:"No es un estado de gestión"}),{status:400});
+  assert.deepEqual((await db.query('SELECT id,state,version FROM "AttentionWorkRequest" ORDER BY id')).rows,before);
 });
 
 test("no leídos de solicitudes respetan al analista nominal y no exponen lecturas al asesor",async t=>{
