@@ -66,6 +66,19 @@ test("anonymous and link-only contexts cannot use attention; existing approval l
   }
 });
 
+test("capture QR publica solo su endpoint exacto; las sesiones nominales mantienen su alcance",()=>{
+  const id="00000000-0000-4000-8000-000000000001",sessionId="00000000-0000-4000-8000-000000000002";
+  for(const cookies of [{},{session:"user",seller_session:"seller"},{approval_analyst_session:"nominal-cookie"},{approval_access_session:"link"}]){
+    for(const method of ["GET","POST"])assert.equal(proxy(request("/api/atencion/captura",cookies,method)).kind,"next");
+  }
+  for(const path of ["/api/atencion","/api/atencion/captura/extra","/api/atencion/captura-extra"])assert.equal(proxy(request(path,{},"POST")).status,401);
+  for(const method of ["DELETE","PATCH","OPTIONS"])assert.equal(proxy(request("/api/atencion/captura",{},method)).status,401);
+  const seller={session:"user",seller_session:"seller"};
+  assert.equal(proxy(request(`/api/ventas/atencion/${id}/capture`,seller,"POST")).kind,"next");
+  for(const method of ["GET","DELETE"])assert.equal(proxy(request(`/api/ventas/atencion/${id}/capture/${sessionId}`,seller,method)).kind,"next");
+  for(const [path,method] of [[`/api/ventas/atencion/${id}/capture`,"GET"],[`/api/ventas/atencion/${id}/capture/${sessionId}`,"POST"],[`/api/ventas/atencion/${id}/capture/${sessionId}/extra`,"DELETE"]])assert.equal(proxy(request(path,seller,method)).status,403);
+});
+
 test("regular session reaches the server role guard while seller-profile sessions are stopped", () => {
   assert.equal(proxy(request(target, { session: "regular-cookie" })).kind, "next");
   assert.equal(proxy(request("/api/atencion", { session: "regular-cookie" })).kind, "next");

@@ -79,6 +79,19 @@ CREATE TABLE IF NOT EXISTS "AttentionWorkFile" (
   content bytea NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 16777216),
   "mimeType" text NOT NULL CHECK("mimeType" IN ('image/jpeg','image/png','application/pdf'))
 );
+-- Upload-only handoff from a nominal work chat to the operator's phone.
+-- Raw bearer tokens never enter the database or the credit evidence tables.
+CREATE TABLE IF NOT EXISTS "AttentionWorkCaptureSession" (
+  id uuid PRIMARY KEY, "workId" uuid NOT NULL REFERENCES "AttentionWorkRequest"(id) ON DELETE RESTRICT,
+  "actorKey" text NOT NULL, actor jsonb NOT NULL CHECK(jsonb_typeof(actor)='object'),
+  "requestId" uuid NOT NULL, "requestVersion" integer NOT NULL CHECK("requestVersion">0),
+  "tokenHash" text NOT NULL CHECK("tokenHash" ~ '^[0-9a-f]{64}$'),
+  "bindingHash" text NOT NULL CHECK("bindingHash" ~ '^[0-9a-f]{64}$'),
+  "expiresAt" timestamptz NOT NULL, "revokedAt" timestamptz,
+  "uploadedCount" integer NOT NULL DEFAULT 0 CHECK("uploadedCount">=0), "lastUploadedAt" timestamptz,
+  "createdAt" timestamptz NOT NULL DEFAULT now(), UNIQUE("actorKey","requestId"), UNIQUE("tokenHash")
+);
+CREATE INDEX IF NOT EXISTS "AttentionWorkCaptureSession_owner" ON "AttentionWorkCaptureSession"("workId","actorKey","createdAt" DESC);
 CREATE TABLE IF NOT EXISTS "AttentionMessage" (
   id uuid PRIMARY KEY, "conversationId" uuid NOT NULL REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
   "externalId" text NOT NULL, direction text NOT NULL CHECK(direction IN ('inbound','outbound')),

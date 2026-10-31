@@ -397,11 +397,15 @@ test("una carga incierta conserva foto y UUID para reintentar; consulta o acceso
   const readOnly=mount(singleOptions);await resolveReads(readOnly,{...sellerCase(),canWrite:false});assert.equal(readOnly.button("Adjuntar fotos").props.disabled,true);assert.equal(readOnly.button("Adjuntar PDF").props.disabled,true);await pickPhoto(readOnly,new File(["foto artificial"],"equipo.jpg",{type:"image/jpeg"}));assert.equal(readOnly.createdUrls.length,0);assert.equal(readOnly.requests.some(r=>r.init.method),false);readOnly.unmount();
 });
 
-test("Tomar foto solicita la cámara trasera y conserva el flujo de revisión y envío privado",async()=>{
-  const f=mount(singleOptions);await resolveReads(f,sellerCase());const camera=f.all().find(n=>n.props["aria-label"]==="Tomar foto con la cámara");let clicks=0;camera.props.ref.current={click(){clicks++;}};
-  assert.equal(camera.props.accept,"image/jpeg,image/png");assert.equal(camera.props.capture,"environment");assert.equal(photoSelector(f).props.capture,undefined);assert.equal(pdfSelector(f).props.accept,"application/pdf");
-  f.button("Tomar foto").props.onClick();assert.equal(clicks,1);assert.equal(f.requests.some(r=>r.init.method),false);
-  const photo=new File(["foto de cámara artificial"],"camara-equipo.jpg",{type:"image/jpeg"}),target={files:[photo],value:"foto-local"};camera.props.onChange({target});await f.flush();assert.equal(target.value,"");assert.ok(localPhoto(f));assert.match(text(f.tree),/camara-equipo.jpg/);assert.equal(f.requests.some(r=>r.init.method),false);
-  f.button("Enviar foto").props.onClick();await f.flush();const request=f.requests.find(r=>r.init.method==="POST");assert.equal(request.url,`/api/ventas/atencion/${itemA.id}/files`);assert.equal(request.init.body.get("file").name,"camara-equipo.jpg");assert.equal(request.init.body.get("version"),"2");assert.equal(f.button("Tomar foto").props.disabled,true);request.respond({...sellerCase(),item:{...itemA,version:3}});await f.flush();assert.equal(localPhoto(f),undefined);assert.ok(f.revokedUrls.includes("blob:preview-1"));f.unmount();
+test("Tomar foto abre captura QR del caso sin abrir el selector local ni enviar archivos",async()=>{
+  const f=mount(singleOptions);await resolveReads(f,sellerCase());
+  const capture=()=>f.all().find(n=>n.type?.name==="./attention-work-photo-capture");
+  assert.equal(capture(),undefined);assert.equal(f.all().some(n=>n.props["aria-label"]==="Tomar foto con la cámara"),false);
+  assert.equal(photoSelector(f).props.capture,undefined);assert.equal(pdfSelector(f).props.accept,"application/pdf");
+  f.button("Tomar foto").props.onClick();await f.flush();
+  assert.equal(capture().props.workId,itemA.id);assert.equal(capture().props.mode,"seller");assert.equal(capture().props.version,2);assert.equal(capture().props.active,true);
+  assert.equal(f.requests.some(r=>r.init.method),false);
+  capture().props.onClose();await f.flush();assert.equal(capture(),undefined);
+  f.button("Tomar foto").props.onClick();await f.flush();f.setProps({active:false});await f.flush();assert.equal(capture(),undefined);f.setProps({active:true});await f.flush();assert.equal(capture(),undefined);f.unmount();
   const readOnly=mount(singleOptions);await resolveReads(readOnly,{...sellerCase(),canWrite:false});assert.equal(readOnly.button("Tomar foto").props.disabled,true);readOnly.unmount();
 });

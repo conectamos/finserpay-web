@@ -60,6 +60,18 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: "/atencion-captura",
+        headers: [
+          ...noStoreHeaders,
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
+          { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
+          { key: "Content-Security-Policy", value: "default-src 'self'; base-uri 'none'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" },
+        ],
+      },
+      {
         source: "/enrolamiento-iphone",
         headers: [
           ...noStoreHeaders,
