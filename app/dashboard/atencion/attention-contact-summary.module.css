@@ -18,4 +18,10 @@
 .files small { display:block; font-size:12px; color:var(--fp-muted); margin-top:4px; }
 .files a { display:grid; place-items:center; min-width:44px; height:44px; color:var(--fp-graphite); border-radius:var(--fp-radius-sm); }
 .files a:hover { background:var(--fp-bg); }
+.receivedFiles { display:block; min-width:0; padding:24px 0; border-bottom:1px solid var(--fp-border); color:var(--fp-graphite); }
+.receivedFiles h3 { display:flex; align-items:center; gap:8px; margin:0 0 14px; font-size:16px; font-weight:600; }
+.receivedFiles h3 svg { flex-shrink:0; }
+.receivedFiles .help { color:var(--fp-muted); font-size:14px; line-height:1.5; margin:10px 0 14px; }
+.receivedFiles .files strong { font-size:15px; }
+.receivedFiles .files small { font-size:13px; }
 @media(max-width:1279px) { .panel { display:none; } }

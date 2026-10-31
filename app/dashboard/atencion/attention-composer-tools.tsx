@@ -13,9 +13,9 @@ const emojis = [
   ["📱", "Teléfono"], ["💳", "Tarjeta"], ["💰", "Pago"], ["🙌", "Manos arriba"],
 ] as const;
 type Recording = { file: File; url: string };
-type Props = { conversationId: string; disabled: boolean; audioDisabled?: boolean; onAudio: (file: File) => void; onEmoji: (emoji: string) => void };
+type Props = { conversationId: string; disabled: boolean; audioDisabled?: boolean; inline?: boolean; onAudio: (file: File) => void; onEmoji: (emoji: string) => void };
 
-export default function AttentionComposerTools({ conversationId, disabled, audioDisabled, onAudio, onEmoji }: Props) {
+export default function AttentionComposerTools({ conversationId, disabled, audioDisabled, inline = false, onAudio, onEmoji }: Props) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [phase, setPhase] = useState<"idle" | "requesting" | "recording" | "preparing">("idle");
   const [seconds, setSeconds] = useState(0);
@@ -143,12 +143,12 @@ export default function AttentionComposerTools({ conversationId, disabled, audio
       if (currentEpoch === epoch.current) { active.current = false; controller.current = null; setPhase("idle"); }
     }
   }
-  return <div className={styles.tools} ref={tools} onKeyDown={event => {
+  return <div className={`${styles.tools} ${inline ? styles.inline : ""}`} ref={tools} onKeyDown={event => {
     if (event.key === "Escape" && emojiOpen) { setEmojiOpen(false); tools.current?.querySelector("button")?.focus(); }
   }}>
     <div className={styles.buttons}>
       <Button variant="ghost" aria-label="Elegir emoji" aria-expanded={emojiOpen} disabled={disabled} onClick={() => setEmojiOpen(value => !value)}><Smile size={20} aria-hidden="true" /><span>Emojis</span></Button>
-      <Button variant="ghost" disabled={disabled || audioDisabled || phase !== "idle" || !!recording} onClick={() => void start()} title={audioDisabled ? "Envía primero el texto o archivo que estás preparando." : "Grabar un audio"}><Mic size={20} aria-hidden="true" /><span>Grabar audio</span></Button>
+      <Button data-attention="record-audio" variant="ghost" disabled={disabled || audioDisabled || phase !== "idle" || !!recording} onClick={() => void start()} title={audioDisabled ? "Envía primero el texto o archivo que estás preparando." : "Grabar un audio"}><Mic size={20} aria-hidden="true" /><span>Grabar audio</span></Button>
     </div>
     {emojiOpen && !disabled && <div className={styles.emojiPanel} role="group" aria-label="Emojis disponibles">
       <div className={styles.panelHeading}><strong>Elige un emoji</strong><Button variant="ghost" aria-label="Cerrar emojis" onClick={() => { setEmojiOpen(false); tools.current?.querySelector("button")?.focus(); }}><X size={18} /></Button></div>

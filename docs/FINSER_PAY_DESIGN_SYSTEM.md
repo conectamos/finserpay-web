@@ -165,14 +165,18 @@ vigentes, y los recibos anteriores conservan las condiciones de su registro.
 
 Atención reutiliza la cabecera horizontal de la plataforma: `FinserNavigation`
 en su variante administrativa para central y `AnalystNavigation` para el perfil
-nominal. Usa porcelana, grafito y acentos lima; no añade una navegación lateral,
-mascotas ni una segunda barra de búsqueda. Una franja compacta agrupa las vistas
-del módulo y el estado real de conexión.
+nominal. La referencia oscura de WhatsApp Web aprobada el 31 de octubre se aplica
+solo a Conversaciones mediante los tokens compartidos `--fp-chat-*`: grafito,
+texto claro, grises suaves y verde bosque. La cabecera se compacta y una barra
+estrecha de iconos conserva los accesos del módulo, con nombre accesible y ayuda.
+Las otras vistas conservan la variante porcelana de la plataforma.
 
-La vista inicial es Conversaciones. Desde 1280 px usa tres columnas: bandeja,
-chat y ficha resumida con los archivos realmente recibidos. En anchos menores
-conserva el chat y abre la ficha bajo demanda. La marca de Atención usa el
-wordmark sobre blanco, con FINSER grafito y PAY verde. La gestión financiera
+La vista inicial es Conversaciones. En escritorio usa una bandeja y un chat
+amplio junto a la barra de accesos; la ficha y sus archivos reales se abren bajo
+demanda. El historial usa un patrón de línea original y discreto, burbujas oscuras
+entrantes y verde bosque para salientes, con fecha y entrega legibles. La marca
+de Atención conserva el wordmark sin recuadro negro. No se muestran botones de
+llamadas o grupos sin una integración confirmada. La gestión financiera
 continúa en `FinserSidePanel`. Enrolamientos y Aprobaciones tienen bandejas
 independientes con chat interno del asesor, ficha del trámite y permisos nominales.
 El panel conserva formularios al cerrarse y restituye el foco al control de origen;

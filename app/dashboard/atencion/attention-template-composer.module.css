@@ -30,3 +30,15 @@
 .content :global(.fp-ui-dialog) > p { min-height: 0; overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 16px; padding-right: 4px; font-size: 16px; }
 .content :global(.fp-ui-dialog) > div { flex-shrink: 0; margin-top: 16px; }
 @media (max-width: 420px) { .content { gap: 16px; } .financial dl { grid-template-columns: 1fr; gap: 12px; } .preview { padding: 16px; } }
+:global([data-chat-theme='dark']) .content { color:var(--fp-chat-text); }
+:global([data-chat-theme='dark']) .recipient,:global([data-chat-theme='dark']) .financial { border-color:var(--fp-chat-border); }
+:global([data-chat-theme='dark']) .recipient span,:global([data-chat-theme='dark']) .financial dt,:global([data-chat-theme='dark']) .financial > p,:global([data-chat-theme='dark']) .hint { color:var(--fp-chat-muted); }
+:global([data-chat-theme='dark']) .field input,:global([data-chat-theme='dark']) .field select { color:var(--fp-chat-text); background-color:var(--fp-chat-input); border-color:var(--fp-chat-border); color-scheme:dark; }
+:global([data-chat-theme='dark']) .preview { color:var(--fp-chat-text); background:var(--fp-chat-outbound); border-color:color-mix(in srgb,var(--fp-chat-border),var(--fp-chat-outbound)); }
+:global([data-chat-theme='dark']) .confirmation input { accent-color:var(--fp-chat-accent); }
+.portalTheme { --fp-bg:var(--fp-chat-bg); --fp-surface:var(--fp-chat-surface); --fp-graphite:var(--fp-chat-text); --fp-muted:var(--fp-chat-muted); --fp-border:var(--fp-chat-border); --fp-lime-soft:var(--fp-chat-accent-soft); --fp-lime-strong:var(--fp-chat-accent); --fp-amber-soft:#3b3221; --fp-danger:#ffaaa2; --fp-danger-soft:#412824; color:var(--fp-chat-text); color-scheme:dark; }
+.portalTheme :global(.fp-ui-button.is-primary) { color:var(--fp-chat-text); background:var(--fp-chat-outbound); }
+.portalTheme :global(.fp-ui-button.is-primary):hover:not(:disabled) { background:var(--fp-chat-outbound-hover); }
+.portalTheme :global(.fp-ui-button.is-secondary),.portalTheme :global(.fp-ui-input) { color:var(--fp-chat-text); background:var(--fp-chat-raised); border-color:var(--fp-chat-border); }
+.portalTheme :global(.fp-ui-button.is-ghost) { color:var(--fp-chat-muted); }
+.portalTheme :global(.fp-ui-button.is-ghost):hover:not(:disabled),.portalTheme :global(.fp-ui-button.is-secondary):hover:not(:disabled) { color:var(--fp-chat-text); background:var(--fp-chat-selected); }

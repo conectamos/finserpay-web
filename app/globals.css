@@ -35,6 +35,22 @@
   --fp-cyan: #4e625f;
   --fp-cream: #fbf8ef;
   --fp-gold: #bfa46a;
+  /* Dark messaging surfaces, shared by the approved Attention workspace. */
+  --fp-chat-bg: #161717;
+  --fp-chat-canvas: #101212;
+  --fp-chat-surface: #202222;
+  --fp-chat-raised: #292c2c;
+  --fp-chat-panel: var(--fp-chat-surface);
+  --fp-chat-input: var(--fp-chat-raised);
+  --fp-chat-selected: #2b2e2e;
+  --fp-chat-border: #343838;
+  --fp-chat-text: #e9edef;
+  --fp-chat-muted: #adb4b5;
+  --fp-chat-accent: #76d17d;
+  --fp-chat-accent-soft: #263c2a;
+  --fp-chat-outbound: #174a31;
+  --fp-chat-outbound-hover: #1c573a;
+  --fp-chat-inbound: #262929;
 }
 
 @theme inline {

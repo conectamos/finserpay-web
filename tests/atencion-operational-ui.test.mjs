@@ -74,6 +74,24 @@ test("filtros ofrecen Sin asignar solo a central y conservan etiqueta al cambiar
   f.setProps({ central: false }); assert.equal(f.button("Sin asignar"), undefined); assert.ok(f.all().some(node => node.props.value === "FINSERPAY")); f.unmount();
 });
 
+test("filtros compactos alternan Clientes sin perder colas ni filtros avanzados", () => {
+  const changes = []; const inbox = { operational: { unread: 3, unanswered: 4, unassigned: 2 }, availableTags: ["FINSERPAY", "Seguimiento"] };
+  const f = mount("AttentionWorkFilters", { inbox, central: true, compact: true, filter: "all", tag: "", change: (...args) => changes.push(args) });
+  assert.equal(f.button("Todos").props["aria-pressed"], true); assert.ok(f.button("No leídos3")); assert.ok(f.all().some(node => node.type === "details"));
+  f.button("Clientes").props.onClick(); assert.deepEqual(changes.at(-1), ["all", "FINSERPAY"]);
+  f.setProps({ filter: "unread", tag: "FINSERPAY" }); assert.equal(f.button("Clientes").props["aria-pressed"], true);
+  f.button("No leídos").props.onClick(); assert.deepEqual(changes.at(-1), ["all", "FINSERPAY"]);
+  f.button("Sin responder").props.onClick(); assert.deepEqual(changes.at(-1), ["unanswered", "FINSERPAY"]);
+  f.button("Sin asignar").props.onClick(); assert.deepEqual(changes.at(-1), ["unassigned", "FINSERPAY"]);
+  f.button("Clientes").props.onClick(); assert.deepEqual(changes.at(-1), ["all", ""]);
+  f.setProps({ filter: "closed", tag: "Seguimiento" });
+  assert.ok(f.all().some(node => node.props["aria-label"] === "Filtros adicionales activos"));
+  f.all().find(node => node.props["aria-label"] === "Estado de conversaciones").props.onChange({ target: { value: "mine" } }); assert.deepEqual(changes.at(-1), ["mine", "Seguimiento"]);
+  f.all().find(node => node.props["aria-label"] === "Filtrar por etiqueta").props.onChange({ target: { value: "FINSERPAY" } }); assert.deepEqual(changes.at(-1), ["closed", "FINSERPAY"]);
+  f.button("Todos").props.onClick(); assert.deepEqual(changes.at(-1), ["all", ""]);
+  f.setProps({ central: false }); assert.equal(f.button("Sin asignar"), undefined); assert.equal(f.requests.length, 0); f.unmount();
+});
+
 const task = { id: id(30), title: "Llamar al contacto sintético", dueAt: "2026-10-30T15:00:00Z", author: "Analista QA", conversation: { id: id(1), name: "Contacto QA", phone: null, version: 7 } };
 const agenda = { items: [task], counts: { today: 1, overdue: 2, upcoming: 3, undated: 1, total: 7 }, page: 1, pageSize: 40, total: 1, today: "2026-10-30" };
 test("Agenda abre chat y completa con versión y UUID; doble clic nunca duplica la intención", async () => {

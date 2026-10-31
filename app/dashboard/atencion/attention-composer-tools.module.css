@@ -10,3 +10,23 @@
 .preview { align-items: stretch; flex-direction: column; }
 .preview audio { width: min(100%, 420px); }
 .error { color: var(--fp-danger); margin: 8px 0 0; font-size: 14px; }
+.inline,.inline > .buttons { display:contents; }
+.inline > .buttons > button:first-child { grid-column:2; grid-row:1; align-self:end; margin-bottom:2px; }
+.inline > .buttons > button:last-child { grid-column:4; grid-row:1; align-self:end; margin-bottom:2px; }
+.inline > .recording,.inline > .preview { grid-column:1 / -1; grid-row:2; }
+.inline > .error { grid-column:1 / -1; grid-row:3; }
+:global([data-chat-theme='dark']) .tools { color:var(--fp-chat-text); }
+:global([data-chat-theme='dark']) .tools > .buttons { flex-wrap:nowrap; gap:2px; }
+:global([data-chat-theme='dark']) .tools > .buttons > button { display:grid; place-items:center; position:relative; min-width:44px; width:44px; min-height:44px; padding:10px; border:0; border-radius:50%; background:transparent; color:var(--fp-chat-muted); }
+:global([data-chat-theme='dark']) .tools > .buttons > button:hover:not(:disabled),:global([data-chat-theme='dark']) .tools > .buttons > button[aria-expanded=true] { background:var(--fp-chat-selected); color:var(--fp-chat-text); }
+/* Keep the action names available to assistive technology while the toolbar uses icons. */
+:global([data-chat-theme='dark']) .tools > .buttons > button > span { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+:global([data-chat-theme='dark']) .emojiPanel { background:var(--fp-chat-surface); border-color:var(--fp-chat-border); color:var(--fp-chat-text); box-shadow:0 12px 32px #0006; z-index:30; }
+:global([data-chat-theme='dark']) .panelHeading { padding-bottom:8px; font-size:14px; }
+:global([data-chat-theme='dark']) .emojiGrid button { border-radius:var(--fp-radius-sm); background:transparent; }
+:global([data-chat-theme='dark']) .emojiGrid button:hover:not(:disabled) { background:var(--fp-chat-selected); }
+:global([data-chat-theme='dark']) .recording,:global([data-chat-theme='dark']) .preview { padding:12px; margin-top:8px; border:1px solid var(--fp-chat-border); border-radius:var(--fp-radius-md); background:var(--fp-chat-surface); font-size:14px; max-width:min(420px,calc(100vw - 48px)); }
+:global([data-chat-theme='dark']) .recording { color:var(--fp-danger); }
+:global([data-chat-theme='dark']) .preview audio { color-scheme:dark; max-width:100%; }
+:global([data-chat-theme='dark']) .preview .buttons { gap:8px; }
+@media(max-width:600px) { :global([data-chat-theme='dark']) .inline > .buttons > button { min-width:40px; width:40px; padding:8px; } }
