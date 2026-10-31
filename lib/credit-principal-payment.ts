@@ -12,6 +12,7 @@ export type CapitalConciliation = {
   numeroProximaCuota: number;
   fuente: string;
 };
+export type CapitalPlanComponents = { capital: number; interes: number; fianza: number; seguro: number };
 export type CapitalPlanRow = {
   numero: number;
   fechaVencimiento: string;
@@ -23,10 +24,12 @@ export type CapitalPlanRow = {
   fianza?: number;
   seguro?: number;
   saldoCapital?: number;
+  componentesAbonadosAlCorte?: CapitalPlanComponents;
 };
 export type CapitalPlanSnapshot = {
   version: typeof CAPITAL_PLAN_VERSION;
   revision: number;
+  requiereConciliacionTasaPeriodo?: boolean;
   totalAbonadoAlCorte: number;
   abonosAlCorte: Array<{ id: number; valor: number }>;
   saldoCapitalAlCorte: number;
@@ -49,7 +52,7 @@ type CurrentPlan = {
   saldoPendiente: number;
   overdueCount: number;
 };
-type AllocatedComponents = { capital: number; interes: number; fianza: number; seguro: number };
+const COMPONENT_ALLOCATION_ORDER = ["interes", "fianza", "seguro", "capital"] as const;
 
 function fail(message: string): never {
   throw new CapitalPaymentValidationError(message);
@@ -100,6 +103,7 @@ export function parseCapitalPlanSnapshot(value: unknown): CapitalPlanSnapshot | 
   if (value === undefined || value === null) return null;
   const obj = record(value, "Plan vigente de capital");
   if (obj.version !== CAPITAL_PLAN_VERSION) fail("Version del plan de capital no reconocida.");
+  if (obj.requiereConciliacionTasaPeriodo !== undefined && typeof obj.requiereConciliacionTasaPeriodo !== "boolean") fail("El estado de conciliacion de la tasa debe ser booleano.");
   const parametros = parseCapitalConciliation(obj.parametros);
   const numeroCuotasOriginal = integer(obj.numeroCuotasOriginal, "Plazo original");
   if (numeroCuotasOriginal > 600 || !Array.isArray(obj.cuotas) || obj.cuotas.length !== numeroCuotasOriginal) fail("Calendario de capital incompleto.");
@@ -128,6 +132,21 @@ export function parseCapitalPlanSnapshot(value: unknown): CapitalPlanSnapshot | 
     } else if (valorProgramado !== valorAbonadoAlCorte) {
       fail("Una cuota pendiente requiere desglose financiero.");
     }
+    if (row.componentesAbonadosAlCorte !== undefined) {
+      if (result.capital === undefined) fail("Los componentes abonados requieren el desglose financiero de la cuota.");
+      const paid = record(row.componentesAbonadosAlCorte, "Componentes abonados al corte");
+      if (Object.keys(paid).length !== COMPONENT_ALLOCATION_ORDER.length ||
+          COMPONENT_ALLOCATION_ORDER.some((key) => !Object.hasOwn(paid, key))) fail("El desglose abonado al corte debe incluir todos los componentes.");
+      const components: CapitalPlanComponents = {
+        capital: cash(paid.capital, "Capital abonado al corte"),
+        interes: cash(paid.interes, "Interes abonado al corte"),
+        fianza: cash(paid.fianza, "Aval abonado al corte"),
+        seguro: cash(paid.seguro, "Seguro abonado al corte"),
+      };
+      if (COMPONENT_ALLOCATION_ORDER.some((key) => cents(components[key]) > cents(result[key] || 0))) fail("Un componente abonado supera el importe programado.");
+      if (COMPONENT_ALLOCATION_ORDER.reduce((sum, key) => sum + cents(components[key]), 0) !== cents(valorAbonadoAlCorte)) fail("Los componentes abonados no concilian con el abono al corte.");
+      result.componentesAbonadosAlCorte = components;
+    }
     if (result.eliminada && (valorProgramado !== 0 || valorAbonadoAlCorte !== 0 || (result.saldoCapital || 0) !== 0)) fail("Una cuota eliminada debe estar en cero.");
     return result;
   });
@@ -146,16 +165,19 @@ export function parseCapitalPlanSnapshot(value: unknown): CapitalPlanSnapshot | 
   const remaining = cuotas.reduce((sum, row) => sum + (row.capital === undefined ? 0 : cents(row.capital) - cents(allocateComponents(row, row.valorAbonadoAlCorte).capital)), 0);
   if (remaining !== cents(saldoCapitalAlCorte)) fail("El saldo capital del calendario no concilia.");
   return { version: CAPITAL_PLAN_VERSION, revision: integer(obj.revision, "Revision"), numeroCuotasOriginal,
+    ...(obj.requiereConciliacionTasaPeriodo !== undefined ? { requiereConciliacionTasaPeriodo: obj.requiereConciliacionTasaPeriodo } : {}),
     totalAbonadoAlCorte, abonosAlCorte, saldoCapitalAlCorte, parametros, cuotas };
 }
 
-function allocateComponents(row: CapitalPlanRow, paid: number): AllocatedComponents {
-  let available = cents(paid);
-  const result: AllocatedComponents = { capital: 0, interes: 0, fianza: 0, seguro: 0 };
-  // Ordinary payments after the reconciled cut: interest, fixed charges, principal.
-  for (const key of ["interes", "fianza", "seguro", "capital"] as const) {
-    const allocated = Math.min(available, cents(row[key] || 0));
-    result[key] = fromCents(allocated);
+function allocateComponents(row: CapitalPlanRow, paid: number): CapitalPlanComponents {
+  const documented = row.componentesAbonadosAlCorte;
+  let available = cents(paid) - (documented ? cents(row.valorAbonadoAlCorte) : 0);
+  if (available < 0) fail("El abono de la cuota es menor al corte documentado.");
+  const result: CapitalPlanComponents = documented ? { ...documented } : { capital: 0, interes: 0, fianza: 0, seguro: 0 };
+  // Preserve the documented cut; only later cash follows the ordinary allocation order.
+  for (const key of COMPONENT_ALLOCATION_ORDER) {
+    const allocated = Math.min(available, cents(row[key] || 0) - cents(result[key]));
+    result[key] = fromCents(cents(result[key]) + allocated);
     available -= allocated;
   }
   return result;
@@ -181,7 +203,7 @@ export function getCapitalOutstandingBalance(value: unknown, totalPaid: number) 
   const snapshot = parseCapitalPlanSnapshot(value);
   if (!snapshot) return null;
   const rows = resolveCapitalPlanRows(snapshot, totalPaid);
-  const pending = (key: keyof AllocatedComponents) => fromCents(rows.reduce((sum, row) =>
+  const pending = (key: keyof CapitalPlanComponents) => fromCents(rows.reduce((sum, row) =>
     sum + (row[key] === undefined ? 0 : cents(row[key]) - cents(row.componentsPaid[key])), 0));
   return { saldoCapital: pending("capital"), saldoFianza: pending("fianza"),
     saldoIntereses: pending("interes"), saldoSeguro: pending("seguro") };
@@ -210,6 +232,7 @@ export function createPrincipalPaymentQuote(input: {
   if (!original) fail("Falta el capital original documentado del credito.");
   const habitual = cash(input.cuotaHabitual, "Cuota habitual");
   const snapshot = parseCapitalPlanSnapshot(input.planCapitalVigente);
+  if (snapshot?.requiereConciliacionTasaPeriodo) fail("Verifica la tasa periodica documentada y completa su conciliacion antes de un nuevo abono a capital.");
   const abonos = input.abonos.map((abono) => ({ id: integer(abono.id, "Id abono"), valor: cash(abono.valor, "Valor abono") }));
   if (new Set(abonos.map((abono) => abono.id)).size !== abonos.length ||
       abonos.reduce((sum, abono) => sum + cents(abono.valor), 0) !== cents(input.plan.totalPaid)) fail("El historial de recaudos no concilia.");
@@ -229,9 +252,10 @@ export function createPrincipalPaymentQuote(input: {
   let balance = cents(after);
   let lastActive: CapitalPlanRow | null = null;
   const cuotas: CapitalPlanRow[] = input.plan.installments.map((row) => {
+    const existing = actual?.find((item) => item.numero === row.numero);
     if (row.numero < next.numero) {
-      const existing = actual?.find((item) => item.numero === row.numero);
       return { ...(existing ? { capital: existing.capital, interes: existing.interes, fianza: existing.fianza, seguro: existing.seguro, saldoCapital: existing.saldoCapital } : {}),
+        ...(existing?.componentesAbonadosAlCorte ? { componentesAbonadosAlCorte: { ...existing.componentsPaid } } : {}),
         numero: row.numero, fechaVencimiento: row.fechaVencimiento, valorProgramado: row.valorProgramado,
         valorAbonadoAlCorte: row.valorAbonado, eliminada: Boolean(row.eliminada) };
     }
@@ -241,7 +265,10 @@ export function createPrincipalPaymentQuote(input: {
     if (!eliminated && fixed <= interest) fail("La cuota no alcanza a amortizar capital con los parametros documentados.");
     const principal = eliminated ? 0 : Math.min(balance, fixed - interest);
     const paid = row.numero === next.numero ? cents(row.valorAbonado) : 0;
-    if (paid > interest) fail("La cuota parcial contiene pagos superiores al nuevo interes. Completa esa cuota o solicita conciliacion antes del abono.");
+    if (paid > interest || (row.numero === next.numero && existing?.componentesAbonadosAlCorte &&
+        (existing.componentsPaid.capital > 0 || existing.componentsPaid.fianza > 0 || existing.componentsPaid.seguro > 0))) {
+      fail("La cuota parcial contiene pagos superiores al nuevo interes o a otros componentes. Completa esa cuota o solicita conciliacion antes del abono.");
+    }
     balance -= principal;
     const surety = eliminated ? 0 : cents(parametros.fianzaCuota);
     const insurance = eliminated ? 0 : cents(parametros.seguroCuota);
@@ -261,6 +288,7 @@ export function createPrincipalPaymentQuote(input: {
   const cuotasPendientesAntes = input.plan.installments.filter((row) => row.saldoPendiente > 0).length;
   const cuotasPendientesDespues = cuotas.filter((row) => row.valorProgramado > row.valorAbonadoAlCorte).length;
   const planCapitalVigente: CapitalPlanSnapshot = { version: CAPITAL_PLAN_VERSION, revision: (snapshot?.revision || 0) + 1,
+    ...(snapshot?.requiereConciliacionTasaPeriodo !== undefined ? { requiereConciliacionTasaPeriodo: snapshot.requiereConciliacionTasaPeriodo } : {}),
     totalAbonadoAlCorte, abonosAlCorte: abonos, saldoCapitalAlCorte: after, numeroCuotasOriginal: cuotas.length, parametros, cuotas };
   // The new receipt id is appended atomically by the persistence layer before validation/storage.
   const last = lastActive as CapitalPlanRow;
