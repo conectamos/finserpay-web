@@ -42,7 +42,7 @@ function fixture(overrides = {}) {
     Error, AbortController, JSON, draftId: 2887, wizardStep: 1, canAdmin: false, createClientMode: true, simulatorMode: false, deliveryMode: false,
     factoryDraftPayload: payload, currentIphoneClosureFingerprint: "closure", canAdminMoveFreelyInFactory: false, nextFactoryStep: { id: 2 },
     draftSaveConflictFingerprintRef: { current: null }, draftSaveTimerRef: { current: null }, draftSaveGenerationRef: { current: 0 }, draftExplicitSaveGenerationRef: { current: 0 }, draftSaveAbortControllerRef: { current: null },
-    wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false, activeSolicitudRedirectingRef: { current: false },
+    wizardStepTransitionInFlightRef: { current: false }, wizardStepTransitioning: false, activeSolicitudRedirectingRef: { current: false }, enrollmentRequestBusy: false,
     draftResumeHydrationRef: { current: false }, draftResumeHydrating: false, draftResumeLoadFailed: false, applyingDraftRef: { current: false },
     firmaSeguroDraftCorrectionPending: false, pendingFirmaSeguroDispatch: null, firmaSeguroProcessSent: false, firmaSeguroProcessSigned: false, signedContractEditLocked: false, advisorSignedContractStep: 5,
     preflightNotice: null, firmaSeguroRequestInFlightRef: { current: false }, firmaSeguroSubmitting: false,
@@ -212,6 +212,27 @@ test("cada avance, retroceso y navegación del stepper persiste su paso antes de
     assert.equal(f.context.wizardStep, to);
   }
   assert.match(source, /onClick=\{\(\) => void advanceToStep\(previousVisibleWizardStep\(wizardStep\)\)\}/);
+});
+
+test("una solicitud de enrolamiento en curso impide cambiar de paso y permite continuar al terminar", async () => {
+  const f = fixture({ enrollmentRequestBusy: true });
+  const before = JSON.stringify(f.context.factoryDraftPayload);
+  assert.equal(await f.functions.persistWizardStep(2), false);
+  await f.functions.advanceToStep(2);
+  await f.functions.goToStep(2);
+  assert.equal(f.requests.length, 0, "no guarda ni confirma el IMEI durante la solicitud de enrolamiento");
+  assert.equal(f.context.wizardStep, 1);
+  assert.equal(f.context.wizardStepTransitioning, false);
+  assert.equal(f.context.imeiConfirmationTargetStep, null);
+  assert.equal(JSON.stringify(f.context.factoryDraftPayload), before);
+
+  f.context.enrollmentRequestBusy = false;
+  await f.functions.advanceToStep(2);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, "/api/creditos/borradores");
+  assert.equal(f.requests[0].body.currentStep, 2);
+  assert.equal(f.context.wizardStep, 2);
+  assert.equal(f.context.draftStatus, "saved");
 });
 
 test("Equipo guarda sus datos sin avanzar y exige confirmación explícita del IMEI", async () => {
