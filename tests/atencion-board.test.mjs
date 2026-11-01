@@ -76,6 +76,42 @@ test("búsqueda de nombre financiero usa únicamente vínculo permitido al anali
   const result=await f.store.cards(analyst,{sectionId:null,search:'Nombre financiero',page:1});assert.equal(result.total,1);assert.deepEqual(result.conversations[0].autoTags,['FINSERPAY']);
 });
 
+test("ficha consulta ubicación y secciones activas sin historial, conteos, lecturas ni escrituras",async t=>{
+  const f=await fixture(t),id=await f.chat(analyst,{sectionId:f.sections[1].id});
+  await f.db.query('UPDATE "AttentionBoardSection" SET "archivedAt"=now() WHERE id=$1',[f.sections[4].id]);
+  const statements=[];
+  const store=createAttentionBoardStore({...f.database,$transaction:fn=>f.database.$transaction(tx=>fn({$queryRawUnsafe:(sql,...values)=>{statements.push(sql);return tx.$queryRawUnsafe(sql,...values);}}))});
+  const result=await store.getPlacement(analyst,id);
+  assert.deepEqual(result,{conversationId:id,sectionId:f.sections[1].id,boardVersion:1,
+    sections:[{id:null,name:'Sin sección'},...f.sections.slice(0,4).map(({id,name})=>({id,name}))],permissions:{move:true}});
+  assert.ok(statements.every(sql=>/^SELECT\b/.test(sql)),statements.join('\n'));
+  assert.ok(!statements.some(sql=>/\b(?:INSERT|UPDATE|DELETE|AttentionMessage|AttentionReadState|AttentionTeamReadState|AttentionAudit|AttentionRequest|pg_advisory_xact_lock)\b/.test(sql)),statements.join('\n'));
+  const before=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[id])).rows[0];
+  await f.store.move(analyst,id,move(f.sections[2].id));
+  const fresh=await store.getPlacement(analyst,id);
+  assert.equal(fresh.sectionId,f.sections[2].id);assert.equal(fresh.boardVersion,2);
+  const after=(await f.db.query('SELECT * FROM "AttentionConversation" WHERE id=$1',[id])).rows[0];
+  for(const key of ['version','status','mode','assigneeKey','lastContactAt','tags'])assert.deepEqual(after[key],before[key],key);
+});
+
+test("ubicación de ficha revalida alcance antes de listar secciones y no acepta asignación ajena",async t=>{
+  const f=await fixture(t),own=await f.chat(analyst),foreign=await f.chat(other),unassigned=await f.chat(null);
+  const statements=[];
+  const store=createAttentionBoardStore({...f.database,$transaction:fn=>f.database.$transaction(tx=>fn({$queryRawUnsafe:(sql,...values)=>{statements.push(sql);return tx.$queryRawUnsafe(sql,...values);}}))});
+  for(const id of [foreign,unassigned,randomUUID()]){
+    statements.length=0;await assert.rejects(store.getPlacement(analyst,id),{status:404});
+    assert.ok(!statements.some(sql=>/SELECT id,name FROM "AttentionBoardSection"/.test(sql)));
+  }
+  assert.equal((await store.getPlacement(central,foreign)).conversationId,foreign);
+  assert.equal((await store.getPlacement(central,unassigned)).permissions.move,true);
+  assert.equal((await store.getPlacement(analyst,own)).sectionId,null);
+  await f.db.query('UPDATE "AttentionConversation" SET "assigneeUserId"=6,"assigneeKey"=$2 WHERE id=$1',[own,other.key]);
+  await assert.rejects(store.getPlacement(analyst,own),{status:404});
+  await f.db.query('UPDATE "Usuario" SET activo=false WHERE id=6');
+  await assert.rejects(store.getPlacement(other,own),{status:403});
+  await assert.rejects(store.getPlacement(central,'invalid'),{status:400});
+});
+
 test("movimiento tiene versión e idempotencia propias y conserva negocio y envío humano reservado",async t=>{
   const f=await fixture(t),id=await f.chat(analyst,{phone:'+573001234567'});
   const meta=createAttentionMetaStore(f.database,{scope,sendingEnabled:true,cutoverConfirmed:true,now:()=>new Date(instant)});
@@ -136,6 +172,6 @@ test("carreras de versión no duplican movimientos ni auditoría y esquema ausen
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(results.find(r=>r.status==='rejected').reason.status,409);
   assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='BOARD_CONVERSATION_MOVED'`)).rows[0].n,1);
   await f.db.exec('ALTER TABLE "AttentionConversation" DROP COLUMN "sectionId",DROP COLUMN "boardVersion"; DROP TABLE "AttentionBoardSection"');
-  await assert.rejects(f.store.get(central),{status:503});await assert.rejects(f.store.move(analyst,id,move(null)),{status:503});
+  await assert.rejects(f.store.get(central),{status:503});await assert.rejects(f.store.getPlacement(analyst,id),{status:503});await assert.rejects(f.store.move(analyst,id,move(null)),{status:503});
   assert.equal((await f.db.query(`SELECT to_regclass('public."AttentionBoardSection"') AS relation`)).rows[0].relation,null);
 });

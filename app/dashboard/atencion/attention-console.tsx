@@ -17,6 +17,7 @@ import AttentionImageViewer from "./attention-image-viewer";
 import AttentionMessageText, { type AttentionPhoneLookupResult } from "./attention-message-text";
 import AttentionTemplateComposer from "./attention-template-composer";
 import AttentionBoard from "./attention-board";
+import AttentionConversationSection from "./attention-conversation-section";
 import AttentionCloseAll from "./attention-close-all";
 import { AttentionReceivedFiles } from "./attention-contact-summary";
 import AttentionWorkQueues from "./attention-work-queues";
@@ -1003,7 +1004,17 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
             </>}</ChatDropSurface>
 
           </section>
-          <FinserSidePanel open={showCustomer && Boolean(detail)} keepMounted title="Ficha del contacto" closeLabel="Volver al chat" busy={busy} onClose={() => setShowCustomer(false)}><div className={styles.customer}>{detail && <CustomerPanel key={detail.conversation.id} detail={detail} busy={busy} mutate={mutate} canOpenRecord={canSupervise} financial={{ attempts: financialAttempts[detail.conversation.id] || {}, disabled: busy || syncing, accessDenied: error => handleFinancialAccessError(detail.conversation.id, error), grant: input => grantExtension(detail.conversation.id, input), sendReceipt: (input, retry) => sendReceipt(detail.conversation.id, input, retry), resolveReceipt: () => resolveReceipt(detail.conversation.id), discardReceipt: () => discardReceipt(detail.conversation.id) }} />}</div></FinserSidePanel>
+          <FinserSidePanel open={showCustomer && Boolean(detail)} keepMounted title="Ficha del contacto" closeLabel="Volver al chat" busy={busy} onClose={() => setShowCustomer(false)}>
+            <div className={styles.customer}>{detail && <CustomerPanel key={detail.conversation.id} detail={detail} busy={busy} mutate={mutate} canOpenRecord={canSupervise}
+              board={showCustomer && view === "conversations" ? <AttentionConversationSection
+                key={`${currentActor.key}:${detail.conversation.id}`} actorKey={currentActor.key} conversationId={detail.conversation.id}
+                active disabled={busy || syncing} request={api} busyChanged={quickReplyBusyChanged}
+                onMoved={() => { setBoardRevision(value => value + 1); void loadInbox(); }}
+                accessDenied={failure => handleFinancialAccessError(detail.conversation.id, failure)}
+              /> : null}
+              financial={{ attempts: financialAttempts[detail.conversation.id] || {}, disabled: busy || syncing, accessDenied: error => handleFinancialAccessError(detail.conversation.id, error), grant: input => grantExtension(detail.conversation.id, input), sendReceipt: (input, retry) => sendReceipt(detail.conversation.id, input, retry), resolveReceipt: () => resolveReceipt(detail.conversation.id), discardReceipt: () => discardReceipt(detail.conversation.id) }}
+            />}</div>
+          </FinserSidePanel>
         </>}
 
         {boardOpened && contentReady && <div className={styles.boardPane} hidden={view !== "board"}><AttentionBoard key={currentActor.key} actor={currentActor} active={view === "board"} onRefresh={boardRevision} onOpenConversation={selectConversation} onAccessDenied={clearInaccessibleData} busyChanged={quickReplyBusyChanged} /></div>}
@@ -1167,7 +1178,7 @@ function FinancialPanel({ detail, actions }: { detail: AttentionDetail; actions:
     <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.kind === "extension" ? "Confirmar prórroga" : "Enviar último recibo"} description={confirmation?.description || ""} confirmLabel={confirmation?.kind === "extension" ? "Conceder prórroga" : "Enviar PDF por WhatsApp"} busy={actions.disabled} onCancel={() => { if (!actions.disabled) setConfirmation(null); }} onConfirm={() => void confirmAction()} />
   </section>;
 }
-function CustomerPanel({ detail, busy, mutate, canOpenRecord, financial }: { detail: AttentionDetail; busy: boolean; mutate: Mutate; canOpenRecord: boolean; financial: FinancialActions }) {
+function CustomerPanel({ detail, busy, mutate, canOpenRecord, financial, board }: { detail: AttentionDetail; busy: boolean; mutate: Mutate; canOpenRecord: boolean; financial: FinancialActions; board?: ReactNode }) {
   const [tab, setTab] = useState<"summary" | "followup">("summary");
   const [note, setNote] = useState(""); const [task, setTask] = useState(""); const [dueAt, setDueAt] = useState(""); const [tag, setTag] = useState(""); const [candidate, setCandidate] = useState("");
   const { customer, conversation, permissions } = detail;
@@ -1181,6 +1192,7 @@ function CustomerPanel({ detail, busy, mutate, canOpenRecord, financial }: { det
     <div className={styles.customerTabBody}>
       <div hidden={tab !== "summary"}>
         <section className={styles.customerSection}><h3>Conversación</h3><div className={styles.keyValues}><div><span>Estado</span><Status conversation={conversation} /></div><div><span>Analista</span><strong>{conversation.assigneeName || "Sin asignar"}</strong></div></div></section>
+        {tab === "summary" && board}
         {detail.workRequest && <section className={styles.customerSection}><h3>Solicitud</h3><dl className={styles.keyValues}><div><dt>Tipo de solicitud</dt><dd>{attentionWorkKinds[detail.workRequest.kind]}</dd></div><div><dt>Estado de la solicitud</dt><dd>{attentionWorkStates[detail.workRequest.state as keyof typeof attentionWorkStates] || detail.workRequest.state}</dd></div></dl></section>}
         <AttentionReceivedFiles detail={detail} />
         {customer.match !== "linked" && <section className={styles.customerSection}><p className={styles.matchMessage}>{matchMessages[customer.match]}</p>{permissions.assign && customer.candidates.length > 0 && <div className={styles.compactForm}><label>Vincular ficha autorizada<Select value={candidate} disabled={busy} onChange={event => setCandidate(event.target.value)}><option value="">Selecciona la ficha correcta</option>{customer.candidates.map(item => <option key={item.id} value={item.id}>{item.name} · {item.documentMasked} · {item.folio}</option>)}</Select></label><Button variant="secondary" disabled={busy || !candidate} onClick={() => void mutate({ action: "link", creditId: Number(candidate) })}>Vincular ficha</Button></div>}{customer.match === "none" && canOpenRecord && <Link href="/dashboard/creditos" className={styles.textLink}>Completar solicitud <ArrowRight aria-hidden="true" size={15} /></Link>}</section>}
