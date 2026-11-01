@@ -239,6 +239,14 @@ de lectura; los fallos de conexión muestran su estado y activan consulta local.
 El campo de respuesta envía con Enter y conserva Shift + Enter para una nueva
 línea. El pegado de imágenes con Ctrl + V prepara el adjunto y su vista previa,
 manteniendo el texto y las validaciones actuales; el pegado de texto sigue siendo nativo.
+Escribir `/` abre las respuestas rápidas aprobadas junto al campo, con búsqueda,
+flechas para elegir, Enter o Tab para insertar y Escape para cerrar. La selección
+reemplaza solo el atajo y conserva el resto del borrador; nunca envía automáticamente.
+El menú se limita al catálogo autorizado ya cargado por Atención, sin exponerlo al
+perfil comercial. El envío confirmado se muestra sin esperar la recarga completa
+de la bandeja: se puede preparar otro borrador mientras llega la versión vigente
+del chat, necesaria para el siguiente envío. Las consultas lentas ofrecen
+recuperación explícita y conservan el borrador.
 Las imágenes y stickers del historial se amplían en un visor modal dentro del
 CRM, con ajuste a pantalla, zoom y descarga privada. Escape o Cerrar vuelve al
 mismo chat y devuelve el foco a la miniatura; se conservan el borrador y la

@@ -162,6 +162,8 @@ La marca de lectura incluye únicamente IDs entrantes capturados en la revisión
 
 ## Respuesta humana y recuperación
 
+La verificación del número dedicado y la primera página de números de su cuenta se consultan en paralelo. El adaptador privado de cada petición reutiliza únicamente una comprobación exitosa durante un máximo de cinco segundos, vinculada al token, versión Graph, Phone Number ID y WABA exactos. No comparte caché entre peticiones ni guarda errores; una rotación, cambio de configuración o vencimiento exige otra verificación. Esto evita repetir las dos consultas en la secuencia habitual de subir un archivo y enviarlo, manteniendo los controles de habilitación, destinatario, ventana y reserva antes del POST.
+
 Administración central supervisa la bandeja global. Los analistas nominales activos solo pueden leer/responder en conversaciones asignadas a su identidad; las cuentas de vendedor, supervisor, aliado o enlaces compartidos no reciben acceso. El servidor revalida el rol y la asignación en la transacción y antes del POST. Para descargar medios vuelve a comprobar el acceso después de la lectura de red.
 
 Cada respuesta de texto libre o archivo exige una ventana abierta de 24 horas desde el último inbound nativo validado. El histórico Dapta no abre esa ventana. Las plantillas manuales aprobadas usan el flujo separado descrito a continuación y no habilitan texto libre fuera de ventana. El texto libre admite hasta 4096 caracteres; las descripciones de imagen, video o PDF admiten hasta 1024. Audio y sticker no admiten descripción en este flujo.

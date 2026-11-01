@@ -18,6 +18,12 @@ La confirmación normal admite hasta 500 mensajes entrantes observados. El hist�
 
 Sin responder significa que existe una entrada posterior a la última salida acreditada. La espera comienza en la primera entrada todavía sin respuesta; una salida pendiente, fallida o incierta no la elimina. Una respuesta aceptada por Meta o una salida registrada en el histórico sí cuenta como respuesta, incluida la automatizada. Leer o añadir una nota no responde al cliente. Se muestra el tiempo transcurrido sin imponer un umbral de servicio ficticio.
 
+## Escritura y respuestas rápidas
+
+En WhatsApp, escribir `/` al comienzo de una palabra abre el catálogo aprobado de respuestas rápidas que ya recibe Atención. La búsqueda ignora tildes y muestra hasta ocho coincidencias por título o texto. Las flechas eligen; Enter, Tab o un clic insertan el contenido en el borrador. Escape cierra el menú. Elegir una respuesta no envía el mensaje, respeta su límite y conserva el texto alrededor del atajo. El selector anterior sigue disponible. Las colas internas de Atención reciben el mismo catálogo; no se amplían los permisos del asesor comercial ni se consulta el catálogo desde su perfil.
+
+Al recibir la confirmación del envío, el historial muestra el mensaje real y la escritura vuelve a habilitarse sin esperar la recarga de la bandeja. El siguiente envío espera una lectura vigente de la conversación para usar su versión real. Una lectura descartada, lenta o fallida no habilita enviar con una versión anterior: se conserva el borrador y se ofrece Actualizar estado. El plazo de esa lectura es de quince segundos. Las escrituras del chat interno tienen un plazo de sesenta segundos; ante incertidumbre conservan contenido, archivo y UUID para consultar o reintentar el mismo intento, sin reenvío automático.
+
 ## Tablero de conversaciones
 
 El tablero organiza los mismos chats en columnas compartidas. Sin sección es permanente. Las cinco secciones iniciales elegidas por el propietario son FINSER PAY, SUMASPAY, BOGOTA, ADDI y OTROS. Se crean únicamente cuando la tabla está vacía; repetir la instalación no restaura secciones renombradas o archivadas. Los chats existentes permanecen en Sin sección hasta que una persona los mueva.

@@ -98,6 +98,7 @@ function mount(options = {}) {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
       if (name === "lucide-react" || name === "@/app/_components/finser-ui") return new Proxy({}, { get: (_, key) => component(String(key)) });
       if (name === "./attention-operational") return new Proxy({}, { get: (_, key) => component(String(key)) });
+      if (name === "./attention-quick-reply-shortcuts") return { useAttentionQuickReplyShortcuts: () => ({ onKeyDown: event => { if (options.slashConsumes) event.preventDefault(); return Boolean(options.slashConsumes); }, onCaretChange() {}, menu: null, popupProps: {} }) };
       if (name.endsWith(".css")) return { default: new Proxy({}, { get: (_, key) => String(key) }) };
       return { default: component(name) };
     },
@@ -203,6 +204,82 @@ test("envío humano usa multipart con versión y requestId; no borra el borrador
   assert.equal(f.composer().props.draft.text, "  Respuesta humana  "); assert.equal(f.composer().props.draft.locked, true);
   sends[0].respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
   assert.equal(f.composer().props.draft.text, ""); await f.completeReads(); f.unmount();
+});
+
+test("aceptación muestra el mensaje y permite escribir mientras actualiza la versión, sin esperar la bandeja", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Primer mensaje" });
+  f.composer().props.send(); await f.flush();
+  f.requests.find(request => request.init.method === "POST").respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
+  assert.equal(f.composer().props.busy, false);
+  assert.equal(f.composer().props.refreshing, true);
+  assert.equal(f.composer().props.detail.messages.at(-1).id, outbound.id);
+  await f.change({ text: "Ya preparo la siguiente respuesta" });
+  f.composer().props.send(); await f.flush();
+  assert.equal(f.requests.filter(request => request.init.method === "POST").length, 1, "no se envía con una versión anterior");
+  const fresh = { ...detail, conversation: { ...chat, version: 5 }, messages: [{ ...outbound, deliveryStatus: "read" }] };
+  f.requests.find(request => !request.done && request.url === `/api/atencion/${chat.id}`).respond(fresh); await f.flush();
+  assert.equal(f.composer().props.refreshing, false);
+  assert.equal(f.composer().props.draft.text, "Ya preparo la siguiente respuesta");
+  assert.ok(f.requests.some(request => !request.done && request.url.includes("?")), "la bandeja aún puede estar pendiente");
+  f.composer().props.send(); await f.flush();
+  const next = f.requests.filter(request => request.init.method === "POST").at(-1);
+  assert.equal(next.init.body.get("version"), "5"); f.unmount();
+});
+
+test("lectura posterior al envío reemplazada no libera el siguiente envío con una versión obsoleta", async t => {
+  const f = mount(); t.after(() => f.unmount());
+  await f.ready(); await f.select(); await f.change({ text: "Primera respuesta" });
+  f.composer().props.send(); await f.flush();
+  f.requests.find(request => request.init.method === "POST").respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
+  const firstRead = f.requests.find(request => !request.done && request.url === `/api/atencion/${chat.id}`);
+  await f.change({ text: "Borrador que espera la versión vigente" });
+  // Other view callbacks can start a newer scoped detail read while this one is pending.
+  f.composer().props.refresh(); await f.flush();
+  const currentRead = f.requests.filter(request => !request.done && request.url === `/api/atencion/${chat.id}`).at(-1);
+  assert.notEqual(currentRead, firstRead);
+  firstRead.respond({ ...detail, conversation: { ...chat, version: 5 } }); await f.flush();
+  assert.equal(f.composer().props.detail.conversation.version, 4, "the superseded response is not applied");
+  assert.equal(f.composer().props.refreshing, true, "finishing an ignored response cannot release the version gate");
+  assert.equal(f.composer().props.refreshBusy, true);
+  assert.equal(f.composer().props.draft.text, "Borrador que espera la versión vigente");
+  f.composer().props.send(); await f.flush();
+  assert.equal(f.requests.filter(request => request.init.method === "POST").length, 1);
+  currentRead.respond({ ...detail, conversation: { ...chat, version: 6 }, messages: [{ ...outbound, deliveryStatus: "delivered" }] }); await f.flush();
+  assert.equal(f.composer().props.refreshing, false); assert.equal(f.composer().props.refreshBusy, false);
+  f.composer().props.send(); await f.flush();
+  assert.equal(f.requests.filter(request => request.init.method === "POST").at(-1).init.body.get("version"), "6");
+});
+
+test("actualización postenvío vence a los quince segundos y conserva borrador y adjunto hasta recuperar estado", async t => {
+  const f = mount(); t.after(() => f.unmount());
+  await f.ready(); await f.select(); await f.change({ text: "Respuesta confirmada" });
+  f.composer().props.send(); await f.flush();
+  f.requests.find(request => request.init.method === "POST").respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
+  const expiredRead = f.requests.find(request => !request.done && request.url === `/api/atencion/${chat.id}`);
+  f.requests.find(request => !request.done && request.url.includes("?")).respond(inbox); await f.flush();
+  const file = new File(["imagen sintética"], "pendiente.png", { type: "image/png" });
+  await f.change({ text: "Siguiente respuesta conservada", file });
+  await f.advance(14_999); assert.equal(f.composer().props.refreshBusy, true);
+  await f.advance(1);
+  assert.equal(expiredRead.init.signal.aborted, true);
+  assert.equal(f.composer().props.busy, false); assert.equal(f.composer().props.refreshBusy, false);
+  assert.equal(f.composer().props.refreshing, true, "timeout never authorizes sending against the old version");
+  assert.equal(f.composer().props.draft.text, "Siguiente respuesta conservada"); assert.equal(f.composer().props.draft.file, file);
+  assert.equal(f.composer().props.detail.messages.at(-1).id, outbound.id, "the acknowledged message remains visible");
+  assert.ok(f.all().some(node => node.props.role === "alert" && /consulta tardó demasiado/i.test(text(node))));
+  f.composer().props.send(); await f.flush(); assert.equal(f.requests.filter(request => request.init.method === "POST").length, 1);
+  f.composer().props.refresh(); await f.flush();
+  const recovery = f.requests.filter(request => !request.done && request.url === `/api/atencion/${chat.id}`).at(-1);
+  assert.notEqual(recovery, expiredRead); assert.equal(f.composer().props.refreshBusy, true);
+  recovery.respond({ ...detail, conversation: { ...chat, version: 5 }, messages: [{ ...outbound, deliveryStatus: "delivered" }] }); await f.flush();
+  assert.equal(f.composer().props.refreshing, false); assert.equal(f.composer().props.refreshBusy, false);
+  assert.equal(f.composer().props.draft.text, "Siguiente respuesta conservada"); assert.equal(f.composer().props.draft.file, file);
+  expiredRead.respond(detail); await f.flush();
+  assert.equal(f.composer().props.detail.conversation.version, 5, "a late response after abort cannot replace the recovered version");
+  f.composer().props.send(); await f.flush();
+  const next = f.requests.filter(request => request.init.method === "POST").at(-1);
+  assert.equal(next.init.body.get("version"), "5"); assert.equal(next.init.body.get("text"), "Siguiente respuesta conservada");
+  assert.equal(next.init.body.get("file").name, "pendiente.png");
 });
 
 const replyInput = composer => composer.all().find(node => node.type === "textarea");

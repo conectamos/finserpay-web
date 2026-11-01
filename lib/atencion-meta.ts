@@ -246,6 +246,12 @@ export function validateMetaAttentionMedia(input: { bytes: Uint8Array; mimeType:
 export function createMetaAttentionAdapter(options: Options = {}) {
   const env = options.env ?? process.env; const transport = options.fetch ?? fetch; const now = options.now ?? Date.now;
   const timeoutMs = Math.max(100, Math.min(options.timeoutMs ?? 20_000, 30_000));
+  type VerifiedConnection = MetaScope & { displayPhone: string };
+  // A runtime owns one adapter per HTTP request. Reuse only the same private
+  // configuration for a few seconds (e.g. upload + send), never across runtimes.
+  let verified: { config: Config; checkedAt: number; value: VerifiedConnection } | null = null;
+  let verifying: { config: Config; promise: Promise<VerifiedConnection> } | null = null;
+  const sameConfig = (a: Config, b: Config) => a.token === b.token && a.version === b.version && a.phoneNumberId === b.phoneNumberId && a.wabaId === b.wabaId;
   function scope(): MetaScope {
     const selected = getMetaAttentionScope(env);
     if (!selected) fail("META_SCOPE_CONFIG", "La línea de Atención no coincide con la autorizada.", 503);
@@ -380,18 +386,34 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     catch { throw new AttentionMetaError("INVALID_RESPONSE", "Meta devolvió una respuesta no válida.", 502, sending); }
   }
   async function verifyConnection() {
-    const cfg = config(); const phone = await graph(cfg.phoneNumberId, { fields: "id,display_phone_number" });
-    const matches = (item: Dict) => item.id === cfg.phoneNumberId && str(item.display_phone_number).replace(/[+\s()-]/g, "") === META_ATTENTION_LINE.displayPhone.slice(1);
-    if (!matches(phone)) fail("META_SCOPE_MISMATCH", "Meta no confirmó la línea autorizada de Atención.", 503);
-    let after = ""; const seen = new Set<string>();
-    for (let page = 0; page < 10; page++) {
-      const result = await graph(`${cfg.wabaId}/phone_numbers`, { fields: "id,display_phone_number", limit: "100", ...(after ? { after } : {}) });
-      if (list(result.data).some(item => matches(dict(item)))) return { ...scope(), displayPhone: META_ATTENTION_LINE.displayPhone };
-      const paging = dict(result.paging); const next = str(dict(paging.cursors).after);
-      if (!paging.next || !next || next.length > 2048 || seen.has(next)) break;
-      seen.add(next); after = next;
-    }
-    fail("META_SCOPE_MISMATCH", "Meta no confirmó que la línea pertenezca a la cuenta autorizada.", 503);
+    const cfg = config(), checkedAt = now();
+    if (verified && sameConfig(verified.config, cfg) && checkedAt >= verified.checkedAt && checkedAt - verified.checkedAt < 5_000) return { ...verified.value };
+    if (verifying && sameConfig(verifying.config, cfg)) return { ...await verifying.promise };
+    verified = null;
+    const promise = (async (): Promise<VerifiedConnection> => {
+      const [phone, firstPage] = await Promise.all([
+        graph(cfg.phoneNumberId, { fields: "id,display_phone_number" }),
+        graph(`${cfg.wabaId}/phone_numbers`, { fields: "id,display_phone_number", limit: "100" }),
+      ]);
+      const matches = (item: Dict) => item.id === cfg.phoneNumberId && str(item.display_phone_number).replace(/[+\s()-]/g, "") === META_ATTENTION_LINE.displayPhone.slice(1);
+      if (!matches(phone)) fail("META_SCOPE_MISMATCH", "Meta no confirmó la línea autorizada de Atención.", 503);
+      let result = firstPage; const seen = new Set<string>();
+      for (let page = 0; page < 10; page++) {
+        if (list(result.data).some(item => matches(dict(item)))) {
+          if (!sameConfig(cfg, config())) fail("META_SCOPE_CONFIG", "La configuración del canal cambió. Vuelve a verificar la conexión.", 503);
+          const value = { phoneNumberId: cfg.phoneNumberId, wabaId: cfg.wabaId, displayPhone: META_ATTENTION_LINE.displayPhone };
+          verified = { config: cfg, checkedAt: now(), value }; return value;
+        }
+        const paging = dict(result.paging), next = str(dict(paging.cursors).after);
+        if (page === 9 || !paging.next || !next || next.length > 2048 || seen.has(next)) break;
+        seen.add(next);
+        result = await graph(`${cfg.wabaId}/phone_numbers`, { fields: "id,display_phone_number", limit: "100", after: next });
+      }
+      fail("META_SCOPE_MISMATCH", "Meta no confirmó que la línea pertenezca a la cuenta autorizada.", 503);
+    })();
+    verifying = { config: cfg, promise };
+    try { return { ...await promise }; }
+    finally { if (verifying?.promise === promise) verifying = null; }
   }
   function validateSendBase(input: Omit<MetaSendInput,"lastInboundAt">, beforeSend: BeforeSend) {
     config(); enabled();
