@@ -279,6 +279,65 @@ test("verified sender and WABA precede persisted claim and single send", async (
   const payload = JSON.parse(mock.requests[2].init.body);
   assert.equal(payload.biz_opaque_callback_data, input.attemptId); assert.equal(payload.text.body, input.text);
 });
+test("verification starts independent phone and WABA reads together and shares concurrent work", async () => {
+  const pending = [];
+  const client = adapter({ fetch: (url) => new Promise(resolve => pending.push({ url: new URL(url), resolve })) });
+  const first = client.verifyConnection(), second = client.verifyConnection();
+  assert.equal(pending.length, 2, "both independent reads start before either one resolves; concurrent calls add no reads");
+  pending.find(item => item.url.pathname.endsWith("/phone_numbers")).resolve(json({ data: [{ id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }] }));
+  pending.find(item => !item.url.pathname.endsWith("/phone_numbers")).resolve(json({ id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }));
+  assert.deepEqual(await first, await second);
+});
+test("successful verification is private to one adapter, expires after five seconds and binds token and Graph version", async () => {
+  const cfg = { ...env }, requests = []; let clock = now;
+  const fetch = async (url, init) => { const parsed = new URL(url); requests.push({ url: parsed, authorization: init.headers.Authorization }); return parsed.pathname.endsWith("/phone_numbers")
+    ? json({ data: [{ id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }] })
+    : json({ id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }); };
+  const client = adapter({ env: cfg, fetch, now: () => clock });
+  const returned = await client.verifyConnection(); returned.displayPhone = "must not mutate the cache";
+  assert.equal((await client.verifyConnection()).displayPhone, META_ATTENTION_LINE.displayPhone); assert.equal(requests.length, 2);
+  clock += 4_999; await client.verifyConnection(); assert.equal(requests.length, 2);
+  clock++; await client.verifyConnection(); assert.equal(requests.length, 4);
+  cfg.WHATSAPP_ATTENTION_ACCESS_TOKEN = "test-only-rotated-token"; await client.verifyConnection(); assert.equal(requests.length, 6);
+  assert.equal(requests.at(-1).authorization, "Bearer test-only-rotated-token");
+  cfg.WHATSAPP_GRAPH_API_VERSION = "v26.0"; await client.verifyConnection(); assert.equal(requests.length, 8); assert.match(requests.at(-1).url.pathname, /^\/v26\.0\//);
+  await adapter({ env: cfg, fetch, now: () => clock }).verifyConnection(); assert.equal(requests.length, 10, "another HTTP runtime always verifies independently");
+  cfg.WHATSAPP_ATTENTION_PHONE_NUMBER_ID = "99999999999";
+  await assert.rejects(client.verifyConnection(), { code: "META_SCOPE_CONFIG" }); assert.equal(requests.length, 10);
+});
+test("verification failures and credential changes while pending never produce a cached success", async () => {
+  let broken = true;
+  const mock = transportMock({ custom: url => broken && url.pathname.endsWith("/phone_numbers") ? json({ data: [] }) : undefined });
+  const client = adapter({ fetch: mock.transport });
+  await assert.rejects(client.verifyConnection(), { code: "META_SCOPE_MISMATCH" });
+  broken = false; await client.verifyConnection(); assert.equal(mock.requests.length, 4, "a failure must be retried against Meta");
+  const cfg = { ...env }, pending = [];
+  const changed = adapter({ env: cfg, fetch: url => new Promise(resolve => pending.push({ url: new URL(url), resolve })) });
+  const first = changed.verifyConnection(); cfg.WHATSAPP_ATTENTION_ACCESS_TOKEN = "test-only-new-token";
+  for (const item of pending) item.resolve(json(item.url.pathname.endsWith("/phone_numbers")
+    ? { data: [{ id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }] }
+    : { id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }));
+  await assert.rejects(first, { code: "META_SCOPE_CONFIG" });
+  const next = changed.verifyConnection(); assert.equal(pending.length, 4, "changed credentials require a fresh pair of reads");
+  for (const item of pending.slice(2)) item.resolve(json(item.url.pathname.endsWith("/phone_numbers")
+    ? { data: [{ id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }] }
+    : { id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }));
+  await next;
+});
+test("upload and media send reuse the short verification but still validate metadata and the transactional claim", async () => {
+  const mock = mediaMock(), client = adapter({ fetch: mock.transport }); let claimed = false;
+  await client.uploadMedia({ bytes: png, mimeType: "image/png", fileName: "image.png", kind: "image" });
+  await client.sendMedia({ ...input, mediaId: "1234567890", kind: "image" }, async () => { claimed = true; });
+  assert.equal(claimed, true);
+  assert.equal(mock.requests.filter(item => item.url.pathname.endsWith("/phone_numbers")).length, 1);
+  assert.equal(mock.requests.filter(item => item.url.pathname === `/v25.0/${META_ATTENTION_LINE.phoneNumberId}`).length, 1);
+  assert.equal(mock.requests.filter(item => item.url.pathname === "/v25.0/1234567890").length, 1, "uploaded media metadata remains independently validated");
+  assert.equal(mock.requests.filter(item => item.init.method === "POST").length, 2, "one upload and one send, without retries");
+  const cfg = { ...env }, flagsMock = transportMock(), guarded = adapter({ env: cfg, fetch: flagsMock.transport });
+  await guarded.verifyConnection(); cfg.WHATSAPP_ATTENTION_SEND_ENABLED = "false";
+  await assert.rejects(guarded.sendText(input, async () => assert.fail("disabled sends cannot claim")), { code: "META_SEND_DISABLED" });
+  assert.equal(flagsMock.requests.length, 2, "cached verification never bypasses fresh enablement guards");
+});
 test("different sender or missing WABA membership prevents claim and send", async () => {
   for (const mode of ["sender", "waba"]) {
     const mock = transportMock({ custom: (url) => {
@@ -403,9 +462,9 @@ test("transport diagnostics expose only stage and allowlisted name/code without 
   const logs=[];t.mock.method(console,"warn",(...args)=>logs.push(args));
   const failure=new TypeError("private token signed-url client information",{cause:Object.assign(new Error("private cause"),{code:"ECONNRESET"})});
   await assert.rejects(adapter({fetch:async()=>{throw failure;}}).verifyConnection(),{code:"META_UNAVAILABLE",uncertain:false});
-  assert.deepEqual(logs[0],["[attention-meta-transport]",{operation:"phone",error:"TypeError",cause:"ECONNRESET",aborted:false}]);
+  assert.deepEqual(logs,["phone","waba_phones"].map(operation=>["[attention-meta-transport]",{operation,error:"TypeError",cause:"ECONNRESET",aborted:false}]));
   await assert.rejects(adapter({fetch:async()=>{throw {name:"secret name",code:"secret code",message:"private message"};}}).verifyConnection(),{code:"META_UNAVAILABLE"});
-  assert.deepEqual(logs[1],["[attention-meta-transport]",{operation:"phone",error:"UnknownError",cause:"UNKNOWN",aborted:false}]);
+  assert.deepEqual(logs.slice(2),["phone","waba_phones"].map(operation=>["[attention-meta-transport]",{operation,error:"UnknownError",cause:"UNKNOWN",aborted:false}]));
   assert.ok(!JSON.stringify(logs).includes("private"));assert.ok(!JSON.stringify(logs).includes("secret"));assert.ok(!JSON.stringify(logs).includes(env.WHATSAPP_ATTENTION_ACCESS_TOKEN));
 });
 test("send window is rechecked after a delayed transactional claim", async () => {

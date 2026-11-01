@@ -18,6 +18,7 @@ import AttentionMessageText, { type AttentionPhoneLookupResult } from "./attenti
 import AttentionTemplateComposer from "./attention-template-composer";
 import AttentionBoard from "./attention-board";
 import AttentionConversationSection from "./attention-conversation-section";
+import { useAttentionQuickReplyShortcuts } from "./attention-quick-reply-shortcuts";
 import AttentionCloseAll from "./attention-close-all";
 import { AttentionReceivedFiles } from "./attention-contact-summary";
 import AttentionWorkQueues from "./attention-work-queues";
@@ -232,7 +233,7 @@ function ChatDropSurface({ children, receive }: { children: ReactNode; receive: 
     {error && <div className={styles.dropError} role="alert"><span>{error}</span><Button variant="ghost" aria-label="Cerrar aviso de archivo" onClick={() => setError("")}><X size={16} /></Button></div>}
   </section>;
 }
-function ReplyComposer({ detail, draft, busy, change, receiveFiles, send, resolve, restart, retry, discard, fallbackDapta, actorKey, quickReplies = [], templateSent, templateBusyChanged }: { detail: AttentionDetail; draft: ReplyDraft; busy: boolean; change: (patch: Partial<ReplyDraft>) => void; receiveFiles: (files: File[]) => string | null; send: () => void; resolve: () => void; restart: () => void; retry: () => void; discard: () => void; fallbackDapta: boolean; actorKey: string; quickReplies?: AttentionQuickReply[]; templateSent: () => void | Promise<void>; templateBusyChanged: (value: boolean) => void }) {
+function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = false, refresh, change, receiveFiles, send, resolve, restart, retry, discard, fallbackDapta, actorKey, quickReplies = [], templateSent, templateBusyChanged }: { detail: AttentionDetail; draft: ReplyDraft; busy: boolean; refreshing?: boolean; refreshBusy?: boolean; refresh?: () => void; change: (patch: Partial<ReplyDraft>) => void; receiveFiles: (files: File[]) => string | null; send: () => void; resolve: () => void; restart: () => void; retry: () => void; discard: () => void; fallbackDapta: boolean; actorKey: string; quickReplies?: AttentionQuickReply[]; templateSent: () => void | Promise<void>; templateBusyChanged: (value: boolean) => void }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const expires = Date.parse(detail.messaging?.windowExpiresAt || "");
@@ -245,11 +246,16 @@ function ReplyComposer({ detail, draft, busy, change, receiveFiles, send, resolv
     ? detail.messaging?.reason || "La conexión de envío con Meta está pendiente de configuración."
     : "La ventana de 24 horas terminó. Se necesita una plantilla aprobada para volver a contactar al cliente.";
   const invalid = replyValidation(draft);
+  const replyInput = useRef<HTMLTextAreaElement | null>(null);
+  const shortcuts = useAttentionQuickReplyShortcuts({ text: draft.text, replies: quickReplies, disabled: busy || draft.locked || !canReply,
+    maxLength: draft.file && !separateText(draft.file) ? 1024 : 4096, inputRef: replyInput,
+    onChange: text => change({ text }), onError: error => change({ error }) });
   function handleReplyKey(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (shortcuts.onKeyDown(event)) return;
     // Safari may report the Enter that confirms an IME candidate as keyCode 229.
     if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.defaultPrevented) return;
     event.preventDefault();
-    if (!event.repeat && canReply && !busy && !draft.locked && !invalid) event.currentTarget.form?.requestSubmit();
+    if (!event.repeat && canReply && !busy && !refreshing && !draft.locked && !invalid) event.currentTarget.form?.requestSubmit();
   }
   function pasteReplyImage(event: ClipboardEvent<HTMLTextAreaElement>) {
     const items = Array.from(event.clipboardData.items || []);
@@ -264,7 +270,7 @@ function ReplyComposer({ detail, draft, busy, change, receiveFiles, send, resolv
     const error = receiveFiles(files);
     if (error) change({ error });
   }
-  return <form data-attention="composer" className={`${styles.replyComposer} ${composerLayout.composer}`} aria-label="Responder por WhatsApp" onSubmit={event => { event.preventDefault(); if (canReply && !busy && !draft.locked && !invalid) send(); }}>
+  return <form data-attention="composer" className={`${styles.replyComposer} ${composerLayout.composer}`} aria-label="Responder por WhatsApp" onSubmit={event => { event.preventDefault(); if (canReply && !busy && !refreshing && !draft.locked && !invalid) send(); }}>
     {!canReply && <p className={styles.replyUnavailable} role="status">{blockedReason}</p>}
     <div data-attention="reply-draft" className={`${styles.replyDraftBody} ${composerLayout.draft}`}>
     {draft.file && <div className={styles.replyAttachment}><FileText aria-hidden="true" size={19} /><span><strong>{draft.file.name}</strong><small>{(draft.file.size / 1024 / 1024).toFixed(2)} MB</small></span><Button type="button" variant="ghost" aria-label="Quitar archivo" disabled={busy || draft.locked} onClick={() => change({ file: null })}><X aria-hidden="true" size={17} /></Button></div>}
@@ -272,6 +278,7 @@ function ReplyComposer({ detail, draft, busy, change, receiveFiles, send, resolv
     {separateText(draft.file) && draft.text.trim() && <p className={styles.replyLimit}>El texto quedará como borrador para enviarlo después.</p>}
     {draft.error && <p className={styles.replyError} role="alert">{draft.error}</p>}
     {!draft.error && invalid && (draft.text || draft.file) && <p className={styles.replyError} role="status">{invalid}</p>}
+    {refreshing && <div className={styles.replyLimit}><p role="status">Puedes escribir tu próxima respuesta mientras se actualiza la conversación…</p>{refresh && <Button type="button" variant="ghost" disabled={busy || refreshBusy} onClick={refresh}>{refreshBusy ? "Actualizando estado…" : "Actualizar estado"}</Button>}</div>}
     </div>
     <div data-attention="reply-actions" data-has-draft={Boolean(draft.text.trim() || draft.file)} data-locked={draft.locked} className={composerLayout.row}>
       <details className={composerLayout.menu} onKeyDown={event => { if (event.key === "Escape" && !event.currentTarget.querySelector("dialog[open]")) { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}>
@@ -285,8 +292,9 @@ function ReplyComposer({ detail, draft, busy, change, receiveFiles, send, resolv
       </details>
       <AttentionComposerTools inline key={detail.conversation.id} conversationId={detail.conversation.id} disabled={busy || draft.locked || !canReply} audioDisabled={Boolean(draft.file)} onAudio={file => { if (!draft.file) change({ file }); }} onEmoji={emoji => { if (draft.text.length + emoji.length <= (draft.file && !separateText(draft.file) ? 1024 : 4096)) change({ text: `${draft.text}${emoji}` }); }} />
       <label className={styles.srOnly} htmlFor={`reply-${detail.conversation.id}`}>Responder al cliente</label>
-      <textarea id={`reply-${detail.conversation.id}`} rows={1} value={draft.text} disabled={busy || draft.locked || !canReply} onChange={event => change({ text: event.target.value })} onKeyDown={handleReplyKey} onPaste={pasteReplyImage} enterKeyHint="send" aria-keyshortcuts="Enter" title="Enter para enviar. Shift + Enter para nueva línea. Ctrl + V para pegar una imagen." maxLength={draft.file && !separateText(draft.file) ? 1024 : 4096} placeholder={canReply ? "Escribe un mensaje…" : "El envío aún no está disponible"} />
-      {!draft.locked && <Button className={composerLayout.send} type="submit" title={busy ? "Enviando…" : "Enviar mensaje"} disabled={busy || !canReply || Boolean(invalid)}><Send aria-hidden="true" size={20} /><span className={styles.srOnly}>{busy ? "Enviando…" : draft.file?.type === "image/webp" ? "Enviar sticker" : isAudioFile(draft.file) ? "Enviar audio" : "Enviar"}</span></Button>}
+      {shortcuts.menu}
+      <textarea ref={replyInput} id={`reply-${detail.conversation.id}`} rows={1} value={draft.text} disabled={busy || draft.locked || !canReply} onChange={event => { change({ text: event.target.value }); shortcuts.onCaretChange(); }} onClick={shortcuts.onCaretChange} onSelect={shortcuts.onCaretChange} {...shortcuts.popupProps} onKeyDown={handleReplyKey} onPaste={pasteReplyImage} enterKeyHint="send" aria-keyshortcuts="Enter" title="Enter para enviar. Shift + Enter para nueva línea. / para respuestas rápidas. Ctrl + V para pegar una imagen." maxLength={draft.file && !separateText(draft.file) ? 1024 : 4096} placeholder={canReply ? "Escribe un mensaje…" : "El envío aún no está disponible"} />
+      {!draft.locked && <Button className={composerLayout.send} type="submit" title={busy ? "Enviando…" : refreshing ? "Actualizando estado del chat…" : "Enviar mensaje"} disabled={busy || refreshing || !canReply || Boolean(invalid)}><Send aria-hidden="true" size={20} /><span className={styles.srOnly}>{busy ? "Enviando…" : draft.file?.type === "image/webp" ? "Enviar sticker" : isAudioFile(draft.file) ? "Enviar audio" : "Enviar"}</span></Button>}
     </div>
     {draft.locked && <div className={composerLayout.recovery}><Button type="button" variant="secondary" disabled={busy} onClick={resolve}><RefreshCw aria-hidden="true" size={16} />{busy ? "Consultando…" : "Consultar estado"}</Button>{draft.result === "missing" && <><Button type="button" variant="secondary" disabled={busy} onClick={discard}>Descartar intento</Button><Button type="button" disabled={busy || !canReply} onClick={retry}>Reintentar misma solicitud</Button></>}{draft.result === "failed" && <Button type="button" disabled={busy || !canReply} onClick={restart}>Preparar nuevo intento</Button>}</div>}
     {draft.locked && <p className={styles.replyLimit}>Comprueba el estado antes de otro envío.</p>}
@@ -314,6 +322,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const [refreshNotice, setRefreshNotice] = useState("");
   const [liveStatus, setLiveStatus] = useState<"connecting" | "connected" | "reconnecting" | "offline" | "paused" | "polling">("connecting");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraft>>({});
+  const [refreshingReplies, setRefreshingReplies] = useState<Record<string, boolean>>({});
   const [financialAttempts, setFinancialAttempts] = useState<Record<string, FinancialAttempts>>({});
   const [notice, setNotice] = useState("");
   const [dismissedAgendaAlert, setDismissedAgendaAlert] = useState<string | null>(null);
@@ -336,10 +345,12 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const [syncRevision, setSyncRevision] = useState(0);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
+  const detailReads = useRef(new Set<() => void>());
   const inboxReadError = useRef(false);
   const detailReadError = useRef(false);
   const selectionRef = useRef<string | null>(null);
   const busyRef = useRef(false);
+  const replyRefreshes = useRef(new Map<string, symbol>());
   const syncingRef = useRef(false);
   const foregroundReads = useRef(0);
   const pollController = useRef<AbortController | null>(null);
@@ -371,11 +382,12 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
 
   const clearInaccessibleData = useCallback((message: string) => {
     ++listRequest.current; ++detailRequest.current; liveAccessBlocked.current = true;
+    detailReads.current.forEach(cancel => cancel());
     teamReadController.current?.abort(); teamReadAttempts.current = {};
     inboxReadError.current = true; detailReadError.current = false;
     selectionRef.current = null;
     setInbox(null); setDetail(null); setSelected(null); setShowCustomer(false); setBoardOpened(false);
-    setReplyDrafts({}); setFinancialAttempts({});
+    setReplyDrafts({}); setRefreshingReplies({}); replyRefreshes.current.clear(); setFinancialAttempts({});
     setOpenedWorkKinds([]); setWorkBusyKinds({ enrollment: false, welcome: false });
     setLoading(false); setDetailLoading(false); setDetailError(""); setError(message);
   }, []);
@@ -403,15 +415,32 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     pollController.current?.abort(); foregroundReads.current++;
     detailReadError.current = false;
     const request = ++detailRequest.current; setDetailLoading(true); setDetailError("");
+    const controller = new AbortController();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let cancel: (() => void) | undefined;
     try {
-      const result = await api<AttentionDetail>(`/api/atencion/${encodeURIComponent(id)}`, { signal });
-      if (mounted.current && !signal?.aborted && request === detailRequest.current && selectionRef.current === id) setDetail(result);
+      const bounded = new Promise<never>((_, reject) => {
+        cancel = () => { controller.abort(); reject(new Error("Consulta cancelada.")); };
+        detailReads.current.add(cancel);
+        signal?.addEventListener("abort", cancel, { once: true });
+        if (signal?.aborted) cancel();
+        deadline = setTimeout(() => { controller.abort(); reject(new Error("La consulta tardó demasiado. Actualiza el estado para continuar enviando; tu borrador se conserva.")); }, 15_000);
+      });
+      const result = await Promise.race([api<AttentionDetail>(`/api/atencion/${encodeURIComponent(id)}`, { signal: controller.signal }), bounded]);
+      if (mounted.current && !signal?.aborted && !controller.signal.aborted && request === detailRequest.current && selectionRef.current === id) {
+        setDetail(result);
+        // Only an applied, current server version can enable another send.
+        if (replyRefreshes.current.delete(id)) setRefreshingReplies(current => ({ ...current, [id]: false }));
+      }
     } catch (err) {
       if (mounted.current && !signal?.aborted && request === detailRequest.current && selectionRef.current === id) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
-        else { detailReadError.current = true; setDetail(null); setDetailError(errorMessage(err)); }
+        else { detailReadError.current = true; if (!replyRefreshes.current.has(id) || err instanceof ApiError && err.status === 404) setDetail(null); setDetailError(errorMessage(err)); }
       }
-    } finally { foregroundReads.current--; if (mounted.current && !signal?.aborted && request === detailRequest.current) setDetailLoading(false); }
+    } finally {
+      if (deadline) clearTimeout(deadline); if (cancel) { signal?.removeEventListener("abort", cancel); detailReads.current.delete(cancel); }
+      foregroundReads.current--; if (mounted.current && !signal?.aborted && request === detailRequest.current) setDetailLoading(false);
+    }
   }, [clearInaccessibleData]);
   useEffect(() => {
     const controller = new AbortController(); const timeout = setTimeout(() => { if (!syncingRef.current) void loadInbox(controller.signal); }, 250);
@@ -419,7 +448,8 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   }, [loadInbox, syncRevision]);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; stopSync.current = true; replyController.current?.abort(); if (replyDeadline.current) clearTimeout(replyDeadline.current); financialController.current?.abort(); if (financialDeadline.current) clearTimeout(financialDeadline.current); teamReadController.current?.abort(); };
+    const reads = detailReads.current;
+    return () => { mounted.current = false; stopSync.current = true; reads.forEach(cancel => cancel()); replyController.current?.abort(); if (replyDeadline.current) clearTimeout(replyDeadline.current); financialController.current?.abort(); if (financialDeadline.current) clearTimeout(financialDeadline.current); teamReadController.current?.abort(); };
   }, []);
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -482,6 +512,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
           id ? api<AttentionDetail>(`/api/atencion/${encodeURIComponent(id)}`, { signal: controller.signal })
             .then(result => { if (current() && selectionRef.current === id) {
               setDetail(result);
+              if (replyRefreshes.current.delete(id)) setRefreshingReplies(previous => ({ ...previous, [id]: false }));
               if (detailReadError.current) { detailReadError.current = false; setDetailError(""); }
             } }).catch(err => failed(err, true)) : Promise.resolve(),
         ]);
@@ -714,7 +745,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     }
   }
   async function sendReply(retrySame = false) {
-    if (!detail || busyRef.current || syncingRef.current || !replyWindowOpen(detail)) return;
+    if (!detail || busyRef.current || syncingRef.current || replyRefreshes.current.has(detail.conversation.id) || !replyWindowOpen(detail)) return;
     const id = detail.conversation.id; const previous = replyDrafts[id] || emptyReply;
     if ((previous.locked && !(retrySame && previous.result === "missing" && previous.requestId)) || replyValidation(previous)) return;
     const draft: ReplyDraft = { ...previous, requestId: previous.requestId || crypto.randomUUID(), version: previous.version ?? detail.conversation.version, locked: true, error: "", result: null };
@@ -727,8 +758,19 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
       const form = new FormData(); form.set("requestId", draft.requestId!); form.set("version", String(draft.version)); form.set("text", separateText(draft.file) ? "" : draft.text.trim());
       if (draft.file) form.set("file", draft.file);
       const result = await api<{ message: AttentionMessage; uncertain?: boolean }>(`/api/atencion/${encodeURIComponent(id)}/messages`, { method: "POST", body: form, signal: controller.signal });
-      recordReplyResult(id, draft, result.uncertain ? { ...result.message, deliveryStatus: "uncertain" } : result.message);
-      if (mounted.current) await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]);
+      const confirmed = result.uncertain ? { ...result.message, deliveryStatus: "uncertain" as const } : result.message;
+      recordReplyResult(id, draft, confirmed);
+      if (mounted.current && selectionRef.current === id) {
+        // Only the server acknowledgement enters the log; never invent a sent message.
+        setDetail(current => current?.conversation.id === id && !current.messages.some(item => item.id === confirmed.id)
+          ? { ...current, historyTruncated: current.historyTruncated || current.messages.length >= 500, messages: [...current.messages, confirmed].sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt) || a.id.localeCompare(b.id)).slice(-500) } : current);
+        const token = Symbol(); replyRefreshes.current.set(id, token);
+        setRefreshingReplies(current => ({ ...current, [id]: true }));
+        // Typing can resume as soon as Meta answers. A new send still waits for
+        // the authoritative conversation version, without waiting for the inbox.
+        void loadDetail(id);
+      }
+      if (mounted.current) void loadInbox();
     } catch (err) {
       if (mounted.current) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
@@ -999,7 +1041,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
               {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <>
 
                 <AttentionObservedRead key={`read:${detail.conversation.id}`} detail={detail} active={!showCustomer && !busy && !syncing} log={messageLog} request={api} onRead={() => void loadInbox()} onError={error => { handleFinancialAccessError(detail.conversation.id, error); }} /><div data-attention="history" className={styles.historyViewport}><div ref={messageLog} data-attention="messages" className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map((message, index) => <Fragment key={message.id}>{(index === 0 || messageDay(message.sentAt) !== messageDay(detail.messages[index - 1].sentAt)) && <p data-attention="day" className={styles.daySeparator}>{date(message.sentAt, true)}</p>}<article data-attention="message" data-direction={message.direction} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}>{message.direction === "outbound" && (index === 0 || detail.messages[index - 1].direction !== "outbound" || detail.messages[index - 1].author !== message.author) && <span>{message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span>}<MessageContent text={message.text} media={message.attachment} mediaReady={keepLatestAfterMedia} phoneActions={{ onOpenPhone: lookupPhoneChat, onOpenConversation: id => openPhoneChat(id, detail.conversation.id), disabled: busy || syncing || workBusy || view !== "conversations", contextKey: `${currentActor.key}:${view}:${detail.conversation.id}:${message.id}` }} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div data-attention="message-meta" className={styles.messageMeta}><time dateTime={message.sentAt} title={date(message.sentAt)}>{time(message.sentAt)}</time><MessageDelivery message={message} /></div></article></Fragment>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
-                {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={detail.conversation.id} detail={detail} actorKey={currentActor.key} quickReplies={inbox?.quickReplies || []} templateSent={() => refreshAfterFinancialAction(detail.conversation.id)} templateBusyChanged={quickReplyBusyChanged} draft={replyDrafts[detail.conversation.id] || emptyReply} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} receiveFiles={receiveReplyFiles} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>{detail.workRequest ? `${detail.workRequest.ally} · ${detail.workRequest.advisor}` : "Gestión interna · asignación y seguimiento por analistas."}</span>{detail.workRequest && <Button variant="secondary" onClick={()=>continueWork(detail.workRequest!.id,detail.workRequest!.kind)}>Continuar solicitud</Button>}</footer>}
+                {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={detail.conversation.id} detail={detail} actorKey={currentActor.key} quickReplies={inbox?.quickReplies || []} refreshing={Boolean(refreshingReplies[detail.conversation.id])} refreshBusy={detailLoading} refresh={() => { if (selectionRef.current) void loadDetail(selectionRef.current); }} templateSent={() => refreshAfterFinancialAction(detail.conversation.id)} templateBusyChanged={quickReplyBusyChanged} draft={replyDrafts[detail.conversation.id] || emptyReply} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} receiveFiles={receiveReplyFiles} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>{detail.workRequest ? `${detail.workRequest.ally} · ${detail.workRequest.advisor}` : "Gestión interna · asignación y seguimiento por analistas."}</span>{detail.workRequest && <Button variant="secondary" onClick={()=>continueWork(detail.workRequest!.id,detail.workRequest!.kind)}>Continuar solicitud</Button>}</footer>}
               </>}
             </>}</ChatDropSurface>
 
@@ -1019,7 +1061,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
 
         {boardOpened && contentReady && <div className={styles.boardPane} hidden={view !== "board"}><AttentionBoard key={currentActor.key} actor={currentActor} active={view === "board"} onRefresh={boardRevision} onOpenConversation={selectConversation} onAccessDenied={clearInaccessibleData} busyChanged={quickReplyBusyChanged} /></div>}
 
-        {contentReady && openedWorkKinds.map(kind => <section key={kind} hidden={view !== kind} data-attention="workspace" className={`${styles.workspace} ${chatSkin.conversationLayout}`} aria-label={kind === "enrollment" ? "Bandeja de enrolamientos" : "Bandeja de aprobaciones"}>{messagingRail}<div className={chatSkin.workSurface}><AttentionWorkQueues kind={kind} initialId={view === kind ? workSelection : null} active={view === kind} embedded navigation={typeNavigation} canAssignFilter={currentActor.central} onBusyChange={kind === "enrollment" ? enrollmentBusyChanged : welcomeBusyChanged} /></div></section>)}
+        {contentReady && openedWorkKinds.map(kind => <section key={kind} hidden={view !== kind} data-attention="workspace" className={`${styles.workspace} ${chatSkin.conversationLayout}`} aria-label={kind === "enrollment" ? "Bandeja de enrolamientos" : "Bandeja de aprobaciones"}>{messagingRail}<div className={chatSkin.workSurface}><AttentionWorkQueues quickReplies={inbox?.quickReplies || []} kind={kind} initialId={view === kind ? workSelection : null} active={view === kind} embedded navigation={typeNavigation} canAssignFilter={currentActor.central} onBusyChange={kind === "enrollment" ? enrollmentBusyChanged : welcomeBusyChanged} /></div></section>)}
         {view === "agenda" && contentReady && <AttentionAgendaView request={api} revision={inbox} disabled={busy || syncing} openChat={selectConversation} busyChanged={quickReplyBusyChanged} saved={() => { void loadInbox(); if (selectionRef.current) void loadDetail(selectionRef.current); }} accessDenied={(error, id) => { if (id) return handleFinancialAccessError(id, error); if (error instanceof ApiError && [401, 403].includes(error.status)) { clearInaccessibleData(errorMessage(error)); return true; } return false; }} /> }
 
         {view === "team" && <Card className={styles.fullTeam}><div className={styles.cardHeading}><div><h2>Analistas de atención</h2><p>Las conversaciones solo se asignan a perfiles de analista activos.</p></div><Badge>{analysts.length} analistas</Badge></div><TeamRows team={team} loading={loading && !inbox} /><div className={styles.teamNote}><ShieldCheck aria-hidden="true" size={17} /><p>Administración asigna los chats. Cada analista consulta y gestiona únicamente las conversaciones de su bandeja.</p></div></Card>}

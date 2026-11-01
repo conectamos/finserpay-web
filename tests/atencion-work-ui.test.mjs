@@ -12,7 +12,7 @@ runInNewContext(ts.transpileModule(readFileSync(new URL("../lib/atencion-work-li
 function mount(options={}){
   let cursor=0,dirty=false,effects=[],tree,clockId=0,now=0;
   let props={kind:"enrollment",mode:"seller",sellerId:7,...options};
-  const slots=[],requests=[],timers=new Map(),sources=[],createdUrls=[],revokedUrls=[];
+  const slots=[],requests=[],timers=new Map(),sources=[],createdUrls=[],revokedUrls=[],shortcutOptions=[],shortcutKeys=[];
   const schedule=(fn,delay=0,interval=0)=>{const id=++clockId;timers.set(id,{fn,at:now+delay,interval});return id;};
   const changed=(a,b)=>!a||!b||a.length!==b.length||b.some((v,i)=>!Object.is(v,a[i]));
   const react={
@@ -40,6 +40,7 @@ function mount(options={}){
       if(name==="@/lib/atencion-work-types")return{attentionWorkKinds:{enrollment:"Enrolamiento iPhone",welcome:"Aprobación · bienvenida"},attentionWorkStates:{pending:"Pendiente",review:"En revisión",information:"Información pendiente",completed:"Finalizada"}};
       if(name==="@/lib/atencion-work-links")return workLinks.exports;
       if(name==="./attention-operational")return{AttentionObservedRead:component("AttentionObservedRead")};
+      if(name==="./attention-quick-reply-shortcuts")return{useAttentionQuickReplyShortcuts(value){shortcutOptions.push(value);return{onKeyDown(event){shortcutKeys.push(event.key);return options.shortcutHandled===true;},onCaretChange(){},popupProps:{"aria-expanded":false},menu:null};}};
       if(name.endsWith(".css"))return{default:new Proxy({},{get:(_,key)=>String(key)})};
       if(name==="lucide-react"||name==="@/app/_components/finser-ui")return new Proxy({},{get:(_,key)=>component(String(key))});
       return{default:component(name)};
@@ -49,7 +50,7 @@ function mount(options={}){
   async function flush(){for(let i=0;i<25;i++){await Promise.resolve();if(dirty)render();}}
   const all=()=>nodes(tree),button=label=>all().find(n=>n.type?.name==="Button"&&(text(n)===label||n.props["aria-label"]===label));
   render();
-  return{requests,flush,all,button,sources,createdUrls,revokedUrls,get tree(){return tree;},query:()=>all().find(n=>n.type?.name==="Input"&&!n.props.type),setProps(patch){props={...props,...patch};render();},
+  return{requests,flush,all,button,sources,createdUrls,revokedUrls,shortcutOptions,shortcutKeys,get tree(){return tree;},query:()=>all().find(n=>n.type?.name==="Input"&&!n.props.type),setProps(patch){props={...props,...patch};render();},
     async advance(ms){const until=now+ms;for(;;){const next=[...timers].filter(([,entry])=>entry.at<=until).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;const[id,entry]=next;now=entry.at;if(entry.interval)entry.at+=entry.interval;else timers.delete(id);entry.fn();await flush();}now=until;await flush();},
     unmount(){for(const slot of slots)slot?.cleanup?.();}};
 }
@@ -96,6 +97,41 @@ const noteField=f=>f.all().find(n=>n.type==="textarea"&&n.props.placeholder==="O
 const plainButton=(f,label)=>f.all().find(n=>n.type==="button"&&text(n)===label);
 async function resolveReads(f,current=detailFor(),items=[itemA,itemB],from=0,total=items.length){for(const request of f.requests.slice(from).filter(r=>!r.done&&!r.init.method))request.respond(request.url.includes("?")?{items,total}:current);await f.flush();}
 async function selectWork(f,item=itemA,current=detailFor(item)){const from=f.requests.length;f.all().find(n=>n.type==="button"&&n.key===item.id).props.onClick();await f.flush();await resolveReads(f,current,[itemA,itemB],from);}
+
+test("un mensaje interno lento conserva el intento, vence a los60s y exige el mismo UUID al reintentar",async()=>{
+  const f=mount({mode:"attention",embedded:true});await resolveReads(f);await selectWork(f);
+  messageField(f).props.onChange({target:{value:"Mensaje pendiente de confirmación"}});await f.flush();
+  f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});await f.flush();
+  const first=f.requests.find(r=>r.init.method==="PATCH"),body=first.init.body;
+  assert.ok(f.button("Enviando…"));assert.equal(first.init.signal.aborted,false);
+  await f.advance(60000);assert.equal(first.init.signal.aborted,true);assert.match(text(f.tree),/El envío tardó demasiado/);
+  assert.equal(f.requests.filter(r=>r.init.method==="PATCH").length,1,"el timeout nunca reenvía automáticamente");
+  assert.equal(messageField(f).props.value,"Mensaje pendiente de confirmación");assert.equal(messageField(f).props.disabled,true);
+  assert.equal(f.button("Consultar / reintentar mismo intento").props.disabled,false);
+  first.respond({...detailFor(),item:{...itemA,version:3}});await f.flush();assert.equal(messageField(f).props.value,"Mensaje pendiente de confirmación","la respuesta tardía del intento cancelado no finge confirmación");
+  await resolveReads(f);f.button("Consultar / reintentar mismo intento").props.onClick();await f.flush();
+  const retry=f.requests.filter(r=>r.init.method==="PATCH").at(-1);assert.equal(retry.init.body,body);
+  retry.respond({...detailFor(),item:{...itemA,version:3}});await f.flush();assert.equal(messageField(f).props.value,"");f.unmount();
+});
+
+test("cerrar el componente cancela la escritura pendiente y libera el aviso de ocupado",async()=>{
+  const changes=[],f=mount({mode:"attention",embedded:true,onBusyChange:value=>changes.push(value)});await resolveReads(f);await selectWork(f);
+  messageField(f).props.onChange({target:{value:"No enviar otra vez"}});await f.flush();
+  f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});await f.flush();
+  const sent=f.requests.find(r=>r.init.method==="PATCH");f.unmount();await f.flush();assert.equal(sent.init.signal.aborted,true);assert.equal(changes.at(-1),false);
+});
+
+test("los atajos del chat interno usan solo el catálogo autorizado del personal y se procesan antes de Enter",async()=>{
+  const replies=[{id:"quick-1",title:"Saludo aprobado",text:"Respuesta aprobada de prueba"}],f=mount({mode:"attention",embedded:true,quickReplies:replies,shortcutHandled:true});await resolveReads(f);await selectWork(f);
+  const shortcut=f.shortcutOptions.at(-1);assert.equal(shortcut.replies,replies);assert.equal(shortcut.disabled,false);assert.equal(shortcut.maxLength,4000);
+  assert.equal(messageField(f).props.ref,shortcut.inputRef);assert.equal(messageField(f).props.onSelect,messageField(f).props.onClick);
+  let submitted=false;messageField(f).props.onKeyDown({key:"Enter",currentTarget:{form:{requestSubmit(){submitted=true;}}}});assert.equal(submitted,false);assert.deepEqual(f.shortcutKeys,["Enter"]);
+  shortcut.onChange("Respuesta aprobada de prueba");await f.flush();assert.equal(messageField(f).props.value,"Respuesta aprobada de prueba");assert.equal(f.requests.some(r=>r.init.method),false);
+  f.setProps({active:false});await f.flush();assert.equal(f.shortcutOptions.at(-1).disabled,true);f.unmount();
+  const seller=mount({quickReplies:replies});await resolveReads(seller);await selectWork(seller);
+  assert.equal(seller.shortcutOptions.at(-1).disabled,true);assert.equal(seller.shortcutOptions.at(-1).replies.length,0,"el asesor no recibe un catálogo de Atención sin API autorizada");seller.unmount();
+  const noCatalogue=mount({mode:"attention",embedded:true});await resolveReads(noCatalogue);await selectWork(noCatalogue);assert.equal(noCatalogue.shortcutOptions.at(-1).disabled,true,"sin catálogo cargado no se intercepta el texto con barra");noCatalogue.unmount();
+});
 
 test("Atención integra navegación y ficha cerrada; conserva mensaje y nota al consultar y cerrar",async()=>{
   const navigation=jsx("nav",{"aria-label":"Tipos de conversación",children:"Clientes · Enrolamientos · Aprobaciones"});
@@ -434,7 +470,7 @@ test("el asesor dispone de botones claros para elegir fotos o PDF sin enviar al 
 test("Enviar foto usa el soporte privado existente y conserva el texto hasta confirmación",async()=>{
   const f=mount(singleOptions);await resolveReads(f,sellerCase());messageField(f).props.onChange({target:{value:"Texto todavía no enviado"}});await f.flush();
   const photo=new File(["imagen artificial"],"equipo-prueba.png",{type:"image/png"});await pickPhoto(f,photo);const click=f.button("Enviar foto").props.onClick;click();click();await f.flush();
-  const uploads=f.requests.filter(r=>r.init.method==="POST");assert.equal(uploads.length,1);assert.equal(uploads[0].url,`/api/ventas/atencion/${itemA.id}/files`);assert.equal(uploads[0].init.body.get("version"),"2");assert.equal(uploads[0].init.body.get("file").name,"equipo-prueba.png");assert.equal(uploads[0].init.body.get("file").type,"image/png");assert.equal(f.button("Enviar foto").props.disabled,true);assert.equal(f.button("Adjuntar fotos").props.disabled,true);
+  const uploads=f.requests.filter(r=>r.init.method==="POST");assert.equal(uploads.length,1);assert.equal(uploads[0].url,`/api/ventas/atencion/${itemA.id}/files`);assert.equal(uploads[0].init.body.get("version"),"2");assert.equal(uploads[0].init.body.get("file").name,"equipo-prueba.png");assert.equal(uploads[0].init.body.get("file").type,"image/png");assert.equal(f.button("Enviando…").props.disabled,true);assert.equal(f.button("Adjuntar fotos").props.disabled,true);
   const attachment={id:"00000000-0000-4000-8000-000000000088",kind:"image",fileName:"equipo-prueba.png"},saved=sellerCase();saved.item={...saved.item,version:3};saved.messages=[...saved.messages,{id:"00000000-0000-4000-8000-000000000089",direction:"inbound",text:"",sentAt:"2026-10-31T13:02:00Z",author:"Asesor de prueba",attachment}];
   uploads[0].respond(saved);await f.flush();assert.equal(localPhoto(f),undefined);assert.equal(f.button("Enviar foto"),undefined);assert.equal(messageField(f).props.value,"Texto todavía no enviado");assert.ok(f.revokedUrls.includes("blob:preview-1"));assert.ok(f.all().some(n=>n.props.src===`/api/ventas/atencion/${itemA.id}/files/${attachment.id}`));f.unmount();
 });
