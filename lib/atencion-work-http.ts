@@ -1,11 +1,17 @@
 import { getAttentionWorkAccess } from "./atencion-work-access";
-import { attentionWorkStore, parseWorkListQuery } from "./atencion-work-storage";
+import { attentionWorkStore, parseWorkListQuery, parseWorkSummaryQuery } from "./atencion-work-storage";
 import { assertAttentionOrigin, attentionHttpError, attentionJson, readAttentionJson } from "./atencion-http";
 import { readAttentionBody } from "./atencion-meta-http";
 import { AttentionError, attentionUuid } from "./atencion-core";
 
 export function attentionWorkHandlers(mode:"seller"|"attention"){
   return {
+    summary:async(request:Request,context:{params:Promise<{id:string}>})=>{try{
+      const a=await getAttentionWorkAccess(mode);
+      if(mode!=="attention"||a.type!=="attention")throw new AttentionError("Usa tu cuenta personal de Atención.",403);
+      const target=parseWorkSummaryQuery(new URL(request.url).searchParams);
+      return attentionJson(await(await attentionWorkStore()).summary(a,(await context.params).id,target));
+    }catch(error){return attentionHttpError(error);}},
     upload:async(request:Request,context:{params:Promise<{id:string}>})=>{try{assertAttentionOrigin(request);const a=await getAttentionWorkAccess(mode),contentType=request.headers.get("content-type")||"";
       if(!/^multipart\/form-data\s*;/i.test(contentType)||contentType.length>250)throw new AttentionError("Adjunta un archivo.",415);
       const bytes=await readAttentionBody(request,16*1024*1024+65536),form=await new Response(Buffer.from(bytes),{headers:{"Content-Type":contentType}}).formData();

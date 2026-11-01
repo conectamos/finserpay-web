@@ -98,7 +98,11 @@ export default function AttentionWorkQueues({kind,mode="attention",sellerId,init
     return()=>source.close();},[mode,refresh,active]);
   useEffect(()=>{if(active)return;readVersion.current++;readController.current?.abort();readController.current=null;searchController.current?.abort();setItems([]);setTotal(0);setDetail(null);setProfileOpen(false);setViewingImage(null);setManagementOpen(false);setLoading(true);},[active]);
   useEffect(()=>{if(initialId===initialSelection.current)return;if(!initialId){initialSelection.current=initialId;if(single){readVersion.current++;readController.current?.abort();readController.current=null;selection.current=null;setSelected(null);setDetail(null);setProfileOpen(false);setViewingImage(null);setManagementOpen(false);setLoading(false);}return;}if(!active||busy||attempt||managementLock.current)return;initialSelection.current=initialId;pendingDeepLink.current=initialId;setNotice("");readVersion.current++;readController.current?.abort();readController.current=null;selection.current=initialId;setSelected(initialId);setDetail(null);setProfileOpen(false);setViewingImage(null);setManagementOpen(false);setAssignee("");setMobileDetail(true);nearBottom.current=true;},[initialId,active,busy,attempt,managementBusy,single]);
-  useEffect(()=>{if(nearBottom.current)tail.current?.scrollIntoView({block:"nearest"});},[detail?.messages.length]);
+  const lastMessageId=detail?.messages.at(-1)?.id;
+  useEffect(()=>{
+    const log=history.current;
+    if(active&&nearBottom.current&&log)log.scrollTop=log.scrollHeight;
+  },[active,detail?.item.id,lastMessageId,detail?.messages.length]);
   async function searchSales(){if(single||!allowCreate)return;searchController.current?.abort();const controller=new AbortController();searchController.current=controller;readFailure.current=null;setError("");setSearching(true);setSearched(false);setSales([]);setTarget("");
     try{const params=new URLSearchParams({q:query,pageSize:"40",...(kind==="enrollment"?{plataforma:"IPHONE"}:{})});
       const result=await fetchJson<{items:Sale[]}>(`/api/solicitudes?${params}`,{signal:controller.signal});if(alive.current&&!controller.signal.aborted){setSales(result.items.filter(s=>s.asesor?.id===sellerId&&(kind==="enrollment"?s.source==="DRAFT"&&s.plataforma==="IPHONE":s.source==="CREDIT")));setSearched(true);}}

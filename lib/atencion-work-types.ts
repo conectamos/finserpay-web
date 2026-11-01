@@ -25,3 +25,8 @@ export type AttentionWorkDetail = {
   team: { key: string; name: string }[];
   events: { id: string; action: string; author: string; at: string; state: string | null }[];
 };
+export type AttentionWorkSummary = {
+  workId: string; kind: "welcome"; target: string; unreadCount: number;
+  lastInbound: { id: string; sentAt: string } | null;
+  lastUnreadInbound: { id: string; sentAt: string } | null;
+};
