@@ -103,6 +103,13 @@ Conversaciones usa la variante oscura aprobada del diseño FINSER PAY: bandeja y
 
 Meta sigue recibiendo mensajes y archivos en el número empresarial actual. La interfaz conserva el historial que el analista está leyendo y sus borradores cuando se actualiza. El estado de entrega proviene de los eventos de WhatsApp.
 
+Los perfiles con `@usuario` pueden llegar sin compartir su teléfono. Atención
+conserva el identificador de Meta y presenta el nombre o usuario disponible para
+encontrarlos en el buscador. El analista puede responder dentro de la ventana
+autorizada sin inventar un teléfono. Ese perfil no se asocia a un crédito por su
+nombre de usuario; las gestiones financieras conservan la identificación
+verificada del cliente.
+
 La conexión en tiempo real usa eventos del servidor y notificaciones transaccionales de PostgreSQL: los mensajes, sus estados y las asignaciones invalidan la bandeja cuando se confirma el cambio. Cada conexión revalida el usuario y su alcance. Si se interrumpe, se reconecta y vuelve a consultar; la actualización periódica queda como respaldo. No hace falta importar Dapta para recibir los nuevos mensajes de Meta.
 
 El instalador ampliado prepara cuatro disparadores de actualización mediante `scripts/ensure-atencion-schema.mjs`: conversaciones, mensajes, outbox y configuración del tablero. Un cambio de sección invalida los chats dentro de su alcance; un cambio de columnas comunica únicamente que cambió la configuración, tras revalidar la cuenta. Las consultas y las entradas de auditoría no producen notificaciones. Una confirmación normal de lectura que añade mensajes genera un único aviso dirigido al mismo usuario nominal; repetirla sin cambios no genera otro aviso ni otra entrada de lectura en auditoría. El cierre conjunto también avisa al administrador de las lecturas que añadió. Un único canal PostgreSQL por proceso sirve a las conexiones autorizadas; los eventos que llegan al navegador no contienen nombres, teléfonos ni mensajes.
