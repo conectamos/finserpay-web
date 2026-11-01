@@ -5,7 +5,7 @@ import { parseAttentionBoardCards, parseAttentionBoardMove, parseAttentionBoardM
 import { assertAttentionCurrentActor, attentionConversationScope, attentionConversationSearch, readAttentionBoardCards,
   type AttentionDatabase, type AttentionDb } from "./atencion-storage";
 import type { AttentionActor } from "./atencion-types";
-import type { AttentionBoard, AttentionBoardSection, AttentionBoardSectionMutation, AttentionBoardMutationResult,
+import type { AttentionBoard, AttentionBoardPlacement, AttentionBoardSection, AttentionBoardSectionMutation, AttentionBoardMutationResult,
   AttentionBoardMove, AttentionBoardMoveResult } from "./atencion-board-types";
 
 type Section = Pick<AttentionBoardSection,"id"|"name"|"color"|"position"|"version"> & { id:string; archivedAt:Date|string|null };
@@ -62,6 +62,17 @@ export function createAttentionBoardStore(database:AttentionDatabase){
         await audit(db,actor,"BOARD_VIEWED",null,{sections:sections.length});
         return {sections:[{id:null,name:"Sin sección",color:"slate",position:0,version:0,count:empty?.count??0,totalCount:empty?.totalCount??0},
           ...sections.map(row=>dto(row,count(row.id)?.count??0,count(row.id)?.totalCount??0))],permissions:{manage:actor.central},pageSize};
+      });
+    },
+    async getPlacement(actor:AttentionActor,conversationId:string):Promise<AttentionBoardPlacement>{
+      conversationId=attentionUuid(conversationId);
+      return transact(actor,async db=>{
+        const access=attentionConversationScope(actor);
+        const [chat]=await db.$queryRawUnsafe<{id:string;sectionId:string|null;boardVersion:number;assigneeKey:string|null}[]>(`SELECT c.id,c."sectionId",c."boardVersion",c."assigneeKey" FROM "AttentionConversation" c WHERE ${access.sql} AND c.id=$4::uuid`,...access.values,conversationId);
+        if(!chat)throw new AttentionError("Conversación no encontrada o no autorizada.",404);
+        const sections=await db.$queryRawUnsafe<{id:string;name:string}[]>(`SELECT id,name FROM "AttentionBoardSection" WHERE "archivedAt" IS NULL ORDER BY position,id`);
+        return {conversationId:chat.id,sectionId:chat.sectionId,boardVersion:chat.boardVersion,
+          sections:[{id:null,name:"Sin sección"},...sections],permissions:{move:actor.central||chat.assigneeKey===actor.key}};
       });
     },
     async cards(actor:AttentionActor,filters:{sectionId:string|null;search:string;page:number}){
@@ -142,6 +153,7 @@ export function createAttentionBoardStore(database:AttentionDatabase){
 }
 async function runtime(){const {default:prisma}=await import("./prisma");return createAttentionBoardStore(prisma as unknown as AttentionDatabase);}
 export async function getAttentionBoard(actor:AttentionActor,search:string){return (await runtime()).get(actor,search);}
+export async function getAttentionBoardPlacement(actor:AttentionActor,id:string){return (await runtime()).getPlacement(actor,id);}
 export async function getAttentionBoardCards(actor:AttentionActor,filters:{sectionId:string|null;search:string;page:number}){return (await runtime()).cards(actor,filters);}
 export async function configureAttentionBoard(actor:AttentionActor,input:AttentionBoardSectionMutation){return (await runtime()).configure(actor,input);}
 export async function moveAttentionBoardConversation(actor:AttentionActor,id:string,input:AttentionBoardMove){return (await runtime()).move(actor,id,input);}

@@ -26,6 +26,8 @@ Administración central puede crear, renombrar, cambiar el color, reordenar y ar
 
 Central puede mover cualquier conversación; el analista nominal solo las que tiene asignadas en ese momento. Se puede arrastrar una tarjeta o usar Mover a. La búsqueda y los conteos respetan ese mismo alcance, con páginas de veinte tarjetas por columna. El total de una sección sin búsqueda se conserva por separado para revisar si está vacía.
 
+Desde Conversaciones, Ficha > Resumen muestra también Tablero: la sección actual, las secciones disponibles y el botón Mover chat. El movimiento requiere elegir un destino y confirmar con ese botón; no cambia de pantalla ni pierde el borrador. La ubicación se consulta al abrir la ficha. Un conflicto o una respuesta incierta exige actualizar y revisar la ubicación antes de volver a mover.
+
 Mover un chat solo cambia su sección y su versión de organización. No cambia asignación, estado, etiquetas, fecha del último contacto ni versión de negocio; tampoco invalida un envío humano reservado. La columna FINSER PAY es una organización manual y no acredita ni modifica la etiqueta automática `FINSERPAY` de los créditos. Ante otro movimiento o cambio de configuración simultáneo, se exige actualizar antes de sobrescribirlo. Cada operación conserva su UUID y auditoría.
 
 ## Cierre conjunto con revisión

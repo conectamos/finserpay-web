@@ -206,6 +206,10 @@ independiente; las solicitudes comerciales se consultan en sus bandejas reales.
 La búsqueda, los filtros y los totales se aplican en el servidor antes de paginar.
 La ficha de cada tipo permanece cerrada por defecto. Cambiar de tipo conserva
 los borradores; las bandejas ocultas suspenden sus lecturas y revalidan al volver.
+En la ficha del contacto, Resumen incluye una sección compacta Tablero con la
+ubicación actual, un selector de las columnas reales y Mover chat. Reutiliza los
+controles compartidos y la paleta del panel; mover conserva la conversación y su
+borrador. Cerrar la ficha suspende la consulta de ubicación.
 
 La vista inicial es Conversaciones. En escritorio usa una bandeja y un chat
 amplio junto a la barra de accesos; la ficha y sus archivos reales se abren bajo

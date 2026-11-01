@@ -8,6 +8,11 @@ export type AttentionBoardSection = {
   count: number; totalCount: number;
 };
 export type AttentionBoard = { sections: AttentionBoardSection[]; permissions: { manage: boolean }; pageSize: number };
+/** Minimal placement controls for one authorized contact; never includes chat content. */
+export type AttentionBoardPlacement = {
+  conversationId: string; sectionId: string | null; boardVersion: number;
+  sections: { id: string | null; name: string }[]; permissions: { move: boolean };
+};
 export type AttentionBoardCard = AttentionConversation & { sectionId: string | null; boardVersion: number };
 export type AttentionBoardCards = { sectionId: string | null; conversations: AttentionBoardCard[]; total: number; page: number; pageSize: number };
 export type AttentionBoardSectionMutation = { requestId: string } & (

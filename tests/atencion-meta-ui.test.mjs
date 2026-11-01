@@ -874,11 +874,16 @@ test("abrir y cerrar ficha conserva el chat, el borrador y la instancia de segui
   const sidePanel = () => f.all().find(node => node.type?.name === "@/app/_components/finser-side-panel");
   const contact = () => f.all().find(node => node.type?.name === "CustomerPanel");
   assert.equal(sidePanel().props.open, false); assert.equal(sidePanel().props.keepMounted, true);
+  assert.equal(contact().props.board, null, "la ubicación no se consulta con la ficha cerrada");
   const instance = contact().key;
   f.all().find(node => node.type?.name === "Button" && text(node).trim() === "Ficha").props.onClick(); await f.flush();
   assert.equal(sidePanel().props.open, true); assert.equal(contact().key, instance);
+  assert.equal(contact().props.board.props.conversationId, detail.conversation.id);
+  assert.equal(contact().props.board.props.actorKey, actor.key);
+  assert.equal(contact().props.board.props.active, true);
   sidePanel().props.onClose(); await f.flush();
   assert.equal(sidePanel().props.open, false); assert.equal(contact().key, instance);
+  assert.equal(contact().props.board, null, "cerrar ficha desmonta solo el control de ubicación");
   assert.equal(f.composer().props.draft.text, "Borrador conservado al consultar el crédito"); f.unmount();
 });
 

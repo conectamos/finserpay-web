@@ -15,11 +15,11 @@ const core=compile('lib/atencion-core.ts',{}),types=compile('lib/atencion-board-
 const boardCore=compile('lib/atencion-board-core.ts',{'./atencion-core':core,'./atencion-board-types':types});
 class ProviderError extends Error{}
 const http=compile('lib/atencion-http.ts',{'./atencion-core':core,'./atencion-dapta':{AttentionDaptaError:ProviderError},'./atencion-meta':{AttentionMetaError:ProviderError}});
-const files=[['board/route.ts','GET'],['board/route.ts','PATCH'],['board/cards/route.ts','GET'],['[id]/section/route.ts','POST']];
+const files=[['board/route.ts','GET'],['board/route.ts','PATCH'],['board/cards/route.ts','GET'],['[id]/section/route.ts','GET'],['[id]/section/route.ts','POST']];
 function harness(file,options={}){
   const calls={access:0,store:[]};
   const access={...core,getAttentionAccess:async()=>{calls.access++;if(options.accessError)throw options.accessError;return actor;}};
-  const store=Object.fromEntries(['getAttentionBoard','getAttentionBoardCards','configureAttentionBoard','moveAttentionBoardConversation'].map(name=>[name,async(...args)=>{calls.store.push({name,args});if(options.storeError)throw options.storeError;return {ok:true};}]));
+  const store=Object.fromEntries(['getAttentionBoard','getAttentionBoardPlacement','getAttentionBoardCards','configureAttentionBoard','moveAttentionBoardConversation'].map(name=>[name,async(...args)=>{calls.store.push({name,args});if(options.storeError)throw options.storeError;return {ok:true};}]));
   return {...compile(`app/api/atencion/${file}`,{'@/lib/atencion-core':access,'@/lib/atencion-board-core':boardCore,'@/lib/atencion-board-storage':store,'@/lib/atencion-http':http}),calls};
 }
 function request(method='POST',body={},options={}){
@@ -67,4 +67,19 @@ test('lecturas paginadas usan búsqueda estricta y nunca toman permisos del clie
   const board=harness('board/route.ts');assert.equal((await board.GET(request('GET',{}, {query:'?search=a&search=b'}))).status,400);assert.equal(board.calls.store.length,0);
   const data={action:'create',name:'Nueva',color:'lime',requestId:randomUUID()};
   assert.equal((await board.PATCH(request('PATCH',data))).status,200);assert.deepEqual(board.calls.store[0],{name:'configureAttentionBoard',args:[actor,data]});
+});
+
+test('ubicación de ficha solo toma el chat validado y el actor de sesión con respuesta privada',async()=>{
+  const h=harness('[id]/section/route.ts');
+  const res=await h.GET(request('GET',{}, {query:'?central=true&userId=1&sectionId=none&boardVersion=900'}),context);
+  assert.equal(res.status,200);privateResponse(res);
+  assert.deepEqual(h.calls.store,[{name:'getAttentionBoardPlacement',args:[actor,id]}]);
+  assert.equal((await h.GET(request('GET'),{params:Promise.resolve({id:'bad'})})).status,400);
+  assert.equal(h.calls.store.length,1);
+  for(const status of [403,404,503]){
+    const blocked=harness('[id]/section/route.ts',{storeError:new core.AttentionError('Ficha no disponible',status)});
+    const response=await blocked.GET(request('GET'),context);assert.equal(response.status,status);privateResponse(response);
+  }
+  const failure=harness('[id]/section/route.ts',{storeError:new Error('private SQL credential')});
+  const response=await failure.GET(request('GET'),context);assert.equal(response.status,500);privateResponse(response);assert.ok(!(await response.text()).includes('private SQL'));
 });
