@@ -6,11 +6,11 @@ import ts from "typescript";
 
 const element = (type, props) => ({ type, props });
 function load(file, dependencies = {}) {
-  const module = { exports: {} };
+  const loadedModule = { exports: {} };
   const source = ts.transpileModule(readFileSync(new URL(`../${file}`, import.meta.url), "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  runInNewContext(source, { module, exports: module.exports, require(name) {
+  runInNewContext(source, { module: loadedModule, exports: loadedModule.exports, require(name) {
     if (name === "react/jsx-runtime") return { jsx: element, jsxs: element, Fragment: "Fragment" };
     if (name === "next/link") return { default: "Link" };
     if (name.endsWith(".module.css")) return { default: {} };
@@ -18,7 +18,7 @@ function load(file, dependencies = {}) {
     assert.ok(Object.hasOwn(dependencies, name), `Unexpected dependency ${name}`);
     return dependencies[name];
   } }, { filename: file });
-  return module.exports;
+  return loadedModule.exports;
 }
 function nodes(tree) {
   if (!tree || typeof tree !== "object") return [];
@@ -37,6 +37,7 @@ function approvalPage({ user = central, nominal = user, shared } = {}) {
     "@/lib/approval-shared-session": { getApprovalSharedRequestActor: async () => shared },
     "@/lib/auth": { getCreditApprovalSessionUser: async () => user, getNominalApprovalWorkspaceSessionUser: async () => nominal },
     "@/lib/roles": roles,
+    "@/lib/atencion-work-links": load("lib/atencion-work-links.ts"),
     "./approval-dashboard-shell": { default: "Shell" },
     "./approval-workspace": { default: "Workspace" },
   }).default;
