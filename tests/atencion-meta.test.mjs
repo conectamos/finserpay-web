@@ -10,6 +10,7 @@ import ExcelJS from "exceljs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
 const { createMetaAttentionAdapter, getMetaAttentionScope, META_ATTENTION_LINE, validateMetaAttentionMedia } = await jiti.import("../lib/atencion-meta.ts");
+const { readMetaManualTemplate } = await jiti.import("../lib/atencion-meta-templates.ts");
 const now = Date.parse("2026-10-30T18:00:00Z");
 const env = {
   WHATSAPP_ATTENTION_ACCESS_TOKEN: "test-only-attention-token", WHATSAPP_ATTENTION_APP_SECRET: "test-only-app-secret",
@@ -52,6 +53,11 @@ function echoEnvelope(echoes = [echo]) {
   change.field = "smb_message_echoes";
   change.value.message_echoes = echoes;
   return body;
+}
+const bsuid = "CO.A1b2C3";
+const bsuidContact = { user_id: bsuid, profile: { name: "Perfil de prueba", username: "usuario.prueba" } };
+function userEnvelope(messages = [{ ...inbound, from: undefined, from_user_id: bsuid }], contacts = [bsuidContact], statuses = []) {
+  const body = envelope(messages, statuses); body.entry[0].changes[0].value.contacts = contacts; return body;
 }
 function sign(body) { const raw = Buffer.from(typeof body === "string" ? body : JSON.stringify(body)); return [raw, `sha256=${createHmac("sha256", env.WHATSAPP_ATTENTION_APP_SECRET).update(raw).digest("hex")}`]; }
 function adapter(overrides = {}) { return createMetaAttentionAdapter({ env: { ...env }, now: () => now, fetch: async () => { throw new Error("Unexpected network request"); }, ...overrides }); }
@@ -119,6 +125,101 @@ test("media and delivery DTOs exclude URLs/payloads and preserve correlation UUI
   const events = adapter().parseWebhook(...sign(body));
   assert.equal(events.messages[0].media.id, "1234567890"); assert.equal(events.statuses[0].requestId, input.attemptId);
   assert.deepEqual(events.statuses[0].errorCodes, [131000]); assert.equal(JSON.stringify(events).includes("private"), false);
+});
+test("BSUID-only inbound retains its opaque identifier, separate profile and username without fabricating a phone", () => {
+  const body = userEnvelope([
+    { ...inbound, from: undefined, from_user_id: bsuid },
+    { ...inbound, id: "wamid.SECOND_USER", from: undefined, from_user_id: "US.SecondUser" },
+  ], [
+    { wa_id: "12025550199", user_id: "US.Unrelated", profile: { name: "No corresponde", username: "no.corresponde" } },
+    { user_id: "US.SecondUser", profile: { name: "Segundo perfil", username: "segundo.usuario" } }, bsuidContact,
+  ]);
+  const events = adapter().parseWebhook(...sign(body));
+  assert.equal(events.ignored, 0); assert.equal(events.messages.length, 2);
+  assert.equal(events.messages[0].from, bsuid); assert.equal(events.messages[0].userId, bsuid); assert.equal(events.messages[0].phone, null);
+  assert.equal(events.messages[0].name, "Perfil de prueba"); assert.equal(events.messages[0].username, "usuario.prueba");
+  assert.equal(events.messages[1].from, "US.SecondUser"); assert.equal(events.messages[1].name, "Segundo perfil");
+  const noContact = adapter().parseWebhook(...sign(userEnvelope(undefined, []))).messages[0];
+  assert.equal(noContact.from, bsuid); assert.equal(noContact.phone, null); assert.equal(noContact.name, null); assert.equal(noContact.username, undefined);
+});
+test("coherent phone plus BSUID remains the phone conversation and never selects another contact by position", () => {
+  const body = userEnvelope([{ ...inbound, from_user_id: bsuid }], [
+    { wa_id: "12025550199", user_id: "US.Unrelated", profile: { name: "No corresponde" } },
+    { ...bsuidContact, wa_id: phone },
+  ]);
+  const message = adapter().parseWebhook(...sign(body)).messages[0];
+  assert.equal(message.from, phone); assert.equal(message.phone, `+${phone}`); assert.equal(message.userId, bsuid);
+  assert.equal(message.name, bsuidContact.profile.name); assert.equal(message.username, bsuidContact.profile.username);
+  const legacy = adapter().parseWebhook(...sign(userEnvelope([inbound], [{ ...bsuidContact, wa_id: phone }]))).messages[0];
+  assert.equal(legacy.from, phone); assert.equal(legacy.userId, undefined, "a missing message-level BSUID does not learn a contact alias");
+});
+test("BSUID media retains the real attachment and caption for image, audio, video, document and sticker", () => {
+  for (const [type, mime_type] of [["image", "image/png"], ["audio", "audio/ogg"], ["video", "video/mp4"], ["document", "application/pdf"], ["sticker", "image/webp"]]) {
+    const body = userEnvelope([{ ...inbound, from: undefined, from_user_id: bsuid, type, text: undefined,
+      [type]: { id: "1234567890", mime_type, caption: "Adjunto de prueba", url: "https://untrusted.invalid/file" } }]);
+    const events = adapter().parseWebhook(...sign(body)), message = events.messages[0];
+    assert.equal(events.ignored, 0); assert.equal(message.from, bsuid); assert.equal(message.phone, null);
+    assert.equal(message.type, type); assert.equal(message.media.id, "1234567890"); assert.equal(message.media.url, undefined);
+  }
+});
+test("ambiguous or contradictory contact pairs and malformed identifiers are ignored without guessing a phone", () => {
+  const both = { ...inbound, from_user_id: bsuid }, hidden = { ...inbound, from: undefined, from_user_id: bsuid };
+  for (const [message, contacts] of [
+    [both, [{ wa_id: phone, user_id: "US.Other" }]],
+    [both, [{ wa_id: "12025550199", user_id: bsuid }]],
+    [both, [{ wa_id: phone, user_id: bsuid }, { wa_id: phone, user_id: "US.Other" }]],
+    [inbound, [{ wa_id: phone, user_id: bsuid }, { wa_id: phone, user_id: "US.Other" }]],
+    [hidden, [{ wa_id: phone, user_id: bsuid }, { wa_id: "12025550199", user_id: bsuid }]],
+    [both, [{ wa_id: phone, user_id: "CO.invalid_id" }]],
+    [hidden, [{ wa_id: "not-a-phone", user_id: bsuid }]],
+    [{ ...hidden, from: "" }, []], [{ ...hidden, from_user_id: "+CO.A1" }, []],
+    [{ ...hidden, from_user_id: "CO.ENT.A1" }, []], [{ ...hidden, from_user_id: `CO.${"a".repeat(129)}` }, []],
+  ]) {
+    const events = adapter().parseWebhook(...sign(userEnvelope([message], contacts)));
+    assert.equal(events.messages.length, 0); assert.equal(events.ignored, 1);
+  }
+});
+test("BSUID parsing preserves raw signatures and fixed scope and rejects group messages", () => {
+  const body = userEnvelope(), signed = sign(body);
+  assert.throws(() => adapter().parseWebhook(Buffer.concat([signed[0], Buffer.from(" ")]), signed[1]), { code: "INVALID_SIGNATURE" });
+  for (const change of [
+    b => { b.entry[0].id = "0000000000"; },
+    b => { b.entry[0].changes[0].value.metadata.phone_number_id = "0000000000"; },
+    b => { b.entry[0].changes[0].value.messages[0].group_id = "group"; },
+    b => { b.entry[0].changes[0].value.group_id = "group"; },
+  ]) {
+    const other = structuredClone(body); change(other);
+    const events = adapter().parseWebhook(...sign(other)); assert.equal(events.messages.length, 0); assert.equal(events.ignored, 1);
+  }
+});
+test("BSUID app echoes and statuses remain outbound and do not manufacture a customer phone or author", () => {
+  const echoBody = echoEnvelope([{ ...echo, to: undefined, to_user_id: bsuid }]);
+  echoBody.entry[0].changes[0].value.contacts = [bsuidContact];
+  const echoed = adapter().parseWebhook(...sign(echoBody));
+  assert.deepEqual(echoed.messages, []); assert.equal(echoed.echoes[0].from, businessPhone); assert.equal(echoed.echoes[0].to, bsuid);
+  assert.equal(echoed.echoes[0].phone, null); assert.equal(echoed.echoes[0].name, null); assert.equal(echoed.echoes[0].userId, bsuid);
+  assert.equal(echoed.echoes[0].username, "usuario.prueba");
+  const events = adapter().parseWebhook(...sign(userEnvelope([], [bsuidContact], [
+    { id: wamid, recipient_user_id: bsuid, timestamp: inbound.timestamp, status: "read", biz_opaque_callback_data: input.attemptId },
+  ])));
+  assert.equal(events.ignored, 0); assert.deepEqual(events.messages, []); assert.equal(events.statuses[0].recipient, bsuid);
+  assert.equal(events.statuses[0].userId, bsuid); assert.equal(events.statuses[0].requestId, input.attemptId);
+  const failed = envelope([], [{ id: wamid, recipient_id: phone, timestamp: inbound.timestamp, status: "failed", errors: [{ code: 131000 }] }]);
+  delete failed.entry[0].changes[0].value.contacts;
+  assert.equal(adapter().parseWebhook(...sign(failed)).statuses[0].recipient, phone);
+});
+test("BSUID echo/status pairs remain coherent and a known self-contact cannot become a customer echo", () => {
+  for (const contacts of [[{ wa_id: phone, user_id: "CO.OtherUser" }], [{ wa_id: "12025550199", user_id: bsuid }]]) {
+    const echoBody = echoEnvelope([{ ...echo, to_user_id: bsuid }]); echoBody.entry[0].changes[0].value.contacts = contacts;
+    const echoed = adapter().parseWebhook(...sign(echoBody)); assert.equal(echoed.echoes.length, 0); assert.equal(echoed.ignored, 1);
+    const statuses = adapter().parseWebhook(...sign(userEnvelope([], contacts, [{ id: wamid, recipient_id: phone, recipient_user_id: bsuid, timestamp: inbound.timestamp, status: "read" }])));
+    assert.equal(statuses.statuses.length, 0); assert.equal(statuses.ignored, 1);
+  }
+  const own = echoEnvelope([{ ...echo, to: undefined, to_user_id: bsuid }]);
+  own.entry[0].changes[0].value.contacts = [{ user_id: bsuid, wa_id: businessPhone }];
+  assert.equal(adapter().parseWebhook(...sign(own)).echoes.length, 0);
+  const coherent = adapter().parseWebhook(...sign(userEnvelope([], [{ ...bsuidContact, wa_id: phone }], [{ id: wamid, recipient_id: phone, recipient_user_id: bsuid, timestamp: inbound.timestamp, status: "read" }])));
+  assert.equal(coherent.statuses[0].recipient, phone); assert.equal(coherent.statuses[0].userId, bsuid);
 });
 test("unsupported identifiers, formats, timestamps and marked secrets are not exposed", () => {
   const events = adapter().parseWebhook(...sign(envelope([
@@ -278,6 +379,68 @@ test("verified sender and WABA precede persisted claim and single send", async (
   assert.equal(mock.requests.length, 3);
   const payload = JSON.parse(mock.requests[2].init.body);
   assert.equal(payload.biz_opaque_callback_data, input.attemptId); assert.equal(payload.text.body, input.text);
+});
+test("BSUID text and media use only recipient, verify scope and accept the exact user_id ACK", async () => {
+  for (const media of [false, true]) {
+    let claimed = false;
+    const mock = transportMock({ custom: (url, init) => {
+      if (url.pathname === "/v25.0/1234567890") return json({ id: "1234567890", mime_type: "image/png", file_size: png.length,
+        url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/?signed=private" });
+      if (url.pathname.endsWith("/messages")) {
+        assert.equal(claimed, true); const payload = JSON.parse(init.body);
+        assert.equal(payload.recipient, bsuid); assert.equal(Object.hasOwn(payload, "to"), false);
+        assert.equal(payload.type, media ? "image" : "text");
+        return json({ messaging_product: "whatsapp", contacts: [{ input: bsuid, user_id: bsuid }], messages: [{ id: wamid }] });
+      }
+    } });
+    const client = adapter({ fetch: mock.transport }), claim = async () => { claimed = true; };
+    const receipt = media ? await client.sendMedia({ ...input, recipient: bsuid, kind: "image", mediaId: "1234567890" }, claim)
+      : await client.sendText({ ...input, recipient: bsuid }, claim);
+    assert.deepEqual(receipt, { providerMessageId: wamid, recipient: bsuid });
+    assert.equal(mock.requests.filter(request => request.init.method === "POST").length, 1);
+    assert.equal(mock.requests.filter(request => request.url.pathname.endsWith("/phone_numbers")).length, 1);
+  }
+});
+test("BSUID templates use the same recipient contract and retain catalogue and persisted-send guards", async () => {
+  const raw = { id: "12345678901", name: "atencion_prueba", language: "es", category: "UTILITY", status: "APPROVED", parameter_format: "POSITIONAL",
+    components: [{ type: "BODY", text: "Hola {{1}}, recibimos tu consulta." }] };
+  const definition = readMetaManualTemplate(raw); assert.equal(definition.available, true); let claims = 0;
+  const mock = transportMock({ custom: (url, init) => {
+    if (url.pathname.endsWith("/message_templates")) return json({ data: [raw] });
+    if (url.pathname.endsWith("/messages")) {
+      const payload = JSON.parse(init.body); assert.equal(claims, 1); assert.equal(payload.type, "template");
+      assert.equal(payload.recipient, bsuid); assert.equal(Object.hasOwn(payload, "to"), false);
+      return json({ messaging_product: "whatsapp", contacts: [{ input: bsuid, user_id: bsuid }], messages: [{ id: wamid }] });
+    }
+  } });
+  const receipt = await adapter({ fetch: mock.transport }).sendTemplate({ ...input, recipient: bsuid, snapshot: { definition, parameters: { "body:1": "Perfil de prueba" } } }, async () => { claims++; });
+  assert.deepEqual(receipt, { providerMessageId: wamid, recipient: bsuid });
+  assert.equal(mock.requests.filter(request => request.init.method === "POST").length, 1);
+});
+test("legacy plus phone stays a phone send and malformed opaque recipients never reach Meta", async () => {
+  const mock = transportMock();
+  assert.deepEqual(await adapter({ fetch: mock.transport }).sendText({ ...input, recipient: `+${phone}` }, async () => {}), { providerMessageId: wamid, recipient: phone });
+  const payload = JSON.parse(mock.requests.find(request => request.init.method === "POST").init.body);
+  assert.equal(payload.to, phone); assert.equal(Object.hasOwn(payload, "recipient"), false);
+  for (const value of ["+CO.A1", "CO.A_B", "CO.ENT.A1", "CO.", "co.A1", `CO.${"a".repeat(129)}`]) {
+    await assert.rejects(adapter().sendText({ ...input, recipient: value }, async () => assert.fail("invalid recipient cannot claim")), { code: "INVALID_RECIPIENT" });
+  }
+  await assert.rejects(adapter().sendText({ ...input, recipient: bsuid, lastInboundAt: "2026-10-29T18:00:00Z" }, async () => assert.fail("closed service window cannot claim")), { code: "SERVICE_WINDOW_CLOSED" });
+});
+test("mismatched BSUID ACKs, transport errors and 5xx remain uncertain and never retry or fall back to phone", async () => {
+  for (const mode of ["missing", "different", "input", "duplicate", "network", "server"]) {
+    let posts = 0;
+    const mock = transportMock({ custom: (url, init) => {
+      if (!url.pathname.endsWith("/messages")) return;
+      posts++; const payload = JSON.parse(init.body); assert.equal(payload.recipient, bsuid); assert.equal(Object.hasOwn(payload, "to"), false);
+      if (mode === "network") throw new TypeError("test network failure");
+      if (mode === "server") return json({ error: { code: 1 } }, 503);
+      const contact = { input: mode === "input" ? "CO.OtherUser" : bsuid, ...(mode === "missing" ? { wa_id: phone } : { user_id: mode === "different" ? "CO.OtherUser" : bsuid }) };
+      return json({ messaging_product: "whatsapp", contacts: mode === "duplicate" ? [contact, contact] : [contact], messages: [{ id: wamid }] });
+    } });
+    await assert.rejects(adapter({ fetch: mock.transport }).sendText({ ...input, recipient: bsuid }, async () => {}), error => error.uncertain === true && error.retryable === false);
+    assert.equal(posts, 1, mode);
+  }
 });
 test("verification starts independent phone and WABA reads together and shares concurrent work", async () => {
   const pending = [];

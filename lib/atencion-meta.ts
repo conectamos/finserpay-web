@@ -3,10 +3,12 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readAttentionSticker } from "./atencion-meta-sticker";
 import { compileMetaTemplate, readMetaManualTemplate, type MetaManualTemplate, type MetaTemplateSnapshot } from "./atencion-meta-templates";
 import { metaAutomationHeaderUrl } from "./whatsapp-automation-meta-config";
+import { isMetaBusinessUserId, isMetaRecipient, metaRecipientPhone } from "./atencion-meta-identity";
 
 // Dedicated Attention credentials. Never fall back to OTP or settlement tokens.
 // Meta contracts: https://www.postman.com/meta/whatsapp-business-platform
 // Signature contract: https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/webhooks/start/
+// BSUID fields and recipient-string contract: https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids/
 export const META_ATTENTION_LINE = Object.freeze({
   phoneNumberId: "1162059967000416", wabaId: "2148284059050848", displayPhone: "+573124085562",
 });
@@ -16,15 +18,17 @@ export type MetaScope = { phoneNumberId: string; wabaId: string };
 export type MetaMediaKind = "image" | "audio" | "video" | "document" | "sticker";
 export type MetaInboundMessage = {
   id: string; from: string; phone: string | null; name: string | null; timestamp: string;
+  userId?: string | null; username?: string | null;
   type: "text" | MetaMediaKind; text?: string; replyToId?: string;
   media?: { id: string; mimeType: string; sha256?: string; fileName?: string; caption?: string };
 };
 /** A message sent from the business app, not a customer message or a CRM actor. */
 export type MetaMessageEcho = Omit<MetaInboundMessage, "phone" | "name"> & {
-  to: string; phone: string; name: null;
+  to: string; phone: string | null; name: null;
 };
 export type MetaDeliveryStatus = {
   id: string; recipient: string; timestamp: string;
+  userId?: string | null;
   status: "sent" | "delivered" | "read" | "failed"; errorCodes: number[]; requestId?: string;
 };
 export type MetaWebhookEvents = { scope: MetaScope; messages: MetaInboundMessage[]; echoes?: MetaMessageEcho[]; statuses: MetaDeliveryStatus[]; ignored: number };
@@ -93,8 +97,47 @@ function mediaRule(type: string) { return Object.hasOwn(MIME, type) ? MIME[type]
 function receivedMediaRule(type: string) { return mediaRule(type) ?? (Object.hasOwn(RECEIVED_MIME, type) ? RECEIVED_MIME[type as keyof typeof RECEIVED_MIME] : undefined); }
 function recipient(value: unknown): string {
   const result = str(value).replace(/^\+/, "");
-  if (!PHONE.test(result)) fail("INVALID_RECIPIENT", "El destinatario de WhatsApp no es válido.");
+  if (!isMetaRecipient(result) || (str(value).startsWith("+") && !PHONE.test(result))) fail("INVALID_RECIPIENT", "El destinatario de WhatsApp no es válido.");
   return result;
+}
+function recipientPayload(value: string): { to: string } | { recipient: string } {
+  return isMetaBusinessUserId(value) ? { recipient: value } : { to: value };
+}
+/** Match each message against its explicit identifiers, never contacts[0]. */
+function webhookIdentity(message: Dict, phoneField: string, userField: string, contacts: unknown[]) {
+  const rawPhone = message[phoneField], rawUser = message[userField];
+  const phone = PHONE.test(str(rawPhone)) ? str(rawPhone) : undefined;
+  const userId = isMetaBusinessUserId(rawUser) ? rawUser : undefined;
+  if ((rawPhone !== undefined && !phone) || (rawUser !== undefined && !userId) || (!phone && !userId)) return null;
+  const matching = contacts.map(dict).filter(contact => (phone && contact.wa_id === phone) || (userId && contact.user_id === userId));
+  const phones = new Set(phone ? [phone] : []), users = new Set(userId ? [userId] : []);
+  for (const contact of matching) {
+    if (contact.wa_id !== undefined) {
+      if (!PHONE.test(str(contact.wa_id))) return null;
+      phones.add(str(contact.wa_id));
+    }
+    if (contact.user_id !== undefined) {
+      if (!isMetaBusinessUserId(contact.user_id)) return null;
+      users.add(contact.user_id);
+    }
+  }
+  if (phones.size > 1 || users.size > 1) return null;
+  const uniqueProfileValue = (key: string) => {
+    const values = new Set(matching.map(contact => safeText(dict(contact.profile)[key], 120)).filter((value): value is string => value !== undefined));
+    return values.size === 1 ? [...values][0] : undefined;
+  };
+  return { recipient: phone ?? userId!, phone: phone ? metaRecipientPhone(phone) : null,
+    ...(userId ? { userId } : {}), name: uniqueProfileValue("name") ?? null,
+    ...(uniqueProfileValue("username") ? { username: uniqueProfileValue("username") } : {}) };
+}
+function sendReceipt(result: Dict, to: string): MetaSendReceipt {
+  const message = dict(list(result.messages)[0]), contacts = list(result.contacts).map(dict), contact = contacts[0];
+  const matches = contacts.length === 1 && (isMetaBusinessUserId(to)
+    ? contact.user_id === to && contact.input === to
+    : contact.wa_id === to && str(contact.input).replace(/^\+/, "") === to);
+  if (result.messaging_product !== "whatsapp" || !WAMID.test(str(message.id)) || !matches)
+    throw new AttentionMetaError("INVALID_SEND_RECEIPT", "Meta no confirmó de forma verificable el envío. No lo reenvíes automáticamente.", 502, true);
+  return { providerMessageId: str(message.id), recipient: to };
 }
 function safeText(value: unknown, max: number): string | undefined {
   if (typeof value !== "string" || !value.trim() || value.length > max) return undefined;
@@ -307,28 +350,34 @@ export function createMetaAttentionAdapter(options: Options = {}) {
         if (change.field === "smb_message_echoes") {
           const businessPhone = META_ATTENTION_LINE.displayPhone.slice(1);
           for (const raw of list(value.message_echoes)) {
-            const message = dict(raw), from = str(message.from), to = str(message.to), id = str(message.id), timestamp = isoTimestamp(message.timestamp, now());
-            if (from !== businessPhone || !PHONE.test(to) || to === businessPhone || !WAMID.test(id) || !timestamp
+            const message = dict(raw), from = str(message.from), id = str(message.id), timestamp = isoTimestamp(message.timestamp, now());
+            const identity = webhookIdentity(message, "to", "to_user_id", list(value.contacts));
+            if (from !== businessPhone || !identity || identity.recipient === businessPhone
+              || (identity.userId && list(value.contacts).some(rawContact => dict(rawContact).user_id === identity.userId && dict(rawContact).wa_id === businessPhone))
+              || !WAMID.test(id) || !timestamp
               || (message.recipient_type !== undefined && message.recipient_type !== "individual")
               || message.group_id !== undefined || value.group_id !== undefined) { events.ignored++; continue; }
             const content = messageContent(message);
             if (!content) { events.ignored++; continue; }
-            events.echoes.push({ id, from, to, phone: `+${to}`, name: null, timestamp, ...content });
+            const { recipient: to, ...peer } = identity;
+            events.echoes.push({ id, from, to, ...peer, name: null, timestamp, ...content });
           }
           continue;
         }
         for (const raw of list(value.messages)) {
-          const message = dict(raw); const from = str(message.from); const id = str(message.id); const timestamp = isoTimestamp(message.timestamp, now());
-          if (!PHONE.test(from) || !WAMID.test(id) || !timestamp) { events.ignored++; continue; }
-          const matching = list(value.contacts).map(dict).find(contact => contact.wa_id === from);
+          const message = dict(raw), id = str(message.id), timestamp = isoTimestamp(message.timestamp, now());
+          const identity = webhookIdentity(message, "from", "from_user_id", list(value.contacts));
+          if (!identity || !WAMID.test(id) || !timestamp || message.group_id !== undefined || value.group_id !== undefined
+            || (message.recipient_type !== undefined && message.recipient_type !== "individual")) { events.ignored++; continue; }
           const content = messageContent(message);
-          if (content) events.messages.push({ id, from, phone: `+${from}`, name: safeText(dict(matching?.profile).name, 120) ?? null, timestamp, ...content });
+          if (content) { const { recipient: from, ...peer } = identity; events.messages.push({ id, from, ...peer, timestamp, ...content }); }
           else events.ignored++;
         }
         for (const raw of list(value.statuses)) {
           const event = dict(raw); const timestamp = isoTimestamp(event.timestamp, now());
-          if (!WAMID.test(str(event.id)) || !PHONE.test(str(event.recipient_id)) || !timestamp || !["sent", "delivered", "read", "failed"].includes(str(event.status))) { events.ignored++; continue; }
-          events.statuses.push({ id: str(event.id), recipient: str(event.recipient_id), timestamp, status: event.status as MetaDeliveryStatus["status"],
+          const identity = webhookIdentity(event, "recipient_id", "recipient_user_id", list(value.contacts));
+          if (!WAMID.test(str(event.id)) || !identity || !timestamp || !["sent", "delivered", "read", "failed"].includes(str(event.status))) { events.ignored++; continue; }
+          events.statuses.push({ id: str(event.id), recipient: identity.recipient, ...(identity.userId ? { userId: identity.userId } : {}), timestamp, status: event.status as MetaDeliveryStatus["status"],
             errorCodes: list(event.errors).map(error => dict(error).code).filter((code): code is number => Number.isSafeInteger(code) && Number(code) >= 0).slice(0, 20),
             ...(UUID.test(str(event.biz_opaque_callback_data)) ? { requestId: str(event.biz_opaque_callback_data) } : {}) });
         }
@@ -514,25 +563,20 @@ export function createMetaAttentionAdapter(options: Options = {}) {
       if(attempted)fail("SEND_ALREADY_STARTED","Este envío ya se inició.",409);attempted=true;
       validateSendBase(input,beforeSend);
       onPost?.();
-      return graph(`${scope().phoneNumberId}/messages`,{},{messaging_product:"whatsapp",recipient_type:"individual",to,
+      return graph(`${scope().phoneNumberId}/messages`,{},{messaging_product:"whatsapp",recipient_type:"individual",...recipientPayload(to),
         type:"template",template:compiled.template,biz_opaque_callback_data:input.attemptId},true);
     };
     const result=withSendGuard?await withSendGuard(send):await send();
     if(!attempted)fail("FINANCIAL_GUARD_REQUIRED","No se confirmó la validación financiera del envío.",409);
-    const message=dict(list(result.messages)[0]),contact=dict(list(result.contacts)[0]);
-    if(result.messaging_product!=="whatsapp"||!WAMID.test(str(message.id))||str(contact.wa_id)!==to||str(contact.input).replace(/^\+/,"")!==to)
-      throw new AttentionMetaError("INVALID_SEND_RECEIPT","Meta no confirmó de forma verificable el envío. No lo reenvíes automáticamente.",502,true);
-    return {providerMessageId:str(message.id),recipient:to};
+    return sendReceipt(result,to);
   }
   async function send(input: MetaSendInput, body: Dict, beforeSend: BeforeSend): Promise<MetaSendReceipt> {
     const to = validateSend(input, beforeSend); await verifyConnection();
     // Last check and persisted outbox claim are immediately before the only POST.
     validateSend(input, beforeSend); await beforeSend(); validateSend(input, beforeSend);
-    const result = await graph(`${scope().phoneNumberId}/messages`, {}, { messaging_product: "whatsapp", recipient_type: "individual", to,
+    const result = await graph(`${scope().phoneNumberId}/messages`, {}, { messaging_product: "whatsapp", recipient_type: "individual", ...recipientPayload(to),
       biz_opaque_callback_data: input.attemptId, ...body }, true);
-    const message = dict(list(result.messages)[0]); const contact = dict(list(result.contacts)[0]);
-    if (result.messaging_product !== "whatsapp" || !WAMID.test(str(message.id)) || str(contact.wa_id) !== to || str(contact.input).replace(/^\+/, "") !== to) throw new AttentionMetaError("INVALID_SEND_RECEIPT", "Meta no confirmó de forma verificable el envío. No lo reenvíes automáticamente.", 502, true);
-    return { providerMessageId: str(message.id), recipient: to };
+    return sendReceipt(result,to);
   }
   async function sendText(input: MetaSendInput & { text: string }, beforeSend: BeforeSend) {
     if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 4096 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(input.text)) fail("INVALID_TEXT", "El mensaje debe contener entre 1 y 4096 caracteres válidos.");

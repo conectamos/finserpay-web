@@ -231,7 +231,39 @@ reconstruyen identificadores, archivos o fechas a partir de capturas.
 
 La lectura MCP histórica de Dapta conserva texto parcial y no recupera imágenes, audios o videos anteriores. Un chat nativo se vincula a un chat WhatsApp existente solo cuando su teléfono normalizado coincide exactamente y el resultado es único; conserva `externalId`, responsable y notas. Ante ambigüedad se crea un chat nativo sin responsable, sin elegir una identidad o sede arbitrarias. No se duplican clientes financieros.
 
-Tras iniciar captura nativa, Dapta puede rellenar inbound anterior al primer mensaje Meta y conserva outbound de IA para mantener contexto durante la transición. Sus UUID no se convierten en `wamid`, y no se deduplican respuestas por semejanza de texto o fecha. El webhook nativo todavía no soporta BSUID opacos: solo procesa remitentes y destinatarios telefónicos válidos. Un ID opaco no se convierte en teléfono; ese caso requiere ampliar el contrato antes de prometer cobertura completa.
+Tras iniciar captura nativa, Dapta puede rellenar inbound anterior al primer mensaje Meta y conserva outbound de IA para mantener contexto durante la transición. Sus UUID no se convierten en `wamid`, y no se deduplican respuestas por semejanza de texto o fecha.
+
+### Perfiles de WhatsApp e identificadores BSUID
+
+La recepción nativa admite el formato BSUID ordinario documentado por Meta:
+`messages[].from_user_id`, `message_echoes[].to_user_id` y
+`statuses[].recipient_user_id`. Los teléfonos `from`, `to`, `recipient_id` y
+`contacts[].wa_id` pueden omitirse en esos eventos. La firma, cuenta y línea
+siguen verificándose antes de procesar el contenido. Véase el
+[contrato oficial de Meta](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids/?locale=en_US).
+
+El BSUID se conserva completo como identidad del canal; nunca se extraen sus
+dígitos para fabricar un teléfono. `profile.username` es una etiqueta mutable
+para mostrar y buscar el contacto. No sirve para vincular conversaciones,
+créditos, clientes o destinatarios. La relación teléfono–BSUID se aprende solo
+cuando el mismo evento Meta acredita ambos y sus datos de contacto son
+coherentes. Una colisión con dos conversaciones diferentes exige revisar el
+vínculo; no se fusionan historiales por nombre. Los UUID históricos de Dapta no
+acreditan por sí mismos esa relación.
+
+El envío humano conserva el destinatario reservado en el outbox: usa `to` para
+un teléfono acreditado y `recipient` para un BSUID sin teléfono. El acuse exige
+`input` y `wa_id` o `user_id`, según el identificador utilizado. No se repite el
+POST usando otra identidad ante un error. Se mantienen la ventana de respuesta,
+los límites de archivos y el control de la IA. Las operaciones financieras y
+las plantillas que requieren teléfono conservan su verificación actual; un
+perfil sin teléfono acreditado no identifica automáticamente un crédito.
+
+Los eventos ignorados dejan únicamente contadores de procesamiento en el log,
+sin nombres, mensajes, teléfonos, BSUID, credenciales ni firmas. Los mensajes
+que el receptor anterior descartó y confirmó no quedan guardados en el CRM ni
+pueden reconstruirse desde una captura; la comprobación de recepción requiere
+un mensaje nuevo del contacto o una fuente histórica verificable.
 
 ## Validación local
 

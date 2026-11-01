@@ -480,3 +480,105 @@ test("identificador externo ya existente se conserva y un eco inválido revierte
   assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,2);
   assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,1);
 });
+
+
+const bsuid="CO.1234567890123456",otherBsuid="CO.2234567890123456";
+const opaqueInbound=(data={})=>inbound({from:bsuid,userId:bsuid,phone:null,username:"Juan_esteban429",name:"Juan Esteban",...data});
+
+test("BSUID recibe texto y medios privados, aparece por usuario y responde sin inventar un teléfono ni crédito",async t=>{
+  const f=await fixture(t);await f.db.query(`INSERT INTO "Credito"(id,"clienteTelefono","clienteNombre","clienteDocumento") VALUES(7,$1,'Otro cliente','123')`,[phone]);
+  const first=opaqueInbound(),row=await f.ingest(first);await f.assign(row.id);
+  assert.equal(row.phone,null);assert.equal(row.name,"Juan Esteban · @Juan_esteban429");
+  const image=opaqueInbound({type:"image",text:undefined,media:{id:"987654321",mimeType:"image/png",fileName:"foto.png"}});
+  const video=opaqueInbound({type:"video",text:undefined,media:{id:"987654322",mimeType:"video/mp4",fileName:"video.mp4"}});
+  await f.meta.ingest(events([image,video]));assert.deepEqual(await f.meta.ingest(events([first,image,video])),{messagesImported:0,echoesImported:0,statusesApplied:0});
+  const inbox=await f.legacy.getAttentionInbox(analyst,{search:"@Juan_esteban429",filter:"all",page:1});assert.equal(inbox.total,1);assert.equal(inbox.conversations[0].phone,null);assert.deepEqual(inbox.conversations[0].autoTags,[]);
+  const detail=await f.legacy.getAttentionDetail(analyst,row.id);assert.equal(detail.messages.length,3);assert.equal(detail.customer.match,"none");
+  const media=detail.messages.find(message=>message.attachment?.kind==="image");assert.equal((await f.meta.getMedia(analyst,row.id,media.id)).mediaId,"987654321");
+  await assert.rejects(f.meta.getMedia(other,row.id,media.id),{status:404});assert.equal((await f.meta.getMessaging(analyst,row.id)).canReply,true);
+  assert.equal((await f.meta.getTemplateAccess(analyst,row.id)).canSend,false);
+  const queued=await f.queue(row.id,analyst),claim=await f.meta.claimReply(analyst,row.id,queued.requestId);assert.equal(queued.contactId,bsuid);
+  await f.meta.beforeSend(analyst,queued.id,claim.reply.leaseToken);const ack=await f.meta.acceptReply(queued.id,claim.reply.leaseToken,"wamid.bsuid-reply");
+  assert.equal(ack.contactId,bsuid);await f.meta.ingest(events([],[delivery(ack.wamid,{recipient:bsuid,userId:bsuid,status:"read"})]));assert.equal((await f.meta.findReply(analyst,row.id,queued.requestId)).status,"read");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation" WHERE phone IS NOT NULL')).rows[0].n,0);
+});
+
+test("alias coacreditado conserva el chat, el intento telefónico, las plantillas y el historial de WhatsApp Business",async t=>{
+  const f=await fixture(t),first=inbound(),row=await f.ingest(first),queued=await f.queue(row.id),claim=await f.meta.claimReply(central,row.id,queued.requestId);
+  const version=(await f.db.query('SELECT version FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0].version;
+  await f.meta.ingest(events([{...first,userId:bsuid,username:"Juan_esteban429"}]));
+  assert.equal((await f.db.query('SELECT version FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0].version,version);
+  assert.deepEqual((await f.db.query('SELECT "contactId" FROM "AttentionMetaBinding" ORDER BY "contactId"')).rows.map(value=>value.contactId),[contact,bsuid].sort());
+  await f.meta.beforeSend(central,queued.id,claim.reply.leaseToken);await f.meta.acceptReply(queued.id,claim.reply.leaseToken,"wamid.phone-alias-reply");
+  await f.meta.ingest(events([],[delivery("wamid.phone-alias-reply",{recipient:bsuid,userId:bsuid,status:"read"})]));assert.equal((await f.meta.findReply(central,row.id,queued.requestId)).status,"read");
+  await f.meta.ingest(events([opaqueInbound()]));const capability=await f.meta.getTemplateAccess(central,row.id);assert.equal(capability.canSend,true);assert.equal(capability.requiresBindingConfirmation,false);
+  const next=await f.queue(row.id);assert.equal(next.contactId,contact);await f.meta.cancelReply(central,row.id,next.requestId);
+  const app=echo({to:bsuid,userId:bsuid,phone:null,username:"Juan_esteban429"});await f.meta.ingest(events([],[],[app]));
+  assert.equal((await f.db.query('SELECT name FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0].name,"Juan Esteban · @Juan_esteban429");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,1);assert.equal((await f.db.query('SELECT phone FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0].phone,phone);
+  await f.meta.ingest(events([],[delivery(app.id,{recipient:contact,status:"read"})]));assert.equal((await f.db.query('SELECT "deliveryStatus" FROM "AttentionMessage" WHERE "metaWamid"=$1',[app.id])).rows[0].deliveryStatus,"read");
+});
+
+test("un intento BSUID sigue fijado cuando un evento repetido acredita después el teléfono",async t=>{
+  const f=await fixture(t),first=opaqueInbound(),row=await f.ingest(first),queued=await f.queue(row.id),claim=await f.meta.claimReply(central,row.id,queued.requestId);
+  await f.meta.ingest(events([{...first,from:contact,phone,userId:bsuid}]));
+  assert.equal((await f.db.query('SELECT phone FROM "AttentionConversation" WHERE id=$1',[row.id])).rows[0].phone,phone);
+  await f.meta.beforeSend(central,queued.id,claim.reply.leaseToken);await f.meta.acceptReply(queued.id,claim.reply.leaseToken,"wamid.pinned-bsuid");
+  const later=await f.queue(row.id);assert.equal(later.contactId,contact);assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,1);
+});
+
+test("colisiones entre teléfono y BSUID, cuentas ajenas y parejas incoherentes no fusionan ni importan mensajes",async t=>{
+  const f=await fixture(t);await f.ingest();await f.ingest(opaqueInbound({name:"Contacto",username:null}));
+  const before=(await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n;
+  await assert.rejects(f.meta.ingest(events([inbound({userId:bsuid})])),{status:409});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,before);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionConversation"')).rows[0].n,2);
+  for(const message of [inbound({phone:null}),opaqueInbound({phone}),inbound({userId:"@nombre"}),opaqueInbound({userId:otherBsuid})])await assert.rejects(f.meta.ingest(events([message])),{status:403});
+  await f.db.query(`UPDATE "AttentionMetaBinding" SET "wabaId"='foreign-account' WHERE "contactId"=$1`,[bsuid]);
+  await assert.rejects(f.meta.ingest(events([opaqueInbound()])),{status:409});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,before);
+});
+
+test("estados anticipados BSUID se reaplican localmente al acreditar alias y ecos opacos conservan recibos y dedupe",async t=>{
+  const f=await fixture(t),row=await f.ingest(),queued=await f.queue(row.id),claim=await f.meta.claimReply(central,row.id,queued.requestId);
+  await f.meta.beforeSend(central,queued.id,claim.reply.leaseToken);await f.meta.acceptReply(queued.id,claim.reply.leaseToken,"wamid.pending-alias");
+  assert.equal((await f.meta.ingest(events([],[delivery("wamid.pending-alias",{recipient:bsuid,userId:bsuid,status:"read"})]))).statusesApplied,0);
+  assert.equal((await f.meta.ingest(events([inbound({userId:bsuid})]))).statusesApplied,1);assert.equal((await f.meta.findReply(central,row.id,queued.requestId)).status,"read");
+  const app=echo({id:"wamid.bsuid-echo",to:otherBsuid,userId:otherBsuid,phone:null,username:"otro_usuario"});
+  await f.meta.ingest(events([],[delivery(app.id,{recipient:otherBsuid,userId:otherBsuid,status:"read"})]));
+  assert.equal((await f.meta.ingest(events([],[],[app]))).statusesApplied,1);assert.equal((await f.meta.ingest(events([],[],[app]))).echoesImported,0);
+  const opaque=(await f.db.query('SELECT c.* FROM "AttentionConversation" c JOIN "AttentionMetaBinding" b ON b."conversationId"=c.id WHERE b."contactId"=$1',[otherBsuid])).rows[0];
+  assert.equal(opaque.phone,null);assert.equal(opaque.name,"@otro_usuario");assert.equal((await f.meta.getMessaging(central,opaque.id)).canReply,false);
+  assert.equal((await f.db.query('SELECT "deliveryStatus" FROM "AttentionMessage" WHERE "metaWamid"=$1',[app.id])).rows[0].deliveryStatus,"read");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,1);
+});
+
+test("automatizaciones numéricas aceptan estado BSUID solo tras alias acreditado de la misma conversación",async t=>{
+  const f=await fixture(t);await f.db.exec(readFileSync(path.join(root,"scripts/setup-whatsapp-automation-meta.sql"),"utf8"));
+  const automation=createWhatsAppAutomationMetaStore(f.database,{now:()=>new Date(instant)}),{row}=await automation.reserve({operationKey:"bienvenida:credito:456",template:"bienvenida",phone:contact,body:["Cliente de prueba"]});
+  await automation.prepare(row.id,row.leaseToken,{text:"Bienvenida",metadata:{}});await automation.start(row.id,row.leaseToken);await automation.accept(row.id,"wamid.automation-user-id");
+  assert.equal((await f.meta.ingest(events([],[delivery("wamid.automation-user-id",{recipient:bsuid,userId:bsuid,status:"read"})]))).statusesApplied,0);
+  assert.equal((await f.meta.ingest(events([inbound({userId:bsuid})]))).statusesApplied,1);
+  assert.equal((await f.db.query('SELECT status FROM "WhatsAppAutomationMetaOutbox" WHERE id=$1',[row.id])).rows[0].status,"read");
+  assert.equal((await f.db.query(`SELECT recipient FROM "AttentionMetaDelivery" WHERE wamid='wamid.automation-user-id'`)).rows[0].recipient,bsuid,"el estado anterior no aprende ni modifica alias");
+  const later=delivery("wamid.automation-user-id",{recipient:bsuid,userId:bsuid,status:"delivered",timestamp:"2026-10-30T15:01:00Z"});await f.meta.ingest(events([],[later]));
+  assert.equal((await f.db.query(`SELECT recipient FROM "AttentionMetaDelivery" WHERE status='delivered'`)).rows[0].recipient,contact);
+  assert.equal((await f.db.query('SELECT status FROM "WhatsAppAutomationMetaOutbox" WHERE id=$1',[row.id])).rows[0].status,"read");
+});
+
+test("un estado dual contradictorio no avanza automatizaciones ni se guarda sin su contradicción para replay",async t=>{
+  const f=await fixture(t);await f.db.exec(readFileSync(path.join(root,"scripts/setup-whatsapp-automation-meta.sql"),"utf8"));
+  const automation=createWhatsAppAutomationMetaStore(f.database,{now:()=>new Date(instant)}),{row}=await automation.reserve({operationKey:"bienvenida:credito:457",template:"bienvenida",phone:contact,body:["Cliente de prueba"]});
+  await automation.prepare(row.id,row.leaseToken,{text:"Bienvenida",metadata:{}});await automation.start(row.id,row.leaseToken);await automation.accept(row.id,"wamid.automation-conflicting-alias");
+  await f.ingest(opaqueInbound());
+  const conflict=delivery("wamid.automation-conflicting-alias",{recipient:contact,userId:bsuid,status:"read"});
+  assert.equal((await f.meta.ingest(events([],[conflict]))).statusesApplied,0);
+  assert.equal((await f.db.query('SELECT status FROM "WhatsAppAutomationMetaOutbox" WHERE id=$1',[row.id])).rows[0].status,"accepted");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMetaDelivery"')).rows[0].n,0);
+  await f.db.query(`UPDATE "AttentionMetaBinding" SET "wabaId"='foreign-account' WHERE "contactId"=$1`,[bsuid]);
+  assert.equal((await f.meta.ingest(events([],[{...conflict,timestamp:"2026-10-30T15:01:00Z"}]))).statusesApplied,0);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMetaDelivery"')).rows[0].n,0);
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='META_DELIVERY_IDENTITY_REJECTED' AND metadata='{}'::jsonb`)).rows[0].n,2);
+  assert.equal((await f.meta.ingest(events([],[delivery(conflict.id,{status:"delivered"})]))).statusesApplied,1,"legacy telefónico conserva funcionamiento");
+  assert.equal((await f.db.query('SELECT status FROM "WhatsAppAutomationMetaOutbox" WHERE id=$1',[row.id])).rows[0].status,"delivered");
+});
