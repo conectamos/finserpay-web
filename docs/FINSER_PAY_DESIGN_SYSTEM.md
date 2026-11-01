@@ -247,6 +247,10 @@ perfil comercial. El envío confirmado se muestra sin esperar la recarga complet
 de la bandeja: se puede preparar otro borrador mientras llega la versión vigente
 del chat, necesaria para el siguiente envío. Las consultas lentas ofrecen
 recuperación explícita y conservan el borrador.
+Los adjuntos pequeños muestran B o KB, evitando presentar un PDF válido como
+0,00 MB. Un adjunto fallido sin archivo publicado indica que no se envió; la
+explicación fija distingue conexión, formato y otros fallos conocidos. Un envío
+incierto conserva la advertencia de consultar su estado antes de otro intento.
 Las imágenes y stickers del historial se amplían en un visor modal dentro del
 CRM, con ajuste a pantalla, zoom y descarga privada. Escape o Cerrar vuelve al
 mismo chat y devuelve el foco a la miniatura; se conservan el borrador y la

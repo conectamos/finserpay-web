@@ -336,20 +336,43 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     }
     return events;
   }
-  async function readBytes(response: Response, max: number): Promise<Uint8Array> {
+  async function readBytes(response: Response, max: number, signal: AbortSignal): Promise<Uint8Array> {
     const declared = response.headers.get("content-length");
     if (declared && (!/^\d+$/.test(declared) || Number(declared) > max)) { await response.body?.cancel(); fail("RESPONSE_TOO_LARGE", "Meta devolvió un contenido que excede el límite.", 502); }
     if (!response.body) fail("INVALID_RESPONSE", "Meta devolvió una respuesta vacía.", 502);
     const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
-    try { for (;;) { const { done, value } = await reader.read(); if (done) break; total += value.length; if (total > max) { await reader.cancel(); fail("RESPONSE_TOO_LARGE", "Meta devolvió un contenido que excede el límite.", 502); } chunks.push(value); } }
-    finally { reader.releaseLock(); }
+    const cancel = () => { void reader.cancel().catch(() => undefined); };
+    signal.addEventListener("abort", cancel, { once: true });
+    try { for (;;) {
+      if (signal.aborted) throw Object.assign(new Error("Request aborted"), { name: "AbortError" });
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw Object.assign(new Error("Request aborted"), { name: "AbortError" });
+      if (done) break; total += value.length; if (total > max) { await reader.cancel(); fail("RESPONSE_TOO_LARGE", "Meta devolvió un contenido que excede el límite.", 502); } chunks.push(value);
+    } }
+    finally { signal.removeEventListener("abort", cancel); reader.releaseLock(); }
     return Buffer.concat(chunks, total);
   }
-  async function request(url: URL, init: RequestInit, max: number, sending = false): Promise<{ response: Response; bytes: Uint8Array }> {
-    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
+  function requestOperation(url: URL, sending: boolean) {
+    return sending ? "send" : url.origin !== GRAPH ? "private_media" : url.pathname.endsWith("/message_templates") ? "templates"
+      : url.pathname.endsWith("/phone_numbers") ? "waba_phones" : url.pathname.endsWith(`/${META_ATTENTION_LINE.phoneNumberId}`) ? "phone" : "graph";
+  }
+  async function requestOnce(url: URL, init: RequestInit, max: number, sending: boolean, budgetMs: number): Promise<{ response: Response; bytes: Uint8Array }> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(Object.assign(new Error("Request deadline"), { name: "AbortError" }));
+        controller.abort();
+      }, budgetMs);
+    });
     try {
-      const response = await transport(url, { ...init, redirect: "error", cache: "no-store", signal: controller.signal });
-      const bytes = await readBytes(response, max);
+      const work = (async () => {
+        const response = await transport(url, { ...init, redirect: "error", cache: "no-store", signal: controller.signal });
+        if (controller.signal.aborted) { void response.body?.cancel().catch(() => undefined); throw Object.assign(new Error("Request aborted"), { name: "AbortError" }); }
+        const bytes = await readBytes(response, max, controller.signal);
+        return { response, bytes };
+      })();
+      const { response, bytes } = await Promise.race([work, deadline]);
       if (!response.ok) {
         // Only a structured Graph rejection proves a send was not accepted.
         let graphError = false;
@@ -369,12 +392,26 @@ export function createMetaAttentionAdapter(options: Options = {}) {
       const safeCodes=new Set(["ENOTFOUND","EAI_AGAIN","ENETUNREACH","EHOSTUNREACH","ECONNRESET","ECONNREFUSED","ETIMEDOUT","EPIPE","ERR_INVALID_URL","ERR_INVALID_ARG_TYPE",
         "ERR_INVALID_CHAR","ERR_INVALID_HTTP_TOKEN","ERR_SSL_WRONG_VERSION_NUMBER","ERR_TLS_CERT_ALTNAME_INVALID","CERT_HAS_EXPIRED","DEPTH_ZERO_SELF_SIGNED_CERT",
         "UNABLE_TO_VERIFY_LEAF_SIGNATURE","UND_ERR_CONNECT_TIMEOUT","UND_ERR_HEADERS_TIMEOUT","UND_ERR_BODY_TIMEOUT","UND_ERR_SOCKET"]);
-      const name=str(dict(error).name),operation=sending?"send":url.origin!==GRAPH?"private_media":url.pathname.endsWith("/message_templates")?"templates"
-        :url.pathname.endsWith("/phone_numbers")?"waba_phones":url.pathname.endsWith(`/${META_ATTENTION_LINE.phoneNumberId}`)?"phone":"graph";
-      console.warn("[attention-meta-transport]",{operation,error:["TypeError","ReferenceError","AbortError","TimeoutError","Error"].includes(name)?name:"UnknownError",
-        cause:safeCodes.has(code)?code:"UNKNOWN",aborted:controller.signal.aborted});
+      const name=str(dict(error).name),operation=requestOperation(url,sending);
+      console.warn("[attention-meta-transport]",JSON.stringify({operation,error:["TypeError","ReferenceError","AbortError","TimeoutError","Error"].includes(name)?name:"UnknownError",
+        cause:safeCodes.has(code)?code:"UNKNOWN",aborted:controller.signal.aborted}));
       throw new AttentionMetaError("META_UNAVAILABLE", "No fue posible completar la conexión con Meta.", 502, sending, !sending);
-    } finally { clearTimeout(timer); }
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  async function request(url: URL, init: RequestInit, max: number, sending = false): Promise<{ response: Response; bytes: Uint8Array }> {
+    // Reads may recover once from a transient connection failure. Uploads and
+    // message/template POSTs are never repeated, even when no response arrives.
+    const started = Date.now();
+    for (let attempt = 1; ; attempt++) {
+      try { return await requestOnce(url, init, max, sending, Math.max(1, timeoutMs - (Date.now() - started))); }
+      catch (error) {
+        if (init.method !== "GET" || sending || attempt !== 1 || !(error instanceof AttentionMetaError) || !error.retryable || Date.now() - started + 250 >= timeoutMs) throw error;
+        console.warn("[attention-meta-read-retry]", JSON.stringify({ operation: requestOperation(url, false), attempt: 2,
+          code: /^[A-Z0-9_:-]{1,80}$/.test(error.code) ? error.code : "UNKNOWN", delayMs: 250 }));
+        await new Promise<void>(resolve => setTimeout(resolve, 250));
+        if (Date.now() - started >= timeoutMs) throw error;
+      }
+    }
   }
   async function graph(path: string, query: Record<string, string> = {}, body?: Dict | FormData, sending = false): Promise<Dict> {
     const cfg = config(); const url = new URL(`${GRAPH}/${cfg.version}/${path}`);

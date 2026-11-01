@@ -7,6 +7,7 @@ import { META_ATTENTION_LINE } from "./atencion-meta";
 import { applyWhatsAppAutomationDelivery } from "./whatsapp-automation-meta-storage";
 import { compileMetaTemplate, templateIntentFingerprint, type MetaTemplateSnapshot } from "./atencion-meta-templates";
 import { reconcileAttentionBusinessReads } from "./atencion-team-read";
+import { attentionMetaFailureMessage } from "./atencion-meta-error-messages";
 
 export type MetaReplyAttachment = {
   kind: "image" | "audio" | "video" | "document" | "sticker";
@@ -79,7 +80,7 @@ export function attentionMetaMessage(row: {id: string; conversationId: string; d
 }
 export function attentionMetaReplyMessage(row: MetaReply): AttentionMessage {
   return { id: row.messageId || row.id, direction: "outbound", text: row.text, sentAt: date(row.acceptedAt || row.createdAt), author: row.authorName,
-    deliveryStatus: row.status, deliveryError: row.status === "failed" ? "No se pudo enviar el mensaje." : row.status === "uncertain" ? "El envío está pendiente de confirmación. No lo reenvíes." : null,
+    deliveryStatus: row.status, deliveryError: row.status === "failed" ? attentionMetaFailureMessage(row.errorCode) : row.status === "uncertain" ? "El envío está pendiente de confirmación. No lo reenvíes." : null,
     ...(row.attachment ? { attachment: { id: row.messageId || row.id, kind: row.attachment.kind, mimeType: row.attachment.mimeType,
       fileName: row.attachment.fileName, url: row.messageId ? `/api/atencion/${row.conversationId}/messages/${row.messageId}/media` : null } } : {}) };
 }

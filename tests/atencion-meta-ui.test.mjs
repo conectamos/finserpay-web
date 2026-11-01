@@ -283,6 +283,15 @@ test("actualización postenvío vence a los quince segundos y conserva borrador 
 });
 
 const replyInput = composer => composer.all().find(node => node.type === "textarea");
+test("un PDF pequeño muestra KB reales y un archivo fallido no se presenta como pendiente de cargar", async () => {
+  const f = mount(); await f.ready(); await f.select();
+  await f.change({ file: new File([new Uint8Array(3315)], "recibo-prueba.pdf", { type: "application/pdf" }) });
+  const composer = mount({ component: "ReplyComposer", props: f.composer().props });
+  assert.match(text(composer.all().find(node => node.props.className === "replyAttachment")), /3,2 KB/);
+  const failed = f.ui.MessageContent({ text: "", dapta: false, media: { id: outbound.id, kind: "document", url: null, fileName: "recibo-prueba.pdf", mimeType: "application/pdf" }, deliveryStatus: "failed" });
+  assert.match(text(failed), /El archivo no se envió/); assert.doesNotMatch(text(failed), /todavía no está disponible/);
+  assert.equal(f.requests.some(request => request.init.method === "POST"), false); composer.unmount(); f.unmount();
+});
 const connectedComposer = parent => mount({ component: "ReplyComposer", props: parent.composer().props });
 function replyKeyEvent(composer, patch = {}) {
   const event = {
