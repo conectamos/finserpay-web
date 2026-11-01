@@ -22,6 +22,7 @@ function load(path, dependencies, globals = {}) {
       if (name === "react/jsx-runtime") return jsxRuntime;
       if (name === "lucide-react") return icons;
       if (name === "@/lib/credit-display-number") return load("lib/credit-display-number.ts", {});
+      if (name === "@/lib/atencion-work-links") return load("lib/atencion-work-links.ts", {});
       assert.ok(name in dependencies, `Unexpected dependency ${name} from ${path}`);
       return dependencies[name];
     } }, { filename: path });
@@ -91,6 +92,7 @@ function mount(path, dependencies, props = {}) {
     all(predicate) { return nodes(tree).filter(predicate); },
     update(nextProps) { currentProps = nextProps; dirty = true; },
     focus() { listeners.get("focus")?.(); },
+    poll() { for (const callback of [...intervals.values()]) callback(); },
     focused() { return focusCalls.at(-1) || null; },
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
@@ -152,6 +154,46 @@ test("la burbuja nominal conserva el vínculo exacto y bloquea el muro durante u
     h.update({ ...props, shared: true });await h.flush();
     assert.equal(h.all(node => node.type === parts.ApprovalWelcomeChat).length, 0, "los enlaces compartidos nunca muestran el chat nominal");
   } finally { h.unmount(); }
+});
+
+for (const trigger of ["poll", "focus", "manual"]) test(`bienvenida conserva el chat y su identidad al refrescar ${trigger}, sin requerir aprobación ni ejecutar un OK`, async () => {
+  const props = { redesigned: true, focusCreditId: 81, welcomeChatCreditId: 81, welcomeChatWorkId: "00000000-0000-4000-8000-000000000081" };
+  let fresh = { ...detail(81), review: { ...detail(81).review, required: false, status: "NOT_REQUIRED" }, canApprove: false };
+  let approvals = 0;
+  const h = wall({ readApprovalCredit: async () => fresh, approveCreditReview: async () => { approvals++; } }, props);
+  const chat = () => h.find(node => node.type === parts.ApprovalWelcomeChat);
+  const workspace = () => h.find(node => node.type === parts.SharedApprovalWorkspace).props;
+  const refresh = () => trigger === "manual" ? workspace().onRefresh() : h[trigger]();
+  try {
+    await h.flush();const key = chat().key;
+    refresh();await h.flush();
+    assert.equal(workspace().detail.id,81);assert.equal(workspace().detail.review.status,"NOT_REQUIRED");
+    assert.equal(chat().key,key,"React conserva la instancia que guarda el borrador del chat");
+    assert.equal(workspace().view,"pending");
+    fresh = { ...detail(81,2), review: { ...detail(81,2).review, status:"APPROVED" }, canApprove:false };
+    refresh();await h.flush();
+    assert.equal(workspace().detail.id,81);assert.equal(workspace().detail.review.status,"APPROVED");
+    assert.equal(workspace().view,"approved");assert.equal(chat().key,key);
+    fresh = { ...detail(81,3), review: { ...detail(81,3).review, required:false,status:"NOT_REQUIRED" },canApprove:false };
+    refresh();await h.flush();
+    assert.equal(workspace().view,"pending");assert.equal(workspace().detail.review.status,"NOT_REQUIRED");
+    assert.equal(chat().key,key);assert.equal(approvals,0);
+  } finally { h.unmount(); }
+});
+
+for(const trigger of ["poll","manual"]) test(`el refresco ordinario ${trigger} conserva el retiro del expediente cuando deja de pertenecer a la cola`, async () => {
+  for(const context of [{},{welcomeChatWorkId:"invalid",welcomeChatCreditId:81},{welcomeChatWorkId:"00000000-0000-4000-8000-000000000081",welcomeChatCreditId:82}]) {
+    let fresh = detail(81);
+    const h = wall({readApprovalCredit:async()=>fresh},{redesigned:true,focusCreditId:81,...context});
+    const workspace=()=>h.find(node=>node.type===parts.SharedApprovalWorkspace).props;
+    try {
+      await h.flush();assert.equal(workspace().detail.id,81);
+      fresh={...detail(81),review:{...detail(81).review,required:false,status:"NOT_REQUIRED"}};
+      if(trigger==="manual")workspace().onRefresh();else h.poll();await h.flush();
+      assert.equal(workspace().detail,null);assert.equal(workspace().selectedId,null);
+      assert.equal(h.all(node=>node.type===parts.ApprovalWelcomeChat).length,0);
+    }finally{h.unmount();}
+  }
 });
 
 test("una ficha atrasada no reemplaza al crédito que se seleccionó después", async () => {

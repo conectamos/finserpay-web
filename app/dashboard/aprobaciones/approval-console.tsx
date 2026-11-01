@@ -1,6 +1,7 @@
 "use client";
 
 import { creditDisplayNumber } from "@/lib/credit-display-number";
+import { isWelcomeChatWorkId } from "@/lib/atencion-work-links";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Expand, FileText, ImageOff, ListChecks, RefreshCw, ShieldCheck } from "lucide-react";
@@ -118,6 +119,9 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
   const submitting = useRef(false);
   const financialBusy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || callBusy;
   const busy = financialBusy || chatBusy;
+  const isPinnedWelcomeCredit = useCallback((id: number) => !shared && isWelcomeChatWorkId(welcomeChatWorkId)
+    && welcomeChatCreditId === focusCreditId && welcomeChatCreditId === selectedId && welcomeChatCreditId === id,
+  [shared, welcomeChatWorkId, welcomeChatCreditId, focusCreditId, selectedId]);
 
   useEffect(() => () => {
     searchController.current?.abort();
@@ -177,11 +181,14 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
     try {
       const nextDetail = await readApprovalCredit(id, controller.signal);
       if (controller.signal.aborted) return;
-      if (nextDetail.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
+      const pinnedWelcome = isPinnedWelcomeCredit(nextDetail.id);
+      const matchesView = nextDetail.review.status === (view === "approved" ? "APPROVED" : "PENDING");
+      if (!matchesView && !pinnedWelcome) {
         setItems((current) => current.filter((item) => item.id !== id)); setSelectedId(null); setSelectedItem(null); setDetail(null);
         setNotice({ text: view === "pending" ? `Crédito ${creditDisplayNumber(nextDetail)} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${creditDisplayNumber(nextDetail)} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
         return nextDetail;
       }
+      if (pinnedWelcome && !matchesView) setView(nextDetail.review.status === "APPROVED" ? "approved" : "pending");
       if (modern && detail?.id === nextDetail.id && (nextDetail.review.revision !== detail.review.revision || nextDetail.review.reviewHash !== detail.review.reviewHash)) {
         setReviewChanged(true); setRereviewed(false);
         setNotice({ text: "El expediente cambió. Revisa los documentos actualizados antes de confirmar el OK.", warning: true });
@@ -285,11 +292,16 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
           setSelectedItem(current => current ? page.items.find(item => item.id === current.id) || current : null);
         }
         if (updated) {
-          if (updated.review.status !== (view === "approved" ? "APPROVED" : "PENDING")) {
+          const pinnedWelcome = isPinnedWelcomeCredit(updated.id);
+          const matchesView = updated.review.status === (view === "approved" ? "APPROVED" : "PENDING");
+          if (!matchesView && !pinnedWelcome) {
             setSelectedId(null); setSelectedItem(null); setDetail(null);
             setItems((current) => current.filter((item) => item.id !== updated.id));
             setNotice({ text: view === "pending" ? `Crédito ${creditDisplayNumber(updated)} aprobado. Puedes consultarlo en Aprobadas.` : `El crédito ${creditDisplayNumber(updated)} ya no tiene una aprobación vigente. Consulta Pendientes por aprobar.`, warning: view === "approved" });
           } else {
+            // A welcome case remains open even when its credit is outside the approval queue.
+            // Refreshing the review status must not discard the linked chat or its draft.
+            if (pinnedWelcome && !matchesView) setView(updated.review.status === "APPROVED" ? "approved" : "pending");
             setDetail(updated);
             if (detail && (updated.review.revision !== detail.review.revision || updated.review.reviewHash !== detail.review.reviewHash)) {
               setReviewChanged(true); setRereviewed(false);
@@ -305,7 +317,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
     const focused = () => { void refresh(); };
     window.addEventListener("focus", focused);
     return () => { controller.abort(); window.clearInterval(interval); window.removeEventListener("focus", focused); };
-  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail, view, query, modern, analystDesk, queueFilters]);
+  }, [busy, searching, loadingDetail, queueLoaded, hasExtraPages, selectedId, detail, view, query, modern, analystDesk, queueFilters, isPinnedWelcomeCredit]);
 
   function searchShared(value: string) {
     if (busy || submitting.current) return;
