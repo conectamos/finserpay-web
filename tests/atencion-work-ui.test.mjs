@@ -45,7 +45,7 @@ function mount(options={}){
       return{default:component(name)};
     },
   });
-  function render(){cursor=0;dirty=false;effects=[];tree=loaded.exports.default(props);for(const run of effects)run();}
+  function render(){cursor=0;dirty=false;effects=[];tree=loaded.exports.default(props);const log=nodes(tree).find(n=>n.props.role==="log");if(options.scrollLog&&log)log.props.ref.current=options.scrollLog;for(const run of effects)run();}
   async function flush(){for(let i=0;i<25;i++){await Promise.resolve();if(dirty)render();}}
   const all=()=>nodes(tree),button=label=>all().find(n=>n.type?.name==="Button"&&(text(n)===label||n.props["aria-label"]===label));
   render();
@@ -210,6 +210,35 @@ test("allowCreate=false conserva la bandeja del asesor sin crear ni buscar otras
 
 const sellerCase=()=>({...detailFor(),canManage:false,canAssign:false});
 const singleOptions={mode:"seller",singleCase:true,allowCreate:false,initialId:itemA.id,expectedTarget:itemA.target};
+
+function clampedHistory(){
+  let top=0;
+  const log={scrollHeight:400,clientHeight:400,writes:[],get scrollTop(){return top;},set scrollTop(value){this.writes.push(value);top=Math.max(0,Math.min(value,this.scrollHeight-this.clientHeight));}};
+  return log;
+}
+const historyNode=f=>f.all().find(n=>n.props.role==="log");
+
+test("seguir los mensajes llega al fondo real incluido el padding de escritorio, sin saltar al leer arriba",async()=>{
+  const log=clampedHistory(),f=mount({...singleOptions,mode:"attention",scrollLog:log});
+  log.scrollHeight=1024;await resolveReads(f,detailFor());
+  assert.equal(log.scrollTop,624);assert.equal(log.scrollHeight-log.scrollTop-log.clientHeight,0,"el padding inferior de 24px también queda dentro del viewport");
+  assert.equal(log.writes.at(-1),1024);
+  log.scrollTop=100;historyNode(f).props.onScroll();const writes=log.writes.length;
+  const next={...detailFor(),messages:[...detailFor().messages,{...detailFor().messages[0],id:"00000000-0000-4000-8000-000000000032"}]};
+  log.scrollHeight=1200;await f.advance(5000);await resolveReads(f,next);
+  assert.equal(log.scrollTop,100,"no abandona los mensajes antiguos que está consultando el lector");assert.equal(log.writes.length,writes);
+  f.setProps({active:false});await f.flush();assert.equal(log.writes.length,writes,"un chat minimizado no mueve el historial");f.unmount();
+});
+
+test("el historial de 200 mensajes sigue el nuevo último mensaje aunque la cantidad no cambie",async()=>{
+  const log=clampedHistory(),f=mount({...singleOptions,mode:"attention",scrollLog:log});
+  const messages=Array.from({length:200},(_,i)=>({...detailFor().messages[0],id:`00000000-0000-4000-8000-${String(1000+i).padStart(12,"0")}`}));
+  log.scrollHeight=16024;await resolveReads(f,{...detailFor(),messages,historyTruncated:true});assert.equal(log.scrollTop,15624);
+  historyNode(f).props.onScroll();
+  const latest=[...messages.slice(1),{...messages[0],id:"00000000-0000-4000-8000-000000009999"}];
+  log.scrollHeight=16524;await f.advance(5000);await resolveReads(f,{...detailFor(),messages:latest,historyTruncated:true});
+  assert.equal(latest.length,messages.length);assert.equal(log.scrollTop,16124);assert.equal(log.scrollHeight-log.scrollTop-log.clientHeight,0);f.unmount();
+});
 test("el chat de una venta consulta solo su caso; la ficha colapsable conserva el borrador y los soportes",async()=>{
   const current=sellerCase();current.messages[0].attachment={id:"00000000-0000-4000-8000-000000000041",kind:"image",fileName:"soporte-privado.png"};
   const f=mount({...singleOptions,sse:true});assert.equal(f.requests.length,1);assert.equal(f.requests[0].url,`/api/ventas/atencion/${itemA.id}`);await resolveReads(f,current);

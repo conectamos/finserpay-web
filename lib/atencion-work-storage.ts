@@ -4,7 +4,7 @@ import { AttentionError, attentionText, attentionUuid } from "./atencion-core";
 import { type AttentionDatabase, type AttentionDb } from "./atencion-storage";
 import { assertAttentionWorkCurrentActor } from "./atencion-work-actor";
 import { notifyAttentionWork } from "./atencion-work-notifications";
-import { attentionWorkKinds, attentionWorkStates, type AttentionWorkActor, type AttentionWorkDetail, type AttentionWorkItem, type AttentionWorkKind, type AttentionWorkListFilters } from "./atencion-work-types";
+import { attentionWorkKinds, attentionWorkStates, type AttentionWorkActor, type AttentionWorkDetail, type AttentionWorkItem, type AttentionWorkKind, type AttentionWorkListFilters, type AttentionWorkSummary } from "./atencion-work-types";
 import type { AttentionActor, AttentionMessage, AttentionNote } from "./atencion-types";
 import { validateMetaAttentionMedia } from "./atencion-meta";
 import { attentionUnreadPredicate } from "./atencion-team-read";
@@ -46,6 +46,12 @@ export function parseWorkListQuery(params:URLSearchParams){
 }
 export function parseWorkTarget(value:unknown){const match=typeof value==="string"?/^([DC])-([1-9]\d{0,9})$/.exec(value):null;if(!match)throw new AttentionError("Selecciona una solicitud o crédito existente.");return {source:match[1] as "D"|"C",id:Number(match[2])};}
 export function parseWorkKind(value:unknown):AttentionWorkKind{if(value!=="enrollment"&&value!=="welcome")throw new AttentionError("Tipo de solicitud inválido.");return value;}
+export function parseWorkSummaryQuery(params:URLSearchParams){
+  if([...params.keys()].some(key=>key!=="target")||params.getAll("target").length!==1)throw new AttentionError("Indica una sola operación vinculada.");
+  const ref=parseWorkTarget(params.get("target"));
+  if(ref.source!=="C"||ref.id>2147483647)throw new AttentionError("Selecciona el crédito de la bienvenida.");
+  return `C-${ref.id}`;
+}
 async function target(db:AttentionDb,source:"D"|"C",id:number,lock=true):Promise<Target>{
   const table=source==="D"?'"CreditoBorrador"':'"Credito"';
   const [r]=await db.$queryRawUnsafe<Target[]>(`SELECT d.id,d."clienteNombre" AS name,d."clienteDocumento" AS document,d.imei,upper(COALESCE(to_jsonb(d)->>'plataforma',to_jsonb(d)->'contratoSnapshot'->>'plataforma','')) AS platform,d.estado AS state,d."vendedorId" AS "sellerId",d."sedeId",s."aliadoId",v.nombre AS advisor,a.nombre AS ally,s.nombre AS branch FROM ${table} d JOIN "Sede" s ON s.id=d."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId" LEFT JOIN "Vendedor" v ON v.id=d."vendedorId" WHERE d.id=$1 ${lock?"FOR SHARE OF d,s,a":""}`,id);
@@ -140,6 +146,33 @@ export function createAttentionWorkStore(database:AttentionDatabase){
     return {fileId,alreadyApplied:false};
   }
   return {
+    summary:async(a:AttentionWorkActor,id:string,expectedTarget:string):Promise<AttentionWorkSummary>=>{
+      if(a.type!=="attention")throw new AttentionError("Usa tu cuenta personal de Atención.",403);
+      const ref=parseWorkTarget(expectedTarget);
+      if(ref.source!=="C"||ref.id>2147483647)throw new AttentionError("Selecciona el crédito de la bienvenida.");
+      return transaction(a,async(db,current)=>{
+        const access=scope(current);
+        type SummaryRow=Omit<AttentionWorkSummary,"target">;
+        const [result]=await db.$queryRawUnsafe<SummaryRow[]>(`SELECT w.id AS "workId",w.kind,
+          ${unreadSql(current)} AS "unreadCount",
+          (SELECT json_build_object('id',m.id,'sentAt',to_char(m."sentAt" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM "AttentionMessage" m
+            WHERE m."conversationId"=c.id AND m.direction='inbound' ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS "lastInbound",
+          (SELECT json_build_object('id',m.id,'sentAt',to_char(m."sentAt" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM "AttentionMessage" m
+            WHERE m."conversationId"=c.id AND m.direction='inbound' AND ${attentionUnreadPredicate}
+            ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS "lastUnreadInbound"
+          ${join} JOIN "Credito" owner ON owner.id=w."targetId"
+          JOIN "Sede" owner_sede ON owner_sede.id=owner."sedeId"
+          WHERE ${access.sql} AND w.id=$${access.values.length+1}::uuid
+          AND w.kind='welcome' AND w."targetSource"='C' AND w."targetId"=$${access.values.length+2}
+          AND owner."vendedorId"=w."sellerId" AND owner."sedeId"=w."sedeId" AND owner_sede."aliadoId"=w."aliadoId"`,
+        ...access.values,attentionUuid(id),ref.id);
+        if(!result)throw new AttentionError("Solicitud no encontrada o no autorizada para este crédito.",404);
+        // Preserve SQL microseconds so cursor ordering matches sentAt,id without inventing an advance on reads.
+        const marker=(value:SummaryRow["lastInbound"])=>value?{id:value.id,sentAt:value.sentAt}:null;
+        return {workId:result.workId,kind:"welcome",target:`C-${ref.id}`,unreadCount:result.unreadCount,
+          lastInbound:marker(result.lastInbound),lastUnreadInbound:marker(result.lastUnreadInbound)};
+      });
+    },
     captureAccess:<T>(a:AttentionWorkActor,id:string,run:(context:AttentionWorkCaptureContext)=>Promise<T>)=>transaction(a,async(db,current)=>{
       const r=await row(db,current,id),t=await target(db,r.targetSource,r.targetId);
       if(current.type==="seller"&&current.sellerId!==t.sellerId)throw new AttentionError("Solo el asesor titular puede enviar soportes.",403);

@@ -35,6 +35,10 @@ Al llegar al muro desde esa acción aparece **Chat con asesor**, una burbuja par
 
 La actualización automática y manual conserva el expediente vinculado a la bienvenida aunque no requiera aprobación financiera o cambie su estado. Se muestran sus datos vigentes sin retirar el chat ni su borrador. La bandeja ordinaria mantiene sus reglas actuales de seguimiento y las acciones financieras continúan sujetas al estado real del crédito.
 
+El contador de **Chat con asesor** consulta únicamente mensajes entrantes pendientes según la lectura nominal y compartida ya existente. Se actualiza mediante eventos en vivo y consulta de respaldo cada cinco segundos mientras la página está visible. La primera consulta presenta los pendientes existentes sin anunciar una llegada nueva. Los mensajes posteriores producen un aviso visual y accesible, sin mostrar el contenido ni solicitar nuevos permisos del dispositivo.
+
+El resumen `GET /api/atencion/solicitudes/:id/resumen?target=C-:creditId` solo devuelve el contador y marcadores de mensajes; no consulta textos o documentos ni confirma lectura, modifica versiones o crea auditorías. Abrir o minimizar no pone el contador en cero. La confirmación sigue en `AttentionObservedRead`, únicamente cuando el historial está visible, al final y sin otro diálogo que lo oculte. Una lectura desde otra pestaña actualiza el contador. Los fallos temporales muestran «Contador no disponible» y se reintentan; una pérdida de acceso retira el contador, el aviso y el chat privado. No requiere tablas ni credenciales nuevas.
+
 ## Permisos y continuidad
 
 Solo administración central y el analista actualmente asignado pueden gestionar el caso. El servidor comprueba nuevamente la asignación, la operación, el asesor titular, la sede y la identidad al guardar. Si cambiaron, solicita actualizar en lugar de aplicar el resultado a otro expediente. Los reintentos del mismo envío recuperan el resultado guardado y evitan repetir la autorización o la llamada.

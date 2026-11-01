@@ -31,8 +31,12 @@ las acciones reales y una sola confirmación principal. Conserva el historial y
 el borrador del chat al abrir y cerrar; en celular ocupa el ancho disponible.
 Al abrir el muro desde bienvenida, una burbuja grafito «Chat con asesor» permite
 reabrir esa misma solicitud en el expediente. El panel se minimiza conservando
-el borrador y suspende sus lecturas cuando está cerrado. Solo se presenta en
+el borrador y suspende las consultas del historial cuando está cerrado. Solo se presenta en
 el expediente vinculado y con el acceso nominal autorizado; no crea otro caso.
+La misma burbuja muestra un contador lima de mensajes entrantes sin leer y un
+aviso discreto al llegar un mensaje del asesor. El resumen mínimo permanece
+actualizado aunque el chat esté cerrado, sin confirmar lecturas. No se añaden
+sonidos, otra burbuja ni permisos de notificación; el aviso accesible es genérico.
 El checklist de enrolamiento reutiliza las cuatro pruebas existentes y comienza
 sin selecciones. Una autorización previa muestra su responsable y fecha, sin
 atribuir sus pruebas al analista actual. Las notas internas tienen su propio
