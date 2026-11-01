@@ -197,10 +197,22 @@ test("bienvenida ofrece el muro vinculado sin descartar la gestión; inconsisten
   const linked={...detail("welcome"),item:{...detail("welcome").item,target:"C-101"},operationHref:"/dashboard/aprobaciones?credito=101"};
   const f=mount("attention-work-management.tsx",{open:true,detail:linked,busy:false});
   const link=()=>f.all().find(n=>n.type==="a"&&text(n)==="Abrir muro del crédito");
-  assert.equal(link().props.href,linked.operationHref);assert.equal(link().props.target,"_blank");assert.equal(link().props.rel,"noopener noreferrer");
+  assert.equal(link().props.href,`${linked.operationHref}&solicitud=${linked.item.id}`);assert.equal(link().props.target,"_blank");assert.equal(link().props.rel,"noopener noreferrer");
   assert.ok(f.named("attention-welcome-management"));assert.match(text(f.tree),/Vuelve a este chat para registrar el resultado/);assert.equal(f.requests.length,0);
   f.setProps({busy:true});assert.equal(link(),undefined);assert.equal(f.button("Abrir muro del crédito").props.disabled,true);
   f.setProps({busy:false,detail:{...linked,operationHref:"/dashboard/aprobaciones?credito=999"}});assert.equal(link(),undefined);assert.match(text(f.tree),/El muro no está disponible/);
   f.setProps({detail:{...linked,canManage:false}});assert.equal(f.tree,null);
   f.setProps({detail:detail("enrollment")});assert.equal(link(),undefined);assert.ok(f.named("attention-enrollment-management"));f.unmount();
+});
+
+test("la gestión abierta desde la burbuja del muro conserva su formulario sin volver a abrir otro muro", () => {
+  const linked = { ...detail("welcome"), item: { ...detail("welcome").item, target: "C-101" }, operationHref: "/dashboard/aprobaciones?credito=101" };
+  const f = mount("attention-work-management.tsx", { open: true, detail: linked, busy: false, welcomeWallOpen: true });
+  assert.equal(f.all().some(node => node.type === "a"), false);
+  assert.doesNotMatch(text(f.tree), /Expediente del crédito|Abrir muro del crédito|Se abre en otra pestaña/);
+  assert.ok(f.named("attention-welcome-management"));
+  assert.equal(f.requests.length, 0, "abrir gestión no inicia llamadas ni envíos");
+  f.setProps({ detail: detail("enrollment") });
+  assert.ok(f.named("attention-enrollment-management"), "el enrolamiento conserva su gestión");
+  f.unmount();
 });

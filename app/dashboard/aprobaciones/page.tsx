@@ -6,6 +6,7 @@ import { getCreditApprovalSessionUser, getNominalApprovalWorkspaceSessionUser } 
 import { canManageApprovalAnalysts, canReviewCreditApprovals, isApprovalAnalystRole } from "@/lib/roles";
 import ApprovalDashboardShell from "./approval-dashboard-shell";
 import ApprovalWorkspace from "./approval-workspace";
+import { isWelcomeChatWorkId } from "@/lib/atencion-work-links";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
@@ -16,7 +17,7 @@ export const metadata = {
 export default async function AprobacionesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ credito?: string | string[]; vista?: string | string[] }>;
+  searchParams: Promise<{ credito?: string | string[]; vista?: string | string[]; solicitud?: string | string[] }>;
 }) {
   const user = await getCreditApprovalSessionUser();
   if (!user) redirect("/aliados");
@@ -33,6 +34,9 @@ export default async function AprobacionesPage({
   const focusApprovalCreditId = Number.isSafeInteger(parsedCreditId) && parsedCreditId > 0
     ? parsedCreditId
     : null;
+  const welcomeChatWorkId = sharedContext === undefined && workspaceUser?.id === user.id
+    && focusApprovalCreditId && !Array.isArray(params.credito) && isWelcomeChatWorkId(params.solicitud)
+    ? params.solicitud : null;
 
   return (
     <ApprovalDashboardShell activeHref="/dashboard/aprobaciones" user={user} analystWorkspace={analystDesk}>
@@ -46,7 +50,7 @@ export default async function AprobacionesPage({
       <ApprovalWorkspace redesigned analystDesk={analystDesk} allowOperations={sharedContext === undefined}
         canManageSadmin={centralAdmin && sharedContext === undefined}
         manageLegacySharedAccess={centralAdmin && sharedContext === undefined} userName={user.nombre}
-        initialFocusApprovalCreditId={focusApprovalCreditId} />
+        initialFocusApprovalCreditId={focusApprovalCreditId} welcomeChatWorkId={welcomeChatWorkId} />
     </ApprovalDashboardShell>
   );
 }

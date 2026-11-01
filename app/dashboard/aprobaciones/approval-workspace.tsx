@@ -13,7 +13,7 @@ function initials(name: string) {
 }
 
 export default function ApprovalWorkspace({ shared = false, redesigned = false, allowOperations = false,
-  analystDesk = false, canManageSadmin = false, manageLegacySharedAccess = false, userName = "", initialFocusApprovalCreditId = null }: {
+  analystDesk = false, canManageSadmin = false, manageLegacySharedAccess = false, userName = "", initialFocusApprovalCreditId = null, welcomeChatWorkId = null }: {
   shared?: boolean;
   redesigned?: boolean;
   allowOperations?: boolean;
@@ -22,6 +22,7 @@ export default function ApprovalWorkspace({ shared = false, redesigned = false, 
   manageLegacySharedAccess?: boolean;
   userName?: string;
   initialFocusApprovalCreditId?: number | null;
+  welcomeChatWorkId?: string | null;
 }) {
   const [view, setView] = useState<"approvals" | "sadmin" | "operations">("approvals");
   const [focusApprovalCreditId, setFocusApprovalCreditId] = useState<number | null>(initialFocusApprovalCreditId);
@@ -54,6 +55,7 @@ export default function ApprovalWorkspace({ shared = false, redesigned = false, 
       : showingDetail ? null
         : <>{manageLegacySharedAccess && !shared ? <SharedAccessControl retirementMode /> : null}
           <ApprovalConsole shared={shared} redesigned={redesigned} analystDesk={analystDesk} focusCreditId={focusApprovalCreditId}
+            welcomeChatWorkId={shared ? null : welcomeChatWorkId} welcomeChatCreditId={initialFocusApprovalCreditId}
             onOpenSadmin={canManageSadmin ? () => setView("sadmin") : undefined} /></>}
   </>;
 }

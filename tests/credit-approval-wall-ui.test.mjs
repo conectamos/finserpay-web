@@ -8,7 +8,7 @@ import ts from "typescript";
 
 const placeholder = (name) => Object.defineProperty(() => null, "name", { value: name });
 const ui = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "LoadingState", "MetricCard", "PageHeader", "StatusPill", "Select", "Tabs"].map((name) => [name, placeholder(name)]));
-const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalSignedDocumentRecovery", "ApprovalNoveltyPanel", "PendingItemEditor", "PendingRemissions", "ApprovalCallRecording", "SharedApprovalWorkspace", "SharedEvidenceGallery", "SharedDataCorrection", "SharedNoveltyHistory", "CreditWelcomeVoiceResult"].map((name) => [name, placeholder(name)]));
+const parts = Object.fromEntries(["ConfirmDialog", "LastPdfPagePreview", "ApprovalEvidenceCorrection", "ApprovalSignatureReissue", "ApprovalSignedDocumentRecovery", "ApprovalNoveltyPanel", "PendingItemEditor", "PendingRemissions", "ApprovalCallRecording", "SharedApprovalWorkspace", "SharedEvidenceGallery", "SharedDataCorrection", "SharedNoveltyHistory", "CreditWelcomeVoiceResult", "ApprovalWelcomeChat"].map((name) => [name, placeholder(name)]));
 const icons = new Proxy({}, { get: (_, key) => placeholder(String(key)) });
 
 function load(path, dependencies, globals = {}) {
@@ -119,6 +119,7 @@ function wall(api = {}, props = {}) {
     "./approval-signature-reissue": { default: parts.ApprovalSignatureReissue },
     "./approval-signed-document-recovery": { default: parts.ApprovalSignedDocumentRecovery },
     "./credit-welcome-voice-result": { default: parts.CreditWelcomeVoiceResult },
+    "./approval-welcome-chat": { default: parts.ApprovalWelcomeChat },
     "./approval-call-recording": { default: parts.ApprovalCallRecording },
     "./approval-novelty-panel": { default: parts.ApprovalNoveltyPanel },
     "@/app/revision-creditos/shared-approval-workspace": { default: parts.SharedApprovalWorkspace },
@@ -129,6 +130,29 @@ const select = (h, id) => h.find((node) => node.props?.["aria-label"] === `Revis
 const current = (h) => h.find((node) => node.type === parts.ApprovalNoveltyPanel).props;
 const approveButton = (h) => h.find((node) => node.type === ui.Button && node.props.onClick?.name === "requestApproval");
 const confirm = (h) => h.find((node) => node.type === parts.ConfirmDialog && node.props.title === "Aprobar para liquidación");
+
+test("la burbuja nominal conserva el vínculo exacto y bloquea el muro durante un envío del chat", async () => {
+  const props = { redesigned: true, focusCreditId: 81, welcomeChatCreditId: 81, welcomeChatWorkId: "00000000-0000-4000-8000-000000000081" };
+  const h = wall({}, props);
+  const chat = () => h.find(node => node.type === parts.ApprovalWelcomeChat);
+  const workspace = () => h.find(node => node.type === parts.SharedApprovalWorkspace).props;
+  try {
+    await h.flush();
+    assert.equal(chat().props.creditId, 81);assert.equal(chat().props.workId, props.welcomeChatWorkId);
+    chat().props.onBusyChange(true);await h.flush();
+    assert.equal(workspace().busy, true);assert.equal(workspace().correctionDisabled, true);
+    assert.equal(workspace().callPanel.props.children[0].props.disabled, true);
+    assert.equal(workspace().callPanel.props.children[1].props.disabled, true);
+    assert.equal(chat().props.disabled, false, "el bloqueo del propio chat no lo desactiva a sí mismo");
+    workspace().onSelect(82);await h.flush();assert.equal(chat().props.creditId, 81);
+    chat().props.onBusyChange(false);await h.flush();
+    workspace().onSelect(82);await h.flush();
+    assert.equal(h.all(node => node.type === parts.ApprovalWelcomeChat).length, 0, "otro expediente no conserva el chat del cliente anterior");
+    workspace().onSelect(81);await h.flush();assert.equal(chat().props.creditId, 81);
+    h.update({ ...props, shared: true });await h.flush();
+    assert.equal(h.all(node => node.type === parts.ApprovalWelcomeChat).length, 0, "los enlaces compartidos nunca muestran el chat nominal");
+  } finally { h.unmount(); }
+});
 
 test("una ficha atrasada no reemplaza al crédito que se seleccionó después", async () => {
   const first = deferred(); let firstSignal;
