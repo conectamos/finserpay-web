@@ -104,7 +104,7 @@ export function useAttentionQuickReplyShortcuts({ text, replies, disabled, maxLe
     const currentToken = tokenAt(current);
     if (!currentToken || current?.value !== text || currentToken.key === dismissed || !["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) return false;
     event.preventDefault();
-    // A held Enter never inserts again or reaches the form's send shortcut.
+    // A held Enter never inserts the quick reply again.
     if (event.repeat) return true;
     const available = matches(replies, currentToken);
     const index = highlight?.key === currentToken.key ? Math.min(highlight.index, Math.max(0, available.length - 1)) : 0;

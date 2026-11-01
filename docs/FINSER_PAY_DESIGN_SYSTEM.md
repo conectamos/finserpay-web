@@ -236,8 +236,9 @@ se agrupan en Seguimiento. `ConfirmDialog` muestra crédito, destinatario y fech
 o importe antes de actuar. El grabador ofrece escucha previa y los emojis se
 insertan en el borrador. La recepción en tiempo real conserva texto y posición
 de lectura; los fallos de conexión muestran su estado y activan consulta local.
-El campo de respuesta envía con Enter y conserva Shift + Enter para una nueva
-línea. El pegado de imágenes con Ctrl + V prepara el adjunto y su vista previa,
+El campo de respuesta usa Enter para una nueva línea y requiere pulsar Enviar
+para despachar el mensaje, también en el chat interno del asesor. El pegado de
+imágenes con Ctrl + V prepara el adjunto y su vista previa,
 manteniendo el texto y las validaciones actuales; el pegado de texto sigue siendo nativo.
 Escribir `/` abre las respuestas rápidas aprobadas junto al campo, con búsqueda,
 flechas para elegir, Enter o Tab para insertar y Escape para cerrar. La selección

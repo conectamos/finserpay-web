@@ -188,13 +188,14 @@ test("errores tardíos de una lectura abortada no retiran el caso revalidado ni 
   }
 });
 
-test("Enter envía una sola intención interna y conserva Shift, IME y repeticiones",async()=>{
+test("Enter conserva el mensaje interno sin enviar y el submit explícito despacha una sola intención",async()=>{
   const busy=[];const f=mount({mode:"attention",embedded:true,onBusyChange:value=>busy.push(value)});await resolveReads(f);await selectWork(f);
   messageField(f).props.onChange({target:{value:"Mensaje interno revisado"}});await f.flush();
   const event=flags=>({key:"Enter",nativeEvent:{},repeat:false,shiftKey:false,ctrlKey:false,metaKey:false,altKey:false,prevented:false,preventDefault(){this.prevented=true;},currentTarget:{form:{requestSubmit(){f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit({preventDefault(){}});}}},...flags});
-  for(const flags of [{shiftKey:true},{ctrlKey:true},{altKey:true},{metaKey:true},{nativeEvent:{isComposing:true}},{nativeEvent:{keyCode:229}},{repeat:true}])messageField(f).props.onKeyDown(event(flags));
+  for(const flags of [{},{shiftKey:true},{ctrlKey:true},{altKey:true},{metaKey:true},{nativeEvent:{isComposing:true}},{nativeEvent:{keyCode:229}},{repeat:true}]){const key=event(flags);messageField(f).props.onKeyDown(key);assert.equal(key.prevented,false);}
   assert.equal(f.requests.some(r=>r.init.method==="PATCH"),false);
-  const key=messageField(f).props.onKeyDown;key(event({}));key(event({}));await f.flush();
+  assert.equal(messageField(f).props.value,"Mensaje interno revisado");assert.equal(messageField(f).props.enterKeyHint,"enter");
+  const submit=f.all().find(n=>n.type==="form"&&n.props.className==="composer").props.onSubmit;submit({preventDefault(){}});submit({preventDefault(){}});await f.flush();
   const writes=f.requests.filter(r=>r.init.method==="PATCH");assert.equal(writes.length,1);assert.equal(JSON.parse(writes[0].init.body).action,"message");assert.equal(JSON.parse(writes[0].init.body).text,"Mensaje interno revisado");assert.ok(busy.includes(true));
   writes[0].respond({...detailFor(),item:{...itemA,version:3}});await f.flush();assert.equal(messageField(f).props.value,"");
   assert.equal(busy.at(-1),false);f.unmount();assert.equal(busy.at(-1),false);
