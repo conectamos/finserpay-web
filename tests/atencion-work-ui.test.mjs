@@ -293,13 +293,26 @@ for(const [profile,canAssign] of [["central",true],["analista asignado",false]])
   await resolveReads(f,current,[item]);
   messageField(f).props.onChange({target:{value:"Respuesta en preparación"}});await f.flush();
   const link=f.all().find(n=>n.type==="a"&&text(n)==="Gestionar bienvenida");
-  assert.equal(link.props.href,"/dashboard/aprobaciones?credito=101");assert.equal(link.props.target,"_blank");assert.equal(link.props.rel,"noopener noreferrer");
+  assert.equal(link.props.href,`/dashboard/aprobaciones?credito=101&solicitud=${item.id}`);assert.equal(link.props.target,"_blank");assert.equal(link.props.rel,"noopener noreferrer");
   let prevented=false;link.props.onClick({preventDefault(){prevented=true;}});await f.flush();
   assert.equal(prevented,false);assert.equal(workManager(f).props.open,true);assert.equal(messageField(f).props.value,"Respuesta en preparación");
   assert.equal(f.requests.some(r=>r.init.method),false,"abrir el muro no aprueba ni inicia llamadas");
   workManager(f).props.onBusyChange(true);await f.flush();
   assert.equal(f.all().find(n=>n.type==="a"&&text(n)==="Gestionar bienvenida"),undefined);assert.equal(f.button("Gestionar bienvenida").props.disabled,true);
   link.props.onClick({preventDefault(){prevented=true;}});assert.equal(prevented,true,"un evento anterior no abre otro muro durante una gestión en curso");f.unmount();
+});
+
+test("dentro del muro la bienvenida se gestiona en el chat sin volver a abrir el expediente",async()=>{
+  const item={...itemA,kind:"welcome",target:"C-101"};
+  const current={...detailFor(item),operationHref:"/dashboard/aprobaciones?credito=101"};
+  const f=mount({kind:"welcome",mode:"attention",initialId:item.id,singleCase:true,allowCreate:false,expectedTarget:"C-101",welcomeWallOpen:true});
+  await resolveReads(f,current,[item]);
+  messageField(f).props.onChange({target:{value:"Borrador dentro del muro"}});await f.flush();
+  assert.equal(f.all().some(n=>n.props.href?.includes("/dashboard/aprobaciones?credito=")),false);
+  f.button("Gestionar bienvenida").props.onClick();await f.flush();
+  assert.equal(workManager(f).props.open,true);assert.equal(workManager(f).props.welcomeWallOpen,true);
+  assert.equal(messageField(f).props.value,"Borrador dentro del muro");
+  assert.equal(f.requests.some(r=>r.init.method),false);f.unmount();
 });
 
 test("una bienvenida sin vínculo consistente conserva el panel y no apunta al crédito de otro cliente",async()=>{

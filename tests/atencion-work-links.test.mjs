@@ -4,10 +4,11 @@ import test from "node:test";
 
 const jiti = createJiti(import.meta.url);
 const { attentionWelcomeCreditWallHref } = await jiti.import("../lib/atencion-work-links.ts");
-const detail = (overrides = {}) => ({ canManage: true, item: { kind: "welcome", target: "C-101" }, operationHref: "/dashboard/aprobaciones?credito=101", ...overrides });
+const workId = "00000000-0000-4000-8000-000000000101";
+const detail = (overrides = {}) => ({ canManage: true, item: { id: workId, kind: "welcome", target: "C-101" }, operationHref: "/dashboard/aprobaciones?credito=101", ...overrides });
 
 test("el muro se vincula exclusivamente al crédito canónico autorizado", () => {
-  assert.equal(attentionWelcomeCreditWallHref(detail()), "/dashboard/aprobaciones?credito=101");
+  assert.equal(attentionWelcomeCreditWallHref(detail()), `/dashboard/aprobaciones?credito=101&solicitud=${workId}`);
   assert.equal(attentionWelcomeCreditWallHref(detail({ canManage: false })), null);
   for (const item of [
     { kind: "enrollment", target: "C-101" }, { kind: "welcome", target: "D-101" },
@@ -16,5 +17,8 @@ test("el muro se vincula exclusivamente al crédito canónico autorizado", () =>
   ]) assert.equal(attentionWelcomeCreditWallHref(detail({ item })), null);
   for (const operationHref of [null, "/dashboard/aprobaciones?credito=102", "/dashboard/aprobaciones", "/dashboard/aprobaciones?credito=101&credito=102", "https://otro.invalid/dashboard/aprobaciones?credito=101", "//otro.invalid", "javascript:void(0)"]) {
     assert.equal(attentionWelcomeCreditWallHref(detail({ operationHref })), null);
+  }
+  for (const id of [undefined, "", "101", `${workId}&credito=999`, "00000000-0000-0000-0000-000000000000"]) {
+    assert.equal(attentionWelcomeCreditWallHref(detail({ item: { ...detail().item, id } })), null);
   }
 });

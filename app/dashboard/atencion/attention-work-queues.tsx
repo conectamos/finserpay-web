@@ -20,7 +20,7 @@ function date(value:string){return new Intl.DateTimeFormat("es-CO",{timeZone:"Am
 function time(value:string){return Number.isFinite(Date.parse(value))?new Intl.DateTimeFormat("es-CO",{timeZone:"America/Bogota",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(value)):"—";}
 function initials(value:string){return value.trim().split(/\s+/).slice(0,2).map(part=>part[0]).join("").toUpperCase()||"A";}
 type ListFilter="all"|"unread"|"unassigned";
-export default function AttentionWorkQueues({kind,mode="attention",sellerId,initialId=null,embedded=false,navigation,canAssignFilter=false,onBusyChange,active=true,allowCreate=true,singleCase=false,expectedTarget}:{kind:AttentionWorkKind;mode?:"attention"|"seller";sellerId?:number;initialId?:string|null;embedded?:boolean;navigation?:ReactNode;canAssignFilter?:boolean;onBusyChange?:(busy:boolean)=>void;active?:boolean;allowCreate?:boolean;singleCase?:boolean;expectedTarget?:string}){
+export default function AttentionWorkQueues({kind,mode="attention",sellerId,initialId=null,embedded=false,navigation,canAssignFilter=false,onBusyChange,active=true,allowCreate=true,singleCase=false,expectedTarget,welcomeWallOpen=false}:{kind:AttentionWorkKind;mode?:"attention"|"seller";sellerId?:number;initialId?:string|null;embedded?:boolean;navigation?:ReactNode;canAssignFilter?:boolean;onBusyChange?:(busy:boolean)=>void;active?:boolean;allowCreate?:boolean;singleCase?:boolean;expectedTarget?:string;welcomeWallOpen?:boolean}){
   const single=singleCase;
   const unified=embedded&&mode==="attention"&&!single;
   const staffQueue=mode==="attention"&&!single;
@@ -137,8 +137,8 @@ export default function AttentionWorkQueues({kind,mode="attention",sellerId,init
   const readRequest=useCallback(<T,>(url:string,options:RequestInit={})=>fetchJson<T>(url,{...options,headers:{"Content-Type":"application/json"}}),[fetchJson]);
   function messageKey(event:KeyboardEvent<HTMLTextAreaElement>){if(event.key!=="Enter"||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229||event.defaultPrevented)return;event.preventDefault();if(!event.repeat&&detail?.canWrite&&!locked&&text.trim())event.currentTarget.form?.requestSubmit();}
   const welcomeWallHref=mode==="attention"&&detail?attentionWelcomeCreditWallHref(detail):null;
-  const profileOperationHref=mode==="attention"&&kind==="welcome"?welcomeWallHref:detail?.operationHref;
-  const managementAction=(label:string)=>welcomeWallHref&&!locked
+  const profileOperationHref=mode==="attention"&&kind==="welcome"?(welcomeWallOpen?null:welcomeWallHref):detail?.operationHref;
+  const managementAction=(label:string)=>welcomeWallHref&&!welcomeWallOpen&&!locked
     ? <a className="fp-ui-button is-primary" href={welcomeWallHref} target="_blank" rel="noopener noreferrer" aria-label={`${label} (abre el muro del crédito en otra pestaña)`} onClick={event=>{if(!activeRef.current||writeLock.current||managementLock.current||accessBlocked.current||selection.current!==detail?.item.id){event.preventDefault();return;}setManagementOpen(true);}}>{label}</a>
     : <Button type="button" disabled={locked} onClick={()=>{if(!writeLock.current&&!managementLock.current&&!accessBlocked.current)setManagementOpen(true);}}>{label}</Button>;
   const profileContent=<aside className={styles.profile}>{detail?<>{!unified&&!single&&<h2>Ficha de la solicitud</h2>}<section><strong>{attentionWorkKinds[detail.item.kind]}</strong><p>{detail.item.ally} · {detail.item.branch}</p><dl><dt>Asesor</dt><dd>{detail.item.advisor}</dd><dt>Cliente</dt><dd>{detail.item.name}</dd><dt>Cédula</dt><dd>{detail.document||"No registrada"}</dd>{kind==="enrollment"&&<><dt>IMEI</dt><dd>{detail.imei||"No registrado"}</dd></>}<dt>Analista</dt><dd>{detail.item.assignee||"Sin asignar"}</dd></dl>{profileOperationHref&&<Link href={profileOperationHref} target="_blank" rel="noopener noreferrer"><FileText size={17}/>Abrir expediente y soportes</Link>}</section>
@@ -174,6 +174,6 @@ export default function AttentionWorkQueues({kind,mode="attention",sellerId,init
     </section>
     {unified&&active&&viewingImage&&detail&&<AttentionImageViewer url={viewingImage.url} name={viewingImage.name} onClose={()=>setViewingImage(null)}/> }
     {unified?<FinserSidePanel open={profileOpen&&Boolean(detail)} keepMounted title="Ficha de la solicitud" closeLabel="Volver al chat" busy={locked} onClose={()=>setProfileOpen(false)}>{profileContent}</FinserSidePanel>:single?null:profileContent}
-    {detail?.canManage&&<AttentionWorkManagement key={detail.item.id} chatTheme={unified?"dark":undefined} open={managementOpen} detail={detail} disabled={busy||Boolean(attempt)||accessBlocked.current} busy={managementBusy} onClose={()=>setManagementOpen(false)} onUpdated={onManagementUpdated} onBusyChange={onManagementBusy} onCallModeChange={callMode=>mutate("call_mode",{callMode})}/>}
+    {detail?.canManage&&<AttentionWorkManagement key={detail.item.id} chatTheme={unified?"dark":undefined} welcomeWallOpen={welcomeWallOpen} open={managementOpen} detail={detail} disabled={busy||Boolean(attempt)||accessBlocked.current} busy={managementBusy} onClose={()=>setManagementOpen(false)} onUpdated={onManagementUpdated} onBusyChange={onManagementBusy} onCallModeChange={callMode=>mutate("call_mode",{callMode})}/>}
   </section>;
 }

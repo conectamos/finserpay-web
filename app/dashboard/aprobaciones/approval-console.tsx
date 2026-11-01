@@ -15,6 +15,7 @@ import ApprovalSignedDocumentRecovery from "./approval-signed-document-recovery"
 import ApprovalCallRecording from "./approval-call-recording";
 import CreditWelcomeVoiceResult from "./credit-welcome-voice-result";
 import ApprovalNoveltyPanel from "./approval-novelty-panel";
+import ApprovalWelcomeChat from "./approval-welcome-chat";
 import { Badge, Button, Card, DataTable, EmptyState, LoadingState, MetricCard, PageHeader, StatusPill, Tabs } from "@/app/_components/finser-ui";
 import { ApprovalRequestError, approveCreditReview, readApprovalCredit, readApprovalQueue, mergeApprovalQueuePage, type ApprovalDetail, type ApprovalQueueItem, type ApprovalQueueOptions, type ApprovalStatus, type ApprovalView } from "./approval-client";
 
@@ -79,8 +80,9 @@ function confirmationDescription(confirmation: Confirmation, shared: boolean) {
   return `Confirma que revisaste el expediente de ${confirmation.clienteNombre}, cédula ${confirmation.clienteDocumento}, crédito ${creditDisplayNumber(confirmation)}, y verificaste las correcciones.${recordingConfirmation} El OK habilitará este crédito para la liquidación al aliado y ${shared ? "quedará registrado por este acceso" : "quedará registrado con tu usuario"}.`;
 }
 
-export default function ApprovalConsole({ shared = false, redesigned = false, analystDesk = false, focusCreditId = null, onOpenSadmin }: {
+export default function ApprovalConsole({ shared = false, redesigned = false, analystDesk = false, focusCreditId = null, onOpenSadmin, welcomeChatWorkId = null, welcomeChatCreditId = null }: {
   shared?: boolean; redesigned?: boolean; analystDesk?: boolean; focusCreditId?: number | null; onOpenSadmin?: () => void;
+  welcomeChatWorkId?: string | null; welcomeChatCreditId?: number | null;
 } = {}) {
   const modern = shared || redesigned;
   const [query, setQuery] = useState("");
@@ -90,6 +92,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
   const loadedPages = useRef(1);
   const [view, setView] = useState<ApprovalView>("pending");
   const [callBusy, setCallBusy] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
   const [items, setItems] = useState<ApprovalQueueItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasExtraPages, setHasExtraPages] = useState(false);
@@ -113,7 +116,8 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
   const searchController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const submitting = useRef(false);
-  const busy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || callBusy;
+  const financialBusy = saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || callBusy;
+  const busy = financialBusy || chatBusy;
 
   useEffect(() => () => {
     searchController.current?.abort();
@@ -384,9 +388,14 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
     }
   }
 
+  const welcomeChat = !shared && welcomeChatWorkId && welcomeChatCreditId && detail?.id === welcomeChatCreditId
+    && selectedId === welcomeChatCreditId && focusCreditId === welcomeChatCreditId && !detailError
+    ? <ApprovalWelcomeChat key={`${welcomeChatCreditId}:${welcomeChatWorkId}`} workId={welcomeChatWorkId} creditId={welcomeChatCreditId}
+      disabled={financialBusy || loadingDetail || searching || Boolean(searchError)} onBusyChange={setChatBusy} /> : null;
+
   if (modern) {
     const actionError = loadingDetail ? "Espera a que termine de cargar el expediente." : detailError || searchError || (searching ? "Actualizando la información del muro." : busy ? "Termina o cancela la acción en curso." : reviewChanged && !rereviewed ? "Confirma que revisaste nuevamente los documentos actualizados." : "");
-    const correctionDisabled = saving || Boolean(confirmation) || signatureBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError);
+    const correctionDisabled = chatBusy || saving || Boolean(confirmation) || signatureBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError);
     const workspaceProps = {
       view, counts, query, items, selectedId, selectedItem, detail, queueLoaded, searching, searchError, nextCursor,
       loadingDetail, detailError, busy, correctionDisabled, notice, onSelect: selectCredit, onView: changeView,
@@ -397,9 +406,9 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
       onUpdated: reloadAfterCorrection, onCorrectionBusy: setCorrectionBusy, onOpenSadmin,
       documentRecoveryPanel: detail ? <ApprovalSignedDocumentRecovery key={`approval-document:${detail.id}:${detail.document.processUuid}`} detail={detail}
         disabled={busy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setDocumentBusy} /> : null,
-      callPanel: detail ? <><ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />{!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}</> : null,
-      noveltyPanel: detail ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null,
-      signaturePanel: detail ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} compact sharedAccess={shared} disabled={saving || Boolean(confirmation) || correctionBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null,
+      callPanel: detail ? <><ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={chatBusy || saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />{!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} disabled={chatBusy} /> : null}</> : null,
+      noveltyPanel: detail ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} compact readOnly={view === "approved"} disabled={chatBusy || saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null,
+      signaturePanel: detail ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} compact sharedAccess={shared} disabled={chatBusy || saving || Boolean(confirmation) || correctionBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null,
       approvalPanel: detail && detail.review.required && detail.review.status === "PENDING" ? <Card data-approval-decision="true">
         <h2 className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} aria-hidden="true" />Liquidación</h2>
         {detail.blockingReasons.length ? <><p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.blockingReasons[0]}</p><details className="mt-3 text-sm"><summary className="min-h-10 cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-[var(--fp-graphite)]">Ver requisitos pendientes ({detail.blockingReasons.length})</summary><ul className="list-disc space-y-2 pb-2 pl-5 text-[var(--fp-danger)]">{detail.blockingReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></> : <p className="mt-3 text-sm text-[var(--fp-muted)]">{detail.canApprove ? recordingRequired ? "Confirma el OK después de revisar los datos, las evidencias, la firma y la llamada." : "Confirma el OK después de revisar los datos, las evidencias y la firma." : "Actualiza el expediente para verificar los requisitos de aprobación."}</p>}
@@ -409,8 +418,8 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
       </Card> : null,
       confirmationDialog: <ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? confirmationDescription(confirmation, shared) : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />,
     };
-    if (analystDesk) return <AnalystApprovalWorkspace {...workspaceProps} />;
-    return <SharedApprovalWorkspace {...workspaceProps} />;
+    if (analystDesk) return <><AnalystApprovalWorkspace {...workspaceProps} />{welcomeChat}</>;
+    return <><SharedApprovalWorkspace {...workspaceProps} />{welcomeChat}</>;
   }
 
   return (
@@ -504,7 +513,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Fotografías del expediente</h2><Badge>{detail.evidence.filter((item) => item.available).length} de {detail.evidence.length} disponibles</Badge></div>
             <p className="mb-4 text-sm text-[var(--fp-muted)]">Abre cada fotografía para revisarla en tamaño completo.</p>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{detail.evidence.map((item) => <EvidencePhoto key={`${detail.id}:${detail.review.reviewHash}:${item.key}`} item={item} clientName={detail.clienteNombre} />)}</div>
-            {view === "pending" ? <ApprovalEvidenceCorrection detail={detail} disabled={saving || Boolean(confirmation) || signatureBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} /> : null}
+            {view === "pending" ? <ApprovalEvidenceCorrection detail={detail} disabled={chatBusy || saving || Boolean(confirmation) || signatureBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCorrectionBusy} /> : null}
           </Card>
 
           <div className={`grid items-start gap-6 ${detail.review.required ? "xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]" : ""}`}>
@@ -514,10 +523,10 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
             </Card>
 
             {detail.review.required ? <aside aria-label="Acciones de revisión" className="min-w-0 space-y-6">
-              {!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} /> : null}
-              <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} readOnly={view === "approved"} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />
-              {view === "pending" ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
-              {view === "pending" ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} disabled={saving || Boolean(confirmation) || correctionBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
+              {!shared ? <CreditWelcomeVoiceResult key={`welcome-voice:${detail.id}`} creditId={detail.id} disabled={chatBusy} /> : null}
+              <ApprovalCallRecording key={`approval-call:${detail.id}`} detail={detail} readOnly={view === "approved"} disabled={chatBusy || saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || noveltyBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setCallBusy} />
+              {view === "pending" ? <ApprovalNoveltyPanel key={`approval-novelty:${detail.id}`} detail={detail} disabled={chatBusy || saving || Boolean(confirmation) || correctionBusy || signatureBusy || documentBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setNoveltyBusy} /> : null}
+              {view === "pending" ? <ApprovalSignatureReissue key={`approval-signature:${detail.id}`} detail={detail} disabled={chatBusy || saving || Boolean(confirmation) || correctionBusy || documentBusy || noveltyBusy || callBusy || loadingDetail || searching || Boolean(detailError)} onUpdated={reloadAfterCorrection} onBusyChange={setSignatureBusy} /> : null}
             </aside> : null}
           </div>
 
@@ -537,6 +546,7 @@ export default function ApprovalConsole({ shared = false, redesigned = false, an
       </div>
 
       <ConfirmDialog open={Boolean(confirmation)} title="Aprobar para liquidación" description={confirmation ? confirmationDescription(confirmation, false) : ""} confirmLabel="Confirmar OK para liquidación" busy={saving} onCancel={() => { if (!saving && !submitting.current) setConfirmation(null); }} onConfirm={() => void confirmApproval()} />
+      {welcomeChat}
     </main>
   );
 }

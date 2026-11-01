@@ -31,6 +31,8 @@ El resultado y la observación quedan en el historial de la conversación. **Con
 
 El resultado humano también se consulta antes de enviar nuevas llamadas: **no autoriza** bloquea las llamadas posteriores y **contacto humano** evita repetir automáticamente la bienvenida. Se conserva como evidencia humana del caso; no se crea una llamada ficticia de Dapta ni se cambia el resultado de llamadas que ya pudieron salir.
 
+Al llegar al muro desde esa acción aparece **Chat con asesor**, una burbuja para reabrir la conversación vinculada en el mismo expediente. **Minimizar chat** vuelve al muro sin desmontar el borrador ni el archivo pendiente; al reabrir se revalidan los permisos y se actualiza el historial real. Desde este chat la gestión de bienvenida abre su formulario sin crear otra pestaña del muro. La burbuja no crea solicitudes: usa el identificador autorizado del enlace y solo aparece mientras se consulta ese mismo crédito con acceso nominal. Las solicitudes finalizadas mantienen su historial de solo lectura.
+
 ## Permisos y continuidad
 
 Solo administración central y el analista actualmente asignado pueden gestionar el caso. El servidor comprueba nuevamente la asignación, la operación, el asesor titular, la sede y la identidad al guardar. Si cambiaron, solicita actualizar en lugar de aplicar el resultado a otro expediente. Los reintentos del mismo envío recuperan el resultado guardado y evitan repetir la autorización o la llamada.

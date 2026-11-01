@@ -29,6 +29,10 @@ Las solicitudes de bienvenida y enrolamiento se gestionan desde la cabecera del
 chat con `FinserSidePanel`. El panel muestra la identidad de la venta vinculada,
 las acciones reales y una sola confirmación principal. Conserva el historial y
 el borrador del chat al abrir y cerrar; en celular ocupa el ancho disponible.
+Al abrir el muro desde bienvenida, una burbuja grafito «Chat con asesor» permite
+reabrir esa misma solicitud en el expediente. El panel se minimiza conservando
+el borrador y suspende sus lecturas cuando está cerrado. Solo se presenta en
+el expediente vinculado y con el acceso nominal autorizado; no crea otro caso.
 El checklist de enrolamiento reutiliza las cuatro pruebas existentes y comienza
 sin selecciones. Una autorización previa muestra su responsable y fecha, sin
 atribuir sus pruebas al analista actual. Las notas internas tienen su propio
