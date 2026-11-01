@@ -37,6 +37,42 @@ async function centralFixture(t){const f=await fixture(t);await f.db.exec('ALTER
 const centralInput=(extra={})=>({requestId:randomUUID(),kind:"enrollment",target:"D-100",text:"Solicitado por administración central",...extra});
 test("asesor crea chat interno con datos reales y reintentos no duplican solicitud ni mensaje",async t=>{const {db,create}=await fixture(t);const id=randomUUID(),a=await create({requestId:id}),b=await create({requestId:id}),c=await create();assert.equal(a.item.id,b.item.id);assert.equal(a.item.id,c.item.id);assert.equal(a.item.name,"Cliente real");assert.equal(a.messages.length,1);assert.equal((await db.query('SELECT channel,phone FROM "AttentionConversation"')).rows[0].channel,"internal");assert.equal((await db.query('SELECT count(*)::int n FROM "AttentionMetaOutbox"')).rows[0].n,0);assert.equal((await db.query('SELECT estado FROM "CreditoBorrador" WHERE id=100')).rows[0].estado,"PROCESO");});
 
+test("ficha de enrolamiento muestra la referencia registrada del borrador y conserva el alcance autorizado",async t=>{
+  const {db,store,create}=await fixture(t);await db.exec('ALTER TABLE "CreditoBorrador" ADD COLUMN payload jsonb');
+  const original=await create();assert.equal(original.deviceReference,null);
+  for(const [payload,expected] of [
+    [{referenciaEquipo:"  IPHONE 16 PRO MAX 256GB  ",equipoMarca:"Otra marca",equipoModelo:"Otro modelo",privateField:"sin-exponer"},"IPHONE 16 PRO MAX 256GB"],
+    [{referenciaEquipo:"  ",equipoMarca:" IPHONE ",equipoModelo:" 16 PRO MAX 256GB "},"IPHONE 16 PRO MAX 256GB"],
+    [{equipoModelo:"IPHONE 15 128GB"},"IPHONE 15 128GB"],
+    [{referenciaEquipo:" ",equipoMarca:" ",equipoModelo:" "},null],
+    [null,null],
+  ]){
+    await db.query('UPDATE "CreditoBorrador" SET payload=$1 WHERE id=100',[payload]);
+    for(const actor of [seller,admin]){
+      const detail=await store.detail(actor,original.item.id);assert.equal(detail.deviceReference,expected);
+      assert.equal(Object.hasOwn(detail,"payload"),false);assert.equal(JSON.stringify(detail).includes("sin-exponer"),false);
+    }
+  }
+  await assert.rejects(store.detail(analyst,original.item.id),{status:404});
+  await db.query('UPDATE "CreditoBorrador" SET "vendedorId"=12 WHERE id=100');
+  await assert.rejects(store.detail(seller,original.item.id),{status:404});
+});
+
+test("ficha de bienvenida lee referencia y modelo del crédito vinculado sin inventar un equipo",async t=>{
+  const {db,store,create}=await fixture(t);await db.exec('ALTER TABLE "Credito" ADD COLUMN "referenciaEquipo" text, ADD COLUMN "equipoMarca" text, ADD COLUMN "equipoModelo" text');
+  const original=await create({kind:"welcome",target:"C-200"});assert.equal(original.deviceReference,null);
+  for(const [reference,brand,model,expected] of [
+    [" IPHONE 13 PRO MAX 128GB ","Otra marca","Otro modelo","IPHONE 13 PRO MAX 128GB"],
+    [null," IPHONE "," 13 PRO MAX 128GB ","IPHONE 13 PRO MAX 128GB"],
+    [" ",null,"IPHONE 14 256GB","IPHONE 14 256GB"],
+    [null," ",null,null],
+  ]){
+    await db.query('UPDATE "Credito" SET "referenciaEquipo"=$1,"equipoMarca"=$2,"equipoModelo"=$3 WHERE id=200',[reference,brand,model]);
+    assert.equal((await store.detail(admin,original.item.id)).deviceReference,expected);
+    assert.equal((await store.detail(seller,original.item.id)).deviceReference,expected);
+  }
+});
+
 test("consulta de bandejas valida búsqueda, estado, filtros y parámetros repetidos",()=>{
   assert.deepEqual(parseWorkListQuery(new URLSearchParams()),{kind:"enrollment",page:1,filters:{search:"",filter:"all",state:""}});
   assert.deepEqual(parseWorkListQuery(new URLSearchParams("kind=welcome&page=2&search=  Tienda  &filter=unassigned&state=information")),
