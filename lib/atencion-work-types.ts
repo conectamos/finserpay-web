@@ -21,7 +21,7 @@ export type AttentionWorkItem = {
 export type AttentionWorkDetail = {
   item: AttentionWorkItem; messages: AttentionMessage[]; notes: AttentionNote[];
   canManage: boolean; canWrite: boolean; canAssign: boolean; historyTruncated: boolean;
-  document: string | null; imei: string | null; operationHref: string | null;
+  document: string | null; imei: string | null; deviceReference: string | null; operationHref: string | null;
   team: { key: string; name: string }[];
   events: { id: string; action: string; author: string; at: string; state: string | null }[];
 };
