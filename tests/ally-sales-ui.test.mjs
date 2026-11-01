@@ -33,6 +33,7 @@ const Dashboard = load("app/dashboard/_components/admin-central-dashboard.tsx", 
   "@/app/_components/finser-brand": component(empty), "./logout-button": component(empty),
   "./central-dashboard-filters": component(empty),
   "./central-dashboard-menu": component(({ label, children }) => jsx.jsxs("details", { children: [jsx.jsx("summary", { children: label }), children] })),
+  "./attention-notifications": { AttentionNotificationBell: empty },
 }).default;
 
 for (const adminCentral of [false, true]) {

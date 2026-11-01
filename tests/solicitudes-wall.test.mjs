@@ -843,7 +843,7 @@ test("central retoma y finaliza sin reemplazar al asesor propietario", async () 
   assert.match(gate, /initialSolicitudId[\s\S]*assessmentParams\.set\("draftId"/);
   assert.match(
     assessmentRoute,
-    /getActiveSolicitudCreditContext\(draftId\)[\s\S]*canOperateSolicitud\(\{[\s\S]*owner: requestedDraft[\s\S]*userId: requestedDraft\.usuarioId[\s\S]*sedeId: requestedDraft\.sedeId/
+    /getActiveSolicitudCreditContext\(draftId, true\)[\s\S]*canOperateSolicitud\(\{[\s\S]*owner: requestedDraft[\s\S]*userId: requestedDraft\.usuarioId[\s\S]*sedeId: requestedDraft\.sedeId/
   );
   assert.doesNotMatch(assessmentRoute, /queryDataCreditoNaturalPerson/);
   assert.match(draftRoute, /canonicalAssessmentId[\s\S]*serializedPayload/);
@@ -1421,7 +1421,7 @@ test("la revalidacion DataCredito reutiliza la solicitud retomada sin bloquearse
   assert.match(evaluationRoute, /type EvaluationBody = \{[\s\S]*solicitudId\?: unknown/);
   assert.match(
     evaluationRoute,
-    /requestedSolicitudId[\s\S]*getActiveSolicitudCreditContext\(requestedSolicitudId\)/
+    /requestedSolicitudId[\s\S]*getActiveSolicitudCreditContext\(requestedSolicitudId, true\)/
   );
   assert.match(
     evaluationRoute,
