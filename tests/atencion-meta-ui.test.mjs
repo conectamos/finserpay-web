@@ -310,16 +310,21 @@ function replyPasteEvent(files = [], items = []) {
   };
 }
 
-test("Enter envía por el submit existente una sola intención y conserva el adjunto hasta la aceptación", async () => {
+test("Enter conserva texto y adjunto sin enviar; el submit explícito conserva una sola intención hasta la aceptación", async () => {
   const root = mount(); await root.ready(); await root.select();
   const file = new File(["imagen"], "pegada.png", { type: "image/png" });
   await root.change({ text: "  Pie confirmado  ", file });
   const composer = connectedComposer(root);
   const first = replyKeyEvent(composer), second = replyKeyEvent(composer);
   replyInput(composer).props.onKeyDown(first); replyInput(composer).props.onKeyDown(second); await root.flush();
-  assert.equal(first.prevented, true); assert.equal(first.submits, 1);
+  assert.equal(first.prevented, false); assert.equal(first.submits, 0); assert.equal(second.submits, 0);
+  assert.equal(root.requests.some(request => request.init.method === "POST"), false);
+  assert.equal(root.composer().props.draft.text, "  Pie confirmado  "); assert.equal(root.composer().props.draft.file, file);
+  assert.equal(replyInput(composer).props.enterKeyHint, "enter"); assert.equal(replyInput(composer).props["aria-keyshortcuts"], undefined);
+  const submit = composer.all().find(node => node.type === "form").props.onSubmit;
+  submit({ preventDefault() {} }); submit({ preventDefault() {} }); await root.flush();
   const writes = root.requests.filter(request => request.init.method === "POST");
-  assert.equal(writes.length, 1, "el segundo Enter no puede eludir el bloqueo síncrono del envío");
+  assert.equal(writes.length, 1, "el segundo submit no puede eludir el bloqueo síncrono del envío");
   assert.equal(writes[0].url, `/api/atencion/${chat.id}/messages`);
   assert.equal(writes[0].init.body.get("text"), "Pie confirmado");
   assert.equal(writes[0].init.body.get("file").name, file.name);
@@ -334,13 +339,13 @@ test("Shift Enter, modificadores, composición IME y Enter repetido no envían",
   const composer = connectedComposer(root);
   for (const patch of [{ shiftKey: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true }, { nativeEvent: { isComposing: true, keyCode: 13 } }, { nativeEvent: { isComposing: false, keyCode: 229 } }, { key: "a" }, { repeat: true }]) {
     const event = replyKeyEvent(composer, patch); replyInput(composer).props.onKeyDown(event);
-    assert.equal(event.submits, 0); assert.equal(event.prevented, Boolean(patch.repeat), JSON.stringify(patch));
+    assert.equal(event.submits, 0); assert.equal(event.prevented, false, JSON.stringify(patch));
   }
   await root.flush(); assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0);
   assert.equal(root.composer().props.draft.text, "Borrador íntegro"); composer.unmount(); root.unmount();
 });
 
-test("Enter respeta permisos, vencimiento, validación y bloqueo del borrador", () => {
+test("Enter permanece nativo incluso con permisos, vencimiento, validación y bloqueo restringidos", () => {
   const base = { detail, draft: { text: "Mensaje", file: null, locked: false }, busy: false, change() {}, send() { assert.fail("el atajo no debe enviar un borrador restringido"); } };
   for (const patch of [
     { detail: { ...detail, permissions: { canSend: false } } },
@@ -350,7 +355,7 @@ test("Enter respeta permisos, vencimiento, validación y bloqueo del borrador", 
   ]) {
     const composer = mount({ component: "ReplyComposer", props: { ...base, ...patch } });
     const event = replyKeyEvent(composer); replyInput(composer).props.onKeyDown(event);
-    assert.equal(event.prevented, true); assert.equal(event.submits, 0); composer.unmount();
+    assert.equal(event.prevented, false); assert.equal(event.submits, 0); composer.unmount();
   }
 });
 

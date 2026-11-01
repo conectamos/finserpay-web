@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, CalendarClock, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Columns3, Download, ExternalLink, FileCheck2, FileText, Image as ImageIcon, Inbox, LayoutDashboard, LockKeyhole, MessageCircle, Mic, MoreVertical, Paperclip, Plus, RefreshCw, Search, Send, Settings, ShieldCheck, Smartphone, Tag, UserRound, Users, Video, Wallet, X, type LucideIcon } from "lucide-react";
 import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import AnalystNavigation from "@/app/dashboard/aprobaciones/analyst-navigation";
@@ -255,13 +255,6 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
   const shortcuts = useAttentionQuickReplyShortcuts({ text: draft.text, replies: quickReplies, disabled: busy || draft.locked || !canReply,
     maxLength: draft.file && !separateText(draft.file) ? 1024 : 4096, inputRef: replyInput,
     onChange: text => change({ text }), onError: error => change({ error }) });
-  function handleReplyKey(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (shortcuts.onKeyDown(event)) return;
-    // Safari may report the Enter that confirms an IME candidate as keyCode 229.
-    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.defaultPrevented) return;
-    event.preventDefault();
-    if (!event.repeat && canReply && !busy && !refreshing && !draft.locked && !invalid) event.currentTarget.form?.requestSubmit();
-  }
   function pasteReplyImage(event: ClipboardEvent<HTMLTextAreaElement>) {
     const items = Array.from(event.clipboardData.items || []);
     const clipboardFiles = Array.from(event.clipboardData.files || []);
@@ -298,7 +291,7 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
       <AttentionComposerTools inline key={detail.conversation.id} conversationId={detail.conversation.id} disabled={busy || draft.locked || !canReply} audioDisabled={Boolean(draft.file)} onAudio={file => { if (!draft.file) change({ file }); }} onEmoji={emoji => { if (draft.text.length + emoji.length <= (draft.file && !separateText(draft.file) ? 1024 : 4096)) change({ text: `${draft.text}${emoji}` }); }} />
       <label className={styles.srOnly} htmlFor={`reply-${detail.conversation.id}`}>Responder al cliente</label>
       {shortcuts.menu}
-      <textarea ref={replyInput} id={`reply-${detail.conversation.id}`} rows={1} value={draft.text} disabled={busy || draft.locked || !canReply} onChange={event => { change({ text: event.target.value }); shortcuts.onCaretChange(); }} onClick={shortcuts.onCaretChange} onSelect={shortcuts.onCaretChange} {...shortcuts.popupProps} onKeyDown={handleReplyKey} onPaste={pasteReplyImage} enterKeyHint="send" aria-keyshortcuts="Enter" title="Enter para enviar. Shift + Enter para nueva línea. / para respuestas rápidas. Ctrl + V para pegar una imagen." maxLength={draft.file && !separateText(draft.file) ? 1024 : 4096} placeholder={canReply ? "Escribe un mensaje…" : "El envío aún no está disponible"} />
+      <textarea ref={replyInput} id={`reply-${detail.conversation.id}`} rows={1} value={draft.text} disabled={busy || draft.locked || !canReply} onChange={event => { change({ text: event.target.value }); shortcuts.onCaretChange(); }} onClick={shortcuts.onCaretChange} onSelect={shortcuts.onCaretChange} {...shortcuts.popupProps} onKeyDown={shortcuts.onKeyDown} onPaste={pasteReplyImage} enterKeyHint="enter" title="Enter para nueva línea. Pulsa Enviar para enviar el mensaje. / para respuestas rápidas. Ctrl + V para pegar una imagen." maxLength={draft.file && !separateText(draft.file) ? 1024 : 4096} placeholder={canReply ? "Escribe un mensaje…" : "El envío aún no está disponible"} />
       {!draft.locked && <Button className={composerLayout.send} type="submit" title={busy ? "Enviando…" : refreshing ? "Actualizando estado del chat…" : "Enviar mensaje"} disabled={busy || refreshing || !canReply || Boolean(invalid)}><Send aria-hidden="true" size={20} /><span className={styles.srOnly}>{busy ? "Enviando…" : draft.file?.type === "image/webp" ? "Enviar sticker" : isAudioFile(draft.file) ? "Enviar audio" : "Enviar"}</span></Button>}
     </div>
     {draft.locked && <div className={composerLayout.recovery}><Button type="button" variant="secondary" disabled={busy} onClick={resolve}><RefreshCw aria-hidden="true" size={16} />{busy ? "Consultando…" : "Consultar estado"}</Button>{draft.result === "missing" && <><Button type="button" variant="secondary" disabled={busy} onClick={discard}>Descartar intento</Button><Button type="button" disabled={busy || !canReply} onClick={retry}>Reintentar misma solicitud</Button></>}{draft.result === "failed" && <Button type="button" disabled={busy || !canReply} onClick={restart}>Preparar nuevo intento</Button>}</div>}
