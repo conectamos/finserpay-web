@@ -33,6 +33,8 @@ El resultado humano también se consulta antes de enviar nuevas llamadas: **no a
 
 Al llegar al muro desde esa acción aparece **Chat con asesor**, una burbuja para reabrir la conversación vinculada en el mismo expediente. **Minimizar chat** vuelve al muro sin desmontar el borrador ni el archivo pendiente; al reabrir se revalidan los permisos y se actualiza el historial real. Desde este chat la gestión de bienvenida abre su formulario sin crear otra pestaña del muro. La burbuja no crea solicitudes: usa el identificador autorizado del enlace y solo aparece mientras se consulta ese mismo crédito con acceso nominal. Las solicitudes finalizadas mantienen su historial de solo lectura.
 
+La actualización automática y manual conserva el expediente vinculado a la bienvenida aunque no requiera aprobación financiera o cambie su estado. Se muestran sus datos vigentes sin retirar el chat ni su borrador. La bandeja ordinaria mantiene sus reglas actuales de seguimiento y las acciones financieras continúan sujetas al estado real del crédito.
+
 ## Permisos y continuidad
 
 Solo administración central y el analista actualmente asignado pueden gestionar el caso. El servidor comprueba nuevamente la asignación, la operación, el asesor titular, la sede y la identidad al guardar. Si cambiaron, solicita actualizar en lugar de aplicar el resultado a otro expediente. Los reintentos del mismo envío recuperan el resultado guardado y evitan repetir la autorización o la llamada.
