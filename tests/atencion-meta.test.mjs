@@ -462,10 +462,66 @@ test("transport diagnostics expose only stage and allowlisted name/code without 
   const logs=[];t.mock.method(console,"warn",(...args)=>logs.push(args));
   const failure=new TypeError("private token signed-url client information",{cause:Object.assign(new Error("private cause"),{code:"ECONNRESET"})});
   await assert.rejects(adapter({fetch:async()=>{throw failure;}}).verifyConnection(),{code:"META_UNAVAILABLE",uncertain:false});
-  assert.deepEqual(logs,["phone","waba_phones"].map(operation=>["[attention-meta-transport]",{operation,error:"TypeError",cause:"ECONNRESET",aborted:false}]));
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.deepEqual(logs.filter(([name])=>name==="[attention-meta-transport]"),["phone","waba_phones","phone","waba_phones"].map(operation=>["[attention-meta-transport]",JSON.stringify({operation,error:"TypeError",cause:"ECONNRESET",aborted:false})]));
+  assert.deepEqual(logs.filter(([name])=>name==="[attention-meta-read-retry]"),["phone","waba_phones"].map(operation=>["[attention-meta-read-retry]",JSON.stringify({operation,attempt:2,code:"META_UNAVAILABLE",delayMs:250})]));
+  const count=logs.length;
   await assert.rejects(adapter({fetch:async()=>{throw {name:"secret name",code:"secret code",message:"private message"};}}).verifyConnection(),{code:"META_UNAVAILABLE"});
-  assert.deepEqual(logs.slice(2),["phone","waba_phones"].map(operation=>["[attention-meta-transport]",{operation,error:"UnknownError",cause:"UNKNOWN",aborted:false}]));
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.deepEqual(logs.slice(count).filter(([name])=>name==="[attention-meta-transport]"),["phone","waba_phones","phone","waba_phones"].map(operation=>["[attention-meta-transport]",JSON.stringify({operation,error:"UnknownError",cause:"UNKNOWN",aborted:false})]));
   assert.ok(!JSON.stringify(logs).includes("private"));assert.ok(!JSON.stringify(logs).includes("secret"));assert.ok(!JSON.stringify(logs).includes(env.WHATSAPP_ATTENTION_ACCESS_TOKEN));
+});
+
+test("a transient WABA connection failure recovers once before the only message POST",async()=>{
+  let reads=0,claims=0;
+  const mock=transportMock({custom:url=>{
+    if(url.pathname.endsWith("/phone_numbers")&&++reads===1)throw new TypeError("private transport failure",{cause:Object.assign(new Error("private"),{code:"UND_ERR_CONNECT_TIMEOUT"})});
+  }});
+  const receipt=await adapter({fetch:mock.transport}).sendText(input,async()=>{claims++;});
+  assert.equal(receipt.providerMessageId,wamid);assert.equal(reads,2);assert.equal(claims,1);
+  assert.equal(mock.requests.filter(item=>item.init.method==="POST").length,1);
+  assert.equal(mock.requests.filter(item=>item.url.pathname===`/v25.0/${META_ATTENTION_LINE.phoneNumberId}`).length,1);
+});
+
+test("GET retries transient HTTP429/5xx but never authorization or validation rejections",async()=>{
+  for(const status of[429,500,503,400,401,403]){
+    let reads=0;
+    const mock=transportMock({custom:url=>url.pathname.endsWith("/phone_numbers")&&++reads===1?json({error:{code:status,message:"private details"}},status):undefined});
+    const call=adapter({fetch:mock.transport}).verifyConnection();
+    if([429,500,503].includes(status)){await call;assert.equal(reads,2);}
+    else{await assert.rejects(call,{code:"META_HTTP_ERROR",uncertain:false,retryable:false});assert.equal(reads,1);}
+    assert.equal(mock.requests.some(item=>item.init.method==="POST"),false);
+  }
+});
+
+test("a repeated transient read failure stops after two attempts and never claims a send",async()=>{
+  let reads=0;
+  const mock=transportMock({custom:url=>{if(url.pathname.endsWith("/phone_numbers")){reads++;throw new TypeError("private transport failure");}}});
+  await assert.rejects(adapter({fetch:mock.transport}).sendText(input,async()=>assert.fail("No claim before verification")),{code:"META_UNAVAILABLE",uncertain:false,retryable:true});
+  assert.equal(reads,2);assert.equal(mock.requests.some(item=>item.init.method==="POST"),false);
+});
+
+test("uploads are never retried for transport loss, HTTP429 or HTTP5xx",async()=>{
+  for(const status of[0,429,503]){
+    const mock=transportMock({custom:url=>{
+      if(!url.pathname.endsWith("/media"))return;
+      if(!status)throw new TypeError("private upload failure");
+      return json({error:{code:status,message:"private details"}},status);
+    }});
+    await assert.rejects(adapter({fetch:mock.transport}).uploadMedia({bytes:pdf,mimeType:"application/pdf",fileName:"receipt.pdf"}),{uncertain:false});
+    assert.equal(mock.requests.filter(item=>item.init.method==="POST").length,1);
+  }
+});
+
+test("a stalled GET body is cancelled within the total read budget and is not retried after expiry",async()=>{
+  let cancelled=false,signal,reads=0;
+  const mock=transportMock({custom:(url,init)=>{
+    if(!url.pathname.endsWith("/phone_numbers"))return;
+    reads++;signal=init.signal;
+    return new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{"data":['));},cancel(){cancelled=true;}}));
+  }});
+  await assert.rejects(adapter({fetch:mock.transport,timeoutMs:100}).verifyConnection(),{code:"META_UNAVAILABLE",uncertain:false});
+  assert.equal(cancelled,true);assert.equal(signal.aborted,true);assert.equal(reads,1);
 });
 test("send window is rechecked after a delayed transactional claim", async () => {
   const mock = transportMock(); let current = now;
