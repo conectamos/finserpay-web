@@ -6,7 +6,7 @@ import { extensionEligibility, financialDay, financialPlan } from "./atencion-fi
 import { assertDaptaEventScope, daptaEventTimestamp, type DaptaEventScope } from "./atencion-dapta-events";
 import { colombiaDateKey } from "./colombia-date";
 import { CreditApprovalError } from "./credit-approval-errors";
-import { DIANA_EXTENSION_PROPOSAL_MS, dianaExtensionDigest, dianaExtensionFollowUp, dianaExtensionMessageCode, dianaExtensionOffer, newDianaExtensionCode, parseDianaExtensionCode, parseDianaExtensionProposal } from "./diana-extension-core";
+import { DIANA_EXTENSION_PROPOSAL_MS, dianaExtensionDigest, dianaExtensionFollowUp, dianaExtensionOffer, newDianaExtensionCode, parseDianaExtensionCode, parseDianaExtensionProposal } from "./diana-extension-core";
 import type { AttentionDatabase, AttentionDb } from "./atencion-storage";
 import type { DianaExtensionMessageResult, DianaExtensionProposalInput, DianaExtensionProposalStatus, DianaExtensionProposalView, DianaExtensionVerifiedMessage } from "./diana-extension-types";
 import { dianaExtensionSchemaCheckSql } from "@/scripts/diana-extension-schema.mjs";
@@ -80,7 +80,8 @@ async function eligibility(db: AttentionDb, credit: Credit, clock: Date) {
 function verifiedProof(proof: DianaExtensionVerifiedMessage, scope: DaptaEventScope, clock: Date) {
   if (!proof || !sameScope(proof.scope, scope) || !["outbound", "inbound"].includes(proof.direction)
     || typeof proof.contactId !== "string" || !/^[1-9][0-9]{7,14}$/.test(proof.contactId) || proof.phone !== `+${proof.contactId}`
-    || typeof proof.text !== "string" || proof.text.length > 10000 || typeof proof.deliveryId !== "string" || proof.deliveryId.length < 1 || proof.deliveryId.length > 200) throw new AttentionError("No se pudo validar el mensaje de confirmación.", 403);
+    || typeof proof.code !== "string" || !/^PR-[A-F0-9]{16}$/.test(proof.code) || typeof proof.textDigest !== "string" || !/^[a-f0-9]{64}$/.test(proof.textDigest)
+    || typeof proof.deliveryId !== "string" || proof.deliveryId.length < 1 || proof.deliveryId.length > 200) throw new AttentionError("No se pudo validar el mensaje de confirmación.", 403);
   [proof.conversationId, proof.externalConversationId, proof.messageId].forEach(attentionUuid);
   const messageAt = daptaEventTimestamp(proof.messageAt);
   if (Date.parse(messageAt) > clock.getTime() + 300000 || Date.parse(messageAt) < clock.getTime() - 86400000) throw new AttentionError("El mensaje de confirmación está fuera de vigencia.", 409);
@@ -146,8 +147,8 @@ export function createDianaExtensionStore(database: AttentionDatabase, settings:
     },
     async consumeVerifiedMessage(proof: DianaExtensionVerifiedMessage): Promise<DianaExtensionMessageResult> {
       enabled(); verifiedProof(proof, scope, now());
-      const code = dianaExtensionMessageCode(proof.text, proof.direction);
-      if (!code) return { outcome: "ignored" };
+      const code = proof.code;
+      if (proof.direction === "inbound" && proof.textDigest !== dianaExtensionDigest(`CONFIRMO ${code}`)) return { outcome: "ignored" };
       await ready(database);
       // Read only the immutable credit key before locking. All financial callers
       // acquire conversation -> credit -> proposal, never the reverse order.
@@ -162,6 +163,7 @@ export function createDianaExtensionStore(database: AttentionDatabase, settings:
         const [proposal] = await db.$queryRawUnsafe<Proposal[]>(`SELECT * FROM "DianaExtensionProposal" WHERE code=$1 FOR UPDATE`, code);
         let clock = now();
         if (!proposal || !rawCredit || proposal.creditoId !== key.creditoId || proposal.phone !== proof.phone || !sameScope(proposal.scope, scope)) return { outcome: "ignored" };
+        if (proof.direction === "outbound" && (proof.textDigest !== proposal.offerDigest || proof.textDigest !== dianaExtensionDigest(proposal.offerText))) return { outcome: "ignored" };
         const reject = async (message: string, expired = false): Promise<DianaExtensionMessageResult> => {
           await db.$queryRawUnsafe(`UPDATE "DianaExtensionProposal" SET status=$2,"rejectedReason"=$3,"updatedAt"=$4::timestamptz WHERE id=$1::uuid AND status IN ('PENDING','OFFERED') RETURNING id`, proposal.id, expired ? "EXPIRED" : "REJECTED", message.slice(0, 500), clock);
           return { outcome: "rejected", code, reason: message };
@@ -177,7 +179,6 @@ export function createDianaExtensionStore(database: AttentionDatabase, settings:
         catch (error) { if (error instanceof AttentionError) return reject(error.message); throw error; }
         if (identity.phone !== proposal.phone || identity.identityHash !== proposal.identityHash || credit.folio !== proposal.folio) return reject("Cambió la identidad vinculada al crédito. Solicita revisión con un analista.");
         if (proof.direction === "outbound") {
-          if (proof.text !== proposal.offerText || dianaExtensionDigest(proof.text) !== proposal.offerDigest) return { outcome: "ignored" };
           if (proposal.status === "OFFERED") return { outcome: "offered", code };
           await db.$queryRawUnsafe(`UPDATE "DianaExtensionProposal" SET status='OFFERED',"conversationId"=$2::uuid,"externalConversationId"=$3::uuid,"contactId"=$4,"offerMessageId"=$5::uuid,"offeredAt"=$6::timestamptz,"updatedAt"=$7::timestamptz WHERE id=$1::uuid AND status='PENDING' RETURNING id`,
           proposal.id, conversation.id, proof.externalConversationId, proof.contactId, proof.messageId, proof.messageAt, clock);

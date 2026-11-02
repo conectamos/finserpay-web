@@ -10,7 +10,7 @@ import { installDianaExtensionSchema } from "../scripts/diana-extension-schema.m
 const root = path.resolve(import.meta.dirname, "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
 const { createDianaExtensionStore } = await jiti.import("../lib/diana-extension-storage.ts");
-const { parseDianaExtensionProposal, dianaExtensionMessageCode } = await jiti.import("../lib/diana-extension-core.ts");
+const { parseDianaExtensionProposal, dianaExtensionMessageCode, dianaExtensionDigest } = await jiti.import("../lib/diana-extension-core.ts");
 const scope = { workspaceId: "7496b9a3-2fe6-4e28-8411-7d54ee788b2c", agentId: "6f9560ec-dcfd-4725-bf61-27cd8d528a1c", agentChannelId: "6933b28b-b0a1-400c-aa1e-54f75bfbbd91", phoneNumberId: "1162059967000416", wabaId: "2148284059050848" };
 const initial = "2026-11-01T17:00:00.000Z", phone = "+573001234567";
 const input = { cedula: "100000077", folio: "FC-77", days: 4, promiseAmount: 100, promiseDate: "2026-11-06", reason: "Compromiso de pago del cliente" };
@@ -39,7 +39,7 @@ async function fixture(t) {
   const now = () => clock, store = createDianaExtensionStore(wrap(db), { scope, enabled: true, now });
   const proof = (direction, text, patch = {}) => ({ scope, direction, conversationId: id, externalConversationId: externalId,
     contactId: phone.slice(1), phone, messageId: randomUUID(), messageAt: direction === "outbound" ? "2026-11-01T17:00:05.000Z" : "2026-11-01T17:00:10.000Z",
-    text, deliveryId: randomUUID(), ...patch });
+    code: text.match(/\bPR-[A-F0-9]{16}\b/)?.[0] || "PR-0000000000000000", textDigest: dianaExtensionDigest(text), deliveryId: randomUUID(), ...patch });
   const offer = async proposal => store.consumeVerifiedMessage(proof("outbound", proposal.offerText));
   const confirm = async (proposal, patch = {}) => store.consumeVerifiedMessage(proof("inbound", `CONFIRMO ${proposal.code}`, patch));
   return { db, store, id, externalId, proof, offer, confirm, now, storeWithHook: hook => createDianaExtensionStore(wrap(db, hook), { scope, enabled: true, now }), setNow: value => { clock = new Date(value); } };
@@ -67,6 +67,33 @@ test("proposal is read-only for credit, private, immutable, bounded and idempote
   await assert.rejects(f.db.exec('DELETE FROM "DianaExtensionProposal"'));
   assert.deepEqual((await f.db.query('SELECT * FROM "Credito"')).rows, before);
   assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraExceptionRequest"')).rows[0].n, 0);
+});
+
+test("private raw-message digests authorize real numeric folios and all-numeric codes without weakening CRM redaction", async t => {
+  const f = await fixture(t), folio = "FC-20260925220309-CCQP", code = "PR-1234567890123456";
+  await f.db.query('UPDATE "Credito" SET folio=$1 WHERE id=77', [folio]);
+  const original = await f.store.propose({ ...input, folio });
+  const offerText = original.offerText.replace(original.code, code), proposal = { ...original, code, offerText };
+  // A deterministic offline fixture covers the otherwise rare valid random
+  // code containing only decimal digits. Production keeps its CSPRNG.
+  await f.db.query('UPDATE "DianaExtensionProposal" SET status=\'EXPIRED\' WHERE code=$1', [original.code]);
+  await f.db.query(`INSERT INTO "DianaExtensionProposal"
+    (id,code,"creditoId","actorSystemKey",status,phone,"identityHash","inputHash","creditFingerprint",scope,folio,days,"installmentNumber","installmentDueDate","expiresOn","promiseAmount","promiseDate",reason,"offerText","offerDigest","createdAt","expiresAt","updatedAt")
+    SELECT $1::uuid,$2,"creditoId","actorSystemKey",'PENDING',phone,"identityHash","inputHash","creditFingerprint",scope,folio,days,"installmentNumber","installmentDueDate","expiresOn","promiseAmount","promiseDate",reason,$3,$4,"createdAt","expiresAt","updatedAt"
+    FROM "DianaExtensionProposal" WHERE code=$5`, [randomUUID(), code, offerText, dianaExtensionDigest(offerText), original.code]);
+  const outbound = f.proof("outbound", offerText);
+  assert.equal(Object.hasOwn(outbound, "text"), false); assert.equal(outbound.code, code);
+  assert.match(offerText, /FC-20260925220309-CCQP/);
+  assert.equal((await f.store.consumeVerifiedMessage({ ...outbound, textDigest: "0".repeat(64) })).outcome, "ignored");
+  assert.equal((await f.store.consumeVerifiedMessage({ ...outbound, code: "PR-0000000000000000" })).outcome, "ignored");
+  const legacy = { ...outbound }; delete legacy.textDigest;
+  await assert.rejects(f.store.consumeVerifiedMessage({ ...legacy, text: offerText }), { status: 403 }, "raw/redacted text is not a fallback witness");
+  assert.equal((await f.store.consumeVerifiedMessage(outbound)).outcome, "offered");
+  const inbound = f.proof("inbound", `CONFIRMO ${code}`);
+  assert.equal((await f.store.consumeVerifiedMessage({ ...inbound, textDigest: dianaExtensionDigest(`CONFIRMO ${code}\nCambie el valor`) })).outcome, "ignored");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraExceptionRequest"')).rows[0].n, 0);
+  f.setNow("2026-11-01T17:00:12.000Z"); assert.equal((await f.store.consumeVerifiedMessage(inbound)).outcome, "granted");
+  assert.equal((await f.store.status(proposal.code)).approved, true);
 });
 
 test("real delivered canonical offer and exact subsequent inbound commit one auditable Diana grant and portfolio history", async t => {
