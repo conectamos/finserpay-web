@@ -79,11 +79,11 @@ type RuleCredit = {
 };
 type StoredRequest = {
   id: string; creditoId: number; type: ExceptionType; status: ExceptionStatus; version: number;
-  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT";
+  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT" | "SYSTEM_DIANA";
   installmentNumber: number | null; installmentDueDate: Date | string | null; expiresOn: Date | string | null;
   promiseAmount: number | string | null; promiseDate: Date | string | null; reason: string; observation: string;
-  createdByUserId: number; createdByName: string; submittedAt: Date | string;
-  decidedByUserId: number | null; decidedByName: string | null; decidedAt: Date | string | null;
+  createdByUserId: number | null; createdBySystemKey?: "SYSTEM_DIANA" | null; createdByName: string; submittedAt: Date | string;
+  decidedByUserId: number | null; decidedBySystemKey?: "SYSTEM_DIANA" | null; decidedByName: string | null; decidedAt: Date | string | null;
   decisionReason: string | null; cooldownBypassed: boolean; cooldownBypassReason: string | null;
   createdAt: Date | string; updatedAt: Date | string;
   folio?: string; clienteNombre?: string; clienteDocumento?: string | null; numeroSadmin?: string | null;
@@ -94,6 +94,7 @@ type StoredRequest = {
 type StoredEvent = {
   id: string; requestId: string; creditoId: number; version: number; action: string;
   fromStatus: string | null; toStatus: string; payload: unknown; actorUserId: number | null;
+  actorSystemKey?: "SYSTEM_DIANA" | null;
   actorName: string; createdAt: Date | string; requestHash?: string;
 };
 
@@ -351,7 +352,8 @@ export function moraCooldownMessage(enabledOn: string) {
 
 const requestColumns = `r."id"::text,r."creditoId",r."type",r."status",r."version",r."source",r."installmentNumber",
   r."installmentDueDate",r."expiresOn",r."promiseAmount",r."promiseDate",r."reason",r."observation",
-  r."createdByUserId",r."createdByName",r."submittedAt",r."decidedByUserId",r."decidedByName",r."decidedAt",
+  r."createdByUserId",to_jsonb(r)->>'createdBySystemKey' AS "createdBySystemKey",r."createdByName",r."submittedAt",
+  r."decidedByUserId",to_jsonb(r)->>'decidedBySystemKey' AS "decidedBySystemKey",r."decidedByName",r."decidedAt",
   r."decisionReason",r."cooldownBypassed",r."cooldownBypassReason",r."createdAt",r."updatedAt",
   credit."folio",credit."clienteNombre",credit."clienteDocumento",
   COALESCE((SELECT SUM(payment."valor") FROM "CreditoAbono" payment
@@ -376,9 +378,11 @@ function requestDto(row: StoredRequest, now = new Date()) {
     source: row.source || "ANALYST_REQUEST", centralDirect: row.source === "CENTRAL_DIRECT",
     installmentNumber: row.installmentNumber, installmentDueDate: nullableDateKey(row.installmentDueDate),
     expiresOn: nullableDateKey(row.expiresOn), promiseAmount: promise, promiseDate: nullableDateKey(row.promiseDate),
-    reason: row.reason, observation: row.observation, createdByUserId: row.createdByUserId,
+    reason: row.reason, observation: row.observation, createdByUserId: row.createdByUserId ?? null,
+    createdBySystemKey: row.createdBySystemKey ?? null,
     createdByName: row.createdByName, submittedAt: toIso(row.submittedAt),
-    decidedByUserId: row.decidedByUserId, decidedByName: row.decidedByName, decidedAt: toIso(row.decidedAt),
+    decidedByUserId: row.decidedByUserId ?? null, decidedBySystemKey: row.decidedBySystemKey ?? null,
+    decidedByName: row.decidedByName, decidedAt: toIso(row.decidedAt),
     decisionReason: row.decisionReason, cooldownBypassed: row.cooldownBypassed,
     cooldownBypassReason: row.cooldownBypassReason, createdAt: toIso(row.createdAt), updatedAt: toIso(row.updatedAt),
     credit: row.folio ? { folio: row.folio, numeroSadmin: row.numeroSadmin || null,
@@ -390,7 +394,7 @@ function requestDto(row: StoredRequest, now = new Date()) {
 function eventDto(row: StoredEvent) {
   const { requestHash: _hash, ...event } = row;
   void _hash;
-  return { ...event, createdAt: toIso(row.createdAt) };
+  return { ...event, actorUserId: row.actorUserId ?? null, actorSystemKey: row.actorSystemKey ?? null, createdAt: toIso(row.createdAt) };
 }
 
 async function ensureSchemas() {
@@ -562,7 +566,8 @@ export async function getMoraExceptionRequest(id: string, actor: MoraActor, now 
     return Promise.all([
       db.$queryRawUnsafe<StoredRequest[]>(`SELECT ${requestReadColumns}${requestReadFrom} WHERE r."id"=$1::uuid`,id),
       db.$queryRawUnsafe<StoredEvent[]>(`SELECT "id"::text,"requestId"::text,"creditoId","version","action","fromStatus","toStatus",
-        "payload","actorUserId","actorName","createdAt" FROM "CreditMoraExceptionEvent" WHERE "requestId"=$1::uuid ORDER BY "createdAt","id"`,id),
+        "payload","actorUserId",to_jsonb("CreditMoraExceptionEvent")->>'actorSystemKey' AS "actorSystemKey",
+        "actorName","createdAt" FROM "CreditMoraExceptionEvent" WHERE "requestId"=$1::uuid ORDER BY "createdAt","id"`,id),
     ]);
   });
   if(!rows[0])throw new CreditApprovalError("MORA_EXCEPTION_NOT_FOUND","Solicitud no encontrada.",404);
@@ -603,7 +608,8 @@ export async function createMoraExceptionRequest(input: CreateInput | CentralCre
       for(const priorRequest of previous){
         const version=priorRequest.version+1;
         await db.$queryRawUnsafe(`UPDATE "CreditMoraExceptionRequest" SET "status"='REPLACED',"version"=$2,
-          "decidedByUserId"=COALESCE("decidedByUserId",$3),"decidedByName"=COALESCE("decidedByName",$4),
+          "decidedByUserId"=CASE WHEN "decidedAt" IS NULL THEN $3 ELSE "decidedByUserId" END,
+          "decidedByName"=CASE WHEN "decidedAt" IS NULL THEN $4 ELSE "decidedByName" END,
           "decidedAt"=COALESCE("decidedAt",CURRENT_TIMESTAMP),"decisionReason"=COALESCE("decisionReason",$5),
           "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid`,priorRequest.id,version,verified.id,verified.nombre,input.reason);
         const payload={replacedByRequestId:id,reason:input.reason,source:"CENTRAL_DIRECT"};
@@ -720,7 +726,8 @@ function amendmentSnapshot(row: StoredRequest) {
     installmentNumber: row.installmentNumber, installmentDueDate: nullableDateKey(row.installmentDueDate),
     expiresOn: nullableDateKey(row.expiresOn), promiseAmount: row.promiseAmount === null ? null : Number(row.promiseAmount),
     promiseDate: nullableDateKey(row.promiseDate), reason: row.reason, observation: row.observation,
-    decidedByUserId: row.decidedByUserId, decidedByName: row.decidedByName, decidedAt: toIso(row.decidedAt),
+    decidedByUserId: row.decidedByUserId ?? null, decidedBySystemKey: row.decidedBySystemKey ?? null,
+    decidedByName: row.decidedByName, decidedAt: toIso(row.decidedAt),
     decisionReason: row.decisionReason,
   };
 }
@@ -779,7 +786,8 @@ export async function amendMoraExceptionRequest(id: string, input: AmendmentInpu
     if (input.action === "CANCEL") {
       nextStatus = "CANCELLED";
       await db.$queryRawUnsafe(`UPDATE "CreditMoraExceptionRequest" SET "status"='CANCELLED',"version"=$2,
-        "decidedByUserId"=COALESCE("decidedByUserId",$3),"decidedByName"=COALESCE("decidedByName",$4),
+        "decidedByUserId"=CASE WHEN "decidedAt" IS NULL THEN $3 ELSE "decidedByUserId" END,
+        "decidedByName"=CASE WHEN "decidedAt" IS NULL THEN $4 ELSE "decidedByName" END,
         "decidedAt"=COALESCE("decidedAt",CURRENT_TIMESTAMP),"decisionReason"=COALESCE("decisionReason",$5),
         "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1::uuid`, id, nextVersion, verified.id, verified.nombre, input.auditReason);
     } else {

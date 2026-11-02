@@ -60,6 +60,8 @@ function eventDto(event: StoredEvent): MoraManagementEvent {
   const { requestHash: _hash, ...item } = event;
   void _hash;
   return { ...item, resultCode: event.resultCode || null, agreementDate: event.agreementDate instanceof Date ? event.agreementDate.toISOString().slice(0,10) : event.agreementDate || null,
+    responsibleUserId: event.responsibleUserId ?? null, responsibleSystemKey: event.responsibleSystemKey ?? null,
+    actorUserId: event.actorUserId ?? null, actorSystemKey: event.actorSystemKey ?? null,
     agreementAmount: event.agreementAmount === null || event.agreementAmount === undefined ? null : Number(event.agreementAmount),
     actedAt: event.actedAt.toISOString(), nextFollowUpAt: event.nextFollowUpAt.toISOString(), createdAt: event.createdAt.toISOString() };
 }

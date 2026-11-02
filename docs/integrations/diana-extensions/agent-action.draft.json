@@ -1,0 +1,17 @@
+{
+  "name": "gestionar_prorroga_finserpay",
+  "type": "api",
+  "method": "POST",
+  "url": "CONFIGURAR_URL_PRIVADA_DEL_FLUJO_DAPTA",
+  "instructions": "Preparar una propuesta de prórroga con las opciones reales del CRM o consultar su resultado. No aprueba por sí sola. Reproduce oferta sin cambios. Después de recibir CONFIRMO PR-..., consulta ese código; solo aprobada=true acredita una concesión vigente.",
+  "parameters": [
+    { "name": "accion", "type": "string", "required": true, "valueMode": "description", "instructions": "proponer o consultar. Nunca aprobar ni confirmar." },
+    { "name": "cedula", "type": "string", "required": false, "valueMode": "description", "instructions": "Para proponer: cédula ya consultada en este chat. Nunca inventarla ni pedirla otra vez si ya está validada." },
+    { "name": "folio", "type": "string", "required": false, "valueMode": "description", "instructions": "Para proponer: folio exacto devuelto por consultar_credito_finserpay. Si hay varios créditos, confirmar cuál elige el cliente." },
+    { "name": "dias", "type": "string", "required": false, "valueMode": "description", "instructions": "Para proponer: 1, 2, 3 o 4 como dígito; exclusivamente una opción habilitada en prorroga.opciones y elegida por el cliente." },
+    { "name": "valorCompromiso", "type": "string", "required": false, "valueMode": "description", "instructions": "Para proponer: importe COP que acepta pagar el cliente, con punto decimal si corresponde, sin símbolos ni separadores de miles. No inventarlo." },
+    { "name": "fechaCompromiso", "type": "string", "required": false, "valueMode": "description", "instructions": "Para proponer: fecha YYYY-MM-DD aceptada por el cliente, desde hoy hasta fechaLimite de la opción elegida. No usar la fecha sugerida máxima si excede la opción elegida." },
+    { "name": "motivo", "type": "string", "required": false, "valueMode": "description", "instructions": "Para proponer: motivo breve expresado por el cliente, de 5 a 500 caracteres. No inventar información." },
+    { "name": "codigo", "type": "string", "required": false, "valueMode": "description", "instructions": "Para consultar: PR- seguido de los 16 caracteres hexadecimales mayúsculos del código devuelto por la herramienta o confirmado en este mismo chat. No consultar códigos de otros clientes." }
+  ]
+}

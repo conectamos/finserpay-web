@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test:atencion": "node --test tests/atencion-*.test.mjs",
+    "test:diana": "node --test --test-concurrency=2 tests/diana-*.test.mjs tests/atencion-dapta-event*.test.mjs tests/atencion-schema-installer.test.mjs",
     "db:setup-atencion": "node scripts/ensure-atencion-schema.mjs",
     "test:admin-access": "node --test tests/admin-password-change.test.mjs tests/admin-session-*.test.mjs tests/central-admin-*.test.mjs tests/central-analyst-*.test.mjs tests/analyst-center-api.test.mjs tests/approval-analyst-access.test.mjs tests/approval-analyst-dashboard-ui.test.mjs",
     "test:welcome-voice": "node --experimental-strip-types --test --test-concurrency=2 tests/credit-welcome-voice-*.test.mjs tests/credit-voice-review-campaign*.test.mjs",

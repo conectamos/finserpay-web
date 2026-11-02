@@ -207,3 +207,26 @@ test("network and provider errors remain sanitized and close only the MCP read s
     assert.deepEqual(f.closed, ["test-event-session"]);
   }
 });
+
+test("an incoming witness reads the exact live lead message and carries a minimal actor proof",async()=>{
+  const inbound={...message,kind:"lead",direction:"inbound",content:"CONFIRMO PR-0123456789ABCDEF"};
+  const result=await mock(()=>detail([inbound])).adapter.fetchConfirmedEventMessage({...input,direction:"inbound"});
+  assert.equal(result.state,"confirmed");assert.equal(result.message.direction,"inbound");
+  assert.deepEqual(result.verification,{fresh:true,kind:"lead"});assert.equal(result.message.text,inbound.content);
+  assert.equal(JSON.stringify(result).includes("PRIVATE_FRESH"),false);
+});
+test("financial witnesses cannot use stale replicas, agent-authored inbound or pending delivery",async()=>{
+  const inbound={...message,kind:"lead",direction:"inbound"};
+  for(const fresh of [undefined,{applied:false}]){
+    const result=await mock(()=>detail([inbound],{fresh})).adapter.fetchConfirmedEventMessage({...input,direction:"inbound"});
+    assert.equal(result.state,"pending");assert.equal(result.reason,"LIVE_READ_PENDING");
+  }
+  for(const patch of [{kind:"agent"},{direction:"outbound"},{content_type:"document"}]){
+    const result=await mock(()=>detail([{...inbound,...patch}])).adapter.fetchConfirmedEventMessage({...input,direction:"inbound"});
+    assert.equal(result.state,"failed");assert.equal(result.reason,"UNSUPPORTED_MESSAGE");
+  }
+  const pending=await mock(()=>detail([{...inbound,status:"sent"}])).adapter.fetchConfirmedEventMessage({...input,direction:"inbound"});
+  assert.equal(pending.state,"pending");assert.equal(pending.reason,"DELIVERY_PENDING");
+  const outbound=await mock(()=>detail([message],{fresh:{applied:false}})).adapter.fetchConfirmedEventMessage({...input,requireFresh:true});
+  assert.equal(outbound.state,"pending");assert.equal(outbound.reason,"LIVE_READ_PENDING");
+});

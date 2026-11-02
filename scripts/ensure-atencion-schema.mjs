@@ -75,7 +75,7 @@ async function verifySchema(client, beforeInstallation) {
       if (!found || found.typeName !== expected.replace("!", "") || (!nullableUpgrade && found.notNull !== expected.endsWith("!"))) throw new AttentionSchemaMismatch(`${table}.${column}`);
     }
   }
-  const { rows: constraints } = await client.query(`SELECT t.relname AS "tableName",c.contype,c.convalidated,
+  const { rows: constraints } = await client.query(`SELECT t.relname AS "tableName",c.contype,c.convalidated,pg_get_constraintdef(c.oid) AS definition,
     ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(id,position)
       JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.id ORDER BY k.position) AS columns,
     ft.relname AS "foreignTable",fn.nspname AS "foreignSchema",
@@ -106,6 +106,8 @@ async function verifySchema(client, beforeInstallation) {
     for(const column of ["event","status","fingerprint","attempts","phone"]){
       if(!constraints.some(row=>row.tableName==="AttentionDaptaEvent"&&row.contype==="c"&&row.convalidated&&row.columns.includes(column)))throw new AttentionSchemaMismatch(`AttentionDaptaEvent.${column}.CHECK`);
     }
+    if(!constraints.some(row=>row.tableName==="AttentionDaptaEvent"&&row.contype==="c"&&row.convalidated&&row.columns.includes("event")
+      &&row.definition.includes("'new_message_sent'")&&row.definition.includes("'new_message_received'")))throw new AttentionSchemaMismatch("AttentionDaptaEvent.EVENT_KINDS_CHECK");
     if(!constraints.some(row=>row.tableName==="AttentionDaptaEvent"&&row.contype==="c"&&row.convalidated&&row.columns.includes("leaseToken")&&row.columns.includes("leaseUntil")))throw new AttentionSchemaMismatch("AttentionDaptaEvent.LEASE_CHECK");
     for (const column of ["actor","requestVersion","tokenHash","bindingHash","uploadedCount"]) {
       if (!constraints.some(row => row.tableName === "AttentionWorkCaptureSession" && row.contype === "c" && row.convalidated && row.columns.includes(column))) throw new AttentionSchemaMismatch(`AttentionWorkCaptureSession.${column}.CHECK`);
@@ -116,7 +118,8 @@ async function verifySchema(client, beforeInstallation) {
         JSON.stringify(row.foreignColumns)===JSON.stringify(["id","conversationId"])))throw new AttentionSchemaMismatch("AttentionTeamReadState.CONVERSATION_FOREIGN_KEY");
     }
     if(!constraints.some(row=>row.tableName==="AttentionTeamReadState"&&row.contype==="c"&&row.convalidated&&row.columns.includes("source")&&row.columns.includes("actorUserId")&&row.columns.includes("replyMessageId")))throw new AttentionSchemaMismatch("AttentionTeamReadState.PROVENANCE_CHECK");
-    if (!constraints.some(row => row.tableName === "AttentionAudit" && row.contype === "c" && row.convalidated && row.columns.includes("actorKind") && row.columns.includes("userId"))) throw new AttentionSchemaMismatch("AttentionAudit.SYSTEM_ACTOR_CHECK");
+    if (!constraints.some(row => row.tableName === "AttentionAudit" && row.contype === "c" && row.convalidated && row.columns.includes("actorKind") && row.columns.includes("userId")
+      && row.columns.includes("sellerId") && row.columns.includes("actorKey") && row.definition.includes("'SYSTEM_DIANA'"))) throw new AttentionSchemaMismatch("AttentionAudit.SYSTEM_ACTOR_CHECK");
     const { rows: indexes } = await client.query(`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_index i
       JOIN pg_catalog.pg_class t ON t.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
       WHERE n.nspname='public' AND t.relname='AttentionMessage' AND i.indisunique AND i.indisvalid AND i.indpred IS NULL

@@ -1,0 +1,13 @@
+{
+  "agentId": "6f9560ec-dcfd-4725-bf61-27cd8d528a1c",
+  "mode": "replace_one_and_append",
+  "before": "No concedas descuentos, prórrogas ni compromisos de pago por tu cuenta.",
+  "after": "No concedas descuentos por tu cuenta. No concedas prórrogas ni registres compromisos por fuera de gestionar_prorroga_finserpay y las verificaciones reales descritas en «PRÓRROGAS REGISTRADAS EN FINSER PAY»; una propuesta no equivale a una aprobación.",
+  "appendFile": "prompt-addition.md",
+  "toolOperation": "upsert",
+  "toolFile": "agent-action.draft.json",
+  "toolUrl": "CONFIGURAR_URL_PRIVADA_DEL_FLUJO_DAPTA",
+  "preserveExistingTools": true,
+  "preserveExistingVariables": true,
+  "sourceAgentUpdatedAt": "2026-11-02 01:33:05.457818+00:00"
+}

@@ -8,15 +8,17 @@ import { createAttentionDaptaEventStore, type DaptaEventJob } from "./atencion-d
 import { assertDaptaEventAuthorization, DAPTA_ATTENTION_EVENT_MAX_BYTES, DaptaEventError,
   getDaptaEventScope, parseDaptaAttentionEvent, type DaptaAttentionEvent, type DaptaEventScope } from "./atencion-dapta-events";
 import type { AttentionDatabase } from "./atencion-storage";
+import { createDianaExtensionEventProcessor } from "./diana-extension-events";
+import { dianaExtensionsEnabled, dianaExtensionRuntime } from "./diana-extension-runtime";
 
-type EventConfig = { scope: DaptaEventScope; token: string };
+type EventConfig = { scope: DaptaEventScope; token: string; extensionsEnabled?: true };
 export function attentionDaptaEventConfig(env: NodeJS.ProcessEnv = process.env): EventConfig | null {
   if (env.DAPTA_ATTENTION_EVENTS_ENABLED !== "true") return null;
   const scope = getDaptaEventScope(env), meta = getMetaAttentionScope(env);
   const token = env.DAPTA_ATTENTION_EVENT_TOKEN?.trim() || "";
   if (!scope || !meta || scope.phoneNumberId !== meta.phoneNumberId || scope.wabaId !== meta.wabaId
       || token.length < 32 || token.length > 4096 || /\s/.test(token)) return null;
-  return { scope, token };
+  return { scope, token, ...(dianaExtensionsEnabled(env) ? { extensionsEnabled: true as const } : {}) };
 }
 function eventJson(body: unknown) {
   return Response.json(body, { headers: { "Cache-Control": "private, no-store", Vary: "Authorization", "X-Content-Type-Options": "nosniff" } });
@@ -37,7 +39,7 @@ export function createAttentionDaptaEventHandler(deps: {
       let body: unknown;
       try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)); }
       catch { throw new AttentionError("Los datos enviados no son válidos.", 400); }
-      const event = parseDaptaAttentionEvent(body, config.scope, deps.now?.());
+      const event = parseDaptaAttentionEvent(body, config.scope, deps.now?.(), { allowInbound: config.extensionsEnabled === true });
       await deps.ingest(event);
       return eventJson({ ok: true });
     } catch (error) { return attentionHttpError(error); }
@@ -47,9 +49,26 @@ export async function attentionDaptaEventRuntime() {
   const config = attentionDaptaEventConfig();
   if (!config) throw new DaptaEventError("DAPTA_EVENT_NOT_CONFIGURED", 503);
   const { default: prisma } = await import("./prisma");
-  return { config, store: createAttentionDaptaEventStore(prisma as unknown as AttentionDatabase, { scope: config.scope }) };
+  const extensionProcessor = config.extensionsEnabled ? createDianaExtensionEventProcessor({
+    scope: config.scope, enabled: dianaExtensionsEnabled,
+    consume: async proof => (await dianaExtensionRuntime()).store.consumeVerifiedMessage(proof),
+    afterGranted: async creditId => {
+      // The grant is committed; a remote equipment-sync failure cannot revoke it.
+      try {
+        const { syncCreditMoraById } = await import("./credit-mora-sync");
+        const result = await syncCreditMoraById(creditId, { forceRemoteAudit: true, preventNewMoraBlock: true });
+        if (result.action === "FAILED") console.warn("[attention-diana-extension] equipment sync pending");
+      } catch { console.warn("[attention-diana-extension] equipment sync pending"); }
+    },
+  }) : undefined;
+  return { config, store: createAttentionDaptaEventStore(prisma as unknown as AttentionDatabase, { scope: config.scope }), extensionProcessor };
 }
-type EventStore = Pick<ReturnType<typeof createAttentionDaptaEventStore>, "claim" | "retry" | "persistConfirmed">;
+type EventStore = Pick<ReturnType<typeof createAttentionDaptaEventStore>, "claim" | "retry" | "persistConfirmed">
+  & Partial<Pick<ReturnType<typeof createAttentionDaptaEventStore>, "getVerifiedConversation" | "completeVerifiedInbound">>;
+type ExtensionWorkerOptions = {
+  enabled: () => boolean;
+  process: ReturnType<typeof createDianaExtensionEventProcessor>;
+};
 function retryClassification(error: unknown, job: DaptaEventJob) {
   if (error instanceof DaptaEventError) return { code: "DAPTA_SCOPE_MISMATCH", delaySeconds: 60 };
   if (error instanceof AttentionDaptaError) {
@@ -59,15 +78,35 @@ function retryClassification(error: unknown, job: DaptaEventJob) {
   return { code: "DAPTA_UNAVAILABLE", delaySeconds: Math.min(300, 10 * 2 ** Math.min(job.attempts, 5)) };
 }
 /** A native event wakes a durable job; pending sends never become a delivered CRM message. */
-export async function dispatchAttentionDaptaEvents(store: EventStore, read = fetchConfirmedEventMessage) {
+export async function dispatchAttentionDaptaEvents(store: EventStore, read = fetchConfirmedEventMessage, extensions?: ExtensionWorkerOptions) {
   const jobs = await store.claim(2);
   const result = { processed: jobs.length, imported: 0, pending: 0, failed: 0 };
   await Promise.all(jobs.map(async job => {
     try {
+      const inbound = job.event === "new_message_received", extensionActive = Boolean(extensions && extensions.enabled());
+      if (inbound && !extensionActive) {
+        await store.retry(job, { delaySeconds: 60, code: "DAPTA_EXTENSION_PENDING" });
+        result.pending++; return;
+      }
       const reply = await read({ externalConversationId: job.externalConversationId, contactId: job.contactId,
-        messageId: job.messageId, historyCursor: job.historyCursor });
+        messageId: job.messageId, historyCursor: job.historyCursor,
+        ...(extensionActive ? { direction: inbound ? "inbound" as const : "outbound" as const, requireFresh: true } : {}) });
       if (reply.state === "confirmed") {
-        const saved = await store.persistConfirmed(job, reply);
+        if (extensionActive) {
+          if (!store.getVerifiedConversation) throw new DaptaEventError("DAPTA_EVENT_NOT_CONFIGURED", 503);
+          const context = await store.getVerifiedConversation(job, reply);
+          if (!context.conversationId) {
+            await store.retry(job, { delaySeconds: 10, code: "DAPTA_BINDING_PENDING", historyCursor: reply.historyCursor });
+            result.pending++; return;
+          }
+          const action = await extensions!.process(job, reply, context.conversationId);
+          if (action.state === "pending" || (inbound && !extensions!.enabled())) {
+            await store.retry(job, { delaySeconds: 10, code: "DAPTA_EXTENSION_PENDING", historyCursor: reply.historyCursor });
+            result.pending++; return;
+          }
+        }
+        if (inbound && !store.completeVerifiedInbound) throw new DaptaEventError("DAPTA_EVENT_NOT_CONFIGURED", 503);
+        const saved = inbound ? await store.completeVerifiedInbound!(job, reply) : await store.persistConfirmed(job, reply);
         if (!saved.pendingBinding) { if (saved.imported) result.imported++; return; }
         await store.retry(job, { delaySeconds: 10, code: "DAPTA_BINDING_PENDING", historyCursor: reply.historyCursor });
         result.pending++;
@@ -98,8 +137,9 @@ export function startAttentionDaptaEventWorker() {
     state.running = true;
     try {
       if (!attentionDaptaEventConfig()) return;
-      const { store } = await attentionDaptaEventRuntime();
-      const result = await dispatchAttentionDaptaEvents(store);
+      const { store, extensionProcessor } = await attentionDaptaEventRuntime();
+      const result = await dispatchAttentionDaptaEvents(store, fetchConfirmedEventMessage,
+        extensionProcessor ? { enabled: dianaExtensionsEnabled, process: extensionProcessor } : undefined);
       if (result.imported) console.log(`[attention-dapta] imported=${result.imported}`);
       if (result.failed) console.warn(`[attention-dapta] failed=${result.failed}; durable retries retained`);
     } catch { console.warn("[attention-dapta] worker unavailable; pending events retained"); }

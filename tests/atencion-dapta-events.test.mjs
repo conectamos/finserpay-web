@@ -60,3 +60,22 @@ test("scope needs explicit agent channel and event fingerprints ignore body but 
   assert.equal(parseDaptaAttentionEvent(a,scope,now).fingerprint,parseDaptaAttentionEvent(b,scope,now).fingerprint);
   b.message.id="00000000-0000-4000-8000-000000000099";assert.notEqual(parseDaptaAttentionEvent(a,scope,now).fingerprint,parseDaptaAttentionEvent(b,scope,now).fingerprint);
 });
+
+function incoming(){const e=event();e.event="new_message_received";Object.assign(e.message,{direction:"inbound",sender_identifier:contact,recipient_identifier:scope.phoneNumberId,status:"delivered",metadata:{provider:"meta",meta_user_id:"CO.Artificial"}});return e;}
+test("customer confirmations require explicit opt-in and retain only native identifiers, never model confirmation flags",()=>{
+  const e=incoming();e.confirmed=true;e.message.content="CONFIRMO PR-0123456789ABCDEF";
+  assert.throws(()=>parseDaptaAttentionEvent(e,scope,now),{code:"DAPTA_EVENT_UNSUPPORTED"});
+  const parsed=parseDaptaAttentionEvent(e,scope,now,{allowInbound:true});
+  assert.equal(parsed.event,"new_message_received");assert.equal(parsed.contactId,contact);
+  for(const field of ["confirmed","content","meta_user_id","status"])assert.equal(Object.hasOwn(parsed,field),false);
+  assert.equal(JSON.stringify(parsed).includes("CONFIRMO"),false);
+});
+test("incoming actor and reversed recipient provenance cannot impersonate a customer",()=>{
+  for(const mutate of [e=>{e.message.sender_identifier="12025550199";},e=>{e.message.recipient_identifier="1162059967000417";},
+    e=>{e.message.metadata.agent_attribution={agent_id:scope.agentId};},e=>{e.conversation.metadata.channel_id="wrong";}]){
+    const e=incoming();mutate(e);assert.throws(()=>parseDaptaAttentionEvent(e,scope,now,{allowInbound:true}),{code:"DAPTA_EVENT_SCOPE_MISMATCH"});
+  }
+  for(const mutate of [e=>{e.message.direction="outbound";},e=>{e.message.content_type="image";},e=>{e.message.status="pending";}]){
+    const e=incoming();mutate(e);assert.throws(()=>parseDaptaAttentionEvent(e,scope,now,{allowInbound:true}),{code:"DAPTA_EVENT_UNSUPPORTED"});
+  }
+});

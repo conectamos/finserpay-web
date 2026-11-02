@@ -3,11 +3,17 @@ export function analystMoraSchemaStatements() {
     `CREATE TABLE IF NOT EXISTS "CreditMoraManagementEvent" (
       "id" UUID PRIMARY KEY, "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
       "action" VARCHAR(32) NOT NULL CHECK ("action" IN ('LLAMADA','MSJ_TEXTO','WHATSAPP','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','VISITA_PENDIENTE')),
-      "actedAt" TIMESTAMPTZ NOT NULL, "responsibleUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "actedAt" TIMESTAMPTZ NOT NULL, "responsibleUserId" INTEGER REFERENCES "Usuario"("id") ON DELETE RESTRICT, "responsibleSystemKey" VARCHAR(32),
       "responsibleName" VARCHAR(180) NOT NULL, "result" VARCHAR(500) NOT NULL CHECK (LENGTH(BTRIM("result"))>=3), "comment" VARCHAR(3000) NOT NULL CHECK (LENGTH(BTRIM("comment"))>=5),
       "nextFollowUpAt" TIMESTAMPTZ NOT NULL CHECK ("nextFollowUpAt">"actedAt"), "managementStatus" VARCHAR(32) NOT NULL CHECK ("managementStatus" IN ('PENDIENTE','CONTACTADO','SIN_RESPUESTA','PROMESA_PAGO','ACUERDO_PAGO','SOPORTE_RECIBIDO','ESCALADO','CERRADO','SOLUCIONADO','SEGUIMIENTO')),
-      "actorUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT, "actorName" VARCHAR(180) NOT NULL,
+      "actorUserId" INTEGER REFERENCES "Usuario"("id") ON DELETE RESTRICT, "actorSystemKey" VARCHAR(32), "actorName" VARCHAR(180) NOT NULL,
       "idempotencyKey" UUID NOT NULL UNIQUE, "requestHash" CHAR(64) NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `ALTER TABLE "CreditMoraManagementEvent" ALTER COLUMN "responsibleUserId" DROP NOT NULL, ALTER COLUMN "actorUserId" DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS "responsibleSystemKey" VARCHAR(32), ADD COLUMN IF NOT EXISTS "actorSystemKey" VARCHAR(32)`,
+    `ALTER TABLE "CreditMoraManagementEvent" DROP CONSTRAINT IF EXISTS "CreditMoraManagementEvent_actor_identity"`,
+    `ALTER TABLE "CreditMoraManagementEvent" ADD CONSTRAINT "CreditMoraManagementEvent_actor_identity" CHECK (
+      (("responsibleUserId" IS NOT NULL AND "responsibleSystemKey" IS NULL) OR ("responsibleUserId" IS NULL AND "responsibleSystemKey" IS NOT NULL AND "responsibleSystemKey"='SYSTEM_DIANA'))
+      AND (("actorUserId" IS NOT NULL AND "actorSystemKey" IS NULL) OR ("actorUserId" IS NULL AND "actorSystemKey" IS NOT NULL AND "actorSystemKey"='SYSTEM_DIANA')))`,
     // Add structured results without changing append-only historical records.
     // Attention combines its existing 500-character reason and 2000-character
     // observation. Manual management keeps its own 2000-character input limit.

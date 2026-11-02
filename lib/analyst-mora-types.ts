@@ -42,7 +42,7 @@ export type MoraManagementInput = {
 };
 
 // Stored history keeps its original descriptions, including retired choices.
-export type MoraManagementEvent = Omit<MoraManagementInput, "action" | "managementStatus" | "result" | "agreementDate" | "agreementAmount"> & {
+export type MoraManagementEvent = Omit<MoraManagementInput, "action" | "managementStatus" | "result" | "agreementDate" | "agreementAmount" | "responsibleUserId"> & {
   id: string;
   creditoId: number;
   action: string;
@@ -51,8 +51,11 @@ export type MoraManagementEvent = Omit<MoraManagementInput, "action" | "manageme
   resultCode: MoraManagementResult | null;
   agreementDate: string | null;
   agreementAmount: number | null;
+  responsibleUserId: number | null;
+  responsibleSystemKey: "SYSTEM_DIANA" | null;
   responsibleName: string;
-  actorUserId: number;
+  actorUserId: number | null;
+  actorSystemKey: "SYSTEM_DIANA" | null;
   actorName: string;
   createdAt: string;
 };

@@ -10,6 +10,10 @@ on:
       - "app/api/aprobaciones/cartera-mora/**"
       - "app/api/creditos/**"
       - "app/api/vendedores/session/**"
+      - "app/api/integraciones/diana/**"
+      - "app/api/integraciones/atencion/dapta/**"
+      - "scripts/*schema.mjs"
+      - "scripts/setup-atencion.sql"
       - "lib/**"
       - "tests/**"
       - "package*.json"
@@ -24,6 +28,10 @@ on:
       - "app/api/aprobaciones/cartera-mora/**"
       - "app/api/creditos/**"
       - "app/api/vendedores/session/**"
+      - "app/api/integraciones/diana/**"
+      - "app/api/integraciones/atencion/dapta/**"
+      - "scripts/*schema.mjs"
+      - "scripts/setup-atencion.sql"
       - "lib/**"
       - "tests/**"
       - "package*.json"
@@ -37,6 +45,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  diana:
+    name: Prórrogas y consultas de Diana
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:generate && npm run test:diana
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -1,0 +1,248 @@
+{
+  "name": "FINSERPAY — Prórrogas de Diana",
+  "type": "api",
+  "timeout": 30,
+  "version": 1,
+  "api_nodes": [
+    {
+      "id": "prIn",
+      "type": "trigger",
+      "name": "Trigger",
+      "api_trigger": {
+        "trigger_type": "post",
+        "trigger_params": [
+          {
+            "id": "prp0",
+            "key": "accion",
+            "type": "text",
+            "origin": "body",
+            "required": true
+          },
+          {
+            "id": "prp1",
+            "key": "cedula",
+            "type": "text",
+            "origin": "body",
+            "required": false
+          },
+          {
+            "id": "prp2",
+            "key": "folio",
+            "type": "text",
+            "origin": "body",
+            "required": false
+          },
+          {
+            "id": "prp3",
+            "key": "dias",
+            "type": "text",
+            "origin": "body",
+            "required": false
+          },
+          {
+            "id": "prp4",
+            "key": "valorCompromiso",
+            "type": "text",
+            "origin": "body",
+            "required": false
+          },
+          {
+            "id": "prp5",
+            "key": "fechaCompromiso",
+            "type": "text",
+            "origin": "body",
+            "required": false
+          },
+          {
+            "id": "prp6",
+            "key": "motivo",
+            "type": "text",
+            "origin": "body",
+            "required": false
+          },
+          {
+            "id": "prp7",
+            "key": "codigo",
+            "type": "text",
+            "origin": "body",
+            "required": false
+          }
+        ],
+        "trigger_options": "http"
+      },
+      "childRef": "nrmPr",
+      "childRefs": [
+        "nrmPr"
+      ],
+      "x": 400,
+      "y": 100
+    },
+    {
+      "id": "nrmPr",
+      "name": "Normalizar Prorroga",
+      "type": "action",
+      "api_action": {
+        "on_error": "stop",
+        "response": [
+          {
+            "variable_name": "request_body",
+            "response_value_path": "request_body"
+          }
+        ],
+        "action_type": "code",
+        "code_action": {
+          "code": "// Flow Studio Code node. No credential or customer data is logged.\nconst body = params.trigger.body;\nconst record = value => value !== null && typeof value === \"object\" && !Array.isArray(value);\nif (!record(body)) throw new Error(\"Solicitud de prórroga no válida\");\nif (body.args !== undefined && (!record(body.args) || Object.keys(body).some(key => key !== \"args\"))) throw new Error(\"Solicitud de prórroga no válida\");\nconst data = body.args === undefined ? body : body.args;\nconst keys = [\"accion\", \"cedula\", \"folio\", \"dias\", \"valorCompromiso\", \"fechaCompromiso\", \"motivo\", \"codigo\"];\nif (Object.keys(data).some(key => !keys.includes(key))) throw new Error(\"Campos de prórroga no válidos\");\nlet output;\nif (data.accion === \"consultar\") {\n  if (typeof data.codigo !== \"string\" || !/^PR-[A-F0-9]{16}$/.test(data.codigo)) throw new Error(\"Código de propuesta no válido\");\n  output = { accion: \"consultar\", codigo: data.codigo };\n} else if (data.accion === \"proponer\") {\n  const numeric = (value, pattern) => typeof value === \"number\" ? value : typeof value === \"string\" && pattern.test(value) ? Number(value) : NaN;\n  const dias = numeric(data.dias, /^[1-4]$/);\n  const amount = numeric(data.valorCompromiso, /^\\d{1,13}(?:\\.\\d{1,2})?$/);\n  if (![1, 2, 3, 4].includes(dias) || !Number.isFinite(amount) || amount <= 0 || amount > 1e12 || Math.round(amount * 100) / 100 !== amount) throw new Error(\"Días o importe no válidos\");\n  if (![\"cedula\", \"folio\", \"fechaCompromiso\", \"motivo\"].every(key => typeof data[key] === \"string\")) throw new Error(\"Faltan los datos de la propuesta\");\n  output = { accion: \"proponer\", cedula: data.cedula, folio: data.folio, dias,\n    valorCompromiso: amount, fechaCompromiso: data.fechaCompromiso, motivo: data.motivo };\n} else throw new Error(\"Acción de prórroga no válida\");\nmodule.exports = { request_body: JSON.stringify(output) };"
+        }
+      },
+      "parentRefs": [
+        "prIn"
+      ],
+      "childRef": "qryPr",
+      "childRefs": [
+        "qryPr"
+      ],
+      "x": 400,
+      "y": 250
+    },
+    {
+      "id": "qryPr",
+      "name": "Gestionar Prorroga",
+      "type": "action",
+      "api_action": {
+        "on_error": "stop",
+        "response": [
+          {
+            "variable_name": "ok",
+            "response_value_path": "response.ok"
+          },
+          {
+            "variable_name": "codigo",
+            "response_value_path": "response.codigo"
+          },
+          {
+            "variable_name": "estado",
+            "response_value_path": "response.estado"
+          },
+          {
+            "variable_name": "aprobada",
+            "response_value_path": "response.aprobada"
+          },
+          {
+            "variable_name": "oferta",
+            "response_value_path": "response.oferta"
+          },
+          {
+            "variable_name": "propuestaVenceAt",
+            "response_value_path": "response.propuestaVenceAt"
+          },
+          {
+            "variable_name": "dias",
+            "response_value_path": "response.dias"
+          },
+          {
+            "variable_name": "cuotaNumero",
+            "response_value_path": "response.cuotaNumero"
+          },
+          {
+            "variable_name": "vencimientoCuota",
+            "response_value_path": "response.vencimientoCuota"
+          },
+          {
+            "variable_name": "fechaLimite",
+            "response_value_path": "response.fechaLimite"
+          },
+          {
+            "variable_name": "compromiso",
+            "response_value_path": "response.compromiso"
+          }
+        ],
+        "action_type": "api",
+        "external_api_action": {
+          "url": "https://finserpay.com/api/integraciones/diana/prorrogas",
+          "body": "{{normalizar_prorroga.request_body}}",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body_format": "raw",
+          "request_type": "post",
+          "authorization": {
+            "type": "bearer",
+            "token": "__DIANA_EXTENSION_API_TOKEN__"
+          }
+        }
+      },
+      "parentRefs": [
+        "nrmPr"
+      ],
+      "childRef": "rspPr",
+      "childRefs": [
+        "rspPr"
+      ],
+      "x": 400,
+      "y": 400
+    },
+    {
+      "id": "rspPr",
+      "name": "Respuesta Prorroga",
+      "type": "response",
+      "parentRefs": [
+        "qryPr"
+      ],
+      "api_response": {
+        "response_params": [
+          {
+            "key": "ok",
+            "value": "{{gestionar_prorroga.ok}}"
+          },
+          {
+            "key": "codigo",
+            "value": "{{gestionar_prorroga.codigo}}"
+          },
+          {
+            "key": "estado",
+            "value": "{{gestionar_prorroga.estado}}"
+          },
+          {
+            "key": "aprobada",
+            "value": "{{gestionar_prorroga.aprobada}}"
+          },
+          {
+            "key": "oferta",
+            "value": "{{gestionar_prorroga.oferta}}"
+          },
+          {
+            "key": "propuestaVenceAt",
+            "value": "{{gestionar_prorroga.propuestaVenceAt}}"
+          },
+          {
+            "key": "dias",
+            "value": "{{gestionar_prorroga.dias}}"
+          },
+          {
+            "key": "cuotaNumero",
+            "value": "{{gestionar_prorroga.cuotaNumero}}"
+          },
+          {
+            "key": "vencimientoCuota",
+            "value": "{{gestionar_prorroga.vencimientoCuota}}"
+          },
+          {
+            "key": "fechaLimite",
+            "value": "{{gestionar_prorroga.fechaLimite}}"
+          },
+          {
+            "key": "compromiso",
+            "value": "{{gestionar_prorroga.compromiso}}"
+          }
+        ]
+      },
+      "x": 400,
+      "y": 550
+    }
+  ],
+  "note_nodes": [],
+  "enableErrorNotification": true
+}
