@@ -74,6 +74,39 @@ test("postcheck rechaza cola de eventos Dapta sin la pareja de lease",async t=>{
   await assert.rejects(f.install(),/AttentionDaptaEvent.LEASE_CHECK/);assert.equal(f.logs.length,0);
 });
 
+test("upgrade de eventos y auditoría admite confirmaciones sin perder entregas previas",async t=>{
+  const {database,install}=await fixture(t);await database.exec(setupSql);
+  await database.exec(`ALTER TABLE "AttentionDaptaEvent" DROP CONSTRAINT "AttentionDaptaEvent_event_check";
+    ALTER TABLE "AttentionDaptaEvent" ADD CONSTRAINT "AttentionDaptaEvent_event_check" CHECK(event='new_message_sent');
+    ALTER TABLE "AttentionAudit" DROP CONSTRAINT "AttentionAudit_actor";
+    ALTER TABLE "AttentionAudit" ADD CONSTRAINT "AttentionAudit_actor" CHECK(
+      ("actorKind"='user' AND "userId" IS NOT NULL AND "actorKey" IS NULL) OR
+      ("actorKind"='seller' AND "sellerId" IS NOT NULL AND "actorKey" IS NULL) OR
+      ("actorKind"='system' AND "userId" IS NULL AND "sellerId" IS NULL AND "actorKey" IN ('SYSTEM_META','SYSTEM_DAPTA')));
+    INSERT INTO "AttentionDaptaEvent"(id,fingerprint,"deliveryId",event,"workspaceId","agentId","agentChannelId","phoneNumberId","wabaId","externalConversationId","messageId","contactId","messageAt","eventAt","expiresAt")
+      VALUES('00000000-0000-4000-8000-000000000041',repeat('a',64),'00000000-0000-4000-8000-000000000042','new_message_sent',
+      '00000000-0000-4000-8000-000000000043','00000000-0000-4000-8000-000000000044','00000000-0000-4000-8000-000000000045','1162059967000416','2148284059050848',
+      '00000000-0000-4000-8000-000000000046','00000000-0000-4000-8000-000000000047','12025550100',now(),now(),now()+interval '15 minutes');
+    INSERT INTO "AttentionAudit"("actorKind","actorKey",action) VALUES('system','SYSTEM_DAPTA','RETAINED');`);
+  await install();await install();
+  assert.equal((await database.query('SELECT event,fingerprint FROM "AttentionDaptaEvent"')).rows[0].fingerprint,'a'.repeat(64));
+  assert.deepEqual((await database.query('SELECT action FROM "AttentionAudit"')).rows,[{action:'RETAINED'}]);
+  await database.exec(`UPDATE "AttentionDaptaEvent" SET event='new_message_received';
+    INSERT INTO "AttentionAudit"("actorKind","actorKey",action) VALUES('system','SYSTEM_DIANA','GRANT_ACTOR');`);
+  assert.equal((await database.query('SELECT event FROM "AttentionDaptaEvent"')).rows[0].event,'new_message_received');
+});
+
+test("postcheck exige ambos eventos nativos y el actor de Diana explícito",async t=>{
+  const sentOnly=await fixture(t,{afterSql:db=>db.exec(`ALTER TABLE "AttentionDaptaEvent" DROP CONSTRAINT "AttentionDaptaEvent_event_check";
+    ALTER TABLE "AttentionDaptaEvent" ADD CONSTRAINT "AttentionDaptaEvent_event_check" CHECK(event='new_message_sent')`)});
+  await assert.rejects(sentOnly.install(),/AttentionDaptaEvent.EVENT_KINDS_CHECK/);
+  const oldActor=await fixture(t,{afterSql:db=>db.exec(`ALTER TABLE "AttentionAudit" DROP CONSTRAINT "AttentionAudit_actor";
+    ALTER TABLE "AttentionAudit" ADD CONSTRAINT "AttentionAudit_actor" CHECK(
+      ("actorKind"='user' AND "userId" IS NOT NULL AND "actorKey" IS NULL) OR
+      ("actorKind"='system' AND "userId" IS NULL AND "sellerId" IS NULL AND "actorKey" IN ('SYSTEM_META','SYSTEM_DAPTA')))`)});
+  await assert.rejects(oldActor.install(),/AttentionAudit.SYSTEM_ACTOR_CHECK/);
+});
+
 test("upgrade operativo añade lecturas y template sin cambiar mensajes existentes",async t=>{
   const {database,install}=await fixture(t);await database.exec(setupSql);
   await database.exec(`DROP TABLE "AttentionReadState"; ALTER TABLE "AttentionMetaOutbox" DROP COLUMN template;

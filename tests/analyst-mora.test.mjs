@@ -333,9 +333,10 @@ test("la migración conserva gestiones históricas y PostgreSQL exige resultados
   await installAnalystMoraSchema({ query: (sql, values) => db.query(sql, values) });
   await installAnalystMoraSchema({ query: (sql, values) => db.query(sql, values) });
   const after = (await db.query(`SELECT * FROM "CreditMoraManagementEvent" WHERE id=$1`, [legacyId])).rows[0];
-  const { resultCode, agreementDate, agreementAmount, ...legacy } = after;
+  const { resultCode, agreementDate, agreementAmount, responsibleSystemKey, actorSystemKey, ...legacy } = after;
   assert.deepEqual(legacy, before);
   assert.deepEqual([resultCode, agreementDate, agreementAmount], [null, null, null]);
+  assert.deepEqual([responsibleSystemKey, actorSystemKey], [null, null]);
   const adapter = {
     credito: { findUnique: async () => ({ enMora: true }) },
     $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,

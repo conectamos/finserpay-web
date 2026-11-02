@@ -5,7 +5,7 @@ export function moraExceptionRequestSchemaStatements() {
       "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
       "type" VARCHAR(16) NOT NULL CHECK ("type" IN ('EXCEPCION','PRORROGA')),
       "status" VARCHAR(16) NOT NULL DEFAULT 'PENDING' CHECK ("status" IN ('PENDING','APPROVED','REJECTED','EXPIRED','REPLACED','CANCELLED')),
-      "source" VARCHAR(24) NOT NULL DEFAULT 'ANALYST_REQUEST' CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT')),
+      "source" VARCHAR(24) NOT NULL DEFAULT 'ANALYST_REQUEST' CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT','SYSTEM_DIANA')),
       "version" INTEGER NOT NULL DEFAULT 1 CHECK ("version">0),
       "installmentNumber" INTEGER CHECK ("installmentNumber">0),
       "installmentDueDate" DATE,
@@ -14,10 +14,12 @@ export function moraExceptionRequestSchemaStatements() {
       "promiseDate" DATE,
       "reason" VARCHAR(500) NOT NULL,
       "observation" VARCHAR(2000) NOT NULL,
-      "createdByUserId" INTEGER NOT NULL REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "createdByUserId" INTEGER REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "createdBySystemKey" VARCHAR(32),
       "createdByName" VARCHAR(180) NOT NULL,
       "submittedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "decidedByUserId" INTEGER REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "decidedBySystemKey" VARCHAR(32),
       "decidedByName" VARCHAR(180),
       "decidedAt" TIMESTAMPTZ,
       "decisionReason" VARCHAR(1000),
@@ -43,14 +45,25 @@ export function moraExceptionRequestSchemaStatements() {
     `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_status_check"`,
     `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_status_check"
       CHECK ("status" IN ('PENDING','APPROVED','REJECTED','EXPIRED','REPLACED','CANCELLED'))`,
-    `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='"CreditMoraExceptionRequest"'::regclass
-      AND conname='CreditMoraExceptionRequest_source_values') THEN
-      ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_values"
-        CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT'));
-      END IF; END $$`,
+    `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_source_check"`,
+    `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_source_values"`,
+    `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_values"
+      CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT','SYSTEM_DIANA'))`,
+    `ALTER TABLE "CreditMoraExceptionRequest"
+      ALTER COLUMN "createdByUserId" DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS "createdBySystemKey" VARCHAR(32),
+      ADD COLUMN IF NOT EXISTS "decidedBySystemKey" VARCHAR(32)`,
+    `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_actor_identity"`,
+    `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_actor_identity" CHECK (
+      (("createdByUserId" IS NOT NULL AND "createdBySystemKey" IS NULL)
+        OR ("createdByUserId" IS NULL AND "createdBySystemKey" IS NOT NULL AND "createdBySystemKey"='SYSTEM_DIANA' AND "source"='SYSTEM_DIANA'))
+      AND ("decidedBySystemKey" IS NULL OR ("decidedBySystemKey"='SYSTEM_DIANA' AND "decidedByUserId" IS NULL))
+      AND ("source"<>'SYSTEM_DIANA' OR ("createdBySystemKey" IS NOT NULL AND "createdBySystemKey"='SYSTEM_DIANA'
+        AND "decidedBySystemKey" IS NOT NULL AND "decidedBySystemKey"='SYSTEM_DIANA' AND "decidedByUserId" IS NULL
+        AND "decidedAt" IS NOT NULL AND "type"='PRORROGA' AND "status" IN ('APPROVED','EXPIRED','REPLACED','CANCELLED'))))`,
     `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_source_fields"`,
     `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_fields"
-        CHECK (("source"='ANALYST_REQUEST' AND "installmentNumber" IS NOT NULL AND "installmentDueDate" IS NOT NULL
+        CHECK (("source" IN ('ANALYST_REQUEST','SYSTEM_DIANA') AND "installmentNumber" IS NOT NULL AND "installmentDueDate" IS NOT NULL
           AND "expiresOn" IS NOT NULL AND "promiseAmount" IS NOT NULL AND "promiseDate" IS NOT NULL)
           OR ("source"='CENTRAL_DIRECT' AND "installmentNumber" IS NULL AND "installmentDueDate" IS NULL
             AND "promiseAmount" IS NULL AND "promiseDate" IS NULL AND "status" IN ('APPROVED','EXPIRED','REPLACED','CANCELLED')))`,
@@ -97,6 +110,7 @@ export function moraExceptionRequestSchemaStatements() {
       "toStatus" VARCHAR(16) NOT NULL,
       "payload" JSONB NOT NULL,
       "actorUserId" INTEGER REFERENCES "Usuario"("id") ON DELETE RESTRICT,
+      "actorSystemKey" VARCHAR(32) CHECK ("actorSystemKey" IS NULL OR ("actorSystemKey"='SYSTEM_DIANA' AND "actorUserId" IS NULL)),
       "actorName" VARCHAR(180) NOT NULL,
       "idempotencyKey" UUID UNIQUE,
       "requestHash" CHAR(64) NOT NULL,
@@ -104,6 +118,10 @@ export function moraExceptionRequestSchemaStatements() {
       UNIQUE ("requestId","version")
     )`,
     `ALTER TABLE "CreditMoraExceptionEvent" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionEvent_action_check"`,
+    `ALTER TABLE "CreditMoraExceptionEvent" ADD COLUMN IF NOT EXISTS "actorSystemKey" VARCHAR(32)`,
+    `ALTER TABLE "CreditMoraExceptionEvent" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionEvent_system_actor"`,
+    `ALTER TABLE "CreditMoraExceptionEvent" ADD CONSTRAINT "CreditMoraExceptionEvent_system_actor"
+      CHECK ("actorSystemKey" IS NULL OR ("actorSystemKey"='SYSTEM_DIANA' AND "actorUserId" IS NULL))`,
     `ALTER TABLE "CreditMoraExceptionEvent" ADD CONSTRAINT "CreditMoraExceptionEvent_action_check"
       CHECK ("action" IN ('SUBMITTED','APPROVED','REJECTED','EXPIRED','OBSERVED','REPLACED','EDITED','CANCELLED'))`,
     `CREATE INDEX IF NOT EXISTS "CreditMoraExceptionEvent_history"

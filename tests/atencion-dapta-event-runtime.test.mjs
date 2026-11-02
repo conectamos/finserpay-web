@@ -69,3 +69,35 @@ test('a verified reply waits for its native binding instead of linking a guessed
   const result=await dispatchAttentionDaptaEvents(f.store,async()=>({state:'confirmed',source:f.source,historyCursor:'tail',historyTruncated:false,message:{id:messageId,text:'Artificial',sentAt:now.toISOString(),status:'sent',direction:'outbound',contentType:'text'}}));
   assert.equal(result.pending,1);assert.deepEqual(f.retries,[{delaySeconds:10,code:'DAPTA_BINDING_PENDING',historyCursor:'tail'}]);
 });
+
+test('incoming customer events require the separate extension gate and never trust forwarded model flags',async()=>{
+  const value=native();value.event='new_message_received';value.confirmed=true;
+  Object.assign(value.message,{direction:'inbound',sender_identifier:contactId,recipient_identifier:scope.phoneNumberId,status:'delivered',metadata:{},content:'CONFIRMO PR-0123456789ABCDEF'});
+  const queued=[],make=()=>new Request('https://finserpay.test/api/integraciones/atencion/dapta',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(value)});
+  const disabled=createAttentionDaptaEventHandler({config:()=>({scope,token}),now:()=>now,ingest:async event=>queued.push(event)});
+  assert.equal((await disabled(make())).status,400);assert.equal(queued.length,0);
+  const enabled=createAttentionDaptaEventHandler({config:()=>({scope,token,extensionsEnabled:true}),now:()=>now,ingest:async event=>queued.push(event)});
+  assert.equal((await enabled(make())).status,200);assert.equal(queued[0].event,'new_message_received');
+  assert.equal(JSON.stringify(queued).includes('CONFIRMO'),false);assert.equal(Object.hasOwn(queued[0],'confirmed'),false);
+});
+test('disabled extensions preserve incoming jobs durably and keep ordinary outbound importing',async()=>{
+  const f=fixture();f.job.event='new_message_received';
+  const result=await dispatchAttentionDaptaEvents(f.store,async()=>assert.fail('disabled incoming must not call provider'));
+  assert.equal(result.pending,1);assert.equal(f.saved.length,0);assert.equal(f.retries[0].code,'DAPTA_EXTENSION_PENDING');
+  f.job.event='new_message_sent';f.retries.length=0;
+  const reply={state:'confirmed',source:f.source,historyCursor:null,historyTruncated:false,message:{id:messageId,text:'Ordinary response',sentAt:now.toISOString(),status:'delivered',direction:'outbound',contentType:'text'}};
+  const done=await dispatchAttentionDaptaEvents(f.store,async()=>reply,{enabled:()=>false,process:async()=>assert.fail('disabled financial store')});
+  assert.equal(done.imported,1);assert.equal(f.saved.length,1);
+});
+test('a confirmation that overtakes its offer retries instead of being discarded or duplicated into native history',async()=>{
+  const f=fixture();f.job.event='new_message_received';let consumed=0,completed=0;
+  f.store.getVerifiedConversation=async()=>({conversationId});
+  f.store.completeVerifiedInbound=async()=>{completed++;return{imported:false,pendingBinding:false};};
+  const reply={state:'confirmed',source:f.source,historyCursor:null,historyTruncated:false,verification:{fresh:true,kind:'lead'},message:{id:messageId,text:'CONFIRMO PR-0123456789ABCDEF',sentAt:now.toISOString(),status:'delivered',direction:'inbound',contentType:'text'}};
+  const extensions={enabled:()=>true,process:async(job,observed,internalId)=>{assert.equal(job,f.job);assert.equal(observed,reply);assert.equal(internalId,conversationId);return{state:++consumed===1?'pending':'complete'};}};
+  const read=async input=>{assert.equal(input.direction,'inbound');assert.equal(input.requireFresh,true);return reply;};
+  assert.equal((await dispatchAttentionDaptaEvents(f.store,read,extensions)).pending,1);
+  assert.equal(completed,0);assert.equal(f.retries[0].code,'DAPTA_EXTENSION_PENDING');assert.equal(f.saved.length,0);
+  const result=await dispatchAttentionDaptaEvents(f.store,read,extensions);
+  assert.equal(result.failed,0);assert.equal(result.pending,0);assert.equal(completed,1);assert.equal(f.saved.length,0);
+});

@@ -20,20 +20,23 @@ type AdapterDependencies = { env?: NodeJS.ProcessEnv; fetch?: typeof fetch };
 type SnapshotOptions = { cursor?: string | null; historyCursors?: Readonly<Record<string, string | null>> };
 export type DaptaConfirmedEventMessageInput = {
   externalConversationId: string; contactId: string; messageId: string; historyCursor?: string | null;
+  direction?: "outbound" | "inbound"; requireFresh?: boolean;
 };
 export type DaptaConfirmedEventSource = {
   workspaceId: string; agentId: string; externalConversationId: string; contactId: string;
 };
 export type DaptaConfirmedEventMessage = {
   id: string; text: string; sentAt: string; status: "sent" | "delivered" | "read";
-  direction: "outbound"; contentType: "text";
+  direction: "outbound" | "inbound"; contentType: "text";
 };
 export type DaptaConfirmedEventMessageResult = {
   source: DaptaConfirmedEventSource;
   /** Event-search checkpoint only. It does not advance the broad history import. */
   historyCursor: string | null; historyTruncated: boolean;
+  /** Present only for the strict live read used by financial message witnesses. */
+  verification?: { fresh: true; kind: "agent" | "followup" | "lead" };
 } & ({ state: "confirmed"; message: DaptaConfirmedEventMessage }
-  | { state: "pending"; reason: "MESSAGE_NOT_FOUND" | "HISTORY_REMAINING" | "DELIVERY_PENDING" }
+  | { state: "pending"; reason: "MESSAGE_NOT_FOUND" | "HISTORY_REMAINING" | "DELIVERY_PENDING" | "LIVE_READ_PENDING" }
   | { state: "failed"; reason: "DELIVERY_FAILED" | "UNSUPPORTED_MESSAGE" | "INVALID_MESSAGE" });
 class ExpiredMcpSession extends Error {
   constructor(readonly sessionId: string) { super("MCP session expired"); }
@@ -325,8 +328,10 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
       const config = configuration(env);
       if (!config) throw new AttentionDaptaError("NOT_CONFIGURED", 503, "Configura las credenciales de lectura, el espacio y el agente de Dapta en el servidor.");
       const descriptor = object(input), contactId = eventContactId(descriptor?.contactId);
+      const direction = input?.direction ?? "outbound", requireFresh = input?.requireFresh === true || direction === "inbound";
       if (!descriptor || typeof descriptor.externalConversationId !== "string" || !UUID.test(descriptor.externalConversationId)
-        || typeof descriptor.messageId !== "string" || !UUID.test(descriptor.messageId) || !contactId) {
+        || typeof descriptor.messageId !== "string" || !UUID.test(descriptor.messageId) || !contactId
+        || !["inbound", "outbound"].includes(direction) || (input.requireFresh !== undefined && typeof input.requireFresh !== "boolean")) {
         throw new AttentionDaptaError("SCOPE_MISMATCH", 400, "La identidad del evento de Dapta no es válida.");
       }
       const externalConversationId = descriptor.externalConversationId, messageId = descriptor.messageId;
@@ -355,6 +360,8 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
           if (!Array.isArray(detail.messages) || detail.messages.length > MESSAGE_LIMIT * 2) invalidResponse();
           const nextCursor = cursor(detail.messages_next_cursor);
           if (nextCursor && seen.has(nextCursor)) invalidResponse();
+          if (requireFresh && object(detail.fresh)?.applied !== true) return { source, state: "pending", reason: "LIVE_READ_PENDING",
+            historyCursor: inputCursor, historyTruncated: nextCursor !== null };
           const targets = detail.messages.map(object).filter((message): message is JsonObject => message?.id === messageId);
           if (targets.length > 1) {
             const immutable = (message: JsonObject) => JSON.stringify([message.kind, message.direction, message.content_type,
@@ -366,15 +373,17 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
             // Re-read this page if needed; finding a live-tail message must not
             // skip the older history pages that this narrow reader does not save.
             const checkpoint = { source, historyCursor: inputCursor, historyTruncated: nextCursor !== null };
-            if (!["agent", "followup"].includes(String(target.kind)) || target.direction !== "outbound" || target.content_type !== "text") {
+            const expectedKind = direction === "inbound" ? target.kind === "lead" : ["agent", "followup"].includes(String(target.kind));
+            if (!expectedKind || target.direction !== direction || target.content_type !== "text") {
               return { ...checkpoint, state: "failed", reason: "UNSUPPORTED_MESSAGE" };
             }
             if (["failed", "error"].includes(String(target.status))) return { ...checkpoint, state: "failed", reason: "DELIVERY_FAILED" };
-            if (!["sent", "delivered", "read"].includes(String(target.status))) return { ...checkpoint, state: "pending", reason: "DELIVERY_PENDING" };
+            if (!(direction === "inbound" ? ["delivered", "read"] : ["sent", "delivered", "read"]).includes(String(target.status))) return { ...checkpoint, state: "pending", reason: "DELIVERY_PENDING" };
             const text = visibleText(target.content, config.key), sentAt = date(target.created_at);
             if (!text || !sentAt) return { ...checkpoint, state: "failed", reason: "INVALID_MESSAGE" };
-            return { ...checkpoint, state: "confirmed", message: { id: messageId, text, sentAt,
-              status: target.status as DaptaConfirmedEventMessage["status"], direction: "outbound", contentType: "text" } };
+            return { ...checkpoint, state: "confirmed", ...(requireFresh ? { verification: { fresh: true as const,
+              kind: target.kind as "agent" | "followup" | "lead" } } : {}), message: { id: messageId, text, sentAt,
+              status: target.status as DaptaConfirmedEventMessage["status"], direction, contentType: "text" } };
           }
           if (!nextCursor) return { source, state: "pending", reason: "MESSAGE_NOT_FOUND", historyCursor: inputCursor, historyTruncated: false };
           pageCursor = nextCursor;

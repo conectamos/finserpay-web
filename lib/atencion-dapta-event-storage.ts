@@ -13,7 +13,8 @@ type EventRow = DaptaAttentionEvent & {
 export type DaptaEventJob = Omit<EventRow, "leaseToken" | "leaseUntil"> & { leaseToken: string; leaseUntil: Date | string };
 export type DaptaConfirmedEventMessage = {
   source: { workspaceId: string; agentId: string; externalConversationId: string; contactId: string };
-  message: { id: string; text: string; sentAt: string; status: "sent" | "delivered" | "read"; direction: "outbound"; contentType: "text" };
+  verification?: { fresh: true; kind: "agent" | "followup" | "lead" };
+  message: { id: string; text: string; sentAt: string; status: "sent" | "delivered" | "read"; direction: "outbound" | "inbound"; contentType: "text" };
 };
 const transactionOptions = { isolationLevel: "ReadCommitted" as const, timeout: 30000, maxWait: 10000 };
 const MAX_ATTEMPTS = 20;
@@ -58,15 +59,27 @@ export function createAttentionDaptaEventStore(database: AttentionDatabase, opti
   }
   function validateEvent(event: DaptaAttentionEvent) {
     assertSource(event);
-    if (event.event !== "new_message_sent" || canonicalDaptaEventContact(event.contactId) !== event.contactId
+    if (!["new_message_sent", "new_message_received"].includes(event.event) || canonicalDaptaEventContact(event.contactId) !== event.contactId
       || event.phone !== metaRecipientPhone(event.contactId) || daptaEventFingerprint(event) !== event.fingerprint) fail("DAPTA_EVENT_INVALID", 400);
   }
   async function leased(db: AttentionDb, job: DaptaEventJob) {
     const [row] = await db.$queryRawUnsafe<EventRow[]>(`SELECT * FROM "AttentionDaptaEvent" WHERE id=$1::uuid FOR UPDATE`, job.id);
     if (!row || row.status !== "pending" || row.leaseToken !== job.leaseToken || !row.leaseUntil || Date.parse(iso(row.leaseUntil)) <= now().getTime()) fail("DAPTA_EVENT_LEASE_LOST");
     assertSource(row);
-    if (row.fingerprint !== job.fingerprint || row.messageId !== job.messageId || row.externalConversationId !== job.externalConversationId || row.contactId !== job.contactId) fail("DAPTA_EVENT_IDENTITY_CONFLICT");
+    if (row.event !== job.event || row.fingerprint !== job.fingerprint || row.messageId !== job.messageId || row.externalConversationId !== job.externalConversationId || row.contactId !== job.contactId) fail("DAPTA_EVENT_IDENTITY_CONFLICT");
     return row;
+  }
+  function verifiedMessage(row: EventRow, confirmed: DaptaConfirmedEventMessage, requireFresh = false) {
+    const source = confirmed?.source, message = confirmed?.message;
+    const inbound = row.event === "new_message_received";
+    if (!source || !message || source.workspaceId !== row.workspaceId || source.agentId !== row.agentId
+      || source.externalConversationId !== row.externalConversationId || canonicalDaptaEventContact(source.contactId) !== row.contactId
+      || message.id !== row.messageId || message.direction !== (inbound ? "inbound" : "outbound") || message.contentType !== "text"
+      || !(inbound ? ["delivered", "read"] : ["sent", "delivered", "read"]).includes(message.status)
+      || (requireFresh && (confirmed.verification?.fresh !== true || !(inbound ? ["lead"] : ["agent", "followup"]).includes(confirmed.verification.kind)))) fail("DAPTA_EVENT_SCOPE_MISMATCH", 403);
+    const sentAt = daptaEventTimestamp(message.sentAt), text = attentionText(message.text, 16000);
+    if (sentAt !== iso(row.messageAt)) fail("DAPTA_EVENT_IDENTITY_CONFLICT");
+    return { sentAt, text };
   }
   return {
     async ingest(event: DaptaAttentionEvent) {
@@ -114,7 +127,7 @@ export function createAttentionDaptaEventStore(database: AttentionDatabase, opti
     async retry(job: DaptaEventJob, input: { delaySeconds: number; code: string; historyCursor?: string | null }) {
       if (!Number.isFinite(input.delaySeconds) || input.delaySeconds < 1 || input.delaySeconds > 3600) fail("DAPTA_EVENT_INVALID", 400);
       if (input.historyCursor !== undefined && input.historyCursor !== null && (typeof input.historyCursor !== "string" || !input.historyCursor || input.historyCursor.length > 4096 || /[\x00-\x20\x7f]/.test(input.historyCursor))) fail("DAPTA_EVENT_INVALID", 400);
-      const code = ["DAPTA_PENDING", "DAPTA_NOT_FOUND", "DAPTA_FAILED", "DAPTA_RATE_LIMITED", "DAPTA_UNAVAILABLE", "DAPTA_BINDING_PENDING", "DAPTA_SCOPE_MISMATCH"].includes(input.code) ? input.code : "DAPTA_UNAVAILABLE";
+      const code = ["DAPTA_PENDING", "DAPTA_NOT_FOUND", "DAPTA_FAILED", "DAPTA_RATE_LIMITED", "DAPTA_UNAVAILABLE", "DAPTA_BINDING_PENDING", "DAPTA_SCOPE_MISMATCH", "DAPTA_EXTENSION_PENDING"].includes(input.code) ? input.code : "DAPTA_UNAVAILABLE";
       return transact(async db => {
         const row = await leased(db, job);
         const blocked = input.code === "DAPTA_FAILED" || input.code === "DAPTA_SCOPE_MISMATCH" || row.attempts >= MAX_ATTEMPTS || new Date(row.expiresAt).getTime() <= now().getTime();
@@ -124,16 +137,38 @@ export function createAttentionDaptaEventStore(database: AttentionDatabase, opti
         return { blocked };
       });
     },
+    /** Commit the binding read before invoking a financial store with its own transaction. */
+    async getVerifiedConversation(job: DaptaEventJob, confirmed: DaptaConfirmedEventMessage) {
+      return transact(async db => {
+        await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended('attention:provider-import',0))`);
+        const row = await leased(db, job);
+        verifiedMessage(row, confirmed, true);
+        const conversationId = await bind(db, row);
+        if (row.conversationId && conversationId && row.conversationId !== conversationId) fail("DAPTA_EVENT_IDENTITY_CONFLICT");
+        return { conversationId };
+      });
+    },
+    /** Native Meta already owns inbound history; only acknowledge the witnessed event. */
+    async completeVerifiedInbound(job: DaptaEventJob, confirmed: DaptaConfirmedEventMessage) {
+      return transact(async db => {
+        await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended('attention:provider-import',0))`);
+        const row = await leased(db, job);
+        if (row.event !== "new_message_received") fail("DAPTA_EVENT_SCOPE_MISMATCH", 403);
+        verifiedMessage(row, confirmed, true);
+        const conversationId = await bind(db, row);
+        if (!conversationId) return { imported: false, pendingBinding: true };
+        if (row.conversationId && row.conversationId !== conversationId) fail("DAPTA_EVENT_IDENTITY_CONFLICT");
+        await db.$queryRawUnsafe(`UPDATE "AttentionDaptaEvent" SET status='complete',"conversationId"=$2::uuid,"leaseToken"=NULL,"leaseUntil"=NULL,"errorCode"=NULL,"completedAt"=$3::timestamptz,"updatedAt"=now() WHERE id=$1::uuid RETURNING id`, row.id, conversationId, now());
+        await audit(db, "DAPTA_INBOUND_VERIFIED", conversationId, row.id);
+        return { imported: false, pendingBinding: false };
+      });
+    },
     async persistConfirmed(job: DaptaEventJob, confirmed: DaptaConfirmedEventMessage) {
       return transact(async db => {
         await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended('attention:provider-import',0))`);
-        const row = await leased(db, job), source = confirmed?.source, message = confirmed?.message;
-        if (!source || !message || source.workspaceId !== row.workspaceId || source.agentId !== row.agentId
-          || source.externalConversationId !== row.externalConversationId || canonicalDaptaEventContact(source.contactId) !== row.contactId
-          || message.id !== row.messageId || message.direction !== "outbound" || message.contentType !== "text"
-          || !["sent", "delivered", "read"].includes(message.status)) fail("DAPTA_EVENT_SCOPE_MISMATCH", 403);
-        const sentAt = daptaEventTimestamp(message.sentAt), text = attentionText(message.text, 16000);
-        if (sentAt !== iso(row.messageAt)) fail("DAPTA_EVENT_IDENTITY_CONFLICT");
+        const row = await leased(db, job), message = confirmed?.message;
+        if (row.event !== "new_message_sent") fail("DAPTA_EVENT_SCOPE_MISMATCH", 403);
+        const { sentAt, text } = verifiedMessage(row, confirmed);
         const conversationId = await bind(db, row);
         if (!conversationId) return { imported: false, pendingBinding: true };
         if (row.conversationId && row.conversationId !== conversationId) fail("DAPTA_EVENT_IDENTITY_CONFLICT");

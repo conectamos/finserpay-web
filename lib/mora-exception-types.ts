@@ -17,7 +17,7 @@ export type MoraExceptionRequestItem = {
   type: MoraExceptionType;
   status: MoraExceptionStatus;
   version: number;
-  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT";
+  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT" | "SYSTEM_DIANA";
   centralDirect: boolean;
   installmentNumber: number | null;
   installmentDueDate: string | null;
@@ -26,10 +26,12 @@ export type MoraExceptionRequestItem = {
   promiseDate: string | null;
   reason: string;
   observation: string;
-  createdByUserId: number;
+  createdByUserId: number | null;
+  createdBySystemKey: "SYSTEM_DIANA" | null;
   createdByName: string;
   submittedAt: string;
   decidedByUserId: number | null;
+  decidedBySystemKey: "SYSTEM_DIANA" | null;
   decidedByName: string | null;
   decidedAt: string | null;
   decisionReason: string | null;
@@ -83,6 +85,7 @@ export type MoraExceptionEvent = {
   toStatus: MoraExceptionStatus;
   payload: unknown;
   actorUserId: number | null;
+  actorSystemKey: "SYSTEM_DIANA" | null;
   actorName: string;
   createdAt: string;
 };

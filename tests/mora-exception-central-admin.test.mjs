@@ -147,6 +147,91 @@ function analystAmendment(api, item, patch = {}) {
     idempotencyKey: randomUUID(), ...patch });
 }
 
+async function approvedDianaExtension(f) {
+  const id = randomUUID();
+  await f.database.query(`INSERT INTO "CreditMoraExceptionRequest"
+    (id,"creditoId",type,status,source,version,"installmentNumber","installmentDueDate","expiresOn","promiseAmount","promiseDate",
+     reason,observation,"createdBySystemKey","createdByName","decidedBySystemKey","decidedByName","decidedAt","decisionReason","createIdempotencyKey","createRequestHash")
+    VALUES($1,77,'PRORROGA','APPROVED','SYSTEM_DIANA',1,3,'2026-10-17','2026-10-20',200,'2026-10-20',
+      'Solicitud confirmada','Cliente confirmó términos','SYSTEM_DIANA','Diana','SYSTEM_DIANA','Diana',$2,'Confirmación auténtica del cliente',$3,$4)`,
+  [id, extensionNow, randomUUID(), "a".repeat(64)]);
+  await f.database.query(`INSERT INTO "CreditMoraExceptionEvent"
+    (id,"requestId","creditoId",version,action,"toStatus",payload,"actorSystemKey","actorName","requestHash")
+    VALUES($1,$2,77,1,'APPROVED','APPROVED','{}','SYSTEM_DIANA','Diana',$3)`, [randomUUID(), id, "b".repeat(64)]);
+  return (await f.database.query(`SELECT * FROM "CreditMoraExceptionRequest" WHERE id=$1`, [id])).rows[0];
+}
+
+test("editar y cancelar prórroga Diana conserva la decisión automática y atribuye al humano solo su propia intervención", async t => {
+  const f = await harness(t, { plan: extensionPlan });
+  const original = await approvedDianaExtension(f);
+  const edited = await f.service.amendMoraExceptionRequest(original.id, analystAmendment(f.service, original, { promiseDate: "2026-10-21" }), analyst, extensionNow);
+  assert.equal(edited.item.source, "SYSTEM_DIANA");
+  assert.equal(edited.item.centralDirect, false);
+  assert.equal(edited.item.createdByUserId, null);
+  assert.equal(edited.item.createdBySystemKey, "SYSTEM_DIANA");
+  assert.equal(edited.item.decidedByUserId, null);
+  assert.equal(edited.item.decidedBySystemKey, "SYSTEM_DIANA");
+  assert.equal(edited.item.decidedByName, "Diana");
+  const cancel = f.service.parseAnalystMoraExtensionAmendment({ action: "CANCEL", version: edited.item.version,
+    auditReason: "Cliente cancela el acuerdo previo", idempotencyKey: randomUUID() });
+  const cancelled = await f.service.amendMoraExceptionRequest(original.id, cancel, analyst, extensionNow);
+  assert.equal(cancelled.item.status, "CANCELLED");
+  assert.equal(cancelled.item.decidedByUserId, null);
+  assert.equal(cancelled.item.decidedBySystemKey, "SYSTEM_DIANA");
+  assert.equal(cancelled.item.decidedByName, "Diana");
+  assert.equal(cancelled.item.decidedAt, original.decidedAt.toISOString());
+  assert.equal(cancelled.item.decisionReason, original.decisionReason);
+  const events = (await f.database.query(`SELECT * FROM "CreditMoraExceptionEvent" WHERE "requestId"=$1 ORDER BY version`, [original.id])).rows;
+  assert.deepEqual(events.map(event => [event.action, event.actorUserId, event.actorSystemKey, event.actorName]),
+    [["APPROVED", null, "SYSTEM_DIANA", "Diana"], ["EDITED", 2, null, "Analista vigente"], ["CANCELLED", 2, null, "Analista vigente"]]);
+  assert.equal(events[1].payload.before.decidedBySystemKey, "SYSTEM_DIANA");
+  assert.equal(events[2].payload.after.decidedByUserId, null);
+  assert.equal((await f.service.amendMoraExceptionRequest(original.id, cancel, analyst, extensionNow)).unchanged, true);
+});
+
+test("reemplazo central de prórroga Diana no convierte al administrador en autor de la aprobación original", async t => {
+  const f = await harness(t, { plan: extensionPlan });
+  const original = await approvedDianaExtension(f);
+  const replacement = await f.service.createMoraExceptionRequest(centralInput(f.service), central, extensionNow);
+  const replaced = (await f.database.query(`SELECT * FROM "CreditMoraExceptionRequest" WHERE id=$1`, [original.id])).rows[0];
+  assert.equal(replaced.status, "REPLACED");
+  assert.equal(replaced.createdByUserId, null); assert.equal(replaced.createdBySystemKey, "SYSTEM_DIANA");
+  assert.equal(replaced.decidedByUserId, null); assert.equal(replaced.decidedBySystemKey, "SYSTEM_DIANA");
+  assert.equal(replaced.decidedByName, "Diana"); assert.equal(replaced.decisionReason, original.decisionReason);
+  assert.equal(replaced.decidedAt.toISOString(), original.decidedAt.toISOString());
+  const event = (await f.database.query(`SELECT * FROM "CreditMoraExceptionEvent" WHERE "requestId"=$1 AND action='REPLACED'`, [original.id])).rows[0];
+  assert.equal(event.actorUserId, 1); assert.equal(event.actorSystemKey, null); assert.equal(event.actorName, "Administrador vigente");
+  assert.equal(replacement.item.createdByUserId, 1); assert.equal(replacement.item.createdBySystemKey, null);
+});
+
+test("muro de cartera lee a Diana como actor sistema y los formularios humanos no pueden suplantarla", async () => {
+  const types = load("lib/analyst-mora-types.ts", {});
+  const timestamp = new Date("2026-10-18T20:00:00Z");
+  const history = { id: randomUUID(), creditoId: 77, action: "MSJ_TEXTO", managementStatus: "ACUERDO_PAGO", result: "Acuerdo registrado",
+    resultCode: "ACUERDO_PAGO", agreementDate: "2026-10-20", agreementAmount: "200", comment: "Términos confirmados",
+    responsibleUserId: null, responsibleSystemKey: "SYSTEM_DIANA", responsibleName: "Diana",
+    actorUserId: null, actorSystemKey: "SYSTEM_DIANA", actorName: "Diana", actedAt: timestamp,
+    nextFollowUpAt: new Date("2026-10-21T13:00:00Z"), createdAt: timestamp, idempotencyKey: randomUUID() };
+  const api = load("lib/analyst-mora-management.ts", {
+    "@/lib/prisma": { default: { $queryRawUnsafe: async sql => sql.startsWith('SELECT * FROM "CreditMoraManagementEvent"') ? [history] : [] } },
+    "@/lib/credit-approval-errors": { CreditApprovalError }, "@/lib/analyst-mora-access": access,
+    "@/lib/analyst-mora-credit": { moraCreditSelect: {}, readMoraCredit: async () => ({}), moraCreditSummary: () => ({ id: 77, estadoCartera: "AL_DIA" }) },
+    "@/lib/analyst-mora-schema": { ensureAnalystMoraSchema: async () => {} }, "@/lib/analyst-mora-types": types,
+    "@/lib/analyst-mora-extension": { readActiveMoraExtensions: async () => new Map() }, "@/lib/colombia-date": dates,
+  });
+  const detail = await api.getCreditManagement(77, extensionNow);
+  assert.equal(detail.history[0].actorUserId, null); assert.equal(detail.history[0].actorSystemKey, "SYSTEM_DIANA");
+  assert.equal(detail.history[0].responsibleUserId, null); assert.equal(detail.history[0].responsibleSystemKey, "SYSTEM_DIANA");
+  assert.equal(detail.history[0].actorName, "Diana");
+  const manual = { action: "MSJ_TEXTO", actedAt: timestamp.toISOString(), responsibleUserId: 2, result: "ACUERDO_PAGO",
+    agreementDate: "2026-10-20", agreementAmount: 200, comment: "Gestión manual verificada", nextFollowUpAt: "2026-10-21T13:00:00Z",
+    managementStatus: "ACUERDO_PAGO", idempotencyKey: randomUUID() };
+  assert.doesNotThrow(() => api.parseCreditManagement(manual, extensionNow));
+  for (const forged of [{ actorSystemKey: "SYSTEM_DIANA" }, { responsibleSystemKey: "SYSTEM_DIANA" }]) {
+    assert.throws(() => api.parseCreditManagement({ ...manual, ...forged }, extensionNow), { code: "INVALID_REQUEST" });
+  }
+});
+
 test("analista edita y cancela la prórroga vigente con rol real, versión e historial sin tocar el crédito", async t => {
   const f = await harness(t, { plan: extensionPlan });
   const item = await approvedAnalystExtension(f);
@@ -733,7 +818,7 @@ test("instalación actualiza esquema previo con datos existentes y admite NULLs 
   assert.equal(new Date(previous.expiresOn).toISOString().slice(0, 10), "2026-10-10");
   assert.equal(previous.reason, "Motivo original");
   assert.equal(previous.createdByName, "Administrador original");
-  assert.deepEqual((await database.query('SELECT * FROM "CreditMoraExceptionEvent"')).rows[0], eventBefore);
+  assert.deepEqual((await database.query('SELECT * FROM "CreditMoraExceptionEvent"')).rows[0], { ...eventBefore, actorSystemKey: null });
   const directId = randomUUID();
   await database.query(`INSERT INTO "CreditMoraExceptionRequest"
     ("id","creditoId","type","source","status","reason","observation","createdByUserId","createdByName",
@@ -747,7 +832,7 @@ test("instalación actualiza esquema previo con datos existentes y admite NULLs 
     ("id","requestId","creditoId","version","action","fromStatus","toStatus","payload","actorUserId","actorName","requestHash")
     VALUES ($1,$2,1,2,'REPLACED','APPROVED','REPLACED','{}',1,'Administrador',$3)`,
   [randomUUID(), requestId, "e".repeat(64)]);
-  assert.deepEqual((await database.query('SELECT * FROM "CreditMoraExceptionEvent" WHERE "id"=$1', [eventId])).rows[0], eventBefore);
+  assert.deepEqual((await database.query('SELECT * FROM "CreditMoraExceptionEvent" WHERE "id"=$1', [eventId])).rows[0], { ...eventBefore, actorSystemKey: null });
   await assert.rejects(database.query(`INSERT INTO "CreditMoraExceptionRequest"
     ("id","creditoId","type","status","reason","observation","createdByUserId","createdByName",
      "decidedAt","createIdempotencyKey","createRequestHash")

@@ -6,13 +6,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 export const DAPTA_ATTENTION_EVENT_MAX_BYTES = 64 * 1024;
+export type DaptaAttentionEventKind = "new_message_sent" | "new_message_received";
 export type DaptaEventScope = {
   workspaceId: string; agentId: string; agentChannelId: string;
   phoneNumberId: string; wabaId: string;
 };
 /** No message body, customer name, document or tool payload is retained here. */
 export type DaptaAttentionEvent = DaptaEventScope & {
-  event: "new_message_sent"; deliveryId: string; eventAt: string;
+  event: DaptaAttentionEventKind; deliveryId: string; eventAt: string;
   externalConversationId: string; contactId: string; phone: string | null;
   messageId: string; messageAt: string; fingerprint: string;
 };
@@ -73,22 +74,26 @@ export function daptaEventFingerprint(event: Omit<DaptaAttentionEvent, "fingerpr
     event.externalConversationId, event.contactId, event.messageId, event.messageAt,
   ])).digest("hex");
 }
-/** Only the native outbound text contract observed in production is accepted. */
-export function parseDaptaAttentionEvent(value: unknown, scope: DaptaEventScope, now = new Date()): DaptaAttentionEvent {
+/** Incoming confirmations are opt-in; neither event kind carries customer text into the queue. */
+export function parseDaptaAttentionEvent(value: unknown, scope: DaptaEventScope, now = new Date(), options: { allowInbound?: boolean } = {}): DaptaAttentionEvent {
   assertDaptaEventScope(scope);
   const input = record(value), conversation = record(input?.conversation), message = record(input?.message);
   const metadata = record(conversation?.metadata), attribution = record(record(message?.metadata)?.agent_attribution);
-  if (!input || !conversation || !message || input.event !== "new_message_sent" || message.direction !== "outbound"
-      || message.content_type !== "text" || !["pending", "sent", "delivered", "read"].includes(String(message.status))) invalid("DAPTA_EVENT_UNSUPPORTED");
+  const inbound = input?.event === "new_message_received";
+  if (!input || !conversation || !message || (!inbound && input.event !== "new_message_sent")
+      || (inbound && options.allowInbound !== true) || message.direction !== (inbound ? "inbound" : "outbound")
+      || message.content_type !== "text" || !(inbound ? ["delivered", "read"] : ["pending", "sent", "delivered", "read"]).includes(String(message.status))) invalid("DAPTA_EVENT_UNSUPPORTED");
   if (input.workspace_id !== scope.workspaceId || input.agent_id !== scope.agentId || input.agent_channel_id !== scope.agentChannelId
       || input.phone_number !== scope.phoneNumberId || conversation.organization_id !== scope.workspaceId
       || conversation.text_agent_id !== scope.agentId || conversation.channel_type !== "meta_whatsapp"
       || metadata?.channel_id !== scope.agentChannelId || metadata.organization_id !== scope.workspaceId
-      || metadata.agent_channel_type !== "meta_whatsapp" || attribution?.agent_id !== scope.agentId) invalid("DAPTA_EVENT_SCOPE_MISMATCH", 403);
+      || metadata.agent_channel_type !== "meta_whatsapp" || (!inbound && attribution?.agent_id !== scope.agentId)
+      || (inbound && attribution !== null)) invalid("DAPTA_EVENT_SCOPE_MISMATCH", 403);
   const externalConversationId = uuid(conversation.id), messageId = uuid(message.id);
   if (message.conversation_id !== externalConversationId) invalid("DAPTA_EVENT_SCOPE_MISMATCH", 403);
   const contactId = canonicalDaptaEventContact(conversation.channel_identifier);
-  if (canonicalDaptaEventContact(message.recipient_identifier) !== contactId) invalid("DAPTA_EVENT_SCOPE_MISMATCH", 403);
+  if (canonicalDaptaEventContact(inbound ? message.sender_identifier : message.recipient_identifier) !== contactId
+      || (inbound && message.recipient_identifier !== scope.phoneNumberId)) invalid("DAPTA_EVENT_SCOPE_MISMATCH", 403);
   if (typeof input.delivery_id !== "string" || !/^[A-Za-z0-9_.:-]{1,200}$/.test(input.delivery_id)) invalid();
   const eventAt = daptaEventTimestamp(input.created_at), messageAt = daptaEventTimestamp(message.created_at);
   const clock = now.getTime();
@@ -96,7 +101,7 @@ export function parseDaptaAttentionEvent(value: unknown, scope: DaptaEventScope,
       || Date.parse(messageAt) > Date.parse(eventAt) + FUTURE_SKEW_MS) invalid("DAPTA_EVENT_EXPIRED");
   // The event itself is only a wake-up signal. Its text and pending status are
   // not evidence of a delivered response and never enter the queue.
-  const event = { ...scope, event: "new_message_sent" as const, deliveryId: input.delivery_id, eventAt,
+  const event = { ...scope, event: input.event as DaptaAttentionEventKind, deliveryId: input.delivery_id, eventAt,
     externalConversationId, contactId, phone: metaRecipientPhone(contactId), messageId, messageAt };
   return { ...event, fingerprint: daptaEventFingerprint(event) };
 }

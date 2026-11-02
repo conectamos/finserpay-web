@@ -13,11 +13,11 @@ const migration=readFileSync(path.join(root,"scripts/setup-atencion.sql"),"utf8"
 const scope={workspaceId:"7496b9a3-2fe6-4e28-8411-7d54ee788b2c",agentId:"6f9560ec-dcfd-4725-bf61-27cd8d528a1c",agentChannelId:"6933b28b-b0a1-400c-aa1e-54f75bfbbd91",phoneNumberId:"1162059967000416",wabaId:"2148284059050848"};
 const instant="2026-11-02T01:00:00.000Z",contact="12025550100";
 function adapter(db){return{$queryRawUnsafe:async(sql,...values)=>(await db.query(sql,values)).rows,$transaction:fn=>db.transaction(tx=>fn(adapter(tx)))};}
-function native(data={}){const conversationId=data.externalConversationId||randomUUID(),messageId=data.messageId||randomUUID(),recipient=data.contactId||contact;return parseDaptaAttentionEvent({
-  event:"new_message_sent",delivery_id:data.deliveryId||randomUUID(),created_at:instant,workspace_id:scope.workspaceId,agent_id:scope.agentId,agent_channel_id:scope.agentChannelId,phone_number:scope.phoneNumberId,
+function native(data={}){const conversationId=data.externalConversationId||randomUUID(),messageId=data.messageId||randomUUID(),recipient=data.contactId||contact,inbound=data.inbound===true;return parseDaptaAttentionEvent({
+  event:inbound?"new_message_received":"new_message_sent",delivery_id:data.deliveryId||randomUUID(),created_at:instant,workspace_id:scope.workspaceId,agent_id:scope.agentId,agent_channel_id:scope.agentChannelId,phone_number:scope.phoneNumberId,
   conversation:{id:conversationId,organization_id:scope.workspaceId,text_agent_id:scope.agentId,channel_type:"meta_whatsapp",channel_identifier:recipient,metadata:{organization_id:scope.workspaceId,agent_channel_type:"meta_whatsapp",channel_id:scope.agentChannelId}},
-  message:{id:messageId,conversation_id:conversationId,direction:"outbound",content_type:"text",content:"NO GUARDAR PENDING",recipient_identifier:recipient,status:"pending",created_at:instant,metadata:{agent_attribution:{agent_id:scope.agentId}}},
-},scope,new Date(instant));}
+  message:{id:messageId,conversation_id:conversationId,direction:inbound?"inbound":"outbound",content_type:"text",content:"NO GUARDAR PENDING",sender_identifier:recipient,recipient_identifier:inbound?scope.phoneNumberId:recipient,status:inbound?"delivered":"pending",created_at:instant,metadata:inbound?{}:{agent_attribution:{agent_id:scope.agentId}}},
+},scope,new Date(instant),{allowInbound:inbound});}
 function confirmed(job,data={}){return{source:{workspaceId:scope.workspaceId,agentId:scope.agentId,externalConversationId:job.externalConversationId,contactId:job.contactId},message:{id:job.messageId,direction:"outbound",contentType:"text",status:"delivered",text:"Respuesta artificial confirmada",sentAt:instant,...data}};}
 async function fixture(t){
   const db=new PGlite();t.after(()=>db.close());
@@ -128,4 +128,33 @@ test("a worker neither claims nor expires another configured channel's jobs",asy
   const f=await fixture(t);await f.store.ingest(native());
   await f.db.query(`UPDATE "AttentionDaptaEvent" SET "agentChannelId"=$1`,[randomUUID()]);f.advance(20*60*1000);
   assert.deepEqual(await f.store.claim(),[]);assert.equal((await f.db.query('SELECT status FROM "AttentionDaptaEvent"')).rows[0].status,"pending");
+});
+
+test("a fresh incoming witness resolves the exact internal chat without duplicating native messages or changing its assignment",async t=>{
+  const f=await fixture(t),id=await f.chat(),event=native({inbound:true});await f.store.ingest(event);const[job]=await f.store.claim();
+  const proof={...confirmed(job,{direction:"inbound",text:"CONFIRMO PR-0123456789ABCDEF"}),verification:{fresh:true,kind:"lead"}};
+  assert.deepEqual(await f.store.getVerifiedConversation(job,proof),{conversationId:id});
+  assert.equal((await f.db.query('SELECT status FROM "AttentionDaptaEvent"')).rows[0].status,"pending");
+  await assert.rejects(f.store.persistConfirmed(job,proof),{code:"DAPTA_EVENT_SCOPE_MISMATCH"});
+  assert.deepEqual(await f.store.completeVerifiedInbound(job,proof),{imported:false,pendingBinding:false});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "AttentionMessage"')).rows[0].n,0);
+  const c=(await f.db.query('SELECT status,"assigneeKey",version FROM "AttentionConversation" WHERE id=$1',[id])).rows[0];
+  assert.deepEqual(c,{status:"closed",assigneeKey:"analyst:7",version:7});
+  assert.equal((await f.db.query('SELECT status FROM "AttentionDaptaEvent"')).rows[0].status,"complete");
+});
+test("inbound identity, live provenance and timestamp are checked again before the financial context can be exposed",async t=>{
+  const f=await fixture(t);await f.chat();await f.store.ingest(native({inbound:true}));const[job]=await f.store.claim();
+  const make=()=>({...confirmed(job,{direction:"inbound"}),verification:{fresh:true,kind:"lead"}});
+  for(const mutate of [p=>{p.verification.kind="agent";},p=>{p.verification.fresh=false;},p=>{p.message.direction="outbound";},p=>{p.source.contactId="12025550199";},p=>{p.message.id=randomUUID();}]){
+    const p=make();mutate(p);await assert.rejects(f.store.getVerifiedConversation(job,p),{code:"DAPTA_EVENT_SCOPE_MISMATCH"});
+  }
+  const old=make();old.message.sentAt="2026-11-02T00:59:59Z";
+  await assert.rejects(f.store.getVerifiedConversation(job,old),{code:"DAPTA_EVENT_IDENTITY_CONFLICT"});
+  assert.equal((await f.db.query('SELECT status FROM "AttentionDaptaEvent"')).rows[0].status,"pending");
+});
+test("financial audit identity permits only the explicit system actor without a nominal user or seller",async t=>{
+  const f=await fixture(t);
+  await f.db.query(`INSERT INTO "AttentionAudit"("actorKind","actorKey",action) VALUES('system','SYSTEM_DIANA','EXTENSION_TEST')`);
+  for(const sql of [`INSERT INTO "AttentionAudit"("actorKind","actorKey","userId",action) VALUES('system','SYSTEM_DIANA',7,'BAD')`,
+    `INSERT INTO "AttentionAudit"("actorKind","actorKey",action) VALUES('system','SYSTEM_OTHER','BAD')`])await assert.rejects(f.db.query(sql));
 });

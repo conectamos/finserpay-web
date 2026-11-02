@@ -3,9 +3,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
+import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const jiti = createJiti(import.meta.url, { alias: { "@": root } });
-const { createDianaCreditHandler } = await jiti.import("../lib/diana-credit-api.ts");
+const jiti = createJiti(import.meta.url, { alias: { "@": root,
+  "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js") } });
+const { createDianaCreditHandler, readDianaExtensionProtections } = await jiti.import("../lib/diana-credit-api.ts");
 const { buildCreditPaymentPlan } = await jiti.import("../lib/credit-payment-plan.ts");
 const { createPrincipalPaymentQuote } = await jiti.import("../lib/credit-principal-payment.ts");
 const token = "test-only-diana-token";
@@ -167,4 +169,195 @@ test("new financial fields are an explicit projection without identity, snapshot
   assert.deepEqual(Object.keys(body.creditos[0].liquidacionAnticipada).sort(),
     ["disponible", "capitalPendiente", "motivo", "consultadoAt", "proximaCuotaFecha"].sort());
   assert.equal(Object.hasOwn(body.creditos[0].liquidacionAnticipada, "expiresAt"), false);
+});
+
+const verifiedProtection = { verified: true, open: null };
+const extensionCredit = { ...base, fechaPrimerPago: "2026-11-02", extensionProtection: verifiedProtection };
+const protectionId = "2fd0fd0f-9035-4fe1-a34d-5e6813c62531";
+async function extensionAt(iso, credit = extensionCredit) {
+  const response = await createDianaCreditHandler({ token: () => token,
+    now: () => new Date(iso), lookup: async () => [credit] })(request());
+  assert.equal(response.status, 200);
+  return (await response.json()).creditos[0];
+}
+
+test("extension options before the 02/17 due date use the CRM policy without granting or exposing internal records", async () => {
+  for (const [dueDate, expires] of [["2026-11-02", ["03", "04", "05", "06"]], ["2026-11-17", ["18", "19", "20", "21"]]]) {
+    const original = { ...extensionCredit, id: 987654321, fechaPrimerPago: dueDate };
+    const snapshot = structuredClone(original);
+    const result = await extensionAt("2026-11-01T17:00:00Z", original);
+    assert.deepEqual(result.prorroga, { verificada: true, disponible: true, motivo: null,
+      cuotaNumero: 1, vencimientoCuota: dueDate,
+      opciones: expires.map((day, index) => ({ dias: index + 1, fechaLimite: `2026-11-${day}` })),
+      compromisoSugerido: { valor: 100, fecha: `2026-11-${expires.at(-1)}` },
+      consultadoAt: "2026-11-01T17:00:00.000Z" });
+    assert.deepEqual(original, snapshot, "read-only consultation must not mutate the credit");
+    assert.equal(JSON.stringify(result).includes("987654321"), false);
+    for (const forbidden of ["granted", "aprobada", "extensionId", "actor", "extensionProtection", "extensionAbonos"]) {
+      assert.equal(Object.hasOwn(result.prorroga, forbidden), false);
+    }
+  }
+});
+
+test("extension windows exclude elapsed choices and close at midnight in Colombia after the 06/21", async () => {
+  for (const [dueDate, cutoff] of [["2026-11-02", "2026-11-06"], ["2026-11-17", "2026-11-21"]]) {
+    const credit = { ...extensionCredit, fechaPrimerPago: dueDate };
+    const result = await extensionAt(`${cutoff}T17:00:00Z`, credit);
+    assert.equal(result.estado, "MORA");
+    assert.deepEqual(result.prorroga.opciones, [{ dias: 4, fechaLimite: cutoff }]);
+    const nextDate = String(Number(cutoff.slice(-2)) + 1).padStart(2, "0");
+    const lastSecond = await extensionAt(`2026-11-${nextDate}T04:59:59Z`, credit);
+    assert.equal(lastSecond.prorroga.disponible, true);
+    const closed = await extensionAt(`2026-11-${nextDate}T05:00:00Z`, credit);
+    assert.equal(closed.prorroga.verificada, true);
+    assert.equal(closed.prorroga.disponible, false);
+    assert.deepEqual(closed.prorroga.opciones, []);
+    assert.match(closed.prorroga.motivo, /06\/21/);
+  }
+  const middle = await extensionAt("2026-11-04T17:00:00Z");
+  assert.deepEqual(middle.prorroga.opciones.map(option => option.dias), [2, 3, 4]);
+});
+
+test("pending or current approved protections block all options; an expired approved protection does not", async () => {
+  for (const open of [
+    { status: "PENDING", expiresOn: "2026-10-31" },
+    { status: "APPROVED", expiresOn: null },
+    { status: "APPROVED", expiresOn: "2026-11-04" },
+    { status: "APPROVED", expiresOn: "2026-11-06" },
+    { type: "EXCEPCION", status: "APPROVED", expiresOn: null },
+  ]) {
+    const result = await extensionAt("2026-11-04T17:00:00Z", { ...extensionCredit,
+      extensionProtection: { verified: true, open: { id: protectionId, type: "PRORROGA", ...open } } });
+    assert.equal(result.prorroga.verificada, true);
+    assert.equal(result.prorroga.disponible, false);
+    assert.deepEqual(result.prorroga.opciones, []);
+    assert.deepEqual(result.prorroga.compromisoSugerido, { valor: null, fecha: null });
+    assert.match(result.prorroga.motivo, /solicitud pendiente o una excepción vigente/);
+    assert.equal(JSON.stringify(result).includes(protectionId), false);
+  }
+  const expired = await extensionAt("2026-11-04T17:00:00Z", { ...extensionCredit,
+    extensionProtection: { verified: true, open: { id: protectionId, type: "EXCEPCION", status: "APPROVED", expiresOn: "2026-11-03" } } });
+  assert.equal(expired.prorroga.disponible, true);
+});
+
+test("paid, cancelled, incomplete schedules and non-regular due dates do not offer extensions", async () => {
+  for (const credit of [
+    { ...extensionCredit, abonos: [{ valor: 300 }] },
+    { ...extensionCredit, pazYSalvoEmitidoAt: new Date("2026-11-01T12:00:00Z") },
+    { ...extensionCredit, estado: "PAZ_Y_SALVO", pazYSalvoEmitidoAt: null, abonos: [] },
+    { ...extensionCredit, estado: "CANCELADO" },
+    { ...extensionCredit, fechaPrimerPago: null, fechaProximoPago: new Date("2026-11-02T00:00:00Z") },
+    { ...extensionCredit, fechaPrimerPago: "2026-11-10" },
+  ]) {
+    const result = await extensionAt("2026-11-01T17:00:00Z", credit);
+    assert.equal(result.prorroga.disponible, false);
+    assert.deepEqual(result.prorroga.opciones, []);
+    assert.equal(typeof result.prorroga.motivo, "string");
+  }
+  const legacyPaid = await extensionAt("2026-11-01T17:00:00Z", { ...extensionCredit,
+    estado: "PAZ_Y_SALVO", pazYSalvoEmitidoAt: null, abonos: [] });
+  assert.equal(legacyPaid.estado, "PAGADO");
+  assert.equal(legacyPaid.prorroga.verificada, true);
+  assert.equal(legacyPaid.prorroga.cuotaNumero, null);
+  assert.equal(legacyPaid.prorroga.vencimientoCuota, null);
+  assert.match(legacyPaid.prorroga.motivo, /pagado/);
+});
+
+test("an invalid principal-plan snapshot still fails the financial consultation without advertising extension options", async () => {
+  const response = await handler([{ ...extensionCredit, planCapitalVigente: { invalid: true } }])(request());
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.equal(Object.hasOwn(body, "creditos"), false);
+  assert.equal(Object.hasOwn(body, "prorroga"), false);
+});
+
+test("extension plan uses only the verified active-payment view and never the administrative next-date override", async () => {
+  const result = await extensionAt("2026-11-01T17:00:00Z", { ...extensionCredit,
+    fechaProximoPago: new Date("2026-11-17T00:00:00Z"),
+    abonos: [{ valor: 125 }], extensionAbonos: [{ valor: 25 }] });
+  assert.equal(result.saldoPendiente, 175, "the pre-existing balance API keeps its own payment input");
+  assert.equal(result.prorroga.vencimientoCuota, "2026-11-02");
+  assert.equal(result.prorroga.compromisoSugerido.valor, 75);
+});
+
+test("unknown protection evidence fails closed while preserving ordinary financial answers", async () => {
+  for (const protection of [undefined, { verified: false }]) {
+    const result = await extensionAt("2026-11-01T17:00:00Z", { ...extensionCredit, extensionProtection: protection });
+    assert.equal(result.saldoPendiente, 300);
+    assert.equal(result.prorroga.verificada, false);
+    assert.equal(result.prorroga.disponible, false);
+    assert.deepEqual(result.prorroga.opciones, []);
+    assert.deepEqual(result.prorroga.compromisoSugerido, { valor: null, fecha: null });
+  }
+});
+
+test("batched protection reader is read-only, distinguishes verified absence and closes on failure or corrupt data", async () => {
+  const calls = [];
+  const read = async ids => { calls.push(ids); return [{ id: protectionId, creditoId: 7, type: "EXCEPCION", status: "PENDING", expiresOn: null }]; };
+  const result = await readDianaExtensionProtections([7, 8, 7], read);
+  assert.deepEqual(calls, [[7, 8]]);
+  assert.equal(result.get(7).open.status, "PENDING");
+  assert.deepEqual(result.get(8), { verified: true, open: null });
+  assert.deepEqual(await readDianaExtensionProtections([], async () => assert.fail("no read for no credits")), new Map());
+  const valid = { id: protectionId, creditoId: 7, type: "PRORROGA", status: "APPROVED", expiresOn: "2026-11-06" };
+  for (const reader of [
+    async () => { throw new Error("missing schema or read denied"); },
+    async () => null,
+    async () => [valid, valid],
+    async () => [{ ...valid, creditoId: 9 }],
+    async () => [{ ...valid, expiresOn: "2026-02-30" }],
+    async () => [{ ...valid, status: "UNKNOWN" }],
+  ]) {
+    const protections = await readDianaExtensionProtections([7, 8], reader);
+    assert.deepEqual([...protections.values()], [{ verified: false }, { verified: false }]);
+    const credit = await extensionAt("2026-11-01T17:00:00Z", { ...extensionCredit, extensionProtection: protections.get(7) });
+    assert.equal(credit.prorroga.disponible, false);
+    assert.deepEqual(credit.prorroga.opciones, []);
+  }
+});
+
+test("production lookup batches real protections and filters the extension payment ledger without enabling writes", async () => {
+  for (const protectionReadFails of [false, true]) {
+    const calls = [], credit = { ...extensionCredit, extensionProtection: undefined, id: 7,
+      pazYSalvoEmitidoAt: null, abonos: [
+        { valor: 25, estado: "ACTIVO", anuladoAt: null, fechaAbono: new Date("2026-11-01T12:00:00Z") },
+        { valor: 100, estado: "PENDIENTE", anuladoAt: null, fechaAbono: null },
+        { valor: 50, estado: "ACTIVO", anuladoAt: new Date("2026-11-01T13:00:00Z"), fechaAbono: null },
+      ] };
+    const prisma = { credito: { findMany: async query => {
+      calls.push("credits");
+      assert.equal(query.where.clienteDocumento, "123456789");
+      assert.equal(query.select.abonos.select.anuladoAt, true);
+      return [credit, { ...credit, id: 8, folio: "TEST-2", abonos: [] }];
+    } }, $queryRawUnsafe: async (sql, ids) => {
+      calls.push("protections");
+      assert.match(sql, /^SELECT .*FROM "CreditMoraExceptionRequest"\s+WHERE/);
+      assert.match(sql, /status IN \('PENDING','APPROVED'\)/);
+      assert.deepEqual(Array.from(ids), [7, 8]);
+      if (protectionReadFails) throw new Error("private missing schema details");
+      return [{ id: protectionId, creditoId: 8, type: "PRORROGA", status: "PENDING", expiresOn: null }];
+    } };
+    const route = loadReissueModule("app/api/integraciones/diana/creditos/route.ts", {
+      "@/lib/prisma": { default: prisma },
+      "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => { calls.push("existing-audit-check"); } },
+      "@/lib/diana-credit-api": { readDianaExtensionProtections,
+        createDianaCreditHandler: deps => createDianaCreditHandler({ ...deps, now: () => new Date("2026-11-01T17:00:00Z") }) },
+    }, { process: { env: { FINSERPAY_DIANA_API_TOKEN: token } } });
+    assert.equal((await route.POST(request(undefined, "Bearer wrong"))).status, 401);
+    assert.deepEqual(calls, []);
+    const response = await route.POST(request());
+    assert.equal(response.status, 200);
+    const body = await response.json(), [first, second] = body.creditos;
+    assert.deepEqual(calls, ["existing-audit-check", "credits", "protections"]);
+    assert.equal(first.saldoPendiente, 125, "ordinary balance input is unchanged");
+    assert.equal(first.prorroga.verificada, !protectionReadFails);
+    assert.equal(first.prorroga.disponible, !protectionReadFails);
+    assert.equal(first.prorroga.compromisoSugerido.valor, protectionReadFails ? null : 75);
+    assert.equal(second.prorroga.disponible, false);
+    assert.deepEqual(second.prorroga.opciones, []);
+    assert.equal(JSON.stringify(body).includes("private missing schema details"), false);
+    for (const result of body.creditos) {
+      for (const key of ["id", "extensionProtection", "extensionAbonos", "abonos"]) assert.equal(Object.hasOwn(result, key), false);
+    }
+  }
 });
