@@ -149,6 +149,53 @@ No se desconectó, migró, registró ni transfirió ningún número. No se cambi
 
 El envío libre por WhatsApp está sujeto a su ventana de atención; fuera de ella se requiere el mecanismo de plantilla aprobado correspondiente. Esta implementación no envía plantillas ni mensajes libres y no considera una conversación importada como prueba de ventana abierta.
 
+## Respuestas de Diana mediante eventos nativos
+
+El 1 de noviembre se reanudaron las respuestas de Diana en la línea actual con
+autorización del propietario y se confirmó una respuesta real. La pausa histórica
+de octubre ya no describe su estado actual. Asignar o finalizar en el CRM sigue
+sin pausar remotamente a Diana; el traspaso se confirma en Inbox Dapta.
+
+Se acreditó un evento real `new_message_sent` de Flow Studio: incluye workspace,
+agente, canal, `phone_number` (el **Phone Number ID**, no el teléfono del cliente),
+conversación y UUID del mensaje. Su estado inicial puede ser `pending` aunque una
+lectura posterior de `get_conversation(fresh=true)` confirme ese mismo UUID como
+`delivered`. El evento despierta la lectura; no demuestra por sí solo el envío.
+
+El receptor `POST /api/integraciones/atencion/dapta` exige un Bearer exclusivo,
+los identificadores configurados y el ámbito Meta fijo de Atención. Conserva
+únicamente identidad y referencias en `AttentionDaptaEvent`, sin el texto del
+evento, cédulas, enlaces o instrucciones de herramientas. El flujo debe filtrar
+los eventos salientes de texto, reenviar solo el subconjunto autorizado y terminar
+los demás sin hacer HTTP. El receptor no admite un formato entrante inventado.
+
+Configuración privada adicional de `finserpay-web`:
+
+- `DAPTA_ATTENTION_EVENTS_ENABLED=true` habilita el receptor y su worker.
+- `DAPTA_ATTENTION_EVENT_TOKEN`: secreto exclusivo de la llamada Flow Studio →
+  FINSER PAY, separado de la clave MCP y del token de consulta financiera.
+- `DAPTA_ATTENTION_AGENT_CHANNEL_ID`: ID del canal nativo acreditado.
+
+La cola usa leases persistentes, deduplicación por entrega y UUID del mensaje,
+reintentos acotados y auditoría `SYSTEM_DAPTA`, sin impersonar administradores.
+El worker consulta cada cinco segundos los trabajos pendientes y usa MCP solo
+para leer la conversación exacta. Revalida workspace, agente, contacto, UUID,
+fecha y estado confirmado antes de guardar. El vínculo exige procedencia
+coherente; bindings de otra línea o WABA bloquean la importación. Un BSUID no se
+convierte en teléfono. No se fusionan mensajes por parecido de texto o fecha.
+
+Las respuestas confirmadas aparecen con autor Diana en la conversación vinculada
+y disparan el SSE existente. Se conservan asignación y cierre: una salida de la
+IA no reabre una atención finalizada. Esta conexión cubre texto saliente; no
+recupera automáticamente medios históricos, no concede identidad financiera al
+agente y no habilita envío de recibos. Los datos privados del crédito y los PDFs
+requieren un contexto de conversación autenticado y su autorización específica.
+
+El estado operativo del flujo y el despliegue deben comprobarse por separado del
+código: guardar el receptor o crear un flujo no acredita su activación ni una
+importación real. Pruebas locales: `tests/atencion-dapta-event*.test.mjs`,
+`tests/atencion-dapta-events*.test.mjs` y el instalador de Atención.
+
 ## Reglas de IA preparadas, sin publicación remota
 
 Este bloque es una propuesta para revisión y aplicación posterior sobre Diana. No reemplaza las reglas de cobranza, atención ni conocimiento ya aprobado; no se publicó ni se probó contra clientes.

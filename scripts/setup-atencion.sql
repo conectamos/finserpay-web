@@ -161,7 +161,16 @@ DO $$ BEGIN
   IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='"AttentionAudit"'::regclass AND conname='AttentionAudit_actor') THEN
     ALTER TABLE "AttentionAudit" ADD CONSTRAINT "AttentionAudit_actor" CHECK (
       ("actorKind"='user' AND "userId" IS NOT NULL) OR
-      ("actorKind"='system' AND "userId" IS NULL AND "sellerId" IS NULL AND "actorKey" IS NOT NULL AND "actorKey"='SYSTEM_META'));
+      ("actorKind"='system' AND "userId" IS NULL AND "sellerId" IS NULL AND "actorKey" IS NOT NULL AND "actorKey" IN ('SYSTEM_META','SYSTEM_DAPTA')));
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='"AttentionAudit"'::regclass AND conname='AttentionAudit_actor'
+      AND pg_get_constraintdef(oid) LIKE '%SYSTEM_DAPTA%') THEN
+    ALTER TABLE "AttentionAudit" DROP CONSTRAINT "AttentionAudit_actor";
+    ALTER TABLE "AttentionAudit" ADD CONSTRAINT "AttentionAudit_actor" CHECK (
+      ("actorKind"='user' AND "userId" IS NOT NULL) OR
+      ("actorKind"='system' AND "userId" IS NULL AND "sellerId" IS NULL AND "actorKey" IS NOT NULL AND "actorKey" IN ('SYSTEM_META','SYSTEM_DAPTA')));
   END IF;
 END $$;
 CREATE TABLE IF NOT EXISTS "AttentionMetaBinding" (
@@ -191,6 +200,25 @@ CREATE TABLE IF NOT EXISTS "AttentionMetaDelivery" (
   "eventAt" timestamptz NOT NULL, "errorCode" text, "requestId" uuid,
   "createdAt" timestamptz NOT NULL DEFAULT now(), UNIQUE("phoneNumberId",wamid,status,"eventAt")
 );
+-- Native Dapta events only wake a bounded read of their exact message UUID.
+-- The event's pending text is deliberately absent from this durable queue.
+CREATE TABLE IF NOT EXISTS "AttentionDaptaEvent" (
+  id uuid PRIMARY KEY, event text NOT NULL CHECK(event='new_message_sent'), "deliveryId" text NOT NULL UNIQUE,
+  "eventAt" timestamptz NOT NULL, "workspaceId" text NOT NULL, "agentId" text NOT NULL,
+  "agentChannelId" text NOT NULL, "phoneNumberId" text NOT NULL, "wabaId" text NOT NULL,
+  "externalConversationId" text NOT NULL, "contactId" text NOT NULL, phone text,
+  "messageId" text NOT NULL, "messageAt" timestamptz NOT NULL, fingerprint text NOT NULL CHECK(fingerprint ~ '^[a-f0-9]{64}$'),
+  "conversationId" uuid REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
+  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','complete','blocked')),
+  "historyCursor" text, attempts integer NOT NULL DEFAULT 0 CHECK(attempts>=0),
+  "nextAttemptAt" timestamptz NOT NULL DEFAULT now(), "expiresAt" timestamptz NOT NULL,
+  "leaseToken" uuid, "leaseUntil" timestamptz, "errorCode" text, "completedAt" timestamptz,
+  "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now(),
+  UNIQUE("workspaceId","agentChannelId","messageId"),
+  CHECK(phone IS NULL OR phone ~ '^\+[1-9][0-9]{6,14}$'),
+  CHECK(("leaseToken" IS NULL)=("leaseUntil" IS NULL))
+);
+CREATE INDEX IF NOT EXISTS "AttentionDaptaEvent_pending" ON "AttentionDaptaEvent"("nextAttemptAt",id) WHERE status='pending';
 CREATE TABLE IF NOT EXISTS "AttentionRequest" (
   "actorKey" text NOT NULL, "requestId" uuid NOT NULL, fingerprint text NOT NULL, "resultId" uuid,
   "createdAt" timestamptz NOT NULL DEFAULT now(), PRIMARY KEY("actorKey","requestId")
