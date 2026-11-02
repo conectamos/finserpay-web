@@ -1,7 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { buildCreditPaymentPlan, type CreditPaymentPlanInput } from "@/lib/credit-payment-plan";
+import { calculateCreditEarlyPayoff, type CreditEarlyPayoffInput } from "@/lib/credit-early-payoff";
 
-export type DianaCredit = CreditPaymentPlanInput & {
+export type DianaCredit = CreditPaymentPlanInput & Pick<CreditEarlyPayoffInput,
+  "contratoSnapshot" | "saldoBaseFinanciado" | "valorInteres" | "valorFianza"> & {
   folio: string;
   estado: string;
   fechaProximoPago?: Date | null;
@@ -43,11 +45,13 @@ export function createDianaCreditHandler(deps: {
       const consultadoAt = (deps.now || (() => new Date()))();
       const credits = await deps.lookup(documento.trim());
       const creditos = credits.map((credit) => {
-        const plan = buildCreditPaymentPlan({ ...credit,
+        const paymentInput = { ...credit,
           fechaPrimerPago: credit.fechaPrimerPago || credit.fechaProximoPago,
           settled: Boolean(credit.pazYSalvoEmitidoAt) || credit.estado === "PAZ_Y_SALVO",
           today: consultadoAt,
-        });
+        };
+        const plan = buildCreditPaymentPlan(paymentInput);
+        const payoff = calculateCreditEarlyPayoff(paymentInput);
         const proxima = plan.saldoPendiente > 0 ? plan.nextInstallment : null;
         const saldoVencido = Math.round(plan.installments.reduce((sum, item) =>
           sum + (item.estaEnMora ? item.saldoPendiente : 0), 0) * 100) / 100;
@@ -60,7 +64,16 @@ export function createDianaCreditHandler(deps: {
           fechaVencimiento: proxima?.fechaVencimiento || null,
           cuotasPagadas: plan.paidCount,
           cuotasPendientes: plan.pendingCount,
+          cuotasTotales: plan.installments.filter(item => !item.eliminada).length,
+          totalCuotasPendientes: plan.saldoPendiente,
           cuotasEnMora: plan.overdueCount,
+          liquidacionAnticipada: {
+            disponible: payoff.eligible,
+            capitalPendiente: payoff.eligible ? payoff.capitalPendiente : null,
+            motivo: payoff.reason,
+            consultadoAt: consultadoAt.toISOString(),
+            proximaCuotaFecha: proxima?.fechaVencimiento || null,
+          },
           orientacion: plan.estadoPago === "PAGADO"
             ? "El credito esta pagado. Puedes consultar tus documentos en el portal de clientes."
             : plan.estadoPago === "MORA"

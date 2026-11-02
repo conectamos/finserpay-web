@@ -13,6 +13,7 @@ export const POST = createDianaCreditHandler({
       where: { clienteDocumento: documento, estado: { not: "ANULADO" } },
       select: {
         folio: true, estado: true, planCapitalVigente: true, montoCredito: true, valorCuota: true,
+        contratoSnapshot: true, saldoBaseFinanciado: true, valorInteres: true, valorFianza: true,
         plazoMeses: true, frecuenciaPago: true, fechaPrimerPago: true,
         fechaProximoPago: true, pazYSalvoEmitidoAt: true,
         abonos: { where: { estado: { not: "ANULADO" } },
@@ -22,6 +23,8 @@ export const POST = createDianaCreditHandler({
     });
     return credits.map(credit => ({ ...credit,
       montoCredito: Number(credit.montoCredito), valorCuota: Number(credit.valorCuota),
+      saldoBaseFinanciado: Number(credit.saldoBaseFinanciado),
+      valorInteres: Number(credit.valorInteres), valorFianza: Number(credit.valorFianza),
       abonos: credit.abonos.map(abono => ({ ...abono, valor: Number(abono.valor) })),
     }));
   },
