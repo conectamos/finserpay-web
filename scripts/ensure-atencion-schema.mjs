@@ -4,6 +4,7 @@ import pg from "pg";
 // PostgreSQL native type names; "!" marks NOT NULL. Existing incompatible tables
 // are rejected instead of attempting an implicit repair or destructive migration.
 const expectedColumns = {
+  AttentionDaptaEvent: "id:uuid! event:text! deliveryId:text! eventAt:timestamptz! workspaceId:text! agentId:text! agentChannelId:text! phoneNumberId:text! wabaId:text! externalConversationId:text! contactId:text! phone:text messageId:text! messageAt:timestamptz! fingerprint:text! conversationId:uuid status:text! historyCursor:text attempts:int4! nextAttemptAt:timestamptz! expiresAt:timestamptz! leaseToken:uuid leaseUntil:timestamptz errorCode:text completedAt:timestamptz createdAt:timestamptz! updatedAt:timestamptz!",
   AttentionPushSubscription: "id:uuid! recipientKey:text! endpoint:text! keys:jsonb! createdAt:timestamptz! updatedAt:timestamptz! expiresAt:timestamptz!",
   AttentionPushDelivery: "id:uuid! notificationId:uuid! subscriptionId:uuid! attempts:int4! nextAttemptAt:timestamptz! leaseToken:uuid leaseUntil:timestamptz deliveredAt:timestamptz errorCode:text createdAt:timestamptz!",
   AttentionWorkNotification: "id:uuid! recipientKey:text! workId:uuid! eventKey:text! kind:text! workKind:text! createdAt:timestamptz! readAt:timestamptz",
@@ -33,6 +34,7 @@ const additiveColumns = {
 };
 const tableNames = Object.keys(expectedColumns);
 const foreignKeys = {
+  AttentionDaptaEvent: { conversationId: "AttentionConversation" },
   AttentionPushDelivery: {notificationId:"AttentionWorkNotification",subscriptionId:"AttentionPushSubscription"},
   AttentionWorkNotification: {workId:"AttentionWorkRequest"},
   AttentionWorkFile: {workId:"AttentionWorkRequest"},
@@ -94,13 +96,17 @@ async function verifySchema(client, beforeInstallation) {
           row.foreignColumns.length === 1 && row.foreignColumns[0] === "id")) throw new AttentionSchemaMismatch(`${table}.${column}.FOREIGN_KEY`);
     }
   }
-  for (const [table, columns] of [["AttentionPushSubscription",["endpoint"]],["AttentionPushDelivery",["notificationId","subscriptionId"]],["AttentionWorkNotification", ["recipientKey", "eventKey"]], ["AttentionConversation", ["externalId"]], ["AttentionMessage", ["conversationId", "externalId"]],
+  for (const [table, columns] of [["AttentionDaptaEvent",["deliveryId"]],["AttentionDaptaEvent",["workspaceId","agentChannelId","messageId"]],["AttentionPushSubscription",["endpoint"]],["AttentionPushDelivery",["notificationId","subscriptionId"]],["AttentionWorkNotification", ["recipientKey", "eventKey"]], ["AttentionConversation", ["externalId"]], ["AttentionMessage", ["conversationId", "externalId"]],
     ["AttentionWorkCaptureSession", ["actorKey", "requestId"]], ["AttentionWorkCaptureSession", ["tokenHash"]],
     ["AttentionMetaBinding", ["phoneNumberId", "contactId"]], ["AttentionMetaOutbox", ["actorKey", "requestId"]],
     ["AttentionMetaOutbox", ["phoneNumberId", "wamid"]], ["AttentionMetaDelivery", ["phoneNumberId", "wamid", "status", "eventAt"]]]) {
     if ((!beforeInstallation || present.has(table)) && !hasConstraint(table, "u", columns)) throw new AttentionSchemaMismatch(`${table}.EXTERNAL_ID_UNIQUE`);
   }
   if (!beforeInstallation) {
+    for(const column of ["event","status","fingerprint","attempts","phone"]){
+      if(!constraints.some(row=>row.tableName==="AttentionDaptaEvent"&&row.contype==="c"&&row.convalidated&&row.columns.includes(column)))throw new AttentionSchemaMismatch(`AttentionDaptaEvent.${column}.CHECK`);
+    }
+    if(!constraints.some(row=>row.tableName==="AttentionDaptaEvent"&&row.contype==="c"&&row.convalidated&&row.columns.includes("leaseToken")&&row.columns.includes("leaseUntil")))throw new AttentionSchemaMismatch("AttentionDaptaEvent.LEASE_CHECK");
     for (const column of ["actor","requestVersion","tokenHash","bindingHash","uploadedCount"]) {
       if (!constraints.some(row => row.tableName === "AttentionWorkCaptureSession" && row.contype === "c" && row.convalidated && row.columns.includes(column))) throw new AttentionSchemaMismatch(`AttentionWorkCaptureSession.${column}.CHECK`);
     }

@@ -15,4 +15,6 @@ export async function register() {
   startSettlementDeliveryWorker();
   const { startAttentionPushWorker } = await import("./lib/atencion-push-worker");
   startAttentionPushWorker();
+  const { startAttentionDaptaEventWorker } = await import("./lib/atencion-dapta-event-runtime");
+  startAttentionDaptaEventWorker();
 }

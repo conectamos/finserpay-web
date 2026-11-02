@@ -1,5 +1,6 @@
 import "server-only";
 import type { AttentionIntegration, AttentionMessage, DaptaConversationSnapshot } from "@/lib/atencion-types";
+import { isMetaBusinessUserId, isMetaPhoneRecipient } from "@/lib/atencion-meta-identity";
 
 // Public, documented MCP endpoint. No arbitrary URL or tool name is accepted.
 const MCP_ENDPOINT = "https://mcp.dapta.ai/mcp";
@@ -17,6 +18,23 @@ type JsonObject = Record<string, unknown>;
 type Config = { key: string; workspace: string; agent: string };
 type AdapterDependencies = { env?: NodeJS.ProcessEnv; fetch?: typeof fetch };
 type SnapshotOptions = { cursor?: string | null; historyCursors?: Readonly<Record<string, string | null>> };
+export type DaptaConfirmedEventMessageInput = {
+  externalConversationId: string; contactId: string; messageId: string; historyCursor?: string | null;
+};
+export type DaptaConfirmedEventSource = {
+  workspaceId: string; agentId: string; externalConversationId: string; contactId: string;
+};
+export type DaptaConfirmedEventMessage = {
+  id: string; text: string; sentAt: string; status: "sent" | "delivered" | "read";
+  direction: "outbound"; contentType: "text";
+};
+export type DaptaConfirmedEventMessageResult = {
+  source: DaptaConfirmedEventSource;
+  /** Event-search checkpoint only. It does not advance the broad history import. */
+  historyCursor: string | null; historyTruncated: boolean;
+} & ({ state: "confirmed"; message: DaptaConfirmedEventMessage }
+  | { state: "pending"; reason: "MESSAGE_NOT_FOUND" | "HISTORY_REMAINING" | "DELIVERY_PENDING" }
+  | { state: "failed"; reason: "DELIVERY_FAILED" | "UNSUPPORTED_MESSAGE" | "INVALID_MESSAGE" });
 class ExpiredMcpSession extends Error {
   constructor(readonly sessionId: string) { super("MCP session expired"); }
 }
@@ -58,6 +76,13 @@ function phone(value: unknown): string | null {
   if (digits.startsWith("00")) digits = digits.slice(2);
   if (/^3\d{9}$/.test(digits)) digits = `57${digits}`;
   return /^[1-9]\d{7,14}$/.test(digits) ? digits : null;
+}
+/** Exact event identity: no country inference, punctuation stripping or BSUID conversion. */
+function eventContactId(value: unknown): string | null {
+  if (isMetaBusinessUserId(value)) return value;
+  if (typeof value !== "string") return null;
+  const bare = value.startsWith("+") ? value.slice(1) : value;
+  return isMetaPhoneRecipient(bare) ? bare : null;
 }
 function cursor(value: unknown): string | null {
   if (value == null || value === "") return null;
@@ -296,6 +321,68 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
           ? "Consulta de Dapta configurada. Respuestas y traspaso de la IA se gestionan en Dapta; esta bandeja no envía mensajes."
           : "Falta configurar el acceso de lectura a Dapta. No hay sincronización ni envío de mensajes activos." };
     },
+    async fetchConfirmedEventMessage(input: DaptaConfirmedEventMessageInput): Promise<DaptaConfirmedEventMessageResult> {
+      const config = configuration(env);
+      if (!config) throw new AttentionDaptaError("NOT_CONFIGURED", 503, "Configura las credenciales de lectura, el espacio y el agente de Dapta en el servidor.");
+      const descriptor = object(input), contactId = eventContactId(descriptor?.contactId);
+      if (!descriptor || typeof descriptor.externalConversationId !== "string" || !UUID.test(descriptor.externalConversationId)
+        || typeof descriptor.messageId !== "string" || !UUID.test(descriptor.messageId) || !contactId) {
+        throw new AttentionDaptaError("SCOPE_MISMATCH", 400, "La identidad del evento de Dapta no es válida.");
+      }
+      const externalConversationId = descriptor.externalConversationId, messageId = descriptor.messageId;
+      let pageCursor: string | null;
+      try { pageCursor = cursor(input.historyCursor); } catch {
+        throw new AttentionDaptaError("INVALID_CURSOR", 400, "El cursor del evento de Dapta no es válido.");
+      }
+      const source: DaptaConfirmedEventSource = { workspaceId: config.workspace, agentId: config.agent, externalConversationId, contactId };
+      const seen = new Set<string>(pageCursor ? [pageCursor] : []);
+      const client = mcpClient(config, transport, Date.now() + 55000);
+      try {
+        await client.initialize();
+        for (let page = 0; page < HISTORY_PAGES; page++) {
+          const inputCursor: string | null = pageCursor;
+          const detail = await client.call("get_conversation", { agent_id: config.agent, conversation_id: externalConversationId,
+            include_messages: true, include_state: false, include_tool_payloads: false, fresh: true,
+            messages_limit: MESSAGE_LIMIT, ...(inputCursor ? { messages_cursor: inputCursor } : {}) });
+          validateWorkspace(detail, config);
+          const row = object(detail.conversation);
+          if (!row || row.id !== externalConversationId || row.text_agent_id !== config.agent || row.channel_type !== "meta_whatsapp"
+            || eventContactId(row.channel_identifier) !== contactId) {
+            throw new AttentionDaptaError("SCOPE_MISMATCH", 502, "Dapta devolvió una conversación diferente a la del evento.");
+          }
+          // A fresh read can include the requested 100-row replica page plus
+          // up to 100 live tail messages. It never authorizes an unbounded read.
+          if (!Array.isArray(detail.messages) || detail.messages.length > MESSAGE_LIMIT * 2) invalidResponse();
+          const nextCursor = cursor(detail.messages_next_cursor);
+          if (nextCursor && seen.has(nextCursor)) invalidResponse();
+          const targets = detail.messages.map(object).filter((message): message is JsonObject => message?.id === messageId);
+          if (targets.length > 1) {
+            const immutable = (message: JsonObject) => JSON.stringify([message.kind, message.direction, message.content_type,
+              message.content, message.created_at, message.status]);
+            if (targets.some(message => immutable(message) !== immutable(targets[0]))) invalidResponse();
+          }
+          const target = targets[0];
+          if (target) {
+            // Re-read this page if needed; finding a live-tail message must not
+            // skip the older history pages that this narrow reader does not save.
+            const checkpoint = { source, historyCursor: inputCursor, historyTruncated: nextCursor !== null };
+            if (!["agent", "followup"].includes(String(target.kind)) || target.direction !== "outbound" || target.content_type !== "text") {
+              return { ...checkpoint, state: "failed", reason: "UNSUPPORTED_MESSAGE" };
+            }
+            if (["failed", "error"].includes(String(target.status))) return { ...checkpoint, state: "failed", reason: "DELIVERY_FAILED" };
+            if (!["sent", "delivered", "read"].includes(String(target.status))) return { ...checkpoint, state: "pending", reason: "DELIVERY_PENDING" };
+            const text = visibleText(target.content, config.key), sentAt = date(target.created_at);
+            if (!text || !sentAt) return { ...checkpoint, state: "failed", reason: "INVALID_MESSAGE" };
+            return { ...checkpoint, state: "confirmed", message: { id: messageId, text, sentAt,
+              status: target.status as DaptaConfirmedEventMessage["status"], direction: "outbound", contentType: "text" } };
+          }
+          if (!nextCursor) return { source, state: "pending", reason: "MESSAGE_NOT_FOUND", historyCursor: inputCursor, historyTruncated: false };
+          pageCursor = nextCursor;
+          seen.add(nextCursor);
+        }
+        return { source, state: "pending", reason: "HISTORY_REMAINING", historyCursor: pageCursor, historyTruncated: true };
+      } finally { await client.close(); }
+    },
     async fetchDaptaConversationSnapshots(options: SnapshotOptions = {}): Promise<{ snapshots: DaptaConversationSnapshot[]; nextCursor: string | null; skipped: number }> {
       const configured = configuration(env);
       if (!configured) throw new AttentionDaptaError("NOT_CONFIGURED", 503, "Configura las credenciales de lectura, el espacio y el agente de Dapta en el servidor.");
@@ -405,4 +492,7 @@ export function attentionIntegrationStatus(): AttentionIntegration {
 }
 export function fetchDaptaConversationSnapshots(options: SnapshotOptions = {}) {
   return createDaptaAttentionAdapter().fetchDaptaConversationSnapshots(options);
+}
+export function fetchConfirmedEventMessage(input: DaptaConfirmedEventMessageInput) {
+  return createDaptaAttentionAdapter().fetchConfirmedEventMessage(input);
 }

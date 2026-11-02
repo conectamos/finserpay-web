@@ -56,15 +56,22 @@ async function fixture(t, overrides = {}) {
       { env: { DATABASE_URL: "postgresql://test-only:no-network@example.invalid/database" } }, installerUrl.href) };
 }
 
-test("instalación aditiva verifica veinte tablas y se puede repetir sin pérdida de datos", async t => {
+test("instalación aditiva verifica veintiuna tablas y se puede repetir sin pérdida de datos", async t => {
   const { database, install, calls, logs, ended } = await fixture(t);
   await install();
   await database.query(`INSERT INTO "AttentionRequest"("actorKey","requestId",fingerprint) VALUES('user:1','00000000-0000-4000-8000-000000000001','retained')`);
   await install();
   assert.equal((await database.query('SELECT fingerprint FROM "AttentionRequest"')).rows[0].fingerprint, "retained");
   assert.ok(calls.findIndex(sql => sql.startsWith("SELECT pg_advisory_lock(")) < calls.indexOf(setupSql));
-  assert.ok(logs.every(message => message.includes("20 tablas") && message.includes("auditoría inmutable")));
+  assert.ok(logs.every(message => message.includes("21 tablas") && message.includes("auditoría inmutable")));
   assert.ok(ended());
+});
+test("postcheck rechaza cola de eventos Dapta sin la pareja de lease",async t=>{
+  const f=await fixture(t,{afterSql:async db=>{
+    const row=(await db.query(`SELECT conname FROM pg_constraint WHERE conrelid='public."AttentionDaptaEvent"'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%leaseToken%'`)).rows[0];
+    await db.exec(`ALTER TABLE "AttentionDaptaEvent" DROP CONSTRAINT "${row.conname.replaceAll('"','""')}"`);
+  }});
+  await assert.rejects(f.install(),/AttentionDaptaEvent.LEASE_CHECK/);assert.equal(f.logs.length,0);
 });
 
 test("upgrade operativo añade lecturas y template sin cambiar mensajes existentes",async t=>{
@@ -164,7 +171,7 @@ test("upgrade desde siete tablas conserva historial y atribución y agrega almac
     INSERT INTO "AttentionAudit"("conversationId","userId",action) VALUES('00000000-0000-4000-8000-000000000010',1,'HISTORIC');
     DROP TRIGGER attention_realtime_conversation ON "AttentionConversation";
     DROP TRIGGER attention_realtime_message ON "AttentionMessage";
-    DROP TABLE "AttentionMetaDelivery","AttentionMetaOutbox","AttentionMetaBinding";
+    DROP TABLE "AttentionDaptaEvent","AttentionMetaDelivery","AttentionMetaOutbox","AttentionMetaBinding";
     ALTER TABLE "AttentionConversation" DROP COLUMN "metaManaged",DROP COLUMN "metaLastInboundAt";
     ALTER TABLE "AttentionMessage" DROP COLUMN "metaWamid",DROP COLUMN "metaPhoneNumberId",DROP COLUMN attachment,DROP COLUMN "deliveryStatus",DROP COLUMN "deliveryAt",DROP COLUMN "replyToWamid";
     ALTER TABLE "AttentionAudit" DROP CONSTRAINT "AttentionAudit_actor",DROP COLUMN "actorKind",DROP COLUMN "actorKey",ALTER COLUMN "userId" SET NOT NULL;`);
@@ -173,6 +180,7 @@ test("upgrade desde siete tablas conserva historial y atribución y agrega almac
   assert.deepEqual((await database.query('SELECT "actorKind","userId",action FROM "AttentionAudit"')).rows,[{actorKind:'user',userId:1,action:'HISTORIC'}]);
   await assert.rejects(database.query(`INSERT INTO "AttentionAudit"("actorKind",action) VALUES('system','ANONYMOUS')`));
   await database.query(`INSERT INTO "AttentionAudit"("actorKind","actorKey",action) VALUES('system','SYSTEM_META','META_TEST')`);
+  await database.query(`INSERT INTO "AttentionAudit"("actorKind","actorKey",action) VALUES('system','SYSTEM_DAPTA','DAPTA_TEST')`);
 });
 
 test("postcheck rechaza identificadores Meta sin unicidad y constraint de actor ausente",async t=>{

@@ -4,6 +4,25 @@ Revisión: 30 de octubre de 2026. La operación directa de Meta descrita a conti
 
 La aplicación Meta `1128613623424831` está publicada, con credenciales dedicadas configuradas en Railway, callback verificado y suscripción a mensajes confirmada. Se comprobó la recepción real de texto, imagen, audio y video en el CRM, conservando el chat existente y su analista; los medios de prueba cargaron y se reprodujeron mediante rutas privadas. La respuesta humana de texto autorizada se envió una sola vez y quedó Entregado en el CRM tras los recibos del webhook. Diana permanece en pausa en la línea autorizada y ambos indicadores de envío están activos en producción. Dapta conserva su suscripción; siguen pendientes el traspaso automático por conversación, su integración como motor de IA, los adjuntos históricos y la prueba de envío multimedia.
 
+## Actualización de Diana del 1 de noviembre de 2026
+
+El propietario autorizó reanudar a Diana con control manual del traspaso en
+Dapta. La línea mostró respuestas activas y el propietario confirmó una respuesta
+real. La pausa descrita en los apartados históricos del 30 de octubre queda
+superada por esta autorización. El cierre desde el CRM permanece independiente
+del agente: asignar o finalizar aquí no confirma una pausa remota.
+
+La consulta financiera de Diana añade cantidades de cuotas vigentes, total
+monetario pendiente y capital para liquidar hoy, utilizando los cálculos del
+portal y conservando la elegibilidad actual. La siguiente cuota no fija la
+vigencia de una cotización. Se actualizaron las instrucciones para información
+pública sin cédula y reutilización de la ya consultada en la misma conversación.
+El reconocimiento automático por cédula del CRM y el envío de recibos por la IA
+requieren todavía un contexto autenticado y su propia integración.
+
+El puente de eventos nativos y sus límites se describen en
+[ATENCION_DAPTA.md](ATENCION_DAPTA.md#respuestas-de-diana-mediante-eventos-nativos).
+
 ## Estado operativo confirmado al 30 de octubre de 2026
 
 - **Aplicación y acceso:** Atención `1128613623424831`, publicada en el negocio Finser PAY `1109745271496382`. Usuario de sistema `61595750474386`, tipo Employee, con acceso Desarrollar a la aplicación y acceso Todo a la cuenta de mensajería vinculada `2148284059050848`, autorizados por el propietario.
