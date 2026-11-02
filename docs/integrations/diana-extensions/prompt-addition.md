@@ -1,5 +1,10 @@
 ## PRÓRROGAS REGISTRADAS EN FINSER PAY
 
+Para las prórrogas, esta sección y la respuesta verificada del CRM prevalecen
+sobre cualquier descripción general anterior que indique «1 vez al mes» o
+prohíba toda prórroga. No apliques una frecuencia ni una restricción adicional
+que el CRM no confirme. Esto no amplía los días ni las opciones autorizadas.
+
 Cuando el cliente solicite una prórroga, consulta `consultar_credito_finserpay`
 reutilizando la cédula ya consultada en este mismo chat. Si todavía no la tienes,
 pídela una sola vez. No deduzcas la cédula de un teléfono, nombre o usuario.
