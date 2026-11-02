@@ -40,10 +40,11 @@ function requestFrame(text: string) {
   // A short nominal request is accepted only as a complete expression, never
   // as a prefix of a question about permission, requirements or policy.
   const nominal = new RegExp("^(?:solicitud de )?prorroga\\s+(?:(?:(?:de|por)\\s+)?" + duration + origin
-    + "(?:\\s+hasta(?: el)?\\s+" + deadline + ")?|hasta(?: el)?\\s+" + deadline + ")" + suffix).test(main)
+    + "(?:\\s+hasta(?: el)?\\s+" + deadline + ")?|(?:hasta|para)(?: el)?\\s+" + deadline + ")" + suffix).test(main)
     || new RegExp("^" + duration + "\\s+(?:de\\s+)?prorroga" + suffix).test(main);
   return topic(main) && (new RegExp("^(?:" + personal + ")\\s+" + object).test(main)
     || new RegExp("^me (?:ayudas?|ayuda|puedes? ayudar) con\\s+" + object).test(main)
+    || new RegExp("^(?:necesito|solicito|quiero|quisiera|deseo|pido)\\s+" + duration + "\\s+de\\s+(?:prorroga|plazo)" + origin + suffix).test(main)
     || nominal);
 }
 function dateKey(at: string) {

@@ -17,6 +17,9 @@ test("direct personal requests recognize exact days, native folio and polite gre
   assert.deepEqual(parse("Sí, necesito una prórroga de 2 días", at), { kind: "days", days: 2 });
   assert.deepEqual(parse("Prórroga de 2 días por favor", at), { kind: "days", days: 2 });
   assert.deepEqual(parse("Prórroga hasta mañana", at), { kind: "date", date: "2026-11-03" });
+  assert.deepEqual(parse("Necesito 2 días de prórroga", at), { kind: "days", days: 2 });
+  assert.deepEqual(parse("Por favor solicito tres días de plazo", at), { kind: "days", days: 3 });
+  assert.deepEqual(parse("Prórroga para mañana", at), { kind: "date", date: "2026-11-03" });
 });
 
 test("calendar requests derive from the native message Bogota date and preserve conflicting hints for core validation", () => {
@@ -40,6 +43,10 @@ test("information, hypotheses, reported speech, negation and ambiguous terms nev
     "Si necesito una prórroga de 2 días, ¿me ayudarías?",
     "Prórroga de 4 días está permitida?", "Prórroga de 4 días: ¿cuáles son los requisitos?",
     "2 días de prórroga están permitidos?", "Prórroga de 4 días?",
+    "Quiero saber si necesito 2 días de prórroga", "Necesito 2 días de prórroga si no me pagan",
+    "Necesito 2 días de prórroga: ¿cuáles son los requisitos?", "Prórroga para mañana es posible?",
+    "Prórroga para mañana: ¿qué requisitos hay?", "Prórroga para mañana?", "Necesito 2 días para pagar",
+    "2 días para pagar", "Quiero entender 2 días de plazo",
     "Tal vez necesito una prórroga de 2 días", "Por ejemplo, necesito una prórroga de 2 días",
     "No quiero prórroga de 2 días", "No la quiero, prórroga de 2 días", "Ya pagué, necesito prórroga de 2 días",
     'El cliente dice: "Necesito prórroga de 2 días"', "Mi mamá necesita prórroga de 2 días",
