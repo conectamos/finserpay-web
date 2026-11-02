@@ -240,6 +240,12 @@ El campo de respuesta usa Enter para una nueva línea y requiere pulsar Enviar
 para despachar el mensaje, también en el chat interno del asesor. El pegado de
 imágenes con Ctrl + V prepara el adjunto y su vista previa,
 manteniendo el texto y las validaciones actuales; el pegado de texto sigue siendo nativo.
+Al preparar una imagen, video o sticker, la vista previa ocupa el lienzo del chat:
+archivo grande ajustado sin recorte, mensaje editable y miniatura inferior.
+El historial permanece montado y su lectura observada se pausa. Cerrar quita
+solo el archivo y conserva el texto; Cambiar archivo usa el selector real sin
+enviar. Audio y PDF conservan sus controles actuales, y un envío incierto mantiene
+su recuperación explícita antes de permitir otro intento.
 Escribir `/` abre las respuestas rápidas aprobadas junto al campo, con búsqueda,
 flechas para elegir, Enter o Tab para insertar y Escape para cerrar. La selección
 reemplaza solo el atajo y conserva el resto del borrador; nunca envía automáticamente.

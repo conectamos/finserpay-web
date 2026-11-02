@@ -182,6 +182,8 @@
 .darkShell [data-attention="composer"] textarea::placeholder { color: var(--fp-chat-muted); }
 .darkShell [data-attention="composer"] textarea:focus-visible { border-radius: 24px; outline: 2px solid var(--fp-chat-accent); outline-offset: 1px; }
 .darkShell [data-attention="composer"] audio { color-scheme: dark; }
+.darkShell [data-preview-open="true"] > [data-attention="chat-header"],
+.darkShell [data-preview-open="true"] > [data-attention="history"] { visibility:hidden; pointer-events:none; }
 .darkShell [data-attention="notice"] { flex-shrink: 0; margin: 0; border-radius: 0; padding: 10px 20px; background: var(--fp-chat-accent-soft); color: var(--fp-chat-text); font-size: 14px; }
 .darkShell [data-attention="error"] { flex-shrink: 0; margin: 0; border-radius: 0; padding: 10px 20px; background: var(--fp-danger-soft); color: var(--fp-danger); font-size: 14px; }
 

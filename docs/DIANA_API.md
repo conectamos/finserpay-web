@@ -219,6 +219,21 @@ del proveedor no revierte la prorroga ni su historial.
 Pruebas locales: `npm run test:diana`. Utilizan fixtures y PostgreSQL embebido;
 no envian WhatsApp, no consultan clientes reales ni conceden prorrogas reales.
 
+### Configuracion verificada en produccion
+
+El 2 de noviembre de 2026 se publico la accion `gestionar_prorroga_finserpay`
+en Diana, conectada al flujo `QBwOS` (FINSERPAY — Prorrogas de Diana). Conserva
+la consulta de credito y la transferencia humana. El flujo `MdjEt` mantiene
+sus seis nodos y admite las confirmaciones entrantes exactas, ademas de los
+mensajes salientes existentes. El Bearer dedicado se configuro desde el entorno
+de Railway directamente hacia Dapta, sin archivos de credenciales.
+
+`DIANA_EXTENSIONS_ENABLED=true` quedo desplegado y se verifico una consulta
+autenticada de un codigo inexistente: 404 «Propuesta no encontrada». Esta prueba
+comprueba habilitacion, alcance, esquema y conexion a BD sin crear propuestas ni
+concesiones. No sustituye una prueba real autorizada de oferta y confirmacion.
+Los mensajes anteriores a esta activacion no conceden prorrogas retroactivas.
+
 ## Manejo por Diana
 
 Consultar antes de responder sobre estado de credito. Identificar cada credito por folio cuando haya varios. Utilizar los importes y fechas de la respuesta, sin inventar descuentos ni prometer cancelaciones. Si el cliente afirma haber pagado y el abono no aparece, solicitar revision con soporte. Ante SIN_CREDITOS, comprobar la cedula sin afirmar que no existe el cliente. Ante errores, informar que la consulta no esta disponible y dirigir al portal o soporte.

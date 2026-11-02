@@ -84,7 +84,7 @@ function mount(options = {}) {
   runInNewContext(outputText, {
     module: loaded, exports: loaded.exports, FormData, File, AbortController, URLSearchParams, Date: ClockDate,
     URL: { createObjectURL(file) { const value = `blob:synthetic-${objectUrls.length + 1}`; objectUrls.push({ file, value }); return value; }, revokeObjectURL(value) { revokedUrls.push(value); } },
-    document: { get visibilityState() { return environment.visibilityState; }, ...eventTarget("document") }, navigator: { get onLine() { return environment.onLine; } }, window: eventTarget("window"),
+    document: { get visibilityState() { return environment.visibilityState; }, querySelector: selector => selector === "dialog[open]" && options.openDialog ? {} : null, ...eventTarget("document") }, navigator: { get onLine() { return environment.onLine; } }, window: eventTarget("window"),
     ...(options.sse ? { EventSource: FakeEventSource } : {}),
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` }, sessionStorage: { getItem: () => null, removeItem() {}, setItem() {} },
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: id => timers.delete(id), setInterval: (fn, delay) => schedule(fn, delay, delay), clearInterval: id => timers.delete(id),
@@ -293,6 +293,67 @@ test("un PDF pequeño muestra KB reales y un archivo fallido no se presenta como
   assert.equal(f.requests.some(request => request.init.method === "POST"), false); composer.unmount(); f.unmount();
 });
 const connectedComposer = parent => mount({ component: "ReplyComposer", props: parent.composer().props });
+
+test("imagen, video y sticker abren preparación amplia con caption y miniatura sin enviar ni confirmar lecturas", async () => {
+  for (const mime of ["image/png", "image/jpeg", "video/mp4", "image/webp"]) {
+    const root = mount(); await root.ready(); await root.select();
+    const file = new File(["archivo sintético"], "soporte-local", { type: mime });
+    await root.change({ file, text: "Mensaje que estoy preparando" });
+    const composer = connectedComposer(root);
+    assert.equal(composer.all().find(node => node.type === "form").props["data-media-preview"], true);
+    assert.equal(root.dropSurface().props.previewOpen, true);
+    assert.equal(root.all().find(node => node.type?.name === "AttentionObservedRead").props.active, false);
+    assert.ok(composer.all().some(node => node.props["data-attention"] === "media-preview"));
+    const previews = composer.all().filter(node => node.type?.name === "ReplyAudioPreview");
+    assert.equal(previews.length, 2); assert.equal(previews[0].props.expanded, true); assert.equal(previews[1].props.thumbnail, true);
+    assert.ok(previews.every(node => node.props.file === file));
+    assert.equal(composer.all().some(node => node.props.className === "replyAttachment"), false);
+    const submitButtons = composer.all().filter(node => node.props.type === "submit");
+    assert.equal(submitButtons.length, 1, "una sola acción explícita de envío");
+    assert.ok(nodes(composer.all().find(node => node.props.className === "mediaTray")).includes(submitButtons[0]), "Enviar permanece en la franja inferior de la vista previa");
+    assert.equal(nodes(composer.all().find(node => node.props["data-attention"] === "reply-actions")).includes(submitButtons[0]), false);
+    assert.equal(replyInput(composer).props.value, "Mensaje que estoy preparando");
+    assert.equal(root.requests.some(request => request.init.method === "POST"), false);
+    composer.all().find(node => node.props["aria-label"] === "Quitar archivo").props.onClick(); await root.flush();
+    assert.equal(root.composer().props.draft.file, null); assert.equal(root.composer().props.draft.text, "Mensaje que estoy preparando");
+    assert.equal(root.all().find(node => node.type?.name === "AttentionObservedRead").props.active, true);
+    assert.equal(root.requests.some(request => request.init.method === "POST"), false);
+    composer.unmount(); root.unmount();
+  }
+});
+
+test("Escape quita solo el adjunto, pero conserva el intento bloqueado y respeta los menús abiertos", async () => {
+  const root = mount(); await root.ready(); await root.select(); await root.change({ file: new File(["foto"], "foto.png", { type: "image/png" }), text: "Texto conservado" });
+  const composer = connectedComposer(root), form = () => composer.all().find(node => node.type === "form");
+  const event = (menu = false) => ({ key: "Escape", defaultPrevented: false, prevented: false, preventDefault() { this.prevented = true; }, currentTarget: { querySelector: () => menu ? {} : null } });
+  const menuEscape = event(true); form().props.onKeyDown(menuEscape); await root.flush(); assert.equal(menuEscape.prevented, false); assert.ok(root.composer().props.draft.file);
+  const modalComposer = mount({ component: "ReplyComposer", props: root.composer().props, openDialog: true });
+  const modalEscape = event(); modalComposer.all().find(node => node.type === "form").props.onKeyDown(modalEscape); await root.flush();
+  assert.equal(modalEscape.prevented, false); assert.ok(root.composer().props.draft.file, "cerrar un panel modal no debe quitar la imagen pendiente"); modalComposer.unmount();
+  composer.setProps({ draft: { ...root.composer().props.draft, locked: true } });
+  const lockedEscape = event(); form().props.onKeyDown(lockedEscape); assert.equal(lockedEscape.prevented, false);
+  assert.equal(composer.all().find(node => node.props["aria-label"] === "Quitar archivo").props.disabled, true);
+  composer.setProps(root.composer().props);
+  const escape = event(); form().props.onKeyDown(escape); await root.flush(); assert.equal(escape.prevented, true);
+  assert.equal(root.composer().props.draft.file, null); assert.equal(root.composer().props.draft.text, "Texto conservado");
+  assert.equal(root.requests.some(request => request.init.method === "POST"), false); composer.unmount(); root.unmount();
+});
+
+test("audio y PDF mantienen la preparación compacta y la vista de video ampliada no reproduce su miniatura", () => {
+  for (const mime of ["audio/ogg", "application/pdf"]) {
+    const f = mount({ component: "ReplyComposer", props: { detail, draft: { text: "", file: new File(["soporte"], "archivo", { type: mime }), locked: false, error: "" }, busy: false, change() {} } });
+    assert.equal(f.all().find(node => node.type === "form").props["data-media-preview"], false);
+    assert.ok(f.all().some(node => node.props.className === "replyAttachment"));
+    assert.equal(f.all().some(node => node.props["data-attention"] === "media-preview"), false); f.unmount();
+  }
+  const file = new File(["video"], "video.mp4", { type: "video/mp4" });
+  const stage = mount({ component: "ReplyAudioPreview", props: { file, expanded: true }, mediaRefs: true });
+  const thumb = mount({ component: "ReplyAudioPreview", props: { file, thumbnail: true }, mediaRefs: true });
+  assert.equal(stage.all()[0].props.controls, true); assert.equal(stage.all()[0].props.className, "mediaFullSize");
+  assert.equal(thumb.all()[0].props.controls, false); assert.equal(thumb.all()[0].props.muted, true); assert.equal(thumb.all()[0].props.autoPlay, undefined);
+  stage.unmount(); thumb.unmount(); assert.equal(stage.revokedUrls.length, 1); assert.equal(thumb.revokedUrls.length, 1);
+});
+
 function replyKeyEvent(composer, patch = {}) {
   const event = {
     key: "Enter", keyCode: 13, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, repeat: false,
