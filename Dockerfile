@@ -67,6 +67,8 @@ COPY --from=builder \
   /app/scripts/setup-atencion.sql \
   /app/scripts/setup-atencion-push.sql \
   /app/scripts/ensure-atencion-schema.mjs \
+  /app/scripts/diana-extension-request-schema.mjs \
+  /app/scripts/ensure-diana-extension-request-schema.mjs \
   /app/scripts/setup-whatsapp-automation-meta.sql \
   /app/scripts/whatsapp-automation-meta-schema.mjs \
   /app/scripts/ensure-whatsapp-automation-meta-schema.mjs \
