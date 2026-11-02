@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AttentionDatabase, AttentionDb } from "./atencion-storage";
 import { attentionText } from "./atencion-core";
 import { metaRecipientPhone } from "./atencion-meta-identity";
+import type { DaptaFinancialWitness } from "./atencion-dapta";
 import { assertDaptaEventScope, canonicalDaptaEventContact, daptaEventFingerprint, daptaEventTimestamp,
   DaptaEventError, type DaptaAttentionEvent, type DaptaEventScope } from "./atencion-dapta-events";
 
@@ -13,7 +14,7 @@ type EventRow = DaptaAttentionEvent & {
 export type DaptaEventJob = Omit<EventRow, "leaseToken" | "leaseUntil"> & { leaseToken: string; leaseUntil: Date | string };
 export type DaptaConfirmedEventMessage = {
   source: { workspaceId: string; agentId: string; externalConversationId: string; contactId: string };
-  verification?: { fresh: true; kind: "agent" | "followup" | "lead" };
+  verification?: { fresh: true; kind: "agent" | "followup" | "lead"; financialWitness?: DaptaFinancialWitness };
   message: { id: string; text: string; sentAt: string; status: "sent" | "delivered" | "read"; direction: "outbound" | "inbound"; contentType: "text" };
 };
 const transactionOptions = { isolationLevel: "ReadCommitted" as const, timeout: 30000, maxWait: 10000 };

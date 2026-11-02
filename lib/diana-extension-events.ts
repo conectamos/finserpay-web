@@ -8,12 +8,6 @@ type ConfirmedReply = Extract<DaptaConfirmedEventMessageResult, { state: "confir
 export type DianaExtensionEventResult = { state: "ignored" | "complete" | "pending"; outcome?: DianaExtensionMessageResult["outcome"] };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** A code only selects a server proposal. It never authorizes a grant by itself. */
-function candidate(text: string, direction: "inbound" | "outbound") {
-  if (direction === "inbound") return /^CONFIRMO PR-[A-F0-9]{16}$/.test(text.trim());
-  return new Set(text.match(/\bPR-[A-F0-9]{16}\b/g) || []).size === 1;
-}
-
 /** Only the worker's exact native identity + live MCP witness may enter the financial store. */
 export function createDianaExtensionEventProcessor(deps: {
   scope: DaptaEventScope;
@@ -26,7 +20,10 @@ export function createDianaExtensionEventProcessor(deps: {
     if (!deps.enabled()) return { state: "ignored" };
     const message = reply.message, inbound = job.event === "new_message_received";
     const direction = inbound ? "inbound" : "outbound";
-    if (!candidate(message.text, direction)) return { state: "ignored" };
+    // The displayed/imported text is deliberately redacted. Only a digest built
+    // from the exact original MCP content may attest the financial offer.
+    const witness = reply.verification?.financialWitness;
+    if (!witness) return { state: "ignored" };
     // Preserve ordinary history imports without turning an opaque profile or a
     // follow-up campaign into authority over a debtor's credit.
     if (!isMetaPhoneRecipient(job.contactId) || (!inbound && reply.verification?.kind === "followup")) return { state: "ignored" };
@@ -37,6 +34,7 @@ export function createDianaExtensionEventProcessor(deps: {
       || reply.source.workspaceId !== job.workspaceId || reply.source.agentId !== job.agentId
       || reply.source.externalConversationId !== job.externalConversationId || reply.source.contactId !== job.contactId
       || reply.verification?.fresh !== true || reply.verification.kind !== (inbound ? "lead" : "agent")
+      || !/^PR-[A-F0-9]{16}$/.test(witness.code) || !/^[a-f0-9]{64}$/.test(witness.textDigest)
       || message.id !== job.messageId || message.direction !== direction || message.contentType !== "text"
       || !(inbound ? ["delivered", "read"] : ["sent", "delivered", "read"]).includes(message.status)
       || daptaEventTimestamp(message.sentAt) !== daptaEventTimestamp(job.messageAt)) {
@@ -45,7 +43,7 @@ export function createDianaExtensionEventProcessor(deps: {
     const proof: DianaExtensionVerifiedMessage = {
       scope: { ...deps.scope }, direction, conversationId,
       externalConversationId: job.externalConversationId, contactId: job.contactId, phone: job.phone!,
-      messageId: job.messageId, messageAt: daptaEventTimestamp(message.sentAt), text: message.text, deliveryId: job.deliveryId,
+      messageId: job.messageId, messageAt: daptaEventTimestamp(message.sentAt), code: witness.code, textDigest: witness.textDigest, deliveryId: job.deliveryId,
     };
     const result = await deps.consume(proof);
     if (result.outcome === "pending_offer") return { state: "pending", outcome: result.outcome };

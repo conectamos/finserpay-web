@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,8 @@ const jiti = createJiti(import.meta.url, { alias: {
   "@": root, "server-only": path.join(root, "node_modules/next/dist/compiled/server-only/empty.js"),
 } });
 const { createDaptaAttentionAdapter } = await jiti.import("../lib/atencion-dapta.ts");
+const { createDianaExtensionEventProcessor } = await jiti.import("../lib/diana-extension-events.ts");
+const { dianaExtensionOffer } = await jiti.import("../lib/diana-extension-core.ts");
 const workspace = "00000000-0000-4000-8000-000000000001";
 const agent = "00000000-0000-4000-8000-000000000002";
 const externalConversationId = "00000000-0000-4000-8000-000000000003";
@@ -73,6 +76,42 @@ test("invalid descriptors or configuration never make a network request", async 
   const f = mock();
   await assert.rejects(f.adapter.fetchConfirmedEventMessage({ ...input, historyCursor: "bad\ncursor" }), { code: "INVALID_CURSOR" });
   assert.equal(f.requests.length, 0);
+});
+
+test("a real-shaped folio and an all-numeric proposal code retain a private exact witness while CRM text remains redacted",async()=>{
+  const scope={workspaceId:workspace,agentId:agent,agentChannelId:"00000000-0000-4000-8000-000000000007",phoneNumberId:"1162059967000416",wabaId:"2148284059050848"};
+  const code="PR-1111111111111111",folio="FC-20260925220309-CCQP",calls=[];
+  const offer=dianaExtensionOffer({code,folio,days:2,installmentNumber:3,installmentDueDate:"2026-11-02",expiresOn:"2026-11-04",promiseAmount:135000,promiseDate:"2026-11-04",expiresAt:"2026-11-02T02:15:00.000Z"});
+  const process=createDianaExtensionEventProcessor({scope,enabled:()=>true,consume:async proof=>{calls.push(proof);return{outcome:proof.direction==="outbound"?"offered":"granted"};}});
+  for(const direction of ["outbound","inbound"]){
+    const raw=direction==="outbound"?offer:`  CONFIRMO ${code}\n`;
+    const f=mock(()=>detail([{...message,kind:direction==="outbound"?"agent":"lead",direction,content:raw}]));
+    const reply=await f.adapter.fetchConfirmedEventMessage({...input,direction,requireFresh:true});
+    assert.equal(reply.state,"confirmed");assert.ok(reply.message.text.includes("[número sensible omitido]"));
+    assert.equal(reply.message.text.includes("20260925220309"),false);assert.equal(reply.message.text.includes("1111111111111111"),false);
+    assert.deepEqual(reply.verification.financialWitness,{code,textDigest:createHash("sha256").update(JSON.stringify(direction==="outbound"?raw:raw.trim())).digest("hex")});
+    const job={...scope,event:direction==="outbound"?"new_message_sent":"new_message_received",deliveryId:"native.delivery",externalConversationId,contactId,phone:`+${contactId}`,messageId,messageAt:reply.message.sentAt};
+    const result=await process(job,reply,"00000000-0000-4000-8000-000000000008");assert.equal(result.state,"complete");
+    assert.equal(calls.at(-1).code,code);assert.equal(calls.at(-1).textDigest,reply.verification.financialWitness.textDigest);assert.equal("text" in calls.at(-1),false);
+  }
+  assert.equal(calls.length,2);
+  const legacy=await mock(()=>detail([{...message,content:offer}])).adapter.fetchConfirmedEventMessage(input);
+  assert.equal(legacy.verification,undefined);assert.equal(legacy.message.text.includes("[número sensible omitido]"),true);
+});
+
+test("only a fresh exact customer confirmation or a uniquely coded canonical offer can produce the private witness",async()=>{
+  const code="PR-1111111111111111";
+  const offer=`Propuesta de prórroga FINSER PAY\nCrédito: FC-20260925220309-CCQP\nCONFIRMO ${code}`;
+  for(const raw of [`NO CONFIRMO ${code}`,`CONFIRMO ${code} pero no acepto`,"sí",`CONFIRMO ${code}\nCONFIRMO PR-AAAAAAAAAAAAAAAA`]){
+    const r=await mock(()=>detail([{...message,kind:"lead",direction:"inbound",content:raw}])).adapter.fetchConfirmedEventMessage({...input,direction:"inbound"});
+    assert.equal(r.verification.financialWitness,undefined);
+  }
+  for(const changes of [{content:`Otro texto ${code}`},{content:`Prefacio\n${offer}`},{content:`${offer}\n${code}`},{content:offer,kind:"followup"}]){
+    const r=await mock(()=>detail([{...message,...changes}])).adapter.fetchConfirmedEventMessage({...input,requireFresh:true});
+    assert.equal(r.verification.financialWitness,undefined);
+  }
+  const stale=await mock(()=>detail([{...message,content:offer}],{fresh:{applied:false}})).adapter.fetchConfirmedEventMessage({...input,requireFresh:true});
+  assert.equal(stale.state,"pending");assert.equal(stale.verification,undefined);
 });
 
 test("rejects wrong workspace, agent, conversation, channel and contact on every page", async () => {
@@ -212,7 +251,8 @@ test("an incoming witness reads the exact live lead message and carries a minima
   const inbound={...message,kind:"lead",direction:"inbound",content:"CONFIRMO PR-0123456789ABCDEF"};
   const result=await mock(()=>detail([inbound])).adapter.fetchConfirmedEventMessage({...input,direction:"inbound"});
   assert.equal(result.state,"confirmed");assert.equal(result.message.direction,"inbound");
-  assert.deepEqual(result.verification,{fresh:true,kind:"lead"});assert.equal(result.message.text,inbound.content);
+  assert.deepEqual(result.verification,{fresh:true,kind:"lead",financialWitness:{code:"PR-0123456789ABCDEF",
+    textDigest:createHash("sha256").update(JSON.stringify(inbound.content)).digest("hex")}});assert.equal(result.message.text,inbound.content);
   assert.equal(JSON.stringify(result).includes("PRIVATE_FRESH"),false);
 });
 test("financial witnesses cannot use stale replicas, agent-authored inbound or pending delivery",async()=>{

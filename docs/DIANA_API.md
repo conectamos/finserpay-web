@@ -172,7 +172,12 @@ El trabajador relee la conversacion real mediante MCP `fresh`; exige el UUID,
 direccion, autor, estado de entrega, fecha y contacto exactos, ademas del
 workspace, agente y canal nativos configurados. La oferta saliente debe ser
 exactamente el texto persistido y haber llegado al telefono registrado del
-deudor. A partir de esa prueba se vincula al chat. Solo una confirmacion entrante
+deudor. La comprobacion usa un hash privado del contenido original verificado,
+calculado antes de redactar numeros sensibles para la importacion del CRM. El
+codigo y el hash no contienen el cuerpo original; el filtro visible no se
+debilita. Esto admite tambien folios con numeros largos y codigos totalmente
+numericos sin usar el texto visible como prueba financiera.
+A partir de esa prueba se vincula al chat. Solo una confirmacion entrante
 posterior, del mismo telefono/chat/linea, con el codigo exacto, permite conceder.
 Un evento pendiente, texto atribuido por el modelo o una oferta para otro
 contacto no tienen autoridad financiera. Un perfil BSUID sin telefono verificado

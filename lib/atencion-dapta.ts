@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { AttentionIntegration, AttentionMessage, DaptaConversationSnapshot } from "@/lib/atencion-types";
 import { isMetaBusinessUserId, isMetaPhoneRecipient } from "@/lib/atencion-meta-identity";
 
@@ -29,12 +30,13 @@ export type DaptaConfirmedEventMessage = {
   id: string; text: string; sentAt: string; status: "sent" | "delivered" | "read";
   direction: "outbound" | "inbound"; contentType: "text";
 };
+export type DaptaFinancialWitness = { code: string; textDigest: string };
 export type DaptaConfirmedEventMessageResult = {
   source: DaptaConfirmedEventSource;
   /** Event-search checkpoint only. It does not advance the broad history import. */
   historyCursor: string | null; historyTruncated: boolean;
   /** Present only for the strict live read used by financial message witnesses. */
-  verification?: { fresh: true; kind: "agent" | "followup" | "lead" };
+  verification?: { fresh: true; kind: "agent" | "followup" | "lead"; financialWitness?: DaptaFinancialWitness };
 } & ({ state: "confirmed"; message: DaptaConfirmedEventMessage }
   | { state: "pending"; reason: "MESSAGE_NOT_FOUND" | "HISTORY_REMAINING" | "DELIVERY_PENDING" | "LIVE_READ_PENDING" }
   | { state: "failed"; reason: "DELIVERY_FAILED" | "UNSUPPORTED_MESSAGE" | "INVALID_MESSAGE" });
@@ -117,6 +119,18 @@ function visibleText(value: unknown, secret: string): string | null {
     .trim();
   // Redaction labels can lengthen a message, so enforce storage's limit again.
   return result && result.length <= MAX_MESSAGE_LENGTH ? result : null;
+}
+
+/** Private worker evidence only: preserve exact offer bytes without exposing raw text. */
+function financialWitness(value: unknown, direction: "inbound" | "outbound", kind: unknown): DaptaFinancialWitness | null {
+  if (typeof value !== "string" || value.length > MAX_MESSAGE_LENGTH) return null;
+  const raw = direction === "inbound" ? value.trim() : value;
+  const codes = raw.match(/\bPR-[A-F0-9]{16}\b/g) || [];
+  if (codes.length !== 1) return null;
+  const code = codes[0];
+  if (direction === "inbound" ? kind !== "lead" || raw !== `CONFIRMO ${code}`
+    : kind !== "agent" || !raw.startsWith("Propuesta de prórroga FINSER PAY\n") || !raw.endsWith(`\nCONFIRMO ${code}`)) return null;
+  return { code, textDigest: createHash("sha256").update(JSON.stringify(raw)).digest("hex") };
 }
 
 async function readRpcResponse(response: Response, requestId: number, signal: AbortSignal): Promise<JsonObject> {
@@ -381,8 +395,9 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
             if (!(direction === "inbound" ? ["delivered", "read"] : ["sent", "delivered", "read"]).includes(String(target.status))) return { ...checkpoint, state: "pending", reason: "DELIVERY_PENDING" };
             const text = visibleText(target.content, config.key), sentAt = date(target.created_at);
             if (!text || !sentAt) return { ...checkpoint, state: "failed", reason: "INVALID_MESSAGE" };
+            const witness = requireFresh ? financialWitness(target.content, direction, target.kind) : null;
             return { ...checkpoint, state: "confirmed", ...(requireFresh ? { verification: { fresh: true as const,
-              kind: target.kind as "agent" | "followup" | "lead" } } : {}), message: { id: messageId, text, sentAt,
+              kind: target.kind as "agent" | "followup" | "lead", ...(witness ? { financialWitness: witness } : {}) } } : {}), message: { id: messageId, text, sentAt,
               status: target.status as DaptaConfirmedEventMessage["status"], direction, contentType: "text" } };
           }
           if (!nextCursor) return { source, state: "pending", reason: "MESSAGE_NOT_FOUND", historyCursor: inputCursor, historyTruncated: false };

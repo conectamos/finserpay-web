@@ -23,7 +23,7 @@ export type DianaExtensionProposalView = {
   promiseDate: string;
   approved: boolean;
 };
-/** Constructed only after native scope/binding and fresh MCP message verification. */
+/** Constructed only from the original message after native scope/binding and fresh MCP verification. No raw message body crosses this boundary. */
 export type DianaExtensionVerifiedMessage = {
   scope: DaptaEventScope;
   direction: "outbound" | "inbound";
@@ -33,7 +33,8 @@ export type DianaExtensionVerifiedMessage = {
   phone: string;
   messageId: string;
   messageAt: string;
-  text: string;
+  code: string;
+  textDigest: string;
   deliveryId: string;
 };
 export type DianaExtensionMessageResult = {
