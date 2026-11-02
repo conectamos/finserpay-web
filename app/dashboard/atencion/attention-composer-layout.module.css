@@ -33,6 +33,11 @@
 .mediaHeader span { font-size:13px; color:var(--fp-chat-muted,var(--fp-muted)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .mediaStage { display:grid; place-items:center; flex:1 1 0; min-height:0; min-width:0; padding:16px 32px 24px; overflow:hidden; }
 .mediaFullSize { display:block; width:100%; height:100%; min-height:0; max-height:100%; min-width:0; max-width:100%; object-fit:contain; }
+.filePreview { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; width:min(100%,560px); max-height:100%; min-height:0; padding:24px; overflow-y:auto; border:1px solid var(--fp-chat-border,var(--fp-border)); border-radius:var(--fp-radius-lg); background:var(--fp-chat-surface,var(--fp-surface)); text-align:center; }
+.filePreview > svg { flex:0 0 auto; color:var(--fp-chat-muted,var(--fp-muted)); }
+.filePreview strong { max-width:100%; font-size:18px; font-weight:550; overflow-wrap:anywhere; }
+.filePreview > span,.filePreview > small { max-width:100%; color:var(--fp-chat-muted,var(--fp-muted)); font-size:14px; overflow-wrap:anywhere; }
+.audioPlayer { width:100%; min-height:48px; flex:0 0 auto; margin-top:8px; }
 .mediaComposer[data-media-preview='true'] .draft { flex:0 1 auto; width:min(820px,calc(100% - 48px)); max-height:24%; align-self:center; padding:0; }
 .mediaComposer[data-media-preview='true'] .row { flex:0 0 auto; align-self:center; width:min(820px,calc(100% - 48px)); grid-template-columns:44px 44px minmax(0,1fr); gap:4px; margin:8px 0 0; }
 .mediaComposer[data-media-preview='true'] .row textarea { grid-column:3; font-size:16px; }
@@ -48,6 +53,8 @@
   .mediaHeader { min-height:56px; gap:8px; padding:6px 8px; }
   .mediaHeader strong { font-size:14px; }
   .mediaStage { padding:8px 12px 16px; }
+  .filePreview { gap:10px; padding:20px 16px; }
+  .filePreview strong { font-size:16px; }
   .mediaComposer[data-media-preview='true'] .draft,.mediaComposer[data-media-preview='true'] .row { width:calc(100% - 16px); }
   .mediaComposer[data-media-preview='true'] .row { grid-template-columns:40px 40px minmax(0,1fr); gap:0; }
   .mediaTray { grid-template-columns:minmax(0,1fr) 44px; min-height:80px; margin-top:8px; padding:8px 12px max(8px,env(safe-area-inset-bottom)); }
