@@ -287,15 +287,15 @@ test("un PDF pequeño muestra KB reales y un archivo fallido no se presenta como
   const f = mount(); await f.ready(); await f.select();
   await f.change({ file: new File([new Uint8Array(3315)], "recibo-prueba.pdf", { type: "application/pdf" }) });
   const composer = mount({ component: "ReplyComposer", props: f.composer().props });
-  assert.match(text(composer.all().find(node => node.props.className === "replyAttachment")), /3,2 KB/);
+  assert.match(text(composer.all().find(node => node.type === "header")), /3,2 KB/);
   const failed = f.ui.MessageContent({ text: "", dapta: false, media: { id: outbound.id, kind: "document", url: null, fileName: "recibo-prueba.pdf", mimeType: "application/pdf" }, deliveryStatus: "failed" });
   assert.match(text(failed), /El archivo no se envió/); assert.doesNotMatch(text(failed), /todavía no está disponible/);
   assert.equal(f.requests.some(request => request.init.method === "POST"), false); composer.unmount(); f.unmount();
 });
 const connectedComposer = parent => mount({ component: "ReplyComposer", props: parent.composer().props });
 
-test("imagen, video y sticker abren preparación amplia con caption y miniatura sin enviar ni confirmar lecturas", async () => {
-  for (const mime of ["image/png", "image/jpeg", "video/mp4", "image/webp"]) {
+test("todo archivo pendiente abre preparación amplia con caption y miniatura sin enviar ni confirmar lecturas", async () => {
+  for (const mime of ["image/png", "image/jpeg", "video/mp4", "image/webp", "audio/ogg", "application/pdf", "application/zip", ""]) {
     const root = mount(); await root.ready(); await root.select();
     const file = new File(["archivo sintético"], "soporte-local", { type: mime });
     await root.change({ file, text: "Mensaje que estoy preparando" });
@@ -339,19 +339,37 @@ test("Escape quita solo el adjunto, pero conserva el intento bloqueado y respeta
   assert.equal(root.requests.some(request => request.init.method === "POST"), false); composer.unmount(); root.unmount();
 });
 
-test("audio y PDF mantienen la preparación compacta y la vista de video ampliada no reproduce su miniatura", () => {
-  for (const mime of ["audio/ogg", "application/pdf"]) {
-    const f = mount({ component: "ReplyComposer", props: { detail, draft: { text: "", file: new File(["soporte"], "archivo", { type: mime }), locked: false, error: "" }, busy: false, change() {} } });
-    assert.equal(f.all().find(node => node.type === "form").props["data-media-preview"], false);
-    assert.ok(f.all().some(node => node.props.className === "replyAttachment"));
-    assert.equal(f.all().some(node => node.props["data-attention"] === "media-preview"), false); f.unmount();
+test("documentos muestran metadatos sin incrustar contenido y el audio tiene un solo reproductor", () => {
+  for (const mime of ["application/pdf", "application/zip", "text/html", ""]) {
+    const file = new File([new Uint8Array(3315)], "soporte-local.pdf", { type: mime });
+    const f = mount({ component: "ReplyAudioPreview", props: { file, expanded: true }, mediaRefs: true });
+    assert.match(text(f.all()), /soporte-local.pdfPDF3,2 KB/);
+    assert.ok(f.all().some(node => node.props.className === "filePreview"));
+    assert.ok(f.all().every(node => !["iframe", "object", "embed", "audio", "video", "img"].includes(node.type)));
+    assert.equal(f.objectUrls.length, 0); f.unmount();
   }
+  const file = new File(["audio"], "nota.ogg", { type: "audio/ogg" });
+  const main = mount({ component: "ReplyAudioPreview", props: { file, expanded: true }, mediaRefs: true });
+  const thumb = mount({ component: "ReplyAudioPreview", props: { file, thumbnail: true }, mediaRefs: true });
+  assert.equal(main.all().filter(node => node.type === "audio").length, 1);
+  assert.equal(main.all().find(node => node.type === "audio").props.controls, true);
+  assert.equal(thumb.all().some(node => node.type === "audio"), false);
+  assert.equal(main.objectUrls.length, 1); assert.equal(thumb.objectUrls.length, 0);
+  main.unmount(); thumb.unmount(); assert.equal(main.revokedUrls.length, 1);
+});
+
+test("la vista de video ampliada no reproduce su miniatura y los archivos inválidos no cargan multimedia", () => {
   const file = new File(["video"], "video.mp4", { type: "video/mp4" });
   const stage = mount({ component: "ReplyAudioPreview", props: { file, expanded: true }, mediaRefs: true });
   const thumb = mount({ component: "ReplyAudioPreview", props: { file, thumbnail: true }, mediaRefs: true });
   assert.equal(stage.all()[0].props.controls, true); assert.equal(stage.all()[0].props.className, "mediaFullSize");
   assert.equal(thumb.all()[0].props.controls, false); assert.equal(thumb.all()[0].props.muted, true); assert.equal(thumb.all()[0].props.autoPlay, undefined);
   stage.unmount(); thumb.unmount(); assert.equal(stage.revokedUrls.length, 1); assert.equal(thumb.revokedUrls.length, 1);
+  for (const file of [new File([new Uint8Array(5 * 1024 * 1024 + 1)], "grande.png", { type: "image/png" }), new File(["gif"], "archivo.gif", { type: "image/gif" })]) {
+    const f = mount({ component: "ReplyAudioPreview", props: { file, expanded: true }, mediaRefs: true });
+    assert.ok(f.all().some(node => node.props.className === "filePreview"));
+    assert.equal(f.all().some(node => node.type === "img"), false); assert.equal(f.objectUrls.length, 0); f.unmount();
+  }
 });
 
 function replyKeyEvent(composer, patch = {}) {
@@ -449,7 +467,7 @@ test("el pegado de texto o HTML permanece nativo y una imagen ilegible produce a
   composer.unmount(); root.unmount();
 });
 
-test("pegar rechaza varias imágenes, formato o tamaño inválido y conserva un archivo ya preparado", async () => {
+test("pegar señala formato o tamaño inválido en la preparación y conserva un archivo ya preparado", async () => {
   const photo = new File(["foto"], "foto.png", { type: "image/png" });
   for (const [files, original, error] of [
     [[photo, photo], null, /un archivo a la vez/],
@@ -460,9 +478,24 @@ test("pegar rechaza varias imágenes, formato o tamaño inválido y conserva un 
     const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Pie preservado", file: original });
     const composer = connectedComposer(root), event = replyPasteEvent(files);
     replyInput(composer).props.onPaste(event); await root.flush();
-    assert.equal(event.prevented, true); assert.equal(root.composer().props.draft.file, original);
+    const expected = !original && files.length === 1 ? files[0] : original;
+    assert.equal(event.prevented, true); assert.equal(root.composer().props.draft.file, expected);
     assert.equal(root.composer().props.draft.text, "Pie preservado"); assert.match(root.composer().props.draft.error, error);
     assert.equal(root.requests.filter(request => request.init.method === "POST").length, 0); composer.unmount(); root.unmount();
+  }
+});
+
+test("pegar audio, PDF o cualquier archivo prepara la misma revisión sin interpretar HTML ni enviar", async () => {
+  for (const [mime, name] of [["audio/ogg", "nota.ogg"], ["application/pdf", "soporte.pdf"], ["application/zip", "archivo.zip"], ["", "archivo-sin-tipo"]]) {
+    const root = mount(); await root.ready(); await root.select(); await root.change({ text: "Texto conservado" });
+    const file = new File(["archivo sintético"], name, { type: mime });
+    const composer = connectedComposer(root), event = replyPasteEvent([], [{ kind: "file", type: mime, getAsFile: () => file }]);
+    replyInput(composer).props.onPaste(event); await root.flush(); composer.setProps(root.composer().props);
+    assert.equal(event.prevented, true); assert.equal(root.composer().props.draft.file, file);
+    assert.equal(root.composer().props.draft.text, "Texto conservado"); assert.equal(root.dropSurface().props.previewOpen, true);
+    assert.equal(composer.all().find(node => node.type === "form").props["data-media-preview"], true);
+    if (["application/zip", ""].includes(mime)) assert.equal(composer.all().find(node => node.props.type === "submit").props.disabled, true);
+    assert.equal(root.requests.some(request => request.init.method === "POST"), false); composer.unmount(); root.unmount();
   }
 });
 
@@ -710,8 +743,8 @@ for (const [tag, mime] of [["img", "image/png"], ["video", "video/mp4"], ["audio
   test(`vista previa ${tag} utiliza un blob local y lo libera al sustituir el archivo y desmontar`, () => {
     const first = new File(["primero"], "primero", { type: mime }); const second = new File(["segundo"], "segundo", { type: mime });
     const f = mount({ component: "ReplyAudioPreview", mediaRefs: true, props: { file: first } });
-    assert.equal(f.all()[0].type, tag); assert.equal(f.mediaElements[0].src, "blob:synthetic-1");
-    if (tag !== "img") assert.equal(f.all()[0].props.controls, true);
+    assert.ok(f.all().some(node => node.type === tag)); assert.equal(f.mediaElements[0].src, "blob:synthetic-1");
+    if (tag !== "img") assert.equal(f.all().find(node => node.type === tag).props.controls, true);
     f.setProps({ file: second }); assert.deepEqual(f.revokedUrls, ["blob:synthetic-1"]); assert.equal(f.mediaElements[0].src, "blob:synthetic-2");
     f.unmount(); assert.deepEqual(f.revokedUrls, ["blob:synthetic-1", "blob:synthetic-2"]); assert.equal(f.mediaElements[0].src, "");
     if (tag !== "img") assert.equal(f.mediaElements[0].pauses, 2); assert.equal(f.requests.length, 0);
@@ -728,7 +761,7 @@ test("alias MP3/M4A de Windows y application/ogg admiten preview de audio, capti
     const picker = composer.all().find(n => n.type === "input" && n.props["aria-label"] === "Adjuntar archivo");
     assert.ok(picker.props.accept.split(",").includes(mime));
     const preview = mount({ component: "ReplyAudioPreview", mediaRefs: true, props: { file } });
-    assert.equal(preview.all()[0].type, "audio"); assert.equal(preview.all()[0].props.controls, true);
+    assert.equal(preview.all().find(node => node.type === "audio").props.controls, true);
     assert.equal(preview.mediaElements[0].src, "blob:synthetic-1");
     assert.equal(f.requests.filter(r => r.init.method === "POST").length, 0);
     f.composer().props.send(); await f.flush(); const sent = f.requests.at(-1);
