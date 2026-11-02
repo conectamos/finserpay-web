@@ -91,3 +91,49 @@ test("provider/database failures do not disclose sensitive details or imply appr
   const blocked = setup({ propose: async () => { throw new AttentionError("La cuota cambió.", 409); } });
   assert.equal((await blocked.handler(request())).status, 409);
 });
+
+test("direct-request status is read-only, separately enabled and accepts no model authorization", async () => {
+  const statusInput = { accion: "consultar_solicitud", cedula: "001234567", folio: "FC-TEST-1" };
+  const observed = [];
+  const { handler, calls } = setup({ enabled: () => false, requestEnabled: () => true,
+    requestStatus: async input => { observed.push(input); return { status: "PENDING", approved: false, existing: false,
+      days: null, installmentNumber: null, installmentDueDate: null, expiresOn: null, reason: null }; } });
+  const response = await handler(request(statusInput));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).aprobada, false);
+  assert.deepEqual(observed, [{ cedula: "001234567", folio: "FC-TEST-1" }]);
+  assert.deepEqual(calls, [], "neither proposals nor legacy approval-state callbacks run");
+  for (const extra of [{ confirmed: true }, { dias: 4 }, { messageId: "forged" }, { phone: "forged" }, { actor: "ADMIN" }]) {
+    assert.equal((await handler(request({ ...statusInput, ...extra }))).status, 400);
+  }
+  assert.equal(observed.length, 1);
+  const disabled = setup({ requestEnabled: () => false, requestStatus: async () => { throw new Error("must not run"); } });
+  assert.equal((await disabled.handler(request(statusInput))).status, 503);
+  const unavailable = setup({ requestEnabled: () => true });
+  assert.equal((await unavailable.handler(request(statusInput))).status, 503);
+});
+
+test("direct-request results confirm only a current committed protection and never disclose native proof", async () => {
+  for (const state of [
+    { status: "GRANTED", approved: true }, { status: "ACTIVE", approved: true },
+    { status: "GRANTED", approved: false }, { status: "REJECTED", approved: true },
+    { status: "NEEDS_CREDIT", approved: false }, { status: "NO_REQUEST", approved: false },
+  ]) {
+    const { handler, calls } = setup({ requestEnabled: () => true, requestStatus: async () => ({
+      ...state, existing: state.status === "ACTIVE", days: 1, installmentNumber: 1,
+      installmentDueDate: "2026-11-02", expiresOn: "2026-11-03", reason: null,
+      phone: "private", messageId: "private", textDigest: "private", creditId: 321, cedula: "private",
+    }) });
+    const response = await handler(request({ accion: "consultar_solicitud", cedula: "001234567", folio: "FC-TEST-1" }));
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.aprobada, ["GRANTED", "ACTIVE"].includes(state.status) && state.approved);
+    assert.equal(result.fechaLimite, "2026-11-03");
+    assert.equal(result.yaExistia, state.status === "ACTIVE");
+    assert.deepEqual(calls, []);
+    for (const key of ["phone", "messageId", "textDigest", "creditId", "cedula", "compromiso", "codigo", "oferta"]) {
+      assert.equal(Object.hasOwn(result, key), false);
+    }
+    assert.match(response.headers.get("cache-control"), /no-store/);
+  }
+});

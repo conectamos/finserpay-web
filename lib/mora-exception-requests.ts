@@ -79,7 +79,7 @@ type RuleCredit = {
 };
 type StoredRequest = {
   id: string; creditoId: number; type: ExceptionType; status: ExceptionStatus; version: number;
-  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT" | "SYSTEM_DIANA";
+  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT" | "SYSTEM_DIANA" | "SYSTEM_DIANA_REQUEST";
   installmentNumber: number | null; installmentDueDate: Date | string | null; expiresOn: Date | string | null;
   promiseAmount: number | string | null; promiseDate: Date | string | null; reason: string; observation: string;
   createdByUserId: number | null; createdBySystemKey?: "SYSTEM_DIANA" | null; createdByName: string; submittedAt: Date | string;
@@ -314,14 +314,14 @@ export async function getMoraExtensionActions(id: string | null, actor: MoraActo
   });
 }
 
-export function evaluateMoraExceptionRule(credit: RuleCredit, input: Pick<CreateInput, "type" | "expiresOn" | "promiseAmount" | "promiseDate">, now = new Date()) {
+function evaluateMoraExceptionWindow(credit: RuleCredit, input: Pick<CreateInput, "type" | "expiresOn">, now: Date, validatePromise?: (outstanding: number, today: string) => void) {
   const today = colombiaDateKey(now);
   const plan = buildCreditPaymentPlan({ ...credit, fechaProximoPago: null, today, settled: Boolean(credit.pazYSalvoEmitidoAt) });
   const installment = plan.installments.find(row => !row.eliminada && row.saldoPendiente > 0) || null;
   if (!installment) throw new CreditApprovalError("NO_PENDING_INSTALLMENT", "El crédito no tiene una cuota regular pendiente.", 409);
   if (input.type === "EXCEPCION" && plan.estadoPago !== "MORA") throw new CreditApprovalError("NOT_OVERDUE", "El crédito no tiene una cuota regular vencida.", 409);
-  if (input.promiseAmount > plan.saldoPendiente) throw invalid("El pago prometido no puede superar el saldo pendiente.");
-  if (input.promiseDate < today || input.expiresOn < today) throw new CreditApprovalError("REQUEST_WINDOW_CLOSED", "La fecha solicitada ya venció.", 409);
+  validatePromise?.(plan.saldoPendiente, today);
+  if (input.expiresOn < today) throw new CreditApprovalError("REQUEST_WINDOW_CLOSED", "La fecha solicitada ya venció.", 409);
   const dueDate = installment.fechaVencimiento;
   const maxExpiresOn = addCalendarDays(dueDate, 4);
   if (input.type === "PRORROGA") {
@@ -338,6 +338,17 @@ export function evaluateMoraExceptionRule(credit: RuleCredit, input: Pick<Create
     outstandingBalance: plan.saldoPendiente,
     maxExpiresOn: input.type === "PRORROGA" ? maxExpiresOn : null,
   };
+}
+
+/** The extension window is independent of a contractual payment promise. */
+export function evaluateMoraExtensionWindow(credit: RuleCredit, input: Pick<CreateInput, "expiresOn">, now = new Date()) {
+  return evaluateMoraExceptionWindow(credit, { type: "PRORROGA", expiresOn: input.expiresOn }, now);
+}
+export function evaluateMoraExceptionRule(credit: RuleCredit, input: Pick<CreateInput, "type" | "expiresOn" | "promiseAmount" | "promiseDate">, now = new Date()) {
+  return evaluateMoraExceptionWindow(credit, input, now, (outstanding, today) => {
+    if (input.promiseAmount > outstanding) throw invalid("El pago prometido no puede superar el saldo pendiente.");
+    if (input.promiseDate < today || input.expiresOn < today) throw new CreditApprovalError("REQUEST_WINDOW_CLOSED", "La fecha solicitada ya venció.", 409);
+  });
 }
 
 export function moraCooldownEnabledOn(expiresOn: string) {
@@ -776,7 +787,7 @@ export async function amendMoraExceptionRequest(id: string, input: AmendmentInpu
         if (input.expiresOn === null || input.expiresOn < allowed.minExpiresOn! || input.expiresOn > allowed.maxExpiresOn!)
           throw new CreditApprovalError("EXTENSION_WINDOW_CLOSED", "Selecciona una fecha vigente entre uno y cuatro días después del vencimiento de la cuota regular.", 409);
         const effectivePromiseDate = input.promiseDate === undefined ? nullableDateKey(current.promiseDate) : input.promiseDate;
-        if (current.source !== "CENTRAL_DIRECT" && (effectivePromiseDate === null || effectivePromiseDate < colombiaDateKey(now)))
+        if (!["CENTRAL_DIRECT", "SYSTEM_DIANA_REQUEST"].includes(current.source) && (effectivePromiseDate === null || effectivePromiseDate < colombiaDateKey(now)))
           throw invalid("El compromiso de pago debe tener una fecha vigente.");
       }
     }
@@ -794,9 +805,11 @@ export async function amendMoraExceptionRequest(id: string, input: AmendmentInpu
       const promiseAmount = input.promiseAmount === undefined
         ? current.promiseAmount === null ? null : Number(current.promiseAmount) : input.promiseAmount;
       const promiseDate = input.promiseDate === undefined ? nullableDateKey(current.promiseDate) : input.promiseDate;
-      if (current.source === "CENTRAL_DIRECT" && (promiseAmount !== null || promiseDate !== null))
-        throw invalid("Esta excepción directa no tiene un compromiso de pago asociado.");
-      if (current.source !== "CENTRAL_DIRECT" && (input.expiresOn === null || promiseAmount === null || promiseDate === null))
+      if (["CENTRAL_DIRECT", "SYSTEM_DIANA_REQUEST"].includes(current.source) && (promiseAmount !== null || promiseDate !== null))
+        throw invalid("Esta autorización no tiene un compromiso de pago asociado.");
+      if (current.source === "SYSTEM_DIANA_REQUEST" && input.expiresOn === null)
+        throw invalid("Conserva una fecha de vencimiento para esta prórroga.");
+      if (!["CENTRAL_DIRECT", "SYSTEM_DIANA_REQUEST"].includes(current.source) && (input.expiresOn === null || promiseAmount === null || promiseDate === null))
         throw invalid("Conserva una fecha de vencimiento y un compromiso válido para esta solicitud.");
       if (promiseDate !== null && input.expiresOn !== null && promiseDate > input.expiresOn)
         throw invalid("El compromiso de pago debe vencer a más tardar con la excepción.");

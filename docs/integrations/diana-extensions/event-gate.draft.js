@@ -1,9 +1,8 @@
 const body = params.trigger.body;
 const message = body && body.message;
 const outbound = body && body.event === 'new_message_sent' && message && message.direction === 'outbound';
-const confirmation = body && body.event === 'new_message_received' && message && message.direction === 'inbound'
-  && typeof message.content === 'string' && /^CONFIRMO PR-[A-F0-9]{16}$/.test(message.content.trim());
-if (!message || message.content_type !== 'text' || (!outbound && !confirmation)) {
+const inbound = body && body.event === 'new_message_received' && message && message.direction === 'inbound';
+if (!message || message.content_type !== 'text' || (!outbound && !inbound)) {
   module.exports = { ok: true, ignored: true, forward: 'no', request_body: '' };
 } else {
   const conversation = body.conversation || {};

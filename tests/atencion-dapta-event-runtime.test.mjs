@@ -101,3 +101,20 @@ test('a confirmation that overtakes its offer retries instead of being discarded
   const result=await dispatchAttentionDaptaEvents(f.store,read,extensions);
   assert.equal(result.failed,0);assert.equal(result.pending,0);assert.equal(completed,1);assert.equal(f.saved.length,0);
 });
+
+test('only activated direct requests require a complete fresh context and keep the native conversation binding',async()=>{
+  for(const requestEnabled of [false,true]){
+    const f=fixture();f.job.event='new_message_received';let processed=0,completed=0;
+    f.store.getVerifiedConversation=async()=>({conversationId});
+    f.store.completeVerifiedInbound=async()=>{completed++;return{imported:false,pendingBinding:false};};
+    const reply={state:'confirmed',source:f.source,historyCursor:null,historyTruncated:false,verification:{fresh:true,kind:'lead'},
+      message:{id:messageId,text:'Native artificial request',sentAt:now.toISOString(),status:'delivered',direction:'inbound',contentType:'text'}};
+    const result=await dispatchAttentionDaptaEvents(f.store,async input=>{
+      assert.equal(input.direction,'inbound');assert.equal(input.requireFresh,true);
+      assert.equal(input.requireRequestContext,requestEnabled?true:undefined);return reply;
+    },{enabled:()=>true,requestEnabled:()=>requestEnabled,process:async(job,observed,internalId)=>{
+      assert.equal(job,f.job);assert.equal(observed,reply);assert.equal(internalId,conversationId);processed++;return{state:'complete'};
+    }});
+    assert.equal(result.failed,0);assert.equal(processed,1);assert.equal(completed,1);assert.equal(f.saved.length,0);
+  }
+});

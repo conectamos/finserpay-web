@@ -1,0 +1,190 @@
+{
+  "name": "FINSERPAY — Prórrogas de Diana",
+  "type": "api",
+  "timeout": 30,
+  "version": 1,
+  "api_nodes": [
+    {
+      "id": "prIn",
+      "type": "trigger",
+      "name": "Trigger",
+      "api_trigger": {
+        "trigger_type": "post",
+        "trigger_params": [
+          {
+            "id": "prq0",
+            "key": "cedula",
+            "type": "text",
+            "origin": "body",
+            "required": true
+          },
+          {
+            "id": "prq1",
+            "key": "folio",
+            "type": "text",
+            "origin": "body",
+            "required": true
+          }
+        ],
+        "trigger_options": "http"
+      },
+      "childRef": "nrmPr",
+      "childRefs": [
+        "nrmPr"
+      ],
+      "x": 400,
+      "y": 100
+    },
+    {
+      "id": "nrmPr",
+      "name": "Normalizar Prorroga",
+      "type": "action",
+      "api_action": {
+        "on_error": "stop",
+        "response": [
+          {
+            "variable_name": "request_body",
+            "response_value_path": "request_body"
+          }
+        ],
+        "action_type": "code",
+        "code_action": {
+          "code": "// Read-only action. Native events alone authorize a direct extension.\nconst body = params.trigger.body;\nconst record = value => value !== null && typeof value === \"object\" && !Array.isArray(value);\nif (!record(body)) throw new Error(\"Consulta de prórroga no válida\");\nif (body.args !== undefined && (!record(body.args) || Object.keys(body).some(key => key !== \"args\"))) throw new Error(\"Consulta de prórroga no válida\");\nconst data = body.args === undefined ? body : body.args;\nif (Object.keys(data).some(key => ![\"cedula\", \"folio\"].includes(key))) throw new Error(\"Campos de consulta no válidos\");\nif (typeof data.cedula !== \"string\" || !/^\\d{5,15}$/.test(data.cedula) || typeof data.folio !== \"string\" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(data.folio)) throw new Error(\"Cédula o folio no válido\");\nmodule.exports = { request_body: JSON.stringify({ accion: \"consultar_solicitud\", cedula: data.cedula, folio: data.folio }) };"
+        }
+      },
+      "parentRefs": [
+        "prIn"
+      ],
+      "childRef": "qryPr",
+      "childRefs": [
+        "qryPr"
+      ],
+      "x": 400,
+      "y": 250
+    },
+    {
+      "id": "qryPr",
+      "name": "Gestionar Prorroga",
+      "type": "action",
+      "api_action": {
+        "on_error": "stop",
+        "response": [
+          {
+            "variable_name": "ok",
+            "response_value_path": "response.ok"
+          },
+          {
+            "variable_name": "estado",
+            "response_value_path": "response.estado"
+          },
+          {
+            "variable_name": "aprobada",
+            "response_value_path": "response.aprobada"
+          },
+          {
+            "variable_name": "yaExistia",
+            "response_value_path": "response.yaExistia"
+          },
+          {
+            "variable_name": "dias",
+            "response_value_path": "response.dias"
+          },
+          {
+            "variable_name": "cuotaNumero",
+            "response_value_path": "response.cuotaNumero"
+          },
+          {
+            "variable_name": "vencimientoCuota",
+            "response_value_path": "response.vencimientoCuota"
+          },
+          {
+            "variable_name": "fechaLimite",
+            "response_value_path": "response.fechaLimite"
+          },
+          {
+            "variable_name": "motivo",
+            "response_value_path": "response.motivo"
+          }
+        ],
+        "action_type": "api",
+        "external_api_action": {
+          "url": "https://finserpay.com/api/integraciones/diana/prorrogas",
+          "body": "{{normalizar_prorroga.request_body}}",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body_format": "raw",
+          "request_type": "post",
+          "authorization": {
+            "type": "bearer",
+            "token": "__DIANA_EXTENSION_API_TOKEN__"
+          }
+        }
+      },
+      "parentRefs": [
+        "nrmPr"
+      ],
+      "childRef": "rspPr",
+      "childRefs": [
+        "rspPr"
+      ],
+      "x": 400,
+      "y": 400
+    },
+    {
+      "id": "rspPr",
+      "name": "Respuesta Prorroga",
+      "type": "response",
+      "parentRefs": [
+        "qryPr"
+      ],
+      "api_response": {
+        "response_params": [
+          {
+            "key": "ok",
+            "value": "{{gestionar_prorroga.ok}}"
+          },
+          {
+            "key": "estado",
+            "value": "{{gestionar_prorroga.estado}}"
+          },
+          {
+            "key": "aprobada",
+            "value": "{{gestionar_prorroga.aprobada}}"
+          },
+          {
+            "key": "yaExistia",
+            "value": "{{gestionar_prorroga.yaExistia}}"
+          },
+          {
+            "key": "dias",
+            "value": "{{gestionar_prorroga.dias}}"
+          },
+          {
+            "key": "cuotaNumero",
+            "value": "{{gestionar_prorroga.cuotaNumero}}"
+          },
+          {
+            "key": "vencimientoCuota",
+            "value": "{{gestionar_prorroga.vencimientoCuota}}"
+          },
+          {
+            "key": "fechaLimite",
+            "value": "{{gestionar_prorroga.fechaLimite}}"
+          },
+          {
+            "key": "motivo",
+            "value": "{{gestionar_prorroga.motivo}}"
+          }
+        ]
+      },
+      "x": 400,
+      "y": 550
+    }
+  ],
+  "note_nodes": [],
+  "enableErrorNotification": true
+}

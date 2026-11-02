@@ -3,16 +3,20 @@ import { assertDaptaEventScope, daptaEventTimestamp, DaptaEventError, type Dapta
 import type { DaptaEventJob } from "./atencion-dapta-event-storage";
 import type { DaptaConfirmedEventMessageResult } from "./atencion-dapta";
 import type { DianaExtensionMessageResult, DianaExtensionVerifiedMessage } from "./diana-extension-types";
+import type { DianaExtensionRequestConsumeResult, DianaExtensionVerifiedRequest } from "./diana-extension-request-types";
 
 type ConfirmedReply = Extract<DaptaConfirmedEventMessageResult, { state: "confirmed" }>;
-export type DianaExtensionEventResult = { state: "ignored" | "complete" | "pending"; outcome?: DianaExtensionMessageResult["outcome"] };
+export type DianaExtensionEventResult = { state: "ignored" | "complete" | "pending"; outcome?: DianaExtensionMessageResult["outcome"] | DianaExtensionRequestConsumeResult["outcome"] };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Only the worker's exact native identity + live MCP witness may enter the financial store. */
 export function createDianaExtensionEventProcessor(deps: {
   scope: DaptaEventScope;
   enabled: () => boolean;
+  legacyEnabled?: () => boolean;
+  requestEnabled?: () => boolean;
   consume: (proof: DianaExtensionVerifiedMessage) => Promise<DianaExtensionMessageResult>;
+  consumeRequest?: (proof: DianaExtensionVerifiedRequest) => Promise<DianaExtensionRequestConsumeResult>;
   afterGranted?: (creditId: number) => Promise<unknown>;
 }) {
   assertDaptaEventScope(deps.scope);
@@ -22,7 +26,9 @@ export function createDianaExtensionEventProcessor(deps: {
     const direction = inbound ? "inbound" : "outbound";
     // The displayed/imported text is deliberately redacted. Only a digest built
     // from the exact original MCP content may attest the financial offer.
-    const witness = reply.verification?.financialWitness;
+    const requestWitness = inbound && deps.requestEnabled?.() && deps.consumeRequest ? reply.verification?.requestWitness : undefined;
+    const legacyActive = deps.legacyEnabled ? deps.legacyEnabled() : deps.enabled();
+    const witness = requestWitness || (legacyActive ? reply.verification?.financialWitness : undefined);
     if (!witness) return { state: "ignored" };
     // Preserve ordinary history imports without turning an opaque profile or a
     // follow-up campaign into authority over a debtor's credit.
@@ -34,12 +40,27 @@ export function createDianaExtensionEventProcessor(deps: {
       || reply.source.workspaceId !== job.workspaceId || reply.source.agentId !== job.agentId
       || reply.source.externalConversationId !== job.externalConversationId || reply.source.contactId !== job.contactId
       || reply.verification?.fresh !== true || reply.verification.kind !== (inbound ? "lead" : "agent")
-      || !/^PR-[A-F0-9]{16}$/.test(witness.code) || !/^[a-f0-9]{64}$/.test(witness.textDigest)
+      || !/^[a-f0-9]{64}$/.test(witness.textDigest)
+      || (!requestWitness && (!("code" in witness) || !/^PR-[A-F0-9]{16}$/.test(witness.code)))
       || message.id !== job.messageId || message.direction !== direction || message.contentType !== "text"
       || !(inbound ? ["delivered", "read"] : ["sent", "delivered", "read"]).includes(message.status)
       || daptaEventTimestamp(message.sentAt) !== daptaEventTimestamp(job.messageAt)) {
       throw new DaptaEventError("DAPTA_EVENT_SCOPE_MISMATCH", 403);
     }
+    if (requestWitness) {
+      if (requestWitness.latest !== true || typeof requestWitness.observedAt !== "string") throw new DaptaEventError("DAPTA_EVENT_SCOPE_MISMATCH", 403);
+      const proof: DianaExtensionVerifiedRequest = {
+        scope: { ...deps.scope }, conversationId, externalConversationId: job.externalConversationId,
+        contactId: job.contactId, phone: job.phone!, messageId: job.messageId,
+        messageAt: daptaEventTimestamp(message.sentAt), deliveryId: job.deliveryId,
+        textDigest: requestWitness.textDigest, intent: requestWitness.intent, latest: true,
+        observedAt: daptaEventTimestamp(requestWitness.observedAt),
+      };
+      const result = await deps.consumeRequest!(proof);
+      if (["granted", "already_granted"].includes(result.outcome) && Number.isSafeInteger(result.creditId) && result.creditId! > 0) await deps.afterGranted?.(result.creditId!);
+      return { state: "complete", outcome: result.outcome };
+    }
+    if (!("code" in witness)) throw new DaptaEventError("DAPTA_EVENT_SCOPE_MISMATCH", 403);
     const proof: DianaExtensionVerifiedMessage = {
       scope: { ...deps.scope }, direction, conversationId,
       externalConversationId: job.externalConversationId, contactId: job.contactId, phone: job.phone!,

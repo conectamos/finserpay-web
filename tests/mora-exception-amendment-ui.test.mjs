@@ -9,7 +9,7 @@ const compiled = ts.transpileModule(readFileSync(new URL("../app/dashboard/aprob
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION", centralDirect = true, failFirst = false, syncWarning = false, deferred = false } = {}) {
+function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION", centralDirect = true, source, failFirst = false, syncWarning = false, deferred = false } = {}) {
   const components = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "Select", "StatusPill"]
     .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
   const ConfirmDialog = () => null;
@@ -46,8 +46,8 @@ function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION",
   };
   const credit = { id: 77, folio: "FC-77", numeroSadmin: "0100000077", clienteNombre: "Cliente de prueba", clienteDocumento: "111222333", clienteTelefono: "3209998877", equipo: "IPHONE 13", imei: "351168083278358", aliadoNombre: "Aliado de prueba" };
   let item = { id: "00000000-0000-4000-8000-000000000077", creditoId: 77, type, status, version: 4, centralDirect,
-    source: centralDirect ? "CENTRAL_DIRECT" : "ANALYST_REQUEST", expiresOn: "2026-10-21", reason: "Motivo original", observation: "Observación original",
-    promiseAmount: centralDirect ? null : 150000, promiseDate: centralDirect ? null : "2026-10-21", installmentNumber: null, installmentDueDate: null,
+    source: source || (centralDirect ? "CENTRAL_DIRECT" : "ANALYST_REQUEST"), expiresOn: "2026-10-21", reason: "Motivo original", observation: "Observación original",
+    promiseAmount: centralDirect || source === "SYSTEM_DIANA_REQUEST" ? null : 150000, promiseDate: centralDirect || source === "SYSTEM_DIANA_REQUEST" ? null : "2026-10-21", installmentNumber: null, installmentDueDate: null,
     createdByName: "Administrador original", decidedByName: "Administrador original", submittedAt: "2026-10-09T14:00:00Z", createdAt: "2026-10-09T14:00:00Z",
     decidedAt: "2026-10-09T14:00:00Z", decisionReason: "Autorización original", paidTowardPromise: 0, conditionStatus: "NOT_APPLICABLE", credit };
   const history = [{ id: "prior", action: "APPROVED", actorName: "Administrador original", createdAt: "2026-10-09T14:00:00Z", toStatus: status, payload: { reason: "Autorización anterior que se conserva" } }];
@@ -172,6 +172,14 @@ test("el editor conserva y actualiza el compromiso de una solicitud del analista
   ui.change("Motivo del cambio", "Cliente confirmó el nuevo compromiso"); ui.review(); await ui.confirm();
   assert.equal(ui.requests[0].promiseAmount, 180000); assert.equal(ui.requests[0].promiseDate, "2026-10-20");
   assert.equal(ui.requests[0].auditReason, "Cliente confirmó el nuevo compromiso");
+});
+
+test("el editor conserva la petición directa de Diana sin mostrar o fabricar una promesa", async () => {
+  const ui = harness({ centralDirect: false, source: "SYSTEM_DIANA_REQUEST", type: "PRORROGA" });
+  await ui.open(); ui.click("Editar solicitud");
+  assert.equal(ui.field("Sin vencimiento"), undefined); assert.equal(ui.field("Valor del compromiso"), undefined); assert.equal(ui.field("Fecha del compromiso"), undefined);
+  ui.change("Vencimiento", "2026-10-20"); ui.review(); await ui.confirm();
+  assert.equal(ui.requests[0].expiresOn, "2026-10-20"); assert.equal(Object.hasOwn(ui.requests[0], "promiseAmount"), false); assert.equal(Object.hasOwn(ui.requests[0], "promiseDate"), false);
 });
 
 test("el compromiso existente no se envía incompleto o con un valor inválido", async () => {

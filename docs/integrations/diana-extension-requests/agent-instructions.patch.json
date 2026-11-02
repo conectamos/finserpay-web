@@ -1,0 +1,11 @@
+{
+  "agentId": "6f9560ec-dcfd-4725-bf61-27cd8d528a1c",
+  "mode": "replace_one_and_replace_final_section",
+  "before": "No concedas descuentos por tu cuenta. No concedas prórrogas ni registres compromisos por fuera de gestionar_prorroga_finserpay y las verificaciones reales descritas en «PRÓRROGAS REGISTRADAS EN FINSER PAY»; una propuesta no equivale a una aprobación.",
+  "after": "No concedas descuentos ni decidas condiciones por tu cuenta. Las prórrogas se registran según la solicitud real del cliente y las validaciones del CRM descritas en «PRÓRROGAS REGISTRADAS EN FINSER PAY». Consulta su resultado con gestionar_prorroga_finserpay y confirma solo cuando aprobada=true; no pidas códigos ni confirmaciones adicionales.",
+  "finalSectionHeading": "## PRÓRROGAS REGISTRADAS EN FINSER PAY",
+  "replacementFile": "prompt-section.md",
+  "toolOperation": "upsert",
+  "toolFile": "agent-action.draft.json",
+  "preserveOtherAgentSettings": true
+}

@@ -136,7 +136,77 @@ Este campo **no concede prorrogas**. La consulta y su autenticacion conservan
 el cuerpo `{cedula}`. Diana no debe anunciar una prorroga aprobada por recibir
 opciones. El otorgamiento usa el flujo independiente descrito a continuacion.
 
-## Propuesta y confirmacion de una prorroga
+## Prórroga por solicitud directa del cliente
+
+La petición clara del cliente es la autorización para una prórroga de 1 a 4
+días permitida por el CRM. Diana no debe pedir código, importe, motivo,
+compromiso ni una segunda confirmación. Solo pregunta cuando falta precisar
+los días o identificar el crédito entre varios. Las fechas se calculan desde
+el vencimiento regular, con los límites 06/21 existentes; no se amplía esa
+política financiera ni se supone que una consulta de opciones sea una petición.
+
+La concesión la procesa el trabajador de eventos nativos. Antes de escribir,
+relee el historial completo y actual mediante MCP, verifica mensaje entrante,
+autor, teléfono registrado, conversación, canal y línea, y descarta
+cancelaciones, consultas hipotéticas, ambigüedades y orden temporal incierto.
+Una cédula, un folio o un indicador del modelo no autorizan la operación. Si
+varias identidades comparten el teléfono, se deriva al analista. Si hay varios
+créditos activos de la misma persona, se requiere una elección expresa del
+cliente; una vinculación manual de la conversación no sustituye esa elección.
+
+La validación reutiliza el plan de pagos real, los pagos activos y la misma
+elegibilidad de Atención. Bloquea nuevamente los registros antes de guardar.
+El UUID nativo se consume una sola vez en `DianaExtensionRequest`; la petición
+caduca a los 15 minutos y debe ser posterior a la activación. La concesión,
+el evento financiero y el seguimiento de cartera se guardan en una transacción.
+La fuente es `SYSTEM_DIANA_REQUEST`, con actor sistema Diana, responsable y
+fecha. Los importes y fechas de compromiso quedan nulos: no se inventa un
+acuerdo de pago. El seguimiento queda a las 08:00 de Colombia del día siguiente
+a la fecha límite. La sincronización del equipo ocurre después del commit.
+
+La acción `gestionar_prorroga_finserpay` conserva su nombre y el flujo `QBwOS`,
+pero en este modo solo recibe `cedula` y `folio`, ambos texto. El flujo envía:
+
+```json
+{"accion":"consultar_solicitud","cedula":"001234567","folio":"EJEMPLO-1"}
+```
+
+`POST /api/integraciones/diana/prorrogas` conserva el Bearer dedicado existente.
+Esta operación únicamente consulta y espera brevemente el resultado del
+trabajador. No acepta días, códigos, mensajes, teléfonos ni autorización del
+modelo. Devuelve `ok`, `estado`, `aprobada`, `yaExistia`, `dias`, `cuotaNumero`,
+`vencimientoCuota`, `fechaLimite` y `motivo`. Solo `aprobada=true` con una
+protección vigente permite confirmar la fecha al cliente. Un estado `PENDING`
+no es aprobación. `yaExistia=true` identifica una protección vigente anterior;
+no se anuncia como una nueva concesión. Todas las respuestas son privadas y
+sin caché.
+
+### Despliegue del modo directo
+
+El modo queda desactivado por defecto. `scripts/railway-predeploy.mjs` prepara
+el libro de solicitudes y verifica columnas, claves, restricciones y auditoría.
+Si falla, el despliegue no continúa. No se ejecuta DDL desde HTTP.
+`node scripts/ensure-diana-extension-request-schema.mjs --check` solo lee el
+esquema; `--apply` ejecuta la preparación transaccional idempotente.
+
+Después de publicar el backend y verificar el esquema, se actualizan los
+cuatro campos documentados de `QBwOS`, el filtro nativo `MdjEt` para mensajes
+entrantes y las instrucciones/acción de Diana. Se conservan autorización HTTP,
+consulta de crédito, transferencia humana, número, proveedor y otros ajustes.
+Los borradores revisables están en `docs/integrations/diana-extension-requests/`.
+Finalmente se configura `DIANA_REQUEST_EXTENSIONS_ENABLED=true` junto con
+`DIANA_REQUEST_EXTENSIONS_ACTIVATED_AT` en UTC. Esta fecha impide conceder por
+mensajes anteriores a la activación. La bandera antigua es independiente y se
+conserva por compatibilidad; no activa el nuevo modo.
+
+Las pruebas locales usan datos sintéticos y PostgreSQL embebido. No envían
+WhatsApp ni conceden prórrogas reales. La publicación externa y la comprobación
+de una concesión real deben distinguirse de esos resultados.
+
+## Propuesta y confirmacion de una prorroga (compatibilidad anterior)
+
+Este contrato se conserva para propuestas históricas. La acción de Diana del
+modo directo utiliza `consultar_solicitud`, descrita arriba, y no pide códigos.
 
 `POST /api/integraciones/diana/prorrogas` utiliza un Bearer dedicado
 `FINSERPAY_DIANA_EXTENSION_API_TOKEN`, distinto del token de consulta, y requiere

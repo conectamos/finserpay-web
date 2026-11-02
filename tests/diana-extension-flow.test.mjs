@@ -69,13 +69,18 @@ test("padded exact confirmations wake the production parser without granting aut
   }
 });
 
-test("ordinary inbound chats, forged variants, media and unrelated events never leave the event gate", () => {
+test("all inbound text wakes private native classification without forwarding content or model authority", () => {
   for (const text of ["Hola", "confirmo PR-0123456789ABCDEF", "CONFIRMO PR-0123456789abcdef",
     "CONFIRMO PR-0123456789ABCDEFX", "CONFIRMO PR-0123456789ABCDEF más texto",
     "CONFIRMO\nPR-0123456789ABCDEF", "CONFIRMO PR-0123456789ABCDEF\nCONFIRMO PR-0123456789ABCDEF"]) {
-    assert.deepEqual(run(gate, event(true, text)),
-      { ok: true, ignored: true, forward: "no", request_body: "" }, JSON.stringify(text));
+    const result = run(gate, event(true, text));
+    assert.equal(result.forward, "yes");
+    assert.equal(result.request_body.includes('"content":'), false);
+    assert.equal(result.request_body.includes(text), false);
   }
+});
+
+test("media, malformed direction and unrelated events never leave the event gate", () => {
   for (const input of [
     { ...event(true, "CONFIRMO PR-0123456789ABCDEF"), event: "conversation_opened" },
     { ...event(true, ""), message: { ...event(true, "").message, content_type: "image", content: "CONFIRMO PR-0123456789ABCDEF" } },

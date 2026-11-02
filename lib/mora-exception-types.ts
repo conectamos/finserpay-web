@@ -17,7 +17,7 @@ export type MoraExceptionRequestItem = {
   type: MoraExceptionType;
   status: MoraExceptionStatus;
   version: number;
-  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT" | "SYSTEM_DIANA";
+  source: "ANALYST_REQUEST" | "CENTRAL_DIRECT" | "SYSTEM_DIANA" | "SYSTEM_DIANA_REQUEST";
   centralDirect: boolean;
   installmentNumber: number | null;
   installmentDueDate: string | null;
