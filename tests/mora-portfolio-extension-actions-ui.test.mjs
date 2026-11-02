@@ -198,6 +198,18 @@ test("el administrador central puede editar una autorización directa sin fecha 
   assert.match(ui.patchRequests()[0].body.auditReason, /administrador central/);
 });
 
+test("la petición directa de Diana se edita sin solicitar ni enviar un compromiso de pago", async () => {
+  for (const centralAdmin of [false, true]) {
+    const ui = harness({ item: { source: "SYSTEM_DIANA_REQUEST", promiseAmount: null, promiseDate: null }, permissions: { centralAdmin } });
+    await editable(ui);
+    assert.equal(ui.field("mora-extension-promise-amount"), undefined); assert.equal(ui.field("mora-extension-promise-date"), undefined);
+    assert.equal(ui.find(item => item.type === "input" && item.props.type === "checkbox"), undefined, "la petición conserva vencimiento");
+    ui.change(ui.field("mora-extension-expires-on"), "2026-10-21"); await ui.submit("Editar prórroga"); await ui.click("Confirmar cambios");
+    const body = ui.patchRequests()[0].body; assert.equal(body.expiresOn, "2026-10-21");
+    assert.equal(Object.hasOwn(body, "promiseAmount"), false); assert.equal(Object.hasOwn(body, "promiseDate"), false);
+  }
+});
+
 test("la cancelación exige revisión y confirmación dentro del panel y conserva la trazabilidad", async () => {
   const ui = harness(); ui.render(); await ui.click("Cancelar prórroga");
   assert.equal(ui.field("mora-extension-expires-on"), undefined); assert.equal(ui.field("mora-extension-promise-amount"), undefined);

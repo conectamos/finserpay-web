@@ -147,19 +147,40 @@ function analystAmendment(api, item, patch = {}) {
     idempotencyKey: randomUUID(), ...patch });
 }
 
-async function approvedDianaExtension(f) {
+async function approvedDianaExtension(f, source = "SYSTEM_DIANA") {
   const id = randomUUID();
   await f.database.query(`INSERT INTO "CreditMoraExceptionRequest"
     (id,"creditoId",type,status,source,version,"installmentNumber","installmentDueDate","expiresOn","promiseAmount","promiseDate",
      reason,observation,"createdBySystemKey","createdByName","decidedBySystemKey","decidedByName","decidedAt","decisionReason","createIdempotencyKey","createRequestHash")
-    VALUES($1,77,'PRORROGA','APPROVED','SYSTEM_DIANA',1,3,'2026-10-17','2026-10-20',200,'2026-10-20',
+    VALUES($1,77,'PRORROGA','APPROVED',$5,1,3,'2026-10-17','2026-10-20',$6,$7,
       'Solicitud confirmada','Cliente confirmó términos','SYSTEM_DIANA','Diana','SYSTEM_DIANA','Diana',$2,'Confirmación auténtica del cliente',$3,$4)`,
-  [id, extensionNow, randomUUID(), "a".repeat(64)]);
+  [id, extensionNow, randomUUID(), "a".repeat(64), source, source === "SYSTEM_DIANA_REQUEST" ? null : 200, source === "SYSTEM_DIANA_REQUEST" ? null : "2026-10-20"]);
   await f.database.query(`INSERT INTO "CreditMoraExceptionEvent"
     (id,"requestId","creditoId",version,action,"toStatus",payload,"actorSystemKey","actorName","requestHash")
     VALUES($1,$2,77,1,'APPROVED','APPROVED','{}','SYSTEM_DIANA','Diana',$3)`, [randomUUID(), id, "b".repeat(64)]);
   return (await f.database.query(`SELECT * FROM "CreditMoraExceptionRequest" WHERE id=$1`, [id])).rows[0];
 }
+
+test("el analista puede editar y cancelar la petición directa de Diana sin inventar un compromiso de pago", async t => {
+  const f = await harness(t, { plan: extensionPlan }), original = await approvedDianaExtension(f, "SYSTEM_DIANA_REQUEST");
+  const edited = await f.service.amendMoraExceptionRequest(original.id, analystAmendment(f.service, original, {
+    reason: "Cliente solicita ajustar la prórroga", observation: "No se recibió una promesa de pago",
+  }), analyst, extensionNow);
+  assert.equal(edited.item.source, "SYSTEM_DIANA_REQUEST"); assert.equal(edited.item.promiseAmount, null); assert.equal(edited.item.promiseDate, null);
+  assert.equal(edited.item.conditionStatus, "NOT_APPLICABLE"); assert.equal(edited.item.expiresOn, "2026-10-21");
+  assert.equal(edited.item.decidedBySystemKey, "SYSTEM_DIANA"); assert.equal(edited.item.decidedByUserId, null);
+  await assert.rejects(f.service.amendMoraExceptionRequest(original.id, amendmentInput(f.service, edited.item, {
+    promiseAmount: 300, promiseDate: "2026-10-21",
+  }), central, extensionNow), /no tiene un compromiso/);
+  await assert.rejects(f.service.amendMoraExceptionRequest(original.id, amendmentInput(f.service, edited.item, { expiresOn: null }), central, extensionNow), /Conserva una fecha/);
+  const cancelled = await f.service.amendMoraExceptionRequest(original.id, f.service.parseAnalystMoraExtensionAmendment({
+    action: "CANCEL", version: edited.item.version, auditReason: "Cliente completó la gestión", idempotencyKey: randomUUID(),
+  }), analyst, extensionNow);
+  assert.equal(cancelled.item.status, "CANCELLED"); assert.equal(cancelled.item.decidedBySystemKey, "SYSTEM_DIANA");
+  const events = (await f.database.query('SELECT action,"actorUserId","actorSystemKey" FROM "CreditMoraExceptionEvent" ORDER BY version')).rows;
+  assert.deepEqual(events, [{ action: "APPROVED", actorUserId: null, actorSystemKey: "SYSTEM_DIANA" },
+    { action: "EDITED", actorUserId: 2, actorSystemKey: null }, { action: "CANCELLED", actorUserId: 2, actorSystemKey: null }]);
+});
 
 test("editar y cancelar prórroga Diana conserva la decisión automática y atribuye al humano solo su propia intervención", async t => {
   const f = await harness(t, { plan: extensionPlan });

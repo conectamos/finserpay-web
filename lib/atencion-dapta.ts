@@ -2,6 +2,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { AttentionIntegration, AttentionMessage, DaptaConversationSnapshot } from "@/lib/atencion-types";
 import { isMetaBusinessUserId, isMetaPhoneRecipient } from "@/lib/atencion-meta-identity";
+import { mightBeDianaExtensionRequest, resolveDianaExtensionRequest, type DianaRequestContextMessage } from "./diana-extension-request-intent";
+import type { DianaExtensionRequestIntent } from "./diana-extension-request-types";
 
 // Public, documented MCP endpoint. No arbitrary URL or tool name is accepted.
 const MCP_ENDPOINT = "https://mcp.dapta.ai/mcp";
@@ -21,7 +23,7 @@ type AdapterDependencies = { env?: NodeJS.ProcessEnv; fetch?: typeof fetch };
 type SnapshotOptions = { cursor?: string | null; historyCursors?: Readonly<Record<string, string | null>> };
 export type DaptaConfirmedEventMessageInput = {
   externalConversationId: string; contactId: string; messageId: string; historyCursor?: string | null;
-  direction?: "outbound" | "inbound"; requireFresh?: boolean;
+  direction?: "outbound" | "inbound"; requireFresh?: boolean; requireRequestContext?: boolean;
 };
 export type DaptaConfirmedEventSource = {
   workspaceId: string; agentId: string; externalConversationId: string; contactId: string;
@@ -31,12 +33,13 @@ export type DaptaConfirmedEventMessage = {
   direction: "outbound" | "inbound"; contentType: "text";
 };
 export type DaptaFinancialWitness = { code: string; textDigest: string };
+export type DaptaExtensionRequestWitness = { intent: DianaExtensionRequestIntent; textDigest: string; latest: true; observedAt: string };
 export type DaptaConfirmedEventMessageResult = {
   source: DaptaConfirmedEventSource;
   /** Event-search checkpoint only. It does not advance the broad history import. */
   historyCursor: string | null; historyTruncated: boolean;
   /** Present only for the strict live read used by financial message witnesses. */
-  verification?: { fresh: true; kind: "agent" | "followup" | "lead"; financialWitness?: DaptaFinancialWitness };
+  verification?: { fresh: true; kind: "agent" | "followup" | "lead"; financialWitness?: DaptaFinancialWitness; requestWitness?: DaptaExtensionRequestWitness };
 } & ({ state: "confirmed"; message: DaptaConfirmedEventMessage }
   | { state: "pending"; reason: "MESSAGE_NOT_FOUND" | "HISTORY_REMAINING" | "DELIVERY_PENDING" | "LIVE_READ_PENDING" }
   | { state: "failed"; reason: "DELIVERY_FAILED" | "UNSUPPORTED_MESSAGE" | "INVALID_MESSAGE" });
@@ -343,9 +346,11 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
       if (!config) throw new AttentionDaptaError("NOT_CONFIGURED", 503, "Configura las credenciales de lectura, el espacio y el agente de Dapta en el servidor.");
       const descriptor = object(input), contactId = eventContactId(descriptor?.contactId);
       const direction = input?.direction ?? "outbound", requireFresh = input?.requireFresh === true || direction === "inbound";
+      const requestContext = input?.requireRequestContext === true;
       if (!descriptor || typeof descriptor.externalConversationId !== "string" || !UUID.test(descriptor.externalConversationId)
         || typeof descriptor.messageId !== "string" || !UUID.test(descriptor.messageId) || !contactId
-        || !["inbound", "outbound"].includes(direction) || (input.requireFresh !== undefined && typeof input.requireFresh !== "boolean")) {
+        || !["inbound", "outbound"].includes(direction) || (input.requireFresh !== undefined && typeof input.requireFresh !== "boolean")
+        || (input.requireRequestContext !== undefined && typeof input.requireRequestContext !== "boolean") || requestContext && direction !== "inbound") {
         throw new AttentionDaptaError("SCOPE_MISMATCH", 400, "La identidad del evento de Dapta no es válida.");
       }
       const externalConversationId = descriptor.externalConversationId, messageId = descriptor.messageId;
@@ -356,6 +361,10 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
       const source: DaptaConfirmedEventSource = { workspaceId: config.workspace, agentId: config.agent, externalConversationId, contactId };
       const seen = new Set<string>(pageCursor ? [pageCursor] : []);
       const client = mcpClient(config, transport, Date.now() + 55000);
+      const context = new Map<string, DianaRequestContextMessage>();
+      const uncertainCustomerAt: number[] = [];
+      let contextMalformed = false;
+      let deferred: { message: DaptaConfirmedEventMessage; witness: DaptaFinancialWitness | null } | null = null;
       try {
         await client.initialize();
         for (let page = 0; page < HISTORY_PAGES; page++) {
@@ -376,6 +385,28 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
           if (nextCursor && seen.has(nextCursor)) invalidResponse();
           if (requireFresh && object(detail.fresh)?.applied !== true) return { source, state: "pending", reason: "LIVE_READ_PENDING",
             historyCursor: inputCursor, historyTruncated: nextCursor !== null };
+          if (requestContext) {
+            for (const item of detail.messages) {
+              const row = object(item);
+              if (!row || !["lead", "agent"].includes(String(row.kind))) continue;
+              const at = date(row.created_at), inbound = row.kind === "lead";
+              if (!at || typeof row.id !== "string" || !UUID.test(row.id) || row.direction !== (inbound ? "inbound" : "outbound")) { contextMalformed = true; continue; }
+              const usable = row.content_type === "text" && typeof row.content === "string" && row.content.length <= MAX_MESSAGE_LENGTH
+                && (inbound ? ["delivered", "read"] : ["sent", "delivered", "read"]).includes(String(row.status));
+              if (!usable) {
+                if (inbound) {
+                  uncertainCustomerAt.push(Date.parse(at));
+                  context.set(row.id, { id: row.id, text: "", sentAt: at, kind: "lead", direction: "inbound" });
+                }
+                continue;
+              }
+              const message: DianaRequestContextMessage = { id: row.id, text: row.content as string, sentAt: at,
+                kind: inbound ? "lead" : "agent", direction: inbound ? "inbound" : "outbound" };
+              const prior = context.get(message.id);
+              if (prior && JSON.stringify(prior) !== JSON.stringify(message)) contextMalformed = true;
+              context.set(message.id, message);
+            }
+          }
           const targets = detail.messages.map(object).filter((message): message is JsonObject => message?.id === messageId);
           if (targets.length > 1) {
             const immutable = (message: JsonObject) => JSON.stringify([message.kind, message.direction, message.content_type,
@@ -396,9 +427,27 @@ export function createDaptaAttentionAdapter(dependencies: AdapterDependencies = 
             const text = visibleText(target.content, config.key), sentAt = date(target.created_at);
             if (!text || !sentAt) return { ...checkpoint, state: "failed", reason: "INVALID_MESSAGE" };
             const witness = requireFresh ? financialWitness(target.content, direction, target.kind) : null;
-            return { ...checkpoint, state: "confirmed", ...(requireFresh ? { verification: { fresh: true as const,
-              kind: target.kind as "agent" | "followup" | "lead", ...(witness ? { financialWitness: witness } : {}) } } : {}), message: { id: messageId, text, sentAt,
-              status: target.status as DaptaConfirmedEventMessage["status"], direction, contentType: "text" } };
+            const message: DaptaConfirmedEventMessage = { id: messageId, text, sentAt,
+              status: target.status as DaptaConfirmedEventMessage["status"], direction, contentType: "text" };
+            if (!requestContext || !mightBeDianaExtensionRequest(String(target.content), sentAt)) {
+              return { ...checkpoint, state: "confirmed", ...(requireFresh ? { verification: { fresh: true as const,
+                kind: target.kind as "agent" | "followup" | "lead", ...(witness ? { financialWitness: witness } : {}) } } : {}), message };
+            }
+            // Keep the original only inside this private reader. Do not authorize
+            // until all later native messages have been checked through EOF.
+            deferred = { message, witness };
+          }
+          if (!nextCursor && deferred) {
+            const targetAt = Date.parse(deferred.message.sentAt);
+            const resolution = !contextMalformed && !uncertainCustomerAt.some(at => at >= targetAt)
+              ? resolveDianaExtensionRequest(messageId, [...context.values()]) : null;
+            const evidence = resolution?.evidenceIds.map(id => context.get(id));
+            const requestWitness: DaptaExtensionRequestWitness | null = resolution && evidence?.every(Boolean)
+              ? { intent: resolution.intent, latest: true, observedAt: new Date().toISOString(),
+                textDigest: createHash("sha256").update(JSON.stringify(evidence)).digest("hex") } : null;
+            return { source, historyCursor: inputCursor, historyTruncated: false, state: "confirmed",
+              verification: { fresh: true, kind: "lead", ...(deferred.witness ? { financialWitness: deferred.witness } : {}),
+                ...(requestWitness ? { requestWitness } : {}) }, message: deferred.message };
           }
           if (!nextCursor) return { source, state: "pending", reason: "MESSAGE_NOT_FOUND", historyCursor: inputCursor, historyTruncated: false };
           pageCursor = nextCursor;

@@ -10,6 +10,7 @@ import { assertDaptaEventAuthorization, DAPTA_ATTENTION_EVENT_MAX_BYTES, DaptaEv
 import type { AttentionDatabase } from "./atencion-storage";
 import { createDianaExtensionEventProcessor } from "./diana-extension-events";
 import { dianaExtensionsEnabled, dianaExtensionRuntime } from "./diana-extension-runtime";
+import { dianaRequestExtensionsEnabled, dianaExtensionRequestRuntime } from "./diana-extension-request-runtime";
 
 type EventConfig = { scope: DaptaEventScope; token: string; extensionsEnabled?: true };
 export function attentionDaptaEventConfig(env: NodeJS.ProcessEnv = process.env): EventConfig | null {
@@ -18,7 +19,7 @@ export function attentionDaptaEventConfig(env: NodeJS.ProcessEnv = process.env):
   const token = env.DAPTA_ATTENTION_EVENT_TOKEN?.trim() || "";
   if (!scope || !meta || scope.phoneNumberId !== meta.phoneNumberId || scope.wabaId !== meta.wabaId
       || token.length < 32 || token.length > 4096 || /\s/.test(token)) return null;
-  return { scope, token, ...(dianaExtensionsEnabled(env) ? { extensionsEnabled: true as const } : {}) };
+  return { scope, token, ...(dianaExtensionsEnabled(env) || dianaRequestExtensionsEnabled(env) ? { extensionsEnabled: true as const } : {}) };
 }
 function eventJson(body: unknown) {
   return Response.json(body, { headers: { "Cache-Control": "private, no-store", Vary: "Authorization", "X-Content-Type-Options": "nosniff" } });
@@ -50,8 +51,10 @@ export async function attentionDaptaEventRuntime() {
   if (!config) throw new DaptaEventError("DAPTA_EVENT_NOT_CONFIGURED", 503);
   const { default: prisma } = await import("./prisma");
   const extensionProcessor = config.extensionsEnabled ? createDianaExtensionEventProcessor({
-    scope: config.scope, enabled: dianaExtensionsEnabled,
+    scope: config.scope, enabled: () => dianaExtensionsEnabled() || dianaRequestExtensionsEnabled(),
+    legacyEnabled: dianaExtensionsEnabled, requestEnabled: dianaRequestExtensionsEnabled,
     consume: async proof => (await dianaExtensionRuntime()).store.consumeVerifiedMessage(proof),
+    consumeRequest: async proof => (await dianaExtensionRequestRuntime()).store.consumeVerifiedRequest(proof),
     afterGranted: async creditId => {
       // The grant is committed; a remote equipment-sync failure cannot revoke it.
       try {
@@ -67,6 +70,7 @@ type EventStore = Pick<ReturnType<typeof createAttentionDaptaEventStore>, "claim
   & Partial<Pick<ReturnType<typeof createAttentionDaptaEventStore>, "getVerifiedConversation" | "completeVerifiedInbound">>;
 type ExtensionWorkerOptions = {
   enabled: () => boolean;
+  requestEnabled?: () => boolean;
   process: ReturnType<typeof createDianaExtensionEventProcessor>;
 };
 function retryClassification(error: unknown, job: DaptaEventJob) {
@@ -90,7 +94,8 @@ export async function dispatchAttentionDaptaEvents(store: EventStore, read = fet
       }
       const reply = await read({ externalConversationId: job.externalConversationId, contactId: job.contactId,
         messageId: job.messageId, historyCursor: job.historyCursor,
-        ...(extensionActive ? { direction: inbound ? "inbound" as const : "outbound" as const, requireFresh: true } : {}) });
+        ...(extensionActive ? { direction: inbound ? "inbound" as const : "outbound" as const, requireFresh: true,
+          ...(inbound && extensions?.requestEnabled?.() ? { requireRequestContext: true } : {}) } : {}) });
       if (reply.state === "confirmed") {
         if (extensionActive) {
           if (!store.getVerifiedConversation) throw new DaptaEventError("DAPTA_EVENT_NOT_CONFIGURED", 503);
@@ -139,7 +144,7 @@ export function startAttentionDaptaEventWorker() {
       if (!attentionDaptaEventConfig()) return;
       const { store, extensionProcessor } = await attentionDaptaEventRuntime();
       const result = await dispatchAttentionDaptaEvents(store, fetchConfirmedEventMessage,
-        extensionProcessor ? { enabled: dianaExtensionsEnabled, process: extensionProcessor } : undefined);
+        extensionProcessor ? { enabled: () => dianaExtensionsEnabled() || dianaRequestExtensionsEnabled(), requestEnabled: dianaRequestExtensionsEnabled, process: extensionProcessor } : undefined);
       if (result.imported) console.log(`[attention-dapta] imported=${result.imported}`);
       if (result.failed) console.warn(`[attention-dapta] failed=${result.failed}; durable retries retained`);
     } catch { console.warn("[attention-dapta] worker unavailable; pending events retained"); }

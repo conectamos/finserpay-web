@@ -116,12 +116,12 @@ export default function MoraPortfolioExtensionActions({ creditId, extension, cap
         (rights.maxExpiresOn && draft.expiresOn > rights.maxExpiresOn))) {
         setError("Selecciona un vencimiento dentro del plazo permitido."); return;
       }
-      if (!detail.item.centralDirect && (!validDate(draft.promiseDate) ||
+      if ((!detail.item.centralDirect && detail.item.source !== "SYSTEM_DIANA_REQUEST") && (!validDate(draft.promiseDate) ||
         (!noExpiry && draft.promiseDate > draft.expiresOn) ||
         (!rights.centralAdmin && draft.promiseDate < colombiaDateKey(new Date())))) {
         setError("Revisa la fecha del compromiso de pago y el vencimiento de la prórroga."); return;
       }
-      if (rights.centralAdmin && !detail.item.centralDirect &&
+      if (rights.centralAdmin && (!detail.item.centralDirect && detail.item.source !== "SYSTEM_DIANA_REQUEST") &&
         (!Number.isFinite(Number(draft.promiseAmount)) || Number(draft.promiseAmount) <= 0)) {
         setError("Indica un valor válido para el compromiso de pago."); return;
       }
@@ -136,7 +136,7 @@ export default function MoraPortfolioExtensionActions({ creditId, extension, cap
       ...(action === "EDIT" ? {
         expiresOn: rights.centralAdmin && detail.item.centralDirect && draft.noExpiry ? null : draft.expiresOn,
         reason: draft.reason, observation: draft.observation,
-        ...(!detail.item.centralDirect ? { promiseDate: draft.promiseDate,
+        ...((!detail.item.centralDirect && detail.item.source !== "SYSTEM_DIANA_REQUEST") ? { promiseDate: draft.promiseDate,
           ...(rights.centralAdmin ? { promiseAmount: Number(draft.promiseAmount) } : {}) } : {}),
       } : {}),
     };
@@ -187,7 +187,7 @@ export default function MoraPortfolioExtensionActions({ creditId, extension, cap
             {rights.centralAdmin && detail.item.centralDirect && <label className={styles.extensionCheckbox}><input type="checkbox" checked={draft.noExpiry} onChange={event => update({ noExpiry: event.target.checked })} />Sin vencimiento</label>}
             {!(rights.centralAdmin && detail.item.centralDirect && draft.noExpiry) && <label><span>Vencimiento</span><Input id="mora-extension-expires-on" type="date" required value={draft.expiresOn} min={rights.minExpiresOn || undefined} max={rights.maxExpiresOn || undefined} onChange={event => update({ expiresOn: event.target.value, noExpiry: false })} /></label>}
             {!rights.centralAdmin && rights.maxExpiresOn && <p className={styles.extensionHelp}>Fecha máxima permitida: <strong>{dateLabel(rights.maxExpiresOn)}</strong>. Hasta 4 días calendario desde la fecha regular de pago.</p>}
-            {!detail.item.centralDirect && <div className={styles.extensionCommitment}>
+            {(!detail.item.centralDirect && detail.item.source !== "SYSTEM_DIANA_REQUEST") && <div className={styles.extensionCommitment}>
               <label><span>Fecha del compromiso</span><Input id="mora-extension-promise-date" type="date" required value={draft.promiseDate} min={rights.centralAdmin ? undefined : colombiaDateKey(new Date())} max={draft.expiresOn || rights.maxExpiresOn || undefined} onChange={event => update({ promiseDate: event.target.value })} /></label>
               <label><span>Valor del compromiso (COP)</span><Input id="mora-extension-promise-amount" type="number" min="0.01" step="0.01" required readOnly={!rights.centralAdmin} value={draft.promiseAmount} onChange={event => update({ promiseAmount: event.target.value })} /></label>
             </div>}

@@ -1,0 +1,17 @@
+{
+  "existingFlowId": "QBwOS",
+  "eventFlowId": "MdjEt",
+  "agentId": "6f9560ec-dcfd-4725-bf61-27cd8d528a1c",
+  "mode": "patch_existing",
+  "preserveHttpAuthorization": true,
+  "preserveExistingTools": true,
+  "replaceAgentAction": "gestionar_prorroga_finserpay",
+  "patchPaths": [
+    "prIn.api_trigger.trigger_params",
+    "nrmPr.api_action.code_action.code",
+    "qryPr.api_action.response",
+    "rspPr.api_response.response_params"
+  ],
+  "activationFlag": "DIANA_REQUEST_EXTENSIONS_ENABLED",
+  "activationFloor": "DIANA_REQUEST_EXTENSIONS_ACTIVATED_AT"
+}

@@ -58,3 +58,35 @@ test("canonical quote validation and idempotent grants belong to the transaction
     assert.equal(result.outcome,outcome);assert.equal(f.calls.length,1);assert.deepEqual(f.sync,outcome==="already_granted"?[7]:[]);
   }
 });
+
+function requestFixture(outcome="granted") {
+  const f=fixture();delete f.reply.verification.financialWitness;
+  f.reply.message.text="Visible redacted text is not authority";
+  f.reply.verification.requestWitness={intent:{kind:"days",days:2,folio:"FC-123"},textDigest:digest("private native original"),latest:true,observedAt:at};
+  const calls=[],sync=[];let enabled=true;
+  const process=createDianaExtensionEventProcessor({scope,enabled:()=>true,legacyEnabled:()=>false,requestEnabled:()=>enabled,
+    consume:async()=>assert.fail("request must not enter the legacy code store"),
+    consumeRequest:async proof=>{calls.push(proof);return{outcome,creditId:7};},afterGranted:async id=>sync.push(id)});
+  return{...f,process,calls,sync,disable:()=>{enabled=false;}};
+}
+test("direct requests pass only native private intent to the transactional request store and sync committed grants",async()=>{
+  for(const outcome of ["granted","already_granted","rejected","needs_credit"]){
+    const f=requestFixture(outcome);f.reply.confirmed=true;f.reply.modelDays=4;
+    assert.deepEqual(await f.process(f.job,f.reply,conversationId),{state:"complete",outcome});
+    assert.equal(f.calls.length,1);assert.deepEqual(f.calls[0].intent,{kind:"days",days:2,folio:"FC-123"});
+    assert.equal(f.calls[0].latest,true);assert.equal(f.calls[0].observedAt,at);assert.equal(f.calls[0].messageId,messageId);
+    assert.equal("text" in f.calls[0],false);assert.equal("code" in f.calls[0],false);assert.equal("confirmed" in f.calls[0],false);
+    assert.deepEqual(f.sync,["granted","already_granted"].includes(outcome)?[7]:[]);
+  }
+});
+test("the direct-request activation gate, complete fresh tail, exact phone and source remain mandatory",async()=>{
+  const disabled=requestFixture();disabled.disable();
+  assert.deepEqual(await disabled.process(disabled.job,disabled.reply,conversationId),{state:"ignored"});assert.equal(disabled.calls.length,0);
+  for(const mutate of [f=>{f.reply.verification.requestWitness.latest=false;},f=>{f.reply.verification.fresh=false;},
+    f=>{f.reply.verification.kind="agent";},f=>{f.job.phone="+12025550199";},f=>{f.job.phoneNumberId="foreign";},
+    f=>{f.reply.source.externalConversationId=conversationId;},f=>{f.reply.verification.requestWitness.textDigest="bad";}]){
+    const f=requestFixture();mutate(f);await assert.rejects(f.process(f.job,f.reply,conversationId));assert.equal(f.calls.length,0);
+  }
+  const opaque=requestFixture();opaque.job.contactId="CO.opaque";opaque.job.phone=null;
+  assert.deepEqual(await opaque.process(opaque.job,opaque.reply,conversationId),{state:"ignored"});assert.equal(opaque.calls.length,0);
+});

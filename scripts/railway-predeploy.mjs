@@ -43,4 +43,10 @@ await import("./ensure-credit-welcome-voice-schema.mjs");
 await import("./ensure-cut-collection-schema.mjs");
 
 await import("./ensure-atencion-schema.mjs");
+// Preparing the native-request ledger does not activate automatic concessions.
+// The independent feature flag and activation floor are checked at runtime.
+const { ensureDianaExtensionRequestSchema } = await import("./ensure-diana-extension-request-schema.mjs");
+const dianaRequestSchema = await ensureDianaExtensionRequestSchema({ apply: true });
+if (!dianaRequestSchema.ready) throw new Error("El esquema de solicitudes directas de Diana no está listo.");
+console.log("Esquema de solicitudes directas de Diana verificado; activación controlada por configuración.");
 await import("./ensure-whatsapp-automation-meta-schema.mjs");

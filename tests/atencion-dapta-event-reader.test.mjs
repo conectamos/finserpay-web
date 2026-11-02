@@ -78,6 +78,52 @@ test("invalid descriptors or configuration never make a network request", async 
   assert.equal(f.requests.length, 0);
 });
 
+const requestMessage = (changes = {}) => ({ ...message, kind: "lead", direction: "inbound",
+  content: "Necesito prórroga de 2 días crédito FC-20260925220309-TEST", ...changes });
+const requestInput = { ...input, direction: "inbound", requireRequestContext: true };
+test("a private direct-request witness uses original folio and only authorizes after the full fresh EOF", async () => {
+  const first = requestMessage(), later = requestMessage({ id: otherMessageId, content: "Gracias", created_at: "2026-11-01 20:00:01.123456-05" });
+  const f = mock(args => args.messages_cursor ? detail([later]) : detail([first], { messages_next_cursor: "tail" }));
+  const result = await f.adapter.fetchConfirmedEventMessage(requestInput);
+  assert.equal(f.requests.filter(r => r.method === "tools/call").length, 2);
+  assert.equal(result.state, "confirmed");
+  assert.deepEqual(result.verification.requestWitness.intent, { kind: "days", days: 2, folio: "FC-20260925220309-TEST" });
+  assert.equal(result.verification.requestWitness.latest, true);
+  assert.match(result.verification.requestWitness.textDigest, /^[a-f0-9]{64}$/);
+  assert.ok(Number.isFinite(Date.parse(result.verification.requestWitness.observedAt)));
+  assert.equal(result.message.text.includes("20260925220309"), false);
+  assert.equal(JSON.stringify(result.verification).includes(first.content), false);
+});
+test("later native cancellations, media uncertainty and equal normalized milliseconds cannot attest a request", async () => {
+  for (const changes of [
+    { content: "No gracias" }, { content: "Mejor 3 días" }, { content_type: "image", content: "private-image" },
+    { content: "No gracias", created_at: "2026-11-01 20:00:00.123999-05" },
+  ]) {
+    const later = requestMessage({ id: otherMessageId, created_at: "2026-11-01 20:00:01.123456-05", ...changes });
+    const f = mock(args => args.messages_cursor ? detail([later]) : detail([requestMessage()], { messages_next_cursor: "tail" }));
+    const result = await f.adapter.fetchConfirmedEventMessage(requestInput);
+    assert.equal(result.state, "confirmed");
+    assert.equal(result.verification.requestWitness, undefined, JSON.stringify(changes));
+  }
+});
+test("a partial or stale conversation tail never creates a request witness", async () => {
+  const f = mock(args => detail([requestMessage()], { messages_next_cursor: args.messages_cursor === "p2" ? "p3" : args.messages_cursor === "p1" ? "p2" : "p1" }));
+  const bounded = await f.adapter.fetchConfirmedEventMessage(requestInput);
+  assert.equal(bounded.state, "pending"); assert.equal(bounded.reason, "HISTORY_REMAINING");
+  assert.equal(bounded.verification, undefined);
+  const stale = await mock(args => args.messages_cursor ? detail([], { fresh: { applied: false } }) : detail([requestMessage()], { messages_next_cursor: "tail" })).adapter.fetchConfirmedEventMessage(requestInput);
+  assert.equal(stale.state, "pending"); assert.equal(stale.verification, undefined);
+});
+test("ordinary chat and legacy confirmation do not walk the request history or gain new authority", async () => {
+  for (const content of ["Hola", "CONFIRMO PR-1111111111111111"]) {
+    const f = mock(() => detail([requestMessage({ content })], { messages_next_cursor: "tail" }));
+    const result = await f.adapter.fetchConfirmedEventMessage(requestInput);
+    assert.equal(f.requests.filter(r => r.method === "tools/call").length, 1);
+    assert.equal(result.state, "confirmed"); assert.equal(result.verification.requestWitness, undefined);
+    assert.equal(Boolean(result.verification.financialWitness), content.startsWith("CONFIRMO"));
+  }
+});
+
 test("a real-shaped folio and an all-numeric proposal code retain a private exact witness while CRM text remains redacted",async()=>{
   const scope={workspaceId:workspace,agentId:agent,agentChannelId:"00000000-0000-4000-8000-000000000007",phoneNumberId:"1162059967000416",wabaId:"2148284059050848"};
   const code="PR-1111111111111111",folio="FC-20260925220309-CCQP",calls=[];

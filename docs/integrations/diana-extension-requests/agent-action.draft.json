@@ -1,0 +1,23 @@
+{
+  "name": "gestionar_prorroga_finserpay",
+  "type": "api",
+  "method": "POST",
+  "url": "CONSERVAR_URL_PRIVADA_DEL_FLUJO_QBwOS",
+  "instructions": "Consultar y esperar el resultado real de la prórroga solicitada por el cliente en WhatsApp. No prepara ofertas ni pide códigos. Solo aprobada=true acredita una prórroga vigente registrada por el CRM; informa su fechaLimite exacta. Esta acción no autoriza concesiones con sus argumentos.",
+  "parameters": [
+    {
+      "name": "cedula",
+      "type": "string",
+      "required": true,
+      "valueMode": "description",
+      "instructions": "Última cédula consultada correctamente en este mismo chat; conserva ceros iniciales. No volver a pedirla si ya la tienes ni deducirla de nombre o teléfono."
+    },
+    {
+      "name": "folio",
+      "type": "string",
+      "required": true,
+      "valueMode": "description",
+      "instructions": "Folio exacto del crédito devuelto por consultar_credito_finserpay. Si hay varios créditos, el cliente debe precisar cuál solicita; no elijas por tu cuenta."
+    }
+  ]
+}

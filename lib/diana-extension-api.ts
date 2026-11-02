@@ -2,12 +2,15 @@ import { timingSafeEqual } from "node:crypto";
 import { AttentionError } from "./atencion-core";
 import { readAttentionJson } from "./atencion-http";
 import type { DianaExtensionProposalInput, DianaExtensionProposalView } from "./diana-extension-types";
+import type { DianaExtensionRequestView } from "./diana-extension-request-types";
 
 type Dependencies = {
   enabled: () => boolean;
   token: () => string | undefined;
   propose: (input: DianaExtensionProposalInput) => Promise<DianaExtensionProposalView>;
   status: (code: string) => Promise<DianaExtensionProposalView>;
+  requestEnabled?: () => boolean;
+  requestStatus?: (input: { cedula: string; folio: string }) => Promise<DianaExtensionRequestView>;
 };
 function json(body: unknown, status = 200) {
   return Response.json(body, { status, headers: {
@@ -23,6 +26,12 @@ function text(value: unknown, min: number, max: number) {
   return value.trim();
 }
 export function parseDianaExtensionAction(body: Record<string, unknown>) {
+  if (body.accion === "consultar_solicitud") {
+    fields(body, ["accion", "cedula", "folio"]);
+    const cedula = text(body.cedula, 5, 15), folio = text(body.folio, 1, 120);
+    if (!/^\d{5,15}$/.test(cedula) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(folio)) throw new AttentionError("Cédula o folio no válido.", 400);
+    return { action: "request_status" as const, input: { cedula, folio } };
+  }
   if (body.accion === "consultar") {
     fields(body, ["accion", "codigo"]);
     const code = text(body.codigo, 10, 80);
@@ -42,7 +51,7 @@ export function parseDianaExtensionAction(body: Record<string, unknown>) {
   return { action: "propose" as const, input: { cedula, folio, days: body.dias as 1 | 2 | 3 | 4,
     promiseAmount: amount, promiseDate: date, reason: text(body.motivo, 5, 500) } };
 }
-/** A model can prepare a proposal or read its state. It cannot approve it. */
+/** The model reads native-request outcomes; it never supplies authorization. */
 export function createDianaExtensionHandler(deps: Dependencies) {
   return async (request: Request) => {
     try {
@@ -51,8 +60,19 @@ export function createDianaExtensionHandler(deps: Dependencies) {
       const received = /^Bearer ([^\s]+)$/i.exec(request.headers.get("authorization") || "")?.[1] || "";
       const a = Buffer.from(received), b = Buffer.from(expected);
       if (a.length !== b.length || !timingSafeEqual(a, b)) return json({ ok: false, error: "No autorizado." }, 401);
-      if (!deps.enabled()) return json({ ok: false, error: "La gestión automática de prórrogas no está habilitada." }, 503);
+      const legacyEnabled = deps.enabled(), requestEnabled = deps.requestEnabled?.() === true;
+      if (!legacyEnabled && !requestEnabled) return json({ ok: false, error: "La gestión automática de prórrogas no está habilitada." }, 503);
       const action = parseDianaExtensionAction(await readAttentionJson(request, { maxBytes: 8192 }));
+      if (action.action === "request_status") {
+        if (!requestEnabled || !deps.requestStatus) return json({ ok: false, error: "La gestión directa de prórrogas no está habilitada." }, 503);
+        const result = await deps.requestStatus(action.input);
+        return json({ ok: true, estado: result.status,
+          aprobada: ["GRANTED", "ACTIVE"].includes(result.status) && result.approved === true,
+          yaExistia: result.existing === true, dias: result.days,
+          cuotaNumero: result.installmentNumber, vencimientoCuota: result.installmentDueDate,
+          fechaLimite: result.expiresOn, motivo: result.reason });
+      }
+      if (!legacyEnabled) return json({ ok: false, error: "La gestión de propuestas no está habilitada." }, 503);
       const result = action.action === "propose" ? await deps.propose(action.input) : await deps.status(action.code);
       return json({ ok: true, codigo: result.code, estado: result.status,
         aprobada: result.status === "GRANTED" && result.approved === true,

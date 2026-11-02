@@ -5,7 +5,7 @@ export function moraExceptionRequestSchemaStatements() {
       "creditoId" INTEGER NOT NULL REFERENCES "Credito"("id") ON DELETE RESTRICT,
       "type" VARCHAR(16) NOT NULL CHECK ("type" IN ('EXCEPCION','PRORROGA')),
       "status" VARCHAR(16) NOT NULL DEFAULT 'PENDING' CHECK ("status" IN ('PENDING','APPROVED','REJECTED','EXPIRED','REPLACED','CANCELLED')),
-      "source" VARCHAR(24) NOT NULL DEFAULT 'ANALYST_REQUEST' CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT','SYSTEM_DIANA')),
+      "source" VARCHAR(24) NOT NULL DEFAULT 'ANALYST_REQUEST' CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT','SYSTEM_DIANA','SYSTEM_DIANA_REQUEST')),
       "version" INTEGER NOT NULL DEFAULT 1 CHECK ("version">0),
       "installmentNumber" INTEGER CHECK ("installmentNumber">0),
       "installmentDueDate" DATE,
@@ -48,7 +48,7 @@ export function moraExceptionRequestSchemaStatements() {
     `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_source_check"`,
     `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_source_values"`,
     `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_values"
-      CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT','SYSTEM_DIANA'))`,
+      CHECK ("source" IN ('ANALYST_REQUEST','CENTRAL_DIRECT','SYSTEM_DIANA','SYSTEM_DIANA_REQUEST'))`,
     `ALTER TABLE "CreditMoraExceptionRequest"
       ALTER COLUMN "createdByUserId" DROP NOT NULL,
       ADD COLUMN IF NOT EXISTS "createdBySystemKey" VARCHAR(32),
@@ -56,15 +56,18 @@ export function moraExceptionRequestSchemaStatements() {
     `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_actor_identity"`,
     `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_actor_identity" CHECK (
       (("createdByUserId" IS NOT NULL AND "createdBySystemKey" IS NULL)
-        OR ("createdByUserId" IS NULL AND "createdBySystemKey" IS NOT NULL AND "createdBySystemKey"='SYSTEM_DIANA' AND "source"='SYSTEM_DIANA'))
+        OR ("createdByUserId" IS NULL AND "createdBySystemKey" IS NOT NULL AND "createdBySystemKey"='SYSTEM_DIANA' AND "source" IN ('SYSTEM_DIANA','SYSTEM_DIANA_REQUEST')))
       AND ("decidedBySystemKey" IS NULL OR ("decidedBySystemKey"='SYSTEM_DIANA' AND "decidedByUserId" IS NULL))
-      AND ("source"<>'SYSTEM_DIANA' OR ("createdBySystemKey" IS NOT NULL AND "createdBySystemKey"='SYSTEM_DIANA'
+      AND ("source" NOT IN ('SYSTEM_DIANA','SYSTEM_DIANA_REQUEST') OR ("createdBySystemKey" IS NOT NULL AND "createdBySystemKey"='SYSTEM_DIANA'
         AND "decidedBySystemKey" IS NOT NULL AND "decidedBySystemKey"='SYSTEM_DIANA' AND "decidedByUserId" IS NULL
         AND "decidedAt" IS NOT NULL AND "type"='PRORROGA' AND "status" IN ('APPROVED','EXPIRED','REPLACED','CANCELLED'))))`,
     `ALTER TABLE "CreditMoraExceptionRequest" DROP CONSTRAINT IF EXISTS "CreditMoraExceptionRequest_source_fields"`,
     `ALTER TABLE "CreditMoraExceptionRequest" ADD CONSTRAINT "CreditMoraExceptionRequest_source_fields"
         CHECK (("source" IN ('ANALYST_REQUEST','SYSTEM_DIANA') AND "installmentNumber" IS NOT NULL AND "installmentDueDate" IS NOT NULL
           AND "expiresOn" IS NOT NULL AND "promiseAmount" IS NOT NULL AND "promiseDate" IS NOT NULL)
+          OR ("source"='SYSTEM_DIANA_REQUEST' AND "installmentNumber" IS NOT NULL AND "installmentDueDate" IS NOT NULL
+            AND "expiresOn" IS NOT NULL AND "promiseAmount" IS NULL AND "promiseDate" IS NULL
+            AND "status" IN ('APPROVED','EXPIRED','REPLACED','CANCELLED'))
           OR ("source"='CENTRAL_DIRECT' AND "installmentNumber" IS NULL AND "installmentDueDate" IS NULL
             AND "promiseAmount" IS NULL AND "promiseDate" IS NULL AND "status" IN ('APPROVED','EXPIRED','REPLACED','CANCELLED')))`,
     `DROP INDEX IF EXISTS "CreditMoraExceptionRequest_one_pending"`,
@@ -137,6 +140,18 @@ export function moraExceptionRequestSchemaStatements() {
     `DROP TRIGGER IF EXISTS "CreditMoraExceptionRequest_no_delete" ON "CreditMoraExceptionRequest"`,
     `CREATE TRIGGER "CreditMoraExceptionRequest_no_delete" BEFORE DELETE OR TRUNCATE
       ON "CreditMoraExceptionRequest" FOR EACH STATEMENT EXECUTE FUNCTION public.mora_exception_history_immutable()`,
+    `CREATE OR REPLACE FUNCTION public.mora_diana_request_identity_immutable() RETURNS trigger AS $$
+      BEGIN
+        IF (OLD.source='SYSTEM_DIANA_REQUEST' OR NEW.source='SYSTEM_DIANA_REQUEST') AND
+          (to_jsonb(OLD)-ARRAY['status','version','expiresOn','reason','observation','updatedAt']) IS DISTINCT FROM
+          (to_jsonb(NEW)-ARRAY['status','version','expiresOn','reason','observation','updatedAt']) THEN
+          RAISE EXCEPTION 'La identidad y decisión originales de Diana son inmutables' USING ERRCODE='23514';
+        END IF;
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql`,
+    `DROP TRIGGER IF EXISTS "CreditMoraExceptionRequest_diana_identity" ON "CreditMoraExceptionRequest"`,
+    `CREATE TRIGGER "CreditMoraExceptionRequest_diana_identity" BEFORE UPDATE ON "CreditMoraExceptionRequest"
+      FOR EACH ROW EXECUTE FUNCTION public.mora_diana_request_identity_immutable()`,
   ];
 }
 
