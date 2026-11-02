@@ -6,6 +6,8 @@ import { createJiti } from "jiti";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 const { createDianaCreditHandler } = await jiti.import("../lib/diana-credit-api.ts");
+const { buildCreditPaymentPlan } = await jiti.import("../lib/credit-payment-plan.ts");
+const { createPrincipalPaymentQuote } = await jiti.import("../lib/credit-principal-payment.ts");
 const token = "test-only-diana-token";
 const base = { folio: "TEST-1", estado: "ACTIVO", montoCredito: 300,
   valorCuota: 100, plazoMeses: 3, frecuenciaPago: "MENSUAL", fechaPrimerPago: "2026-10-10", abonos: [] };
@@ -82,4 +84,87 @@ test("production administrative due-date override is honored", async () => {
   assert.equal(body.estado, "MORA");
   assert.equal(body.creditos[0].fechaVencimiento, "2026-10-02");
   assert.equal(body.creditos[0].saldoVencido, 100);
+});
+
+test("partial payments return the actual remaining installment total and current principal quote", async () => {
+  const credit = { ...base, saldoBaseFinanciado: 240, valorInteres: 30, valorFianza: 30,
+    abonos: [{ valor: 50, fechaAbono: "2026-10-05" }] };
+  const response = await handler([credit])(request());
+  const { creditos: [result] } = await response.json();
+  assert.equal(result.cuotasTotales, 3);
+  assert.equal(result.cuotasPendientes, 3);
+  assert.equal(result.totalCuotasPendientes, 250);
+  assert.notEqual(result.totalCuotasPendientes, result.cuotasPendientes * credit.valorCuota);
+  assert.deepEqual(result.liquidacionAnticipada, { disponible: true, capitalPendiente: 200,
+    motivo: null, consultadoAt: "2026-10-06T15:00:00.000Z", proximaCuotaFecha: "2026-10-10" });
+});
+
+test("an audited principal plan retains its principal and excludes eliminated installments from the total count", async () => {
+  const terms = { ...base, montoCredito: 1200, valorCuota: 120, plazoMeses: 10,
+    saldoBaseFinanciado: 1000, valorInteres: 0, valorFianza: 200 };
+  const prior = [{ id: 1, valor: 480, fechaAbono: "2026-10-04" }];
+  const quote = createPrincipalPaymentQuote({ plan: buildCreditPaymentPlan({ ...terms,
+    abonos: prior, today: "2026-10-06" }), abonos: prior, valor: 100,
+    capitalOriginal: 1000, cuotaHabitual: 120,
+    conciliacion: { capitalPendiente: 600, tasaPeriodo: 0, cuotaCredito: 100,
+      fianzaCuota: 20, seguroCuota: 0, numeroProximaCuota: 5, fuente: "Conciliacion artificial de prueba" } });
+  const planCapitalVigente = structuredClone(quote.planCapitalVigente);
+  planCapitalVigente.abonosAlCorte.push({ id: 2, valor: 100 });
+  const credit = { ...terms, montoCredito: quote.montoCreditoActualizado, planCapitalVigente,
+    abonos: [...prior, { id: 2, valor: 100, fechaAbono: "2026-10-05" }] };
+  const { creditos: [result] } = await (await handler([credit])(request())).json();
+  assert.equal(result.cuotasTotales, 9);
+  assert.equal(result.cuotasPagadas, 4);
+  assert.equal(result.cuotasPendientes, 5);
+  assert.equal(result.totalCuotasPendientes, 600);
+  assert.equal(result.liquidacionAnticipada.disponible, true);
+  assert.equal(result.liquidacionAnticipada.capitalPendiente, 500);
+  assert.equal(result.liquidacionAnticipada.proximaCuotaFecha, "2027-02-10");
+});
+
+test("overdue and settled credits never offer a principal payoff amount", async () => {
+  for (const [credit, state, reason] of [
+    [{ ...base, fechaPrimerPago: "2026-08-10" }, "MORA", /al dia/],
+    [{ ...base, abonos: [{ valor: 300 }] }, "PAGADO", /pagado/],
+    [{ ...base, estado: "PAZ_Y_SALVO" }, "PAGADO", /pagado/],
+    [{ ...base, pazYSalvoEmitidoAt: new Date("2026-10-01T12:00:00Z") }, "PAGADO", /pagado/],
+  ]) {
+    const { creditos: [result] } = await (await handler([credit])(request())).json();
+    assert.equal(result.estado, state);
+    assert.equal(result.liquidacionAnticipada.disponible, false);
+    assert.equal(result.liquidacionAnticipada.capitalPendiente, null);
+    assert.match(result.liquidacionAnticipada.motivo, reason);
+    if (state === "PAGADO") {
+      assert.equal(result.totalCuotasPendientes, 0);
+      assert.equal(result.cuotasPendientes, 0);
+      assert.equal(result.liquidacionAnticipada.proximaCuotaFecha, null);
+    }
+  }
+});
+
+test("payoff eligibility follows the Colombia calendar without expiring on the due date itself", async () => {
+  const apiAt = iso => createDianaCreditHandler({ token: () => token,
+    lookup: async () => [{ ...base, fechaPrimerPago: "2026-10-06" }], now: () => new Date(iso) });
+  const onDueDate = await (await apiAt("2026-10-07T04:59:59Z")(request())).json();
+  assert.equal(onDueDate.creditos[0].estado, "AL_DIA");
+  assert.equal(onDueDate.creditos[0].liquidacionAnticipada.disponible, true);
+  assert.equal(onDueDate.creditos[0].liquidacionAnticipada.proximaCuotaFecha, "2026-10-06");
+  const followingDay = await (await apiAt("2026-10-07T05:00:00Z")(request())).json();
+  assert.equal(followingDay.creditos[0].estado, "MORA");
+  assert.equal(followingDay.creditos[0].liquidacionAnticipada.capitalPendiente, null);
+});
+
+test("new financial fields are an explicit projection without identity, snapshots, payment data or secrets", async () => {
+  const response = await handler([{ ...base, clienteDocumento: "123456789", clienteNombre: "PRIVATE_NAME",
+    clienteTelefono: "+573001234567", accessToken: "PRIVATE_TOKEN", contratoSnapshot: { private: "PRIVATE_SNAPSHOT" },
+    abonos: [{ valor: 50, observacion: "PRIVATE_PAYMENT" }] }])(request());
+  const body = await response.json(), serialized = JSON.stringify(body);
+  for (const privateValue of ["123456789", "PRIVATE_NAME", "+573001234567", "PRIVATE_TOKEN", "PRIVATE_SNAPSHOT", "PRIVATE_PAYMENT"]) {
+    assert.equal(serialized.includes(privateValue), false);
+  }
+  assert.equal(response.headers.get("vary"), "Authorization");
+  assert.match(response.headers.get("cache-control"), /private, no-store/);
+  assert.deepEqual(Object.keys(body.creditos[0].liquidacionAnticipada).sort(),
+    ["disponible", "capitalPendiente", "motivo", "consultadoAt", "proximaCuotaFecha"].sort());
+  assert.equal(Object.hasOwn(body.creditos[0].liquidacionAnticipada, "expiresAt"), false);
 });

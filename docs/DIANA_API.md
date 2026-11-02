@@ -36,7 +36,16 @@ Ejemplo ilustrativo, sin datos reales:
     "fechaVencimiento": "2026-09-10",
     "cuotasPagadas": 0,
     "cuotasPendientes": 3,
+    "cuotasTotales": 3,
+    "totalCuotasPendientes": 250000,
     "cuotasEnMora": 2,
+    "liquidacionAnticipada": {
+      "disponible": false,
+      "capitalPendiente": null,
+      "motivo": "La liquidacion anticipada solo aplica cuando el credito esta al dia.",
+      "consultadoAt": "2026-10-06T15:00:00.000Z",
+      "proximaCuotaFecha": "2026-09-10"
+    },
     "orientacion": "Tienes cuotas vencidas. Consulta el portal para revisar y pagar el saldo vencido. Si ya pagaste y el abono no aparece, solicita revision del comprobante con soporte."
   }]
 }
@@ -48,11 +57,48 @@ Estado general: MORA si hay algun credito en mora; AL_DIA si hay saldo pendiente
 
 valorAPagar es el total vencido en mora, el saldo de la proxima cuota si esta al dia, o cero si esta pagado. No es una liquidacion anticipada ni incluye cargos distintos a los calculados por el plan existente. fechaVencimiento es la primera cuota pendiente (puede estar vencida); es null al pagar todo. Los importes son numeros en COP.
 
+`cuotasTotales` cuenta las cuotas no eliminadas del plan vigente, incluyendo las
+pagadas. Si hubo un abono a capital que elimino cuotas, no se presenta el plazo
+original como si todas siguieran vigentes. `totalCuotasPendientes` es la suma real
+de los saldos pendientes del plan (`saldoPendiente`); no se multiplica la cantidad
+de cuotas por el valor habitual, pues puede haber cuotas parcialmente pagadas o
+un ultimo importe distinto.
+
+`liquidacionAnticipada` reutiliza `calculateCreditEarlyPayoff`, la misma funcion
+del portal de clientes, con capital financiado, intereses, fianza, componentes
+contractuales, plan de capital vigente y abonos registrados. `disponible` conserva
+la regla actual: credito al dia, sin paz y salvo y con capital pendiente. Si no
+aplica, `capitalPendiente` es `null` y `motivo` explica por que; no se ofrece un
+importe de liquidacion para un credito en mora o pagado.
+
+El capital corresponde a la consulta de **hoy**, cuya fecha exacta figura en
+`consultadoAt`. La elegibilidad utiliza el calendario de Colombia, igual que el
+plan de pagos. El dia de vencimiento sigue siendo un dia al corriente conforme a
+la regla existente; esta ampliacion no adelanta ni retrasa el inicio de mora.
+`proximaCuotaFecha` conserva la fecha de la primera cuota pendiente, o `null`
+si esta pagado. Es contexto del plan, **no** una fecha garantizada de vigencia de
+la cotizacion: el importe debe recalcularse antes de pagar y puede cambiar con
+nuevos abonos, ajustes o revisiones del plan. Este endpoint no crea una intencion
+de pago ni registra una liquidacion.
+
 La respuesta evita nombre, cedula, telefono, direccion y documentos del cliente. Todas las respuestas usan Cache-Control: private, no-store.
 
 ## Manejo por Diana
 
 Consultar antes de responder sobre estado de credito. Identificar cada credito por folio cuando haya varios. Utilizar los importes y fechas de la respuesta, sin inventar descuentos ni prometer cancelaciones. Si el cliente afirma haber pagado y el abono no aparece, solicitar revision con soporte. Ante SIN_CREDITOS, comprobar la cedula sin afirmar que no existe el cliente. Ante errores, informar que la consulta no esta disponible y dirigir al portal o soporte.
+
+Cuando pregunten por el pago total, distinguir la cantidad de cuotas pendientes,
+su total monetario y el capital para liquidar hoy. Solo presentar este ultimo
+si `liquidacionAnticipada.disponible=true`, usando exactamente el importe
+devuelto. Informar la fecha de la siguiente cuota como contexto y volver a
+consultar antes de orientar un pago; no asegurar que el mismo capital estara
+disponible hasta esa fecha. Si la liquidacion no aplica, utilizar `motivo` y
+mantener los saldos ordinarios separados.
+
+Esta ampliacion conserva el cuerpo `{cedula}` y su autenticacion. No reconoce
+automaticamente a una persona por su chat, no cambia las instrucciones publicadas
+de Diana y no habilita el envio de recibos; esas capacidades requieren su propio
+contexto autenticado, autorizacion y configuracion del agente.
 
 ## Errores y validacion
 
