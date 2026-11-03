@@ -67,7 +67,7 @@ export default function AttentionForwardMessage({ actorKey, source, onClose, onS
     read.current?.abort(); read.current = controller; setLoading(true); setError("");
     const delay = setTimeout(() => {
       const timeout = setTimeout(() => { controller.abort(); if (alive.current && generation.current === binding) setError("La búsqueda tardó demasiado. Vuelve a buscar o abre de nuevo el panel."); }, 20_000);
-      const query = new URLSearchParams({ search, page: String(page), filter: "all", collection: "clients" });
+      const query = new URLSearchParams({ search, page: String(page), filter: "all", collection: "clients", dashboard: "0" });
       void request<AttentionInbox>(`/api/atencion?${query}`, { signal: controller.signal }).then(value => {
         if (alive.current && !controller.signal.aborted && generation.current === binding) setInbox(value);
       }).catch(failure => {

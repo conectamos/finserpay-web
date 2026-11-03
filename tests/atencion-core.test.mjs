@@ -45,6 +45,14 @@ test("Clientes es una colección independiente de etiquetas y rechaza parámetro
     assert.throws(() => parseAttentionFilters(new URLSearchParams(query)), { status: 400 });
 });
 
+test("el resumen es opcional sin cambiar el contrato legado ni aceptar valores ambiguos", () => {
+  assert.equal(parseAttentionFilters(new URLSearchParams('dashboard=0')).includeDashboard, false);
+  assert.equal(parseAttentionFilters(new URLSearchParams('dashboard=1')).includeDashboard, true);
+  assert.equal('includeDashboard' in parseAttentionFilters(new URLSearchParams()), false);
+  for (const query of ['dashboard=', 'dashboard=false', 'dashboard=2', 'dashboard=0&dashboard=1'])
+    assert.throws(() => parseAttentionFilters(new URLSearchParams(query)), { status: 400 });
+});
+
 test("actores requieren identidad explícita central o analista, sin compatibilidad con vendedores", () => {
   const admin={userId:1,sellerId:null,key:"admin:1",central:true,admin:true,analyst:false,supervisor:false};
   const analyst={...admin,key:"analyst:1",central:false,admin:false,analyst:true};

@@ -10,12 +10,16 @@ const jiti=createJiti(import.meta.url);
 const policy=await jiti.import('../lib/collection-voice-policy.ts');
 const source=readFileSync(new URL('../lib/collection-voice-runtime.ts',import.meta.url),'utf8');
 const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=false,history=[],followupCompleted=false,portfolio=false,auditAttempts=[],auditContacts=[],auditOther=[],manualRequested=false,enMora=true,extension=false}={}) {
+function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=false,history=[],followupCompleted=false,portfolio=false,auditAttempts=[],auditContacts=[],auditOther=[],manualRequested=false,enMora=true,extension=false,now}={}) {
+  const RuntimeDate=now===undefined?Date:class extends Date {
+    constructor(...args){super(...(args.length?args:[now]));}
+    static now(){return now;}
+  };
   const secret='synthetic-runtime-test-secret-00000000';
-  const state={id:'00000000-0000-4000-8000-000000000081',creditoId:81,phone:'573001234567',status:'ACCEPTED',createdAt:new Date(Date.now()-(expired?7200000:1000)),identityAttempts:0,identityVerifiedAt:verified?new Date():null,managementId:null,optOut:false,manualRequested};
+  const state={id:'00000000-0000-4000-8000-000000000081',creditoId:81,phone:'573001234567',status:'ACCEPTED',createdAt:new RuntimeDate(RuntimeDate.now()-(expired?7200000:1000)),identityAttempts:0,identityVerifiedAt:verified?new RuntimeDate():null,managementId:null,optOut:false,manualRequested};
   const writes=[],allCreditWrites=[],sqlMutations=[],auditQueries=[];
   const db={
-    $executeRawUnsafe:async(sql,...args)=>{sqlMutations.push(sql);if(sql.includes('"identityVerifiedAt"=CURRENT_TIMESTAMP'))state.identityVerifiedAt=new Date();if(sql.includes('"managementId"=$2'))state.managementId=args[1];return 1;},
+    $executeRawUnsafe:async(sql,...args)=>{sqlMutations.push(sql);if(sql.includes('"identityVerifiedAt"=CURRENT_TIMESTAMP'))state.identityVerifiedAt=new RuntimeDate();if(sql.includes('"managementId"=$2'))state.managementId=args[1];return 1;},
     $queryRawUnsafe:async(sql,...args)=>{
       if(sql.includes('collection-audit-'))auditQueries.push({sql,args});
       if(sql.includes('collection-audit-attempts'))return auditAttempts;
@@ -45,7 +49,7 @@ function setup({verified=false,expired=false,persistenceFails=false,ownedPhone=f
     '@/lib/dapta-welcome':{normalizeColombianMobile:v=>v},'@/lib/dapta-collections-http':{collectionCallKey:()=>state.id},'@/lib/collection-voice-policy':policy,
   };
   const loaded={exports:{}};
-  runInNewContext(code,{module:loaded,exports:loaded.exports,require:n=>{assert.ok(n in modules,n);return modules[n];},process:{env:{FINSERPAY_COBRANZA_API_TOKEN:secret,FINSERPAY_COBRANZA_AGENT_ID:'synthetic-agent',FINSERPAY_COBRANZA_ACTOR_ID:'51'}},Buffer,Uint8Array,URL,URLSearchParams,Date,Request,Response,AbortSignal,fetch:()=>{throw new Error('No external calls allowed in tests');}});
+  runInNewContext(code,{module:loaded,exports:loaded.exports,require:n=>{assert.ok(n in modules,n);return modules[n];},process:{env:{FINSERPAY_COBRANZA_API_TOKEN:secret,FINSERPAY_COBRANZA_AGENT_ID:'synthetic-agent',FINSERPAY_COBRANZA_ACTOR_ID:'51'}},Buffer,Uint8Array,URL,URLSearchParams,Date:RuntimeDate,Request,Response,AbortSignal,fetch:()=>{throw new Error('No external calls allowed in tests');}});
   const call=async(body,auth=secret)=>loaded.exports.collectionVoiceOperation(new Request('https://example.test',{method:'POST',headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:JSON.stringify({event_token:policy.collectionSessionToken(state.id,secret),...body})}));
   return{call,state,writes,allCreditWrites,sqlMutations,auditQueries,token:policy.collectionSessionToken(state.id,secret)};
 }
@@ -163,16 +167,22 @@ test('un fallo del repositorio nunca confirma el acuerdo; un pago informado cons
 });
 
 test('un acuerdo exige el campo de confirmación utilizado por la herramienta de voz',async()=>{
-  const s=setup({verified:true});
+  // Keep the requested next-day agreement ahead of the fixture's clock, rather
+  // than letting its scheduling window expire with the CI machine's date.
+  const s=setup({verified:true,now:Date.parse('2026-10-19T15:00:00Z')});
   const body={action:'register',result:'ACUERDO_PAGO',agreementDate:'2026-10-20',agreementAmount:'50000'};
   assert.equal((await s.call(body)).status,409);
   assert.equal((await s.call({...body,confirmed:'true'})).status,409);
   assert.equal((await s.call({...body,agreementConfirmed:'true',agreementAmount:'50.000'})).status,409);
   const response=await(await s.call({...body,agreementConfirmed:'true'})).json();
   assert.equal(response.registrado,true);
+  assert.equal(s.writes.length,1);
   assert.equal(s.writes[0].agreementDate,'2026-10-20');
   assert.equal(s.writes[0].agreementAmount,50000);
   assert.equal(s.writes[0].managementStatus,'ACUERDO_PAGO');
+  assert.equal(s.writes[0].actedAt,'2026-10-19T15:00:00.000Z');
+  assert.equal(s.writes[0].nextFollowUpAt,'2026-10-20T15:00:00.000Z');
+  assert.equal(s.writes[0].responsibleUserId,51);
 });
 
 test('el cierre registra medios en cartera una sola vez y no acepta otro cierre contradictorio',async()=>{

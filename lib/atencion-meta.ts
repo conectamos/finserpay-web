@@ -4,6 +4,7 @@ import { readAttentionSticker } from "./atencion-meta-sticker";
 import { compileMetaTemplate, readMetaManualTemplate, type MetaManualTemplate, type MetaTemplateSnapshot } from "./atencion-meta-templates";
 import { metaAutomationHeaderUrl } from "./whatsapp-automation-meta-config";
 import { isMetaBusinessUserId, isMetaRecipient, metaRecipientPhone } from "./atencion-meta-identity";
+import { createAttentionMetaVerificationCache, sharedAttentionMetaVerificationCache, type AttentionVerifiedMetaConnection } from "./atencion-meta-verification-cache";
 
 // Dedicated Attention credentials. Never fall back to OTP or settlement tokens.
 // Meta contracts: https://www.postman.com/meta/whatsapp-business-platform
@@ -42,7 +43,8 @@ type Env = Record<string, string | undefined>;
 type Dict = Record<string, unknown>;
 type Config = MetaScope & { token: string; version: string };
 type BeforeSend = () => Promise<void>;
-type Options = { env?: Env; fetch?: typeof fetch; now?: () => number; timeoutMs?: number };
+type Options = { env?: Env; fetch?: typeof fetch; now?: () => number; timeoutMs?: number;
+  verificationCache?: ReturnType<typeof createAttentionMetaVerificationCache> };
 export function getMetaAttentionScope(env: Env = process.env): MetaScope | null {
   return env.WHATSAPP_ATTENTION_PHONE_NUMBER_ID === META_ATTENTION_LINE.phoneNumberId && env.WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID === META_ATTENTION_LINE.wabaId
     ? { phoneNumberId: META_ATTENTION_LINE.phoneNumberId, wabaId: META_ATTENTION_LINE.wabaId } : null;
@@ -290,12 +292,15 @@ export function validateMetaAttentionMedia(input: { bytes: Uint8Array; mimeType:
 export function createMetaAttentionAdapter(options: Options = {}) {
   const env = options.env ?? process.env; const transport = options.fetch ?? fetch; const now = options.now ?? Date.now;
   const timeoutMs = Math.max(100, Math.min(options.timeoutMs ?? 20_000, 30_000));
-  type VerifiedConnection = MetaScope & { displayPhone: string };
-  // A runtime owns one adapter per HTTP request. Reuse only the same private
-  // configuration for a few seconds (e.g. upload + send), never across runtimes.
-  let verified: { config: Config; checkedAt: number; value: VerifiedConnection } | null = null;
-  let verifying: { config: Config; promise: Promise<VerifiedConnection> } | null = null;
+  // Reuse provider identity within the existing five-second allowance.
+  // Sharing the positive check also coalesces simultaneous sends. A rotated
+  // token, version or business scope has a different opaque fingerprint.
+  const verificationCache = options.verificationCache ?? (options.fetch ? createAttentionMetaVerificationCache() : sharedAttentionMetaVerificationCache);
   const sameConfig = (a: Config, b: Config) => a.token === b.token && a.version === b.version && a.phoneNumberId === b.phoneNumberId && a.wabaId === b.wabaId;
+  const configKey = (cfg: Config) => createHash("sha256").update(JSON.stringify([cfg.token,cfg.version,cfg.phoneNumberId,cfg.wabaId])).digest("hex");
+  // A request can reuse only its own most recent successful upload once. This
+  // is not a client-supplied receipt or a cache of downloaded/private media.
+  let uploadedReceipt: { id: string; key: string; checkedAt: number; kind: MetaMediaKind; mimeType: string; size: number } | null = null;
   function scope(): MetaScope {
     const selected = getMetaAttentionScope(env);
     if (!selected) fail("META_SCOPE_CONFIG", "La línea de Atención no coincide con la autorizada.", 503);
@@ -402,9 +407,11 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     finally { signal.removeEventListener("abort", cancel); reader.releaseLock(); }
     return Buffer.concat(chunks, total);
   }
-  function requestOperation(url: URL, sending: boolean) {
+  function requestOperation(url: URL, sending: boolean, method = "GET") {
     return sending ? "send" : url.origin !== GRAPH ? "private_media" : url.pathname.endsWith("/message_templates") ? "templates"
-      : url.pathname.endsWith("/phone_numbers") ? "waba_phones" : url.pathname.endsWith(`/${META_ATTENTION_LINE.phoneNumberId}`) ? "phone" : "graph";
+      : method === "POST" && url.pathname.endsWith("/media") ? "upload_media"
+      : url.pathname.endsWith("/phone_numbers") ? "waba_phones" : url.pathname.endsWith(`/${META_ATTENTION_LINE.phoneNumberId}`) ? "phone"
+      : method === "GET" && /^\/v\d{2}\.0\/\d{5,30}$/.test(url.pathname) ? "metadata" : "graph";
   }
   async function requestOnce(url: URL, init: RequestInit, max: number, sending: boolean, budgetMs: number): Promise<{ response: Response; bytes: Uint8Array }> {
     const controller = new AbortController();
@@ -426,7 +433,15 @@ export function createMetaAttentionAdapter(options: Options = {}) {
       if (!response.ok) {
         // Only a structured Graph rejection proves a send was not accepted.
         let graphError = false;
-        try { graphError = Number.isInteger(dict(dict(JSON.parse(Buffer.from(bytes).toString("utf8"))).error).code); } catch { /* no raw provider payload in errors */ }
+        let providerError: Dict = {};
+        try { providerError = dict(dict(JSON.parse(Buffer.from(bytes).toString("utf8"))).error); graphError = Number.isInteger(providerError.code); } catch { /* no raw provider payload in errors */ }
+        // Provider descriptions can contain credentials or customer data. Only
+        // fixed stages and bounded numeric/boolean diagnostics reach the log.
+        const numeric = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+        console.warn("[attention-meta-http]", JSON.stringify({ operation: requestOperation(url, sending, init.method), httpStatus: response.status,
+          ...(numeric(providerError.code) ? { graphCode: providerError.code } : {}),
+          ...(numeric(providerError.error_subcode) ? { graphSubcode: providerError.error_subcode } : {}),
+          ...(typeof providerError.is_transient === "boolean" ? { isTransient: providerError.is_transient } : {}) }));
         throw new AttentionMetaError("META_HTTP_ERROR", "Meta no pudo completar la solicitud.", response.status === 401 || response.status === 403 ? 503 : 502,
           sending && !(response.status >= 400 && response.status < 500 && graphError), !sending && (response.status === 429 || response.status >= 500));
       }
@@ -442,7 +457,7 @@ export function createMetaAttentionAdapter(options: Options = {}) {
       const safeCodes=new Set(["ENOTFOUND","EAI_AGAIN","ENETUNREACH","EHOSTUNREACH","ECONNRESET","ECONNREFUSED","ETIMEDOUT","EPIPE","ERR_INVALID_URL","ERR_INVALID_ARG_TYPE",
         "ERR_INVALID_CHAR","ERR_INVALID_HTTP_TOKEN","ERR_SSL_WRONG_VERSION_NUMBER","ERR_TLS_CERT_ALTNAME_INVALID","CERT_HAS_EXPIRED","DEPTH_ZERO_SELF_SIGNED_CERT",
         "UNABLE_TO_VERIFY_LEAF_SIGNATURE","UND_ERR_CONNECT_TIMEOUT","UND_ERR_HEADERS_TIMEOUT","UND_ERR_BODY_TIMEOUT","UND_ERR_SOCKET"]);
-      const name=str(dict(error).name),operation=requestOperation(url,sending);
+      const name=str(dict(error).name),operation=requestOperation(url,sending,init.method);
       console.warn("[attention-meta-transport]",JSON.stringify({operation,error:["TypeError","ReferenceError","AbortError","TimeoutError","Error"].includes(name)?name:"UnknownError",
         cause:safeCodes.has(code)?code:"UNKNOWN",aborted:controller.signal.aborted}));
       throw new AttentionMetaError("META_UNAVAILABLE", "No fue posible completar la conexión con Meta.", 502, sending, !sending);
@@ -456,7 +471,7 @@ export function createMetaAttentionAdapter(options: Options = {}) {
       try { return await requestOnce(url, init, max, sending, Math.max(1, timeoutMs - (Date.now() - started))); }
       catch (error) {
         if (init.method !== "GET" || sending || attempt !== 1 || !(error instanceof AttentionMetaError) || !error.retryable || Date.now() - started + 250 >= timeoutMs) throw error;
-        console.warn("[attention-meta-read-retry]", JSON.stringify({ operation: requestOperation(url, false), attempt: 2,
+        console.warn("[attention-meta-read-retry]", JSON.stringify({ operation: requestOperation(url, false, init.method), attempt: 2,
           code: /^[A-Z0-9_:-]{1,80}$/.test(error.code) ? error.code : "UNKNOWN", delayMs: 250 }));
         await new Promise<void>(resolve => setTimeout(resolve, 250));
         if (Date.now() - started >= timeoutMs) throw error;
@@ -473,11 +488,9 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     catch { throw new AttentionMetaError("INVALID_RESPONSE", "Meta devolvió una respuesta no válida.", 502, sending); }
   }
   async function verifyConnection() {
-    const cfg = config(), checkedAt = now();
-    if (verified && sameConfig(verified.config, cfg) && checkedAt >= verified.checkedAt && checkedAt - verified.checkedAt < 5_000) return { ...verified.value };
-    if (verifying && sameConfig(verifying.config, cfg)) return { ...await verifying.promise };
-    verified = null;
-    const promise = (async (): Promise<VerifiedConnection> => {
+    const cfg = config();
+    const key = configKey(cfg);
+    const value = await verificationCache.verify(key, now, async (): Promise<AttentionVerifiedMetaConnection> => {
       const [phone, firstPage] = await Promise.all([
         graph(cfg.phoneNumberId, { fields: "id,display_phone_number" }),
         graph(`${cfg.wabaId}/phone_numbers`, { fields: "id,display_phone_number", limit: "100" }),
@@ -489,7 +502,7 @@ export function createMetaAttentionAdapter(options: Options = {}) {
         if (list(result.data).some(item => matches(dict(item)))) {
           if (!sameConfig(cfg, config())) fail("META_SCOPE_CONFIG", "La configuración del canal cambió. Vuelve a verificar la conexión.", 503);
           const value = { phoneNumberId: cfg.phoneNumberId, wabaId: cfg.wabaId, displayPhone: META_ATTENTION_LINE.displayPhone };
-          verified = { config: cfg, checkedAt: now(), value }; return value;
+          return value;
         }
         const paging = dict(result.paging), next = str(dict(paging.cursors).after);
         if (page === 9 || !paging.next || !next || next.length > 2048 || seen.has(next)) break;
@@ -497,10 +510,11 @@ export function createMetaAttentionAdapter(options: Options = {}) {
         result = await graph(`${cfg.wabaId}/phone_numbers`, { fields: "id,display_phone_number", limit: "100", after: next });
       }
       fail("META_SCOPE_MISMATCH", "Meta no confirmó que la línea pertenezca a la cuenta autorizada.", 503);
-    })();
-    verifying = { config: cfg, promise };
-    try { return { ...await promise }; }
-    finally { if (verifying?.promise === promise) verifying = null; }
+    });
+    // Each waiter checks its own current configuration, even when another
+    // request supplied the shared successful verification.
+    if (!sameConfig(cfg, config())) fail("META_SCOPE_CONFIG", "La configuración del canal cambió. Vuelve a verificar la conexión.", 503);
+    return { ...value };
   }
   function validateSendBase(input: Omit<MetaSendInput,"lastInboundAt">, beforeSend: BeforeSend) {
     config(); enabled();
@@ -585,11 +599,19 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     return send(input, { type: "text", text: { body: input.text, preview_url: false } }, beforeSend);
   }
   async function uploadMedia(input: { bytes: Uint8Array; mimeType: string; fileName: string; kind?: MetaMediaKind }) {
+    uploadedReceipt = null;
     config(); enabled(); const validated = validateMetaAttentionMedia(input); await verifyConnection();
     const form = new FormData(); form.set("messaging_product", "whatsapp"); form.set("type", validated.mimeType);
     form.set("file", new Blob([new Uint8Array(input.bytes)], { type: validated.mimeType }), input.fileName);
-    const result = await graph(`${scope().phoneNumberId}/media`, {}, form);
+    const cfg = config(), dispatchedAt = now();
+    const result = await graph(`${cfg.phoneNumberId}/media`, {}, form);
     if (!ID.test(str(result.id))) fail("INVALID_MEDIA_RECEIPT", "Meta no confirmó la carga del archivo.", 502);
+    const checkedAt = now();
+    try {
+      if (sameConfig(cfg, config()) && Number.isFinite(dispatchedAt) && Number.isFinite(checkedAt) && checkedAt >= dispatchedAt) {
+        uploadedReceipt = { id: str(result.id), key: configKey(cfg), checkedAt, kind: validated.kind, mimeType: validated.mimeType, size: validated.size };
+      }
+    } catch { /* A changed configuration gets the ordinary metadata check at send time. */ }
     return { mediaId: str(result.id) };
   }
   async function mediaMetadata(mediaId: string, received = false) {
@@ -604,7 +626,17 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     return { url, mimeType: type, size, kind: rule.kind, sha256: mediaHash(result.sha256) };
   }
   async function sendMedia(input: MetaSendInput & { mediaId: string; kind: MetaMediaKind; caption?: string; fileName?: string }, beforeSend: BeforeSend) {
-    validateSend(input, beforeSend); const metadata = await mediaMetadata(input.mediaId);
+    validateSend(input, beforeSend);
+    if (!ID.test(input.mediaId)) fail("INVALID_MEDIA_ID", "El identificador del archivo no es válido.");
+    const ownUpload = uploadedReceipt; uploadedReceipt = null;
+    const instant = now();
+    const freshUpload = ownUpload && ownUpload.id === input.mediaId && ownUpload.key === configKey(config())
+      && Number.isFinite(instant) && instant >= ownUpload.checkedAt && instant - ownUpload.checkedAt < 5_000 ? ownUpload : null;
+    // Both are read-only provider preconditions. Validate them together rather
+    // than serializing two network round trips before the transactional guard.
+    // A just-uploaded asset already has validated bytes/type and a successful
+    // authenticated Meta ID. Stored, expired or other-runtime IDs still use GET.
+    const [metadata] = await Promise.all([freshUpload ? Promise.resolve(freshUpload) : mediaMetadata(input.mediaId), verifyConnection()]);
     if (metadata.kind !== input.kind) fail("UNSUPPORTED_MEDIA", "El archivo no corresponde al tipo de mensaje.", 415);
     if (input.caption !== undefined && (typeof input.caption !== "string" || input.caption.length > 1024 || !["image", "video", "document"].includes(input.kind))) fail("INVALID_CAPTION", "La descripción del archivo no es válida.");
     if (input.fileName !== undefined && (input.kind !== "document" || !fileName(input.fileName) || !MIME[metadata.mimeType].extensions.includes(input.fileName.split(".").pop()?.toLowerCase() || ""))) fail("INVALID_MEDIA_NAME", "El nombre del archivo no es válido.");

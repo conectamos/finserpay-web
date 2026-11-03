@@ -64,11 +64,12 @@ function mount(options = {}) {
   const react = {
     useState(initial) { const n = cursor++; slots[n] ??= { value: typeof initial === "function" ? initial() : initial }; return [slots[n].value, value => { slots[n].value = typeof value === "function" ? value(slots[n].value) : value; dirty = true; }]; },
     useRef(value) { const n = cursor++; slots[n] ??= { current: value }; return slots[n]; },
+    useMemo(fn, deps) { const n = cursor++; if (!slots[n] || changed(slots[n].deps, deps)) slots[n] = { value: fn(), deps }; return slots[n].value; },
     useCallback(fn, deps) { const n = cursor++; if (!slots[n] || changed(slots[n].deps, deps)) slots[n] = { fn, deps }; return slots[n].fn; },
     useEffect(effect, deps) { const n = cursor++; if (!slots[n] || changed(slots[n].deps, deps)) effects.push(() => { slots[n]?.cleanup?.(); slots[n] = { deps, cleanup: effect() }; }); },
   };
   const component = name => Object.defineProperty(() => null, "name", { value: name });
-  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MediaImage, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag, ReplyComposer, ChatDropSurface, ReplyAudioPreview, AttentionMessageQuote };";
+  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MediaImage, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag, ReplyComposer, ChatDropSurface, ReplyAudioPreview, AttentionMessageQuote, SendingReplyBubble };";
   const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } });
   const loaded = { exports: {} };
   const sources = [], events = new Map();
@@ -82,7 +83,7 @@ function mount(options = {}) {
   }
 
   runInNewContext(outputText, {
-    module: loaded, exports: loaded.exports, FormData, File, AbortController, URLSearchParams, Date: ClockDate,
+    module: loaded, exports: loaded.exports, FormData, File, AbortController, URLSearchParams, Date: ClockDate, Intl: options.intl || Intl,
     URL: { createObjectURL(file) { const value = `blob:synthetic-${objectUrls.length + 1}`; objectUrls.push({ file, value }); return value; }, revokeObjectURL(value) { revokedUrls.push(value); } },
     document: { get visibilityState() { return environment.visibilityState; }, getElementById: id => options.messageTargets?.[id] || null, querySelector: selector => selector === "dialog[open]" && options.openDialog ? {} : null, ...eventTarget("document") }, navigator: { get onLine() { return environment.onLine; } }, window: eventTarget("window"),
     ...(options.sse ? { EventSource: FakeEventSource } : {}),
@@ -1130,4 +1131,160 @@ test("colas y etiqueta conservan página y borrador durante invalidaciones SSE",
   const refresh = f.requests.filter(request => !request.done && request.url.includes("?")).at(-1);
   assert.match(refresh.url, /filter=unread/); assert.match(refresh.url, /page=2/); assert.match(refresh.url, /tag=Seguimiento/);
   await f.completeReads(); assert.equal(f.composer().props.draft.text, "Borrador antes del filtro"); assert.equal(filters().props.filter, "unread"); assert.equal(filters().props.tag, "Seguimiento"); f.unmount();
+});
+
+
+test("escribir en un historial de500 mensajes conserva sus elementos y evita volver a formatearlos", async () => {
+  const counters = { constructors: 0, formats: 0 };
+  const intl = { NumberFormat: Intl.NumberFormat, DateTimeFormat: function (...args) {
+    counters.constructors++; const formatter = new Intl.DateTimeFormat(...args);
+    return { format(value) { counters.formats++; return formatter.format(value); } };
+  } };
+  const f = mount({ intl }); await f.ready();
+  const messages = Array.from({ length: 500 }, (_, index) => ({ ...outbound, id: "message-" + index, text: "Texto de prueba " + index }));
+  await f.select({ ...detail, messages });
+  const history = () => f.all().find(node => node.props["data-attention"] === "messages").props.children[0];
+  const original = history(), formats = counters.formats;
+  await f.change({ text: "Primera letra" }); await f.change({ text: "Sigo escribiendo sin esperar el historial" });
+  assert.equal(history(), original, "la edición no debe reconstruir quinientas burbujas");
+  assert.equal(counters.constructors, 4, "los formatos de fecha se crean una vez por módulo");
+  assert.ok(counters.formats - formats < 20, "solo se reformatea la pequeña bandeja, no el historial completo");
+  f.unmount();
+});
+
+test("al enviar aparece Enviando inmediatamente, cierra la preparación y mantiene el mismo intento al navegar", async () => {
+  const f = mount(); await f.ready(); await f.select();
+  const file = new File(["imagen de prueba"], "foto.jpg", { type: "image/jpeg" });
+  await f.change({ text: "Pie que no se pierde", file }); f.composer().props.send(); await f.flush();
+  const post = f.requests.find(request => request.init.method === "POST");
+  const pending = () => f.all().find(node => node.type?.name === "SendingReplyBubble");
+  assert.ok(pending()); assert.equal(pending().props.attempt.requestId, post.init.body.get("requestId"));
+  const bubble = f.ui.SendingReplyBubble(pending().props);
+  assert.match(text(bubble), /Enviando/); assert.doesNotMatch(text(bubble), /Aceptado|Entregado|Leído/);
+  assert.equal(pending().props.attempt.draft.file, file); assert.equal(f.composer().props.draft.file, file);
+  assert.equal(f.dropSurface().props.previewOpen, false, "la preparación debe dejar visible la burbuja que se está enviando");
+  const editor = mount({ component: "ReplyComposer", props: { ...f.composer().props } });
+  assert.equal(editor.all().find(node => node.type === "form").props["data-media-preview"], false);
+  assert.equal(editor.all().find(node => node.type === "textarea").props.value, "");
+  assert.ok(!editor.all().some(node => node.props["data-attention"] === "media-preview")); editor.unmount();
+  await f.select({ ...detail, conversation: other }); assert.equal(pending(), undefined);
+  f.composer().props.send(); await f.flush(); assert.equal(f.requests.filter(request => request.init.method === "POST").length, 1);
+  await f.select(); assert.equal(pending().props.attempt.requestId, post.init.body.get("requestId"));
+  post.fail(); await f.flush(); assert.equal(pending(), undefined);
+  assert.equal(f.composer().props.draft.file, file); assert.equal(f.composer().props.draft.text, "Pie que no se pierde");
+  assert.equal(f.composer().props.draft.locked, true); assert.match(f.composer().props.draft.error, /Consulta el estado/); f.unmount();
+});
+
+test("aceptación lenta del chat anterior no añade su mensaje ni borra el borrador del chat abierto", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Mensaje A" });
+  await f.select({ ...detail, conversation: other }); await f.change({ text: "Borrador B" });
+  await f.select(); f.composer().props.send(); await f.flush(); const post = f.requests.find(request => request.init.method === "POST");
+  await f.select({ ...detail, conversation: other }); post.respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
+  assert.equal(f.composer().props.detail.conversation.id, other.id); assert.equal(f.composer().props.draft.text, "Borrador B");
+  assert.ok(!f.composer().props.detail.messages.some(message => message.id === outbound.id));
+  assert.ok(!f.all().some(node => node.type?.name === "SendingReplyBubble"));
+  await f.select(); assert.equal(f.composer().props.draft.text, ""); f.unmount();
+});
+
+test("revocar acceso o cambiar actor durante un envío descarta la burbuja y su respuesta tardía", async () => {
+  for (const mode of ["revoked", "actor"]) {
+    const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Mensaje del actor anterior" });
+    f.composer().props.send(); await f.flush(); const post = f.requests.find(request => request.init.method === "POST");
+    f.all().find(node => node.props["aria-label"] === "Actualizar").props.onClick(); await f.flush();
+    const read = f.requests.filter(request => !request.done && request.url.startsWith("/api/atencion?")).at(-1);
+    if (mode === "revoked") read.respond({ error: "Sin autorización" }, 403);
+    else read.respond({ ...inbox, actor: { ...actor, key: "admin:2", name: "Otro administrador" } });
+    await f.flush(); assert.ok(post.init.signal.aborted);
+    post.respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
+    assert.ok(!f.all().some(node => node.type?.name === "SendingReplyBubble")); assert.equal(f.composer(), undefined);
+    if (mode === "actor") { await f.select(); assert.equal(f.composer().props.draft.text, ""); }
+    f.unmount();
+  }
+});
+
+test("la bandeja pide resumen solo cuando se abre la vista Resumen", async () => {
+  const f = mount(); await f.ready();
+  assert.equal(new URL(f.requests[0].url, "https://finserpay.test").searchParams.get("dashboard"), "0");
+  f.all().find(node => node.type === "button" && text(node) === "Resumen").props.onClick(); await f.flush(); await f.advance(250);
+  const request = f.requests.filter(item => item.url.startsWith("/api/atencion?")).at(-1);
+  assert.equal(new URL(request.url, "https://finserpay.test").searchParams.get("dashboard"), "1"); f.unmount();
+});
+
+
+test("historial recibido antes del POST conserva una sola copia confirmada y separa el progreso del envío", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Mensaje confirmado por webhook" });
+  f.composer().props.send(); await f.flush(); const post = f.requests.find(request => request.init.method === "POST");
+  await f.select({ ...detail, conversation: other });
+  const confirmed = { ...outbound, text: "Mensaje confirmado por webhook", deliveryStatus: "accepted" };
+  await f.select({ ...detail, conversation: { ...chat, version: chat.version + 1 }, messages: [confirmed] });
+  const log = () => f.all().find(node => node.props["data-attention"] === "messages");
+  const contents = () => nodes(log()).filter(node => node.type?.name === "MessageContent" && node.props.text === confirmed.text);
+  assert.equal(contents().length, 1);
+  assert.ok(!nodes(log()).some(node => node.type?.name === "SendingReplyBubble"), "el progreso no se mezcla con mensajes confirmados");
+  assert.ok(f.all().some(node => node.type?.name === "SendingReplyBubble"));
+  post.respond({ message: confirmed }); await f.flush();
+  assert.equal(contents().length, 1); assert.ok(!f.all().some(node => node.type?.name === "SendingReplyBubble")); f.unmount();
+});
+
+test("consultar o descartar un intento no repone datos privados cuando se revoca el acceso", async () => {
+  for (const action of ["resolve", "discard"]) {
+    const f = mount({ sse: true }); await f.ready(); await f.select(); await f.change({ text: "Intención privada" });
+    f.composer().props.send(); await f.flush(); f.requests.find(request => request.init.method === "POST").fail(); await f.flush();
+    f.composer().props.resolve(); await f.flush();
+    if (action === "discard") { f.requests.at(-1).respond({ message: null }); await f.flush(); f.composer().props.discard(); await f.flush(); }
+    const request = f.requests.at(-1); f.sources.at(-1).emit("unauthorized"); await f.flush();
+    assert.ok(request.init.signal.aborted);
+    request.respond(action === "resolve" ? { message: { ...outbound, deliveryStatus: "failed" } } : { cancelled: true }); await f.flush();
+    assert.equal(f.composer(), undefined); assert.ok(!f.all().some(node => node.type?.name === "SendingReplyBubble")); f.unmount();
+  }
+});
+
+
+test("un poll correcto con otro actor retira el chat anterior y descarta su detalle paralelo tardío", async () => {
+  const f = mount({ sse: true }); await f.ready(); await f.select(); await f.change({ text: "Borrador del perfil anterior" });
+  f.composer().props.send(); await f.flush(); f.requests.find(request => request.init.method === "POST").fail(); await f.flush();
+  assert.equal(f.composer().props.draft.locked, true);
+  const stream = f.sources.at(-1); stream.emit("invalidate"); await f.advance(250);
+  const list = f.requests.filter(request => !request.done && request.url.startsWith("/api/atencion?")).at(-1);
+  const oldDetail = f.requests.filter(request => !request.done && request.url === "/api/atencion/" + chat.id).at(-1);
+  assert.ok(list); assert.ok(oldDetail);
+  list.respond({ ...inbox, actor: { ...actor, key: "admin:2", name: "Nuevo perfil" } }); await f.flush();
+  assert.equal(f.composer(), undefined); assert.equal(stream.closed, true);
+  oldDetail.respond({ ...detail, messages: [outbound] }); await f.flush();
+  assert.equal(f.composer(), undefined, "el detalle de la identidad anterior no debe restaurarse");
+  await f.select(); assert.equal(f.composer().props.draft.text, ""); assert.equal(f.composer().props.draft.locked, false); f.unmount();
+});
+
+
+test("Equipo conserva sus cargas reales al abrir y durante las actualizaciones en vivo", async () => {
+  const f = mount({ sse: true }); await f.ready();
+  f.all().find(node => node.type === "button" && text(node) === "Equipo").props.onClick(); await f.flush(); await f.advance(250);
+  const initial = f.requests.filter(request => !request.done && request.url.startsWith("/api/atencion?")).at(-1);
+  assert.equal(new URL(initial.url, "https://finserpay.test").searchParams.get("dashboard"), "1");
+  const payload = { ...inbox, dashboard: { team: [{ key: "analyst:9", name: "Analista real de prueba", assigned: 4, pending: 2 }], daily: [], activity: [], activeConversations: [] } };
+  initial.respond(payload); await f.flush();
+  const team = () => f.all().find(node => node.type?.name === "TeamRows").props.team;
+  assert.equal(team()[0].name, "Analista real de prueba"); assert.equal(team()[0].assigned, 4);
+  f.sources.at(-1).emit("invalidate"); await f.advance(250);
+  const poll = f.requests.filter(request => !request.done && request.url.startsWith("/api/atencion?")).at(-1);
+  assert.equal(new URL(poll.url, "https://finserpay.test").searchParams.get("dashboard"), "1");
+  poll.respond(payload); await f.flush(); assert.equal(team()[0].assigned, 4); assert.equal(team()[0].pending, 2); f.unmount();
+});
+
+
+test("el menú de adjuntos se cierra al preparar archivos y al enviar sin modificar el borrador ni forzar foco", async () => {
+  const draft = { text: "Pie conservado", file: null, locked: false, replyTo: null, error: "" };
+  let changes = 0, focuses = 0;
+  const f = mount({ component: "ReplyComposer", props: { detail, draft, busy: false, actorKey: actor.key, change() { changes++; } } });
+  const menu = { open: true, removeAttribute(name) { assert.equal(name, "open"); this.open = false; } };
+  f.all().find(node => node.type === "details").props.ref.current = menu;
+  f.all().find(node => node.type === "textarea").props.ref.current = { focus() { focuses++; } };
+  const file = new File(["sticker"], "sticker.webp", { type: "image/webp" });
+  f.setProps({ draft: { ...draft, file } }); await f.flush();
+  assert.equal(menu.open, false); assert.equal(focuses, 1);
+  assert.equal(f.all().find(node => node.type === "textarea").props.value, draft.text);
+  menu.open = true;
+  f.setProps({ draft: { ...draft, file, locked: true }, submitting: true, busy: true }); await f.flush();
+  assert.equal(menu.open, false); assert.equal(focuses, 1, "iniciar el envío no fuerza el foco al campo deshabilitado");
+  assert.equal(changes, 0, "cerrar las opciones no cambia ni quita el archivo guardado por el intento"); f.unmount();
 });

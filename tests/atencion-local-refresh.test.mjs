@@ -42,6 +42,7 @@ function mount() {
       slots[index].value = typeof value === "function" ? value(slots[index].value) : value; dirty = true;
     }]; },
     useRef(value) { const index = cursor++; slots[index] ??= { current: value }; return slots[index]; },
+    useMemo(fn, deps) { const n = cursor++; if (!slots[n] || changed(slots[n].deps, deps)) slots[n] = { value: fn(), deps }; return slots[n].value; },
     useCallback(fn, deps) { const index = cursor++; if (!slots[index] || changed(slots[index].deps, deps)) slots[index] = { fn, deps }; return slots[index].fn; },
     useEffect(effect, deps) { const index = cursor++; if (!slots[index] || changed(slots[index].deps, deps)) effects.push(() => {
       slots[index]?.cleanup?.(); slots[index] = { deps, effect, cleanup: effect() };

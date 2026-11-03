@@ -48,9 +48,9 @@ INSERT INTO "Credito"(id,folio,"clienteNombre","clienteDocumento","clienteTelefo
 INSERT INTO "CreditoAbono" VALUES(1,1,100,'ACTIVO',null,'EFECTIVO','2026-10-30'),(2,1,100,'ANULADO','2026-10-30','EFECTIVO','2026-10-30');
 INSERT INTO "DataCreditoAssessment" VALUES('00000000-0000-4000-8000-000000000001',1,'APROBADO','2026-10-30',20,2,100);
 `;
-function adapter(db) {
-  return { $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
-    $transaction: (fn) => db.transaction(tx => fn(adapter(tx))) };
+function adapter(db, queries) {
+  return { $queryRawUnsafe: async (sql, ...values) => { queries?.push({ sql, values }); return (await db.query(sql, values)).rows; },
+    $transaction: (fn) => db.transaction(tx => fn(adapter(tx, queries))) };
 }
 async function fixture(t, install = true) {
   const db = new PGlite({ parsers: { 1114: value => new Date(`${value.replace(" ", "T")}Z`) } });
@@ -66,6 +66,75 @@ async function fixture(t, install = true) {
 const snapshot = (data = {}) => ({ externalId: "provider-chat", phone: "+573001234567", name: "Contacto", mode: "ai",
   lastContactAt: null, historyTruncated: false, historyCursor: null, messages: [], ...data });
 const message = (id, sentAt = new Date().toISOString()) => ({ id, direction: "inbound", text: "Consulta real", sentAt, author: null });
+
+test("la bandeja compacta conserva datos y permisos sin ejecutar consultas del resumen", async t => {
+  const f = await fixture(t), queries = [], store = createAttentionStore(adapter(f.db, queries));
+  const own = await f.create(), other = await f.create(central, { phone: '3000000099' });
+  await f.assign(own.id); await f.assign(other.id, otherAnalyst);
+  await f.db.query('INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt") VALUES($1,$2,\'compact\',\'inbound\',\'Mensaje recibido\',now())', [randomUUID(), own.id]);
+  queries.length = 0;
+  const full = await store.getAttentionInbox(analyst, filters), fullQueries = queries.length;
+  assert.ok(full.dashboard);
+  queries.length = 0;
+  const compact = await store.getAttentionInbox(analyst, { ...filters, includeDashboard: false });
+  const { dashboard, ...expected } = full;
+  assert.deepEqual(compact, expected);
+  assert.equal(fullQueries - queries.length, 4, 'las cuatro lecturas exclusivas del resumen no se ejecutan');
+  assert.equal(compact.total, 1); assert.equal(compact.operational.unread, 1);
+  assert.deepEqual(compact.conversations.map(item => item.id), [own.id]);
+  assert.equal(compact.conversations.some(item => item.id === other.id), false);
+  await f.assign(own.id, otherAnalyst);
+  assert.equal((await store.getAttentionInbox(analyst, { ...filters, includeDashboard: false })).total, 0);
+  await f.db.exec('UPDATE "Usuario" SET activo=false WHERE id=5');
+  await assert.rejects(store.getAttentionInbox(analyst, { ...filters, includeDashboard: false }), { status: 403 });
+});
+
+test("paginar sin filtro operativo limita las estadísticas a la página y conserva totales de no leídos", async t => {
+  const f = await fixture(t), queries = [], store = createAttentionStore(adapter(f.db, queries));
+  await f.db.exec(`INSERT INTO "AttentionConversation"(id,channel,name,phone,"lastContactAt")
+    SELECT ('00000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid,'whatsapp','Contacto '||i,'+573001000'||lpad(i::text,3,'0'),now()-i*interval '1 minute'
+    FROM generate_series(1,45) i;
+    INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt")
+    SELECT gen_random_uuid(),id,'page-test','inbound','Mensaje',now() FROM "AttentionConversation";`);
+  const first = await store.getAttentionInbox(central, { ...filters, includeDashboard: false });
+  assert.equal(first.total, 45); assert.equal(first.conversations.length, 40); assert.equal(first.operational.unread, 45);
+  const pageQuery = queries.find(item => item.sql.includes('AS preview') && item.sql.includes('LIMIT $8 OFFSET $9'));
+  const plan = (await f.db.query(`EXPLAIN(ANALYZE,FORMAT JSON) ${pageQuery.sql}`, pageQuery.values)).rows[0]['QUERY PLAN'][0].Plan;
+  const messageScans = [];
+  const walk = node => { if (node['Relation Name'] === 'AttentionMessage') messageScans.push(node); for (const child of node.Plans || []) walk(child); };
+  walk(plan);
+  assert.ok(messageScans.length > 0);
+  assert.ok(messageScans.every(node => node['Actual Loops'] <= 40), 'los escaneos correlacionados de mensajes solo consideran las 40 conversaciones de la página');
+  const countQuery = queries.find(item => item.sql.startsWith('SELECT count(*)::integer AS total FROM "AttentionConversation" c'));
+  const countPlan = (await f.db.query(`EXPLAIN(FORMAT JSON) ${countQuery.sql}`, countQuery.values)).rows[0]['QUERY PLAN'][0].Plan;
+  const relations = [];
+  const countWalk = node => { if (node['Relation Name']) relations.push(node['Relation Name']); for (const child of node.Plans || []) countWalk(child); };
+  countWalk(countPlan);
+  assert.equal(relations.includes('AttentionMessage'), false, 'contar todas las conversaciones no requiere recorrer mensajes');
+  const second = await store.getAttentionInbox(central, { ...filters, page: 2, includeDashboard: false });
+  assert.equal(second.conversations.length, 5); assert.equal(new Set([...first.conversations, ...second.conversations].map(item => item.id)).size, 45);
+  assert.equal((await store.getAttentionInbox(central, { ...filters, filter: 'unread', includeDashboard: false })).total, 45);
+});
+
+test("la identidad consulta columnas concretas sin serializar soportes grandes del crédito", async t => {
+  const f = await fixture(t), { id } = await f.create(), queries = [], store = createAttentionStore(adapter(f.db, queries));
+  await f.db.exec(`DELETE FROM "Credito" WHERE id=3;
+    ALTER TABLE "Credito" ADD COLUMN "clienteTipoDocumento" text;
+    UPDATE "Credito" SET "clienteTipoDocumento"='CC',"contratoSnapshot"=jsonb_build_object('evidence',repeat('synthetic-private-data-',5000)) WHERE id IN(1,2);`);
+  const inbox = await store.getAttentionInbox(central, { ...filters, includeDashboard: false });
+  assert.deepEqual(inbox.conversations[0].customerIdentity, { name: 'Persona uno', document: '12345678', documentLabel: 'C.C.' });
+  const detail = await store.getAttentionDetail(central, id);
+  assert.equal(detail.customer.name, 'Persona uno'); assert.equal(detail.customer.credits.length, 2);
+  assert.doesNotMatch(JSON.stringify({ inbox, detail }), /synthetic-private-data/);
+  const creditReads = queries.filter(item => item.sql.includes('FROM "Credito" c WHERE') && item.sql.startsWith('SELECT c.id'));
+  assert.ok(creditReads.length >= 3);
+  for (const query of creditReads) {
+    const plan = (await f.db.query(`EXPLAIN(VERBOSE,FORMAT JSON) ${query.sql}`, query.values)).rows[0]['QUERY PLAN'][0];
+    assert.doesNotMatch(JSON.stringify(plan), /to_jsonb\(c\.\*\)|contratoSnapshot/, 'la proyección no debe descomprimir ni convertir el expediente completo para obtener la cédula');
+  }
+  await f.db.exec('ALTER TABLE "Credito" DROP COLUMN "clienteTipoDocumento"');
+  assert.equal((await store.getAttentionInbox(central, { ...filters, includeDashboard: false })).conversations[0].customerIdentity.documentLabel, 'Documento', 'la compatibilidad con la columna opcional no se almacena entre transacciones');
+});
 
 test("colección Clientes separa solicitudes globalmente y conserva potenciales, etiquetas y alcance", async t => {
   const f = await fixture(t);

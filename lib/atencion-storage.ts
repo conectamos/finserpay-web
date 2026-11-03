@@ -37,6 +37,15 @@ const messagePreviewSql = `CASE WHEN NULLIF(btrim(m.text),'') IS NOT NULL THEN l
 const iso = (value: Date | string) => new Date(value).toISOString();
 const maskDocument = (value: string | null) => value ? `••••${value.replace(/[\s.-]/g, "").slice(-4)}` : "Sin documento";
 const unassignedSql = `c."assigneeKey" IS NULL AND c."assigneeUserId" IS NULL AND c."assigneeSellerId" IS NULL`;
+// Membership/count filters need to know whether one matching message exists,
+// not aggregate an entire history for every scoped conversation.
+const unreadConversationSql = `EXISTS(SELECT 1 FROM "AttentionMessage" m WHERE m."conversationId"=c.id
+  AND m.direction='inbound' AND ${attentionUnreadPredicate})`;
+const unansweredConversationSql = `EXISTS(SELECT 1 FROM "AttentionMessage" m WHERE m."conversationId"=c.id
+  AND m.direction='inbound' AND m."sentAt">COALESCE((SELECT o."sentAt" FROM "AttentionMessage" o
+    WHERE o."conversationId"=c.id AND o.direction='outbound'
+      AND (to_jsonb(o)->>'deliveryStatus' IS NULL OR to_jsonb(o)->>'deliveryStatus' IN ('accepted','sent','delivered','read'))
+    ORDER BY o."sentAt" DESC,o.id DESC LIMIT 1),'-infinity'::timestamptz))`;
 // Provider history and acknowledged API/app sends count as replies. Pending,
 // uncertain and failed sends never clear a customer's unanswered message.
 const operationJoin = `LEFT JOIN LATERAL (
@@ -47,6 +56,15 @@ const operationJoin = `LEFT JOIN LATERAL (
 ) op ON true`;
 const operationSelect = `op."unreadCount",op."lastInboundAt",op."waitingSince"`;
 type ConversationIdentity = AttentionCreditResolution & { customerIdentity: AttentionConversation["customerIdentity"] };
+/** Optional legacy columns are detected without serializing a credit's full
+ * contract/evidence JSON just to project its document type. No customer state is
+ * cached: each query still reads current scoped records in its transaction. */
+async function creditReadColumns(tx: AttentionDb) {
+  const [columns] = await tx.$queryRawUnsafe<{ documentType: boolean; capitalPlan: boolean }[]>(`SELECT
+    EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('public."Credito"') AND attname='clienteTipoDocumento' AND attnum>0 AND NOT attisdropped) AS "documentType",
+    EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('public."Credito"') AND attname='planCapitalVigente' AND attnum>0 AND NOT attisdropped) AS "capitalPlan"`);
+  return columns;
+}
 function conversation(row: ConversationRow, identity: ConversationIdentity): AttentionConversation {
   return { id: row.id, externalId: row.externalId, channel: row.channel, phone: row.phone, name: row.name,
     status: row.status, mode: row.mode, assigneeKey: row.assigneeKey, assigneeName: row.assigneeName,
@@ -59,13 +77,20 @@ function conversation(row: ConversationRow, identity: ConversationIdentity): Att
 /** Resolve only scoped chats. Credit access stays central or explicitly linked for nominal analysts. */
 async function conversationIdentities(tx: AttentionDb, actor: AttentionActor, rows: readonly Pick<ConversationRow, "id" | "phone" | "linkedCreditId">[]): Promise<Map<string, ConversationIdentity>> {
   const phones = [...new Set(rows.map(row => attentionPhoneOrNull(row.phone)).filter((phone): phone is string => phone !== null))];
+  const columns = phones.length ? await creditReadColumns(tx) : null;
   const records = phones.length ? await tx.$queryRawUnsafe<(AttentionCreditIdentityRecord & { clienteNombre: string | null })[]>(`SELECT c.id,c."clienteTelefono",c."clienteDocumento",c."clienteNombre",
-    to_jsonb(c)->>'clienteTipoDocumento' AS "clienteTipoDocumento",c.estado FROM "Credito" c WHERE ${attentionPhoneSql("c")}=ANY($1::text[])`, phones) : [];
+    ${columns?.documentType ? 'c."clienteTipoDocumento"::text' : 'NULL::text'} AS "clienteTipoDocumento",c.estado FROM "Credito" c WHERE ${attentionPhoneSql("c")}=ANY($1::text[])`, phones) : [];
+  const byPhone = new Map<string, typeof records>();
+  for (const record of records) {
+    const phone = attentionPhoneOrNull(record.clienteTelefono);
+    if (phone) { const values = byPhone.get(phone) || []; values.push(record); byPhone.set(phone, values); }
+  }
   return new Map(rows.map(row => {
-    const resolved = resolveAttentionCreditIdentity(row, records);
+    const matching = byPhone.get(attentionPhoneOrNull(row.phone) || "") || [];
+    const resolved = resolveAttentionCreditIdentity(row, matching);
     let customerIdentity: AttentionConversation["customerIdentity"] = null;
     if (resolved.classification.status === "finserpay" && (actor.central || row.linkedCreditId)) {
-      const selected = records.filter(record => resolved.creditIds.includes(record.id) && (actor.central || record.id === row.linkedCreditId))
+      const selected = matching.filter(record => resolved.creditIds.includes(record.id) && (actor.central || record.id === row.linkedCreditId))
         .sort((a, b) => Number(b.id === row.linkedCreditId) - Number(a.id === row.linkedCreditId) || b.id - a.id)[0];
       const key = selected && attentionDocumentKey(selected);
       if (selected && key) {
@@ -169,18 +194,20 @@ async function idempotent(tx: AttentionDb, actor: AttentionActor, requestId: str
 const phoneSql = attentionPhoneSql;
 async function candidateCredits(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<CreditRow[]> {
   if (!row.phone || (!actor.central && !row.linkedCreditId)) return [];
+  const columns = await creditReadColumns(tx);
   return tx.$queryRawUnsafe(`SELECT c.id,c.folio,c."clienteNombre",c."clienteDocumento",c."clienteTelefono",
-    to_jsonb(c)->>'clienteTipoDocumento' AS "clienteTipoDocumento",c.estado,c."referenciaEquipo",c."equipoMarca",c."equipoModelo",
+    ${columns.documentType ? 'c."clienteTipoDocumento"::text' : 'NULL::text'} AS "clienteTipoDocumento",c.estado,c."referenciaEquipo",c."equipoMarca",c."equipoModelo",
     c."montoCredito",c."valorCuota",c."plazoMeses",c."frecuenciaPago",c."fechaPrimerPago",c."fechaProximoPago",c."pazYSalvoEmitidoAt",
-    to_jsonb(c)->'planCapitalVigente' AS "planCapitalVigente" FROM "Credito" c
+    ${columns.capitalPlan ? 'c."planCapitalVigente"' : 'NULL::jsonb'} AS "planCapitalVigente" FROM "Credito" c
     WHERE ${phoneSql("c")}=$1 AND ($2::boolean OR c.id=$3::integer) ORDER BY c.id DESC LIMIT 101`,
     row.phone, actor.central, row.linkedCreditId);
 }
 async function candidateDrafts(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<DraftRow[]> {
   if (!actor.central || !row.phone) return [];
-  const presence = await tx.$queryRawUnsafe<{present: boolean}[]>(`SELECT to_regclass('public."CreditoBorrador"') IS NOT NULL AS present`);
+  const presence = await tx.$queryRawUnsafe<{present: boolean; documentType: boolean}[]>(`SELECT to_regclass('public."CreditoBorrador"') IS NOT NULL AS present,
+    EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('public."CreditoBorrador"') AND attname='clienteTipoDocumento' AND attnum>0 AND NOT attisdropped) AS "documentType"`);
   if (!presence[0]?.present) return [];
-  return tx.$queryRawUnsafe(`SELECT d.id,d."clienteNombre",d."clienteDocumento",to_jsonb(d)->>'clienteTipoDocumento' AS "clienteTipoDocumento",d.estado,d."dataCreditoAssessmentId",d."createdAt"
+  return tx.$queryRawUnsafe(`SELECT d.id,d."clienteNombre",d."clienteDocumento",${presence[0].documentType ? 'd."clienteTipoDocumento"::text' : 'NULL::text'} AS "clienteTipoDocumento",d.estado,d."dataCreditoAssessmentId",d."createdAt"
     FROM "CreditoBorrador" d WHERE d."creditoId" IS NULL AND ${phoneSql("d")}=$1 ORDER BY d.id DESC LIMIT 101`, row.phone);
 }
 async function customerDetail(tx: AttentionDb, actor: AttentionActor, row: ConversationRow): Promise<AttentionCustomer> {
@@ -280,55 +307,63 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
         const tag = filters.tag?.normalize("NFKC").trim().toLocaleLowerCase("es-CO");
         const tagIds = tag ? tagRows.filter(row => [...row.tags.filter(value=>!isAttentionSystemTag(value)), ...identities.get(row.id)!.autoTags].some(value=>value.toLocaleLowerCase("es-CO")===tag)).map(row=>row.id) : null;
         const searchQuery=await attentionConversationSearch(tx,actor,filters.search);
+        const predicates = { all: "$6::text='all'", mine: `$6::text='mine' AND c."assigneeKey"=$3`,
+          pending: "$6::text='pending' AND c.status='pending'", closed: "$6::text='closed' AND c.status='closed'",
+          unassigned: `$6::text='unassigned' AND ${unassignedSql}`, unread: `$6::text='unread' AND ${unreadConversationSql}`,
+          unanswered: `$6::text='unanswered' AND ${unansweredConversationSql}` };
         const filtered = `${searchQuery.sql}${collectionSql}
-          AND ($6::text='all' OR ($6='mine' AND c."assigneeKey"=$3) OR ($6='pending' AND c.status='pending') OR ($6='closed' AND c.status='closed')
-            OR ($6='unassigned' AND ${unassignedSql}) OR ($6='unread' AND op."unreadCount">0) OR ($6='unanswered' AND op."waitingSince" IS NOT NULL))
+          AND (${predicates[filters.filter] || 'false AND $6::text IS NOT NULL'})
           AND ($7::uuid[] IS NULL OR c.id=ANY($7::uuid[]))`;
         const values = [...searchQuery.values, filters.filter, tagIds];
+        // Choose the page with bounded EXISTS checks, then aggregate only its
+        // 40 histories for exact previews, unread counts and waiting timestamps.
+        const pageFrom = `(SELECT c.* FROM "AttentionConversation" c WHERE ${filtered}
+              ORDER BY c."lastContactAt" DESC NULLS LAST,c.id LIMIT $8 OFFSET $9 FOR SHARE OF c) c ${operationJoin}`;
         const rows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,${operationSelect},
           (SELECT ${messagePreviewSql} FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
-          FROM "AttentionConversation" c ${operationJoin} WHERE ${filtered}
-          ORDER BY c."lastContactAt" DESC NULLS LAST,c.id LIMIT $8 OFFSET $9 FOR SHARE OF c`, ...values, pageSize, (filters.page - 1) * pageSize);
-        const totals = await tx.$queryRawUnsafe<{total: number}[]>(`SELECT count(*)::integer AS total FROM "AttentionConversation" c ${operationJoin} WHERE ${filtered}`, ...values);
+          FROM ${pageFrom}
+          ORDER BY c."lastContactAt" DESC NULLS LAST,c.id`, ...values, pageSize, (filters.page - 1) * pageSize);
+        const totals = await tx.$queryRawUnsafe<{total: number}[]>(`SELECT count(*)::integer AS total FROM "AttentionConversation" c WHERE ${filtered}`, ...values);
         const [operational] = await tx.$queryRawUnsafe<AttentionInbox["operational"][]>(`SELECT count(*) FILTER(WHERE ${unassignedSql})::integer AS unassigned,
-          count(*) FILTER(WHERE op."unreadCount">0)::integer AS unread,count(*) FILTER(WHERE op."waitingSince" IS NOT NULL)::integer AS unanswered
-          FROM "AttentionConversation" c ${operationJoin} WHERE ${access.sql}`,...access.values);
+          count(*) FILTER(WHERE ${unreadConversationSql})::integer AS unread,count(*) FILTER(WHERE ${unansweredConversationSql})::integer AS unanswered
+          FROM "AttentionConversation" c WHERE ${access.sql}`,...access.values);
         const metricRows = await tx.$queryRawUnsafe<{pending: number; open: number; closed: number; mine: number}[]>(`SELECT
           count(*) FILTER (WHERE c.status='pending')::integer AS pending, count(*) FILTER (WHERE c.status='open')::integer AS open,
           count(*) FILTER (WHERE c.status='closed')::integer AS closed, count(*) FILTER (WHERE c."assigneeKey"=$3)::integer AS mine
           FROM "AttentionConversation" c WHERE ${access.sql}`, ...access.values);
         const replies = await tx.$queryRawUnsafe<AttentionQuickReply[]>(`SELECT id,title,text,"approvedBy","approvedAt" FROM "AttentionQuickReply" ORDER BY title,id LIMIT 200`);
         const team = await teamList(tx, actor);
-        const daily = await tx.$queryRawUnsafe<{date: string; count: number}[]>(`WITH days AS (
+        const includeDashboard = filters.includeDashboard !== false;
+        const daily = includeDashboard ? await tx.$queryRawUnsafe<{date: string; count: number}[]>(`WITH days AS (
           SELECT ((now() AT TIME ZONE 'America/Bogota')::date-i)::text AS date FROM generate_series(0,6) i
         ), received AS (SELECT (m."sentAt" AT TIME ZONE 'America/Bogota')::date::text AS date,count(DISTINCT c.id)::integer AS count
           FROM "AttentionMessage" m JOIN "AttentionConversation" c ON c.id=m."conversationId"
           WHERE m.direction='inbound' AND ${access.sql}
           AND m."sentAt">=((now() AT TIME ZONE 'America/Bogota')::date-6)::timestamp AT TIME ZONE 'America/Bogota'
           GROUP BY (m."sentAt" AT TIME ZONE 'America/Bogota')::date)
-          SELECT days.date,COALESCE(received.count,0)::integer AS count FROM days LEFT JOIN received USING(date) ORDER BY days.date`, ...access.values);
-        const activeRows = await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,${operationSelect},
+          SELECT days.date,COALESCE(received.count,0)::integer AS count FROM days LEFT JOIN received USING(date) ORDER BY days.date`, ...access.values) : [];
+        const activeRows = includeDashboard ? await tx.$queryRawUnsafe<ConversationRow[]>(`SELECT c.*,${operationSelect},
           (SELECT ${messagePreviewSql} FROM "AttentionMessage" m WHERE m."conversationId"=c.id ORDER BY m."sentAt" DESC,m.id DESC LIMIT 1) AS preview
-          FROM "AttentionConversation" c ${operationJoin} WHERE ${access.sql} AND c.status<>'closed' ORDER BY c."lastContactAt" DESC NULLS LAST,c."updatedAt" DESC,c.id LIMIT 5 FOR SHARE OF c`, ...access.values);
-        const loads = await tx.$queryRawUnsafe<{key: string; assigned: number; pending: number}[]>(`SELECT c."assigneeKey" AS key,
+          FROM "AttentionConversation" c ${operationJoin} WHERE ${access.sql} AND c.status<>'closed' ORDER BY c."lastContactAt" DESC NULLS LAST,c."updatedAt" DESC,c.id LIMIT 5 FOR SHARE OF c`, ...access.values) : [];
+        const loads = includeDashboard ? await tx.$queryRawUnsafe<{key: string; assigned: number; pending: number}[]>(`SELECT c."assigneeKey" AS key,
           count(*) FILTER(WHERE c.status<>'closed')::integer AS assigned,count(*) FILTER(WHERE c.status='pending')::integer AS pending
-          FROM "AttentionConversation" c WHERE ${access.sql} AND c."assigneeSellerId" IS NULL AND c."assigneeKey"='analyst:'||c."assigneeUserId"::text GROUP BY c."assigneeKey"`, ...access.values);
-        const activityRows = await tx.$queryRawUnsafe<{id: string; action: string; at: Date | string; conversationId: string; author: string}[]>(`SELECT a.id::text,a.action,a."createdAt" AS at,a."conversationId",u.nombre AS author
+          FROM "AttentionConversation" c WHERE ${access.sql} AND c."assigneeSellerId" IS NULL AND c."assigneeKey"='analyst:'||c."assigneeUserId"::text GROUP BY c."assigneeKey"`, ...access.values) : [];
+        const activityRows = includeDashboard ? await tx.$queryRawUnsafe<{id: string; action: string; at: Date | string; conversationId: string; author: string}[]>(`SELECT a.id::text,a.action,a."createdAt" AS at,a."conversationId",u.nombre AS author
           FROM "AttentionAudit" a JOIN "AttentionConversation" c ON c.id=a."conversationId" JOIN "Usuario" u ON u.id=a."userId"
           WHERE ${access.sql} AND a.action=ANY($4::text[]) ORDER BY a."createdAt" DESC,a.id DESC LIMIT 12`, ...access.values,
-          ["CONVERSATION_TRANSFER", "CONVERSATION_CLAIM", "CONVERSATION_CLOSE", "CONVERSATION_REOPEN", "CONVERSATION_NOTE", "CONVERSATION_TASK", "CONVERSATION_COMPLETE_TASK", "CONVERSATION_LINK", "CONVERSATION_HUMAN_REQUEST", "DAPTA_SNAPSHOT_IMPORTED"]);
+          ["CONVERSATION_TRANSFER", "CONVERSATION_CLAIM", "CONVERSATION_CLOSE", "CONVERSATION_REOPEN", "CONVERSATION_NOTE", "CONVERSATION_TASK", "CONVERSATION_COMPLETE_TASK", "CONVERSATION_LINK", "CONVERSATION_HUMAN_REQUEST", "DAPTA_SNAPSHOT_IMPORTED"]) : [];
         const titles: Record<string,string> = { CONVERSATION_TRANSFER: "Conversación asignada", CONVERSATION_CLAIM: "Atención iniciada", CONVERSATION_CLOSE: "Conversación finalizada", CONVERSATION_REOPEN: "Conversación reabierta", CONVERSATION_NOTE: "Nota añadida", CONVERSATION_TASK: "Recordatorio creado", CONVERSATION_COMPLETE_TASK: "Recordatorio completado", CONVERSATION_LINK: "Ficha vinculada", CONVERSATION_HUMAN_REQUEST: "Atención humana solicitada", DAPTA_SNAPSHOT_IMPORTED: "Conversación sincronizada" };
         // Tag discovery precedes these locked rows. Never serialize an identity
         // cached before a concurrent unlink, reassignment or contact correction.
         const freshIdentities = await conversationIdentities(tx,actor,[...rows,...activeRows]);
         for (const [id,identity] of freshIdentities) identities.set(id,identity);
         const result = { schemaReady: true, conversations: rows.map(row => conversation(row, identities.get(row.id)!)), total: totals[0]?.total || 0, page: filters.page, pageSize,
-          metrics: metricRows[0], operational, availableTags, agendaCounts: await agendaCounts(tx,actor,colombiaDateKey(now())), team, branches: [], dashboard: {
+          metrics: metricRows[0], operational, availableTags, agendaCounts: await agendaCounts(tx,actor,colombiaDateKey(now())), team, branches: [], ...(includeDashboard ? { dashboard: {
             daily: daily.map(day => ({ ...day, label: new Date(`${day.date}T12:00:00Z`).toLocaleDateString("es-CO", { weekday: "short", timeZone: "America/Bogota" }) })),
             team: team.map(person => ({ key: person.key, name: person.name, assigned: loads.find(l => l.key === person.key)?.assigned || 0, pending: loads.find(l => l.key === person.key)?.pending || 0 })),
             activeConversations: activeRows.map(row => conversation(row, identities.get(row.id)!)),
             activity: activityRows.map(item => ({ id: item.id, title: titles[item.action], description: item.author, at: iso(item.at), conversationId: item.conversationId })),
-          },
+          } } : {}),
           quickReplies: replies.map(reply => ({ ...reply, approvedAt: iso(reply.approvedAt) })), actor };
         await audit(tx, actor, "INBOX_VIEWED", null, { filter: filters.filter, page: filters.page, conversationIds: rows.map(r => r.id) });
         return result;

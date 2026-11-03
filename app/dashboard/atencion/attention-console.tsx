@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode, type RefObject } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, CalendarClock, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Columns3, Download, ExternalLink, FileCheck2, FileText, Image as ImageIcon, Inbox, LayoutDashboard, LockKeyhole, MessageCircle, Mic, MoreVertical, Paperclip, Plus, RefreshCw, Search, Send, Settings, ShieldCheck, Smartphone, Tag, UserRound, Users, Video, Wallet, X, type LucideIcon } from "lucide-react";
 import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import AnalystNavigation from "@/app/dashboard/aprobaciones/analyst-navigation";
@@ -35,18 +35,22 @@ type View = "enrollment" | "welcome" | "dashboard" | "conversations" | "board" |
 const DAPTA_INBOX_URL = "https://app.dapta.ai/agents-studio/inbox";
 const statusNames = { pending: "Pendiente", open: "En atención", closed: "Finalizada" } as const;
 const money = (value: number | null) => value === null ? "No disponible" : new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value);
+const dayFormatter = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "short" });
+const dateFormatter = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+const timeFormatter = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false });
+const messageDayFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" });
 function date(value: string | null, short = false) {
   if (!value) return "Sin contacto registrado";
   const parsed = new Date(value.length === 10 ? `${value}T12:00:00-05:00` : value);
   if (Number.isNaN(parsed.getTime())) return "Fecha no disponible";
-  return new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "short", ...(short ? {} : { hour: "2-digit", minute: "2-digit" }) }).format(parsed);
+  return (short ? dayFormatter : dateFormatter).format(parsed);
 }
 function time(value: string | null) {
   if (!value || !Number.isFinite(Date.parse(value))) return "—";
-  return new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value));
+  return timeFormatter.format(new Date(value));
 }
 function messageDay(value: string) {
-  return Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value)) : "";
+  return Number.isFinite(Date.parse(value)) ? messageDayFormatter.format(new Date(value)) : "";
 }
 function contactName(conversation: AttentionConversation) { return conversation.customerIdentity?.name || conversation.name || conversation.phone || "Contacto de WhatsApp"; }
 function initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase() || "C"; }
@@ -183,6 +187,16 @@ function MessageDelivery({ message }: { message: AttentionMessage }) {
   return <span className={`${styles.deliveryStatus} ${status === "failed" || status === "uncertain" ? styles.deliveryAttention : ""}`} title={message.deliveryError || undefined}><Icon aria-hidden="true" size={14} />{deliveryNames[status]}{message.deliveryError && <span>{message.deliveryError}</span>}</span>;
 }
 type ReplyDraft = { text: string; file: File | null; replyTo: AttentionQuote | null; requestId: string | null; version: number | null; locked: boolean; error: string; result: "failed" | "missing" | null };
+type SendingReply = { actorKey: string; conversationId: string; requestId: string; draft: ReplyDraft };
+function SendingReplyBubble({ attempt, mediaReady }: { attempt: SendingReply; mediaReady?: () => void }) {
+  const { draft } = attempt;
+  return <aside data-attention="sending-message" className={styles.sendingReply} role="status" aria-label="Envío en curso" onLoadCapture={mediaReady}><header><Clock3 aria-hidden="true" size={17} />Enviando…</header>
+    {draft.replyTo && <AttentionQuotedMessage quote={draft.replyTo} />}
+    {draft.file && <ReplyAudioPreview file={draft.file} />}
+    {(!draft.file || !separateText(draft.file)) && draft.text.trim() && <p>{draft.text.trim()}</p>}
+    <small>Esperando confirmación de WhatsApp. Puedes consultar otro chat mientras termina.</small>
+  </aside>;
+}
 type ExtensionAttempt = { input: AttentionExtensionInput; phase: "pending" | "uncertain" | "failed" | "confirmed"; message: string; requiresReview?: boolean; management?: AttentionExtensionResult["management"] };
 type ReceiptAttempt = { input: AttentionReceiptSendInput; phase: "pending" | "uncertain" | "missing" | "failed" | "confirmed"; message: string };
 type FinancialAttempts = { extension?: ExtensionAttempt; receipt?: ReceiptAttempt };
@@ -257,7 +271,7 @@ function ChatDropSurface({ children, receive, previewOpen = false }: { children:
     {error && <div className={styles.dropError} role="alert"><span>{error}</span><Button variant="ghost" aria-label="Cerrar aviso de archivo" onClick={() => setError("")}><X size={16} /></Button></div>}
   </section>;
 }
-function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = false, refresh, change, receiveFiles, send, resolve, restart, retry, discard, fallbackDapta, actorKey, quickReplies = [], templateSent, templateBusyChanged }: { detail: AttentionDetail; draft: ReplyDraft; busy: boolean; refreshing?: boolean; refreshBusy?: boolean; refresh?: () => void; change: (patch: Partial<ReplyDraft>) => void; receiveFiles: (files: File[]) => string | null; send: () => void; resolve: () => void; restart: () => void; retry: () => void; discard: () => void; fallbackDapta: boolean; actorKey: string; quickReplies?: AttentionQuickReply[]; templateSent: () => void | Promise<void>; templateBusyChanged: (value: boolean) => void }) {
+function ReplyComposer({ detail, draft, busy, submitting = false, refreshing = false, refreshBusy = false, refresh, change, receiveFiles, send, resolve, restart, retry, discard, fallbackDapta, actorKey, quickReplies = [], templateSent, templateBusyChanged }: { detail: AttentionDetail; draft: ReplyDraft; busy: boolean; submitting?: boolean; refreshing?: boolean; refreshBusy?: boolean; refresh?: () => void; change: (patch: Partial<ReplyDraft>) => void; receiveFiles: (files: File[]) => string | null; send: () => void; resolve: () => void; restart: () => void; retry: () => void; discard: () => void; fallbackDapta: boolean; actorKey: string; quickReplies?: AttentionQuickReply[]; templateSent: () => void | Promise<void>; templateBusyChanged: (value: boolean) => void }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const expires = Date.parse(detail.messaging?.windowExpiresAt || "");
@@ -270,9 +284,13 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
     ? detail.messaging?.reason || "La conexión de envío con Meta está pendiente de configuración."
     : "La ventana de 24 horas terminó. Se necesita una plantilla aprobada para volver a contactar al cliente.";
   const invalid = replyValidation(draft);
-  const attachmentPreview = Boolean(draft.file);
+  const attachmentPreview = Boolean(draft.file) && !submitting;
   const replyInput = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const optionsMenu = useRef<HTMLDetailsElement | null>(null);
+  useEffect(() => {
+    if (attachmentPreview || submitting) optionsMenu.current?.removeAttribute("open");
+  }, [attachmentPreview, submitting, draft.file]);
   useEffect(() => {
     if (attachmentPreview) replyInput.current?.focus();
   }, [attachmentPreview]);
@@ -302,7 +320,7 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
       <div data-attention="media-preview" className={composerLayout.mediaStage} aria-label="Vista previa antes de enviar"><ReplyAudioPreview file={draft.file} expanded /></div>
     </>}
     {!canReply && <p className={styles.replyUnavailable} role="status">{blockedReason}</p>}
-    {draft.replyTo && <AttentionReplyReference quote={draft.replyTo} disabled={busy || draft.locked} onCancel={() => change({ replyTo: null })} />}
+    {!submitting && draft.replyTo && <AttentionReplyReference quote={draft.replyTo} disabled={busy || draft.locked} onCancel={() => change({ replyTo: null })} />}
     <div data-attention="reply-draft" className={`${styles.replyDraftBody} ${composerLayout.draft}`}>
     {separateText(draft.file) && draft.text.trim() && <p className={styles.replyLimit}>El texto quedará como borrador para enviarlo después.</p>}
     {draft.error && <p className={styles.replyError} role="alert">{draft.error}</p>}
@@ -310,7 +328,7 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
     {refreshing && <div className={styles.replyLimit}><p role="status">Puedes escribir tu próxima respuesta mientras se actualiza la conversación…</p>{refresh && <Button type="button" variant="ghost" disabled={busy || refreshBusy} onClick={refresh}>{refreshBusy ? "Actualizando estado…" : "Actualizar estado"}</Button>}</div>}
     </div>
     <div data-attention="reply-actions" data-has-draft={Boolean(draft.text.trim() || draft.file)} data-locked={draft.locked} className={composerLayout.row}>
-      <details className={composerLayout.menu} onKeyDown={event => { if (event.key === "Escape" && !event.currentTarget.querySelector("dialog[open]")) { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}>
+      <details ref={optionsMenu} className={composerLayout.menu} onKeyDown={event => { if (event.key === "Escape" && !event.currentTarget.querySelector("dialog[open]")) { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}>
         <summary aria-label="Adjuntar y más opciones" title="Adjuntar y más opciones"><Plus aria-hidden="true" size={24} /></summary>
         <div className={composerLayout.options}>
           <label title="JPG/PNG hasta 5 MB; otros formatos hasta 16 MB" className={`${styles.attachButton} ${composerLayout.attach} ${busy || draft.locked || !canReply ? styles.attachDisabled : ""}`}><Paperclip aria-hidden="true" size={20} /><span>Adjuntar archivo</span><input ref={fileInput} type="file" aria-label="Adjuntar archivo" accept={replyMimeTypes.join(",")} disabled={busy || draft.locked || !canReply} onChange={event => { const file = event.target.files?.[0] || null; if (file) change({ file }); event.target.value = ""; }} /></label>
@@ -322,12 +340,12 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
       <AttentionComposerTools inline key={detail.conversation.id} conversationId={detail.conversation.id} disabled={busy || draft.locked || !canReply} audioDisabled={Boolean(draft.file)} onAudio={file => { if (!draft.file) change({ file }); }} onEmoji={emoji => { if (draft.text.length + emoji.length <= (draft.file && !separateText(draft.file) ? 1024 : 4096)) change({ text: `${draft.text}${emoji}` }); }} />
       <label className={styles.srOnly} htmlFor={`reply-${detail.conversation.id}`}>Responder al cliente</label>
       {shortcuts.menu}
-      <textarea ref={replyInput} id={`reply-${detail.conversation.id}`} rows={1} value={draft.text} disabled={busy || draft.locked || !canReply} onChange={event => { change({ text: event.target.value }); shortcuts.onCaretChange(); }} onClick={shortcuts.onCaretChange} onSelect={shortcuts.onCaretChange} {...shortcuts.popupProps} onKeyDown={shortcuts.onKeyDown} onPaste={pasteReplyFile} enterKeyHint="enter" title="Enter para nueva línea. Pulsa Enviar para enviar el mensaje. / para respuestas rápidas. Ctrl + V para pegar un archivo." maxLength={draft.file && !separateText(draft.file) ? 1024 : 4096} placeholder={canReply ? "Escribe un mensaje…" : "El envío aún no está disponible"} />
+      <textarea ref={replyInput} id={`reply-${detail.conversation.id}`} rows={1} value={submitting ? "" : draft.text} disabled={busy || draft.locked || !canReply} onChange={event => { change({ text: event.target.value }); shortcuts.onCaretChange(); }} onClick={shortcuts.onCaretChange} onSelect={shortcuts.onCaretChange} {...shortcuts.popupProps} onKeyDown={shortcuts.onKeyDown} onPaste={pasteReplyFile} enterKeyHint="enter" title="Enter para nueva línea. Pulsa Enviar para enviar el mensaje. / para respuestas rápidas. Ctrl + V para pegar un archivo." maxLength={draft.file && !separateText(draft.file) ? 1024 : 4096} placeholder={canReply ? "Escribe un mensaje…" : "El envío aún no está disponible"} />
       {!attachmentPreview && sendButton}
     </div>
     {attachmentPreview && draft.file && <div className={composerLayout.mediaTray}><div className={composerLayout.mediaSelection}><span className={composerLayout.mediaThumbnail} aria-label="Archivo preparado"><ReplyAudioPreview file={draft.file} thumbnail /></span><Button type="button" variant="ghost" disabled={busy || draft.locked || !canReply} onClick={() => fileInput.current?.click()}><Paperclip aria-hidden="true" size={18} />Cambiar archivo</Button></div>{sendButton}</div>}
-    {draft.locked && <div className={composerLayout.recovery}><Button type="button" variant="secondary" disabled={busy} onClick={resolve}><RefreshCw aria-hidden="true" size={16} />{busy ? "Consultando…" : "Consultar estado"}</Button>{draft.result === "missing" && <><Button type="button" variant="secondary" disabled={busy} onClick={discard}>Descartar intento</Button><Button type="button" disabled={busy || !canReply} onClick={retry}>Reintentar misma solicitud</Button></>}{draft.result === "failed" && <Button type="button" disabled={busy || !canReply} onClick={restart}>Preparar nuevo intento</Button>}</div>}
-    {draft.locked && <p className={styles.replyLimit}>Comprueba el estado antes de otro envío.</p>}
+    {draft.locked && !submitting && <div className={composerLayout.recovery}><Button type="button" variant="secondary" disabled={busy} onClick={resolve}><RefreshCw aria-hidden="true" size={16} />{busy ? "Consultando…" : "Consultar estado"}</Button>{draft.result === "missing" && <><Button type="button" variant="secondary" disabled={busy} onClick={discard}>Descartar intento</Button><Button type="button" disabled={busy || !canReply} onClick={retry}>Reintentar misma solicitud</Button></>}{draft.result === "failed" && <Button type="button" disabled={busy || !canReply} onClick={restart}>Preparar nuevo intento</Button>}</div>}
+    {draft.locked && !submitting && <p className={styles.replyLimit}>Comprueba el estado antes de otro envío.</p>}
     {fallbackDapta && <a className={styles.daptaFallback} href={DAPTA_INBOX_URL} target="_blank" rel="noopener noreferrer">Responder en Dapta <ExternalLink aria-hidden="true" size={14} /></a>}
   </form>;
 }
@@ -352,6 +370,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const [refreshNotice, setRefreshNotice] = useState("");
   const [liveStatus, setLiveStatus] = useState<"connecting" | "connected" | "reconnecting" | "offline" | "paused" | "polling">("connecting");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraft>>({});
+  const [sendingReply, setSendingReply] = useState<SendingReply | null>(null);
   const [forwardSource, setForwardSource] = useState<AttentionForwardSource | null>(null);
   const [saveStickerSource, setSaveStickerSource] = useState<{ conversationId: string; message: AttentionMessage } | null>(null);
   const [refreshingReplies, setRefreshingReplies] = useState<Record<string, boolean>>({});
@@ -387,6 +406,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const foregroundReads = useRef(0);
   const pollController = useRef<AbortController | null>(null);
   const liveAccessBlocked = useRef(false);
+  const replyAuthority = useRef(0);
   const replyController = useRef<AbortController | null>(null);
   const replyDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const financialController = useRef<AbortController | null>(null);
@@ -414,7 +434,11 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const activeConversations = dashboard?.activeConversations ?? [];
 
   const clearInaccessibleData = useCallback((message: string) => {
-    ++listRequest.current; ++detailRequest.current; liveAccessBlocked.current = true;
+    ++listRequest.current; ++detailRequest.current; ++replyAuthority.current; liveAccessBlocked.current = true;
+    const hadReplyOperation = Boolean(replyController.current);
+    replyController.current?.abort(); replyController.current = null;
+    if (replyDeadline.current) clearTimeout(replyDeadline.current); replyDeadline.current = null;
+    setSendingReply(null); if (hadReplyOperation) { busyRef.current = false; setBusy(false); }
     detailReads.current.forEach(cancel => cancel());
     teamReadController.current?.abort(); teamReadAttempts.current = {};
     inboxReadError.current = true; detailReadError.current = false;
@@ -434,7 +458,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     inboxReadError.current = false;
     const request = ++listRequest.current; setLoading(true); setError("");
     try {
-      const query = new URLSearchParams({ search, filter, page: String(page), ...(tag ? { tag } : {}), ...(view === "conversations" ? { collection: "clients" } : {}) });
+      const query = new URLSearchParams({ search, filter, page: String(page), ...(tag ? { tag } : {}), dashboard: view === "dashboard" || view === "team" ? "1" : "0", ...(view === "conversations" ? { collection: "clients" } : {}) });
       const result = await api<AttentionInbox>(`/api/atencion?${query}`, { signal });
       if (mounted.current && !signal?.aborted && request === listRequest.current) {
         if (authorityKey.current !== result.actor.key) {
@@ -549,11 +573,15 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
         } else temporaryFailure = true;
       };
       try {
-        const query = new URLSearchParams({ search, filter, page: String(page), ...(tag ? { tag } : {}), ...(view === "conversations" ? { collection: "clients" } : {}) });
+        const query = new URLSearchParams({ search, filter, page: String(page), ...(tag ? { tag } : {}), dashboard: view === "dashboard" || view === "team" ? "1" : "0", ...(view === "conversations" ? { collection: "clients" } : {}) });
         await Promise.all([
           api<AttentionInbox>(`/api/atencion?${query}`, { signal: controller.signal })
             .then(result => { if (current()) {
-              setInbox(result);
+              if (authorityKey.current !== result.actor.key) {
+                authorityKey.current = result.actor.key;
+                clearInaccessibleData("");
+              }
+              liveAccessBlocked.current = false; setInbox(result);
               setBoardRevision(value => value + 1);
               if (inboxReadError.current) { inboxReadError.current = false; setError(""); }
             } }).catch(err => failed(err, false)),
@@ -654,11 +682,12 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
       window.removeEventListener("offline", environmentChanged);
       window.removeEventListener("online", environmentChanged);
     };
-  }, [filter, page, search, tag, selected, view, clearInaccessibleData]);
+  }, [filter, page, search, tag, selected, view, currentActor.key, clearInaccessibleData]);
   useEffect(() => { if (selected && !showCustomer) chatHeading.current?.focus({ preventScroll: true }); }, [selected, showCustomer, view]);
+  const activeSendingReply = sendingReply?.actorKey === currentActor.key && sendingReply.conversationId === detail?.conversation.id ? sendingReply : null;
   const historyId = detail?.conversation.id;
-  const historyLength = detail?.messages.length;
-  const historyTail = detail?.messages[detail.messages.length - 1]?.id;
+  const historyLength = detail ? detail.messages.length + (activeSendingReply ? 1 : 0) : 0;
+  const historyTail = activeSendingReply?.requestId || detail?.messages[detail.messages.length - 1]?.id;
   const historyDelivery = detail?.messages[detail.messages.length - 1]?.deliveryStatus;
   const historyDeliveryError = detail?.messages[detail.messages.length - 1]?.deliveryError;
   useEffect(() => {
@@ -673,10 +702,10 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     });
     return () => cancelAnimationFrame(frame);
   }, [historyId, historyLength, historyTail, historyDelivery, historyDeliveryError, showCustomer, view]);
-  function keepLatestAfterMedia() {
+  const keepLatestAfterMedia = useCallback(() => {
     const log = messageLog.current;
     if (mounted.current && log && followLatest.current) log.scrollTop = log.scrollHeight;
-  }
+  }, []);
   function goToLatest() {
     const log = messageLog.current;
     if (!log) return;
@@ -689,14 +718,14 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     void loadInbox();
     if (view === "conversations" && selectionRef.current) void loadDetail(selectionRef.current);
   }
-  function selectConversation(id: string | null) {
+  const selectConversation = useCallback((id: string | null) => {
     pollController.current?.abort();
     detailReadError.current = false;
     selectionRef.current = id; ++detailRequest.current; setSelected(id); setDetail(null); setDetailError("");
     setDetailLoading(Boolean(id)); setShowCustomer(false); setShowLatest(false); displayedHistory.current = null; followLatest.current = true; mutationKey.current = null;
     if (id) { setView("conversations"); }
-  }
-  async function lookupPhoneChat(phone: string, signal?: AbortSignal): Promise<AttentionPhoneLookupResult> {
+  }, []);
+  const lookupPhoneChat = useCallback(async (phone: string, signal?: AbortSignal): Promise<AttentionPhoneLookupResult> => {
     const binding = phoneLookupBinding.current;
     const sourceId = selectionRef.current;
     if (busyRef.current || syncingRef.current || workBusy || liveAccessBlocked.current) throw new Error("Espera a que termine la gestión actual para abrir otro chat.");
@@ -706,11 +735,11 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
       if (mounted.current && !signal?.aborted && sourceId === selectionRef.current && binding === phoneLookupBinding.current && error instanceof ApiError && [401, 403].includes(error.status)) clearInaccessibleData(errorMessage(error));
       throw error;
     }
-  }
-  function openPhoneChat(id: string, sourceId: string) {
+  }, [workBusy, clearInaccessibleData]);
+  const openPhoneChat = useCallback((id: string, sourceId: string) => {
     if (!mounted.current || selectionRef.current !== sourceId || busyRef.current || syncingRef.current || workBusy || liveAccessBlocked.current) return;
     selectConversation(id);
-  }
+  }, [workBusy, selectConversation]);
   async function mutate(input: Omit<AttentionMutation, "version" | "requestId">) {
     if (!detail || busyRef.current) return false;
     pollController.current?.abort();
@@ -759,13 +788,13 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
       busyRef.current = false; if (mounted.current) setBusy(false);
     }
   }
-  function changeReply(id: string, patch: Partial<ReplyDraft>) {
+  const changeReply = useCallback((id: string, patch: Partial<ReplyDraft>) => {
     if (busyRef.current) return;
     setReplyDrafts(current => {
       const draft = current[id] || emptyReply;
       return draft.locked ? current : { ...current, [id]: { ...draft, ...patch, requestId: null, version: null, error: patch.error ?? "", result: null } };
     });
-  }
+  }, []);
   function receiveReplyFiles(files: File[]): string | null {
     if (!detail || detail.conversation.channel !== "whatsapp") return "Selecciona un chat de WhatsApp para adjuntar el archivo.";
     if (!replyWindowOpen(detail)) return detail.messaging?.reason || "El envío no está disponible en este chat.";
@@ -798,6 +827,9 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     const draft: ReplyDraft = { ...previous, requestId: previous.requestId || crypto.randomUUID(), version: previous.version ?? detail.conversation.version, locked: true, error: "", result: null };
     pollController.current?.abort(); busyRef.current = true; setBusy(true);
     setReplyDrafts(current => ({ ...current, [id]: draft }));
+    const owner = authorityKey.current, authority = replyAuthority.current;
+    const current = () => mounted.current && owner === authorityKey.current && authority === replyAuthority.current && !liveAccessBlocked.current;
+    setSendingReply({ actorKey: owner, conversationId: id, requestId: draft.requestId!, draft });
     const controller = new AbortController(); replyController.current = controller;
     const timeout = setTimeout(() => controller.abort(), 60_000);
     replyDeadline.current = timeout;
@@ -806,6 +838,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
       if (draft.file) form.set("file", draft.file);
       if (draft.replyTo?.id) form.set("replyToMessageId", draft.replyTo.id);
       const result = await api<{ message: AttentionMessage; uncertain?: boolean }>(`/api/atencion/${encodeURIComponent(id)}/messages`, { method: "POST", body: form, signal: controller.signal });
+      if (!current()) return;
       const confirmed = result.uncertain ? { ...result.message, deliveryStatus: "uncertain" as const } : result.message;
       recordReplyResult(id, draft, confirmed);
       if (mounted.current && selectionRef.current === id) {
@@ -820,13 +853,14 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
       }
       if (mounted.current) void loadInbox();
     } catch (err) {
-      if (mounted.current) {
+      if (current()) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
         else setReplyDrafts(current => ({ ...current, [id]: { ...draft, error: `${errorMessage(err)} Consulta el estado antes de intentar otro envío.` } }));
       }
     } finally {
       clearTimeout(timeout); if (replyDeadline.current === timeout) replyDeadline.current = null; if (replyController.current === controller) replyController.current = null;
-      busyRef.current = false; if (mounted.current) setBusy(false);
+      if (current()) { busyRef.current = false; setBusy(false); }
+      if (mounted.current) setSendingReply(value => value?.requestId === draft.requestId && value.actorKey === owner ? null : value);
     }
   }
   async function resolveReply() {
@@ -834,21 +868,24 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     const id = detail.conversation.id; const draft = replyDrafts[id];
     if (!draft?.requestId || !draft.locked) return;
     pollController.current?.abort(); busyRef.current = true; setBusy(true);
+    const owner = authorityKey.current, authority = replyAuthority.current;
+    const current = () => mounted.current && owner === authorityKey.current && authority === replyAuthority.current && !liveAccessBlocked.current;
     const controller = new AbortController(); replyController.current = controller;
     const timeout = setTimeout(() => controller.abort(), 20_000);
     replyDeadline.current = timeout;
     try {
       const result = await api<{ message: AttentionMessage | null }>(`/api/atencion/${encodeURIComponent(id)}/messages?requestId=${encodeURIComponent(draft.requestId)}`, { signal: controller.signal });
+      if (!current()) return;
       recordReplyResult(id, draft, result.message);
-      if (mounted.current) await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]);
+      if (current()) await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]);
     } catch (err) {
-      if (mounted.current) {
+      if (current()) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
         else setReplyDrafts(current => ({ ...current, [id]: { ...draft, error: `No se pudo comprobar el envío. ${errorMessage(err)}` } }));
       }
     } finally {
       clearTimeout(timeout); if (replyDeadline.current === timeout) replyDeadline.current = null; if (replyController.current === controller) replyController.current = null;
-      busyRef.current = false; if (mounted.current) setBusy(false);
+      if (current()) { busyRef.current = false; setBusy(false); }
     }
   }
   function restartReply(id: string) {
@@ -863,23 +900,26 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     const id = detail.conversation.id; const draft = replyDrafts[id];
     if (!draft?.requestId || draft.result !== "missing" || !draft.locked) return;
     pollController.current?.abort(); busyRef.current = true; setBusy(true);
+    const owner = authorityKey.current, authority = replyAuthority.current;
+    const current = () => mounted.current && owner === authorityKey.current && authority === replyAuthority.current && !liveAccessBlocked.current;
     const controller = new AbortController(); replyController.current = controller;
     const timeout = setTimeout(() => controller.abort(), 20_000); replyDeadline.current = timeout;
     try {
       const result = await api<{ cancelled: boolean }>(`/api/atencion/${encodeURIComponent(id)}/messages?requestId=${encodeURIComponent(draft.requestId)}`, { method: "DELETE", signal: controller.signal });
+      if (!current()) return;
       if (result.cancelled !== true) throw new Error("No se confirmó la cancelación del intento. Consulta su estado.");
-      if (mounted.current) {
+      if (current()) {
         setReplyDrafts(current => ({ ...current, [id]: { ...draft, requestId: null, version: null, locked: false, error: "", result: null } }));
         await Promise.all([loadInbox(), selectionRef.current === id ? loadDetail(id) : Promise.resolve()]);
       }
     } catch (err) {
-      if (mounted.current) {
+      if (current()) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
         else setReplyDrafts(current => ({ ...current, [id]: { ...draft, error: `${errorMessage(err)} El contenido sigue bloqueado hasta confirmar el estado.` } }));
       }
     } finally {
       clearTimeout(timeout); if (replyDeadline.current === timeout) replyDeadline.current = null; if (replyController.current === controller) replyController.current = null;
-      busyRef.current = false; if (mounted.current) setBusy(false);
+      if (current()) { busyRef.current = false; setBusy(false); }
     }
   }
   function updateFinancialAttempt(id: string, patch: Partial<FinancialAttempts>) {
@@ -1030,6 +1070,10 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     } catch (err) { if (mounted.current) setSyncError(errorMessage(err)); }
     finally { syncingRef.current = false; if (mounted.current) { setSyncing(false); setStoppingSync(false); setSyncWaitSeconds(0); } }
   }
+  const historyLocked = Boolean(detail && replyDrafts[detail.conversation.id]?.locked);
+  const historyCanReply = Boolean(detail && replyWindowOpen(detail));
+  const messageHistory = useMemo(() => detail ? <>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map((message, index) => <Fragment key={message.id}>{(index === 0 || messageDay(message.sentAt) !== messageDay(detail.messages[index - 1].sentAt)) && <p data-attention="day" className={styles.daySeparator}>{date(message.sentAt, true)}</p>}<article id={`attention-message-${message.id}`} tabIndex={-1} data-attention="message" data-direction={message.direction} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}>{message.direction === "outbound" && (index === 0 || detail.messages[index - 1].direction !== "outbound" || detail.messages[index - 1].author !== message.author) && <span>{message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span>}<AttentionMessageQuote message={message} messages={detail.messages} log={messageLog} />{message.forwarded && <small className={styles.muted}>Reenviado</small>}<MessageContent text={message.text} deliveryStatus={message.deliveryStatus} media={message.attachment} mediaReady={keepLatestAfterMedia} phoneActions={{ onOpenPhone: lookupPhoneChat, onOpenConversation: id => openPhoneChat(id, detail.conversation.id), disabled: busy || syncing || workBusy || view !== "conversations", contextKey: `${currentActor.key}:${view}:${detail.conversation.id}:${message.id}` }} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div data-attention="message-meta" className={styles.messageMeta}><time dateTime={message.sentAt} title={date(message.sentAt)}>{time(message.sentAt)}</time><MessageDelivery message={message} /><AttentionMessageActions message={message} disabled={busy || syncing || workBusy || historyLocked} canReply={message.canReplyTo === true && historyCanReply} canForward={message.canForward === true && detail.permissions.manage} onReply={() => { if (message.canReplyTo && !busyRef.current && replyWindowOpen(detail)) changeReply(detail.conversation.id, { replyTo: { id: message.id, author: message.direction === "inbound" ? contactName(detail.conversation) : message.author || "Equipo FINSER PAY", text: message.text, ...(message.attachment ? { attachment: { kind: message.attachment.kind, fileName: message.attachment.fileName } } : {}) } }); }} onForward={() => { if (message.canForward && !busyRef.current) setForwardSource({ conversationId: detail.conversation.id, contactName: contactName(detail.conversation), message }); }} onSaveSticker={message.attachment?.kind === "sticker" && privateMediaUrl(message.attachment.url) ? () => setSaveStickerSource({ conversationId: detail.conversation.id, message }) : undefined} /></div></article></Fragment>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</> : null,
+    [detail, busy, syncing, workBusy, view, currentActor.key, historyLocked, historyCanReply, keepLatestAfterMedia, lookupPhoneChat, openPhoneChat, changeReply]);
   const viewTitles = { enrollment: "Enrolamientos", welcome: "Aprobaciones · bienvenida", dashboard: "Resumen del equipo", conversations: "Conversaciones", board: "Tablero de conversaciones", agenda: "Agenda", team: "Equipo de analistas", settings: "Configuración" };
   const agendaCount = (inbox?.agendaCounts?.today || 0) + (inbox?.agendaCounts?.overdue || 0);
   const agendaAlertKey = `${inbox?.agendaCounts?.today || 0}:${inbox?.agendaCounts?.overdue || 0}`;
@@ -1083,13 +1127,13 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
           <section data-attention="workspace" data-has-selection={Boolean(selected)} className={`${styles.workspace} ${chatSkin.conversationLayout} ${selected ? styles.hasSelection : ""}`} aria-label="Bandeja de atención">
             {messagingRail}
             <aside data-attention="inbox" className={styles.inbox} aria-label="Conversaciones"><div data-attention="inbox-heading" className={styles.inboxHeading}><h2>Conversaciones <span>{inbox?.total ?? "—"}</span></h2><div className={chatSkin.inboxTitleActions}><div data-attention="connection"><span className={`${styles.liveConnection} ${liveStatus === "connected" ? styles.liveConnected : ""}`} role="status" aria-label={connectionLabel} title={connectionLabel}><i aria-hidden="true" /><span className={styles.srOnly}>{connectionLabel}</span></span></div><Button variant="ghost" aria-label="Actualizar" title="Actualizar vista" disabled={loading || detailLoading || busy} onClick={refreshCurrentView}><RefreshCw aria-hidden="true" size={18} /></Button>{currentActor.central && <Button variant="ghost" aria-label="Nueva gestión" title="Nueva gestión interna" disabled={!contentReady || busy} onClick={() => { setShowNew(value => !value); newRequestKey.current = null; }}><Plus aria-hidden="true" size={20} /></Button>}</div></div><label data-attention="search" className={styles.search}><Search aria-hidden="true" size={18} /><span className={styles.srOnly}>Buscar conversación</span><Input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Buscar nombre o teléfono…" maxLength={100} /></label>{typeNavigation}<AttentionWorkFilters compact showClientTag={false} filter={filter} tag={tag} central={currentActor.central} inbox={inbox} change={(nextFilter, nextTag) => { setFilter(nextFilter); setTag(nextTag); setPage(1); }} /><div data-attention="conversation-list" className={styles.conversationList} aria-busy={loading}>{loading && !inbox ? <LoadingState label="Cargando conversaciones…" /> : error ? <EmptyState title="No se pudo abrir la bandeja" description="Vuelve a intentar la consulta." /> : !inbox?.conversations.length ? <DashboardEmpty icon={Inbox} title={search ? "Sin coincidencias" : "No hay conversaciones en este filtro"} text={search ? "Prueba con otro nombre o teléfono." : currentActor.central ? "Las conversaciones aparecerán al recibir mensajes en el canal conectado." : "Las conversaciones asignadas a tu perfil aparecerán aquí."} /> : inbox.conversations.map(conversation => <button type="button" key={conversation.id} data-attention="conversation" data-selected={selected === conversation.id} className={`${styles.conversation} ${selected === conversation.id ? styles.selected : ""}`} aria-pressed={selected === conversation.id} onClick={() => selectConversation(conversation.id)}><span data-attention="avatar" className={styles.avatar}>{initials(contactName(conversation))}</span><span data-attention="conversation-body" className={styles.conversationBody}><span data-attention="conversation-title" className={styles.conversationTitle}><strong>{contactName(conversation)}</strong><time dateTime={conversation.lastContactAt || undefined}>{time(conversation.lastContactAt)}</time></span>{conversation.customerIdentity && <span className={styles.contactDocument}>{conversation.customerIdentity.documentLabel || "Cédula"} {conversation.customerIdentity.document}</span>}<span data-attention="preview" className={styles.preview}>{conversation.preview || "Abre la conversación para consultar su historial"}</span><ConversationLabels conversation={conversation} /><span className={styles.conversationFooter}><small title={`${conversation.assigneeName || "Sin asignar"} · ${statusNames[conversation.status]}`}>{conversation.assigneeName || "Sin asignar"}</small><span className={styles.srOnly}>Estado: {statusNames[conversation.status]}</span><AttentionConversationIndicators conversation={conversation} /></span></span></button>)}</div><div data-attention="pagination" className={styles.pagination}><Button variant="ghost" aria-label="Página anterior" disabled={page <= 1 || loading} onClick={() => setPage(value => value - 1)}><ChevronLeft aria-hidden="true" size={18} /></Button><span>{page} / {Math.max(1, Math.ceil((inbox?.total ?? 0) / (inbox?.pageSize || 40)))}</span><Button variant="ghost" aria-label="Página siguiente" disabled={loading || !inbox || page * inbox.pageSize >= inbox.total} onClick={() => setPage(value => value + 1)}><ChevronRight aria-hidden="true" size={18} /></Button></div></aside>
-            <ChatDropSurface key={selected || "no-chat"} receive={receiveReplyFiles} previewOpen={Boolean(detail && Boolean(replyDrafts[detail.conversation.id]?.file))}>{!selected ? <div className={styles.selectPrompt}><span><MessageCircle aria-hidden="true" size={37} /></span><h2>Tu espacio de atención</h2><p>Selecciona una conversación para responder y consultar su seguimiento.</p></div> : <>
+            <ChatDropSurface key={selected || "no-chat"} receive={receiveReplyFiles} previewOpen={Boolean(detail && Boolean(replyDrafts[detail.conversation.id]?.file)) && !activeSendingReply}>{!selected ? <div className={styles.selectPrompt}><span><MessageCircle aria-hidden="true" size={37} /></span><h2>Tu espacio de atención</h2><p>Selecciona una conversación para responder y consultar su seguimiento.</p></div> : <>
               <div data-attention="chat-header" className={styles.chatHeader}><Button variant="ghost" className={styles.backButton} aria-label="Volver a conversaciones" onClick={() => selectConversation(null)}><ArrowLeft aria-hidden="true" size={18} /></Button><span data-attention="avatar" className={styles.avatar}>{initials(detail ? contactName(detail.conversation) : "Contacto")}</span><div className={styles.chatIdentity}><div className={styles.chatTitle}><h2 ref={chatHeading} tabIndex={-1}>{detail ? contactName(detail.conversation) : "Conversación"}</h2>{detail && <CustomerBadge conversation={detail.conversation} />}</div>{detail?.conversation.customerIdentity && <span className={styles.contactDocument}>{detail.conversation.customerIdentity.documentLabel || "Cédula"} {detail.conversation.customerIdentity.document}</span>}<span>{detail ? detail.conversation.phone || "Teléfono no disponible" : "Consultando historial…"}{detail && ` · ${detail.conversation.channel === "whatsapp" ? "WhatsApp" : "Gestión interna"}`}</span></div><Button variant="secondary" className={styles.customerToggle} aria-expanded={showCustomer} onClick={() => setShowCustomer(value => !value)}><UserRound aria-hidden="true" size={16} /> Ficha</Button>{detail && <details data-attention="chat-menu" className={styles.chatMenu} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}><summary aria-label="Gestionar conversación" title="Gestionar conversación"><MoreVertical aria-hidden="true" size={21} /></summary><div data-attention="chat-actions" className={styles.chatActions}><Status conversation={detail.conversation} /><span className={styles.assignee}><UserRound aria-hidden="true" size={14} />{detail.conversation.assigneeName || "Sin analista asignado"}</span>{detail.permissions.claim && detail.conversation.status !== "open" && <Button disabled={busy} onClick={() => void mutate({ action: "claim" })}>Atender</Button>}{detail.permissions.manage && <Button variant="secondary" aria-label="Marcar como leído para el equipo" title="Marcar los mensajes actuales como leídos para el equipo" disabled={busy || syncing || detailLoading} onClick={() => void markTeamRead()}><CheckCheck aria-hidden="true" size={16} />Marcar como leído</Button>}{detail.permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => void mutate({ action: detail.conversation.status === "closed" ? "reopen" : "close" })}>{detail.conversation.status === "closed" ? "Reabrir" : "Finalizar"}</Button>}{detail.permissions.assign && <details data-attention="assignment-menu" className={styles.assignmentMenu}><summary><Users aria-hidden="true" size={17} /> Asignar</summary><div data-attention="assignment" className={styles.assignment}><label className={styles.srOnly} htmlFor="attention-transfer">Asignar analista</label><Select id="attention-transfer" value="" disabled={busy || !analysts.length} onChange={event => { if (event.target.value) { event.currentTarget.closest("details")?.removeAttribute("open"); void mutate({ action: "transfer", assigneeKey: event.target.value }); } }}><option value="">{detail.conversation.assigneeKey ? "Cambiar analista…" : "Asignar analista…"}</option>{analysts.filter(person => person.key !== detail.conversation.assigneeKey).map(person => <option key={person.key} value={person.key}>{person.name}</option>)}</Select><span>Solo analistas activos</span></div></details>}</div></details>}</div>
               {detailError && <div data-attention="error" className={styles.error} role="alert"><span>{detailError}</span><Button variant="secondary" disabled={busy || detailLoading} onClick={() => void loadDetail(selected)}>Actualizar</Button></div>}
               {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <>
 
-                <AttentionObservedRead key={`read:${detail.conversation.id}`} detail={detail} active={!showCustomer && !forwardSource && !saveStickerSource && !busy && !syncing && !Boolean(replyDrafts[detail.conversation.id]?.file)} log={messageLog} request={api} onRead={() => void loadInbox()} onError={error => { handleFinancialAccessError(detail.conversation.id, error); }} /><div data-attention="history" className={styles.historyViewport}><div ref={messageLog} data-attention="messages" className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map((message, index) => <Fragment key={message.id}>{(index === 0 || messageDay(message.sentAt) !== messageDay(detail.messages[index - 1].sentAt)) && <p data-attention="day" className={styles.daySeparator}>{date(message.sentAt, true)}</p>}<article id={`attention-message-${message.id}`} tabIndex={-1} data-attention="message" data-direction={message.direction} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}>{message.direction === "outbound" && (index === 0 || detail.messages[index - 1].direction !== "outbound" || detail.messages[index - 1].author !== message.author) && <span>{message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span>}<AttentionMessageQuote message={message} messages={detail.messages} log={messageLog} />{message.forwarded && <small className={styles.muted}>Reenviado</small>}<MessageContent text={message.text} deliveryStatus={message.deliveryStatus} media={message.attachment} mediaReady={keepLatestAfterMedia} phoneActions={{ onOpenPhone: lookupPhoneChat, onOpenConversation: id => openPhoneChat(id, detail.conversation.id), disabled: busy || syncing || workBusy || view !== "conversations", contextKey: `${currentActor.key}:${view}:${detail.conversation.id}:${message.id}` }} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div data-attention="message-meta" className={styles.messageMeta}><time dateTime={message.sentAt} title={date(message.sentAt)}>{time(message.sentAt)}</time><MessageDelivery message={message} /><AttentionMessageActions message={message} disabled={busy || syncing || workBusy || Boolean(replyDrafts[detail.conversation.id]?.locked)} canReply={message.canReplyTo === true && replyWindowOpen(detail)} canForward={message.canForward === true && detail.permissions.manage} onReply={() => { if (message.canReplyTo && !busyRef.current && replyWindowOpen(detail)) changeReply(detail.conversation.id, { replyTo: { id: message.id, author: message.direction === "inbound" ? contactName(detail.conversation) : message.author || "Equipo FINSER PAY", text: message.text, ...(message.attachment ? { attachment: { kind: message.attachment.kind, fileName: message.attachment.fileName } } : {}) } }); }} onForward={() => { if (message.canForward && !busyRef.current) setForwardSource({ conversationId: detail.conversation.id, contactName: contactName(detail.conversation), message }); }} onSaveSticker={message.attachment?.kind === "sticker" && privateMediaUrl(message.attachment.url) ? () => setSaveStickerSource({ conversationId: detail.conversation.id, message }) : undefined} /></div></article></Fragment>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
-                {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={`${currentActor.key}:${detail.conversation.id}`} detail={detail} actorKey={currentActor.key} quickReplies={inbox?.quickReplies || []} refreshing={Boolean(refreshingReplies[detail.conversation.id])} refreshBusy={detailLoading} refresh={() => { if (selectionRef.current) void loadDetail(selectionRef.current); }} templateSent={() => refreshAfterFinancialAction(detail.conversation.id)} templateBusyChanged={quickReplyBusyChanged} draft={replyDrafts[detail.conversation.id] || emptyReply} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} receiveFiles={receiveReplyFiles} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>{detail.workRequest ? `${detail.workRequest.ally} · ${detail.workRequest.advisor}` : "Gestión interna · asignación y seguimiento por analistas."}</span>{detail.workRequest && <Button variant="secondary" onClick={()=>continueWork(detail.workRequest!.id,detail.workRequest!.kind)}>Continuar solicitud</Button>}</footer>}
+                <AttentionObservedRead key={`read:${detail.conversation.id}`} detail={detail} active={!showCustomer && !forwardSource && !saveStickerSource && !busy && !syncing && !Boolean(replyDrafts[detail.conversation.id]?.file)} log={messageLog} request={api} onRead={() => void loadInbox()} onError={error => { handleFinancialAccessError(detail.conversation.id, error); }} /><div data-attention="history" className={styles.historyViewport}><div ref={messageLog} data-attention="messages" className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{messageHistory}</div>
+                {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{activeSendingReply && <SendingReplyBubble key={activeSendingReply.requestId} attempt={activeSendingReply} mediaReady={keepLatestAfterMedia} />}{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={`${currentActor.key}:${detail.conversation.id}`} detail={detail} actorKey={currentActor.key} quickReplies={inbox?.quickReplies || []} refreshing={Boolean(refreshingReplies[detail.conversation.id])} refreshBusy={detailLoading} refresh={() => { if (selectionRef.current) void loadDetail(selectionRef.current); }} templateSent={() => refreshAfterFinancialAction(detail.conversation.id)} templateBusyChanged={quickReplyBusyChanged} draft={replyDrafts[detail.conversation.id] || emptyReply} submitting={Boolean(activeSendingReply)} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} receiveFiles={receiveReplyFiles} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>{detail.workRequest ? `${detail.workRequest.ally} · ${detail.workRequest.advisor}` : "Gestión interna · asignación y seguimiento por analistas."}</span>{detail.workRequest && <Button variant="secondary" onClick={()=>continueWork(detail.workRequest!.id,detail.workRequest!.kind)}>Continuar solicitud</Button>}</footer>}
               </>}
             </>}</ChatDropSurface>
 
