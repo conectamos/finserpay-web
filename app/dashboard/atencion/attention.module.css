@@ -319,6 +319,11 @@
 .message > span { font-size:12px; color:var(--fp-muted); }
 .message p { font-size:16px; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; margin:2px 0; }
 .message:focus { outline:2px solid var(--fp-chat-accent,var(--fp-lime-strong)); outline-offset:3px; }
+.sendingReply { flex:0 0 auto; align-self:flex-end; width:min(540px,calc(100% - 24px)); max-height:min(25dvh,200px); overflow:auto; margin:8px 12px; padding:10px 12px; border:1px solid var(--fp-chat-border,var(--fp-border)); border-radius:var(--fp-radius-md); background:var(--fp-chat-raised,var(--fp-surface)); color:var(--fp-chat-text,var(--fp-graphite)); }
+.sendingReply header { display:flex; align-items:center; gap:8px; color:var(--fp-chat-accent,var(--fp-lime-strong)); font-size:14px; font-weight:600; }
+.sendingReply p { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere; font-size:15px; line-height:1.45; margin:6px 0; }
+.sendingReply small { display:block; margin-top:6px; font-size:13px; color:var(--fp-chat-muted,var(--fp-muted)); }
+.sendingReply img,.sendingReply video { max-height:100px; }
 .messageMeta { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:4px 8px; margin-top:3px; color:var(--fp-muted); }
 .message time,.deliveryStatus { font-size:12px; }
 .latestButton { right:20px; bottom:16px; font-size:14px!important; }

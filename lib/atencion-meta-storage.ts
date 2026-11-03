@@ -110,8 +110,10 @@ async function assertActor(db: AttentionDb, actor: AttentionActor) {
     AND u."sedeId"=$2 AND s."aliadoId"=$3 FOR SHARE OF u,r,s,a`, actor.userId, actor.sedeId, actor.aliadoId);
   if (row?.role !== (actor.central ? "ADMIN" : "ANALISTA_APROBACION")) throw new AttentionError("La cuenta de atención ya no está autorizada.", 403);
 }
-async function scopedConversation(db: AttentionDb, actor: AttentionActor, id: string) {
-  await assertActor(db, actor);
+async function scopedConversation(db: AttentionDb, actor: AttentionActor, id: string, actorLocked = false) {
+  // actorLocked is used only by lockConversations after locking this actor's
+  // current user/role/branch rows in the same transaction.
+  if (!actorLocked) await assertActor(db, actor);
   const [row] = await db.$queryRawUnsafe<MetaConversation[]>(`SELECT * FROM "AttentionConversation" c WHERE c.id=$1::uuid
     AND ($2::boolean OR (c."assigneeUserId"=$3 AND c."assigneeKey"=$4 AND c."assigneeSellerId" IS NULL)) FOR UPDATE`, attentionUuid(id), actor.central, actor.userId, actor.key);
   if (!row) throw new AttentionError("Conversación no encontrada o no autorizada.", 404);
@@ -162,11 +164,14 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
   }, transactionOptions);
   async function lockConversations(db: AttentionDb, actor: AttentionActor, ids: string[]) {
     const rows=new Map<string,MetaConversation>();
-    for(const id of [...new Set(ids.map(value=>attentionUuid(value)))].sort())rows.set(id,await scopedConversation(db,actor,id));
+    await assertActor(db,actor);
+    for(const id of [...new Set(ids.map(value=>attentionUuid(value)))].sort())rows.set(id,await scopedConversation(db,actor,id,true));
     return rows;
   }
-  async function source(db:AttentionDb,actor:AttentionActor,conversationId:string,messageId:string,forward=false) {
-    const conversation=await scopedConversation(db,actor,conversationId);
+  async function source(db:AttentionDb,actor:AttentionActor,conversationId:string,messageId:string,forward=false,lockedConversation?:MetaConversation) {
+    // Reuse only a scoped FOR UPDATE row obtained by this transaction. Every
+    // new transaction (including pre-POST) still revalidates the actor and scope.
+    const conversation=lockedConversation?.id===conversationId?lockedConversation:await scopedConversation(db,actor,conversationId);
     if(conversation.channel!=="whatsapp"||!conversation.metaManaged)throw new AttentionError("El mensaje no pertenece al canal de WhatsApp configurado.",409);
     await binding(db,conversationId);
     const [row]=await db.$queryRawUnsafe<MessageSource[]>(`SELECT id,"conversationId",direction,text,author,"metaWamid","metaPhoneNumberId",attachment,"deliveryStatus"
@@ -226,8 +231,8 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     }
     return {canSend:reason===null,reason,conversationVersion:conversation.version,requiresBindingConfirmation,contactId};
   }
-  async function reply(db: AttentionDb, actor: AttentionActor, conversationId: string, requestId: string) {
-    await scopedConversation(db, actor, conversationId);
+  async function reply(db: AttentionDb, actor: AttentionActor, conversationId: string, requestId: string, lockedConversation?:MetaConversation) {
+    if(lockedConversation?.id!==conversationId)await scopedConversation(db, actor, conversationId);
     const [row] = await db.$queryRawUnsafe<MetaReply[]>(`SELECT * FROM "AttentionMetaOutbox" WHERE "actorKey"=$1 AND "requestId"=$2::uuid FOR UPDATE`, actor.key, attentionUuid(requestId));
     if (row && row.conversationId !== conversationId) throw new AttentionError("La solicitud pertenece a otra conversación.", 409);
     if (row && (row.phoneNumberId !== scope.phoneNumberId || row.wabaId !== scope.wabaId)) throw new AttentionError("El canal configurado cambió.", 409);
@@ -242,7 +247,7 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     if (row.actorKey !== actor.key || row.userId !== actor.userId) throw new AttentionError("El envío pertenece a otro usuario.", 403);
     if (row.phoneNumberId !== scope.phoneNumberId || row.wabaId !== scope.wabaId || row.leaseToken !== attentionUuid(leaseToken)
       || !row.leaseUntil || new Date(row.leaseUntil) <= now()) throw new AttentionError("La reserva del envío venció.", 409);
-    return { row, conversation };
+    return { row, conversation, conversations };
   }
   // Every writer locks the conversation before its outbox row, including webhooks.
   async function systemReply(db: AttentionDb, id: string) {
@@ -522,9 +527,9 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
         const locked=await lockConversations(db,actor,[conversationId,...(forwardConversationId?[forwardConversationId]:[])]);
         const conversation=locked.get(conversationId)!;
         let messageContext:MessageContext|null=null;
-        if(replyToMessageId){const original=await source(db,actor,conversationId,replyToMessageId);messageContext={reply:{messageId:original.id,wamid:original.metaWamid!,quote:quote(original)}};}
+        if(replyToMessageId){const original=await source(db,actor,conversationId,replyToMessageId,false,conversation);messageContext={reply:{messageId:original.id,wamid:original.metaWamid!,quote:quote(original)}};}
         if(forwardConversationId&&forwardMessageId){
-          const original=await source(db,actor,forwardConversationId,forwardMessageId,true);
+          const original=await source(db,actor,forwardConversationId,forwardMessageId,true,locked.get(forwardConversationId));
           const originalFingerprint=sourceFingerprint(original);
           if(input.forwardFingerprint!==originalFingerprint)throw new AttentionError("El mensaje original cambió. Revísalo antes de reenviar.",409);
           if(Boolean(original.attachment)!==Boolean(attachment)||original.attachment&&(original.attachment.kind!==attachment?.kind||original.attachment.mimeType!==attachment?.mimeType
@@ -534,7 +539,7 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
         await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`, `attention:meta:request:${actor.key}:${requestId}`);
         const [reserved]=await db.$queryRawUnsafe<{fingerprint:string}[]>(`SELECT fingerprint FROM "AttentionRequest" WHERE "actorKey"=$1 AND "requestId"=$2::uuid`,actor.key,requestId);
         if(reserved)throw new AttentionError(reserved.fingerprint==='META_REPLY_CANCELLED'?"La solicitud fue cancelada y ya no puede enviarse.":"La solicitud ya corresponde a otra operación.",409);
-        const existing=await reply(db,actor,conversationId,requestId);
+        const existing=await reply(db,actor,conversationId,requestId,conversation);
         if(existing){ if(existing.fingerprint!==fingerprint)throw new AttentionError("La solicitud ya se usó con otro contenido.",409); return existing; }
         const [unresolved]=await db.$queryRawUnsafe<{id:string}[]>(`SELECT id FROM "AttentionMetaOutbox" WHERE "conversationId"=$1::uuid AND status IN ('queued','sending','uncertain') LIMIT 1`,conversationId);
         if(unresolved)throw new AttentionError("Hay un envío pendiente de confirmación. Revisa su estado antes de escribir otro mensaje.",409);
@@ -570,7 +575,7 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     async claimReply(actor:AttentionActor,conversationId:string,requestId:string){return transact(async db=>{
       const conversation=await scopedConversation(db,actor,conversationId);
       const lastInboundAt=conversation.metaLastInboundAt?date(conversation.metaLastInboundAt):null;
-      const row=await reply(db,actor,conversationId,requestId);if(!row)throw new AttentionError("Envío no encontrado.",404);
+      const row=await reply(db,actor,conversationId,requestId,conversation);if(!row)throw new AttentionError("Envío no encontrado.",404);
       if(row.status==='sending'&&row.leaseUntil&&new Date(row.leaseUntil)<=now()){
         const [uncertain]=await db.$queryRawUnsafe<MetaReply[]>(`UPDATE "AttentionMetaOutbox" SET status='uncertain',"leaseToken"=NULL,"leaseUntil"=NULL,"errorCode"='LEASE_EXPIRED_AFTER_SEND',"updatedAt"=now() WHERE id=$1::uuid RETURNING *`,row.id);
         await systemAudit(db,"META_REPLY_UNCERTAIN",conversationId,{outboxId:row.id});return {reply:uncertain,claimed:false,lastInboundAt};
@@ -598,10 +603,10 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
       await userAudit(db,actor,"META_TEMPLATE_MEDIA_UPLOADED",row.conversationId,{outboxId:id});return updated;
     });},
     async beforeSend(actor:AttentionActor,id:string,leaseToken:string){return transact(async db=>{
-      const {row,conversation}=await ownedReply(db,actor,id,leaseToken);
-      if(row.messageContext?.reply){const original=await source(db,actor,row.conversationId,row.messageContext.reply.messageId);
+      const {row,conversation,conversations}=await ownedReply(db,actor,id,leaseToken);
+      if(row.messageContext?.reply){const original=await source(db,actor,row.conversationId,row.messageContext.reply.messageId,false,conversation);
         if(original.metaWamid!==row.messageContext.reply.wamid)throw new AttentionError("El mensaje original cambió.",409);}
-      if(row.messageContext?.forward){const forwarded=row.messageContext.forward,original=await source(db,actor,forwarded.conversationId,forwarded.messageId,true);
+      if(row.messageContext?.forward){const forwarded=row.messageContext.forward,original=await source(db,actor,forwarded.conversationId,forwarded.messageId,true,conversations.get(forwarded.conversationId));
         if(sourceFingerprint(original)!==forwarded.fingerprint)throw new AttentionError("El mensaje original cambió. No se reenvió.",409);}
       if(row.template){compileMetaTemplate(row.template);const capability=await templateCapability(db,conversation);if(!capability.canSend)throw new AttentionError(capability.reason!,409);}
       else {const capability=messaging(conversation);if(!capability.canReply)throw new AttentionError(capability.reason!,409);}

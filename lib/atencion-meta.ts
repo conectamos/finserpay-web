@@ -4,6 +4,7 @@ import { readAttentionSticker } from "./atencion-meta-sticker";
 import { compileMetaTemplate, readMetaManualTemplate, type MetaManualTemplate, type MetaTemplateSnapshot } from "./atencion-meta-templates";
 import { metaAutomationHeaderUrl } from "./whatsapp-automation-meta-config";
 import { isMetaBusinessUserId, isMetaRecipient, metaRecipientPhone } from "./atencion-meta-identity";
+import { createAttentionMetaVerificationCache, sharedAttentionMetaVerificationCache, type AttentionVerifiedMetaConnection } from "./atencion-meta-verification-cache";
 
 // Dedicated Attention credentials. Never fall back to OTP or settlement tokens.
 // Meta contracts: https://www.postman.com/meta/whatsapp-business-platform
@@ -42,7 +43,8 @@ type Env = Record<string, string | undefined>;
 type Dict = Record<string, unknown>;
 type Config = MetaScope & { token: string; version: string };
 type BeforeSend = () => Promise<void>;
-type Options = { env?: Env; fetch?: typeof fetch; now?: () => number; timeoutMs?: number };
+type Options = { env?: Env; fetch?: typeof fetch; now?: () => number; timeoutMs?: number;
+  verificationCache?: ReturnType<typeof createAttentionMetaVerificationCache> };
 export function getMetaAttentionScope(env: Env = process.env): MetaScope | null {
   return env.WHATSAPP_ATTENTION_PHONE_NUMBER_ID === META_ATTENTION_LINE.phoneNumberId && env.WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID === META_ATTENTION_LINE.wabaId
     ? { phoneNumberId: META_ATTENTION_LINE.phoneNumberId, wabaId: META_ATTENTION_LINE.wabaId } : null;
@@ -290,11 +292,10 @@ export function validateMetaAttentionMedia(input: { bytes: Uint8Array; mimeType:
 export function createMetaAttentionAdapter(options: Options = {}) {
   const env = options.env ?? process.env; const transport = options.fetch ?? fetch; const now = options.now ?? Date.now;
   const timeoutMs = Math.max(100, Math.min(options.timeoutMs ?? 20_000, 30_000));
-  type VerifiedConnection = MetaScope & { displayPhone: string };
-  // A runtime owns one adapter per HTTP request. Reuse only the same private
-  // configuration for a few seconds (e.g. upload + send), never across runtimes.
-  let verified: { config: Config; checkedAt: number; value: VerifiedConnection } | null = null;
-  let verifying: { config: Config; promise: Promise<VerifiedConnection> } | null = null;
+  // Reuse provider identity within the existing five-second allowance.
+  // Sharing the positive check also coalesces simultaneous sends. A rotated
+  // token, version or business scope has a different opaque fingerprint.
+  const verificationCache = options.verificationCache ?? (options.fetch ? createAttentionMetaVerificationCache() : sharedAttentionMetaVerificationCache);
   const sameConfig = (a: Config, b: Config) => a.token === b.token && a.version === b.version && a.phoneNumberId === b.phoneNumberId && a.wabaId === b.wabaId;
   function scope(): MetaScope {
     const selected = getMetaAttentionScope(env);
@@ -473,11 +474,9 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     catch { throw new AttentionMetaError("INVALID_RESPONSE", "Meta devolvió una respuesta no válida.", 502, sending); }
   }
   async function verifyConnection() {
-    const cfg = config(), checkedAt = now();
-    if (verified && sameConfig(verified.config, cfg) && checkedAt >= verified.checkedAt && checkedAt - verified.checkedAt < 5_000) return { ...verified.value };
-    if (verifying && sameConfig(verifying.config, cfg)) return { ...await verifying.promise };
-    verified = null;
-    const promise = (async (): Promise<VerifiedConnection> => {
+    const cfg = config();
+    const key = createHash("sha256").update(JSON.stringify([cfg.token,cfg.version,cfg.phoneNumberId,cfg.wabaId])).digest("hex");
+    const value = await verificationCache.verify(key, now, async (): Promise<AttentionVerifiedMetaConnection> => {
       const [phone, firstPage] = await Promise.all([
         graph(cfg.phoneNumberId, { fields: "id,display_phone_number" }),
         graph(`${cfg.wabaId}/phone_numbers`, { fields: "id,display_phone_number", limit: "100" }),
@@ -489,7 +488,7 @@ export function createMetaAttentionAdapter(options: Options = {}) {
         if (list(result.data).some(item => matches(dict(item)))) {
           if (!sameConfig(cfg, config())) fail("META_SCOPE_CONFIG", "La configuración del canal cambió. Vuelve a verificar la conexión.", 503);
           const value = { phoneNumberId: cfg.phoneNumberId, wabaId: cfg.wabaId, displayPhone: META_ATTENTION_LINE.displayPhone };
-          verified = { config: cfg, checkedAt: now(), value }; return value;
+          return value;
         }
         const paging = dict(result.paging), next = str(dict(paging.cursors).after);
         if (page === 9 || !paging.next || !next || next.length > 2048 || seen.has(next)) break;
@@ -497,10 +496,11 @@ export function createMetaAttentionAdapter(options: Options = {}) {
         result = await graph(`${cfg.wabaId}/phone_numbers`, { fields: "id,display_phone_number", limit: "100", after: next });
       }
       fail("META_SCOPE_MISMATCH", "Meta no confirmó que la línea pertenezca a la cuenta autorizada.", 503);
-    })();
-    verifying = { config: cfg, promise };
-    try { return { ...await promise }; }
-    finally { if (verifying?.promise === promise) verifying = null; }
+    });
+    // Each waiter checks its own current configuration, even when another
+    // request supplied the shared successful verification.
+    if (!sameConfig(cfg, config())) fail("META_SCOPE_CONFIG", "La configuración del canal cambió. Vuelve a verificar la conexión.", 503);
+    return { ...value };
   }
   function validateSendBase(input: Omit<MetaSendInput,"lastInboundAt">, beforeSend: BeforeSend) {
     config(); enabled();
@@ -604,7 +604,11 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     return { url, mimeType: type, size, kind: rule.kind, sha256: mediaHash(result.sha256) };
   }
   async function sendMedia(input: MetaSendInput & { mediaId: string; kind: MetaMediaKind; caption?: string; fileName?: string }, beforeSend: BeforeSend) {
-    validateSend(input, beforeSend); const metadata = await mediaMetadata(input.mediaId);
+    validateSend(input, beforeSend);
+    if (!ID.test(input.mediaId)) fail("INVALID_MEDIA_ID", "El identificador del archivo no es válido.");
+    // Both are read-only provider preconditions. Validate them together rather
+    // than serializing two network round trips before the transactional guard.
+    const [metadata] = await Promise.all([mediaMetadata(input.mediaId), verifyConnection()]);
     if (metadata.kind !== input.kind) fail("UNSUPPORTED_MEDIA", "El archivo no corresponde al tipo de mensaje.", 415);
     if (input.caption !== undefined && (typeof input.caption !== "string" || input.caption.length > 1024 || !["image", "video", "document"].includes(input.kind))) fail("INVALID_CAPTION", "La descripción del archivo no es válida.");
     if (input.fileName !== undefined && (input.kind !== "document" || !fileName(input.fileName) || !MIME[metadata.mimeType].extensions.includes(input.fileName.split(".").pop()?.toLowerCase() || ""))) fail("INVALID_MEDIA_NAME", "El nombre del archivo no es válido.");

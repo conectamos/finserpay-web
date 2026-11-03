@@ -49,7 +49,7 @@ export async function getAttentionAccess(): Promise<AttentionActor> {
   assertAttentionActor(actor); return actor;
 }
 export function parseAttentionFilters(params: URLSearchParams): AttentionFilters {
-  if (["search", "filter", "page", "tag", "collection"].some(key => params.getAll(key).length > 1)) throw new AttentionError("No repitas parámetros de búsqueda.");
+  if (["search", "filter", "page", "tag", "collection", "dashboard"].some(key => params.getAll(key).length > 1)) throw new AttentionError("No repitas parámetros de búsqueda.");
   const filter = params.get("filter") || "mine";
   if (!["mine", "all", "pending", "closed", "unassigned", "unread", "unanswered"].includes(filter)) throw new AttentionError("Filtro inválido.");
   const pageText = params.get("page") || "1";
@@ -57,7 +57,9 @@ export function parseAttentionFilters(params: URLSearchParams): AttentionFilters
   const tag = attentionText(params.get("tag") || "", 40, false).normalize("NFKC").replace(/\s+/g, " ");
   const collection = params.get("collection");
   if (collection !== null && collection !== "clients") throw new AttentionError("Colección de conversaciones inválida.");
-  return { search: attentionText(params.get("search") || "", 120, false), filter: filter as AttentionFilters["filter"], page: Number(pageText), ...(tag ? { tag: isAttentionSystemTag(tag) ? "FINSERPAY" : tag } : {}), ...(collection === "clients" ? { collection } : {}) };
+  const dashboard = params.get("dashboard");
+  if (dashboard !== null && dashboard !== "0" && dashboard !== "1") throw new AttentionError("Vista de resumen inválida.");
+  return { search: attentionText(params.get("search") || "", 120, false), filter: filter as AttentionFilters["filter"], page: Number(pageText), ...(tag ? { tag: isAttentionSystemTag(tag) ? "FINSERPAY" : tag } : {}), ...(collection === "clients" ? { collection } : {}), ...(dashboard !== null ? { includeDashboard: dashboard === "1" } : {}) };
 }
 export function parseAttentionAgendaFilters(params: URLSearchParams): AttentionAgendaFilters {
   if (["filter", "page"].some(key => params.getAll(key).length > 1)) throw new AttentionError("No repitas parámetros de agenda.");

@@ -58,6 +58,15 @@ fotos ya enviadas. La captura de documentos del crédito mantiene su propio fluj
 
 ## Principios
 
+El historial autorizado del chat conserva sus elementos al escribir; los cambios
+de mensajes, permisos o identidad actualizan esa vista. Al iniciar un envío,
+la preparación de archivos se cierra y una tarjeta temporal «Enviando…» muestra
+la intención conservada, separada del historial confirmado. Se puede consultar
+otro chat mientras termina. La tarjeta no atribuye entrega ni reemplaza la
+confirmación de WhatsApp; ante un fallo se conserva el borrador y su archivo.
+El resumen del equipo se consulta al abrir Resumen o Equipo, sin añadir ese trabajo a
+cada actualización de la bandeja.
+
 - La interfaz debe sentirse financiera, premium, sobria y profesional.
 - El sidebar usa azul marino o grafito; el area principal usa blanco porcelana o
   gris muy claro.

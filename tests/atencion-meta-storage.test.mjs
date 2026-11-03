@@ -92,7 +92,7 @@ const metaEnv={WHATSAPP_ATTENTION_ACCESS_TOKEN:"test-only-meta-token",WHATSAPP_A
   WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID:scope.wabaId,WHATSAPP_GRAPH_API_VERSION:"v25.0",
   WHATSAPP_ATTENTION_SEND_ENABLED:"true",WHATSAPP_ATTENTION_AI_CUTOVER_CONFIRMED:"true"};
 const daptaEnv={DAPTA_MCP_API_KEY:"test-only-dapta-token",DAPTA_ATTENTION_WORKSPACE_ID:"7496b9a3-2fe6-4e28-8411-7d54ee788b2c",DAPTA_ATTENTION_AGENT_ID:"6f9560ec-dcfd-4725-bf61-27cd8d528a1c"};
-function adapter(db){return {$queryRawUnsafe:async(sql,...values)=>(await db.query(sql,values)).rows,$transaction:fn=>db.transaction(tx=>fn(adapter(tx)))};}
+function adapter(db,queries){return {$queryRawUnsafe:async(sql,...values)=>{queries?.push(sql);return (await db.query(sql,values)).rows;},$transaction:fn=>db.transaction(tx=>fn(adapter(tx,queries)))};}
 async function fixture(t,opts={}){
   const db=new PGlite();t.after(()=>db.close());
   await db.exec(`CREATE TABLE "Rol"(id integer PRIMARY KEY,nombre text);
@@ -107,14 +107,14 @@ async function fixture(t,opts={}){
     INSERT INTO "Sede" VALUES(10,'Central',1,true);
     INSERT INTO "Usuario" VALUES(1,'Central',true,10,1),(5,'Analista A',true,10,3),(6,'Analista B',true,10,3);`);
   await db.exec(migration);
-  let clock=new Date(instant);const database=adapter(db);
+  let clock=new Date(instant);const queries=opts.trackQueries?[]:undefined;const database=adapter(db,queries);
   const meta=createAttentionMetaStore(database,{scope,sendingEnabled:true,cutoverConfirmed:true,now:()=>clock,...opts});
   const legacy=createAttentionStore(database);
   const ingest=async(msg=inbound())=>{await meta.ingest(events([msg]));return (await db.query('SELECT * FROM "AttentionConversation" ORDER BY "createdAt" DESC,id DESC')).rows[0]};
   const assign=async(id,actor=analyst)=>db.query('UPDATE "AttentionConversation" SET "assigneeUserId"=$2,"assigneeKey"=$3,"assigneeName"=$4,version=version+1 WHERE id=$1',[id,actor.userId,actor.key,actor.name]);
   const input=async(id,data={})=>({requestId:randomUUID(),version:(await db.query('SELECT version FROM "AttentionConversation" WHERE id=$1',[id])).rows[0].version,text:"Respuesta",...data});
   const queue=async(id,actor=central,data={})=>meta.queueReply(actor,id,await input(id,data));
-  return {db,database,meta,legacy,ingest,assign,input,queue,advance:ms=>{clock=new Date(clock.getTime()+ms)}};
+  return {db,database,meta,legacy,ingest,assign,input,queue,queries,advance:ms=>{clock=new Date(clock.getTime()+ms)}};
 }
 
 test("webhook enlaza solo teléfono exacto único, preserva asignación y deduplica wamid",async t=>{
@@ -644,4 +644,18 @@ test("un estado dual contradictorio no avanza automatizaciones ni se guarda sin 
   assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='META_DELIVERY_IDENTITY_REJECTED' AND metadata='{}'::jsonb`)).rows[0].n,2);
   assert.equal((await f.meta.ingest(events([],[delivery(conflict.id,{status:"delivered"})]))).statusesApplied,1,"legacy telefónico conserva funcionamiento");
   assert.equal((await f.db.query('SELECT status FROM "WhatsAppAutomationMetaOutbox" WHERE id=$1',[row.id])).rows[0].status,"delivered");
+});
+
+
+test("send stages reuse only their already locked scope and still revalidate every new transaction",async t=>{
+  const f=await fixture(t,{trackQueries:true}),original=inbound({text:"Consulta original"}),conversation=await f.ingest(original);
+  const message=(await f.db.query('SELECT id FROM "AttentionMessage" WHERE "metaWamid"=$1',[original.id])).rows[0];
+  const input=await f.input(conversation.id,{replyToMessageId:message.id});
+  const count=()=>({actor:f.queries.filter(sql=>sql.includes('JOIN "Rol" r')).length,chat:f.queries.filter(sql=>sql.includes('SELECT * FROM "AttentionConversation" c WHERE')).length,readiness:f.queries.filter(sql=>sql.includes("to_regclass('public.\"AttentionMetaBinding\"')")).length});
+  f.queries.length=0;const queued=await f.meta.queueReply(central,conversation.id,input);
+  assert.deepEqual(count(),{actor:1,chat:1,readiness:1},"queue shares its scoped lock with quote and idempotency reads, instead of three actor/chat checks");
+  f.queries.length=0;const claim=await f.meta.claimReply(central,conversation.id,input.requestId);
+  assert.deepEqual(count(),{actor:1,chat:1,readiness:1},"claim checks current authority once, rather than repeating it inside reply lookup");
+  f.queries.length=0;await f.meta.beforeSend(central,queued.id,claim.reply.leaseToken);
+  assert.deepEqual(count(),{actor:1,chat:1,readiness:1},"pre-POST performs a fresh authority/schema check and shares its locked row only within that transaction");
 });
