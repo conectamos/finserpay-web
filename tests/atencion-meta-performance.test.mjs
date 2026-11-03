@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { createJiti } from "jiti";
+import sharp from "sharp";
+import PDFDocument from "pdfkit";
 
 const root=path.resolve(import.meta.dirname,"..");
 const jiti=createJiti(import.meta.url,{alias:{"@":root,"server-only":path.join(root,"node_modules/next/dist/compiled/server-only/empty.js")}});
-const {createMetaAttentionAdapter,META_ATTENTION_LINE}=await jiti.import("../lib/atencion-meta.ts");
+const {createMetaAttentionAdapter,META_ATTENTION_LINE,validateMetaAttentionMedia}=await jiti.import("../lib/atencion-meta.ts");
 const {createAttentionMetaVerificationCache}=await jiti.import("../lib/atencion-meta-verification-cache.ts");
 const clockStart=Date.parse("2026-11-03T15:00:00Z");
 const env=()=>({WHATSAPP_ATTENTION_ACCESS_TOKEN:"private-test-verification-token",WHATSAPP_ATTENTION_APP_SECRET:"private-test-app-secret",
@@ -108,4 +111,158 @@ test("default production adapters reuse positive checks without sharing injected
  try{for(let i=0;i<2;i++)await createMetaAttentionAdapter({env:{...env(),WHATSAPP_ATTENTION_ACCESS_TOKEN:"synthetic-default-cache-only"},now:()=>clockStart}).verifyConnection();}
  finally{globalThis.fetch=priorFetch;}
  assert.equal(read.calls.length,2,"fresh HTTP adapters share only the identical private configuration's provider identity");
+});
+
+const uploadedPng=Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]);
+const uploadInput={bytes:uploadedPng,mimeType:'image/png',fileName:'image.png',kind:'image'};
+const uploadId='1234567890';
+function uploadNetwork(options={}){
+ const calls=[];
+ const fetch=async(url,init)=>{
+  const parsed=new URL(url);assert.equal(parsed.origin,'https://graph.facebook.com');calls.push({url:parsed,init});
+  if(parsed.pathname.endsWith('/messages'))return json({messaging_product:'whatsapp',messages:[{id:'wamid.OWN_UPLOAD_PERF'}],contacts:[{input:input.recipient,wa_id:input.recipient}]});
+  if(parsed.pathname.endsWith('/media')){options.onUpload?.();return json({id:options.ackId??uploadId});}
+  if(parsed.pathname.endsWith('/phone_numbers'))return json({data:[{id:META_ATTENTION_LINE.phoneNumberId,display_phone_number:META_ATTENTION_LINE.displayPhone}]});
+  if(parsed.pathname.endsWith('/'+uploadId))return json({id:uploadId,mime_type:options.media?.mimeType??'image/png',file_size:options.media?.bytes.length??uploadedPng.length,url:'https://lookaside.fbsbx.com/whatsapp_business/attachments/?synthetic=upload'});
+  return json({id:META_ATTENTION_LINE.phoneNumberId,display_phone_number:META_ATTENTION_LINE.displayPhone});
+ };
+ return{calls,fetch,metadata:()=>calls.filter(call=>call.url.pathname.endsWith('/'+uploadId)).length,messages:()=>calls.filter(call=>call.url.pathname.endsWith('/messages')).length};
+}
+
+const sampleImage={create:{width:512,height:512,channels:4,background:{r:12,g:180,b:70,alpha:0.5}}};
+// The ISO-BMFF video track is the same structural fixture used by the media
+// service tests. All five cases pass the real byte/type validator before upload.
+const mediaBox=(kind,data)=>{const out=Buffer.alloc(8+data.length);out.writeUInt32BE(out.length);out.write(kind,4);data.copy(out,8);return out;};
+const videoHandler=Buffer.alloc(12);videoHandler.write('vide',8);
+const videoFixture=Buffer.concat([mediaBox('ftyp',Buffer.from('isom0000')),mediaBox('moov',mediaBox('trak',mediaBox('mdia',mediaBox('hdlr',videoHandler))))]);
+const pdfFixture=await new Promise(resolve=>{const doc=new PDFDocument(),chunks=[];doc.on('data',chunk=>chunks.push(chunk));doc.on('end',()=>resolve(Buffer.concat(chunks)));doc.text('Documento artificial de prueba local.');doc.end();});
+const uploadSamples=[
+ {kind:'image',mimeType:'image/png',fileName:'prueba.png',bytes:await sharp(sampleImage).png().toBuffer()},
+ {kind:'audio',mimeType:'audio/mp4',fileName:'prueba.m4a',bytes:await readFile(path.join(root,'tests/fixtures/approval-call/tone.m4a'))},
+ {kind:'video',mimeType:'video/mp4',fileName:'prueba.mp4',bytes:videoFixture},
+ {kind:'document',mimeType:'application/pdf',fileName:'prueba.pdf',bytes:pdfFixture},
+ {kind:'sticker',mimeType:'image/webp',fileName:'prueba.webp',bytes:await sharp(sampleImage).webp({lossless:true}).toBuffer()},
+];
+for(const media of uploadSamples)test(`fresh ${media.kind} upload removes one Graph GET from the first send, without skipping its guard`,async()=>{
+ assert.equal(validateMetaAttentionMedia(media).kind,media.kind);
+ const sendInput={...input,kind:media.kind,...(media.kind==='document'?{fileName:media.fileName}:{}),...(['image','video','document'].includes(media.kind)?{caption:'Descripción de prueba local'}:{})};
+ for(const sameRuntime of[false,true]){
+  const wire=uploadNetwork({media}),cache=createAttentionMetaVerificationCache();let guards=0;
+  const make=()=>createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>clockStart,verificationCache:cache});
+  const uploader=make(),uploaded=await uploader.uploadMedia(media);assert.deepEqual(uploaded,{mediaId:uploadId});
+  const sender=sameRuntime?uploader:make();
+  await sender.sendMedia({...sendInput,...uploaded},async()=>{guards++;});
+  assert.equal(wire.calls.length,sameRuntime?4:5,'only the exact same runtime may omit the fifth metadata GET');
+  assert.equal(wire.metadata(),sameRuntime?0:1);assert.equal(wire.messages(),1);assert.equal(guards,1);
+  assert.equal(wire.calls.filter(call=>call.init.method==='POST').length,2,'neither upload nor message is retried');
+  const sent=JSON.parse(wire.calls.find(call=>call.url.pathname.endsWith('/messages')).init.body);
+  assert.equal(sent.type,media.kind);assert.equal(sent[media.kind].id,uploadId);
+ }
+});
+
+test('upload proof is consumed once and never crosses adapter instances or applies to stored media IDs',async()=>{
+ const wire=uploadNetwork(),cache=createAttentionMetaVerificationCache();
+ const make=()=>createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>clockStart,verificationCache:cache});
+ const adapter=make();await adapter.uploadMedia(uploadInput);
+ await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(wire.metadata(),0);
+ await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(wire.metadata(),1,'second use performs ordinary metadata validation');
+ await adapter.uploadMedia(uploadInput);
+ await make().sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(wire.metadata(),2,'another runtime cannot consume private upload evidence');
+ await make().sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(wire.metadata(),3,'an existing outbox media ID is always checked');
+});
+
+test('expired or rolled-back upload clocks fall back to provider metadata',async()=>{
+ for(const offset of[5000,-1]){
+  let instant=clockStart;const wire=uploadNetwork();
+  const adapter=createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>instant});
+  await adapter.uploadMedia(uploadInput);instant+=offset;
+  await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});
+  assert.equal(wire.metadata(),1);assert.equal(wire.messages(),1);
+ }
+ for(const invalidInstant of[NaN,Infinity,-Infinity]){
+  let instant=invalidInstant;const wire=uploadNetwork();const adapter=createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>instant});
+  await adapter.uploadMedia(uploadInput);instant=clockStart;
+  await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(wire.metadata(),1,'non-finite upload clock never supplies reusable evidence');
+ }
+});
+
+test('scope rotation during an upload acknowledgment never creates reusable upload evidence',async()=>{
+ for(const field of['WHATSAPP_ATTENTION_PHONE_NUMBER_ID','WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID']){
+  const cfg=env(),original=cfg[field],wire=uploadNetwork({onUpload:()=>{cfg[field]='unapproved-scope';}});
+  const adapter=createMetaAttentionAdapter({env:cfg,fetch:wire.fetch,now:()=>clockStart});
+  await adapter.uploadMedia(uploadInput);
+  await assert.rejects(adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>assert.fail()),{code:'META_SCOPE_CONFIG'});
+  assert.equal(wire.messages(),0);cfg[field]=original;
+  await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});
+  assert.equal(wire.metadata(),1,'restoring configuration cannot manufacture proof of the earlier upload');
+ }
+});
+
+test('upload evidence is bound to token and Graph version, including rotation during the upload acknowledgment',async()=>{
+ for(const field of['WHATSAPP_ATTENTION_ACCESS_TOKEN','WHATSAPP_GRAPH_API_VERSION']){
+  const cfg=env(),wire=uploadNetwork();const adapter=createMetaAttentionAdapter({env:cfg,fetch:wire.fetch,now:()=>clockStart});
+  await adapter.uploadMedia(uploadInput);cfg[field]=field==='WHATSAPP_ATTENTION_ACCESS_TOKEN'?'rotated-upload-test-token':'v26.0';
+  await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(wire.metadata(),1);
+ }
+ const cfg=env(),wire=uploadNetwork({onUpload:()=>{cfg.WHATSAPP_ATTENTION_ACCESS_TOKEN='rotated-inside-upload-test-token';}});
+ const adapter=createMetaAttentionAdapter({env:cfg,fetch:wire.fetch,now:()=>clockStart});
+ await adapter.uploadMedia(uploadInput);await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});
+ assert.equal(wire.metadata(),1,'the upload response cannot be attributed to a different configuration');
+ cfg.WHATSAPP_ATTENTION_PHONE_NUMBER_ID='unapproved-line';
+ await assert.rejects(adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>assert.fail()),{code:'META_SCOPE_CONFIG'});
+ assert.equal(wire.messages(),1);
+});
+
+test('malformed upload acknowledgments and invalid file kind or names cannot use upload proof to send',async()=>{
+ const bad=uploadNetwork({ackId:'not-a-media-id'}),broken=createMetaAttentionAdapter({env:env(),fetch:bad.fetch,now:()=>clockStart});
+ await assert.rejects(broken.uploadMedia(uploadInput),{code:'INVALID_MEDIA_RECEIPT'});assert.equal(bad.messages(),0);
+ await broken.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(bad.metadata(),1,'a client-known ID is not proof of an upload');
+ const wire=uploadNetwork(),adapter=createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>clockStart});
+ await adapter.uploadMedia(uploadInput);
+ await assert.rejects(adapter.sendMedia({...input,mediaId:uploadId,kind:'video'},async()=>assert.fail()),{code:'UNSUPPORTED_MEDIA'});
+ assert.equal(wire.messages(),0);assert.equal(wire.metadata(),0);
+ await adapter.uploadMedia(uploadInput);
+ await assert.rejects(adapter.sendMedia({...input,mediaId:uploadId,kind:'image',fileName:'image.exe'},async()=>assert.fail()),{code:'INVALID_MEDIA_NAME'});
+ assert.equal(wire.messages(),0);
+});
+
+test('fresh upload proof never bypasses a disabled channel, closed window or failed persisted guard',async()=>{
+ for(const failure of['disabled','window','guard']){
+  const cfg=env(),wire=uploadNetwork(),adapter=createMetaAttentionAdapter({env:cfg,fetch:wire.fetch,now:()=>clockStart});let guards=0;
+  await adapter.uploadMedia(uploadInput);
+  if(failure==='disabled')cfg.WHATSAPP_ATTENTION_SEND_ENABLED='false';
+  const send={...input,mediaId:uploadId,kind:'image',...(failure==='window'?{lastInboundAt:new Date(clockStart-24*3600000).toISOString()}:{})};
+  await assert.rejects(adapter.sendMedia(send,async()=>{guards++;throw new Error('persisted guard rejected');}),failure==='guard'?/persisted guard rejected/:{code:failure==='disabled'?'META_SEND_DISABLED':'SERVICE_WINDOW_CLOSED'});
+  assert.equal(wire.messages(),0);assert.equal(guards,failure==='guard'?1:0);
+ }
+});
+
+test('a failed persisted guard consumes upload evidence before a later explicit attempt',async()=>{
+ const wire=uploadNetwork(),adapter=createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>clockStart});let guards=0;
+ await adapter.uploadMedia(uploadInput);
+ await assert.rejects(adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{guards++;throw new Error('persisted guard rejected');}),/persisted guard rejected/);
+ assert.equal(wire.messages(),0);assert.equal(wire.metadata(),0);assert.equal(guards,1);
+ await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{guards++;});
+ assert.equal(wire.metadata(),1,'the later explicit call performs ordinary metadata validation');
+ assert.equal(wire.messages(),1);assert.equal(guards,2,'each explicit call still requires its own persisted guard');
+});
+
+test('a different media ID cannot consume upload evidence as authorization or skip its metadata lookup',async()=>{
+ const wire=uploadNetwork(),adapter=createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>clockStart}),differentId='9876543210';
+ await adapter.uploadMedia(uploadInput);
+ await assert.rejects(adapter.sendMedia({...input,mediaId:differentId,kind:'image'},async()=>assert.fail()),{code:'UNSUPPORTED_MEDIA'});
+ assert.equal(wire.calls.filter(call=>call.url.pathname.endsWith('/'+differentId)).length,1);
+ assert.equal(wire.messages(),0);
+ await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});
+ assert.equal(wire.metadata(),1,'an attempted different ID retires the single-use proof rather than retaining it');
+});
+
+test('a failed second upload clears the earlier proof and rollback during upload cannot create one',async()=>{
+ const options={},wire=uploadNetwork(options),adapter=createMetaAttentionAdapter({env:env(),fetch:wire.fetch,now:()=>clockStart});
+ await adapter.uploadMedia(uploadInput);options.ackId='invalid';
+ await assert.rejects(adapter.uploadMedia(uploadInput),{code:'INVALID_MEDIA_RECEIPT'});
+ await adapter.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(wire.metadata(),1);
+ let instant=clockStart;const rolled=uploadNetwork({onUpload:()=>{instant--;}}),rollback=createMetaAttentionAdapter({env:env(),fetch:rolled.fetch,now:()=>instant});
+ await rollback.uploadMedia(uploadInput);instant=clockStart;
+ await rollback.sendMedia({...input,mediaId:uploadId,kind:'image'},async()=>{});assert.equal(rolled.metadata(),1);
 });

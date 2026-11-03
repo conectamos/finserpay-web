@@ -487,14 +487,14 @@ test("verification failures and credential changes while pending never produce a
     : { id: META_ATTENTION_LINE.phoneNumberId, display_phone_number: META_ATTENTION_LINE.displayPhone }));
   await next;
 });
-test("upload and media send reuse the short verification but still validate metadata and the transactional claim", async () => {
+test("upload and media send reuse their private short-lived upload proof and still require the transactional claim", async () => {
   const mock = mediaMock(), client = adapter({ fetch: mock.transport }); let claimed = false;
   await client.uploadMedia({ bytes: png, mimeType: "image/png", fileName: "image.png", kind: "image" });
   await client.sendMedia({ ...input, mediaId: "1234567890", kind: "image" }, async () => { claimed = true; });
   assert.equal(claimed, true);
   assert.equal(mock.requests.filter(item => item.url.pathname.endsWith("/phone_numbers")).length, 1);
   assert.equal(mock.requests.filter(item => item.url.pathname === `/v25.0/${META_ATTENTION_LINE.phoneNumberId}`).length, 1);
-  assert.equal(mock.requests.filter(item => item.url.pathname === "/v25.0/1234567890").length, 1, "uploaded media metadata remains independently validated");
+  assert.equal(mock.requests.filter(item => item.url.pathname === "/v25.0/1234567890").length, 0, "the same runtime already validated these uploaded bytes and received Meta's ID");
   assert.equal(mock.requests.filter(item => item.init.method === "POST").length, 2, "one upload and one send, without retries");
   const cfg = { ...env }, flagsMock = transportMock(), guarded = adapter({ env: cfg, fetch: flagsMock.transport });
   await guarded.verifyConnection(); cfg.WHATSAPP_ATTENTION_SEND_ENABLED = "false";
