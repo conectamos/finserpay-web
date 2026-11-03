@@ -1,115 +1,48 @@
 # Recaudo por corte
 
-Disponible en **Cartera → Recaudo por corte**, inmediatamente debajo de
-**Riesgo por referencia**, para administradores. Los supervisores tienen acceso
-al módulo en Cartera según su sede. También figura en el centro de reportes.
-Ruta: `/dashboard/reportes/recaudo-por-corte`.
+Disponible en **Cartera → Recaudo por corte**, debajo de **Riesgo por referencia**, para administradores. Los supervisores acceden según su sede. También figura en el centro de reportes. Ruta: `/dashboard/reportes/recaudo-por-corte`.
 
 ## Uso
 
-1. Seleccionar corte 02 o 17, mes, año, aliado y sede. La fecha inicial es el
-   siguiente corte según `America/Bogota`.
-2. Consultar la vista previa y guardar la proyección. Se capturan todas las
-   cuotas del corte dentro del aliado/sede seleccionados, independientemente
-   del filtro de estado. El servidor fija la fecha y hora del guardado.
-3. Consultar esa versión para medir pagos posteriores, incluso después del
-   vencimiento. Preparar una nueva proyección crea otra versión; no sustituye
-   la anterior. El historial permite comparar cortes y versiones, en páginas
-   de diez registros; las versiones anteriores siguen disponibles.
-4. Aplicar estado para filtrar simultáneamente tabla, tarjetas y exportación.
-   El Excel incluye resumen, cuotas, pagos aplicados y la página del histórico
-   consultada, identificada expresamente en el resumen del archivo.
+Seleccionar corte 02 o 17, mes, año, aliado, sede y estado; pulsar **Consultar corte**. No se guarda ninguna proyección. El reporte compara las cuotas con vencimiento exactamente en la fecha seleccionada con todo el efectivo vigente aplicado a ellas, hasta la hora de consulta. El estado filtra simultáneamente tarjetas, tabla y Excel. La descarga contiene Resumen, Cuotas y Pagos aplicados.
 
-## Fuente y distribución
+## Fuente y cálculo
 
-La fuente de efectivo es únicamente `CreditoAbono`. Caja, intenciones Wompi e
-importaciones Efecty no se suman adicionalmente: representan los mismos abonos.
-La autorización se aplica a la sede **del crédito**, también para recaudos
-digitales recibidos en una sede recaudadora diferente.
+La fuente de efectivo es `CreditoAbono`. Caja, intenciones Wompi e importaciones Efecty no se suman adicionalmente porque representan los mismos abonos. El alcance corresponde a la sede **del crédito**, aunque una sede recaudadora diferente haya recibido el pago.
 
-La plataforma no mantiene una tabla persistida de distribución pago→cuota.
-`buildCreditPaymentPlan` aplica la suma de abonos vigentes en orden de cuota.
-Este reporte reutiliza ese cronograma y reconstruye la asignación de cada
-abono en el orden del recibo oficial (`fechaAbono`, luego ID). Los IDs guardados
-determinan si el pago es previo o nuevo: una importación con fecha antigua
-no se convierte en un anticipo que existía al proyectar. Si entra antes de otros
-pagos en ese orden, puede reasignar los anticipos existentes; esa variación se
-presenta como ajuste, sin atribuir a ese abono cuotas distintas de las del recibo.
-Se registran todos los IDs conocidos al guardar, incluidos los anulados.
+La plataforma no mantiene una tabla persistida de distribución pago→cuota. El reporte reutiliza `buildCreditPaymentPlan` y reconstruye la asignación FIFO en el orden del recibo oficial (`fechaAbono`, luego ID). Los anulados, reversados, revertidos o eliminados no cuentan. Se conservan las cuotas ya pagadas en su calendario: `fechaProximoPago` es un cursor móvil y no desplaza cortes anteriores.
 
-Cada versión guarda el cronograma completo de los créditos incluidos, los
-abonos conocidos y los valores calculados de cada cuota: vencimiento, valor,
-anticipos, saldo esperado y distribución inicial. Los importes originales se
-leen directamente de la versión; no se recalculan para construir el esperado.
-Se incluyen únicamente cuotas cuyo vencimiento guardado coincide exactamente
-con la fecha seleccionada; las cuotas eliminadas no forman parte de la cohorte.
-
-- **Esperado:** saldo pendiente persistido al guardar.
-- **Anticipos previos:** efectivo ya asignado a esas cuotas al guardar.
-- **Recibido:** asignación vigente de abonos cuyos IDs no estaban en la versión.
-  Los abonos anulados, reversados, revertidos o eliminados dejan de contar.
-- **Ajuste de anticipos:** anticipos guardados menos la asignación actual de
-  los IDs previos. Puede ser negativo si se rehabilita un pago previo.
-- **Pendiente por cuota:** `máximo(0, esperado − recibido + ajuste de anticipos)`.
+- **Créditos del corte:** créditos distintos de las cuotas visibles.
+- **Esperado:** valor completo programado de las cuotas del corte.
+- **Recibido:** efectivo vigente aplicado a esas cuotas, incluidos anticipos, pagos del día y pagos posteriores al vencimiento.
+- **Anticipos incluidos:** parte del recibido cuya fecha efectiva es anterior a las 00:00 del corte en `America/Bogota`. No se suma nuevamente al recibido.
+- **Pendiente:** `máximo(0, esperado − recibido)` por cuota.
 - **Cumplimiento:** `recibido / esperado × 100`; si esperado es cero, **No aplica**.
-  No se limita a 100%: recuperar anticipos revertidos puede superar lo proyectado.
-- **Clientes pendientes:** documentos distintos con saldo pendiente; cuando
-  falta el documento se conserva una identidad por crédito.
+- **Clientes pendientes:** documentos distintos normalizados con saldo pendiente; cuando falta el documento se conserva una identidad por crédito.
 
-Recuperación de cuotas anteriores y anticipos de cuotas futuras se muestran
-fuera del cumplimiento. Su alcance son los créditos de las filas visibles;
-no representan todos los pagos diarios de la empresa. Se deduplican por crédito.
-Las tarjetas suman exactamente las mismas filas que la tabla y el Excel.
+La recuperación de cuotas anteriores y los anticipos de cuotas futuras se muestran aparte. Incluyen pagos desde el inicio del corte hasta la consulta, aplicados a otros vencimientos de los créditos visibles; se deduplican por crédito. No representan todos los ingresos diarios de la empresa.
 
-## Ajustes de crédito
+## Cronograma vigente y conciliaciones
 
-El cierre o paz y salvo no se transforma en dinero recibido. Una condonación,
-anulación o modificación del calendario conserva el esperado histórico y genera
-una observación. Cuando el calendario ordinario cambia, se compara el efectivo
-aplicado a los mismos números de cuota y se mantiene la fecha guardada.
+La consulta usa el cronograma vigente, incluidas modificaciones reales de fechas y capital. No es una fotografía histórica inmutable. Excluye cuotas eliminadas, créditos anulados y créditos con paz y salvo emitido antes del inicio del corte. Un cierre desde ese día no se convierte en efectivo recibido: se muestra una observación para distinguir la diferencia de recaudo de una deuda exigible.
 
-Los planes conciliados por abono a capital usan `planCapitalVigente`, validando
-los IDs y valores de sus abonos base. Los anticipos agregados de esa conciliación
-incluyen acceso a los abonos fuente y una advertencia: no existe asignación
-individual por cuota para esas fuentes y no se inventa esa distribución.
-Si se altera esa conciliación o cambia la
-revisión de capital después de proyectar, la plataforma no dispone de un ledger
-histórico que permita asignar el efectivo con certeza. Se solicita conciliación
-con un error explícito; no se inventan importes. La versión permanece visible
-en el historial con valores actuales desconocidos, sin presentarlos como cero.
+Los planes de capital usan `planCapitalVigente`, validando identidades y valores de sus abonos base. El efectivo conciliado por cuota se incluye una sola vez como `reconciledReceived`; los recibos fuente muestran su valor bruto informativo y no reciben asignaciones individuales inventadas. La pantalla y el Excel separan ese agregado para cuadrar el detalle de pagos con el recibido.
 
-## Persistencia y permisos
+Si todas las fuentes son anteriores al corte, el agregado es anticipo; si son del corte o posteriores, no lo es. Si mezclan ambos periodos sin una distribución individual, se conserva en recibido y se informa como importe sin fecha de atribución, sin inventar su proporción de anticipos ni su última fecha de pago. Una conciliación de capital realmente inconsistente produce un error explícito; no se sustituye por un cronograma inventado.
 
-`CutCollectionProjection` es una tabla independiente y de solo inserción.
-Un trigger impide UPDATE/DELETE. El guardado y la consulta leen cronogramas y
-pagos en una transacción `REPEATABLE READ`. La única escritura del módulo es el
-INSERT de la versión; no actualiza créditos, abonos ni saldos. Una clave UUID
-por intento evita crear una segunda versión al reintentar el mismo guardado.
+## Permisos y conservación de datos
 
 - Administrador central: todas las sedes autorizadas.
 - Administrador de aliado: sedes de su aliado de acceso.
 - Supervisor: su sede operativa autorizada.
 - Vendedores y sesiones ausentes: acceso denegado.
 
-El servidor valida los filtros y vuelve a restringir el historial por sede
-guardada y sede actual del crédito. Un traslado a un alcance no autorizado no
-expone datos del cliente. Los cambios de alcance se indican en pantalla.
-Los timestamps se almacenan como instantes y se presentan en Colombia; los
-vencimientos conservan su fecha calendario original.
+La consulta se ejecuta en una transacción `REPEATABLE READ` mediante lecturas. No modifica créditos, pagos, saldos ni proyecciones. Las proyecciones anteriores permanecen en `CutCollectionProjection`, con su protección contra UPDATE/DELETE; el reporte directo no depende de esa tabla ni de una nueva migración.
 
-## Instalación y verificación
+GET `/api/reportes/recaudo-por-corte` acepta los filtros y `format=xlsx`. Los enlaces antiguos con `projectionId` o `historyPage` consultan directamente la fecha seleccionada e ignoran esos parámetros. POST valida acceso y devuelve 410, sin escribir. Todas las respuestas del módulo son privadas y sin caché.
 
-El predeploy ejecuta `scripts/ensure-cut-collection-schema.mjs`, que instala
-`scripts/setup-cut-collection.sql`. También puede ejecutarse explícitamente con
-`npm run db:setup-cut-collection` con `DATABASE_URL` configurada. Importar o
-consultar el módulo no instala ni modifica el esquema. Si falta la tabla,
-la vista previa sigue disponible con aviso y guardar requiere la instalación.
+## Verificación
 
-Pruebas: `npm run test:cut-collection`. Cubren asignación, anticipos, pagos
-parciales/tardíos, reversos, fecha histórica de importación, cero esperado,
-inmutabilidad, conciliación de capital, permisos, aislamiento de sedes,
-idempotencia, lectura sin efectos en créditos/pagos, HTTP y Excel.
+`node --experimental-strip-types --test tests/cut-collection*.test.mjs` cubre cálculo, anticipos, parciales, pagos tardíos, reversos, capital, créditos pagados, permisos, sedes, tarjetas, tabla, Excel y conservación del histórico anterior.
 
-API: GET y POST `/api/reportes/recaudo-por-corte`; GET acepta `format=xlsx` y
-`projectionId`. POST recibe filtros y `requestKey` UUID. Las respuestas son
-privadas y no se almacenan en caché. Guardar requiere mismo origen y JSON.
+`scripts/verify-cut-collection-production.mjs --cut YYYY-MM-DD` verifica cuentas existentes, permisos, filtros, enlaces antiguos, exportación y huellas de créditos y pagos antes/después. Usa solo GET y SQL de lectura; recibe `DATABASE_URL` y `SESSION_SECRET` del entorno sin imprimir credenciales ni datos de clientes.
