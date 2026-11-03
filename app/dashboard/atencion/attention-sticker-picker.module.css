@@ -15,6 +15,9 @@
 .add label { display:grid; gap:6px; }
 .add small { font-size:13px; color:var(--fp-muted); }
 .selectedFile { display:flex; justify-content:space-between; gap:12px; overflow-wrap:anywhere; }
+.sourcePreview,.uploadPreview { display:flex; flex-direction:column; align-items:center; gap:12px; margin:16px 0; padding:16px; border:1px solid var(--fp-border); border-radius:var(--fp-radius-md); }
+.sourcePreview img,.uploadPreview img { display:block; max-width:100%; width:192px; height:192px; object-fit:contain; }
+.uploadPreview small { text-align:center; color:var(--fp-muted); }
 .error { padding:12px; background:var(--fp-danger-soft); color:var(--fp-danger); border-radius:var(--fp-radius-sm); }
 @media(max-width:420px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 :global([data-chat-theme='dark']) .library { color:var(--fp-chat-text); }
@@ -26,3 +29,5 @@
 :global([data-chat-theme='dark']) .select { color:var(--fp-chat-text); border-radius:var(--fp-radius-sm); }
 :global([data-chat-theme='dark']) .select:hover:not(:disabled) { background:var(--fp-chat-selected); }
 :global([data-chat-theme='dark']) .actions button[aria-pressed=true] { color:var(--fp-chat-accent); }
+:global([data-chat-theme='dark']) .sourcePreview,:global([data-chat-theme='dark']) .uploadPreview { border-color:var(--fp-chat-border); background:var(--fp-chat-bg); }
+:global([data-chat-theme='dark']) .uploadPreview small { color:var(--fp-chat-muted); }

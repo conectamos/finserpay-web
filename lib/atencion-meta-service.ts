@@ -1,6 +1,7 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { AttentionError } from "./atencion-core";
-import { AttentionMetaError, createMetaAttentionAdapter, getMetaAttentionScope } from "./atencion-meta";
+import { AttentionMetaError, createMetaAttentionAdapter, getMetaAttentionScope, validateMetaAttentionMedia } from "./atencion-meta";
 import { attentionMetaReplyMessage, createAttentionMetaStore } from "./atencion-meta-storage";
 import type { AttentionActor } from "./atencion-types";
 import type { AttentionDatabase } from "./atencion-storage";
@@ -107,7 +108,25 @@ export function createAttentionMetaService(store: Store, adapter: Adapter, colle
       }
     },
     async send(actor: AttentionActor, conversationId: string, input: ReplyInput) {
-      const queued = await store.queueReply(actor, conversationId, input);
+      let prepared: Parameters<Store["queueReply"]>[2] = input;
+      let mediaBytes:Uint8Array|undefined=input.bytes;
+      if(input.forwardConversationId&&input.forwardMessageId){
+        const source=await store.getForwardSource(actor,input.forwardConversationId,input.forwardMessageId);
+        prepared={...input,text:source.text,forwardFingerprint:source.fingerprint};
+        if(source.attachment){
+          const media=await adapter.downloadMedia({mediaId:source.attachment.mediaId});
+          if(media.mimeType!==source.attachment.mimeType)throw new AttentionError("El archivo original cambió.",409);
+          const contentHash=createHash("sha256").update(media.bytes).digest("hex");
+          if(source.attachment.sha256&&Buffer.from(source.attachment.sha256,/^[a-f0-9]{64}$/i.test(source.attachment.sha256)?"hex":"base64").toString("hex")!==contentHash)
+            throw new AttentionError("El archivo original no coincide con el recibido en este chat.",409);
+          const validated=validateMetaAttentionMedia({bytes:media.bytes,mimeType:media.mimeType,...(source.attachment.fileName?{fileName:source.attachment.fileName}:{})});
+          if(validated.kind!==source.attachment.kind)throw new AttentionError("El archivo original no coincide con su tipo.",409);
+          mediaBytes=media.bytes;
+          prepared={...prepared,attachment:{kind:validated.kind,mimeType:validated.mimeType,fileName:source.attachment.fileName,
+            sha256:contentHash,size:media.bytes.length}};
+        }
+      }
+      const queued = await store.queueReply(actor, conversationId, prepared);
       if (queued.status !== "queued") return { message: attentionMetaReplyMessage(queued), uncertain: ["sending", "uncertain"].includes(queued.status) };
       const claim = await store.claimReply(actor, conversationId, input.requestId);
       let row = claim.reply;
@@ -117,14 +136,16 @@ export function createAttentionMetaService(store: Store, adapter: Adapter, colle
       try {
         if (!claim.lastInboundAt) throw new AttentionError("Hace falta un mensaje reciente del contacto para responder.", 409);
         if (row.attachment && !row.uploadedMediaId) {
-          if (!input.bytes) throw new AttentionError("Adjunta nuevamente el archivo de este mensaje.", 400);
-          const uploaded = await adapter.uploadMedia({ bytes: input.bytes, mimeType: row.attachment.mimeType,
-            fileName: row.attachment.fileName || "archivo", kind: row.attachment.kind });
+          if (!mediaBytes) throw new AttentionError("Adjunta nuevamente el archivo de este mensaje.", 400);
+          const extension:Record<string,string>={"image/jpeg":"jpg","image/png":"png","image/webp":"webp","audio/aac":"aac","audio/mp4":"m4a",
+            "audio/mpeg":"mp3","audio/amr":"amr","audio/ogg":"ogg","video/mp4":"mp4","video/3gpp":"3gp","application/pdf":"pdf"};
+          const uploaded = await adapter.uploadMedia({ bytes: mediaBytes, mimeType: row.attachment.mimeType,
+            fileName: row.attachment.fileName || `archivo.${extension[row.attachment.mimeType]||"bin"}`, kind: row.attachment.kind });
           row = await store.setUploadedMedia(actor, row.id, leaseToken, uploaded.mediaId);
         }
         const beforeSend = async () => { await store.beforeSend(actor, row.id, leaseToken); sendingStarted = true; };
         const send = { recipient: row.contactId, attemptId: row.id, lastInboundAt: claim.lastInboundAt,
-          cutoverConfirmed: adapter.status().cutoverConfirmed };
+          cutoverConfirmed: adapter.status().cutoverConfirmed,...(row.messageContext?.reply?{replyToId:row.messageContext.reply.wamid}:{}) };
         const receipt = row.attachment
           ? await adapter.sendMedia({ ...send, mediaId: row.uploadedMediaId!, kind: row.attachment.kind,
             ...(row.text ? { caption: row.text } : {}), ...(row.attachment.kind === "document" && row.attachment.fileName ? { fileName: row.attachment.fileName } : {}) }, beforeSend)

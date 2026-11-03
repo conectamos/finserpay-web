@@ -194,6 +194,8 @@ CREATE TABLE IF NOT EXISTS "AttentionMetaOutbox" (
 );
 CREATE INDEX IF NOT EXISTS "AttentionMetaOutbox_conversation" ON "AttentionMetaOutbox"("conversationId","createdAt");
 ALTER TABLE "AttentionMetaOutbox" ADD COLUMN IF NOT EXISTS template jsonb;
+ALTER TABLE "AttentionMetaOutbox" ADD COLUMN IF NOT EXISTS "messageContext" jsonb;
+CREATE INDEX IF NOT EXISTS "AttentionMetaOutbox_message" ON "AttentionMetaOutbox"("messageId") WHERE "messageId" IS NOT NULL;
 CREATE TABLE IF NOT EXISTS "AttentionMetaDelivery" (
   id uuid PRIMARY KEY, "phoneNumberId" text NOT NULL, "wabaId" text NOT NULL, wamid text NOT NULL,
   recipient text NOT NULL, status text NOT NULL CHECK(status IN ('sent','delivered','read','failed')),

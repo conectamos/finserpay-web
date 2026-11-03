@@ -6,23 +6,48 @@ import FinserSidePanel from "@/app/_components/finser-side-panel";
 import type {AttentionSavedSticker} from "@/lib/atencion-sticker-library";
 import styles from "./attention-sticker-picker.module.css";
 
+function stickerUploadError(file: File | null) {
+  if (!file) return null;
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || !file.size || file.size > 5 * 1024 * 1024) return "Usa una imagen JPG, PNG o WebP de hasta 5 MB.";
+  return file.type === "image/webp" && file.size > 500 * 1024 ? "El sticker WebP admite hasta 500 KB; si es estático, hasta 100 KB." : null;
+}
+
+function StickerUploadPreview({file}:{file:File}) {
+  const image=useRef<HTMLImageElement|null>(null);
+  useEffect(()=>{
+    if(stickerUploadError(file))return;
+    const target=image.current,url=URL.createObjectURL(file);
+    if(target)target.src=url;
+    return()=>{if(target)target.removeAttribute("src");URL.revokeObjectURL(url);};
+  },[file]);
+  return stickerUploadError(file)?null:<div className={styles.uploadPreview}>
+    {/* Local preview stays in memory and is revoked when the selection changes. */}
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img ref={image} alt={`Vista previa del sticker: ${file.name}`} width={192} height={192}/>
+    <small>{file.type === "image/webp" ? "Vista previa. El WebP debe medir 512 × 512." : "Vista previa. Al guardar se ajustará sin recortar a 512 × 512."}</small>
+  </div>;
+}
+
 export default function AttentionStickerPicker({disabled,onSelect}:{disabled:boolean;onSelect:(file:File)=>void}){
   const [open,setOpen]=useState(false),[items,setItems]=useState<AttentionSavedSticker[]>([]),[filter,setFilter]=useState<"all"|"favorite"|"archived">("all");
   const [name,setName]=useState(""),[file,setFile]=useState<File|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const alive=useRef(true),locked=useRef(false),uploadIntent=useRef<string|null>(null),controller=useRef<AbortController|null>(null);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;controller.current?.abort();};},[]);
   async function request<T>(url:string,init:RequestInit={}):Promise<T>{
-    const response=await fetch(url,{...init,cache:"no-store",credentials:"same-origin"});const data=await response.json().catch(()=>null);
-    if(!response.ok){if([401,403].includes(response.status)&&alive.current)setItems([]);throw new Error(data?.error||"No fue posible consultar la biblioteca.");}return data;
+    const read=new AbortController();controller.current=read;const timeout=setTimeout(()=>read.abort(),25_000);
+    try{
+      const response=await fetch(url,{...init,cache:"no-store",credentials:"same-origin",signal:read.signal});const data=await response.json().catch(()=>null);
+      if(!response.ok){if([401,403].includes(response.status)&&alive.current){setItems([]);setFile(null);setName("");setOpen(false);}throw new Error(data?.error||"No fue posible consultar la biblioteca.");}return data;
+    }finally{clearTimeout(timeout);}
   }
   async function load(){
-    if(locked.current)return;locked.current=true;setBusy(true);setError("");const read=new AbortController();controller.current=read;
-    try{const data=await request<{items:AttentionSavedSticker[]}>("/api/atencion/stickers",{signal:read.signal});if(alive.current&&!read.signal.aborted)setItems(data.items);}
-    catch(failure){if(alive.current&&!read.signal.aborted)setError(failure instanceof Error?failure.message:"No fue posible abrir la biblioteca.");}
+    if(locked.current)return;locked.current=true;setBusy(true);setError("");
+    try{const data=await request<{items:AttentionSavedSticker[]}>("/api/atencion/stickers");if(alive.current)setItems(data.items);}
+    catch(failure){if(alive.current)setError(failure instanceof Error?failure.message:"No fue posible abrir la biblioteca.");}
     finally{locked.current=false;if(alive.current)setBusy(false);}
   }
   async function save(){
-    if(locked.current||!file||!name.trim())return;locked.current=true;setBusy(true);setError("");uploadIntent.current||=crypto.randomUUID();
+    if(locked.current||!file||stickerUploadError(file)||!name.trim())return;locked.current=true;setBusy(true);setError("");uploadIntent.current||=crypto.randomUUID();
     const form=new FormData();form.set("file",file);form.set("name",name.trim());form.set("requestId",uploadIntent.current);
     try{const data=await request<{sticker:AttentionSavedSticker}>("/api/atencion/stickers",{method:"POST",body:form});if(alive.current){setItems(current=>[data.sticker,...current.filter(item=>item.id!==data.sticker.id)]);setFile(null);setName("");uploadIntent.current=null;setFilter(data.sticker.archived?"archived":"all");}}
     catch(failure){if(alive.current)setError(failure instanceof Error?failure.message:"No se pudo guardar el sticker.");}
@@ -36,13 +61,14 @@ export default function AttentionStickerPicker({disabled,onSelect}:{disabled:boo
   }
   async function select(item:AttentionSavedSticker){
     if(locked.current||disabled||item.archived)return;locked.current=true;setBusy(true);setError("");
+    const read=new AbortController();controller.current=read;const timeout=setTimeout(()=>read.abort(),25_000);
     try{
-      const response=await fetch(`/api/atencion/stickers/${item.id}/media`,{cache:"no-store",credentials:"same-origin"});
-      if(!response.ok)throw new Error("No se pudo abrir el sticker. Actualiza la biblioteca.");const blob=await response.blob();
+      const response=await fetch(`/api/atencion/stickers/${item.id}/media`,{cache:"no-store",credentials:"same-origin",signal:read.signal});
+      if(!response.ok){if([401,403,404].includes(response.status)&&alive.current){setItems([]);setFile(null);setName("");setOpen(false);}throw new Error("No se pudo abrir el sticker. Actualiza la biblioteca.");}const blob=await response.blob();
       if(blob.type!=="image/webp"||blob.size>500*1024)throw new Error("El sticker recibido no es válido.");
       if(alive.current){onSelect(new File([blob],"sticker.webp",{type:"image/webp"}));setOpen(false);}
     }catch(failure){if(alive.current)setError(failure instanceof Error?failure.message:"No se pudo seleccionar el sticker.");}
-    finally{locked.current=false;if(alive.current)setBusy(false);}
+    finally{clearTimeout(timeout);locked.current=false;if(alive.current)setBusy(false);}
   }
   const shown=items.filter(item=>filter==="archived"?item.archived:!item.archived&&(filter!=="favorite"||item.favorite));
   return <><Button type="button" variant="ghost" aria-label="Stickers guardados" title="Stickers" disabled={disabled} onClick={()=>{setOpen(true);void load();}}><Sticker size={20} aria-hidden="true" /></Button>
@@ -58,8 +84,8 @@ export default function AttentionStickerPicker({disabled,onSelect}:{disabled:boo
         <div className={styles.actions}>{item.archived?<Button type="button" variant="ghost" disabled={busy} onClick={()=>void update(item,"restore")}>Restaurar</Button>:<><Button type="button" variant="ghost" disabled={busy} aria-label={`${item.favorite?"Quitar de":"Agregar a"} favoritos: ${item.name}`} aria-pressed={item.favorite} onClick={()=>void update(item,"favorite")}><Star size={18} fill={item.favorite?"currentColor":"none"} /></Button><Button type="button" variant="ghost" disabled={busy} aria-label={`Archivar sticker: ${item.name}`} onClick={()=>void update(item,"archive")}><Archive size={18} /></Button></>}</div></article>)}</div>
       {!shown.length&&!busy&&<p>No tienes stickers en esta sección.</p>}
       <section className={styles.add}><h3><Plus size={18} /> Agregar sticker</h3><label>Nombre<Input maxLength={60} value={name} disabled={busy} onChange={event=>{setName(event.target.value);uploadIntent.current=null;}} /></label><label>Imagen<Input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event=>{const selected=event.target.files?.[0]||null;setFile(selected);uploadIntent.current=null;if(selected&&!name)setName(selected.name.replace(/\.[^.]+$/,"").slice(0,60));event.target.value="";}} /></label>
-        {file&&<div className={styles.selectedFile}><span>{file.name}</span><Button type="button" aria-label="Quitar imagen de sticker" variant="ghost" disabled={busy} onClick={()=>{setFile(null);uploadIntent.current=null;}}><X size={18} /></Button></div>}
-        <small>JPG o PNG hasta 5 MB; se ajustan a 512 × 512. WebP estático hasta 100 KB o animado hasta 500 KB. Biblioteca personal: 50 stickers / 10 MB, incluidos los archivados.</small><Button type="button" disabled={busy||!file||!name.trim()} onClick={()=>void save()}>Guardar sticker</Button>
+      {file&&<><div className={styles.selectedFile}><span>{file.name}</span><Button type="button" aria-label="Quitar imagen de sticker" variant="ghost" disabled={busy} onClick={()=>{setFile(null);uploadIntent.current=null;}}><X size={18} /></Button></div><StickerUploadPreview file={file}/>{stickerUploadError(file)&&<p role="alert" className={styles.error}>{stickerUploadError(file)}</p>}</>}
+        <small>JPG o PNG hasta 5 MB; se ajustan a 512 × 512. WebP estático hasta 100 KB o animado hasta 500 KB. Biblioteca personal: 50 stickers / 10 MB, incluidos los archivados.</small><Button type="button" disabled={busy||!file||Boolean(stickerUploadError(file))||!name.trim()} onClick={()=>void save()}>Guardar sticker</Button>
       </section>
     </div></FinserSidePanel>
   </>;

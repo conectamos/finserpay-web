@@ -240,6 +240,21 @@ El campo de respuesta usa Enter para una nueva línea y requiere pulsar Enviar
 para despachar el mensaje, también en el chat interno del asesor. El pegado de
 archivos con Ctrl + V prepara el adjunto y su vista previa,
 manteniendo el texto y las validaciones actuales; el pegado de texto sigue siendo nativo.
+Cada mensaje compatible ofrece un menú compacto con Responder y Reenviar,
+operable con teclado y en celular. Responder añade una referencia breve encima
+del borrador; cancelarla conserva el texto y el archivo. El historial muestra
+la cita real y permite volver al original si está cargado. Solo se presentan
+acciones habilitadas por el canal y los permisos vigentes. Reenviar abre un
+selector de conversaciones autorizadas, revisa un único destinatario y requiere
+pulsar Reenviar mensaje. No modifica la asignación del chat de origen. Un intento
+incierto conserva su identificador y ofrece Consultar estado antes de otro envío;
+cerrar el panel no elimina esa recuperación. Los datos del mensaje no se guardan
+en el almacenamiento del navegador para recuperar el intento.
+Los stickers recibidos por el canal nativo se pueden guardar en la biblioteca
+personal desde el mismo menú. Guardar no envía mensajes; seleccionar un sticker
+lo prepara para pulsar Enviar. La creación desde JPG o PNG muestra una vista previa
+y ajusta la imagen sin recorte al tamaño admitido por Meta. Los paquetes de stickers
+del celular no se sincronizan automáticamente con esta biblioteca.
 Al preparar cualquier archivo, la vista previa ocupa el lienzo del chat:
 imagen, video o sticker grande ajustado sin recorte; audio con un solo reproductor;
 documentos con nombre, formato y tamaño. Conserva el mensaje editable y una

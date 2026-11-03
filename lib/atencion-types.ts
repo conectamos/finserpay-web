@@ -29,6 +29,11 @@ export type AttentionMessage = {
   author: string | null;
   deliveryStatus?: "queued" | "sending" | "accepted" | "sent" | "delivered" | "read" | "failed" | "uncertain";
   deliveryError?: string | null;
+  canReplyTo?: boolean;
+  canForward?: boolean;
+  forwarded?: boolean;
+  replyTo?: { id: string | null; text: string; author: string | null;
+    attachment?: { kind: "image" | "audio" | "video" | "document" | "sticker"; fileName: string | null } };
   attachment?: {
     id: string; kind: "image" | "audio" | "video" | "document" | "sticker";
     url: string | null; fileName: string | null; mimeType: string | null;

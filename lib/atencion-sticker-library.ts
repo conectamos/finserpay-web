@@ -27,7 +27,11 @@ export async function readStickerUpload(request:Request){
       const image=sharp(content,{limitInputPixels:16_000_000,pages:1,failOn:"warning"}).timeout({seconds:10});
       const meta=await image.metadata();
       if(!["jpeg","png"].includes(meta.format||"")||meta.pages&&meta.pages>1)throw new Error("format");
-      content=await image.rotate().resize(512,512,{fit:"contain",background:{r:0,g:0,b:0,alpha:0}}).webp({quality:75,effort:4}).toBuffer();
+      const prepared=image.rotate().resize(512,512,{fit:"contain",background:{r:0,g:0,b:0,alpha:0}});
+      for(const quality of [75,60,45,30]){
+        content=await prepared.clone().webp({quality,effort:4}).toBuffer();
+        if(content.length<=100*1024)break;
+      }
     }catch{throw new AttentionError("No se pudo preparar esta imagen como sticker. Usa JPG o PNG de hasta 16 millones de píxeles.",415);}
   }
   validateMetaAttentionMedia({bytes:content,mimeType:"image/webp",fileName:"sticker.webp",kind:"sticker"});

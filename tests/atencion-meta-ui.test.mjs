@@ -68,7 +68,7 @@ function mount(options = {}) {
     useEffect(effect, deps) { const n = cursor++; if (!slots[n] || changed(slots[n].deps, deps)) effects.push(() => { slots[n]?.cleanup?.(); slots[n] = { deps, cleanup: effect() }; }); },
   };
   const component = name => Object.defineProperty(() => null, "name", { value: name });
-  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MediaImage, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag, ReplyComposer, ChatDropSurface, ReplyAudioPreview };";
+  const source = readFileSync(new URL("../app/dashboard/atencion/attention-console.tsx", import.meta.url), "utf8") + "\nexport const testUi = { privateMediaUrl, replyValidation, replyWindowOpen, MessageContent, MediaImage, MessageDelivery, FinancialPanel, CustomerBadge, ConversationLabels, isReservedTag, ReplyComposer, ChatDropSurface, ReplyAudioPreview, AttentionMessageQuote };";
   const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } });
   const loaded = { exports: {} };
   const sources = [], events = new Map();
@@ -84,7 +84,7 @@ function mount(options = {}) {
   runInNewContext(outputText, {
     module: loaded, exports: loaded.exports, FormData, File, AbortController, URLSearchParams, Date: ClockDate,
     URL: { createObjectURL(file) { const value = `blob:synthetic-${objectUrls.length + 1}`; objectUrls.push({ file, value }); return value; }, revokeObjectURL(value) { revokedUrls.push(value); } },
-    document: { get visibilityState() { return environment.visibilityState; }, querySelector: selector => selector === "dialog[open]" && options.openDialog ? {} : null, ...eventTarget("document") }, navigator: { get onLine() { return environment.onLine; } }, window: eventTarget("window"),
+    document: { get visibilityState() { return environment.visibilityState; }, getElementById: id => options.messageTargets?.[id] || null, querySelector: selector => selector === "dialog[open]" && options.openDialog ? {} : null, ...eventTarget("document") }, navigator: { get onLine() { return environment.onLine; } }, window: eventTarget("window"),
     ...(options.sse ? { EventSource: FakeEventSource } : {}),
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` }, sessionStorage: { getItem: () => null, removeItem() {}, setItem() {} },
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: id => timers.delete(id), setInterval: (fn, delay) => schedule(fn, delay, delay), clearInterval: id => timers.delete(id),
@@ -204,6 +204,52 @@ test("envío humano usa multipart con versión y requestId; no borra el borrador
   assert.equal(f.composer().props.draft.text, "  Respuesta humana  "); assert.equal(f.composer().props.draft.locked, true);
   sends[0].respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
   assert.equal(f.composer().props.draft.text, ""); await f.completeReads(); f.unmount();
+});
+
+test("responder cita el mensaje real sin perder texto ni archivo y conserva la referencia por conversación", async () => {
+  const f = mount(); await f.ready();
+  const incoming = { ...outbound, direction: "inbound", author: null, text: "¿Puedes revisar el pago?", canReplyTo: true, canForward: true };
+  const payload = { ...detail, messages: [incoming] };
+  await f.select(payload); const file = new File(["foto"], "pago.jpg", { type: "image/jpeg" }); await f.change({ text: "Lo reviso", file });
+  const actions = () => f.all().find(node => node.type?.name?.endsWith("attention-message-actions"));
+  assert.equal(actions().props.canReply, true); actions().props.onReply(); await f.flush();
+  assert.equal(f.composer().props.draft.replyTo.id, incoming.id); assert.equal(f.composer().props.draft.text, "Lo reviso"); assert.equal(f.composer().props.draft.file, file);
+  await f.select({ ...detail, conversation: other }); assert.equal(f.composer().props.draft.replyTo, null);
+  await f.select(payload); assert.equal(f.composer().props.draft.replyTo.id, incoming.id);
+  f.composer().props.send(); await f.flush(); const send = f.requests.filter(item => item.init.method === "POST").at(-1);
+  assert.equal(send.init.body.get("replyToMessageId"), incoming.id); assert.equal(send.init.body.get("text"), "Lo reviso");
+  assert.equal(send.init.body.has("replyToWamid"), false); assert.equal(send.init.body.has("forwardMessageId"), false);
+  send.respond({ message: { ...outbound, deliveryStatus: "accepted" } }); await f.flush();
+  assert.equal(f.composer().props.draft.replyTo, null); await f.completeReads(payload); f.unmount();
+});
+
+test("una respuesta fallida conserva la cita; cancelar la referencia conserva el resto del borrador", async () => {
+  const f = mount(); await f.ready(); await f.select();
+  const reference = { id: outbound.id, author: "Contacto A", text: "Mensaje original" };
+  await f.change({ text: "Respuesta preparada", replyTo: reference }); f.composer().props.send(); await f.flush();
+  f.requests.filter(item => item.init.method === "POST").at(-1).respond({ message: { ...outbound, deliveryStatus: "failed" } }); await f.flush();
+  assert.equal(f.composer().props.draft.replyTo.id, outbound.id); assert.equal(f.composer().props.draft.locked, true);
+  f.composer().props.restart(); await f.flush(); await f.change({ replyTo: null });
+  assert.equal(f.composer().props.draft.replyTo, null); assert.equal(f.composer().props.draft.text, "Respuesta preparada"); f.unmount();
+});
+
+test("un cambio de actor retira chat y citas del perfil anterior antes de mostrar la nueva bandeja", async () => {
+  const f = mount(); await f.ready(); await f.select(); await f.change({ text: "Borrador privado", replyTo: { id: outbound.id, author: "Contacto A", text: "Privado" } });
+  const refresh = f.all().find(node => node.props["aria-label"] === "Actualizar");
+  assert.ok(refresh); refresh.props.onClick(); await f.flush();
+  const request = f.requests.filter(item => !item.done && item.url.includes("?")).at(-1);
+  assert.ok(request); request.respond({ ...inbox, actor: { ...actor, key: "analyst:8", central: false } }); await f.flush();
+  assert.equal(f.composer(), undefined); assert.equal(f.financial(), undefined); f.unmount();
+});
+
+test("la cita abre únicamente un mensaje cargado dentro del historial de la conversación", () => {
+  const calls = [], target = { scrollIntoView: value => calls.push(["scroll", value]), focus: value => calls.push(["focus", value]) };
+  const quote = { id: outbound.id, author: "Contacto A", text: "Original" };
+  const f = mount({ messageTargets: { [`attention-message-${outbound.id}`]: target } });
+  const loaded = f.ui.AttentionMessageQuote({ message: { ...outbound, replyTo: quote }, messages: [outbound], log: { current: { contains: item => item === target } } });
+  assert.equal(typeof loaded.props.onOpen, "function"); loaded.props.onOpen(); assert.equal(calls.length, 2);
+  const absent = f.ui.AttentionMessageQuote({ message: { ...outbound, replyTo: quote }, messages: [], log: { current: null } }); assert.equal(absent.props.onOpen, undefined);
+  const foreign = f.ui.AttentionMessageQuote({ message: { ...outbound, replyTo: quote }, messages: [outbound], log: { current: { contains: () => false } } }); foreign.props.onOpen(); assert.equal(calls.length, 2); f.unmount();
 });
 
 test("aceptación muestra el mensaje y permite escribir mientras actualiza la versión, sin esperar la bandeja", async () => {

@@ -24,6 +24,69 @@ const events=(messages=[],statuses=[],echoes=[])=>({scope,messages,statuses,echo
 const snapshot=(data={})=>({externalId:"dapta-chat",phone,name:"Contacto Dapta",mode:"ai",lastContactAt:null,historyTruncated:false,historyCursor:null,messages:[],...data});
 const delivery=(id,data={})=>({id,recipient:contact,timestamp:instant,status:"delivered",errorCodes:[],...data});
 const attachment={kind:"image",mimeType:"image/png",fileName:"imagen.png",sha256:"a".repeat(64),size:128};
+
+test("respuesta citada resuelve UUID nativo del mismo chat, persiste contexto y muestra cita segura",async t=>{
+  const f=await fixture(t),original=inbound({text:"¿Cuál es la siguiente cuota?"}),conversation=await f.ingest(original);
+  await f.assign(conversation.id);
+  const source=(await f.db.query('SELECT id FROM "AttentionMessage" WHERE "metaWamid"=$1',[original.id])).rows[0];
+  const queued=await f.queue(conversation.id,central,{replyToMessageId:source.id,text:"La reviso"});
+  assert.equal(queued.messageContext.reply.wamid,original.id);assert.equal(queued.messageContext.reply.quote.id,source.id);
+  assert.equal(attentionMetaReplyMessage(queued).replyTo.text,original.text);
+  const claim=await f.meta.claimReply(central,conversation.id,queued.requestId);
+  await f.meta.beforeSend(central,queued.id,claim.reply.leaseToken);await f.meta.acceptReply(queued.id,claim.reply.leaseToken,"wamid.quoted-reply");
+  const detail=await f.legacy.getAttentionDetail(analyst,conversation.id),message=detail.messages.find(item=>item.text==="La reviso");
+  assert.equal(message.replyTo.text,original.text);assert.equal(message.replyTo.id,source.id);assert.equal(detail.messages[0].canReplyTo,true);
+  assert.ok(!JSON.stringify(detail).includes(original.id));
+});
+
+test("citas no aceptan IDs de otra conversación y un reintento no puede cambiar el mensaje citado",async t=>{
+  const f=await fixture(t),a=await f.ingest(),b=await f.ingest(inbound({from:"573009999999",phone:"+573009999999"}));
+  const messages=(await f.db.query('SELECT id,"conversationId" FROM "AttentionMessage"')).rows;
+  const first=messages.find(item=>item.conversationId===a.id),foreign=messages.find(item=>item.conversationId===b.id);
+  await assert.rejects(f.queue(a.id,central,{replyToMessageId:foreign.id}),{status:409});
+  const request=await f.input(a.id,{replyToMessageId:first.id});await f.meta.queueReply(central,a.id,request);
+  await f.meta.ingest(events([inbound({text:"Segundo mensaje"})]));
+  const second=(await f.db.query('SELECT id FROM "AttentionMessage" WHERE text=$1',["Segundo mensaje"])).rows[0];
+  await assert.rejects(f.meta.queueReply(central,a.id,{...request,replyToMessageId:second.id}),{status:409});
+});
+
+test("reenvío copia solo fuente nativa autorizada, sin datos de identidad y con auditoría del analista",async t=>{
+  const f=await fixture(t),a=await f.ingest(inbound({text:"Información para reenviar"})),b=await f.ingest(inbound({from:"573009999999",phone:"+573009999999"}));
+  await f.assign(a.id);await f.assign(b.id);
+  const original=(await f.db.query('SELECT id FROM "AttentionMessage" WHERE "conversationId"=$1',[a.id])).rows[0];
+  const source=await f.meta.getForwardSource(analyst,a.id,original.id);
+  const input=await f.input(b.id,{text:source.text,forwardConversationId:a.id,forwardMessageId:original.id,forwardFingerprint:source.fingerprint});
+  const queued=await f.meta.queueReply(analyst,b.id,input);assert.equal(queued.text,source.text);
+  assert.equal(attentionMetaReplyMessage(queued).forwarded,true);assert.equal(attentionMetaReplyMessage(queued).replyTo,undefined);
+  const claim=await f.meta.claimReply(analyst,b.id,input.requestId);await f.meta.beforeSend(analyst,queued.id,claim.reply.leaseToken);
+  await f.meta.acceptReply(queued.id,claim.reply.leaseToken,"wamid.forwarded-text");
+  const detail=await f.legacy.getAttentionDetail(analyst,b.id),message=detail.messages.find(item=>item.text===source.text);
+  assert.equal(message.forwarded,true);assert.ok(!JSON.stringify(message).includes(a.id));assert.ok(!JSON.stringify(message).includes(phone));
+  const replay=await f.meta.queueReply(analyst,b.id,input);assert.equal(replay.id,queued.id);assert.equal(replay.status,"accepted");
+});
+
+test("revocar acceso al origen o cambiarlo antes del POST bloquea el reenvío",async t=>{
+  for(const change of ["reassign","content"]){
+    const f=await fixture(t),a=await f.ingest(),b=await f.ingest(inbound({from:"573009999999",phone:"+573009999999"}));
+    await f.assign(a.id);await f.assign(b.id);
+    const original=(await f.db.query('SELECT id FROM "AttentionMessage" WHERE "conversationId"=$1',[a.id])).rows[0];
+    const source=await f.meta.getForwardSource(analyst,a.id,original.id);
+    const queued=await f.meta.queueReply(analyst,b.id,await f.input(b.id,{forwardConversationId:a.id,forwardMessageId:original.id,forwardFingerprint:source.fingerprint}));
+    const claim=await f.meta.claimReply(analyst,b.id,queued.requestId);
+    if(change==="reassign")await f.assign(a.id,other);else await f.db.query('UPDATE "AttentionMessage" SET text=$2 WHERE id=$1',[original.id,"Contenido modificado"]);
+    await assert.rejects(f.meta.beforeSend(analyst,queued.id,claim.reply.leaseToken),{status:change==="reassign"?404:409});
+    assert.equal((await f.db.query('SELECT "sendStartedAt" FROM "AttentionMetaOutbox" WHERE id=$1',[queued.id])).rows[0].sendStartedAt,null);
+  }
+});
+
+test("citas recibidas no resuelven un wamid de otro chat y archivos no habilitados no se reenvían",async t=>{
+  const f=await fixture(t),first=inbound(),a=await f.ingest(first),b=await f.ingest(inbound({from:"573009999999",phone:"+573009999999",replyToId:first.id}));
+  await f.assign(b.id);
+  const detail=await f.legacy.getAttentionDetail(analyst,b.id);assert.equal(detail.messages[0].replyTo.id,null);assert.equal(detail.messages[0].replyTo.text,"Mensaje original no disponible");
+  await f.meta.ingest(events([inbound({type:"document",text:undefined,media:{id:"1234567890",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",fileName:"ventas.xlsx"}})]));
+  const xlsx=(await f.db.query(`SELECT id FROM "AttentionMessage" WHERE attachment->>'kind'='document'`)).rows[0];
+  await assert.rejects(f.meta.getForwardSource(central,a.id,xlsx.id),{status:409});
+});
 const metaEnv={WHATSAPP_ATTENTION_ACCESS_TOKEN:"test-only-meta-token",WHATSAPP_ATTENTION_APP_SECRET:"test-only-meta-app-secret",
   WHATSAPP_ATTENTION_VERIFY_TOKEN:"test-only-meta-verify-token",WHATSAPP_ATTENTION_PHONE_NUMBER_ID:scope.phoneNumberId,
   WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID:scope.wabaId,WHATSAPP_GRAPH_API_VERSION:"v25.0",

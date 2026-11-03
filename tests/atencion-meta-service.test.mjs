@@ -130,6 +130,50 @@ for (const format of formats) test(`multipart → service → real adapter sends
   assert.equal(body[format.kind].caption, text || undefined);
 });
 
+test("quoted replies send verified persisted context for text and media, never client context",async()=>{
+  const replyTo="wamid.EXISTING_CUSTOMER_MESSAGE";
+  for(const format of [null,formats[0]]){
+    const h=harness({row:{messageContext:{reply:{messageId,wamid:replyTo,quote:{id:messageId,text:"Consulta",author:null}}}}});
+    const input=await mediaHttp.readAttentionMetaReply(multipart({file:format||undefined,extra:form=>form.set("replyToMessageId",messageId)}));
+    const result=await h.service.send(actor,id,input);assert.equal(result.message.replyTo.id,messageId);
+    const body=JSON.parse(h.calls.network.find(item=>item.url.pathname.endsWith("/messages")).init.body);
+    assert.deepEqual(body.context,{message_id:replyTo});assert.ok(!JSON.stringify(body).includes(messageId));
+  }
+});
+
+test("forward multipart requires exact source UUID pair and cannot inject text/file/reply context",async()=>{
+  const build=extra=>multipart({extra:form=>{form.delete("text");form.set("forwardConversationId",id);form.set("forwardMessageId",messageId);extra?.(form);}});
+  const input=await mediaHttp.readAttentionMetaReply(build());assert.equal(input.forwardMessageId,messageId);assert.equal(input.text,"");
+  for(const extra of [form=>form.delete("forwardConversationId"),form=>form.set("text","tampered"),form=>form.set("replyToMessageId",messageId),
+    form=>form.set("file",new Blob([png],{type:"image/png"}),"image.png"),form=>form.set("forwardMessageId","wamid.untrusted")]){
+    await assert.rejects(mediaHttp.readAttentionMetaReply(build(extra)),{status:400});
+  }
+});
+
+test("forward media downloads and validates original bytes before queue/upload and never follows user URLs",async()=>{
+  for(const format of formats){
+    const h=harness({format});let sourceReads=0;
+    h.store.getForwardSource=async(who,conversationId,sourceMessageId)=>{sourceReads++;assert.equal(who,actor);assert.equal(conversationId,id);assert.equal(sourceMessageId,messageId);
+      return {text:["audio","sticker"].includes(format.kind)?"":"Descripción original",fingerprint:"f".repeat(64),attachment:{kind:format.kind,mimeType:format.mimeType,fileName:format.fileName,mediaId}};};
+    const input=await mediaHttp.readAttentionMetaReply(multipart({extra:form=>{form.delete("text");form.set("forwardConversationId",id);form.set("forwardMessageId",messageId);}}));
+    const result=await h.service.send(actor,id,input);assert.equal(sourceReads,1);assert.equal(result.message.deliveryStatus,"accepted");
+    assert.equal(h.calls.queue,1);assert.equal(h.calls.uploaded,1);
+    const download=h.calls.network.findIndex(item=>item.url.origin==="https://lookaside.fbsbx.com");
+    const upload=h.calls.network.findIndex(item=>item.url.pathname.endsWith("/media"));assert.ok(download>=0&&upload>download);
+    const body=JSON.parse(h.calls.network.find(item=>item.url.pathname.endsWith("/messages")).init.body);
+    assert.equal(body[format.kind].caption,["audio","sticker"].includes(format.kind)?undefined:"Descripción original");assert.equal(body.context,undefined);
+  }
+});
+
+test("denied source fails forwarding before provider I/O and malformed originals fail before queue",async()=>{
+  const input={...textInput,forwardConversationId:id,forwardMessageId:messageId};
+  const denied=harness();denied.store.getForwardSource=async()=>{throw new core.AttentionError("Sin acceso",404);};
+  await assert.rejects(denied.service.send(actor,id,input),{status:404});assert.equal(denied.calls.network.length,0);assert.equal(denied.calls.queue,0);
+  const invalid=harness({format:{...formats[0],bytes:Buffer.from("<html>not a photo</html>")}});
+  invalid.store.getForwardSource=async()=>({text:"",fingerprint:"f".repeat(64),attachment:{kind:"image",mimeType:"image/png",fileName:"photo.png",mediaId}});
+  await assert.rejects(invalid.service.send(actor,id,input),{status:415});assert.equal(invalid.calls.queue,0);assert.equal(invalid.calls.network.some(item=>item.init.method==="POST"),false);
+});
+
 test("claim refused or missing lease causes no upload/send/ack", async () => {
   for (const options of [{ claimed: false }, { row: { leaseToken: null } }]) {
     const h = harness(options); const result = await h.service.send(actor, id, textInput);
