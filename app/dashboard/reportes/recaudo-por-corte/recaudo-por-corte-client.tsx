@@ -179,7 +179,7 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
         </div>
       </Card>
 
-      {visibleReport.warnings.length > 0 && <div className={styles.notice} role="status">{visibleReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
+      {visibleReport.warnings.length > 0 && <details className={styles.notice}><summary>Observaciones del corte ({visibleReport.warnings.length})</summary>{visibleReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}</details>}
 
       <section className={styles.metrics} aria-label="Indicadores del corte con los filtros aplicados">
         <MetricCard className={styles.metric} label="Créditos del corte" value={summary.creditsCount.toLocaleString("es-CO")} detail="Créditos únicos con cuotas en esta fecha" />

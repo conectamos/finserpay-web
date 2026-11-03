@@ -122,8 +122,8 @@ test("recorrido completo usa sólo GET y SQL de lectura, mantiene roles, valida 
         { userId: 4, sedeId: 2, aliadoId: 2, vendedorId: 8, profile: "VENDEDOR" },
       ] };
       if (sql.includes("SELECT u.id")) return { rows: [
-        { userId: 1, sedeId: 1, aliadoId: 1, central: true, credits: 2 },
-        { userId: 2, sedeId: 2, aliadoId: 2, central: false, credits: 2 },
+        { userId: 1, sedeId: 1, aliadoId: 1, central: true, credits: 2, credentialVersion: "private-version" },
+        { userId: 2, sedeId: 2, aliadoId: 2, central: false, credits: 2, credentialVersion: "private-version" },
       ] };
       if (sql.includes('SELECT id FROM "Credito"')) return { rows: values[1].map(id => ({ id })) };
       throw new Error("Unexpected query in test");
@@ -136,6 +136,7 @@ test("recorrido completo usa sólo GET y SQL de lectura, mantiene roles, valida 
     assert.equal(options.body, undefined);
     const encoded = options.headers.Cookie?.match(/(?:^|;\s*)session=([^.;]+)/)?.[1];
     const userId = encoded ? JSON.parse(Buffer.from(encoded, "base64url").toString()).userId : null;
+    if (userId === 1 || userId === 2) assert.equal(JSON.parse(Buffer.from(encoded, "base64url").toString()).credentialVersion, "private-version");
     if (!userId) return Response.json({ error: "No autenticado" }, { status: 401 });
     if (userId === 4) return Response.json({ error: "Acceso no autorizado" }, { status: 403 });
     const params = new URL(input).searchParams;
@@ -171,7 +172,7 @@ test("recorrido completo usa sólo GET y SQL de lectura, mantiene roles, valida 
     assert.equal(inherited.length, 4);
     assert(inherited.every(request => request.url.includes("517ce382-0723-48f6-a791-31dc9eda22dd")));
     assert(messages.some(message => message.includes("production_cut_verification_complete")));
-    assert.doesNotMatch(messages.join("\n"), /secret-connection|secret-signing|Cliente de prueba|1\.234|private-hash/);
+    assert.doesNotMatch(messages.join("\n"), /secret-connection|secret-signing|Cliente de prueba|1\.234|private-hash|private-version/);
   } finally {
     pg.Client = originalClient;
     globalThis.fetch = originalFetch;

@@ -156,7 +156,7 @@ export async function runProductionVerification(args = process.argv.slice(2), en
       const encoded = Buffer.from(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + 15 * 60 })).toString("base64url");
       return `${encoded}.${createHmac("sha256", env.SESSION_SECRET).update(encoded).digest("base64url")}`;
     };
-    const cookies = account => account ? `session=${token({ userId: account.userId })}${account.vendedorId ? `; seller_session=${token({ userId: account.userId, vendedorId: account.vendedorId, accesoSedeId: account.sedeId, sedeId: account.sedeId })}` : ""}` : "";
+    const cookies = account => account ? `session=${token({ userId: account.userId, ...(account.credentialVersion ? { credentialVersion: account.credentialVersion } : {}) })}${account.vendedorId ? `; seller_session=${token({ userId: account.userId, vendedorId: account.vendedorId, accesoSedeId: account.sedeId, sedeId: account.sedeId })}` : ""}` : "";
     const query = filters => new URLSearchParams(Object.entries({ ...baseFilters, ...filters }).filter(([, value]) => value !== null && value !== undefined).map(([key, value]) => [key, String(value)]));
     async function request(account, filters = {}, status = 200, allowProxyDenial = false) {
       const headers = { Origin: origin, Accept: "application/json", "Cache-Control": "no-store" };
@@ -174,9 +174,11 @@ export async function runProductionVerification(args = process.argv.slice(2), en
     const before = await fingerprints();
 
     stage = "existing_accounts";
-    // These are the current regular-session contracts. No password/PIN hashes,
-    // analyst grants, names, documents or contact fields are queried.
+    // Respect password-version revocation without returning password/PIN hashes,
+    // analyst grants, names, documents or contact fields. The version stays only
+    // in memory and is never logged, like the existing signing secret.
     const admins = await sql(`SELECT u.id AS "userId",s.id AS "sedeId",s."aliadoId",UPPER(BTRIM(a.codigo))='FINSERPAY' AS central,
+      rtrim(translate(encode(sha256(convert_to(u."claveHash" || '|','UTF8')),'base64'),'+/','-_'),'=') AS "credentialVersion",
       (SELECT COUNT(*)::integer FROM "Credito" c JOIN "Sede" own ON own.id=c."sedeId" WHERE own."aliadoId"=a.id) AS credits
       FROM "Usuario" u JOIN "Rol" r ON r.id=u."rolId" JOIN "Sede" s ON s.id=u."sedeId" JOIN "Aliado" a ON a.id=s."aliadoId"
       WHERE u.activo AND s.activa AND a.activo AND UPPER(BTRIM(r.nombre))='ADMIN' ORDER BY credits,u.id`);
