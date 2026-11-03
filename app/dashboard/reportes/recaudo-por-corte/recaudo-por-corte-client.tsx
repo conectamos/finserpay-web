@@ -2,17 +2,18 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, Download, Eye, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock3, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import {
   Badge, Button, Card, DataTable, EmptyState, Input, LoadingState,
-  MetricCard, PageHeader, ProgressBar, Select, StatusPill,
+  PageHeader, ProgressBar, Select,
 } from "@/app/_components/finser-ui";
 import type { CutFilters, CutReport, CutRow, CutStatus } from "@/lib/cut-collection-types";
+import CutInstallmentDetail from "./cut-installment-detail";
 import styles from "./recaudo-por-corte.module.css";
 
 const API = "/api/reportes/recaudo-por-corte";
 const MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-const STATUS_LABELS = { pendiente: "Pendiente", parcial: "Parcial", pagado: "Pagado" };
+const STATUS_LABELS = { todos: "Todos", pendiente: "Pendiente", parcial: "Parcial", pagado: "Pagado" };
 const moneyFormatter = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const numberFormatter = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 });
 const dateFormatter = new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short", year: "numeric", timeZone: "America/Bogota" });
@@ -83,15 +84,54 @@ function PaymentDetail({ row, onClose }: { row: CutRow | null; onClose: () => vo
   </dialog>;
 }
 
+function CutBalance({ report }: { report: CutReport }) {
+  const { summary, filters, options } = report;
+  const [year, month, day] = report.cutDate.split("-");
+  const scope = [
+    filters.aliadoId && options.aliados.find(ally => ally.id === filters.aliadoId)?.nombre,
+    filters.sedeId && options.sedes.find(site => site.id === filters.sedeId)?.nombre,
+    filters.status !== "todos" && STATUS_LABELS[filters.status],
+  ].filter(Boolean).join(" · ");
+
+  return <section aria-label="Indicadores del corte con los filtros aplicados">
+    <Card className={styles.balance}>
+      <div className={styles.periodPanel}>
+        <p className={styles.kicker}><CalendarDays size={16} aria-hidden="true" /> Corte consultado</p>
+        <h2><time dateTime={report.cutDate}>{day} de {MONTHS[Number(month) - 1].toLowerCase()} <span>de {year}</span></time></h2>
+        <div className={styles.counts}>
+          <div><strong>{summary.creditsCount.toLocaleString("es-CO")}</strong><span>Créditos del corte</span></div>
+          <div><strong>{summary.pendingClients.toLocaleString("es-CO")}</strong><span>Clientes pendientes</span></div>
+        </div>
+        {scope && <p className={styles.scope}>{scope}</p>}
+      </div>
+      <div className={styles.balanceBody}>
+        <div className={styles.balanceTitle}><h3>Balance del corte</h3><span>Pesos colombianos</span></div>
+        <dl className={styles.amounts}>
+          <div><dt>Recaudo esperado</dt><dd>{money(summary.expected)}</dd></div>
+          <div><dt><i className={styles.receivedDot} aria-hidden="true" />Recaudo recibido</dt><dd>{money(summary.received)}</dd></div>
+        </dl>
+        <div className={styles.progressHeading}><span>Cumplimiento</span><strong>{percentage(summary.completion)}</strong></div>
+        {summary.completion === null
+          ? <p className={styles.noTarget}>Sin valor esperado para este corte.</p>
+          : <ProgressBar className={styles.progress} value={summary.completion} label="Cumplimiento del recaudo esperado" />}
+        <dl className={styles.outstanding}><dt>Pendiente por recaudar</dt><dd>{money(summary.pending)}</dd></dl>
+      </div>
+    </Card>
+  </section>;
+}
+
 export default function RecaudoPorCorteClient({ initialFilters }: { initialFilters: CutFilters }) {
   const [draft, setDraft] = useState(initialFilters);
   const [selection, setSelection] = useState(initialFilters);
+  const [showFilters, setShowFilters] = useState(Boolean(initialFilters.aliadoId || initialFilters.sedeId || initialFilters.status !== "todos"));
   const [reload, setReload] = useState(0);
   const [result, setResult] = useState<{ key: string; report: CutReport | null; error: string | null }>({ key: "", report: null, error: null });
   const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<CutRow | null>(null);
   const query = paramsFor(selection).toString();
+  const draftChanged = paramsFor(draft).toString() !== query;
+  const scopeCount = Number(Boolean(draft.aliadoId)) + Number(Boolean(draft.sedeId)) + Number(draft.status !== "todos");
   const fetchKey = `${query}#${reload}`;
   const loading = result.key !== fetchKey;
   const report = result.report;
@@ -148,23 +188,38 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
       className={styles.heading}
       eyebrow="CARTERA"
       title="Recaudo por corte"
-      description="Consulta los créditos que debían pagar en una fecha de corte y compara lo esperado con lo recibido."
+      description="Compara las cuotas que vencían en una fecha con los pagos aplicados a ellas."
+      actions={visibleReport && <div className={styles.updated}>
+        <div><span>Actualizado · Colombia</span><time dateTime={visibleReport.asOf}>{dateTime(visibleReport.asOf)}</time></div>
+        <Button variant="secondary" aria-label="Actualizar recaudo" onClick={() => setReload(value => value + 1)}>
+          <RefreshCw aria-hidden="true" />Actualizar
+        </Button>
+      </div>}
     />
 
     <Card className={styles.filters}>
       <form onSubmit={applyFilters}>
-        <div className={styles.filterFields}>
-          <label className={styles.field}>Corte<Select value={draft.day} onChange={(event) => setDraft({ ...draft, day: Number(event.target.value) as 2 | 17 })}><option value="2">02</option><option value="17">17</option></Select></label>
+        <div className={styles.filterBar}>
+          <fieldset className={styles.dayField}><legend>Día de corte</legend>
+            <div className={styles.days}>{([2, 17] as const).map(day =>
+              <label key={day}><input type="radio" name="cut-day" value={day} checked={draft.day === day} onChange={() => setDraft({ ...draft, day })} />
+                <span>{String(day).padStart(2, "0")}</span></label>)}</div>
+          </fieldset>
           <label className={styles.field}>Mes<Select value={draft.month} onChange={(event) => setDraft({ ...draft, month: Number(event.target.value) })}>{MONTHS.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}</Select></label>
           <label className={styles.field}>Año<Input type="number" min="2000" max="2200" required value={draft.year || ""} onChange={(event) => setDraft({ ...draft, year: Number(event.target.value) })} /></label>
+          <div className={styles.filterActions}>
+            <Button variant="secondary" aria-expanded={showFilters} aria-controls="cut-scope-filters" onClick={() => setShowFilters(value => !value)}>
+              <SlidersHorizontal aria-hidden="true" />Más filtros{scopeCount > 0 && <span className={styles.filterCount}>{scopeCount}</span>}
+            </Button>
+            <Button type="submit" disabled={loading}>Consultar corte</Button>
+          </div>
+        </div>
+        <div id="cut-scope-filters" hidden={!showFilters} className={styles.extraFilters}>
           <label className={styles.field}>Aliado<Select value={draft.aliadoId || ""} onChange={(event) => setDraft({ ...draft, aliadoId: Number(event.target.value) || null, sedeId: null })}><option value="">Todos los autorizados</option>{report?.options.aliados.map((ally) => <option key={ally.id} value={ally.id}>{ally.nombre}</option>)}</Select></label>
           <label className={styles.field}>Sede<Select value={draft.sedeId || ""} onChange={(event) => setDraft({ ...draft, sedeId: Number(event.target.value) || null })}><option value="">Todas las autorizadas</option>{visibleSedes.map((sede) => <option key={sede.id} value={sede.id}>{sede.nombre}</option>)}</Select></label>
           <label className={styles.field}>Estado<Select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as CutStatus })}><option value="todos">Todos</option><option value="pendiente">Pendiente</option><option value="parcial">Parcial</option><option value="pagado">Pagado</option></Select></label>
         </div>
-        <div className={styles.filterFooter}>
-          <p>Solo cuotas con vencimiento en la fecha seleccionada. Fechas y horas de Colombia.</p>
-          <div className={styles.actions}><Button type="submit" disabled={loading}>Consultar corte</Button><Button variant="ghost" aria-label="Actualizar recaudo" onClick={() => setReload((value) => value + 1)} disabled={loading}><RefreshCw aria-hidden="true" />Actualizar</Button></div>
-        </div>
+        {draftChanged && <p className={styles.draftNote} role="status"><Clock3 size={15} aria-hidden="true" />Hay cambios en los filtros. Pulsa «Consultar corte» para aplicarlos.</p>}
       </form>
     </Card>
 
@@ -172,48 +227,20 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
     {loading && <LoadingState label="Consultando cronogramas y pagos…" />}
 
     {visibleReport && summary && <>
-      <Card className={styles.cutSummary}>
-        <div>
-          <h2>Corte del {dateLabel(visibleReport.cutDate)}</h2>
-          <p>Consulta actualizada al {dateTime(visibleReport.asOf)} (Colombia).</p>
-        </div>
-      </Card>
+      <CutBalance report={visibleReport} />
 
-      {visibleReport.warnings.length > 0 && <details className={styles.notice}><summary>Observaciones del corte ({visibleReport.warnings.length})</summary>{visibleReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}</details>}
-
-      <section className={styles.metrics} aria-label="Indicadores del corte con los filtros aplicados">
-        <MetricCard className={styles.metric} label="Créditos del corte" value={summary.creditsCount.toLocaleString("es-CO")} detail="Créditos únicos con cuotas en esta fecha" />
-        <MetricCard className={styles.metric} label="Recaudo esperado" value={money(summary.expected)} detail="Valor total de las cuotas del corte" />
-        <MetricCard className={styles.metric} label="Recaudo recibido" value={money(summary.received)} detail="Todo lo aplicado, incluidos anticipos" />
-        <MetricCard className={styles.metric} label="Pendiente por recaudar" value={money(summary.pending)} detail="Esperado menos recibido" />
-        <MetricCard className={styles.metric} label="Cumplimiento" value={percentage(summary.completion)} detail={summary.completion === null ? "El esperado es cero" : "Recibido / esperado"}>{summary.completion !== null && <ProgressBar value={summary.completion} label="Cumplimiento del recaudo esperado" />}</MetricCard>
-        <MetricCard className={styles.metric} label="Clientes pendientes" value={summary.pendingClients.toLocaleString("es-CO")} detail="Clientes únicos con saldo en el corte" />
+      <section className={styles.breakdown} aria-labelledby="cut-breakdown-title">
+        <h2 id="cut-breakdown-title">Distribución de pagos</h2>
+        <Card className={styles.breakdownBody}>
+          <div><Badge tone="positive">Incluido en recibido</Badge><h3>Anticipos del corte</h3><strong>{money(summary.priorPayments)}</strong><p>Abonos a estas cuotas antes del día del corte.</p></div>
+          <div><Badge>Fuera del corte</Badge><h3>Recuperación de cuotas anteriores</h3><strong>{money(summary.previousRecovery)}</strong><p>Pagos desde el corte a cuotas que ya habían vencido.</p></div>
+          <div><Badge>Fuera del corte</Badge><h3>Anticipos de cuotas futuras</h3><strong>{money(summary.futureAdvances)}</strong><p>Pagos desde el corte a cuotas con vencimiento posterior.</p></div>
+        </Card>
       </section>
 
-      <Card className={styles.separate}>
-        <div><span>Anticipos incluidos en recibido</span><strong>{money(summary.priorPayments)}</strong><p>Pagos identificados antes de las 00:00 del día del corte en Colombia y aplicados a estas cuotas. Ya forman parte del recibido; no se suman de nuevo.</p></div>
-        <div><span>Recuperación de cuotas anteriores</span><strong>{money(summary.previousRecovery)}</strong><p>Pagos desde el inicio del corte aplicados a vencimientos anteriores de estos créditos. No se incluyen en el recibido del corte.</p></div>
-        <div><span>Anticipos de cuotas futuras</span><strong>{money(summary.futureAdvances)}</strong><p>Pagos desde el inicio del corte aplicados a vencimientos futuros de estos créditos. No se incluyen en el recibido del corte.</p></div>
-      </Card>
       {(summary.unclassifiedReceived || 0) > 0 && <p className={styles.notice}>{money(summary.unclassifiedReceived || 0)} del recibido está conciliado por cuota, pero no permite separar su fecha individual; no se clasifica como anticipo.</p>}
-
-      <section className={styles.section} aria-labelledby="cut-detail-title">
-        <header className={styles.sectionHeading}>
-          <div><h2 id="cut-detail-title">Detalle de cuotas</h2><p>{visibleReport.rows.length.toLocaleString("es-CO")} cuotas · Las tarjetas y el total de la tabla usan los mismos filtros.</p></div>
-          <Button variant="secondary" onClick={exportExcel} disabled={exporting || !visibleReport.rows.length}><Download aria-hidden="true" />{exporting ? "Generando Excel…" : "Exportar a Excel"}</Button>
-        </header>
-        {visibleReport.rows.length ? <DataTable className={styles.table}><table>
-          <caption className={styles.visuallyHidden}>Cuotas con vencimiento en el corte del {dateLabel(visibleReport.cutDate)} y sus pagos aplicados</caption>
-          <thead><tr><th scope="col">Cliente</th><th scope="col">Cédula</th><th scope="col">Crédito</th><th scope="col">Aliado</th><th scope="col">Sede</th><th scope="col">Vencimiento</th><th scope="col" className={styles.number}>Valor de cuota</th><th scope="col" className={styles.number}>Anticipos incluidos</th><th scope="col" className={styles.number}>Esperado</th><th scope="col" className={styles.number}>Recibido</th><th scope="col" className={styles.number}>Pendiente</th><th scope="col">Último pago</th><th scope="col">Estado</th><th scope="col">Detalle</th></tr></thead>
-          <tbody>{visibleReport.rows.map((row) => <tr key={row.key}>
-            <td className={styles.identity}><strong>{row.clientName}</strong>{row.warning && <small>{row.warning}</small>}</td><td>{row.document}</td><td>{row.folio}<br /><small>Cuota {row.installment}</small></td><td>{row.aliado}</td><td>{row.sede}</td><td>{dateLabel(row.dueDate)}</td>
-            <td className={styles.number}>{money(row.installmentAmount)}</td><td className={styles.number}>{money(row.priorPayments)}</td><td className={styles.number}>{money(row.expected)}</td><td className={styles.number}>{money(row.received)}</td><td className={styles.number}>{money(row.pending)}</td><td>{!row.lastPaymentAt && row.reconciledReceived ? "Sin fecha individual" : dateTime(row.lastPaymentAt)}</td>
-            <td><StatusPill tone={row.status === "pagado" ? "positive" : row.status === "parcial" ? "warning" : "neutral"}>{STATUS_LABELS[row.status]}</StatusPill></td><td><Button variant="ghost" aria-label={`Ver pagos de ${row.clientName}, crédito ${row.folio}, cuota ${row.installment}`} onClick={() => setSelectedRow(row)}><Eye aria-hidden="true" />Ver pagos</Button></td>
-          </tr>)}</tbody>
-          <tfoot><tr><td colSpan={6}>Total de las cuotas filtradas</td><td className={styles.number}>{money(visibleReport.rows.reduce((total, row) => total + row.installmentAmount, 0))}</td><td className={styles.number}>{money(summary.priorPayments)}</td><td className={styles.number}>{money(summary.expected)}</td><td className={styles.number}>{money(summary.received)}</td><td className={styles.number}>{money(summary.pending)}</td><td colSpan={3} /></tr></tfoot>
-        </table></DataTable> : <EmptyState title="No hay cuotas con estos filtros" description="Selecciona otro corte, aliado, sede o estado para consultar sus créditos y pagos." />}
-        <p className={styles.note}>El recibido incluye anticipos y pagos posteriores aplicados a estas cuotas, con anulaciones y reversos reflejados. Pendiente = esperado − recibido, sin saldos negativos.</p>
-      </section>
+      {visibleReport.warnings.length > 0 && <details className={styles.notice}><summary>Observaciones del corte ({visibleReport.warnings.length})</summary>{visibleReport.warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}
+      <CutInstallmentDetail key={query} report={visibleReport} onExport={exportExcel} exporting={exporting} onViewPayments={setSelectedRow} />
     </>}
     <PaymentDetail row={selectedRow} onClose={() => setSelectedRow(null)} />
   </div>;
