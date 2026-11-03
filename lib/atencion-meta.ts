@@ -34,6 +34,7 @@ export type MetaDeliveryStatus = {
 export type MetaWebhookEvents = { scope: MetaScope; messages: MetaInboundMessage[]; echoes?: MetaMessageEcho[]; statuses: MetaDeliveryStatus[]; ignored: number };
 export type MetaSendInput = {
   recipient: string; attemptId: string; cutoverConfirmed: boolean; lastInboundAt: string;
+  replyToId?: string;
 };
 export type MetaSendReceipt = { providerMessageId: string; recipient: string };
 export type MetaMediaDownload = { bytes: Uint8Array; mimeType: string; totalBytes: number; status: 200 | 206; contentRange?: string };
@@ -571,11 +572,12 @@ export function createMetaAttentionAdapter(options: Options = {}) {
     return sendReceipt(result,to);
   }
   async function send(input: MetaSendInput, body: Dict, beforeSend: BeforeSend): Promise<MetaSendReceipt> {
+    if (input.replyToId !== undefined && !WAMID.test(input.replyToId)) fail("INVALID_REPLY_CONTEXT", "El mensaje de respuesta no es válido.");
     const to = validateSend(input, beforeSend); await verifyConnection();
     // Last check and persisted outbox claim are immediately before the only POST.
     validateSend(input, beforeSend); await beforeSend(); validateSend(input, beforeSend);
     const result = await graph(`${scope().phoneNumberId}/messages`, {}, { messaging_product: "whatsapp", recipient_type: "individual", ...recipientPayload(to),
-      biz_opaque_callback_data: input.attemptId, ...body }, true);
+      biz_opaque_callback_data: input.attemptId, ...(input.replyToId ? { context: { message_id: input.replyToId } } : {}), ...body }, true);
     return sendReceipt(result,to);
   }
   async function sendText(input: MetaSendInput & { text: string }, beforeSend: BeforeSend) {

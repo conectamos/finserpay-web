@@ -2,6 +2,10 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { AttentionError, attentionText, attentionUuid } from "./atencion-core";
 import { META_ATTENTION_MAX_MEDIA_BYTES, validateMetaAttentionMedia } from "./atencion-meta";
+import type { MetaReplyAttachment } from "./atencion-meta-storage";
+
+export type AttentionMetaReplyInput = {requestId:string;version:number;text:string;attachment?:MetaReplyAttachment;bytes?:Uint8Array;
+  replyToMessageId?:string;forwardConversationId?:string;forwardMessageId?:string};
 
 /** Read bounded bytes before parsing multipart or verifying a webhook signature. */
 export async function readAttentionBody(request: Request, maxBytes: number, timeoutMs = 20_000): Promise<Uint8Array> {
@@ -29,31 +33,39 @@ export async function readAttentionBody(request: Request, maxBytes: number, time
   } finally { if (timer) clearTimeout(timer); reader.releaseLock(); }
 }
 
-export async function readAttentionMetaReply(request: Request) {
+export async function readAttentionMetaReply(request: Request): Promise<AttentionMetaReplyInput> {
   const contentType = request.headers.get("content-type") || "";
   if (!/^multipart\/form-data\s*;/i.test(contentType) || contentType.length > 250) throw new AttentionError("Envía el mensaje y sus archivos como formulario.", 415);
   const bytes = await readAttentionBody(request, META_ATTENTION_MAX_MEDIA_BYTES + 65_536);
   let form: FormData;
   try { form = await new Response(Buffer.from(bytes), { headers: { "Content-Type": contentType } }).formData(); }
   catch { throw new AttentionError("No se pudo leer el formulario del mensaje.", 400); }
-  const allowed = new Set(["requestId", "version", "text", "file"]);
+  const allowed = new Set(["requestId", "version", "text", "file", "replyToMessageId", "forwardConversationId", "forwardMessageId"]);
   for (const key of form.keys()) if (!allowed.has(key) || form.getAll(key).length !== 1) throw new AttentionError("El formulario contiene campos repetidos o no admitidos.", 400);
   const requestId = attentionUuid(form.get("requestId"));
   const rawVersion = form.get("version");
   if (typeof rawVersion !== "string" || !/^[1-9]\d{0,8}$/.test(rawVersion)) throw new AttentionError("Versión de conversación inválida.", 400);
   const version = Number(rawVersion);
+  const replyToMessageId = form.has("replyToMessageId") ? attentionUuid(form.get("replyToMessageId")) : undefined;
+  const forwarding = form.has("forwardConversationId") || form.has("forwardMessageId");
+  if (forwarding) {
+    if (replyToMessageId || form.has("text") || form.has("file")) throw new AttentionError("El reenvío no admite contenido adicional ni otra respuesta.", 400);
+    return { requestId, version, text: "", attachment: undefined, bytes: undefined,
+      forwardConversationId: attentionUuid(form.get("forwardConversationId")), forwardMessageId: attentionUuid(form.get("forwardMessageId")), replyToMessageId: undefined };
+  }
   const text = attentionText(form.get("text") ?? "", 4096, false);
   const file = form.get("file");
   if (file !== null && (typeof file === "string" || typeof file.arrayBuffer !== "function")) throw new AttentionError("Archivo inválido.", 400);
   if (!file) {
     if (!text) throw new AttentionError("Escribe un mensaje o adjunta un archivo.", 400);
-    return { requestId, version, text, attachment: undefined, bytes: undefined };
+    return { requestId, version, text, attachment: undefined, bytes: undefined, replyToMessageId,
+      forwardConversationId: undefined, forwardMessageId: undefined };
   }
   const content = new Uint8Array(await file.arrayBuffer());
   const media = validateMetaAttentionMedia({ bytes: content, mimeType: file.type, fileName: file.name });
   if (text.length > 1024) throw new AttentionError("El texto de un archivo admite hasta 1.024 caracteres.", 400);
   if (["audio", "sticker"].includes(media.kind) && text) throw new AttentionError("Envía el audio o sticker sin texto adjunto.", 400);
-  return { requestId, version, text,
+  return { requestId, version, text, replyToMessageId, forwardConversationId: undefined, forwardMessageId: undefined,
     attachment: { kind: media.kind, mimeType: media.mimeType, fileName: file.name,
       size: media.size, sha256: createHash("sha256").update(content).digest("hex") }, bytes: content };
 }

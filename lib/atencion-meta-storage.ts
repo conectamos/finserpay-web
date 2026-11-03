@@ -15,6 +15,32 @@ export type MetaReplyAttachment = {
   mimeType: string; fileName: string | null; sha256: string; size: number;
 };
 type StoredAttachment = { kind: MetaReplyAttachment["kind"]; mediaId: string; mimeType: string; fileName: string | null; sha256?: string };
+type MessageSource = { id: string; conversationId: string; direction: "inbound" | "outbound"; text: string; author: string | null;
+  metaWamid: string | null; metaPhoneNumberId: string | null; attachment: StoredAttachment | null; deliveryStatus: AttentionMessage["deliveryStatus"] | null };
+type MessageContext = { reply?: { messageId: string; wamid: string; quote: NonNullable<AttentionMessage["replyTo"]> };
+  forward?: { conversationId: string; messageId: string; fingerprint: string } };
+type ReplyInput = {requestId:string;version:number;text:string;attachment?:MetaReplyAttachment;template?:MetaTemplateSnapshot;
+  replyToMessageId?:string;forwardConversationId?:string;forwardMessageId?:string;forwardFingerprint?:string};
+const forwardFormats: Record<string, StoredAttachment["kind"]> = { "image/jpeg":"image", "image/png":"image", "image/webp":"sticker",
+  "audio/aac":"audio", "audio/mp4":"audio", "audio/mpeg":"audio", "audio/amr":"audio", "audio/ogg":"audio",
+  "video/mp4":"video", "video/3gpp":"video", "application/pdf":"document" };
+function nativeSource(row: Pick<MessageSource,"metaPhoneNumberId"|"metaWamid"|"deliveryStatus">) {
+  return row.metaPhoneNumberId === META_ATTENTION_LINE.phoneNumberId && typeof row.metaWamid === "string" && /^wamid\.[A-Za-z0-9_+/=.-]{1,500}$/.test(row.metaWamid)
+    && !["queued","sending","failed","uncertain"].includes(row.deliveryStatus || "");
+}
+function forwardable(row: MessageSource) {
+  return nativeSource(row) && (row.attachment ? forwardFormats[row.attachment.mimeType] === row.attachment.kind
+    && /^\d{5,30}$/.test(row.attachment.mediaId) && row.text.length <= 1024
+    && (!["audio","sticker"].includes(row.attachment.kind) || !row.text) : Boolean(row.text.trim()) && row.text.length <= 4096);
+}
+function sourceFingerprint(row: MessageSource) {
+  return createHash("sha256").update(JSON.stringify({id:row.id,conversationId:row.conversationId,metaWamid:row.metaWamid,
+    phoneNumberId:row.metaPhoneNumberId,text:row.text,attachment:row.attachment})).digest("hex");
+}
+function quote(row: MessageSource): NonNullable<AttentionMessage["replyTo"]> {
+  return {id:row.id,text:row.text.slice(0,1000),author:row.author,
+    ...(row.attachment?{attachment:{kind:row.attachment.kind,fileName:row.attachment.fileName}}:{})};
+}
 type MetaConversation = { id: string; name: string; phone: string | null; version: number; metaManaged: boolean; metaLastInboundAt: Date | string | null;
   channel: string; lastContactAt: Date | string | null; closedAt: Date | string | null; status: string; assigneeKey: string | null };
 export type MetaReply = {
@@ -22,6 +48,7 @@ export type MetaReply = {
   fingerprint: string; conversationVersion: number; phoneNumberId: string; wabaId: string; contactId: string;
   text: string; attachment: MetaReplyAttachment | null; uploadedMediaId: string | null;
   template?: MetaTemplateSnapshot | null;
+  messageContext?: MessageContext | null;
   status: NonNullable<AttentionMessage["deliveryStatus"]>; messageId: string | null; wamid: string | null;
   leaseToken: string | null; leaseUntil: Date | string | null; sendStartedAt: Date | string | null;
   acceptedAt: Date | string | null; deliveryAt: Date | string | null; errorCode: string | null;
@@ -63,6 +90,7 @@ export async function attentionMetaSchemaReady(db: AttentionDb) {
   const [row] = await db.$queryRawUnsafe<{ready: boolean}[]>(`SELECT to_regclass('public."AttentionMetaBinding"') IS NOT NULL
     AND to_regclass('public."AttentionMetaOutbox"') IS NOT NULL AND to_regclass('public."AttentionMetaDelivery"') IS NOT NULL
     AND to_regclass('public."AttentionTeamReadState"') IS NOT NULL
+    AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='AttentionMetaOutbox' AND column_name='messageContext' AND data_type='jsonb')
     AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='AttentionMessage' AND column_name='teamReadReply' AND data_type='boolean') AS ready`);
   return row?.ready === true;
 }
@@ -90,8 +118,13 @@ async function scopedConversation(db: AttentionDb, actor: AttentionActor, id: st
   return row;
 }
 export function attentionMetaMessage(row: {id: string; conversationId: string; direction: "inbound" | "outbound"; text: string;
-  sentAt: Date | string; author: string | null; attachment?: StoredAttachment | null; deliveryStatus?: AttentionMessage["deliveryStatus"] | null}): AttentionMessage {
+  sentAt: Date | string; author: string | null; attachment?: StoredAttachment | null; deliveryStatus?: AttentionMessage["deliveryStatus"] | null;
+  metaWamid?: string | null; metaPhoneNumberId?: string | null; replyToWamid?: string | null; quotedMessage?: MessageSource | null; forwarded?: boolean}): AttentionMessage {
   return { id: row.id, direction: row.direction, text: row.text, sentAt: date(row.sentAt), author: row.author,
+    canReplyTo: nativeSource({...row,metaWamid:row.metaWamid??null,metaPhoneNumberId:row.metaPhoneNumberId??null,deliveryStatus:row.deliveryStatus??null}),
+    canForward: forwardable({...row,metaWamid:row.metaWamid??null,metaPhoneNumberId:row.metaPhoneNumberId??null,attachment:row.attachment??null,deliveryStatus:row.deliveryStatus??null}),
+    ...(row.forwarded ? {forwarded:true}:{}),
+    ...(row.replyToWamid ? {replyTo:row.quotedMessage?quote(row.quotedMessage):{id:null,text:"Mensaje original no disponible",author:null}}:{}),
     ...(row.deliveryStatus ? { deliveryStatus: row.deliveryStatus } : {}),
     ...(row.attachment ? { attachment: { id: row.id, kind: row.attachment.kind, mimeType: row.attachment.mimeType,
       fileName: row.attachment.fileName, url: `/api/atencion/${row.conversationId}/messages/${row.id}/media` } } : {}) };
@@ -99,6 +132,8 @@ export function attentionMetaMessage(row: {id: string; conversationId: string; d
 export function attentionMetaReplyMessage(row: MetaReply): AttentionMessage {
   return { id: row.messageId || row.id, direction: "outbound", text: row.text, sentAt: date(row.acceptedAt || row.createdAt), author: row.authorName,
     deliveryStatus: row.status, deliveryError: row.status === "failed" ? attentionMetaFailureMessage(row.errorCode) : row.status === "uncertain" ? "El envío está pendiente de confirmación. No lo reenvíes." : null,
+    ...(row.messageContext?.reply?{replyTo:row.messageContext.reply.quote}:{}),
+    ...(row.messageContext?.forward?{forwarded:true}:{}),
     ...(row.attachment ? { attachment: { id: row.messageId || row.id, kind: row.attachment.kind, mimeType: row.attachment.mimeType,
       fileName: row.attachment.fileName, url: row.messageId ? `/api/atencion/${row.conversationId}/messages/${row.messageId}/media` : null } } : {}) };
 }
@@ -125,6 +160,21 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     if (!await attentionMetaSchemaReady(db)) throw new AttentionError("La preparación de Meta está pendiente.", 503);
     return fn(db);
   }, transactionOptions);
+  async function lockConversations(db: AttentionDb, actor: AttentionActor, ids: string[]) {
+    const rows=new Map<string,MetaConversation>();
+    for(const id of [...new Set(ids.map(value=>attentionUuid(value)))].sort())rows.set(id,await scopedConversation(db,actor,id));
+    return rows;
+  }
+  async function source(db:AttentionDb,actor:AttentionActor,conversationId:string,messageId:string,forward=false) {
+    const conversation=await scopedConversation(db,actor,conversationId);
+    if(conversation.channel!=="whatsapp"||!conversation.metaManaged)throw new AttentionError("El mensaje no pertenece al canal de WhatsApp configurado.",409);
+    await binding(db,conversationId);
+    const [row]=await db.$queryRawUnsafe<MessageSource[]>(`SELECT id,"conversationId",direction,text,author,"metaWamid","metaPhoneNumberId",attachment,"deliveryStatus"
+      FROM "AttentionMessage" WHERE id=$1::uuid AND "conversationId"=$2::uuid FOR SHARE`,attentionUuid(messageId),conversationId);
+    if(!row||!nativeSource(row))throw new AttentionError("Este mensaje no está disponible para responder o reenviar por WhatsApp.",409);
+    if(forward&&!forwardable(row))throw new AttentionError("Este tipo de mensaje no se puede reenviar desde el CRM.",409);
+    return row;
+  }
   function messaging(row: MetaConversation) {
     const expiresAt = row.metaLastInboundAt ? new Date(new Date(row.metaLastInboundAt).getTime() + 24 * 3600000) : null;
     const reason = !row.metaManaged ? "Esta conversación todavía no está conectada a Meta."
@@ -184,9 +234,10 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     return row ?? null;
   }
   async function ownedReply(db: AttentionDb, actor: AttentionActor, id: string, leaseToken: string) {
-    const [location] = await db.$queryRawUnsafe<{conversationId: string}[]>(`SELECT "conversationId" FROM "AttentionMetaOutbox" WHERE id=$1::uuid`, attentionUuid(id));
+    const [location] = await db.$queryRawUnsafe<{conversationId: string;messageContext:MessageContext|null}[]>(`SELECT "conversationId","messageContext" FROM "AttentionMetaOutbox" WHERE id=$1::uuid`, attentionUuid(id));
     if (!location) throw new AttentionError("Envío no encontrado.", 404);
-    const conversation = await scopedConversation(db, actor, location.conversationId);
+    const conversations=await lockConversations(db,actor,[location.conversationId,...(location.messageContext?.forward?[location.messageContext.forward.conversationId]:[])]);
+    const conversation = conversations.get(location.conversationId)!;
     const [row] = await db.$queryRawUnsafe<MetaReply[]>(`SELECT * FROM "AttentionMetaOutbox" WHERE id=$1::uuid FOR UPDATE`, id);
     if (row.actorKey !== actor.key || row.userId !== actor.userId) throw new AttentionError("El envío pertenece a otro usuario.", 403);
     if (row.phoneNumberId !== scope.phoneNumberId || row.wabaId !== scope.wabaId || row.leaseToken !== attentionUuid(leaseToken)
@@ -206,9 +257,9 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     if (!row.sendStartedAt) throw new AttentionError("El envío todavía no fue iniciado.", 409);
     const attachment = row.attachment && row.uploadedMediaId ? { ...row.attachment, mediaId: row.uploadedMediaId } : null;
     if (!row.messageId) {
-      await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,"metaWamid","metaPhoneNumberId",attachment,"deliveryStatus")
-        VALUES($1::uuid,$2::uuid,$3,'outbound',$4,$5::timestamptz,$6,$7,$8,$9::jsonb,'accepted') RETURNING id`,
-      messageId, row.conversationId, `meta:${providerId}`, row.text, row.sendStartedAt, row.authorName, providerId, row.phoneNumberId, JSON.stringify(attachment));
+      await db.$queryRawUnsafe(`INSERT INTO "AttentionMessage"(id,"conversationId","externalId",direction,text,"sentAt",author,"metaWamid","metaPhoneNumberId",attachment,"deliveryStatus","replyToWamid")
+        VALUES($1::uuid,$2::uuid,$3,'outbound',$4,$5::timestamptz,$6,$7,$8,$9::jsonb,'accepted',$10) RETURNING id`,
+      messageId, row.conversationId, `meta:${providerId}`, row.text, row.sendStartedAt, row.authorName, providerId, row.phoneNumberId, JSON.stringify(attachment),row.messageContext?.reply?.wamid??null);
       await db.$queryRawUnsafe(`UPDATE "AttentionConversation" SET "lastContactAt"=GREATEST("lastContactAt",$2::timestamptz),"updatedAt"=now(),version=version+1 WHERE id=$1::uuid RETURNING id`, row.conversationId, row.sendStartedAt);
     }
     const [updated] = await db.$queryRawUnsafe<MetaReply[]>(`UPDATE "AttentionMetaOutbox" SET "messageId"=$2::uuid,wamid=$3,
@@ -441,14 +492,26 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
         return {messagesImported,echoesImported,statusesApplied};
       });
     },
-    async queueReply(actor: AttentionActor, conversationId: string, input: {requestId:string;version:number;text:string;attachment?:MetaReplyAttachment;template?:MetaTemplateSnapshot}) {
+    async getForwardSource(actor:AttentionActor,conversationId:string,messageId:string) {return transact(async db=>{
+      const row=await source(db,actor,attentionUuid(conversationId),messageId,true);
+      await userAudit(db,actor,"META_FORWARD_SOURCE_READ",conversationId,{messageId:row.id});
+      return {text:row.text,attachment:row.attachment,fingerprint:sourceFingerprint(row)};
+    });},
+    async queueReply(actor: AttentionActor, conversationId: string, input: ReplyInput) {
       const template=input.template??null, compiled=template?compileMetaTemplate(template):null;
-      const requestId=attentionUuid(input.requestId), text=attentionText(compiled?.text??input.text,template?16000:4096,false), attachment=attachmentInput(input.attachment);
+      const requestId=attentionUuid(input.requestId), attachment=attachmentInput(input.attachment);
+      const replyToMessageId=input.replyToMessageId?attentionUuid(input.replyToMessageId):null;
+      const forwarding=Boolean(input.forwardConversationId||input.forwardMessageId);
+      const forwardConversationId=forwarding?attentionUuid(input.forwardConversationId):null;
+      const forwardMessageId=forwarding?attentionUuid(input.forwardMessageId):null;
+      if((template&&(replyToMessageId||forwarding))||(replyToMessageId&&forwarding))throw new AttentionError("El mensaje contiene acciones incompatibles.");
+      let text=attentionText(compiled?.text??input.text,template?16000:4096,false);
       if(template&&attachment)throw new AttentionError("La plantilla no admite un archivo adicional.");
-      if ((!text&&!attachment)||!Number.isSafeInteger(input.version)||input.version<1) throw new AttentionError("Respuesta inválida.");
+      if ((!forwarding&&!text&&!attachment)||!Number.isSafeInteger(input.version)||input.version<1) throw new AttentionError("Respuesta inválida.");
       const fingerprint=template?templateIntentFingerprint(conversationId,{version:input.version,templateKey:template.definition.key,revision:template.definition.revision,parameters:template.parameters,
         ...(template.financial?{creditId:template.financial.creditId,financialRevision:template.financial.reviewHash}:{})})
-        :createHash("sha256").update(JSON.stringify({conversationId,text,attachment,version:input.version})).digest("hex");
+        :createHash("sha256").update(JSON.stringify({conversationId,...(forwarding?{forwardConversationId,forwardMessageId}:{text,attachment}),version:input.version,
+          ...(replyToMessageId?{replyToMessageId}:{})})).digest("hex");
       return transact(async db=>{
         // Match provider import lock order while establishing a historical chat's binding.
         if(template){
@@ -456,7 +519,18 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
           const [location]=await db.$queryRawUnsafe<{phone:string|null}[]>(`SELECT phone FROM "AttentionConversation" WHERE id=$1::uuid`,attentionUuid(conversationId));
           if(location?.phone)await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`,`attention:phone:${location.phone}`);
         }
-        const conversation=await scopedConversation(db,actor,conversationId);
+        const locked=await lockConversations(db,actor,[conversationId,...(forwardConversationId?[forwardConversationId]:[])]);
+        const conversation=locked.get(conversationId)!;
+        let messageContext:MessageContext|null=null;
+        if(replyToMessageId){const original=await source(db,actor,conversationId,replyToMessageId);messageContext={reply:{messageId:original.id,wamid:original.metaWamid!,quote:quote(original)}};}
+        if(forwardConversationId&&forwardMessageId){
+          const original=await source(db,actor,forwardConversationId,forwardMessageId,true);
+          const originalFingerprint=sourceFingerprint(original);
+          if(input.forwardFingerprint!==originalFingerprint)throw new AttentionError("El mensaje original cambió. Revísalo antes de reenviar.",409);
+          if(Boolean(original.attachment)!==Boolean(attachment)||original.attachment&&(original.attachment.kind!==attachment?.kind||original.attachment.mimeType!==attachment?.mimeType
+            ||original.attachment.fileName!==attachment?.fileName))throw new AttentionError("El archivo original no coincide con el reenvío.",409);
+          text=original.text;messageContext={forward:{conversationId:forwardConversationId,messageId:forwardMessageId,fingerprint:originalFingerprint}};
+        }
         await db.$queryRawUnsafe(`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended($1,0))`, `attention:meta:request:${actor.key}:${requestId}`);
         const [reserved]=await db.$queryRawUnsafe<{fingerprint:string}[]>(`SELECT fingerprint FROM "AttentionRequest" WHERE "actorKey"=$1 AND "requestId"=$2::uuid`,actor.key,requestId);
         if(reserved)throw new AttentionError(reserved.fingerprint==='META_REPLY_CANCELLED'?"La solicitud fue cancelada y ya no puede enviarse.":"La solicitud ya corresponde a otra operación.",409);
@@ -469,9 +543,9 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
         else {const capability=messaging(conversation);if(!capability.canReply)throw new AttentionError(capability.reason!,409);}
         const recipient=await binding(db,conversationId);
         const values=[randomUUID(),conversationId,actor.userId,actor.key,actor.name,requestId,fingerprint,input.version,scope.phoneNumberId,scope.wabaId,recipient.contactId,text,JSON.stringify(attachment)];
-        if(template)values.push(JSON.stringify(template));
-        const [row]=await db.$queryRawUnsafe<MetaReply[]>(`INSERT INTO "AttentionMetaOutbox"(id,"conversationId","userId","actorKey","authorName","requestId",fingerprint,"conversationVersion","phoneNumberId","wabaId","contactId",text,attachment${template?',template':''})
-          VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,$12,$13::jsonb${template?',$14::jsonb':''}) RETURNING *`,...values);
+        values.push(JSON.stringify(messageContext),JSON.stringify(template));
+        const [row]=await db.$queryRawUnsafe<MetaReply[]>(`INSERT INTO "AttentionMetaOutbox"(id,"conversationId","userId","actorKey","authorName","requestId",fingerprint,"conversationVersion","phoneNumberId","wabaId","contactId",text,attachment,"messageContext",template)
+          VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb) RETURNING *`,...values);
         await userAudit(db,actor,"META_REPLY_QUEUED",conversationId,{outboxId:row.id,requestId}); return row;
       });
     },
@@ -525,6 +599,10 @@ export function createAttentionMetaStore(database: AttentionDatabase, options: A
     });},
     async beforeSend(actor:AttentionActor,id:string,leaseToken:string){return transact(async db=>{
       const {row,conversation}=await ownedReply(db,actor,id,leaseToken);
+      if(row.messageContext?.reply){const original=await source(db,actor,row.conversationId,row.messageContext.reply.messageId);
+        if(original.metaWamid!==row.messageContext.reply.wamid)throw new AttentionError("El mensaje original cambió.",409);}
+      if(row.messageContext?.forward){const forwarded=row.messageContext.forward,original=await source(db,actor,forwarded.conversationId,forwarded.messageId,true);
+        if(sourceFingerprint(original)!==forwarded.fingerprint)throw new AttentionError("El mensaje original cambió. No se reenvió.",409);}
       if(row.template){compileMetaTemplate(row.template);const capability=await templateCapability(db,conversation);if(!capability.canSend)throw new AttentionError(capability.reason!,409);}
       else {const capability=messaging(conversation);if(!capability.canReply)throw new AttentionError(capability.reason!,409);}
       if(row.status!=='queued'||row.sendStartedAt||conversation.version!==row.conversationVersion)throw new AttentionError("La conversación o el envío cambió. No se envió el mensaje.",409);

@@ -318,6 +318,7 @@
 .message.outbound { align-self:flex-end; border-color:color-mix(in srgb,var(--fp-lime-strong) 20%,var(--fp-border)); background:var(--fp-lime-soft); border-top-left-radius:var(--fp-radius-lg); border-top-right-radius:3px; }
 .message > span { font-size:12px; color:var(--fp-muted); }
 .message p { font-size:16px; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; margin:2px 0; }
+.message:focus { outline:2px solid var(--fp-chat-accent,var(--fp-lime-strong)); outline-offset:3px; }
 .messageMeta { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:4px 8px; margin-top:3px; color:var(--fp-muted); }
 .message time,.deliveryStatus { font-size:12px; }
 .latestButton { right:20px; bottom:16px; font-size:14px!important; }

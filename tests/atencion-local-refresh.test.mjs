@@ -176,9 +176,23 @@ test("no solapa una carga lenta; una mutación cancela el poll y no acepta su re
   assert.ok(!f.text().includes("Respuesta obsoleta"));
   f.requests[4].respond({}); await f.flush();
   assert.equal(f.requests.length, 7);
-  await f.advance(20_000); assert.equal(f.requests.length, 7, "las cargas posteriores a guardar conservan prioridad");
+  await f.advance(10_000); assert.equal(f.requests.length, 7, "las cargas posteriores a guardar conservan prioridad antes de su límite de15s");
   f.requests[5].respond(inbox); f.requests[6].respond({ ...detail, conversation: { ...chat, status: "closed", version: 2 } }); await f.flush();
-  assert.ok(f.button("Reabrir")); f.unmount();
+  assert.ok(f.button("Reabrir"));
+  await f.advance(10_000);
+  assert.ok(f.requests.slice(7).every(request => !request.init.method), "una consulta posterior no vuelve a ejecutar la mutación");
+  f.unmount();
+});
+
+test("la consulta posterior a una mutación conserva el límite de15s y descarta su respuesta tardía", async () => {
+  const f = mount(); await f.ready(); await f.select();
+  f.button("Finalizar").props.onClick(); await f.flush(); f.requests[2].respond({}); await f.flush();
+  const list = f.requests[3], late = f.requests[4];
+  assert.equal(list.url.startsWith("/api/atencion?"), true); assert.equal(late.url, `/api/atencion/${chat.id}`);
+  await f.advance(15_001); assert.equal(late.init.signal.aborted, true);
+  list.respond(inbox); await f.flush(); late.respond({ ...detail, conversation: { ...chat, name: "Respuesta vencida", status: "closed", version: 2 } }); await f.flush();
+  assert.equal(f.button("Reabrir"), undefined); assert.doesNotMatch(f.text(), /Respuesta vencida/); assert.match(f.text(), /consulta tardó demasiado/i);
+  assert.equal(f.requests.filter(request => request.init.method === "PATCH").length, 1); f.unmount();
 });
 
 test("fallo temporal conserva datos y avisa;404 de reasignación elimina la ficha", async () => {

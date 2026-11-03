@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode, type RefObject } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, CalendarClock, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Columns3, Download, ExternalLink, FileCheck2, FileText, Image as ImageIcon, Inbox, LayoutDashboard, LockKeyhole, MessageCircle, Mic, MoreVertical, Paperclip, Plus, RefreshCw, Search, Send, Settings, ShieldCheck, Smartphone, Tag, UserRound, Users, Video, Wallet, X, type LucideIcon } from "lucide-react";
 import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import AnalystNavigation from "@/app/dashboard/aprobaciones/analyst-navigation";
@@ -23,6 +23,9 @@ import AttentionCloseAll from "./attention-close-all";
 import { AttentionReceivedFiles } from "./attention-contact-summary";
 import AttentionWorkQueues from "./attention-work-queues";
 import AttentionStickerPicker from "./attention-sticker-picker";
+import AttentionMessageActions, { AttentionQuotedMessage, AttentionReplyReference, type AttentionQuote } from "./attention-message-actions";
+import AttentionForwardMessage, { type AttentionForwardSource } from "./attention-forward-message";
+import AttentionSaveStickerPanel from "./attention-save-sticker";
 import { AttentionAgendaView, AttentionConversationIndicators, AttentionObservedRead, AttentionQuickReplies, AttentionWorkFilters } from "./attention-operational";
 import styles from "./attention.module.css";
 import chatSkin from "./attention-whatsapp.module.css";
@@ -156,6 +159,15 @@ function MessageContent({ text, dapta, media, mediaReady, phoneActions, delivery
   const Icon = kind === "Audio" ? Mic : kind === "Video" ? Video : kind === "Imagen" || kind === "Sticker" ? ImageIcon : FileText;
   return <div className={styles.mediaCard}><span className={styles.mediaIcon}><Icon aria-hidden="true" size={25} /></span><div><strong>{kind} de WhatsApp</strong><p>Consulta el archivo en la bandeja de Dapta.</p><a href={DAPTA_INBOX_URL} target="_blank" rel="noopener noreferrer">Ver en Dapta <ExternalLink aria-hidden="true" size={14} /></a></div></div>;
 }
+function AttentionMessageQuote({ message, messages, log }: { message: AttentionMessage; messages: AttentionMessage[]; log: RefObject<HTMLDivElement | null> }) {
+  const quote = message.replyTo;
+  if (!quote) return null;
+  const loaded = Boolean(quote.id && messages.some(item => item.id === quote.id));
+  return <AttentionQuotedMessage quote={quote} onOpen={loaded ? () => {
+    const target = quote.id ? document.getElementById(`attention-message-${quote.id}`) : null;
+    if (target && log.current?.contains(target)) { target.scrollIntoView({ block: "center", behavior: "auto" }); target.focus({ preventScroll: true }); }
+  } : undefined} />;
+}
 function MediaImage({ url, name, onLoad }: { url: string; name: string; onLoad?: () => void }) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -170,7 +182,7 @@ function MessageDelivery({ message }: { message: AttentionMessage }) {
   const Icon = status === "read" || status === "delivered" ? CheckCheck : status === "sent" || status === "accepted" ? Check : status === "failed" || status === "uncertain" ? CircleAlert : Clock3;
   return <span className={`${styles.deliveryStatus} ${status === "failed" || status === "uncertain" ? styles.deliveryAttention : ""}`} title={message.deliveryError || undefined}><Icon aria-hidden="true" size={14} />{deliveryNames[status]}{message.deliveryError && <span>{message.deliveryError}</span>}</span>;
 }
-type ReplyDraft = { text: string; file: File | null; requestId: string | null; version: number | null; locked: boolean; error: string; result: "failed" | "missing" | null };
+type ReplyDraft = { text: string; file: File | null; replyTo: AttentionQuote | null; requestId: string | null; version: number | null; locked: boolean; error: string; result: "failed" | "missing" | null };
 type ExtensionAttempt = { input: AttentionExtensionInput; phase: "pending" | "uncertain" | "failed" | "confirmed"; message: string; requiresReview?: boolean; management?: AttentionExtensionResult["management"] };
 type ReceiptAttempt = { input: AttentionReceiptSendInput; phase: "pending" | "uncertain" | "missing" | "failed" | "confirmed"; message: string };
 type FinancialAttempts = { extension?: ExtensionAttempt; receipt?: ReceiptAttempt };
@@ -183,7 +195,7 @@ type FinancialActions = {
   resolveReceipt: () => Promise<void>;
   discardReceipt: () => Promise<void>;
 };
-const emptyReply: ReplyDraft = { text: "", file: null, requestId: null, version: null, locked: false, error: "", result: null };
+const emptyReply: ReplyDraft = { text: "", file: null, replyTo: null, requestId: null, version: null, locked: false, error: "", result: null };
 function replyFileSize(bytes: number) {
   const unit = bytes < 1024 ? "B" : bytes < 1024 * 1024 ? "KB" : "MB";
   const size = unit === "B" ? bytes : bytes / (unit === "KB" ? 1024 : 1024 * 1024);
@@ -264,6 +276,7 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
   useEffect(() => {
     if (attachmentPreview) replyInput.current?.focus();
   }, [attachmentPreview]);
+  useEffect(() => { if (draft.replyTo) replyInput.current?.focus(); }, [draft.replyTo]);
   function removeAttachment() { change({ file: null }); replyInput.current?.focus(); }
   const shortcuts = useAttentionQuickReplyShortcuts({ text: draft.text, replies: quickReplies, disabled: busy || draft.locked || !canReply,
     maxLength: draft.file && !separateText(draft.file) ? 1024 : 4096, inputRef: replyInput,
@@ -289,6 +302,7 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
       <div data-attention="media-preview" className={composerLayout.mediaStage} aria-label="Vista previa antes de enviar"><ReplyAudioPreview file={draft.file} expanded /></div>
     </>}
     {!canReply && <p className={styles.replyUnavailable} role="status">{blockedReason}</p>}
+    {draft.replyTo && <AttentionReplyReference quote={draft.replyTo} disabled={busy || draft.locked} onCancel={() => change({ replyTo: null })} />}
     <div data-attention="reply-draft" className={`${styles.replyDraftBody} ${composerLayout.draft}`}>
     {separateText(draft.file) && draft.text.trim() && <p className={styles.replyLimit}>El texto quedará como borrador para enviarlo después.</p>}
     {draft.error && <p className={styles.replyError} role="alert">{draft.error}</p>}
@@ -300,7 +314,7 @@ function ReplyComposer({ detail, draft, busy, refreshing = false, refreshBusy = 
         <summary aria-label="Adjuntar y más opciones" title="Adjuntar y más opciones"><Plus aria-hidden="true" size={24} /></summary>
         <div className={composerLayout.options}>
           <label title="JPG/PNG hasta 5 MB; otros formatos hasta 16 MB" className={`${styles.attachButton} ${composerLayout.attach} ${busy || draft.locked || !canReply ? styles.attachDisabled : ""}`}><Paperclip aria-hidden="true" size={20} /><span>Adjuntar archivo</span><input ref={fileInput} type="file" aria-label="Adjuntar archivo" accept={replyMimeTypes.join(",")} disabled={busy || draft.locked || !canReply} onChange={event => { const file = event.target.files?.[0] || null; if (file) change({ file }); event.target.value = ""; }} /></label>
-          <div className={composerLayout.stickers}><AttentionStickerPicker disabled={busy || draft.locked || !canReply} onSelect={file => change({ file })} /><span aria-hidden="true">Stickers</span></div>
+          <div className={composerLayout.stickers}><AttentionStickerPicker key={actorKey} disabled={busy || draft.locked || !canReply} onSelect={file => change({ file })} /><span aria-hidden="true">Stickers</span></div>
           <div className={composerLayout.quickReplies}><span>Respuestas rápidas</span><AttentionQuickReplies replies={quickReplies} disabled={busy || draft.locked || !canReply} insert={text => { const next = `${draft.text}${draft.text ? "\n" : ""}${text}`; if (next.length <= (draft.file && !separateText(draft.file) ? 1024 : 4096)) change({ text: next }); else change({ error: "La respuesta rápida supera el espacio disponible. Acorta el borrador antes de insertarla." }); }} /></div>
           <AttentionTemplateComposer key={`template:${detail.conversation.id}`} chatTheme="dark" actorKey={actorKey} detail={detail} disabled={busy || draft.locked || !detail.permissions.manage} onSent={templateSent} onBusyChange={templateBusyChanged} />
         </div>
@@ -338,6 +352,8 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const [refreshNotice, setRefreshNotice] = useState("");
   const [liveStatus, setLiveStatus] = useState<"connecting" | "connected" | "reconnecting" | "offline" | "paused" | "polling">("connecting");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraft>>({});
+  const [forwardSource, setForwardSource] = useState<AttentionForwardSource | null>(null);
+  const [saveStickerSource, setSaveStickerSource] = useState<{ conversationId: string; message: AttentionMessage } | null>(null);
   const [refreshingReplies, setRefreshingReplies] = useState<Record<string, boolean>>({});
   const [financialAttempts, setFinancialAttempts] = useState<Record<string, FinancialAttempts>>({});
   const [notice, setNotice] = useState("");
@@ -386,6 +402,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
   const displayedHistory = useRef<string | null>(null);
   const followLatest = useRef(true);
   const phoneLookupBinding = useRef("");
+  const authorityKey = useRef(actor.key);
   const currentActor = inbox?.actor ?? actor;
   phoneLookupBinding.current = `${currentActor.key}:${view}:${selected ?? ""}`;
   const syncStorageKey = `finser:attention:sync:${actor.key}`;
@@ -403,7 +420,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     inboxReadError.current = true; detailReadError.current = false;
     selectionRef.current = null;
     setInbox(null); setDetail(null); setSelected(null); setShowCustomer(false); setBoardOpened(false);
-    setReplyDrafts({}); setRefreshingReplies({}); replyRefreshes.current.clear(); setFinancialAttempts({});
+    setReplyDrafts({}); setForwardSource(null); setSaveStickerSource(null); setRefreshingReplies({}); replyRefreshes.current.clear(); setFinancialAttempts({});
     setOpenedWorkKinds([]); setWorkBusyKinds({ enrollment: false, welcome: false });
     setLoading(false); setDetailLoading(false); setDetailError(""); setError(message);
   }, []);
@@ -419,7 +436,13 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     try {
       const query = new URLSearchParams({ search, filter, page: String(page), ...(tag ? { tag } : {}), ...(view === "conversations" ? { collection: "clients" } : {}) });
       const result = await api<AttentionInbox>(`/api/atencion?${query}`, { signal });
-      if (mounted.current && !signal?.aborted && request === listRequest.current) { liveAccessBlocked.current = false; setInbox(result); setBoardRevision(value => value + 1); }
+      if (mounted.current && !signal?.aborted && request === listRequest.current) {
+        if (authorityKey.current !== result.actor.key) {
+          authorityKey.current = result.actor.key;
+          clearInaccessibleData("");
+        }
+        liveAccessBlocked.current = false; setInbox(result); setBoardRevision(value => value + 1);
+      }
     } catch (err) {
       if (mounted.current && !signal?.aborted && request === listRequest.current) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
@@ -451,7 +474,16 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     } catch (err) {
       if (mounted.current && !signal?.aborted && request === detailRequest.current && selectionRef.current === id) {
         if (err instanceof ApiError && [401, 403].includes(err.status)) clearInaccessibleData(errorMessage(err));
-        else { detailReadError.current = true; if (!replyRefreshes.current.has(id) || err instanceof ApiError && err.status === 404) setDetail(null); setDetailError(errorMessage(err)); }
+        else {
+          detailReadError.current = true;
+          if (!replyRefreshes.current.has(id) || err instanceof ApiError && err.status === 404) setDetail(null);
+          if (err instanceof ApiError && err.status === 404) {
+            setForwardSource(current => current?.conversationId === id ? null : current);
+            setSaveStickerSource(current => current?.conversationId === id ? null : current);
+            setReplyDrafts(current => { const next = { ...current }; delete next[id]; return next; });
+          }
+          setDetailError(errorMessage(err));
+        }
       }
     } finally {
       if (deadline) clearTimeout(deadline); if (cancel) { signal?.removeEventListener("abort", cancel); detailReads.current.delete(cancel); }
@@ -772,6 +804,7 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
     try {
       const form = new FormData(); form.set("requestId", draft.requestId!); form.set("version", String(draft.version)); form.set("text", separateText(draft.file) ? "" : draft.text.trim());
       if (draft.file) form.set("file", draft.file);
+      if (draft.replyTo?.id) form.set("replyToMessageId", draft.replyTo.id);
       const result = await api<{ message: AttentionMessage; uncertain?: boolean }>(`/api/atencion/${encodeURIComponent(id)}/messages`, { method: "POST", body: form, signal: controller.signal });
       const confirmed = result.uncertain ? { ...result.message, deliveryStatus: "uncertain" as const } : result.message;
       recordReplyResult(id, draft, confirmed);
@@ -1055,12 +1088,14 @@ export default function AttentionConsole({ actor, initialWorkKind = null, initia
               {detailError && <div data-attention="error" className={styles.error} role="alert"><span>{detailError}</span><Button variant="secondary" disabled={busy || detailLoading} onClick={() => void loadDetail(selected)}>Actualizar</Button></div>}
               {detailLoading && !detail ? <LoadingState label="Consultando historial y ficha…" /> : detail && <>
 
-                <AttentionObservedRead key={`read:${detail.conversation.id}`} detail={detail} active={!showCustomer && !busy && !syncing && !Boolean(replyDrafts[detail.conversation.id]?.file)} log={messageLog} request={api} onRead={() => void loadInbox()} onError={error => { handleFinancialAccessError(detail.conversation.id, error); }} /><div data-attention="history" className={styles.historyViewport}><div ref={messageLog} data-attention="messages" className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map((message, index) => <Fragment key={message.id}>{(index === 0 || messageDay(message.sentAt) !== messageDay(detail.messages[index - 1].sentAt)) && <p data-attention="day" className={styles.daySeparator}>{date(message.sentAt, true)}</p>}<article data-attention="message" data-direction={message.direction} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}>{message.direction === "outbound" && (index === 0 || detail.messages[index - 1].direction !== "outbound" || detail.messages[index - 1].author !== message.author) && <span>{message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span>}<MessageContent text={message.text} deliveryStatus={message.deliveryStatus} media={message.attachment} mediaReady={keepLatestAfterMedia} phoneActions={{ onOpenPhone: lookupPhoneChat, onOpenConversation: id => openPhoneChat(id, detail.conversation.id), disabled: busy || syncing || workBusy || view !== "conversations", contextKey: `${currentActor.key}:${view}:${detail.conversation.id}:${message.id}` }} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div data-attention="message-meta" className={styles.messageMeta}><time dateTime={message.sentAt} title={date(message.sentAt)}>{time(message.sentAt)}</time><MessageDelivery message={message} /></div></article></Fragment>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
-                {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={detail.conversation.id} detail={detail} actorKey={currentActor.key} quickReplies={inbox?.quickReplies || []} refreshing={Boolean(refreshingReplies[detail.conversation.id])} refreshBusy={detailLoading} refresh={() => { if (selectionRef.current) void loadDetail(selectionRef.current); }} templateSent={() => refreshAfterFinancialAction(detail.conversation.id)} templateBusyChanged={quickReplyBusyChanged} draft={replyDrafts[detail.conversation.id] || emptyReply} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} receiveFiles={receiveReplyFiles} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>{detail.workRequest ? `${detail.workRequest.ally} · ${detail.workRequest.advisor}` : "Gestión interna · asignación y seguimiento por analistas."}</span>{detail.workRequest && <Button variant="secondary" onClick={()=>continueWork(detail.workRequest!.id,detail.workRequest!.kind)}>Continuar solicitud</Button>}</footer>}
+                <AttentionObservedRead key={`read:${detail.conversation.id}`} detail={detail} active={!showCustomer && !forwardSource && !saveStickerSource && !busy && !syncing && !Boolean(replyDrafts[detail.conversation.id]?.file)} log={messageLog} request={api} onRead={() => void loadInbox()} onError={error => { handleFinancialAccessError(detail.conversation.id, error); }} /><div data-attention="history" className={styles.historyViewport}><div ref={messageLog} data-attention="messages" className={styles.messages} role="log" aria-label="Mensajes sincronizados" onScroll={() => { const log = messageLog.current; if (log) { const away = log.scrollHeight - log.scrollTop - log.clientHeight > 100; followLatest.current = !away; setShowLatest(away); } }}>{detail.historyTruncated && <p className={styles.historyNotice}>Se muestra una parte del historial disponible. La siguiente sincronización incorpora más mensajes.</p>}{detail.messages.length ? detail.messages.map((message, index) => <Fragment key={message.id}>{(index === 0 || messageDay(message.sentAt) !== messageDay(detail.messages[index - 1].sentAt)) && <p data-attention="day" className={styles.daySeparator}>{date(message.sentAt, true)}</p>}<article id={`attention-message-${message.id}`} tabIndex={-1} data-attention="message" data-direction={message.direction} className={`${styles.message} ${message.direction === "outbound" ? styles.outbound : ""}`}>{message.direction === "outbound" && (index === 0 || detail.messages[index - 1].direction !== "outbound" || detail.messages[index - 1].author !== message.author) && <span>{message.author || (message.deliveryStatus ? "Equipo FINSER PAY" : "Dapta")}</span>}<AttentionMessageQuote message={message} messages={detail.messages} log={messageLog} />{message.forwarded && <small className={styles.muted}>Reenviado</small>}<MessageContent text={message.text} deliveryStatus={message.deliveryStatus} media={message.attachment} mediaReady={keepLatestAfterMedia} phoneActions={{ onOpenPhone: lookupPhoneChat, onOpenConversation: id => openPhoneChat(id, detail.conversation.id), disabled: busy || syncing || workBusy || view !== "conversations", contextKey: `${currentActor.key}:${view}:${detail.conversation.id}:${message.id}` }} dapta={detail.conversation.channel === "whatsapp" && Boolean(detail.conversation.externalId)} /><div data-attention="message-meta" className={styles.messageMeta}><time dateTime={message.sentAt} title={date(message.sentAt)}>{time(message.sentAt)}</time><MessageDelivery message={message} /><AttentionMessageActions message={message} disabled={busy || syncing || workBusy || Boolean(replyDrafts[detail.conversation.id]?.locked)} canReply={message.canReplyTo === true && replyWindowOpen(detail)} canForward={message.canForward === true && detail.permissions.manage} onReply={() => { if (message.canReplyTo && !busyRef.current && replyWindowOpen(detail)) changeReply(detail.conversation.id, { replyTo: { id: message.id, author: message.direction === "inbound" ? contactName(detail.conversation) : message.author || "Equipo FINSER PAY", text: message.text, ...(message.attachment ? { attachment: { kind: message.attachment.kind, fileName: message.attachment.fileName } } : {}) } }); }} onForward={() => { if (message.canForward && !busyRef.current) setForwardSource({ conversationId: detail.conversation.id, contactName: contactName(detail.conversation), message }); }} onSaveSticker={message.attachment?.kind === "sticker" && privateMediaUrl(message.attachment.url) ? () => setSaveStickerSource({ conversationId: detail.conversation.id, message }) : undefined} /></div></article></Fragment>) : <DashboardEmpty icon={MessageCircle} title={detail.conversation.channel === "internal" ? "Gestión interna" : "Historial pendiente de sincronización"} text={detail.conversation.channel === "internal" ? "Registra el seguimiento en notas y tareas de la ficha." : "Los mensajes aparecerán al actualizar el canal de WhatsApp."} />}</div>
+                {showLatest && <Button variant="secondary" className={styles.latestButton} onClick={goToLatest}><ArrowDown aria-hidden="true" size={17} /> Último mensaje</Button>}</div>{detail.conversation.channel === "whatsapp" ? <ReplyComposer key={`${currentActor.key}:${detail.conversation.id}`} detail={detail} actorKey={currentActor.key} quickReplies={inbox?.quickReplies || []} refreshing={Boolean(refreshingReplies[detail.conversation.id])} refreshBusy={detailLoading} refresh={() => { if (selectionRef.current) void loadDetail(selectionRef.current); }} templateSent={() => refreshAfterFinancialAction(detail.conversation.id)} templateBusyChanged={quickReplyBusyChanged} draft={replyDrafts[detail.conversation.id] || emptyReply} busy={busy || syncing} fallbackDapta={!inbox?.integration.canSend && Boolean(detail.conversation.externalId)} change={patch => changeReply(detail.conversation.id, patch)} receiveFiles={receiveReplyFiles} send={() => void sendReply()} resolve={() => void resolveReply()} restart={() => restartReply(detail.conversation.id)} retry={() => void sendReply(true)} discard={() => void discardReply()} /> : <footer className={styles.historyFooter}><MessageCircle aria-hidden="true" size={16} /><span>{detail.workRequest ? `${detail.workRequest.ally} · ${detail.workRequest.advisor}` : "Gestión interna · asignación y seguimiento por analistas."}</span>{detail.workRequest && <Button variant="secondary" onClick={()=>continueWork(detail.workRequest!.id,detail.workRequest!.kind)}>Continuar solicitud</Button>}</footer>}
               </>}
             </>}</ChatDropSurface>
 
           </section>
+          <AttentionForwardMessage key={`forward:${currentActor.key}`} actorKey={currentActor.key} source={forwardSource} onClose={() => setForwardSource(null)} onBusyChange={quickReplyBusyChanged} onSent={id => { void loadInbox(); if (selectionRef.current === id) void loadDetail(id); }} onAccessDenied={(status, message) => { if ([401, 403].includes(status)) clearInaccessibleData(message); else refreshCurrentView(); }} />
+          <AttentionSaveStickerPanel key={`save-sticker:${currentActor.key}`} source={saveStickerSource} onClose={() => setSaveStickerSource(null)} />
           <FinserSidePanel open={showCustomer && Boolean(detail)} keepMounted title="Ficha del contacto" closeLabel="Volver al chat" busy={busy} onClose={() => setShowCustomer(false)}>
             <div className={styles.customer}>{detail && <CustomerPanel key={detail.conversation.id} detail={detail} busy={busy} mutate={mutate} canOpenRecord={canSupervise}
               board={showCustomer && view === "conversations" ? <AttentionConversationSection

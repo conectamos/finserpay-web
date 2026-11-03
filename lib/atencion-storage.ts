@@ -342,7 +342,12 @@ export function createAttentionStore(database: AttentionDatabase, settings: { no
         const [operation] = await tx.$queryRawUnsafe<Pick<ConversationRow,"unreadCount"|"lastInboundAt"|"waitingSince">[]>(`SELECT ${operationSelect} FROM "AttentionConversation" c ${operationJoin} WHERE ${access.sql} AND c.id=$4::uuid`,...access.values,id);
         const metaReady = await attentionMetaSchemaReady(tx);
         const messages = await tx.$queryRawUnsafe<Parameters<typeof attentionMetaMessage>[0][]>(`
-          SELECT id,"conversationId",direction,text,"sentAt",author${metaReady ? ',attachment,"deliveryStatus"' : ''} FROM "AttentionMessage" WHERE "conversationId"=$1::uuid ORDER BY "sentAt" DESC,id DESC LIMIT 501`, id);
+          SELECT m.id,m."conversationId",m.direction,m.text,m."sentAt",m.author${metaReady ? `,m.attachment,m."deliveryStatus",m."metaWamid",m."metaPhoneNumberId",m."replyToWamid",
+            (SELECT row_to_json(q) FROM (SELECT original.id,original."conversationId",original.direction,original.text,original.author,original.attachment
+              FROM "AttentionMessage" original WHERE original."conversationId"=m."conversationId" AND original."metaPhoneNumberId"=m."metaPhoneNumberId"
+                AND original."metaWamid"=m."replyToWamid" LIMIT 1) q) AS "quotedMessage",
+            EXISTS(SELECT 1 FROM "AttentionMetaOutbox" forwarded WHERE forwarded."messageId"=m.id AND forwarded."messageContext"->'forward' IS NOT NULL) AS forwarded` : ''}
+          FROM "AttentionMessage" m WHERE m."conversationId"=$1::uuid ORDER BY m."sentAt" DESC,m.id DESC LIMIT 501`, id);
         const pending = metaReady ? await attentionMetaPendingMessages(tx,id) : [];
         const displayMessages = [...messages.map(attentionMetaMessage),...pending].sort((a,b) => Date.parse(a.sentAt)-Date.parse(b.sentAt)||a.id.localeCompare(b.id));
         const notes = await tx.$queryRawUnsafe<{id: string; text: string; author: string; createdAt: Date | string}[]>(`SELECT id,text,author,"createdAt" FROM "AttentionNote" WHERE "conversationId"=$1::uuid ORDER BY "createdAt" DESC,id DESC LIMIT 301`, id);

@@ -12,6 +12,8 @@ on:
       - "app/api/vendedores/session/**"
       - "app/api/integraciones/diana/**"
       - "app/api/integraciones/atencion/dapta/**"
+      - "app/api/atencion/**"
+      - "app/dashboard/atencion/**"
       - "scripts/*schema.mjs"
       - "scripts/setup-atencion.sql"
       - "lib/**"
@@ -30,6 +32,8 @@ on:
       - "app/api/vendedores/session/**"
       - "app/api/integraciones/diana/**"
       - "app/api/integraciones/atencion/dapta/**"
+      - "app/api/atencion/**"
+      - "app/dashboard/atencion/**"
       - "scripts/*schema.mjs"
       - "scripts/setup-atencion.sql"
       - "lib/**"
@@ -45,6 +49,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  attention:
+    name: Conversaciones de Atención
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Synthetic fixtures only: no WhatsApp messages or external media uploads.
+      - run: npm run prisma:generate && npm run test:atencion
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public
   diana:
     name: Prórrogas y consultas de Diana
     runs-on: ubuntu-latest

@@ -23,14 +23,14 @@ const expectedColumns = {
   AttentionReadState: "userId:int4! messageId:uuid! conversationId:uuid! readAt:timestamptz!",
   AttentionTeamReadState: "messageId:uuid! conversationId:uuid! source:text! actorUserId:int4 replyMessageId:uuid readAt:timestamptz!",
   AttentionMetaBinding: "id:uuid! conversationId:uuid! phoneNumberId:text! wabaId:text! contactId:text! createdAt:timestamptz!",
-  AttentionMetaOutbox: "id:uuid! conversationId:uuid! userId:int4! actorKey:text! authorName:text! requestId:uuid! fingerprint:text! conversationVersion:int4! phoneNumberId:text! wabaId:text! contactId:text! text:text! attachment:jsonb uploadedMediaId:text status:text! messageId:uuid wamid:text leaseToken:uuid leaseUntil:timestamptz sendStartedAt:timestamptz acceptedAt:timestamptz deliveryAt:timestamptz errorCode:text attempts:int4! createdAt:timestamptz! updatedAt:timestamptz! template:jsonb",
+  AttentionMetaOutbox: "id:uuid! conversationId:uuid! userId:int4! actorKey:text! authorName:text! requestId:uuid! fingerprint:text! conversationVersion:int4! phoneNumberId:text! wabaId:text! contactId:text! text:text! attachment:jsonb uploadedMediaId:text status:text! messageId:uuid wamid:text leaseToken:uuid leaseUntil:timestamptz sendStartedAt:timestamptz acceptedAt:timestamptz deliveryAt:timestamptz errorCode:text attempts:int4! createdAt:timestamptz! updatedAt:timestamptz! template:jsonb messageContext:jsonb",
   AttentionMetaDelivery: "id:uuid! phoneNumberId:text! wabaId:text! wamid:text! recipient:text! status:text! eventAt:timestamptz! errorCode:text requestId:uuid createdAt:timestamptz!",
 };
 const additiveColumns = {
   AttentionConversation: ["closedAt", "daptaMessagesCursor", "metaManaged", "metaLastInboundAt", "sectionId", "boardVersion"],
   AttentionMessage: ["metaWamid", "metaPhoneNumberId", "attachment", "deliveryStatus", "deliveryAt", "replyToWamid", "teamReadReply"],
   AttentionAudit: ["actorKind", "actorKey"],
-  AttentionMetaOutbox: ["template"],
+  AttentionMetaOutbox: ["template", "messageContext"],
 };
 const tableNames = Object.keys(expectedColumns);
 const foreignKeys = {
