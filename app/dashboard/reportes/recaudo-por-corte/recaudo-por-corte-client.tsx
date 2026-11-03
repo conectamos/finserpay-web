@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, Download, Eye, RefreshCw, Save, X } from "lucide-react";
-import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import { ArrowLeft, Download, Eye, RefreshCw, X } from "lucide-react";
 import {
   Badge, Button, Card, DataTable, EmptyState, Input, LoadingState,
   MetricCard, PageHeader, ProgressBar, Select, StatusPill,
 } from "@/app/_components/finser-ui";
-import type { CutFilters, CutHistory, CutReport, CutRow, CutStatus } from "@/lib/cut-collection-types";
+import type { CutFilters, CutReport, CutRow, CutStatus } from "@/lib/cut-collection-types";
 import styles from "./recaudo-por-corte.module.css";
 
 const API = "/api/reportes/recaudo-por-corte";
@@ -23,11 +22,10 @@ function money(value: number) { return moneyFormatter.format(value); }
 function percentage(value: number | null) { return value === null ? "No aplica" : `${numberFormatter.format(value)} %`; }
 function dateLabel(value: string) { return dateFormatter.format(new Date(value.length === 10 ? `${value}T12:00:00Z` : value)); }
 function dateTime(value: string | null) { return value ? dateTimeFormatter.format(new Date(value)) : "Sin pagos"; }
-function paramsFor(filters: CutFilters, projectionId: string | null) {
+function paramsFor(filters: CutFilters) {
   const params = new URLSearchParams({ day: String(filters.day), month: String(filters.month), year: String(filters.year), status: filters.status });
   if (filters.aliadoId) params.set("aliadoId", String(filters.aliadoId));
   if (filters.sedeId) params.set("sedeId", String(filters.sedeId));
-  if (projectionId) params.set("projectionId", projectionId);
   return params;
 }
 
@@ -54,22 +52,22 @@ function PaymentDetail({ row, onClose }: { row: CutRow | null; onClose: () => vo
         <Button variant="ghost" onClick={onClose} aria-label="Cerrar detalle de pagos" autoFocus><X aria-hidden="true" /></Button>
       </header>
       <div className={styles.dialogTotals}>
-        <span>Anticipos al guardar<strong>{money(row.priorPayments)}</strong></span>
         <span>Esperado<strong>{money(row.expected)}</strong></span>
-        <span>Recibido posterior<strong>{money(row.received)}</strong></span>
-        <span>Ajuste de anticipos<strong>{money(row.priorReversals)}</strong></span>
+        <span>Recibido total<strong>{money(row.received)}</strong></span>
+        <span>Anticipos incluidos en recibido<strong>{money(row.priorPayments)}</strong></span>
         <span>Pendiente<strong>{money(row.pending)}</strong></span>
       </div>
+      {(row.reconciledReceived || 0) > 0 && <p className={styles.reconciledPayment}>Efectivo conciliado por cuota (incluido en recibido): <strong>{money(row.reconciledReceived || 0)}</strong></p>}
       {row.payments.length ? <DataTable className={styles.table}><table>
-        <caption>Las columnas de aplicación y recaudo corresponden a esta cuota.</caption>
-        <thead><tr><th>Pago</th><th>Fecha del pago</th><th>Registrado</th><th>Medio</th><th>Origen</th><th>Estado</th><th className={styles.number}>Valor del pago</th><th className={styles.number}>Aplicado al guardar</th><th className={styles.number}>Aplicado actual</th><th className={styles.number}>Recaudo del corte</th></tr></thead>
+        <caption>El valor aplicado corresponde a esta cuota; el total del pago puede incluir otras cuotas.</caption>
+        <thead><tr><th>Pago</th><th>Fecha del pago</th><th>Registrado</th><th>Medio</th><th>Origen</th><th>Estado</th><th className={styles.number}>Valor del pago</th><th className={styles.number}>Aplicado a esta cuota</th></tr></thead>
         <tbody>{row.payments.map((payment) => <tr key={payment.id}>
           <td>#{payment.id}</td><td>{dateTime(payment.paidAt)}</td><td>{dateTime(payment.createdAt)}</td><td>{payment.method || "Sin medio"}</td>
-          <td>{payment.previous ? "Anticipo previo" : "Pago posterior"}</td>
+          <td>{payment.previous ? "Antes del corte" : "Desde el corte"}</td>
           <td><Badge tone={payment.state.toUpperCase().includes("ANUL") ? "danger" : "neutral"}>{payment.state}</Badge></td>
-          <td className={styles.number}>{money(payment.amount)}</td><td className={styles.number}>{money(payment.appliedBefore)}</td><td className={styles.number}>{money(payment.appliedNow)}</td><td className={styles.number}>{money(payment.received)}</td>
+          <td className={styles.number}>{money(payment.amount)}</td><td className={styles.number}>{money(payment.appliedNow)}</td>
         </tr>)}</tbody>
-      </table></DataTable> : <EmptyState title={row.sourcePayments?.length ? "Sin atribución individual de los abonos fuente" : "Esta cuota aún no tiene pagos"} description={row.sourcePayments?.length ? "La conciliación registra el importe abonado a la cuota. Los abonos fuente del crédito se detallan a continuación." : "Los pagos aplicados a esta cuota aparecerán aquí, incluso cuando se reciban después del vencimiento."} />}
+      </table></DataTable> : <EmptyState title={(row.reconciledReceived || 0) > 0 ? "Sin recibos con asignación individual" : row.sourcePayments?.length ? "Sin atribución individual de los abonos fuente" : "Esta cuota aún no tiene pagos"} description={(row.reconciledReceived || 0) > 0 ? "El efectivo conciliado por cuota está incluido en el recibido y se muestra por separado." : row.sourcePayments?.length ? "La conciliación registra el importe abonado a la cuota. Los abonos fuente del crédito se detallan a continuación." : "Los pagos aplicados a esta cuota aparecerán aquí, incluso cuando se reciban después del vencimiento."} />}
       {!!row.sourcePayments?.length && <section className={styles.sourcePayments} aria-labelledby="cut-source-payments-title">
         <h3 id="cut-source-payments-title">Abonos fuente de la conciliación</h3>
         <p>Estos abonos respaldan la conciliación de capital del crédito. Sus valores son los totales de cada abono y no equivalen al importe aplicado a esta cuota.</p>
@@ -78,29 +76,22 @@ function PaymentDetail({ row, onClose }: { row: CutRow | null; onClose: () => vo
           <tbody>{row.sourcePayments.map((payment) => <tr key={payment.id}><td>#{payment.id}</td><td>{dateTime(payment.paidAt)}</td><td>{dateTime(payment.createdAt)}</td><td>{payment.method || "Sin medio"}</td><td>{payment.state}</td><td className={styles.number}>{money(payment.amount)}</td></tr>)}</tbody>
         </table></DataTable>
       </section>}
-      <p className={styles.note}>El recaudo usa pagos registrados después de guardar la proyección y su aplicación vigente a esta cuota. Las anulaciones y los ajustes de anticipos se reflejan por separado. Horas de Colombia.</p>
+      <p className={styles.note}>El recibido incluye todos los pagos vigentes aplicados a esta cuota, antes, durante o después del vencimiento. Los anticipos son parte de ese total y no se suman de nuevo. Horas de Colombia.</p>
+      {(row.unclassifiedReceived || 0) > 0 && <p className={styles.notice}>{money(row.unclassifiedReceived || 0)} del recibido está conciliado por cuota, pero no permite separar su fecha individual; no se clasifica como anticipo.</p>}
       {row.warning && <p className={styles.notice}>{row.warning}</p>}
     </>}
   </dialog>;
 }
 
-export default function RecaudoPorCorteClient({ initialFilters, initialProjectionId }: { initialFilters: CutFilters; initialProjectionId: string | null }) {
+export default function RecaudoPorCorteClient({ initialFilters }: { initialFilters: CutFilters }) {
   const [draft, setDraft] = useState(initialFilters);
-  const [selection, setSelection] = useState({ filters: initialFilters, projectionId: initialProjectionId });
+  const [selection, setSelection] = useState(initialFilters);
   const [reload, setReload] = useState(0);
-  const [historyPage, setHistoryPage] = useState(0);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [result, setResult] = useState<{ key: string; report: CutReport | null; error: string | null }>({ key: "", report: null, error: null });
-  const [confirming, setConfirming] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<CutRow | null>(null);
-  const saveAttempt = useRef<{ signature: string; key: string } | null>(null);
-  const queryParams = paramsFor(selection.filters, selection.projectionId);
-  queryParams.set("historyPage", String(historyPage));
-  const query = queryParams.toString();
+  const query = paramsFor(selection).toString();
   const fetchKey = `${query}#${reload}`;
   const loading = result.key !== fetchKey;
   const report = result.report;
@@ -119,50 +110,13 @@ export default function RecaudoPorCorteClient({ initialFilters, initialProjectio
     return () => controller.abort();
   }, [fetchKey, query]);
 
-  function select(filters: CutFilters, projectionId: string | null) {
-    setDraft(filters);
-    setSelection({ filters, projectionId });
-    setHistoryPage(0);
-    setSelectedRow(null);
-    setActionError(null);
-    setSuccess(null);
-    window.history.replaceState(null, "", `${window.location.pathname}?${paramsFor(filters, projectionId)}`);
-  }
-
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const sameCut = draft.day === selection.filters.day && draft.month === selection.filters.month && draft.year === selection.filters.year;
-    select(draft, sameCut ? selection.projectionId : null);
-  }
-
-  function selectProjection(id: string) {
-    const item = report?.history.find((entry) => entry.id === id);
-    if (!item) { select(selection.filters, null); return; }
-    const [year, month, day] = item.cutDate.split("-").map(Number);
-    select({ ...selection.filters, day: day as 2 | 17, month, year }, id);
-  }
-
-  async function saveProjection() {
-    if (saving || !visibleReport || visibleReport.projection) return;
-    setSaving(true);
+    setSelection(draft);
+    setReload((value) => value + 1);
+    setSelectedRow(null);
     setActionError(null);
-    const signature = JSON.stringify(selection.filters);
-    if (saveAttempt.current?.signature !== signature) saveAttempt.current = { signature, key: crypto.randomUUID() };
-    try {
-      const response = await fetch(API, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...selection.filters, requestKey: saveAttempt.current.key }),
-      });
-      const saved = await readReport(response);
-      if (!saved.projection) throw new Error("La respuesta no confirmó la proyección guardada. Vuelve a intentar.");
-      select(saved.filters, saved.projection.id);
-      setSuccess(`Proyección guardada el ${dateTime(saved.projection.createdAt)} (Colombia). Las versiones anteriores se conservan.`);
-      saveAttempt.current = null;
-      setConfirming(false);
-    } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : "No fue posible guardar la proyección.");
-      setConfirming(false);
-    } finally { setSaving(false); }
+    window.history.replaceState(null, "", `${window.location.pathname}?${paramsFor(draft)}`);
   }
 
   async function exportExcel() {
@@ -186,7 +140,6 @@ export default function RecaudoPorCorteClient({ initialFilters, initialProjectio
     } finally { setExporting(false); }
   }
 
-  const history = report?.history || [];
   const summary = visibleReport?.summary;
 
   return <div className={styles.content}>
@@ -195,10 +148,7 @@ export default function RecaudoPorCorteClient({ initialFilters, initialProjectio
       className={styles.heading}
       eyebrow="CARTERA"
       title="Recaudo por corte"
-      description="Compara lo esperado de las cuotas de un corte con los pagos aplicados a ellas."
-      actions={visibleReport?.projection
-        ? <Button onClick={() => select(selection.filters, null)} disabled={saving}><Save aria-hidden="true" />Preparar nueva proyección</Button>
-        : <Button onClick={() => setConfirming(true)} disabled={loading || saving || !visibleReport?.rows.length}><Save aria-hidden="true" />Guardar proyección</Button>}
+      description="Consulta los créditos que debían pagar en una fecha de corte y compara lo esperado con lo recibido."
     />
 
     <Card className={styles.filters}>
@@ -212,41 +162,40 @@ export default function RecaudoPorCorteClient({ initialFilters, initialProjectio
           <label className={styles.field}>Estado<Select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as CutStatus })}><option value="todos">Todos</option><option value="pendiente">Pendiente</option><option value="parcial">Parcial</option><option value="pagado">Pagado</option></Select></label>
         </div>
         <div className={styles.filterFooter}>
-          <p>Fechas y horas de Colombia. El estado filtra la consulta; al guardar se incluyen todas las cuotas del aliado y la sede seleccionados.</p>
-          <div className={styles.actions}><Button variant="secondary" type="submit" disabled={saving}>Aplicar filtros</Button><Button variant="ghost" aria-label="Actualizar recaudo" onClick={() => setReload((value) => value + 1)} disabled={loading || saving}><RefreshCw aria-hidden="true" />Actualizar</Button></div>
+          <p>Solo cuotas con vencimiento en la fecha seleccionada. Fechas y horas de Colombia.</p>
+          <div className={styles.actions}><Button type="submit" disabled={loading}>Consultar corte</Button><Button variant="ghost" aria-label="Actualizar recaudo" onClick={() => setReload((value) => value + 1)} disabled={loading}><RefreshCw aria-hidden="true" />Actualizar</Button></div>
         </div>
       </form>
     </Card>
 
-    {(error || actionError) && <div className={styles.error} role="alert"><p>{error || actionError}</p>{error && <div className={styles.actions}><Button variant="secondary" onClick={() => setReload((value) => value + 1)}>Reintentar consulta</Button>{selection.projectionId && <Button variant="secondary" onClick={() => select(selection.filters, null)}>Volver a vista previa</Button>}</div>}</div>}
-    {success && <p className={styles.success} role="status">{success}</p>}
-    {loading && <LoadingState label="Consultando cronogramas, pagos y proyecciones…" />}
+    {(error || actionError) && <div className={styles.error} role="alert"><p>{error || actionError}</p>{error && <Button variant="secondary" onClick={() => setReload((value) => value + 1)}>Reintentar consulta</Button>}</div>}
+    {loading && <LoadingState label="Consultando cronogramas y pagos…" />}
 
     {visibleReport && summary && <>
-      <Card className={styles.projection}>
+      <Card className={styles.cutSummary}>
         <div>
-          <div className={styles.projectionHeading}><h2>Corte del {dateLabel(visibleReport.cutDate)}</h2><Badge tone={visibleReport.projection ? "positive" : "warning"}>{visibleReport.projection ? "Proyección guardada" : "Vista previa"}</Badge></div>
-          <p>{visibleReport.projection ? `Esperado fijado el ${dateTime(visibleReport.projection.createdAt)}.` : "El esperado muestra el saldo actual. Guarda la proyección para iniciar la medición del recaudo posterior."}<br />Recaudo consultado al {dateTime(visibleReport.asOf)}.</p>
+          <h2>Corte del {dateLabel(visibleReport.cutDate)}</h2>
+          <p>Consulta actualizada al {dateTime(visibleReport.asOf)} (Colombia).</p>
         </div>
-        <label className={styles.field}>Proyección consultada<Select value={visibleReport.projection?.id || ""} onChange={(event) => selectProjection(event.target.value)}><option value="">Vista previa · saldo actual</option>{visibleReport.projection && !history.some((item) => item.id === visibleReport.projection?.id) && <option value={visibleReport.projection.id}>{dateLabel(visibleReport.cutDate)} · guardada {dateTime(visibleReport.projection.createdAt)}</option>}{history.map((item) => <option key={item.id} value={item.id}>{dateLabel(item.cutDate)} · guardada {dateTime(item.createdAt)}</option>)}</Select></label>
       </Card>
 
       {visibleReport.warnings.length > 0 && <div className={styles.notice} role="status">{visibleReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
 
       <section className={styles.metrics} aria-label="Indicadores del corte con los filtros aplicados">
-        <MetricCard className={styles.metric} label="Recaudo esperado" value={money(summary.expected)} detail={visibleReport.projection ? "Saldo fijado al guardar" : "Saldo actual por proyectar"} />
-        <MetricCard className={styles.metric} label="Recaudo recibido" value={money(summary.received)} detail="Pagos posteriores aplicados al corte" />
-        <MetricCard className={styles.metric} label="Pendiente por recaudar" value={money(summary.pending)} detail="Incluye ajustes de anticipos" />
+        <MetricCard className={styles.metric} label="Créditos del corte" value={summary.creditsCount.toLocaleString("es-CO")} detail="Créditos únicos con cuotas en esta fecha" />
+        <MetricCard className={styles.metric} label="Recaudo esperado" value={money(summary.expected)} detail="Valor total de las cuotas del corte" />
+        <MetricCard className={styles.metric} label="Recaudo recibido" value={money(summary.received)} detail="Todo lo aplicado, incluidos anticipos" />
+        <MetricCard className={styles.metric} label="Pendiente por recaudar" value={money(summary.pending)} detail="Esperado menos recibido" />
         <MetricCard className={styles.metric} label="Cumplimiento" value={percentage(summary.completion)} detail={summary.completion === null ? "El esperado es cero" : "Recibido / esperado"}>{summary.completion !== null && <ProgressBar value={summary.completion} label="Cumplimiento del recaudo esperado" />}</MetricCard>
         <MetricCard className={styles.metric} label="Clientes pendientes" value={summary.pendingClients.toLocaleString("es-CO")} detail="Clientes únicos con saldo en el corte" />
       </section>
 
       <Card className={styles.separate}>
-        <div><span>Anticipos previos del corte</span><strong>{money(summary.priorPayments)}</strong><p>Ya aplicados al guardar. Se separan del recaudo posterior contra el esperado.</p></div>
-        <div><span>Recuperación de cuotas anteriores</span><strong>{money(summary.previousRecovery)}</strong><p>Pagos posteriores aplicados a vencimientos anteriores, en los créditos incluidos en esta consulta.</p></div>
-        <div><span>Anticipos de cuotas futuras</span><strong>{money(summary.futureAdvances)}</strong><p>Pagos posteriores aplicados a vencimientos futuros, en los créditos incluidos en esta consulta.</p></div>
+        <div><span>Anticipos incluidos en recibido</span><strong>{money(summary.priorPayments)}</strong><p>Pagos identificados antes de las 00:00 del día del corte en Colombia y aplicados a estas cuotas. Ya forman parte del recibido; no se suman de nuevo.</p></div>
+        <div><span>Recuperación de cuotas anteriores</span><strong>{money(summary.previousRecovery)}</strong><p>Pagos desde el inicio del corte aplicados a vencimientos anteriores de estos créditos. No se incluyen en el recibido del corte.</p></div>
+        <div><span>Anticipos de cuotas futuras</span><strong>{money(summary.futureAdvances)}</strong><p>Pagos desde el inicio del corte aplicados a vencimientos futuros de estos créditos. No se incluyen en el recibido del corte.</p></div>
       </Card>
-      {summary.priorReversals !== 0 && <p className={styles.notice}>Ajuste neto de anticipos previos: <strong>{money(summary.priorReversals)}</strong>. Los reversos o cambios de aplicación modifican el pendiente; el esperado guardado se conserva.</p>}
+      {(summary.unclassifiedReceived || 0) > 0 && <p className={styles.notice}>{money(summary.unclassifiedReceived || 0)} del recibido está conciliado por cuota, pero no permite separar su fecha individual; no se clasifica como anticipo.</p>}
 
       <section className={styles.section} aria-labelledby="cut-detail-title">
         <header className={styles.sectionHeading}>
@@ -255,32 +204,17 @@ export default function RecaudoPorCorteClient({ initialFilters, initialProjectio
         </header>
         {visibleReport.rows.length ? <DataTable className={styles.table}><table>
           <caption className={styles.visuallyHidden}>Cuotas con vencimiento en el corte del {dateLabel(visibleReport.cutDate)} y sus pagos aplicados</caption>
-          <thead><tr><th scope="col">Cliente</th><th scope="col">Cédula</th><th scope="col">Crédito</th><th scope="col">Aliado</th><th scope="col">Sede</th><th scope="col">Vencimiento</th><th scope="col" className={styles.number}>Valor de cuota</th><th scope="col" className={styles.number}>Anticipos previos</th><th scope="col" className={styles.number}>Esperado</th><th scope="col" className={styles.number}>Recibido</th><th scope="col" className={styles.number}>Ajuste anticipos</th><th scope="col" className={styles.number}>Pendiente</th><th scope="col">Último pago</th><th scope="col">Estado</th><th scope="col">Detalle</th></tr></thead>
+          <thead><tr><th scope="col">Cliente</th><th scope="col">Cédula</th><th scope="col">Crédito</th><th scope="col">Aliado</th><th scope="col">Sede</th><th scope="col">Vencimiento</th><th scope="col" className={styles.number}>Valor de cuota</th><th scope="col" className={styles.number}>Anticipos incluidos</th><th scope="col" className={styles.number}>Esperado</th><th scope="col" className={styles.number}>Recibido</th><th scope="col" className={styles.number}>Pendiente</th><th scope="col">Último pago</th><th scope="col">Estado</th><th scope="col">Detalle</th></tr></thead>
           <tbody>{visibleReport.rows.map((row) => <tr key={row.key}>
             <td className={styles.identity}><strong>{row.clientName}</strong>{row.warning && <small>{row.warning}</small>}</td><td>{row.document}</td><td>{row.folio}<br /><small>Cuota {row.installment}</small></td><td>{row.aliado}</td><td>{row.sede}</td><td>{dateLabel(row.dueDate)}</td>
-            <td className={styles.number}>{money(row.installmentAmount)}</td><td className={styles.number}>{money(row.priorPayments)}</td><td className={styles.number}>{money(row.expected)}</td><td className={styles.number}>{money(row.received)}</td><td className={styles.number}>{money(row.priorReversals)}</td><td className={styles.number}>{money(row.pending)}</td><td>{dateTime(row.lastPaymentAt)}</td>
+            <td className={styles.number}>{money(row.installmentAmount)}</td><td className={styles.number}>{money(row.priorPayments)}</td><td className={styles.number}>{money(row.expected)}</td><td className={styles.number}>{money(row.received)}</td><td className={styles.number}>{money(row.pending)}</td><td>{!row.lastPaymentAt && row.reconciledReceived ? "Sin fecha individual" : dateTime(row.lastPaymentAt)}</td>
             <td><StatusPill tone={row.status === "pagado" ? "positive" : row.status === "parcial" ? "warning" : "neutral"}>{STATUS_LABELS[row.status]}</StatusPill></td><td><Button variant="ghost" aria-label={`Ver pagos de ${row.clientName}, crédito ${row.folio}, cuota ${row.installment}`} onClick={() => setSelectedRow(row)}><Eye aria-hidden="true" />Ver pagos</Button></td>
           </tr>)}</tbody>
-          <tfoot><tr><td colSpan={6}>Total de las cuotas filtradas</td><td className={styles.number}>{money(visibleReport.rows.reduce((total, row) => total + row.installmentAmount, 0))}</td><td className={styles.number}>{money(summary.priorPayments)}</td><td className={styles.number}>{money(summary.expected)}</td><td className={styles.number}>{money(summary.received)}</td><td className={styles.number}>{money(summary.priorReversals)}</td><td className={styles.number}>{money(summary.pending)}</td><td colSpan={3} /></tr></tfoot>
-        </table></DataTable> : <EmptyState title="No hay cuotas con estos filtros" description="Selecciona otro corte, aliado, sede o estado. Las proyecciones guardadas siguen disponibles en el historial." />}
-        <p className={styles.note}>El recibido sigue los pagos aplicados a las cuotas de esta proyección, también después de su vencimiento. Pendiente = esperado − recibido + ajuste de anticipos, sin saldos negativos.</p>
+          <tfoot><tr><td colSpan={6}>Total de las cuotas filtradas</td><td className={styles.number}>{money(visibleReport.rows.reduce((total, row) => total + row.installmentAmount, 0))}</td><td className={styles.number}>{money(summary.priorPayments)}</td><td className={styles.number}>{money(summary.expected)}</td><td className={styles.number}>{money(summary.received)}</td><td className={styles.number}>{money(summary.pending)}</td><td colSpan={3} /></tr></tfoot>
+        </table></DataTable> : <EmptyState title="No hay cuotas con estos filtros" description="Selecciona otro corte, aliado, sede o estado para consultar sus créditos y pagos." />}
+        <p className={styles.note}>El recibido incluye anticipos y pagos posteriores aplicados a estas cuotas, con anulaciones y reversos reflejados. Pendiente = esperado − recibido, sin saldos negativos.</p>
       </section>
-
-      <Card className={styles.history}><details open={historyOpen} onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
-        <summary>Historial y comparación de proyecciones</summary>
-        <p>Cada guardado crea una versión independiente. Los importes se muestran con los filtros de aliado, sede y estado de esta consulta.</p>
-        {history.length ? <DataTable className={styles.table}><table>
-          <thead><tr><th>Corte</th><th>Guardada (Colombia)</th><th className={styles.number}>Cuotas</th><th className={styles.number}>Esperado</th><th className={styles.number}>Recibido actual</th><th className={styles.number}>Pendiente</th><th className={styles.number}>Cumplimiento</th><th>Consulta</th></tr></thead>
-          <tbody>{history.map((item: CutHistory) => <tr key={item.id}><td className={item.warning ? styles.identity : undefined}>{dateLabel(item.cutDate)}{item.warning && <small>{item.warning}</small>}</td><td>{dateTime(item.createdAt)}</td><td className={styles.number}>{item.rowCount ?? "—"}</td><td className={styles.number}>{item.expected === null ? "—" : money(item.expected)}</td><td className={styles.number}>{item.received === null ? "—" : money(item.received)}</td><td className={styles.number}>{item.pending === null ? "—" : money(item.pending)}</td><td className={styles.number}>{item.warning ? "—" : percentage(item.completion)}</td><td><Button variant="ghost" onClick={() => selectProjection(item.id)} disabled={item.id === visibleReport.projection?.id}>{item.id === visibleReport.projection?.id ? "En consulta" : "Consultar"}</Button></td></tr>)}</tbody>
-        </table></DataTable> : <EmptyState title={historyPage ? "No hay proyecciones en esta página" : "Aún no hay proyecciones guardadas"} description={historyPage ? "Usa la navegación del historial para consultar otras versiones." : "Guarda la primera proyección para conservar su esperado y comparar el recaudo de este corte."} />}
-        {(historyPage > 0 || visibleReport.historyHasMore) && <div className={styles.historyPagination}>
-          <span>Página {visibleReport.historyPage + 1}</span>
-          <div className={styles.actions}><Button variant="secondary" disabled={historyPage === 0} onClick={() => setHistoryPage((page) => Math.max(0, page - 1))}>Anterior</Button><Button variant="secondary" disabled={!visibleReport.historyHasMore} onClick={() => setHistoryPage((page) => page + 1)}>Siguiente</Button></div>
-        </div>}
-      </details></Card>
     </>}
-
-    <ConfirmDialog open={confirming} title="Guardar proyección del corte" description="Se fijará el saldo pendiente de todas las cuotas del corte para el aliado y la sede seleccionados, con fecha y hora de Colombia. El filtro de estado solo afecta la consulta. Se creará una nueva versión y se conservarán las anteriores. Esta acción no cambia créditos ni pagos." confirmLabel="Guardar proyección" busy={saving} onCancel={() => { if (!saving) setConfirming(false); }} onConfirm={saveProjection} />
     <PaymentDetail row={selectedRow} onClose={() => setSelectedRow(null)} />
   </div>;
 }

@@ -25,12 +25,10 @@
 .filterFooter { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 16px; }
 .filterFooter p, .note { margin: 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.projection { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px; }
-.projectionHeading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.projection h2, .sectionHeading h2, .history h2 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -.02em; }
-.projection p { margin: 8px 0 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
-.projection select { max-width: 480px; }
-.metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+.cutSummary { padding: 24px; }
+.cutSummary h2, .sectionHeading h2 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -.02em; }
+.cutSummary p { margin: 8px 0 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
+.metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; }
 .metric { padding: 24px 16px; }
 .metric > span { font-size: 14px; }
 .metric > strong { margin-top: 12px; font-size: clamp(22px, 1.8vw, 30px); font-weight: 800; line-height: 1.3; letter-spacing: -.025em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
@@ -58,21 +56,16 @@
 .table .creditLink { text-decoration: underline; text-underline-offset: 3px; }
 .table caption { text-align: left; padding: 16px; color: var(--fp-muted); font-size: 14px; }
 .table button { white-space: nowrap; }
-.history { padding: 24px; }
-.history summary { cursor: pointer; min-height: 40px; font-size: 20px; font-weight: 750; }
-.history p { color: var(--fp-muted); font-size: 14px; margin: 8px 0 16px; }
-.history .table { margin-top: 16px; }
-.historyPagination { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 16px; color: var(--fp-muted); font-size: 14px; }
 .error { padding: 16px 24px; border: 1px solid var(--fp-danger); border-radius: var(--fp-radius-md); background: var(--fp-danger-soft); color: var(--fp-danger); }
 .error p { margin: 0 0 12px; line-height: 1.5; }
 .notice { padding: 16px 24px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-amber-soft); color: var(--fp-graphite); font-size: 14px; line-height: 1.5; }
-.success { padding: 16px 24px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-lime-soft); font-size: 14px; }
 .dialog { position: fixed; inset: 0; margin: auto; width: min(1050px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-lg); background: var(--fp-surface); color: var(--fp-graphite); padding: 24px; box-shadow: var(--fp-shadow-md); }
 .dialog::backdrop { background: rgb(7 24 39 / 55%); }
 .dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .dialog h2 { margin: 0; font-size: 24px; font-weight: 800; }
 .dialog header p { margin: 8px 0 0; color: var(--fp-muted); font-size: 14px; }
 .dialog .note { margin-top: 16px; }
+.reconciledPayment { margin: 0 0 24px; font-size: 14px; line-height: 1.5; }
 .sourcePayments { margin-top: 24px; }
 .sourcePayments h3 { font-size: 18px; font-weight: 750; }
 .sourcePayments p { margin: 8px 0 16px; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
@@ -86,18 +79,15 @@
   .main { padding: 24px; }
   .filterFields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .projection { align-items: stretch; flex-direction: column; gap: 16px; }
-  .projection select { max-width: none; }
 }
 
 @media (max-width: 700px) {
   .main { padding: 16px; }
   .content { gap: 16px; }
-  .filters, .projection, .history, .separate { padding: 16px; }
+  .filters, .cutSummary, .separate { padding: 16px; }
   .filterFields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .filterFooter { align-items: stretch; flex-direction: column; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  .metric:last-child { grid-column: 1 / -1; }
   .metric { padding: 16px; }
   .metric > strong { font-size: 22px; }
   .separate { grid-template-columns: 1fr; gap: 16px; }

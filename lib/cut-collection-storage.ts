@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { assertCutUuid, CutCollectionError, cutDateFromFilters, type CutAccess } from "./cut-collection-access";
-import { captureCutSnapshot, buildCutRows, summarizeCutRows } from "./cut-collection";
+import { captureCutSnapshot, buildCutRows, buildDirectCutRows, summarizeCutRows } from "./cut-collection";
 import type { CutCredit, CutFilters, CutHistory, CutReport, CutSnapshot } from "./cut-collection-types";
 
 export interface CutDb {
@@ -65,6 +65,7 @@ async function readCredits(tx: CutDb, sedeIds: number[]): Promise<CutCredit[]> {
     id: row.id, folio: displayNumbers.get(row.id) || row.folio, clientName: row.clienteNombre,
     document: row.clienteDocumento || "", aliadoId: row.aliadoId, aliado: row.aliado || "Sin aliado",
     sedeId: row.sedeId, sede: row.sede, state: row.estado,
+    settledAt: row.pazYSalvoEmitidoAt ? iso(row.pazYSalvoEmitidoAt) : null,
     plan: { montoCredito: Number(row.montoCredito), valorCuota: Number(row.valorCuota), plazoMeses: row.plazoMeses,
       frecuenciaPago: row.frecuenciaPago, fechaPrimerPago: row.fechaPrimerPago ? calendar(row.fechaPrimerPago) : null,
       fechaProximoPago: row.fechaProximoPago ? calendar(row.fechaProximoPago) : null,
@@ -185,6 +186,26 @@ export function createCutCollectionStore(database: CutDatabase) {
         sedes: scope.authorized.map(({ id, nombre, aliadoId }) => ({ id, nombre, aliadoId })) } };
   }
   return {
+    async directReport(access: CutAccess, filters: CutFilters): Promise<CutReport> {
+      return database.$transaction(async tx => {
+        const scope = await branches(tx, access, filters);
+        const [{ now }] = await tx.$queryRawUnsafe<{ now: Date | string }[]>(`SELECT CURRENT_TIMESTAMP AS now`);
+        const asOf = iso(now);
+        const cutDate = cutDateFromFilters(filters);
+        const credits = await readCredits(tx, scope.selected.map(branch => branch.id));
+        let calculated: ReturnType<typeof buildDirectCutRows>;
+        try { calculated = buildDirectCutRows(credits, cutDate, asOf); }
+        catch (error) { throw new CutCollectionError(error instanceof Error ? error.message : "No se pudo conciliar el cronograma y sus recaudos.", 409); }
+        const rows = calculated.rows.filter(row => filters.status === "todos" || row.status === filters.status);
+        const allies = new Map<number, string>();
+        for (const branch of scope.authorized) if (branch.aliadoId) allies.set(branch.aliadoId, branch.aliado || "Sin aliado");
+        return { ok: true, mode: "consulta", filters, cutDate, asOf, projection: null,
+          rows, summary: summarizeCutRows(rows), warnings: [...new Set(rows.flatMap(row => row.warning ? [`${row.folio}: ${row.warning}`] : []))],
+          history: [], historyPage: 0, historyHasMore: false,
+          options: { aliados: [...allies].map(([id, nombre]) => ({ id, nombre })).sort((a,b) => a.nombre.localeCompare(b.nombre)),
+            sedes: scope.authorized.map(({ id, nombre, aliadoId }) => ({ id, nombre, aliadoId })) } };
+      }, transactionOptions);
+    },
     async report(access: CutAccess, filters: CutFilters, projectionId?: string | null, historyPage = 0) {
       if (projectionId) assertCutUuid(projectionId);
       if (!Number.isSafeInteger(historyPage) || historyPage < 0 || !Number.isSafeInteger(historyPage * HISTORY_PAGE_SIZE)) {
@@ -213,6 +234,9 @@ async function defaultStore() {
 }
 export async function getCutCollectionReport(access: CutAccess, filters: CutFilters, projectionId?: string | null, historyPage = 0) {
   return (await defaultStore()).report(access, filters, projectionId, historyPage);
+}
+export async function getDirectCutCollectionReport(access: CutAccess, filters: CutFilters) {
+  return (await defaultStore()).directReport(access, filters);
 }
 export async function saveCutCollectionProjection(access: CutAccess, filters: CutFilters, requestKey: string) {
   return (await defaultStore()).save(access, filters, requestKey);

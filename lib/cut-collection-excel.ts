@@ -72,8 +72,7 @@ export function buildCutCollectionWorkbook(report: CutReport) {
   entry("Sede", report.filters.sedeId == null ? "Todas las permitidas" :
     text(report.options.sedes.find((item) => item.id === report.filters.sedeId)?.nombre || report.filters.sedeId));
   entry("Estado de cuota", text(report.filters.status));
-  entry("Versión / ID de proyección", report.projection ? text(report.projection.id) : "Vista previa sin guardar");
-  entry("Proyección guardada (Bogotá)", date(report.projection?.createdAt || null, true), DATETIME);
+  entry("Tipo de reporte", "Consulta directa");
   entry("Consultado al (Bogotá)", date(report.asOf, true), DATETIME);
   entry("Zona horaria", "America/Bogota (UTC-05:00)");
   entry("Recaudo esperado", amount(report.summary.expected), COP);
@@ -82,62 +81,62 @@ export function buildCutCollectionWorkbook(report: CutReport) {
   entry("Porcentaje de cumplimiento", report.summary.completion == null ? "No aplica: esperado cero" : report.summary.completion / 100,
     report.summary.completion == null ? "@" : "0.00%");
   entry("Clientes pendientes", amount(report.summary.pendingClients), "0");
-  entry("Anticipos previos", amount(report.summary.priorPayments), COP);
-  entry("Ajustes de anticipos previos", amount(report.summary.priorReversals), COP);
+  entry("Créditos del corte filtrado", amount(report.summary.creditsCount), "0");
+  entry("Anticipos anteriores al corte", amount(report.summary.priorPayments), COP);
+  entry("Criterio del esperado", "Valor total de las cuotas que vencen en la fecha seleccionada.");
+  entry("Criterio del recibido", "Pagos vigentes aplicados a esas cuotas, incluidos anticipos y pagos posteriores al vencimiento.");
+  entry("Tratamiento de anticipos", "Los anticipos ya están incluidos en el recaudo recibido. No se suman nuevamente.");
   entry("Recuperación de cuotas anteriores", amount(report.summary.previousRecovery), COP);
   entry("Anticipos de cuotas futuras", amount(report.summary.futureAdvances), COP);
+  entry("Periodo de otros recaudos", "Pagos desde el inicio del corte (hora Colombia) hasta la consulta; no se suman al recibido del corte.");
+  if (report.summary.unclassifiedReceived) entry("Recibido sin fecha individual de atribución", amount(report.summary.unclassifiedReceived), COP);
   entry("Cuotas en el detalle filtrado", report.rows.length, "0");
-  entry("Comparación histórica", "Cada versión conserva su esperado; consulta su ID para ver sus cuotas.");
-  entry("Página de historial exportada", (report.historyPage ?? 0) + 1, "0");
-  entry("Alcance del histórico exportado", "Solo las versiones de la página actual. Cambia la página para exportar otras versiones.");
-  entry("Hay más páginas de historial", report.historyHasMore ? "Sí" : "No");
   for (const warning of report.warnings) entry("Observación", text(warning));
 
   const detail = sheet(workbook, "Cuotas", [
     { header: "Cliente", width: 36 }, { header: "Cédula" }, { header: "Número de crédito", width: 28 },
     { header: "Aliado", width: 30 }, { header: "Sede", width: 30 }, { header: "Vencimiento", format: DATE },
-    { header: "Valor de cuota", format: COP }, { header: "Anticipos previos", format: COP },
+    { header: "Valor de cuota", format: COP }, { header: "Anticipos anteriores al corte", format: COP },
     { header: "Esperado", format: COP }, { header: "Recibido", format: COP }, { header: "Pendiente", format: COP },
     { header: "Último pago (Bogotá)", format: DATETIME }, { header: "Estado" },
-    { header: "Ajustes de anticipos previos", format: COP }, { header: "Número de cuota", format: "0" }, { header: "Observación", width: 50 },
+    { header: "Número de cuota", format: "0" }, { header: "Observación", width: 50 },
   ]);
   const payments = sheet(workbook, "Pagos aplicados", [
     { header: "Cliente", width: 36 }, { header: "Cédula" }, { header: "Número de crédito", width: 28 },
     { header: "Número de cuota", format: "0" }, { header: "ID de pago" }, { header: "Fecha de pago (Bogotá)", format: DATETIME },
     { header: "Registrado (Bogotá)", format: DATETIME }, { header: "Método" }, { header: "Estado de pago" },
     { header: "Valor total del pago (referencia)", format: COP, width: 30 },
-    { header: "Aplicado a cuota al guardar", format: COP }, { header: "Aplicado a cuota actualmente", format: COP },
-    { header: "Recibido contra esperado", format: COP }, { header: "Pago previo a proyección" }, { header: "Origen de la atribución", width: 55 },
+    { header: "Anticipo aplicado a la cuota", format: COP }, { header: "Aplicado vigente a la cuota", format: COP },
+    { header: "Recibido del corte", format: COP }, { header: "Pago anterior al corte" }, { header: "Origen de la atribución", width: 55 },
   ]);
   for (const row of report.rows) {
     detail.addRow([
       text(row.clientName), text(row.document), text(row.folio), text(row.aliado), text(row.sede), date(row.dueDate),
       amount(row.installmentAmount), amount(row.priorPayments), amount(row.expected), amount(row.received), amount(row.pending),
-      date(row.lastPaymentAt, true), text(row.status), amount(row.priorReversals), row.installment, text(row.warning),
+      date(row.lastPaymentAt, true), text(row.status), row.installment, text(row.warning),
     ]);
     for (const payment of row.payments) payments.addRow([
       text(row.clientName), text(row.document), text(row.folio), row.installment, text(payment.id),
       date(payment.paidAt, true), date(payment.createdAt, true), text(payment.method), text(payment.state),
       amount(payment.amount), amount(payment.appliedBefore), amount(payment.appliedNow), amount(payment.received), payment.previous ? "Sí" : "No", "Distribución por cuota",
     ]);
+    if (row.reconciledReceived) {
+      const prior = Math.max(0, row.priorPayments - row.payments.reduce((sum, payment) => sum + payment.appliedBefore, 0));
+      payments.addRow([
+        text(row.clientName), text(row.document), text(row.folio), row.installment, "", null, null, "", "",
+        null, amount(prior), amount(row.reconciledReceived), amount(row.reconciledReceived), "",
+        "Efectivo conciliado por cuota; incluido en recibido, sin atribución individual por pago",
+      ]);
+    }
     for (const payment of row.sourcePayments || []) payments.addRow([
       text(row.clientName), text(row.document), text(row.folio), row.installment, text(payment.id),
       date(payment.paidAt, true), date(payment.createdAt, true), text(payment.method), text(payment.state),
-      amount(payment.amount), null, null, null, "Sí", "Conciliación base; distribución no individualizada",
+      amount(payment.amount), null, null, null,
+      new Date(payment.paidAt).getTime() < new Date(`${report.cutDate}T00:00:00-05:00`).getTime() ? "Sí" : "No",
+      "Conciliación base; distribución no individualizada",
     ]);
   }
-  const history = sheet(workbook, "Histórico", [
-    { header: "Versión / ID de proyección", width: 40 }, { header: "Corte", format: DATE },
-    { header: "Guardada (Bogotá)", format: DATETIME }, { header: "Esperado", format: COP },
-    { header: "Recibido", format: COP }, { header: "Pendiente", format: COP },
-    { header: "Cumplimiento", format: "0.00%" }, { header: "Cuotas", format: "0" }, { header: "Observación", width: 55 },
-  ]);
-  for (const item of report.history) history.addRow([
-    text(item.id), date(item.cutDate), date(item.createdAt, true), amount(item.expected), amount(item.received), amount(item.pending),
-    item.completion == null ? item.expected == null ? "Requiere conciliación" : "No aplica: esperado cero" : item.completion / 100,
-    amount(item.rowCount), text(item.warning),
-  ]);
   finish(summary, false);
-  for (const worksheet of [detail, payments, history]) finish(worksheet);
+  for (const worksheet of [detail, payments]) finish(worksheet);
   return workbook;
 }

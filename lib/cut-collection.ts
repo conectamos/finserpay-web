@@ -223,9 +223,95 @@ export function summarizeCutRows(rows: CutRow[], previousRecovery = 0, futureAdv
   const visibleCredits = new Map(rows.map(row => [row.creditId, row]));
   const hasOtherAmounts = rows.some(row => row.previousRecovery !== undefined || row.futureAdvances !== undefined);
   return { expected: money(expected), received: money(received), pending: money(sum("pending")),
+    creditsCount: visibleCredits.size,
+    unclassifiedReceived: money(rows.reduce((total, row) => total + Math.round((row.unclassifiedReceived || 0) * 100), 0)),
     completion: expected > 0 ? Math.round(received / expected * 10000) / 100 : null,
     pendingClients: new Set(rows.filter(row => row.pending > 0).map(row => row.document.replace(/[.\s-]/g, "").toUpperCase() || `credit:${row.creditId}`)).size,
     priorPayments: money(sum("priorPayments")), priorReversals: money(sum("priorReversals")),
     previousRecovery: hasOtherAmounts ? money([...visibleCredits.values()].reduce((total, row) => total + Math.round((row.previousRecovery || 0) * 100), 0)) : previousRecovery,
     futureAdvances: hasOtherAmounts ? money([...visibleCredits.values()].reduce((total, row) => total + Math.round((row.futureAdvances || 0) * 100), 0)) : futureAdvances };
+}
+
+/** A read-only cohort: scheduled installments versus all cash actually applied.
+ * fechaProximoPago is a moving collection cursor, not a replacement for past due
+ * dates. In particular, paying a November 2 installment must not remove it from
+ * that cut when the cursor advances to November 17.
+ */
+export function buildDirectCutRows(credits: CutCredit[], cutDate: string, asOf: string) {
+  calendar(cutDate);
+  const start = new Date(`${cutDate}T00:00:00.000-05:00`).getTime();
+  const instant = new Date(asOf).getTime();
+  if (!Number.isFinite(instant)) throw new CutCollectionError("La fecha de consulta es inválida.");
+  const ids = new Set<number>();
+  const rows: CutRow[] = [];
+  const warnings = new Set<string>();
+  for (const credit of credits) {
+    if (ids.has(credit.id)) throw new CutCollectionError(`El crédito ${credit.folio} está duplicado.`);
+    ids.add(credit.id);
+    if (["ANULADO", "ANULADA", "CANCELADO", "CANCELADA"].includes(credit.state.toUpperCase())) continue;
+    if (credit.settledAt && new Date(credit.settledAt).getTime() < start) continue;
+    if (!credit.plan.planCapitalVigente && ((!credit.plan.fechaPrimerPago && !credit.plan.fechaProximoPago) || !(Number(credit.plan.montoCredito) > 0))) continue;
+    const current = allocation({ ...credit, plan: {
+      ...credit.plan, fechaProximoPago: null,
+      fechaPrimerPago: credit.plan.fechaPrimerPago || credit.plan.fechaProximoPago,
+    } }, asOf);
+    const due = current.plan.installments.filter(row => !row.eliminada && row.valorProgramado > 0 && row.fechaVencimiento === cutDate);
+    if (!due.length) continue;
+    const notes: string[] = [];
+    if (credit.plan.settled) notes.push("Crédito finalizado: se muestra solo efectivo recibido; una condonación no se cuenta como recaudo ni la diferencia como saldo exigible.");
+    if (current.unallocated) notes.push(`Hay ${money(current.unallocated)} de recaudos sin cupo en el cronograma; no se incluyen en el cumplimiento.`);
+    const seedSources = (current.capital?.abonosAlCorte || []).map(entry => current.payments.get(entry.id)!);
+    const beforeCut = (payment: CutPayment) => new Date(payment.paidAt).getTime() < start;
+    for (const payment of current.payments.values()) {
+      if (!Number.isFinite(new Date(payment.paidAt).getTime())) throw new CutCollectionError(`El crédito ${credit.folio} tiene un recaudo sin fecha válida.`);
+    }
+    const seedAllBefore = seedSources.length > 0 && seedSources.every(beforeCut);
+    const seedAllAfter = seedSources.length > 0 && seedSources.every(payment => !beforeCut(payment));
+    // Other cohorts only describe receipts since this cut began, never their
+    // all-time collection. A mixed-date capital aggregate cannot be dated by ID.
+    const afterAmount = (numero: number) => {
+      const assigned = [...(current.assigned.get(numero) || [])].reduce((sum, [id, value]) => sum + (beforeCut(current.payments.get(id)!) ? 0 : value), 0);
+      return assigned + (seedAllAfter ? current.seed.get(numero) || 0 : 0);
+    };
+    let previous = 0;
+    let future = 0;
+    for (const installment of current.plan.installments) {
+      if (installment.eliminada) continue;
+      if (installment.fechaVencimiento < cutDate) previous += afterAmount(installment.numero);
+      if (installment.fechaVencimiento > cutDate) future += afterAmount(installment.numero);
+    }
+    for (const installment of due) {
+      const assigned = current.assigned.get(installment.numero) || new Map<number, number>();
+      const seed = current.seed.get(installment.numero) || 0;
+      const expected = cents(installment.valorProgramado);
+      const received = seed + [...assigned.values()].reduce((sum, value) => sum + value, 0);
+      if (received !== cents(installment.valorAbonado) || received > expected) throw new CutCollectionError(`El recaudo del crédito ${credit.folio} no concilia con su cuota.`);
+      const pending = Math.max(0, expected - received);
+      const prior = (seedAllBefore ? seed : 0) + [...assigned].reduce((sum, [id, value]) => sum + (beforeCut(current.payments.get(id)!) ? value : 0), 0);
+      const unclassified = !seedAllBefore && !seedAllAfter ? seed : 0;
+      const payments = [...assigned].map(([id, value]) => {
+        const payment = current.payments.get(id)!;
+        return { id, paidAt: payment.paidAt, createdAt: payment.createdAt, method: payment.method,
+          state: payment.state, amount: payment.value, appliedBefore: beforeCut(payment) ? money(value) : 0,
+          appliedNow: money(value), received: money(value), previous: beforeCut(payment) };
+      });
+      const sourcePayments = seed ? seedSources.map(payment => ({ id: payment.id, paidAt: payment.paidAt,
+        createdAt: payment.createdAt, method: payment.method, state: payment.state, amount: payment.value })) : [];
+      const rowNotes = [...notes];
+      if (seed) rowNotes.push("El plan de capital conserva efectivo conciliado por cuota; los recibos fuente no tienen una distribución individual y no se suman nuevamente.");
+      if (unclassified) rowNotes.push("Parte del recibido está conciliado por cuota, pero mezcla fechas anteriores y posteriores al corte sin distribución individual; no se clasifica como anticipo.");
+      rows.push({ key: `${credit.id}:${installment.numero}`, creditId: credit.id, installment: installment.numero,
+        clientName: credit.clientName, document: credit.document, folio: credit.folio,
+        aliadoId: credit.aliadoId, aliado: credit.aliado, sedeId: credit.sedeId, sede: credit.sede,
+        dueDate: cutDate, installmentAmount: money(expected), expected: money(expected), received: money(received),
+        pending: money(pending), priorPayments: money(prior), priorReversals: 0, unclassifiedReceived: money(unclassified), reconciledReceived: money(seed),
+        lastPaymentAt: payments.map(payment => payment.paidAt).sort().at(-1) || null,
+        status: pending === 0 ? "pagado" : received > 0 ? "parcial" : "pendiente",
+        payments, sourcePayments, warning: rowNotes.length ? rowNotes.join(" ") : null,
+        previousRecovery: money(previous), futureAdvances: money(future) });
+      for (const note of rowNotes) warnings.add(`${credit.folio}: ${note}`);
+    }
+  }
+  const summary = summarizeCutRows(rows);
+  return { rows, previousRecovery: summary.previousRecovery, futureAdvances: summary.futureAdvances, warnings: [...warnings] };
 }

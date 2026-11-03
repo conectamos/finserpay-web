@@ -35,13 +35,12 @@ function initialFilters(query: Query): CutFilters {
 
 export const metadata = {
   title: "Recaudo por corte | FINSER PAY",
-  description: "Proyecciones de cuotas por vencimiento y seguimiento del recaudo aplicado.",
+  description: "Consulta de créditos por fecha de vencimiento y comparación del recaudo esperado y recibido.",
 };
 
 export default async function RecaudoPorCortePage({ searchParams }: { searchParams: Promise<Query> }) {
   const { admin, session, supervisor } = await requireAdminOrSupervisorDashboardAccess();
   const query = await searchParams;
-  const projectionId = String(first(query.projectionId) || "");
 
   return <div className={styles.shell}>
     <FinserNavigation
@@ -56,7 +55,6 @@ export default async function RecaudoPorCortePage({ searchParams }: { searchPara
     <main className={styles.main}>
       <RecaudoPorCorteClient
         initialFilters={initialFilters(query)}
-        initialProjectionId={/^[a-f0-9-]{36}$/i.test(projectionId) ? projectionId : null}
       />
     </main>
   </div>;

@@ -55,7 +55,7 @@ const REPORTS: ReportDefinition[] = [
   },
   {
     category: "Recaudos",
-    description: "Proyección y cumplimiento de las cuotas de cada corte.",
+      description: "Créditos del corte, recaudo esperado y pagos recibidos.",
     formats: ["Excel"],
     href: "/dashboard/reportes/recaudo-por-corte",
     kind: "cut-collection",

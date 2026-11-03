@@ -4,21 +4,23 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import ts from "typescript";
+import { createJiti } from "jiti";
 
 const require = createRequire(import.meta.url);
+const jiti = createJiti(import.meta.url);
+const { CutCollectionError, parseCutFilters, cutAccessFromDashboard } = await jiti.import("../lib/cut-collection-access.ts");
 const root = path.resolve(import.meta.dirname, "..");
-const origin = "https://finser.example";
-const url = `${origin}/api/reportes/recaudo-por-corte`;
-const id = "d088e4a2-c9d0-4310-aa0d-6023b48b2196";
+const url = "https://finser.example/api/reportes/recaudo-por-corte";
 const filters = { day: 17, month: 10, year: 2026, aliadoId: 1, sedeId: 10, status: "parcial" };
+const query = new URLSearchParams(Object.entries(filters).map(([key, value]) => [key, String(value)]));
 const access = { userId: 8, central: false, aliadoId: 1, sedeId: 10 };
-const report = { ok: true, cutDate: "2026-10-17", projection: { id }, rows: [], filters };
-class CutCollectionError extends Error { constructor(message, status) { super(message); this.status = status; } }
+const report = { ok: true, mode: "consulta", cutDate: "2026-10-17", projection: null, history: [],
+  historyPage: 0, historyHasMore: false, rows: [], filters, summary: { creditsCount: 0 } };
 
-// Execute the real handlers with access, parsing, persistence and workbook
-// boundaries substituted. Their domain contracts have independent tests.
+// Real handlers and filter parsing; only session, report and workbook boundaries
+// are substituted. Legacy persistence must never run.
 function harness(overrides = {}) {
-  const calls = { access: 0, parse: [], read: [], save: [], excel: [] };
+  const calls = { access: 0, parse: [], read: [], legacyRead: [], save: [], excel: [] };
   const source = readFileSync(path.join(root, "app/api/reportes/recaudo-por-corte/route.ts"), "utf8");
   const { outputText } = ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
@@ -27,12 +29,16 @@ function harness(overrides = {}) {
   function scopedRequire(name) {
     if (name === "@/lib/cut-collection-access") return {
       CutCollectionError,
-      getCutCollectionAccess: async () => { calls.access++; if (overrides.accessError) throw overrides.accessError; return access; },
-      parseCutFilters: value => { calls.parse.push(value instanceof URLSearchParams ? Object.fromEntries(value) : value); return filters; },
+      getCutCollectionAccess: async () => { calls.access++; if (overrides.accessError) throw overrides.accessError; return overrides.access ?? access; },
+      parseCutFilters: value => {
+        calls.parse.push(Object.fromEntries(value));
+        return parseCutFilters(value, new Date("2026-11-02T15:00:00Z"));
+      },
     };
     if (name === "@/lib/cut-collection-storage") return {
-      getCutCollectionReport: async (...args) => { calls.read.push(args); if (overrides.error) throw overrides.error; return report; },
-      saveCutCollectionProjection: async (...args) => { calls.save.push(args); if (overrides.error) throw overrides.error; return report; },
+      getDirectCutCollectionReport: async (...args) => { calls.read.push(args); if (overrides.error) throw overrides.error; return report; },
+      getCutCollectionReport: async (...args) => { calls.legacyRead.push(args); throw new Error("No se debe consultar una proyección"); },
+      saveCutCollectionProjection: async (...args) => { calls.save.push(args); throw new Error("No se debe guardar una proyección"); },
     };
     if (name === "@/lib/cut-collection-excel") return {
       buildCutCollectionWorkbook: value => { calls.excel.push(value); return { xlsx: { writeBuffer: async () => Buffer.from("PK-test") } }; },
@@ -43,118 +49,104 @@ function harness(overrides = {}) {
   return { ...mod.exports, calls };
 }
 
-function post(body = { ...filters, requestKey: id }, headers = {}, target = url) {
-  const merged = new Headers({ origin, "content-type": "application/json", ...headers });
-  for (const [name, value] of Object.entries(headers)) if (value === null) merged.delete(name);
-  return new Request(target, { method: "POST", headers: merged, body: typeof body === "string" ? body : JSON.stringify(body) });
-}
 function assertPrivate(response) {
   assert.match(response.headers.get("cache-control"), /private, no-store/);
   assert.equal(response.headers.get("vary"), "Cookie");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 }
 
-test("GET y POST exigen sesión y permisos antes de consultar o guardar", async () => {
+test("GET y POST exigen sesión y permisos antes de consultar o rechazar la operación retirada", async () => {
   for (const status of [401, 403]) {
     const handler = harness({ accessError: new CutCollectionError("Sin acceso", status) });
-    for (const response of [await handler.GET(new Request(url)), await handler.POST(post())]) {
+    for (const response of [await handler.GET(new Request(url)), await handler.POST()]) {
       assert.equal(response.status, status);
       assertPrivate(response);
     }
     assert.equal(handler.calls.read.length, 0);
+    assert.equal(handler.calls.legacyRead.length, 0);
     assert.equal(handler.calls.save.length, 0);
   }
 });
 
-test("consulta pasa filtros e ID junto al alcance de sesión, sin confiar en permisos URL", async () => {
-  const handler = harness();
-  const response = await handler.GET(new Request(`${url}?day=17&month=10&year=2026&status=parcial&projectionId=${id}&central=true&userId=999`));
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), report);
-  assert.deepEqual(handler.calls.read, [[access, filters, id, 0]]);
-  assert.equal(handler.calls.save.length, 0);
-  assertPrivate(response);
+test("consulta directa recibe los filtros y el alcance real de central, aliado y supervisor", async () => {
+  for (const dashboard of [
+    { admin: true, supervisor: false, session: { id: 8, sedeId: 10, aliadoAccesoId: 1, aliadoAccesoCodigo: "FINSERPAY" } },
+    { admin: true, supervisor: false, session: { id: 8, sedeId: 10, aliadoAccesoId: 1, aliadoAccesoCodigo: "ALIADO" } },
+    { admin: false, supervisor: true, session: { id: 8, sedeId: 10, aliadoAccesoId: 1, aliadoAccesoCodigo: "ALIADO" } },
+  ]) {
+    const authorized = cutAccessFromDashboard(dashboard);
+    const handler = harness({ access: authorized });
+    const response = await handler.GET(new Request(`${url}?${query}&central=true&userId=999`));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), report);
+    assert.deepEqual(handler.calls.read, [[authorized, filters]]);
+    assert.equal(handler.calls.legacyRead.length, 0);
+    assert.equal(handler.calls.save.length, 0);
+    assertPrivate(response);
+  }
 });
 
-test("Excel usa el mismo reporte filtrado, es privado y conserva versión en nombre de archivo", async () => {
+test("enlaces heredados ignoran ID y página de proyección incluso vacíos, inválidos o repetidos", async () => {
+  for (const inherited of [
+    "projectionId=&historyPage=", "projectionId=../../secret&historyPage=-1",
+    "projectionId=old&projectionId=other&historyPage=bad&historyPage=100001",
+    "projectionId=d088e4a2-c9d0-4310-aa0d-6023b48b2196&historyPage=4",
+  ]) {
+    const handler = harness();
+    const response = await handler.GET(new Request(`${url}?${query}&${inherited}`));
+    assert.equal(response.status, 200);
+    assert.deepEqual(handler.calls.read, [[access, filters]]);
+    assert.equal("projectionId" in handler.calls.parse[0], false);
+    assert.equal("historyPage" in handler.calls.parse[0], false);
+    assert.equal(handler.calls.legacyRead.length, 0);
+    assert.equal(handler.calls.save.length, 0);
+  }
+});
+
+test("Excel usa exactamente el reporte directo filtrado y nombra el archivo por fecha", async () => {
   const handler = harness();
-  const response = await handler.GET(new Request(`${url}?format=xlsx&projectionId=${id}&status=parcial`));
+  const response = await handler.GET(new Request(`${url}?${query}&format=xlsx&projectionId=invalid&historyPage=old`));
   assert.equal(response.status, 200);
-  assert.deepEqual(handler.calls.read, [[access, filters, id, 0]]);
+  assert.deepEqual(handler.calls.read, [[access, filters]]);
   assert.deepEqual(handler.calls.excel, [report]);
+  assert.equal(handler.calls.legacyRead.length, 0);
   assert.equal(handler.calls.save.length, 0);
   assert.equal(response.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  assert.match(response.headers.get("content-disposition"), new RegExp(`attachment;.*2026-10-17_${id}\\.xlsx`));
+  assert.equal(response.headers.get("content-disposition"), 'attachment; filename="FINSERPAY_Recaudo_2026-10-17.xlsx"');
   assert.equal(response.headers.get("content-length"), "7");
   assert.equal(Buffer.from(await response.arrayBuffer()).toString(), "PK-test");
   assertPrivate(response);
 });
 
-test("guardar pasa actor desde sesión, filtros y clave idempotente sin aceptar snapshot cliente", async () => {
-  const handler = harness();
-  const response = await handler.POST(post({ ...filters, requestKey: id, userId: 999, snapshot: { expected: 1 }, central: true }));
-  assert.equal(response.status, 201);
-  assert.deepEqual(handler.calls.save, [[access, filters, id]]);
-  assert.equal(handler.calls.read.length, 0);
-  assertPrivate(response);
+test("POST responde 410 tras autorizar sin leer el cuerpo, consultar ni guardar", async () => {
+  for (const body of ["{", JSON.stringify({ ...filters, requestKey: "old", snapshot: { expected: 1 }, userId: 999 })]) {
+    const handler = harness();
+    const request = new Request(url, { method: "POST", body });
+    const response = await handler.POST(request);
+    assert.equal(response.status, 410);
+    assert.match((await response.json()).error, /consulta directamente/);
+    assert.equal(request.bodyUsed, false);
+    assert.equal(handler.calls.access, 1);
+    assert.equal(handler.calls.parse.length, 0);
+    assert.equal(handler.calls.read.length, 0);
+    assert.equal(handler.calls.legacyRead.length, 0);
+    assert.equal(handler.calls.save.length, 0);
+    assertPrivate(response);
+  }
 });
 
-test("parámetros repetidos, identificadores y formato inválidos no consultan storage", async () => {
-  for (const query of ["projectionId=", "projectionId=1", "projectionId=../../secret", "projectionId=00000000-0000-0000-0000-000000000000", "day=2&day=17", `projectionId=${id}&projectionId=${id}`, "format=csv", "format=", "historyPage=-1", "historyPage=1.5", "historyPage=100001", "historyPage=", "historyPage=true", "historyPage=1&historyPage=2"]) {
+test("filtros y formatos inválidos o repetidos no consultan el reporte", async () => {
+  for (const invalid of ["day=2&day=17", "format=xlsx&format=xlsx", "format=csv", "format=", "day=3",
+    "month=13", "year=1999", "aliadoId=-1", "sedeId=1.5", "status=invalid", "status=parcial&status=pagado"]) {
     const handler = harness();
-    const response = await handler.GET(new Request(`${url}?${query}`));
-    assert.equal(response.status, 400, query);
+    const response = await handler.GET(new Request(`${url}?${invalid}`));
+    assert.equal(response.status, 400, invalid);
     assert.equal(handler.calls.read.length, 0);
     assertPrivate(response);
   }
-  for (const requestKey of [null, "", 123, true, "wrong", `${id} `]) {
-    const handler = harness();
-    assert.equal((await handler.POST(post({ ...filters, requestKey }))).status, 400);
-    assert.equal(handler.calls.save.length, 0);
-  }
 });
 
-test("la página del historial se valida y se pasa explícita a consulta y exportación", async () => {
-  for (const format of ["", "&format=xlsx"]) {
-    const handler = harness();
-    const response = await handler.GET(new Request(`${url}?projectionId=${id}&historyPage=4${format}`));
-    assert.equal(response.status, 200);
-    assert.deepEqual(handler.calls.read, [[access, filters, id, 4]]);
-  }
-});
-
-test("POST requiere origen explícito válido y rechaza cross-site antes de sesión", async () => {
-  for (const headers of [
-    { origin: null }, { origin: "null" }, { origin: "invalid" }, { origin: "https://attacker.example" },
-    { origin: `${origin}/path` }, { origin: "https://user@finser.example" }, { origin: "http://finser.example" },
-    { "sec-fetch-site": "cross-site" }, { "sec-fetch-site": "same-site" },
-  ]) {
-    const handler = harness();
-    const response = await handler.POST(post(undefined, headers));
-    assert.equal(response.status, 403, JSON.stringify(headers));
-    assert.equal(handler.calls.access, 0);
-    assert.equal(handler.calls.save.length, 0);
-  }
-  assert.equal((await harness().POST(post(undefined, { host: "finser.example", "x-forwarded-proto": "https" }, "http://internal:3000/api/reportes/recaudo-por-corte"))).status, 201);
-  assert.equal((await harness().POST(post(undefined, { host: "finser.example" }, "http://internal:3000/api/reportes/recaudo-por-corte"))).status, 201);
-});
-
-test("validación de JSON y límite medido de bytes se ejecutan antes de guardar", async () => {
-  for (const contentType of ["text/plain", "application/jsonp", ""]) {
-    assert.equal((await harness().POST(post(undefined, { "content-type": contentType }))).status, 415);
-  }
-  for (const body of ["{", "not json", "[]", "null", "true", "17", '"value"']) {
-    const handler = harness();
-    assert.equal((await handler.POST(post(body))).status, 400, body);
-    assert.equal(handler.calls.save.length, 0);
-  }
-  const handler = harness();
-  assert.equal((await handler.POST(post({ x: "é".repeat(5000) }, { "content-length": "1" }))).status, 413);
-  assert.equal(handler.calls.save.length, 0);
-  assert.equal((await harness().POST(post(undefined, { "content-type": "application/json; charset=utf-8" }))).status, 201);
-});
-
-test("errores de base de datos y timeout no revelan SQL ni datos de cliente", async () => {
+test("errores de alcance, base de datos y timeout mantienen privacidad", async () => {
   const log = [];
   const original = console.error;
   console.error = (...args) => log.push(args.join(" "));
@@ -164,15 +156,15 @@ test("errores de base de datos y timeout no revelan SQL ni datos de cliente", as
       [Object.assign(new Error("SQL private secret-token"), { code: "57014" }), 503],
       [new CutCollectionError("SQL private secret-token", 503), 503],
     ]) {
-      const handler = harness({ error });
-      const response = await handler.GET(new Request(url));
+      const response = await harness({ error }).GET(new Request(url));
       assert.equal(response.status, status);
       assert.doesNotMatch(JSON.stringify(await response.json()), /SQL|001234|secret-token/);
       assertPrivate(response);
     }
     assert.doesNotMatch(log.join(" "), /SQL|001234|secret-token/);
   } finally { console.error = original; }
-  const response = await harness({ error: new CutCollectionError("Proyección fuera de tu alcance.", 403) }).GET(new Request(url));
+  const response = await harness({ error: new CutCollectionError("Sede no autorizada.", 403) }).GET(new Request(url));
   assert.equal(response.status, 403);
-  assert.equal((await response.json()).error, "Proyección fuera de tu alcance.");
+  assert.equal((await response.json()).error, "Sede no autorizada.");
+  assertPrivate(response);
 });

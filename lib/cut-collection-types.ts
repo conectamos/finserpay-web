@@ -6,6 +6,7 @@ export type CutPayment = { id: number; value: number; paidAt: string; createdAt:
 export type CutCredit = {
   id: number; folio: string; clientName: string; document: string; aliadoId: number | null;
   aliado: string; sedeId: number; sede: string; state: string;
+  settledAt?: string | null;
   plan: Omit<CreditPaymentPlanInput, "abonos" | "today">;
   payments: CutPayment[];
 };
@@ -27,14 +28,18 @@ export type CutRow = {
   warning: string | null; payments: CutPaymentDetail[];
   sourcePayments?: { id: number; paidAt: string; createdAt: string; method: string; state: string; amount: number }[];
   previousRecovery?: number; futureAdvances?: number;
+  unclassifiedReceived?: number;
+  reconciledReceived?: number;
 };
 export type CutSummary = {
   expected: number; received: number; pending: number; completion: number | null; pendingClients: number;
+  creditsCount: number; unclassifiedReceived?: number;
   priorPayments: number; priorReversals: number; previousRecovery: number; futureAdvances: number;
 };
 export type CutHistory = { id: string; cutDate: string; createdAt: string; expected: number | null; received: number | null; pending: number | null; completion: number | null; rowCount: number | null; warning?: string };
 export type CutReport = {
   ok: true; filters: CutFilters; cutDate: string; asOf: string;
+  mode?: "consulta";
   projection: { id: string; createdAt: string } | null;
   rows: CutRow[]; summary: CutSummary; history: CutHistory[];
   historyPage: number; historyHasMore: boolean;

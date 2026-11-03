@@ -110,6 +110,46 @@ function totalsMatch(report) {
   }
 }
 
+test("consulta directa funciona sin tabla de proyecciones, suma lo pagado y no escribe", async t => {
+  const f = await fixture(t, false);
+  const id = await f.credit();
+  await f.payment(id, 150);
+  await f.payment(id, 25, { paidAt: "2026-10-25T19:00:00Z" });
+  const before = await f.financialData();
+  f.calls.length = 0;
+  const report = await f.store.directReport(allied, filters);
+  assert.equal(report.mode, "consulta");
+  assert.equal(report.projection, null);
+  assert.deepEqual(report.history, []);
+  assert.deepEqual([report.summary.creditsCount, report.summary.expected, report.summary.received,
+    report.summary.priorPayments, report.summary.pending], [1, 100, 75, 50, 25]);
+  totalsMatch(report);
+  assert.deepEqual(await f.financialData(), before);
+  assert(f.calls.every(({ sql }) => /^\s*SELECT\b/i.test(sql)));
+  assert(!f.calls.some(({ sql }) => /CutCollectionProjection|to_regclass/i.test(sql)));
+});
+
+test("consulta directa conserva créditos pagados en su fecha, filtros y sedes propietarias", async t => {
+  const f = await fixture(t);
+  const paid = await f.credit({ document: "555" });
+  const pending = await f.credit({ document: "555" });
+  const outside = await f.credit({ sedeId: 30 });
+  await f.payment(paid, 200, { sedeId: 99, paidAt: "2026-10-17T17:00:00Z" });
+  await f.payment(outside, 200, { sedeId: 20 });
+  await f.pg.query('UPDATE "Credito" SET "fechaProximoPago"=$1 WHERE id=$2', ["2026-11-02T17:00:00Z", paid]);
+  const report = await f.store.directReport(allied, filters);
+  assert.deepEqual(report.rows.map(row => row.creditId), [paid, pending]);
+  assert.equal(report.summary.creditsCount, 2);
+  assert.equal(report.summary.pendingClients, 1);
+  assert.equal(report.summary.received, 100);
+  const filtered = await f.store.directReport(allied, { ...filters, status: "pagado" });
+  assert.deepEqual(filtered.rows.map(row => row.creditId), [paid]);
+  assert.equal(filtered.summary.creditsCount, 1);
+  assert.equal(filtered.summary.expected, 100);
+  totalsMatch(filtered);
+  await assert.rejects(f.store.directReport(allied, { ...filters, sedeId: 30 }), /no autorizada/);
+});
+
 test("guardar fija el esperado; los pagos parciales tardíos se aplican a cuotas reales y no alteran créditos", async t => {
   const f = await fixture(t);
   const id = await f.credit();
