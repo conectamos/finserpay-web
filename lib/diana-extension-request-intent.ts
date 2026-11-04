@@ -15,9 +15,14 @@ const normalize = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036
 const number = (value: string) => ({ un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4 }[value] ?? Number(value));
 const quotedOrThirdParty = (text: string) => /[">“”«»]|(?:^|\n)\s*>/.test(text)
   || /\b(?:el cliente|la clienta|un cliente|una clienta|mi (?:mama|papa|herman[oa]|amig[oa]|espos[oa])|para otra persona|para un tercero)\b/.test(normalize(text));
-const cancelled = (text: string) => /\b(?:no (?:(?:la|lo|me) )?(?:quiero|necesito|deseo|solicito|acepto)|no (?:me|la|lo) (?:des|de|apliques|aplique|concedas|conceda)|ya no|cancel[ae](?:r)?|anul[ae](?:r)?|no apliques|no aplique|ya (?:pague|cancele|pago)|espera|espere|un momento|olvidalo|olvidela|suspende|suspenda)\b/.test(normalize(text))
-  || /^(?:no(?: gracias)?|mejor no|dejalo|dejela)[.!? ]*$/.test(normalize(text));
-const topic = (text: string) => /\b(?:prorroga|plazo|aplazamiento|aplazar|extender|extension)\b/.test(normalize(text));
+const cancelled = (text: string) => {
+  // The noun in a request for "días de espera" is not the imperative "espera".
+  // Remove only that exact expression; a separate pause/cancellation still wins.
+  const value = normalize(text).replace(/\bdias? de espera\b/g, "plazo");
+  return /\b(?:no (?:(?:la|lo|las|los|me) )?(?:quiero|necesito|deseo|solicito|acepto)|no (?:(?:me|la|lo|las|los) ){1,2}(?:des|de|apliques|aplique|concedas|conceda)|ya no|cancel[ae](?:r)?|anul[ae](?:r)?|no apliques|no aplique|ya (?:pague|cancele|pago)|espera|espere|un momento|olvidalo|olvidela|suspende|suspenda)\b/.test(value)
+    || /^(?:no(?: gracias)?|mejor no|dejalo|dejela)[.!? ]*$/.test(value);
+};
+const topic = (text: string) => /\b(?:prorroga|plazo|aplazamiento|aplazar|extender|extension|dias? de espera)\b/.test(normalize(text));
 function requestFrame(text: string) {
   const value = normalize(text.replace(/^\s*sí[,\s]+/i, ""));
   if (!value || value.length > 2000 || quotedOrThirdParty(text) || cancelled(text)
@@ -33,6 +38,9 @@ function requestFrame(text: string) {
   main = main.replace(/^(?:es que )?(?:no tengo|no cuento con|estoy sin) (?:el )?(?:dinero|plata)(?: (?:en este momento|en el momento|ahora|hoy))?[,.;:]\s*/, "");
   const object = "(?:(?:una?|la|mi|el)\\s+)?(?:prorroga|plazo|aplazamiento|extension)\\b";
   const personal = "(?:necesito|solicito|quiero|quisiera|deseo|pido)(?:\\s+(?:pedir|solicitar))?|dame|deme|darme|concedeme|concedame|regalame|regaleme|me (?:puedes?|podrias?|podria|pueden) (?:dar|conceder|regalar|otorgar)|me (?:das|da|regalas?|regala|concedes?|concede)|(?:puedes?|podrias?) (?:darme|concederme|regalarme)|puedo tener";
+  // A bounded personal request can introduce the term before Diana asks how
+  // many days. Neither the agent's question nor the phrase alone supplies days.
+  const waitingRequest = new RegExp("^(?:" + personal + "|para que me (?:den|de|concedan|conceda))\\s+(?:(?:los|unos|mis|un|el)\\s+)?dias? de espera(?:,?\\s+(?:por favor|muchas gracias|gracias))*[.!]*$").test(main);
   const duration = numberWord + "\\s+dias?";
   const deadline = "(?:manana|pasado manana|hoy|\\d{4}-\\d{2}-\\d{2}|\\d{2}/\\d{2}/\\d{4})";
   const origin = "(?:\\s+(?:desde (?:hoy|el vencimiento)|despues del vencimiento|a partir de hoy))?";
@@ -42,7 +50,7 @@ function requestFrame(text: string) {
   const nominal = new RegExp("^(?:solicitud de )?prorroga\\s+(?:(?:(?:de|por)\\s+)?" + duration + origin
     + "(?:\\s+hasta(?: el)?\\s+" + deadline + ")?|(?:hasta|para)(?: el)?\\s+" + deadline + ")" + suffix).test(main)
     || new RegExp("^" + duration + "\\s+(?:de\\s+)?prorroga" + suffix).test(main);
-  return topic(main) && (new RegExp("^(?:" + personal + ")\\s+" + object).test(main)
+  return waitingRequest || topic(main) && (new RegExp("^(?:" + personal + ")\\s+" + object).test(main)
     || new RegExp("^me (?:ayudas?|ayuda|puedes? ayudar) con\\s+" + object).test(main)
     || new RegExp("^(?:necesito|solicito|quiero|quisiera|deseo|pido)\\s+" + duration + "\\s+de\\s+(?:prorroga|plazo)" + origin + suffix).test(main)
     || nominal);
