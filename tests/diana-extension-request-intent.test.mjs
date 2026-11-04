@@ -90,3 +90,74 @@ test("equal millisecond timestamps fail closed instead of sorting a cancellation
     assert.equal(resolve("z", [request, msg(id, "No gracias")]), null);
   }
 });
+
+test("a personal request for días de espera retains the customer's clarified duration across an identity question", () => {
+  const request = msg("a", "Para que me den los días de espera muchas gracias");
+  const question = msg("b", "Claro, ¿cuántos días de prórroga necesitas?", 1, "agent");
+  const answer = msg("c", "3 días", 60);
+  const identityQuestion = msg("d", "Compárteme tu número de cédula para consultar tu crédito y revisar la solicitud de prórroga por 3 días.", 61, "agent");
+  const document = msg("e", "100000000", 62);
+  const handoff = msg("f", "Te comunicaremos con un asesor para continuar con tu solicitud.", 63, "agent");
+  const thanks = msg("g", "Ok gracias", 64);
+  const history = [request, question, answer, identityQuestion, document, handoff, thanks];
+  const expected = { intent: { kind: "days", days: 3 }, evidenceIds: ["a", "b", "c"] };
+  assert.equal(parse(request.text, request.sentAt), null, "the original request does not specify a duration");
+  assert.deepEqual(resolve("c", history.slice(0, 3)), expected);
+  assert.deepEqual(resolve("c", history), expected, "identity and courtesy do not change a still-current native request");
+  assert.equal(resolve("e", history), null, "a document is never a new request or an inferred credit folio");
+  assert.equal(resolve("g", history), null, "thanks after handoff never authorizes a new grant");
+  assert.equal(resolve("e", [request, question, answer, identityQuestion, { ...document, text: "CC 100000000" }]), null);
+});
+
+test("waiting-day requests require an explicit personal frame and a native Diana duration question", () => {
+  for (const text of ["Necesito días de espera", "Por favor, quiero los días de espera", "Para que me den los días de espera muchas gracias",
+    "Para que me den los días de espera, muchas gracias", "Necesito días de espera, por favor"]) {
+    const request = msg("a", text), answer = msg("c", "3 días", 2);
+    const question = msg("b", "¿Cuántos días de espera necesitas?", 1, "agent");
+    assert.deepEqual(resolve("c", [request, question, answer]), { intent: { kind: "days", days: 3 }, evidenceIds: ["a", "b", "c"] }, text);
+    assert.equal(resolve("c", [request, answer]), null, "a bare duration without a native question is not sufficient");
+    assert.equal(resolve("c", [request, { ...question, kind: "followup" }, answer]), null, "a follow-up campaign cannot supply the question");
+    assert.equal(resolve("c", [request, { ...question, text: "Te dimos tres días de espera." }, answer]), null, "an agent's claim cannot authorize a grant");
+  }
+});
+
+test("the waiting-day alias never turns information, hypotheses or third-party text into a personal request", () => {
+  const question = msg("b", "¿Cuántos días de prórroga necesitas?", 1, "agent"), answer = msg("c", "3 días", 2);
+  for (const text of [
+    "Días de espera", "Hola", "¿Qué son los días de espera?", "Quiero información sobre días de espera",
+    "¿Qué necesito para que me den los días de espera?", "Para que me den los días de espera, ¿qué debo hacer?",
+    "Si necesito días de espera, ¿cuáles son los requisitos?", "Tal vez necesito días de espera",
+    "El cliente quiere los días de espera", "Mi mamá necesita días de espera",
+    '"Para que me den los días de espera muchas gracias"', "Me dijeron que solicito días de espera",
+    "No quiero días de espera", "Ya pagué, necesito días de espera",
+  ]) {
+    assert.equal(parse(text, at), null, text);
+    assert.equal(resolve("c", [msg("a", text), question, answer]), null, text);
+  }
+  assert.equal(resolve("c", [question, answer]), null, "the agent and a bare number alone do not establish consent");
+});
+
+test("imperative pauses and cancellation still override a waiting-day request", () => {
+  const request = msg("a", "Para que me den los días de espera muchas gracias");
+  const question = msg("b", "¿Cuántos días de prórroga necesitas?", 1, "agent"), answer = msg("c", "3 días", 2);
+  for (const text of ["Espera", "Espere", "Un momento", "Espera un momento", "No gracias", "Mejor no", "No me des los días de espera", "No los apliques", "No me los des", "No los quiero", "Cancela la prórroga", "Ya pagué"]) {
+    assert.equal(resolve("c", [request, question, answer, msg("d", text, 3)]), null, text);
+  }
+  for (const text of ["Necesito días de espera, espera un momento", "Para que me den los días de espera, no los apliques", "Para que me den los días de espera, muchas gracias, no los apliques", "Espera, quiero los días de espera"]) {
+    assert.equal(resolve("c", [msg("a", text), question, answer]), null, text);
+  }
+});
+
+test("waiting-day clarification preserves the existing age, ordering, credit and duration guards", () => {
+  const request = msg("a", "Para que me den los días de espera muchas gracias");
+  const question = msg("b", "¿Cuántos días de prórroga necesitas?", 1, "agent"), answer = msg("c", "3 días", 2);
+  for (const text of ["Mejor 4 días", "Necesito prórroga de 2 días", "Crédito FC-2", "Para el crédito FC-2", "No gracias"]) {
+    assert.equal(resolve("c", [request, question, answer, msg("d", text, 3)]), null, text);
+  }
+  for (const text of ["5 días", "3 o 4 días", "3 días o 2 días", "3 días para otro cliente", "100000000"]) {
+    assert.equal(resolve("c", [request, question, { ...answer, text }]), null, text);
+  }
+  assert.equal(resolve("c", [request, question, { ...answer, sentAt: new Date(Date.parse(at) + 16 * 60_000).toISOString() }]), null);
+  assert.equal(resolve("c", [request, { ...question, sentAt: request.sentAt }, answer]), null);
+  assert.equal(resolve("c", [request, { ...question, sentAt: answer.sentAt }, answer]), null);
+});

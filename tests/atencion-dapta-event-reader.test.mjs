@@ -94,6 +94,60 @@ test("a private direct-request witness uses original folio and only authorizes a
   assert.equal(result.message.text.includes("20260925220309"), false);
   assert.equal(JSON.stringify(result.verification).includes(first.content), false);
 });
+
+function waitingDaysConversation() {
+  const base = Date.parse("2026-11-03T20:22:00.000Z");
+  const row = (id, content, seconds, kind = "lead") => ({ ...message, id, content, kind,
+    direction: kind === "lead" ? "inbound" : "outbound", created_at: new Date(base + seconds * 1000).toISOString() });
+  const request = row("00000000-0000-4000-8000-000000000006", "Para que me den los días de espera muchas gracias", 0);
+  const question = row("00000000-0000-4000-8000-000000000007", "Claro, ¿cuántos días de prórroga necesitas?", 1, "agent");
+  const duration = row(messageId, "3 días", 2);
+  const identityQuestion = row("00000000-0000-4000-8000-000000000008", "Claro. Compárteme tu número de cédula para consultar tu crédito y revisar la solicitud de prórroga por 3 días.", 3, "agent");
+  const identity = row("00000000-0000-4000-8000-000000000009", "100000001", 4);
+  const thanks = row("00000000-0000-4000-8000-000000000010", "Ok gracias", 5);
+  const read = args => args.messages_cursor === "waiting-identity" ? detail([identity, thanks])
+    : args.messages_cursor === "waiting-duration" ? detail([duration, identityQuestion], { messages_next_cursor: "waiting-identity" })
+    : detail([request, question], { messages_next_cursor: "waiting-duration" });
+  return { request, question, duration, identity, read };
+}
+
+test("native days-of-waiting clarification retains the three-message request evidence through a later identity exchange", async () => {
+  const native = waitingDaysConversation(), f = mock(native.read);
+  const reply = await f.adapter.fetchConfirmedEventMessage(requestInput);
+  assert.equal(f.requests.filter(r => r.method === "tools/call").length, 3, "the identity tail must be checked through fresh EOF");
+  assert.equal(reply.state, "confirmed"); assert.equal(reply.historyTruncated, false);
+  const evidence = [native.request, native.question, native.duration].map(row => ({ id: row.id, text: row.content,
+    sentAt: row.created_at, kind: row.kind, direction: row.direction }));
+  const digest = createHash("sha256").update(JSON.stringify(evidence)).digest("hex");
+  assert.deepEqual(reply.verification.requestWitness.intent, { kind: "days", days: 3 });
+  assert.equal(reply.verification.requestWitness.textDigest, digest, "only the personal request, Diana's clarification and customer duration attest intent");
+  assert.equal(reply.verification.requestWitness.latest, true);
+  assert.equal(JSON.stringify(reply.verification).includes(native.identity.content), false);
+  assert.equal(JSON.stringify(reply.verification).includes(native.request.content), false);
+
+  const scope = { workspaceId: workspace, agentId: agent, agentChannelId: "00000000-0000-4000-8000-000000000012",
+    phoneNumberId: "1162059967000416", wabaId: "2148284059050848" };
+  const calls = [];
+  const process = createDianaExtensionEventProcessor({ scope, enabled: () => true, legacyEnabled: () => false, requestEnabled: () => true,
+    consume: async () => assert.fail("a natural request must not enter the legacy proposal path"),
+    consumeRequest: async proof => { calls.push(proof); return { outcome: "ignored" }; },
+    afterGranted: async () => assert.fail("the stub has not recorded a financial grant") });
+  const job = { ...scope, event: "new_message_received", deliveryId: "synthetic.waiting-days",
+    externalConversationId, contactId, phone: `+${contactId}`, messageId, messageAt: reply.message.sentAt };
+  assert.deepEqual(await process(job, reply, "00000000-0000-4000-8000-000000000011"), { state: "complete", outcome: "ignored" });
+  assert.equal(calls.length, 1); assert.equal(calls[0].messageId, native.duration.id);
+  assert.deepEqual(calls[0].intent, { kind: "days", days: 3 }); assert.equal(calls[0].textDigest, digest);
+  assert.equal("text" in calls[0], false); assert.equal("cedula" in calls[0], false); assert.equal("folio" in calls[0].intent, false);
+});
+
+test("a later cédula is not a second extension request or a credit folio", async () => {
+  const native = waitingDaysConversation(), f = mock(native.read);
+  const reply = await f.adapter.fetchConfirmedEventMessage({ ...requestInput, messageId: native.identity.id });
+  assert.equal(reply.state, "confirmed"); assert.equal(reply.message.id, native.identity.id);
+  assert.equal(reply.verification.requestWitness, undefined);
+  assert.equal(reply.verification.financialWitness, undefined);
+});
+
 test("later native cancellations, media uncertainty and equal normalized milliseconds cannot attest a request", async () => {
   for (const changes of [
     { content: "No gracias" }, { content: "Mejor 3 días" }, { content_type: "image", content: "private-image" },
