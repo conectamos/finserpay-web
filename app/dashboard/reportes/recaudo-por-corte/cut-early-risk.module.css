@@ -40,6 +40,8 @@
 .chipActions { display: flex; margin-left: auto; }
 .selectedCuts time { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .selectedCuts button { width: 40px; min-height: 40px; padding: 8px; }
+.selectedCuts .grip { touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+.selectedCuts .grip:active { cursor: grabbing; }
 .hint, .selectionError, .orderMessage { margin: 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
 .selectionError { color: var(--fp-danger); }
 .orderMessage { color: var(--fp-graphite); }

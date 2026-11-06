@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, GripVertical, Plus, X } from "lucide-react";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, Select } from "@/app/_components/finser-ui";
 import { getCutFpdLevel } from "@/lib/cut-risk-presentation";
@@ -29,6 +29,8 @@ type Props = {
   renderActions: (disabled: boolean) => ReactNode;
 };
 
+type CutDrag = { kind: "pointer"; cut: string; pointerId: number } | { kind: "native"; cut: string };
+
 export default function CutRiskComparison({ report, filtersQuery, riskCuts, explicitSelection, manualOrder, onChange, onReorder, onReset, renderActions }: Props) {
   const [draft, setDraft] = useState({ day: report.filters.day, month: report.filters.month, year: report.filters.year });
   const [selectionError, setSelectionError] = useState<string | null>(null);
@@ -38,6 +40,8 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
   const [retry, setRetry] = useState(0);
   const [result, setResult] = useState<{ key: string; reports: CutRiskComparisonItem[]; error: string | null }>({ key: "", reports: [], error: null });
   const selectorHeading = useRef<HTMLHeadingElement>(null);
+  const selectedCutsList = useRef<HTMLUListElement>(null);
+  const activeDrag = useRef<CutDrag | null>(null);
   const datesKey = riskCuts.join(",");
   const params = new URLSearchParams(filtersQuery);
   params.set("riskCuts", datesKey);
@@ -116,6 +120,42 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
     onReorder(reordered);
   }
 
+  function cutAtPoint(clientX: number, clientY: number) {
+    const chip = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-risk-cut]");
+    const cut = chip?.dataset.riskCut;
+    return chip && cut && riskCuts.includes(cut) && chip.closest("[data-risk-cut-list]") === selectedCutsList.current ? cut : null;
+  }
+
+  function startPointerDrag(event: PointerEvent<HTMLButtonElement>, cut: string) {
+    if (riskCuts.length < 2 || event.button !== 0 || event.isPrimary === false || activeDrag.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { return; }
+    activeDrag.current = { kind: "pointer", cut, pointerId: event.pointerId };
+    setDraggedCut(cut);
+    setDropTarget(null);
+  }
+
+  function movePointerDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = activeDrag.current;
+    if (drag?.kind !== "pointer" || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const target = cutAtPoint(event.clientX, event.clientY);
+    setDropTarget(target !== drag.cut ? target : null);
+  }
+
+  function finishPointerDrag(event: PointerEvent<HTMLButtonElement>, cancelled = false) {
+    const drag = activeDrag.current;
+    if (drag?.kind !== "pointer" || drag.pointerId !== event.pointerId) return;
+    const target = cancelled ? null : cutAtPoint(event.clientX, event.clientY);
+    activeDrag.current = null;
+    setDraggedCut(null);
+    setDropTarget(null);
+    event.preventDefault();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (target) moveCut(drag.cut, riskCuts.indexOf(target));
+  }
+
   return <section className={styles.section} aria-labelledby="early-risk-title">
     <header className={styles.header}>
       <div className={styles.headerTitle}><h2 id="early-risk-title">Riesgo temprano</h2></div>
@@ -133,18 +173,28 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
         <label>Año<Input aria-label="Año para comparar" type="number" min="2000" max="2200" value={draft.year || ""} onChange={event => { setSelectionError(null); setDraft({ ...draft, year: Number(event.target.value) }); }} /></label>
         <Button variant="secondary" onClick={addCut} disabled={riskCuts.length >= 6}><Plus aria-hidden="true" />Agregar corte</Button>
       </div>
-      <ul className={styles.selectedCuts} aria-label="Cortes seleccionados para riesgo">
+      <ul ref={selectedCutsList} data-risk-cut-list="" className={styles.selectedCuts} aria-label="Cortes seleccionados para riesgo">
         {riskCuts.map((cut, index) => <li key={cut}
           draggable={riskCuts.length > 1}
+          data-risk-cut={cut}
           data-dragging={draggedCut === cut || undefined}
           data-drop-target={dropTarget === cut || undefined}
-          onDragStart={event => { event.dataTransfer.setData("text/plain", cut); event.dataTransfer.effectAllowed = "move"; setDraggedCut(cut); }}
-          onDragOver={event => { if (draggedCut && draggedCut !== cut) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropTarget(cut); } }}
-          onDragLeave={() => setDropTarget(null)}
-          onDrop={event => { event.preventDefault(); if (draggedCut) moveCut(draggedCut, index); setDraggedCut(null); setDropTarget(null); }}
-          onDragEnd={() => { setDraggedCut(null); setDropTarget(null); }}
+          onDragStart={event => { if (activeDrag.current?.kind === "pointer") { event.preventDefault(); return; } activeDrag.current = { kind: "native", cut }; event.dataTransfer.setData("text/plain", cut); event.dataTransfer.effectAllowed = "move"; setDraggedCut(cut); }}
+          onDragOver={event => { if (activeDrag.current?.kind === "native" && activeDrag.current.cut !== cut) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropTarget(cut); } }}
+          onDragLeave={() => { if (activeDrag.current?.kind === "native") setDropTarget(null); }}
+          onDrop={event => { event.preventDefault(); const drag = activeDrag.current; if (drag?.kind !== "native") return; activeDrag.current = null; setDraggedCut(null); setDropTarget(null); moveCut(drag.cut, index); }}
+          onDragEnd={() => { if (activeDrag.current?.kind === "native") { activeDrag.current = null; setDraggedCut(null); setDropTarget(null); } }}
         >
-          <span className={styles.chipLabel}><GripVertical aria-hidden="true" /><time dateTime={cut}>{dateLabel(cut)}</time></span>
+          <span className={styles.chipLabel}>
+            <Button variant="ghost" className={styles.grip} draggable={false} disabled={riskCuts.length === 1}
+              aria-label={`Arrastrar corte del ${dateLabel(cut)}`} aria-describedby="risk-reorder-help"
+              onPointerDown={event => startPointerDrag(event, cut)} onPointerMove={movePointerDrag}
+              onPointerUp={event => finishPointerDrag(event)} onPointerCancel={event => finishPointerDrag(event, true)}
+              onLostPointerCapture={event => finishPointerDrag(event, true)}
+              onKeyDown={event => { if (!activeDrag.current && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); moveCut(cut, index + (event.key === "ArrowLeft" ? -1 : 1)); } }}
+            ><GripVertical aria-hidden="true" /></Button>
+            <time dateTime={cut}>{dateLabel(cut)}</time>
+          </span>
           <span className={styles.chipActions}>
             <Button variant="ghost" disabled={index === 0} aria-label={`Mover corte del ${dateLabel(cut)} antes`} onClick={() => moveCut(cut, index - 1)}><ChevronLeft aria-hidden="true" /></Button>
             <Button variant="ghost" disabled={index === riskCuts.length - 1} aria-label={`Mover corte del ${dateLabel(cut)} después`} onClick={() => moveCut(cut, index + 1)}><ChevronRight aria-hidden="true" /></Button>
@@ -153,7 +203,7 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
         </li>)}
       </ul>
       {selectionError && <p className={styles.selectionError} role="alert">{selectionError}</p>}
-      <p className={styles.hint}>Arrastra los cortes o usa las flechas para cambiar el orden. {riskCuts.length >= 6 ? "Máximo de 6 cortes; retira uno para agregar otro." : manualOrder ? "Los nuevos cortes se agregan al final." : "Los nuevos cortes se ordenan por fecha."}</p>
+      <p id="risk-reorder-help" className={styles.hint}>Arrastra desde el agarre o usa las flechas para cambiar el orden. {riskCuts.length >= 6 ? "Máximo de 6 cortes; retira uno para agregar otro." : manualOrder ? "Los nuevos cortes se agregan al final." : "Los nuevos cortes se ordenan por fecha."}</p>
       {orderMessage && <p className={styles.orderMessage} role="status">{orderMessage}</p>}
     </Card>
 

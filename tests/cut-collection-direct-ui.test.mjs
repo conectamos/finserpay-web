@@ -85,6 +85,8 @@ function harness(respond = () => reportFixture()) {
   const requests = [];
   const replacedUrls = [];
   const downloads = [];
+  const hitPoints = [];
+  let pointerHit = null;
   let tree;
   let html;
   const Component = load("app/dashboard/reportes/recaudo-por-corte/recaudo-por-corte-client.tsx", {
@@ -134,6 +136,7 @@ function harness(respond = () => reportFixture()) {
     crypto: { randomUUID },
     URL: { createObjectURL: () => "blob:local-test", revokeObjectURL: () => {} },
     document: {
+      elementFromPoint: (x, y) => { hitPoints.push([x, y]); return pointerHit; },
       body: { appendChild: () => {} },
       createElement: () => ({ href: "", download: "", click() { downloads.push({ href: this.href, name: this.download }); }, remove() {} }),
     },
@@ -166,7 +169,8 @@ function harness(respond = () => reportFixture()) {
   }
   render();
   return {
-    requests, replacedUrls, downloads, render,
+    requests, replacedUrls, downloads, hitPoints, render,
+    pointAt: element => { pointerHit = element; },
     html: () => html,
     text: () => normalized(text(tree)),
     find: predicate => nodes(tree, predicate),
@@ -383,6 +387,76 @@ test("flechas accesibles y arrastre fijan el orden manual para la tabla, el PDF 
   for (const request of app.requests.filter(request => request.method === "POST" || request.url.includes("format=pdf"))) {
     assert.equal(new URL(request.url, "https://finserpay.test").searchParams.get("riskCuts"), expected.join(","));
   }
+});
+
+test("el agarre usa captura y coordenadas de puntero, valida destino y mueve una sola vez", async () => {
+  const app = harness(url => url.includes("format=risk") ? comparisonForUrl(url) : reportWithRiskForUrl(url));
+  await app.settle();
+  for (const day of [17, 2]) {
+    app.change("Mes para comparar", "10");
+    app.change("Día para comparar", String(day));
+    await app.click(/^Agregar corte$/);
+  }
+  const listNode = app.find(node => node.type === "ul" && node.props["data-risk-cut-list"] === "")[0];
+  const localList = {};
+  listNode.props.ref.current = localList;
+  const hit = (cut, list = localList) => ({ closest: selector => {
+    assert.equal(selector, "[data-risk-cut]");
+    return { dataset: { riskCut: cut }, closest: parentSelector => {
+      assert.equal(parentSelector, "[data-risk-cut-list]");
+      return list;
+    } };
+  } });
+  const captured = new Set();
+  const releases = [];
+  const gripElement = {
+    setPointerCapture: pointerId => captured.add(pointerId),
+    hasPointerCapture: pointerId => captured.has(pointerId),
+    releasePointerCapture: pointerId => { releases.push(pointerId); captured.delete(pointerId); },
+  };
+  const pointer = (pointerId = 7) => ({ pointerId, pointerType: "mouse", button: 0, isPrimary: true,
+    clientX: 144, clientY: 320, currentTarget: gripElement, preventDefault() {}, stopPropagation() {} });
+  const grip = cut => nodes(riskChip(app, cut), node => node.type === "button" && name(node).startsWith("Arrastrar corte del"))[0];
+  grip("2026-11-02").props.onPointerDown(pointer());
+  assert.ok(captured.has(7));
+  let nativeBlocked = false;
+  riskChip(app, "2026-11-02").props.onDragStart({ preventDefault() { nativeBlocked = true; }, dataTransfer: { setData() { assert.fail("No debe iniciar un segundo arrastre nativo"); } } });
+  assert.equal(nativeBlocked, true);
+  app.pointAt(hit("2026-10-02"));
+  grip("2026-11-02").props.onPointerMove(pointer());
+  app.render();
+  assert.equal(riskChip(app, "2026-10-02").props["data-drop-target"], true);
+  const sourceGrip = grip("2026-11-02");
+  sourceGrip.props.onPointerUp(pointer());
+  sourceGrip.props.onPointerUp(pointer());
+  sourceGrip.props.onLostPointerCapture(pointer());
+  riskChip(app, "2026-10-17").props.onDrop({ preventDefault() {} });
+  app.render();
+  const expected = ["2026-11-02", "2026-10-02", "2026-10-17"];
+  assert.deepEqual(riskCutDates(app), expected);
+  assert.deepEqual(releases, [7]);
+  assert.deepEqual(app.hitPoints.at(-1), [144, 320]);
+
+  // A matching date in another list is not a valid drop target.
+  grip("2026-10-17").props.onPointerDown(pointer(8));
+  app.pointAt(hit("2026-11-02", {}));
+  grip("2026-10-17").props.onPointerMove(pointer(8));
+  grip("2026-10-17").props.onPointerUp(pointer(8));
+  app.render();
+  assert.deepEqual(riskCutDates(app), expected);
+
+  // Cancelling a captured touch gesture must not commit its hovered target.
+  const touch = { ...pointer(9), pointerType: "touch" };
+  grip("2026-10-17").props.onPointerDown(touch);
+  app.pointAt(hit("2026-11-02"));
+  grip("2026-10-17").props.onPointerMove(touch);
+  grip("2026-10-17").props.onPointerCancel(touch);
+  grip("2026-10-17").props.onPointerUp(touch);
+  app.render();
+  assert.deepEqual(riskCutDates(app), expected);
+  assert.equal(captured.size, 0);
+  await app.settle();
+  assert.deepEqual(riskMatrixDates(app), expected);
 });
 
 test("una comparación fallida impide exportar o enviar hasta reintentar con éxito", async () => {
