@@ -257,11 +257,10 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
         <header className={riskStyles.header}>
           <div>
             <h2 id="early-risk-title">Riesgo temprano del corte</h2>
-            <p>Créditos cuya primera cuota vence en este corte, según aliado y sede. El estado actual de la cuota no cambia esta medición.</p>
+            <p>Créditos con primera cuota en el corte seleccionado.</p>
           </div>
           <Button variant="secondary" onClick={() => downloadRisk(visibleReport)}>Descargar indicadores para compartir</Button>
         </header>
-        {visibleReport.earlyRisk.every(metric => metric.eligible === 0) && <p className={riskStyles.emptyNotice} role="status">Sin base evaluable para este corte. Los créditos por madurar o sin datos comparables no se interpretan como un riesgo de 0 %.</p>}
         <div className={riskStyles.grid}>
           {visibleReport.earlyRisk.map(metric => <Card key={metric.label} className={riskStyles.card}>
             <div className={riskStyles.cardHeader}>
@@ -272,14 +271,17 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
             </div>
             <div className={riskStyles.result}>
               <strong className={metric.eligible ? riskStyles.percentage : riskStyles.noPercentage}>{metric.eligible ? percentage(100 * metric.cases / metric.eligible) : "Sin base evaluable"}</strong>
-              {metric.eligible > 0 && <span>Créditos en riesgo</span>}
+              {metric.eligible > 0 && <p className={riskStyles.ratio}>
+                <b>{numberFormatter.format(metric.cases)}</b> en riesgo de <b>{numberFormatter.format(metric.eligible)}</b> evaluados
+              </p>}
             </div>
-            {metric.eligible > 0 && <p className={riskStyles.ratio}><strong>{numberFormatter.format(metric.cases)}</strong> de <strong>{numberFormatter.format(metric.eligible)}</strong> evaluados</p>}
-            <p className={riskStyles.description}>{metric.label === "40/60" ? "Menos de 4 cuotas completas al día 60 desde la fecha de crédito registrada." : `Primera cuota pendiente al cierre del día ${metric.label.slice(4)} de mora.`}</p>
-            <dl className={riskStyles.maturity}>
-              <div><dt>Por madurar</dt><dd>{numberFormatter.format(metric.pending)}</dd></div>
-              <div><dt>Sin datos comparables</dt><dd>{numberFormatter.format(metric.unavailable)}</dd></div>
-            </dl>
+            {metric.eligible > 0 && <div className={riskStyles.track} aria-hidden="true">
+              <ProgressBar className={riskStyles.riskBar} value={100 * metric.cases / metric.eligible} />
+            </div>}
+            {(metric.pending > 0 || metric.unavailable > 0) && <dl className={riskStyles.maturity}>
+              {metric.pending > 0 && <div><dt>Por madurar</dt><dd>{numberFormatter.format(metric.pending)}</dd></div>}
+              {metric.unavailable > 0 && <div><dt>Sin datos comparables</dt><dd>{numberFormatter.format(metric.unavailable)}</dd></div>}
+            </dl>}
           </Card>)}
         </div>
       </section>}
