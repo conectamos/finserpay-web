@@ -4,7 +4,7 @@ import type { CutReport } from "./cut-collection-types";
 // Shared FINSER PAY palette (app/globals.css); built-in fonts travel with PDFKit.
 const COLORS = {
   graphite: "#151A21", muted: "#667085", border: "#D8DEE5", lime: "#B7E63D",
-  porcelain: "#F5F6F4", white: "#FFFFFF", amber: "#B86B10", amberSoft: "#FFF6DF",
+  porcelain: "#F5F6F4", white: "#FFFFFF",
 };
 const MARGIN = 40;
 const MONEY = new Intl.NumberFormat("es-CO", {
@@ -126,35 +126,7 @@ export async function buildCutCollectionPdf(report: CutReport): Promise<Buffer> 
   y += 44;
 
   paragraph(`${count(summary.creditsCount)} créditos del corte  |  ${count(summary.pendingClients)} clientes pendientes`, 10, COLORS.graphite, 12);
-  if (summary.completion == null) paragraph("Cumplimiento no aplicable: no hay valor esperado en este alcance.");
-
-  const distribution: [string, number, boolean][] = [
-    ["Anticipos del corte (ya incluidos en recibido)", summary.priorPayments, true],
-    ["Recuperación de cuotas anteriores", summary.previousRecovery, false],
-    ["Anticipos de cuotas futuras", summary.futureAdvances, false],
-  ];
-  ensureSpace(85);
-  for (const [label, value, included] of distribution) {
-    text(label, MARGIN, y, width - 165, 9, included);
-    fitted(money(value), MARGIN + width - 155, y, 155, 10, COLORS.graphite, "right");
-    y += 18;
-  }
-  paragraph("Recuperación y anticipos futuros: pagos desde el corte; se excluyen de su cumplimiento.", 8.5, COLORS.muted, 13);
-
-  const notes: { value: string; size: number; color: string; gap: number }[] = [
-    { value: "DPF 3/7/15: primera cuota incompleta al cierre del día 3, 7 o 15 desde su vencimiento. 40/60: menos de 4 cuotas completas al cierre del día 60 desde la fecha del crédito.", size: 8.5, color: COLORS.muted, gap: 7 },
-    { value: "Base: solo créditos evaluados; excluye por madurar y sin datos comparables.", size: 8.5, color: COLORS.muted, gap: 8 },
-  ];
-  if (report.filters.status !== "todos") notes.push({ value: "Indicadores por aliado y sede, sin filtro de estado.", size: 8.5, color: COLORS.muted, gap: 8 });
-  if ((summary.unclassifiedReceived || 0) > 0) notes.push({
-    value: `${money(summary.unclassifiedReceived || 0)} del recibido no tiene fecha individual atribuible y no se clasifica como anticipo.`, size: 9, color: COLORS.amber, gap: 8,
-  });
-  if (report.warnings.length > 0) notes.push({
-    value: `${count(report.warnings.length)} ${report.warnings.length === 1 ? "observación disponible" : "observaciones disponibles"} en la plataforma. Se omite el detalle individual.`, size: 9, color: COLORS.amber, gap: 8,
-  });
-  notes.push({ value: "Esperado: valor total de las cuotas del corte. Recibido: efectivo aplicado a esas cuotas, incluidos anticipos y pagos tardíos. Las cifras corresponden a los filtros y a la consulta indicada.", size: 8.5, color: COLORS.muted, gap: 0 });
-  // Keep definitions and caveats with their indicators rather than orphaning a final note.
-  ensureSpace(23 + 25 + RISK_LABELS.length * 23 + 10 + notes.reduce((total, note) => total + height(note.value, width, note.size) + note.gap, 0));
+  ensureSpace(23 + 25 + RISK_LABELS.length * 23);
   text("Riesgo temprano del corte", MARGIN, y, width, 14, true);
   y += 23;
   const columns = [0, 78, 146, 223, 306, 398, width];
@@ -177,8 +149,6 @@ export async function buildCutCollectionPdf(report: CutReport): Promise<Buffer> 
     y += 23;
     line(y);
   }
-  y += 10;
-  for (const note of notes) paragraph(note.value, note.size, note.color, note.gap);
 
   const pages = doc.bufferedPageRange();
   for (let index = pages.start; index < pages.start + pages.count; index++) {
