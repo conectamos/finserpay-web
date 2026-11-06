@@ -199,6 +199,17 @@ function tableRows(app) {
   return nodes(nodes(table, node => node.type === "tbody")[0], node => node.type === "tr");
 }
 
+function expectVisibleFilter(app, label) {
+  const field = app.find(node => node.type === "label" && normalized(text(node)).startsWith(label))[0];
+  assert.ok(field, `Existe el filtro ${label}`);
+  assert.equal(app.find(node => (node.props.hidden || node.props["aria-hidden"] === true ||
+    node.props["aria-hidden"] === "true" || node.props.style?.display === "none" ||
+    node.props.style?.visibility === "hidden" || (node.type === "details" && !node.props.open)) &&
+    nodes(node, child => child === field).length).length, 0, `${label} es visible sin abrir un panel`);
+  assert.ok(!nodes(field, node => ["select", "input"].includes(node.type))[0].props.disabled,
+    `${label} está disponible para editar`);
+}
+
 test("la consulta inicial es GET y presenta los seis indicadores financieros sin depender de su orden", async () => {
   const app = harness();
   assert.match(app.html(), /Consultando cronogramas y pagos/);
@@ -230,9 +241,8 @@ test("cambiar corte y filtros consulta directamente y exporta los mismos filtros
   });
   await app.settle();
   assert.deepEqual(app.find(node => node.type === "input" && node.props.type === "radio").map(node => [node.props.value, node.props.checked]), [[2, true], [17, false]]);
-  assert.equal(app.find(node => node.props.id === "cut-scope-filters")[0].props.hidden, true);
-  await app.click(/^Más filtros/);
-  assert.equal(app.find(node => node.props.id === "cut-scope-filters")[0].props.hidden, false);
+  for (const label of ["02", "17", "Mes", "Año", "Aliado", "Sede", "Estado"]) expectVisibleFilter(app, label);
+  assert.equal(app.find(node => node.type === "button" && /Más filtros/.test(name(node))).length, 0);
   app.change("17", "17");
   app.change("Mes", "10");
   app.change("Año", "2025");
@@ -271,7 +281,7 @@ test("el selector de sede sólo muestra opciones autorizadas para el aliado esco
   report.options.sedes.push({ id: 9, nombre: "Segunda sede autorizada", aliadoId: 5 });
   const app = harness(() => report);
   await app.settle();
-  await app.click(/^Más filtros/);
+  for (const label of ["Aliado", "Sede", "Estado"]) expectVisibleFilter(app, label);
   const sede = () => nodes(app.find(node => node.type === "label" && normalized(text(node)).startsWith("Sede"))[0], node => node.type === "select")[0];
   const options = () => nodes(sede(), node => node.type === "option").map(node => String(node.props.value));
   assert.deepEqual(options(), ["", "8", "9"]);
@@ -298,7 +308,6 @@ test("página 2 mantiene totales globales y Excel exporta todo el corte filtrado
       sedeId: Number(query.get("sedeId")) || null } };
   });
   await app.settle();
-  await app.click(/^Más filtros/);
   app.change("Aliado", "4");
   app.change("Sede", "8");
   app.change("Estado", "parcial");

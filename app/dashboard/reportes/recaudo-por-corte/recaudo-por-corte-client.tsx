@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, CalendarDays, Clock3, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock3, RefreshCw, X } from "lucide-react";
 import {
   Badge, Button, Card, DataTable, EmptyState, Input, LoadingState,
   PageHeader, ProgressBar, Select,
 } from "@/app/_components/finser-ui";
 import type { CutFilters, CutReport, CutRow, CutStatus } from "@/lib/cut-collection-types";
 import CutInstallmentDetail from "./cut-installment-detail";
+import riskStyles from "./cut-early-risk.module.css";
 import styles from "./recaudo-por-corte.module.css";
 
 const API = "/api/reportes/recaudo-por-corte";
@@ -106,34 +107,47 @@ function PaymentDetail({ row, onClose }: { row: CutRow | null; onClose: () => vo
 function CutBalance({ report }: { report: CutReport }) {
   const { summary, filters, options } = report;
   const [year, month, day] = report.cutDate.split("-");
-  const scope = [
-    filters.aliadoId && options.aliados.find(ally => ally.id === filters.aliadoId)?.nombre,
-    filters.sedeId && options.sedes.find(site => site.id === filters.sedeId)?.nombre,
-    filters.status !== "todos" && STATUS_LABELS[filters.status],
-  ].filter(Boolean).join(" · ");
+  const ally = options.aliados.find(item => item.id === filters.aliadoId)?.nombre ?? "Todos los aliados autorizados";
+  const site = options.sedes.find(item => item.id === filters.sedeId)?.nombre;
+  const scale = Math.max(summary.expected, summary.received);
+  const comparison = [
+    { label: "Recaudo esperado", amount: summary.expected, style: styles.expectedTrack },
+    { label: "Recaudo recibido", amount: summary.received, style: styles.receivedTrack },
+  ];
 
   return <section aria-label="Indicadores del corte con los filtros aplicados">
     <Card className={styles.balance}>
-      <div className={styles.periodPanel}>
-        <p className={styles.kicker}><CalendarDays size={16} aria-hidden="true" /> Corte consultado</p>
-        <h2><time dateTime={report.cutDate}>{day} de {MONTHS[Number(month) - 1].toLowerCase()} <span>de {year}</span></time></h2>
-        <div className={styles.counts}>
-          <div><strong>{summary.creditsCount.toLocaleString("es-CO")}</strong><span>Créditos del corte</span></div>
-          <div><strong>{summary.pendingClients.toLocaleString("es-CO")}</strong><span>Clientes pendientes</span></div>
+      <header className={styles.balanceHeader}>
+        <div>
+          <p className={styles.kicker}><CalendarDays size={16} aria-hidden="true" /> Corte consultado</p>
+          <h2><time dateTime={report.cutDate}>{day} de {MONTHS[Number(month) - 1].toLowerCase()} de {year}</time></h2>
         </div>
-        {scope && <p className={styles.scope}>{scope}</p>}
-      </div>
+        <div className={styles.scope} aria-label="Filtros aplicados">
+          <Badge tone="positive">{ally}</Badge>
+          {site && <Badge>{site}</Badge>}
+          {filters.status !== "todos" && <Badge>{STATUS_LABELS[filters.status]}</Badge>}
+        </div>
+      </header>
       <div className={styles.balanceBody}>
-        <div className={styles.balanceTitle}><h3>Balance del corte</h3><span>Pesos colombianos</span></div>
-        <dl className={styles.amounts}>
-          <div><dt>Recaudo esperado</dt><dd>{money(summary.expected)}</dd></div>
-          <div><dt><i className={styles.receivedDot} aria-hidden="true" />Recaudo recibido</dt><dd>{money(summary.received)}</dd></div>
-        </dl>
-        <div className={styles.progressHeading}><span>Cumplimiento</span><strong>{percentage(summary.completion)}</strong></div>
-        {summary.completion === null
-          ? <p className={styles.noTarget}>Sin valor esperado para este corte.</p>
-          : <ProgressBar className={styles.progress} value={summary.completion} label="Cumplimiento del recaudo esperado" />}
-        <dl className={styles.outstanding}><dt>Pendiente por recaudar</dt><dd>{money(summary.pending)}</dd></dl>
+        <div className={styles.comparison}>
+          <div className={styles.balanceTitle}><h3>Recibido frente a esperado</h3><span>COP</span></div>
+          <div className={styles.amounts}>
+            {comparison.map(item => <div key={item.label}>
+              <div className={styles.amountLine}><span>{item.label}</span><strong>{money(item.amount)}</strong></div>
+              <div aria-hidden="true"><ProgressBar className={item.style} value={scale > 0 ? 100 * item.amount / scale : 0} /></div>
+            </div>)}
+          </div>
+          <p className={styles.note}>Pagos aplicados a las cuotas del corte, incluidos los anticipos.</p>
+        </div>
+        <aside className={styles.balanceStats} aria-label="Resultado del recaudo">
+          <div className={styles.completion}><span>Cumplimiento</span><strong>{percentage(summary.completion)}</strong></div>
+          {summary.completion === null && <p className={styles.note}>Sin valor esperado para este corte.</p>}
+          <dl className={styles.outstanding}><dt>Pendiente por recaudar</dt><dd>{money(summary.pending)}</dd></dl>
+          <div className={styles.counts}>
+            <div><strong>{summary.creditsCount.toLocaleString("es-CO")}</strong><span>Créditos del corte</span></div>
+            <div><strong>{summary.pendingClients.toLocaleString("es-CO")}</strong><span>Clientes pendientes</span></div>
+          </div>
+        </aside>
       </div>
     </Card>
   </section>;
@@ -142,7 +156,6 @@ function CutBalance({ report }: { report: CutReport }) {
 export default function RecaudoPorCorteClient({ initialFilters }: { initialFilters: CutFilters }) {
   const [draft, setDraft] = useState(initialFilters);
   const [selection, setSelection] = useState(initialFilters);
-  const [showFilters, setShowFilters] = useState(Boolean(initialFilters.aliadoId || initialFilters.sedeId || initialFilters.status !== "todos"));
   const [reload, setReload] = useState(0);
   const [result, setResult] = useState<{ key: string; report: CutReport | null; error: string | null }>({ key: "", report: null, error: null });
   const [exporting, setExporting] = useState(false);
@@ -150,7 +163,6 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
   const [selectedRow, setSelectedRow] = useState<CutRow | null>(null);
   const query = paramsFor(selection).toString();
   const draftChanged = paramsFor(draft).toString() !== query;
-  const scopeCount = Number(Boolean(draft.aliadoId)) + Number(Boolean(draft.sedeId)) + Number(draft.status !== "todos");
   const fetchKey = `${query}#${reload}`;
   const loading = result.key !== fetchKey;
   const report = result.report;
@@ -226,17 +238,10 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
           </fieldset>
           <label className={styles.field}>Mes<Select value={draft.month} onChange={(event) => setDraft({ ...draft, month: Number(event.target.value) })}>{MONTHS.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}</Select></label>
           <label className={styles.field}>Año<Input type="number" min="2000" max="2200" required value={draft.year || ""} onChange={(event) => setDraft({ ...draft, year: Number(event.target.value) })} /></label>
-          <div className={styles.filterActions}>
-            <Button variant="secondary" aria-expanded={showFilters} aria-controls="cut-scope-filters" onClick={() => setShowFilters(value => !value)}>
-              <SlidersHorizontal aria-hidden="true" />Más filtros{scopeCount > 0 && <span className={styles.filterCount}>{scopeCount}</span>}
-            </Button>
-            <Button type="submit" disabled={loading}>Consultar corte</Button>
-          </div>
-        </div>
-        <div id="cut-scope-filters" hidden={!showFilters} className={styles.extraFilters}>
-          <label className={styles.field}>Aliado<Select value={draft.aliadoId || ""} onChange={(event) => setDraft({ ...draft, aliadoId: Number(event.target.value) || null, sedeId: null })}><option value="">Todos los autorizados</option>{report?.options.aliados.map((ally) => <option key={ally.id} value={ally.id}>{ally.nombre}</option>)}</Select></label>
-          <label className={styles.field}>Sede<Select value={draft.sedeId || ""} onChange={(event) => setDraft({ ...draft, sedeId: Number(event.target.value) || null })}><option value="">Todas las autorizadas</option>{visibleSedes.map((sede) => <option key={sede.id} value={sede.id}>{sede.nombre}</option>)}</Select></label>
+          <label className={`${styles.field} ${styles.allyField}`}>Aliado<Select value={draft.aliadoId || ""} disabled={loading && !report} onChange={(event) => setDraft({ ...draft, aliadoId: Number(event.target.value) || null, sedeId: null })}><option value="">Todos los autorizados</option>{report?.options.aliados.map((ally) => <option key={ally.id} value={ally.id}>{ally.nombre}</option>)}</Select></label>
+          <label className={styles.field}>Sede<Select value={draft.sedeId || ""} disabled={loading && !report} onChange={(event) => setDraft({ ...draft, sedeId: Number(event.target.value) || null })}><option value="">Todas las autorizadas</option>{visibleSedes.map((sede) => <option key={sede.id} value={sede.id}>{sede.nombre}</option>)}</Select></label>
           <label className={styles.field}>Estado<Select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as CutStatus })}><option value="todos">Todos</option><option value="pendiente">Pendiente</option><option value="parcial">Parcial</option><option value="pagado">Pagado</option></Select></label>
+          <div className={styles.filterActions}><Button type="submit" disabled={loading}>Consultar corte</Button></div>
         </div>
         {draftChanged && <p className={styles.draftNote} role="status"><Clock3 size={15} aria-hidden="true" />Hay cambios en los filtros. Pulsa «Consultar corte» para aplicarlos.</p>}
       </form>
@@ -248,18 +253,35 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
     {visibleReport && summary && <>
       <CutBalance report={visibleReport} />
 
-      {visibleReport.earlyRisk && <section className={styles.breakdown} aria-labelledby="early-risk-title">
-        <h2 id="early-risk-title">Riesgo temprano del corte</h2>
-        <p className={styles.note}>Créditos cuya primera cuota vence en este corte, según aliado y sede. El estado actual de la cuota no cambia esta medición.</p>
-        <Card className={styles.breakdownBody}>
-          {visibleReport.earlyRisk.map(metric => <div key={metric.label}>
-            <h3>{metric.label}</h3>
-            <strong>{metric.eligible ? `${metric.cases} de ${metric.eligible} · ${percentage(100 * metric.cases / metric.eligible)}` : "Sin base evaluable"}</strong>
-            <p>{metric.label === "40/60" ? "Menos de 4 cuotas completas al día 60 desde la fecha de crédito registrada." : `Primera cuota pendiente al cierre del día ${metric.label.slice(4)} de mora.`}</p>
-            <p>{metric.pending} por madurar · {metric.unavailable} sin datos comparables</p>
-          </div>)}
-        </Card>
-        <div><Button variant="secondary" onClick={() => downloadRisk(visibleReport)}>Descargar indicadores para compartir</Button></div>
+      {visibleReport.earlyRisk && <section className={riskStyles.section} aria-labelledby="early-risk-title">
+        <header className={riskStyles.header}>
+          <div>
+            <h2 id="early-risk-title">Riesgo temprano del corte</h2>
+            <p>Créditos cuya primera cuota vence en este corte, según aliado y sede. El estado actual de la cuota no cambia esta medición.</p>
+          </div>
+          <Button variant="secondary" onClick={() => downloadRisk(visibleReport)}>Descargar indicadores para compartir</Button>
+        </header>
+        {visibleReport.earlyRisk.every(metric => metric.eligible === 0) && <p className={riskStyles.emptyNotice} role="status">Sin base evaluable para este corte. Los créditos por madurar o sin datos comparables no se interpretan como un riesgo de 0 %.</p>}
+        <div className={riskStyles.grid}>
+          {visibleReport.earlyRisk.map(metric => <Card key={metric.label} className={riskStyles.card}>
+            <div className={riskStyles.cardHeader}>
+              <h3>{metric.label}</h3>
+              <Badge tone={metric.pending > 0 || metric.unavailable > 0 ? "warning" : "neutral"}>
+                {metric.pending > 0 ? (metric.eligible > 0 ? "Maduración parcial" : "Por madurar") : metric.eligible > 0 ? "Evaluado" : metric.unavailable > 0 ? "Sin datos comparables" : "Sin créditos"}
+              </Badge>
+            </div>
+            <div className={riskStyles.result}>
+              <strong className={metric.eligible ? riskStyles.percentage : riskStyles.noPercentage}>{metric.eligible ? percentage(100 * metric.cases / metric.eligible) : "Sin base evaluable"}</strong>
+              {metric.eligible > 0 && <span>Créditos en riesgo</span>}
+            </div>
+            {metric.eligible > 0 && <p className={riskStyles.ratio}><strong>{numberFormatter.format(metric.cases)}</strong> de <strong>{numberFormatter.format(metric.eligible)}</strong> evaluados</p>}
+            <p className={riskStyles.description}>{metric.label === "40/60" ? "Menos de 4 cuotas completas al día 60 desde la fecha de crédito registrada." : `Primera cuota pendiente al cierre del día ${metric.label.slice(4)} de mora.`}</p>
+            <dl className={riskStyles.maturity}>
+              <div><dt>Por madurar</dt><dd>{numberFormatter.format(metric.pending)}</dd></div>
+              <div><dt>Sin datos comparables</dt><dd>{numberFormatter.format(metric.unavailable)}</dd></div>
+            </dl>
+          </Card>)}
+        </div>
       </section>}
 
       <section className={styles.breakdown} aria-labelledby="cut-breakdown-title">
