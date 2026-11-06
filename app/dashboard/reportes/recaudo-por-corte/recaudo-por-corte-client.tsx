@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, CalendarDays, Clock3, Download, Mail, RefreshCw, Share2, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock3, Download, Mail, MessageCircle, RefreshCw, X } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import {
   Badge, Button, Card, DataTable, EmptyState, Input, LoadingState,
@@ -40,7 +40,7 @@ async function readReport(response: Response): Promise<CutReport> {
   return payload as CutReport;
 }
 
-type PreparedReportPdf = { blob: Blob; filename: string; file: File | null };
+type PreparedReportPdf = { blob: Blob; filename: string };
 
 function saveReportPdf(pdf: PreparedReportPdf) {
   const url = URL.createObjectURL(pdf.blob);
@@ -54,11 +54,11 @@ function saveReportPdf(pdf: PreparedReportPdf) {
 }
 
 function CutReportActions({ report }: { report: CutReport }) {
-  const [busy, setBusy] = useState<"pdf" | "share" | "email" | null>(null);
+  const [busy, setBusy] = useState<"pdf" | "whatsapp" | "email" | null>(null);
   const busyRef = useRef(false);
   const pdfRef = useRef<PreparedReportPdf | null>(null);
   const emailRequestKey = useRef<string | null>(null);
-  const [shareReady, setShareReady] = useState(false);
+  const whatsappRequestKey = useRef<string | null>(null);
   const [confirmEmail, setConfirmEmail] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "info" | "success" | "error"; message: string } | null>(null);
   const ally = report.options.aliados.find(item => item.id === report.filters.aliadoId)?.nombre;
@@ -77,14 +77,8 @@ function CutReportActions({ report }: { report: CutReport }) {
       throw new Error("El servidor no devolvió un informe PDF válido. Vuelve a intentarlo.");
     }
     const filename = `recaudo-por-corte-${report.cutDate}${report.filters.aliadoId ? `-aliado-${report.filters.aliadoId}` : ""}.pdf`;
-    pdfRef.current = { blob, filename, file: typeof File === "function" ? new File([blob], filename, { type: "application/pdf" }) : null };
+    pdfRef.current = { blob, filename };
     return pdfRef.current;
-  }
-
-  function canSharePdf(pdf: PreparedReportPdf) {
-    try {
-      return Boolean(pdf.file && typeof navigator.share === "function" && typeof navigator.canShare === "function" && navigator.canShare({ files: [pdf.file] }));
-    } catch { return false; }
   }
 
   async function downloadPdf() {
@@ -100,41 +94,27 @@ function CutReportActions({ report }: { report: CutReport }) {
     } finally { busyRef.current = false; setBusy(null); }
   }
 
-  async function sharePdf() {
-    if (busyRef.current) return;
+  async function sendWhatsApp() {
+    if (!report.filters.aliadoId || !ally || busyRef.current) return;
     busyRef.current = true;
-    setBusy("share");
+    setBusy("whatsapp");
     setFeedback(null);
     try {
-      const cachedPdf = pdfRef.current;
-      const pdf = cachedPdf ?? await preparePdf();
-      if (!canSharePdf(pdf)) {
-        saveReportPdf(pdf);
-        setShareReady(false);
-        setFeedback({ kind: "info", message: "PDF descargado. Abre WhatsApp y adjunta el archivo manualmente; este navegador no permite compartir archivos directamente." });
-        return;
+      whatsappRequestKey.current ??= crypto.randomUUID();
+      const response = await fetch(`${API}?${query}&action=whatsapp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": whatsappRequestKey.current },
+        cache: "no-store",
+      }).catch(() => { throw new Error("No fue posible confirmar el envío por WhatsApp. Verifica si llegó antes de repetirlo."); });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok !== true || typeof payload.recipient !== "string") {
+        if (response.status === 502 && payload?.retryWithNewKey === true) whatsappRequestKey.current = null;
+        throw new Error(payload?.error || payload?.message || "No fue posible confirmar el envío por WhatsApp. Verifica si llegó antes de repetirlo.");
       }
-      // A fresh click preserves user activation when preparing the PDF took time.
-      if (!cachedPdf && !navigator.userActivation?.isActive) {
-        setShareReady(true);
-        setFeedback({ kind: "info", message: "Informe listo. Pulsa «Elegir WhatsApp» y selecciona WhatsApp en el menú para compartir." });
-        return;
-      }
-      try {
-        await navigator.share({ files: [pdf.file!], title: `Recaudo por corte · ${dateLabel(report.cutDate)}` });
-        setShareReady(false);
-        setFeedback({ kind: "info", message: "Se abrió el menú para compartir el informe PDF." });
-      } catch (cause) {
-        if (cause instanceof Error && cause.name === "AbortError") {
-          setFeedback({ kind: "info", message: "Se canceló la opción de compartir. El PDF sigue disponible para descargar." });
-          return;
-        }
-        saveReportPdf(pdf);
-        setShareReady(false);
-        setFeedback({ kind: "info", message: "No fue posible abrir la opción de compartir. PDF descargado: abre WhatsApp y adjunta el archivo manualmente." });
-      }
+      whatsappRequestKey.current = null;
+      setFeedback({ kind: "success", message: `Envío por WhatsApp aceptado para ${payload.recipient}, número registrado de ${ally}.` });
     } catch (cause) {
-      setFeedback({ kind: "error", message: cause instanceof Error ? cause.message : "No fue posible preparar el informe para compartir." });
+      setFeedback({ kind: "error", message: cause instanceof Error ? cause.message : "No fue posible confirmar el envío por WhatsApp. Verifica si llegó antes de repetirlo." });
     } finally { busyRef.current = false; setBusy(null); }
   }
 
@@ -169,7 +149,7 @@ function CutReportActions({ report }: { report: CutReport }) {
   return <div className={riskStyles.actionsPanel}>
     <div className={riskStyles.actions} aria-label="Acciones del informe" aria-busy={busy !== null}>
       <Button variant="secondary" disabled={busy !== null} onClick={downloadPdf}><Download aria-hidden="true" />{busy === "pdf" ? "Preparando PDF…" : "Descargar informe PDF"}</Button>
-      <Button variant="secondary" disabled={busy !== null} onClick={sharePdf}><Share2 aria-hidden="true" />{busy === "share" ? "Preparando para compartir…" : shareReady ? "Elegir WhatsApp" : "Compartir por WhatsApp"}</Button>
+      {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={busy !== null} onClick={sendWhatsApp}><MessageCircle aria-hidden="true" />{busy === "whatsapp" ? "Enviando por WhatsApp…" : "Enviar por WhatsApp"}</Button> : null}
       {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={busy !== null} onClick={() => { setFeedback(null); setConfirmEmail(true); }}><Mail aria-hidden="true" />{busy === "email" ? "Enviando informe…" : "Enviar por correo"}</Button> : null}
     </div>
     {feedback && <p className={`${riskStyles.feedback} ${feedback.kind === "error" ? riskStyles.feedbackError : feedback.kind === "success" ? riskStyles.feedbackSuccess : ""}`} role={feedback.kind === "error" ? "alert" : "status"}>{feedback.message}</p>}

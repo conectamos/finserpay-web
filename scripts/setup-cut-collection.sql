@@ -1,4 +1,13 @@
 BEGIN;
+CREATE TABLE IF NOT EXISTS "CutCollectionWhatsAppAttempt" (
+  "userId" INTEGER NOT NULL,
+  "requestKey" UUID NOT NULL,
+  "scopeHash" TEXT NOT NULL,
+  "state" TEXT NOT NULL CHECK ("state" IN ('SENDING', 'ACCEPTED', 'REJECTED')),
+  "providerId" TEXT,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("userId", "requestKey")
+);
 CREATE TABLE IF NOT EXISTS "CutCollectionProjection" (
   id UUID PRIMARY KEY,
   "requestKey" UUID NOT NULL,

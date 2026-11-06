@@ -16,8 +16,12 @@ const report = { ok: true, mode: "consulta", cutDate: "2026-10-17", projection: 
   historyPage: 0, historyHasMore: false, rows: [], filters, summary: { creditsCount: 0 } };
 const pdfBytes = Buffer.from("%PDF-local-http-fixture");
 const registeredRecipient = "aliado-registrado@example.test";
+const registeredWhatsApp = "573001234567";
 const requestKey = "1d34cc6f-8bf8-4277-b1a4-2f908a6ca9ab";
 class CutCollectionEmailError extends Error {
+  constructor(message, status) { super(message); this.status = status; }
+}
+class CutCollectionWhatsAppError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
 
@@ -45,7 +49,7 @@ const { assertAttentionOrigin } = compile("lib/atencion-http.ts", name => {
 // Real handlers, origin guard and filter parsing. Dynamic document/delivery
 // imports are isolated too: tests never reach a live database or mail provider.
 function harness(overrides = {}) {
-  const calls = { access: 0, parse: [], read: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], recipient: [], email: [], order: [] };
+  const calls = { access: 0, parse: [], read: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], recipient: [], email: [], whatsapp: [], order: [] };
   function scopedRequire(name) {
     if (name === "@/lib/cut-collection-access") return {
       CutCollectionError,
@@ -75,19 +79,29 @@ function harness(overrides = {}) {
       getCutCollectionRecipient: async id => { calls.recipient.push(id); calls.order.push("recipient"); if (overrides.recipientError) throw overrides.recipientError; return registeredRecipient; },
       sendCutCollectionEmail: async input => { calls.email.push(input); calls.order.push("email"); if (overrides.emailError) throw overrides.emailError; },
     };
+    if (name === "@/lib/cut-collection-whatsapp") return {
+      CutCollectionWhatsAppError,
+      sendCutCollectionWhatsApp: async input => {
+        calls.whatsapp.push(input); calls.order.push("whatsapp");
+        if (overrides.whatsappError) throw overrides.whatsappError;
+        return registeredWhatsApp;
+      },
+    };
     assert.fail(`Dependencia no aislada: ${name}`);
   }
   return { ...compile("app/api/reportes/recaudo-por-corte/route.ts", scopedRequire), calls };
 }
 
-function emailRequest({ headers = {}, params = query.toString(), body = {} } = {}) {
+function deliveryRequest({ headers = {}, params = query.toString(), body = {}, action = "email" } = {}) {
   const merged = new Headers({ origin: new URL(url).origin, "content-type": "application/json", "idempotency-key": requestKey });
   for (const [key, value] of Object.entries(headers)) {
     if (value === null) merged.delete(key);
     else merged.set(key, value);
   }
-  return new Request(`${url}?${params}&action=email`, { method: "POST", headers: merged, body: JSON.stringify(body) });
+  return new Request(`${url}?${params}&action=${action}`, { method: "POST", headers: merged, body: JSON.stringify(body) });
 }
+const emailRequest = options => deliveryRequest({ ...options, action: "email" });
+const whatsappRequest = options => deliveryRequest({ ...options, action: "whatsapp" });
 
 function assertPrivate(response) {
   assert.match(response.headers.get("cache-control"), /private, no-store/);
@@ -99,14 +113,14 @@ test("GET y POST exigen sesión y permisos antes de consultar o rechazar la oper
   for (const status of [401, 403]) {
     const handler = harness({ accessError: new CutCollectionError("Sin acceso", status) });
     for (const response of [await handler.GET(new Request(url)), await handler.POST(new Request(url, { method: "POST" })),
-      await handler.GET(new Request(`${url}?${query}&format=pdf`)), await handler.POST(emailRequest())]) {
+      await handler.GET(new Request(`${url}?${query}&format=pdf`)), await handler.POST(emailRequest()), await handler.POST(whatsappRequest())]) {
       assert.equal(response.status, status);
       assertPrivate(response);
     }
     assert.equal(handler.calls.read.length, 0);
     assert.equal(handler.calls.legacyRead.length, 0);
     assert.equal(handler.calls.save.length, 0);
-    for (const stage of ["origin", "parse", "recipient", "pdf", "email"]) assert.equal(handler.calls[stage].length, 0);
+    for (const stage of ["origin", "parse", "recipient", "pdf", "email", "whatsapp"]) assert.equal(handler.calls[stage].length, 0);
   }
 });
 
@@ -191,7 +205,7 @@ test("POST responde 410 tras autorizar sin leer el cuerpo, consultar ni guardar"
   }
 });
 
-test("enviar correo exige origen propio, JSON, UUID v4, filtros válidos y un aliado explícito", async () => {
+test("enviar correo o WhatsApp exige origen propio, JSON, UUID v4, filtros válidos y un aliado explícito", async () => {
   const withoutAlly = new URLSearchParams(query);
   withoutAlly.delete("aliadoId");
   for (const [options, status] of [
@@ -210,12 +224,14 @@ test("enviar correo exige origen propio, JSON, UUID v4, filtros válidos y un al
     [{ params: "day=17&aliadoId=1&sedeId=-10" }, 400],
     [{ params: "day=17&aliadoId=1&status=invalid" }, 400],
   ]) {
-    const handler = harness();
-    const response = await handler.POST(emailRequest(options));
-    assert.equal(response.status, status, JSON.stringify(options));
-    assert.equal(handler.calls.access, 1);
-    for (const stage of ["read", "recipient", "pdf", "email", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
-    assertPrivate(response);
+    for (const action of ["email", "whatsapp"]) {
+      const handler = harness();
+      const response = await handler.POST(deliveryRequest({ ...options, action }));
+      assert.equal(response.status, status, JSON.stringify({ ...options, action }));
+      assert.equal(handler.calls.access, 1);
+      for (const stage of ["read", "recipient", "pdf", "email", "whatsapp", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
+      assertPrivate(response);
+    }
   }
 });
 
@@ -257,6 +273,70 @@ test("correo envía una sola vez el PDF validado al contacto registrado e ignora
   for (const stage of ["excel", "legacyRead", "save"]) assert.equal(handler.calls[stage].length, 0);
   assert.equal(request.bodyUsed, false, "El cuerpo no es una fuente de contenido ni destinatarios del envío");
   assertPrivate(response);
+});
+
+test("WhatsApp recibe una sola vez el aliado autorizado y devuelve el contacto registrado sin aceptar números del navegador", async () => {
+  const handler = harness();
+  const request = whatsappRequest({
+    params: `${query}&phone=573999999999&recipient=573888888888&userId=999&central=true`,
+    body: { phone: "573999999999", recipient: "573888888888", clienteTelefono: "573777777777",
+      telefonoWhatsapp: "573666666666", aliadoId: 999, userId: 999, pdf: "forged-pdf", fallback: "email" },
+  });
+  const response = await handler.POST(request);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, recipient: registeredWhatsApp });
+  assert.deepEqual(handler.calls.order, ["access", "origin", "parse", "report", "whatsapp"]);
+  assert.deepEqual(handler.calls.read, [[access, filters]]);
+  assert.deepEqual(handler.calls.whatsapp, [{ userId: access.userId, key: requestKey, allyId: filters.aliadoId, report }]);
+  for (const stage of ["recipient", "email", "pdf", "excel", "legacyRead", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
+  assert.equal(request.bodyUsed, false);
+  assertPrivate(response);
+});
+
+test("WhatsApp valida el alcance antes de invocar el servicio y no usa otro canal si falta el número registrado", async () => {
+  const forbidden = harness({ error: new CutCollectionError("Aliado no autorizado.", 403) });
+  const denied = await forbidden.POST(whatsappRequest());
+  assert.equal(denied.status, 403);
+  assert.deepEqual(forbidden.calls.order, ["access", "origin", "parse", "report"]);
+  assert.equal(forbidden.calls.whatsapp.length, 0);
+  assertPrivate(denied);
+
+  const missingNumber = harness({ whatsappError: new CutCollectionError("El aliado no tiene un número de WhatsApp válido registrado.", 422) });
+  const response = await missingNumber.POST(whatsappRequest({ body: { phone: "573999999999", fallback: "email" } }));
+  assert.equal(response.status, 422);
+  assert.deepEqual(await response.json(), { error: "El aliado no tiene un número de WhatsApp válido registrado." });
+  assert.deepEqual(missingNumber.calls.whatsapp, [{ userId: access.userId, key: requestKey, allyId: filters.aliadoId, report }]);
+  for (const handler of [forbidden, missingNumber]) {
+    for (const stage of ["recipient", "email", "pdf", "excel", "legacyRead", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
+  }
+  assertPrivate(response);
+});
+
+test("WhatsApp conserva errores seguros, oculta fallos internos y no reintenta ni deriva a correo", async () => {
+  const captured = [];
+  const original = console.error;
+  console.error = (...args) => captured.push(args.join(" "));
+  try {
+    for (const [error, status] of [
+      [new CutCollectionWhatsAppError("La solicitud corresponde a otro informe.", 409), 409],
+      [new CutCollectionWhatsAppError("WhatsApp rechazó el envío del informe.", 502), 502],
+      [new CutCollectionWhatsAppError("WhatsApp no confirmó el envío. Verifica si llegó antes de volver a enviarlo.", 503), 503],
+      [new Error("SQL clienteDocumento=001234 secret-token graph.facebook.com 573999999999"), 500],
+      [new CutCollectionError("SQL secret-token 573999999999", 503), 503],
+    ]) {
+      const handler = harness({ whatsappError: error });
+      const response = await handler.POST(whatsappRequest());
+      assert.equal(response.status, status);
+      const payload = await response.json();
+      assert.deepEqual(Object.keys(payload), ["error"]);
+      if (error instanceof CutCollectionWhatsAppError) assert.equal(payload.error, error.message);
+      assert.doesNotMatch(JSON.stringify(payload), /SQL|001234|secret-token|graph\.facebook|573999999999|wa\.me/);
+      assert.equal(handler.calls.whatsapp.length, 1);
+      for (const stage of ["recipient", "email", "pdf", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
+      assertPrivate(response);
+    }
+    assert.doesNotMatch(captured.join(" "), /SQL|001234|secret-token|573999999999/);
+  } finally { console.error = original; }
 });
 
 test("errores de correo, destinatario y PDF no exponen datos internos ni reintentan el envío", async () => {

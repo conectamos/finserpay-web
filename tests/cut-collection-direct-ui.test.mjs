@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
@@ -120,11 +121,13 @@ function harness(respond = () => reportFixture()) {
     "./recaudo-por-corte.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
   }, {
     fetch: async (url, options) => {
-      requests.push({ url, method: options?.method || "GET", cache: options?.cache });
+      requests.push({ url, method: options?.method || "GET", cache: options?.cache,
+        ...(options?.method === "POST" ? { headers: options.headers, body: options.body } : {}) });
       if (url.includes("format=xlsx")) return { ok: true, blob: async () => new Blob(["local test workbook"]) };
-      const data = await respond(url);
+      const data = await respond(url, options);
       return { ok: !data.error, json: async () => data };
     },
+    crypto: { randomUUID },
     URL: { createObjectURL: () => "blob:local-test", revokeObjectURL: () => {} },
     document: {
       body: { appendChild: () => {} },
@@ -212,6 +215,91 @@ function expectVisibleFilter(app, label) {
   assert.ok(!nodes(field, node => ["select", "input"].includes(node.type))[0].props.disabled,
     `${label} está disponible para editar`);
 }
+
+function reportWithRiskForUrl(url) {
+  const query = new URL(url, "https://finserpay.test").searchParams;
+  const report = reportFixture();
+  return { ...report,
+    filters: { ...report.filters, aliadoId: Number(query.get("aliadoId")) || null,
+      sedeId: Number(query.get("sedeId")) || null, status: query.get("status") || "todos" },
+    earlyRisk: [{ label: "FPD 1", cases: 1, eligible: 2, pending: 0, unavailable: 0 }],
+  };
+}
+
+test("WhatsApp envía directamente al aliado aplicado con los filtros consultados y sin destinatario del cliente", async () => {
+  const app = harness((url, options) => options?.method === "POST"
+    ? { ok: true, recipient: "+573001234567" } : reportWithRiskForUrl(url));
+  await app.settle();
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp").length, 0);
+  app.change("Aliado", "4");
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp").length, 0,
+    "Cambiar el borrador no habilita un envío a un aliado aún no consultado");
+  app.change("Sede", "8");
+  app.change("Estado", "parcial");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  app.change("Estado", "pagado");
+  await app.click(/^Enviar por WhatsApp$/);
+  const requests = app.requests.filter(request => request.method === "POST");
+  assert.equal(requests.length, 1);
+  const query = new URL(requests[0].url, "https://finserpay.test").searchParams;
+  for (const [key, expected] of Object.entries({ day: "2", month: "11", year: "2026", status: "parcial", aliadoId: "4", sedeId: "8", action: "whatsapp" })) {
+    assert.equal(query.get(key), expected, key);
+  }
+  assert.equal(query.has("recipient"), false);
+  assert.equal(query.has("phone"), false);
+  assert.equal(requests[0].body, undefined);
+  assert.equal(requests[0].headers["Content-Type"], "application/json");
+  assert.match(requests[0].headers["Idempotency-Key"], /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i);
+  assert.equal(app.find(node => node.props.role === "alertdialog").length, 0);
+  assert.match(app.text(), /Envío por WhatsApp aceptado para \+573001234567/);
+  assert.equal(app.downloads.length, 0);
+  assert.ok(!app.text().includes("Compartir por WhatsApp") && !app.text().includes("adjunta el archivo"));
+});
+
+test("WhatsApp bloquea envíos simultáneos mientras el servidor responde", async () => {
+  let finishSend;
+  const app = harness((url, options) => options?.method === "POST"
+    ? new Promise(resolve => { finishSend = resolve; }) : reportWithRiskForUrl(url));
+  await app.settle();
+  app.change("Aliado", "4");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  const button = app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp")[0];
+  const first = button.props.onClick();
+  await button.props.onClick();
+  app.render();
+  assert.equal(app.requests.filter(request => request.method === "POST").length, 1);
+  const pendingButton = app.find(node => node.type === "button" && name(node) === "Enviando por WhatsApp…")[0];
+  assert.equal(pendingButton.props.disabled, true);
+  finishSend({ ok: true, recipient: "+573001234567" });
+  await first;
+  app.render();
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp")[0].props.disabled, false);
+});
+
+test("un fallo de red de WhatsApp informa incertidumbre y conserva la clave al repetir el mismo envío", async () => {
+  let fail = true;
+  const app = harness((url, options) => {
+    if (options?.method !== "POST") return reportWithRiskForUrl(url);
+    if (fail) throw new Error("QA offline");
+    return { ok: true, recipient: "+573001234567" };
+  });
+  await app.settle();
+  app.change("Aliado", "4");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  await app.click(/^Enviar por WhatsApp$/);
+  assert.match(app.text(), /No fue posible confirmar el envío por WhatsApp\. Verifica si llegó antes de repetirlo/);
+  assert.ok(!app.text().includes("QA offline"));
+  assert.ok(app.find(node => node.props.role === "alert").length);
+  fail = false;
+  await app.click(/^Enviar por WhatsApp$/);
+  const requests = app.requests.filter(request => request.method === "POST");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].headers["Idempotency-Key"], requests[1].headers["Idempotency-Key"]);
+  assert.match(app.text(), /Envío por WhatsApp aceptado/);
+});
 
 test("la consulta inicial es GET y presenta los seis indicadores financieros sin depender de su orden", async () => {
   const app = harness();

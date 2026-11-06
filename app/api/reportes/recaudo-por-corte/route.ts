@@ -82,7 +82,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const access = await getCutCollectionAccess();
-    if (new URL(request.url).searchParams.get("action") !== "email") {
+    const action = new URL(request.url).searchParams.get("action");
+    if (action !== "email" && action !== "whatsapp") {
       return json({ error: "El recaudo por corte se consulta directamente. Ya no se guardan nuevas proyecciones." }, 410);
     }
     const { assertAttentionOrigin } = await import("@/lib/atencion-http");
@@ -98,6 +99,18 @@ export async function POST(request: Request) {
     const filters = parseCutFilters(readQuery(request));
     if (!filters.aliadoId) throw new CutCollectionError("Selecciona un aliado para enviar el informe.", 400);
     const report = await getDirectCutCollectionReport(access, filters);
+    if (action === "whatsapp") {
+      const { CutCollectionWhatsAppError, sendCutCollectionWhatsApp } = await import("@/lib/cut-collection-whatsapp");
+      try {
+        const recipient = await sendCutCollectionWhatsApp({ userId: access.userId, key, allyId: filters.aliadoId, report });
+        return json({ ok: true, recipient });
+      } catch (error) {
+        if (error instanceof CutCollectionWhatsAppError) {
+          return json({ error: error.message, ...(error.retryWithNewKey && { retryWithNewKey: true }) }, error.status);
+        }
+        throw error;
+      }
+    }
     const { CutCollectionEmailError, getCutCollectionRecipient, sendCutCollectionEmail } = await import("@/lib/cut-collection-email");
     const recipient = await getCutCollectionRecipient(filters.aliadoId);
     const { buildCutCollectionPdf } = await import("@/lib/cut-collection-pdf");
