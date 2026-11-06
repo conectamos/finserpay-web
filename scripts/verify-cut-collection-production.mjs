@@ -209,7 +209,7 @@ export async function runProductionVerification(args = process.argv.slice(2), en
       const otherCut = await read(central, { day: baseFilters.day === 2 ? 17 : 2 });
       const scoped = await read(central, { aliadoId: ally.aliadoId });
       for (const report of [centralReport, otherCut, scoped, allyReport]) {
-        check(report.earlyRisk?.map(metric => metric.label).join(",") === "DPF 3,DPF 7,DPF 15,40/60", "risk_metrics_missing");
+        check(report.earlyRisk?.map(metric => metric.label).join(",") === "DPF 3,DPF 7,DPF 15,40/60,FPD MADURO", "risk_metrics_missing");
         check(report.earlyRisk.every(metric => metric.cases >= 0 && metric.cases <= metric.eligible), "risk_counts_invalid");
       }
       check(JSON.stringify(scoped.earlyRisk) === JSON.stringify(allyReport.earlyRisk), "risk_ally_scope_mismatch");

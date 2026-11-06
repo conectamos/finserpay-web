@@ -48,18 +48,17 @@
 
 .matrix { width: 100%; max-width: 100%; min-width: 0; overflow: auto; background: var(--fp-surface); }
 .matrix:focus-visible { outline: 3px solid var(--fp-lime); outline-offset: -3px; }
-.matrix table { width: 100%; min-width: 940px; border-collapse: separate; border-spacing: 0; text-align: left; }
-.matrix caption { padding: 12px 16px; color: var(--fp-muted); font-size: 14px; text-align: left; }
-.matrix th, .matrix td { padding: 16px; border-top: 1px solid var(--fp-border); vertical-align: top; }
+.matrix table { width: 100%; min-width: 1240px; border-collapse: separate; border-spacing: 0; text-align: left; }
+.matrix caption { padding: 16px 24px; color: var(--fp-muted); font-size: 14px; text-align: left; }
+.matrix th, .matrix td { padding: 20px 24px; border-top: 1px solid var(--fp-border); vertical-align: top; }
 .matrix th + th, .matrix td { border-left: 1px solid var(--fp-border); }
-.matrix thead th { position: sticky; top: 0; z-index: 2; min-width: 190px; background: var(--fp-bg); color: var(--fp-graphite); font-size: 14px; font-weight: 750; }
-.matrix th:first-child { position: sticky; left: 0; min-width: 160px; width: 160px; }
+.matrix thead th { position: sticky; top: 0; z-index: 2; min-width: 210px; background: var(--fp-bg); color: var(--fp-graphite); font-size: 14px; font-weight: 750; }
+.matrix th:first-child { position: sticky; left: 0; min-width: 180px; width: 180px; }
 .matrix thead th:first-child { z-index: 3; }
 .matrix tbody th { z-index: 1; background: var(--fp-surface); font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .matrix tbody tr:hover > * { background: var(--fp-bg); }
-.columnHint { display: block; margin-top: 4px; color: var(--fp-muted); font-size: 13px; font-weight: 400; }
-.cell { display: grid; gap: 6px; }
-.cellHeading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; }
+.cell { display: grid; gap: 10px; }
+.cellHeading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
 .cellHeading strong { color: var(--fp-graphite); font-variant-numeric: tabular-nums; line-height: 1.2; letter-spacing: -.025em; }
 .cellHeading > span { font-size: 12px; }
 .percentage { font-size: 24px; font-weight: 750; }
@@ -80,8 +79,8 @@
   .selectorControls { grid-template-columns: minmax(64px, .7fr) minmax(110px, 1.3fr) minmax(78px, .9fr); gap: 8px; }
   .selectorControls :is(select, input) { padding-inline: 8px; }
   .selectorControls > button { grid-column: 1 / -1; }
-  .matrix th, .matrix td { padding: 12px; }
-  .matrix th:first-child { min-width: 126px; width: 126px; }
+  .matrix th, .matrix td { padding: 16px; }
+  .matrix th:first-child { min-width: 140px; width: 140px; }
 }
 
 @media (max-width: 360px) {

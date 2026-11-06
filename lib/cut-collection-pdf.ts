@@ -1,18 +1,18 @@
 import PDFDocument from "pdfkit";
 import type { CutReport, CutRiskComparisonItem } from "./cut-collection-types";
-import { getCutFpdLevel } from "./cut-risk-presentation";
+import { CUT_RISK_INDICATORS, getCutFpdLevel } from "./cut-risk-presentation";
 
 // Shared FINSER PAY palette (app/globals.css); built-in fonts travel with PDFKit.
 const COLORS = {
   graphite: "#151A21", muted: "#667085", border: "#D8DEE5", lime: "#B7E63D",
-  porcelain: "#F5F6F4", white: "#FFFFFF",
+  porcelain: "#F5F6F4", white: "#FFFFFF", date: "#F5F8ED",
 };
 const MARGIN = 40;
-const TABLE_HEADING = 35;
-const ROW_HEIGHT = 89;
+const TABLE_HEADING = 40;
+const ROW_HEIGHT = 92;
+const ROW_GAP = 9;
 const NUMBER = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
 const PERCENT = new Intl.NumberFormat("es-CO", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
-const RISK_LABELS = ["DPF 3", "DPF 7", "DPF 15", "40/60"] as const;
 const FPD_COLORS = {
   EXCELENTE: { background: "#F2F9DF", foreground: "#365314" },
   BUENO: { background: "#EDF6ED", foreground: "#285334" },
@@ -23,12 +23,11 @@ const FPD_COLORS = {
 function clean(value: string) { return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim(); }
 function count(value: number) { return Number.isFinite(value) ? NUMBER.format(value) : "-"; }
 function percent(value: number | null) { return value != null && Number.isFinite(value) ? `${PERCENT.format(value)} %` : "No aplica"; }
-function dateLabel(value: string, timestamp = false) {
-  const date = new Date(timestamp ? value : `${value}T12:00:00-05:00`);
+function dateLabel(value: string) {
+  const date = new Date(`${value}T12:00:00-05:00`);
   if (!Number.isFinite(+date)) return "Fecha no disponible";
   return new Intl.DateTimeFormat("es-CO", {
     timeZone: "America/Bogota", day: "2-digit", month: "long", year: "numeric",
-    ...(timestamp ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" as const } : {}),
   }).format(date);
 }
 
@@ -39,7 +38,7 @@ export async function buildCutCollectionPdf(report: CutReport, comparison?: CutR
   }];
   const title = "Riesgo temprano por corte";
   const doc = new PDFDocument({
-    size: "A4", margin: MARGIN, bufferPages: true, compress: true,
+    size: "A4", layout: "landscape", margin: MARGIN, bufferPages: true, compress: true,
     info: { Title: cuts.length === 1 ? `${title} - ${cuts[0].cutDate}` : title, Author: "FINSER PAY", Subject: "Indicadores de riesgo temprano" },
   });
   const chunks: Buffer[] = [];
@@ -49,7 +48,7 @@ export async function buildCutCollectionPdf(report: CutReport, comparison?: CutR
     doc.on("error", reject);
   });
   const width = doc.page.width - MARGIN * 2;
-  const bottom = doc.page.height - 66;
+  const bottom = doc.page.height - 60;
   let y = MARGIN;
 
   function text(value: string, x: number, top: number, available: number, size = 10, bold = false, color = COLORS.graphite,
@@ -76,83 +75,75 @@ export async function buildCutCollectionPdf(report: CutReport, comparison?: CutR
     doc.roundedRect(MARGIN + 134, 33, 7, 16, 3).fill(COLORS.lime);
     text("RIESGO TEMPRANO", MARGIN + 270, 38, width - 270, 8, true, COLORS.muted, "right");
   }
-  function ensureSpace(required: number) {
-    if (y + required <= bottom) return;
-    doc.addPage();
-    brand();
-    text(title, MARGIN, 65, width, 14, true);
-    fitted(ally, MARGIN, 87, width, 9, COLORS.muted);
-    line(106);
-    y = 122;
-  }
   const ally = report.filters.aliadoId == null ? "Todos los permitidos" : clean(
     report.options.aliados.find(item => item.id === report.filters.aliadoId)?.nombre || `Aliado ${report.filters.aliadoId}`);
   const site = report.filters.sedeId == null ? "Todas las permitidas" : clean(
     report.options.sedes.find(item => item.id === report.filters.sedeId)?.nombre || `Sede ${report.filters.sedeId}`);
-  brand();
-  text(title, MARGIN, 69, width, 27, true);
-  text(`Consultado al ${dateLabel(cuts[0].queriedAt, true)} | Hora de Colombia (UTC-05:00)`, MARGIN, 106, width, 9, false, COLORS.muted);
-  y = 132;
-  // Full-width scope values wrap, including long unbroken names, without truncation.
-  for (const [label, value] of [["ALIADO", ally], ["SEDE", site]]) {
-    const labelWidth = 110;
-    const rowHeight = Math.max(14, height(value, width - labelWidth, 10));
-    ensureSpace(rowHeight + 8);
-    text(label, MARGIN, y + 1, labelWidth - 8, 8, true, COLORS.muted);
-    text(value, MARGIN + labelWidth, y, width - labelWidth, 10);
-    y += rowHeight + 5;
+  function pageHeader(continued = false) {
+    brand();
+    text(title, MARGIN, 68, width, continued ? 20 : 29, true);
+    const scopeTop = continued ? 99 : 113;
+    const half = width / 2;
+    const valueWidth = half - 36;
+    const scopeHeight = 36 + Math.max(height(ally, valueWidth, 11, true), height(site, valueWidth, 11, true));
+    doc.roundedRect(MARGIN, scopeTop, width, scopeHeight, 8).fill(COLORS.porcelain);
+    for (const [index, [label, value]] of [["ALIADO", ally], ["SEDE", site]].entries()) {
+      const x = MARGIN + index * half + 17;
+      text(label, x, scopeTop + 11, valueWidth, 8, true, COLORS.muted);
+      text(value, x, scopeTop + 24, valueWidth, 11, true);
+    }
+    y = scopeTop + scopeHeight + 17;
   }
-  y += 12;
-  const dateWidth = 120;
-  const metricWidth = (width - dateWidth) / RISK_LABELS.length;
+  const dateWidth = 128;
+  const metricWidth = (width - dateWidth) / CUT_RISK_INDICATORS.length;
   function matrixHeader() {
-    doc.roundedRect(MARGIN, y, width, TABLE_HEADING + 5, 7).fill(COLORS.graphite);
-    doc.roundedRect(MARGIN + 12, y + 10, 4, 15, 2).fill(COLORS.lime);
-    text("CORTE", MARGIN + 24, y + 13, dateWidth - 30, 9, true, COLORS.white);
-    RISK_LABELS.forEach((label, column) => {
-      const x = MARGIN + dateWidth + column * metricWidth + 10;
-      text(label.replace("DPF", "FPD"), x, y + (label === "40/60" ? 7 : 12), metricWidth - 18, 11, true, COLORS.white);
-      if (label === "40/60") fitted("6 cuotas en 3 meses", x, y + 21, metricWidth - 18, 8, COLORS.lime);
+    doc.roundedRect(MARGIN, y, width, TABLE_HEADING, 8).fill(COLORS.graphite);
+    doc.roundedRect(MARGIN + 14, y + 12, 4, 16, 2).fill(COLORS.lime);
+    text("CORTE", MARGIN + 25, y + 15, dateWidth - 32, 10, true, COLORS.white);
+    CUT_RISK_INDICATORS.forEach(({ label }, column) => {
+      const x = MARGIN + dateWidth + column * metricWidth + 13;
+      fitted(label, x, y + 14, metricWidth - 25, 10, COLORS.white);
     });
-    y += TABLE_HEADING;
+    y += TABLE_HEADING + ROW_GAP;
   }
-  ensureSpace(TABLE_HEADING + ROW_HEIGHT);
+  pageHeader();
   matrixHeader();
   for (const [position, cut] of cuts.entries()) {
     if (y + ROW_HEIGHT > bottom) {
-      ensureSpace(TABLE_HEADING + ROW_HEIGHT);
+      doc.addPage();
+      pageHeader(true);
       matrixHeader();
     }
-    doc.rect(MARGIN, y, width, ROW_HEIGHT).fill(position % 2 ? "#FAFBFA" : COLORS.white);
-    doc.rect(MARGIN, y, dateWidth, ROW_HEIGHT).fill(COLORS.porcelain);
+    doc.roundedRect(MARGIN, y, width, ROW_HEIGHT, 8).lineWidth(0.7).strokeColor(COLORS.border).stroke();
+    doc.roundedRect(MARGIN + 1, y + 1, dateWidth - 4, ROW_HEIGHT - 2, 7).fill(COLORS.date);
     const [dayMonth, year] = dateLabel(cut.cutDate).split(/ de (?=\d{4}$)/);
-    text(`CORTE ${String(position + 1).padStart(2, "0")}`, MARGIN + 12, y + 13, dateWidth - 24, 8, true, COLORS.muted);
-    fitted(dayMonth, MARGIN + 12, y + 29, dateWidth - 24, 12);
-    if (year) text(year, MARGIN + 12, y + 45, dateWidth - 24, 11, true);
-    RISK_LABELS.forEach((label, column) => {
+    text(`CORTE ${String(position + 1).padStart(2, "0")}`, MARGIN + 14, y + 16, dateWidth - 27, 8, true, COLORS.muted);
+    fitted(dayMonth, MARGIN + 14, y + 33, dateWidth - 27, 13);
+    if (year) text(year, MARGIN + 14, y + 51, dateWidth - 27, 11, false, COLORS.muted);
+    CUT_RISK_INDICATORS.forEach(({ key, hasFpdLevel }, column) => {
       const left = MARGIN + dateWidth + column * metricWidth;
-      doc.moveTo(left, y).lineTo(left, y + ROW_HEIGHT).lineWidth(0.5).strokeColor(COLORS.border).stroke();
-      const x = left + 10;
-      const available = metricWidth - 20;
-      const metric = cut.earlyRisk.find(item => item.label === label);
+      if (column > 0) doc.moveTo(left, y + 12).lineTo(left, y + ROW_HEIGHT - 12).lineWidth(0.5).strokeColor(COLORS.border).stroke();
+      const x = left + 13;
+      const available = metricWidth - 25;
+      const metric = cut.earlyRisk.find(item => item.label === key);
       const rate = metric && metric.eligible > 0 ? metric.cases / metric.eligible * 100 : null;
-      const level = label !== "40/60" && rate !== null ? getCutFpdLevel(rate) : null;
-      fitted(rate === null ? "Sin base" : percent(rate), x, y + 10, available, rate === null ? 12 : 16);
+      const level = hasFpdLevel && rate !== null ? getCutFpdLevel(rate) : null;
+      fitted(rate === null ? "Sin base" : percent(rate), x, y + 12, available, rate === null ? 13 : 19);
       const status = level ?? (rate !== null ? "" : metric?.pending ? "POR MADURAR" : metric?.unavailable ? "SIN DATOS" : "");
       if (status) {
         const tone = level ? FPD_COLORS[level] : { background: "#FFF6DF", foreground: "#7C450D" };
-        const pillWidth = Math.min(available, 72);
-        doc.roundedRect(x, y + 28, pillWidth, 14, 4).fill(tone.background);
-        text(status, x, y + 31, pillWidth, 7, true, tone.foreground, "center");
+        const pillWidth = Math.min(available, 78);
+        doc.roundedRect(x, y + 36, pillWidth, 16, 4).fill(tone.background);
+        text(status, x, y + 40, pillWidth, 7.5, true, tone.foreground, "center");
       }
       const details = metric ? [
         metric.eligible > 0 ? `${count(metric.cases)} de ${count(metric.eligible)} en riesgo` : "0 evaluados",
-        `Por madurar: ${count(metric.pending)}`, `Sin datos: ${count(metric.unavailable)}`,
+        metric.pending > 0 ? `Por madurar: ${count(metric.pending)}` : "",
+        metric.unavailable > 0 ? `Sin datos: ${count(metric.unavailable)}` : "",
       ] : ["Sin datos disponibles"];
-      details.forEach((detail, index) => fitted(detail, x, y + 48 + index * 12, available, 8, COLORS.muted));
+      details.filter(Boolean).forEach((detail, index) => text(detail, x, y + (status ? 58 : 45) + index * 10, available, 8.5, false, COLORS.muted));
     });
-    y += ROW_HEIGHT;
-    line(y);
+    y += ROW_HEIGHT + ROW_GAP;
   }
 
   const pages = doc.bufferedPageRange();

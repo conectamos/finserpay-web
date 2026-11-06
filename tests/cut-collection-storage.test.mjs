@@ -156,9 +156,9 @@ test("compara seis cohortes con pagos reales en una lectura y un instante sin hi
   const dates = ["2020-11-17", "2020-09-17", "2020-11-02", "2020-10-02", "2020-10-17", "2020-12-02"];
   const atDay = (date, days) => new Date(Date.parse(`${date}T00:00:00-05:00`) + days * 86400000).toISOString();
   for (const [index, date] of dates.entries()) {
-    const id = await f.credit({ first: date, total: 600, count: 6 });
+    const id = await f.credit({ first: date, total: 1000, count: 10 });
     await f.pg.query('UPDATE "Credito" SET "fechaCredito"=$1 WHERE id=$2', [atDay(date, -15), id]);
-    if (index === 1) await f.payment(id, 600, { paidAt: atDay(date, -1), sedeId: 99 });
+    if (index === 1) await f.payment(id, 1000, { paidAt: atDay(date, -1), sedeId: 99 });
     if (index === 2) await f.payment(id, 100, { paidAt: atDay(date, 5) });
     if (index === 3) await f.payment(id, 100, { state: "ANULADO", paidAt: atDay(date, -1), annulledAt: atDay(date, 4) });
     if (index === 4) await f.payment(id, 99, { paidAt: atDay(date, -1) });
@@ -177,12 +177,12 @@ test("compara seis cohortes con pagos reales en una lectura y un instante sin hi
   assert.equal(new Set(comparison.map(item => item.queriedAt)).size, 1);
   assert(comparison.every(item => Number.isFinite(Date.parse(item.queriedAt))));
   assert.deepEqual(comparison.map(item => item.earlyRisk.map(metric => [metric.cases, metric.eligible])), [
-    [[1, 1], [1, 1], [1, 1], [1, 1]],
-    [[0, 1], [0, 1], [0, 1], [0, 1]],
-    [[1, 1], [0, 1], [0, 1], [1, 1]],
-    [[0, 1], [1, 1], [1, 1], [1, 1]],
-    [[1, 1], [1, 1], [1, 1], [1, 1]],
-    [[1, 1], [1, 1], [1, 1], [1, 1]],
+    [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
+    [[0, 1], [0, 1], [0, 1], [0, 1], [0, 1]],
+    [[1, 1], [0, 1], [0, 1], [1, 1], [1, 1]],
+    [[0, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
+    [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
+    [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
   ]);
   assert.equal(f.calls.length, 4, "scope, database time, credits and payments are each read once");
   assert.equal(f.calls.filter(({ sql }) => sql.includes("CURRENT_TIMESTAMP")).length, 1);
@@ -215,8 +215,34 @@ test("comparación y reporte unitario miden seis cuotas al cierre del tercer mes
   const [comparison] = await f.store.directRiskComparison(allied, filters, [first]);
   const report = await f.store.directReport(allied, { ...filters, day: 2, month: 2, year: 2020 });
   assert.deepEqual(comparison.earlyRisk, report.earlyRisk);
-  assert.deepEqual(comparison.earlyRisk.at(-1),
+  assert.deepEqual(comparison.earlyRisk.find(metric => metric.label === "40/60"),
     { label: "40/60", cases: 2, eligible: 3, pending: 0, unavailable: 1 });
+});
+
+test("FPD MADURO conserva paridad unitario con décima cuota dentro, fuera y reversada en el mes cinco", async t => {
+  const f = await fixture(t, false);
+  await f.pg.exec('ALTER TABLE "Credito" ADD COLUMN "fechaCredito" timestamp');
+  const first = "2020-02-02";
+  const complete = await f.credit({ first, total: 1000, count: 10 });
+  const late = await f.credit({ first, total: 1000, count: 10 });
+  const reversed = await f.credit({ first, total: 1000, count: 10 });
+  const nineInstallments = await f.credit({ first, total: 900, count: 9 });
+  await f.pg.query('UPDATE "Credito" SET "fechaCredito"=$1', ["2020-01-31T15:00:00Z"]);
+  for (const id of [complete, late, reversed, nineInstallments]) {
+    await f.payment(id, 900, { paidAt: "2020-04-30T17:00:00Z" });
+  }
+  await f.payment(complete, 100, { paidAt: "2020-07-01T04:59:59.999Z" });
+  await f.payment(late, 100, { paidAt: "2020-07-01T05:00:00Z" });
+  await f.payment(reversed, 100, { state: "ANULADO", paidAt: "2020-06-15T15:00:00Z", annulledAt: "2020-06-30T17:00:00Z" });
+  const before = await f.financialData();
+  const [comparison] = await f.store.directRiskComparison(allied, filters, [first]);
+  const report = await f.store.directReport(allied, { ...filters, day: 2, month: 2, year: 2020 });
+  assert.deepEqual(comparison.earlyRisk, report.earlyRisk);
+  assert.deepEqual(comparison.earlyRisk.find(metric => metric.label === "FPD MADURO"),
+    { label: "FPD MADURO", cases: 2, eligible: 3, pending: 0, unavailable: 1 });
+  assert.deepEqual(comparison.earlyRisk.find(metric => metric.label === "40/60"),
+    { label: "40/60", cases: 0, eligible: 4, pending: 0, unavailable: 0 });
+  assert.deepEqual(await f.financialData(), before);
 });
 
 test("comparación respeta aliado, supervisor, sede propietaria y movimientos sin filtrar por estado actual", async t => {
@@ -258,7 +284,7 @@ test("comparación sin cohortes devuelve mediciones vacías sin requerir tablas 
   const dates = ["2020-10-02", "2020-10-17"];
   const comparison = await f.store.directRiskComparison({ ...allied, aliadoId: 999 }, filters, dates);
   assert.deepEqual(comparison.map(item => item.cutDate), dates);
-  assert(comparison.every(item => item.earlyRisk.length === 4 && item.earlyRisk.every(metric =>
+  assert(comparison.every(item => item.earlyRisk.length === 5 && item.earlyRisk.every(metric =>
     metric.cases === 0 && metric.eligible === 0 && metric.pending === 0 && metric.unavailable === 0)));
   assert.equal(f.calls.length, 2, "an empty authorized scope requires only scope and database time");
 });

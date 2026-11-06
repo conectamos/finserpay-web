@@ -234,7 +234,7 @@ function reportWithRiskForUrl(url) {
     cutDate: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
     filters: { ...report.filters, day, month, year, aliadoId: Number(query.get("aliadoId")) || null,
       sedeId: Number(query.get("sedeId")) || null, status: query.get("status") || "todos" },
-    earlyRisk: ["DPF 3", "DPF 7", "DPF 15", "40/60"].map(label => ({ label, cases: 1, eligible: 2, pending: 0, unavailable: 0 })),
+    earlyRisk: ["DPF 3", "DPF 7", "DPF 15", "40/60", "FPD MADURO"].map(label => ({ label, cases: 1, eligible: 2, pending: 0, unavailable: 0 })),
   };
 }
 
@@ -290,7 +290,7 @@ test("tres cortes agregados fuera de orden se comparan y se envían en el mismo 
   assert.ok(app.text().includes("FPD 3") && app.text().includes("FPD 7") && app.text().includes("FPD 15"));
   assert.ok(!app.text().includes("DPF"));
   assert.deepEqual(riskMatrixDates(app), expected);
-  assert.match(app.text(), /40\/60 6 cuotas en 3 meses/);
+  assert.ok(app.text().includes("FPD PRE MADURO") && app.text().includes("FPD MADURO"));
   await app.click(/^Descargar informe PDF$/);
   assert.equal(app.downloads.at(-1).name, "FINSERPAY_Riesgo_2026-10-02_a_2026-11-02.pdf");
   await app.click(/^Enviar por WhatsApp$/);
@@ -307,6 +307,35 @@ test("tres cortes agregados fuera de orden se comparan y se envían en el mismo 
     assert.equal(query.get("aliadoId"), "4");
     assert.equal(query.get("sedeId"), "8");
   }
+});
+
+test("la matriz distingue premaduro y maduro sin aplicarles niveles FPD ni mostrar la fecha de consulta", async () => {
+  const app = harness(url => {
+    const report = reportWithRiskForUrl(url);
+    return { ...report, earlyRisk: report.earlyRisk.map(metric => metric.label === "40/60"
+      ? { ...metric, cases: 1, eligible: 4, pending: 2, unavailable: 1 }
+      : metric.label === "FPD MADURO" ? { ...metric, cases: 0, eligible: 0, pending: 5, unavailable: 0 } : metric) };
+  });
+  await app.settle();
+  const riskSection = app.find(node => node.type === "section" && node.props["aria-labelledby"] === "early-risk-title")[0];
+  const table = nodes(riskSection, node => node.type === "table")[0];
+  assert.deepEqual(nodes(table, node => node.type === "th" && node.props.scope === "col").map(node => normalized(text(node))),
+    ["Corte", "FPD 3", "FPD 7", "FPD 15", "FPD PRE MADURO", "FPD MADURO"]);
+  const cells = nodes(table, node => node.type === "td");
+  assert.equal(cells.length, 5);
+  assert.match(normalized(text(cells[0])), /50 % Malo/);
+  assert.match(normalized(text(cells[3])), /25 % Base parcial 1 \/ 4 evaluados/);
+  assert.match(normalized(text(cells[3])), /Por madurar 2 Sin datos comparables 1/);
+  assert.match(normalized(text(cells[4])), /Sin base evaluable Por madurar/);
+  for (const cell of cells.slice(3)) {
+    assert.ok(!/Excelente|Bueno|Regular|Malo/.test(text(cell)), "La madurez no reutiliza los niveles de FPD 3/7/15");
+    assert.equal(nodes(cell, node => /is-danger|is-warning|is-positive/.test(node.props.className || "")).length, 0);
+  }
+  assert.ok(!text(riskSection).includes("6 cuotas en 3 meses"));
+  assert.ok(!text(riskSection).includes("40/60"));
+  assert.ok(!text(riskSection).includes("Última consulta"));
+  assert.ok(nodes(riskSection, node => node.type === "time").every(node => /^\d{4}-\d{2}-\d{2}$/.test(node.props.dateTime)),
+    "Solo permanecen fechas de corte, sin timestamp de consulta");
 });
 
 test("el selector valida año, evita duplicados, limita seis fechas y permite retirar el corte principal", async () => {

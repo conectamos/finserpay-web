@@ -21,11 +21,11 @@ test("riesgo temprano conserva DPF y evalúa seis cuotas al cierre de tres meses
   loan.plan.montoCredito = 600;
   loan.plan.plazoMeses = 6;
   assert.deepEqual(measureEarlyRisk([loan], first, "2026-10-21T05:00:00Z").map(m => [m.cases, m.pending]),
-    [[1, 0], [0, 1], [0, 1], [0, 1]]);
-  assert.deepEqual(measureEarlyRisk([loan], first, "2026-12-05T05:00:00Z").at(-1),
+    [[1, 0], [0, 1], [0, 1], [0, 1], [0, 1]]);
+  assert.deepEqual(measureEarlyRisk([loan], first, "2026-12-05T05:00:00Z").find(metric => metric.label === "40/60"),
     { label: "40/60", cases: 0, eligible: 0, pending: 1, unavailable: 0 });
   assert.deepEqual(measureEarlyRisk([loan], first, "2027-01-03T05:00:00Z").map(m => [m.cases, m.eligible]),
-    [[1, 1], [0, 1], [0, 1], [1, 1]]);
+    [[1, 1], [0, 1], [0, 1], [1, 1], [0, 0]]);
 });
 
 test("40/60 ajusta el tercer mes al último día y cierra según la fecha local de Bogotá", () => {
@@ -44,9 +44,9 @@ test("40/60 ajusta el tercer mes al último día y cierra según la fecha local 
     Object.assign(loan.plan, { montoCredito: 600, plazoMeses: 6, fechaPrimerPago: first });
     freeze(loan);
     const beforeClose = new Date(Date.parse(close) - 1).toISOString();
-    assert.deepEqual(measureEarlyRisk([loan], first, beforeClose).at(-1),
+    assert.deepEqual(measureEarlyRisk([loan], first, beforeClose).find(metric => metric.label === "40/60"),
       { label: "40/60", cases: 0, eligible: 0, pending: 1, unavailable: 0 }, originatedAt);
-    assert.deepEqual(measureEarlyRisk([loan], first, close).at(-1),
+    assert.deepEqual(measureEarlyRisk([loan], first, close).find(metric => metric.label === "40/60"),
       { label: "40/60", cases: 1, eligible: 1, pending: 0, unavailable: 0 }, originatedAt);
   }
 });
@@ -69,9 +69,9 @@ test("40/60 distingue cinco de seis cuotas y reversos de la sexta al cierre del 
   });
   const before = structuredClone(loans);
   freeze(loans);
-  assert.deepEqual(measureEarlyRisk(loans, first, close).at(-1),
+  assert.deepEqual(measureEarlyRisk(loans, first, close).find(metric => metric.label === "40/60"),
     { label: "40/60", cases: 3, eligible: 5, pending: 0, unavailable: 0 });
-  assert.deepEqual(measureEarlyRisk(loans, first, "2027-01-01T12:00:00Z").at(-1),
+  assert.deepEqual(measureEarlyRisk(loans, first, "2027-01-01T12:00:00Z").find(metric => metric.label === "40/60"),
     { label: "40/60", cases: 3, eligible: 5, pending: 0, unavailable: 0 });
   assert.deepEqual(loans, before);
 });
@@ -80,8 +80,71 @@ test("40/60 no inventa una sexta cuota en planes de menos de seis cuotas evaluab
   const loan = credit([payment(1, 500, "2026-04-15T15:00:00Z")], { originatedAt: "2026-01-31T15:00:00Z" });
   Object.assign(loan.plan, { montoCredito: 500, plazoMeses: 5, fechaPrimerPago: "2026-02-02" });
   const risk = measureEarlyRisk([loan], "2026-02-02", "2026-05-01T05:00:00Z");
-  assert.deepEqual(risk.at(-1), { label: "40/60", cases: 0, eligible: 0, pending: 0, unavailable: 1 });
+  assert.deepEqual(risk.find(metric => metric.label === "40/60"), { label: "40/60", cases: 0, eligible: 0, pending: 0, unavailable: 1 });
   assert(risk.slice(0, 3).every(metric => metric.eligible === 1 && metric.unavailable === 0));
+});
+
+test("FPD MADURO cierra cinco meses calendario con ajuste de fin de mes y fecha Bogotá", () => {
+  const examples = [
+    ["2026-01-31T15:00:00Z", "2026-02-02", "2026-07-01T05:00:00Z"],
+    ["2026-08-31T15:00:00Z", "2026-09-02", "2027-02-01T05:00:00Z"],
+    ["2026-09-30T15:00:00Z", "2026-10-02", "2027-03-01T05:00:00Z"],
+    ["2027-09-30T15:00:00Z", "2027-10-02", "2028-03-01T05:00:00Z"],
+    ["2026-10-31T15:00:00Z", "2026-11-02", "2027-04-01T05:00:00Z"],
+    ["2026-03-01T04:59:59Z", "2026-03-02", "2026-07-29T05:00:00Z"],
+    ["2026-03-01T05:00:00Z", "2026-03-02", "2026-08-02T05:00:00Z"],
+    ["2028-03-01T04:59:59Z", "2028-03-02", "2028-07-30T05:00:00Z"],
+  ];
+  for (const [originatedAt, first, close] of examples) {
+    const loan = credit([], { originatedAt });
+    Object.assign(loan.plan, { montoCredito: 1000, plazoMeses: 10, fechaPrimerPago: first });
+    freeze(loan);
+    const beforeClose = new Date(Date.parse(close) - 1).toISOString();
+    assert.deepEqual(measureEarlyRisk([loan], first, beforeClose).find(metric => metric.label === "FPD MADURO"),
+      { label: "FPD MADURO", cases: 0, eligible: 0, pending: 1, unavailable: 0 }, originatedAt);
+    assert.deepEqual(measureEarlyRisk([loan], first, close).find(metric => metric.label === "FPD MADURO"),
+      { label: "FPD MADURO", cases: 1, eligible: 1, pending: 0, unavailable: 0 }, originatedAt);
+  }
+});
+
+test("FPD MADURO distingue nueve de diez cuotas, el pago límite y el reverso de la décima", () => {
+  const first = "2026-02-02";
+  const close = "2026-07-01T05:00:00.000Z";
+  const beforeClose = "2026-07-01T04:59:59.999Z";
+  const receipts = [
+    [payment(1, 900, "2026-05-15T15:00:00Z"), payment(2, 100, beforeClose)],
+    [payment(3, 900, "2026-05-15T15:00:00Z"), payment(4, 100, close)],
+    [payment(5, 900, "2026-05-15T15:00:00Z"), payment(6, 100, "2026-06-15T15:00:00Z", { state: "ANULADO", annulledAt: close })],
+    [payment(7, 900, "2026-05-15T15:00:00Z"), payment(8, 100, "2026-06-15T15:00:00Z", { state: "ANULADO", annulledAt: beforeClose })],
+    [payment(9, 999.99, beforeClose)],
+  ];
+  const loans = receipts.map((payments, index) => {
+    const loan = credit(payments, { id: index + 1, originatedAt: "2026-01-31T15:00:00Z" });
+    Object.assign(loan.plan, { montoCredito: 1000, plazoMeses: 10, fechaPrimerPago: first });
+    return loan;
+  });
+  const before = structuredClone(loans);
+  freeze(loans);
+  const metrics = measureEarlyRisk(loans, first, close);
+  assert.deepEqual(metrics.map(metric => metric.label), ["DPF 3", "DPF 7", "DPF 15", "40/60", "FPD MADURO"]);
+  assert.deepEqual(metrics.find(metric => metric.label === "FPD MADURO"),
+    { label: "FPD MADURO", cases: 3, eligible: 5, pending: 0, unavailable: 0 });
+  assert.deepEqual(measureEarlyRisk(loans, first, "2027-01-01T12:00:00Z").find(metric => metric.label === "FPD MADURO"),
+    { label: "FPD MADURO", cases: 3, eligible: 5, pending: 0, unavailable: 0 });
+  assert.deepEqual(loans, before);
+});
+
+test("FPD MADURO deja no disponibles planes de menos de diez cuotas sin cambiar PRE", () => {
+  const loan = credit([payment(1, 900, "2026-04-15T15:00:00Z")], { originatedAt: "2026-01-31T15:00:00Z" });
+  Object.assign(loan.plan, { montoCredito: 900, plazoMeses: 9, fechaPrimerPago: "2026-02-02" });
+  const risk = measureEarlyRisk([loan], "2026-02-02", "2026-07-01T05:00:00Z");
+  assert.deepEqual(risk.find(metric => metric.label === "FPD MADURO"),
+    { label: "FPD MADURO", cases: 0, eligible: 0, pending: 0, unavailable: 1 });
+  assert.deepEqual(risk.find(metric => metric.label === "40/60"),
+    { label: "40/60", cases: 0, eligible: 1, pending: 0, unavailable: 0 });
+  assert(risk.slice(0, 3).every(metric => metric.eligible === 1 && metric.unavailable === 0));
+  const noOrigin = measureEarlyRisk([{ ...loan, originatedAt: null }], "2026-02-02", "2026-07-01T05:00:00Z");
+  assert(noOrigin.slice(3).every(metric => metric.unavailable === 1 && metric.eligible === 0));
 });
 function payment(id, value, paidAt = "2026-11-03T15:00:00.000Z", options = {}) {
   return { id, value, paidAt, createdAt: paidAt, state: "ACTIVO", annulledAt: null, method: "EFECTIVO", ...options };

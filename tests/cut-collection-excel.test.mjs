@@ -104,6 +104,36 @@ test("fechas de vencimiento mantienen el día y timestamps muestran hora Colombi
   assert.equal(payments.getCell("M2").value + payments.getCell("M3").value, summary.get("Recaudo recibido").value);
 });
 
+test("riesgo exporta FPD PRE MADURO y FPD MADURO con criterios de meses calendario sin alterar importes ni fechas", async () => {
+  for (const previousLabel of ["40/60", "FPD PRE MADURO"]) {
+    const report = fixture();
+    report.earlyRisk = [
+      { label: "DPF 3", cases: 1, eligible: 8, pending: 0, unavailable: 1 },
+      { label: previousLabel, cases: 2, eligible: 5, pending: 3, unavailable: 1 },
+      { label: "FPD MADURO", cases: 1, eligible: 4, pending: 4, unavailable: 1 },
+    ];
+    const workbook = await roundTrip(report);
+    const summary = summaryValues(workbook);
+    assert.equal(summary.get("FPD PRE MADURO").value, "2/5 (40.0 %) · 3 por madurar · 1 sin datos comparables");
+    assert.equal(summary.get("FPD MADURO").value, "1/4 (25.0 %) · 4 por madurar · 1 sin datos comparables");
+    assert.equal(summary.get("DPF 3").value, "1/8 (12.5 %) · 0 por madurar · 1 sin datos comparables");
+    assert.match(summary.get("Medición FPD PRE MADURO").value, /6 cuotas completas.*3 meses calendario.*desembolso/);
+    assert.match(summary.get("Medición FPD MADURO").value, /10 cuotas completas.*5 meses calendario.*desembolso/);
+    assert.doesNotMatch(JSON.stringify(workbook.model), /40\/60/);
+    assert.equal(summary.get("Consultado al (Bogotá)").value.toISOString(), "2026-10-20T20:10:20.000Z");
+    assert.equal(summary.get("Recaudo recibido").value, report.summary.received);
+    assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ["Resumen", "Cuotas", "Pagos aplicados"]);
+  }
+});
+
+test("FPD MADURO sin créditos evaluables conserva pendientes y ausencia de datos sin porcentaje inválido", async () => {
+  const report = fixture();
+  report.earlyRisk = [{ label: "FPD MADURO", cases: 0, eligible: 0, pending: 5, unavailable: 2 }];
+  const workbook = await roundTrip(report);
+  assert.equal(summaryValues(workbook).get("FPD MADURO").value, "Sin base evaluable · 5 por madurar · 2 sin datos comparables");
+  assert.doesNotMatch(JSON.stringify(workbook.model), /NaN|Infinity/);
+});
+
 test("textos con fórmulas permanecen texto literal y el export no filtra datos privados extra", async () => {
   const strings = ["=1+1", "+123", "-00123", "@SUM(A1:A2)", '\t=HYPERLINK("https://example.test","Click")'];
   const report = fixture();

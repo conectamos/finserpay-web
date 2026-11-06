@@ -3,16 +3,14 @@
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, GripVertical, Plus, X } from "lucide-react";
 import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, Select } from "@/app/_components/finser-ui";
-import { getCutFpdLevel } from "@/lib/cut-risk-presentation";
+import { CUT_RISK_INDICATORS, getCutFpdLevel } from "@/lib/cut-risk-presentation";
 import type { CutReport, CutRiskComparisonItem } from "@/lib/cut-collection-types";
 import styles from "./cut-early-risk.module.css";
 
 const MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-const INDICATORS = ["FPD 3", "FPD 7", "FPD 15", "40/60"];
 const LEVEL_LABELS = { EXCELENTE: "Excelente", BUENO: "Bueno", REGULAR: "Regular", MALO: "Malo" };
 const numberFormatter = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 });
 const dateFormatter = new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short", year: "numeric", timeZone: "America/Bogota" });
-const timeFormatter = new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "America/Bogota" });
 
 function dateLabel(value: string) { return dateFormatter.format(new Date(`${value}T12:00:00Z`)); }
 function indicatorLabel(value: string) { return value.replace(/^DPF(?=\s|$)/, "FPD"); }
@@ -55,7 +53,6 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
     ? [{ cutDate: report.cutDate, queriedAt: report.asOf, earlyRisk: report.earlyRisk! }]
     : !loading && !error ? result.reports : [];
   const hasMetrics = reports.some(item => item.earlyRisk.length > 0);
-  const queriedAt = reports.map(item => item.queriedAt).sort().at(-1);
 
   useEffect(() => {
     if (usePrimaryRisk) return;
@@ -213,18 +210,19 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
     {hasMetrics && <DataTable><div className={styles.matrix} role="region" tabIndex={0} aria-label="Comparación de riesgo por corte; desplaza la tabla para ver todos los indicadores">
       <table>
         <caption>Créditos en riesgo / evaluados por corte.</caption>
-        <thead><tr><th scope="col">Corte</th>{INDICATORS.map(label => <th key={label} scope="col">{label}{label === "40/60" && <span className={styles.columnHint}>6 cuotas en 3 meses</span>}</th>)}</tr></thead>
+        <thead><tr><th scope="col">Corte</th>{CUT_RISK_INDICATORS.map(indicator => <th key={indicator.key} scope="col">{indicator.label}</th>)}</tr></thead>
         <tbody>{reports.map(item => <tr key={item.cutDate}>
           <th scope="row"><time dateTime={item.cutDate}>{dateLabel(item.cutDate)}</time></th>
-          {INDICATORS.map(label => {
-            const metric = item.earlyRisk.find(value => indicatorLabel(value.label) === label);
+          {CUT_RISK_INDICATORS.map(indicator => {
+            const metric = item.earlyRisk.find(value => indicatorLabel(value.label) === indicatorLabel(indicator.key));
             const rate = metric?.eligible ? 100 * metric.cases / metric.eligible : null;
-            const level = rate !== null && label.startsWith("FPD") ? getCutFpdLevel(rate) : null;
-            return <td key={label}>
+            const level = rate !== null && indicator.hasFpdLevel ? getCutFpdLevel(rate) : null;
+            return <td key={indicator.key}>
               {metric ? <div className={styles.cell}>
                 <div className={styles.cellHeading}>
                   <strong className={rate === null ? styles.noPercentage : styles.percentage}>{rate === null ? "Sin base evaluable" : `${numberFormatter.format(rate)} %`}</strong>
                   {level && <Badge tone={level === "MALO" ? "danger" : level === "REGULAR" ? "warning" : "positive"}>{LEVEL_LABELS[level]}</Badge>}
+                  {!indicator.hasFpdLevel && <Badge>{metric.pending > 0 ? (metric.eligible > 0 ? "Base parcial" : "Por madurar") : metric.eligible > 0 ? "Evaluado" : metric.unavailable > 0 ? "Sin datos" : "Sin créditos"}</Badge>}
                 </div>
                 {metric.eligible > 0 && <p className={styles.ratio}><b>{numberFormatter.format(metric.cases)}</b> / <b>{numberFormatter.format(metric.eligible)}</b> evaluados</p>}
                 {(metric.pending > 0 || metric.unavailable > 0) && <dl className={styles.maturity}>
@@ -237,6 +235,5 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
         </tr>)}</tbody>
       </table>
     </div></DataTable>}
-    {queriedAt && <p className={styles.hint}>Cada corte se evalúa por separado. Última consulta: <time dateTime={queriedAt}>{timeFormatter.format(new Date(queriedAt))}</time> · Colombia.</p>}
   </section>;
 }
