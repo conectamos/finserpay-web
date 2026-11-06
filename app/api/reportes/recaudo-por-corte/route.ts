@@ -1,6 +1,6 @@
 import { CutCollectionError, getCutCollectionAccess, parseCutFilters } from "@/lib/cut-collection-access";
 import { buildCutCollectionWorkbook } from "@/lib/cut-collection-excel";
-import { getDirectCutCollectionReport } from "@/lib/cut-collection-storage";
+import { getDirectCutCollectionReport, getDirectCutRiskComparison } from "@/lib/cut-collection-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,8 +44,27 @@ function readQuery(request: Request) {
   return query;
 }
 
-function pdfFilename(cutDate: string) {
-  return `FINSERPAY_Recaudo_${cutDate}.pdf`;
+function deliveryPeriod(cutDate: string, cutDates?: string[]) {
+  if (!cutDates) return cutDate;
+  const chronological = [...cutDates].sort();
+  return chronological.length === 1 ? chronological[0] : `${chronological[0]} a ${chronological.at(-1)}`;
+}
+
+function pdfFilename(cutDate: string, cutDates?: string[]) {
+  return cutDates
+    ? `FINSERPAY_Riesgo_${deliveryPeriod(cutDate, cutDates).replace(" a ", "_a_")}.pdf`
+    : `FINSERPAY_Recaudo_${cutDate}.pdf`;
+}
+
+function readRiskCuts(query: URLSearchParams) {
+  const value = query.get("riskCuts");
+  if (value === null) return undefined;
+  const dates = value.split(",");
+  if (!value || value.length > 65 || dates.length > 6 || new Set(dates).size !== dates.length ||
+      dates.some(date => !/^(?:20\d{2}|21\d{2}|2200)-(?:0[1-9]|1[0-2])-(?:02|17)$/.test(date))) {
+    throw new CutCollectionError("Selecciona hasta seis cortes distintos con fechas válidas de los días 02 o 17.", 400);
+  }
+  return dates;
 }
 
 export async function GET(request: Request) {
@@ -53,16 +72,22 @@ export async function GET(request: Request) {
     const access = await getCutCollectionAccess();
     const query = readQuery(request);
     const filters = parseCutFilters(query);
+    const cutDates = readRiskCuts(query);
     const format = query.get("format");
-    if (format !== null && format !== "xlsx" && format !== "pdf") throw new CutCollectionError("Formato de exportación no válido.", 400);
+    if (format !== null && format !== "xlsx" && format !== "pdf" && format !== "risk") throw new CutCollectionError("Formato de exportación no válido.", 400);
+    if (format === "risk") {
+      const selectedCut = `${filters.year}-${String(filters.month).padStart(2, "0")}-${String(filters.day).padStart(2, "0")}`;
+      return json({ reports: await getDirectCutRiskComparison(access, filters, cutDates ?? [selectedCut]) });
+    }
     const report = await getDirectCutCollectionReport(access, filters);
     if (format === "pdf") {
+      const comparison = cutDates ? await getDirectCutRiskComparison(access, filters, cutDates) : undefined;
       const { buildCutCollectionPdf } = await import("@/lib/cut-collection-pdf");
-      const pdf = await buildCutCollectionPdf(report);
+      const pdf = await buildCutCollectionPdf(report, comparison);
       return new Response(new Uint8Array(pdf), { headers: {
         ...privateHeaders,
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${pdfFilename(report.cutDate)}"`,
+        "Content-Disposition": `attachment; filename="${pdfFilename(report.cutDate, cutDates)}"`,
         "Content-Length": String(pdf.byteLength),
       } });
     }
@@ -96,13 +121,17 @@ export async function POST(request: Request) {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(key)) {
       throw new CutCollectionError("Identificador de envío inválido.", 400);
     }
-    const filters = parseCutFilters(readQuery(request));
+    const query = readQuery(request);
+    const filters = parseCutFilters(query);
+    const cutDates = readRiskCuts(query);
     if (!filters.aliadoId) throw new CutCollectionError("Selecciona un aliado para enviar el informe.", 400);
     const report = await getDirectCutCollectionReport(access, filters);
+    const comparison = cutDates ? await getDirectCutRiskComparison(access, filters, cutDates) : undefined;
     if (action === "whatsapp") {
       const { CutCollectionWhatsAppError, sendCutCollectionWhatsApp } = await import("@/lib/cut-collection-whatsapp");
       try {
-        const recipient = await sendCutCollectionWhatsApp({ userId: access.userId, key, allyId: filters.aliadoId, report });
+        const recipient = await sendCutCollectionWhatsApp({ userId: access.userId, key, allyId: filters.aliadoId, report,
+          ...(comparison ? { comparison } : {}) });
         return json({ ok: true, recipient });
       } catch (error) {
         if (error instanceof CutCollectionWhatsAppError) {
@@ -114,11 +143,11 @@ export async function POST(request: Request) {
     const { CutCollectionEmailError, getCutCollectionRecipient, sendCutCollectionEmail } = await import("@/lib/cut-collection-email");
     const recipient = await getCutCollectionRecipient(filters.aliadoId);
     const { buildCutCollectionPdf } = await import("@/lib/cut-collection-pdf");
-    const pdf = await buildCutCollectionPdf(report);
+    const pdf = await buildCutCollectionPdf(report, comparison);
     try {
       await sendCutCollectionEmail({
-        recipient, pdf, cutDate: report.cutDate,
-        filename: pdfFilename(report.cutDate), idempotencyKey: `${access.userId}/${filters.aliadoId}/${key}`,
+        recipient, pdf, cutDate: deliveryPeriod(report.cutDate, cutDates),
+        filename: pdfFilename(report.cutDate, cutDates), idempotencyKey: `${access.userId}/${filters.aliadoId}/${key}`,
       });
     } catch (error) {
       if (error instanceof CutCollectionEmailError) return json({ error: error.message }, error.status);

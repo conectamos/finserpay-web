@@ -38,8 +38,10 @@ export type CutSummary = {
   priorPayments: number; priorReversals: number; previousRecovery: number; futureAdvances: number;
 };
 export type CutHistory = { id: string; cutDate: string; createdAt: string; expected: number | null; received: number | null; pending: number | null; completion: number | null; rowCount: number | null; warning?: string };
+export type CutRiskMetric = { label: string; cases: number; eligible: number; pending: number; unavailable: number };
+export type CutRiskComparisonItem = { cutDate: string; queriedAt: string; earlyRisk: CutRiskMetric[] };
 export type CutReport = {
-  earlyRisk?: { label: string; cases: number; eligible: number; pending: number; unavailable: number }[];
+  earlyRisk?: CutRiskMetric[];
   ok: true; filters: CutFilters; cutDate: string; asOf: string;
   mode?: "consulta";
   projection: { id: string; createdAt: string } | null;

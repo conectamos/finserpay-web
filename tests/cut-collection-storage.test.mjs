@@ -150,6 +150,128 @@ test("consulta directa conserva créditos pagados en su fecha, filtros y sedes p
   await assert.rejects(f.store.directReport(allied, { ...filters, sedeId: 30 }), /no autorizada/);
 });
 
+test("compara seis cohortes con pagos reales en una lectura y un instante sin historial ni Sadmin", async t => {
+  const f = await fixture(t, false);
+  await f.pg.exec('ALTER TABLE "Credito" ADD COLUMN "fechaCredito" timestamp');
+  const dates = ["2020-11-17", "2020-09-17", "2020-11-02", "2020-10-02", "2020-10-17", "2020-12-02"];
+  const atDay = (date, days) => new Date(Date.parse(`${date}T00:00:00-05:00`) + days * 86400000).toISOString();
+  for (const [index, date] of dates.entries()) {
+    const id = await f.credit({ first: date, total: 600, count: 6 });
+    await f.pg.query('UPDATE "Credito" SET "fechaCredito"=$1 WHERE id=$2', [atDay(date, -15), id]);
+    if (index === 1) await f.payment(id, 600, { paidAt: atDay(date, -1), sedeId: 99 });
+    if (index === 2) await f.payment(id, 100, { paidAt: atDay(date, 5) });
+    if (index === 3) await f.payment(id, 100, { state: "ANULADO", paidAt: atDay(date, -1), annulledAt: atDay(date, 4) });
+    if (index === 4) await f.payment(id, 99, { paidAt: atDay(date, -1) });
+  }
+  await f.credit({ first: dates[0], sedeId: 30 });
+  await f.credit({ first: "2019-10-17", installment: 0 });
+  const before = await f.financialData();
+  const inputDates = Object.freeze([...dates]);
+  const inputFilters = Object.freeze({ ...filters, status: "pagado" });
+  let transactions = 0;
+  const store = createCutCollectionStore({ ...f.db, $transaction: (...args) => { transactions++; return f.db.$transaction(...args); } });
+  f.calls.length = 0;
+  const comparison = await store.directRiskComparison(allied, inputFilters, inputDates);
+  assert.equal(transactions, 1);
+  assert.deepEqual(comparison.map(item => item.cutDate), dates);
+  assert.equal(new Set(comparison.map(item => item.queriedAt)).size, 1);
+  assert(comparison.every(item => Number.isFinite(Date.parse(item.queriedAt))));
+  assert.deepEqual(comparison.map(item => item.earlyRisk.map(metric => [metric.cases, metric.eligible])), [
+    [[1, 1], [1, 1], [1, 1], [1, 1]],
+    [[0, 1], [0, 1], [0, 1], [0, 1]],
+    [[1, 1], [0, 1], [0, 1], [1, 1]],
+    [[0, 1], [1, 1], [1, 1], [1, 1]],
+    [[1, 1], [1, 1], [1, 1], [1, 1]],
+    [[1, 1], [1, 1], [1, 1], [1, 1]],
+  ]);
+  assert.equal(f.calls.length, 4, "scope, database time, credits and payments are each read once");
+  assert.equal(f.calls.filter(({ sql }) => sql.includes("CURRENT_TIMESTAMP")).length, 1);
+  const cohortQueries = f.calls.filter(({ sql }) => sql.includes('c."fechaPrimerPago"::date=ANY($2::date[])'));
+  assert.equal(cohortQueries.length, 2);
+  assert(cohortQueries.every(({ args }) => JSON.stringify(args) === JSON.stringify([[20, 21], dates])));
+  assert(f.calls.every(({ sql }) => /^\s*SELECT\b/i.test(sql)));
+  assert(!f.calls.some(({ sql }) => /CutCollectionProjection|CreditSadminRegistration|to_regclass|OFFSET/i.test(sql)));
+  assert.deepEqual(await f.financialData(), before);
+  assert.deepEqual(inputDates, dates);
+  assert(comparison.every(item => Object.keys(item).sort().join() === "cutDate,earlyRisk,queriedAt"));
+});
+
+test("comparación y reporte unitario miden seis cuotas al cierre del tercer mes calendario", async t => {
+  const f = await fixture(t, false);
+  await f.pg.exec('ALTER TABLE "Credito" ADD COLUMN "fechaCredito" timestamp');
+  const first = "2020-02-02";
+  const complete = await f.credit({ first, total: 600, count: 6 });
+  const incomplete = await f.credit({ first, total: 600, count: 6 });
+  const fiveInstallments = await f.credit({ first, total: 500, count: 5 });
+  const reversedSixth = await f.credit({ first, total: 600, count: 6 });
+  await f.pg.query('UPDATE "Credito" SET "fechaCredito"=$1', ["2020-01-31T15:00:00Z"]);
+  await f.payment(complete, 500, { paidAt: "2020-03-15T15:00:00Z" });
+  await f.payment(complete, 100, { paidAt: "2020-05-01T04:59:59.999Z" });
+  await f.payment(incomplete, 500, { paidAt: "2020-04-30T17:00:00Z" });
+  await f.payment(incomplete, 100, { paidAt: "2020-05-01T05:00:00Z" });
+  await f.payment(fiveInstallments, 500, { paidAt: "2020-04-30T17:00:00Z" });
+  await f.payment(reversedSixth, 500, { paidAt: "2020-03-15T15:00:00Z" });
+  await f.payment(reversedSixth, 100, { state: "ANULADO", paidAt: "2020-04-15T15:00:00Z", annulledAt: "2020-04-30T17:00:00Z" });
+  const [comparison] = await f.store.directRiskComparison(allied, filters, [first]);
+  const report = await f.store.directReport(allied, { ...filters, day: 2, month: 2, year: 2020 });
+  assert.deepEqual(comparison.earlyRisk, report.earlyRisk);
+  assert.deepEqual(comparison.earlyRisk.at(-1),
+    { label: "40/60", cases: 2, eligible: 3, pending: 0, unavailable: 1 });
+});
+
+test("comparación respeta aliado, supervisor, sede propietaria y movimientos sin filtrar por estado actual", async t => {
+  const f = await fixture(t, false);
+  const dates = ["2020-10-02"];
+  const own = await f.credit({ first: dates[0] });
+  await f.credit({ first: dates[0], sedeId: 21 });
+  const foreign = await f.credit({ first: dates[0], sedeId: 30 });
+  await f.payment(foreign, 300, { sedeId: 20, paidAt: "2020-10-01T17:00:00Z" });
+  const risk = async (access, selected = filters) => (await f.store.directRiskComparison(access, selected, dates))[0].earlyRisk;
+  const adminRisk = await risk(allied);
+  assert.deepEqual(adminRisk[0], { label: "DPF 3", cases: 2, eligible: 2, pending: 0, unavailable: 0 });
+  assert.equal((await risk(supervisor))[0].eligible, 1);
+  assert.deepEqual((await risk(central))[0], { label: "DPF 3", cases: 2, eligible: 3, pending: 0, unavailable: 0 });
+  assert.deepEqual(await risk(central, { ...filters, aliadoId: 2 }), adminRisk);
+  assert.equal((await risk(allied, { ...filters, sedeId: 21 }))[0].eligible, 1);
+  for (const status of ["pendiente", "parcial", "pagado"]) assert.deepEqual(await risk(allied, { ...filters, status }), adminRisk);
+  for (const [access, selected] of [[allied, { ...filters, aliadoId: 3 }], [allied, { ...filters, sedeId: 30 }], [supervisor, { ...filters, sedeId: 21 }]]) {
+    await assert.rejects(f.store.directRiskComparison(access, selected, dates), error => error.status === 403);
+  }
+  await f.pg.query('UPDATE "Credito" SET "sedeId"=30 WHERE id=$1', [own]);
+  assert.equal((await risk(allied))[0].eligible, 1);
+  assert.equal((await risk(supervisor))[0].eligible, 0);
+});
+
+test("comparación valida cantidad, fechas y duplicados antes de consultar", async t => {
+  const f = await fixture(t, false);
+  const invalid = [[], null, "2020-10-02", ["2020-10-02", "2020-10-02"],
+    ["2020-10-01"], ["2020-13-02"], ["2020-2-02"], ["2020-10-02T00:00:00Z"],
+    ["1999-10-02"], ["2201-10-02"], [null], [42],
+    ["2020-10-02", "2020-10-17", "2020-11-02", "2020-11-17", "2020-12-02", "2020-12-17", "2021-01-02"]];
+  f.calls.length = 0;
+  for (const dates of invalid) await assert.rejects(f.store.directRiskComparison(allied, filters, dates), error => error.status === 400);
+  assert.deepEqual(f.calls, []);
+});
+
+test("comparación sin cohortes devuelve mediciones vacías sin requerir tablas de versiones", async t => {
+  const f = await fixture(t, false);
+  const dates = ["2020-10-02", "2020-10-17"];
+  const comparison = await f.store.directRiskComparison({ ...allied, aliadoId: 999 }, filters, dates);
+  assert.deepEqual(comparison.map(item => item.cutDate), dates);
+  assert(comparison.every(item => item.earlyRisk.length === 4 && item.earlyRisk.every(metric =>
+    metric.cases === 0 && metric.eligible === 0 && metric.pending === 0 && metric.unavailable === 0)));
+  assert.equal(f.calls.length, 2, "an empty authorized scope requires only scope and database time");
+});
+
+test("comparación conserva no comparables de planes de capital sin construir el reporte completo", async t => {
+  const f = await fixture(t, false);
+  await f.pg.exec('ALTER TABLE "Credito" ADD COLUMN "planCapitalVigente" jsonb');
+  const id = await f.credit({ first: "2020-10-02" });
+  await f.pg.query('UPDATE "Credito" SET "planCapitalVigente"=$1::jsonb WHERE id=$2', [JSON.stringify({ requiresReconciliation: true }), id]);
+  const [comparison] = await f.store.directRiskComparison(allied, filters, ["2020-10-02"]);
+  assert(comparison.earlyRisk.every(metric => metric.unavailable === 1 && metric.eligible === 0));
+});
+
 test("guardar fija el esperado; los pagos parciales tardíos se aplican a cuotas reales y no alteran créditos", async t => {
   const f = await fixture(t);
   const id = await f.credit();

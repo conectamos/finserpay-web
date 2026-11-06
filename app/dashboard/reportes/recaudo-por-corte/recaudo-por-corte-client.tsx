@@ -10,6 +10,7 @@ import {
 } from "@/app/_components/finser-ui";
 import type { CutFilters, CutReport, CutRow, CutStatus } from "@/lib/cut-collection-types";
 import CutInstallmentDetail from "./cut-installment-detail";
+import CutRiskComparison from "./cut-risk-comparison";
 import riskStyles from "./cut-early-risk.module.css";
 import styles from "./recaudo-por-corte.module.css";
 
@@ -53,7 +54,7 @@ function saveReportPdf(pdf: PreparedReportPdf) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function CutReportActions({ report }: { report: CutReport }) {
+function CutReportActions({ report, riskCuts, disabled }: { report: CutReport; riskCuts: string[]; disabled: boolean }) {
   const [busy, setBusy] = useState<"pdf" | "whatsapp" | "email" | null>(null);
   const busyRef = useRef(false);
   const pdfRef = useRef<PreparedReportPdf | null>(null);
@@ -63,7 +64,9 @@ function CutReportActions({ report }: { report: CutReport }) {
   const [feedback, setFeedback] = useState<{ kind: "info" | "success" | "error"; message: string } | null>(null);
   const ally = report.options.aliados.find(item => item.id === report.filters.aliadoId)?.nombre;
   const site = report.options.sedes.find(item => item.id === report.filters.sedeId)?.nombre ?? "Todas las autorizadas";
-  const query = paramsFor(report.filters).toString();
+  const params = paramsFor(report.filters);
+  params.set("riskCuts", riskCuts.join(","));
+  const query = params.toString();
 
   async function preparePdf() {
     if (pdfRef.current) return pdfRef.current;
@@ -76,13 +79,14 @@ function CutReportActions({ report }: { report: CutReport }) {
     if (!blob.size || !blob.type.toLowerCase().startsWith("application/pdf")) {
       throw new Error("El servidor no devolvió un informe PDF válido. Vuelve a intentarlo.");
     }
-    const filename = `recaudo-por-corte-${report.cutDate}${report.filters.aliadoId ? `-aliado-${report.filters.aliadoId}` : ""}.pdf`;
+    const chronologicalCuts = [...riskCuts].sort();
+    const filename = `FINSERPAY_Riesgo_${chronologicalCuts[0]}${chronologicalCuts.length > 1 ? `_a_${chronologicalCuts.at(-1)}` : ""}.pdf`;
     pdfRef.current = { blob, filename };
     return pdfRef.current;
   }
 
   async function downloadPdf() {
-    if (busyRef.current) return;
+    if (disabled || busyRef.current) return;
     busyRef.current = true;
     setBusy("pdf");
     setFeedback(null);
@@ -95,7 +99,7 @@ function CutReportActions({ report }: { report: CutReport }) {
   }
 
   async function sendWhatsApp() {
-    if (!report.filters.aliadoId || !ally || busyRef.current) return;
+    if (disabled || !report.filters.aliadoId || !ally || busyRef.current) return;
     busyRef.current = true;
     setBusy("whatsapp");
     setFeedback(null);
@@ -119,7 +123,7 @@ function CutReportActions({ report }: { report: CutReport }) {
   }
 
   async function sendEmail() {
-    if (!confirmEmail || !report.filters.aliadoId || !ally || busyRef.current) return;
+    if (disabled || !confirmEmail || !report.filters.aliadoId || !ally || busyRef.current) return;
     busyRef.current = true;
     setBusy("email");
     setFeedback(null);
@@ -148,15 +152,15 @@ function CutReportActions({ report }: { report: CutReport }) {
 
   return <div className={riskStyles.actionsPanel}>
     <div className={riskStyles.actions} aria-label="Acciones del informe" aria-busy={busy !== null}>
-      <Button variant="secondary" disabled={busy !== null} onClick={downloadPdf}><Download aria-hidden="true" />{busy === "pdf" ? "Preparando PDF…" : "Descargar informe PDF"}</Button>
-      {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={busy !== null} onClick={sendWhatsApp}><MessageCircle aria-hidden="true" />{busy === "whatsapp" ? "Enviando por WhatsApp…" : "Enviar por WhatsApp"}</Button> : null}
-      {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={busy !== null} onClick={() => { setFeedback(null); setConfirmEmail(true); }}><Mail aria-hidden="true" />{busy === "email" ? "Enviando informe…" : "Enviar por correo"}</Button> : null}
+      <Button variant="secondary" disabled={disabled || busy !== null} onClick={downloadPdf}><Download aria-hidden="true" />{busy === "pdf" ? "Preparando PDF…" : "Descargar informe PDF"}</Button>
+      {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={disabled || busy !== null} onClick={sendWhatsApp}><MessageCircle aria-hidden="true" />{busy === "whatsapp" ? "Enviando por WhatsApp…" : "Enviar por WhatsApp"}</Button> : null}
+      {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={disabled || busy !== null} onClick={() => { setFeedback(null); setConfirmEmail(true); }}><Mail aria-hidden="true" />{busy === "email" ? "Enviando informe…" : "Enviar por correo"}</Button> : null}
     </div>
     {feedback && <p className={`${riskStyles.feedback} ${feedback.kind === "error" ? riskStyles.feedbackError : feedback.kind === "success" ? riskStyles.feedbackSuccess : ""}`} role={feedback.kind === "error" ? "alert" : "status"}>{feedback.message}</p>}
     <ConfirmDialog
       open={confirmEmail}
       title="Enviar informe por correo"
-      description={`Se enviará el informe PDF del corte del ${dateLabel(report.cutDate)} a la dirección registrada de ${ally ?? "este aliado"}. Sede: ${site}. Estado: ${STATUS_LABELS[report.filters.status]}. ¿Confirmas el envío?`}
+      description={`Se enviará el informe PDF de riesgo temprano a la dirección registrada de ${ally ?? "este aliado"}. Cortes de riesgo: ${riskCuts.map(dateLabel).join(", ")}. Sede: ${site}. ¿Confirmas el envío?`}
       confirmLabel="Confirmar envío"
       busy={busy === "email"}
       onCancel={() => { if (!busyRef.current) setConfirmEmail(false); }}
@@ -268,6 +272,8 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
   const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<CutRow | null>(null);
+  const [selectedRiskCuts, setSelectedRiskCuts] = useState<string[] | null>(null);
+  const [manualRiskOrder, setManualRiskOrder] = useState(false);
   const query = paramsFor(selection).toString();
   const draftChanged = paramsFor(draft).toString() !== query;
   const fetchKey = `${query}#${reload}`;
@@ -319,6 +325,7 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
   }
 
   const summary = visibleReport?.summary;
+  const riskCuts = selectedRiskCuts ?? (visibleReport ? [visibleReport.cutDate] : []);
 
   return <div className={styles.content}>
     <nav className={styles.breadcrumb} aria-label="Ruta actual"><Link href="/dashboard"><ArrowLeft aria-hidden="true" />Inicio</Link><span aria-hidden="true">/</span><span>Cartera</span><span aria-hidden="true">/</span><strong aria-current="page">Recaudo por corte</strong></nav>
@@ -360,37 +367,17 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
     {visibleReport && summary && <>
       <CutBalance report={visibleReport} />
 
-      {visibleReport.earlyRisk && <section className={riskStyles.section} aria-labelledby="early-risk-title">
-        <header className={riskStyles.header}>
-          <div className={riskStyles.headerTitle}>
-            <h2 id="early-risk-title">Riesgo temprano del corte</h2>
-          </div>
-          <CutReportActions key={fetchKey} report={visibleReport} />
-        </header>
-        <div className={riskStyles.grid}>
-          {visibleReport.earlyRisk.map(metric => <Card key={metric.label} className={riskStyles.card}>
-            <div className={riskStyles.cardHeader}>
-              <h3>{metric.label}</h3>
-              <Badge tone={metric.pending > 0 || metric.unavailable > 0 ? "warning" : "neutral"}>
-                {metric.pending > 0 ? (metric.eligible > 0 ? "Maduración parcial" : "Por madurar") : metric.eligible > 0 ? "Evaluado" : metric.unavailable > 0 ? "Sin datos comparables" : "Sin créditos"}
-              </Badge>
-            </div>
-            <div className={riskStyles.result}>
-              <strong className={metric.eligible ? riskStyles.percentage : riskStyles.noPercentage}>{metric.eligible ? percentage(100 * metric.cases / metric.eligible) : "Sin base evaluable"}</strong>
-              {metric.eligible > 0 && <p className={riskStyles.ratio}>
-                <b>{numberFormatter.format(metric.cases)}</b> en riesgo de <b>{numberFormatter.format(metric.eligible)}</b> evaluados
-              </p>}
-            </div>
-            {metric.eligible > 0 && <div className={riskStyles.track} aria-hidden="true">
-              <ProgressBar className={riskStyles.riskBar} value={100 * metric.cases / metric.eligible} />
-            </div>}
-            {(metric.pending > 0 || metric.unavailable > 0) && <dl className={riskStyles.maturity}>
-              {metric.pending > 0 && <div><dt>Por madurar</dt><dd>{numberFormatter.format(metric.pending)}</dd></div>}
-              {metric.unavailable > 0 && <div><dt>Sin datos comparables</dt><dd>{numberFormatter.format(metric.unavailable)}</dd></div>}
-            </dl>}
-          </Card>)}
-        </div>
-      </section>}
+      {visibleReport.earlyRisk && <CutRiskComparison
+        report={visibleReport}
+        filtersQuery={query}
+        riskCuts={riskCuts}
+        explicitSelection={selectedRiskCuts !== null}
+        manualOrder={manualRiskOrder}
+        onChange={setSelectedRiskCuts}
+        onReorder={cuts => { setSelectedRiskCuts(cuts); setManualRiskOrder(true); }}
+        onReset={() => { setSelectedRiskCuts(null); setManualRiskOrder(false); }}
+        renderActions={disabled => <CutReportActions key={`${fetchKey}:${riskCuts.join(",")}`} report={visibleReport} riskCuts={riskCuts} disabled={disabled} />}
+      />}
 
       <section className={styles.breakdown} aria-labelledby="cut-breakdown-title">
         <h2 id="cut-breakdown-title">Distribución de pagos</h2>

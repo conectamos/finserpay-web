@@ -20,6 +20,9 @@ function load(file, dependencies, globals = {}, cache = new Map()) {
       if (name === "@/app/_components/finser-confirm-dialog") {
         return load("app/_components/finser-confirm-dialog.tsx", dependencies, globals, cache);
       }
+      if (name === "@/lib/cut-risk-presentation") {
+        return load("lib/cut-risk-presentation.ts", dependencies, globals, cache);
+      }
       if (/^\.\/[a-z][\w-]*$/.test(name)) {
         return load(`${file.slice(0, file.lastIndexOf("/"))}/${name.slice(2)}.tsx`, dependencies, globals, cache);
       }
@@ -124,6 +127,7 @@ function harness(respond = () => reportFixture()) {
       requests.push({ url, method: options?.method || "GET", cache: options?.cache,
         ...(options?.method === "POST" ? { headers: options.headers, body: options.body } : {}) });
       if (url.includes("format=xlsx")) return { ok: true, blob: async () => new Blob(["local test workbook"]) };
+      if (url.includes("format=pdf")) return { ok: true, blob: async () => new Blob(["%PDF-QA local fixture"], { type: "application/pdf" }) };
       const data = await respond(url, options);
       return { ok: !data.error, json: async () => data };
     },
@@ -219,12 +223,189 @@ function expectVisibleFilter(app, label) {
 function reportWithRiskForUrl(url) {
   const query = new URL(url, "https://finserpay.test").searchParams;
   const report = reportFixture();
+  const day = Number(query.get("day")) || report.filters.day;
+  const month = Number(query.get("month")) || report.filters.month;
+  const year = Number(query.get("year")) || report.filters.year;
   return { ...report,
-    filters: { ...report.filters, aliadoId: Number(query.get("aliadoId")) || null,
+    cutDate: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    filters: { ...report.filters, day, month, year, aliadoId: Number(query.get("aliadoId")) || null,
       sedeId: Number(query.get("sedeId")) || null, status: query.get("status") || "todos" },
-    earlyRisk: [{ label: "FPD 1", cases: 1, eligible: 2, pending: 0, unavailable: 0 }],
+    earlyRisk: ["DPF 3", "DPF 7", "DPF 15", "40/60"].map(label => ({ label, cases: 1, eligible: 2, pending: 0, unavailable: 0 })),
   };
 }
+
+function comparisonForUrl(url) {
+  const query = new URL(url, "https://finserpay.test").searchParams;
+  const report = reportWithRiskForUrl(url);
+  return { reports: query.get("riskCuts").split(",").map((cutDate, index) => ({
+    cutDate, queriedAt: report.asOf,
+    earlyRisk: report.earlyRisk.map(metric => ({ ...metric, cases: index + 1, eligible: 10 })),
+  })) };
+}
+
+function riskCutDates(app) {
+  const list = app.find(node => node.type === "ul" && node.props["aria-label"] === "Cortes seleccionados para riesgo")[0];
+  assert.ok(list);
+  return nodes(list, node => node.type === "time").map(node => node.props.dateTime);
+}
+
+function riskMatrixDates(app) {
+  const region = app.find(node => node.props.role === "region" && node.props["aria-label"]?.startsWith("Comparación de riesgo por corte"))[0];
+  assert.ok(region, "La tabla de riesgo conserva una región desplazable con nombre accesible");
+  assert.equal(region.props.tabIndex, 0);
+  const body = nodes(region, node => node.type === "tbody")[0];
+  return nodes(body, node => node.type === "time").map(node => node.props.dateTime);
+}
+
+function riskChip(app, cut) {
+  return app.find(node => node.type === "li" && nodes(node, child => child.type === "time" && child.props.dateTime === cut).length)[0];
+}
+
+test("tres cortes agregados fuera de orden se comparan y se envían en el mismo orden cronológico", async () => {
+  const app = harness((url, options) => {
+    const query = new URL(url, "https://finserpay.test").searchParams;
+    if (options?.method === "POST") return { ok: true, recipient: query.get("action") === "email" ? "aliado@example.test" : "+573001234567" };
+    return query.get("format") === "risk" ? comparisonForUrl(url) : reportWithRiskForUrl(url);
+  });
+  await app.settle();
+  app.change("Aliado", "4");
+  app.change("Sede", "8");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  app.change("Mes para comparar", "10");
+  app.change("Día para comparar", "17");
+  await app.click(/^Agregar corte$/);
+  app.change("Día para comparar", "2");
+  await app.click(/^Agregar corte$/);
+  const expected = ["2026-10-02", "2026-10-17", "2026-11-02"];
+  assert.deepEqual(riskCutDates(app), expected);
+  assert.ok(app.find(node => node.type === "button" && name(node) === "Descargar informe PDF")[0].props.disabled);
+  await app.settle();
+  const riskRequest = app.requests.filter(request => request.url.includes("format=risk")).at(-1);
+  assert.equal(new URL(riskRequest.url, "https://finserpay.test").searchParams.get("riskCuts"), expected.join(","));
+  assert.ok(app.text().includes("FPD 3") && app.text().includes("FPD 7") && app.text().includes("FPD 15"));
+  assert.ok(!app.text().includes("DPF"));
+  assert.deepEqual(riskMatrixDates(app), expected);
+  assert.match(app.text(), /40\/60 6 cuotas en 3 meses/);
+  await app.click(/^Descargar informe PDF$/);
+  assert.equal(app.downloads.at(-1).name, "FINSERPAY_Riesgo_2026-10-02_a_2026-11-02.pdf");
+  await app.click(/^Enviar por WhatsApp$/);
+  await app.click(/^Enviar por correo$/);
+  assert.match(app.text(), /Cortes de riesgo:/);
+  const confirmation = app.find(node => node.props.role === "alertdialog")[0];
+  assert.ok(!text(confirmation).includes("Estado:"));
+  await app.click(/^Confirmar envío$/);
+  const deliveries = app.requests.filter(request => request.method === "POST" || request.url.includes("format=pdf"));
+  assert.equal(deliveries.length, 3);
+  for (const request of deliveries) {
+    const query = new URL(request.url, "https://finserpay.test").searchParams;
+    assert.equal(query.get("riskCuts"), expected.join(","));
+    assert.equal(query.get("aliadoId"), "4");
+    assert.equal(query.get("sedeId"), "8");
+  }
+});
+
+test("el selector valida año, evita duplicados, limita seis fechas y permite retirar el corte principal", async () => {
+  const app = harness(url => url.includes("format=risk") ? comparisonForUrl(url) : reportWithRiskForUrl(url));
+  await app.settle();
+  await app.click(/^Agregar corte$/);
+  assert.match(app.text(), /Ese corte ya está en la comparación/);
+  app.change("Año para comparar", "1999");
+  await app.click(/^Agregar corte$/);
+  assert.match(app.text(), /El año debe estar entre 2000 y 2200/);
+  app.change("Año para comparar", "2201");
+  await app.click(/^Agregar corte$/);
+  assert.equal(riskCutDates(app).length, 1);
+  app.change("Año para comparar", "2026");
+  for (const [month, day] of [[10, 17], [10, 2], [9, 17], [9, 2], [8, 17]]) {
+    app.change("Mes para comparar", String(month));
+    app.change("Día para comparar", String(day));
+    await app.click(/^Agregar corte$/);
+  }
+  assert.equal(riskCutDates(app).length, 6);
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Agregar corte")[0].props.disabled, true);
+  const principal = riskChip(app, "2026-11-02");
+  nodes(principal, node => node.type === "button" && name(node).startsWith("Quitar corte del"))[0].props.onClick();
+  app.render();
+  assert.ok(!riskCutDates(app).includes("2026-11-02"));
+  const selected = riskCutDates(app);
+  app.change("Mes", "12");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  assert.deepEqual(riskCutDates(app), selected, "La selección explícita persiste al cambiar el corte principal");
+  await app.settle();
+  await app.click(/^Usar corte consultado$/);
+  assert.deepEqual(riskCutDates(app), ["2026-12-02"]);
+  const onlyRemove = app.find(node => node.type === "button" && name(node).startsWith("Quitar corte del"))[0];
+  assert.equal(onlyRemove.props.disabled, true);
+  app.change("Mes", "10");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  assert.deepEqual(riskCutDates(app), ["2026-10-02"], "Sin selección explícita sigue al corte consultado");
+});
+
+test("flechas accesibles y arrastre fijan el orden manual para la tabla, el PDF y WhatsApp", async () => {
+  const app = harness((url, options) => options?.method === "POST" ? { ok: true, recipient: "+573001234567" }
+    : url.includes("format=risk") ? comparisonForUrl(url) : reportWithRiskForUrl(url));
+  await app.settle();
+  app.change("Aliado", "4");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  for (const day of [17, 2]) {
+    app.change("Mes para comparar", "10");
+    app.change("Día para comparar", String(day));
+    await app.click(/^Agregar corte$/);
+  }
+  const moveEarlier = nodes(riskChip(app, "2026-11-02"), node => node.type === "button" && name(node).endsWith(" antes"))[0];
+  assert.equal(moveEarlier.props.disabled, false);
+  moveEarlier.props.onClick();
+  app.render();
+  assert.deepEqual(riskCutDates(app), ["2026-10-02", "2026-11-02", "2026-10-17"]);
+  assert.match(app.text(), /movido a la posición 2 de 3/);
+  const dragData = new Map();
+  const dataTransfer = { setData: (type, value) => dragData.set(type, value) };
+  assert.equal(riskChip(app, "2026-11-02").props.draggable, true);
+  riskChip(app, "2026-11-02").props.onDragStart({ dataTransfer });
+  app.render();
+  assert.equal(dragData.get("text/plain"), "2026-11-02");
+  riskChip(app, "2026-10-02").props.onDrop({ preventDefault() {} });
+  app.render();
+  app.change("Mes para comparar", "9");
+  app.change("Día para comparar", "2");
+  await app.click(/^Agregar corte$/);
+  const expected = ["2026-11-02", "2026-10-02", "2026-10-17", "2026-09-02"];
+  assert.deepEqual(riskCutDates(app), expected, "Agregar conserva el orden manual y coloca el nuevo corte al final");
+  await app.settle();
+  assert.deepEqual(riskMatrixDates(app), expected);
+  await app.click(/^Descargar informe PDF$/);
+  assert.equal(app.downloads.at(-1).name, "FINSERPAY_Riesgo_2026-09-02_a_2026-11-02.pdf");
+  await app.click(/^Enviar por WhatsApp$/);
+  for (const request of app.requests.filter(request => request.method === "POST" || request.url.includes("format=pdf"))) {
+    assert.equal(new URL(request.url, "https://finserpay.test").searchParams.get("riskCuts"), expected.join(","));
+  }
+});
+
+test("una comparación fallida impide exportar o enviar hasta reintentar con éxito", async () => {
+  let fail = true;
+  const app = harness(url => url.includes("format=risk")
+    ? fail ? { error: "No se pudo consultar riesgo." } : comparisonForUrl(url)
+    : reportWithRiskForUrl(url));
+  await app.settle();
+  app.change("Aliado", "4");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  app.change("Mes para comparar", "10");
+  await app.click(/^Agregar corte$/);
+  await app.settle();
+  assert.match(app.text(), /No se pudo consultar riesgo/);
+  for (const label of ["Descargar informe PDF", "Enviar por WhatsApp", "Enviar por correo"]) {
+    assert.equal(app.find(node => node.type === "button" && name(node) === label)[0].props.disabled, true);
+  }
+  fail = false;
+  await app.click(/^Reintentar comparación$/);
+  await app.settle();
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Descargar informe PDF")[0].props.disabled, false);
+});
 
 test("WhatsApp envía directamente al aliado aplicado con los filtros consultados y sin destinatario del cliente", async () => {
   const app = harness((url, options) => options?.method === "POST"

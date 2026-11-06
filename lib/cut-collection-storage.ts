@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assertCutUuid, CutCollectionError, cutDateFromFilters, type CutAccess } from "./cut-collection-access";
 import { captureCutSnapshot, buildCutRows, buildDirectCutRows, summarizeCutRows, measureEarlyRisk } from "./cut-collection";
-import type { CutCredit, CutFilters, CutHistory, CutReport, CutSnapshot } from "./cut-collection-types";
+import type { CutCredit, CutFilters, CutHistory, CutReport, CutRiskComparisonItem, CutSnapshot } from "./cut-collection-types";
 
 export interface CutDb {
   $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>;
@@ -37,31 +37,39 @@ async function branches(tx: CutDb, access: CutAccess, filters: CutFilters) {
 }
 
 /** Read exclusively from credit-owned branches. A digital payment's collection branch grants no access. */
-async function readCredits(tx: CutDb, sedeIds: number[]): Promise<CutCredit[]> {
+async function readCredits(tx: CutDb, sedeIds: number[], firstCutDates?: readonly string[]): Promise<CutCredit[]> {
   if (!sedeIds.length) return [];
+  // Risk comparisons need only these initial-payment cohorts, not every loan
+  // with a later installment in a selected cut. Dates remain SQL parameters.
+  const cohortClause = firstCutDates ? ' AND c."fechaPrimerPago"::date=ANY($2::date[])' : "";
+  const parameters = firstCutDates ? [sedeIds, firstCutDates] : [sedeIds];
   const credits = await tx.$queryRawUnsafe<RawCredit[]>(`SELECT c.id,c.folio,c."clienteNombre",c."clienteDocumento",c."sedeId",
     s.nombre AS sede,s."aliadoId",a.nombre AS aliado,c.estado,c."montoCredito",c."valorCuota",c."plazoMeses",c."frecuenciaPago",
     c."fechaPrimerPago",c."fechaProximoPago",c."pazYSalvoEmitidoAt",(to_jsonb(c)->>'fechaCredito')::timestamp AS "originatedAt",to_jsonb(c)->'planCapitalVigente' AS "planCapitalVigente"
     FROM "Credito" c JOIN "Sede" s ON s.id=c."sedeId" LEFT JOIN "Aliado" a ON a.id=s."aliadoId"
-    WHERE c."sedeId"=ANY($1::integer[]) ORDER BY c.id`, sedeIds);
+    WHERE c."sedeId"=ANY($1::integer[])${cohortClause} ORDER BY c.id`, ...parameters);
   const payments = await tx.$queryRawUnsafe<RawPayment[]>(`SELECT p.id,p."creditoId",p.valor,p.estado,p."metodoPago",p."fechaAbono",p."createdAt",p."anuladoAt"
     FROM "CreditoAbono" p JOIN "Credito" c ON c.id=p."creditoId"
-    WHERE c."sedeId"=ANY($1::integer[]) ORDER BY p."fechaAbono",p.id`, sedeIds);
+    WHERE c."sedeId"=ANY($1::integer[])${cohortClause} ORDER BY p."fechaAbono",p.id`, ...parameters);
   const grouped = new Map<number, RawPayment[]>();
   for (const payment of payments) { const list = grouped.get(payment.creditoId) || []; list.push(payment); grouped.set(payment.creditoId, list); }
   // Keep the current Sadmin presentation rules, inside this same authorized
   // transaction. The store's raw adapter does not expose Prisma model delegates.
-  const { getCreditDisplayNumbers } = await import("./credit-display-number-server");
-  const displayNumbers = await getCreditDisplayNumbers(credits.map(row => row.id), {
-    creditSadminRegistration: {
-      findMany: ({ where }) => tx.$queryRawUnsafe<Array<{
-        creditoId: number; numeroCredito: string | null; numeroCreditoConfirmado: boolean;
-      }>>(`SELECT "creditoId","numeroCredito","numeroCreditoConfirmado"
-        FROM "CreditSadminRegistration"
-        WHERE "creditoId"=ANY($1::integer[]) AND "numeroCreditoConfirmado"=TRUE AND "numeroCredito" IS NOT NULL`,
-      where.creditoId.in),
-    },
-  });
+  // Aggregate-only risk reports never expose credit numbers and need no Sadmin lookup.
+  let displayNumbers = new Map<number, string>();
+  if (!firstCutDates) {
+    const { getCreditDisplayNumbers } = await import("./credit-display-number-server");
+    displayNumbers = await getCreditDisplayNumbers(credits.map(row => row.id), {
+      creditSadminRegistration: {
+        findMany: ({ where }) => tx.$queryRawUnsafe<Array<{
+          creditoId: number; numeroCredito: string | null; numeroCreditoConfirmado: boolean;
+        }>>(`SELECT "creditoId","numeroCredito","numeroCreditoConfirmado"
+          FROM "CreditSadminRegistration"
+          WHERE "creditoId"=ANY($1::integer[]) AND "numeroCreditoConfirmado"=TRUE AND "numeroCredito" IS NOT NULL`,
+        where.creditoId.in),
+      },
+    });
+  }
   return credits.map(row => ({
     id: row.id, folio: displayNumbers.get(row.id) || row.folio, clientName: row.clienteNombre,
     document: row.clienteDocumento || "", aliadoId: row.aliadoId, aliado: row.aliado || "Sin aliado",
@@ -92,6 +100,22 @@ function evaluate(snapshot: CutSnapshot, credits: CutCredit[], filters: CutFilte
   } catch (error) {
     throw new CutCollectionError(error instanceof Error ? error.message : "Se requiere conciliar el cronograma de la proyección.", 409);
   }
+}
+
+function comparisonDates(cutDates: string[]): string[] {
+  if (!Array.isArray(cutDates) || cutDates.length < 1 || cutDates.length > 6) {
+    throw new CutCollectionError("Selecciona entre uno y seis cortes para comparar.");
+  }
+  const unique = new Set<string>();
+  for (const cutDate of cutDates) {
+    if (typeof cutDate !== "string" || !/^\d{4}-(0[1-9]|1[0-2])-(02|17)$/.test(cutDate) ||
+        Number(cutDate.slice(0, 4)) < 2000 || Number(cutDate.slice(0, 4)) > 2200) {
+      throw new CutCollectionError("Fecha de comparación inválida. Usa un corte 02 o 17 en formato AAAA-MM-DD.");
+    }
+    if (unique.has(cutDate)) throw new CutCollectionError("Hay cortes repetidos en la comparación.");
+    unique.add(cutDate);
+  }
+  return [...unique];
 }
 
 export function createCutCollectionStore(database: CutDatabase) {
@@ -188,6 +212,25 @@ export function createCutCollectionStore(database: CutDatabase) {
         sedes: scope.authorized.map(({ id, nombre, aliadoId }) => ({ id, nombre, aliadoId })) } };
   }
   return {
+    async directRiskComparison(access: CutAccess, filters: CutFilters, cutDates: string[]): Promise<CutRiskComparisonItem[]> {
+      const dates = comparisonDates(cutDates);
+      return database.$transaction(async tx => {
+        const scope = await branches(tx, access, filters);
+        const [{ now }] = await tx.$queryRawUnsafe<{ now: Date | string }[]>(`SELECT CURRENT_TIMESTAMP AS now`);
+        const queriedAt = iso(now);
+        const credits = await readCredits(tx, scope.selected.map(branch => branch.id), dates);
+        const cohorts = new Map(dates.map(cutDate => [cutDate, [] as CutCredit[]]));
+        for (const credit of credits) cohorts.get(String(credit.plan.fechaPrimerPago))?.push(credit);
+        try {
+          // Match the main report: risk uses ally/site scope, independently of
+          // the current installment status. All cuts share this database snapshot.
+          return dates.map(cutDate => ({ cutDate, queriedAt,
+            earlyRisk: measureEarlyRisk(cohorts.get(cutDate)!, cutDate, queriedAt) }));
+        } catch (error) {
+          throw new CutCollectionError(error instanceof Error ? error.message : "No se pudo conciliar el riesgo temprano de los cortes.", 409);
+        }
+      }, transactionOptions);
+    },
     async directReport(access: CutAccess, filters: CutFilters): Promise<CutReport> {
       return database.$transaction(async tx => {
         const scope = await branches(tx, access, filters);
@@ -239,6 +282,9 @@ export async function getCutCollectionReport(access: CutAccess, filters: CutFilt
 }
 export async function getDirectCutCollectionReport(access: CutAccess, filters: CutFilters) {
   return (await defaultStore()).directReport(access, filters);
+}
+export async function getDirectCutRiskComparison(access: CutAccess, filters: CutFilters, cutDates: string[]): Promise<CutRiskComparisonItem[]> {
+  return (await defaultStore()).directRiskComparison(access, filters, cutDates);
 }
 export async function saveCutCollectionProjection(access: CutAccess, filters: CutFilters, requestKey: string) {
   return (await defaultStore()).save(access, filters, requestKey);

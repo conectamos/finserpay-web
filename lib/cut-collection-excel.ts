@@ -75,7 +75,7 @@ export function buildCutCollectionWorkbook(report: CutReport) {
   entry("Tipo de reporte", "Consulta directa");
   if (report.earlyRisk) {
     entry("Cohorte de riesgo temprano", "Créditos con primer vencimiento en el corte. Alcance por aliado y sede; independiente del estado actual de la cuota.");
-    entry("40/60", "Menos de 4 cuotas completas al cierre del día 60 desde la fecha de crédito registrada.");
+    entry("Medición 40/60", "Menos de 6 cuotas completas al cierre de los 3 meses calendario desde el desembolso registrado.");
     for (const metric of report.earlyRisk) {
       entry(metric.label, `${metric.eligible ? `${metric.cases}/${metric.eligible} (${(100 * metric.cases / metric.eligible).toFixed(1)} %)` : "Sin base evaluable"} · ${metric.pending} por madurar · ${metric.unavailable} sin datos comparables`);
     }

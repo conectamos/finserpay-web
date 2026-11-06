@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { AllyContactValidationError, normalizeAllyWhatsApp } from "./ally-contact";
 import { CutCollectionError } from "./cut-collection-access";
 import { buildCutCollectionPdf } from "./cut-collection-pdf";
-import type { CutReport } from "./cut-collection-types";
+import type { CutReport, CutRiskComparisonItem } from "./cut-collection-types";
 
 export const RISK_WHATSAPP_TEMPLATE = "finser_informe_riesgo_temprano";
 export const RISK_WHATSAPP_LANGUAGE = "es_CO";
@@ -30,7 +30,7 @@ async function graph(url: string, options: RequestInit) {
   return fetch(url, { ...options, redirect: "error", signal: AbortSignal.timeout(12_000) });
 }
 
-async function prepareDocument(report: CutReport) {
+async function prepareDocument(report: CutReport, comparison?: CutRiskComparisonItem[]) {
   const { base, phone, business, headers } = configuration();
   const query = new URLSearchParams({ name: RISK_WHATSAPP_TEMPLATE, fields: "name,status,language,components", limit: "50" });
   const [sender, templates] = await Promise.all([
@@ -52,8 +52,11 @@ async function prepareDocument(report: CutReport) {
       !components.some(item => item.type === "BODY" && item.text === RISK_WHATSAPP_BODY)) {
     throw new CutCollectionWhatsAppError("Meta aún no tiene aprobada la plantilla de WhatsApp para este informe.", 503);
   }
-  const pdf = await buildCutCollectionPdf(report);
-  const filename = `FINSERPAY_Riesgo_${report.cutDate}.pdf`;
+  const pdf = await buildCutCollectionPdf(report, comparison);
+  const dates = comparison?.map(item => item.cutDate).sort() ?? [];
+  const first = dates[0] ?? report.cutDate;
+  const period = dates.length > 1 ? `${first}_a_${dates[dates.length - 1]}` : first;
+  const filename = `FINSERPAY_Riesgo_${period}.pdf`;
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
   form.set("type", "application/pdf");
@@ -66,14 +69,19 @@ async function prepareDocument(report: CutReport) {
   return { url: `${base}/${phone}/messages`, headers, mediaId: media.id as string, filename };
 }
 
-export async function sendCutCollectionWhatsApp(input: { userId: number; key: string; allyId: number; report: CutReport }) {
+export async function sendCutCollectionWhatsApp(input: {
+  userId: number; key: string; allyId: number; report: CutReport; comparison?: CutRiskComparisonItem[];
+}) {
   const { default: prisma } = await import("./prisma");
   const ally = await prisma.aliado.findUnique({ where: { id: input.allyId }, select: { activo: true, telefonoWhatsapp: true } });
   let recipient: string | null = null;
   try { if (ally?.activo) recipient = normalizeAllyWhatsApp(ally.telefonoWhatsapp); }
   catch (error) { if (!(error instanceof AllyContactValidationError)) throw error; }
   if (!recipient) throw new CutCollectionError("El aliado no tiene un número de WhatsApp válido registrado.", 422);
-  const scope = createHash("sha256").update(JSON.stringify([input.report.filters, recipient])).digest("hex");
+  const cuts = input.comparison?.map(item => item.cutDate) ?? [];
+  const scopeParts: unknown[] = [input.report.filters, recipient];
+  if (cuts.length > 1 || (cuts.length === 1 && cuts[0] !== input.report.cutDate)) scopeParts.push(cuts);
+  const scope = createHash("sha256").update(JSON.stringify(scopeParts)).digest("hex");
   const { userId, key } = input;
   async function existing() {
     const [attempt] = await prisma.$queryRaw<Array<{ scopeHash: string; state: string }>>`
@@ -88,7 +96,7 @@ export async function sendCutCollectionWhatsApp(input: { userId: number; key: st
   if (await existing()) return recipient;
 
   let document: Awaited<ReturnType<typeof prepareDocument>>;
-  try { document = await prepareDocument(input.report); }
+  try { document = await prepareDocument(input.report, input.comparison); }
   catch (error) {
     if (error instanceof CutCollectionWhatsAppError) throw error;
     throw new CutCollectionWhatsAppError("No se pudo preparar el informe en WhatsApp.", 503);

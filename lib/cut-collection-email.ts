@@ -43,7 +43,7 @@ export async function sendCutCollectionEmail(input: {
         from: "FINSER PAY <pagos@finserpay.com>",
         to: [input.recipient],
         subject: `Informe de riesgo temprano | ${input.cutDate}`,
-        text: "Hola. Adjuntamos la medición de riesgo temprano del corte consultado en FINSER PAY.",
+        text: "Hola. Adjuntamos el informe de riesgo temprano consultado en FINSER PAY.",
         attachments: [{ filename: input.filename, content: input.pdf.toString("base64") }],
       }),
     });

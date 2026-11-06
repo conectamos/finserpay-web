@@ -21,6 +21,7 @@ const payload = {
 function harness({ pending = false, networkFailure = false, missingPhone = false } = {}) {
   const requests = [];
   const sent = [];
+  const rendered = [];
   let row;
   const database = {
     aliado: { findUnique: async () => ({ activo: true, telefonoWhatsapp: missingPhone ? null : "3001234567" }) },
@@ -41,7 +42,10 @@ function harness({ pending = false, networkFailure = false, missingPhone = false
     "./prisma": { __esModule: true, default: database },
     "./cut-collection-access": { CutCollectionError },
     "./ally-contact": contacts,
-    "./cut-collection-pdf": { buildCutCollectionPdf: async () => Buffer.from("%PDF-synthetic") },
+    "./cut-collection-pdf": { buildCutCollectionPdf: async (...args) => {
+      rendered.push(args);
+      return Buffer.from("%PDF-synthetic");
+    } },
   };
   const fetcher = async (url, options) => {
     requests.push(url);
@@ -67,7 +71,7 @@ function harness({ pending = false, networkFailure = false, missingPhone = false
     { env: { WHATSAPP_ATTENTION_ACCESS_TOKEN: "test-only", WHATSAPP_SETTLEMENT_PHONE_NUMBER_ID: "12345678",
       WHATSAPP_SETTLEMENT_BUSINESS_ACCOUNT_ID: "12345679" } }, fetcher,
   );
-  return { send: compiledModule.exports.sendCutCollectionWhatsApp, requests, sent };
+  return { send: compiledModule.exports.sendCutCollectionWhatsApp, requests, sent, rendered };
 }
 
 test("envía solo al contacto registrado y una repetición de la misma llave no reenvía", async () => {
@@ -78,6 +82,16 @@ test("envía solo al contacto registrado y una repetición de la misma llave no 
   assert.equal(sent[0].to, "573001234567");
   assert.equal(sent[0].template.components[0].parameters[0].document.id, "123456789");
   assert.equal(requests.length, 4);
+});
+
+test("envía un solo PDF con la selección y la llave impide cambiar sus cortes", async () => {
+  const { send, sent, rendered } = harness();
+  const comparison = ["2026-10-02", "2026-10-17", "2026-11-02"].map(cutDate => ({ cutDate, earlyRisk: [] }));
+  await send({ ...payload, comparison });
+  assert.deepEqual(rendered, [[payload.report, comparison]]);
+  assert.equal(sent[0].template.components[0].parameters[0].document.filename, "FINSERPAY_Riesgo_2026-10-02_a_2026-11-02.pdf");
+  await assert.rejects(send({ ...payload, comparison: comparison.slice(1) }), error => error.status === 409);
+  assert.equal(sent.length, 1);
 });
 
 test("una plantilla pendiente nunca sube el PDF ni intenta enviar", async () => {

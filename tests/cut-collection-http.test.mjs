@@ -18,6 +18,10 @@ const pdfBytes = Buffer.from("%PDF-local-http-fixture");
 const registeredRecipient = "aliado-registrado@example.test";
 const registeredWhatsApp = "573001234567";
 const requestKey = "1d34cc6f-8bf8-4277-b1a4-2f908a6ca9ab";
+const riskCuts = ["2026-08-02", "2026-10-17", "2026-09-17"];
+const sixRiskCuts = [...riskCuts, "2000-01-02", "2200-12-17", "2026-07-02"];
+const comparisonFor = dates => dates.map((cutDate, index) => ({ cutDate, queriedAt: "2026-11-06T20:00:00.000Z",
+  earlyRisk: [{ label: "FPD 7", cases: index + 1, eligible: 10, pending: 2, unavailable: 0 }] }));
 class CutCollectionEmailError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
@@ -49,7 +53,7 @@ const { assertAttentionOrigin } = compile("lib/atencion-http.ts", name => {
 // Real handlers, origin guard and filter parsing. Dynamic document/delivery
 // imports are isolated too: tests never reach a live database or mail provider.
 function harness(overrides = {}) {
-  const calls = { access: 0, parse: [], read: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], recipient: [], email: [], whatsapp: [], order: [] };
+  const calls = { access: 0, parse: [], read: [], risk: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], pdfComparisons: [], recipient: [], email: [], whatsapp: [], order: [] };
   function scopedRequire(name) {
     if (name === "@/lib/cut-collection-access") return {
       CutCollectionError,
@@ -62,6 +66,11 @@ function harness(overrides = {}) {
     };
     if (name === "@/lib/cut-collection-storage") return {
       getDirectCutCollectionReport: async (...args) => { calls.read.push(args); calls.order.push("report"); if (overrides.error) throw overrides.error; return report; },
+      getDirectCutRiskComparison: async (...args) => {
+        calls.risk.push(args); calls.order.push("risk");
+        if (overrides.riskError) throw overrides.riskError;
+        return comparisonFor(args[2]);
+      },
       getCutCollectionReport: async (...args) => { calls.legacyRead.push(args); throw new Error("No se debe consultar una proyección"); },
       saveCutCollectionProjection: async (...args) => { calls.save.push(args); throw new Error("No se debe guardar una proyección"); },
     };
@@ -72,7 +81,11 @@ function harness(overrides = {}) {
       assertAttentionOrigin: request => { calls.origin.push(request); calls.order.push("origin"); return assertAttentionOrigin(request); },
     };
     if (name === "@/lib/cut-collection-pdf") return {
-      buildCutCollectionPdf: async value => { calls.pdf.push(value); calls.order.push("pdf"); if (overrides.pdfError) throw overrides.pdfError; return pdfBytes; },
+      buildCutCollectionPdf: async (value, comparison) => {
+        calls.pdf.push(value); calls.pdfComparisons.push(comparison); calls.order.push("pdf");
+        if (overrides.pdfError) throw overrides.pdfError;
+        return pdfBytes;
+      },
     };
     if (name === "@/lib/cut-collection-email") return {
       CutCollectionEmailError,
@@ -113,14 +126,16 @@ test("GET y POST exigen sesión y permisos antes de consultar o rechazar la oper
   for (const status of [401, 403]) {
     const handler = harness({ accessError: new CutCollectionError("Sin acceso", status) });
     for (const response of [await handler.GET(new Request(url)), await handler.POST(new Request(url, { method: "POST" })),
-      await handler.GET(new Request(`${url}?${query}&format=pdf`)), await handler.POST(emailRequest()), await handler.POST(whatsappRequest())]) {
+      await handler.GET(new Request(`${url}?${query}&format=pdf`)),
+      await handler.GET(new Request(`${url}?${query}&format=risk&riskCuts=${riskCuts.join(",")}`)),
+      await handler.POST(emailRequest()), await handler.POST(whatsappRequest())]) {
       assert.equal(response.status, status);
       assertPrivate(response);
     }
     assert.equal(handler.calls.read.length, 0);
     assert.equal(handler.calls.legacyRead.length, 0);
     assert.equal(handler.calls.save.length, 0);
-    for (const stage of ["origin", "parse", "recipient", "pdf", "email", "whatsapp"]) assert.equal(handler.calls[stage].length, 0);
+    for (const stage of ["origin", "parse", "risk", "recipient", "pdf", "email", "whatsapp"]) assert.equal(handler.calls[stage].length, 0);
   }
 });
 
@@ -180,12 +195,138 @@ test("PDF exporta el reporte completo autorizado con los mismos filtros y encabe
   assert.equal(response.status, 200);
   assert.deepEqual(handler.calls.read, [[access, filters]]);
   assert.deepEqual(handler.calls.pdf, [report]);
+  assert.deepEqual(handler.calls.pdfComparisons, [undefined]);
+  assert.equal(handler.calls.risk.length, 0, "El PDF sin riskCuts conserva el comportamiento anterior");
   for (const stage of ["excel", "recipient", "email", "legacyRead", "save"]) assert.equal(handler.calls[stage].length, 0);
   assert.equal(response.headers.get("content-type"), "application/pdf");
   assert.equal(response.headers.get("content-disposition"), 'attachment; filename="FINSERPAY_Recaudo_2026-10-17.pdf"');
   assert.equal(response.headers.get("content-length"), String(pdfBytes.byteLength));
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), pdfBytes);
   assertPrivate(response);
+});
+
+test("format=risk consulta hasta seis cortes en orden manual con alcance y filtros comunes sin depender de proyecciones", async () => {
+  const dates = sixRiskCuts;
+  assert.equal(dates.join(",").length, 65);
+  for (const status of ["todos", "pendiente", "parcial", "pagado"]) {
+    const handler = harness();
+    const params = new URLSearchParams(query);
+    params.set("status", status);
+    params.set("format", "risk");
+    params.set("riskCuts", dates.join(","));
+    params.set("projectionId", "old-invalid-id");
+    params.set("historyPage", "old-invalid-page");
+    const response = await handler.GET(new Request(`${url}?${params}`));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { reports: comparisonFor(dates) });
+    assert.deepEqual(handler.calls.risk, [[access, { ...filters, status }, dates]]);
+    for (const stage of ["read", "pdf", "excel", "email", "whatsapp", "legacyRead", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
+    assert.equal("projectionId" in handler.calls.parse[0], false);
+    assertPrivate(response);
+  }
+  const selected = harness();
+  const response = await selected.GET(new Request(`${url}?${query}&format=risk`));
+  assert.deepEqual(await response.json(), { reports: comparisonFor([report.cutDate]) });
+  assert.deepEqual(selected.calls.risk, [[access, filters, [report.cutDate]]]);
+});
+
+test("riskCuts inválidos o repetidos se rechazan antes de consultar o enviar en todos los formatos de riesgo", async () => {
+  for (const value of [
+    "", "2026-11-02,2026-11-02", "2026-01-02,2026-02-02,2026-03-02,2026-04-02,2026-05-02,2026-06-02,2026-07-02",
+    "2026-11-03", "2026-02-30", "2026-13-02", "2026-00-17", "2026-1-02", "2026-11-2",
+    "1999-12-17", "2201-01-02", "2026-11-02T00:00:00Z", "2026-11-02,", " 2026-11-02",
+  ]) {
+    const params = new URLSearchParams(query);
+    params.set("riskCuts", value);
+    for (const mode of ["risk", "pdf", "email", "whatsapp"]) {
+      const handler = harness();
+      const response = mode === "risk" || mode === "pdf"
+        ? await handler.GET(new Request(`${url}?${params}&format=${mode}`))
+        : await handler.POST(deliveryRequest({ action: mode, params: params.toString() }));
+      assert.equal(response.status, 400, `${mode}: ${value}`);
+      for (const stage of ["read", "risk", "recipient", "pdf", "email", "whatsapp", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
+      assertPrivate(response);
+    }
+  }
+  const repeated = harness();
+  const response = await repeated.GET(new Request(`${url}?${query}&format=risk&riskCuts=2026-11-02&riskCuts=2026-11-17`));
+  assert.equal(response.status, 400);
+  assert.equal(repeated.calls.risk.length, 0);
+});
+
+test("PDF, correo y WhatsApp preservan el orden manual de seis cortes y los filtros del reporte", async () => {
+  const params = `${query}&riskCuts=${sixRiskCuts.join(",")}`;
+  const comparison = comparisonFor(sixRiskCuts);
+  for (const mode of ["pdf", "email", "whatsapp"]) {
+    const handler = harness();
+    const response = mode === "pdf"
+      ? await handler.GET(new Request(`${url}?${params}&format=pdf`))
+      : await handler.POST(deliveryRequest({ action: mode, params,
+        body: { riskCuts: ["2026-12-17"], comparison: [{ cutDate: "2026-12-17", earlyRisk: [] }], recipient: "forged@example.test" } }));
+    assert.equal(response.status, 200);
+    assert.deepEqual(handler.calls.read, [[access, filters]]);
+    assert.deepEqual(handler.calls.risk, [[access, filters, sixRiskCuts]]);
+    if (mode === "whatsapp") {
+      assert.deepEqual(handler.calls.whatsapp, [{ userId: access.userId, key: requestKey, allyId: filters.aliadoId, report, comparison }]);
+      assert.equal(handler.calls.pdf.length, 0);
+      assert.equal(handler.calls.email.length, 0);
+    } else {
+      assert.deepEqual(handler.calls.pdf, [report]);
+      assert.deepEqual(handler.calls.pdfComparisons, [comparison]);
+      assert.equal(handler.calls.email.length, mode === "email" ? 1 : 0);
+      assert.equal(handler.calls.whatsapp.length, 0);
+    }
+    assertPrivate(response);
+  }
+});
+
+test("riskCuts no cambia el JSON financiero ni Excel ni añade consultas de riesgo a esos formatos", async () => {
+  for (const format of ["", "&format=xlsx"]) {
+    const handler = harness();
+    const response = await handler.GET(new Request(`${url}?${query}&riskCuts=${riskCuts.join(",")}${format}`));
+    assert.equal(response.status, 200);
+    assert.deepEqual(handler.calls.read, [[access, filters]]);
+    assert.equal(handler.calls.risk.length, 0);
+    if (format) assert.deepEqual(handler.calls.excel, [report]);
+    else assert.deepEqual(await response.json(), report);
+    assertPrivate(response);
+  }
+});
+
+test("PDF y asunto de correo identifican el corte explícito o los extremos cronológicos de la comparación", async () => {
+  for (const [dates, period, suffix] of [
+    [["2026-08-02"], "2026-08-02", "2026-08-02"],
+    [["2026-10-17", "2026-08-02", "2026-09-17"], "2026-08-02 a 2026-10-17", "2026-08-02_a_2026-10-17"],
+  ]) {
+    const params = `${query}&riskCuts=${dates.join(",")}`;
+    const filename = `FINSERPAY_Riesgo_${suffix}.pdf`;
+    const pdf = harness();
+    const downloaded = await pdf.GET(new Request(`${url}?${params}&format=pdf`));
+    assert.equal(downloaded.status, 200);
+    assert.equal(downloaded.headers.get("content-disposition"), `attachment; filename="${filename}"`);
+    assert.deepEqual(pdf.calls.pdfComparisons, [comparisonFor(dates)], "Nombrar cronológicamente no cambia el orden solicitado");
+    const email = harness();
+    const sent = await email.POST(emailRequest({ params }));
+    assert.equal(sent.status, 200);
+    assert.equal(email.calls.email[0].filename, filename);
+    assert.equal(email.calls.email[0].cutDate, period, "El asunto usa los cortes comparados, no el corte financiero principal");
+    assert.deepEqual(email.calls.risk, [[access, filters, dates]]);
+  }
+});
+
+test("un alcance denegado en la comparación bloquea PDF y ambos envíos antes de resolver destinatarios", async () => {
+  for (const mode of ["risk", "pdf", "email", "whatsapp"]) {
+    const handler = harness({ riskError: new CutCollectionError("Sede no autorizada.", 403) });
+    const params = `${query}&riskCuts=${riskCuts.join(",")}`;
+    const response = mode === "risk" || mode === "pdf"
+      ? await handler.GET(new Request(`${url}?${params}&format=${mode}`))
+      : await handler.POST(deliveryRequest({ action: mode, params }));
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "Sede no autorizada." });
+    assert.deepEqual(handler.calls.risk, [[access, filters, riskCuts]]);
+    for (const stage of ["recipient", "pdf", "email", "whatsapp", "save"]) assert.equal(handler.calls[stage].length, 0, stage);
+    assertPrivate(response);
+  }
 });
 
 test("POST responde 410 tras autorizar sin leer el cuerpo, consultar ni guardar", async () => {

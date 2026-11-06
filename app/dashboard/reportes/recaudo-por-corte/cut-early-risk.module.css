@@ -20,40 +20,69 @@
 .feedback { margin: 12px 0 0; padding: 12px 16px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-bg); color: var(--fp-graphite); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .feedbackError { border-color: var(--fp-danger); background: var(--fp-danger-soft); color: var(--fp-danger); }
 .feedbackSuccess { background: var(--fp-lime-soft); }
+.feedback > p { margin: 0 0 12px; }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-auto-rows: 1fr;
-  gap: 16px;
-}
+.selector { display: grid; gap: 12px; padding: 16px; min-width: 0; }
+.selectorHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.selectorHeading h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 650; }
+.selectorHeading h3:focus-visible { outline: 3px solid var(--fp-lime); outline-offset: 4px; }
+.selectorControls { display: grid; grid-template-columns: minmax(80px, .7fr) minmax(140px, 1.3fr) minmax(100px, .8fr) max-content; align-items: end; gap: 12px; max-width: 740px; }
+.selectorControls label { display: grid; gap: 6px; min-width: 0; font-size: 14px; font-weight: 600; }
+.selectorControls :is(select, input) { min-width: 0; min-height: 44px; font-weight: 400; }
+.selectorControls > button { min-height: 44px; }
+.selectedCuts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.selectedCuts li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-lime-soft); }
+.selectedCuts li[draggable="true"] { cursor: grab; }
+.selectedCuts li[data-dragging="true"] { opacity: .5; }
+.selectedCuts li[data-drop-target="true"] { outline: 2px dashed var(--fp-graphite); outline-offset: 2px; }
+.chipLabel { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; }
+.chipLabel svg { width: 16px; height: 16px; color: var(--fp-muted); }
+.chipActions { display: flex; margin-left: auto; }
+.selectedCuts time { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.selectedCuts button { width: 40px; min-height: 40px; padding: 8px; }
+.hint, .selectionError, .orderMessage { margin: 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
+.selectionError { color: var(--fp-danger); }
+.orderMessage { color: var(--fp-graphite); }
 
-.card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; }
-.cardHeader { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
-.cardHeader h3 { margin: 0; color: var(--fp-graphite); font-size: 16px; font-weight: 750; line-height: 1.25; }
-.cardHeader > span { max-width: 100%; white-space: normal; font-size: 12px; line-height: 1.4; }
-.result { display: grid; gap: 4px; }
-.result strong { color: var(--fp-graphite); font-variant-numeric: tabular-nums; line-height: 1.15; letter-spacing: -.035em; overflow-wrap: anywhere; }
-.percentage { font-size: 32px; font-weight: 750; }
-.noPercentage { font-size: 20px; font-weight: 650; }
-.ratio, .maturity dt { font-size: 13px; line-height: 1.5; color: var(--fp-muted); }
+.matrix { width: 100%; max-width: 100%; min-width: 0; overflow: auto; background: var(--fp-surface); }
+.matrix:focus-visible { outline: 3px solid var(--fp-lime); outline-offset: -3px; }
+.matrix table { width: 100%; min-width: 940px; border-collapse: separate; border-spacing: 0; text-align: left; }
+.matrix caption { padding: 12px 16px; color: var(--fp-muted); font-size: 14px; text-align: left; }
+.matrix th, .matrix td { padding: 16px; border-top: 1px solid var(--fp-border); vertical-align: top; }
+.matrix th + th, .matrix td { border-left: 1px solid var(--fp-border); }
+.matrix thead th { position: sticky; top: 0; z-index: 2; min-width: 190px; background: var(--fp-bg); color: var(--fp-graphite); font-size: 14px; font-weight: 750; }
+.matrix th:first-child { position: sticky; left: 0; min-width: 160px; width: 160px; }
+.matrix thead th:first-child { z-index: 3; }
+.matrix tbody th { z-index: 1; background: var(--fp-surface); font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.matrix tbody tr:hover > * { background: var(--fp-bg); }
+.columnHint { display: block; margin-top: 4px; color: var(--fp-muted); font-size: 13px; font-weight: 400; }
+.cell { display: grid; gap: 6px; }
+.cellHeading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; }
+.cellHeading strong { color: var(--fp-graphite); font-variant-numeric: tabular-nums; line-height: 1.2; letter-spacing: -.025em; }
+.cellHeading > span { font-size: 12px; }
+.percentage { font-size: 24px; font-weight: 750; }
+.noPercentage { font-size: 15px; font-weight: 600; }
+.ratio, .maturity dt { font-size: 14px; line-height: 1.5; color: var(--fp-muted); }
 .ratio { margin: 0; overflow-wrap: anywhere; }
 .ratio b { color: var(--fp-graphite); font-variant-numeric: tabular-nums; }
-.track { margin-top: auto; }
-.riskBar > span { background: var(--fp-danger); }
-.maturity { display: grid; gap: 4px; margin: 0; padding-top: 8px; border-top: 1px solid var(--fp-border); }
+.maturity { display: grid; gap: 4px; margin: 0; padding-top: 4px; }
 .maturity > div { display: flex; justify-content: space-between; gap: 8px; }
 .maturity dd { margin: 0; font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
-@media (max-width: 1100px) {
-  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
 @media (max-width: 600px) {
   .section { gap: 12px; }
-  .grid { grid-template-columns: 1fr; grid-auto-rows: auto; gap: 12px; }
   .header { align-items: stretch; }
   .actionsPanel { flex-basis: 100%; }
   .actions { display: grid; grid-template-columns: 1fr; }
   .actions button { width: 100%; }
+  .selectorControls { grid-template-columns: minmax(64px, .7fr) minmax(110px, 1.3fr) minmax(78px, .9fr); gap: 8px; }
+  .selectorControls :is(select, input) { padding-inline: 8px; }
+  .selectorControls > button { grid-column: 1 / -1; }
+  .matrix th, .matrix td { padding: 12px; }
+  .matrix th:first-child { min-width: 126px; width: 126px; }
+}
+
+@media (max-width: 360px) {
+  .selectorControls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .selectorControls label:last-of-type { grid-column: 1 / -1; }
 }
