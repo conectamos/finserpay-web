@@ -888,6 +888,71 @@ CREATE TABLE IF NOT EXISTS "DataCreditoPolicyAssignmentAudit" (
     REFERENCES "DataCreditoPolicyProfile" ("id") ON DELETE RESTRICT
 );
 
+-- BEGIN AUDITED SAME-DOCUMENT IDENTITY REQUERY
+-- An approved provider response remains approved evidence. A separately audited
+-- correction of the queried surname may retire only its unused reuse window.
+-- Restore that exception after the 15-day backfill on every deployment, without
+-- editing identity, score, offer, retention or the daily inquiry consumption.
+-- Retire the whole reuse family: the global reservation guard also checks clones.
+-- Draft/signature guards and the document lock belong to the authorizing operation;
+-- this preflight only preserves an already recorded, explicitly bound authorization.
+WITH identity_requery_authorizations AS (
+  SELECT root."id", MIN(audit."createdAt") AS "authorizedAt"
+  FROM "DataCreditoAssessment" root
+  JOIN "DataCreditoAdminAccessAudit" audit ON audit."assessmentId" = root."id"
+  WHERE audit."action" = 'OPS_IDENTITY_REQUERY_AUTHORIZED'
+    AND audit."outcome" = 'AUTHORIZED'
+    AND audit."metadata" -> 'version' = '1'::jsonb
+    AND audit."metadata" ->> 'code' = 'SAME_DOCUMENT_SURNAME_CORRECTION'
+    AND audit."metadata" ->> 'originalStatus' = 'APROBADO'
+    AND audit."metadata" ->> 'documentHash' = root."documentHash"
+    AND audit."metadata" ->> 'providerEnvironment' = root."providerEnvironment"
+    AND audit."metadata" ->> 'originalSurnameHash' = root."surnameHash"
+    AND jsonb_typeof(audit."metadata" -> 'oldQuerySurname') = 'string'
+    AND jsonb_typeof(audit."metadata" -> 'newQuerySurname') = 'string'
+    AND LENGTH(BTRIM(audit."metadata" ->> 'oldQuerySurname')) BETWEEN 1 AND 128
+    AND LENGTH(BTRIM(audit."metadata" ->> 'newQuerySurname')) BETWEEN 1 AND 128
+    AND UPPER(REGEXP_REPLACE(BTRIM(audit."metadata" ->> 'oldQuerySurname'), '\s+', ' ', 'g'))
+      <> UPPER(REGEXP_REPLACE(BTRIM(audit."metadata" ->> 'newQuerySurname'), '\s+', ' ', 'g'))
+    AND jsonb_typeof(audit."metadata" -> 'reason') = 'string'
+    AND LENGTH(BTRIM(audit."metadata" ->> 'reason')) BETWEEN 10 AND 500
+    AND jsonb_typeof(audit."metadata" -> 'originalExpiresAt') = 'string'
+    AND audit."metadata" ->> 'originalExpiresAt'
+      ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$'
+    AND jsonb_typeof(audit."metadata" -> 'targetDraftId') = 'number'
+    AND audit."metadata" ->> 'targetDraftId' ~ '^[1-9][0-9]*$'
+    AND root."reusedFromAssessmentId" IS NULL
+    AND root."status" = 'APROBADO'
+    AND root."providerStatus" = 'ACCEPTED'
+    AND root."transactionCode" = '01'
+    AND root."errorCode" IS NULL
+    AND root."score" IS NOT NULL
+    AND root."decision" = 'APROBADO'
+    AND root."offer" IS NOT NULL
+    AND audit."createdAt" >= root."createdAt"
+    AND NOT EXISTS (
+      SELECT 1 FROM "DataCreditoAssessment" protected_member
+      WHERE COALESCE(protected_member."reusedFromAssessmentId", protected_member."id") = root."id"
+        AND (
+          protected_member."status" = 'PENDING'
+          OR protected_member."claimedAt" IS NOT NULL
+          OR protected_member."claimTokenHash" IS NOT NULL
+          OR protected_member."claimExpiresAt" IS NOT NULL
+          OR protected_member."consumedAt" IS NOT NULL
+          OR protected_member."creditId" IS NOT NULL
+          OR protected_member."documentHash" IS DISTINCT FROM root."documentHash"
+          OR protected_member."providerEnvironment" IS DISTINCT FROM root."providerEnvironment"
+        )
+    )
+  GROUP BY root."id"
+)
+UPDATE "DataCreditoAssessment" family
+SET "expiresAt" = LEAST(family."expiresAt", requery_authorization."authorizedAt")
+FROM identity_requery_authorizations requery_authorization
+WHERE COALESCE(family."reusedFromAssessmentId", family."id") = requery_authorization."id"
+  AND family."expiresAt" > requery_authorization."authorizedAt";
+-- END AUDITED SAME-DOCUMENT IDENTITY REQUERY
+
 CREATE TABLE IF NOT EXISTS "DataCreditoDailyQuotaUsage" (
   "allyId" INTEGER NOT NULL,
   "businessDate" DATE NOT NULL,
