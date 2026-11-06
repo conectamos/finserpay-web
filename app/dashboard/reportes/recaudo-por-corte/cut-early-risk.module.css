@@ -17,6 +17,7 @@
 .actionsPanel { flex: 1 1 720px; min-width: 0; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .actions button { white-space: normal; }
+.deliveryHint { margin: 8px 0 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
 .feedback { margin: 12px 0 0; padding: 12px 16px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); background: var(--fp-bg); color: var(--fp-graphite); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .feedbackError { border-color: var(--fp-danger); background: var(--fp-danger-soft); color: var(--fp-danger); }
 .feedbackSuccess { background: var(--fp-lime-soft); }

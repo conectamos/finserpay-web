@@ -54,7 +54,7 @@ function saveReportPdf(pdf: PreparedReportPdf) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function CutReportActions({ report, riskCuts, disabled }: { report: CutReport; riskCuts: string[]; disabled: boolean }) {
+function CutReportActions({ report, riskCuts, disabled, hasUnappliedFilters }: { report: CutReport; riskCuts: string[]; disabled: boolean; hasUnappliedFilters: boolean }) {
   const [busy, setBusy] = useState<"pdf" | "whatsapp" | "email" | null>(null);
   const busyRef = useRef(false);
   const pdfRef = useRef<PreparedReportPdf | null>(null);
@@ -63,6 +63,10 @@ function CutReportActions({ report, riskCuts, disabled }: { report: CutReport; r
   const [confirmEmail, setConfirmEmail] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "info" | "success" | "error"; message: string } | null>(null);
   const ally = report.options.aliados.find(item => item.id === report.filters.aliadoId)?.nombre;
+  const hasAppliedAlly = Boolean(report.filters.aliadoId && ally);
+  const deliveryHint = hasUnappliedFilters
+    ? "Pulsa Consultar corte para aplicar los filtros antes de enviar"
+    : !hasAppliedAlly ? "Selecciona un aliado y pulsa Consultar corte" : null;
   const site = report.options.sedes.find(item => item.id === report.filters.sedeId)?.nombre ?? "Todas las autorizadas";
   const params = paramsFor(report.filters);
   params.set("riskCuts", riskCuts.join(","));
@@ -99,7 +103,7 @@ function CutReportActions({ report, riskCuts, disabled }: { report: CutReport; r
   }
 
   async function sendWhatsApp() {
-    if (disabled || !report.filters.aliadoId || !ally || busyRef.current) return;
+    if (disabled || hasUnappliedFilters || !report.filters.aliadoId || !ally || busyRef.current) return;
     busyRef.current = true;
     setBusy("whatsapp");
     setFeedback(null);
@@ -123,7 +127,7 @@ function CutReportActions({ report, riskCuts, disabled }: { report: CutReport; r
   }
 
   async function sendEmail() {
-    if (disabled || !confirmEmail || !report.filters.aliadoId || !ally || busyRef.current) return;
+    if (disabled || hasUnappliedFilters || !confirmEmail || !report.filters.aliadoId || !ally || busyRef.current) return;
     busyRef.current = true;
     setBusy("email");
     setFeedback(null);
@@ -153,12 +157,13 @@ function CutReportActions({ report, riskCuts, disabled }: { report: CutReport; r
   return <div className={riskStyles.actionsPanel}>
     <div className={riskStyles.actions} aria-label="Acciones del informe" aria-busy={busy !== null}>
       <Button variant="secondary" disabled={disabled || busy !== null} onClick={downloadPdf}><Download aria-hidden="true" />{busy === "pdf" ? "Preparando PDF…" : "Descargar informe PDF"}</Button>
-      {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={disabled || busy !== null} onClick={sendWhatsApp}><MessageCircle aria-hidden="true" />{busy === "whatsapp" ? "Enviando por WhatsApp…" : "Enviar por WhatsApp"}</Button> : null}
-      {report.filters.aliadoId && ally ? <Button variant="secondary" disabled={disabled || busy !== null} onClick={() => { setFeedback(null); setConfirmEmail(true); }}><Mail aria-hidden="true" />{busy === "email" ? "Enviando informe…" : "Enviar por correo"}</Button> : null}
+      <Button variant="secondary" disabled={disabled || busy !== null || !hasAppliedAlly || hasUnappliedFilters} aria-describedby={deliveryHint ? "risk-delivery-help" : undefined} onClick={sendWhatsApp}><MessageCircle aria-hidden="true" />{busy === "whatsapp" ? "Enviando por WhatsApp…" : "Enviar por WhatsApp"}</Button>
+      {hasAppliedAlly ? <Button variant="secondary" disabled={disabled || busy !== null || hasUnappliedFilters} aria-describedby={deliveryHint ? "risk-delivery-help" : undefined} onClick={() => { if (disabled || hasUnappliedFilters || busyRef.current) return; setFeedback(null); setConfirmEmail(true); }}><Mail aria-hidden="true" />{busy === "email" ? "Enviando informe…" : "Enviar por correo"}</Button> : null}
     </div>
+    {deliveryHint && <p id="risk-delivery-help" className={riskStyles.deliveryHint} role="status">{deliveryHint}</p>}
     {feedback && <p className={`${riskStyles.feedback} ${feedback.kind === "error" ? riskStyles.feedbackError : feedback.kind === "success" ? riskStyles.feedbackSuccess : ""}`} role={feedback.kind === "error" ? "alert" : "status"}>{feedback.message}</p>}
     <ConfirmDialog
-      open={confirmEmail}
+      open={confirmEmail && !hasUnappliedFilters}
       title="Enviar informe por correo"
       description={`Se enviará el informe PDF de riesgo temprano a la dirección registrada de ${ally ?? "este aliado"}. Cortes de riesgo: ${riskCuts.map(dateLabel).join(", ")}. Sede: ${site}. ¿Confirmas el envío?`}
       confirmLabel="Confirmar envío"
@@ -376,7 +381,7 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
         onChange={setSelectedRiskCuts}
         onReorder={cuts => { setSelectedRiskCuts(cuts); setManualRiskOrder(true); }}
         onReset={() => { setSelectedRiskCuts(null); setManualRiskOrder(false); }}
-        renderActions={disabled => <CutReportActions key={`${fetchKey}:${riskCuts.join(",")}`} report={visibleReport} riskCuts={riskCuts} disabled={disabled} />}
+        renderActions={disabled => <CutReportActions key={`${fetchKey}:${riskCuts.join(",")}`} report={visibleReport} riskCuts={riskCuts} disabled={disabled} hasUnappliedFilters={draftChanged} />}
       />}
 
       <section className={styles.breakdown} aria-labelledby="cut-breakdown-title">

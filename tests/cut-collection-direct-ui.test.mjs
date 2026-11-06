@@ -516,20 +516,29 @@ test("WhatsApp envía directamente al aliado aplicado con los filtros consultado
   const app = harness((url, options) => options?.method === "POST"
     ? { ok: true, recipient: "+573001234567" } : reportWithRiskForUrl(url));
   await app.settle();
-  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp").length, 0);
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp")[0].props.disabled, true);
+  assert.match(app.text(), /Selecciona un aliado y pulsa Consultar corte/);
   app.change("Aliado", "4");
-  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp").length, 0,
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp")[0].props.disabled, true,
     "Cambiar el borrador no habilita un envío a un aliado aún no consultado");
+  assert.match(app.text(), /Pulsa Consultar corte para aplicar los filtros antes de enviar/);
   app.change("Sede", "8");
   app.change("Estado", "parcial");
   await app.click(/^Consultar corte$/);
   await app.settle();
   app.change("Estado", "pagado");
+  const pendingWhatsApp = app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp")[0];
+  assert.equal(pendingWhatsApp.props.disabled, true);
+  await pendingWhatsApp.props.onClick();
+  assert.equal(app.requests.filter(request => request.method === "POST").length, 0);
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por correo")[0].props.disabled, true);
+  await app.click(/^Consultar corte$/);
+  await app.settle();
   await app.click(/^Enviar por WhatsApp$/);
   const requests = app.requests.filter(request => request.method === "POST");
   assert.equal(requests.length, 1);
   const query = new URL(requests[0].url, "https://finserpay.test").searchParams;
-  for (const [key, expected] of Object.entries({ day: "2", month: "11", year: "2026", status: "parcial", aliadoId: "4", sedeId: "8", action: "whatsapp" })) {
+  for (const [key, expected] of Object.entries({ day: "2", month: "11", year: "2026", status: "pagado", aliadoId: "4", sedeId: "8", action: "whatsapp" })) {
     assert.equal(query.get(key), expected, key);
   }
   assert.equal(query.has("recipient"), false);
@@ -541,6 +550,46 @@ test("WhatsApp envía directamente al aliado aplicado con los filtros consultado
   assert.match(app.text(), /Envío por WhatsApp aceptado para \+573001234567/);
   assert.equal(app.downloads.length, 0);
   assert.ok(!app.text().includes("Compartir por WhatsApp") && !app.text().includes("adjunta el archivo"));
+});
+
+test("cambiar el aliado bloquea ambos envíos hasta consultar y mantiene el PDF del filtro aplicado", async () => {
+  const app = harness((url, options) => {
+    if (options?.method === "POST") return { ok: true, recipient: "+573009876543" };
+    const report = reportWithRiskForUrl(url);
+    return { ...report, options: { ...report.options,
+      aliados: [...report.options.aliados, { id: 5, nombre: "Segundo aliado" }] } };
+  });
+  await app.settle();
+  app.change("Aliado", "4");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp")[0].props.disabled, false);
+  app.change("Aliado", "5");
+  for (const label of ["Enviar por WhatsApp", "Enviar por correo"]) {
+    const button = app.find(node => node.type === "button" && name(node) === label)[0];
+    assert.equal(button.props.disabled, true);
+    assert.equal(button.props["aria-describedby"], "risk-delivery-help");
+    await button.props.onClick();
+  }
+  app.render();
+  assert.equal(app.requests.filter(request => request.method === "POST").length, 0);
+  assert.equal(app.find(node => node.props.role === "alertdialog").length, 0);
+  assert.match(app.text(), /Pulsa Consultar corte para aplicar los filtros antes de enviar/);
+  await app.click(/^Descargar informe PDF$/);
+  const pdf = app.requests.find(request => request.url.includes("format=pdf"));
+  assert.equal(new URL(pdf.url, "https://finserpay.test").searchParams.get("aliadoId"), "4");
+  await app.click(/^Consultar corte$/);
+  await app.settle();
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por WhatsApp")[0].props.disabled, false);
+  assert.equal(app.find(node => node.type === "button" && name(node) === "Enviar por correo")[0].props.disabled, false);
+  await app.click(/^Enviar por WhatsApp$/);
+  const sends = app.requests.filter(request => request.method === "POST");
+  assert.equal(sends.length, 1);
+  const query = new URL(sends[0].url, "https://finserpay.test").searchParams;
+  assert.equal(query.get("aliadoId"), "5");
+  assert.equal(query.has("recipient"), false);
+  assert.equal(sends[0].body, undefined);
+  assert.match(app.text(), /aceptado para \+573009876543, número registrado de Segundo aliado/);
 });
 
 test("WhatsApp bloquea envíos simultáneos mientras el servidor responde", async () => {
