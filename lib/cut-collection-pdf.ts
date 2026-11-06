@@ -11,9 +11,9 @@ const NUMBER = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
 const PERCENT = new Intl.NumberFormat("es-CO", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
 const RISK_LABELS = ["DPF 3", "DPF 7", "DPF 15", "40/60"] as const;
 const FPD_LEVELS = [
-  { max: 5, label: "EXCELENTE", background: "#F2F9DF", foreground: "#365314" },
-  { max: 10, label: "BUENO", background: "#EDF6ED", foreground: "#285334" },
-  { max: 20, label: "REGULAR", background: "#FFF6DF", foreground: "#7C450D" },
+  { max: 1, label: "EXCELENTE", background: "#F2F9DF", foreground: "#365314" },
+  { max: 4, label: "BUENO", background: "#EDF6ED", foreground: "#285334" },
+  { max: 8, label: "REGULAR", background: "#FFF6DF", foreground: "#7C450D" },
   { max: Infinity, label: "MALO", background: "#FFF1F0", foreground: "#B42318" },
 ] as const;
 
