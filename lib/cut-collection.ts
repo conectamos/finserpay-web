@@ -241,7 +241,7 @@ export function measureEarlyRisk(credits: CutCredit[], cutDate: string, asOf: st
   const rules = [[3, "DPF 3"], [7, "DPF 7"], [15, "DPF 15"], [60, "40/60"]] as const;
   const bogotaDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" });
   const cohort = credits.filter(credit => credit.plan.fechaPrimerPago === cutDate &&
-    credit.plan.montoCredito > 0 && !/^(ANULAD[OA]|CANCELAD[OA])$/i.test(credit.state.trim()));
+    Number(credit.plan.montoCredito) > 0 && !/^(ANULAD[OA]|CANCELAD[OA])$/i.test(credit.state.trim()));
   return rules.map(([days, label]) => {
     const metric = { label, cases: 0, eligible: 0, pending: 0, unavailable: 0 };
     for (const credit of cohort) {
