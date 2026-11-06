@@ -224,10 +224,6 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
                   {level && <Badge tone={level === "MALO" ? "danger" : level === "REGULAR" ? "warning" : "positive"}>{LEVEL_LABELS[level]}</Badge>}
                   {!indicator.hasFpdLevel && <Badge>{metric.pending > 0 ? (metric.eligible > 0 ? "Base parcial" : "Por madurar") : metric.eligible > 0 ? "Evaluado" : metric.unavailable > 0 ? "Sin datos" : "Sin créditos"}</Badge>}
                 </div>
-                {(metric.pending > 0 || metric.unavailable > 0) && <dl className={styles.maturity}>
-                  {metric.pending > 0 && <div><dt>Por madurar</dt><dd>{numberFormatter.format(metric.pending)}</dd></div>}
-                  {metric.unavailable > 0 && <div><dt>Sin datos comparables</dt><dd>{numberFormatter.format(metric.unavailable)}</dd></div>}
-                </dl>}
               </div> : <span className={styles.hint}>No disponible</span>}
             </td>;
           })}

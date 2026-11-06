@@ -63,10 +63,6 @@
 .cellHeading > span { font-size: 12px; }
 .percentage { font-size: 24px; font-weight: 750; }
 .noPercentage { font-size: 15px; font-weight: 600; }
-.maturity dt { font-size: 14px; line-height: 1.5; color: var(--fp-muted); }
-.maturity { display: grid; gap: 4px; margin: 0; padding-top: 4px; }
-.maturity > div { display: flex; justify-content: space-between; gap: 8px; }
-.maturity dd { margin: 0; font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 600px) {
   .section { gap: 12px; }

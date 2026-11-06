@@ -11,7 +11,6 @@ const MARGIN = 40;
 const TABLE_HEADING = 40;
 const ROW_HEIGHT = 92;
 const ROW_GAP = 9;
-const NUMBER = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
 const PERCENT = new Intl.NumberFormat("es-CO", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
 const FPD_COLORS = {
   EXCELENTE: { background: "#F2F9DF", foreground: "#365314" },
@@ -21,7 +20,6 @@ const FPD_COLORS = {
 };
 
 function clean(value: string) { return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim(); }
-function count(value: number) { return Number.isFinite(value) ? NUMBER.format(value) : "-"; }
 function percent(value: number | null) { return value != null && Number.isFinite(value) ? `${PERCENT.format(value)} %` : "No aplica"; }
 function dateLabel(value: string) {
   const date = new Date(`${value}T12:00:00-05:00`);
@@ -128,19 +126,14 @@ export async function buildCutCollectionPdf(report: CutReport, comparison?: CutR
       const metric = cut.earlyRisk.find(item => item.label === key);
       const rate = metric && metric.eligible > 0 ? metric.cases / metric.eligible * 100 : null;
       const level = hasFpdLevel && rate !== null ? getCutFpdLevel(rate) : null;
-      fitted(rate === null ? "Pendiente" : percent(rate), x, y + 12, available, rate === null ? 13 : 19);
       const status = level ?? (rate !== null ? "" : metric?.pending ? "POR MADURAR" : metric?.unavailable ? "SIN DATOS" : "");
+      fitted(rate === null ? "Pendiente" : percent(rate), x, y + (status ? 22 : 35), available, rate === null ? 13 : 19);
       if (status) {
         const tone = level ? FPD_COLORS[level] : { background: "#FFF6DF", foreground: "#7C450D" };
         const pillWidth = Math.min(available, 78);
-        doc.roundedRect(x, y + 36, pillWidth, 16, 4).fill(tone.background);
-        text(status, x, y + 40, pillWidth, 7.5, true, tone.foreground, "center");
+        doc.roundedRect(x, y + 48, pillWidth, 16, 4).fill(tone.background);
+        text(status, x, y + 52, pillWidth, 7.5, true, tone.foreground, "center");
       }
-      const details = metric ? [
-        metric.pending > 0 ? `Por madurar: ${count(metric.pending)}` : "",
-        metric.unavailable > 0 ? `Sin datos: ${count(metric.unavailable)}` : "",
-      ] : ["Sin datos disponibles"];
-      details.filter(Boolean).forEach((detail, index) => text(detail, x, y + (status ? 58 : 45) + index * 10, available, 8.5, false, COLORS.muted));
     });
     y += ROW_HEIGHT + ROW_GAP;
   }
