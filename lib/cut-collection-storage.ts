@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assertCutUuid, CutCollectionError, cutDateFromFilters, type CutAccess } from "./cut-collection-access";
-import { captureCutSnapshot, buildCutRows, buildDirectCutRows, summarizeCutRows, measureEarlyRisk } from "./cut-collection";
-import type { CutCredit, CutFilters, CutHistory, CutReport, CutRiskComparisonItem, CutSnapshot } from "./cut-collection-types";
+import { captureCutSnapshot, buildCutRows, buildDirectCutRows, summarizeCutRows, measureEarlyRisk, buildCutAutomaticAnalysis } from "./cut-collection";
+import type { CutAutomaticAnalysis, CutCredit, CutFilters, CutHistory, CutReport, CutRiskComparisonItem, CutSnapshot } from "./cut-collection-types";
 
 export interface CutDb {
   $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>;
@@ -37,7 +37,7 @@ async function branches(tx: CutDb, access: CutAccess, filters: CutFilters) {
 }
 
 /** Read exclusively from credit-owned branches. A digital payment's collection branch grants no access. */
-async function readCredits(tx: CutDb, sedeIds: number[], firstCutDates?: readonly string[]): Promise<CutCredit[]> {
+async function readCredits(tx: CutDb, sedeIds: number[], firstCutDates?: readonly string[], includeDisplayNumbers = true): Promise<CutCredit[]> {
   if (!sedeIds.length) return [];
   // Risk comparisons need only these initial-payment cohorts, not every loan
   // with a later installment in a selected cut. Dates remain SQL parameters.
@@ -57,7 +57,7 @@ async function readCredits(tx: CutDb, sedeIds: number[], firstCutDates?: readonl
   // transaction. The store's raw adapter does not expose Prisma model delegates.
   // Aggregate-only risk reports never expose credit numbers and need no Sadmin lookup.
   let displayNumbers = new Map<number, string>();
-  if (!firstCutDates) {
+  if (!firstCutDates && includeDisplayNumbers) {
     const { getCreditDisplayNumbers } = await import("./credit-display-number-server");
     displayNumbers = await getCreditDisplayNumbers(credits.map(row => row.id), {
       creditSadminRegistration: {
@@ -212,6 +212,15 @@ export function createCutCollectionStore(database: CutDatabase) {
         sedes: scope.authorized.map(({ id, nombre, aliadoId }) => ({ id, nombre, aliadoId })) } };
   }
   return {
+    async directAutomaticAnalysis(access: CutAccess, filters: CutFilters): Promise<CutAutomaticAnalysis> {
+      return database.$transaction(async tx => {
+        const scope = await branches(tx, access, filters);
+        const [{ now }] = await tx.$queryRawUnsafe<{ now: Date | string }[]>(`SELECT CURRENT_TIMESTAMP AS now`);
+        const credits = await readCredits(tx, scope.selected.map(branch => branch.id), undefined, false);
+        try { return buildCutAutomaticAnalysis(credits, filters, iso(now)); }
+        catch { throw new CutCollectionError("No se pudo calcular el análisis del corte con los datos disponibles.", 409); }
+      }, transactionOptions);
+    },
     async directRiskComparison(access: CutAccess, filters: CutFilters, cutDates: string[]): Promise<CutRiskComparisonItem[]> {
       const dates = comparisonDates(cutDates);
       return database.$transaction(async tx => {
@@ -285,6 +294,9 @@ export async function getDirectCutCollectionReport(access: CutAccess, filters: C
 }
 export async function getDirectCutRiskComparison(access: CutAccess, filters: CutFilters, cutDates: string[]): Promise<CutRiskComparisonItem[]> {
   return (await defaultStore()).directRiskComparison(access, filters, cutDates);
+}
+export async function getDirectCutAutomaticAnalysis(access: CutAccess, filters: CutFilters): Promise<CutAutomaticAnalysis> {
+  return (await defaultStore()).directAutomaticAnalysis(access, filters);
 }
 export async function saveCutCollectionProjection(access: CutAccess, filters: CutFilters, requestKey: string) {
   return (await defaultStore()).save(access, filters, requestKey);

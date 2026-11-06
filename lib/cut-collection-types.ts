@@ -40,6 +40,27 @@ export type CutSummary = {
 export type CutHistory = { id: string; cutDate: string; createdAt: string; expected: number | null; received: number | null; pending: number | null; completion: number | null; rowCount: number | null; warning?: string };
 export type CutRiskMetric = { label: string; cases: number; eligible: number; pending: number; unavailable: number };
 export type CutRiskComparisonItem = { cutDate: string; queriedAt: string; earlyRisk: CutRiskMetric[] };
+export type CutAnalysisPriority = {
+  id: number | null; name: string; aliadoId?: number | null; aliado?: string;
+  expected: number; received: number; pending: number; collectiblePending: number;
+  creditsCount: number; pendingClients: number; fpd3: CutRiskMetric; fpd3Rate: number | null;
+};
+export type CutAutomaticAnalysis = {
+  ok: true;
+  cutDate: string;
+  asOf: string;
+  filters: CutFilters;
+  collectionBasis: {
+    mode: "current_accumulated"; sameAgeAvailable: false; referenceAgeDays: number | null;
+    reason: "NO_COMPLETE_HISTORICAL_LEDGER";
+  };
+  cuts: Array<{
+    cutDate: string; ageDays: number; summary: CutSummary | null;
+    earlyRisk: CutRiskMetric[]; unavailableCredits: number;
+  }>;
+  priorities: { allies: CutAnalysisPriority[]; sites: CutAnalysisPriority[] };
+  warnings: string[];
+};
 export type CutReport = {
   earlyRisk?: CutRiskMetric[];
   ok: true; filters: CutFilters; cutDate: string; asOf: string;

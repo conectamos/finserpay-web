@@ -1,6 +1,6 @@
 import { buildCreditPaymentPlan } from "@/lib/credit-payment-plan";
 import { parseCapitalPlanSnapshot } from "@/lib/credit-principal-payment";
-import type { CutBaselineInstallment, CutCredit, CutPayment, CutRow, CutSnapshot, CutSummary } from "@/lib/cut-collection-types";
+import type { CutAnalysisPriority, CutAutomaticAnalysis, CutBaselineInstallment, CutCredit, CutFilters, CutPayment, CutRiskMetric, CutRow, CutSnapshot, CutSummary } from "@/lib/cut-collection-types";
 
 export class CutCollectionError extends Error {
   constructor(message: string) { super(message); this.name = "CutCollectionError"; }
@@ -358,4 +358,98 @@ export function buildDirectCutRows(credits: CutCredit[], cutDate: string, asOf: 
   }
   const summary = summarizeCutRows(rows);
   return { rows, previousRecovery: summary.previousRecovery, futureAdvances: summary.futureAdvances, warnings: [...warnings] };
+}
+
+/** Current collection totals are not historical snapshots. Payment deletion and
+ * schedule changes prevent certifying the same historical age for every loan. */
+export function buildCutAutomaticAnalysis(credits: CutCredit[], filters: CutFilters, asOf: string): CutAutomaticAnalysis {
+  const cutDate = calendar(`${filters.year}-${String(filters.month).padStart(2, "0")}-${String(filters.day).padStart(2, "0")}`);
+  if (![2, 17].includes(filters.day)) throw new CutCollectionError("El corte debe ser 02 o 17.");
+  const instant = new Date(asOf);
+  if (!Number.isFinite(+instant)) throw new CutCollectionError("La fecha de consulta es inválida.");
+  if (new Set(credits.map(credit => credit.id)).size !== credits.length) throw new CutCollectionError("Hay créditos duplicados en la consulta.");
+  const localDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(instant);
+  const age = (date: string) => Math.round((Date.parse(`${localDay}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86400000);
+  const dates = [cutDate];
+  while (dates.length < 3) {
+    const [year, month, day] = dates.at(-1)!.split("-").map(Number);
+    dates.push(new Date(Date.UTC(year, month - (day === 2 ? 2 : 1), day === 2 ? 17 : 2)).toISOString().slice(0, 10));
+  }
+  const warnings = new Set<string>();
+  const currentRows = new Map<number, CutRow[]>();
+  const currentFpd3 = new Map<number, CutRiskMetric>();
+  const riskFailures = new Set<number>();
+  let hasSettlement = false;
+  const cuts = dates.map(date => {
+    const rows: CutRow[] = [];
+    const earlyRisk = measureEarlyRisk([], date, asOf);
+    let unavailableCredits = 0;
+    for (const credit of credits) {
+      try {
+        const calculated = buildDirectCutRows([credit], date, asOf);
+        rows.push(...calculated.rows);
+        if (date === cutDate) {
+          currentRows.set(credit.id, calculated.rows);
+          if (calculated.rows.length && (credit.plan.settled || credit.settledAt)) hasSettlement = true;
+        }
+      } catch {
+        // Do not present the sum of only the reconcilable loans as a full total.
+        unavailableCredits++;
+      }
+      let metrics: CutRiskMetric[];
+      try { metrics = measureEarlyRisk([credit], date, asOf); }
+      catch {
+        riskFailures.add(credit.id);
+        metrics = earlyRisk.map(metric => ({ label: metric.label, cases: 0, eligible: 0, pending: 0, unavailable: 1 }));
+      }
+      for (const [index, metric] of metrics.entries()) {
+        for (const field of ["cases", "eligible", "pending", "unavailable"] as const) earlyRisk[index][field] += metric[field];
+      }
+      if (date === cutDate) currentFpd3.set(credit.id, metrics[0]);
+    }
+    if (unavailableCredits) warnings.add(`Corte ${date}: no fue posible conciliar ${unavailableCredits} crédito(s). No se presenta un total parcial como recaudo completo.`);
+    return { cutDate: date, ageDays: age(date), summary: unavailableCredits ? null : summarizeCutRows(rows), earlyRisk, unavailableCredits };
+  });
+  if (riskFailures.size) warnings.add(`No fue posible reconstruir el riesgo de ${riskFailures.size} crédito(s); se informan como no disponibles, sin convertirlos en riesgo cero.`);
+  if (hasSettlement) warnings.add("La diferencia de recaudo de créditos con paz y salvo permanece en el corte, pero no se incluye en el saldo en créditos sin paz y salvo.");
+  const priorities: CutAutomaticAnalysis["priorities"] = { allies: [], sites: [] };
+  if (cuts[0].unavailableCredits) {
+    warnings.add("La priorización por saldo está deshabilitada porque el corte consultado tiene créditos sin conciliar.");
+  } else {
+    type Group = { identity: Pick<CutAnalysisPriority, "id" | "name" | "aliadoId" | "aliado">; rows: CutRow[]; openRows: CutRow[]; fpd3: CutRiskMetric };
+    const allies = new Map<number | null, Group>();
+    const sites = new Map<number, Group>();
+    const group = <K extends number | null>(groups: Map<K, Group>, id: K, identity: Group["identity"]) => {
+      let value = groups.get(id);
+      if (!value) {
+        value = { identity, rows: [], openRows: [], fpd3: { label: "DPF 3", cases: 0, eligible: 0, pending: 0, unavailable: 0 } };
+        groups.set(id, value);
+      }
+      return value;
+    };
+    for (const credit of credits) {
+      const rows = currentRows.get(credit.id) || [];
+      const fpd3 = currentFpd3.get(credit.id)!;
+      if (!rows.length && !(fpd3.eligible || fpd3.pending || fpd3.unavailable)) continue;
+      for (const target of [
+        group(allies, credit.aliadoId, { id: credit.aliadoId, name: credit.aliado }),
+        group(sites, credit.sedeId, { id: credit.sedeId, name: credit.sede, aliadoId: credit.aliadoId, aliado: credit.aliado }),
+      ]) {
+        target.rows.push(...rows);
+        if (!credit.plan.settled && !credit.settledAt) target.openRows.push(...rows);
+        for (const field of ["cases", "eligible", "pending", "unavailable"] as const) target.fpd3[field] += fpd3[field];
+      }
+    }
+    const rank = (groups: Iterable<Group>): CutAnalysisPriority[] => [...groups].map(({ identity, rows, openRows, fpd3 }) => {
+      const summary = summarizeCutRows(rows);
+      return { ...identity, expected: summary.expected, received: summary.received, pending: summary.pending,
+        collectiblePending: summarizeCutRows(openRows).pending, creditsCount: summary.creditsCount, pendingClients: summary.pendingClients,
+        fpd3, fpd3Rate: fpd3.eligible ? fpd3.cases / fpd3.eligible * 100 : null };
+    }).sort((a, b) => b.collectiblePending - a.collectiblePending || b.fpd3.cases - a.fpd3.cases || a.name.localeCompare(b.name, "es") || (a.id ?? 0) - (b.id ?? 0));
+    priorities.allies = rank(allies.values());
+    priorities.sites = rank(sites.values());
+  }
+  return { ok: true, cutDate, asOf, filters: { ...filters, status: "todos" },
+    collectionBasis: { mode: "current_accumulated", sameAgeAvailable: false, referenceAgeDays: age(cutDate) >= 0 ? age(cutDate) : null, reason: "NO_COMPLETE_HISTORICAL_LEDGER" },
+    cuts, priorities, warnings: [...warnings] };
 }

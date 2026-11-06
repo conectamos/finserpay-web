@@ -9,6 +9,7 @@ import {
   PageHeader, ProgressBar, Select,
 } from "@/app/_components/finser-ui";
 import type { CutFilters, CutReport, CutRow, CutStatus } from "@/lib/cut-collection-types";
+import CutAutomaticAnalysisPanel from "./cut-automatic-analysis";
 import CutInstallmentDetail from "./cut-installment-detail";
 import CutRiskComparison from "./cut-risk-comparison";
 import riskStyles from "./cut-early-risk.module.css";
@@ -371,6 +372,8 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
 
     {visibleReport && summary && <>
       <CutBalance report={visibleReport} />
+
+      <CutAutomaticAnalysisPanel key={fetchKey} filtersQuery={query} />
 
       {visibleReport.earlyRisk && <CutRiskComparison
         report={visibleReport}

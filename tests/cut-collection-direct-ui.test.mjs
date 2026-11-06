@@ -23,6 +23,9 @@ function load(file, dependencies, globals = {}, cache = new Map()) {
       if (name === "@/lib/cut-risk-presentation") {
         return load("lib/cut-risk-presentation.ts", dependencies, globals, cache);
       }
+      if (name === "./cut-automatic-analysis") {
+        return { default: ({ filtersQuery }) => jsxRuntime.jsx("section", { "data-test-analysis-filters": filtersQuery }) };
+      }
       if (/^\.\/[a-z][\w-]*$/.test(name)) {
         return load(`${file.slice(0, file.lastIndexOf("/"))}/${name.slice(2)}.tsx`, dependencies, globals, cache);
       }
@@ -676,11 +679,14 @@ test("cambiar corte y filtros consulta directamente y exporta los mismos filtros
   app.change("Sede", "8");
   app.change("Estado", "parcial");
   assert.equal(app.requests.length, 1, "Los filtros en edición no disparan consultas");
+  const analysisFilters = () => app.find(node => node.props["data-test-analysis-filters"])[0]?.props["data-test-analysis-filters"];
+  assert.equal(analysisFilters(), "day=2&month=11&year=2026&status=todos", "El análisis usa el corte aplicado");
   await app.click(/^Consultar corte$/);
   await app.settle();
   const expected = "day=17&month=10&year=2025&status=parcial&aliadoId=4&sedeId=8";
   assert.ok(app.requests[1].url.endsWith(`?${expected}`));
   assert.ok(app.replacedUrls[0].endsWith(`?${expected}`));
+  assert.equal(analysisFilters(), expected, "El análisis se actualiza con los filtros consultados");
   await app.click(/^Exportar a Excel$/);
   assert.ok(app.requests.at(-1).url.endsWith(`?${expected}&format=xlsx`));
   assert.deepEqual(app.downloads, [{ href: "blob:local-test", name: "recaudo-por-corte-2025-10-17.xlsx" }]);

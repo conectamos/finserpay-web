@@ -14,6 +14,12 @@ const query = new URLSearchParams(Object.entries(filters).map(([key, value]) => 
 const access = { userId: 8, central: false, aliadoId: 1, sedeId: 10 };
 const report = { ok: true, mode: "consulta", cutDate: "2026-10-17", projection: null, history: [],
   historyPage: 0, historyHasMore: false, rows: [], filters, summary: { creditsCount: 0 } };
+const automaticAnalysis = {
+  ok: true, cutDate: report.cutDate, asOf: "2026-11-06T20:00:00.000Z", filters: { ...filters, status: "todos" },
+  collectionBasis: { mode: "current_accumulated", sameAgeAvailable: false, referenceAgeDays: 20, reason: "NO_COMPLETE_HISTORICAL_LEDGER" },
+  cuts: [{ cutDate: report.cutDate, ageDays: 20, summary: null, earlyRisk: [], unavailableCredits: 0 }],
+  priorities: { allies: [], sites: [] }, warnings: [],
+};
 const pdfBytes = Buffer.from("%PDF-local-http-fixture");
 const registeredRecipient = "aliado-registrado@example.test";
 const registeredWhatsApp = "573001234567";
@@ -53,7 +59,7 @@ const { assertAttentionOrigin } = compile("lib/atencion-http.ts", name => {
 // Real handlers, origin guard and filter parsing. Dynamic document/delivery
 // imports are isolated too: tests never reach a live database or mail provider.
 function harness(overrides = {}) {
-  const calls = { access: 0, parse: [], read: [], risk: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], pdfComparisons: [], recipient: [], email: [], whatsapp: [], order: [] };
+  const calls = { access: 0, parse: [], read: [], risk: [], analysis: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], pdfComparisons: [], recipient: [], email: [], whatsapp: [], order: [] };
   function scopedRequire(name) {
     if (name === "@/lib/cut-collection-access") return {
       CutCollectionError,
@@ -66,6 +72,12 @@ function harness(overrides = {}) {
     };
     if (name === "@/lib/cut-collection-storage") return {
       getDirectCutCollectionReport: async (...args) => { calls.read.push(args); calls.order.push("report"); if (overrides.error) throw overrides.error; return report; },
+      getDirectCutAutomaticAnalysis: async (...args) => {
+        calls.analysis.push(args);
+        calls.order.push("analysis");
+        if (overrides.analysisError) throw overrides.analysisError;
+        return automaticAnalysis;
+      },
       getDirectCutRiskComparison: async (...args) => {
         calls.risk.push(args); calls.order.push("risk");
         if (overrides.riskError) throw overrides.riskError;
@@ -121,6 +133,24 @@ function assertPrivate(response) {
   assert.equal(response.headers.get("vary"), "Cookie");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 }
+
+test("el análisis automático es una consulta privada y conserva el alcance autorizado", async () => {
+  const request = new Request(`${url}?${query}&format=analysis`);
+  const { GET, calls } = harness();
+  const response = await GET(request);
+  assert.equal(response.status, 200);
+  assertPrivate(response);
+  assert.deepEqual(await response.json(), automaticAnalysis);
+  assert.deepEqual(calls.analysis, [[access, filters]]);
+  assert.deepEqual(calls.order, ["access", "parse", "analysis"]);
+  assert.equal(calls.read.length + calls.save.length + calls.risk.length + calls.whatsapp.length, 0);
+
+  const blocked = harness({ analysisError: new CutCollectionError("La sede no está autorizada.", 403) });
+  const denied = await blocked.GET(request);
+  assert.equal(denied.status, 403);
+  assertPrivate(denied);
+  assert.deepEqual(await denied.json(), { error: "La sede no está autorizada." });
+});
 
 test("GET y POST exigen sesión y permisos antes de consultar o rechazar la operación retirada", async () => {
   for (const status of [401, 403]) {

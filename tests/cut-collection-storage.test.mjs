@@ -150,6 +150,92 @@ test("consulta directa conserva créditos pagados en su fecha, filtros y sedes p
   await assert.rejects(f.store.directReport(allied, { ...filters, sedeId: 30 }), /no autorizada/);
 });
 
+test("análisis automático lee una vez, conserva tres recaudos unitarios y no expone PII ni altera finanzas", async t => {
+  const f = await fixture(t, false);
+  const selected = Object.freeze({ ...filters, day: 2, month: 11, year: 2020, status: "pagado" });
+  const id = await f.credit({ first: "2020-10-02", name: "NOMBRE PRIVADO ANALISIS", document: "DOCUMENTO PRIVADO ANALISIS", folio: "FOLIO PRIVADO ANALISIS" });
+  await f.payment(id, 250, { paidAt: "2020-11-05T15:00:00Z", sedeId: 99 });
+  const before = await f.financialData();
+  let transactions = 0;
+  const store = createCutCollectionStore({ ...f.db, $transaction: (...args) => { transactions++; return f.db.$transaction(...args); } });
+  f.calls.length = 0;
+  const result = await store.directAutomaticAnalysis(allied, selected);
+  assert.equal(transactions, 1);
+  assert.equal(f.calls.length, 4);
+  assert(f.calls.every(({ sql }) => /^\s*SELECT\b/i.test(sql)));
+  assert(!f.calls.some(({ sql }) => /CutCollectionProjection|CreditSadminRegistration|to_regclass|OFFSET/i.test(sql)));
+  assert.equal(f.calls.filter(({ sql }) => sql.includes('FROM "Credito" c')).length, 1);
+  assert.equal(f.calls.filter(({ sql }) => sql.includes('FROM "CreditoAbono" p')).length, 1);
+  assert.equal(result.filters.status, "todos");
+  assert.equal(selected.status, "pagado");
+  assert.deepEqual(result.cuts.map(cut => cut.cutDate), ["2020-11-02", "2020-10-17", "2020-10-02"]);
+  assert.deepEqual(result.cuts.map(cut => cut.summary.received), [50, 100, 100]);
+  assert.equal(result.collectionBasis.sameAgeAvailable, false);
+  for (const cut of result.cuts) {
+    const [year, month, day] = cut.cutDate.split("-").map(Number);
+    const unitary = await f.store.directReport(allied, { ...selected, year, month, day, status: "todos" });
+    assert.deepEqual(cut.summary, unitary.summary);
+    assert.deepEqual(cut.earlyRisk, unitary.earlyRisk);
+  }
+  assert(!JSON.stringify(result).includes("PRIVADO ANALISIS"));
+  assert.deepEqual(await f.financialData(), before);
+});
+
+test("análisis restringe aliado y sede propietaria, preserva riesgo sin saldo y excluye paz y salvo del ranking", async t => {
+  const f = await fixture(t, false);
+  const selected = { ...filters, day: 2, month: 10, year: 2020 };
+  const own = await f.credit({ first: "2020-10-02" });
+  const settled = await f.credit({ first: "2020-10-02", sedeId: 21 });
+  const paidLate = await f.credit({ first: "2020-10-02", sedeId: 21 });
+  await f.credit({ first: "2020-10-02", sedeId: 30, name: "FUERA DEL ALCANCE ANALISIS" });
+  await f.payment(own, 40, { paidAt: "2020-10-03T15:00:00Z", sedeId: 99 });
+  await f.payment(paidLate, 100, { paidAt: "2020-10-10T15:00:00Z", sedeId: 30 });
+  await f.pg.query('UPDATE "Credito" SET "pazYSalvoEmitidoAt"=$1 WHERE id=$2', ["2020-10-04T15:00:00Z", settled]);
+  const result = await f.store.directAutomaticAnalysis(allied, selected);
+  assert.deepEqual(result.priorities.allies.map(row => row.id), [2]);
+  assert.deepEqual(result.priorities.sites.map(row => row.id), [20, 21]);
+  assert.deepEqual(result.priorities.sites.map(row => row.collectiblePending), [60, 0]);
+  assert.equal(result.priorities.sites.find(row => row.id === 21).pending, 100);
+  assert.equal(result.priorities.sites.find(row => row.id === 21).fpd3.cases, 2);
+  assert.equal(result.cuts[0].summary.pending, 160);
+  assert(!JSON.stringify(result).includes("FUERA DEL ALCANCE ANALISIS"));
+  assert(!JSON.stringify(result).includes("Aliado externo"));
+  const local = await f.store.directAutomaticAnalysis(supervisor, selected);
+  assert.deepEqual(local.priorities.sites.map(row => row.id), [20]);
+  assert.equal(local.cuts[0].summary.pending, 60);
+  for (const [access, manipulated] of [[allied, { ...selected, aliadoId: 3 }], [allied, { ...selected, sedeId: 30 }], [supervisor, { ...selected, sedeId: 21 }]]) {
+    await assert.rejects(f.store.directAutomaticAnalysis(access, manipulated), error => error.status === 403);
+  }
+  await f.pg.query('UPDATE "Credito" SET "sedeId"=30 WHERE id=$1', [own]);
+  const moved = await f.store.directAutomaticAnalysis(supervisor, selected);
+  assert.equal(moved.cuts[0].summary.creditsCount, 0);
+  assert.deepEqual(moved.priorities, { allies: [], sites: [] });
+});
+
+test("análisis informa conciliación incompleta y no prioriza totales parciales", async t => {
+  const f = await fixture(t, false);
+  const selected = { ...filters, day: 2, month: 10, year: 2020 };
+  await f.credit({ first: "2020-10-02" });
+  const invalid = await f.credit({ first: "2020-10-02", name: "PRIVADO ERROR ANALISIS" });
+  await f.payment(invalid, -1, { paidAt: "2020-10-03T15:00:00Z" });
+  const before = await f.financialData();
+  const result = await f.store.directAutomaticAnalysis(allied, selected);
+  assert.equal(result.cuts[0].summary, null);
+  assert.equal(result.cuts[0].unavailableCredits, 1);
+  assert.deepEqual(result.priorities, { allies: [], sites: [] });
+  assert.deepEqual(result.cuts[0].earlyRisk[0], { label: "DPF 3", cases: 1, eligible: 1, pending: 0, unavailable: 1 });
+  assert.match(result.warnings.join(" "), /total parcial|priorización por saldo está deshabilitada/);
+  assert(!JSON.stringify(result).includes("PRIVADO ERROR ANALISIS"));
+  assert.deepEqual(await f.financialData(), before);
+});
+
+test("análisis no filtra errores internos de cálculo al DTO", async t => {
+  const f = await fixture(t, false);
+  await f.credit({ name: "DATOS PRIVADOS NO EXPONER" });
+  await assert.rejects(f.store.directAutomaticAnalysis(allied, { ...filters, day: 3 }), error =>
+    error.status === 409 && error.message === "No se pudo calcular el análisis del corte con los datos disponibles.");
+});
+
 test("compara seis cohortes con pagos reales en una lectura y un instante sin historial ni Sadmin", async t => {
   const f = await fixture(t, false);
   await f.pg.exec('ALTER TABLE "Credito" ADD COLUMN "fechaCredito" timestamp');

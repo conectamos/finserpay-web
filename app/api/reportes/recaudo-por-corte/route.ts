@@ -1,6 +1,6 @@
 import { CutCollectionError, getCutCollectionAccess, parseCutFilters } from "@/lib/cut-collection-access";
 import { buildCutCollectionWorkbook } from "@/lib/cut-collection-excel";
-import { getDirectCutCollectionReport, getDirectCutRiskComparison } from "@/lib/cut-collection-storage";
+import { getDirectCutAutomaticAnalysis, getDirectCutCollectionReport, getDirectCutRiskComparison } from "@/lib/cut-collection-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +74,7 @@ export async function GET(request: Request) {
     const filters = parseCutFilters(query);
     const cutDates = readRiskCuts(query);
     const format = query.get("format");
+    if (format === "analysis") return json(await getDirectCutAutomaticAnalysis(access, filters));
     if (format !== null && format !== "xlsx" && format !== "pdf" && format !== "risk") throw new CutCollectionError("Formato de exportación no válido.", 400);
     if (format === "risk") {
       const selectedCut = `${filters.year}-${String(filters.month).padStart(2, "0")}-${String(filters.day).padStart(2, "0")}`;
