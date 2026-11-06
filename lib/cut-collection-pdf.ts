@@ -128,7 +128,7 @@ export async function buildCutCollectionPdf(report: CutReport, comparison?: CutR
       const metric = cut.earlyRisk.find(item => item.label === key);
       const rate = metric && metric.eligible > 0 ? metric.cases / metric.eligible * 100 : null;
       const level = hasFpdLevel && rate !== null ? getCutFpdLevel(rate) : null;
-      fitted(rate === null ? "Sin base" : percent(rate), x, y + 12, available, rate === null ? 13 : 19);
+      fitted(rate === null ? "Pendiente" : percent(rate), x, y + 12, available, rate === null ? 13 : 19);
       const status = level ?? (rate !== null ? "" : metric?.pending ? "POR MADURAR" : metric?.unavailable ? "SIN DATOS" : "");
       if (status) {
         const tone = level ? FPD_COLORS[level] : { background: "#FFF6DF", foreground: "#7C450D" };
@@ -137,7 +137,6 @@ export async function buildCutCollectionPdf(report: CutReport, comparison?: CutR
         text(status, x, y + 40, pillWidth, 7.5, true, tone.foreground, "center");
       }
       const details = metric ? [
-        metric.eligible > 0 ? `${count(metric.cases)} de ${count(metric.eligible)} en riesgo` : "0 evaluados",
         metric.pending > 0 ? `Por madurar: ${count(metric.pending)}` : "",
         metric.unavailable > 0 ? `Sin datos: ${count(metric.unavailable)}` : "",
       ] : ["Sin datos disponibles"];

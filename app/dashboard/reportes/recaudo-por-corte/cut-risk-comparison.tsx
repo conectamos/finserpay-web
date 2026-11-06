@@ -209,7 +209,7 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
     {!loading && !error && !hasMetrics && <EmptyState title="Sin indicadores disponibles" description="No hay datos de riesgo temprano para los cortes seleccionados." />}
     {hasMetrics && <DataTable><div className={styles.matrix} role="region" tabIndex={0} aria-label="Comparación de riesgo por corte; desplaza la tabla para ver todos los indicadores">
       <table>
-        <caption>Créditos en riesgo / evaluados por corte.</caption>
+        <caption>Porcentaje de riesgo por corte.</caption>
         <thead><tr><th scope="col">Corte</th>{CUT_RISK_INDICATORS.map(indicator => <th key={indicator.key} scope="col">{indicator.label}</th>)}</tr></thead>
         <tbody>{reports.map(item => <tr key={item.cutDate}>
           <th scope="row"><time dateTime={item.cutDate}>{dateLabel(item.cutDate)}</time></th>
@@ -220,11 +220,10 @@ export default function CutRiskComparison({ report, filtersQuery, riskCuts, expl
             return <td key={indicator.key}>
               {metric ? <div className={styles.cell}>
                 <div className={styles.cellHeading}>
-                  <strong className={rate === null ? styles.noPercentage : styles.percentage}>{rate === null ? "Sin base evaluable" : `${numberFormatter.format(rate)} %`}</strong>
+                  <strong className={rate === null ? styles.noPercentage : styles.percentage}>{rate === null ? "Pendiente" : `${numberFormatter.format(rate)} %`}</strong>
                   {level && <Badge tone={level === "MALO" ? "danger" : level === "REGULAR" ? "warning" : "positive"}>{LEVEL_LABELS[level]}</Badge>}
                   {!indicator.hasFpdLevel && <Badge>{metric.pending > 0 ? (metric.eligible > 0 ? "Base parcial" : "Por madurar") : metric.eligible > 0 ? "Evaluado" : metric.unavailable > 0 ? "Sin datos" : "Sin créditos"}</Badge>}
                 </div>
-                {metric.eligible > 0 && <p className={styles.ratio}><b>{numberFormatter.format(metric.cases)}</b> / <b>{numberFormatter.format(metric.eligible)}</b> evaluados</p>}
                 {(metric.pending > 0 || metric.unavailable > 0) && <dl className={styles.maturity}>
                   {metric.pending > 0 && <div><dt>Por madurar</dt><dd>{numberFormatter.format(metric.pending)}</dd></div>}
                   {metric.unavailable > 0 && <div><dt>Sin datos comparables</dt><dd>{numberFormatter.format(metric.unavailable)}</dd></div>}

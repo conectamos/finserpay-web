@@ -324,9 +324,12 @@ test("la matriz distingue premaduro y maduro sin aplicarles niveles FPD ni mostr
   const cells = nodes(table, node => node.type === "td");
   assert.equal(cells.length, 5);
   assert.match(normalized(text(cells[0])), /50 % Malo/);
-  assert.match(normalized(text(cells[3])), /25 % Base parcial 1 \/ 4 evaluados/);
+  assert.match(normalized(text(cells[3])), /25 % Base parcial/);
   assert.match(normalized(text(cells[3])), /Por madurar 2 Sin datos comparables 1/);
-  assert.match(normalized(text(cells[4])), /Sin base evaluable Por madurar/);
+  assert.match(normalized(text(cells[4])), /Pendiente Por madurar/);
+  assert.ok(!text(table).includes("evaluados"));
+  assert.ok(!/\d+\s*\/\s*\d+/.test(text(table)), "La tabla omite la relación de casos/base");
+  assert.ok(!text(table).includes("Sin base evaluable"));
   for (const cell of cells.slice(3)) {
     assert.ok(!/Excelente|Bueno|Regular|Malo/.test(text(cell)), "La madurez no reutiliza los niveles de FPD 3/7/15");
     assert.equal(nodes(cell, node => /is-danger|is-warning|is-positive/.test(node.props.className || "")).length, 0);
