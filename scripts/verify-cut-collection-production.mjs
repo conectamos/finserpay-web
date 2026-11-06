@@ -205,6 +205,16 @@ export async function runProductionVerification(args = process.argv.slice(2), en
     const centralReport = await read(central);
     ally = admins.find(account => !account.central && centralReport.rows.some(row => row.aliadoId === account.aliadoId)) || ally;
     const allyReport = await read(ally, { aliadoId: ally.aliadoId });
+    if (process.env.FINSERPAY_VERIFY_EARLY_RISK === "1") {
+      const otherCut = await read(central, { day: baseFilters.day === 2 ? 17 : 2 });
+      const scoped = await read(central, { aliadoId: ally.aliadoId });
+      for (const report of [centralReport, otherCut, scoped, allyReport]) {
+        check(report.earlyRisk?.map(metric => metric.label).join(",") === "DPF 3,DPF 7,DPF 15,40/60", "risk_metrics_missing");
+        check(report.earlyRisk.every(metric => metric.cases >= 0 && metric.cases <= metric.eligible), "risk_counts_invalid");
+      }
+      check(JSON.stringify(scoped.earlyRisk) === JSON.stringify(allyReport.earlyRisk), "risk_ally_scope_mismatch");
+      output("early_risk_verified", { cuts: [centralReport.cutDate, otherCut.cutDate], all: centralReport.earlyRisk, other: otherCut.earlyRisk, ally: scoped.earlyRisk });
+    }
     check(allyReport.options.sedes.every(site => site.aliadoId === ally.aliadoId), "foreign_site_in_ally_options");
     check(allyReport.options.aliados.every(item => item.id === ally.aliadoId), "foreign_ally_in_options");
     if (supervisor) {

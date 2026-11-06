@@ -73,6 +73,13 @@ export function buildCutCollectionWorkbook(report: CutReport) {
     text(report.options.sedes.find((item) => item.id === report.filters.sedeId)?.nombre || report.filters.sedeId));
   entry("Estado de cuota", text(report.filters.status));
   entry("Tipo de reporte", "Consulta directa");
+  if (report.earlyRisk) {
+    entry("Cohorte de riesgo temprano", "Créditos con primer vencimiento en el corte. Alcance por aliado y sede; independiente del estado actual de la cuota.");
+    entry("40/60", "Menos de 4 cuotas completas al cierre del día 60 desde la fecha de crédito registrada.");
+    for (const metric of report.earlyRisk) {
+      entry(metric.label, `${metric.eligible ? `${metric.cases}/${metric.eligible} (${(100 * metric.cases / metric.eligible).toFixed(1)} %)` : "Sin base evaluable"} · ${metric.pending} por madurar · ${metric.unavailable} sin datos comparables`);
+    }
+  }
   entry("Consultado al (Bogotá)", date(report.asOf, true), DATETIME);
   entry("Zona horaria", "America/Bogota (UTC-05:00)");
   entry("Recaudo esperado", amount(report.summary.expected), COP);

@@ -4,12 +4,27 @@ import path from "node:path";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": path.resolve(import.meta.dirname, "..") } });
-const { buildDirectCutRows, summarizeCutRows } = await jiti.import("../lib/cut-collection.ts");
+const { buildDirectCutRows, summarizeCutRows, measureEarlyRisk } = await jiti.import("../lib/cut-collection.ts");
 const { buildCreditPaymentPlan } = await jiti.import("../lib/credit-payment-plan.ts");
 const { createPrincipalPaymentQuote, parseCapitalPlanSnapshot } = await jiti.import("../lib/credit-principal-payment.ts");
 
 const cut = "2026-11-02";
 const asOf = "2026-11-30T18:00:00.000Z";
+test("riesgo temprano usa el cierre de cada día en Bogotá y cuatro cuotas completas al día 60", () => {
+  const first = "2026-10-17";
+  const loan = credit([
+    payment(1, 99, "2026-10-20T20:00:00Z"),
+    payment(2, 1, "2026-10-21T05:00:00Z"),
+    payment(3, 299, "2026-11-15T15:00:00Z"),
+    payment(4, 1, "2026-12-02T05:00:00Z"),
+  ], { originatedAt: "2026-10-02T15:00:00Z" });
+  loan.plan.montoCredito = 600;
+  loan.plan.plazoMeses = 6;
+  assert.deepEqual(measureEarlyRisk([loan], first, "2026-10-21T05:00:00Z").map(m => [m.cases, m.pending]),
+    [[1, 0], [0, 1], [0, 1], [0, 1]]);
+  assert.deepEqual(measureEarlyRisk([loan], first, "2026-12-05T05:00:00Z").map(m => [m.cases, m.eligible]),
+    [[1, 1], [0, 1], [0, 1], [1, 1]]);
+});
 function payment(id, value, paidAt = "2026-11-03T15:00:00.000Z", options = {}) {
   return { id, value, paidAt, createdAt: paidAt, state: "ACTIVO", annulledAt: null, method: "EFECTIVO", ...options };
 }

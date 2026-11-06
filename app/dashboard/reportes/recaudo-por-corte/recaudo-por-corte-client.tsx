@@ -21,6 +21,25 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-CO", { day: "2-digit", mon
 
 function money(value: number) { return moneyFormatter.format(value); }
 function percentage(value: number | null) { return value === null ? "No aplica" : `${numberFormatter.format(value)} %`; }
+function downloadRisk(report: CutReport) {
+  const ally = report.options.aliados.find(item => item.id === report.filters.aliadoId)?.nombre ?? "Todos los autorizados";
+  const site = report.options.sedes.find(item => item.id === report.filters.sedeId)?.nombre ?? "Todas las autorizadas";
+  const rows = [
+    ["Corte (primer vencimiento)", "Aliado", "Sede", "Indicador", "Créditos en riesgo", "Créditos evaluados", "Porcentaje", "Por madurar", "Sin datos comparables"],
+    ...(report.earlyRisk ?? []).map(metric => [report.cutDate, ally, site, metric.label, metric.cases, metric.eligible,
+      metric.eligible ? percentage(100 * metric.cases / metric.eligible) : "No aplica", metric.pending, metric.unavailable]),
+  ];
+  const csv = rows.map(row => row.map(value => {
+    const cell = String(value);
+    return '"' + (/^\s*[=+@-]/.test(cell) ? "'" : "") + cell.replaceAll('"', '""') + '"';
+  }).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `riesgo-temprano-${report.cutDate}.csv`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 function dateLabel(value: string) { return dateFormatter.format(new Date(value.length === 10 ? `${value}T12:00:00Z` : value)); }
 function dateTime(value: string | null) { return value ? dateTimeFormatter.format(new Date(value)) : "Sin pagos"; }
 function paramsFor(filters: CutFilters) {
@@ -228,6 +247,20 @@ export default function RecaudoPorCorteClient({ initialFilters }: { initialFilte
 
     {visibleReport && summary && <>
       <CutBalance report={visibleReport} />
+
+      {visibleReport.earlyRisk && <section className={styles.breakdown} aria-labelledby="early-risk-title">
+        <h2 id="early-risk-title">Riesgo temprano del corte</h2>
+        <p className={styles.note}>Créditos cuya primera cuota vence en este corte, según aliado y sede. El estado actual de la cuota no cambia esta medición.</p>
+        <Card className={styles.breakdownBody}>
+          {visibleReport.earlyRisk.map(metric => <div key={metric.label}>
+            <h3>{metric.label}</h3>
+            <strong>{metric.eligible ? `${metric.cases} de ${metric.eligible} · ${percentage(100 * metric.cases / metric.eligible)}` : "Sin base evaluable"}</strong>
+            <p>{metric.label === "40/60" ? "Menos de 4 cuotas completas al día 60 desde la fecha de crédito registrada." : `Primera cuota pendiente al cierre del día ${metric.label.slice(4)} de mora.`}</p>
+            <p>{metric.pending} por madurar · {metric.unavailable} sin datos comparables</p>
+          </div>)}
+        </Card>
+        <div><Button variant="secondary" onClick={() => downloadRisk(visibleReport)}>Descargar indicadores para compartir</Button></div>
+      </section>}
 
       <section className={styles.breakdown} aria-labelledby="cut-breakdown-title">
         <h2 id="cut-breakdown-title">Distribución de pagos</h2>

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { assertCutUuid, CutCollectionError, cutDateFromFilters, type CutAccess } from "./cut-collection-access";
-import { captureCutSnapshot, buildCutRows, buildDirectCutRows, summarizeCutRows } from "./cut-collection";
+import { captureCutSnapshot, buildCutRows, buildDirectCutRows, summarizeCutRows, measureEarlyRisk } from "./cut-collection";
 import type { CutCredit, CutFilters, CutHistory, CutReport, CutSnapshot } from "./cut-collection-types";
 
 export interface CutDb {
@@ -16,6 +16,7 @@ type RawCredit = {
   aliadoId: number | null; sede: string; aliado: string | null; estado: string;
   montoCredito: number; valorCuota: number; plazoMeses: number | null; frecuenciaPago: string;
   fechaPrimerPago: Date | string | null; fechaProximoPago: Date | string | null;
+  originatedAt?: Date | string | null;
   pazYSalvoEmitidoAt: Date | string | null; planCapitalVigente: unknown;
 };
 type RawPayment = { id: number; creditoId: number; valor: number; estado: string; metodoPago: string; fechaAbono: Date | string; createdAt: Date | string; anuladoAt: Date | string | null };
@@ -40,7 +41,7 @@ async function readCredits(tx: CutDb, sedeIds: number[]): Promise<CutCredit[]> {
   if (!sedeIds.length) return [];
   const credits = await tx.$queryRawUnsafe<RawCredit[]>(`SELECT c.id,c.folio,c."clienteNombre",c."clienteDocumento",c."sedeId",
     s.nombre AS sede,s."aliadoId",a.nombre AS aliado,c.estado,c."montoCredito",c."valorCuota",c."plazoMeses",c."frecuenciaPago",
-    c."fechaPrimerPago",c."fechaProximoPago",c."pazYSalvoEmitidoAt",to_jsonb(c)->'planCapitalVigente' AS "planCapitalVigente"
+    c."fechaPrimerPago",c."fechaProximoPago",c."pazYSalvoEmitidoAt",(to_jsonb(c)->>'fechaCredito')::timestamp AS "originatedAt",to_jsonb(c)->'planCapitalVigente' AS "planCapitalVigente"
     FROM "Credito" c JOIN "Sede" s ON s.id=c."sedeId" LEFT JOIN "Aliado" a ON a.id=s."aliadoId"
     WHERE c."sedeId"=ANY($1::integer[]) ORDER BY c.id`, sedeIds);
   const payments = await tx.$queryRawUnsafe<RawPayment[]>(`SELECT p.id,p."creditoId",p.valor,p.estado,p."metodoPago",p."fechaAbono",p."createdAt",p."anuladoAt"
@@ -66,6 +67,7 @@ async function readCredits(tx: CutDb, sedeIds: number[]): Promise<CutCredit[]> {
     document: row.clienteDocumento || "", aliadoId: row.aliadoId, aliado: row.aliado || "Sin aliado",
     sedeId: row.sedeId, sede: row.sede, state: row.estado,
     settledAt: row.pazYSalvoEmitidoAt ? iso(row.pazYSalvoEmitidoAt) : null,
+    originatedAt: row.originatedAt ? iso(row.originatedAt) : undefined,
     plan: { montoCredito: Number(row.montoCredito), valorCuota: Number(row.valorCuota), plazoMeses: row.plazoMeses,
       frecuenciaPago: row.frecuenciaPago, fechaPrimerPago: row.fechaPrimerPago ? calendar(row.fechaPrimerPago) : null,
       fechaProximoPago: row.fechaProximoPago ? calendar(row.fechaProximoPago) : null,
@@ -200,7 +202,7 @@ export function createCutCollectionStore(database: CutDatabase) {
         const allies = new Map<number, string>();
         for (const branch of scope.authorized) if (branch.aliadoId) allies.set(branch.aliadoId, branch.aliado || "Sin aliado");
         return { ok: true, mode: "consulta", filters, cutDate, asOf, projection: null,
-          rows, summary: summarizeCutRows(rows), warnings: [...new Set(rows.flatMap(row => row.warning ? [`${row.folio}: ${row.warning}`] : []))],
+          rows, summary: summarizeCutRows(rows), earlyRisk: measureEarlyRisk(credits, cutDate, asOf), warnings: [...new Set(rows.flatMap(row => row.warning ? [`${row.folio}: ${row.warning}`] : []))],
           history: [], historyPage: 0, historyHasMore: false,
           options: { aliados: [...allies].map(([id, nombre]) => ({ id, nombre })).sort((a,b) => a.nombre.localeCompare(b.nombre)),
             sedes: scope.authorized.map(({ id, nombre, aliadoId }) => ({ id, nombre, aliadoId })) } };

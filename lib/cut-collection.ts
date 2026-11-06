@@ -237,6 +237,35 @@ export function summarizeCutRows(rows: CutRow[], previousRecovery = 0, futureAdv
  * dates. In particular, paying a November 2 installment must not remove it from
  * that cut when the cursor advances to November 17.
  */
+export function measureEarlyRisk(credits: CutCredit[], cutDate: string, asOf: string) {
+  const rules = [[3, "DPF 3"], [7, "DPF 7"], [15, "DPF 15"], [60, "40/60"]] as const;
+  const bogotaDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" });
+  const cohort = credits.filter(credit => credit.plan.fechaPrimerPago === cutDate &&
+    credit.plan.montoCredito > 0 && !/^(ANULAD[OA]|CANCELAD[OA])$/i.test(credit.state.trim()));
+  return rules.map(([days, label]) => {
+    const metric = { label, cases: 0, eligible: 0, pending: 0, unavailable: 0 };
+    for (const credit of cohort) {
+      const origin = credit.originatedAt ? new Date(credit.originatedAt) : null;
+      const base = days === 60 && origin && Number.isFinite(+origin) ? bogotaDay.format(origin) : cutDate;
+      if (days === 60 && (!origin || !Number.isFinite(+origin))) { metric.unavailable++; continue; }
+      const end = Date.parse(`${base}T00:00:00-05:00`) + (days + 1) * 86400000;
+      if (Date.parse(asOf) < end) { metric.pending++; continue; }
+      // The current capital schedule cannot reliably reconstruct the original installments.
+      if (credit.plan.planCapitalVigente) { metric.unavailable++; continue; }
+      const payments = credit.payments.filter(payment => Date.parse(payment.paidAt) < end &&
+        (payment.annulledAt ? Date.parse(payment.annulledAt) >= end : active(payment)));
+      const current = allocation({ ...credit, payments: payments.map(payment => ({ ...payment, state: "ACTIVO" })),
+        plan: { ...credit.plan, fechaProximoPago: null } }, new Date(end - 1).toISOString());
+      const installments = current.plan.installments.filter(row => !row.eliminada && row.valorProgramado > 0);
+      if (installments.length < (days === 60 ? 4 : 1)) { metric.unavailable++; continue; }
+      metric.eligible++;
+      const complete = installments.filter(row => cents(row.valorAbonado) >= cents(row.valorProgramado)).length;
+      if (days === 60 ? complete < 4 : cents(installments[0].valorAbonado) < cents(installments[0].valorProgramado)) metric.cases++;
+    }
+    return metric;
+  });
+}
+
 export function buildDirectCutRows(credits: CutCredit[], cutDate: string, asOf: string) {
   calendar(cutDate);
   const start = new Date(`${cutDate}T00:00:00.000-05:00`).getTime();

@@ -7,6 +7,7 @@ export type CutCredit = {
   id: number; folio: string; clientName: string; document: string; aliadoId: number | null;
   aliado: string; sedeId: number; sede: string; state: string;
   settledAt?: string | null;
+  originatedAt?: string;
   plan: Omit<CreditPaymentPlanInput, "abonos" | "today">;
   payments: CutPayment[];
 };
@@ -38,6 +39,7 @@ export type CutSummary = {
 };
 export type CutHistory = { id: string; cutDate: string; createdAt: string; expected: number | null; received: number | null; pending: number | null; completion: number | null; rowCount: number | null; warning?: string };
 export type CutReport = {
+  earlyRisk?: { label: string; cases: number; eligible: number; pending: number; unavailable: number }[];
   ok: true; filters: CutFilters; cutDate: string; asOf: string;
   mode?: "consulta";
   projection: { id: string; createdAt: string } | null;
