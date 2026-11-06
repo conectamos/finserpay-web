@@ -16,6 +16,9 @@ function load(file, dependencies, globals = {}, cache = new Map()) {
   runInNewContext(compiled, {
     module: testModule, exports: testModule.exports, Date, Intl, URLSearchParams, AbortController,
     require(name) {
+      if (name === "@/app/_components/finser-confirm-dialog") {
+        return load("app/_components/finser-confirm-dialog.tsx", dependencies, globals, cache);
+      }
       if (/^\.\/[a-z][\w-]*$/.test(name)) {
         return load(`${file.slice(0, file.lastIndexOf("/"))}/${name.slice(2)}.tsx`, dependencies, globals, cache);
       }
