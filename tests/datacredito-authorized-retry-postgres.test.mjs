@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 const setup = await readFile(new URL("../scripts/setup-datacredito.sql", import.meta.url), "utf8");
 const auditStart = setup.indexOf('CREATE TABLE IF NOT EXISTS "DataCreditoAdminAccessAudit" (');
@@ -16,6 +18,193 @@ const noEvaluableRecoverySql = setup.slice(noEvaluableRecoveryStart, recoveryEnd
 const rootStart = setup.indexOf('UPDATE "DataCreditoAssessment" root');
 const rootEnd = setup.indexOf('UPDATE "DataCreditoAssessment" clone', rootStart);
 const rootBackfill = setup.slice(rootStart, rootEnd);
+
+const retryStorage = await readFile(new URL("../lib/datacredito/admin-retry-storage.ts", import.meta.url), "utf8");
+
+async function retryFixture() {
+  // Match Prisma's adapter-pg UTC interpretation of PostgreSQL timestamp (OID 1114).
+  const pg = new PGlite({parsers: {1114: value => new Date(value.replace(' ', 'T') + 'Z')}});
+  const assessmentId = randomUUID();
+  await pg.exec(`
+    CREATE TABLE "DataCreditoAssessment" (
+      id uuid PRIMARY KEY, "documentHash" text, "documentLast4" text, "surnameHash" text,
+      platform text, "providerEnvironment" text, status text, score integer, decision text, offer jsonb,
+      "transactionCode" text, "providerStatus" text, "errorCode" text, "durationMs" integer,
+      "reusedFromAssessmentId" uuid, "claimedAt" timestamp, "claimTokenHash" text, "claimExpiresAt" timestamp,
+      "consumedAt" timestamp, "creditId" integer, "expiresAt" timestamp, "retainedUntil" timestamp,
+      "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP, "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP,
+      "userId" integer DEFAULT 1, "sellerId" integer, "aliadoId" integer DEFAULT 1, "sedeId" integer DEFAULT 1
+    );
+    CREATE TABLE "CreditoBorrador" (
+      id integer PRIMARY KEY, estado text, "closedReason" text, "currentStep" integer,
+      "clienteDocumento" text, plataforma text, imei text, "creditoId" integer, "dataCreditoAssessmentId" uuid,
+      "dataCreditoStatus" text, "dataCreditoErrorCode" text, payload jsonb,
+      "expiresAt" timestamp, "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP, "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE "Usuario" (id integer PRIMARY KEY, nombre text);
+    CREATE TABLE "Vendedor" (id integer PRIMARY KEY, nombre text);
+    CREATE TABLE "Aliado" (id integer PRIMARY KEY, nombre text);
+    CREATE TABLE "Sede" (id integer PRIMARY KEY, nombre text);
+    CREATE TABLE "DataCreditoAdminAccessAudit" (
+      id uuid PRIMARY KEY, "assessmentId" uuid, "actorUserId" integer, action text, outcome text,
+      "requestCorrelationId" uuid, "ipHash" text, "userAgentHash" text, "retainedUntil" timestamp,
+      "createdAt" timestamp, metadata jsonb
+    );
+    INSERT INTO "Usuario" VALUES (1,'Prueba'); INSERT INTO "Aliado" VALUES(1,'Central'); INSERT INTO "Sede" VALUES(1,'Central');
+  `);
+  await pg.query(`INSERT INTO "DataCreditoAssessment" (id,"documentHash","documentLast4","surnameHash",platform,
+    "providerEnvironment",status,"providerStatus","errorCode","durationMs","expiresAt","retainedUntil")
+    VALUES($1,'document:1234567','4567','surname:ANTERIOR','IPHONE','production','NO_EVALUADO','HTTP 500',
+      'PROVIDER_OUTCOME_AMBIGUOUS',15566,CURRENT_TIMESTAMP+INTERVAL '15 days',CURRENT_TIMESTAMP+INTERVAL '90 days')`, [assessmentId]);
+  await pg.query(`INSERT INTO "CreditoBorrador" (id,estado,"closedReason","currentStep","clienteDocumento",plataforma,
+    "dataCreditoAssessmentId","dataCreditoStatus","dataCreditoErrorCode",payload,"expiresAt")
+    VALUES(81,'CERRADO','DESISTIDA',1,'1234567','IPHONE',$1::uuid,'NO_EVALUADO','PROVIDER_OUTCOME_AMBIGUOUS',
+      jsonb_build_object('clientePrimerApellido','ANTERIOR','dataCreditoAssessmentId',($1::uuid)::text),CURRENT_TIMESTAMP+INTERVAL '15 days')`, [assessmentId]);
+  const locks = [];
+  let beforeTransaction = async () => {};
+  let failAudit = false;
+  // Prisma sends Date parameters in UTC. PGlite's direct Date binding uses the host timezone.
+  const prismaArgs = args => args.map(value => value instanceof Date ? value.toISOString() : value);
+  const db = {
+    $queryRawUnsafe: async (sql, ...args) => (await pg.query(sql, prismaArgs(args))).rows,
+    $executeRawUnsafe: async (sql, ...args) => {
+      if (sql.includes('pg_advisory_xact_lock')) { locks.push('document'); return 1; }
+      if (failAudit && sql.includes('INSERT INTO "DataCreditoAdminAccessAudit"')) throw new Error('AUDIT_UNAVAILABLE');
+      return (await pg.query(sql, prismaArgs(args))).affectedRows;
+    },
+    $transaction: async callback => {
+      await beforeTransaction();
+      await pg.exec('BEGIN');
+      try { const result = await callback(db); await pg.exec('COMMIT'); return result; }
+      catch (error) { await pg.exec('ROLLBACK'); throw error; }
+    },
+  };
+  const dependencies = {
+    'server-only': {}, 'node:crypto': {randomUUID}, '@/lib/prisma': {default: db},
+    '@/lib/datacredito/storage': {ensureDataCreditoSchema: async () => {},
+      hmacDataCreditoValue: (kind, value) => `${kind}:${value}`,
+      normalizeDataCreditoDocument: value => String(value ?? '').replace(/\D/g, ''),
+      normalizeDataCreditoSurname: value => String(value ?? '').trim().toUpperCase()},
+    '@/lib/solicitudes-storage': {ensureSolicitudSchema: async () => {}},
+    '@/lib/firmaseguro-storage': {lockSolicitudOperationMutation: async () => {locks.push('solicitud');}},
+  };
+  const loaded = {exports: {}};
+  runInNewContext(ts.transpileModule(retryStorage, {compilerOptions: {target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.CommonJS}}).outputText, {module: loaded, exports: loaded.exports,
+    require: name => {assert.ok(name in dependencies, `Unexpected dependency ${name}`); return dependencies[name];},
+    Date, Number, String, Object, Array, Set, JSON, RegExp, Error});
+  const input = {assessmentId, documentNumber: '1234567', providerEnvironment: 'production', actorUserId: 1,
+    mutationId: randomUUID(), ipHash: null, userAgentHash: null, canAuthorizeAmbiguousRetry: true, riskAcknowledged: true};
+  const root = async () => (await pg.query('SELECT * FROM "DataCreditoAssessment" WHERE id=$1',[assessmentId])).rows[0];
+  const draft = async () => (await pg.query('SELECT * FROM "CreditoBorrador" WHERE id=81')).rows[0];
+  return {pg, input, operations: loaded.exports, root, draft, locks,
+    setBeforeTransaction: fn => {beforeTransaction = fn;}, setFailAudit: value => {failAudit = value;}};
+}
+
+test("liberacion ambigua ejecuta la mutacion real una sola vez y conserva evidencia, solicitud y consumo", async () => {
+  const f = await retryFixture();
+  try {
+    const before = await f.root(); const draftBefore = await f.draft();
+    const candidate = await f.operations.findDataCreditoAdminRetryCandidate(f.input);
+    assert.equal(candidate.retryKind, 'AMBIGUOUS_PROVIDER'); assert.equal(candidate.eligible, true);
+    const result = await f.operations.authorizeDataCreditoAdminRetry(f.input);
+    assert.equal(result.retryKind, 'AMBIGUOUS_PROVIDER'); assert.equal(result.requiresNewSolicitud, true);
+    const after = await f.root();
+    assert.ok(after.expiresAt < before.expiresAt);
+    assert.equal(after.expiresAt.toISOString(), result.authorizedAt);
+    assert.deepEqual({...after, expiresAt: before.expiresAt}, before);
+    assert.deepEqual(await f.draft(), draftBefore);
+    const audit = (await f.pg.query('SELECT * FROM "DataCreditoAdminAccessAudit"')).rows;
+    assert.equal(audit.length, 1); assert.equal(audit[0].action, 'OPS_AMBIGUOUS_RETRY_AUTHORIZED');
+    assert.equal(audit[0].outcome, 'AUTHORIZED_WITH_RISK_ACK');
+    assert.equal(audit[0].metadata.riskAcknowledged, true);
+    const replay = await f.operations.authorizeDataCreditoAdminRetry({...f.input, mutationId: randomUUID()});
+    assert.equal(replay.alreadyAuthorized, true);
+    assert.equal((await f.pg.query('SELECT count(*)::int AS n FROM "DataCreditoAdminAccessAudit"')).rows[0].n, 1);
+    assert.deepEqual(f.locks, ['solicitud', 'document']);
+    assert.equal((await f.operations.findDataCreditoAdminRetryCandidate(f.input)).alreadyAuthorized, true);
+  } finally {await f.pg.close();}
+});
+
+test("liberacion ambigua requiere administrador central y aceptacion booleana explicita", async () => {
+  const f = await retryFixture();
+  try {
+    const before = await f.root();
+    for (const riskAcknowledged of [undefined, false, 'true', 1]) {
+      await assert.rejects(f.operations.authorizeDataCreditoAdminRetry({...f.input, riskAcknowledged}),
+        error => error.code === 'RETRY_RISK_ACK_REQUIRED');
+    }
+    await assert.rejects(f.operations.authorizeDataCreditoAdminRetry({...f.input, canAuthorizeAmbiguousRetry: false}),
+      error => error.code === 'RETRY_CENTRAL_ADMIN_REQUIRED' && error.status === 403);
+    assert.deepEqual(await f.root(), before); assert.deepEqual(f.locks, []);
+  } finally {await f.pg.close();}
+});
+
+test("una autorizacion anterior a la consulta no cuenta como liberacion ni replay", async () => {
+  const f = await retryFixture();
+  try {
+    await f.pg.query(`INSERT INTO "DataCreditoAdminAccessAudit" (id,"assessmentId",action,outcome,"createdAt")
+      VALUES($1,$2,'OPS_AMBIGUOUS_RETRY_AUTHORIZED','AUTHORIZED_WITH_RISK_ACK',CURRENT_TIMESTAMP-INTERVAL '1 hour')`, [randomUUID(),f.input.assessmentId]);
+    const candidate = await f.operations.findDataCreditoAdminRetryCandidate(f.input);
+    assert.equal(candidate.alreadyAuthorized,false); assert.equal(candidate.eligible,true);
+    const result = await f.operations.authorizeDataCreditoAdminRetry(f.input);
+    assert.equal(result.alreadyAuthorized,false);
+    assert.equal((await f.pg.query('SELECT count(*)::int AS n FROM "DataCreditoAdminAccessAudit"')).rows[0].n,2);
+  } finally {await f.pg.close();}
+});
+
+test("liberacion ambigua revalida cambios concurrentes y revierte si falla auditoria", async () => {
+  const f = await retryFixture();
+  try {
+    f.setBeforeTransaction(async () => {await f.pg.query('UPDATE "DataCreditoAssessment" SET score=600 WHERE id=$1',[f.input.assessmentId]);});
+    await assert.rejects(f.operations.authorizeDataCreditoAdminRetry(f.input), error => error.code === 'RETRY_STATE_CHANGED');
+    assert.equal((await f.pg.query('SELECT count(*)::int AS n FROM "DataCreditoAdminAccessAudit"')).rows[0].n,0);
+    await f.pg.query('UPDATE "DataCreditoAssessment" SET score=NULL WHERE id=$1',[f.input.assessmentId]);
+    f.setBeforeTransaction(async () => {}); f.setFailAudit(true);
+    const before = await f.root();
+    await assert.rejects(f.operations.authorizeDataCreditoAdminRetry(f.input), /AUDIT_UNAVAILABLE/);
+    assert.deepEqual(await f.root(), before);
+  } finally {await f.pg.close();}
+});
+
+test("liberacion ambigua rechaza resultado evaluado, HTTP no admitido, reserva y expiracion", async () => {
+  const f = await retryFixture();
+  try {
+    const variants = [
+      ['score', '600'], ['decision', "'APROBADO'"], ['offer', "'{}'::jsonb"], ['status', "'RECHAZADO'"],
+      ['providerStatus', "'HTTP 400'"], ['providerStatus', "'HTTP 500 EXTRA'"], ['transactionCode', "'06'"],
+      ['claimedAt', 'CURRENT_TIMESTAMP'], ['claimTokenHash', "'token'"], ['claimExpiresAt', 'CURRENT_TIMESTAMP'],
+      ['consumedAt', 'CURRENT_TIMESTAMP'], ['creditId', '1'], ['durationMs', 'NULL'], ['durationMs', '-1'],
+      ['reusedFromAssessmentId', `'${randomUUID()}'::uuid`], ['expiresAt', "CURRENT_TIMESTAMP-INTERVAL '1 day'"],
+    ];
+    for (const [column, value] of variants) {
+      await f.pg.exec('BEGIN');
+      try {
+        await f.pg.exec(`UPDATE "DataCreditoAssessment" SET "${column}"=${value}`);
+        const candidate = await f.operations.findDataCreditoAdminRetryCandidate(f.input);
+        assert.equal(candidate.eligible, false, column);
+        await assert.rejects(f.operations.authorizeDataCreditoAdminRetry(f.input), error => error.code === 'RETRY_NOT_ELIGIBLE', column);
+      } finally {await f.pg.exec('ROLLBACK');}
+    }
+  } finally {await f.pg.close();}
+});
+
+test("TX06 conserva apellido corregido y ambiguo abierto conserva el apellido existente", async () => {
+  for (const kind of ['TX06_SURNAME', 'AMBIGUOUS_PROVIDER']) {
+    const f = await retryFixture();
+    try {
+      await f.pg.exec('UPDATE "CreditoBorrador" SET estado=\'ABIERTO\',"closedReason"=NULL');
+      if (kind === 'TX06_SURNAME') await f.pg.exec(`UPDATE "DataCreditoAssessment" SET "errorCode"='NO_EVALUABLE_INFORMATION',"providerStatus"='ACCEPTED',"transactionCode"='06'`);
+      const result = await f.operations.authorizeDataCreditoAdminRetry({...f.input,
+        firstSurname: kind === 'TX06_SURNAME' ? 'CORREGIDO' : undefined,
+        riskAcknowledged: kind === 'TX06_SURNAME' ? undefined : true});
+      assert.equal(result.retryKind, kind); assert.equal(result.requiresNewSolicitud, false);
+      const draft = await f.draft();
+      assert.equal(draft.dataCreditoAssessmentId, null); assert.equal(draft.dataCreditoStatus, 'PENDING');
+      assert.equal(draft.payload.clientePrimerApellido, kind === 'TX06_SURNAME' ? 'CORREGIDO' : 'ANTERIOR');
+    } finally {await f.pg.close();}
+  }
+});
 
 test("la excepcion TX06 requiere auditoria explicita y mantiene la migracion atomica", () => {
   assert.ok(rootStart > setup.indexOf("BEGIN;"));
@@ -107,6 +296,7 @@ test("PostgreSQL: HTTP 500 solo se libera con riesgo autorizado y permanece libe
       { name: "http500-clone", reusedFromAssessmentId: randomUUID() },
       { name: "http500-without-dispatch-time", durationMs: null },
       { name: "http500-audit-before-query", auditDate: "2025-12-31" },
+      { name: "http500-valid-authorization-after-bad-timestamp", eligible: true, earlierInvalidAudit: true },
     ].map((fixture) => ({ id: randomUUID(), providerStatus: "HTTP 500", durationMs: 183, ...fixture }));
     for (const fixture of fixtures) {
       await database.query(`INSERT INTO "DataCreditoAssessment"
@@ -134,6 +324,12 @@ test("PostgreSQL: HTTP 500 solo se libera con riesgo autorizado y permanece libe
       ]);
     }
     const authorizedAt = (await database.query(`SELECT TIMESTAMP '2026-01-02' AS value`)).rows[0].value;
+    for (const fixture of fixtures.filter((item) => item.earlierInvalidAudit)) {
+      await database.query(`INSERT INTO "DataCreditoAdminAccessAudit"
+        ("id","assessmentId","actorUserId","action","outcome","requestCorrelationId","retainedUntil","createdAt")
+        VALUES ($1,$2,1,'OPS_AMBIGUOUS_RETRY_AUTHORIZED','AUTHORIZED_WITH_RISK_ACK',$3,'2026-04-01','2025-12-31')`,
+      [randomUUID(), fixture.id, randomUUID()]);
+    }
     const expected = before.map((row) => fixtures.find((fixture) => fixture.id === row.id).eligible
       ? { ...row, expiresAt: authorizedAt } : row);
     await database.exec(ambiguousRecoverySql);

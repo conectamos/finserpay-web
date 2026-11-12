@@ -16,7 +16,11 @@ const UUID_PATTERN =
 const SURNAME_PATTERN = /^[\p{L}\p{M}]+(?: [\p{L}\p{M}]+)*$/u;
 const RETRY_ACTION = "OPS_TX06_RETRY_AUTHORIZED";
 const RETRY_OUTCOME = "AUTHORIZED";
+const AMBIGUOUS_RETRY_ACTION = "OPS_AMBIGUOUS_RETRY_AUTHORIZED";
+const AMBIGUOUS_RETRY_OUTCOME = "AUTHORIZED_WITH_RISK_ACK";
 const RETRY_CLOSED_DRAFT_REASONS = new Set(["DESISTIDA", "DESISTIDO"]);
+
+export type DataCreditoAdminRetryKind = "TX06_SURNAME" | "AMBIGUOUS_PROVIDER";
 
 type DataCreditoAdminRetryDraftMode =
   | "REUSE_OPEN_DRAFT"
@@ -30,16 +34,18 @@ export type DataCreditoAdminRetryErrorCode =
   | "ASSESSMENT_NOT_FOUND"
   | "RETRY_NOT_ELIGIBLE"
   | "RETRY_SURNAME_UNCHANGED"
+  | "RETRY_RISK_ACK_REQUIRED"
+  | "RETRY_CENTRAL_ADMIN_REQUIRED"
   | "RETRY_STATE_CHANGED";
 
 export class DataCreditoAdminRetryError extends Error {
   readonly code: DataCreditoAdminRetryErrorCode;
-  readonly status: 400 | 404 | 409;
+  readonly status: 400 | 403 | 404 | 409;
 
   constructor(
     code: DataCreditoAdminRetryErrorCode,
     message: string,
-    status: 400 | 404 | 409
+    status: 400 | 403 | 404 | 409
   ) {
     super(message);
     this.name = "DataCreditoAdminRetryError";
@@ -55,6 +61,12 @@ type CandidateRow = {
   providerEnvironment: string;
   status: string;
   score: number | null;
+  decision: string | null;
+  offer: unknown;
+  durationMs: number | null;
+  claimedAt: Date | null;
+  claimTokenHash: string | null;
+  claimExpiresAt: Date | null;
   transactionCode: string | null;
   providerStatus: string | null;
   errorCode: string | null;
@@ -91,6 +103,12 @@ type LockedAssessmentRow = {
   providerEnvironment: string;
   status: string;
   score: number | null;
+  decision: string | null;
+  offer: unknown;
+  durationMs: number | null;
+  claimedAt: Date | null;
+  claimTokenHash: string | null;
+  claimExpiresAt: Date | null;
   reusedFromAssessmentId: string | null;
   transactionCode: string | null;
   providerStatus: string | null;
@@ -133,6 +151,7 @@ export type DataCreditoAdminRetryCandidate = {
   transactionCode: string | null;
   providerStatus: string | null;
   errorCode: string | null;
+  retryKind: DataCreditoAdminRetryKind | null;
   draftId: number | null;
   actor: {
     userName: string | null;
@@ -199,6 +218,26 @@ function iso(value: Date | string | null) {
 
 function normalizedCode(value: unknown) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+function assessmentRetryKind(row: Pick<LockedAssessmentRow,
+  "reusedFromAssessmentId" | "status" | "score" | "decision" | "offer" |
+  "errorCode" | "providerStatus" | "transactionCode" | "durationMs" |
+  "claimedAt" | "claimTokenHash" | "claimExpiresAt" | "consumedAt" | "creditId"
+>): DataCreditoAdminRetryKind | null {
+  if (row.reusedFromAssessmentId || normalizedCode(row.status) !== "NO_EVALUADO" ||
+      row.score !== null || row.consumedAt !== null || row.creditId !== null) return null;
+  if (normalizedCode(row.errorCode) === "NO_EVALUABLE_INFORMATION" &&
+      normalizedCode(row.providerStatus) === "ACCEPTED" &&
+      normalizedCode(row.transactionCode) === "06") return "TX06_SURNAME";
+  if (normalizedCode(row.errorCode) === "PROVIDER_OUTCOME_AMBIGUOUS" &&
+      row.decision === null && row.offer === null && row.transactionCode === null &&
+      row.durationMs !== null && Number.isFinite(row.durationMs) && row.durationMs >= 0 &&
+      (row.providerStatus === null || /^HTTP 5[0-9]{2}$/.test(row.providerStatus)) &&
+      row.claimedAt === null && row.claimTokenHash === null && row.claimExpiresAt === null) {
+    return "AMBIGUOUS_PROVIDER";
+  }
+  return null;
 }
 
 function documentLabel(last4: string) {
@@ -284,20 +323,12 @@ function candidateEligibility(row: CandidateRow) {
       requiresNewSolicitud: false,
     };
   }
-  if (
-    row.reusedFromAssessmentId ||
-    normalizedCode(row.status) !== "NO_EVALUADO" ||
-    row.score !== null ||
-    normalizedCode(row.errorCode) !== "NO_EVALUABLE_INFORMATION" ||
-    normalizedCode(row.providerStatus) !== "ACCEPTED" ||
-    normalizedCode(row.transactionCode) !== "06" ||
-    row.consumedAt !== null ||
-    row.creditId !== null
-  ) {
+  const retryKind = assessmentRetryKind(row);
+  if (!retryKind) {
     return {
       eligible: false,
       code: "NOT_TX06_SURNAME_CASE" as const,
-      message: "La consulta no corresponde al caso técnico TX06 habilitado para corrección de apellido.",
+      message: "La consulta no cumple las condiciones para corregir un apellido TX06 o autorizar otro intento por un resultado incierto del proveedor.",
       requiresNewSolicitud: false,
     };
   }
@@ -314,7 +345,9 @@ function candidateEligibility(row: CandidateRow) {
     eligible: true,
     code: "ELIGIBLE" as const,
     message:
-      draftMode === "NEW_SOLICITUD_REQUIRED"
+      retryKind === "AMBIGUOUS_PROVIDER"
+        ? "El proveedor no confirmó el resultado. El administrador central puede autorizar otro intento aceptando el posible nuevo cobro y solicitando consentimiento nuevo."
+        : draftMode === "NEW_SOLICITUD_REQUIRED"
         ? "TX06 confirmado. Puede autorizarse una consulta nueva con consentimiento nuevo y el apellido correcto. Las solicitudes desistidas permanecerán cerradas."
         : "TX06 confirmado. Puede autorizarse una nueva consulta con el apellido correcto.",
     requiresNewSolicitud: draftMode === "NEW_SOLICITUD_REQUIRED",
@@ -332,6 +365,7 @@ function serializeCandidate(row: CandidateRow): DataCreditoAdminRetryCandidate {
     transactionCode: row.transactionCode,
     providerStatus: row.providerStatus,
     errorCode: row.errorCode,
+    retryKind: assessmentRetryKind(row),
     draftId: row.draftId ? Number(row.draftId) : null,
     actor: serializeActor(row),
     createdAt: iso(row.createdAt)!,
@@ -356,6 +390,8 @@ async function loadCandidate(
       SELECT assessment."id" AS "assessmentId",
         assessment."documentLast4", assessment."platform",
         assessment."providerEnvironment", assessment."status", assessment."score",
+        assessment."decision", assessment."offer", assessment."durationMs",
+        assessment."claimedAt", assessment."claimTokenHash", assessment."claimExpiresAt",
         assessment."transactionCode", assessment."providerStatus", assessment."errorCode",
         assessment."reusedFromAssessmentId", assessment."consumedAt", assessment."creditId",
         assessment."expiresAt", assessment."retainedUntil", assessment."createdAt",
@@ -395,8 +431,9 @@ async function loadCandidate(
         SELECT MIN(audit."createdAt") AS "authorizedAt"
         FROM "DataCreditoAdminAccessAudit" audit
         WHERE audit."assessmentId" = assessment."id"
-          AND audit."action" = '${RETRY_ACTION}'
-          AND audit."outcome" = '${RETRY_OUTCOME}'
+          AND audit."createdAt" >= assessment."createdAt"
+          AND ((audit."action" = '${RETRY_ACTION}' AND audit."outcome" = '${RETRY_OUTCOME}')
+            OR (audit."action" = '${AMBIGUOUS_RETRY_ACTION}' AND audit."outcome" = '${AMBIGUOUS_RETRY_OUTCOME}'))
       ) retry_authorization ON TRUE
       WHERE assessment."documentHash" = $1
         AND assessment."providerEnvironment" = $2
@@ -434,14 +471,7 @@ function exactAssessmentIsEligible(
 ) {
   const now = new Date(databaseNow).getTime();
   return (
-    !row.reusedFromAssessmentId &&
-    normalizedCode(row.status) === "NO_EVALUADO" &&
-    row.score === null &&
-    normalizedCode(row.errorCode) === "NO_EVALUABLE_INFORMATION" &&
-    normalizedCode(row.providerStatus) === "ACCEPTED" &&
-    normalizedCode(row.transactionCode) === "06" &&
-    row.consumedAt === null &&
-    row.creditId === null &&
+    assessmentRetryKind(row) !== null &&
     Number.isFinite(now) &&
     new Date(row.expiresAt).getTime() > now &&
     new Date(row.retainedUntil).getTime() > now
@@ -479,7 +509,9 @@ function exactDraftIsEligible(
 export async function authorizeDataCreditoAdminRetry(input: {
   assessmentId: unknown;
   documentNumber: unknown;
-  firstSurname: unknown;
+  firstSurname?: unknown;
+  riskAcknowledged?: unknown;
+  canAuthorizeAmbiguousRetry?: boolean;
   providerEnvironment: string;
   actorUserId: number;
   mutationId: unknown;
@@ -497,7 +529,6 @@ export async function authorizeDataCreditoAdminRetry(input: {
     "El identificador de la operación no es válido."
   );
   const documentNumber = parseDocument(input.documentNumber);
-  const firstSurname = parseSurname(input.firstSurname);
   if (!Number.isSafeInteger(input.actorUserId) || input.actorUserId <= 0) {
     throw new DataCreditoAdminRetryError(
       "RETRY_NOT_ELIGIBLE",
@@ -511,7 +542,6 @@ export async function authorizeDataCreditoAdminRetry(input: {
 
   await Promise.all([ensureDataCreditoSchema(), ensureSolicitudSchema()]);
   const documentHash = hmacDataCreditoValue("document", documentNumber);
-  const surnameHash = hmacDataCreditoValue("surname", firstSurname);
   const preliminary = await loadCandidate(
     documentHash,
     documentNumber,
@@ -526,11 +556,27 @@ export async function authorizeDataCreditoAdminRetry(input: {
     );
   }
   const preliminaryEligibility = candidateEligibility(preliminary);
+  const retryKind = assessmentRetryKind(preliminary);
+  if (retryKind === "AMBIGUOUS_PROVIDER") {
+    if (input.canAuthorizeAmbiguousRetry !== true) {
+      throw new DataCreditoAdminRetryError("RETRY_CENTRAL_ADMIN_REQUIRED",
+        "Solo el administrador central puede autorizar otro intento con posible nuevo cobro.", 403);
+    }
+    if (input.riskAcknowledged !== true) {
+      throw new DataCreditoAdminRetryError("RETRY_RISK_ACK_REQUIRED",
+        "Confirma que aceptas el posible nuevo cobro antes de autorizar otro intento.", 400);
+    }
+  }
+  const firstSurname = retryKind === "TX06_SURNAME" ? parseSurname(input.firstSurname) : null;
+  const surnameHash = firstSurname ? hmacDataCreditoValue("surname", firstSurname) : null;
+  const retryAction = retryKind === "AMBIGUOUS_PROVIDER" ? AMBIGUOUS_RETRY_ACTION : RETRY_ACTION;
+  const retryOutcome = retryKind === "AMBIGUOUS_PROVIDER" ? AMBIGUOUS_RETRY_OUTCOME : RETRY_OUTCOME;
   if (preliminary.authorizedAt) {
     return {
       authorized: true as const,
       alreadyAuthorized: true,
       assessmentId,
+      retryKind,
       documentLabel: documentLabel(preliminary.documentLast4),
       draftId: preliminary.draftId ? Number(preliminary.draftId) : null,
       actor: serializeActor(preliminary),
@@ -590,18 +636,23 @@ export async function authorizeDataCreditoAdminRetry(input: {
           SELECT audit."createdAt"
           FROM "DataCreditoAdminAccessAudit" audit
           WHERE audit."assessmentId" = $1::uuid
-            AND audit."action" = '${RETRY_ACTION}'
-            AND audit."outcome" = '${RETRY_OUTCOME}'
+            AND audit."createdAt" >= $4::timestamp
+            AND audit."action" = $2
+            AND audit."outcome" = $3
           ORDER BY audit."createdAt" ASC
           LIMIT 1
         `,
-        assessmentId
+        assessmentId,
+        retryAction,
+        retryOutcome,
+        assessment.createdAt
       );
       if (previousAuthorization[0]) {
         return {
           authorized: true as const,
           alreadyAuthorized: true,
           assessmentId,
+          retryKind,
           documentLabel: documentLabel(assessment.documentLast4),
           draftId,
           actor: serializeActor(preliminary),
@@ -632,14 +683,14 @@ export async function authorizeDataCreditoAdminRetry(input: {
       const authorizedAt = timestampRows[0]?.authorizedAt;
       if (!authorizedAt) throw new Error("DATACREDITO_RETRY_TIMESTAMP_UNAVAILABLE");
 
-      if (!exactAssessmentIsEligible(assessment, authorizedAt)) {
+      if (!exactAssessmentIsEligible(assessment, authorizedAt) || assessmentRetryKind(assessment) !== retryKind) {
         throw new DataCreditoAdminRetryError(
           "RETRY_STATE_CHANGED",
-          "La consulta ya no cumple las condiciones para autorizar un reintento TX06.",
+          "La consulta ya no cumple las condiciones para autorizar otro intento.",
           409
         );
       }
-      if (assessment.surnameHash === surnameHash) {
+      if (retryKind === "TX06_SURNAME" && assessment.surnameHash === surnameHash) {
         throw new DataCreditoAdminRetryError(
           "RETRY_SURNAME_UNCHANGED",
           "El apellido correcto debe ser diferente al usado en la consulta TX06.",
@@ -677,9 +728,13 @@ export async function authorizeDataCreditoAdminRetry(input: {
             AND "reusedFromAssessmentId" IS NULL
             AND "status" = 'NO_EVALUADO'
             AND "score" IS NULL
-            AND "errorCode" = 'NO_EVALUABLE_INFORMATION'
-            AND "providerStatus" = 'ACCEPTED'
-            AND "transactionCode" = '06'
+            AND (($5 = 'TX06_SURNAME' AND "errorCode" = 'NO_EVALUABLE_INFORMATION'
+              AND "providerStatus" = 'ACCEPTED' AND "transactionCode" = '06')
+              OR ($5 = 'AMBIGUOUS_PROVIDER' AND "errorCode" = 'PROVIDER_OUTCOME_AMBIGUOUS'
+                AND "decision" IS NULL AND "offer" IS NULL AND "transactionCode" IS NULL
+                AND "durationMs" IS NOT NULL
+                AND ("providerStatus" IS NULL OR "providerStatus" ~ '^HTTP 5[0-9]{2}$')
+                AND "claimedAt" IS NULL AND "claimTokenHash" IS NULL AND "claimExpiresAt" IS NULL))
             AND "consumedAt" IS NULL
             AND "creditId" IS NULL
             AND "expiresAt" > $4::timestamp
@@ -689,7 +744,8 @@ export async function authorizeDataCreditoAdminRetry(input: {
         assessmentId,
         documentHash,
         providerEnvironment,
-        authorizedAt
+        authorizedAt,
+        retryKind
       );
       if (updatedAssessments.length !== 1) {
         throw new DataCreditoAdminRetryError(
@@ -709,8 +765,9 @@ export async function authorizeDataCreditoAdminRetry(input: {
                 "dataCreditoStatus" = 'PENDING',
                 "dataCreditoErrorCode" = 'ASSESSMENT_RETRY_AUTHORIZED',
                 "payload" = (COALESCE(draft."payload", '{}'::jsonb) - 'dataCreditoAssessmentId')
+                  || CASE WHEN $3::text IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('clientePrimerApellido', $3::text) END
                   || jsonb_build_object(
-                    'clientePrimerApellido', $3::text,
                     'dataCreditoStatus', 'PENDING',
                     'dataCreditoErrorCode', 'ASSESSMENT_RETRY_AUTHORIZED',
                     'dataCreditoUpdatedAt', $4::timestamp
@@ -746,10 +803,10 @@ export async function authorizeDataCreditoAdminRetry(input: {
           INSERT INTO "DataCreditoAdminAccessAudit" (
             "id", "assessmentId", "actorUserId", "action", "outcome",
             "requestCorrelationId", "ipHash", "userAgentHash",
-            "retainedUntil", "createdAt"
+            "retainedUntil", "createdAt", "metadata"
           ) VALUES (
-            $1::uuid, $2::uuid, $3, '${RETRY_ACTION}', '${RETRY_OUTCOME}',
-            $4::uuid, $5, $6, $7::timestamp, $8::timestamp
+            $1::uuid, $2::uuid, $3, $9, $10,
+            $4::uuid, $5, $6, $7::timestamp, $8::timestamp, $11::jsonb
           )
         `,
         randomUUID(),
@@ -759,13 +816,17 @@ export async function authorizeDataCreditoAdminRetry(input: {
         input.ipHash,
         input.userAgentHash,
         assessment.retainedUntil,
-        authorizedAt
+        authorizedAt,
+        retryAction,
+        retryOutcome,
+        JSON.stringify({ retryKind, riskAcknowledged: retryKind === "AMBIGUOUS_PROVIDER", draftId, draftMode })
       );
 
       return {
         authorized: true as const,
         alreadyAuthorized: false,
         assessmentId,
+        retryKind,
         documentLabel: documentLabel(assessment.documentLast4),
         draftId,
         actor: serializeActor(preliminary),

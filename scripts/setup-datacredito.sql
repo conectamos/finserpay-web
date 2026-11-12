@@ -816,6 +816,10 @@ FROM (
   FROM "DataCreditoAdminAccessAudit"
   WHERE "action" = 'OPS_AMBIGUOUS_RETRY_AUTHORIZED'
     AND "outcome" = 'AUTHORIZED_WITH_RISK_ACK'
+    AND "createdAt" >= (
+      SELECT assessment."createdAt" FROM "DataCreditoAssessment" assessment
+      WHERE assessment."id" = "DataCreditoAdminAccessAudit"."assessmentId"
+    )
   GROUP BY "assessmentId"
 ) retry_authorization
 WHERE root."id" = retry_authorization."assessmentId"

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Liberar consultas DataCrédito | FINSER PAY",
   description:
-    "Autorización central de nuevos intentos para consultas TX06 sin puntaje",
+    "Autorización central de nuevos intentos por TX06 o resultado técnico incierto",
 };
 
 export default async function DataCreditoReleasePage() {

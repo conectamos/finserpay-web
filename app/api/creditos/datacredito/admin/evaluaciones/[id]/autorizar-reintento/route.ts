@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDataCreditoPublicConfig } from "@/lib/datacredito";
-import { getDataCreditoRetryReleaseActor } from "@/lib/datacredito/admin-access";
+import { getDataCreditoCentralAdmin, getDataCreditoRetryReleaseActor } from "@/lib/datacredito/admin-access";
 import {
   authorizeDataCreditoAdminRetry,
   DataCreditoAdminRetryError,
@@ -75,10 +75,13 @@ export async function POST(
     }
 
     const metadata = requestMetadata(request);
+    const centralAccess = await getDataCreditoCentralAdmin();
     const result = await authorizeDataCreditoAdminRetry({
       assessmentId: id,
       documentNumber: body.documentNumber,
       firstSurname: body.firstSurname,
+      riskAcknowledged: body.riskAcknowledged,
+      canAuthorizeAmbiguousRetry: centralAccess.ok && centralAccess.user.id === access.user.id,
       mutationId: body.mutationId,
       providerEnvironment: getDataCreditoPublicConfig().environment,
       actorUserId: access.user.id,
@@ -91,7 +94,9 @@ export async function POST(
         eligible: false,
         eligibilityMessage:
           result.requiresNewSolicitud
-            ? "La consulta quedó liberada. Cree una solicitud nueva, obtenga consentimiento nuevo y use el apellido correcto. Las solicitudes desistidas permanecen cerradas."
+            ? result.retryKind === "AMBIGUOUS_PROVIDER"
+              ? "La consulta quedó liberada. Crea una solicitud nueva y solicita consentimiento nuevo. Otro intento puede generar un nuevo cobro."
+              : "La consulta quedó liberada. Cree una solicitud nueva, obtenga consentimiento nuevo y use el apellido correcto. Las solicitudes desistidas permanecen cerradas."
             : "Esta consulta ya fue liberada para un nuevo intento.",
       },
       correlationId,
