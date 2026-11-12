@@ -578,6 +578,15 @@ Si no hay una respuesta confirmada reutilizable, debe conciliarse el resultado
 con el proveedor antes de autorizar otra consulta que pueda generar costo.
 Una revisión técnica no equivale a aprobación y no permite inventar una decisión.
 
+La administración central puede revisar estos casos en **Liberar consulta**.
+Para una raíz `PROVIDER_OUTCOME_AMBIGUOUS` sin puntaje, decisión, oferta ni reserva,
+con duración de despacho y estado HTTP 5xx o ausente, la pantalla exige aceptar
+el posible nuevo cobro y confirmar la liberación. Registra
+`OPS_AMBIGUOUS_RETRY_AUTHORIZED` con `AUTHORIZED_WITH_RISK_ACK` y el usuario
+responsable. El próximo intento requiere consentimiento nuevo y envío manual.
+Las solicitudes desistidas requieren una solicitud nueva. El acceso nominal
+del analista conserva el flujo de corrección de apellido TX06.
+
 La regresión de cliente y API cubre OAuth fallido sin POST de consulta, devolución
 de cupo con SQL real, timeout después del envío sin devolución ni duplicado,
 renovación OAuth fallida después de un 401 y correlaciones independientes cuando

@@ -54,6 +54,7 @@ type ReleaseLookupResult = {
   draftId: number | null;
   authorizedAt: string | null;
   requiresNewSolicitud: boolean;
+  retryKind?: "TX06_SURNAME" | "AMBIGUOUS_PROVIDER" | null;
   adminRejection?: {
     canReject: boolean;
     eligible: boolean;
@@ -103,6 +104,8 @@ type PendingAuthorization = {
   firstSurname: string;
   mutationId: string;
   requiresNewSolicitud: boolean;
+  retryKind: "TX06_SURNAME" | "AMBIGUOUS_PROVIDER";
+  riskAcknowledged: boolean;
 };
 
 type SuccessNotice = {
@@ -237,6 +240,8 @@ export default function Tx06ReleaseConsole({
   const [searchedDocument, setSearchedDocument] = useState("");
   const [firstSurname, setFirstSurname] = useState("");
   const [surnameError, setSurnameError] = useState("");
+  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
+  const [riskError, setRiskError] = useState("");
   const [lookupResult, setLookupResult] =
     useState<ReleaseLookupResult | null>(null);
   const [searching, setSearching] = useState(false);
@@ -289,6 +294,8 @@ export default function Tx06ReleaseConsole({
     setLookupResult(null);
     setFirstSurname("");
     setSurnameError("");
+    setRiskAcknowledged(false);
+    setRiskError("");
     setLookupError("");
     setMutationError("");
     setSuccessNotice(null);
@@ -322,6 +329,8 @@ export default function Tx06ReleaseConsole({
     setLookupResult(null);
     setFirstSurname("");
     setSurnameError("");
+    setRiskAcknowledged(false);
+    setRiskError("");
     setLookupError("");
     setMutationError("");
     setSuccessNotice(null);
@@ -357,22 +366,29 @@ export default function Tx06ReleaseConsole({
 
   function prepareAuthorization(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!lookupResult?.eligible || lookupResult.alreadyAuthorized || mutationBusy || confirmationOpen) {
+    if (!lookupResult?.eligible || lookupResult.alreadyAuthorized || mutationBusy || confirmationOpen ||
+      (analystMode && lookupResult.retryKind === "AMBIGUOUS_PROVIDER")) {
       return;
     }
 
+    const retryKind = lookupResult.retryKind === "AMBIGUOUS_PROVIDER" ? "AMBIGUOUS_PROVIDER" : "TX06_SURNAME";
     const normalizedFirstSurname = normalizeSurname(firstSurname);
-    if (!normalizedFirstSurname) {
+    if (retryKind === "TX06_SURNAME" && !normalizedFirstSurname) {
       setSurnameError(
         "Ingresa el primer apellido correcto antes de liberar la consulta."
       );
+      return;
+    }
+    if (retryKind === "AMBIGUOUS_PROVIDER" && !riskAcknowledged) {
+      setRiskError("Acepta el posible nuevo cobro para revisar esta liberación.");
       return;
     }
 
     const signature = [
       lookupResult.assessmentId,
       searchedDocument,
-      normalizedFirstSurname.toLocaleUpperCase("es-CO"),
+      retryKind,
+      retryKind === "TX06_SURNAME" ? normalizedFirstSurname.toLocaleUpperCase("es-CO") : "RISK_ACKNOWLEDGED",
     ].join(":");
     if (lastMutationRef.current?.signature !== signature) {
       lastMutationRef.current = {
@@ -383,6 +399,7 @@ export default function Tx06ReleaseConsole({
 
     setFirstSurname(normalizedFirstSurname);
     setSurnameError("");
+    setRiskError("");
     setMutationError("");
     setPendingAuthorization({
       assessmentId: lookupResult.assessmentId,
@@ -391,6 +408,8 @@ export default function Tx06ReleaseConsole({
       firstSurname: normalizedFirstSurname,
       mutationId: lastMutationRef.current.mutationId,
       requiresNewSolicitud: lookupResult.requiresNewSolicitud,
+      retryKind,
+      riskAcknowledged: retryKind === "AMBIGUOUS_PROVIDER" && riskAcknowledged,
     });
   }
 
@@ -409,7 +428,9 @@ export default function Tx06ReleaseConsole({
         )}/autorizar-reintento`,
         {
           documentNumber: pending.documentNumber,
-          firstSurname: pending.firstSurname,
+          ...(pending.retryKind === "AMBIGUOUS_PROVIDER"
+            ? { riskAcknowledged: pending.riskAcknowledged }
+            : { firstSurname: pending.firstSurname }),
           mutationId: pending.mutationId,
         },
         {
@@ -444,6 +465,8 @@ export default function Tx06ReleaseConsole({
       });
       setFirstSurname("");
       setSurnameError("");
+      setRiskAcknowledged(false);
+      setRiskError("");
       setPendingAuthorization(null);
     } catch (error) {
       setPendingAuthorization(null);
@@ -462,7 +485,8 @@ export default function Tx06ReleaseConsole({
     if (authorizing || submittingRef.current) return;
     setPendingAuthorization(null);
     window.setTimeout(() => {
-      document.getElementById("tx06-first-surname")?.focus();
+      document.getElementById(pendingAuthorization?.retryKind === "AMBIGUOUS_PROVIDER"
+        ? "dc-retry-risk" : "tx06-first-surname")?.focus();
     }, 0);
   }
 
@@ -557,8 +581,10 @@ export default function Tx06ReleaseConsole({
   }
 
   const canAuthorize = Boolean(
-    lookupResult?.eligible && !lookupResult.alreadyAuthorized
+    lookupResult?.eligible && !lookupResult.alreadyAuthorized &&
+    !(analystMode && lookupResult.retryKind === "AMBIGUOUS_PROVIDER")
   );
+  const ambiguousRetry = lookupResult?.retryKind === "AMBIGUOUS_PROVIDER";
   const administrativeRejection = lookupResult?.adminRejection?.decision;
   const canReviewRejection = Boolean(lookupResult?.adminRejection?.canReject &&
     lookupResult.adminRejection.eligible && lookupResult.adminRejection.solicitudId && !administrativeRejection);
@@ -596,9 +622,10 @@ export default function Tx06ReleaseConsole({
 
         <div className={styles.scopeBar}>
           <span><ShieldCheck size={17} aria-hidden="true" />Operación auditada</span>
-          <Badge tone="neutral">{lookupResult?.adminRejection?.canReject
-            ? "TX06 · Revisión administrativa TX07"
-            : "Solo TX06 sin puntaje"}</Badge>
+          <Badge tone="neutral">{analystMode ? "TX06 sin puntaje"
+            : lookupResult?.adminRejection?.canReject
+              ? "TX06 · Error técnico · Revisión TX07"
+              : "TX06 · Error técnico"}</Badge>
         </div>
 
         <Card className={styles.searchCard}>
@@ -651,7 +678,7 @@ export default function Tx06ReleaseConsole({
             <p><strong>La próxima consulta requiere consentimiento nuevo y consume cupo normal.</strong></p>
             <details>
               <summary>Condiciones de liberación<ChevronDown size={16} aria-hidden="true" /></summary>
-              <p>Autoriza un nuevo intento únicamente cuando MiDecisor aceptó una consulta TX06 sin puntaje.</p>
+              <p>Permite corregir el apellido en respuestas TX06 sin puntaje. La administración central también puede liberar un error técnico de resultado incierto después de aceptar el posible nuevo cobro.</p>
               <p>
                 La liberación no cambia un rechazo, una aprobación ni un puntaje, y
                 no consulta al proveedor en este momento. El vendedor deberá usar el
@@ -809,7 +836,28 @@ export default function Tx06ReleaseConsole({
                     onSubmit={prepareAuthorization}
                     noValidate
                   >
-                    <label
+                    {ambiguousRetry ? (
+                      <div>
+                        <p className={styles.fieldHelp}>El proveedor pudo procesar la consulta anterior. Confirma el resultado con MiDecisor o acepta el riesgo de otro cobro para autorizar un nuevo intento.</p>
+                        <label className={styles.rejectionAcknowledgement} htmlFor="dc-retry-risk">
+                          <input
+                            id="dc-retry-risk"
+                            type="checkbox"
+                            checked={riskAcknowledged}
+                            onChange={(event) => {
+                              setRiskAcknowledged(event.target.checked);
+                              setRiskError("");
+                              setMutationError("");
+                            }}
+                            disabled={mutationBusy || confirmationOpen}
+                            aria-invalid={Boolean(riskError)}
+                            aria-describedby={riskError ? "dc-retry-risk-error" : undefined}
+                          />
+                          <span>Acepto que el nuevo intento puede generar otro cobro y consumirá el cupo normal. El titular deberá otorgar un consentimiento nuevo.</span>
+                        </label>
+                        {riskError ? <p id="dc-retry-risk-error" role="alert" className={styles.fieldError}>{riskError}</p> : null}
+                      </div>
+                    ) : <label
                       className={styles.surnameField}
                       htmlFor="tx06-first-surname"
                     >
@@ -849,7 +897,7 @@ export default function Tx06ReleaseConsole({
                           {surnameError}
                         </span>
                       ) : null}
-                    </label>
+                    </label>}
                     <Button
                       type="submit"
                       disabled={mutationBusy || confirmationOpen}
@@ -918,8 +966,10 @@ export default function Tx06ReleaseConsole({
         title="Autorizar nuevo intento DataCrédito"
         description={
           pendingAuthorization
-            ? `Vas a liberar ${pendingAuthorization.documentLabel} usando el primer apellido “${pendingAuthorization.firstSurname}”. Esta autorización aplica solo al TX06 sin puntaje: no cambia un rechazo ni un puntaje y no consulta al proveedor ahora. ${pendingAuthorization.requiresNewSolicitud ? "Las solicitudes desistidas permanecerán cerradas y deberá crearse una solicitud nueva. " : "La solicitud original quedará lista para retomarse. "}La próxima consulta requerirá consentimiento nuevo y consumirá el cupo normal.`
-            : "Confirma la liberación de la consulta TX06."
+            ? pendingAuthorization.retryKind === "AMBIGUOUS_PROVIDER"
+              ? `Vas a liberar ${pendingAuthorization.documentLabel} después de un error técnico con resultado incierto. Aceptas el posible nuevo cobro. La autorización quedará registrada con tu usuario y la consulta anterior conservará su evidencia. ${pendingAuthorization.requiresNewSolicitud ? "Deberá crearse una solicitud nueva. " : "Retoma la solicitud original. "}El próximo intento requerirá consentimiento nuevo y consumirá el cupo normal.`
+              : `Vas a liberar ${pendingAuthorization.documentLabel} usando el primer apellido “${pendingAuthorization.firstSurname}”. Esta autorización aplica solo al TX06 sin puntaje: no cambia un rechazo ni un puntaje y no consulta al proveedor ahora. ${pendingAuthorization.requiresNewSolicitud ? "Las solicitudes desistidas permanecerán cerradas y deberá crearse una solicitud nueva. " : "La solicitud original quedará lista para retomarse. "}La próxima consulta requerirá consentimiento nuevo y consumirá el cupo normal.`
+            : "Confirma la liberación de la consulta DataCrédito."
         }
         confirmLabel="Autorizar nuevo intento"
         busy={authorizing}

@@ -80,7 +80,11 @@ export async function POST(request: Request) {
           ...(result.draftId ? { solicitudId: result.draftId } : {}),
         }) }
       : { canReject: false, eligible: false, eligibilityMessage: "Revisión exclusiva del administrador central.", decision: null, solicitudId: null };
-    return json({ ok: true, result: { ...result, adminRejection }, correlationId });
+    const retryAccess = result.retryKind === "AMBIGUOUS_PROVIDER" && !centralAccess.ok && !result.alreadyAuthorized
+      ? { eligible: false, eligibilityCode: "CENTRAL_ADMIN_REQUIRED",
+          eligibilityMessage: "La liberación por resultado incierto requiere al administrador central y la aceptación del posible nuevo cobro." }
+      : {};
+    return json({ ok: true, result: { ...result, ...retryAccess, adminRejection }, correlationId });
   } catch (error) {
     if (error instanceof DataCreditoAdminRetryError) {
       return json(

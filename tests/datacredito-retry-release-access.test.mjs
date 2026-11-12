@@ -89,3 +89,35 @@ test("la liberación rechaza enlaces, vendedores y administradores externos", as
     assert.deepEqual(fixture.calls, ["regular", "analyst"]);
   });
 });
+
+test("POST deriva permiso ambiguo de la sesion central y no del JSON recibido", async () => {
+  const path = 'app/api/creditos/datacredito/admin/evaluaciones/[id]/autorizar-reintento/route.ts';
+  for (const isCentral of [false, true]) {
+    const calls = [];
+    class RetryError extends Error {constructor(code,status) {super(code);this.code=code;this.status=status;}}
+    const user = isCentral ? centralAdmin : centralAnalyst;
+    const route = load(path, {
+      'node:crypto': {randomUUID: () => '11111111-1111-4111-8111-111111111111'},
+      'next/server': {NextResponse: {json: (body, options) => ({body, ...options})}},
+      '@/lib/datacredito': {getDataCreditoPublicConfig: () => ({environment: 'production'})},
+      '@/lib/datacredito/admin-access': {
+        getDataCreditoRetryReleaseActor: async () => ({ok:true,user}),
+        getDataCreditoCentralAdmin: async () => isCentral ? ({ok:true,user}) : ({ok:false,status:403}),
+      },
+      '@/lib/datacredito/admin-retry-storage': {DataCreditoAdminRetryError:RetryError,
+        authorizeDataCreditoAdminRetry: async input => {
+          calls.push(input);
+          if (!input.canAuthorizeAmbiguousRetry) throw new RetryError('RETRY_CENTRAL_ADMIN_REQUIRED',403);
+          return {retryKind:'AMBIGUOUS_PROVIDER',requiresNewSolicitud:true};
+        }},
+      '@/lib/datacredito/storage': {hashDataCreditoRequestMetadata: () => null},
+    });
+    const response = await route.POST({headers:new Headers(),json:async()=>({documentNumber:'1234567',
+      canAuthorizeAmbiguousRetry:true,riskAcknowledged:true,actorUserId:999,mutationId:'11111111-1111-4111-8111-111111111111'})},
+      {params:Promise.resolve({id:'22222222-2222-4222-8222-222222222222'})});
+    assert.equal(calls.length,1); assert.equal(calls[0].canAuthorizeAmbiguousRetry,isCentral);
+    assert.equal(calls[0].actorUserId,user.id); assert.equal(calls[0].riskAcknowledged,true);
+    assert.equal(response.status,isCentral ? 200 : 403);
+    assert.equal(response.body.ok,isCentral);
+  }
+});
