@@ -351,6 +351,6 @@ export default async function ReportesAdminPage({ searchParams }: { searchParams
 
   return <div className={styles.shell}>
     <FinserNavigation variant="requests" activeSection={admin?"administration":"operation"} admin={admin} adminCentral={adminCentral} isSupervisor={!admin} nombreUsuario={session.nombre} rolUsuario={session.rolNombre}/>
-    <main className={styles.main}><ReportCenter period={period} selectedSedeId={selectedSede?String(selectedSede.id):""} sedes={sedes} admin={admin} initialQuery={query} reports={availableReports.map(report=>({...report,href:buildReportHref(report,reportParams)}))} metrics={{activeCredits:activeCredits.toLocaleString("es-CO"),collected:money(collected),portfolioBalance:money(portfolioBalance),mora:percent(moraPercent)}}/></main>
+    <main className={styles.main}><ReportCenter period={period} selectedSedeId={selectedSede?String(selectedSede.id):""} sedes={sedes} admin={admin} adminCentral={adminCentral} initialQuery={query} reports={availableReports.map(report=>({...report,href:buildReportHref(report,reportParams)}))} metrics={{activeCredits:activeCredits.toLocaleString("es-CO"),collected:money(collected),...(adminCentral?{portfolioBalance:money(portfolioBalance),mora:percent(moraPercent)}:{})}}/></main>
   </div>;
 }

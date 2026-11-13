@@ -4,7 +4,7 @@ import {useEffect,useRef,useState} from "react";
 import {ArrowLeft,ArrowRight,CalendarDays,CircleDollarSign,CreditCard,FileSearch,FileSpreadsheet,Globe,Layers,MapPin,PieChart,Search,Store,UserRound,X} from "lucide-react";
 import styles from "./report-center.module.css";
 export type CenterReport={title:string;description:string;formats:string[];href:string;kind:"credits"|"payments"|"cut-collection"|"portfolio"|"stores"|"sellers"|"datacredito-sales"};
-type Props={period:string;selectedSedeId:string;sedes:{id:number;nombre:string}[];admin:boolean;initialQuery:string;reports:CenterReport[];metrics:{activeCredits:string;collected:string;portfolioBalance:string;mora:string}};
+type Props={period:string;selectedSedeId:string;sedes:{id:number;nombre:string}[];admin:boolean;adminCentral:boolean;initialQuery:string;reports:CenterReport[];metrics:{activeCredits:string;collected:string;portfolioBalance?:string;mora?:string}};
 const icons={credits:CreditCard,payments:CircleDollarSign,"cut-collection":CalendarDays,portfolio:PieChart,stores:Store,sellers:UserRound,"datacredito-sales":FileSearch};
 const normalize=(value:string)=>value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("es-CO");
 export default function ReportCenter(props:Props){
@@ -21,12 +21,14 @@ export default function ReportCenter(props:Props){
       {search&&<input type="hidden" name="q" value={search}/>}
       <button type="submit" className={styles.apply}>Aplicar</button><Link href="/dashboard/reportes" className={styles.clear}>Limpiar</Link>
     </form>
-    <section className={styles.metrics} aria-label="Indicadores de la operación">{[
+    <section className={`${styles.metrics} ${props.adminCentral?"":styles.allyMetrics}`} aria-label="Indicadores de la operación">{[
       ["Créditos activos",props.metrics.activeCredits,"Créditos no anulados con saldo pendiente en las sedes autorizadas."],
       ["Recaudado del período",props.metrics.collected,"Abonos activos registrados dentro del período y alcance seleccionados."],
-      ["Saldo de cartera",props.metrics.portfolioBalance,"Saldo pendiente actual de los créditos del alcance seleccionado."],
-      ["Mora actual",props.metrics.mora,"Porcentaje del saldo pendiente correspondiente a cuotas vencidas."],
-    ].map(([label,value,description],index)=><div key={label} title={description}><span>{label}</span><strong className={index===3?styles.mora:undefined}>{value}</strong></div>)}</section>
+      ...(props.adminCentral?[
+        ["Saldo de cartera",props.metrics.portfolioBalance,"Saldo pendiente actual de los créditos del alcance seleccionado."],
+        ["Mora actual",props.metrics.mora,"Porcentaje del saldo pendiente correspondiente a cuotas vencidas."],
+      ]:[]),
+    ].map(([label,value,description],index)=><div key={label} title={description}><span>{label}</span><strong className={index===3?styles.mora:undefined}>{value??"—"}</strong></div>)}</section>
     <section aria-labelledby="available-reports"><header className={styles.available}><h2 id="available-reports">Reportes disponibles</h2><label className={styles.search}><Search aria-hidden="true"/><input aria-label="Buscar reportes por nombre" value={search} onChange={event=>setSearch(event.target.value)} placeholder="Buscar reporte..."/></label></header>
       {visible.length?<div className={styles.cards}>{visible.map(report=>{const Icon=icons[report.kind];const excel=report.formats.includes("Excel");return <article className={styles.card} key={report.kind}><div className={styles.cardHeading}><span className={styles.icon}><Icon aria-hidden="true"/></span><div><h3>{report.title}</h3><p>{report.description}</p></div></div><footer><span className={`${styles.format} ${excel?styles.excel:""}`}>{excel?<FileSpreadsheet aria-hidden="true"/>:<Globe aria-hidden="true"/>}{report.formats.join(" · ")}</span><Link href={report.href} aria-label={`Abrir ${report.title}`}>Abrir<ArrowRight aria-hidden="true"/></Link></footer></article>;})}</div>:<div className={styles.empty} role="status"><h3>No encontramos reportes</h3><p>Cambia el nombre que estás buscando.</p><button type="button" className={styles.back} onClick={()=>setSearch("")}>Limpiar búsqueda</button></div>}
     </section>

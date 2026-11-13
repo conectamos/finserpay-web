@@ -26,3 +26,12 @@ test("exporta todos los resultados y el resumen diario recibido, independiente d
 test("responsable digital y responsable asignado conservan origen actual",()=>{
  assert.equal(paymentReportCollector(row),"Responsable prueba");assert.equal(paymentReportCollector({...row,sede:{...row.sede,codigo:"RECAUDO_DIGITAL"}}),"DIGITAL");assert.equal(paymentReportCollector({...row,vendedor:null}),"Registrador prueba");
 });
+
+test("Excel solo contiene pagos y totales diarios del período, sin resumen financiero general",async()=>{
+ const book=await roundTrip([row],[{fecha:"2026-10-06",cantidad:1,total:row.valor}]);
+ assert.deepEqual(book.worksheets.map(sheet=>sheet.name),["Pagos registrados","Recaudo día a día"]);
+ const values=[];for(const sheet of book.worksheets)sheet.eachRow(row=>row.eachCell(cell=>values.push(cell.value)));
+ assert.doesNotMatch(JSON.stringify(values),/Pendiente por cobrar|Recaudado general|totalPendientePorCobrar|totalRecaudadoGeneral/i);
+ assert.deepEqual(book.getWorksheet("Recaudo día a día").getRow(1).values.slice(1),["Fecha","Abonos","Total"]);
+ assert.equal(book.getWorksheet("Recaudo día a día").getCell("C2").value,row.valor);
+});

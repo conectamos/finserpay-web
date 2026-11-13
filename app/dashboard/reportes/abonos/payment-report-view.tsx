@@ -30,11 +30,19 @@ export default function PaymentReportView(props:Props){
   const shown=props.items.slice((currentPage-1)*pageSize,currentPage*pageSize);
   const numbers=[...new Set([1,2,3,currentPage-1,currentPage,currentPage+1,pages])].filter(n=>n>0&&n<=pages).sort((a,b)=>a-b);
   const apply=()=>{setPage(1);props.apply();};
-  const metrics=[{label:"Abonos del período",value:(props.summary?.totalAbonos||0).toLocaleString("es-CO"),tone:styles.green},{label:"Recaudado del período",value:money(props.summary?.totalRecaudadoPeriodo||0)},{label:"Pendiente por cobrar",value:money(props.summary?.totalPendientePorCobrar||0),tone:styles.amber},{label:"Recaudado general",value:money(props.summary?.totalRecaudadoGeneral||0)},{label:"Créditos al día",value:(props.summary?.creditosAlDia||0).toLocaleString("es-CO")}];
+  const metrics=[
+    {label:"Abonos del período",value:(props.summary?.totalAbonos||0).toLocaleString("es-CO"),tone:styles.green},
+    {label:"Recaudado del período",value:money(props.summary?.totalRecaudadoPeriodo||0)},
+    ...(props.isCentralAdmin?[
+      {label:"Pendiente por cobrar",value:props.summary?.totalPendientePorCobrar==null?"—":money(props.summary.totalPendientePorCobrar),tone:styles.amber},
+      {label:"Recaudado general",value:props.summary?.totalRecaudadoGeneral==null?"—":money(props.summary.totalRecaudadoGeneral)},
+    ]:[]),
+    {label:"Créditos al día",value:(props.summary?.creditosAlDia||0).toLocaleString("es-CO")},
+  ];
   return <>
     <nav className={base.breadcrumb} aria-label="Ruta actual"><Link href="/dashboard" aria-label="Inicio"><Home aria-hidden="true"/></Link><ChevronRight aria-hidden="true"/><span>Operación</span><ChevronRight aria-hidden="true"/><Link href="/dashboard/reportes">Reportes</Link><ChevronRight aria-hidden="true"/><strong aria-current="page">Abonos</strong></nav>
     <header className={`${base.heading} ${styles.heading}`}><div><h1>Reporte de recaudos</h1><p>Consulta los pagos registrados y su origen.</p></div><div className={base.headingActions}><Link href="/dashboard/reportes" className={base.secondary}><ArrowLeft aria-hidden="true"/>Volver a reportes</Link><button type="button" className={base.primary} onClick={props.exportExcel} disabled={props.loading||props.exporting||!total}><FileSpreadsheet aria-hidden="true"/>{props.exporting?"Generando Excel…":"Exportar Excel"}</button></div></header>
-    <section className={styles.metrics} aria-label="Indicadores de recaudos">{metrics.map(metric=><div key={metric.label}><span>{metric.label}</span><strong className={metric.tone}>{props.loading?"…":metric.value}</strong></div>)}</section>
+    <section className={`${styles.metrics} ${props.isCentralAdmin?"":styles.allyMetrics}`} aria-label="Indicadores de recaudos">{metrics.map(metric=><div key={metric.label}><span>{metric.label}</span><strong className={metric.tone}>{props.loading?"…":metric.value}</strong></div>)}</section>
     <form className={styles.filters} role="search" onSubmit={event=>{event.preventDefault();apply();}}>
       <label className={styles.search}><Search aria-hidden="true"/><input aria-label="Buscar recaudos" placeholder="Cliente, cédula, Sadmin, crédito o folio" value={props.search} onChange={event=>props.setSearch(event.target.value)}/></label>
       <input type="date" aria-label="Fecha desde" value={props.from} onChange={event=>props.setFrom(event.target.value)}/><input type="date" aria-label="Fecha hasta" value={props.to} onChange={event=>props.setTo(event.target.value)}/>

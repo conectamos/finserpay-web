@@ -4,6 +4,7 @@
 .main button:disabled{opacity:.45;cursor:default;}
 .heading{margin:16px 4px 28px;}
 .metrics{display:grid;grid-template-columns:1fr 1.25fr 1.35fr 1.3fr .8fr;border:1px solid var(--fp-border);border-radius:var(--fp-radius-lg);background:white;padding:20px 0;margin-bottom:25px;}
+.allyMetrics{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr);}
 .metrics>div{padding:0 24px;border-left:1px solid var(--fp-border);min-width:0;}
 .metrics>div:first-child{border-left:0;}
 .metrics span{display:block;color:#62708b;font-size:15px;}

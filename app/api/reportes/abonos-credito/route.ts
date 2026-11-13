@@ -21,6 +21,11 @@ function parsePositiveInt(value: string | null) {
 const BOGOTA_UTC_OFFSET_MS = 5 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DIGITAL_COLLECTION_COLLECTOR_NAME = "DIGITAL";
+const privateReportHeaders = {
+  "Cache-Control": "private, no-store, max-age=0",
+  Vary: "Cookie",
+  "X-Content-Type-Options": "nosniff",
+};
 
 function parseDate(value: string | null, endOfDay = false) {
   const normalized = String(value || "").trim();
@@ -89,7 +94,7 @@ export async function GET(req: Request) {
     const user = await getSessionUser();
 
     if (!user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+      return NextResponse.json({ error: "No autenticado" }, { status: 401, headers: privateReportHeaders });
     }
 
     await ensureCreditAbonoAuditColumns();
@@ -104,7 +109,7 @@ export async function GET(req: Request) {
     if (!admin && sellerSession?.tipoPerfil !== "SUPERVISOR") {
       return NextResponse.json(
         { error: "Solo supervisor o administrador puede ver el reporte de abonos" },
-        { status: 403 }
+        { status: 403, headers: privateReportHeaders }
       );
     }
 
@@ -442,8 +447,10 @@ export async function GET(req: Request) {
       summary: {
         totalAbonos: activeAbonosRows.length,
         totalRecaudadoPeriodo: activeAbonosRows.reduce((acc, item) => acc + item.valor, 0),
-        totalPendientePorCobrar: pendingSummary.totalPendiente,
-        totalRecaudadoGeneral: pendingSummary.totalRecaudado,
+        ...(adminCentral ? {
+          totalPendientePorCobrar: pendingSummary.totalPendiente,
+          totalRecaudadoGeneral: pendingSummary.totalRecaudado,
+        } : {}),
         totalCreditos: pendingSummary.totalCreditos,
         creditosAlDia: pendingSummary.creditosAlDia,
       },
@@ -451,12 +458,12 @@ export async function GET(req: Request) {
         b.fecha.localeCompare(a.fecha)
       ),
       items: abonosRows,
-    });
+    }, { headers: privateReportHeaders });
   } catch (error) {
     console.error("ERROR REPORTE ABONOS DE CREDITO:", error);
     return NextResponse.json(
       { error: "No se pudo cargar el reporte de abonos" },
-      { status: 500 }
+      { status: 500, headers: privateReportHeaders }
     );
   }
 }

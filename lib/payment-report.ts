@@ -89,8 +89,8 @@ export type PaymentReportResponse = {
   summary: {
     totalAbonos: number;
     totalRecaudadoPeriodo: number;
-    totalPendientePorCobrar: number;
-    totalRecaudadoGeneral: number;
+    totalPendientePorCobrar?: number;
+    totalRecaudadoGeneral?: number;
     totalCreditos: number;
     creditosAlDia: number;
   };

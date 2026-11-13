@@ -20,7 +20,9 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const display = load("lib/credit-display-number.ts");
 const roles = load("lib/roles.ts");
 const dates = load("lib/colombia-date.ts");
-const factory = load("lib/credit-factory.ts", { "@/lib/colombia-date": dates });
+const paymentMethods = load("lib/payment-methods.ts");
+const allies = load("lib/aliados.ts");
+const factory = load("lib/credit-factory.ts", { "@/lib/colombia-date": dates, "@/lib/payment-methods": paymentMethods });
 const site = { id: 10, nombre: "Sede QA", codigo: "QA", aliadoId: 5, aliado: { nombre: "Aliado QA", codigo: "ALIADO" } };
 const user = { id: 1, nombre: "Admin aliado", rolNombre: "ADMIN", aliadoAccesoCodigo: "ALIADO", aliadoAccesoId: 5, sedeId: 10 };
 const credit = { id: 31, folio: "FC-ORIGINAL-31", clienteNombre: "Cliente QA", clienteDocumento: "00100031", montoCredito: 1000, cuotaInicial: 200, estado: "INSCRITO", sedeId: 10 };
@@ -72,7 +74,7 @@ test("abonos devuelve número confirmado y busca dentro del aliado autorizado si
 function harness({session=user,seller=null,rows=[payment],credits=[credit],registrations=[],groups=[{creditoId:31,_sum:{valor:100},_count:{_all:1}}]}={}){
  const calls=[];const database={credito:{findMany:async query=>{calls.push(["credits",plain(query)]);return credits;}},creditoAbono:{findMany:async query=>{calls.push(["payments",plain(query)]);return rows;},groupBy:async query=>{calls.push(["groups",plain(query)]);return groups;}},creditSadminRegistration:{findMany:async query=>{calls.push(["numbers",plain(query)]);return registrations.filter(row=>query.where.creditoId.in.includes(row.creditoId)&&row.numeroCreditoConfirmado&&row.numeroCredito!==null);}}};
  const displayServer=load("lib/credit-display-number-server.ts",{"server-only":{},"@/lib/prisma":{default:database},"@/lib/credit-display-number":display});
- const route=load("app/api/reportes/abonos-credito/route.ts",{"next/server":{NextResponse:Response},"@/lib/prisma":{default:database},"@/lib/auth":{getSessionUser:async()=>session},"@/lib/seller-auth":{getSellerSessionUser:async()=>seller},"@/lib/roles":roles,"@/lib/aliados":{isFinserPayCentralAlly:code=>code==="FINSERPAY"},"@/lib/credit-factory":factory,"@/lib/credit-abono-audit":{ensureCreditAbonoAuditColumns:async()=>{}},"@/lib/credit-display-number-server":displayServer,"@/lib/digital-collection-sede":{DIGITAL_COLLECTION_SEDE_CODE:"RECAUDO_DIGITAL",DIGITAL_COLLECTION_SEDE_NAME:"RECAUDO DIGITAL FINSER PAY"}});
+ const route=load("app/api/reportes/abonos-credito/route.ts",{"next/server":{NextResponse:Response},"@/lib/prisma":{default:database},"@/lib/auth":{getSessionUser:async()=>session},"@/lib/seller-auth":{getSellerSessionUser:async()=>seller},"@/lib/roles":roles,"@/lib/aliados":allies,"@/lib/credit-factory":factory,"@/lib/credit-abono-audit":{ensureCreditAbonoAuditColumns:async()=>{}},"@/lib/credit-display-number-server":displayServer,"@/lib/digital-collection-sede":{DIGITAL_COLLECTION_SEDE_CODE:"RECAUDO_DIGITAL",DIGITAL_COLLECTION_SEDE_NAME:"RECAUDO DIGITAL FINSER PAY"}});
  return{calls,get:(query="")=>route.GET(new Request("https://qa.test/api/reportes/abonos-credito"+query))};
 }
 test("más de 500 resultados forman el resumen diario completo y excluyen anulados",async()=>{
@@ -83,7 +85,7 @@ test("más de 500 resultados forman el resumen diario completo y excluyen anulad
  assert.deepEqual(body.byDay,[{fecha:"2026-10-06",cantidad:605,total:60651.25}]);assert.equal(api.calls.find(([name])=>name==="payments")[1].take,undefined);
 });
 test("fechas solo afectan pagos del período y no redefinen recaudo general ni créditos al día",async()=>{
- const api=harness({rows:[{...payment,valor:75.09}],credits:[credit,{...credit,id:32,montoCredito:500}],groups:[{creditoId:31,_sum:{valor:300.25},_count:{_all:3}},{creditoId:32,_sum:{valor:500},_count:{_all:5}}]});
+ const api=harness({session:{...user,aliadoAccesoCodigo:"FINSERPAY"},rows:[{...payment,valor:75.09}],credits:[credit,{...credit,id:32,montoCredito:500}],groups:[{creditoId:31,_sum:{valor:300.25},_count:{_all:3}},{creditoId:32,_sum:{valor:500},_count:{_all:5}}]});
  const body=await(await api.get("?from=2026-10-01&to=2026-10-07")).json();
  assert.equal(body.summary.totalRecaudadoPeriodo,75.09);assert.equal(body.summary.totalRecaudadoGeneral,800.25);assert.equal(body.summary.totalPendientePorCobrar,699.75);assert.equal(body.summary.creditosAlDia,1);
  const credits=api.calls.find(([name])=>name==="credits")[1];assert.equal(credits.where.fechaCredito,undefined);
@@ -98,4 +100,52 @@ test("permiso y alcance del supervisor, aliado y central permanecen separados",a
  for(const [session,seller,status]of [[null,null,401],[{...user,rolNombre:"VENDEDOR"},{tipoPerfil:"VENDEDOR"},403],[{...user,rolNombre:"ANALISTA"},null,403]]){const api=harness({session,seller});assert.equal((await api.get()).status,status);assert.equal(api.calls.length,0);}
  const api=harness({session:{...user,rolNombre:"VENDEDOR"},seller:{tipoPerfil:"SUPERVISOR"}});assert.equal((await api.get("?sedeId=99&aliadoId=99")).status,200);for(const [name,query]of api.calls.filter(([name])=>["credits","payments"].includes(name))){assert.equal(query.where.sedeId,10,name);assert.equal(query.where.sede,undefined);}
  const central=harness({session:{...user,aliadoAccesoCodigo:"FINSERPAY"}});await central.get("?sedeId=20&aliadoId=99");for(const [,query]of central.calls.filter(([name])=>["credits","payments"].includes(name))){assert.deepEqual(query.where.sede,{aliadoId:99});assert.equal(query.where.sedeId,20);}
+});
+
+function assertPrivate(response) {
+ assert.match(response.headers.get("cache-control"), /private, no-store/);
+ assert.equal(response.headers.get("vary"), "Cookie");
+ assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+}
+
+test("solo admin central recibe los dos totales generales; aliado y supervisor conservan período, registros y alcance", async () => {
+ const common = { rows: [{...payment, valor:75.09}], credits:[credit,{...credit,id:32,montoCredito:500}],
+   groups:[{creditoId:31,_sum:{valor:300.25},_count:{_all:3}},{creditoId:32,_sum:{valor:500},_count:{_all:5}}] };
+ const central = harness({...common, session:{...user,aliadoAccesoCodigo:"FINSERPAY"}});
+ const centralResponse = await central.get("?from=2026-10-01&to=2026-10-07&aliadoId=5&sedeId=10");
+ assertPrivate(centralResponse);
+ const original = await centralResponse.json();
+ assert.equal(original.summary.totalPendientePorCobrar,699.75);
+ assert.equal(original.summary.totalRecaudadoGeneral,800.25);
+ const {totalPendientePorCobrar,totalRecaudadoGeneral,...allowedSummary} = original.summary;
+ assert.deepEqual(allowedSummary,{totalAbonos:1,totalRecaudadoPeriodo:75.09,totalCreditos:2,creditosAlDia:1});
+ for (const [session,seller,supervisor] of [
+   [user,null,false],
+   [{...user,rolNombre:"VENDEDOR"},{tipoPerfil:"SUPERVISOR"},true],
+   [{...user,rolNombre:"VENDEDOR",aliadoAccesoCodigo:"FINSERPAY"},{tipoPerfil:"SUPERVISOR"},true],
+ ]) {
+   const api=harness({...common,session,seller});
+   const response=await api.get("?from=2026-10-01&to=2026-10-07&aliadoId=99&sedeId="+(supervisor?"99":"10")+
+     "&adminCentral=true&central=true&rolNombre=ADMIN&aliadoAccesoCodigo=FINSERPAY&includeFinancial=true");
+   assert.equal(response.status,200);assertPrivate(response);
+   const body=await response.json();
+   assert.deepEqual(body.summary,allowedSummary);
+   assert.equal(Object.hasOwn(body.summary,"totalPendientePorCobrar"),false);
+   assert.equal(Object.hasOwn(body.summary,"totalRecaudadoGeneral"),false);
+   assert.doesNotMatch(JSON.stringify(body),/totalPendientePorCobrar|totalRecaudadoGeneral|699\.75|800\.25/);
+   assert.deepEqual(body.items,original.items);assert.deepEqual(body.byDay,original.byDay);
+   for(const [,query]of api.calls.filter(([name])=>["credits","payments"].includes(name))) {
+     assert.equal(query.where.sedeId,10);
+     if(supervisor)assert.equal(query.where.sede,undefined);
+     else assert.deepEqual(query.where.sede,{aliadoId:5});
+   }
+   assert.deepEqual(api.calls.find(([name])=>name==="groups")[1].where,{creditoId:{in:[31,32]},estado:{not:"ANULADO"}});
+ }
+});
+
+test("respuestas sin sesión o sin permiso también impiden caché compartida",async()=>{
+ for(const options of [{session:null},{session:{...user,rolNombre:"VENDEDOR"},seller:{tipoPerfil:"VENDEDOR"}}]) {
+   const api=harness(options);const response=await api.get("?adminCentral=true");
+   assert.equal(response.status,options.session?403:401);assertPrivate(response);assert.equal(api.calls.length,0);
+ }
 });
