@@ -51,6 +51,7 @@ export type CreditReportItem = {
   cuotaInicial: number;
   valorCuota: number;
   plazoMeses: number | null;
+  frecuenciaPago: string | null;
   estado: string;
   estadoReporte?: string;
   deliverableReady: boolean;

@@ -25,7 +25,10 @@ function loadModule(path, dependencies = {}) {
 }
 
 const dates = loadModule("lib/colombia-date.ts");
-const factory = loadModule("lib/credit-factory.ts", { "@/lib/colombia-date": dates });
+const factory = loadModule("lib/credit-factory.ts", {
+  "@/lib/colombia-date": dates,
+  "@/lib/payment-methods": loadModule("lib/payment-methods.ts"),
+});
 const roles = loadModule("lib/roles.ts");
 const allies = loadModule("lib/aliados.ts");
 const assignedSeller = loadModule("lib/credit-assigned-seller.ts");
@@ -83,6 +86,21 @@ test("un OK de la revision vigente muestra APROBADO en estados operativos de ape
   for (const estado of ["GENERADO", "INSCRITO", "ENTREGABLE", " inscrito "]) {
     assert.equal(resolveCreditReportState(estado, approved), "APROBADO");
   }
+});
+
+test("el DTO conserva cuota, plazo y frecuencia registrados sin asignar frecuencia a datos ausentes", async () => {
+  const frequencies = ["SEMANAL", "CATORCENAL", "QUINCENAL", "MENSUAL", " mensual ", "LEGACY", "", null, undefined];
+  const rows = frequencies.map((frecuenciaPago, index) => fixture(index + 1, {
+    frecuenciaPago, plazoMeses: 12 + index, valorCuota: 12345.67 + index,
+  }));
+  const before = plain(rows);
+  const response = await harness(rows).get();
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.deepEqual(data.items.map(({ valorCuota, plazoMeses, frecuenciaPago }) => ({ valorCuota, plazoMeses, frecuenciaPago })),
+    rows.map(row => ({ valorCuota: row.valorCuota, plazoMeses: row.plazoMeses, frecuenciaPago: row.frecuenciaPago ?? null })));
+  assert.deepEqual(data.items.slice(-2).map(row => row.frecuenciaPago), [null, null]);
+  assert.deepEqual(plain(rows), before);
 });
 
 test("el reporte agrega números SADMIN confirmados sin alterar folios ni ampliar el alcance al buscar", async () => {

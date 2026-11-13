@@ -304,6 +304,7 @@ export async function GET(req: Request) {
         cuotaInicial: Number(item.cuotaInicial || 0),
         valorCuota: Number(item.valorCuota || 0),
         plazoMeses: item.plazoMeses,
+        frecuenciaPago: item.frecuenciaPago ?? null,
         estado: item.estado,
         estadoReporte: resolveCreditReportState(item.estado, item.aprobacionAnalista),
         deliverableReady: item.deliverableReady,

@@ -23,6 +23,8 @@ export type CreditReportExportItem = {
   cuotaInicial: number;
   creditoAutorizado: number;
   plazoMeses?: number | null;
+  valorCuota?: number | null;
+  frecuenciaPago?: string | null;
   estado: string;
   estadoReporte?: string;
 };
@@ -60,12 +62,15 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     { header: "Folio original", width: 30 },
     { header: "Número Sadmin", width: 30 },
     { header: "Plazo financiado (cuotas)", width: 25 },
+    { header: "Valor de la cuota", width: 22 },
+    { header: "Frecuencia de pago", width: 23 },
   ];
 
   sheet.columns.forEach((column, index) => {
-    const isMoney = index >= 10 && index <= 12;
+    const isMoney = (index >= 10 && index <= 12) || index === 17;
     const isTerm = index === 16;
-    column.numFmt = index === 0 ? "dd/mm/yyyy" : isMoney ? '"$" #,##0' : isTerm ? "0" : "@";
+    const moneyFormat = index === 17 ? '"$" #,##0.00' : '"$" #,##0';
+    column.numFmt = index === 0 ? "dd/mm/yyyy" : isMoney ? moneyFormat : isTerm ? "0" : "@";
     column.font = { name: "Calibri", size: 11, color: { argb: "FF151A21" } };
     column.alignment = {
       vertical: "middle",
@@ -96,6 +101,10 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
       item.plazoMeses != null && Number.isInteger(item.plazoMeses) && item.plazoMeses > 0
         ? item.plazoMeses
         : null,
+      item.valorCuota != null && Number.isFinite(item.valorCuota) && item.valorCuota >= 0
+        ? item.valorCuota
+        : null,
+      item.frecuenciaPago ?? "",
     ]);
     row.height = 32;
     row.eachCell({ includeEmpty: true }, (cell) => {
@@ -115,7 +124,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   });
-  sheet.autoFilter = `A1:Q${sheet.rowCount}`;
+  sheet.autoFilter = `A1:S${sheet.rowCount}`;
 
   return workbook;
 }
