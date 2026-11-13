@@ -60,6 +60,7 @@ function serializePolicyResponse(input: {
     platform: DataCreditoPlatform;
     decision: DataCreditoDecision;
     offer: DataCreditoOffer | null;
+    initialPaymentPercentages: number[];
     policyVersion: number;
     policyRevisionId: string;
   } | null;
@@ -210,6 +211,11 @@ export async function GET(request: Request) {
               simulationResolution.decision === "APROBADO"
                 ? simulationResolution.offer
                 : null,
+            initialPaymentPercentages: [...new Set(policy.bands
+              .filter((band) => band.platform === simulationPlatform && band.decision === "APROBADO" &&
+                Number.isFinite(band.initialPaymentPercentage) &&
+                band.initialPaymentPercentage >= 0 && band.initialPaymentPercentage <= 100)
+              .map((band) => band.initialPaymentPercentage))].sort((a, b) => a - b),
             policyVersion: policy.version,
             policyRevisionId: policy.revisionId,
           }

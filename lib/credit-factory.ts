@@ -96,6 +96,30 @@ export function resolveInitialPaymentAfterMinimumRefresh(input: {
   return String(minimum);
 }
 
+export function getAndroidSimulatorInitialPaymentPercentages(
+  policyPercentages: unknown
+): number[] {
+  if (!Array.isArray(policyPercentages)) return [];
+  return [...new Set(policyPercentages.filter(
+    (value): value is number =>
+      typeof value === "number" && Number.isFinite(value) &&
+      value >= 0 && value <= 100
+  ))].sort((left, right) => left - right);
+}
+
+export function resolveAndroidSimulatorInitialPaymentPercentage(input: {
+  selectedPercentage: number;
+  policyPercentages: readonly number[];
+  policyDefaultPercentage?: number | null;
+}) {
+  const allowed = getAndroidSimulatorInitialPaymentPercentages(input.policyPercentages);
+  if (allowed.includes(input.selectedPercentage)) return input.selectedPercentage;
+  if (input.policyDefaultPercentage != null && allowed.includes(input.policyDefaultPercentage)) {
+    return input.policyDefaultPercentage;
+  }
+  return allowed[0] ?? DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE;
+}
+
 export function calculateAndroidSimulatorInitialPayment(
   valorTotalEquipo: number | null | undefined,
   initialPaymentPercentage: number | null | undefined =
@@ -103,10 +127,13 @@ export function calculateAndroidSimulatorInitialPayment(
 ) {
   const total = Number(valorTotalEquipo || 0);
   if (!Number.isFinite(total) || total <= 0) return 0;
+  const percentage = initialPaymentPercentage == null
+    ? DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
+    : Number(initialPaymentPercentage);
   const normalizedPercentage =
-    SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.find(
-      (percentage) => percentage === Number(initialPaymentPercentage)
-    ) ?? DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE;
+    Number.isFinite(percentage) && percentage >= 0 && percentage <= 100
+      ? percentage
+      : DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE;
 
   return Math.round((total * normalizedPercentage) / 100);
 }

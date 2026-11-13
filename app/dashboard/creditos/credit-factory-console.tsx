@@ -106,6 +106,7 @@ import {
   DEFAULT_PAYMENT_FREQUENCY,
   DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
   generatePagareNumber,
+  getAndroidSimulatorInitialPaymentPercentages,
   getCreditClosureReadiness,
   getDefaultFirstPaymentDate,
   getCreditInstallmentOptions,
@@ -124,6 +125,7 @@ import {
   normalizePaymentFrequency,
   parseCreditInstallmentSelection,
   PAYMENT_FREQUENCY_OPTIONS,
+  resolveAndroidSimulatorInitialPaymentPercentage,
   resolveRequiredInitialPaymentByPlatform,
   resolveInitialPaymentAfterMinimumRefresh,
   shouldPreserveIphoneFactoryInstallments,
@@ -824,6 +826,7 @@ type DataCreditoPolicySimulation = {
   platform: "ANDROID" | "IPHONE";
   decision: "APROBADO" | "RECHAZADO";
   offer: DataCreditoApprovedResult["offer"] | null;
+  initialPaymentPercentages?: number[];
   policyVersion: number;
   policyRevisionId: string;
 };
@@ -3365,10 +3368,12 @@ export default function CreditFactoryConsole({
   const currentEquipmentImeiRef = useRef("");
   const currentDraftDocumentRef = useRef("");
   const [stepTwoContinuing, setStepTwoContinuing] = useState(false);
-  const [simulatorInitialPaymentPercentage, setSimulatorInitialPaymentPercentage] =
+  const [iphoneSimulatorInitialPaymentPercentage, setIphoneSimulatorInitialPaymentPercentage] =
     useState<SimulatorInitialPaymentPercentage>(
       DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
     );
+  const [androidSimulatorInitialPaymentPercentage, setAndroidSimulatorInitialPaymentPercentage] =
+    useState<number>(DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE);
   const [plazoMeses, setPlazoMeses] = useState(String(DEFAULT_CREDIT_INSTALLMENTS));
   const [tasaInteresEa, setTasaInteresEa] = useState(
     String(DEFAULT_LEGAL_CONSUMER_RATE_EA)
@@ -4024,6 +4029,7 @@ export default function CreditFactoryConsole({
   const simulationPolicyOffer =
     simulatorMode &&
     dataCreditoSimulationStatus === "ready" &&
+    dataCreditoSimulation?.platform === dataCreditoPlatform &&
     dataCreditoSimulation?.decision === "APROBADO"
       ? dataCreditoSimulation.offer
       : null;
@@ -4074,6 +4080,25 @@ export default function CreditFactoryConsole({
   );
   const simulatorIphoneRulesActive = simulatorMode && iphoneFactory;
   const simulatorAndroidRulesActive = simulatorMode && !iphoneFactory;
+  const androidSimulatorInitialPaymentPercentages = useMemo(
+    () => dataCreditoSimulation?.platform === "ANDROID"
+      ? getAndroidSimulatorInitialPaymentPercentages(
+          dataCreditoSimulation.initialPaymentPercentages ??
+            [dataCreditoSimulation.offer?.initialPaymentPercentage]
+        )
+      : [],
+    [dataCreditoSimulation]
+  );
+  const simulatorInitialPaymentPercentages: readonly number[] = simulatorAndroidRulesActive
+    ? androidSimulatorInitialPaymentPercentages
+    : SIMULATOR_INITIAL_PAYMENT_PERCENTAGES;
+  const simulatorInitialPaymentPercentage = simulatorAndroidRulesActive
+    ? resolveAndroidSimulatorInitialPaymentPercentage({
+        selectedPercentage: androidSimulatorInitialPaymentPercentage,
+        policyPercentages: androidSimulatorInitialPaymentPercentages,
+        policyDefaultPercentage: dataCreditoSimulation?.offer?.initialPaymentPercentage,
+      })
+    : iphoneSimulatorInitialPaymentPercentage;
   const dataCreditoEffectiveMaxFinancedAmount =
     simulatorIphoneRulesActive
       ? iphoneMaxFinancedAmount
@@ -7241,13 +7266,24 @@ export default function CreditFactoryConsole({
   };
 
   const handleSimulatorInitialPaymentPercentageChange = (
-    percentage: SimulatorInitialPaymentPercentage
+    percentage: number
   ) => {
-    if (percentage === simulatorInitialPaymentPercentage) {
+    if (
+      percentage === simulatorInitialPaymentPercentage ||
+      !simulatorInitialPaymentPercentages.includes(percentage)
+    ) {
       return;
     }
 
-    setSimulatorInitialPaymentPercentage(percentage);
+    if (simulatorAndroidRulesActive) {
+      setAndroidSimulatorInitialPaymentPercentage(percentage);
+    } else {
+      const iphonePercentage = SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.find(
+        (value) => value === percentage
+      );
+      if (iphonePercentage == null) return;
+      setIphoneSimulatorInitialPaymentPercentage(iphonePercentage);
+    }
     setCuotaInicial("");
   };
 
@@ -7394,6 +7430,7 @@ export default function CreditFactoryConsole({
           `/api/creditos/datacredito/politica?${params.toString()}`,
           { signal: controller.signal }
         );
+        if (controller.signal.aborted) return;
 
         if (!result.ok) {
           throw new Error(
@@ -7425,7 +7462,7 @@ export default function CreditFactoryConsole({
 
         setDataCreditoSimulationStatus("ready");
       } catch (error) {
-        if ((error as { name?: string })?.name === "AbortError") {
+        if (controller.signal.aborted || (error as { name?: string })?.name === "AbortError") {
           return;
         }
         setDataCreditoSimulation(null);
@@ -7619,6 +7656,7 @@ export default function CreditFactoryConsole({
   }, [clientePrimerNombre, clientePrimerApellido, clienteSegundoApellido, dataCreditoApproval, dataCreditoFullNameOnly]);
 
   useEffect(() => {
+    if (simulatorMode && !simulationPolicyReady) return;
     setCuotaInicial((currentValue) => {
       if (!valorTotalEquipoNumero && currentValue) {
         return currentValue;
@@ -7635,6 +7673,8 @@ export default function CreditFactoryConsole({
     cuotaInicialMinimaNumero,
     draftResumeHydrating,
     firmaSeguroProcessExists,
+    simulationPolicyReady,
+    simulatorMode,
     valorEquipoTotal,
   ]);
 
@@ -9980,7 +10020,10 @@ export default function CreditFactoryConsole({
     setValorEquipoTotal("");
     setCuotaInicial("");
     setPlazoMeses("");
-    setSimulatorInitialPaymentPercentage(
+    setIphoneSimulatorInitialPaymentPercentage(
+      DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
+    );
+    setAndroidSimulatorInitialPaymentPercentage(
       DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE
     );
     setStepTwoClearConfirmOpen(false);
@@ -16031,7 +16074,7 @@ export default function CreditFactoryConsole({
                           <div className="fp-step2-percentage">
                             <span>Porcentaje de cuota inicial</span>
                             <div role="radiogroup" aria-label="Porcentaje de cuota inicial">
-                              {SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.map(
+                              {simulatorInitialPaymentPercentages.map(
                                 (percentage) => {
                                   const selected =
                                     simulatorInitialPaymentPercentage === percentage;

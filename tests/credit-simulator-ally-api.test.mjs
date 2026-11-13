@@ -49,8 +49,9 @@ function createPolicy(allyId, decision = "APROBADO") {
   };
 }
 
-function fixture({ user = allyAdmin, enabled = true, assignedPolicy = createPolicy(user?.aliadoId || 2) } = {}) {
+function fixture({ user = allyAdmin, enabled = true, assignedPolicy = createPolicy(user?.aliadoId || 2), dailyQuota } = {}) {
   const reads = [];
+  const quotaReads = [];
   const unavailable = () => assert.fail("La simulación no debe consultar cupos, expedientes ni modificar configuración");
   const route = load("app/api/creditos/datacredito/politica/route.ts", {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
@@ -74,13 +75,22 @@ function fixture({ user = allyAdmin, enabled = true, assignedPolicy = createPoli
         reads.push(allyId);
         return assignedPolicy ? { kind: "READY", policy: assignedPolicy } : { kind: "NOT_ASSIGNED" };
       },
-      getDataCreditoDailyQuotaSnapshot: unavailable,
+      getDataCreditoDailyQuotaSnapshot: async (allyId) => {
+        if (dailyQuota === undefined) return unavailable();
+        quotaReads.push(allyId);
+        return dailyQuota;
+      },
       getDataCreditoQuotaSolicitudOwner: unavailable,
       createDataCreditoPolicyVersion: unavailable,
     },
   });
   return {
     reads,
+    quotaReads,
+    async ordinaryRequest(search = "") {
+      const response = await route.GET(new Request(`https://finserpay.test/api/creditos/datacredito/politica${search}`));
+      return { status: response.status, data: await response.json() };
+    },
     async request(platform = "ANDROID", search = "", method = "GET") {
       const response = await route[method](new Request(
         `https://finserpay.test/api/creditos/datacredito/politica?purpose=simulation&platform=${platform}${search}`,
@@ -104,6 +114,7 @@ test("el administrador aliado simula Android e iPhone con su política local sin
     assert.equal(result.data.simulation.offer.initialPaymentPercentage, 30);
     assert.equal(result.data.simulation.offer.installmentCount, 24);
     assert.equal(result.data.simulation.offer.maxInstallmentAmount, platform === "IPHONE" ? 160_000 : null);
+    assert.deepEqual(result.data.simulation.initialPaymentPercentages, [30]);
     assert.deepEqual(result.data.policy, { version: 5, createdAt: "2026-10-18T05:00:00.000Z" });
     for (const field of ["dailyQuota", "assessmentId", "bands", "priorityRules"]) {
       assert.equal(result.data[field], undefined, field);
@@ -111,6 +122,49 @@ test("el administrador aliado simula Android e iPhone con su política local sin
       assert.equal(result.data.policy[field], undefined, field);
     }
   }
+});
+
+test("las iniciales de simulación vienen de bandas aprobadas de la plataforma, incluyen cero y se ordenan sin duplicados", async () => {
+  const assignedPolicy = createPolicy(2);
+  const base = assignedPolicy.bands[0];
+  assignedPolicy.bands.push(...[40, 0, 30, 5, 10, 20, 25, 12.5, 100, 5, -1, 101, NaN, Infinity, null, undefined, "15"].map((initialPaymentPercentage, index) => ({
+    ...base, id: `android-${index}`, scoreMin: index, scoreMax: index, initialPaymentPercentage,
+  })));
+  assignedPolicy.bands.push(
+    { ...base, id: "android-rejected", scoreMin: 400, scoreMax: 500, decision: "RECHAZADO", initialPaymentPercentage: 8 },
+    { ...base, id: "iphone-only", platform: "IPHONE", scoreMin: 0, scoreMax: 500, initialPaymentPercentage: 15 },
+    { ...base, id: "iphone-rejected", platform: "IPHONE", scoreMin: 501, scoreMax: 950, decision: "RECHAZADO", initialPaymentPercentage: 2 },
+  );
+  const before = plain(assignedPolicy);
+  const f = fixture({ assignedPolicy });
+  const android = await f.request("ANDROID", "&aliadoId=1");
+  const iphone = await f.request("IPHONE");
+  assert.equal(android.status, 200);
+  assert.equal(iphone.status, 200);
+  assert.deepEqual(android.data.simulation.initialPaymentPercentages, [0, 5, 10, 12.5, 20, 25, 30, 40, 100]);
+  assert.deepEqual(iphone.data.simulation.initialPaymentPercentages, [15, 30]);
+  assert.deepEqual(f.reads, [2, 2]);
+  assert.deepEqual(f.quotaReads, []);
+  assert.deepEqual(plain(assignedPolicy), before);
+  for (const result of [android, iphone]) {
+    assert.equal(result.data.simulation.offer.initialPaymentPercentage, 30, "El selector no sustituye la oferta de simulación");
+    assert.equal(result.data.policy.bands, undefined);
+    assert.equal(result.data.simulation.bands, undefined);
+    assert.equal(result.data.simulation.score, undefined);
+    assert.equal(result.data.simulation.priorityRules, undefined);
+  }
+});
+
+test("la consulta normal conserva su respuesta y no expone iniciales de simulación", async () => {
+  const f = fixture({ dailyQuota: null });
+  const result = await f.ordinaryRequest("?platform=ANDROID");
+  assert.equal(result.status, 200);
+  assert.equal(result.data.simulation, undefined);
+  assert.equal(result.data.initialPaymentPercentages, undefined);
+  assert.equal(result.data.policy.initialPaymentPercentages, undefined);
+  assert.deepEqual(result.data.policy, { version: 5, createdAt: "2026-10-18T05:00:00.000Z" });
+  assert.deepEqual(f.reads, [2]);
+  assert.deepEqual(f.quotaReads, [2]);
 });
 
 test("un aliado no puede cambiar la política simulada enviando otro aliado, documento o solicitud", async () => {
@@ -137,6 +191,7 @@ test("el simulador aliado conserva rechazo, falta de asignación e integración 
   assert.equal(denied.status, 200);
   assert.equal(denied.data.simulation.decision, "RECHAZADO");
   assert.equal(denied.data.simulation.offer, null);
+  assert.deepEqual(denied.data.simulation.initialPaymentPercentages, []);
   for (const f of [fixture({ assignedPolicy: null }), fixture({ enabled: false })]) {
     const result = await f.request();
     assert.equal(result.status, 200);
