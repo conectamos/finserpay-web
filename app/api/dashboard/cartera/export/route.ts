@@ -75,7 +75,7 @@ function numberCell(value: number) {
   return `<td style='mso-number-format:"0";'>${Math.round(Number(value || 0))}</td>`;
 }
 
-function buildWorkbookHtml(rows: string, includeProrroga: boolean) {
+function buildWorkbookHtml(rows: string, includeProrroga: boolean, adminCentral: boolean) {
   return `<!doctype html>
 <html>
 <head>
@@ -114,11 +114,11 @@ function buildWorkbookHtml(rows: string, includeProrroga: boolean) {
         <th>Cuotas pagadas</th>
         <th>Cuotas pendientes</th>
         <th>Valor cuota</th>
-        <th>Saldo obligacion</th>
+        ${adminCentral ? "<th>Saldo obligacion</th>" : ""}
         <th>Saldo capital</th>
-        <th>Saldo fianza</th>
-        <th>Saldo intereses</th>
-        <th>Saldo seguro</th>
+        ${adminCentral ? "<th>Saldo fianza</th>" : ""}
+        ${adminCentral ? "<th>Saldo intereses</th>" : ""}
+        ${adminCentral ? "<th>Saldo seguro</th>" : ""}
         <th>Dias vencidos</th>
         <th>Ultimo pago que ha realizado</th>
         ${includeProrroga ? "<th>PRORROGA ACTIVA</th>" : ""}
@@ -350,11 +350,11 @@ export async function GET(req: Request) {
           ${numberCell(plan.paidCount)}
           ${numberCell(plan.pendingCount)}
           ${moneyCell(Number(credito.valorCuota || 0))}
-          ${moneyCell(plan.saldoPendiente)}
+          ${adminCentral ? moneyCell(plan.saldoPendiente) : ""}
           ${moneyCell(balances.saldoCapital)}
-          ${moneyCell(balances.saldoFianza)}
-          ${moneyCell(balances.saldoIntereses)}
-          ${moneyCell(balances.saldoSeguro ?? 0)}
+          ${adminCentral ? moneyCell(balances.saldoFianza) : ""}
+          ${adminCentral ? moneyCell(balances.saldoIntereses) : ""}
+          ${adminCentral ? moneyCell(balances.saldoSeguro ?? 0) : ""}
           ${numberCell(diasVencidos)}
           ${textCell(ultimoPago)}
           ${includeProrroga ? textCell(prorrogaActiva ? "SI" : "NO") : ""}
@@ -362,7 +362,7 @@ export async function GET(req: Request) {
       })
       .join("");
 
-    const html = buildWorkbookHtml(rows, includeProrroga);
+    const html = buildWorkbookHtml(rows, includeProrroga, adminCentral);
     const filenamePrefix =
       exportScope === "mora" ? "clientes-en-mora-finserpay" : "cartera-finserpay";
     const filename = `${filenamePrefix}-${new Date()

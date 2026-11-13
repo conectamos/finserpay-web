@@ -476,9 +476,6 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
   const totalMora = activeCredits.reduce((sum, item) => sum + item.saldoMora, 0);
   const totalPagado = cartera.reduce((sum, item) => sum + item.totalPaid, 0);
   const totalCredito = cartera.reduce((sum, item) => sum + item.montoCredito, 0);
-  const totalCapitalInvertido = cartera
-    .filter((item) => !["CANCELADO", "CANCELADA"].includes(String(item.estado || "").toUpperCase()))
-    .reduce((sum, item) => sum + item.capitalOriginal, 0);
   const totalInvertido = cartera.reduce((sum, item) => sum + item.inversionNeta, 0);
   const estimatedInvestments = cartera.filter((item) => item.inversionEstimada);
   const totalInversionEstimada = estimatedInvestments.reduce((sum, item) => sum + item.inversionNeta, 0);
@@ -649,29 +646,28 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             <p className={styles.updated}><History size={15} aria-hidden="true" />Actualizada {lastUpdatedLabel}</p>
         </Card>
 
+        {adminCentral ? <>
         <section
-          className={`${styles.metrics} ${adminCentral ? styles.centralMetrics : styles.allyMetrics}`}
+          className={`${styles.metrics} ${styles.centralMetrics}`}
           aria-label="Resumen de cartera"
         >
-          {adminCentral ? (
-            <MetricCard
-              detail={`${activeCredits.length} creditos con saldo`}
-              icon={WalletCards}
-              label="Saldo por cobrar"
-              tone="neutral"
-              value={money(totalPendiente)}
-              featured
-            />
-          ) : null}
           <MetricCard
-            detail={adminCentral ? `${money(totalSano)} sin mora` : undefined}
+            detail={`${activeCredits.length} creditos con saldo`}
+            icon={WalletCards}
+            label="Saldo por cobrar"
+            tone="neutral"
+            value={money(totalPendiente)}
+            featured
+          />
+          <MetricCard
+            detail={`${money(totalSano)} sin mora`}
             icon={CircleCheck}
             label="Cartera al dia"
             tone="green"
             value={percent(pctSana)}
           />
           <MetricCard
-            detail={adminCentral ? `${percent(pctMora)} del saldo pendiente` : undefined}
+            detail={`${percent(pctMora)} del saldo pendiente`}
             icon={TriangleAlert}
             label="Cartera en mora"
             tone="red"
@@ -679,7 +675,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
             warning={pctMora > 18}
           />
           <MetricCard
-            detail={adminCentral ? money(totalPagado) : undefined}
+            detail={money(totalPagado)}
             icon={TrendingUp}
             label="Recuperado"
             tone="neutral"
@@ -694,50 +690,45 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
               <strong>Detalle financiero</strong>
               <span>Inversión, capital y créditos pagados</span>
             </span>
-            {adminCentral ? <span className={styles.profitTotal}>
+            <span className={styles.profitTotal}>
               <span>Ganancia estimada</span>
               <strong className={totalGanancias < 0 ? styles.negative : undefined}>{money(totalGanancias)}</strong>
-            </span> : null}
+            </span>
             <ChevronDown size={20} className={styles.chevron} aria-hidden="true" />
           </summary>
           <div className={styles.disclosureBody}>
             <section
-              className={`${styles.secondaryMetrics} ${adminCentral ? styles.centralSecondary : styles.allySecondary}`}
+              className={`${styles.secondaryMetrics} ${styles.centralSecondary}`}
               aria-label="Indicadores complementarios"
             >
               <MiniMetric
                 label="Inversión acumulada"
-                value={money(adminCentral ? totalInvertido : totalCapitalInvertido)}
-                detail={adminCentral ? "Neto por crédito · activos y pagados" : "Capital original · activos y pagados"}
+                value={money(totalInvertido)}
+                detail="Neto por crédito · activos y pagados"
               />
               <MiniMetric
                 label="Capital comprometido"
                 value={money(totalCapitalComprometidoMora)}
                 detail={`${clientsMora} clientes en mora`}
               />
-              {adminCentral ? (
-                <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail="Retención activa · ya descontada de la inversión" />
-              ) : null}
+              <MiniMetric label="Respaldo" value={money(bolsaRespaldoMora)} detail="Retención activa · ya descontada de la inversión" />
               <MiniMetric label="Creditos pagados" value={percent(pctPagados)} detail={`${paidCredits.length} cerrados`} />
               <MiniMetric label="Clientes en mora" value={String(clientsMora)} detail={health.label} />
             </section>
 
-            {adminCentral ? (
-              <>
-              <div className={styles.financialActions}>
-                <p>{money(gananciaReconocida)} reconocida descontada · {money(totalGastosOperacion)} en gastos</p>
-                <div>
-                  <ActionLink href="/dashboard/financiero/cartera" icon={ReceiptText} label="Registrar gasto" />
-                  <ActionLink href="/dashboard/financiero/cartera/detalle" icon={History} label="Historial de gastos" />
-                </div>
+            <div className={styles.financialActions}>
+              <p>{money(gananciaReconocida)} reconocida descontada · {money(totalGastosOperacion)} en gastos</p>
+              <div>
+                <ActionLink href="/dashboard/financiero/cartera" icon={ReceiptText} label="Registrar gasto" />
+                <ActionLink href="/dashboard/financiero/cartera/detalle" icon={History} label="Historial de gastos" />
               </div>
-              <PortfolioProfitBreakdown input={profitInput} total={totalGanancias}
-                estimatedInvestment={totalInversionEstimada} estimatedCount={estimatedInvestments.length}
-                productFiltered={Boolean(selectedPlatform)} />
-              </>
-            ) : null}
+            </div>
+            <PortfolioProfitBreakdown input={profitInput} total={totalGanancias}
+              estimatedInvestment={totalInversionEstimada} estimatedCount={estimatedInvestments.length}
+              productFiltered={Boolean(selectedPlatform)} />
           </div>
         </details>
+        </> : null}
 
         <section
           className={`${styles.workspaces} ${adminCentral ? styles.centralWorkspaces : ""}`}
@@ -761,24 +752,30 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                 title="Temprana"
                 subtitle="1 a 15 dias"
                 clients={clientsTemprana}
-                value={bucketValues.temprana}
-                percentValue={ratio(bucketValues.temprana, totalPendiente)}
+                {...(adminCentral ? {
+                  value: bucketValues.temprana,
+                  percentValue: ratio(bucketValues.temprana, totalPendiente),
+                } : {})}
                 tone="amber"
               />
               <BucketCard
                 title="Mayor"
                 subtitle="16 a 30 dias"
                 clients={clientsMayor}
-                value={bucketValues.mayor}
-                percentValue={ratio(bucketValues.mayor, totalPendiente)}
+                {...(adminCentral ? {
+                  value: bucketValues.mayor,
+                  percentValue: ratio(bucketValues.mayor, totalPendiente),
+                } : {})}
                 tone="orange"
               />
               <BucketCard
                 title="Avanzada"
                 subtitle="Mas de 30 dias"
                 clients={clientsAvanzada}
-                value={bucketValues.avanzada}
-                percentValue={ratio(bucketValues.avanzada, totalPendiente)}
+                {...(adminCentral ? {
+                  value: bucketValues.avanzada,
+                  percentValue: ratio(bucketValues.avanzada, totalPendiente),
+                } : {})}
                 tone="red"
               />
             </div>
@@ -841,7 +838,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   <th className="w-[215px] px-4 py-3 text-[10px] font-bold uppercase">Equipo</th>
                   <th className="w-[120px] px-4 py-3 text-[10px] font-bold uppercase">Sede</th>
                   <th className="w-[175px] px-4 py-3 text-[10px] font-bold uppercase">Mora</th>
-                  <th className="w-[135px] px-4 py-3 text-[10px] font-bold uppercase">Saldo total</th>
+                  {adminCentral ? <th className="w-[135px] px-4 py-3 text-[10px] font-bold uppercase">Saldo total</th> : null}
                   <th className="w-[145px] px-4 py-3 text-[10px] font-bold uppercase">Capital pendiente</th>
                   <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Vence</th>
                   <th className="w-[130px] px-4 py-3 text-[10px] font-bold uppercase">Cuota</th>
@@ -889,9 +886,9 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                           {riskLabels[item.bucket]} · {item.diasMora} dias
                         </span>
                       </td>
-                      <td className="px-4 py-3 align-top font-black text-[#101828]">
+                      {adminCentral ? <td className="px-4 py-3 align-top font-black text-[#101828]">
                         {money(item.saldoPendiente)}
-                      </td>
+                      </td> : null}
                       <td className="px-4 py-3 align-top font-black text-[#101828]">
                         {money(item.saldoCapital)}
                       </td>
@@ -905,7 +902,7 @@ export default async function CarteraPage({ searchParams }: CarteraPageProps) {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={12} className="px-5 py-12 text-center text-sm font-semibold text-[#667085]">
+                    <td colSpan={adminCentral ? 12 : 11} className="px-5 py-12 text-center text-sm font-semibold text-[#667085]">
                       No hay creditos en mora para mostrar.
                     </td>
                   </tr>
@@ -1015,8 +1012,8 @@ function BucketCard({
   title: string;
   subtitle: string;
   clients: number;
-  value: number;
-  percentValue: number;
+  value?: number;
+  percentValue?: number;
   tone: "amber" | "orange" | "red";
 }) {
   return (
@@ -1024,9 +1021,11 @@ function BucketCard({
       <p className={styles.bucketTitle}>{title}</p>
       <p className={styles.bucketDetail}>{subtitle}</p>
       <p className={styles.bucketClients}>{clients}</p>
-      <p className={styles.bucketValue}>{money(value)}</p>
-      <ProgressBar value={percentValue} label={`${title}: ${percent(percentValue)} del saldo`} className={styles.bucketProgress} />
-      <p className={styles.bucketDetail}>{percent(percentValue)} del saldo</p>
+      {value !== undefined && percentValue !== undefined ? <>
+        <p className={styles.bucketValue}>{money(value)}</p>
+        <ProgressBar value={percentValue} label={`${title}: ${percent(percentValue)} del saldo`} className={styles.bucketProgress} />
+        <p className={styles.bucketDetail}>{percent(percentValue)} del saldo</p>
+      </> : null}
     </div>
   );
 }

@@ -99,6 +99,14 @@ function workbookRows(html) {
   );
 }
 
+function workbookHeaders(html) {
+  return [...html.matchAll(/<th>([\s\S]*?)<\/th>/g)].map(match => match[1]);
+}
+
+function rowCells(row) {
+  return [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(match => match[1]);
+}
+
 test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas porcentuales numericas", async (t) => {
   const credits = [
     creditFixture(1, "INSCRITO", {
@@ -197,9 +205,10 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
     "@/lib/credit-outstanding-balance": {
       splitOutstandingBalance({ saldoPendiente }) {
         return {
-          saldoCapital: saldoPendiente,
-          saldoFianza: 0,
-          saldoIntereses: 0,
+          saldoCapital: saldoPendiente > 0 ? 234_567 : 0,
+          saldoFianza: saldoPendiente > 0 ? 81_234 : 0,
+          saldoIntereses: saldoPendiente > 0 ? 75_000 : 0,
+          saldoSeguro: saldoPendiente > 0 ? 9_199 : 0,
         };
       },
     },
@@ -341,6 +350,66 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   assert.equal(allyWithoutScopeResponse.status, 403);
   assert.equal(findManyQuery, null);
   assert.equal(exemptionCalls.length, 0, "La cartera general no consulta excepciones");
+
+  await t.test("aliado recibe solo capital y columnas permitidas sin saldos reservados en cartera ni mora", async () => {
+    const previousSession = sessionUser;
+    const previousOverdue = overdue;
+    const centralHeaders = [
+      "Fecha apertura", "Número crédito", "Folio original", "Nombre del cliente", "Cedula",
+      "Telefono del cliente", "DIRECCION", "FECHA DE NACIMIENTO", "CORREO", "SEXO", "IMEI",
+      "Referencia", "Plataforma", "Plazo credito", "Frecuencia de pago", "Interés mensual efectivo (%)",
+      "Fianza total del crédito (%)", "Seguro por cuota (%)", "ALIADO", "SEDE",
+      "Fecha proxima cuota a pagar", "Cuotas pagadas", "Cuotas pendientes", "Valor cuota",
+      "Saldo obligacion", "Saldo capital", "Saldo fianza", "Saldo intereses", "Saldo seguro",
+      "Dias vencidos", "Ultimo pago que ha realizado",
+    ];
+    const reserved = new Set(["Saldo obligacion", "Saldo fianza", "Saldo intereses", "Saldo seguro"]);
+    try {
+      overdue = true;
+      for (const scope of ["cartera", "mora", "central"]) {
+        sessionUser = { id: 1, rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY", aliadoAccesoId: 1 };
+        const centralResponse = await route.GET(new Request(
+          `https://finserpay.test/api/dashboard/cartera/export?scope=${scope}&plataforma=IPHONE`
+        ));
+        const centralHtml = await centralResponse.text();
+        const headers = workbookHeaders(centralHtml);
+        const centralRows = workbookRows(centralHtml);
+        assert.equal(centralResponse.status, 200);
+        assert.deepEqual(headers, [...centralHeaders, ...(scope === "mora" ? ["PRORROGA ACTIVA"] : [])]);
+        assert.equal(centralRows.length, 1);
+        assert.equal(rowCells(centralRows[0]).length, headers.length);
+        for (const value of [400_000, 81_234, 75_000, 9_199]) assert.match(centralHtml, new RegExp(`>${value}</td>`));
+
+        sessionUser = { id: 8, rolNombre: "ADMIN", aliadoAccesoCodigo: "ALIADO_PRUEBA", aliadoAccesoId: 7 };
+        const allyResponse = await route.GET(new Request(
+          `https://finserpay.test/api/dashboard/cartera/export?scope=${scope}&plataforma=IPHONE` +
+          "&aliadoId=99&adminCentral=true&central=true&rolNombre=ADMIN&includeFinancial=true"
+        ));
+        const allyHtml = await allyResponse.text();
+        const allyHeaders = workbookHeaders(allyHtml);
+        const allyRows = workbookRows(allyHtml);
+        assert.equal(allyResponse.status, 200);
+        assert.equal(findManyQuery.where.sede.aliadoId, 7, "El aliado de sesión prevalece sobre parámetros falsificados");
+        assert.deepEqual(allyHeaders, headers.filter(heading => !reserved.has(heading)));
+        assert.equal(allyRows.length, centralRows.length);
+        for (let index = 0; index < allyRows.length; index++) {
+          const cells = rowCells(allyRows[index]);
+          assert.equal(cells.length, allyHeaders.length);
+          assert.deepEqual(cells, rowCells(centralRows[index]).filter((_, column) => !reserved.has(headers[column])),
+            "Capital, cuota, conteos y tasas conservan los mismos valores y orden");
+        }
+        for (const heading of reserved) assert.equal(allyHtml.includes(heading), false);
+        assert.doesNotMatch(allyHtml, /400000|81234|75000|9199/, "Los valores privados no aparecen en texto, atributos ni metadatos");
+        assert.match(allyHtml, />234567<\/td>/);
+        assert.match(allyHtml, />100000<\/td>/);
+        assert.doesNotMatch(allyHtml, /CLIENTE_PAGADO_EXPORTADO/, "Se conserva el filtro de plataforma");
+      }
+    } finally {
+      sessionUser = previousSession;
+      overdue = previousOverdue;
+      exemptionCalls.length = 0;
+    }
+  });
 
   await t.test("Excel mora marca SI/NO con excepciones vigentes, vencidas y desactivadas", async () => {
     sessionUser = {

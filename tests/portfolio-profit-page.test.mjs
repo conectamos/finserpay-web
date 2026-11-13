@@ -88,46 +88,51 @@ function expectInvestment(rendered,amount,detail){
  assert.match(rendered.html,/Inversión acumulada/);
  assert.doesNotMatch(rendered.html,/estimada ·|créditos sin liquidación/);
 }
+function expectAllyFinancialHidden(rendered){
+ assert.equal(rendered.investment,null,"El aliado no recibe la tarjeta de inversión en el árbol RSC");
+ assert.equal(rendered.captured.input,undefined);
+ assert.doesNotMatch(rendered.html,/Detalle financiero|Inversión acumulada|Capital comprometido|Ganancia estimada/);
+}
 
-test("el aliado ve capital original de activos, pagados e históricos sin restar netos ni redescuentos",async()=>{
+test("el aliado no recibe inversión ni detalle financiero de activos, pagados o históricos",async()=>{
  const rows=[credit(1),credit(2,{paid:true}),credit(3,{historical:true,ally:1})];
  const rendered=await render({rows,central:false});
- expectInvestment(rendered,5_000_000,"Capital original · activos y pagados");
- assert.equal(rendered.captured.input,undefined);
- // Changing settlement net amounts must not change historical funded capital.
+ expectAllyFinancialHidden(rendered);
+ // Neither historical values nor changed settlement amounts may reveal the block.
  rows[0].liquidacionAliadoCredito.valorPagar=1;
  rows[1].liquidacionAliadoCredito.valorPagar=10_000_000;
  rows[0].sede={...rows[0].sede,aliado:{...rows[0].sede.aliado,redescuentoIphonePorcentaje:75}};
  const changed=await render({rows,central:false});
- expectInvestment(changed,5_000_000,"Capital original · activos y pagados");
+ expectAllyFinancialHidden(changed);
 });
 
-test("el capital original usa saldo base, equipo menos inicial y obligación menos cargos según disponibilidad",async()=>{
+test("las distintas fuentes de capital no exponen el detalle financiero al aliado",async()=>{
  const rows=[credit(1,{historical:true}),credit(2,{historical:true}),credit(3,{historical:true})];
  Object.assign(rows[0],{saldoBaseFinanciado:0,valorEquipoTotal:900_000,cuotaInicial:100_000,montoCredito:1_200_000,valorInteres:200_000,valorFianza:100_000});
  Object.assign(rows[1],{saldoBaseFinanciado:0,valorEquipoTotal:0,cuotaInicial:0,montoCredito:1_500_000,valorInteres:300_000,valorFianza:200_000});
  Object.assign(rows[2],{saldoBaseFinanciado:850_000,valorEquipoTotal:2_000_000,cuotaInicial:500_000,montoCredito:2_000_000,valorInteres:900_000,valorFianza:100_000});
  const rendered=await render({rows,central:false});
- expectInvestment(rendered,2_650_000,"Capital original · activos y pagados");
+ expectAllyFinancialHidden(rendered);
 });
 
-test("la inversión del aliado respeta producto y todas sus sedes e ignora un aliado solicitado ajeno",async()=>{
+test("el aliado mantiene alcance y producto sin recibir inversión aunque solicite otro aliado",async()=>{
  const rows=[credit(1),credit(2,{paid:true}),credit(3,{historical:true,ally:1,platform:"ANDROID"}),credit(4,{historical:true,ally:2})];
  rows[1].sede={...rows[1].sede,nombre:"Segunda sede"};
  const all=await render({rows,central:false,params:{aliadoId:"2"}});
- expectInvestment(all,5_000_000,"Capital original · activos y pagados");
+ expectAllyFinancialHidden(all);
  assert.equal(all.calls.credit.where.sede.aliadoId,1);
  const iphone=await render({rows,central:false,params:{plataforma:"IPHONE"}});
- expectInvestment(iphone,4_000_000,"Capital original · activos y pagados");
+ expectAllyFinancialHidden(iphone);
  assert.equal(iphone.calls.credit.where.AND[0].sede.aliadoId,1);
  const android=await render({rows,central:false,params:{plataforma:"ANDROID"}});
- expectInvestment(android,1_000_000,"Capital original · activos y pagados");
+ expectAllyFinancialHidden(android);
+ assert.equal(android.calls.credit.where.AND[0].sede.aliadoId,1);
 });
 
-test("los anulados y cancelados no aumentan inversión original del aliado",async()=>{
+test("los anulados y cancelados no hacen aparecer inversión ni detalle financiero al aliado",async()=>{
  const rows=[credit(1),...["ANULADO","ANULADA","CANCELADO","CANCELADA"].map((estado,index)=>({...credit(index+2),estado}))];
  const rendered=await render({rows,central:false});
- expectInvestment(rendered,2_000_000,"Capital original · activos y pagados");
+ expectAllyFinancialHidden(rendered);
 });
 
 test("central conserva inversión neta de ganancia y detalle sin texto de estimación en la tarjeta",async()=>{
@@ -139,10 +144,11 @@ test("central conserva inversión neta de ganancia y detalle sin texto de estima
  assert.equal(rendered.captured.estimatedCount,1);
 });
 
-test("el aliado conserva capital original histórico cuando supera mil registros",async()=>{
+test("el aliado no recibe el bloque financiero aunque su historial supere mil registros",async()=>{
  const rows=Array.from({length:1001},(_,index)=>credit(index+1,{historical:true,paid:true}));
  const rendered=await render({rows,central:false,params:{plataforma:"IPHONE"}});
- expectInvestment(rendered,1_001_000_000,"Capital original · activos y pagados");
+ expectAllyFinancialHidden(rendered);
+ assert.equal(rendered.calls.credit.where.AND[1].id.in.length,1001);
  assert.equal(rendered.calls.credit.take,undefined);
 });
 
@@ -171,7 +177,7 @@ test("aliado conserva su Excel y navegación sin recibir acciones ni informació
  const links=linksIn(rendered.html);
  assert.ok(links.includes("/api/dashboard/cartera/export?aliadoId=1&plataforma=IPHONE"),"el Excel debe quedar limitado al aliado de la sesión");
  assert.ok(links.includes("/dashboard/cartera/detalle-mora"));
- assert.ok(links.includes("/dashboard/reportes/recaudo-por-corte"));
+ assert.ok(!links.includes("/dashboard/reportes/recaudo-por-corte"));
  assert.ok(!links.includes("/dashboard/financiero/cartera"));
  assert.ok(!links.includes("/dashboard/financiero/cartera/detalle"));
  assert.doesNotMatch(rendered.html,/PUSH_DE_PRUEBA|WHATSAPP_DE_PRUEBA|Ganancia estimada|Saldo por cobrar/);
@@ -180,18 +186,19 @@ test("aliado conserva su Excel y navegación sin recibir acciones ni informació
  assert.equal(product.props.defaultValue,"IPHONE");
 });
 
-test("ambos alcances conservan tabla completa desplazable por teclado y métricas adaptables",async()=>{
+test("ambos alcances conservan tabla desplazable por teclado con columnas y métricas autorizadas",async()=>{
  for(const central of [true,false]) {
   const rendered=await render({rows:[credit(1,{late:true})],central});
   const container=nodes(rendered.element,node=>node.type==="main")[0];
   assert.equal(container.props.className,"content");
   const metrics=nodes(rendered.element,node=>node.props?.["aria-label"]==="Resumen de cartera")[0];
-  assert.equal(metrics.props.className,`metrics ${central?"centralMetrics":"allyMetrics"}`);
+  if(central) assert.equal(metrics.props.className,"metrics centralMetrics");
+  else assert.equal(metrics,undefined,"El aliado no recibe las tarjetas financieras");
   const tableRegion=nodes(rendered.element,node=>node.props?.role==="region"&&node.props?.["aria-label"]?.startsWith("Créditos en mora"))[0];
   assert.equal(tableRegion.props.tabIndex,0,"en móvil y teclado se puede consultar todo el detalle horizontal");
   assert.equal(tableRegion.props.className,"tableScroll");
   const headers=nodes(tableRegion,node=>node.type==="th");
-  assert.equal(headers.length,12);
+  assert.equal(headers.length,central?12:11);
   for(const label of ["Documento","Celular","Ref. familiar","Número crédito","Equipo","Capital pendiente","Cuota"]) {
    assert.ok(headers.some(node=>node.props.children===label),`Columna preservada: ${label}`);
   }
