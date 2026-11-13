@@ -427,7 +427,9 @@ test("la mesa agrupa la información sin abrir formularios antes de seleccionar 
 test("una prórroga vigente muestra Prórroga y su vencimiento en la fila y el panel", async () => {
   const ui = harness({ creditOverrides: { prorrogaActiva: activeExtension, estadoGestion: "PRORROGA" } });
   await ui.open();
-  assert.deepEqual(rowStatus(ui), ["Prórroga"]);
+  assert.equal(rowStatus(ui).length, 2);
+  assert.match(rowStatus(ui)[0], /Prórroga activa hasta .*10.*2026/);
+  assert.equal(rowStatus(ui)[1], "Prórroga");
   assert.match(ui.nodeText(ui.row()), /10.*2026/, "el vencimiento debe verse sin abrir el crédito");
   assert.ok(ui.sidePanel(), "el detalle se abre en el panel compartido");
   const panelText = ui.nodeText(ui.sidePanel());
@@ -461,8 +463,8 @@ test("un estado Prórroga obsoleto sin autorización vuelve al estado real de la
 test("la autorización central sin vencimiento muestra Sin fecha límite sin inventar una fecha", async () => {
   const ui = harness({ creditOverrides: { prorrogaActiva: { ...activeExtension, expiresOn: null }, estadoGestion: "PRORROGA" } });
   await ui.open();
-  assert.deepEqual(rowStatus(ui), ["Prórroga"]);
-  assert.match(ui.nodeText(ui.row()), /Sin fecha límite/);
+  assert.deepEqual(rowStatus(ui), ["Prórroga activa sin fecha límite", "Prórroga"]);
+  assert.match(ui.nodeText(ui.row()), /sin fecha límite/i);
   assert.match(ui.nodeText(ui.sidePanel()), /Sin fecha límite/);
   assert.doesNotMatch(ui.nodeText(ui.sidePanel()), /1970|Invalid Date/);
 });
