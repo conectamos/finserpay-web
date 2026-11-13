@@ -528,7 +528,9 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   let deliveryStatus = "RESEND_UNCERTAIN";
   let deliveryContactSource;
   let confirmedContact = { phone: "3101234567", email: "nuevo@example.com" };
-  const acceptedResendContact = { phone: "3101234567", email: "nuevo@example.com" };
+  let acceptedResendContact = { phone: "3101234567", email: "nuevo@example.com" };
+  let eventContact = acceptedResendContact;
+  let pendingTransport;
   let resentAt = "2026-10-09T16:05:00.000Z";
   let requestPayload = { endpoint: "create-full-by-company", payload: {
     signers: [{ number: "3218928117", email: "original@example.com" }],
@@ -556,7 +558,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
       assert.match(sql, /"draftId"=\$1 AND "processUuid"=\$2/,
         "un reenvío histórico incierto no bloquea otro proceso vigente");
       return deliveryPending && deliveryProcessUuid === params[1] ? [{ id: "60000000-0000-4000-8000-000000000006",
-        status: deliveryStatus, processUuid: deliveryProcessUuid, afterContact: { phone: "3101234567", email: "nuevo@example.com" },
+        status: deliveryStatus, processUuid: deliveryProcessUuid, afterContact: { phone: "3101234567", email: "nuevo@example.com", transport: pendingTransport },
         beforeContact: deliveryContactSource ? { source: deliveryContactSource } : {},
         reason: "El número original no tiene WhatsApp", actorName: "Analista nominal" }] : [];
     }
@@ -571,7 +573,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
       id: "delivery-event", status: deliveryPending ? "RESEND_UNCERTAIN" : "RESENT",
       actorName: "Analista nominal", reason: "El número original no tiene WhatsApp",
       beforeContact: { phone: "3218928117", email: "original@example.com" },
-      afterContact: confirmedContact || {}, createdAt: "2026-10-09T16:05:00.000Z",
+      afterContact: eventContact, createdAt: "2026-10-09T16:05:00.000Z",
     }];
     return [];
   } };
@@ -583,17 +585,29 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   assert.equal(ready.signature.sentEmail, "nuevo@example.com");
   assert.equal(ready.signature.sentAt, resentAt);
   assert.equal(ready.capabilities.canRedirectPendingSignature, true, "no se exige sello para reenviar el documento existente");
-  assert.deepEqual(plain(ready.signature.lastResend), { acceptedAt: resentAt, channel: "EMAIL",
-    email: "nuevo@example.com", deliveryStatus: "UNCONFIRMED" });
+  assert.deepEqual(plain(ready.signature.lastResend), { acceptedAt: resentAt, transport: "API", channel: "EMAIL",
+    phone: "3101234567", email: "nuevo@example.com", deliveryStatus: "UNCONFIRMED" });
   assert.ok(ready.timeline.some(event => event.label === "Reenvío por correo aceptado; entrega sin confirmar" &&
     event.actor === "Analista nominal" && event.detail.includes("3218928117 → 3101234567")));
   assert.ok(calls.every(call => !/\b(INSERT|UPDATE|DELETE)\b/.test(call.sql)), "la consulta no altera ningún registro");
 
-  confirmedContact = { phone: "3101234568", email: "otra-edicion@example.com" };
+  confirmedContact = { phone: "3101234568", email: "otra-edicion@example.com", transport: "PORTAL" };
   const newerEdit = await read.getOperationalCase("DRAFT", "30", db);
   assert.equal(newerEdit.signature.sentEmail, "otra-edicion@example.com");
   assert.equal(newerEdit.signature.lastResend.email, "nuevo@example.com",
     "una edición posterior no atribuye a su correo un reenvío aceptado para otro destinatario");
+  assert.equal(newerEdit.signature.lastResend.phone, "3101234567");
+  assert.equal(newerEdit.signature.lastResend.transport, "API",
+    "una edición posterior en el portal no cambia el transporte del acuse histórico");
+  assert.ok(newerEdit.timeline.some(event => event.label === "Reenvío por correo aceptado; entrega sin confirmar"),
+    "cada evento conserva su transporte aunque el contacto vigente se haya editado desde el portal");
+  acceptedResendContact = { ...acceptedResendContact, transport: "PORTAL" };
+  eventContact = acceptedResendContact;
+  const portalResend = await read.getOperationalCase("DRAFT", "30", db);
+  assert.deepEqual(plain(portalResend.signature.lastResend), { acceptedAt: resentAt, transport: "PORTAL", channel: "UNCONFIRMED",
+    phone: "3101234567", email: "nuevo@example.com", deliveryStatus: "UNCONFIRMED" });
+  assert.ok(portalResend.timeline.some(event => event.label === "Reenvío solicitado desde el portal; canal y entrega sin confirmar" &&
+    event.detail.includes("3218928117 → 3101234567")));
   confirmedContact = { ...acceptedResendContact };
 
   correctionPending = true;
@@ -614,7 +628,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
     const resumed = await read.getOperationalCase("DRAFT", "30", db);
     assert.equal(resumed.capabilities.canRedirectPendingSignature, true, retryable);
     assert.deepEqual(plain(resumed.pendingRecipientDelivery), {
-      id: "60000000-0000-4000-8000-000000000006", status: retryable, processUuid,
+      id: "60000000-0000-4000-8000-000000000006", status: retryable, transport: "API", processUuid,
       phone: "3101234567", email: "nuevo@example.com", reason: "El número original no tiene WhatsApp",
       actorName: "Analista nominal", retryable: true,
     }, "la recarga conserva el id durable, contacto y motivo para reintentar la misma operación");
@@ -636,8 +650,13 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
         "un teléfono no confirmado exige revisión, incluso al recargar el expediente");
     }
   }
-  deliveryContactSource = "PROVIDER_READBACK";
-  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).pendingRecipientDelivery.retryable, true);
+  for (const source of ["PROVIDER_READBACK", "PORTAL_READBACK"]) {
+    deliveryContactSource = source;
+    pendingTransport = source === "PORTAL_READBACK" ? "PORTAL" : undefined;
+    const verified = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(verified.pendingRecipientDelivery.retryable, true);
+    assert.equal(verified.pendingRecipientDelivery.transport, pendingTransport || "API");
+  }
   deliveryContactSource = undefined;
 
   deliveryStatus = "RESEND_UNCERTAIN";
@@ -651,6 +670,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
     "se conserva la trazabilidad sin inventar confirmación de entrega");
   signed = false;
   deliveryProcessUuid = "historical-superseded-process";
+  eventContact = { phone: "3101234567", email: "nuevo@example.com" };
   confirmedContact = null;
   const oldUncertain = await read.getOperationalCase("DRAFT", "30", db);
   assert.equal(oldUncertain.pendingRecipientDelivery, null);

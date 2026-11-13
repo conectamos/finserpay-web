@@ -1,5 +1,52 @@
 # Actualizar y reenviar el mismo firmante en FirmaSeguro
 
+## Flujo vigente: portal con correo y contraseña
+
+Desde el 13 de noviembre de 2026, las nuevas operaciones de **Gestionar firma**
+utilizan el portal `https://app.firmaseguro.co`. La API sigue consultando el proceso
+y vinculando su identificador de firmante; la edición del contacto y el reenvío
+se realizan mediante los controles del portal. No existe retorno automático a las
+mutaciones API cuando falla el portal.
+
+El servidor inicia una sesión temporal con `FIRMASEGURO_PORTAL_EMAIL` y
+`FIRMASEGURO_PORTAL_PASSWORD`. Si ninguna de las dos está definida, usa el par
+existente `FIRMASEGURO_EMAIL` / `FIRMASEGURO_PASSWORD`. Un par específico incompleto
+produce un error de configuración. Las credenciales permanecen en variables del
+servidor; no se solicitan al analista ni se incluyen en el historial.
+
+El navegador busca por cédula y folio, exige un único proceso y comprueba el
+documento, el identificador del firmante, su identidad y que la firma continúe
+pendiente. Solo cambia celular y correo, conserva los demás campos y verifica
+el contacto guardado mediante una nueva lectura antes de reenviar. No crea otro
+proceso ni sustituye el PDF. Un CAPTCHA, cambio de estructura o coincidencia
+ambigua detiene la operación.
+
+El historial guarda el contacto anterior leído del portal (`PORTAL_READBACK`),
+el contacto solicitado y `afterContact.transport: "PORTAL"`. Una edición sin
+confirmación se concilia mediante lectura antes de continuar. Un reenvío iniciado
+o incierto nunca se repite automáticamente. La confirmación **Solicitud reenviada**
+acredita la aceptación del portal; el canal, la entrega y la lectura del cliente
+permanecen sin confirmar. Los reintentos de operaciones históricas sin marcador
+de transporte conservan su flujo API original.
+
+El contenedor incluye Chromium headless de Playwright, de la misma versión exacta
+que la dependencia de producción, bajo `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`.
+En desarrollo se instala con `npx playwright install --only-shell chromium`.
+Cada operación cierra su contexto; no guarda perfiles, capturas ni trazas de acceso.
+Las pruebas automatizadas usan un portal simulado. El 13 de noviembre de 2026 se
+comprobó además el inicio de sesión real y el listado con Chromium headless en
+Windows, usando las credenciales actuales de Railway sin mostrarlas. La consulta
+utiliza `verifyFirmaSeguroPortalAccess()`, que comparte el acceso y las
+restricciones de navegación con la gestión de destinatarios y cierra siempre su
+sesión. La comprobación identificó la ruta canónica de contraseña
+`/Identity/Account/SignInPassword`, ahora permitida de forma específica.
+
+Esa consulta no editó contactos ni reenvió solicitudes. Antes de activar siguen
+pendientes la comprobación del contenedor Linux y la edición/reenvío de un caso
+pendiente con destinatario autorizado.
+
+## Referencia histórica: contrato API
+
 Fuente consultada el 9 de octubre de 2026: [API v2 oficial, Swagger JSON](https://demo.firmaseguro.co/api/swagger/v2/swagger.json), enlazada desde la [documentación oficial](https://firmaseguro.atlassian.net/wiki/spaces/FIRMASEGUR/pages/353468417/Consumo+API+PROCESS+Crear+procesos+de+Firma+V2). El ambiente de ese contrato es **Pre-Prod**. Swagger en producción devuelve 404; no se realizaron mutaciones al consultar el contrato.
 
 | Operación | Método y ruta |
