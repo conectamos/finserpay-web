@@ -761,7 +761,9 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           expectedProcessUuid: processUuid, confirmed: true }),
       }, "No fue posible cambiar el número y reenviar la firma.");
       const message = result.operation?.message || result.message ||
-        "FirmaSeguro aceptó la solicitud de reenvío por correo. La entrega y el envío por WhatsApp no están confirmados.";
+        (pending && pending.transport !== "PORTAL"
+          ? "FirmaSeguro aceptó la solicitud de reenvío por correo. La entrega y el envío por WhatsApp no están confirmados."
+          : "Se solicitó el reenvío desde el portal de FirmaSeguro. El canal y la entrega al destinatario no están confirmados.");
       failedSafely = result.operation?.status === "FAILED_SAFE";
       if (result.operation?.status !== "RESENT" || result.operation.processUuid !== processUuid) setActionError(message);
       else {
@@ -935,6 +937,10 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   const canSubmitImei = Boolean(detail?.capabilities.canChangeImei && !busy && /^\d{15}$/.test(newImei) && newImei !== detail?.imei && reason.trim().length >= 5);
   const normalizedRedirectPhone = colombianPhone(redirectPhone);
   const pendingDelivery = detail?.pendingRecipientDelivery;
+  const redirectionUsesPortal = !pendingDelivery || pendingDelivery.transport === "PORTAL";
+  const redirectionActionLabel = pendingDelivery
+    ? redirectionUsesPortal ? "Completar reenvío desde el portal" : "Completar reenvío por correo"
+    : "Editar destinatario y reenviar firma";
   const deliveryLocked = Boolean(pendingDelivery);
   const canSubmitRedirection = Boolean(canRedirectPendingSignature && !busy && /^3\d{9}$/.test(normalizedRedirectPhone) &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(redirectEmail.trim()) && redirectReason.trim().length >= 5 &&
@@ -1175,8 +1181,12 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           </div>
           {signature?.lastResend && signature.status === "PENDING" ? <p className={styles.redirectionWarning} role="status">
             <FileClock size={18} aria-hidden="true" /><span>
-              Reenvío por correo aceptado: {signature.lastResend.email || "correo registrado"}. Entrega no confirmada.
-              {" "}No hay confirmación de envío por WhatsApp. {dateLabel(signature.lastResend.acceptedAt)}.
+              {signature.lastResend.transport === "PORTAL" ? <>
+                Reenvío solicitado desde el portal: celular {signature.lastResend.phone || "sin registro"}; correo {signature.lastResend.email || "sin registro"}. Canal y entrega no confirmados.
+              </> : <>
+                Reenvío por correo aceptado: {signature.lastResend.email || "correo registrado"}. Entrega no confirmada.
+                {" "}No hay confirmación de envío por WhatsApp.
+              </>} {dateLabel(signature.lastResend.acceptedAt)}.
             </span>
           </p> : null}
           {detail.capabilities.canUpdateContact || canManageSignature || canRedirectPendingSignature || canRefreshSignature ? <div className={styles.signatureActions}>
@@ -1197,7 +1207,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
                 setRedirectPhone(pendingDelivery?.phone || signature?.sentPhone || detail.phone || "");
                 setRedirectEmail(pendingDelivery?.email || signature?.sentEmail || detail.email || "");
                 setRedirectReason(pendingDelivery?.reason || ""); setRedirectingSignature(true); }} disabled={Boolean(busy)}>
-              Editar destinatario y reenviar por correo<ArrowRight size={18} aria-hidden="true" />
+              {redirectionActionLabel}<ArrowRight size={18} aria-hidden="true" />
             </Button> : null}
           </div> : null}
         </div>
@@ -1214,7 +1224,9 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         </div> : null}
         {redirectingSignature && canRedirectPendingSignature ? <div className={styles.signatureRedirection}>
           <p className={styles.redirectionWarning}><FileClock size={18} aria-hidden="true" /><span>
-            Se actualizará el destinatario en FirmaSeguro y se solicitará el reenvío por correo del mismo documento pendiente. Esta operación no confirma un envío por WhatsApp. El cambio quedará registrado en el historial.
+            {redirectionUsesPortal
+              ? "Se ingresará al portal de FirmaSeguro para actualizar el destinatario y reenviar la solicitud pendiente. Se conservarán el mismo documento y proceso de firma. Esta operación no confirma el canal ni la entrega al destinatario. El cambio quedará registrado en el historial."
+              : "Se completará el reenvío por correo del mismo documento pendiente en FirmaSeguro con el destinatario registrado. Esta operación no confirma un envío por WhatsApp ni la entrega. El cambio quedará registrado en el historial."}
           </span></p>
           {pendingDelivery ? <p className={styles.muted}>Responsable: {pendingDelivery.actorName}. {pendingDelivery.retryable
             ? "Hay un reenvío pendiente de completar. Continúa con el contacto y el motivo registrados."
@@ -1236,7 +1248,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           <div className={styles.redirectionActions}>
             <Button variant="ghost" onClick={() => { setRedirectingSignature(false); setRedirectPhone(""); setRedirectEmail(""); setRedirectReason(""); }} disabled={Boolean(busy)}>Cancelar</Button>
             <Button onClick={() => { setActionError(""); setConfirmation("signature-redirection"); }} disabled={!canSubmitRedirection}>
-              {pendingDelivery ? "Completar reenvío por correo" : "Editar destinatario y reenviar por correo"}<ArrowRight size={18} aria-hidden="true" />
+              {redirectionActionLabel}<ArrowRight size={18} aria-hidden="true" />
             </Button>
           </div>
         </div> : null}
@@ -1281,10 +1293,14 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         ". El estado solo cambiará a firmado tras la confirmación real de FirmaSeguro."}
       confirmLabel={signatureActionLabel} busy={busy === "signature"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void sendSignature()} />
-    <ConfirmDialog open={confirmation === "signature-redirection"} title="Editar destinatario y reenviar por correo"
-      description={"Se actualizará el destinatario del mismo documento pendiente en FirmaSeguro al celular " + visible(normalizedRedirectPhone) +
-        " y se solicitará el reenvío al correo " + visible(redirectEmail) + ". El envío por WhatsApp no está confirmado por esta operación. Se conservarán la solicitud de firma y el documento existentes."}
-      confirmLabel="Confirmar reenvío por correo" busy={busy === "signature"}
+    <ConfirmDialog open={confirmation === "signature-redirection"} title={redirectionActionLabel}
+      description={(redirectionUsesPortal
+        ? "Se ingresará al portal de FirmaSeguro para actualizar el destinatario del mismo documento pendiente al celular " + visible(normalizedRedirectPhone) +
+          " y correo " + visible(redirectEmail) + ", y reenviar la solicitud pendiente. Esta operación no confirma el canal ni la entrega al destinatario."
+        : "Se completará el reenvío del mismo documento pendiente en FirmaSeguro al celular registrado " + visible(normalizedRedirectPhone) +
+          " y se solicitará el reenvío al correo " + visible(redirectEmail) + ". El envío por WhatsApp no está confirmado por esta operación.") +
+        " Se conservarán la solicitud de firma y el documento existentes."}
+      confirmLabel={redirectionUsesPortal ? "Confirmar reenvío desde el portal" : "Confirmar reenvío por correo"} busy={busy === "signature"}
       onCancel={() => { if (!submitting.current) setConfirmation(null); }} onConfirm={() => void redirectPendingSignature()} />
     <ConfirmDialog open={confirmation === "remission-verify"} title="Verificar nueva remisión"
       description="Confirma que la foto muestra la nueva remisión firmada y corresponde al equipo de este crédito. Después de verificarla aún se requerirá aprobar el enrolamiento antes de aplicar el IMEI."

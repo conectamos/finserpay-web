@@ -102,6 +102,12 @@ function originalSigner(process: FirmaSeguroProcessRow) {
     secondLastName: text(field(person, "second_last_name", "secondLastName")) || null };
 }
 
+/** Identity stays bound to the frozen signer when a portal contact edit is uncertain. */
+export function frozenFirmaSeguroRecipientIdentity(process: FirmaSeguroProcessRow) {
+  const source = originalSigner(process);
+  return { identification: source.identification, firstName: source.firstName, firstLastName: source.firstLastName };
+}
+
 /** Full contacts are verified by readback. The observed production status-only
  * response is bound to one process and signer; its phone is a frozen snapshot or
  * an acknowledged edit, never a provider readback. */

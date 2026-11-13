@@ -20,7 +20,12 @@ RUN npm run build
 
 FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS runner
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY --from=deps /app/node_modules/playwright ./node_modules/playwright
+COPY --from=deps /app/node_modules/playwright-core ./node_modules/playwright-core
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+  && node node_modules/playwright/cli.js install --with-deps --only-shell chromium \
+  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000

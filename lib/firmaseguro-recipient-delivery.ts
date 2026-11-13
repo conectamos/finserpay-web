@@ -6,14 +6,18 @@ import { firmaSeguroRecipientDeliverySchemaStatements } from "@/scripts/firmaseg
 import { FirmaSeguroApiError, firmaSeguroEditSignature, firmaSeguroResendSignature, firmaSeguroSignIn,
   isFirmaSeguroCompletedStatus } from "@/lib/firmaseguro";
 import { isVerifiedPendingSignatureStatus, supportsPendingSignatureRecipientDelivery } from "@/lib/approval-operations-core";
-import { inspectPendingFirmaSeguroRecipient, FirmaSeguroRecipientProviderError } from "@/lib/firmaseguro-recipient-provider";
+import { inspectPendingFirmaSeguroRecipient, FirmaSeguroRecipientProviderError,
+  frozenFirmaSeguroRecipientIdentity } from "@/lib/firmaseguro-recipient-provider";
+import { openFirmaSeguroPortalRecipient, FirmaSeguroPortalError,
+  type FirmaSeguroPortalRecipient } from "@/lib/firmaseguro-portal";
 import { tryAcquireSolicitudOperationLock, type FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
 
 export type FirmaSeguroRecipientDeliveryStatus = "PREPARING" | "EDITING" | "RECIPIENT_UPDATED" | "RESENDING"
   | "RESENT" | "EDIT_UNCERTAIN" | "RESEND_FAILED" | "RESEND_UNCERTAIN" | "FAILED_SAFE";
 type Contact = { phone: string; email: string | null;
-  source?: "FROZEN_REQUEST" | "ACKNOWLEDGED_EDIT" | "PROVIDER_READBACK" };
+  source?: "FROZEN_REQUEST" | "ACKNOWLEDGED_EDIT" | "PROVIDER_READBACK" | "PORTAL_READBACK";
+  transport?: "PORTAL" | "API" };
 export type FirmaSeguroRecipientDeliveryRow = {
   id: string; draftId: number; processUuid: string; signatureId: number;
   actorUserId: number; actorName: string; reason: string; intentSha256: string;
@@ -67,9 +71,13 @@ function assertReplay(row: FirmaSeguroRecipientDeliveryRow, input: Input) {
     throw new FirmaSeguroRecipientDeliveryError("IDEMPOTENCY_CONFLICT", "Esta confirmación pertenece a otro reenvío de firma.");
 }
 export function publicFirmaSeguroRecipientDelivery(row: FirmaSeguroRecipientDeliveryRow) {
+  const transport = row.afterContact.transport === "PORTAL" ? "PORTAL" as const : "API" as const;
   const metadataEditUncertain = ["EDIT_UNCERTAIN", "EDITING"].includes(row.status)
-    && row.beforeContact.source !== undefined && row.beforeContact.source !== "PROVIDER_READBACK";
-  const message = row.status === "RESENT" ? "FirmaSeguro aceptó la solicitud de reenvío por correo del mismo documento. La entrega al correo y el envío por WhatsApp no están confirmados."
+    && row.beforeContact.source !== undefined
+    && !["PROVIDER_READBACK", "PORTAL_READBACK"].includes(row.beforeContact.source);
+  const message = row.status === "RESENT" ? transport === "PORTAL"
+    ? "El portal de FirmaSeguro confirmó la solicitud de reenvío del mismo documento. El canal y la entrega al cliente no están confirmados."
+    : "FirmaSeguro aceptó la solicitud de reenvío por correo del mismo documento. La entrega al correo y el envío por WhatsApp no están confirmados."
     : row.status === "RESEND_FAILED" ? "El contacto quedó actualizado en FirmaSeguro. El reenvío fue rechazado; puedes reintentar este mismo documento."
     : row.status === "RESEND_UNCERTAIN" || row.status === "RESENDING"
       ? "El contacto está actualizado, pero FirmaSeguro no confirmó el reenvío. Consulta su estado antes de repetirlo."
@@ -79,8 +87,8 @@ export function publicFirmaSeguroRecipientDelivery(row: FirmaSeguroRecipientDeli
         : "FirmaSeguro no confirmó el cambio de contacto. Reintenta esta misma operación para verificarlo."
     : row.status === "FAILED_SAFE" ? "FirmaSeguro rechazó el cambio de contacto. El documento original se conservó."
     : "El contacto está preparado para reenviar el mismo documento.";
-  return { id: row.id, status: row.status, message, processUuid: row.processUuid,
-    notificationChannel: row.status === "RESENT" ? "EMAIL" as const : null,
+  return { id: row.id, status: row.status, message, processUuid: row.processUuid, transport,
+    notificationChannel: row.status === "RESENT" ? transport === "PORTAL" ? "UNCONFIRMED" as const : "EMAIL" as const : null,
     deliveryStatus: "UNCONFIRMED" as const,
     sentPhone: row.editedAt ? row.afterContact.phone : undefined, sentEmail: row.editedAt ? row.afterContact.email : undefined,
     retryable: !metadataEditUncertain
@@ -129,6 +137,134 @@ async function currentPendingProcess(draftId: number, processUuid: string) {
   return process;
 }
 
+function assertPortalRecipient(recipient: FirmaSeguroPortalRecipient, signatureId: number) {
+  if (recipient.signatureId !== signatureId || recipient.contactVerification !== "PROVIDER_READBACK"
+    || recipient.contactSource !== "PORTAL_READBACK" || !/^3\d{9}$/.test(recipient.phone)
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email))
+    throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El portal no confirmó el destinatario del mismo documento.");
+}
+function sameContact(recipient: { phone: string; email: string | null }, contact: Contact) {
+  return recipient.phone === contact.phone && (recipient.email || null) === contact.email;
+}
+function portalFailureSummary(error: unknown) {
+  // Persist only the adapter's stable code, never page contents, credentials or request data.
+  return error instanceof FirmaSeguroPortalError ? `Portal FirmaSeguro: ${error.code}`
+    : "Portal FirmaSeguro sin confirmación de respuesta";
+}
+function portalDefinitiveRejection(error: unknown, stage: "EDIT" | "RESEND") {
+  return error instanceof FirmaSeguroPortalError && error.stage === stage && !error.uncertain;
+}
+async function deliverThroughPortal(input: Input, existing: FirmaSeguroRecipientDeliveryRow | null, process: FirmaSeguroProcessRow) {
+  let row = existing;
+  let signatureId: number;
+  let identity: { identification: string; firstName: string; firstLastName: string };
+  if (row) {
+    // A replay must tolerate an email edit whose acknowledgement was lost. The
+    // immutable signer identity and ledger id bind the portal; API email metadata cannot.
+    signatureId = row.signatureId;
+    identity = frozenFirmaSeguroRecipientIdentity(process);
+  } else {
+    const { token } = await firmaSeguroSignIn();
+    const bound = await inspectPendingFirmaSeguroRecipient(token, process,
+      await latestAcknowledgedRecipient(input.draftId, input.processUuid));
+    signatureId = bound.signatureId;
+    const contact = bound.editPayload.contact_information;
+    if (typeof contact.identification !== "string" || !contact.identification.trim())
+      throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "No se pudo vincular la identidad del firmante al portal.");
+    identity = { identification: contact.identification, firstName: contact.first_name, firstLastName: contact.first_last_name };
+  }
+  if (!process.draftFolio)
+    throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_FOLIO_MISSING", "La firma no tiene un folio verificable para abrirla en el portal.");
+  const portal = await openFirmaSeguroPortalRecipient({ processUuid: process.processUuid,
+    folio: process.draftFolio, signatureId, identity });
+  try {
+    let recipient = await portal.inspect();
+    assertPortalRecipient(recipient, signatureId);
+    if (!row) {
+      const beforeContact: Contact = { phone: recipient.phone, email: recipient.email, source: "PORTAL_READBACK" };
+      const afterContact: Contact = { phone: input.hasPhone ? input.phone! : recipient.phone,
+        email: input.hasEmail ? input.email : recipient.email, transport: "PORTAL" };
+      if (!/^3\d{9}$/.test(afterContact.phone) || !afterContact.email
+        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(afterContact.email))
+        throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_CONTACT_INVALID", "Indica un celular y correo válidos para el destinatario.", 400);
+      row = await prisma.$transaction(async db => {
+        const previous = await db.$queryRawUnsafe<FirmaSeguroRecipientDeliveryRow[]>(
+          `SELECT * FROM "FirmaSeguroRecipientDelivery" WHERE "id"=$1::uuid`, input.id);
+        if (previous[0]) { assertReplay(previous[0], input); return previous[0]; }
+        const active = await db.$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT "id" FROM "FirmaSeguroRecipientDelivery" WHERE "draftId"=$1 AND "processUuid"=$2
+            AND "status" NOT IN ('RESENT','FAILED_SAFE') LIMIT 1`, input.draftId, input.processUuid);
+        if (active.length) throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_PENDING", "Hay un cambio de contacto pendiente. Retoma esa misma operación antes de iniciar otra.");
+        const inserted = await db.$queryRawUnsafe<FirmaSeguroRecipientDeliveryRow[]>(
+          `INSERT INTO "FirmaSeguroRecipientDelivery" ("id","draftId","processUuid","signatureId","actorUserId","actorName",
+            "reason","intentSha256","beforeContact","afterContact","status")
+            VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,'PREPARING') RETURNING *`,
+          input.id, input.draftId, input.processUuid, signatureId, input.actor.id, input.actor.nombre,
+          input.reason, intentHash(input), JSON.stringify(beforeContact), JSON.stringify(afterContact));
+        return inserted[0];
+      });
+    }
+    // Never turn a historical API row into a portal operation, even if another
+    // writer appeared between the initial lookup and this insert.
+    if (row.afterContact.transport !== "PORTAL" || row.signatureId !== signatureId)
+      throw new FirmaSeguroRecipientDeliveryError("IDEMPOTENCY_CONFLICT", "La confirmación pertenece a otro medio de gestión de firma.");
+    if (row.status === "EDITING" || row.status === "EDIT_UNCERTAIN") {
+      if (sameContact(recipient, row.afterContact))
+        row = (await transition(row.id, ["EDITING", "EDIT_UNCERTAIN"], "RECIPIENT_UPDATED", { edited: true }))!;
+      else if (sameContact(recipient, row.beforeContact))
+        row = (await transition(row.id, ["EDITING", "EDIT_UNCERTAIN"], "PREPARING"))!;
+      else throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El contacto del portal cambió durante la operación. Requiere revisión técnica.");
+    }
+    if (row.status === "PREPARING") {
+      if (sameContact(recipient, row.afterContact)) {
+        row = (await transition(row.id, ["PREPARING"], "RECIPIENT_UPDATED", { edited: true }))!;
+      } else {
+        if (!sameContact(recipient, row.beforeContact))
+          throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El contacto del portal cambió antes de la edición. Actualiza el expediente.");
+        row = (await transition(row.id, ["PREPARING"], "EDITING"))!;
+        try {
+          await portal.edit({ phone: row.afterContact.phone, email: row.afterContact.email! });
+        } catch (error) {
+          row = (await transition(row.id, ["EDITING"], portalDefinitiveRejection(error, "EDIT") ? "FAILED_SAFE" : "EDIT_UNCERTAIN",
+            { error: portalFailureSummary(error) }))!;
+          return publicFirmaSeguroRecipientDelivery(row);
+        }
+        // A click acknowledgement alone does not establish the contact. Any
+        // failure in the following read remains uncertain and cannot trigger resend.
+        try {
+          recipient = await portal.inspect();
+          assertPortalRecipient(recipient, row.signatureId);
+          if (!sameContact(recipient, row.afterContact))
+            throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El portal no confirmó el contacto actualizado.");
+        } catch (error) {
+          row = (await transition(row.id, ["EDITING"], "EDIT_UNCERTAIN", { error: portalFailureSummary(error) }))!;
+          return publicFirmaSeguroRecipientDelivery(row);
+        }
+        row = (await transition(row.id, ["EDITING"], "RECIPIENT_UPDATED", { edited: true }))!;
+      }
+    }
+    if (row.status === "RECIPIENT_UPDATED" || row.status === "RESEND_FAILED") {
+      await currentPendingProcess(input.draftId, input.processUuid);
+      recipient = await portal.inspect();
+      assertPortalRecipient(recipient, row.signatureId);
+      if (!sameContact(recipient, row.afterContact))
+        throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El portal no confirmó el nuevo contacto. Revisa el expediente antes de reenviar.");
+      row = (await transition(row.id, ["RECIPIENT_UPDATED", "RESEND_FAILED"], "RESENDING"))!;
+      try { await portal.resend({ phone: row.afterContact.phone, email: row.afterContact.email }); }
+      catch (error) {
+        row = (await transition(row.id, ["RESENDING"], portalDefinitiveRejection(error, "RESEND") ? "RESEND_FAILED" : "RESEND_UNCERTAIN",
+          { error: portalFailureSummary(error) }))!;
+        return publicFirmaSeguroRecipientDelivery(row);
+      }
+      row = (await transition(row.id, ["RESENDING"], "RESENT", { resent: true }))!;
+    }
+    return publicFirmaSeguroRecipientDelivery(row);
+  } finally {
+    // Closing a session cannot revoke an already persisted provider acknowledgement.
+    await portal.close().catch(() => undefined);
+  }
+}
+
 /** A delivery correction changes provider contact only; all contractual snapshots remain immutable. */
 export async function deliverExistingFirmaSeguroSignature(input: Input) {
   await ensureFirmaSeguroRecipientDeliverySchema();
@@ -147,6 +283,9 @@ export async function deliverExistingFirmaSeguroSignature(input: Input) {
       if (["RESENT", "FAILED_SAFE", "RESENDING", "RESEND_UNCERTAIN"].includes(row.status)) return publicFirmaSeguroRecipientDelivery(row);
     }
     const process = await currentPendingProcess(input.draftId, input.processUuid);
+    if (!row || row.afterContact.transport === "PORTAL")
+      return await deliverThroughPortal(input, row, process);
+    // Only durable pre-portal operations may replay the historical API transport.
     const { token } = await firmaSeguroSignIn();
     const knownRecipient = await latestAcknowledgedRecipient(input.draftId, input.processUuid);
     let recipient: Awaited<ReturnType<typeof inspectPendingFirmaSeguroRecipient>>;
@@ -165,27 +304,6 @@ export async function deliverExistingFirmaSeguroSignature(input: Input) {
     }
     if (row && recipient.signatureId !== row.signatureId)
       throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El destinatario de FirmaSeguro cambió. Requiere revisión técnica.");
-    if (!row) {
-      const beforeContact: Contact = { phone: recipient.phone, email: recipient.email, source: recipient.contactSource };
-      const afterContact: Contact = { phone: input.hasPhone ? input.phone! : recipient.phone,
-        email: input.hasEmail ? input.email : recipient.email };
-      row = await prisma.$transaction(async db => {
-        const previous = await db.$queryRawUnsafe<FirmaSeguroRecipientDeliveryRow[]>(
-          `SELECT * FROM "FirmaSeguroRecipientDelivery" WHERE "id"=$1::uuid`, input.id);
-        if (previous[0]) { assertReplay(previous[0], input); return previous[0]; }
-        const active = await db.$queryRawUnsafe<Array<{ id: string }>>(
-          `SELECT "id" FROM "FirmaSeguroRecipientDelivery" WHERE "draftId"=$1 AND "processUuid"=$2
-            AND "status" NOT IN ('RESENT','FAILED_SAFE') LIMIT 1`, input.draftId, input.processUuid);
-        if (active.length) throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_PENDING", "Hay un cambio de contacto pendiente. Retoma esa misma operación antes de iniciar otra.");
-        const inserted = await db.$queryRawUnsafe<FirmaSeguroRecipientDeliveryRow[]>(
-          `INSERT INTO "FirmaSeguroRecipientDelivery" ("id","draftId","processUuid","signatureId","actorUserId","actorName",
-            "reason","intentSha256","beforeContact","afterContact","status")
-            VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,'PREPARING') RETURNING *`,
-          input.id, input.draftId, input.processUuid, recipient.signatureId, input.actor.id, input.actor.nombre,
-          input.reason, intentHash(input), JSON.stringify(beforeContact), JSON.stringify(afterContact));
-        return inserted[0];
-      });
-    }
     if (row.status === "EDITING" || row.status === "EDIT_UNCERTAIN") {
       // Only a complete provider contact readback can reconcile a lost PUT.
       if (recipient.contactVerification === "BOUND_METADATA") {
@@ -240,6 +358,8 @@ export async function deliverExistingFirmaSeguroSignature(input: Input) {
     }
     return publicFirmaSeguroRecipientDelivery(row);
   } catch (error) {
+    if (error instanceof FirmaSeguroPortalError)
+      throw new FirmaSeguroRecipientDeliveryError(error.code, error.message, error.status);
     if (error instanceof FirmaSeguroRecipientProviderError)
       throw new FirmaSeguroRecipientDeliveryError(error.code, error.message, error.status);
     if (error instanceof FirmaSeguroApiError)

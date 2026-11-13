@@ -24,7 +24,9 @@ export type OperationalSignature = {
   signedAt: string | null;
   lastResend?: {
     acceptedAt: string;
-    channel: "EMAIL";
+    transport: "PORTAL" | "API";
+    channel: "EMAIL" | "UNCONFIRMED";
+    phone: string | null;
     email: string | null;
     deliveryStatus: "UNCONFIRMED";
   } | null;
@@ -48,6 +50,7 @@ export type OperationalCaseDetail = OperationalCaseSummary & {
   pendingRecipientDelivery?: {
     id: string;
     status: string;
+    transport: "PORTAL" | "API";
     processUuid: string;
     phone: string | null;
     email: string | null;

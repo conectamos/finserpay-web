@@ -721,8 +721,9 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
         const contact = record(pending.afterContact);
         const contactSource = record(pending.beforeContact).source;
         const unverifiedPhoneEdit = ["EDITING", "EDIT_UNCERTAIN"].includes(pending.status)
-          && contactSource !== undefined && contactSource !== "PROVIDER_READBACK";
+          && contactSource !== undefined && !["PROVIDER_READBACK", "PORTAL_READBACK"].includes(String(contactSource));
         pendingRecipientDelivery = { id: pending.id, status: pending.status,
+          transport: contact.transport === "PORTAL" ? "PORTAL" : "API",
           processUuid: pending.processUuid, phone: clean(contact.phone), email: clean(contact.email),
           reason: pending.reason, actorName: pending.actorName,
           retryable: !unverifiedPhoneEdit && pending.processUuid === signature.processUuid &&
@@ -750,7 +751,9 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
           const acceptedAt = iso(deliveries[0].resentAt);
           const resentContact = record(deliveries[0].resentContact);
           if (acceptedAt && deliveries[0].resentContact) signature.lastResend = {
-            acceptedAt, channel: "EMAIL", email: clean(resentContact.email), deliveryStatus: "UNCONFIRMED",
+            acceptedAt, transport: resentContact.transport === "PORTAL" ? "PORTAL" : "API",
+            channel: resentContact.transport === "PORTAL" ? "UNCONFIRMED" : "EMAIL",
+            phone: clean(resentContact.phone), email: clean(resentContact.email), deliveryStatus: "UNCONFIRMED",
           };
         }
       }
@@ -777,12 +780,15 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
           if (!at) continue;
           const before = record(event.beforeContact);
           const after = record(event.afterContact);
+          const portal = after.transport === "PORTAL";
           const changes = ["phone", "email"].flatMap(field =>
             clean(before[field]) !== clean(after[field])
               ? [`${field === "phone" ? "Celular" : "Correo"}: ${clean(before[field]) || "Sin registro"} → ${clean(after[field]) || "Sin registro"}`]
               : []);
           timeline.push({ id: `firma-destino:${event.id}`, at,
-            label: deliveryLabels[event.status] || "Reenvío de FirmaSeguro actualizado",
+            label: event.status === "RESENT" && portal
+              ? "Reenvío solicitado desde el portal; canal y entrega sin confirmar"
+              : (deliveryLabels[event.status] || "Reenvío de FirmaSeguro actualizado") + (portal ? " en el portal" : ""),
             detail: [clean(event.reason), ...changes].filter(Boolean).join(" · ") || null,
             actor: clean(event.actorName), status: event.status });
         }
