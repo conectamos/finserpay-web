@@ -33,8 +33,17 @@ El contenedor incluye Chromium headless de Playwright, de la misma versión exac
 que la dependencia de producción, bajo `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`.
 En desarrollo se instala con `npx playwright install --only-shell chromium`.
 Cada operación cierra su contexto; no guarda perfiles, capturas ni trazas de acceso.
-Las pruebas usan un portal simulado: antes de habilitarlo se debe comprobar el
-inicio de sesión real con la cuenta autorizada y un caso de prueba pendiente.
+Las pruebas automatizadas usan un portal simulado. El 13 de noviembre de 2026 se
+comprobó además el inicio de sesión real y el listado con Chromium headless en
+Windows, usando las credenciales actuales de Railway sin mostrarlas. La consulta
+utiliza `verifyFirmaSeguroPortalAccess()`, que comparte el acceso y las
+restricciones de navegación con la gestión de destinatarios y cierra siempre su
+sesión. La comprobación identificó la ruta canónica de contraseña
+`/Identity/Account/SignInPassword`, ahora permitida de forma específica.
+
+Esa consulta no editó contactos ni reenvió solicitudes. Antes de activar siguen
+pendientes la comprobación del contenedor Linux y la edición/reenvío de un caso
+pendiente con destinatario autorizado.
 
 ## Referencia histórica: contrato API
 
