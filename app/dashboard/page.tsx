@@ -16,6 +16,9 @@ import SellerProfileAccess from "./_components/seller-profile-access";
 import AdminCentralDashboard from "./_components/admin-central-dashboard";
 import SellerCommercialDashboard from "./_components/seller-commercial-dashboard";
 import { getAdminDashboardOverview } from "./_lib/admin-dashboard-data";
+import { getAllyDashboardFpd, type AllyDashboardFpdData } from "./_lib/ally-dashboard-fpd";
+import { cutAccessFromDashboard } from "@/lib/cut-collection-access";
+import { resolveDashboardMonth } from "@/lib/dashboard-month";
 
 type DashboardSearchParams = Promise<{
   month?: string | string[];
@@ -245,11 +248,43 @@ export default async function DashboardPage({
   const requestedSedeId = selectedScope?.startsWith("sede:") ? Number(selectedScope.slice(5)) : null;
   const selectedSede = requestedSedeId !== null && availableSedes.some(s => s.id === requestedSedeId) ? requestedSedeId : null;
   if (requestedSedeId !== null && selectedSede === null) notFound();
-  const dashboardOverview = await getAdminDashboardOverview({
-    aliadoId: adminAliado ? aliadoStatsScopeId : selectedAlly?.id ?? null,
-    month: requestedMonth,
-    ...(selectedSede ? { sedeId: selectedSede } : {}),
-  });
+  const dashboardNow = new Date();
+  const dashboardMonth = resolveDashboardMonth(requestedMonth, dashboardNow).key;
+  const allyFpdPromise = adminAliado ? (async (): Promise<AllyDashboardFpdData> => {
+    try {
+      return await getAllyDashboardFpd({
+        access: cutAccessFromDashboard({ admin: true, supervisor: false, session }),
+        month: dashboardMonth,
+        sedeId: selectedSede,
+        now: dashboardNow,
+      });
+    } catch {
+      console.error("No se pudo consultar el FPD del panel aliado.");
+      return { status: "unavailable", cuts: [] };
+    }
+  })() : undefined;
+  const [dashboardOverview, allyFpd] = await Promise.all([
+    getAdminDashboardOverview({
+      aliadoId: adminAliado ? aliadoStatsScopeId : selectedAlly?.id ?? null,
+      month: dashboardMonth,
+      ...(selectedSede ? { sedeId: selectedSede } : {}),
+    }),
+    allyFpdPromise,
+  ]);
+  let fpReportHref: string | undefined;
+  if (adminAliado) {
+    const reportParams = new URLSearchParams({ status: "todos" });
+    if (aliadoStatsScopeId > 0) reportParams.set("aliadoId", String(aliadoStatsScopeId));
+    if (selectedSede) reportParams.set("sedeId", String(selectedSede));
+    const latestCut = allyFpd?.cuts[0]?.cutDate;
+    if (latestCut) {
+      const [year, month, day] = latestCut.split("-");
+      reportParams.set("year", year);
+      reportParams.set("month", String(Number(month)));
+      reportParams.set("day", String(Number(day)));
+    }
+    fpReportHref = `/dashboard/reportes/recaudo-por-corte?${reportParams.toString()}`;
+  }
 
   return (
     <AdminCentralDashboard
@@ -260,6 +295,8 @@ export default async function DashboardPage({
       allies={allies}
       selectedAlly={selectedAlly}
       data={dashboardOverview}
+      allyFpd={allyFpd}
+      fpReportHref={fpReportHref}
       nombreUsuario={nombreUsuario}
       rolUsuario={rolUsuario}
       sedeLabel={sedeLabel}

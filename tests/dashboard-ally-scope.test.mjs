@@ -4,6 +4,11 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import * as jsxRuntime from "react/jsx-runtime";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url);
+const cutAccess = await jiti.import("../lib/cut-collection-access.ts");
+const dashboardMonth = await jiti.import("../lib/dashboard-month.ts");
 
 const source = readFileSync(new URL("../app/dashboard/page.tsx", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, {
@@ -52,7 +57,9 @@ function harness({ session = central, availableAllies = allies, sellerSession = 
       },
       creditoAbono: { aggregate: async (args) => { creditCalls.push(snapshot(args)); return { _sum: { valor: 0 } }; } },
     } },
-    "@/lib/auth": { getSessionUser: async () => session },
+    "@/lib/auth": { getSessionUser: async () => session, getNominalApprovalAnalystSessionUser: async () => null },
+    "@/lib/cut-collection-access": cutAccess,
+    "@/lib/dashboard-month": dashboardMonth,
     "@/lib/roles": {
       isAdminRole: (role) => role === "ADMIN",
       isApprovalAnalystRole: (role) => role === "ANALISTA_APROBACION",
@@ -70,6 +77,7 @@ function harness({ session = central, availableAllies = allies, sellerSession = 
     "./_components/admin-central-dashboard": { default: AdminDashboard },
     "./_components/seller-commercial-dashboard": { default: SellerDashboard },
     "./_components/seller-profile-access": { default: ProfileAccess },
+    "./_lib/ally-dashboard-fpd": { getAllyDashboardFpd: async () => ({ status: "ready", cuts: [] }) },
     "./_lib/admin-dashboard-data": {
       getAdminDashboardOverview: async (args) => {
         overviewCalls.push(snapshot(args));
@@ -79,7 +87,7 @@ function harness({ session = central, availableAllies = allies, sellerSession = 
   };
   const loaded = { exports: {} };
   runInNewContext(outputText, {
-    module: loaded, exports: loaded.exports, Date, Number,
+    module: loaded, exports: loaded.exports, Date, Number, URLSearchParams,
     require(name) {
       assert.ok(name in dependencies, "Dependencia del dashboard no simulada: " + name);
       return dependencies[name];

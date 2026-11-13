@@ -1,0 +1,38 @@
+.panel { container-type: inline-size; min-width: 0; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+.header h2 { margin: 0; color: var(--fp-graphite); }
+.header p { margin: 4px 0 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
+.header a { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; color: var(--fp-graphite); font-size: 14px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.header a:hover { color: var(--fp-navy); }
+.header a:focus-visible { outline: 3px solid var(--fp-lime); outline-offset: 4px; border-radius: var(--fp-radius-sm); }
+.header a svg { width: 16px; height: 16px; }
+.table { width: 100%; margin-top: 20px; table-layout: fixed; border-collapse: collapse; }
+.table th, .table td { padding: 16px 4px; text-align: center; vertical-align: middle; }
+.table thead th { padding-top: 0; padding-bottom: 12px; color: var(--fp-muted); font-size: 13px; font-weight: 500; }
+.table th:first-child { width: 23%; text-align: left; }
+.table tbody tr { border-top: 1px solid var(--fp-border); }
+.table time { display: grid; gap: 4px; color: var(--fp-graphite); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.table time small { color: var(--fp-muted); font-size: 12px; font-weight: 400; }
+.metric { display: grid; justify-items: center; gap: 6px; }
+.metric > strong { color: var(--fp-graphite); font-size: 21px; line-height: 1.2; letter-spacing: -.025em; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.metric > strong > span { font-size: 14px; font-weight: 500; }
+.metric > span { font-size: 12px; line-height: 1.2; padding: 4px 8px; }
+.pending { color: var(--fp-muted); font-size: 13px; font-weight: 500; }
+.empty { display: grid; place-content: center; min-height: 220px; margin: 0; padding: 24px 0; color: var(--fp-muted); font-size: 14px; }
+.mobile { display: none; margin-top: 16px; }
+.mobileCut { padding: 16px 0; border-top: 1px solid var(--fp-border); }
+.mobileCut h3 { margin: 0 0 12px; color: var(--fp-graphite); font-size: 14px; font-weight: 600; }
+.mobileCut time { display: flex; gap: 6px; align-items: baseline; }
+.mobileCut time small { color: var(--fp-muted); font-size: 13px; font-weight: 400; }
+.mobileCut dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; text-align: center; }
+.mobileCut dt { margin-bottom: 8px; color: var(--fp-muted); font-size: 13px; }
+.mobileCut dd { margin: 0; }
+@container (max-width: 390px) {
+  .table { display: none; }
+  .mobile { display: block; }
+}
+@media (max-width: 480px) {
+  .table { display: none; }
+  .mobile { display: block; }
+  .metric > strong { font-size: 20px; }
+}
