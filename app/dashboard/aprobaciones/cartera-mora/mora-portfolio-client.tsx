@@ -230,7 +230,8 @@ function freshManagement(responsibleUserId = ""): ManagementForm {
 function statusTone(status: string | undefined) {
   if (status === "CERRADO" || status === "SOLUCIONADO") return "positive" as const;
   if (status === "ESCALADO" || status === "SIN_RESPUESTA") return "danger" as const;
-  if (status === "PRORROGA" || status === "PROMESA_PAGO" || status === "ACUERDO_PAGO" || status === "SOPORTE_RECIBIDO") return "warning" as const;
+  if (status === "PRORROGA") return "positive" as const;
+  if (status === "PROMESA_PAGO" || status === "ACUERDO_PAGO" || status === "SOPORTE_RECIBIDO") return "warning" as const;
   return "neutral" as const;
 }
 
@@ -633,12 +634,12 @@ export default function MoraPortfolioClient({ scope = "overdue", initialCreditId
                 <tbody>{portfolio.items.map((item) => {
                   const managementStatus = portfolioStatus(item);
                   return <tr key={item.id} data-selected={selectedId === item.id || undefined} data-extension={Boolean(item.prorrogaActiva) || undefined}>
-                    <td><div className={styles.cellStack}><strong>{item.clienteNombre}</strong><span className={styles.creditNumber}>{item.numeroCreditoVisible}</span><span>Cédula: {item.clienteDocumento || "No disponible"}</span>{item.prorrogaActiva ? <div className={styles.mobileExtension}><StatusPill tone="warning">Prórroga</StatusPill><span>{item.prorrogaActiva.expiresOn ? `Hasta ${displayDay(item.prorrogaActiva.expiresOn)}` : "Sin fecha límite"}</span></div> : null}</div></td>
+                    <td><div className={styles.cellStack}><strong>{item.clienteNombre}</strong><span className={styles.creditNumber}>{item.numeroCreditoVisible}</span><span>Cédula: {item.clienteDocumento || "No disponible"}</span>{item.prorrogaActiva ? <div className={styles.activeExtension}><StatusPill tone="positive">{item.prorrogaActiva.expiresOn ? `Prórroga activa hasta ${displayDay(item.prorrogaActiva.expiresOn)}` : "Prórroga activa sin fecha límite"}</StatusPill></div> : null}</div></td>
                     <td><div className={styles.cellStack}><strong>{item.aliadoNombre}</strong><span className={styles.equipment}>{item.equipo || "Equipo no disponible"}</span><span className={styles.imei}>IMEI: {item.imei || "No disponible"}</span></div></td>
                     <td><div className={styles.cellStack}>{allCredits ? <><StatusPill tone={financialTone(item.estadoCartera)}>{financialLabels[item.estadoCartera || ""] || "Estado no disponible"}</StatusPill>{item.estadoCartera === "EN_MORA" ? <><strong className={styles.amount}>{money.format(item.valorVencido)}</strong><span className={styles.overdue}>{item.diasMora} {item.diasMora === 1 ? "día" : "días"} en mora</span></> : item.estadoCartera === "AL_DIA" ? <span>Próximo pago: {item.fechaProximoPago ? displayDay(item.fechaProximoPago) : "Sin fecha pendiente"}</span> : <span>Historial disponible</span>}</> : <><strong className={styles.amount}>{money.format(item.valorVencido)}</strong><span className={styles.overdue}>{item.diasMora} {item.diasMora === 1 ? "día" : "días"} en mora</span></>}</div></td>
                     <td><div className={styles.cellStack}><strong className={styles.result}>{item.ultimaGestion?.result || "Sin gestión"}</strong><span>{item.ultimaGestion?.responsibleName || "Sin asignar"}</span><span>{displayDateTime(item.ultimaGestion?.actedAt)}</span></div></td>
                     <td><div className={styles.cellStack}><span className={styles.followUp}>{displayDateTime(item.ultimaGestion?.nextFollowUpAt)}</span></div></td>
-                    <td><div className={styles.cellStack}><StatusPill tone={statusTone(managementStatus)}>{statusLabels[managementStatus] || managementStatus}</StatusPill>{item.prorrogaActiva ? <span className={styles.extensionUntil}>{item.prorrogaActiva.expiresOn ? `Hasta ${displayDay(item.prorrogaActiva.expiresOn)}` : "Sin fecha límite"}</span> : null}</div></td>
+                    <td><div className={styles.cellStack}><StatusPill tone={statusTone(managementStatus)}>{statusLabels[managementStatus] || managementStatus}</StatusPill></div></td>
                     <td><Button variant="secondary" disabled={saving || extensionBusy} aria-pressed={selectedId === item.id} onClick={() => void openCredit(item)}>Gestionar<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button></td>
                   </tr>;
                 })}</tbody>

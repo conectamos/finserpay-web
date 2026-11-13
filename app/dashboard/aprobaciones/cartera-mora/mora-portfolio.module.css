@@ -36,7 +36,8 @@
 .table td { padding: 20px; vertical-align: top; border-bottom: 1px solid var(--fp-border); }
 .table tbody tr:last-child td { border-bottom: 0; }
 .table tr:hover td { background: var(--fp-bg); }
-.table tr[data-extension] td:first-child { box-shadow: inset 3px 0 var(--fp-amber); }
+.table tr[data-extension] td { background: var(--fp-lime-soft); }
+.table tr[data-extension] td:first-child { box-shadow: inset 3px 0 var(--fp-lime-strong); }
 .table tr[data-selected] td { background: var(--fp-lime-soft); }
 .table tr[data-selected] td:first-child { box-shadow: inset 3px 0 var(--fp-lime); }
 .table td:last-child { vertical-align: middle; }
@@ -49,16 +50,16 @@
 .cellStack .amount { white-space: nowrap; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .cellStack .overdue { color: var(--fp-danger); font-weight: 600; }
 .cellStack .followUp { color: var(--fp-graphite); }
-.cellStack .extensionUntil { font-weight: 600; color: var(--fp-graphite); }
 .result { max-width: 280px; }
-.mobileExtension { display: none; }
+.activeExtension { margin-top: 4px; max-width: 100%; }
+.activeExtension > span { white-space: normal; text-align: left; }
 .detailSummary { display: grid; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--fp-border); }
 .detailHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .detailHeading h3 { margin: 6px 0; font-size: 22px; font-weight: 700; line-height: 1.35; }
 .detailHeading p { font-size: 14px; color: var(--fp-muted); }
 .detailHeading .creditNumber { color: var(--fp-graphite); }
-.extensionBanner { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border-radius: var(--fp-radius-md); border: 1px solid var(--fp-border); background: var(--fp-amber-soft); }
-.extensionBanner > svg { flex-shrink: 0; width: 22px; height: 22px; color: var(--fp-amber); }
+.extensionBanner { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border-radius: var(--fp-radius-md); border: 1px solid var(--fp-border); background: var(--fp-lime-soft); }
+.extensionBanner > svg { flex-shrink: 0; width: 22px; height: 22px; color: var(--fp-lime-strong); }
 .extensionBanner strong { display: block; font-size: 16px; font-weight: 700; }
 .extensionBanner p { margin: 6px 0 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .extensionBanner small { display: block; margin-top: 10px; font-size: 13px; line-height: 1.5; color: var(--fp-muted); }
@@ -98,8 +99,6 @@
   .filterBottom { gap: 8px; }
   .secondaryFilters { grid-template-columns: minmax(0, 1fr); }
   .listHeader { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; }
-  .mobileExtension { display: grid; justify-items: start; gap: 5px; margin-top: 4px; font-size: 13px; }
-  .mobileExtension > span:last-child { font-weight: 600; }
   .detailHeading { flex-direction: column; }
   .detailHeading h3 { font-size: 20px; }
   .extensionButtons > button { min-height: 44px; }
