@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createJiti } from "jiti";
 import ts from "typescript";
 
-const jiti = createJiti(import.meta.url);
+const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("..", import.meta.url)) } });
 const { buildDataCreditoAdminRiskSummary, sanitizeDataCreditoProviderPayload } = await jiti.import("../lib/datacredito/admin-report.ts");
+const financialDisplay = await jiti.import("../lib/credit-offer-financial-display.ts");
 const source = readFileSync(new URL("../app/dashboard/datacredito/datacredito-admin-console.tsx", import.meta.url), "utf8");
 const listUrl = "/api/creditos/datacredito/admin/evaluaciones";
 const controls = new Proxy({}, { get: (_, name) => String(name) });
@@ -86,6 +88,7 @@ function mount(fetchImplementation) {
       if (name === "lucide-react" || name === "@/app/_components/finser-ui") return controls;
       if (name.endsWith(".module.css")) return { default: controls };
       if (name === "next/link") return { default: "a" };
+      if (name === "@/lib/credit-offer-financial-display") return financialDisplay;
       throw new Error(name);
     },
   });
@@ -153,6 +156,23 @@ test("expediente mantiene los datos de riesgo y todas las secciones dentro de de
   }
   assert.match(h.text(), /885/); assert.match(h.text(), /368/);
   assert.equal(h.requests.length, 2); assert.equal(h.requests[1].url, listUrl + "/assessment-a");
+});
+
+test("historial presenta la fianza de la política guardada y distingue las modalidades históricas", async () => {
+  const base = { tasaInteresEa: 29.24, seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL" };
+  for (const [financialSettings, expected] of [
+    [{ ...base, calculoVersion: "ARES_FRANCES_V2", fianzaTotalPorcentaje: 75, tasaPeriodoDecimales: 6, redondeoComercial: { modo: "PISO", multiplo: 50 } }, "Fianza total 75 %"],
+    [{ ...base, calculoVersion: "FRANCES_V1", fianzaCuotaPorcentaje: 2.083333 }, "Fianza por cuota 2.083333 %"],
+    [undefined, "Fianza total (oferta histórica) 60 %"],
+  ]) {
+    const item = assessment(); item.offer = { ...item.offer, suretyPercentage: 60, financialSettings };
+    const h = mount(async url => Response.json(url === listUrl ? list([item]) : detail(item)));
+    await h.flush(); open(h); await h.flush();
+    const field = h.all(node => node.type === "div" && [node.props?.children].flat().some(child => child?.type === "span" && text(child).trim().startsWith("Fianza")))[0];
+    assert.ok(field);
+    assert.equal(text(field).replace(/\s+/g, " ").trim(), expected);
+    assert.equal(h.requests.length, 2);
+  }
 });
 
 test("fallo del expediente conserva el listado y muestra un error claro", async () => {

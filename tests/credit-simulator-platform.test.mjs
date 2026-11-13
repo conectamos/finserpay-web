@@ -14,16 +14,15 @@ const projectRoot = path.resolve(
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const {
   ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
-  ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE,
   DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
   SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
   calculateAndroidSimulatorInitialPayment,
-  calculateAndroidSimulatorInstallmentSuretyPercentage,
   resolveInitialPaymentAfterMinimumRefresh,
 } = await jiti.import("../lib/credit-factory.ts");
 const { calculateFrenchAmortization } = await jiti.import(
   "../lib/credit-amortization.ts"
 );
+const { resolveCreditPolicyFinancialSettings } = await jiti.import("../lib/credit-policy-financial-settings.ts");
 
 const page = readFileSync(
   new URL("../app/dashboard/creditos/page.tsx", import.meta.url),
@@ -186,14 +185,10 @@ test("el simulador permite consultar inicial del 20 o 30 por ciento", () => {
   );
 });
 
-test("el simulador Android conserva la fianza total del 75 por ciento", () => {
+test("ambos simuladores calculan fianza, interés y seguro con la política resuelta y no con la banda", () => {
   assert.match(
     creditFactorySource,
     /const DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE[^=]*=\s*30/
-  );
-  assert.match(
-    creditFactorySource,
-    /const ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE = 75/
   );
   assert.match(
     consoleSource,
@@ -207,31 +202,28 @@ test("el simulador Android conserva la fianza total del 75 por ciento", () => {
     consoleSource,
     /const cuotaInicialMinimaNumero = simulatorAndroidRulesActive\s*\? calculateAndroidSimulatorInitialPayment\(\s*valorTotalEquipoNumero,\s*simulatorInitialPaymentPercentage/
   );
-  assert.match(
-    consoleSource,
-    /simulatorAndroidRulesActive\s*\? calculateAndroidSimulatorInstallmentSuretyPercentage\(plazoMesesNumero\)/
-  );
-
-  const valorEquipo = 1_000_000;
-  const numeroCuotas = 16;
-  const cuotaInicial = calculateAndroidSimulatorInitialPayment(valorEquipo, 30);
-  const fianzaCuotaPorcentaje =
-    calculateAndroidSimulatorInstallmentSuretyPercentage(numeroCuotas);
-  const amortization = calculateFrenchAmortization({
-    valorVenta: valorEquipo,
-    cuotaInicial,
-    numeroCuotas,
-    tasaInteresEa: 29.66,
-    fianzaCuotaPorcentaje,
-    seguroCuotaPorcentaje: 0.03,
-    frecuenciaPago: "QUINCENAL",
-    fechaPrimerPago: "2026-09-17",
-  });
-
-  assert.equal(ANDROID_SIMULATOR_TOTAL_SURETY_PERCENTAGE, 75);
-  assert.equal(cuotaInicial, 300_000);
-  assert.equal(amortization.valorFinanciado, 700_000);
-  assert.equal(amortization.valorFianzaTotal, 525_000);
+  const suretyExpression = productionNode(node => ts.isVariableDeclaration(node) && node.name.getText(consoleAst) === "effectiveFianzaCuotaPorcentaje").initializer;
+  for (const platform of ["ANDROID", "IPHONE"]) {
+    for (const totalSurety of [75, 68]) {
+      const numeroCuotas = platform === "ANDROID" ? 16 : 24;
+      const resolvedPolicyFinancialSettings = resolveCreditPolicyFinancialSettings({
+        globalSettings: { tasaInteresEa: 17.84, fianzaCuotaPorcentaje: 2.083333, seguroCuotaPorcentaje: 0.1, frecuenciaPago: "MENSUAL" },
+        policyFinancialSettings: { calculoVersion: "ARES_FRANCES_V2", tasaInteresEa: 29.24, fianzaTotalPorcentaje: totalSurety, seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL", tasaPeriodoDecimales: 6, redondeoComercial: { modo: "PISO", multiplo: 50 } },
+        legacyOfferSuretyPercentage: 60, numeroCuotas,
+      });
+      const fianzaCuotaPorcentaje = executeProduction(suretyExpression.getText(consoleAst), {
+        simulatorAndroidRulesActive: platform === "ANDROID", plazoMesesNumero: numeroCuotas, resolvedPolicyFinancialSettings,
+        calculateAndroidSimulatorInstallmentSuretyPercentage() { throw new Error("El simulador no debe sustituir la política"); },
+      });
+      assert.equal(fianzaCuotaPorcentaje, totalSurety / numeroCuotas);
+      const amortization = calculateFrenchAmortization({ ...resolvedPolicyFinancialSettings,
+        valorVenta: 1_000_000, cuotaInicial: 300_000, numeroCuotas, fianzaCuotaPorcentaje, fechaPrimerPago: "2026-11-17" });
+      assert.equal(amortization.valorFinanciado, 700_000);
+      assert.ok(Math.abs(amortization.valorFianzaTotal - 700_000 * totalSurety / 100) < 0.001);
+      assert.equal(amortization.tasaInteresEa, 29.24);
+      assert.equal(amortization.seguroCuotaPorcentaje, 0.03);
+    }
+  }
 });
 
 test("el simulador oculta la política DataCrédito y sus términos internos", () => {

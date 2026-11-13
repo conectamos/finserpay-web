@@ -39,11 +39,13 @@ import type {
   DataCreditoAdminRiskSummary,
   DataCreditoSanitizedProviderPayload,
 } from "@/lib/datacredito/admin-report";
+import { getCreditOfferFinancialDisplay } from "@/lib/credit-offer-financial-display";
 import styles from "./datacredito-history.module.css";
 
 type Offer = {
   initialPaymentPercentage: number;
   suretyPercentage: number;
+  financialSettings?: unknown;
   maxFinancedAmount: number;
   decisionRule?:
     | "SCORE_BAND"
@@ -426,6 +428,7 @@ export default function DataCreditoAdminConsole() {
   }
 
   const summary = detail?.summary ?? null;
+  const offerFinancialDisplay = getCreditOfferFinancialDisplay(detail?.assessment?.offer);
   const risk = summary?.risk ?? null;
   const totals = summary?.totals ?? null;
   const sectors = summary?.sectors ?? [];
@@ -832,10 +835,10 @@ export default function DataCreditoAdminConsole() {
                     </div>
                     <div>
                       <span className="text-xs font-bold text-[var(--fp-muted)]">
-                        Fianza
+                        {offerFinancialDisplay.fianzaLabel}
                       </span>
                       <strong className="mt-1 block text-xl">
-                        {detail.assessment.offer.suretyPercentage} %
+                        {offerFinancialDisplay.fianzaPorcentaje == null ? "No disponible" : `${offerFinancialDisplay.fianzaPorcentaje} %`}
                       </strong>
                     </div>
                     <div>

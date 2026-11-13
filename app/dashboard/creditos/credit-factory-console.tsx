@@ -96,7 +96,6 @@ import FirmaSeguroIdentityReview from "./firma-seguro-identity-review";
 import clientValidationStyles from "./client-validation-shell.module.css";
 import {
   calculateAndroidSimulatorInitialPayment,
-  calculateAndroidSimulatorInstallmentSuretyPercentage,
   calculateFinancedBalance,
   DEFAULT_CREDIT_INSTALLMENTS,
   DEFAULT_FIANCO_SURETY_PERCENTAGE,
@@ -4288,9 +4287,7 @@ export default function CreditFactoryConsole({
     resolvedPolicyFinancialSettings.tasaInteresEa
   );
   const effectiveFianzaCuotaPorcentaje =
-    simulatorAndroidRulesActive
-      ? calculateAndroidSimulatorInstallmentSuretyPercentage(plazoMesesNumero)
-      : resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
+    resolvedPolicyFinancialSettings.fianzaCuotaPorcentaje;
   const frecuenciaPagoCredito =
     firmaSeguroDraftCorrectionPending && firmaSeguroSignedCorrectionFrequency
       ? normalizePaymentFrequency(firmaSeguroSignedCorrectionFrequency)

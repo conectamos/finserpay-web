@@ -7,6 +7,7 @@ import { Badge, Button, Input, Select } from "@/app/_components/finser-ui";
 import type { CreditClientField, CreditClientFormValues, CreditClientValidationResult } from "@/lib/credit-client-validation";
 import { normalizeCreditContactPhoneInput } from "@/lib/credit-contact-phones";
 import { getPaymentFrequencyLabel } from "@/lib/credit-factory";
+import { getCreditOfferFinancialDisplay } from "@/lib/credit-offer-financial-display";
 import type { DataCreditoApprovedResult } from "./datacredito-prequalification-gate";
 import styles from "./customer-details-form.module.css";
 
@@ -90,8 +91,7 @@ export default function CustomerDetailsForm(props: Props) {
   }
 
   const money = (value: number) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value);
-  const approvedTerms = approval?.offer.financialSettings;
-  const financialTerms = approvedTerms && typeof approvedTerms === "object" ? approvedTerms as Record<string, unknown> : null;
+  const financialTerms = getCreditOfferFinancialDisplay(approval?.offer);
   const blocks = [
     <div key="personal">
       <div className={styles.name}>{nameFields}</div>
@@ -147,7 +147,7 @@ export default function CustomerDetailsForm(props: Props) {
       <div><dt>Crédito máximo</dt><dd>{money(approval.offer.maxFinancedAmount)}</dd></div>
       <div><dt>Plazo máximo</dt><dd>{approval.offer.installmentCount} cuotas</dd></div>
       {approval.offer.maxInstallmentAmount ? <div><dt>Tope de cuota</dt><dd>{money(approval.offer.maxInstallmentAmount)}</dd></div> : null}
-      <div><dt>Fianza</dt><dd>{approval.offer.suretyPercentage}%</dd></div>
+      <div><dt>{financialTerms.fianzaLabel}</dt><dd>{financialTerms.fianzaPorcentaje == null ? "No disponible" : `${financialTerms.fianzaPorcentaje}%`}</dd></div>
       {typeof financialTerms?.frecuenciaPago === "string" ? <div><dt>Frecuencia de pago</dt><dd>{getPaymentFrequencyLabel(financialTerms.frecuenciaPago)}</dd></div> : null}
       {typeof financialTerms?.tasaInteresEa === "number" ? <div><dt>Tasa efectiva anual</dt><dd>{financialTerms.tasaInteresEa}%</dd></div> : null}
       {typeof financialTerms?.seguroCuotaPorcentaje === "number" ? <div><dt>Seguro por cuota</dt><dd>{financialTerms.seguroCuotaPorcentaje}%</dd></div> : null}
