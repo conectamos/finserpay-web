@@ -22,6 +22,7 @@ export type CreditReportExportItem = {
   valorEquipoTotal: number;
   cuotaInicial: number;
   creditoAutorizado: number;
+  plazoMeses?: number | null;
   estado: string;
   estadoReporte?: string;
 };
@@ -58,15 +59,17 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     { header: "Estado", width: 20 },
     { header: "Folio original", width: 30 },
     { header: "Número Sadmin", width: 30 },
+    { header: "Plazo financiado (cuotas)", width: 25 },
   ];
 
   sheet.columns.forEach((column, index) => {
     const isMoney = index >= 10 && index <= 12;
-    column.numFmt = index === 0 ? "dd/mm/yyyy" : isMoney ? '"$" #,##0' : "@";
+    const isTerm = index === 16;
+    column.numFmt = index === 0 ? "dd/mm/yyyy" : isMoney ? '"$" #,##0' : isTerm ? "0" : "@";
     column.font = { name: "Calibri", size: 11, color: { argb: "FF151A21" } };
     column.alignment = {
       vertical: "middle",
-      horizontal: isMoney ? "right" : "left",
+      horizontal: isMoney || isTerm ? "right" : "left",
       wrapText: true,
     };
   });
@@ -90,6 +93,9 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
       item.estadoReporte ?? item.estado,
       item.folio,
       creditReportSadmin(item) || "PENDIENTE SADMIN",
+      item.plazoMeses != null && Number.isInteger(item.plazoMeses) && item.plazoMeses > 0
+        ? item.plazoMeses
+        : null,
     ]);
     row.height = 32;
     row.eachCell({ includeEmpty: true }, (cell) => {
@@ -109,7 +115,7 @@ export function buildCreditReportWorkbook(items: CreditReportExportItem[]) {
     cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   });
-  sheet.autoFilter = `A1:P${sheet.rowCount}`;
+  sheet.autoFilter = `A1:Q${sheet.rowCount}`;
 
   return workbook;
 }

@@ -23,6 +23,7 @@ const example = {
   valorEquipoTotal: 2640000,
   cuotaInicial: 1200000,
   creditoAutorizado: 1440000,
+  plazoMeses: 36,
   estado: "ENTREGABLE",
 };
 
@@ -34,12 +35,13 @@ async function roundTrip(items) {
   return workbook.getWorksheet("Créditos");
 }
 
-test("exporta las 16 columnas con identificadores completos y valores numéricos", async () => {
+test("exporta las 17 columnas con identificadores completos y plazo financiado numérico", async () => {
   const sheet = await roundTrip([example]);
   assert.equal(sheet.rowCount, 2);
   assert.deepEqual(sheet.getRow(1).values.slice(1), [
     "Fecha", "Número crédito", "Cliente", "Documento", "Teléfono", "Referencia", "IMEI",
     "Aliado", "Sede", "Vendedor", "Valor venta", "Inicial", "Valor crédito autorizado", "Estado", "Folio original", "Número Sadmin",
+    "Plazo financiado (cuotas)",
   ]);
   for (const [address, expected] of [
     ["B2", example.folio], ["C2", example.clienteNombre],
@@ -55,6 +57,9 @@ test("exporta las 16 columnas con identificadores completos y valores numéricos
     assert.equal(sheet.getCell(address).numFmt, '"$" #,##0');
   }
   assert.equal(sheet.getCell("A2").type, ExcelJS.ValueType.Date);
+  assert.equal(sheet.getCell("Q2").value, 36);
+  assert.equal(sheet.getCell("Q2").type, ExcelJS.ValueType.Number);
+  assert.equal(sheet.getCell("Q2").numFmt, "0");
   const sourceDate = new Date(example.fechaCredito);
   assert.equal(sheet.getCell("A2").value.getTime(), Date.UTC(
     sourceDate.getFullYear(), sourceDate.getMonth(), sourceDate.getDate(),
@@ -85,7 +90,7 @@ test("respeta filas y orden recibidos, vacíos, ceros y referencia alternativa",
       ...example, folio: "SEGUNDO", fechaCredito: "fecha inválida",
       clienteDocumento: null, clienteTelefono: null, referenciaEquipo: null,
       sede: { nombre: "Sin aliado", aliado: null },
-      valorEquipoTotal: 0, cuotaInicial: 0, creditoAutorizado: 0,
+      valorEquipoTotal: 0, cuotaInicial: 0, creditoAutorizado: 0, plazoMeses: null,
     },
   ]);
   assert.equal(sheet.rowCount, 3);
@@ -97,7 +102,8 @@ test("respeta filas y orden recibidos, vacíos, ceros y referencia alternativa",
   assert.equal(sheet.getCell("F3").value, "APPLE IPHONE 16");
   assert.equal(sheet.getCell("H3").text, "");
   for (const column of ["K", "L", "M"]) assert.equal(sheet.getCell(`${column}3`).value, 0);
-  assert.equal(sheet.autoFilter, "A1:P3");
+  assert.equal(sheet.getCell("Q3").value, null);
+  assert.equal(sheet.autoFilter, "A1:Q3");
   assert.equal(sheet.views[0].state, "frozen");
   assert.equal(sheet.views[0].ySplit, 1);
   assert.equal(sheet.getCell("A1").alignment.wrapText, true);
@@ -137,8 +143,18 @@ test("la columna Estado coincide con el reporte aprobado y conserva el fallback 
     assert.equal(sheet.getCell("L" + row).value, example.cuotaInicial);
     assert.equal(sheet.getCell("M" + row).value, example.creditoAutorizado);
   }
-  assert.equal(sheet.columnCount, 16);
+  assert.equal(sheet.columnCount, 17);
   assert.deepEqual(items, snapshot);
+});
+
+test("el plazo exportado conserva las cuotas registradas y deja vacíos los datos ausentes", async () => {
+  const values = [12, 18, 24, 36, null, undefined, 0, -1, 1.5];
+  const items = values.map(plazoMeses => ({ ...example, plazoMeses }));
+  const before = structuredClone(items);
+  const sheet = await roundTrip(items);
+  assert.deepEqual(values.map((_, index) => sheet.getCell(`Q${index + 2}`).value),
+    [12, 18, 24, 36, null, null, null, null, null]);
+  assert.deepEqual(items, before);
 });
 
 test("el número visible SADMIN conserva texto literal y el folio contractual en columna separada", async () => {
