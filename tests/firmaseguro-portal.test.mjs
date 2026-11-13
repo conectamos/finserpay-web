@@ -15,7 +15,7 @@ const originalContact = { phone: "3001234567", email: "original@example.test" };
 // Behavioral fixtures for the observed portal DOM. No real Chromium, HTTP, account or notification is used.
 function fixture(options = {}) {
   const state = { phase: "email", url: ORIGIN + "/Login", authenticated: false, editor: null, modal: false,
-    ack: false, edits: 0, resends: 0, browserClosed: 0, contextClosed: 0, fills: [], navigations: [], launches: [],
+    ack: false, edits: 0, resends: 0, browserClosed: 0, contextClosed: 0, fills: [], clicks: [], navigations: [], launches: [],
     route: null, contextOptions: null, ...options };
   const target = { id: input.signatureId, cc: input.identity.identification, firstName: "MARIA", firstLastName: "PEREZ",
     ...originalContact, indicative: "57", authentication: "4", signed: false,
@@ -53,7 +53,7 @@ function fixture(options = {}) {
     if (selector === 'input[type="submit"][value="Ingresar con Contraseña"]') return state.phase === "email" ? [leaf("passwordEntry")] : [];
     if (selector === 'input[type="password"]') return state.phase === "password" ? [leaf("password")] : [];
     if (["#SearchIdentification", "#SearchFileName", "#btnFilterProcess"].includes(selector))
-      return state.phase === "list" ? [leaf(selector)] : [];
+      return state.phase === "list" && options.missingFilter !== selector ? [leaf(selector)] : [];
     if (selector === "#myTable tr[data-process-id]") return state.phase === "list"
       ? Array.from({ length: options.rows ?? 1 }, () => leaf("row")) : [];
     if (selector === ".box.signer") return state.phase === "detail" ? cards.map(card => leaf("card", { card })) : [];
@@ -80,7 +80,7 @@ function fixture(options = {}) {
       const n = this.resolve()[0];
       if (!n) throw new Error("fixture missing node");
       if (n.kind === "passwordEntry" && name === "formaction") return options.loginAction || "/Login?returnUrl=.%2FSignInPassword";
-      if (n.kind === "loginForm" && name === "action") return options.passwordAction || "/SignInPassword";
+      if (n.kind === "loginForm" && name === "action") return options.passwordAction || "/Identity/Account/SignInPassword";
       if (n.kind === "passwordSubmit" && name === "formaction") return options.passwordSubmitAction || null;
       if (n.kind === "row" && name === "data-process-id") return "244008";
       if (n.kind === "document" && name === "data-bs-original-title") return `TALONARIO_FINSERPAY_${n.folio}.pdf`;
@@ -118,7 +118,8 @@ function fixture(options = {}) {
     async click() {
       const n = this.resolve()[0];
       if (!n) throw new Error("fixture missing control");
-      if (n.kind === "passwordEntry") { state.phase = "password"; state.url = ORIGIN + "/SignInPassword"; }
+      state.clicks.push(n.kind);
+      if (n.kind === "passwordEntry") { state.phase = "password"; state.url = ORIGIN + "/Identity/Account/SignInPassword"; }
       if (n.kind === "passwordSubmit") {
         if (options.loginFailure) throw new Error("fixture portal password=fixture-secret should never escape");
         state.authenticated = true; state.phase = "list"; state.url = ORIGIN + "/Process/List";
@@ -171,7 +172,7 @@ function fixture(options = {}) {
   const chromium = { async launch(value) { state.launches.push(value); return browser; } };
   const cleaned = source.replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "");
   const api = runInNewContext(stripTypeScriptTypes(cleaned, { mode: "transform" }) +
-    "\n({ openFirmaSeguroPortalRecipient, FirmaSeguroPortalError });", {
+    "\n({ openFirmaSeguroPortalRecipient, verifyFirmaSeguroPortalAccess, FirmaSeguroPortalError });", {
     chromium, URL, process: { env: options.env ?? { FIRMASEGURO_EMAIL: "fixture@example.test", FIRMASEGURO_PASSWORD: "fixture-secret" } },
   });
   return { ...api, state, target, page, frame, open: () => api.openFirmaSeguroPortalRecipient(input) };
@@ -247,6 +248,7 @@ test("rechaza navegación fuera de allowlist y solo admite scripts externos obse
     [ORIGIN + "/Login?ReturnUrl=%2FProcess%2FList", true, "document", "continue"],
     [ORIGIN + "/Login?returnUrl=.%2FSignInPassword", true, "document", "continue"],
     [ORIGIN + "/Login?returnUrl=./SignInPassword", true, "document", "continue"],
+    [ORIGIN + "/Identity/Account/SignInPassword", true, "document", "continue"],
     [ORIGIN + "/Process/", true, "document", "continue"],
     ["https://cdn.jsdelivr.net/npm/flatpickr", false, "script", "continue"],
     ["https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/es.js", false, "script", "continue"],
@@ -255,6 +257,9 @@ test("rechaza navegación fuera de allowlist y solo admite scripts externos obse
     ["https://cdn.jsdelivr.net/npm/flatpickr", false, "xhr", "abort"],
     ["https://untrusted.example.test/file.js", false, "script", "abort"],
     [ORIGIN + "/Login?ReturnUrl=https%3A%2F%2Funtrusted.example.test", true, "document", "abort"],
+    [ORIGIN + "/Identity/Account/Login", true, "document", "abort"],
+    [ORIGIN + "/Identity/Account/Manage", true, "document", "abort"],
+    [ORIGIN + "/Identity/Account/SignInPassword/extra", true, "document", "abort"],
     ["https://cdn.jsdelivr.net/npm/flatpickr", true, "document", "abort"],
     [ORIGIN + "/Process/Delete/244008", true, "document", "abort"],
   ]) {
@@ -335,4 +340,47 @@ test("un reenvío sin correo autorizado no adopta el correo nuevo de otra lectur
   await assert.rejects(session.resend({ phone: originalContact.phone, email: null }), error => error.code === "PORTAL_CONTACT_REQUIRED" && !error.uncertain);
   assert.equal(f.state.resends, 0);
   await session.close();
+});
+
+test("verifica acceso usando el login compartido y cierra sin consultar ni modificar un destinatario", async () => {
+  const f = fixture();
+  assert.equal(await f.verifyFirmaSeguroPortalAccess(), undefined);
+  assert.equal(f.state.url, ORIGIN + "/Process/List");
+  assert.deepEqual(f.state.fills.map(fill => fill.kind), ["emailLogin", "password"]);
+  assert.deepEqual(f.state.clicks, ["passwordEntry", "passwordSubmit"]);
+  assert.equal(f.state.editor, null);
+  assert.equal(f.state.modal, false);
+  assert.equal(f.state.edits, 0);
+  assert.equal(f.state.resends, 0);
+  assert.ok(f.state.navigations.every(url => url === ORIGIN + "/Process/List"));
+  assert.equal(f.state.contextClosed, 1);
+  assert.equal(f.state.browserClosed, 1);
+});
+
+test("la verificación exige todos los filtros visibles y cierra también ante error de login o captcha", async () => {
+  for (const options of [
+    { missingFilter: "#SearchIdentification" }, { missingFilter: "#SearchFileName" },
+    { missingFilter: "#btnFilterProcess" }, { loginFailure: true }, { captcha: true },
+    { passwordAction: "https://untrusted.example.test/collect" },
+  ]) {
+    const f = fixture(options);
+    await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => error.name === "FirmaSeguroPortalError" &&
+      error.stage === "READ" && !error.uncertain && !/fixture-secret|password=/.test(error.message));
+    assert.equal(f.state.edits, 0);
+    assert.equal(f.state.resends, 0);
+    assert.ok(!f.state.clicks.includes("#btnFilterProcess"));
+    assert.equal(f.state.contextClosed, 1);
+    assert.equal(f.state.browserClosed, 1);
+  }
+});
+
+test("verificación y operaciones comparten selección de credenciales sin mezclar namespaces", async () => {
+  const f = fixture({ env: { FIRMASEGURO_PORTAL_EMAIL: "custom@example.test", FIRMASEGURO_PASSWORD: "fixture-secret" } });
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => error.code === "PORTAL_NOT_CONFIGURED");
+  assert.equal(f.state.launches.length, 0);
+  const complete = fixture({ env: { FIRMASEGURO_PORTAL_EMAIL: "custom@example.test", FIRMASEGURO_PORTAL_PASSWORD: "custom-fixture",
+    FIRMASEGURO_EMAIL: "fallback@example.test", FIRMASEGURO_PASSWORD: "fallback-fixture" } });
+  await complete.verifyFirmaSeguroPortalAccess();
+  assert.deepEqual(complete.state.fills.map(fill => fill.value), ["custom@example.test", "custom-fixture"]);
+  assert.equal(complete.state.browserClosed, 1);
 });

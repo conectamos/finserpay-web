@@ -72,7 +72,7 @@ function allowedNavigation(value: string) {
   try {
     const url = new URL(value, ORIGIN);
     if (url.origin !== ORIGIN || url.username || url.password || url.hash) return false;
-    if (!/^\/(?:Login|SignInPassword|Process|Process\/List|Process\/Details\/[1-9]\d*)?\/?$/i.test(url.pathname)) return false;
+    if (!/^\/(?:Login|SignInPassword|Identity\/Account\/SignInPassword|Process|Process\/List|Process\/Details\/[1-9]\d*)?\/?$/i.test(url.pathname)) return false;
     for (const [key, redirect] of url.searchParams) {
       if (/returnurl|redirect|redirecturi|redirecturl|next/i.test(key)) {
         const destination = new URL(redirect, ORIGIN + "/");
@@ -101,6 +101,113 @@ async function visibleOne(locator: Locator) {
   await locator.first().waitFor({ state: "visible", timeout: TIMEOUT });
   return one(locator);
 }
+function safeError(error: unknown, stage: Stage, uncertain: boolean) {
+  if (error instanceof FirmaSeguroPortalError) {
+    return new FirmaSeguroPortalError(error.code, error.message, error.status, stage, uncertain || error.uncertain);
+  }
+  return new FirmaSeguroPortalError(uncertain ? "PORTAL_RESULT_UNCERTAIN" : "PORTAL_UNAVAILABLE",
+    uncertain ? "No se confirmó el resultado en FirmaSeguro. No repitas el envío; requiere revisión."
+      : "No se pudo verificar la firma en el portal de FirmaSeguro.", 502, stage, uncertain);
+}
+
+// Shared by recipient operations and the read-only credential check. No customer filters are applied here.
+async function openPortalAccess() {
+  // Prefer a complete credential pair; never combine accounts from the two namespaces.
+  const specific = process.env.FIRMASEGURO_PORTAL_EMAIL || process.env.FIRMASEGURO_PORTAL_PASSWORD;
+  const account = specific ? process.env.FIRMASEGURO_PORTAL_EMAIL : process.env.FIRMASEGURO_EMAIL;
+  const password = specific ? process.env.FIRMASEGURO_PORTAL_PASSWORD : process.env.FIRMASEGURO_PASSWORD;
+  if (!account?.trim() || !password) {
+    throw new FirmaSeguroPortalError("PORTAL_NOT_CONFIGURED", "Falta configurar el acceso al portal de FirmaSeguro.", 503);
+  }
+  let browser: Browser | undefined, context: BrowserContext | undefined, page: Page;
+  let closed = false, blockedNavigation = false;
+  async function close() {
+    if (closed) return;
+    closed = true;
+    try { await context?.close(); } catch { /* Never expose browser errors or credentials. */ }
+    try { await browser?.close(); } catch { /* Best effort after a crashed context. */ }
+  }
+  async function guardPage() {
+    if (blockedNavigation || !allowedNavigation(page.url()))
+      failure("PORTAL_NAVIGATION_BLOCKED", "El portal intentó abrir un destino no autorizado.");
+    const captcha = page.locator('iframe[src*="captcha" i], .g-recaptcha, .h-captcha, input[name*="captcha" i]');
+    for (let i = 0; i < await captcha.count(); i++) {
+      if (await captcha.nth(i).isVisible()) failure("PORTAL_CHALLENGE", "El portal requiere una verificación humana.");
+    }
+  }
+  async function settle() {
+    // Waiting is not an ACK. Mutations are acknowledged only by the subsequent UI readback / success text.
+    await page.waitForLoadState("networkidle", { timeout: TIMEOUT });
+    await guardPage();
+  }
+  try {
+    browser = await chromium.launch({ headless: true });
+    context = await browser.newContext({ acceptDownloads: false, ignoreHTTPSErrors: false, serviceWorkers: "block" });
+    await context.route("**/*", async route => {
+      const request = route.request();
+      let permitted = false;
+      try {
+        const url = new URL(request.url());
+        permitted = !url.username && !url.password && (url.origin === ORIGIN ||
+          (!request.isNavigationRequest() && request.resourceType() === "script" && EXTERNAL_SCRIPTS.has(url.href)));
+      } catch { /* Block unknown schemes. */ }
+      if (request.isNavigationRequest() && request.frame() === page?.mainFrame()) {
+        permitted &&= allowedNavigation(request.url());
+        if (!permitted) blockedNavigation = true;
+      }
+      // Same-origin AJAX emitted by portal controls is permitted; no guessed private endpoint is called here.
+      if (permitted) await route.continue(); else await route.abort("blockedbyclient");
+    });
+    page = await context.newPage();
+    page.setDefaultTimeout(TIMEOUT);
+    page.setDefaultNavigationTimeout(TIMEOUT);
+    page.on("popup", popup => { void popup.close().catch(() => {}); });
+    page.on("dialog", dialog => { void dialog.dismiss().catch(() => {}); });
+    await page.goto(ORIGIN + "/Process/List", { waitUntil: "domcontentloaded" });
+    await guardPage();
+    const login = await visibleOne(page.locator("input#Input_Email"));
+    const passwordEntry = await visibleOne(page.locator('input[type="submit"][value="Ingresar con Contraseña"]'));
+    const loginAction = await passwordEntry.getAttribute("formaction");
+    if (!loginAction || !allowedNavigation(loginAction) ||
+      new URL(loginAction, ORIGIN).searchParams.get("returnUrl") !== "./SignInPassword")
+      failure("PORTAL_LOGIN_CHANGED", "El formulario de acceso al portal cambió.");
+    await login.fill(account.trim());
+    await passwordEntry.click();
+    await settle();
+    const secret = await visibleOne(page.locator('input[type="password"]'));
+    const loginForm = await one(secret.locator("xpath=ancestor::form"));
+    const action = await loginForm.getAttribute("action");
+    if (action && !allowedNavigation(new URL(action, page.url()).href))
+      failure("PORTAL_LOGIN_CHANGED", "El formulario de acceso al portal cambió.");
+    const submit = await visibleOne(loginForm.locator('input[type="submit"], button[type="submit"]'));
+    const submitAction = await submit.getAttribute("formaction");
+    if (submitAction && !allowedNavigation(new URL(submitAction, page.url()).href))
+      failure("PORTAL_LOGIN_CHANGED", "El formulario de acceso al portal cambió.");
+    await secret.fill(password);
+    await submit.click();
+    await settle();
+    if (/\/(?:Login|SignInPassword)\/?$/i.test(new URL(page.url()).pathname))
+      failure("PORTAL_LOGIN_FAILED", "No se pudo iniciar sesión en el portal de FirmaSeguro.");
+    await page.goto(ORIGIN + "/Process/List", { waitUntil: "domcontentloaded" });
+    await guardPage();
+    if (!/^\/Process\/List\/?$/i.test(new URL(page.url()).pathname))
+      failure("PORTAL_LOGIN_FAILED", "No se pudo verificar el acceso al listado del portal.");
+    for (const selector of ["#SearchIdentification", "#SearchFileName", "#btnFilterProcess"])
+      await visibleOne(page.locator(selector));
+    return { page, guardPage, settle, close };
+  } catch (error) {
+    await close();
+    throw safeError(error, "READ", false);
+  }
+}
+
+/** Checks credentials through the same login and navigation policy, without filtering or opening a process. */
+export async function verifyFirmaSeguroPortalAccess(): Promise<void> {
+  const access = await openPortalAccess();
+  try { await access.guardPage(); }
+  catch (error) { throw safeError(error, "READ", false); }
+  finally { await access.close(); }
+}
 
 /** Uses only the portal's observed UI. No persistent profile, token API, direct AJAX, or provider retries.
  * Selectors and the single-result filter must still be smoke-tested with an authorized runtime account.
@@ -115,45 +222,17 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
     typeof input.identity.firstLastName !== "string" || !input.identity.firstLastName.trim()) {
     throw new FirmaSeguroPortalError("PORTAL_INPUT_INVALID", "Falta una identidad de firma válida para consultar el portal.", 400);
   }
-  // Prefer a complete credential pair; never combine accounts from the two namespaces.
-  const specific = process.env.FIRMASEGURO_PORTAL_EMAIL || process.env.FIRMASEGURO_PORTAL_PASSWORD;
-  const account = specific ? process.env.FIRMASEGURO_PORTAL_EMAIL : process.env.FIRMASEGURO_EMAIL;
-  const password = specific ? process.env.FIRMASEGURO_PORTAL_PASSWORD : process.env.FIRMASEGURO_PASSWORD;
-  if (!account?.trim() || !password) {
-    throw new FirmaSeguroPortalError("PORTAL_NOT_CONFIGURED", "Falta configurar el acceso al portal de FirmaSeguro.", 503);
-  }
   const expected = { ...input, folio: input.folio.trim(), identity: { ...input.identity } };
-  let browser: Browser | undefined, context: BrowserContext | undefined, page: Page;
-  let closed = false, busy = false, blockedNavigation = false;
+  const access = await openPortalAccess();
+  const { page, guardPage, settle } = access;
+  let closed = false, busy = false;
   let editAttempted = false, resendAttempted = false, uncertainMutation = false;
   let detailUrl = "";
 
   async function close() {
     if (closed) return;
     closed = true;
-    try { await context?.close(); } catch { /* Never expose browser errors or credentials. */ }
-    try { await browser?.close(); } catch { /* Best effort after a crashed context. */ }
-  }
-  function safeError(error: unknown, stage: Stage, uncertain: boolean) {
-    if (error instanceof FirmaSeguroPortalError) {
-      return new FirmaSeguroPortalError(error.code, error.message, error.status, stage, uncertain || error.uncertain);
-    }
-    return new FirmaSeguroPortalError(uncertain ? "PORTAL_RESULT_UNCERTAIN" : "PORTAL_UNAVAILABLE",
-      uncertain ? "No se confirmó el resultado en FirmaSeguro. No repitas el envío; requiere revisión."
-        : "No se pudo verificar la firma en el portal de FirmaSeguro.", 502, stage, uncertain);
-  }
-  async function guardPage() {
-    if (blockedNavigation || !allowedNavigation(page.url()))
-      failure("PORTAL_NAVIGATION_BLOCKED", "El portal intentó abrir un destino no autorizado.");
-    const captcha = page.locator('iframe[src*="captcha" i], .g-recaptcha, .h-captcha, input[name*="captcha" i]');
-    for (let i = 0; i < await captcha.count(); i++) {
-      if (await captcha.nth(i).isVisible()) failure("PORTAL_CHALLENGE", "El portal requiere una verificación humana.");
-    }
-  }
-  async function settle() {
-    // Waiting is not an ACK. Mutations are acknowledged only by the subsequent UI readback / success text.
-    await page.waitForLoadState("networkidle", { timeout: TIMEOUT });
-    await guardPage();
+    await access.close();
   }
   async function reloadDetail() {
     if (page.url() !== detailUrl) failure("PORTAL_PROCESS_CHANGED", "El proceso del portal cambió.");
@@ -270,55 +349,6 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
   }
 
   try {
-    browser = await chromium.launch({ headless: true });
-    context = await browser.newContext({ acceptDownloads: false, ignoreHTTPSErrors: false, serviceWorkers: "block" });
-    await context.route("**/*", async route => {
-      const request = route.request();
-      let permitted = false;
-      try {
-        const url = new URL(request.url());
-        permitted = !url.username && !url.password && (url.origin === ORIGIN ||
-          (!request.isNavigationRequest() && request.resourceType() === "script" && EXTERNAL_SCRIPTS.has(url.href)));
-      } catch { /* Block unknown schemes. */ }
-      if (request.isNavigationRequest() && request.frame() === page?.mainFrame()) {
-        permitted &&= allowedNavigation(request.url());
-        if (!permitted) blockedNavigation = true;
-      }
-      // Same-origin AJAX emitted by portal controls is permitted; no guessed private endpoint is called here.
-      if (permitted) await route.continue(); else await route.abort("blockedbyclient");
-    });
-    page = await context.newPage();
-    page.setDefaultTimeout(TIMEOUT);
-    page.setDefaultNavigationTimeout(TIMEOUT);
-    page.on("popup", popup => { void popup.close().catch(() => {}); });
-    page.on("dialog", dialog => { void dialog.dismiss().catch(() => {}); });
-    await page.goto(ORIGIN + "/Process/List", { waitUntil: "domcontentloaded" });
-    await guardPage();
-    const login = await visibleOne(page.locator("input#Input_Email"));
-    const passwordEntry = await visibleOne(page.locator('input[type="submit"][value="Ingresar con Contraseña"]'));
-    const loginAction = await passwordEntry.getAttribute("formaction");
-    if (!loginAction || !allowedNavigation(loginAction) ||
-      new URL(loginAction, ORIGIN).searchParams.get("returnUrl") !== "./SignInPassword")
-      failure("PORTAL_LOGIN_CHANGED", "El formulario de acceso al portal cambió.");
-    await login.fill(account.trim());
-    await passwordEntry.click();
-    await settle();
-    const secret = await visibleOne(page.locator('input[type="password"]'));
-    const loginForm = await one(secret.locator("xpath=ancestor::form"));
-    const action = await loginForm.getAttribute("action");
-    if (action && !allowedNavigation(new URL(action, page.url()).href))
-      failure("PORTAL_LOGIN_CHANGED", "El formulario de acceso al portal cambió.");
-    const submit = await visibleOne(loginForm.locator('input[type="submit"], button[type="submit"]'));
-    const submitAction = await submit.getAttribute("formaction");
-    if (submitAction && !allowedNavigation(new URL(submitAction, page.url()).href))
-      failure("PORTAL_LOGIN_CHANGED", "El formulario de acceso al portal cambió.");
-    await secret.fill(password);
-    await submit.click();
-    await settle();
-    if (/\/(?:Login|SignInPassword)\/?$/i.test(new URL(page.url()).pathname))
-      failure("PORTAL_LOGIN_FAILED", "No se pudo iniciar sesión en el portal de FirmaSeguro.");
-    await page.goto(ORIGIN + "/Process/List", { waitUntil: "domcontentloaded" });
-    await guardPage();
     await (await visibleOne(page.locator("#SearchIdentification"))).fill(expected.identity.identification);
     await (await visibleOne(page.locator("#SearchFileName"))).fill(expected.folio);
     await (await visibleOne(page.locator("#btnFilterProcess"))).click();
