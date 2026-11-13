@@ -101,7 +101,8 @@ test("Cartera aparece en el menu de administradores centrales y aliados", () => 
       assert.match(submenu, /href="\/dashboard\/riesgo-referencia"/);
       assert.match(submenu, />Riesgo por referencia<\/span>/);
       const hrefs = Array.from(submenu.matchAll(/href="([^"]+)"/g), match => match[1]);
-      assert.equal(hrefs.indexOf("/dashboard/reportes/recaudo-por-corte"), hrefs.indexOf("/dashboard/riesgo-referencia") + 1);
+      if (html === central) assert.equal(hrefs.indexOf("/dashboard/reportes/recaudo-por-corte"), hrefs.indexOf("/dashboard/riesgo-referencia") + 1);
+      else assert.ok(!hrefs.includes("/dashboard/reportes/recaudo-por-corte"));
     }
     assert.equal((html.match(/href="\/dashboard\/riesgo-referencia"/g) || []).length, 2);
   }
@@ -141,11 +142,11 @@ test("Detalle de mora permanece activo dentro del submenú Cartera en escritorio
   assert.equal((html.match(/<details open="" class="group\/cartera"/g) || []).length, 2);
 });
 
-test("Recaudo por corte abre Cartera y conserva el estilo del módulo para ambos administradores", () => {
+test("Recaudo por corte abre Cartera sólo al administrador central", () => {
   for (const adminCentral of [true, false]) {
     const html = renderSidebar({ adminCentral, rolUsuario: "ADMIN", activeHref: "/dashboard/reportes/recaudo-por-corte" });
-    assert.equal((html.match(/href="\/dashboard\/reportes\/recaudo-por-corte" aria-current="page"/g) || []).length, 2);
-    assert.equal((html.match(/<details open="" class="group\/cartera"/g) || []).length, 2);
+    assert.equal((html.match(/href="\/dashboard\/reportes\/recaudo-por-corte" aria-current="page"/g) || []).length, adminCentral ? 2 : 0);
+    assert.equal((html.match(/<details open="" class="group\/cartera"/g) || []).length, adminCentral ? 2 : 0);
     assert.match(html, /^<aside class="bg-\[var\(--fp-graphite\)\]/);
   }
 });

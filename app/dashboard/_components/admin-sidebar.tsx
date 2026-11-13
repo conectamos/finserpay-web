@@ -203,7 +203,7 @@ export default function AdminSidebar({
               ...(adminCentral ? [{ href: "/dashboard/aprobaciones/gestion-cartera", icon: ClipboardList, label: "Gestión de cartera" }] : []),
               { href: "/dashboard/cartera/detalle-mora", icon: BarChart3, label: "Detalle de mora" },
               { href: "/dashboard/riesgo-referencia", icon: BarChart3, label: "Riesgo por referencia" },
-              { href: "/dashboard/reportes/recaudo-por-corte", icon: CalendarDays, label: "Recaudo por corte" },
+              ...(adminCentral ? [{ href: "/dashboard/reportes/recaudo-por-corte", icon: CalendarDays, label: "Recaudo por corte" }] : []),
             ] }]
           : []),
         ...(adminCentral

@@ -2,7 +2,7 @@ import FinserNavigation from "@/app/dashboard/_components/finser-navigation";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { parseCutFilters } from "@/lib/cut-collection-access";
 import type { CutFilters, CutStatus } from "@/lib/cut-collection-types";
-import { requireAdminOrSupervisorDashboardAccess } from "@/lib/dashboard-access";
+import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
 import RecaudoPorCorteClient from "./recaudo-por-corte-client";
 import styles from "./recaudo-por-corte.module.css";
 
@@ -39,7 +39,7 @@ export const metadata = {
 };
 
 export default async function RecaudoPorCortePage({ searchParams }: { searchParams: Promise<Query> }) {
-  const { admin, session, supervisor } = await requireAdminOrSupervisorDashboardAccess();
+  const { admin, session, supervisor } = await requireCentralAdminDashboardAccess();
   const query = await searchParams;
 
   return <div className={styles.shell}>

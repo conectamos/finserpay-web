@@ -91,9 +91,8 @@ test("el resumen presenta los tres cortes más recientes con porcentajes y nivel
   assert.equal(nodes(table, node => node.type === "th" && node.props.scope === "row").length, 3);
   assert.doesNotMatch(text(tree), /Por madurar|Sin datos|55|\b100\b|casos|evaluados|18:47|Consulta/);
   assert.equal(JSON.stringify(data), before);
-  const link = nodes(tree, node => node.type === "a")[0];
-  const query = new URL(link.props.href, "https://finserpay.test").searchParams;
-  assert.equal(query.get("day"), "2"); assert.equal(query.get("month"), "11"); assert.equal(query.get("year"), "2026");
+  assert.equal(nodes(tree, node => node.type === "a" || node.type === "button").length, 0);
+  assert.doesNotMatch(text(tree), /Ver informe/);
 });
 
 test("la alternativa móvil conserva cada corte y sus tres métricas, sin columnas horizontales ni pérdida de indicadores", () => {
@@ -121,17 +120,17 @@ test("un fallo o ausencia de datos no presenta porcentajes cero ni conserva resu
   assert.match(text(empty), /Sin cortes disponibles/);
 });
 
-test("sólo el dashboard aliado sustituye Salud de cartera y el enlace conserva fecha y sede autorizadas", () => {
-  const fpReportHref = "/dashboard/reportes/recaudo-por-corte?day=2&month=11&year=2026&sedeId=9";
-  const ally = expand(jsxRuntime.jsx(Dashboard, { ...props, allyFpd: fixture(), fpReportHref }));
+test("el dashboard aliado conserva FPD sin acceso al informe y el central conserva cartera y navegación completa", () => {
+  const ally = expand(jsxRuntime.jsx(Dashboard, { ...props, allyFpd: fixture() }));
   const headings = nodes(ally, node => node.type === "h2").map(text);
   assert.ok(headings.includes("FPD por corte"));
   assert.ok(!headings.includes("Salud de cartera"));
-  assert.equal(nodes(ally, node => node.type === "a" && text(node) === "Ver informe")[0].props.href, fpReportHref);
-  const central = expand(jsxRuntime.jsx(Dashboard, { ...props, adminCentral: true, allyFpd: fixture(), fpReportHref }));
+  assert.equal(nodes(ally, node => node.type === "a" && (text(node) === "Ver informe" || node.props.href.includes("/reportes/recaudo-por-corte"))).length, 0);
+  const central = expand(jsxRuntime.jsx(Dashboard, { ...props, adminCentral: true, allyFpd: fixture() }));
   assert.ok(nodes(central, node => node.type === "h2" && text(node) === "Salud de cartera").length);
   assert.equal(nodes(central, node => node.props["aria-labelledby"] === "ally-dashboard-fpd-title").length, 0);
   assert.equal(nodes(central, node => node.props.role === "img" && node.props["aria-label"] === "75,0% al día, 20,0% mora temprana y 5,0% mora crítica").length, 1);
   assert.ok(nodes(central, node => node.type === "a" && text(node) === "Ver detalle" && node.props.href === "/dashboard/cartera/detalle-mora").length);
+  assert.equal(nodes(central, node => node.type === "a" && node.props.href === "/dashboard/reportes/recaudo-por-corte").length, 1);
   assert.doesNotMatch(renderToStaticMarkup(ally), /NaN|Infinity|undefined/);
 });

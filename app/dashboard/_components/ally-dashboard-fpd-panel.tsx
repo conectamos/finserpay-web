@@ -1,5 +1,3 @@
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 import { Badge, Card } from "@/app/_components/finser-ui";
 import type { CutRiskMetric } from "@/lib/cut-collection-types";
 import { getCutFpdLevel } from "@/lib/cut-risk-presentation";
@@ -27,14 +25,11 @@ function CutDate({ value }: { value: string }) {
   return <time dateTime={value}><span>{cutDay.format(new Date(`${value}T12:00:00Z`))}</span><small>{value.slice(0, 4)}</small></time>;
 }
 
-export default function AllyDashboardFpdPanel({ data, reportHref }: { data?: AllyDashboardFpdData; reportHref?: string }) {
+export default function AllyDashboardFpdPanel({ data }: { data?: AllyDashboardFpdData }) {
   const cuts = data?.status === "ready" ? [...data.cuts].sort((left, right) => right.cutDate.localeCompare(left.cutDate)).slice(0, 3) : [];
-  const latest = cuts[0]?.cutDate;
-  const fallbackQuery = latest ? new URLSearchParams({ day: String(Number(latest.slice(8, 10))), month: String(Number(latest.slice(5, 7))), year: latest.slice(0, 4) }) : null;
-  const href = reportHref || `/dashboard/reportes/recaudo-por-corte${fallbackQuery ? `?${fallbackQuery}` : ""}`;
 
   return <Card className={styles.panel} role="region" aria-labelledby="ally-dashboard-fpd-title">
-    <header className={styles.header}><div><h2 id="ally-dashboard-fpd-title">FPD por corte</h2><p>Últimos 3 cortes</p></div><Link href={href}>Ver informe <ArrowRight aria-hidden="true" /></Link></header>
+    <header className={styles.header}><div><h2 id="ally-dashboard-fpd-title">FPD por corte</h2><p>Últimos 3 cortes</p></div></header>
     {data?.status !== "ready" ? <p className={styles.empty} role="status">FPD no disponible.</p> : !cuts.length ? <p className={styles.empty} role="status">Sin cortes disponibles.</p> : <>
       <table className={styles.table} aria-label="FPD de los últimos tres cortes">
         <thead><tr><th scope="col">Corte</th>{days.map(day => <th key={day} scope="col">FPD {day}</th>)}</tr></thead>

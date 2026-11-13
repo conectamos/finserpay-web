@@ -6,12 +6,16 @@ import ts from "typescript";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { CutCollectionError, parseCutFilters, cutAccessFromDashboard } = await jiti.import("../lib/cut-collection-access.ts");
+const { CutCollectionError, cutAccessFromDashboard, cutReportAccessFromDashboard } = await jiti.import("../lib/cut-collection-access.ts");
+const colombiaDates = await jiti.import("../lib/colombia-date.ts");
+const roles = await jiti.import("../lib/roles.ts");
+const allies = await jiti.import("../lib/aliados.ts");
 const root = path.resolve(import.meta.dirname, "..");
 const url = "https://finser.example/api/reportes/recaudo-por-corte";
 const filters = { day: 17, month: 10, year: 2026, aliadoId: 1, sedeId: 10, status: "parcial" };
 const query = new URLSearchParams(Object.entries(filters).map(([key, value]) => [key, String(value)]));
-const access = { userId: 8, central: false, aliadoId: 1, sedeId: 10 };
+const centralSession = { id: 8, sedeId: 10, aliadoAccesoId: 1, aliadoAccesoCodigo: "FINSERPAY", rolNombre: "ADMIN" };
+const access = { userId: 8, central: true, aliadoId: null, sedeId: null };
 const report = { ok: true, mode: "consulta", cutDate: "2026-10-17", projection: null, history: [],
   historyPage: 0, historyHasMore: false, rows: [], filters, summary: { creditsCount: 0 } };
 const automaticAnalysis = {
@@ -56,31 +60,54 @@ const { assertAttentionOrigin } = compile("lib/atencion-http.ts", name => {
   return mocks[name];
 });
 
-// Real handlers, origin guard and filter parsing. Dynamic document/delivery
-// imports are isolated too: tests never reach a live database or mail provider.
+// Real HTTP handlers, dashboard-role resolution and report authorization.
+// Only session I/O and downstream data/document/provider services are isolated.
 function harness(overrides = {}) {
-  const calls = { access: 0, parse: [], read: [], risk: [], analysis: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], pdfComparisons: [], recipient: [], email: [], whatsapp: [], order: [] };
+  const calls = { access: 0, session: 0, seller: 0, parse: [], read: [], risk: [], analysis: [], legacyRead: [], save: [], excel: [], origin: [], pdf: [], pdfComparisons: [], recipient: [], email: [], whatsapp: [], order: [] };
+  const dashboard = compile("lib/dashboard-access.ts", name => {
+    if (name === "next/navigation") return { redirect: () => assert.fail("GET authorization must not redirect") };
+    if (name === "@/lib/auth") return { getSessionUser: async () => {
+      calls.session++;
+      return Object.hasOwn(overrides, "session") ? overrides.session : centralSession;
+    } };
+    if (name === "@/lib/seller-auth") return { getSellerSessionUser: async () => { calls.seller++; return overrides.seller ?? null; } };
+    if (name === "@/lib/roles") return roles;
+    if (name === "@/lib/aliados") return allies;
+    assert.fail(`Dependencia de autenticación no aislada: ${name}`);
+  });
+  const reportAccess = compile("lib/cut-collection-access.ts", name => {
+    if (name === "./colombia-date") return colombiaDates;
+    if (name === "./dashboard-access") return {
+      getDashboardAccess: async () => { calls.access++; calls.order.push("access"); return dashboard.getDashboardAccess(); },
+    };
+    assert.fail(`Dependencia de alcance no aislada: ${name}`);
+  });
+  function raise(error) {
+    // Mocked downstream services must throw the same compiled error class as
+    // the real route. Actual authentication errors are never substituted.
+    if (error instanceof CutCollectionError) throw new reportAccess.CutCollectionError(error.message, error.status);
+    throw error;
+  }
   function scopedRequire(name) {
     if (name === "@/lib/cut-collection-access") return {
-      CutCollectionError,
-      getCutCollectionAccess: async () => { calls.access++; calls.order.push("access"); if (overrides.accessError) throw overrides.accessError; return overrides.access ?? access; },
+      ...reportAccess,
       parseCutFilters: value => {
         calls.order.push("parse");
         calls.parse.push(Object.fromEntries(value));
-        return parseCutFilters(value, new Date("2026-11-02T15:00:00Z"));
+        return reportAccess.parseCutFilters(value, new Date("2026-11-02T15:00:00Z"));
       },
     };
     if (name === "@/lib/cut-collection-storage") return {
-      getDirectCutCollectionReport: async (...args) => { calls.read.push(args); calls.order.push("report"); if (overrides.error) throw overrides.error; return report; },
+      getDirectCutCollectionReport: async (...args) => { calls.read.push(args); calls.order.push("report"); if (overrides.error) raise(overrides.error); return report; },
       getDirectCutAutomaticAnalysis: async (...args) => {
         calls.analysis.push(args);
         calls.order.push("analysis");
-        if (overrides.analysisError) throw overrides.analysisError;
+        if (overrides.analysisError) raise(overrides.analysisError);
         return automaticAnalysis;
       },
       getDirectCutRiskComparison: async (...args) => {
         calls.risk.push(args); calls.order.push("risk");
-        if (overrides.riskError) throw overrides.riskError;
+        if (overrides.riskError) raise(overrides.riskError);
         return comparisonFor(args[2]);
       },
       getCutCollectionReport: async (...args) => { calls.legacyRead.push(args); throw new Error("No se debe consultar una proyección"); },
@@ -95,20 +122,20 @@ function harness(overrides = {}) {
     if (name === "@/lib/cut-collection-pdf") return {
       buildCutCollectionPdf: async (value, comparison) => {
         calls.pdf.push(value); calls.pdfComparisons.push(comparison); calls.order.push("pdf");
-        if (overrides.pdfError) throw overrides.pdfError;
+        if (overrides.pdfError) raise(overrides.pdfError);
         return pdfBytes;
       },
     };
     if (name === "@/lib/cut-collection-email") return {
       CutCollectionEmailError,
-      getCutCollectionRecipient: async id => { calls.recipient.push(id); calls.order.push("recipient"); if (overrides.recipientError) throw overrides.recipientError; return registeredRecipient; },
-      sendCutCollectionEmail: async input => { calls.email.push(input); calls.order.push("email"); if (overrides.emailError) throw overrides.emailError; },
+      getCutCollectionRecipient: async id => { calls.recipient.push(id); calls.order.push("recipient"); if (overrides.recipientError) raise(overrides.recipientError); return registeredRecipient; },
+      sendCutCollectionEmail: async input => { calls.email.push(input); calls.order.push("email"); if (overrides.emailError) raise(overrides.emailError); },
     };
     if (name === "@/lib/cut-collection-whatsapp") return {
       CutCollectionWhatsAppError,
       sendCutCollectionWhatsApp: async input => {
         calls.whatsapp.push(input); calls.order.push("whatsapp");
-        if (overrides.whatsappError) throw overrides.whatsappError;
+        if (overrides.whatsappError) raise(overrides.whatsappError);
         return registeredWhatsApp;
       },
     };
@@ -152,35 +179,64 @@ test("el análisis automático es una consulta privada y conserva el alcance aut
   assert.deepEqual(await denied.json(), { error: "La sede no está autorizada." });
 });
 
-test("GET y POST exigen sesión y permisos antes de consultar o rechazar la operación retirada", async () => {
-  for (const status of [401, 403]) {
-    const handler = harness({ accessError: new CutCollectionError("Sin acceso", status) });
-    for (const response of [await handler.GET(new Request(url)), await handler.POST(new Request(url, { method: "POST" })),
-      await handler.GET(new Request(`${url}?${query}&format=pdf`)),
-      await handler.GET(new Request(`${url}?${query}&format=risk&riskCuts=${riskCuts.join(",")}`)),
-      await handler.POST(emailRequest()), await handler.POST(whatsappRequest())]) {
+test("sesión ausente y roles ajenos a admin central se rechazan antes de datos, exportaciones o envíos", async () => {
+  const allySession = { ...centralSession, aliadoAccesoId: 2, aliadoAccesoCodigo: "ALIADO" };
+  for (const [identity, status] of [
+    [{ session: null }, 401],
+    [{ session: allySession }, 403],
+    [{ session: { ...allySession, rolNombre: "USUARIO" }, seller: { tipoPerfil: "SUPERVISOR" } }, 403],
+    [{ session: { ...centralSession, rolNombre: "USUARIO" }, seller: { tipoPerfil: "SUPERVISOR" } }, 403],
+    [{ session: { ...allySession, rolNombre: "USUARIO" }, seller: { tipoPerfil: "VENDEDOR" } }, 403],
+    [{ session: { ...centralSession, rolNombre: "ANALISTA_APROBACION" } }, 403],
+    [{ session: { ...centralSession, id: 0 } }, 403],
+    [{ session: { ...centralSession, aliadoAccesoCodigo: null } }, 403],
+  ]) {
+    const handler = harness(identity);
+    const forged = `${query}&central=true&userId=999&rolNombre=ADMIN`;
+    const requests = [
+      ...["", "analysis", "risk", "xlsx", "pdf"].map(format =>
+        new Request(`${url}?${forged}${format ? `&format=${format}` : ""}`)),
+      new Request(`${url}?day=not-a-cut&day=17&format=pdf`),
+      new Request(url, { method: "POST", body: "{" }),
+      deliveryRequest({ action: "save", body: { central: true } }),
+      emailRequest({ body: { central: true, userId: 999, rolNombre: "ADMIN" } }),
+      whatsappRequest({ body: { central: true, userId: 999, rolNombre: "ADMIN" } }),
+    ];
+    for (const request of requests) {
+      const response = await handler[request.method](request);
       assert.equal(response.status, status);
       assertPrivate(response);
+      assert.equal(typeof (await response.json()).error, "string");
+      assert.equal(request.bodyUsed, false, "La autorización precede cualquier lectura del cuerpo");
     }
-    assert.equal(handler.calls.read.length, 0);
-    assert.equal(handler.calls.legacyRead.length, 0);
-    assert.equal(handler.calls.save.length, 0);
-    for (const stage of ["origin", "parse", "risk", "recipient", "pdf", "email", "whatsapp"]) assert.equal(handler.calls[stage].length, 0);
+    assert.equal(handler.calls.access, requests.length);
+    assert.equal(handler.calls.session, requests.length, "La autorización usa getDashboardAccess y la sesión real del wrapper");
+    assert.deepEqual(handler.calls.order, requests.map(() => "access"));
+    for (const stage of ["origin", "parse", "read", "analysis", "risk", "legacyRead", "save", "excel", "recipient", "pdf", "email", "whatsapp"]) {
+      assert.equal(handler.calls[stage].length, 0, stage);
+    }
   }
 });
 
-test("consulta directa recibe los filtros y el alcance real de central, aliado y supervisor", async () => {
+test("el alcance interno aliado y supervisor permanece utilizable por FPD pero no autoriza el informe completo", () => {
   for (const dashboard of [
-    { admin: true, supervisor: false, session: { id: 8, sedeId: 10, aliadoAccesoId: 1, aliadoAccesoCodigo: "FINSERPAY" } },
-    { admin: true, supervisor: false, session: { id: 8, sedeId: 10, aliadoAccesoId: 1, aliadoAccesoCodigo: "ALIADO" } },
-    { admin: false, supervisor: true, session: { id: 8, sedeId: 10, aliadoAccesoId: 1, aliadoAccesoCodigo: "ALIADO" } },
+    { admin: true, supervisor: false, session: { ...centralSession, aliadoAccesoId: 2, aliadoAccesoCodigo: "ALIADO" } },
+    { admin: false, supervisor: true, session: { ...centralSession, aliadoAccesoId: 2, aliadoAccesoCodigo: "ALIADO" } },
   ]) {
-    const authorized = cutAccessFromDashboard(dashboard);
-    const handler = harness({ access: authorized });
+    assert.deepEqual(cutAccessFromDashboard(dashboard), { userId: 8, central: false,
+      aliadoId: 2, sedeId: dashboard.admin ? null : 10 });
+    assert.throws(() => cutReportAccessFromDashboard(dashboard), error => error.status === 403);
+  }
+  assert.throws(() => cutReportAccessFromDashboard(null), error => error.status === 401);
+});
+
+test("solo admin central consulta el reporte con filtros reales e ignora el alcance enviado en URL", async () => {
+  for (const code of ["FINSERPAY", " finserpay "]) {
+    const handler = harness({ session: { ...centralSession, aliadoAccesoCodigo: code } });
     const response = await handler.GET(new Request(`${url}?${query}&central=true&userId=999`));
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), report);
-    assert.deepEqual(handler.calls.read, [[authorized, filters]]);
+    assert.deepEqual(handler.calls.read, [[access, filters]]);
     assert.equal(handler.calls.legacyRead.length, 0);
     assert.equal(handler.calls.save.length, 0);
     assertPrivate(response);

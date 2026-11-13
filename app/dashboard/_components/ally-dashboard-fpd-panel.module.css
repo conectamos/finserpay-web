@@ -2,10 +2,6 @@
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
 .header h2 { margin: 0; color: var(--fp-graphite); }
 .header p { margin: 4px 0 0; color: var(--fp-muted); font-size: 14px; line-height: 1.5; }
-.header a { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; color: var(--fp-graphite); font-size: 14px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
-.header a:hover { color: var(--fp-navy); }
-.header a:focus-visible { outline: 3px solid var(--fp-lime); outline-offset: 4px; border-radius: var(--fp-radius-sm); }
-.header a svg { width: 16px; height: 16px; }
 .table { width: 100%; margin-top: 20px; table-layout: fixed; border-collapse: collapse; }
 .table th, .table td { padding: 16px 4px; text-align: center; vertical-align: middle; }
 .table thead th { padding-top: 0; padding-bottom: 12px; color: var(--fp-muted); font-size: 13px; font-weight: 500; }

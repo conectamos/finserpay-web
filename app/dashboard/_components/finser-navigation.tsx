@@ -37,7 +37,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
   const portfolio: Item[] = [
     ...(admin ? [["Resumen", "/dashboard/cartera"], ["Detalle de mora", "/dashboard/cartera/detalle-mora"], ["Riesgo por referencia", "/dashboard/riesgo-referencia"]] as Item[] : []),
     ...(adminCentral ? [["Gestión de cartera", "/dashboard/aprobaciones/gestion-cartera"]] as Item[] : []),
-    ["Recaudo por corte", "/dashboard/reportes/recaudo-por-corte"],
+    ...(admin && adminCentral ? [["Recaudo por corte", "/dashboard/reportes/recaudo-por-corte"]] as Item[] : []),
   ];
   const integrations: Item[] = [["Integraciones", "/dashboard/integraciones"], ["Enrolamiento iPhone", "/dashboard/integraciones/enrolamiento-iphone"], ["Historial DataCrédito", "/dashboard/datacredito"], ["Liberar consultas", "/dashboard/datacredito/liberaciones"], ["Equality Zero Touch", "/dashboard/equality"]];
 
@@ -48,7 +48,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
       <nav className={styles.navigation} aria-label="Navegación principal">
         <Link href="/dashboard"><LayoutGrid aria-hidden="true" />Panel</Link>
         <NavigationMenu label="Operación" icon={Timer} items={operation.filter(([, href]) => href !== "/dashboard/pagos-aliados" && href !== "/dashboard/reportes")} />
-        {(admin || isSupervisor) && <NavigationMenu label="Cartera" icon={WalletCards} items={portfolio} active={activeSection === "portfolio"} />}
+        {(admin || isSupervisor) && portfolio.length > 0 && <NavigationMenu label="Cartera" icon={WalletCards} items={portfolio} active={activeSection === "portfolio"} />}
         {admin && <Link href="/dashboard/pagos-aliados" className={styles.active} aria-current="page"><Wallet aria-hidden="true" />Pagos</Link>}
         {admin && <Link href="/dashboard/reportes"><ChartNoAxesColumnIncreasing aria-hidden="true" />Reportes</Link>}
       </nav>
@@ -73,7 +73,7 @@ return (<header className={`${styles.topbar} ${variant === "requests" ? styles.r
       <nav className={styles.navigation} aria-label="Navegación principal">
         <Link href="/dashboard">{variant === "reports" ? "Panel central" : "Inicio"}</Link>
         <NavigationMenu label="Operación" items={operation} active={activeSection==="operation"} />
-        {(admin || isSupervisor) && <NavigationMenu label="Cartera" items={portfolio} active={activeSection === "portfolio"} />}
+        {(admin || isSupervisor) && portfolio.length > 0 && <NavigationMenu label="Cartera" items={portfolio} active={activeSection === "portfolio"} />}
         {variant === "reports" && admin && <Link href="/dashboard/reportes" className={styles.active} aria-current="location">Reportes</Link>}
         {admin && <NavigationMenu label="Administración" items={administration} active={activeSection==="administration"} />}
         {(variant === "requests" || variant === "reports" || variant === "administration") && adminCentral && <NavigationMenu label="Integraciones" items={integrations} active={activeSection === "integrations"} />}

@@ -22,9 +22,19 @@ export function cutAccessFromDashboard(access: {
   return { userId: session.id, central, aliadoId: central ? null : session.aliadoAccesoId ?? null, sedeId: access.admin ? null : session.sedeId };
 }
 
+export function cutReportAccessFromDashboard(
+  access: Parameters<typeof cutAccessFromDashboard>[0]
+): CutAccess {
+  const scope = cutAccessFromDashboard(access);
+  if (scope.central !== true) {
+    throw new CutCollectionError("Solo el administrador central puede consultar el informe de recaudo por corte.", 403);
+  }
+  return scope;
+}
+
 export async function getCutCollectionAccess() {
   const { getDashboardAccess } = await import("./dashboard-access");
-  return cutAccessFromDashboard(await getDashboardAccess());
+  return cutReportAccessFromDashboard(await getDashboardAccess());
 }
 
 export function parseCutFilters(input: URLSearchParams | Record<string, unknown>, now = new Date()): CutFilters {

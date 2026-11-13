@@ -119,9 +119,7 @@ test("FPD aliado recibe el alcance de sesión y el mismo mes normalizado del das
   assert.equal(f.calls.allies.length, 0);
   assert.equal(view.props.allyFpd, report);
   assert.equal(view.props.adminCentral, false);
-  const link = new URL(view.props.fpReportHref, "https://finserpay.test");
-  assert.equal(link.pathname, "/dashboard/reportes/recaudo-por-corte");
-  assert.deepEqual(Object.fromEntries(link.searchParams), { status: "todos", aliadoId: "2", year: "2026", month: "11", day: "2" });
+  assert.equal("fpReportHref" in view.props, false, "El resumen FPD no habilita el informe completo al aliado");
 });
 
 test("mes futuro o inválido usa el mes de Bogotá en ambos loaders", async () => {
@@ -134,16 +132,15 @@ test("mes futuro o inválido usa el mes de Bogotá en ambos loaders", async () =
   }
 });
 
-test("sede autorizada restringe overview, FPD y enlace sin adoptar el aliado de la URL", async () => {
+test("sede autorizada restringe overview y FPD sin adoptar el aliado de la URL ni enlazar el informe", async () => {
   const f = harness();
   const view = await f.render({ month: "2026-11", scope: ["sede:21", "sede:30"], aliadoId: "3" });
   assert.equal(f.calls.fpd[0].access.aliadoId, 2);
   assert.equal(f.calls.fpd[0].sedeId, 21);
   assert.deepEqual(f.calls.overview, [{ aliadoId: 2, month: "2026-11", sedeId: 21 }]);
   assert.equal(view.props.selectedSede, 21);
-  const link = new URL(view.props.fpReportHref, "https://finserpay.test");
-  assert.equal(link.searchParams.get("aliadoId"), "2");
-  assert.equal(link.searchParams.get("sedeId"), "21");
+  assert.equal(view.props.allyFpd, report);
+  assert.equal("fpReportHref" in view.props, false);
 });
 
 test("una sede de otro aliado o inexistente se rechaza antes de cargar FPD y overview", async () => {
@@ -163,7 +160,7 @@ test("central conserva Salud de cartera sin cargar FPD incluso filtrando un alia
     assert.equal(view.type, f.AdminDashboard);
     assert.equal(view.props.adminCentral, true);
     assert.equal(view.props.allyFpd, undefined);
-    assert.equal(view.props.fpReportHref, undefined);
+    assert.equal("fpReportHref" in view.props, false);
     assert.equal(f.calls.fpd.length, 0);
     assert.equal(f.calls.overview.length, 1);
   }
@@ -216,8 +213,5 @@ test("fallo del loader no convierte riesgo en cero ni divulga el error interno",
   assert.equal(f.calls.overview.length, 1);
   assert.doesNotMatch(JSON.stringify(view.props), /sensitive-query-detail/);
   assert.doesNotMatch(JSON.stringify(f.calls.errors), /sensitive-query-detail/);
-  const link = new URL(view.props.fpReportHref, "https://finserpay.test");
-  assert.equal(link.searchParams.get("aliadoId"), "2");
-  assert.equal(link.searchParams.get("sedeId"), "21");
-  assert.equal(link.searchParams.has("day"), false);
+  assert.equal("fpReportHref" in view.props, false);
 });

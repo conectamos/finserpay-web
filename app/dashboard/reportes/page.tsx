@@ -59,7 +59,7 @@ const REPORTS: ReportDefinition[] = [
     formats: ["Excel"],
     href: "/dashboard/reportes/recaudo-por-corte",
     kind: "cut-collection",
-    permission: "all",
+    permission: "central",
     title: "Recaudo por corte",
   },
   {

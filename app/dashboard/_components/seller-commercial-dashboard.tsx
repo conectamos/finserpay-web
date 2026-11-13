@@ -5,7 +5,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   Calculator,
-  CalendarDays,
   ChevronDown,
   CircleDollarSign,
   ClipboardList,
@@ -80,10 +79,6 @@ const SUPERVISOR_NAV_ITEMS: NavItem[] = [
   { href: "/dashboard/abonos", icon: CircleDollarSign, label: "Recaudos" },
   { href: "/dashboard/reportes/creditos", icon: BarChart3, label: "Cr\u00e9ditos por fecha" },
   { href: "/dashboard/reportes/abonos", icon: ReceiptText, label: "Abonos por fecha" },
-];
-
-const SUPERVISOR_PORTFOLIO_ITEMS: NavItem[] = [
-  { href: "/dashboard/reportes/recaudo-por-corte", icon: CalendarDays, label: "Recaudo por corte" },
 ];
 
 const QUICK_ACTIONS: ActionItem[] = [
@@ -210,8 +205,6 @@ export function CommercialSidebar({
             <div className="mt-4 border-t border-white/10 pt-4">
               <p className="mb-2 px-3 text-[10px] font-semibold uppercase text-white/45">Supervisi&oacute;n</p>
               <Navigation activeHref={activeHref} items={SUPERVISOR_NAV_ITEMS} />
-              <p className="mb-2 mt-4 px-3 text-[10px] font-semibold uppercase text-white/45">Cartera</p>
-              <Navigation activeHref={activeHref} items={SUPERVISOR_PORTFOLIO_ITEMS} label="Cartera" />
             </div>
           ) : null}
         </div>
@@ -227,8 +220,6 @@ export function CommercialSidebar({
               Supervisi&oacute;n
             </p>
             <Navigation activeHref={activeHref} items={SUPERVISOR_NAV_ITEMS} />
-            <p className="mb-2 mt-4 px-3 text-[10px] font-semibold uppercase text-white/45">Cartera</p>
-            <Navigation activeHref={activeHref} items={SUPERVISOR_PORTFOLIO_ITEMS} label="Cartera" />
           </div>
         ) : null}
       </div>

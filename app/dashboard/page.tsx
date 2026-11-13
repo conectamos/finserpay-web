@@ -271,20 +271,6 @@ export default async function DashboardPage({
     }),
     allyFpdPromise,
   ]);
-  let fpReportHref: string | undefined;
-  if (adminAliado) {
-    const reportParams = new URLSearchParams({ status: "todos" });
-    if (aliadoStatsScopeId > 0) reportParams.set("aliadoId", String(aliadoStatsScopeId));
-    if (selectedSede) reportParams.set("sedeId", String(selectedSede));
-    const latestCut = allyFpd?.cuts[0]?.cutDate;
-    if (latestCut) {
-      const [year, month, day] = latestCut.split("-");
-      reportParams.set("year", year);
-      reportParams.set("month", String(Number(month)));
-      reportParams.set("day", String(Number(day)));
-    }
-    fpReportHref = `/dashboard/reportes/recaudo-por-corte?${reportParams.toString()}`;
-  }
 
   return (
     <AdminCentralDashboard
@@ -296,7 +282,6 @@ export default async function DashboardPage({
       selectedAlly={selectedAlly}
       data={dashboardOverview}
       allyFpd={allyFpd}
-      fpReportHref={fpReportHref}
       nombreUsuario={nombreUsuario}
       rolUsuario={rolUsuario}
       sedeLabel={sedeLabel}

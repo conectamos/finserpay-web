@@ -34,6 +34,7 @@ function load(file, extra = {}) {
     "./seller-client-app-dialog": component(Empty),
     "./seller-commissions": component(Empty),
     "./seller-dashboard-refresh": component(Empty),
+    "./ally-dashboard-fpd-panel": component(Empty),
     ...extra,
   };
   runInNewContext(source, {
@@ -58,24 +59,25 @@ function menu(html, name) {
     .find(content => content.match(/<summary[^>]*>([\s\S]*?)<\/summary>/)?.[1].replace(/<[^>]*>/g, "") === name);
 }
 
-for (const variant of ["sale", "requests", "reports", "settlement"]) {
-  test(`Cartera conserva Recaudo después de Riesgo y Gestión de cartera central en ${variant}`, () => {
+for (const variant of ["sale", "requests", "reports", "settlement", "administration"]) {
+  test(`Cartera muestra Recaudo sólo al administrador central en ${variant}`, () => {
     for (const adminCentral of [false, true]) {
       const html = render(Navigation, { admin: true, adminCentral, nombreUsuario: "Administrador", rolUsuario: "ADMIN", variant, activeSection: "portfolio" });
       const portfolio = menu(html, "Cartera");
       assert.ok(portfolio);
       const links = hrefs(portfolio);
       assert.deepEqual(links.slice(links.indexOf("/dashboard/riesgo-referencia") + 1),
-        adminCentral ? ["/dashboard/aprobaciones/gestion-cartera", route] : [route]);
-      assert.equal(links.filter(href => href === route).length, 1);
+        adminCentral ? ["/dashboard/aprobaciones/gestion-cartera", route] : []);
+      assert.equal(links.filter(href => href === route).length, adminCentral ? 1 : 0);
       assert.ok(!hrefs(menu(html, "Operación")).includes(route));
       assert.match(html, /class="active"><details><summary>[\s\S]*?Cartera/);
     }
   });
 
-  test(`el supervisor accede a Recaudo por corte sin mostrar módulos de cartera restringidos en ${variant}`, () => {
+  test(`supervisor y vendedor no ven Recaudo ni un menú Cartera vacío en ${variant}`, () => {
     const html = render(Navigation, { admin: false, adminCentral: false, isSupervisor: true, nombreUsuario: "Supervisor", rolUsuario: "SUPERVISOR", variant });
-    assert.deepEqual(hrefs(menu(html, "Cartera")), [route]);
+    assert.equal(menu(html, "Cartera"), undefined);
+    assert.ok(!hrefs(html).includes(route));
     assert.doesNotMatch(html, /href="\/dashboard\/(?:cartera(?:\/detalle-mora)?|riesgo-referencia)"/);
     const seller = render(Navigation, { admin: false, adminCentral: false, isSupervisor: false, nombreUsuario: "Vendedor", rolUsuario: "VENDEDOR", variant });
     assert.equal(menu(seller, "Cartera"), undefined);
@@ -83,7 +85,7 @@ for (const variant of ["sale", "requests", "reports", "settlement"]) {
   });
 }
 
-test("el inicio de los administradores central y aliado conserva el orden solicitado en Cartera", () => {
+test("el inicio conserva Recaudo después de Riesgo sólo para el administrador central", () => {
   const product = { totalBalance: 0, healthyPercent: 0, earlyPercent: 0, criticalPercent: 0 };
   const data = { productHealth: { IPHONE: product, ANDROID: product }, creditPerformance: [], daily: [] };
   for (const adminCentral of [true, false]) {
@@ -91,22 +93,19 @@ test("el inicio de los administradores central y aliado conserva el orden solici
     const header = tree.props.children[0];
     const html = renderToStaticMarkup(header);
     const links = hrefs(menu(html, "Cartera"));
-    assert.equal(links.indexOf(route), links.indexOf("/dashboard/riesgo-referencia") + 1);
+    if (adminCentral) assert.equal(links.indexOf(route), links.indexOf("/dashboard/riesgo-referencia") + 1);
+    else assert.ok(!links.includes(route));
     assert.ok(!hrefs(menu(html, "Operación")).includes(route));
   }
 });
 
-test("el sidebar comercial muestra Cartera sólo al supervisor en escritorio y móvil", () => {
-  const html = render(CommercialSidebar, { avatarSrc: null, isSupervisor: true, nombre: "Supervisor", activeHref: route });
-  const sections = Array.from(html.matchAll(/<nav[^>]*aria-label="Cartera"[^>]*>([\s\S]*?)<\/nav>/g), match => match[1]);
-  assert.equal(sections.length, 2);
-  for (const section of sections) {
-    assert.deepEqual(hrefs(section), [route]);
-    assert.match(section, /aria-current="page"/);
+test("el sidebar comercial oculta Recaudo a supervisor y vendedor en escritorio y móvil", () => {
+  for (const isSupervisor of [true, false]) {
+    const html = render(CommercialSidebar, { avatarSrc: null, isSupervisor, nombre: "Usuario", activeHref: route });
+    assert.ok(!hrefs(html).includes(route));
+    assert.doesNotMatch(html, /aria-label="Cartera"|Recaudo por corte/);
+    assert.equal(hrefs(html).filter(href => href === "/dashboard/reportes/creditos").length, isSupervisor ? 2 : 0);
   }
-  const seller = render(CommercialSidebar, { avatarSrc: null, isSupervisor: false, nombre: "Vendedor" });
-  assert.ok(!hrefs(seller).includes(route));
-  assert.doesNotMatch(seller, /aria-label="Cartera"/);
 });
 
 test("la ruta del reporte marca Cartera como sección activa después de validar el rol", async () => {
@@ -115,7 +114,7 @@ test("la ruta del reporte marca Cartera como sección activa después de validar
     "@/app/dashboard/_components/finser-navigation": component("CutNavigation"),
     "@/lib/aliados": { isFinserPayCentralAlly: () => true },
     "@/lib/cut-collection-access": { parseCutFilters: () => ({ day: 17, month: 10, year: 2026 }) },
-    "@/lib/dashboard-access": { requireAdminOrSupervisorDashboardAccess: async () => {
+    "@/lib/dashboard-access": { requireCentralAdminDashboardAccess: async () => {
       accessChecked = true;
       return { admin: true, supervisor: false, session: { nombre: "Administrador", rolNombre: "ADMIN", aliadoAccesoCodigo: "FINSERPAY" } };
     } },
