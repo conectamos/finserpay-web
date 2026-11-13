@@ -17,8 +17,14 @@ const carteraAccess = await jiti.import("../lib/cartera-access.ts");
 const carteraExport = await jiti.import("../lib/cartera-export.ts");
 const carteraDueDays = await jiti.import("../lib/cartera-due-days.ts");
 const displayNumber = await jiti.import("../lib/credit-display-number.ts");
+const paymentPlan = await jiti.import("../lib/credit-payment-plan.ts");
+const outstandingBalance = await jiti.import("../lib/credit-outstanding-balance.ts");
+const creditFactory = await jiti.import("../lib/credit-factory.ts");
+const allyPayments = await jiti.import("../lib/ally-payments-core.ts");
+const roles = await jiti.import("../lib/roles.ts");
+const allies = await jiti.import("../lib/aliados.ts");
 
-function loadRoute(dependencies, routePath = "app/api/dashboard/cartera/export/route.ts") {
+function loadRoute(dependencies, routePath = "app/api/dashboard/cartera/export/route.ts", clock = Date) {
   const source = readFileSync(path.join(projectRoot, routePath), "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: {
@@ -34,7 +40,7 @@ function loadRoute(dependencies, routePath = "app/api/dashboard/cartera/export/r
       exports: loaded.exports,
       module: loaded,
       console,
-      Date,
+      Date: clock,
       Intl,
       Request,
       Response,
@@ -106,6 +112,185 @@ function workbookHeaders(html) {
 function rowCells(row) {
   return [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(match => match[1]);
 }
+
+function actualPlanRoute({ credits = [], central = true, now = "2026-11-14T04:30:00.000Z" } = {}) {
+  const calls = { queries: [], plans: [], exemptions: [], creditExceptions: [], currentInstants: 0 };
+  class ExportDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); if (!args.length) calls.currentInstants++; }
+    static now() { return Date.parse(now); }
+  }
+  const route = loadRoute({
+    "next/server": { NextResponse: Response },
+    "@/lib/cartera-due-days": carteraDueDays,
+    "@/lib/credit-payment-plan": { buildCreditPaymentPlan(input) { calls.plans.push(input); return paymentPlan.buildCreditPaymentPlan(input); } },
+    "@/lib/credit-outstanding-balance": outstandingBalance,
+    "@/lib/credit-abono-audit": { ensureCreditAbonoAuditColumns: async () => {} },
+    "@/lib/credit-factory": creditFactory,
+    "@/lib/ally-payments-core": allyPayments,
+    "@/lib/auth": { getSessionUser: async () => ({ id: 8, rolNombre: "ADMIN", aliadoAccesoId: 7,
+      aliadoAccesoCodigo: central ? "FINSERPAY" : "ALIADO" }) },
+    "@/lib/aliados": allies,
+    "@/lib/cartera-export": carteraExport,
+    "@/lib/cartera-access": carteraAccess,
+    "@/lib/credit-display-number": displayNumber,
+    "@/lib/credit-display-number-server": { getCreditDisplayNumbers: async () => new Map(), withCreditDisplayNumber: credit => credit },
+    "@/lib/mora-block-exemptions": {
+      normalizeMoraExemptionDocument: value => String(value || "").replace(/[^0-9]/g, ""),
+      getActiveMoraBlockExemptionDocuments: async today => { calls.exemptions.push(today); return new Set(); },
+    },
+    "@/lib/mora-exception-requests": { getActiveMoraExceptionsByCreditIds: async (ids, today) => {
+      calls.creditExceptions.push({ ids, today }); return new Map([[101, { type: "PRORROGA" }]]);
+    } },
+    "@/lib/roles": roles,
+    "@/lib/prisma": { default: { credito: { findMany: async query => {
+      calls.queries.push(query);
+      // Emulate the actual Prisma payment predicate instead of prefiltering the
+      // fixture: an annulment must stop contributing to the real payment plan.
+      const condition = query.include.abonos.where.estado;
+      return credits.map(credit => ({ ...credit, abonos: credit.abonos.filter(payment =>
+        (condition.not === undefined || payment.estado !== condition.not) &&
+        (!condition.notIn || !condition.notIn.includes(payment.estado))) }));
+    } } } },
+  }, "app/api/dashboard/cartera/export/route.ts", ExportDate);
+  return { calls, async get(scope = "mora") {
+    const response = await route.GET(new Request(`https://finserpay.test/api/dashboard/cartera/export?scope=${scope}&aliadoId=99&adminCentral=true`));
+    const html = await response.text();
+    assert.equal(response.status, 200);
+    return { response, html, headers: workbookHeaders(html), rows: workbookRows(html) };
+  } };
+}
+
+function weeklyCredit(id, changes = {}) {
+  return creditFixture(id, "ACTIVO", {
+    montoCredito: 600.24, valorCuota: 100.04, plazoMeses: 6, frecuenciaPago: "SEMANAL",
+    fechaPrimerPago: new Date("2026-10-16T00:00:00.000Z"), fechaProximoPago: null,
+    cuotaInicial: 0, saldoBaseFinanciado: 600.24, valorEquipoTotal: 600.24, valorFianza: 0, valorInteres: 0,
+    abonos: [{ valor: 150.06, estado: "ACTIVO", metodoPago: "EFECTIVO", fechaAbono: new Date("2026-10-20T15:00:00Z") }],
+    ...changes,
+  });
+}
+
+function assertOverdueCells(result, row, { count, amount, prorroga = "NO" }) {
+  const cells = [...row.matchAll(/<td([^>]*)>([\s\S]*?)<\/td>/g)].map(match => ({ attrs: match[1], value: match[2] }));
+  assert.equal(cells.length, result.headers.length);
+  const countIndex = result.headers.indexOf("Cuotas en mora");
+  const amountIndex = result.headers.indexOf("Valor de cuotas en mora");
+  assert.ok(countIndex > 0);
+  assert.equal(result.headers[countIndex - 1], "Cuotas pendientes");
+  assert.equal(amountIndex, countIndex + 1);
+  assert.equal(result.headers[amountIndex + 1], "Valor cuota");
+  assert.equal(cells[countIndex].value, String(count));
+  assert.match(cells[countIndex].attrs, /mso-number-format:"0"/);
+  assert.equal(cells[amountIndex].value, amount.toFixed(2));
+  assert.ok(cells[amountIndex].attrs.includes(`x:num="${amount.toFixed(2)}"`), "Excel recibe un número exacto, no moneda escrita como texto");
+  assert.match(result.html, /xmlns:x="urn:schemas-microsoft-com:office:excel"/);
+  assert.match(cells[amountIndex].attrs, /mso-number-format:.*0\.00/);
+  assert.doesNotMatch(cells[amountIndex].attrs, /\\@/);
+  assert.equal(result.headers.at(-1), "PRORROGA ACTIVA");
+  assert.equal(cells.at(-1).value, prorroga);
+}
+
+test("Excel mora calcula cuotas vencidas parcialmente pagadas sin incluir hoy, futuras, pagadas o canceladas", async () => {
+  const credits = [
+    weeklyCredit(101),
+    weeklyCredit(102, { abonos: [] }),
+    weeklyCredit(103, { fechaPrimerPago: new Date("2026-11-13T00:00:00Z"), abonos: [] }),
+    weeklyCredit(104, { fechaPrimerPago: new Date("2026-11-20T00:00:00Z"), abonos: [] }),
+    weeklyCredit(105, { abonos: [{ valor: 600.24, estado: "ACTIVO", fechaAbono: new Date("2026-10-20T15:00:00Z") }] }),
+    weeklyCredit(106, { pazYSalvoEmitidoAt: new Date("2026-10-20T15:00:00Z"), abonos: [] }),
+    ...["CANCELADO", "ANULADO", "CANCELADA", "ANULADA"].map((estado, index) => weeklyCredit(107 + index, { estado, abonos: [] })),
+    weeklyCredit(111, { montoCredito: 0, valorCuota: 0, abonos: [] }),
+  ];
+  for (const central of [true, false]) {
+    const f = actualPlanRoute({ credits, central });
+    const result = await f.get();
+    assert.equal(result.rows.length, 2);
+    assertOverdueCells(result, result.rows.find(row => row.includes("CARTERA-101")), { count: 3, amount: 250.10, prorroga: "SI" });
+    const unpaid = result.rows.find(row => row.includes("CARTERA-102"));
+    assertOverdueCells(result, unpaid, { count: 4, amount: 400.16 });
+    assert.equal(rowCells(unpaid)[result.headers.indexOf("Cuotas pagadas")], "0");
+    assert.equal(f.calls.currentInstants, 1, "La descarga captura una sola fecha efectiva");
+    assert.ok(f.calls.plans.every(input => input.today === f.calls.exemptions[0]));
+    assert.equal(f.calls.creditExceptions[0].today, f.calls.exemptions[0]);
+    assert.equal(f.calls.queries[0].include.abonos.where.estado.not, "ANULADO");
+    assert.equal(f.calls.queries[0].where.sede.aliadoId, central ? 99 : 7);
+    for (const label of ["Saldo obligacion", "Saldo fianza", "Saldo intereses", "Saldo seguro"]) {
+      assert.equal(result.headers.includes(label), central, `${label} sigue reservado`);
+    }
+    const general = await f.get("cartera");
+    assert.equal(general.headers.includes("Cuotas en mora"), false);
+    assert.equal(general.headers.includes("Valor de cuotas en mora"), false);
+    assert.equal(general.headers.includes("PRORROGA ACTIVA"), false);
+    assert.ok(general.rows.some(row => row.includes("CARTERA-105")), "El reporte general conserva pagados");
+    for (const row of general.rows) assert.equal(rowCells(row).length, general.headers.length);
+  }
+});
+
+test("Excel mora usa el saldo vigente tras anular un pago y respeta la próxima cuota reprogramada", async () => {
+  const original = weeklyCredit(101);
+  const reversed = weeklyCredit(102, { abonos: original.abonos.map(payment => ({ ...payment, estado: "ANULADO" })) });
+  const moved = weeklyCredit(103, { fechaProximoPago: new Date("2026-12-17T00:00:00Z") });
+  const f = actualPlanRoute({ credits: [original, reversed, moved], central: false });
+  const result = await f.get();
+  assert.equal(result.rows.length, 3);
+  assertOverdueCells(result, result.rows.find(row => row.includes("CARTERA-101")), { count: 3, amount: 250.10, prorroga: "SI" });
+  assertOverdueCells(result, result.rows.find(row => row.includes("CARTERA-102")), { count: 4, amount: 400.16 });
+  assertOverdueCells(result, result.rows.find(row => row.includes("CARTERA-103")), { count: 2, amount: 200.08 });
+  assert.equal(f.calls.plans[1].abonos.length, 0, "El abono anulado no se entrega al motor");
+  assert.equal(reversed.abonos[0].estado, "ANULADO", "Consultar no modifica el abono");
+});
+
+test("el vencimiento de hoy entra a Excel mora sólo al comenzar el siguiente día de Bogotá", async () => {
+  const credits = [weeklyCredit(101, { fechaPrimerPago: new Date("2026-11-13T00:00:00Z"), abonos: [] })];
+  const before = await actualPlanRoute({ credits, now: "2026-11-14T04:59:59.999Z" }).get();
+  assert.equal(before.rows.length, 0);
+  assert.ok(before.headers.includes("Cuotas en mora"));
+  assert.ok(before.headers.includes("Valor de cuotas en mora"));
+  const after = await actualPlanRoute({ credits, now: "2026-11-14T05:00:00.000Z" }).get();
+  assert.equal(after.rows.length, 1);
+  assertOverdueCells(after, after.rows[0], { count: 1, amount: 100.04, prorroga: "SI" });
+});
+
+test("descargas sin mora conservan encabezados y no inventan filas de cero", async () => {
+  const almostPaid = weeklyCredit(101, { montoCredito: 100.04, valorCuota: 100.04, plazoMeses: 1,
+    abonos: [{ valor: 99.54, estado: "ACTIVO", fechaAbono: new Date("2026-10-20T15:00:00Z") }] });
+  for (const central of [true, false]) {
+    for (const credits of [[], [almostPaid]]) {
+      const result = await actualPlanRoute({ credits, central }).get();
+      assert.equal(result.rows.length, 0, "El residuo menor de un peso conserva el tratamiento del motor vigente");
+      assert.equal(result.headers.filter(header => header === "Cuotas en mora").length, 1);
+      assert.equal(result.headers.filter(header => header === "Valor de cuotas en mora").length, 1);
+      assert.equal(result.headers.at(-1), "PRORROGA ACTIVA");
+      assert.doesNotMatch(result.html, /NaN|Infinity|undefined/);
+    }
+  }
+});
+
+test("la cuota reducida del plan de capital suma su valor real y la eliminada no cuenta", async () => {
+  const planCapitalVigente = {
+    version: "CAPITAL_REDUCCION_PLAZO_V1", revision: 1, totalAbonadoAlCorte: 100.04,
+    abonosAlCorte: [{ id: 501, valor: 100.04 }], saldoCapitalAlCorte: 150.07, numeroCuotasOriginal: 4,
+    parametros: { capitalPendiente: 150.07, tasaPeriodo: 0, cuotaCredito: 100.04, fianzaCuota: 0, seguroCuota: 0,
+      numeroProximaCuota: 2, fuente: "Conciliación de prueba documentada" },
+    cuotas: [
+      { numero: 1, fechaVencimiento: "2026-10-02", valorProgramado: 100.04, valorAbonadoAlCorte: 100.04, eliminada: false },
+      { numero: 2, fechaVencimiento: "2026-10-17", valorProgramado: 100.04, valorAbonadoAlCorte: 0, eliminada: false,
+        capital: 100.04, interes: 0, fianza: 0, seguro: 0, saldoCapital: 50.03 },
+      { numero: 3, fechaVencimiento: "2026-11-02", valorProgramado: 50.03, valorAbonadoAlCorte: 0, eliminada: false,
+        capital: 50.03, interes: 0, fianza: 0, seguro: 0, saldoCapital: 0 },
+      { numero: 4, fechaVencimiento: "2026-11-08", valorProgramado: 0, valorAbonadoAlCorte: 0, eliminada: true },
+    ],
+  };
+  const credit = weeklyCredit(101, { planCapitalVigente, montoCredito: 250.11, plazoMeses: 4,
+    abonos: [{ valor: 100.04, estado: "ACTIVO", fechaAbono: new Date("2026-10-03T15:00:00Z") }] });
+  const before = JSON.stringify(credit);
+  for (const central of [true, false]) {
+    const result = await actualPlanRoute({ credits: [credit], central }).get();
+    assert.equal(result.rows.length, 1);
+    assertOverdueCells(result, result.rows[0], { count: 2, amount: 150.07, prorroga: "SI" });
+  }
+  assert.equal(JSON.stringify(credit), before);
+});
 
 test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas porcentuales numericas", async (t) => {
   const credits = [
@@ -199,6 +384,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
           nextInstallment,
           paidCount: paid ? 12 : 8,
           pendingCount: paid ? 0 : 4,
+          overdueCount: !paid && overdue ? 1 : 0,
         };
       },
     },
@@ -375,7 +561,9 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
         const headers = workbookHeaders(centralHtml);
         const centralRows = workbookRows(centralHtml);
         assert.equal(centralResponse.status, 200);
-        assert.deepEqual(headers, [...centralHeaders, ...(scope === "mora" ? ["PRORROGA ACTIVA"] : [])]);
+        const expectedHeaders = [...centralHeaders];
+        if (scope === "mora") expectedHeaders.splice(expectedHeaders.indexOf("Valor cuota"), 0, "Cuotas en mora", "Valor de cuotas en mora");
+        assert.deepEqual(headers, [...expectedHeaders, ...(scope === "mora" ? ["PRORROGA ACTIVA"] : [])]);
         assert.equal(centralRows.length, 1);
         assert.equal(rowCells(centralRows[0]).length, headers.length);
         for (const value of [400_000, 81_234, 75_000, 9_199]) assert.match(centralHtml, new RegExp(`>${value}</td>`));
@@ -399,7 +587,10 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
             "Capital, cuota, conteos y tasas conservan los mismos valores y orden");
         }
         for (const heading of reserved) assert.equal(allyHtml.includes(heading), false);
-        assert.doesNotMatch(allyHtml, /400000|81234|75000|9199/, "Los valores privados no aparecen en texto, atributos ni metadatos");
+        // The new overdue amount may equal the obligation balance; that amount
+        // is authorized only in the new mora column, never as a private column.
+        assert.doesNotMatch(allyHtml, scope === "mora" ? /81234|75000|9199/ : /400000|81234|75000|9199/,
+          "Los cargos reservados no aparecen en texto, atributos ni metadatos");
         assert.match(allyHtml, />234567<\/td>/);
         assert.match(allyHtml, />100000<\/td>/);
         assert.doesNotMatch(allyHtml, /CLIENTE_PAGADO_EXPORTADO/, "Se conserva el filtro de plataforma");
@@ -453,7 +644,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       const row = moraRows.find((row) => row.includes(name));
       assert.ok(row, name);
       const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((match) => match[1]);
-      assert.equal(cells.length, 32, name);
+      assert.equal(cells.length, workbookHeaders(moraHtml).length, name);
       assert.equal(cells.at(-1), expected, name);
     }
     assert.doesNotMatch(moraHtml, /Sin fecha de fin|Vencida|Desactivada|Documento historico invalido/);

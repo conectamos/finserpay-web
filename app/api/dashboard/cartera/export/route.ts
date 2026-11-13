@@ -71,13 +71,18 @@ function moneyCell(value: number) {
   return `<td style='mso-number-format:"#,##0";'>${Math.round(Number(value || 0))}</td>`;
 }
 
+function overdueAmountCell(value: number) {
+  const amount = value.toFixed(2);
+  return `<td x:num="${amount}" style='mso-number-format:"#,##0.00";'>${amount}</td>`;
+}
+
 function numberCell(value: number) {
   return `<td style='mso-number-format:"0";'>${Math.round(Number(value || 0))}</td>`;
 }
 
-function buildWorkbookHtml(rows: string, includeProrroga: boolean, adminCentral: boolean) {
+function buildWorkbookHtml(rows: string, includeProrroga: boolean, adminCentral: boolean, includeOverdueColumns: boolean) {
   return `<!doctype html>
-<html>
+<html xmlns:x="urn:schemas-microsoft-com:office:excel">
 <head>
   <meta charset="utf-8" />
   <style>
@@ -113,6 +118,7 @@ function buildWorkbookHtml(rows: string, includeProrroga: boolean, adminCentral:
         <th>Fecha proxima cuota a pagar</th>
         <th>Cuotas pagadas</th>
         <th>Cuotas pendientes</th>
+        ${includeOverdueColumns ? "<th>Cuotas en mora</th><th>Valor de cuotas en mora</th>" : ""}
         <th>Valor cuota</th>
         ${adminCentral ? "<th>Saldo obligacion</th>" : ""}
         <th>Saldo capital</th>
@@ -279,6 +285,12 @@ export async function GET(req: Request) {
       })
       .map(({ credito, plan }) => {
         const diasVencidos = resolveCarteraDaysPastDue(plan, today);
+        const overdueInstallments = plan.installments.filter(
+          (installment) => installment.estaEnMora && installment.saldoPendiente > 0
+        );
+        const overdueAmount = overdueInstallments.reduce(
+          (cents, installment) => cents + Math.round(installment.saldoPendiente * 100), 0
+        ) / 100;
         const lastPayment = credito.abonos[credito.abonos.length - 1] || null;
         const balances = splitOutstandingBalance({
           planCapitalVigente: credito.planCapitalVigente,
@@ -349,6 +361,7 @@ export async function GET(req: Request) {
           ${textCell(plan.nextInstallment?.fechaVencimiento || "")}
           ${numberCell(plan.paidCount)}
           ${numberCell(plan.pendingCount)}
+          ${exportScope === "mora" ? numberCell(overdueInstallments.length) + overdueAmountCell(overdueAmount) : ""}
           ${moneyCell(Number(credito.valorCuota || 0))}
           ${adminCentral ? moneyCell(plan.saldoPendiente) : ""}
           ${moneyCell(balances.saldoCapital)}
@@ -362,10 +375,10 @@ export async function GET(req: Request) {
       })
       .join("");
 
-    const html = buildWorkbookHtml(rows, includeProrroga, adminCentral);
+    const html = buildWorkbookHtml(rows, includeProrroga, adminCentral, exportScope === "mora");
     const filenamePrefix =
       exportScope === "mora" ? "clientes-en-mora-finserpay" : "cartera-finserpay";
-    const filename = `${filenamePrefix}-${new Date()
+    const filename = `${filenamePrefix}-${today
       .toISOString()
       .slice(0, 10)}.xls`;
 
