@@ -170,16 +170,22 @@ export function moraExceptionRequestSchemaStatements() {
         END IF;
         SELECT to_jsonb(c) INTO credit FROM "Credito" c WHERE c.id=NEW."creditoId";
         NEW."activationWhatsApp"=jsonb_build_object(
-          'status',CASE WHEN NEW."expiresOn" IS NULL THEN 'FAILED' ELSE 'PENDING' END,
+          'templateName','prorroga_activada_v2',
+          'status',CASE WHEN NEW."expiresOn" IS NOT NULL AND NEW."installmentDueDate" IS NOT NULL
+            AND NEW."expiresOn">NEW."installmentDueDate" THEN 'PENDING' ELSE 'FAILED' END,
           'activatedAt',NEW."decidedAt", 'authorizedByName',COALESCE(NEW."decidedByName",NEW."createdByName"),
-          'approvedDays',CASE WHEN NEW."expiresOn" IS NULL THEN NULL
-            ELSE GREATEST(1,NEW."expiresOn"-(NEW."decidedAt" AT TIME ZONE 'America/Bogota')::date) END,
+          'installmentDueDate',NEW."installmentDueDate",
+          'approvedDays',CASE WHEN NEW."expiresOn">NEW."installmentDueDate"
+            THEN NEW."expiresOn"-NEW."installmentDueDate" ELSE NULL END,
           'expiresAt',CASE WHEN NEW."expiresOn" IS NULL THEN NULL
             ELSE ((NEW."expiresOn"+1)::timestamp AT TIME ZONE 'America/Bogota')-interval '1 millisecond' END,
           'name',credit->>'clienteNombre','phone',credit->>'clienteTelefono','sentAt',NULL,
-          'error',CASE WHEN NEW."expiresOn" IS NULL THEN 'MISSING_EXTENSION_EXPIRY' ELSE NULL END,
+          'error',CASE WHEN NEW."expiresOn" IS NULL THEN 'MISSING_EXTENSION_EXPIRY'
+            WHEN NEW."installmentDueDate" IS NULL THEN 'MISSING_INSTALLMENT_DUE_DATE'
+            WHEN NEW."expiresOn"<=NEW."installmentDueDate" THEN 'INVALID_EXTENSION_DURATION' ELSE NULL END,
           'attempts',0,'operationKey',NULL,'leaseToken',NULL,'leaseUntil',NULL,
-          'nextAttemptAt',CASE WHEN NEW."expiresOn" IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END);
+          'nextAttemptAt',CASE WHEN NEW."expiresOn" IS NOT NULL AND NEW."installmentDueDate" IS NOT NULL
+            AND NEW."expiresOn">NEW."installmentDueDate" THEN CURRENT_TIMESTAMP ELSE NULL END);
         RETURN NEW;
       END; $$ LANGUAGE plpgsql`,
     `DROP TRIGGER IF EXISTS "CreditMoraExceptionRequest_whatsapp_activation" ON "CreditMoraExceptionRequest"`,

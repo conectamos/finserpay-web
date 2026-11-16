@@ -80,8 +80,10 @@ async function fixture(t, options = {}) {
     if (endpoint.pathname.endsWith("/phone_numbers")) return reply({ data: [{ id: scope.phoneNumberId, display_phone_number: "+573124085562" }] });
     if (endpoint.pathname.endsWith("/message_templates")) {
       if (options.beforeTemplateMetadata) await options.beforeTemplateMetadata({ db });
-      return reply({ data: [{ id: "123456789012345", name: "prorroga_activada", language: "es",
-        status: "APPROVED", parameter_format: "POSITIONAL", components: [{ type: "BODY", text: metaConfig.PRORROGA_ACTIVADA_TEMPLATE_BODY }] }] });
+      const name = endpoint.searchParams.get("name");
+      return reply({ data: [{ id: "123456789012345", name, language: "es",
+        status: "APPROVED", parameter_format: "POSITIONAL", components: [{ type: "BODY", text: name === "prorroga_activada_v2"
+          ? metaConfig.PRORROGA_ACTIVADA_V2_TEMPLATE_BODY : metaConfig.PRORROGA_ACTIVADA_TEMPLATE_BODY }] }] });
     }
     return reply({ id: scope.phoneNumberId, display_phone_number: "+573124085562" });
   };
@@ -91,15 +93,22 @@ async function fixture(t, options = {}) {
   };
   const service = () => createMoraExtensionWhatsAppService({ database, env, sendMeta, now: () => new Date(clock) });
   const meta = createAttentionMetaStore(database, { scope, now: () => new Date(clock) });
-  async function insert({ expiresOn = "2026-11-06", source = "CENTRAL_DIRECT", phone = "3001234567", type = "PRORROGA" } = {}) {
+  async function insert({ expiresOn = "2026-11-06", source = "ANALYST_REQUEST", phone = "3001234567", type = "PRORROGA",
+    installmentDueDate = "2026-11-02", activatedAt = instant, legacy = false } = {}) {
     const id = randomUUID(), creditId = nextCreditId++, direct = source === "CENTRAL_DIRECT";
     await db.query(`INSERT INTO "Credito" VALUES($1,$2,'Cliente sintético',$3,'ACTIVO',700000,true,'2026-11-02')`, [creditId, `FNS-${creditId}`, phone]);
     await db.query(`INSERT INTO "CreditMoraExceptionRequest"(id,"creditoId",type,status,source,"installmentNumber","installmentDueDate",
       "expiresOn","promiseAmount","promiseDate",reason,observation,"createdByUserId","createdByName","decidedByUserId","decidedByName",
       "decidedAt","createIdempotencyKey","createRequestHash")
       VALUES($1::uuid,$2,$3,'APPROVED',$4,$5,$6::date,$7::date,$8,$9::date,'Acuerdo registrado','Condición original',1,'Administradora',1,'Administradora',$10::timestamptz,$11::uuid,$12)`,
-    [id, creditId, type, source, direct ? null : 2, direct ? null : "2026-11-02", expiresOn, direct ? null : 120000,
-      direct ? null : "2026-11-05", instant, randomUUID(), "a".repeat(64)]);
+    [id, creditId, type, source, direct ? null : 2, direct ? null : installmentDueDate, expiresOn, direct ? null : 120000,
+      direct ? null : "2026-11-05", activatedAt, randomUUID(), "a".repeat(64)]);
+    // Central creation freezes the verified plan's due date inside its transaction.
+    // Its production-service tests exercise that path; this fixture sets its result.
+    if (direct && installmentDueDate) await db.query(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"="activationWhatsApp"||
+      jsonb_build_object('installmentDueDate',$2::text,'approvedDays',"expiresOn"-$2::date,'status','PENDING','error',NULL) WHERE id=$1::uuid`, [id, installmentDueDate]);
+    if (legacy) await db.query(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"="activationWhatsApp"||
+      jsonb_build_object('templateName','prorroga_activada','installmentDueDate',NULL,'approvedDays',3,'status','PENDING','error',NULL) WHERE id=$1::uuid`, [id]);
     await db.query(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"="activationWhatsApp"||$2::jsonb WHERE id=$1::uuid`,
       [id, JSON.stringify({ nextAttemptAt: new Date(clock).toISOString() })]);
     return { id, creditId };
@@ -118,31 +127,93 @@ test("dos workers reclaman una activación una sola vez y el replay no toca cond
   assert.equal(reports.reduce((total, report) => total + report.selected, 0), 1);
   assert.equal(f.messages, 1);
   const result = await f.service().read(row.id);
-  assert.equal(result.status, "SENT"); assert.equal(result.approvedDays, 3); assert.equal(result.authorizedByName, "Administradora");
+  assert.equal(result.status, "SENT"); assert.equal(result.approvedDays, 4); assert.equal(result.authorizedByName, "Administradora");
   assert.equal(result.canRetry, false); assert.ok(result.sentAt); assert.equal(result.attempts, 1);
-  assert.deepEqual(f.sends[0].template.components[0].parameters, [{ type: "text", text: "Cliente sintético" }, { type: "text", text: "3" }]);
+  assert.deepEqual(f.sends[0].template.components[0].parameters, [{ type: "text", text: "Cliente sintético" }, { type: "text", text: "4" }, { type: "text", text: "06/11/2026" }]);
   assert.equal((await f.service().run()).selected, 0); assert.equal(f.messages, 1);
   assert.deepEqual(await f.conditions(row.id), before, "WhatsApp no altera versión, condiciones, mora ni pago");
   await assert.rejects(f.service().retry(row.id, actor), error => error.code === "WHATSAPP_RETRY_UNAVAILABLE");
 });
 
 test("una excepción directa finita guarda intención y envía el WhatsApp una vez sin alterar su tipo ni sus reglas", async t => {
-  const f = await fixture(t), row = await f.insert({ type: "EXCEPCION" });
+  const f = await fixture(t), row = await f.insert({ type: "EXCEPCION", source: "CENTRAL_DIRECT" });
   const notification = await f.raw(row.id), before = await f.conditions(row.id);
   assert.ok(notification, "la aprobación finita guarda la intención de WhatsApp en la misma transacción");
   assert.equal(notification.status, "PENDING", "el trigger también cubre el acuerdo humano finito guardado como EXCEPCION");
-  assert.equal(notification.approvedDays, 3); assert.equal(notification.attempts, 0);
+  assert.equal(notification.approvedDays, 4); assert.equal(notification.attempts, 0);
   assert.equal(before.request.type, "EXCEPCION"); assert.equal(before.request.source, "CENTRAL_DIRECT");
   const report = await f.service().run({ limit: 1 });
   assert.equal(report.sent, 1); assert.equal(f.messages, 1);
-  assert.equal(f.sends[0].template.name, "prorroga_activada");
-  assert.deepEqual(f.sends[0].template.components[0].parameters, [{ type: "text", text: "Cliente sintético" }, { type: "text", text: "3" }]);
+  assert.equal(f.sends[0].template.name, "prorroga_activada_v2");
+  assert.deepEqual(f.sends[0].template.components[0].parameters, [{ type: "text", text: "Cliente sintético" }, { type: "text", text: "4" }, { type: "text", text: "06/11/2026" }]);
   const sent = await f.service().read(row.id);
   assert.equal(sent.status, "SENT"); assert.equal(sent.canRetry, false); assert.equal(sent.attempts, 1); assert.ok(sent.sentAt);
   assert.equal((await f.service().run({ limit: 1 })).selected, 0); assert.equal(f.messages, 1);
   assert.equal((await f.db.query('SELECT count(*)::int n FROM "WhatsAppAutomationMetaOutbox"')).rows[0].n, 1);
   assert.deepEqual(await f.conditions(row.id), before, "conserva tipo, estado, versión, vencimiento, condiciones, mora y pagos");
   await assert.rejects(f.service().retry(row.id, actor), error => error.code === "WHATSAPP_RETRY_UNAVAILABLE");
+});
+
+test("cuota del 17 hasta el 21 informa cuatro días y la fecha, aunque se active antes o después del 17", async t => {
+  const f = await fixture(t);
+  for (const activatedAt of ["2026-11-16T23:00:00Z", "2026-11-18T02:00:00Z", "2026-11-20T18:00:00Z"]) {
+    const row = await f.insert({ installmentDueDate: "2026-11-17", expiresOn: "2026-11-21", activatedAt });
+    assert.equal((await f.raw(row.id)).approvedDays, 4);
+    assert.equal((await f.service().run({ limit: 1 })).sent, 1);
+    const parameters = f.sends.at(-1).template.components[0].parameters;
+    assert.deepEqual(parameters.map(parameter => parameter.text), ["Cliente sintético", "4", "21/11/2026"]);
+    assert.equal((await f.service().read(row.id)).approvedDays, 4);
+  }
+  assert.equal(f.messages, 3);
+  assert.equal((await f.service().run()).selected, 0);
+});
+
+test("el reintento conserva la cuota base y actualiza la fecha aprobada sin usar el día del reintento", async t => {
+  const f = await fixture(t, { post: (body, attempt) => attempt === 1 ? reply({ error: { code: 131026 } }, 400)
+    : reply({ messaging_product: "whatsapp", contacts: [{ input: body.to, wa_id: body.to }], messages: [{ id: "wamid.frozen-installment" }] }) });
+  const row = await f.insert({ installmentDueDate: "2026-11-17", expiresOn: "2026-11-21", activatedAt: "2026-11-16T18:00:00Z" });
+  await f.service().run({ limit: 1 });
+  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET "expiresOn"='2026-11-22',version=version+1 WHERE id=$1::uuid`, [row.id]);
+  await f.db.query(`UPDATE "Credito" SET "fechaProximoPago"='2026-12-02' WHERE id=$1`, [row.creditId]);
+  f.advance(86_400_000);
+  const before = await f.conditions(row.id);
+  const pending = await f.service().retry(row.id, actor);
+  assert.equal(pending.approvedDays, 5);
+  assert.equal((await f.raw(row.id)).installmentDueDate, "2026-11-17");
+  assert.equal((await f.service().run({ limit: 1 })).sent, 1);
+  assert.deepEqual(f.sends.at(-1).template.components[0].parameters.map(parameter => parameter.text), ["Cliente sintético", "5", "22/11/2026"]);
+  assert.deepEqual(await f.conditions(row.id), before);
+});
+
+test("sin cuota base o con plazo no positivo se conserva la aprobación y no se inventan días", async t => {
+  const f = await fixture(t);
+  const missing = await f.insert({ source: "CENTRAL_DIRECT", installmentDueDate: null });
+  const invalid = await f.insert({ installmentDueDate: "2026-11-17", expiresOn: "2026-11-17" });
+  const before = await Promise.all([f.conditions(missing.id), f.conditions(invalid.id)]);
+  assert.equal((await f.service().read(missing.id)).status, "FAILED");
+  assert.equal((await f.service().read(missing.id)).canRetry, false, "sin una cuota verificable un reintento ciego no puede inventar la referencia");
+  await assert.rejects(f.service().retry(missing.id, actor), error => error.code === "WHATSAPP_RETRY_UNAVAILABLE");
+  assert.equal((await f.service().read(invalid.id)).status, "FAILED");
+  await f.service().run();
+  assert.equal(f.messages, 0);
+  assert.deepEqual(await Promise.all([f.conditions(missing.id), f.conditions(invalid.id)]), before);
+});
+
+test("las operaciones históricas v1 inciertas mantienen plantilla y parámetros hasta su conciliación", async t => {
+  const f = await fixture(t, { post: () => { throw new Error("Simulated old ACK loss"); } });
+  const row = await f.insert({ legacy: true });
+  assert.equal((await f.service().run({ limit: 1 })).pending, 1);
+  assert.equal(f.sends[0].template.name, "prorroga_activada");
+  assert.equal(f.sends[0].template.components[0].parameters.length, 2);
+  const snapshot = await f.raw(row.id);
+  f.advance(60_000);
+  assert.equal((await f.service().run({ limit: 1 })).pending, 1);
+  assert.equal(f.messages, 1);
+  assert.equal((await f.raw(row.id)).operationKey, snapshot.operationKey);
+  const [outbox] = (await f.db.query('SELECT id FROM "WhatsAppAutomationMetaOutbox"')).rows;
+  await f.statuses([{ id: "wamid.legacy-confirmation", recipient: "573001234567", timestamp: f.now().toISOString(), status: "delivered", errorCodes: [], requestId: outbox.id }]);
+  assert.equal((await f.service().read(row.id)).status, "SENT");
+  assert.equal(f.messages, 1);
 });
 
 test("rechazo definitivo permite reintentar con nueva operación conservando la activación", async t => {

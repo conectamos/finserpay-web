@@ -100,7 +100,9 @@ test("analyst grants approved due+4, preserves loan terms, real actor, immutable
   const row = (await f.db.query('SELECT * FROM "CreditMoraExceptionRequest"')).rows[0];
   assert.equal(row.createdByUserId, 5); assert.equal(row.decidedByUserId, 5); assert.equal(row.decidedByName, "Analista real"); assert.equal(row.source, "ANALYST_REQUEST");
   assert.equal(row.activationWhatsApp.status, "PENDING");
-  assert.equal(row.activationWhatsApp.approvedDays, 3, "WhatsApp cuenta desde activación el 03 hasta vencimiento el 06, no cuatro días desde cuota");
+  assert.equal(row.activationWhatsApp.templateName, "prorroga_activada_v2");
+  assert.equal(row.activationWhatsApp.installmentDueDate, "2026-10-02");
+  assert.equal(row.activationWhatsApp.approvedDays, 4, "WhatsApp conserva los cuatro días desde la cuota del 02 hasta el 06");
   assert.equal(new Date(row.activationWhatsApp.activatedAt).toISOString(), instant);
   assert.equal(row.activationWhatsApp.authorizedByName, "Analista real");
   assert.equal(row.activationWhatsApp.name, "Cliente sintético");

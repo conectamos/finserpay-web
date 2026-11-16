@@ -2,10 +2,17 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
+import path from "node:path";
 import test from "node:test";
+import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import { installMoraExceptionRequestSchema } from "../scripts/mora-exception-requests-schema.mjs";
+
+const projectRoot = path.resolve(import.meta.dirname, "..");
+const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot,
+  "server-only": path.join(projectRoot, "node_modules/next/dist/compiled/server-only/empty.js") } });
+const { financialPlan } = await jiti.import("../lib/atencion-financial-core.ts");
 
 class CreditApprovalError extends Error {
   constructor(code, message, status = 400) {
@@ -49,6 +56,12 @@ const overduePlan = {
   installments: [{ numero: 3, fechaVencimiento: "2026-10-02", saldoPendiente: 300, eliminada: false }],
 };
 
+const noticeCreditTerms = {
+  montoCredito: 400, valorCuota: 100, plazoMeses: 4, frecuenciaPago: "QUINCENAL",
+  fechaPrimerPago: "2026-11-02", fechaProximoPago: "2026-11-20",
+  abonos: [{ valor: 100, fechaAbono: "2026-11-10" }],
+};
+
 function service(prisma = {}, creditLookup = () => null, listMoraPortfolio = async () => ({ items: [] })) {
   return load("lib/mora-exception-requests.ts", {
     "@/lib/prisma": { default: prisma },
@@ -74,6 +87,7 @@ function service(prisma = {}, creditLookup = () => null, listMoraPortfolio = asy
     "@/lib/ally-payments-core": products,
     "@/lib/credit-approval-errors": { CreditApprovalError },
     "@/lib/credit-payment-plan": { buildCreditPaymentPlan: credit => credit.plan || overduePlan },
+    "@/lib/atencion-financial-core": { financialPlan },
     "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
   });
 }
@@ -117,6 +131,72 @@ async function harness(t, { plan = overduePlan, estado = "ACTIVO" } = {}) {
 function centralInput(api, patch = {}) {
   return api.parseCentralMoraExceptionCreate({ creditoId: 77, type: "EXCEPCION", expiresOn: null, idempotencyKey: randomUUID(), ...patch });
 }
+
+test("la autorización central V2 calcula cuatro días desde cuota 17 al 21 sin modificar columnas contractuales", async t => {
+  const f = await harness(t);
+  Object.assign(f.credits.get(77), noticeCreditTerms);
+  const beforeCredit = (await f.database.query('SELECT * FROM "Credito"')).rows[0];
+  const input = centralInput(f.service, { type: "EXCEPCION", expiresOn: "2026-11-21" });
+  const result = await f.service.createMoraExceptionRequest(input, central, new Date("2026-11-16T20:00:00Z"));
+  const row = (await f.database.query('SELECT * FROM "CreditMoraExceptionRequest" WHERE id=$1', [result.item.id])).rows[0];
+  assert.equal(row.type, "EXCEPCION");
+  assert.equal(row.source, "CENTRAL_DIRECT");
+  assert.equal(row.status, "APPROVED");
+  assert.equal(row.version, 1);
+  assert.equal(row.installmentDueDate, null);
+  assert.equal(row.installmentNumber, null);
+  assert.equal(row.promiseAmount, null);
+  assert.equal(row.promiseDate, null);
+  assert.equal(row.activationWhatsApp.templateName, "prorroga_activada_v2");
+  assert.equal(row.activationWhatsApp.installmentDueDate, "2026-11-17");
+  assert.equal(row.activationWhatsApp.approvedDays, 4);
+  assert.equal(row.activationWhatsApp.status, "PENDING");
+  assert.equal(row.activationWhatsApp.error, null);
+  assert.ok(row.activationWhatsApp.nextAttemptAt);
+  assert.deepEqual((await f.database.query('SELECT * FROM "Credito"')).rows[0], beforeCredit);
+  const replay = await f.service.createMoraExceptionRequest(input, central, new Date("2026-11-20T20:00:00Z"));
+  assert.equal(replay.unchanged, true);
+  assert.equal(replay.item.id, result.item.id);
+  assert.deepEqual((await f.database.query('SELECT "activationWhatsApp" FROM "CreditMoraExceptionRequest" WHERE id=$1', [result.item.id])).rows[0].activationWhatsApp, row.activationWhatsApp);
+});
+
+test("la referencia central usa pagos reales y falla solo el aviso si falta calendario, ya está pagado o el plazo no es positivo", async t => {
+  const f = await harness(t);
+  const cases = [
+    { label: "activada el 18", patch: {}, at: "2026-11-18T20:00:00Z", due: "2026-11-17", days: 4, error: null },
+    { label: "activada el 20", patch: {}, at: "2026-11-20T20:00:00Z", due: "2026-11-17", days: 4, error: null },
+    { label: "cuota anterior parcial", patch: { abonos: [{ valor: 50, fechaAbono: "2026-11-10" }] }, due: "2026-11-02", days: 19, error: null },
+    { label: "cuota del 17 pagada", patch: { abonos: [{ valor: 200, fechaAbono: "2026-11-15" }] }, due: "2026-12-02", days: null, error: "INVALID_EXTENSION_DURATION" },
+    { label: "sin calendario", patch: { fechaPrimerPago: null }, due: null, days: null, error: "MISSING_INSTALLMENT_DUE_DATE" },
+    { label: "liquidado", patch: { pazYSalvoEmitidoAt: "2026-11-15" }, due: null, days: null, error: "MISSING_INSTALLMENT_DUE_DATE" },
+    { label: "plan capital inválido", patch: { planCapitalVigente: { version: "INVALID" } }, due: null, days: null, error: "MISSING_INSTALLMENT_DUE_DATE" },
+  ];
+  for (const { label, patch, at, due, days, error } of cases) {
+    Object.assign(f.credits.get(77), noticeCreditTerms, { pazYSalvoEmitidoAt: null, planCapitalVigente: null }, patch);
+    const result = await f.service.createMoraExceptionRequest(centralInput(f.service, { expiresOn: "2026-11-21" }), central,
+      new Date(at || "2026-11-16T20:00:00Z"));
+    const row = (await f.database.query('SELECT status,"installmentDueDate","activationWhatsApp" FROM "CreditMoraExceptionRequest" WHERE id=$1', [result.item.id])).rows[0];
+    assert.equal(row.status, "APPROVED", label);
+    assert.equal(row.installmentDueDate, null, label);
+    assert.equal(row.activationWhatsApp.installmentDueDate, due, label);
+    assert.equal(row.activationWhatsApp.approvedDays, days, label);
+    assert.equal(row.activationWhatsApp.error, error, label);
+    assert.equal(row.activationWhatsApp.status, error ? "FAILED" : "PENDING", label);
+    assert.equal(Boolean(row.activationWhatsApp.nextAttemptAt), !error, label);
+  }
+});
+
+test("fallar el historial central revierte también el snapshot V2 calculado", async t => {
+  const f = await harness(t);
+  Object.assign(f.credits.get(77), noticeCreditTerms);
+  await f.database.exec(`CREATE FUNCTION fail_notice_approval_history() RETURNS trigger AS $$
+    BEGIN RAISE EXCEPTION 'Fallo de historial sintético'; END; $$ LANGUAGE plpgsql;
+    CREATE TRIGGER fail_notice_approval_history BEFORE INSERT ON "CreditMoraExceptionEvent"
+      FOR EACH ROW EXECUTE FUNCTION fail_notice_approval_history();`);
+  await assert.rejects(f.service.createMoraExceptionRequest(centralInput(f.service, { expiresOn: "2026-11-21" }), central,
+    new Date("2026-11-16T20:00:00Z")), /historial/);
+  assert.equal((await f.database.query('SELECT count(*)::int n FROM "CreditMoraExceptionRequest"')).rows[0].n, 0);
+});
 
 function analystInput(api, patch = {}) {
   return api.parseMoraExceptionCreate({ creditoId: 77, type: "EXCEPCION", expiresOn: "2026-10-10",
