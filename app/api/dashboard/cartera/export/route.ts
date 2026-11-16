@@ -20,11 +20,7 @@ import {
   shouldIncludeCarteraExportCredit,
 } from "@/lib/cartera-export";
 import { isAdminRole } from "@/lib/roles";
-import {
-  getActiveMoraBlockExemptionDocuments,
-  normalizeMoraExemptionDocument,
-} from "@/lib/mora-block-exemptions";
-import { getActiveMoraExceptionsByCreditIds } from "@/lib/mora-exception-requests";
+import { readActiveMoraExtensions } from "@/lib/analyst-mora-extension";
 import prisma from "@/lib/prisma";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
@@ -80,7 +76,7 @@ function numberCell(value: number) {
   return `<td style='mso-number-format:"0";'>${Math.round(Number(value || 0))}</td>`;
 }
 
-function buildWorkbookHtml(rows: string, includeProrroga: boolean, adminCentral: boolean, includeOverdueColumns: boolean) {
+function buildWorkbookHtml(rows: string, adminCentral: boolean, includeOverdueColumns: boolean) {
   return `<!doctype html>
 <html xmlns:x="urn:schemas-microsoft-com:office:excel">
 <head>
@@ -127,7 +123,7 @@ function buildWorkbookHtml(rows: string, includeProrroga: boolean, adminCentral:
         ${adminCentral ? "<th>Saldo seguro</th>" : ""}
         <th>Dias vencidos</th>
         <th>Ultimo pago que ha realizado</th>
-        ${includeProrroga ? "<th>PRORROGA ACTIVA</th>" : ""}
+        <th>Prórroga activa</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
@@ -187,10 +183,6 @@ export async function GET(req: Request) {
     };
 
     const today = new Date();
-    const includeProrroga = exportScope === "mora";
-    const activeExemptionDocuments = includeProrroga
-      ? await getActiveMoraBlockExemptionDocuments(today)
-      : new Set<string>();
     const creditos = await prisma.credito.findMany({
       where,
       include: {
@@ -232,10 +224,6 @@ export async function GET(req: Request) {
         fechaCredito: "desc",
       },
     });
-    const activeExceptionCreditIds = includeProrroga
-      ? new Set((await getActiveMoraExceptionsByCreditIds(creditos.map(credit => credit.id), today)).keys())
-      : new Set<number>();
-
     const platformCredits = selectedPlatform
       ? creditos.filter(
           (credito) =>
@@ -248,7 +236,7 @@ export async function GET(req: Request) {
     const displayNumbers = await getCreditDisplayNumbers(
       platformCredits.map((credito) => credito.id)
     );
-    const rows = platformCredits
+    const plannedCredits = platformCredits
       .map(credito => withCreditDisplayNumber(credito, displayNumbers))
       .filter((credito) => !isExcludedCarteraCreditState(credito.estado))
       .map((credito) => {
@@ -282,7 +270,14 @@ export async function GET(req: Request) {
               installment.estaEnMora && installment.saldoPendiente > 0
           ),
         });
-      })
+      });
+    const activeExtensions = await readActiveMoraExtensions(
+      plannedCredits
+        .filter(({ credito, plan }) => plan.saldoPendiente > 0 && !credito.pazYSalvoEmitidoAt)
+        .map(({ credito }) => credito.id),
+      today
+    );
+    const rows = plannedCredits
       .map(({ credito, plan }) => {
         const diasVencidos = resolveCarteraDaysPastDue(plan, today);
         const overdueInstallments = plan.installments.filter(
@@ -333,9 +328,8 @@ export async function GET(req: Request) {
           credito.equipoMarca
         );
 
-        const documento = normalizeMoraExemptionDocument(credito.clienteDocumento);
-        const prorrogaActiva = activeExceptionCreditIds.has(credito.id) ||
-          (Boolean(documento) && activeExemptionDocuments.has(documento));
+        const prorrogaActiva = plan.saldoPendiente > 0 && !credito.pazYSalvoEmitidoAt
+          && activeExtensions.has(credito.id);
 
         return `<tr>
           ${textCell(formatDate(credito.fechaCredito))}
@@ -370,12 +364,12 @@ export async function GET(req: Request) {
           ${adminCentral ? moneyCell(balances.saldoSeguro ?? 0) : ""}
           ${numberCell(diasVencidos)}
           ${textCell(ultimoPago)}
-          ${includeProrroga ? textCell(prorrogaActiva ? "SI" : "NO") : ""}
+          ${textCell(prorrogaActiva ? "SI" : "NO")}
         </tr>`;
       })
       .join("");
 
-    const html = buildWorkbookHtml(rows, includeProrroga, adminCentral, exportScope === "mora");
+    const html = buildWorkbookHtml(rows, adminCentral, exportScope === "mora");
     const filenamePrefix =
       exportScope === "mora" ? "clientes-en-mora-finserpay" : "cartera-finserpay";
     const filename = `${filenamePrefix}-${today
