@@ -163,5 +163,6 @@ plantilla aprobada y las credenciales del entorno de envío.
 | `lib/whatsapp-automation-meta-config.ts`, `lib/whatsapp-automation-meta.ts` | Plantilla y verificación del cuerpo exacto |
 | `scripts/setup-whatsapp-automation-meta.sql`, `scripts/whatsapp-automation-meta-schema.mjs` | Ampliación aditiva del outbox compartido |
 | `scripts/prepare-prorroga-whatsapp-template.mjs` | Consulta o alta de plantilla ausente; nunca envía mensajes |
+| `package.json` | Incluye las pruebas de WhatsApp de prórrogas en `test:mora-analista`, ejecutado por CI |
 | `tests/mora-extension-whatsapp-*.test.mjs` | Activación, envío, recuperación, permisos y preparación de plantilla |
 | `tests/atencion-financial.test.mjs`, `tests/internal-cron-schedule.test.mjs`, `tests/mora-exception-api.test.mjs`, `tests/mora-exception-amendment-ui.test.mjs`, `tests/whatsapp-automation-meta.test.mjs` | Regresiones del flujo, cron y transporte existentes |
