@@ -152,6 +152,38 @@ export function moraExceptionRequestSchemaStatements() {
     `DROP TRIGGER IF EXISTS "CreditMoraExceptionRequest_diana_identity" ON "CreditMoraExceptionRequest"`,
     `CREATE TRIGGER "CreditMoraExceptionRequest_diana_identity" BEFORE UPDATE ON "CreditMoraExceptionRequest"
       FOR EACH ROW EXECUTE FUNCTION public.mora_diana_request_identity_immutable()`,
+    // Keep the notification intent with the successful activation. There is no
+    // backfill: installing this trigger must never notify historical approvals.
+    `ALTER TABLE "CreditMoraExceptionRequest" ADD COLUMN IF NOT EXISTS "activationWhatsApp" JSONB`,
+    `CREATE INDEX IF NOT EXISTS "CreditMoraExceptionRequest_whatsapp_due"
+      ON "CreditMoraExceptionRequest" (("activationWhatsApp"->>'nextAttemptAt'))
+      WHERE "activationWhatsApp" IS NOT NULL AND "activationWhatsApp"->>'status'<>'SENT'`,
+    `CREATE OR REPLACE FUNCTION public.mora_extension_whatsapp_activation() RETURNS trigger AS $$
+      DECLARE credit JSONB;
+      BEGIN
+        IF NEW.type<>'PRORROGA' OR NEW.status<>'APPROVED' OR NEW."activationWhatsApp" IS NOT NULL
+          OR NEW.source NOT IN ('ANALYST_REQUEST','CENTRAL_DIRECT') OR NEW."decidedByUserId" IS NULL
+          OR NEW."decidedBySystemKey" IS NOT NULL THEN RETURN NEW; END IF;
+        IF TG_OP='UPDATE' THEN
+          IF OLD.status<>'PENDING' THEN RETURN NEW; END IF;
+        END IF;
+        SELECT to_jsonb(c) INTO credit FROM "Credito" c WHERE c.id=NEW."creditoId";
+        NEW."activationWhatsApp"=jsonb_build_object(
+          'status',CASE WHEN NEW."expiresOn" IS NULL THEN 'FAILED' ELSE 'PENDING' END,
+          'activatedAt',NEW."decidedAt", 'authorizedByName',COALESCE(NEW."decidedByName",NEW."createdByName"),
+          'approvedDays',CASE WHEN NEW."expiresOn" IS NULL THEN NULL
+            ELSE GREATEST(1,NEW."expiresOn"-(NEW."decidedAt" AT TIME ZONE 'America/Bogota')::date) END,
+          'expiresAt',CASE WHEN NEW."expiresOn" IS NULL THEN NULL
+            ELSE ((NEW."expiresOn"+1)::timestamp AT TIME ZONE 'America/Bogota')-interval '1 millisecond' END,
+          'name',credit->>'clienteNombre','phone',credit->>'clienteTelefono','sentAt',NULL,
+          'error',CASE WHEN NEW."expiresOn" IS NULL THEN 'MISSING_EXTENSION_EXPIRY' ELSE NULL END,
+          'attempts',0,'operationKey',NULL,'leaseToken',NULL,'leaseUntil',NULL,
+          'nextAttemptAt',CASE WHEN NEW."expiresOn" IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END);
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql`,
+    `DROP TRIGGER IF EXISTS "CreditMoraExceptionRequest_whatsapp_activation" ON "CreditMoraExceptionRequest"`,
+    `CREATE TRIGGER "CreditMoraExceptionRequest_whatsapp_activation" BEFORE INSERT OR UPDATE OF status
+      ON "CreditMoraExceptionRequest" FOR EACH ROW EXECUTE FUNCTION public.mora_extension_whatsapp_activation()`,
   ];
 }
 

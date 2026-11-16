@@ -9,7 +9,7 @@ const compiled = ts.transpileModule(readFileSync(new URL("../app/dashboard/aprob
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION", centralDirect = true, source, failFirst = false, syncWarning = false, deferred = false } = {}) {
+function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION", centralDirect = true, source, failFirst = false, syncWarning = false, deferred = false, whatsApp = null, retryError = false } = {}) {
   const components = Object.fromEntries(["Badge", "Button", "Card", "DataTable", "EmptyState", "Input", "LoadingState", "Select", "StatusPill"]
     .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
   const ConfirmDialog = () => null;
@@ -17,7 +17,7 @@ function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION",
   const stubComponents = new Set([...Object.values(components), ConfirmDialog, MoraSupports]);
   const node = (component, props) => typeof component === "function" && !stubComponents.has(component) ? component(props) :
     component === ConfirmDialog && !props.open ? null : ({ type: component, props });
-  const slots = [], effects = [], requests = [];
+  const slots = [], effects = [], requests = [], whatsAppRequests = [];
   let cursor = 0, dirty = false, tree, uuid = 0, resolveSave;
   const same = (before, after) => before?.length === after?.length && before.every((value, index) => Object.is(value, after[index]));
   const hooks = {
@@ -58,7 +58,14 @@ function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION",
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}` },
     fetch: async (url, options = {}) => {
       if (url.startsWith("/api/aprobaciones/excepciones-mora?")) return response({ ok: true, items: [item], page: 1, pageSize: 25, total: 1, totalPages: 1 });
-      if (url.endsWith(item.id) && (!options.method || options.method === "GET")) return response({ ok: true, item, history: [...history], credit });
+      if (url.endsWith(item.id) && (!options.method || options.method === "GET")) return response({ ok: true, item, history: [...history], credit, whatsApp });
+      if (url.endsWith(item.id + "/whatsapp") && options.method === "POST") {
+        whatsAppRequests.push(JSON.parse(options.body));
+        if (deferred) await new Promise(resolve => { resolveSave = resolve; });
+        if (retryError) throw new Error("La confirmación del envío está pendiente; no se puede reenviar.");
+        whatsApp = { ...whatsApp, status: "PENDING", canRetry: false, error: null };
+        return response({ ok: true, whatsApp });
+      }
       if (url.endsWith(item.id) && options.method === "PATCH") {
         const input = JSON.parse(options.body); requests.push(input);
         if (failFirst && requests.length === 1) throw new Error("No se pudo confirmar el envío. Intenta de nuevo.");
@@ -111,8 +118,62 @@ function harness({ centralAdmin = true, status = "APPROVED", type = "EXCEPCION",
   const open = async () => { render(); await settle(); click("Ver detalle"); await settle(); };
   const review = () => { assert.ok(form()); form().props.onSubmit({ preventDefault() {} }); render(); };
   const confirm = async () => { assert.ok(dialog()); dialog().props.onConfirm(); await settle(); };
-  return { open, click, change, button, field, form, dialog, review, confirm, settle, render, requests, text: () => text(tree), resolve: () => resolveSave?.() };
+  return { open, click, change, button, field, form, dialog, review, confirm, settle, render, requests, whatsAppRequests, text: () => text(tree), resolve: () => resolveSave?.() };
 }
+
+const activationWhatsApp = {
+  status: "FAILED", activatedAt: "2026-10-09T14:00:00Z", approvedDays: 3,
+  expiresAt: "2026-10-13T04:59:59.999Z", authorizedByName: "Analista autorizador",
+  sentAt: null, error: "No se pudo enviar el WhatsApp. Puedes reintentar.", canRetry: true, attempts: 1,
+};
+
+test("historial de WhatsApp conserva activación, días, responsable y vencimiento aprobado", async () => {
+  const ui = harness({ type: "PRORROGA", whatsApp: activationWhatsApp }); await ui.open();
+  assert.match(ui.text(), /WhatsApp de prórroga activada/);
+  assert.match(ui.text(), /Fallido/);
+  assert.match(ui.text(), /3 días/);
+  assert.match(ui.text(), /Analista autorizador/);
+  assert.match(ui.text(), /09\/10\/2026/);
+  assert.match(ui.text(), /12\/10\/2026/);
+  assert.match(ui.text(), /No se pudo enviar el WhatsApp/);
+  assert.ok(ui.button("Reintentar WhatsApp"));
+});
+
+test("enviado significa aceptación de WhatsApp y no ofrece un reenvío", async () => {
+  const ui = harness({ type: "PRORROGA", whatsApp: { ...activationWhatsApp, status: "SENT", canRetry: false, error: null, sentAt: "2026-10-09T14:01:00Z" } }); await ui.open();
+  assert.match(ui.text(), /Enviado/);
+  assert.match(ui.text(), /aceptado por WhatsApp/);
+  assert.equal(ui.button("Reintentar WhatsApp"), undefined);
+});
+
+test("confirmación pendiente permite actualizar sin ofrecer reenvío", async () => {
+  const ui = harness({ type: "PRORROGA", whatsApp: { ...activationWhatsApp, status: "PENDING", canRetry: false, error: "WhatsApp aún no confirma el resultado." } }); await ui.open();
+  assert.ok(ui.button("Actualizar estado de WhatsApp"));
+  assert.equal(ui.button("Reintentar WhatsApp"), undefined);
+  const legacy = harness({ type: "PRORROGA" }); await legacy.open();
+  assert.doesNotMatch(legacy.text(), /WhatsApp de prórroga activada/);
+});
+
+test("reintento usa los datos del servidor y previene doble clic mientras guarda", async () => {
+  const ui = harness({ centralAdmin: false, type: "PRORROGA", whatsApp: activationWhatsApp, deferred: true }); await ui.open();
+  const retry = ui.button("Reintentar WhatsApp"); retry.props.onClick(); retry.props.onClick(); ui.render();
+  assert.equal(ui.whatsAppRequests.length, 1);
+  assert.deepEqual(ui.whatsAppRequests[0], {});
+  assert.equal(ui.button("Reintentar WhatsApp").props.disabled, true);
+  assert.equal(ui.requests.length, 0, "no vuelve a aprobar ni editar la prórroga");
+  ui.resolve(); await ui.settle();
+  assert.match(ui.text(), /Reintento de WhatsApp programado/);
+  assert.equal(ui.button("Reintentar WhatsApp"), undefined);
+  assert.ok(ui.button("Actualizar estado de WhatsApp"));
+});
+
+test("fallo al programar reintento conserva historial y muestra el error", async () => {
+  const ui = harness({ type: "PRORROGA", whatsApp: activationWhatsApp, retryError: true }); await ui.open();
+  ui.click("Reintentar WhatsApp"); await ui.settle();
+  assert.match(ui.text(), /confirmación del envío está pendiente/);
+  assert.match(ui.text(), /Analista autorizador/);
+  assert.equal(ui.button("Reintentar WhatsApp").props.disabled, false);
+});
 
 for (const type of ["EXCEPCION", "PRORROGA"]) {
   for (const status of ["PENDING", "APPROVED"]) {

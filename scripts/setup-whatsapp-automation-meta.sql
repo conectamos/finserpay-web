@@ -2,7 +2,7 @@ BEGIN;
 SET LOCAL search_path = public;
 CREATE TABLE IF NOT EXISTS "WhatsAppAutomationMetaOutbox" (
   id uuid PRIMARY KEY, "operationKey" text NOT NULL UNIQUE, provider text NOT NULL CHECK(provider='meta'),
-  fingerprint text NOT NULL, "templateName" text NOT NULL CHECK("templateName" IN ('bienvenida','1_dia_falta','hoyvence','data','2dias','cuotavencida','bloqueo')),
+  fingerprint text NOT NULL, "templateName" text NOT NULL,
   language text NOT NULL, "phoneNumberId" text NOT NULL, "wabaId" text NOT NULL, "contactId" text NOT NULL,
   "bodyParameters" jsonb NOT NULL CHECK(jsonb_typeof("bodyParameters")='array'), "headerImageUrl" text,
   "conversationId" uuid NOT NULL REFERENCES "AttentionConversation"(id) ON DELETE RESTRICT,
@@ -14,5 +14,12 @@ CREATE TABLE IF NOT EXISTS "WhatsAppAutomationMetaOutbox" (
   "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now(),
   UNIQUE("phoneNumberId",wamid)
 );
+-- Upgrade the original inline check too: CREATE TABLE IF NOT EXISTS does not
+-- change constraints on an already deployed outbox. Existing rows are retained.
+ALTER TABLE "WhatsAppAutomationMetaOutbox"
+  DROP CONSTRAINT IF EXISTS "WhatsAppAutomationMetaOutbox_templateName_check";
+ALTER TABLE "WhatsAppAutomationMetaOutbox"
+  ADD CONSTRAINT "WhatsAppAutomationMetaOutbox_templateName_check"
+  CHECK("templateName" IN ('bienvenida','1_dia_falta','hoyvence','data','2dias','cuotavencida','bloqueo','prorroga_activada'));
 CREATE INDEX IF NOT EXISTS "WhatsAppAutomationMetaOutbox_conversation" ON "WhatsAppAutomationMetaOutbox"("conversationId","createdAt");
 COMMIT;

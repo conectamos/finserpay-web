@@ -11,7 +11,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = false, failTwoDays = false, initialBatchDate,
   welcomeEnabled = false, holdWelcome = false, failWelcome = false, cronEnabled = true,
   reviewEnabled = false, holdReview = false, failReview = false, holdCuota = false, failCuota = false,
-  holdBloqueo = false, failBloqueo = false } = {}) {
+  holdBloqueo = false, failBloqueo = false, holdExtension = false, failExtension = false } = {}) {
   let clock = new Date(now);
   let timerCallback;
   let paused = hold;
@@ -19,6 +19,8 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
   let reviewPaused = holdReview;
   let cuotaPaused = holdCuota;
   let bloqueoPaused = holdBloqueo;
+  let extensionPaused = holdExtension;
+  const extensionCalls = [], extensionReleases = [];
   const calls = [];
   const welcomeCalls = [];
   const reviewCalls = [];
@@ -46,6 +48,14 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     return report;
   };
   const cron = loadReissueModule("lib/internal-cron.ts", {
+    "@/lib/mora-extension-whatsapp": {
+      runMoraExtensionWhatsApp: async options => {
+        extensionCalls.push(plain(options));
+        if (failExtension) throw new Error("private phone token credential");
+        if (extensionPaused) await new Promise(resolve => extensionReleases.push(resolve));
+        return { configured: true, selected: 0, sent: 0, pending: 0, failed: 0 };
+      },
+    },
     "@/lib/credit-mora-sync": { syncAllCreditMora: async () => ({ ok: true }) },
     "@/lib/credit-due-reminders": {
       runCreditDueReminders: options => runCampaign(options.campaign === "two_days_before_due" ? twoDaysTask
@@ -120,9 +130,34 @@ function cronFixture({ now = "2026-10-07T21:00:00Z", hold = false, failData = fa
     releaseReview: () => { reviewPaused = false; reviewReleases.splice(0).forEach(resolve => resolve()); },
     releaseCuota: () => { cuotaPaused = false; cuotaReleases.splice(0).forEach(resolve => resolve()); },
     releaseBloqueo: () => { bloqueoPaused = false; bloqueoReleases.splice(0).forEach(resolve => resolve()); },
+    releaseExtension: () => { extensionPaused = false; extensionReleases.splice(0).forEach(resolve => resolve()); },
+    extensionCalls,
     calls, welcomeCalls, reviewCalls, cuotaCalls, bloqueoCalls, operationalCalls, logs, errors, state: () => scope.__finserpayInternalCron,
   };
 }
+
+test("activation WhatsApp recovers at startup and drains every 30 seconds independently of payment jobs", async () => {
+  const f = cronFixture({ holdExtension: true });
+  f.start(); await nextTurn();
+  assert.deepEqual(f.extensionCalls, [{ limit: 5 }]);
+  assert.equal(f.state().running.has("mora-extension-whatsapp"), true);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+  f.tick(); await nextTurn();
+  assert.equal(f.extensionCalls.length, 1);
+  f.releaseExtension(); await nextTurn();
+  f.setClock("2026-10-07T21:00:30Z"); f.tick(); await nextTurn();
+  assert.equal(f.extensionCalls.length, 2);
+});
+
+test("activation WhatsApp errors release the worker without leaking data or delaying payment jobs", async () => {
+  const f = cronFixture({ failExtension: true });
+  f.start(); await nextTurn();
+  assert.equal(f.extensionCalls.length, 1);
+  assert.equal(f.state().running.has("mora-extension-whatsapp"), false);
+  assert.ok(f.operationalCalls.some(call => call.name === "unlock"));
+  assert.match(JSON.stringify(f.errors), /prórrogas activadas/);
+  assert.doesNotMatch(JSON.stringify(f.errors), /private|phone|token|credential/);
+});
 
 test("a manually queued WhatsApp batch drains independently without creating a scheduled campaign", async () => {
   const f = cronFixture({ now: "2026-10-18T05:00:00Z", holdCuota: true });

@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { AttentionDatabase } from "./atencion-storage";
 import { validateMetaAttentionMedia } from "./atencion-meta";
-import { isMetaAutomationConfigured, metaAutomationHeaderUrl, META_AUTOMATION_SCOPE, META_AUTOMATION_TEMPLATES, type MetaAutomationEnv } from "./whatsapp-automation-meta-config";
+import { isMetaAutomationConfigured, metaAutomationHeaderUrl, META_AUTOMATION_SCOPE, META_AUTOMATION_TEMPLATES, PRORROGA_ACTIVADA_TEMPLATE_BODY, type MetaAutomationEnv } from "./whatsapp-automation-meta-config";
 import { AutomationError, createWhatsAppAutomationMetaStore, type AutomationInput, type AutomationRow } from "./whatsapp-automation-meta-storage";
 export { isMetaAutomationConfigured, isWhatsAppAutomationMetaConfigured } from "./whatsapp-automation-meta-config";
 export type { MetaAutomationTemplate } from "./whatsapp-automation-meta-config";
@@ -34,6 +34,9 @@ function metadata(value: unknown, input: AutomationInput): TemplateMetadata {
   const bodies = components.filter(c => c.type === "BODY"), headers = components.filter(c => c.type === "HEADER");
   if (bodies.length !== 1 || (rule.imageEnv ? headers.length !== 1 || headers[0].format !== "IMAGE" : headers.length !== 0)) throw new AutomationError("TEMPLATE_SHAPE_CHANGED");
   const body = str(bodies[0].text), parameters = [...body.matchAll(/\{\{(\d+)\}\}/g)].map(m => Number(m[1]));
+  // This notice must match the approved agreement warning, including parameter order.
+  if (input.template === "prorroga_activada" && (components.length !== 1 || body !== PRORROGA_ACTIVADA_TEMPLATE_BODY))
+    throw new AutomationError("TEMPLATE_CONTENT_CHANGED");
   if (!body || body.length > 10000 || new Set(parameters).size !== rule.parameters || parameters.some(n => n < 1 || n > rule.parameters)
     || /\{\{|\}\}/.test(body.replace(/\{\{\d+\}\}/g, ""))) throw new AutomationError("TEMPLATE_SHAPE_CHANGED");
   const footer = components.filter(c => c.type === "FOOTER").map(c => str(c.text)).join("\n");

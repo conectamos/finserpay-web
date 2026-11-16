@@ -8,7 +8,7 @@ import { Badge, Button, Card, DataTable, EmptyState, Input, LoadingState, Select
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import FinserSidePanel from "@/app/_components/finser-side-panel";
 import { colombiaDateKey } from "@/lib/colombia-date";
-import type { MoraExceptionCreditSummary, MoraExceptionEligibility, MoraExceptionEvent, MoraExceptionRequestItem, MoraExceptionStatus, MoraExceptionType } from "@/lib/mora-exception-types";
+import type { MoraExceptionCreditSummary, MoraExceptionEligibility, MoraExceptionEvent, MoraExceptionRequestItem, MoraExceptionStatus, MoraExceptionType, MoraExtensionWhatsApp } from "@/lib/mora-exception-types";
 import MoraSupports from "../mora-supports";
 import styles from "./mora-exception-requests.module.css";
 
@@ -60,7 +60,7 @@ function eventChanges(payload: unknown) {
     .map(field => ({ key: field.key, label: field.label, before: field.format(before[field.key]), after: field.format(after[field.key]) }));
 }
 type List = { items: MoraExceptionRequestItem[]; total: number; page: number; pageSize: number; totalPages: number; credit?: MoraExceptionCreditSummary; eligibility?: MoraExceptionEligibility };
-type Detail = { item: MoraExceptionRequestItem; history: MoraExceptionEvent[]; credit?: MoraExceptionCreditSummary; eligibility?: MoraExceptionEligibility };
+type Detail = { item: MoraExceptionRequestItem; history: MoraExceptionEvent[]; credit?: MoraExceptionCreditSummary; eligibility?: MoraExceptionEligibility; whatsApp?: MoraExtensionWhatsApp | null };
 type AmendmentDraft = { action: "EDIT" | "CANCEL"; version: number; expiresOn: string; noExpiry: boolean; reason: string; observation: string; promiseAmount: string; promiseDate: string; auditReason: string };
 
 export default function MoraExceptionRequestsClient({ centralAdmin, initialCreditId = null, initialCreateOpen = false }: { centralAdmin: boolean; initialCreditId?: number | null; initialCreateOpen?: boolean }) {
@@ -188,6 +188,18 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
       setNotice(action === "OBSERVE" ? "Observación guardada en el historial." : "Decisión guardada en el historial.");
       if (response.moraSync && !response.moraSync.ok) setError(response.moraSync.message);
     } catch (e) { setConfirm(null); setError(e instanceof Error ? e.message : "No se pudo registrar la gestión."); }
+    finally { submitting.current = false; setSaving(false); }
+  }
+  async function retryWhatsApp() {
+    if (!detail?.whatsApp?.canRetry || submitting.current) return;
+    submitting.current = true; setSaving(true); setError(""); setNotice("");
+    try {
+      await request("/api/aprobaciones/excepciones-mora/" + detail.item.id + "/whatsapp", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      setReload(value => value + 1);
+      setNotice("Reintento de WhatsApp programado. El envío continuará desde el servidor.");
+    } catch (e) { setError(e instanceof Error ? e.message : "No se pudo programar el reintento de WhatsApp."); }
     finally { submitting.current = false; setSaving(false); }
   }
   function openAmendment(action: "EDIT" | "CANCEL") {
@@ -334,6 +346,26 @@ export default function MoraExceptionRequestsClient({ centralAdmin, initialCredi
           {detail.item.cooldownBypassed && <p className={styles.warning}>Enfriamiento omitido por autorización: {detail.item.cooldownBypassReason}</p>}
           {detail.item.conditionStatus === "FULFILLED" && <Badge tone="positive">Compromiso cumplido</Badge>}
           {detail.item.conditionStatus === "BREACHED" && <Badge tone="danger">Compromiso incumplido</Badge>}
+          {detail.whatsApp && <section className={styles.history} aria-labelledby="mora-whatsapp-title">
+            <h3 id="mora-whatsapp-title">WhatsApp de prórroga activada</h3>
+            <StatusPill tone={detail.whatsApp.status === "SENT" ? "positive" : detail.whatsApp.status === "FAILED" ? "danger" : "warning"}>
+              {detail.whatsApp.status === "SENT" ? "Enviado" : detail.whatsApp.status === "FAILED" ? "Fallido" : "Pendiente"}
+            </StatusPill>
+            <dl className={styles.details}>
+              <div><dt>Activación</dt><dd>{date(detail.whatsApp.activatedAt, true)}</dd></div>
+              <div><dt>Días aprobados</dt><dd>{detail.whatsApp.approvedDays === null ? "Sin determinar" : `${detail.whatsApp.approvedDays} días`}</dd></div>
+              <div><dt>Autorizada por</dt><dd>{detail.whatsApp.authorizedByName}</dd></div>
+              <div><dt>Vencimiento aprobado</dt><dd>{detail.whatsApp.expiresAt ? date(detail.whatsApp.expiresAt, true) : "Sin vencimiento"}</dd></div>
+              <div><dt>Envío</dt><dd>{date(detail.whatsApp.sentAt, true)}</dd></div>
+              <div><dt>Intentos</dt><dd>{detail.whatsApp.attempts}</dd></div>
+            </dl>
+            {detail.whatsApp.status === "SENT" && <p className={styles.muted}>El mensaje fue aceptado por WhatsApp. La entrega se confirma en el historial de Atención.</p>}
+            {detail.whatsApp.error && <p className={styles.muted}>{detail.whatsApp.error}</p>}
+            <div className={styles.management}>
+              {detail.whatsApp.canRetry && <Button variant="secondary" disabled={saving} onClick={() => void retryWhatsApp()}>Reintentar WhatsApp</Button>}
+              {detail.whatsApp.status === "PENDING" && <Button variant="secondary" disabled={saving} onClick={() => setReload(value => value + 1)}>Actualizar estado de WhatsApp</Button>}
+            </div>
+          </section>}
           <MoraSupports key={detail.item.id} creditoId={detail.item.creditoId} subjectKind="EXCEPCION" subjectId={detail.item.id} defaultOpen={!centralAdmin} />
           {canAmend && !amendment && <div className={styles.management} aria-label="Administrar solicitud"><Button variant="secondary" disabled={saving} onClick={() => openAmendment("EDIT")}>Editar solicitud</Button><Button variant="danger" disabled={saving} onClick={() => openAmendment("CANCEL")}>Cancelar solicitud</Button></div>}
           {amendment && <form className={`${styles.form} ${styles.amendment}`} aria-labelledby="mora-amendment-title" onSubmit={confirmAmendment}>
