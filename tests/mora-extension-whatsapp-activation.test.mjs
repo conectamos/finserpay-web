@@ -13,8 +13,8 @@ async function fixture(t) {
   const client = { query: (sql, values = []) => db.query(sql, values) };
   await installMoraExceptionRequestSchema(client);
   let nextCreditId = 77;
-  async function insert({ status = "APPROVED", type = "PRORROGA", source = "CENTRAL_DIRECT",
-    at = "2026-10-03T17:00:00.000Z", expiresOn = "2026-10-06", system = false, userId = 1 } = {}, connection = db) {
+  async function insert({ status = "APPROVED", type = "PRORROGA", source = "ANALYST_REQUEST",
+    at = "2026-10-03T17:00:00.000Z", expiresOn = "2026-10-06", installmentDueDate = "2026-10-02", system = false, userId = 1 } = {}, connection = db) {
     const id = randomUUID(), creditId = nextCreditId++;
     await connection.query(`INSERT INTO "Credito" VALUES ($1,$2,'Cliente sintético','3001234567','ACTIVO')`, [creditId, `FC-${creditId}`]);
     const pending = status === "PENDING", direct = source === "CENTRAL_DIRECT", systemKey = system ? "SYSTEM_DIANA" : null;
@@ -23,7 +23,7 @@ async function fixture(t) {
        "createdByUserId","createdBySystemKey","createdByName","decidedByUserId","decidedBySystemKey","decidedByName","decidedAt","createIdempotencyKey","createRequestHash")
       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::date,$8::date,$9,$10::date,'Compromiso confirmado','Seguimiento documentado',
         $11,$12,$13,$14,$15,$16,$17::timestamptz,$18::uuid,$19)`,
-    [id, creditId, type, status, source, direct ? null : 1, direct ? null : "2026-10-02", expiresOn,
+    [id, creditId, type, status, source, direct ? null : 1, direct ? null : installmentDueDate, expiresOn,
       direct || source === "SYSTEM_DIANA_REQUEST" ? null : 100,
       direct || source === "SYSTEM_DIANA_REQUEST" ? null : expiresOn,
       system ? null : userId, systemKey, system ? "Diana" : userId === 2 ? "Analista real" : "Administradora real",
@@ -37,7 +37,7 @@ async function fixture(t) {
 
 const iso = value => new Date(value).toISOString();
 
-test("la activación directa guarda el WhatsApp con identidad y plazo desde la decisión; repetir y editar no lo recrea", async t => {
+test("la activación guarda el WhatsApp V2 con identidad y plazo de la cuota; repetir y editar no lo recrea", async t => {
   const f = await fixture(t), { id } = await f.insert();
   const activation = await f.read(id);
   assert.equal(activation.status, "PENDING");
@@ -45,7 +45,9 @@ test("la activación directa guarda el WhatsApp con identidad y plazo desde la d
   assert.equal(activation.phone, "3001234567");
   assert.equal(activation.authorizedByName, "Administradora real");
   assert.equal(iso(activation.activatedAt), "2026-10-03T17:00:00.000Z");
-  assert.equal(activation.approvedDays, 3, "el plazo del mensaje se cuenta desde activación, no desde cuota del 02");
+  assert.equal(activation.templateName, "prorroga_activada_v2");
+  assert.equal(activation.installmentDueDate, "2026-10-02");
+  assert.equal(activation.approvedDays, 4, "el plazo del mensaje se cuenta desde la cuota del 02 hasta el 06");
   assert.equal(iso(activation.expiresAt), "2026-10-07T04:59:59.999Z");
   assert.equal(activation.sentAt, null);
   assert.equal(activation.attempts, 0);
@@ -69,7 +71,7 @@ test("una solicitud pendiente solo encola al aprobarse y la auditoría fallida r
   assert.equal(await f.read(pending.id), null);
   assert.equal((await f.db.query(`SELECT status FROM "CreditMoraExceptionRequest" WHERE id=$1::uuid`, [pending.id])).rows[0].status, "PENDING");
   await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED',version=2,"decidedByUserId"=1,"decidedByName"='Administradora real',"decidedAt"='2026-10-03T17:00:00Z' WHERE id=$1::uuid`, [pending.id]);
-  assert.equal((await f.read(pending.id)).approvedDays, 3);
+  assert.equal((await f.read(pending.id)).approvedDays, 4);
 });
 
 test("un INSERT aprobado de analista revierte junto a toda la activación si falla el historial", async t => {
@@ -92,7 +94,7 @@ test("rechazo, cancelación sin aprobar, excepciones indefinidas y decisiones de
     await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status=$2,"decidedAt"='2026-10-03T17:00:00Z',"decidedByUserId"=1,"decidedByName"='Administradora real' WHERE id=$1::uuid`, [pending.id, status]);
     assert.equal(await f.read(pending.id), null);
   }
-  const exception = await f.insert({ type: "EXCEPCION", expiresOn: null });
+  const exception = await f.insert({ type: "EXCEPCION", source: "CENTRAL_DIRECT", expiresOn: null });
   assert.equal(await f.read(exception.id), null);
   for (const source of ["SYSTEM_DIANA", "SYSTEM_DIANA_REQUEST"]) {
     const row = await f.insert({ source, system: true });
@@ -102,14 +104,14 @@ test("rechazo, cancelación sin aprobar, excepciones indefinidas y decisiones de
   }
 });
 
-test("la excepción temporal central encola una sola notificación sin cambiar tipo ni condiciones", async t => {
+test("la excepción temporal con cuota encola una sola notificación sin cambiar tipo ni condiciones", async t => {
   const f = await fixture(t);
   let row;
   await f.db.transaction(async tx => {
     row = await f.insert({ type: "EXCEPCION" }, tx);
     const notification = await f.read(row.id, tx);
     assert.equal(notification.status, "PENDING");
-    assert.equal(notification.approvedDays, 3);
+    assert.equal(notification.approvedDays, 4);
     assert.equal(notification.authorizedByName, "Administradora real");
   });
   const notification = await f.read(row.id);
@@ -117,7 +119,7 @@ test("la excepción temporal central encola una sola notificación sin cambiar t
     FROM "CreditMoraExceptionRequest" r JOIN "Credito" c ON c.id=r."creditoId" WHERE r.id=$1::uuid`, [row.id])).rows[0];
   const before = await business();
   assert.equal(before.request.type, "EXCEPCION");
-  assert.equal(before.request.source, "CENTRAL_DIRECT");
+  assert.equal(before.request.source, "ANALYST_REQUEST");
   assert.equal(before.request.status, "APPROVED");
   await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED' WHERE id=$1::uuid`, [row.id]);
   assert.deepEqual(await f.read(row.id), notification);
@@ -142,7 +144,7 @@ test("aprobar una excepción temporal pendiente encola atómicamente; un fallo r
   await f.db.transaction(approve);
   const notification = await f.read(row.id);
   assert.equal(notification.status, "PENDING");
-  assert.equal(notification.approvedDays, 3);
+  assert.equal(notification.approvedDays, 4);
   assert.equal(notification.name, "Cliente sintético");
   assert.equal(notification.phone, "3001234567");
   await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED' WHERE id=$1::uuid`, [row.id]);
@@ -156,7 +158,7 @@ test("aprobar una excepción temporal pendiente encola atómicamente; un fallo r
 });
 
 test("una excepción indefinida conserva su aprobación y no se notifica al editarla después", async t => {
-  const f = await fixture(t), row = await f.insert({ type: "EXCEPCION", expiresOn: null });
+  const f = await fixture(t), row = await f.insert({ type: "EXCEPCION", source: "CENTRAL_DIRECT", expiresOn: null });
   assert.equal(await f.read(row.id), null);
   await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED',"expiresOn"='2026-10-06' WHERE id=$1::uuid`, [row.id]);
   assert.equal(await f.read(row.id), null, "corregir una autorización anterior no equivale a una nueva activación");
@@ -165,18 +167,20 @@ test("una excepción indefinida conserva su aprobación y no se notifica al edit
   assert.equal(stored.status, "APPROVED");
 });
 
-test("el día de activación usa medianoche Colombia y el mismo día equivale a un día", async t => {
+test("cuota del 17 hasta el 21 siempre representa cuatro días, aunque se active el 16, 18 o 20", async t => {
   const f = await fixture(t);
-  for (const [at, expected] of [["2026-10-04T04:59:59.999Z", 3], ["2026-10-04T05:00:00.000Z", 2], ["2026-10-06T23:59:00.000Z", 1]]) {
-    const { id } = await f.insert({ at });
+  for (const at of ["2026-11-16T20:00:00.000Z", "2026-11-18T20:00:00.000Z", "2026-11-20T20:00:00.000Z"]) {
+    const { id } = await f.insert({ at, installmentDueDate: "2026-11-17", expiresOn: "2026-11-21" });
     const snapshot = await f.read(id);
-    assert.equal(snapshot.approvedDays, expected, at);
+    assert.equal(snapshot.approvedDays, 4, at);
+    assert.equal(snapshot.installmentDueDate, "2026-11-17");
+    assert.equal(iso(snapshot.expiresAt), "2026-11-22T04:59:59.999Z");
     assert.equal(iso(snapshot.activatedAt), at);
   }
 });
 
 test("sin fecha de vencimiento la activación se conserva con fallo rastreable y sin duración inventada", async t => {
-  const f = await fixture(t), { id } = await f.insert({ expiresOn: null });
+  const f = await fixture(t), { id } = await f.insert({ source: "CENTRAL_DIRECT", expiresOn: null });
   const snapshot = await f.read(id);
   assert.equal(snapshot.status, "FAILED");
   assert.equal(snapshot.error, "MISSING_EXTENSION_EXPIRY");
@@ -186,6 +190,34 @@ test("sin fecha de vencimiento la activación se conserva con fallo rastreable y
   assert.equal(snapshot.sentAt, null);
   assert.equal(snapshot.attempts, 0);
   assert.equal((await f.db.query(`SELECT status FROM "CreditMoraExceptionRequest" WHERE id=$1::uuid`, [id])).rows[0].status, "APPROVED");
+});
+
+test("sin cuota verificada o con plazo cero o negativo falla solo la notificación", async t => {
+  const f = await fixture(t), direct = await f.insert({ source: "CENTRAL_DIRECT" });
+  const missing = await f.read(direct.id);
+  assert.equal(missing.status, "FAILED");
+  assert.equal(missing.error, "MISSING_INSTALLMENT_DUE_DATE");
+  assert.equal(missing.approvedDays, null);
+  assert.equal(missing.installmentDueDate, null);
+  assert.equal(missing.nextAttemptAt, null);
+  for (const expiresOn of ["2026-11-17", "2026-11-16"]) {
+    const { id } = await f.insert({ installmentDueDate: "2026-11-17", expiresOn });
+    const invalid = await f.read(id);
+    assert.equal(invalid.status, "FAILED");
+    assert.equal(invalid.error, "INVALID_EXTENSION_DURATION");
+    assert.equal(invalid.approvedDays, null);
+    assert.equal(invalid.nextAttemptAt, null);
+    assert.equal((await f.db.query(`SELECT status FROM "CreditMoraExceptionRequest" WHERE id=$1::uuid`, [id])).rows[0].status, "APPROVED");
+  }
+});
+
+test("una notificación legacy existente conserva su plantilla y duración al reinstalar y repetir estado", async t => {
+  const f = await fixture(t), { id } = await f.insert();
+  const legacy = { ...(await f.read(id)), templateName: "prorroga_activada", approvedDays: 3, installmentDueDate: null };
+  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"=$2::jsonb WHERE id=$1::uuid`, [id, JSON.stringify(legacy)]);
+  await installMoraExceptionRequestSchema(f.client);
+  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED' WHERE id=$1::uuid`, [id]);
+  assert.deepEqual(await f.read(id), legacy);
 });
 
 test("reinstalar conserva notificaciones y no genera envíos para aprobaciones históricas", async t => {

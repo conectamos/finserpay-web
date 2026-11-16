@@ -20,6 +20,6 @@ ALTER TABLE "WhatsAppAutomationMetaOutbox"
   DROP CONSTRAINT IF EXISTS "WhatsAppAutomationMetaOutbox_templateName_check";
 ALTER TABLE "WhatsAppAutomationMetaOutbox"
   ADD CONSTRAINT "WhatsAppAutomationMetaOutbox_templateName_check"
-  CHECK("templateName" IN ('bienvenida','1_dia_falta','hoyvence','data','2dias','cuotavencida','bloqueo','prorroga_activada'));
+  CHECK("templateName" IN ('bienvenida','1_dia_falta','hoyvence','data','2dias','cuotavencida','bloqueo','prorroga_activada','prorroga_activada_v2'));
 CREATE INDEX IF NOT EXISTS "WhatsAppAutomationMetaOutbox_conversation" ON "WhatsAppAutomationMetaOutbox"("conversationId","createdAt");
 COMMIT;

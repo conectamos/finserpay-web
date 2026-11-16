@@ -21,6 +21,6 @@ export async function installWhatsAppAutomationMetaSchema(client) {
     || !has("f",["conversationId"],'"AttentionConversation"') || !has("f",["messageId"],'"AttentionMessage"'))throw new Error("WHATSAPP_AUTOMATION_SCHEMA_KEYS");
   const templateCheck=keys.find(row=>row.name==="WhatsAppAutomationMetaOutbox_templateName_check"&&row.kind==="c"&&row.valid);
   const templateNames=templateCheck?[...templateCheck.definition.matchAll(/'([^']+)'/g)].map(match=>match[1]).sort():[];
-  const expectedTemplates=["bienvenida","1_dia_falta","hoyvence","data","2dias","cuotavencida","bloqueo","prorroga_activada"].sort();
+  const expectedTemplates=["bienvenida","1_dia_falta","hoyvence","data","2dias","cuotavencida","bloqueo","prorroga_activada","prorroga_activada_v2"].sort();
   if(JSON.stringify(templateNames)!==JSON.stringify(expectedTemplates))throw new Error("WHATSAPP_AUTOMATION_SCHEMA_TEMPLATES");
 }

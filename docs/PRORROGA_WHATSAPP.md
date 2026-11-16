@@ -24,12 +24,22 @@ nombre, teléfono, responsable, activación, días y vencimiento aprobado. Los
 eventos de decisión existentes permanecen inmutables; los intentos de WhatsApp
 no incrementan la versión de la decisión.
 
-Los días se calculan como la diferencia entre el día de activación en
-`America/Bogota` y `expiresOn`, con mínimo de un día cuando activación y
-vencimiento corresponden al mismo día. Por ejemplo, activación el 16 y
-vencimiento el 20 producen **4 días**; activación y vencimiento el 16 producen
-**1 día**. El vencimiento con hora es el final del día aprobado en Colombia.
-No se calcula desde la fecha contractual de la cuota ni desde cada reintento.
+Los nuevos avisos calculan los días como `expiresOn − installmentDueDate`, por
+fechas calendario. Una cuota del **17** con prórroga hasta el **21** produce
+**4 días**, independientemente de si se activa el 16, 18 o 20. La fecha base
+se congela en el JSON de WhatsApp y se conserva al reintentar; no se usa el día
+de activación ni el del reintento. El mensaje también muestra el vencimiento
+como `DD/MM/AAAA`, y la hora efectiva sigue siendo el final del día aprobado
+en `America/Bogota`.
+
+Las solicitudes con cuota vinculada utilizan esa fecha. El alta central deja
+sus columnas contractuales sin cuota por diseño: en su misma transacción se
+consulta el helper existente `financialPlan()` y se guarda únicamente en el
+JSON del aviso la primera cuota regular pendiente. Esto respeta abonos, cuotas
+eliminadas y planes de capital, sin usar el override `fechaProximoPago`. No se
+inventan fechas a partir del último 02/17 del calendario ni se reclasifica la
+autorización. Si falta una cuota verificable o el plazo no es positivo, el
+aviso queda fallido con explicación y la autorización conserva sus condiciones.
 
 Una prórroga sin fecha queda fallida con explicación; no se inventa una
 cantidad de días. El administrador puede corregir su fecha y usar
@@ -78,12 +88,21 @@ la verificación final mostró **Activa: calidad pendiente**, con cero mensajes
 enviados. El adaptador exige `APPROVED` antes de transmitir. Registrar la
 plantilla no despliega este código ni instala el esquema en producción.
 
-La plantilla es `prorroga_activada`, idioma `es`, categoría `UTILITY`, sin
-cabecera, pie ni botones. Usa parámetros posicionales `{{1}}` para el nombre y
-`{{2}}` para los días. El único texto canónico se exporta como
-`PRORROGA_ACTIVADA_TEMPLATE_BODY` desde
-`lib/whatsapp-automation-meta-config.ts`; tanto el preparador como el adaptador
-de envío lo comprueban sin mantener copias independientes.
+Los nuevos avisos usan `prorroga_activada_v2`, idioma `es`, categoría `UTILITY`,
+sin cabecera, pie ni botones. Sus parámetros posicionales son `{{1}}` nombre,
+`{{2}}` días desde la cuota y `{{3}}` fecha de vencimiento. El cuerpo canónico
+`PRORROGA_ACTIVADA_V2_TEMPLATE_BODY` añade la línea
+`📅 *Fecha de vencimiento de la prórroga:* {{3}}`.
+Se registró en Meta el 16 de noviembre de 2026 con ID `1672395654266933`.
+
+La plantilla aprobada anterior `prorroga_activada` se conserva exactamente con
+sus dos parámetros. Los avisos históricos sin versión explícita siguen usando
+esa versión para conservar sus recibos y operaciones inciertas, sin reenviar
+mensajes ya aceptados. No se cambia la plantilla ni el cuerpo bajo una clave
+de operación existente. El worker selecciona la versión guardada en cada
+activación; el preparador consulta o registra únicamente la nueva v2. Ambos
+cuerpos se exportan desde `lib/whatsapp-automation-meta-config.ts` y el emisor
+comprueba el texto aprobado correspondiente antes del envío.
 
 Meta debe aprobar la plantilla antes de utilizarla. El permiso de gestión de
 plantillas es `whatsapp_business_management`; la creación utiliza ejemplos
@@ -133,10 +152,13 @@ bloqueo automático de tres meses.
 
 ## Validación
 
-Se aprobaron 216 pruebas en grupos de regresión independientes: activación,
-Atención, aprobación/edición/cancelación, permisos, historial, worker,
-transporte compartido, plantilla y cron. TypeScript, ESLint y `git diff --check`
-terminaron sin errores. El build de producción con Turbopack terminó
+La actualización de cuota y vencimiento aprobó 393 pruebas de la suite de
+mora, además de las 36 pruebas de plantilla/emisor y las 29 de Atención
+financiera (algunas pruebas de plantilla también forman parte de la suite de
+mora). Cubren activación, aprobación/edición/cancelación, permisos, historial,
+worker, transporte compartido y la convivencia de las versiones de plantilla.
+TypeScript, ESLint y `git diff --check` terminaron sin errores.
+El build de producción con Turbopack de la integración inicial terminó
 correctamente; para las dependencias enlazadas de esta copia local se amplió
 temporalmente `turbopack.root` al directorio común de los archivos. La
 configuración original se restauró byte por byte después del build y no forma

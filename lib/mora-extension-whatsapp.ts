@@ -9,6 +9,8 @@ import { normalizeWhatsAppRecipient } from "@/lib/whatsapp";
 import { isMetaAutomationConfigured, sendMetaAutomation, type MetaAutomationSender } from "@/lib/whatsapp-automation-provider";
 
 type Notification = Omit<MoraExtensionWhatsApp, "canRetry"> & {
+  templateName?: "prorroga_activada" | "prorroga_activada_v2";
+  installmentDueDate?: string | null;
   name: string | null; phone: string | null; operationKey: string | null;
   nextAttemptAt: string | null; leaseToken: string | null; leaseUntil: string | null;
 };
@@ -28,10 +30,25 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 const iso = (value: Date | string) => new Date(value).toISOString();
 const day = (value: Date | string) => value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10);
 const cleanName = (value: string | null) => String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
+const templateName = (notification: Notification) => notification.templateName ?? "prorroga_activada";
+function installmentDays(base: string | null | undefined, expiry: string | null): number | null {
+  if (!base || !expiry || !/^\d{4}-\d{2}-\d{2}$/.test(base)) return null;
+  const start = Date.parse(`${base}T00:00:00Z`), end = Date.parse(`${expiry}T00:00:00Z`);
+  if (!Number.isFinite(start) || new Date(start).toISOString().slice(0, 10) !== base || !Number.isFinite(end)) return null;
+  const days = Math.round((end - start) / 86_400_000);
+  return days > 0 ? days : null;
+}
+function expiryLabel(expiresAt: string) {
+  const [year, month, date] = colombiaDateKey(new Date(expiresAt)).split("-");
+  return `${date}/${month}/${year}`;
+}
 
 function message(code: string | null) {
   if (!code) return null;
   if (code === "MISSING_EXTENSION_EXPIRY") return "La prórroga no tiene fecha de vencimiento para calcular los días.";
+  if (code === "MISSING_INSTALLMENT_DUE_DATE") return "No se pudo determinar la fecha de la cuota correspondiente a la prórroga.";
+  if (code === "INVALID_EXTENSION_DURATION") return "El vencimiento de la prórroga debe ser posterior a la fecha de la cuota.";
+  if (code === "INVALID_EXTENSION_TEMPLATE") return "La versión de la notificación de prórroga no es válida.";
   if (code === "INVALID_EXTENSION_PHONE") return "Revisa el teléfono de WhatsApp registrado en el crédito.";
   if (code === "MISSING_EXTENSION_NAME") return "El crédito no tiene un nombre de cliente válido.";
   if (code === "EXTENSION_NOT_ACTIVE") return "La prórroga ya no está activa; el mensaje no se enviará.";
@@ -69,6 +86,7 @@ export function createMoraExtensionWhatsAppService(options: Options) {
       sentAt: outbox?.acceptedAt ? iso(outbox.acceptedAt) : notification.sentAt, attempts: notification.attempts,
       error: status === "SENT" ? null : message(error),
       canRetry: status === "FAILED" && row.status === "APPROVED" && !busy
+        && !(templateName(notification) === "prorroga_activada_v2" && !notification.installmentDueDate)
         && (!outbox || outbox.status === "failed")
         && (row.expiresOn === null || day(row.expiresOn) >= colombiaDateKey(now())) };
   }
@@ -114,11 +132,15 @@ export function createMoraExtensionWhatsAppService(options: Options) {
         || !credit || /^(ANULAD[OA]|CANCELAD[OA])$/i.test(credit.state || ""))
         throw new CreditApprovalError("WHATSAPP_RETRY_UNAVAILABLE", "Este envío no admite reintento. Actualiza el historial para consultar su estado.", 409);
       const notification = row.activationWhatsApp;
-      const days = row.expiresOn === null ? null : Math.max(1, Math.round((Date.parse(`${day(row.expiresOn)}T00:00:00Z`)
-        - Date.parse(`${colombiaDateKey(new Date(notification.activatedAt))}T00:00:00Z`)) / 86_400_000));
+      const version2 = templateName(notification) === "prorroga_activada_v2";
+      const days = version2 ? installmentDays(notification.installmentDueDate, row.expiresOn === null ? null : day(row.expiresOn))
+        : row.expiresOn === null ? null : Math.max(1, Math.round((Date.parse(`${day(row.expiresOn)}T00:00:00Z`)
+          - Date.parse(`${colombiaDateKey(new Date(notification.activatedAt))}T00:00:00Z`)) / 86_400_000));
       const expiresAt = row.expiresOn === null ? null : new Date(`${day(row.expiresOn)}T23:59:59.999-05:00`).toISOString();
+      const error = !expiresAt ? "MISSING_EXTENSION_EXPIRY" : version2 && !notification.installmentDueDate
+        ? "MISSING_INSTALLMENT_DUE_DATE" : version2 && !days ? "INVALID_EXTENSION_DURATION" : null;
       const next = { ...notification, name: credit.name, phone: credit.phone, approvedDays: days, expiresAt,
-        status: "PENDING", error: null, operationKey: null, nextAttemptAt: now().toISOString(), leaseToken: null, leaseUntil: null };
+        status: error ? "FAILED" : "PENDING", error, operationKey: null, nextAttemptAt: error ? null : now().toISOString(), leaseToken: null, leaseUntil: null };
       await db.$queryRawUnsafe(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"=$2::jsonb WHERE id=$1::uuid RETURNING id`, id, JSON.stringify(next));
     });
     return read(id);
@@ -145,7 +167,12 @@ export function createMoraExtensionWhatsAppService(options: Options) {
         report.failed++; continue;
       }
       const name = cleanName(notification.name), phone = normalizeWhatsAppRecipient(notification.phone);
-      const invalid = !active(row) ? "EXTENSION_NOT_ACTIVE" : !notification.expiresAt || !notification.approvedDays ? "MISSING_EXTENSION_EXPIRY"
+      const template = templateName(notification), version2 = template === "prorroga_activada_v2";
+      const invalid = !active(row) ? "EXTENSION_NOT_ACTIVE" : !notification.expiresAt ? "MISSING_EXTENSION_EXPIRY"
+        : template !== "prorroga_activada" && template !== "prorroga_activada_v2" ? "INVALID_EXTENSION_TEMPLATE"
+        : version2 && !notification.installmentDueDate ? "MISSING_INSTALLMENT_DUE_DATE"
+        : version2 && (!notification.approvedDays || installmentDays(notification.installmentDueDate, day(row.expiresOn!)) !== notification.approvedDays) ? "INVALID_EXTENSION_DURATION"
+        : !notification.approvedDays ? "MISSING_EXTENSION_EXPIRY"
         : !name ? "MISSING_EXTENSION_NAME" : !/^573\d{9}$/.test(phone) ? "INVALID_EXTENSION_PHONE" : null;
       if (invalid && !(prior && ambiguous.has(prior.status))) {
         await save(row, { status: "FAILED", error: invalid, nextAttemptAt: null, operationKey: null });
@@ -153,8 +180,9 @@ export function createMoraExtensionWhatsAppService(options: Options) {
       }
       let guardCode: string | null = null;
       try {
-        const result = await sendMeta({ operationKey: notification.operationKey!, template: "prorroga_activada", phone,
-          body: [name, String(notification.approvedDays)] }, { database, env, deadlineAt: deadline, withSendGuard: send => transact(async db => {
+        const body = [name, String(notification.approvedDays), ...(version2 ? [expiryLabel(notification.expiresAt!)] : [])];
+        const result = await sendMeta({ operationKey: notification.operationKey!, template, phone,
+          body }, { database, env, deadlineAt: deadline, withSendGuard: send => transact(async db => {
           // Same credit/request lock order as activation, amendment and cancellation.
           const [credit] = await db.$queryRawUnsafe<{ estado: string; clienteNombre: string | null; clienteTelefono: string | null }[]>(
             `SELECT estado,"clienteNombre","clienteTelefono" FROM "Credito" WHERE id=$1 FOR UPDATE`, row.creditoId);

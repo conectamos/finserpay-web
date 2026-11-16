@@ -635,6 +635,32 @@ export async function createMoraExceptionRequest(input: CreateInput | CentralCre
          "createIdempotencyKey","createRequestHash")
         VALUES ($1::uuid,$2,$3,'APPROVED',1,'CENTRAL_DIRECT',$4::date,$5,$6,$7,$8,$7,$8,CURRENT_TIMESTAMP,$5,$9::uuid,$10)`,
       id,input.creditoId,input.type,input.expiresOn,input.reason,input.observation,verified.id,verified.nombre,input.idempotencyKey,requestHash);
+      // Direct authorizations intentionally keep the contractual installment
+      // columns empty. Freeze only the notice's reference from the same locked
+      // credit and existing payment-plan evaluator, without restricting approval.
+      let notificationDueDate: string | null = null;
+      if (input.expiresOn !== null) {
+        try {
+          const { financialPlan } = await import("@/lib/atencion-financial-core");
+          notificationDueDate = financialPlan(credit, now)?.installments
+            .find(installment => !installment.eliminada && installment.saldoPendiente > 0)?.fechaVencimiento || null;
+        } catch {
+          // An unverifiable calendar fails the notice, never the authorization.
+        }
+      }
+      if (notificationDueDate) {
+        await db.$queryRawUnsafe(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"="activationWhatsApp"||jsonb_build_object(
+          'installmentDueDate',$2::date,
+          'approvedDays',CASE WHEN "expiresOn">$2::date THEN "expiresOn"-$2::date ELSE NULL END,
+          'status',CASE WHEN "expiresOn">$2::date THEN 'PENDING' ELSE 'FAILED' END,
+          'error',CASE WHEN "expiresOn" IS NULL THEN 'MISSING_EXTENSION_EXPIRY'
+            WHEN "expiresOn"<=$2::date THEN 'INVALID_EXTENSION_DURATION' ELSE NULL END,
+          'nextAttemptAt',CASE WHEN "expiresOn">$2::date THEN CURRENT_TIMESTAMP ELSE NULL END)
+          WHERE "id"=$1::uuid AND "source"='CENTRAL_DIRECT'
+            AND "activationWhatsApp"->>'templateName'='prorroga_activada_v2'
+            AND "activationWhatsApp"->>'error'='MISSING_INSTALLMENT_DUE_DATE'
+            AND "activationWhatsApp"->>'operationKey' IS NULL RETURNING "id"`, id, notificationDueDate);
+      }
       const payload={source:"CENTRAL_DIRECT",type:input.type,expiresOn:input.expiresOn,reason:input.reason,
         observation:input.observation,replacedRequestIds:previous.map(row=>row.id)};
       await db.$queryRawUnsafe(`INSERT INTO "CreditMoraExceptionEvent"

@@ -3,9 +3,9 @@ import { pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { fsCache: false });
-const { PRORROGA_ACTIVADA_TEMPLATE_BODY, META_AUTOMATION_SCOPE, META_AUTOMATION_TEMPLATES } =
+const { PRORROGA_ACTIVADA_V2_TEMPLATE_BODY, META_AUTOMATION_SCOPE, META_AUTOMATION_TEMPLATES } =
   await jiti.import("../lib/whatsapp-automation-meta-config.ts");
-const name = "prorroga_activada";
+const name = "prorroga_activada_v2";
 const language = META_AUTOMATION_TEMPLATES[name].language;
 const statuses = new Set(["APPROVED", "PENDING", "REJECTED", "PAUSED", "DISABLED", "IN_APPEAL", "PENDING_DELETION", "DELETED", "LIMIT_EXCEEDED", "ARCHIVED"]);
 const numericId = value => typeof value === "string" && /^\d{5,30}$/.test(value);
@@ -82,14 +82,14 @@ export async function ensureProrrogaWhatsAppTemplate({ env = process.env, fetche
       const row = matching[0];
       if (!numericId(row.id) || row.language !== language || row.category !== "UTILITY" || row.parameter_format !== "POSITIONAL"
         || !Array.isArray(row.components) || row.components.length !== 1 || row.components[0]?.type !== "BODY"
-        || row.components[0].text !== PRORROGA_ACTIVADA_TEMPLATE_BODY) throw new ProrrogaTemplateError("META_TEMPLATE_CONTENT_MISMATCH");
+        || row.components[0].text !== PRORROGA_ACTIVADA_V2_TEMPLATE_BODY) throw new ProrrogaTemplateError("META_TEMPLATE_CONTENT_MISMATCH");
       if (!statuses.has(row.status)) throw new ProrrogaTemplateError("META_TEMPLATE_INVALID_RESPONSE");
       return { ...summary, exists: true, created: false, status: row.status, approved: row.status === "APPROVED", id: row.id };
     }
     if (!apply) return { ...summary, exists: false, created: false, status: "MISSING", approved: false };
     const created = await graph("POST", {
       name, language, category: "UTILITY", parameter_format: "POSITIONAL", allow_category_change: false,
-      components: [{ type: "BODY", text: PRORROGA_ACTIVADA_TEMPLATE_BODY, example: { body_text: [["Ana Ejemplo", "3"]] } }],
+      components: [{ type: "BODY", text: PRORROGA_ACTIVADA_V2_TEMPLATE_BODY, example: { body_text: [["Ana Ejemplo", "4", "21/11/2026"]] } }],
     });
     if (!numericId(created.id) || created.category !== "UTILITY" || !statuses.has(created.status)) throw new ProrrogaTemplateError("META_TEMPLATE_INVALID_CREATE_RECEIPT");
     return { ...summary, exists: true, created: true, status: created.status, approved: created.status === "APPROVED", id: created.id };

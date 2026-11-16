@@ -3,10 +3,10 @@ import test from "node:test";
 import { createJiti } from "jiti";
 import { ensureProrrogaWhatsAppTemplate } from "../scripts/prepare-prorroga-whatsapp-template.mjs";
 
-const { PRORROGA_ACTIVADA_TEMPLATE_BODY, META_AUTOMATION_SCOPE } = await createJiti(import.meta.url, { fsCache: false }).import("../lib/whatsapp-automation-meta-config.ts");
+const { PRORROGA_ACTIVADA_TEMPLATE_BODY, PRORROGA_ACTIVADA_V2_TEMPLATE_BODY, META_AUTOMATION_SCOPE } = await createJiti(import.meta.url, { fsCache: false }).import("../lib/whatsapp-automation-meta-config.ts");
 const env = { WHATSAPP_ATTENTION_ACCESS_TOKEN: "fixture-secret-never-print", WHATSAPP_GRAPH_API_VERSION: "v25.0" };
-const template = overrides => ({ id: "123456789012345", name: "prorroga_activada", language: "es", category: "UTILITY", parameter_format: "POSITIONAL", status: "APPROVED",
-  components: [{ type: "BODY", text: PRORROGA_ACTIVADA_TEMPLATE_BODY }], ...overrides });
+const template = overrides => ({ id: "123456789012345", name: "prorroga_activada_v2", language: "es", category: "UTILITY", parameter_format: "POSITIONAL", status: "APPROVED",
+  components: [{ type: "BODY", text: PRORROGA_ACTIVADA_V2_TEMPLATE_BODY }], ...overrides });
 const response = value => Response.json(value);
 function fixture({ rows = [], post, listed, fetchError } = {}) {
   const calls = [];
@@ -27,7 +27,7 @@ test("importar el preparador no consulta Meta y el modo predeterminado solo lee"
   const result = await f.run();
   assert.equal(result.status, "MISSING"); assert.equal(result.created, false); assert.equal(result.approved, false);
   assert.equal(f.calls.length, 1); assert.equal(f.calls[0].init.method, "GET");
-  assert.equal(f.calls[0].url.searchParams.get("name"), "prorroga_activada");
+  assert.equal(f.calls[0].url.searchParams.get("name"), "prorroga_activada_v2");
   assert.match(f.calls[0].url.searchParams.get("fields"), /parameter_format/);
   assert.equal(f.calls[0].url.searchParams.has("access_token"), false);
 });
@@ -52,15 +52,15 @@ test("--apply crea solo cuando no existe, conserva texto canónico y usa ejemplo
   assert.equal(result.created, true); assert.equal(result.status, "PENDING"); assert.equal(result.approved, false);
   assert.deepEqual(f.calls.map(call => call.init.method), ["GET", "POST"]);
   const payload = JSON.parse(f.calls[1].init.body);
-  assert.deepEqual(payload, { name: "prorroga_activada", language: "es", category: "UTILITY", parameter_format: "POSITIONAL", allow_category_change: false,
-    components: [{ type: "BODY", text: PRORROGA_ACTIVADA_TEMPLATE_BODY, example: { body_text: [["Ana Ejemplo", "3"]] } }] });
+  assert.deepEqual(payload, { name: "prorroga_activada_v2", language: "es", category: "UTILITY", parameter_format: "POSITIONAL", allow_category_change: false,
+    components: [{ type: "BODY", text: PRORROGA_ACTIVADA_V2_TEMPLATE_BODY, example: { body_text: [["Ana Ejemplo", "4", "21/11/2026"]] } }] });
   assert.equal(f.calls.some(call => call.url.pathname.endsWith("/messages")), false);
 });
 
 for (const override of [
   { language: "es_CO" }, { category: "MARKETING" }, { parameter_format: "NAMED" },
-  { components: [{ type: "BODY", text: PRORROGA_ACTIVADA_TEMPLATE_BODY.replace("3 meses", "90 días") }] },
-  { components: [{ type: "BODY", text: PRORROGA_ACTIVADA_TEMPLATE_BODY }, { type: "FOOTER", text: "Otra nota" }] },
+  { components: [{ type: "BODY", text: PRORROGA_ACTIVADA_V2_TEMPLATE_BODY.replace("3 meses", "90 días") }] },
+  { components: [{ type: "BODY", text: PRORROGA_ACTIVADA_V2_TEMPLATE_BODY }, { type: "FOOTER", text: "Otra nota" }] },
 ]) {
   test(`una plantilla existente distinta no se sobrescribe: ${Object.keys(override)[0]}`, async () => {
     const f = fixture({ rows: [template(override)] });
@@ -68,6 +68,25 @@ for (const override of [
     assert.equal(f.calls.length, 1);
   });
 }
+
+test("crear v2 conserva la plantilla v1 aprobada sin editarla ni reutilizar su nombre", async () => {
+  const legacy = template({ name: "prorroga_activada", components: [{ type: "BODY", text: PRORROGA_ACTIVADA_TEMPLATE_BODY }] });
+  const before = structuredClone(legacy), f = fixture({ rows: [legacy] });
+  const result = await f.run({ apply: true });
+  assert.equal(result.templateName, "prorroga_activada_v2"); assert.equal(result.created, true);
+  assert.deepEqual(legacy, before);
+  assert.deepEqual(f.calls.map(call => call.init.method), ["GET", "POST"]);
+  assert.equal(JSON.parse(f.calls[1].init.body).name, "prorroga_activada_v2");
+  assert.equal(f.calls.some(call => call.url.pathname.endsWith(`/${legacy.id}`)), false);
+});
+
+test("v2 debe incluir la fecha como tercer parámetro y mantener completo el cuerpo anterior", async () => {
+  assert.equal(PRORROGA_ACTIVADA_V2_TEMPLATE_BODY.replace("📅 *Fecha de vencimiento de la prórroga:* {{3}}\n\n", ""), PRORROGA_ACTIVADA_TEMPLATE_BODY);
+  assert.equal(PRORROGA_ACTIVADA_TEMPLATE_BODY.includes("{{3}}"), false);
+  const f = fixture({ rows: [template({ components: [{ type: "BODY", text: PRORROGA_ACTIVADA_TEMPLATE_BODY }] })] });
+  await assert.rejects(f.run({ apply: true }), { code: "META_TEMPLATE_CONTENT_MISMATCH" });
+  assert.equal(f.calls.length, 1);
+});
 
 test("resultados ambiguos o incompletos no autorizan una creación", async () => {
   for (const listed of [{ data: [template(), template()] }, { data: [], paging: { next: "https://host-ajeno.invalid?access_token=secret" } }, { data: null }]) {
