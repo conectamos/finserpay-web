@@ -6,6 +6,7 @@ import { runVoiceReviewCampaign } from "@/lib/credit-voice-review-campaign";
 import { runCollectionVoice, runCollectionMessages } from "@/lib/collection-voice-runtime";
 import { runCuotaVencidaWhatsApp } from "@/lib/cuotavencida-whatsapp-dispatch";
 import { runBloqueoWhatsApp } from "@/lib/bloqueo-whatsapp-dispatch";
+import { runMoraExtensionWhatsApp } from "@/lib/mora-extension-whatsapp";
 import {
   processPendingDeviceUnlockCommands,
   recoverRecentApprovedWompiUnlockCommands,
@@ -26,7 +27,7 @@ import {
 const BOGOTA_TIME_ZONE = "America/Bogota";
 const CHECK_INTERVAL_MS = 30_000;
 const MERCHANT_APPLICATION_INTERVAL_MINUTES = 5;
-type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice" | "voice-review-campaign" | "collection-voice" | "cuotavencida-whatsapp" | "bloqueo-whatsapp" | "draft-signature-recovery";
+type InternalCronTask = ScheduledInternalCronTask | "merchant-applications" | "credit-welcome-voice" | "voice-review-campaign" | "collection-voice" | "cuotavencida-whatsapp" | "bloqueo-whatsapp" | "draft-signature-recovery" | "mora-extension-whatsapp";
 
 type InternalCronState = {
   completed: Set<string>;
@@ -138,6 +139,12 @@ async function runScheduledTask(
   let completed = false;
 
   try {
+    if (taskName === "mora-extension-whatsapp") {
+      const summary = await runMoraExtensionWhatsApp({ limit: 5 });
+      if (summary.selected > 0) logCron("WhatsApp de prórrogas activadas procesados.", summary);
+      completed = true;
+      return;
+    }
     if (taskName === "draft-signature-recovery") {
       // This worker only verifies and attaches an existing provider process.
       // Its database leases survive restarts and coordinate multiple instances.
@@ -246,7 +253,9 @@ async function runScheduledTask(
     logCron("Mora y bloqueos finalizados.", summarizeReport(result));
     completed = true;
   } catch (error) {
-    if (taskName === "draft-signature-recovery") {
+    if (taskName === "mora-extension-whatsapp") {
+      console.error("[finserpay-cron] No se pudo procesar WhatsApp de prórrogas activadas.");
+    } else if (taskName === "draft-signature-recovery") {
       console.error("[finserpay-cron] No se pudo conciliar la cola de confirmaciones de firma.");
     } else if (taskName === "cuotavencida-whatsapp" || taskName === "bloqueo-whatsapp") {
       console.error(taskName === "bloqueo-whatsapp" ? "[finserpay-cron] No se pudo procesar el lote manual de BLOQUEO." : "[finserpay-cron] No se pudo procesar el lote manual de Cuotavencida.");
@@ -298,6 +307,7 @@ async function tick() {
   void runScheduledTask("collection-voice", `collection-voice:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
   void runScheduledTask("cuotavencida-whatsapp", `cuotavencida-whatsapp:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
   void runScheduledTask("bloqueo-whatsapp", `bloqueo-whatsapp:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
+  void runScheduledTask("mora-extension-whatsapp", `mora-extension-whatsapp:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
   void runScheduledTask("draft-signature-recovery", `draft-signature-recovery:${Math.floor(Date.now() / CHECK_INTERVAL_MS)}`);
 
   await runScheduledTask(
@@ -325,6 +335,7 @@ async function runStartupRecovery() {
   void runScheduledTask("voice-review-campaign", `voice-review-campaign:startup:${dateKey}:${timeKey}`);
   void runScheduledTask("cuotavencida-whatsapp", `cuotavencida-whatsapp:startup:${dateKey}:${timeKey}`);
   void runScheduledTask("bloqueo-whatsapp", `bloqueo-whatsapp:startup:${dateKey}:${timeKey}`);
+  void runScheduledTask("mora-extension-whatsapp", `mora-extension-whatsapp:startup:${dateKey}:${timeKey}`);
   void runScheduledTask("draft-signature-recovery", `draft-signature-recovery:startup:${dateKey}:${timeKey}`);
 
   try {

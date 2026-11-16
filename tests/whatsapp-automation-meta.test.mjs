@@ -11,7 +11,7 @@ const root=path.resolve(import.meta.dirname,"..");
 const jiti=createJiti(import.meta.url,{alias:{"@":root,"server-only":path.join(root,"node_modules/next/dist/compiled/server-only/empty.js")}});
 const {createWhatsAppAutomationMetaSender}=await jiti.import("../lib/whatsapp-automation-meta.ts");
 const {createWhatsAppAutomationMetaStore}=await jiti.import("../lib/whatsapp-automation-meta-storage.ts");
-const {isMetaAutomationConfigured,META_AUTOMATION_TEMPLATES}=await jiti.import("../lib/whatsapp-automation-meta-config.ts");
+const {isMetaAutomationConfigured,META_AUTOMATION_TEMPLATES,PRORROGA_ACTIVADA_TEMPLATE_BODY}=await jiti.import("../lib/whatsapp-automation-meta-config.ts");
 const {createAttentionMetaStore}=await jiti.import("../lib/atencion-meta-storage.ts");
 const scope={phoneNumberId:"1162059967000416",wabaId:"2148284059050848"};
 const instant="2026-10-30T20:00:00.000Z",phone="573001234567";
@@ -47,7 +47,7 @@ async function fixture(t,options={}) {
     if(u.pathname.endsWith("/message_templates")) {
       const name=u.searchParams.get("name"),rule=META_AUTOMATION_TEMPLATES[name];
       const row={id:"123456789012345",name,language:rule.language,status:"APPROVED",parameter_format:"POSITIONAL",
-        components:[{type:"BODY",text:rule.parameters===0?"Mensaje aprobado":`Hola {{1}}${rule.parameters===2?", {{2}}":""}.`},...(rule.imageEnv?[{type:"HEADER",format:"IMAGE"}]:[])]};
+        components:[{type:"BODY",text:name==="prorroga_activada"?PRORROGA_ACTIVADA_TEMPLATE_BODY:rule.parameters===0?"Mensaje aprobado":`Hola {{1}}${rule.parameters===2?", {{2}}":""}.`},...(rule.imageEnv?[{type:"HEADER",format:"IMAGE"}]:[])]};
       return reply({data:[options.template?options.template(row):row]});
     }
     return reply({id:scope.phoneNumberId,display_phone_number:options.wrongPhone?"+573000000000":"+573124085562"});
@@ -79,6 +79,37 @@ test("idempotencia concurrente y huella impiden segundo POST o cambiar destinata
   assert.equal((await f.send(intent)).status,"accepted");assert.equal(f.messages,1);
   assert.equal((await f.send({...intent,body:["Distinto"]})).code,"AUTOMATION_OPERATION_CONFLICT");assert.equal(f.messages,1);
   assert.equal((await f.db.query('SELECT count(*)::int n FROM "WhatsAppAutomationMetaOutbox"')).rows[0].n,1);
+});
+
+test("prórroga activada envía nombre y días con texto exacto una sola vez por operación",async t=>{
+  const f=await fixture(t),intent=input({operationKey:`prorroga:${randomUUID()}:1`,template:"prorroga_activada",body:["Cliente de prueba","4"]});
+  const results=await Promise.all([f.send(intent),f.send(intent)]);
+  assert.equal(f.messages,1);assert.ok(results.some(result=>result.status==="accepted"));
+  assert.equal((await f.send(intent)).status,"accepted");assert.equal(f.messages,1);
+  const posted=JSON.parse(f.requests.find(request=>request.url.pathname.endsWith("/messages")).init.body);
+  assert.equal(posted.to,phone);
+  assert.deepEqual(posted.template,{name:"prorroga_activada",language:{code:"es"},components:[{type:"body",parameters:[
+    {type:"text",text:"Cliente de prueba"},{type:"text",text:"4"},
+  ]}]});
+  const message=(await f.db.query('SELECT text FROM "AttentionMessage"')).rows[0];
+  assert.equal(message.text,"🔓 *FINSER PAY | PRÓRROGA ACTIVADA*\n\nHola, *Cliente de prueba* 👋\n\n✅ Su solicitud de prórroga por *4 días* fue activada exitosamente.\n\n⚠️ *IMPORTANTE:* Recuerde que, si incumple con el acuerdo de pago establecido durante la prórroga, *no podrá volver a solicitar una nueva prórroga durante los próximos 3 meses.*\n\n💚 *FINSER PAY*");
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "WhatsAppAutomationMetaOutbox"')).rows[0].n,1);
+  assert.equal((await f.send({...intent,body:["Cliente de prueba","3"]})).code,"AUTOMATION_OPERATION_CONFLICT");
+  assert.equal(f.messages,1);
+});
+
+test("prórroga no envía plantilla sin aprobar, advertencia alterada, parámetros invertidos o texto extra",async t=>{
+  const cases=[
+    {template:row=>({...row,status:"PENDING"}),code:"TEMPLATE_NOT_APPROVED"},
+    {template:row=>({...row,components:[{type:"BODY",text:PRORROGA_ACTIVADA_TEMPLATE_BODY.replace("3 meses","1 mes")}]}),code:"TEMPLATE_CONTENT_CHANGED"},
+    {template:row=>({...row,components:[{type:"BODY",text:PRORROGA_ACTIVADA_TEMPLATE_BODY.replace("{{1}}","{{3}}").replace("{{2}}","{{1}}").replace("{{3}}","{{2}}") }]}),code:"TEMPLATE_CONTENT_CHANGED"},
+    {template:row=>({...row,components:[...row.components,{type:"FOOTER",text:"Condiciones diferentes"}]}),code:"TEMPLATE_CONTENT_CHANGED"},
+  ];
+  for(const options of cases){
+    const f=await fixture(t,options);
+    const sent=await f.send(input({template:"prorroga_activada",body:["Cliente de prueba","4"]}));
+    assert.equal(sent.status,"failed");assert.equal(sent.code,options.code);assert.equal(f.messages,0);
+  }
 });
 
 test("timeout queda incierto sin reintento; recibo firmado correlaciona solo outbox+scope+destinatario",async t=>{
@@ -149,6 +180,19 @@ test("migración aditiva idempotente verifica claves text[] y falla esquema pree
   const f=await fixture(t);await installWhatsAppAutomationMetaSchema(f.client);
   await f.db.exec('ALTER TABLE "WhatsAppAutomationMetaOutbox" DROP CONSTRAINT "WhatsAppAutomationMetaOutbox_operationKey_key"');
   await assert.rejects(installWhatsAppAutomationMetaSchema(f.client),/SCHEMA_KEYS/);
+});
+
+test("migración de outbox anterior habilita prórroga y conserva intentos existentes",async t=>{
+  const f=await fixture(t);
+  await f.send(input());
+  await f.db.exec(`ALTER TABLE "WhatsAppAutomationMetaOutbox" DROP CONSTRAINT "WhatsAppAutomationMetaOutbox_templateName_check";
+    ALTER TABLE "WhatsAppAutomationMetaOutbox" ADD CONSTRAINT "WhatsAppAutomationMetaOutbox_templateName_check"
+    CHECK("templateName" IN ('bienvenida','1_dia_falta','hoyvence','data','2dias','cuotavencida','bloqueo'));`);
+  await installWhatsAppAutomationMetaSchema(f.client);
+  await installWhatsAppAutomationMetaSchema(f.client);
+  assert.equal((await f.send(input({template:"prorroga_activada",body:["Cliente de prueba","2"]}))).status,"accepted");
+  const rows=(await f.db.query('SELECT "templateName",status FROM "WhatsAppAutomationMetaOutbox" ORDER BY "templateName"')).rows;
+  assert.deepEqual(rows,[{templateName:"bienvenida",status:"accepted"},{templateName:"prorroga_activada",status:"accepted"}]);
 });
 
 test("imágenes aprobadas se descargan sin credenciales, suben aMeta y conservan mediaId privado enCRM",async t=>{

@@ -1,4 +1,15 @@
 export type MetaAutomationEnv = Record<string, string | undefined>;
+export const PRORROGA_ACTIVADA_TEMPLATE_BODY = [
+  "🔓 *FINSER PAY | PRÓRROGA ACTIVADA*",
+  "",
+  "Hola, *{{1}}* 👋",
+  "",
+  "✅ Su solicitud de prórroga por *{{2}} días* fue activada exitosamente.",
+  "",
+  "⚠️ *IMPORTANTE:* Recuerde que, si incumple con el acuerdo de pago establecido durante la prórroga, *no podrá volver a solicitar una nueva prórroga durante los próximos 3 meses.*",
+  "",
+  "💚 *FINSER PAY*",
+].join("\n");
 export const META_AUTOMATION_TEMPLATES = Object.freeze({
   bienvenida: { language: "es", parameters: 1, imageEnv: null },
   "1_dia_falta": { language: "es", parameters: 2, imageEnv: null },
@@ -7,6 +18,7 @@ export const META_AUTOMATION_TEMPLATES = Object.freeze({
   "2dias": { language: "es", parameters: 1, imageEnv: "WHATSAPP_AUTOMATIONS_2DIAS_HEADER_IMAGE_URL" },
   cuotavencida: { language: "es_AR", parameters: 1, imageEnv: "WHATSAPP_AUTOMATIONS_CUOTAVENCIDA_HEADER_IMAGE_URL" },
   bloqueo: { language: "es", parameters: 0, imageEnv: "WHATSAPP_AUTOMATIONS_BLOQUEO_HEADER_IMAGE_URL" },
+  prorroga_activada: { language: "es", parameters: 2, imageEnv: null },
 } as const);
 export type MetaAutomationTemplate = keyof typeof META_AUTOMATION_TEMPLATES;
 export const META_AUTOMATION_SCOPE = Object.freeze({ phoneNumberId: "1162059967000416", wabaId: "2148284059050848" });

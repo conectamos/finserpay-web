@@ -11,6 +11,18 @@ export type MoraExceptionStatus = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED
 export type MoraPromiseConditionStatus = "NOT_APPLICABLE" | "PENDING" | "FULFILLED" | "BREACHED";
 export type MoraCreditProduct = "ANDROID" | "IPHONE" | null;
 
+export type MoraExtensionWhatsApp = {
+  status: "PENDING" | "SENT" | "FAILED";
+  activatedAt: string;
+  approvedDays: number | null;
+  expiresAt: string | null;
+  authorizedByName: string;
+  sentAt: string | null;
+  error: string | null;
+  canRetry: boolean;
+  attempts: number;
+};
+
 export type MoraExceptionRequestItem = {
   id: string;
   creditoId: number;

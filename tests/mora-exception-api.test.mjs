@@ -11,6 +11,7 @@ function loadRoute({ action, syncImpl, events, errors = [], centralAdmin = true,
   });
   const loaded = { exports: {} };
   const dependencies = {
+    "@/lib/mora-extension-whatsapp": { getMoraExtensionWhatsApp: async () => null },
     "next/server": {
       NextResponse: { json: (body, options = {}) => ({ body, status: options.status || 200, headers: options.headers }) },
     },

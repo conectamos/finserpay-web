@@ -99,8 +99,15 @@ test("analyst grants approved due+4, preserves loan terms, real actor, immutable
   assert.equal(result.version, input.version + 1);
   const row = (await f.db.query('SELECT * FROM "CreditMoraExceptionRequest"')).rows[0];
   assert.equal(row.createdByUserId, 5); assert.equal(row.decidedByUserId, 5); assert.equal(row.decidedByName, "Analista real"); assert.equal(row.source, "ANALYST_REQUEST");
+  assert.equal(row.activationWhatsApp.status, "PENDING");
+  assert.equal(row.activationWhatsApp.approvedDays, 3, "WhatsApp cuenta desde activación el 03 hasta vencimiento el 06, no cuatro días desde cuota");
+  assert.equal(new Date(row.activationWhatsApp.activatedAt).toISOString(), instant);
+  assert.equal(row.activationWhatsApp.authorizedByName, "Analista real");
+  assert.equal(row.activationWhatsApp.name, "Cliente sintético");
+  assert.equal(row.activationWhatsApp.phone, "3001234567");
   assert.deepEqual((await f.db.query('SELECT * FROM "Credito" WHERE id=77')).rows[0], original);
   const replay = await f.financial.grant(analyst, f.id, input); assert.equal(replay.unchanged, true); assert.equal(replay.extension.id, result.extension.id);
+  assert.deepEqual((await f.db.query('SELECT "activationWhatsApp" FROM "CreditMoraExceptionRequest" WHERE id=$1', [result.extension.id])).rows[0].activationWhatsApp, row.activationWhatsApp);
   await assert.rejects(f.financial.grant(analyst, f.id, { ...input, days: 3 }), { status: 409 });
   assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditMoraExceptionRequest"')).rows[0].n, 1);
   assert.equal((await f.db.query(`SELECT count(*)::int n FROM "AttentionAudit" WHERE action='EXTENSION_GRANTED'`)).rows[0].n, 1);

@@ -11,6 +11,7 @@ import {
 } from "@/lib/mora-exception-requests";
 import { approvalErrorResponse, approvalPrivateHeaders, readApprovalRequest } from "@/lib/credit-approval-http";
 import { syncCreditMoraById } from "@/lib/credit-mora-sync";
+import { getMoraExtensionWhatsApp } from "@/lib/mora-extension-whatsapp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +22,9 @@ export async function GET(_request: Request, context: Context) {
   try {
     const actor = await getMoraActor();
     const { id } = await context.params;
-    return NextResponse.json({ ok: true, ...await getMoraExceptionRequest(id, actor) }, { headers: approvalPrivateHeaders });
+    const result = await getMoraExceptionRequest(id, actor);
+    const whatsApp = await getMoraExtensionWhatsApp(id);
+    return NextResponse.json({ ok: true, ...result, whatsApp }, { headers: approvalPrivateHeaders });
   } catch (error) {
     return approvalErrorResponse(error);
   }

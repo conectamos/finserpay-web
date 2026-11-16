@@ -13,10 +13,14 @@ export async function installWhatsAppAutomationMetaSchema(client) {
     const column=rows.find(row=>row.name===name);
     if(!column || column.type!==type || column.required!==Object.hasOwn(required,name))throw new Error(`WHATSAPP_AUTOMATION_SCHEMA_COLUMN_${name}`);
   }
-  const {rows:keys}=await client.query(`SELECT c.contype AS kind,ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(id,position)
+  const {rows:keys}=await client.query(`SELECT c.conname AS name,pg_get_constraintdef(c.oid) AS definition,c.contype AS kind,ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(id,position)
     JOIN pg_catalog.pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.id ORDER BY k.position) AS columns,
     c.confrelid::regclass::text AS target,c.convalidated AS valid FROM pg_catalog.pg_constraint c WHERE c.conrelid='public."WhatsAppAutomationMetaOutbox"'::regclass`);
   const has=(kind,columns,target)=>keys.some(row=>row.kind===kind && row.valid && JSON.stringify(row.columns)===JSON.stringify(columns) && (!target || row.target===target));
   if(!has("p",["id"]) || !has("u",["operationKey"]) || !has("u",["phoneNumberId","wamid"])
     || !has("f",["conversationId"],'"AttentionConversation"') || !has("f",["messageId"],'"AttentionMessage"'))throw new Error("WHATSAPP_AUTOMATION_SCHEMA_KEYS");
+  const templateCheck=keys.find(row=>row.name==="WhatsAppAutomationMetaOutbox_templateName_check"&&row.kind==="c"&&row.valid);
+  const templateNames=templateCheck?[...templateCheck.definition.matchAll(/'([^']+)'/g)].map(match=>match[1]).sort():[];
+  const expectedTemplates=["bienvenida","1_dia_falta","hoyvence","data","2dias","cuotavencida","bloqueo","prorroga_activada"].sort();
+  if(JSON.stringify(templateNames)!==JSON.stringify(expectedTemplates))throw new Error("WHATSAPP_AUTOMATION_SCHEMA_TEMPLATES");
 }
