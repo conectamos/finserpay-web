@@ -158,7 +158,7 @@ financiera (algunas pruebas de plantilla también forman parte de la suite de
 mora). Cubren activación, aprobación/edición/cancelación, permisos, historial,
 worker, transporte compartido y la convivencia de las versiones de plantilla.
 TypeScript, ESLint y `git diff --check` terminaron sin errores.
-El build de producción con Turbopack de la integración inicial terminó
+El build de producción con Turbopack de esta actualización también terminó
 correctamente; para las dependencias enlazadas de esta copia local se amplió
 temporalmente `turbopack.root` al directorio común de los archivos. La
 configuración original se restauró byte por byte después del build y no forma
