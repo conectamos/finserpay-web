@@ -91,14 +91,14 @@ async function fixture(t, options = {}) {
   };
   const service = () => createMoraExtensionWhatsAppService({ database, env, sendMeta, now: () => new Date(clock) });
   const meta = createAttentionMetaStore(database, { scope, now: () => new Date(clock) });
-  async function insert({ expiresOn = "2026-11-06", source = "CENTRAL_DIRECT", phone = "3001234567" } = {}) {
+  async function insert({ expiresOn = "2026-11-06", source = "CENTRAL_DIRECT", phone = "3001234567", type = "PRORROGA" } = {}) {
     const id = randomUUID(), creditId = nextCreditId++, direct = source === "CENTRAL_DIRECT";
     await db.query(`INSERT INTO "Credito" VALUES($1,$2,'Cliente sintético',$3,'ACTIVO',700000,true,'2026-11-02')`, [creditId, `FNS-${creditId}`, phone]);
     await db.query(`INSERT INTO "CreditMoraExceptionRequest"(id,"creditoId",type,status,source,"installmentNumber","installmentDueDate",
       "expiresOn","promiseAmount","promiseDate",reason,observation,"createdByUserId","createdByName","decidedByUserId","decidedByName",
       "decidedAt","createIdempotencyKey","createRequestHash")
-      VALUES($1::uuid,$2,'PRORROGA','APPROVED',$3,$4,$5::date,$6::date,$7,$8::date,'Acuerdo registrado','Condición original',1,'Administradora',1,'Administradora',$9::timestamptz,$10::uuid,$11)`,
-    [id, creditId, source, direct ? null : 2, direct ? null : "2026-11-02", expiresOn, direct ? null : 120000,
+      VALUES($1::uuid,$2,$3,'APPROVED',$4,$5,$6::date,$7::date,$8,$9::date,'Acuerdo registrado','Condición original',1,'Administradora',1,'Administradora',$10::timestamptz,$11::uuid,$12)`,
+    [id, creditId, type, source, direct ? null : 2, direct ? null : "2026-11-02", expiresOn, direct ? null : 120000,
       direct ? null : "2026-11-05", instant, randomUUID(), "a".repeat(64)]);
     await db.query(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"="activationWhatsApp"||$2::jsonb WHERE id=$1::uuid`,
       [id, JSON.stringify({ nextAttemptAt: new Date(clock).toISOString() })]);
@@ -123,6 +123,25 @@ test("dos workers reclaman una activación una sola vez y el replay no toca cond
   assert.deepEqual(f.sends[0].template.components[0].parameters, [{ type: "text", text: "Cliente sintético" }, { type: "text", text: "3" }]);
   assert.equal((await f.service().run()).selected, 0); assert.equal(f.messages, 1);
   assert.deepEqual(await f.conditions(row.id), before, "WhatsApp no altera versión, condiciones, mora ni pago");
+  await assert.rejects(f.service().retry(row.id, actor), error => error.code === "WHATSAPP_RETRY_UNAVAILABLE");
+});
+
+test("una excepción directa finita guarda intención y envía el WhatsApp una vez sin alterar su tipo ni sus reglas", async t => {
+  const f = await fixture(t), row = await f.insert({ type: "EXCEPCION" });
+  const notification = await f.raw(row.id), before = await f.conditions(row.id);
+  assert.ok(notification, "la aprobación finita guarda la intención de WhatsApp en la misma transacción");
+  assert.equal(notification.status, "PENDING", "el trigger también cubre el acuerdo humano finito guardado como EXCEPCION");
+  assert.equal(notification.approvedDays, 3); assert.equal(notification.attempts, 0);
+  assert.equal(before.request.type, "EXCEPCION"); assert.equal(before.request.source, "CENTRAL_DIRECT");
+  const report = await f.service().run({ limit: 1 });
+  assert.equal(report.sent, 1); assert.equal(f.messages, 1);
+  assert.equal(f.sends[0].template.name, "prorroga_activada");
+  assert.deepEqual(f.sends[0].template.components[0].parameters, [{ type: "text", text: "Cliente sintético" }, { type: "text", text: "3" }]);
+  const sent = await f.service().read(row.id);
+  assert.equal(sent.status, "SENT"); assert.equal(sent.canRetry, false); assert.equal(sent.attempts, 1); assert.ok(sent.sentAt);
+  assert.equal((await f.service().run({ limit: 1 })).selected, 0); assert.equal(f.messages, 1);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "WhatsAppAutomationMetaOutbox"')).rows[0].n, 1);
+  assert.deepEqual(await f.conditions(row.id), before, "conserva tipo, estado, versión, vencimiento, condiciones, mora y pagos");
   await assert.rejects(f.service().retry(row.id, actor), error => error.code === "WHATSAPP_RETRY_UNAVAILABLE");
 });
 

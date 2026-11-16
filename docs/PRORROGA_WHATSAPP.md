@@ -8,10 +8,15 @@ bloqueos, desbloqueos o reglas de nuevas solicitudes.
 
 El trigger `CreditMoraExceptionRequest_whatsapp_activation` guarda la intención
 de notificación en `CreditMoraExceptionRequest.activationWhatsApp` dentro de la
-misma transacción que confirma la prórroga. Cubre el alta directa aprobada y el
-paso de pendiente a aprobada con un autorizador humano. Rechazar, cancelar,
-observar o fallar la transacción no inicia un envío. Las activaciones de Diana
-con identidad de sistema conservan su comportamiento actual.
+misma transacción que confirma la autorización. Cubre las solicitudes de tipo
+`PRORROGA` y las autorizaciones temporales guardadas como `EXCEPCION` con
+`expiresOn` definido, tanto en el alta directa aprobada como en el paso de
+pendiente a aprobada con un autorizador humano. El formulario actual inicia
+con el tipo `EXCEPCION`; una autorización con fecha recibe la misma notificación
+sin reclasificarla ni cambiar sus condiciones. Las excepciones sin vencimiento
+se conservan y no generan esta notificación. Rechazar, cancelar, observar o
+fallar la transacción no inicia un envío. Las activaciones de Diana con
+identidad de sistema conservan su comportamiento actual.
 
 La instalación es aditiva y no rellena autorizaciones históricas. Una edición
 de la solicitud tampoco crea otra notificación. La intención conserva crédito,

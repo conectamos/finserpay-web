@@ -161,7 +161,8 @@ export function moraExceptionRequestSchemaStatements() {
     `CREATE OR REPLACE FUNCTION public.mora_extension_whatsapp_activation() RETURNS trigger AS $$
       DECLARE credit JSONB;
       BEGIN
-        IF NEW.type<>'PRORROGA' OR NEW.status<>'APPROVED' OR NEW."activationWhatsApp" IS NOT NULL
+        IF NEW.type NOT IN ('PRORROGA','EXCEPCION') OR (NEW.type='EXCEPCION' AND NEW."expiresOn" IS NULL)
+          OR NEW.status<>'APPROVED' OR NEW."activationWhatsApp" IS NOT NULL
           OR NEW.source NOT IN ('ANALYST_REQUEST','CENTRAL_DIRECT') OR NEW."decidedByUserId" IS NULL
           OR NEW."decidedBySystemKey" IS NOT NULL THEN RETURN NEW; END IF;
         IF TG_OP='UPDATE' THEN
