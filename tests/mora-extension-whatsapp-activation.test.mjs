@@ -85,14 +85,14 @@ test("un INSERT aprobado de analista revierte junto a toda la activación si fal
   assert.equal((await f.db.query(`SELECT count(*)::int n FROM "Credito"`)).rows[0].n, 0);
 });
 
-test("rechazo, cancelación sin aprobar, excepciones y decisiones de Diana no crean mensajes de prórroga", async t => {
+test("rechazo, cancelación sin aprobar, excepciones indefinidas y decisiones de Diana no crean mensajes de prórroga", async t => {
   const f = await fixture(t);
   for (const status of ["REJECTED", "CANCELLED"]) {
     const pending = await f.insert({ source: "ANALYST_REQUEST", status: "PENDING" });
     await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status=$2,"decidedAt"='2026-10-03T17:00:00Z',"decidedByUserId"=1,"decidedByName"='Administradora real' WHERE id=$1::uuid`, [pending.id, status]);
     assert.equal(await f.read(pending.id), null);
   }
-  const exception = await f.insert({ type: "EXCEPCION" });
+  const exception = await f.insert({ type: "EXCEPCION", expiresOn: null });
   assert.equal(await f.read(exception.id), null);
   for (const source of ["SYSTEM_DIANA", "SYSTEM_DIANA_REQUEST"]) {
     const row = await f.insert({ source, system: true });
@@ -100,6 +100,69 @@ test("rechazo, cancelación sin aprobar, excepciones y decisiones de Diana no cr
     await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='CANCELLED',version=version+1 WHERE id=$1::uuid`, [row.id]);
     assert.equal(await f.read(row.id), null, "el trigger conserva las protecciones de identidad de Diana");
   }
+});
+
+test("la excepción temporal central encola una sola notificación sin cambiar tipo ni condiciones", async t => {
+  const f = await fixture(t);
+  let row;
+  await f.db.transaction(async tx => {
+    row = await f.insert({ type: "EXCEPCION" }, tx);
+    const notification = await f.read(row.id, tx);
+    assert.equal(notification.status, "PENDING");
+    assert.equal(notification.approvedDays, 3);
+    assert.equal(notification.authorizedByName, "Administradora real");
+  });
+  const notification = await f.read(row.id);
+  const business = async () => (await f.db.query(`SELECT to_jsonb(r)-'activationWhatsApp' AS request,to_jsonb(c) AS credit
+    FROM "CreditMoraExceptionRequest" r JOIN "Credito" c ON c.id=r."creditoId" WHERE r.id=$1::uuid`, [row.id])).rows[0];
+  const before = await business();
+  assert.equal(before.request.type, "EXCEPCION");
+  assert.equal(before.request.source, "CENTRAL_DIRECT");
+  assert.equal(before.request.status, "APPROVED");
+  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED' WHERE id=$1::uuid`, [row.id]);
+  assert.deepEqual(await f.read(row.id), notification);
+  assert.deepEqual(await business(), before, "la reserva no reclasifica la excepción ni modifica crédito, versión, autorización o fechas");
+  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET "expiresOn"='2026-10-10',version=version+1 WHERE id=$1::uuid`, [row.id]);
+  assert.deepEqual(await f.read(row.id), notification, "editar una excepción ya aprobada no duplica la activación");
+});
+
+test("aprobar una excepción temporal pendiente encola atómicamente; un fallo revierte decisión y WhatsApp", async t => {
+  const f = await fixture(t), row = await f.insert({ type: "EXCEPCION", source: "ANALYST_REQUEST", status: "PENDING", userId: 2 });
+  assert.equal(await f.read(row.id), null);
+  const approve = tx => tx.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED',version=2,
+    "decidedByUserId"=1,"decidedByName"='Administradora real',"decidedAt"='2026-10-03T17:00:00Z' WHERE id=$1::uuid`, [row.id]);
+  await assert.rejects(f.db.transaction(async tx => {
+    await approve(tx);
+    assert.equal((await f.read(row.id, tx)).status, "PENDING");
+    await tx.query(`INSERT INTO "CreditMoraExceptionEvent"(id,"requestId","creditoId",version,action,"fromStatus","toStatus",payload,"actorName","requestHash")
+      VALUES ($1::uuid,$2::uuid,$3,2,'INVALID','PENDING','APPROVED','{}','Administradora real',$4)`, [randomUUID(), row.id, row.creditId, "b".repeat(64)]);
+  }));
+  assert.equal(await f.read(row.id), null);
+  assert.equal((await f.db.query(`SELECT status FROM "CreditMoraExceptionRequest" WHERE id=$1::uuid`, [row.id])).rows[0].status, "PENDING");
+  await f.db.transaction(approve);
+  const notification = await f.read(row.id);
+  assert.equal(notification.status, "PENDING");
+  assert.equal(notification.approvedDays, 3);
+  assert.equal(notification.name, "Cliente sintético");
+  assert.equal(notification.phone, "3001234567");
+  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED' WHERE id=$1::uuid`, [row.id]);
+  assert.deepEqual(await f.read(row.id), notification);
+  const stored = (await f.db.query(`SELECT type,source,"decidedByUserId","decidedAt",version FROM "CreditMoraExceptionRequest" WHERE id=$1::uuid`, [row.id])).rows[0];
+  assert.equal(stored.type, "EXCEPCION");
+  assert.equal(stored.source, "ANALYST_REQUEST");
+  assert.equal(stored.decidedByUserId, 1);
+  assert.equal(iso(stored.decidedAt), "2026-10-03T17:00:00.000Z");
+  assert.equal(stored.version, 2);
+});
+
+test("una excepción indefinida conserva su aprobación y no se notifica al editarla después", async t => {
+  const f = await fixture(t), row = await f.insert({ type: "EXCEPCION", expiresOn: null });
+  assert.equal(await f.read(row.id), null);
+  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED',"expiresOn"='2026-10-06' WHERE id=$1::uuid`, [row.id]);
+  assert.equal(await f.read(row.id), null, "corregir una autorización anterior no equivale a una nueva activación");
+  const stored = (await f.db.query(`SELECT type,status FROM "CreditMoraExceptionRequest" WHERE id=$1::uuid`, [row.id])).rows[0];
+  assert.equal(stored.type, "EXCEPCION");
+  assert.equal(stored.status, "APPROVED");
 });
 
 test("el día de activación usa medianoche Colombia y el mismo día equivale a un día", async t => {
@@ -126,13 +189,19 @@ test("sin fecha de vencimiento la activación se conserva con fallo rastreable y
 });
 
 test("reinstalar conserva notificaciones y no genera envíos para aprobaciones históricas", async t => {
-  const f = await fixture(t), current = await f.insert(), historical = await f.insert();
-  const snapshot = await f.read(current.id);
-  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"=NULL WHERE id=$1::uuid`, [historical.id]);
+  const f = await fixture(t);
+  const pairs = [];
+  for (const type of ["PRORROGA", "EXCEPCION"]) {
+    const current = await f.insert({ type }), historical = await f.insert({ type });
+    pairs.push({ current, historical, snapshot: await f.read(current.id) });
+    await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET "activationWhatsApp"=NULL WHERE id=$1::uuid`, [historical.id]);
+  }
   await installMoraExceptionRequestSchema(f.client);
   await installMoraExceptionRequestSchema(f.client);
-  assert.deepEqual(await f.read(current.id), snapshot);
-  assert.equal(await f.read(historical.id), null);
-  await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED' WHERE id=$1::uuid`, [historical.id]);
-  assert.equal(await f.read(historical.id), null, "repetir estado aprobado histórico no encola retrospectivamente");
+  for (const { current, historical, snapshot } of pairs) {
+    assert.deepEqual(await f.read(current.id), snapshot);
+    assert.equal(await f.read(historical.id), null);
+    await f.db.query(`UPDATE "CreditMoraExceptionRequest" SET status='APPROVED' WHERE id=$1::uuid`, [historical.id]);
+    assert.equal(await f.read(historical.id), null, "repetir estado aprobado histórico no encola retrospectivamente");
+  }
 });
