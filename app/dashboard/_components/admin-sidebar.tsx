@@ -209,7 +209,7 @@ export default function AdminSidebar({
         ...(adminCentral
           ? [
               {
-                href: "/dashboard/excepciones-mora",
+                href: "/dashboard/aprobaciones/excepciones-mora",
                 icon: TriangleAlert,
                 label: "Excepciones por mora",
               },

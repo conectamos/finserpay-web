@@ -1,7 +1,5 @@
+import { redirect } from "next/navigation";
 import { requireCentralAdminDashboardAccess } from "@/lib/dashboard-access";
-import AdminSidebar from "@/app/dashboard/_components/admin-sidebar";
-import AdminWorkspaceTopbar from "@/app/dashboard/_components/admin-workspace-topbar";
-import MoraExceptionsClient from "./mora-exceptions-client";
 
 export const dynamic = "force-dynamic";
 
@@ -10,27 +8,20 @@ export const metadata = {
   description: "Acuerdos que conservan la mora sin bloquear el dispositivo",
 };
 
-export default async function MoraExceptionsPage() {
-  const access = await requireCentralAdminDashboardAccess();
+export default async function MoraExceptionsPage({ searchParams }: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  await requireCentralAdminDashboardAccess();
+  const params = await searchParams;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(key, item);
+    } else if (value !== undefined) {
+      query.append(key, value);
+    }
+  }
 
-  return (
-    <div className="min-h-screen bg-[#f4f7f8] text-[#101828] lg:grid lg:grid-cols-[228px_minmax(0,1fr)]">
-      <AdminSidebar
-        activeHref="/dashboard/excepciones-mora"
-        adminCentral
-        nombreUsuario={access.session.nombre}
-        rolUsuario={access.session.rolNombre}
-      />
-
-      <div className="min-w-0">
-        <AdminWorkspaceTopbar
-          parent="Cartera"
-          current="Excepciones por mora"
-          userName={access.session.nombre}
-          userRole={access.session.rolNombre}
-        />
-        <MoraExceptionsClient />
-      </div>
-    </div>
-  );
+  const search = query.toString();
+  redirect(`/dashboard/aprobaciones/excepciones-mora${search ? `?${search}` : ""}`);
 }

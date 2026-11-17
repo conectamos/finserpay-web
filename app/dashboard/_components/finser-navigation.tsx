@@ -25,7 +25,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
     ["Simulador", "/dashboard/creditos?mode=simulator"],
     ...(admin || isSupervisor ? [["Clientes", "/dashboard/clientes"], ["Recaudos", "/dashboard/abonos"]] as Item[] : []),
     ...(admin ? [["Pagos aliado", "/dashboard/pagos-aliados"], ["Reportes", "/dashboard/reportes"]] as Item[] : []),
-    ...(adminCentral ? [["Créditos masivos", "/dashboard/creditos-masivos"], ["Excepciones por mora", "/dashboard/excepciones-mora"]] as Item[] : []),
+    ...(adminCentral ? [["Créditos masivos", "/dashboard/creditos-masivos"], ["Excepciones por mora", "/dashboard/aprobaciones/excepciones-mora"]] as Item[] : []),
   ];
   const administration: Item[] = [
     ...(admin && adminCentral ? [["Analistas", "/dashboard/aprobaciones/centro"]] as Item[] : []),
