@@ -230,6 +230,15 @@ const policyButton = (h, label) => h.find(node => node.type === "Button" && text
 const policyDialog = (h, title) => h.find(node => node.type === "ConfirmDialog" && node.props.title === title);
 const platformEditor = (h, platform = "ANDROID") => h.find(node => typeof node.type === "function" && node.type.name === "PlatformEditor" && node.props.platform === platform);
 
+function assertCreationFocus(h) {
+  assert.equal(h.all(node => node.type === "Select" && !node.props["aria-label"] && ["general", "other"].includes(node.props.value)).length, 0,
+    "El selector de la política publicada no aparece dentro de la creación");
+  for (const label of ["Nueva política", "Editar política", "Cancelar edición"]) {
+    assert.equal(h.all(node => node.type === "Button" && text(node).trim() === label).length, 0,
+      `La acción ${label} del catálogo no se duplica encima del wizard`);
+  }
+  assert.equal(h.all(node => node.type === "Button" && node.props["aria-label"] === "Retirar política").length, 0);
+}
 const createStepTitles = ["Datos de la política", "Reglas de evaluación", "Condiciones del crédito", "Revisar nueva política"];
 const currentCopyStep = h => createStepTitles.indexOf(text(byId(h, "policy-create-step-title")).trim()) + 1;
 async function goCopyStep(h, destination) {
@@ -241,6 +250,7 @@ async function goCopyStep(h, destination) {
     control.props.onClick(); await h.flush();
   }
   assert.equal(currentCopyStep(h), destination);
+  assertCreationFocus(h);
 }
 async function beginPolicyCopy(h, name = "Recuperar cartera", step = 3) {
   policyButton(h, "Nueva política").props.onClick();
@@ -433,27 +443,39 @@ test("duplicating isolates bands, finances and priorities and creates only the n
   assert.equal(JSON.stringify(original), before);
 });
 
-test("changing the copy source requires discard and cancel keeps its snapshot and editable values", async () => {
-  const requests = [], h = mountPolicy(async (url, options) => {
-    requests.push({ url, options }); return Response.json(catalog());
-  });
-  await h.flush(); await beginPolicyCopy(h, "Mi nueva política");
+test("creation hides catalog controls and changing its source requires canceling the isolated draft first", async () => {
+  const original = catalog(), before = JSON.stringify(original), requests = [];
+  const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(original); });
+  await h.flush();
+  assert.equal(h.find(node => node.type === "Select" && !node.props["aria-label"] && node.props.value === "general").props.value, "general");
+  assert.equal(policyButton(h, "Nueva política").props.disabled, false);
+  assert.equal(policyButton(h, "Editar política").props.disabled, false);
+  await beginPolicyCopy(h, "Mi nueva política");
   platformEditor(h).props.onChange("android-high", "initialPaymentPercentage", "35"); await h.flush();
-  const select = () => h.find(node => node.type === "Select" && node.props.value === "general");
-  select().props.onChange({ target: { value: "other" } }); await h.flush();
-  const discard = policyDialog(h, "Descartar borrador y cambiar de política");
+  assertCreationFocus(h);
+  assert.match(h.text(), /Base:.*Política general.*versión 10.*política independiente/);
+  policyButton(h, "Cancelar").props.onClick(); await h.flush();
+  const discard = policyDialog(h, "Descartar la nueva política");
   assert.equal(discard.props.open, true);
   discard.props.onCancel(); await h.flush();
   await assertCopyName(h, "Mi nueva política");
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "35");
-  assert.match(h.text(), /Base:.*Política general.*versión 10.*política independiente/);
+  assertCreationFocus(h);
+  policyButton(h, "Cancelar").props.onClick(); await h.flush();
+  policyDialog(h, "Descartar la nueva política").props.onConfirm(); await h.flush();
+  assert.equal(h.all(node => node.props?.id === "policy-create-step-title").length, 0);
+  const select = () => h.find(node => node.type === "Select" && !node.props["aria-label"] && node.props.value === "general");
+  assert.equal(select().props.value, "general");
+  assert.equal(policyButton(h, "Nueva política").props.disabled, false);
+  assert.equal(policyButton(h, "Editar política").props.disabled, false);
+  assert.equal(JSON.stringify(original), before);
   select().props.onChange({ target: { value: "other" } }); await h.flush();
-  policyDialog(h, "Descartar borrador y cambiar de política").props.onConfirm(); await h.flush();
-  assert.equal(h.all(node => node.props?.id === "new-policy-name").length, 0);
-  assert.equal(h.find(node => node.type === "Select" && node.props.value === "other").props.value, "other");
-  await enablePolicyEditing(h);
+  await beginPolicyCopy(h, "Copia de otra política");
+  assert.match(h.text(), /Base:.*Otra política.*versión 3.*política independiente/);
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "20");
-  assert.equal(requests.length, 1, "Cambiar el origen no publica ni duplica perfiles");
+  assertCreationFocus(h);
+  assert.equal(JSON.stringify(original), before);
+  assert.equal(requests.length, 1, "Elegir otra base después de cancelar no publica ni duplica perfiles");
 });
 
 test("tab navigation and reload confirm discarding the independent copy", async () => {
