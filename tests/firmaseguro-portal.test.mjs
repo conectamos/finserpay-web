@@ -10,6 +10,9 @@ const input = {
   identity: { identification: "1234567890", firstName: "María", firstLastName: "Pérez" },
 };
 const ORIGIN = "https://app.firmaseguro.co";
+const PRIVATE_BROWSER_ENDPOINT = "ws://firma-portal-browser.railway.internal:3010/connect";
+const remoteEnv = () => ({ FIRMASEGURO_EMAIL: "fixture@example.test", FIRMASEGURO_PASSWORD: "fixture-secret",
+  FIRMASEGURO_BROWSER_ENDPOINT: PRIVATE_BROWSER_ENDPOINT, FIRMASEGURO_BROWSER_TOKEN: "fixture_private_browser_token_1234567890" });
 const originalContact = { phone: "3001234567", email: "original@example.test" };
 const whatsappOnlyIndicators = () => [
   { label: "Notificación por Email", title: "No se envía Email", classes: "fas fa-times text-danger" },
@@ -40,6 +43,7 @@ async function routedRequest(f, { url = ORIGIN + "/Process/List", method = "GET"
 function fixture(options = {}) {
   const state = { phase: "email", url: ORIGIN + "/Login", authenticated: false, editor: null, modal: false,
     ack: false, edits: 0, resends: 0, browserClosed: 0, contextClosed: 0, fills: [], clicks: [], navigations: [], launches: [],
+    connections: [], remoteDisconnected: 0, closeOrder: [],
     route: null, contextOptions: null, notificationIndicators: whatsappOnlyIndicators(),
     notificationHeading: "Notificaciones", notificationSections: 1, ...options };
   const target = { id: input.signatureId, cc: input.identity.identification, firstName: "MARIA", firstLastName: "PEREZ",
@@ -223,7 +227,10 @@ function fixture(options = {}) {
   const context = {
     async route(_pattern, callback) { state.route = callback; },
     async newPage() { return page; },
-    async close() { state.contextClosed++; },
+    async close() {
+      state.contextClosed++; state.closeOrder.push("context");
+      if (options.contextCloseFailure) throw new Error("fixture private context close failure");
+    },
   };
   const browser = {
     async newContext(value) {
@@ -231,7 +238,7 @@ function fixture(options = {}) {
       if (options.contextFailure) throw new Error("fixture No usable sandbox: private context detail");
       state.contextOptions = value; return context;
     },
-    async close() { state.browserClosed++; },
+    async close() { state.browserClosed++; state.closeOrder.push("local-browser"); },
   };
   const chromium = { async launch(value) {
     state.launches.push(value);
@@ -239,6 +246,11 @@ function fixture(options = {}) {
     if (options.browserLaunchFailure) throw new Error(typeof options.browserLaunchFailure === "string"
       ? options.browserLaunchFailure : "fixture sandbox unavailable; private launch detail");
     return browser;
+  }, async connect(endpoint, settings) {
+    state.connections.push({ endpoint, settings });
+    if (options.connectionFailure) throw new Error(`fixture private connection failure ${endpoint} ${settings.headers.Authorization}`);
+    return { newContext: browser.newContext,
+      async close() { state.remoteDisconnected++; state.closeOrder.push("remote-disconnect"); } };
   } };
   const cleaned = source.replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "");
   const api = runInNewContext(stripTypeScriptTypes(cleaned, { mode: "transform" }) +
@@ -284,6 +296,94 @@ test("Chromium recibe solo entorno del SO permitido, sin secretos de aplicación
   const minimal = fixture();
   await minimal.verifyFirmaSeguroPortalAccess();
   assert.deepEqual(JSON.parse(JSON.stringify(minimal.state.launches[0].env)), {});
+});
+
+test("conecta únicamente al navegador privado autenticado, sin exponer la red ni lanzar Chromium local", async () => {
+  const env = remoteEnv(), f = fixture({ env });
+  await f.verifyFirmaSeguroPortalAccess();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.state.connections)), [{ endpoint: PRIVATE_BROWSER_ENDPOINT,
+    settings: { headers: { Authorization: `Bearer ${env.FIRMASEGURO_BROWSER_TOKEN}` }, timeout: 20000 } }]);
+  assert.equal(f.state.launches.length, 0);
+  assert.equal(f.state.contextOptions.ignoreHTTPSErrors, false);
+  assert.equal(f.state.contextOptions.serviceWorkers, "block");
+  assert.deepEqual(f.state.closeOrder, ["context", "remote-disconnect"]);
+  assert.equal(f.state.remoteDisconnected, 1); assert.equal(f.state.browserClosed, 0);
+  assert.equal(f.state.edits, 0); assert.equal(f.state.resends, 0);
+});
+
+test("la sesión remota conserva inspección y cierra únicamente su contexto y conexión una vez", async () => {
+  const f = fixture({ env: remoteEnv() }), session = await f.open();
+  const recipient = await session.inspect();
+  assert.equal(recipient.signatureId, input.signatureId);
+  assert.equal(recipient.contactSource, "PORTAL_READBACK");
+  await session.close(); await session.close();
+  assert.deepEqual(f.state.closeOrder, ["context", "remote-disconnect"]);
+  assert.equal(f.state.connections.length, 1); assert.equal(f.state.launches.length, 0);
+  assert.equal(f.state.browserClosed, 0);
+});
+
+for (const endpoint of [
+  undefined, "", "ws://127.0.0.1:3010/connect", "ws://untrusted.example.test:3010/connect",
+  "wss://firma-portal-browser.railway.internal:3010/connect",
+  "ws://private:secret@firma-portal-browser.railway.internal:3010/connect",
+  PRIVATE_BROWSER_ENDPOINT + "?token=private", PRIVATE_BROWSER_ENDPOINT + "#private",
+  PRIVATE_BROWSER_ENDPOINT + "/", "ws://firma-portal-browser.railway.internal:3011/connect",
+  "ws://firma-portal-browser.railway.internal:3010/a/../connect",
+  " " + PRIVATE_BROWSER_ENDPOINT,
+]) test("rechaza destino privado ausente o diferente sin conexión, SSRF ni fallback", async () => {
+  const f = fixture({ env: { ...remoteEnv(), FIRMASEGURO_BROWSER_ENDPOINT: endpoint } });
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => {
+    assert.equal(error.code, "PORTAL_NOT_CONFIGURED"); assert.equal(error.status, 503);
+    assert.equal(error.readPhase, "BROWSER_LAUNCH"); assert.equal(error.runtimeCategory, undefined);
+    assert.doesNotMatch(JSON.stringify(error) + error.stack, /fixture_private_browser_token|private:secret|\?token=|untrusted\.example/);
+    return true;
+  });
+  assert.equal(f.state.connections.length, 0); assert.equal(f.state.launches.length, 0);
+  assert.deepEqual(f.state.fills, []); assert.deepEqual(f.state.clicks, []);
+});
+
+for (const token of [undefined, "", "x".repeat(31), "x".repeat(257), "x".repeat(32) + "=", "x".repeat(32) + "+", "x".repeat(32) + "\n"]) {
+  test("rechaza token remoto ausente o inválido antes del navegador", async () => {
+    const f = fixture({ env: { ...remoteEnv(), FIRMASEGURO_BROWSER_TOKEN: token } });
+    await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => error.code === "PORTAL_NOT_CONFIGURED"
+      && error.status === 503 && error.readPhase === "BROWSER_LAUNCH");
+    assert.equal(f.state.connections.length, 0); assert.equal(f.state.launches.length, 0);
+    assert.deepEqual(f.state.fills, []);
+  });
+}
+
+test("ambos valores remotos vacíos se rechazan; solo su ausencia permite el navegador local", async () => {
+  const absent = fixture();
+  await absent.verifyFirmaSeguroPortalAccess();
+  assert.equal(absent.state.launches.length, 1); assert.equal(absent.state.connections.length, 0);
+  assert.equal(absent.state.launches[0].chromiumSandbox, true);
+  const empty = fixture({ env: { ...remoteEnv(), FIRMASEGURO_BROWSER_ENDPOINT: "", FIRMASEGURO_BROWSER_TOKEN: "" } });
+  await assert.rejects(empty.verifyFirmaSeguroPortalAccess(), error => error.code === "PORTAL_NOT_CONFIGURED");
+  assert.equal(empty.state.launches.length, 0); assert.equal(empty.state.connections.length, 0);
+});
+
+test("fallo remoto no reintenta ni usa fallback local y elimina endpoint y token del error", async () => {
+  const f = fixture({ env: remoteEnv(), connectionFailure: true });
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => {
+    assert.equal(error.code, "PORTAL_UNAVAILABLE"); assert.equal(error.readPhase, "BROWSER_LAUNCH");
+    assert.equal(error.runtimeCategory, "OTHER"); assert.equal(error.uncertain, false);
+    assert.doesNotMatch(JSON.stringify(error) + error.stack, /railway\.internal|Bearer|fixture_private_browser_token/);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  assert.equal(f.state.connections.length, 1); assert.equal(f.state.launches.length, 0);
+  assert.deepEqual(f.state.fills, []); assert.deepEqual(f.state.clicks, []);
+});
+
+test("fallos de contexto o de cierre remoto desconectan al cliente sin intentar cerrar el servidor", async () => {
+  const failed = fixture({ env: remoteEnv(), contextFailure: true });
+  await assert.rejects(failed.verifyFirmaSeguroPortalAccess(), error => error.readPhase === "CONTEXT");
+  assert.deepEqual(failed.state.closeOrder, ["remote-disconnect"]);
+  assert.equal(failed.state.browserClosed, 0); assert.equal(failed.state.launches.length, 0);
+  const closing = fixture({ env: remoteEnv(), contextCloseFailure: true });
+  await closing.verifyFirmaSeguroPortalAccess();
+  assert.deepEqual(closing.state.closeOrder, ["context", "remote-disconnect"]);
+  assert.equal(closing.state.remoteDisconnected, 1); assert.equal(closing.state.browserClosed, 0);
 });
 
 test("un sandbox no disponible detiene el acceso sin volver a lanzar Chromium sin aislamiento", async () => {

@@ -15,7 +15,7 @@ async function runtimeFixture(options = {}) {
   const state = { loads: 0, accesses: 0, packages: 0, logs: [], errors: [] };
   const process = {
     platform: options.platform ?? "linux", getuid: options.getuid ?? (() => options.uid ?? 1000),
-    argv: options.direct ? ["node", fileURLToPath(runtimeUrl)] : [], exitCode: undefined,
+    argv: options.direct ? ["node", fileURLToPath(runtimeUrl)] : [], exitCode: undefined, env: options.env ?? {},
   };
   const code = runtimeSource.replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "")
     .replaceAll("import.meta.url", JSON.stringify(runtimeUrl.href))
@@ -108,11 +108,21 @@ test("Linux no root usa una sola comprobación del driver y devuelve únicamente
   const fixture = await runtimeFixture();
   const result = await fixture.api.verifyFirmaSeguroPortalRuntime();
   assert.deepEqual(JSON.parse(JSON.stringify(result)), {
-    ok: true, code: "PORTAL_RUNTIME_ACCESS_VERIFIED", platform: "linux", uid: 1000, playwrightVersion: "1.65.0",
+    ok: true, code: "PORTAL_RUNTIME_ACCESS_VERIFIED", platform: "linux", uid: 1000, playwrightVersion: "1.65.0", browserTransport: "LOCAL",
   });
   assert.equal(fixture.state.loads, 1);
   assert.equal(fixture.state.accesses, 1);
   assert.equal(fixture.process.exitCode, undefined);
+});
+test("el recibo distingue el navegador privado sin publicar su token ni endpoint", async () => {
+  const env = { FIRMASEGURO_BROWSER_ENDPOINT: "ws://firma-portal-browser.railway.internal:3010/connect",
+    FIRMASEGURO_BROWSER_TOKEN: "testtoken_123456789012345678901234567890123" };
+  const fixture = await runtimeFixture({ env });
+  const result = await fixture.api.verifyFirmaSeguroPortalRuntime();
+  assert.equal(result.browserTransport, "PRIVATE");
+  assert.equal(fixture.state.accesses, 1);
+  assert.equal(JSON.stringify(result).includes(env.FIRMASEGURO_BROWSER_TOKEN), false);
+  assert.equal(JSON.stringify(result).includes("railway.internal"), false);
 });
 
 for (const options of [{ packageError: new Error("private package path") }, { version: "private data" }]) {

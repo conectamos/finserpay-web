@@ -77,6 +77,22 @@ test("only fixed diagnostic phases and categories reach startup logs", async () 
     assert.equal(events[0].runtimeCategory, details.runtimeCategory === "BINARY" ? "BINARY" : undefined);
   }
 });
+test("private browser credentials reach only the trusted Node probe and are absent from its receipt", async () => {
+  const env = { FIRMASEGURO_BROWSER_ENDPOINT: "ws://firma-portal-browser.railway.internal:3010/connect",
+    FIRMASEGURO_BROWSER_TOKEN: "testtoken_123456789012345678901234567890123", DATABASE_URL: "private-db" };
+  const received = await verifyPortalInChild(env, (_binary, _args, config, callback) => {
+    assert.equal(config.env.FIRMASEGURO_BROWSER_ENDPOINT, env.FIRMASEGURO_BROWSER_ENDPOINT);
+    assert.equal(config.env.FIRMASEGURO_BROWSER_TOKEN, env.FIRMASEGURO_BROWSER_TOKEN);
+    assert.equal(config.env.DATABASE_URL, undefined);
+    callback(null, JSON.stringify({ ...receipt, browserTransport: "PRIVATE" }));
+  });
+  const events = [];
+  await startFinserpay({ env: { FIRMASEGURO_PORTAL_RESEND_ENABLED: "true" }, verify: async () => received,
+    start: async () => {}, report: event => events.push(event) });
+  assert.equal(events[0].browserTransport, "PRIVATE");
+  assert.equal(JSON.stringify(events).includes(env.FIRMASEGURO_BROWSER_TOKEN), false);
+  assert.equal(JSON.stringify(events).includes("railway.internal"), false);
+});
 test("an unknown verification receipt cannot open the portal gate", async () => {
   const env = { FIRMASEGURO_PORTAL_RESEND_ENABLED: "true" };
   await startFinserpay({ env, verify: async () => ({ ok: true, platform: "windows" }), start: async () => {}, report: () => {} });

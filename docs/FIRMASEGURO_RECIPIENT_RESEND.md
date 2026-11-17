@@ -44,6 +44,11 @@ de transporte conservan su flujo API original.
 El contenedor incluye Chromium headless de Playwright, de la misma versión exacta
 que la dependencia de producción, bajo `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`.
 En desarrollo se instala con `npx playwright install --only-shell chromium`.
+Cuando el contenedor web no permite el sandbox, el navegador se ejecuta en un
+worker privado separado, manteniendo el sandbox y el mismo Playwright 1.65.0.
+El código del portal y sus controles siguen en FINSERPAY; el worker solo aloja
+el navegador y su gateway autenticado. No existe fallback automático entre
+transportes tras un fallo.
 El proceso se ejecuta sin root y exige el sandbox de Chromium, sin desactivarlo
 como alternativa si el entorno no lo admite. El navegador recibe solo variables
 del sistema necesarias para arrancar; no hereda los secretos de la aplicación.
@@ -107,6 +112,50 @@ credenciales ficticias: ejecutar `tests/firmaseguro-portal.test.mjs` con
 Chrome instalado con `FIRMASEGURO_PORTAL_SYNTHETIC_BROWSER_CHANNEL=chrome`.
 Esta prueba no sustituye la comprobación del contenedor Linux ni la recepción
 del enlace de firma de un caso autorizado.
+
+## Navegador privado de FirmaSeguro
+
+`Dockerfile.firmaseguro-browser` crea una imagen independiente con Node,
+Playwright y `scripts/firmaseguro-browser-worker.mjs`. No copia la aplicación,
+Prisma, documentos, archivos `.env` ni volúmenes. No se configuran credenciales
+de base de datos ni de FirmaSeguro en ese servicio. Usuario y contraseña de
+FirmaSeguro sí atraviesan transitoriamente el RPC y el navegador durante el
+inicio de sesión; no se registran frames, headers, trazas ni capturas.
+
+El worker exige Linux y UID no root, inicia Chromium con sandbox y entorno
+mínimo y verifica un renderer sin red antes de estar listo. El servidor original
+de Playwright solo escucha en loopback con su ruta aleatoria; el gateway
+escucha por la red privada en el puerto 3010. `/connect` exige un único Bearer
+con comparación de tiempo constante, Host y ruta exactos, y rechaza Origin,
+cookies, query strings y redirecciones. Solo reenvía los headers del handshake
+WebSocket a un destino loopback fijado por el propio proceso. Limita a tres
+conexiones simultáneas y limpia cada conexión sin cerrar las de otros clientes.
+
+La red privada de Railway se cifra mediante WireGuard; no se debe generar un
+dominio público ni proxy TCP para el worker. El token permite control amplio de
+Playwright en ese contenedor y debe mantenerse exclusivamente en variables del
+servidor. No se entrega a clientes ni a Chromium. La imagen mínima limita el
+alcance de ese control; no añadirle secretos, archivos o acceso a la base de datos.
+
+Configuración del servicio `firma-portal-browser`:
+
+- `RAILWAY_DOCKERFILE_PATH=Dockerfile.firmaseguro-browser`, puerto 3010 y arranque
+  `node scripts/firmaseguro-browser-worker.mjs`, sin comandos predeploy de la app.
+- `FIRMASEGURO_BROWSER_TOKEN`: secreto aleatorio base64url de al menos 32 caracteres.
+- Comprobar su acuse de renderer, versión, UID y sandbox antes de conectar la app.
+
+Configuración de FINSERPAY:
+
+- `FIRMASEGURO_BROWSER_ENDPOINT=ws://firma-portal-browser.railway.internal:3010/connect`.
+- `FIRMASEGURO_BROWSER_TOKEN` referencia el secreto del worker.
+- Ambos valores son obligatorios para el transporte privado. Un endpoint distinto,
+  par incompleto o error de conexión detiene el acceso sin iniciar un navegador local.
+- La sonda Node recibe estas dos variables; el entorno del proceso Chromium no.
+
+El acuse de FINSERPAY distingue `browserTransport: PRIVATE` de `LOCAL`. Su UID
+corresponde a la sonda de la app; el sandbox y UID del navegador remoto se
+verifican en el acuse propio del worker. Un login aceptado confirma acceso y
+listado, no entrega de una solicitud de firma.
 
 ## Referencia histórica: contrato API
 
