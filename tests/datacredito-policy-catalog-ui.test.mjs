@@ -78,12 +78,13 @@ test("gestiona un catálogo de políticas con revisiones inmutables", () => {
     /fetch\("\/api\/creditos\/datacredito\/politicas"/
   );
   assert.match(consoleSource, /method: "POST"/);
-  assert.match(consoleSource, /bands: selectedProfile\.bands/);
+  assert.match(consoleSource, /setNewPolicyBands\(selectedProfile\.bands\.map\(toEditableBand\)\)/);
+  assert.match(consoleSource, /bands: newPolicyBandValidation\.canonicalBands/);
   assert.match(consoleSource, /action: "SAVE_REVISION"/);
   assert.match(consoleSource, /expectedVersion: version/);
   assert.match(consoleSource, /POLICY_VERSION_CONFLICT/);
   assert.match(consoleSource, /Publicar nueva versión/);
-  assert.match(consoleSource, /no reemplazará ni modificará revisiones históricas/);
+  assert.match(consoleSource, /Las revisiones históricas se conservarán/);
 });
 
 test("guarda política y cupo diario por aliado con concurrencia optimista", () => {
@@ -183,7 +184,7 @@ test("bloquea duplicar un borrador y usa la fecha de la revisión publicada", ()
   );
   assert.match(
     consoleSource,
-    /!selectedProfile \|\| loading \|\| saving \|\| creating \|\| hasUnsavedChanges/
+    /!selectedProfile \|\| loading \|\| saving \|\| creating \|\| createOpen \|\| hasUnsavedChanges/
   );
   assert.match(consoleSource, /Publica los cambios o recarga para descartarlos/);
 });

@@ -8,7 +8,6 @@ import { createJiti } from "jiti";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
-const simulationConditionsSource = await readProjectFile("lib/datacredito/simulation-conditions.ts");
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const { isDataCreditoUniqueViolation } = await jiti.import(
   "../lib/datacredito/database-errors.ts"
@@ -591,7 +590,7 @@ test("la ausencia explicita usa politica y puede consumirse sin exponer el senti
   assert.match(policyConsole, /Sin información/);
 });
 
-test("la simulacion resuelve condiciones aprobadas de la politica asignada", () => {
+test("la simulacion usa parámetros generales antes de consultar configuración o políticas DataCrédito", () => {
   const getter = policyRoute.slice(
     policyRoute.indexOf("export async function GET"),
     policyRoute.indexOf("export async function PATCH")
@@ -601,40 +600,28 @@ test("la simulacion resuelve condiciones aprobadas de la politica asignada", () 
   assert.match(getter, /purpose\s*===\s*["']simulation["']/);
   assert.match(getter, /searchParams\.get\(["']platform["']\)/);
   assert.match(getter, /normalizeDataCreditoPlatform/);
-  assert.match(
-    getter,
-    /getDataCreditoSimulationConditions\(policy, simulationPlatform\)/
-  );
-  assert.match(
-    getter,
-    /\{\s*\.\.\.policy,\s*priorityRules:\s*null\s*\}/
-  );
-  assert.match(simulationConditionsSource, /band\.decision === "APROBADO"/);
-  assert.match(simulationConditionsSource,
-    /resolveDataCreditoDecision\([\s\S]{0,160}bands:\s*\[band\],\s*priorityRules:\s*null[\s\S]{0,80}band\.scoreMin/);
+  const simulationStart = getter.indexOf("if (simulationRequested && simulationPlatform)");
+  const providerStart = getter.indexOf("const provider = getDataCreditoPublicConfig()");
+  assert.ok(simulationStart >= 0 && providerStart > simulationStart);
+  const simulationBranch = getter.slice(simulationStart, providerStart);
+  assert.match(simulationBranch, /await getCreditSettings\(\)/);
+  assert.match(simulationBranch, /getPlatformCreditSettings\(globalSettings, simulationPlatform\)/);
+  assert.match(simulationBranch, /return NextResponse\.json/);
+  assert.doesNotMatch(simulationBranch, /getAssignedDataCreditoPolicy|getDataCreditoDailyQuotaSnapshot|resolveDataCreditoDecision|isDataCreditoAuditConfigured/);
 });
 
-test("el DTO de simulacion es minimo y un rechazo nunca expone oferta", () => {
-  const simulationMarker = policyRoute.indexOf("simulationOnly: true");
-  assert.notEqual(simulationMarker, -1);
-
-  const dtoSource = policyRoute.slice(
-    Math.max(0, simulationMarker - 900),
-    Math.min(policyRoute.length, simulationMarker + 1_500)
-  );
+test("el DTO general de simulacion no implica aprobación ni expone políticas o datos personales", () => {
+  const dtoStart = policyRoute.indexOf('kind: "GENERAL_CREDIT_SETTINGS"');
+  assert.notEqual(dtoStart, -1);
+  const dtoSource = policyRoute.slice(dtoStart, policyRoute.indexOf("} catch", dtoStart));
   assert.doesNotMatch(
     dtoSource,
-    /\b(?:bands|assessmentId|documentNumber|firstSurname|documentHash|surnameHash|cedula)\s*:/i
+    /\b(?:bands|assessmentId|documentNumber|firstSurname|documentHash|surnameHash|cedula|conditions|offer|decision|policyVersion|policyRevisionId)\s*:/i
   );
+  assert.match(dtoSource, /simulationOnly: true/);
   assert.match(dtoSource, /\bplatform\s*:/);
-  assert.match(dtoSource, /\bdecision\s*:/);
-  assert.match(dtoSource, /\boffer\s*:/);
-  assert.match(dtoSource, /\bconditions\s*:\s*DataCreditoSimulationCondition\[\]/);
-
-  assert.match(
-    policyRoute,
-    /(?:offer\s*:|const\s+\w*offer\w*\s*=)[\s\S]{0,220}\.decision\s*===\s*["']APROBADO["'][\s\S]{0,160}\.offer[\s\S]{0,80}:\s*null/
-  );
+  assert.match(dtoSource, /\bsettings\b/);
+  assert.match(dtoSource, /\bglobalSettings\b/);
 });
 
 test("la consola usa la simulacion sin convertirla en assessment aprobado", () => {
@@ -663,7 +650,7 @@ test("la consola usa la simulacion sin convertirla en assessment aprobado", () =
   assert.doesNotMatch(loaderSource, /\bassessmentId\s*:/);
 });
 
-test("la oferta activa conserva su plazo y nunca cae al tope global en pantalla", () => {
+test("la oferta de venta conserva su plazo y el simulador iPhone usa el tope general", () => {
   assert.match(factoryConsole, /policyControlled:\s*true/);
   assert.match(
     factoryConsole,
@@ -671,7 +658,7 @@ test("la oferta activa conserva su plazo y nunca cae al tope global en pantalla"
   );
   assert.match(
     factoryConsole,
-    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*dataCreditoMaxFinancedAmount/
+    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorMode && iphoneFactory\s*\? iphoneMaxFinancedAmount\s*:\s*dataCreditoMaxFinancedAmount/
   );
   assert.match(
     factoryConsole,

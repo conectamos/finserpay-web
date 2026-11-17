@@ -40,7 +40,8 @@ test("el contrato separa cupo de rechazo y el GET lee solo el aliado autenticado
   assert.match(exhaustedBranch, /dailyQuota: serializeDataCreditoDailyQuota\(/);
   assert.doesNotMatch(exhaustedBranch, /RECHAZADO|solicitudTechnicalResponse/);
   assert.match(policyRoute,
-    /const dailyQuota = simulationRequested\s*\? undefined\s*:\s*await getDataCreditoDailyQuotaSnapshot\(quotaAllyId\)/);
+    /const dailyQuota = await getDataCreditoDailyQuotaSnapshot\(quotaAllyId\)/);
+  assert.ok(policyRoute.indexOf('kind: "GENERAL_CREDIT_SETTINGS"') < policyRoute.indexOf("const dailyQuota ="));
   assert.doesNotMatch(policyRoute, /getDataCreditoDailyQuotaSnapshot\(.*searchParams/);
   assert.doesNotMatch(policyRoute, /getActiveSolicitudCreditContext|expireStaleSolicitudes/);
   const reuse = storage.indexOf("const reusable = await tryReuseDataCreditoAssessment", storage.indexOf("export async function reserveDataCreditoAssessment"));
@@ -67,6 +68,7 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
   const quotaReads = [];
   const policyReads = [];
   const ownerReads = [];
+  const settingsReads = [];
   const dependencies = {
     NextResponse: Response,
     getSessionUser: async () => user,
@@ -90,9 +92,8 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
       quotaReads.push(id);
       return serializeDataCreditoDailyQuota({ limit: 5, used: 5, resetsAt });
     },
-    resolveDataCreditoDecision: () => ({ decision: "APROBADO", offer: {} }),
-    getDataCreditoSimulationConditions: () => [{ id: "condition-1", offer: { initialPaymentPercentage: 30 } }],
-    DATACREDITO_NO_INFORMATION_SCORE: -1,
+    getCreditSettings: async () => { settingsReads.push("GLOBAL"); return { plazoCuotas: 16 }; },
+    getPlatformCreditSettings: (settings) => settings,
     serializePolicyResponse: (input) => ({ ok: true, ...input }),
     DataCreditoStorageConfigurationError: class extends Error {},
   };
@@ -100,7 +101,7 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
     `${stripTypeScriptTypes(policyGetSource.replace("export async", "async"))}; return GET;`
   )(...Object.values(dependencies));
   const response = await get(new Request(`https://finserpay.test/api/creditos/datacredito/politica${query}`));
-  return { status: response.status, body: await response.json(), quotaReads, policyReads, ownerReads };
+  return { status: response.status, body: await response.json(), quotaReads, policyReads, ownerReads, settingsReads };
 }
 
 test("GET cuota: autenticacion, propietario autorizado y aislamiento entre aliados", async () => {
@@ -142,6 +143,9 @@ test("GET cuota: autenticacion, propietario autorizado y aislamiento entre aliad
   assert.equal(simulation.status, 200);
   assert.deepEqual(simulation.quotaReads, []);
   assert.deepEqual(simulation.ownerReads, []);
+  assert.deepEqual(simulation.policyReads, []);
+  assert.deepEqual(simulation.settingsReads, ["GLOBAL"]);
+  assert.equal(simulation.body.simulation.kind, "GENERAL_CREDIT_SETTINGS");
   assert.equal(simulation.body.dailyQuota, undefined);
 });
 

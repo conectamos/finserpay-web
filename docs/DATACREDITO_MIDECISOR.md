@@ -284,6 +284,21 @@ cambió primero, la API responde `409 ALLY_DAILY_QUERY_LIMIT_CONFLICT` e informa
 duplicados devuelve `POLICY_NAME_CONFLICT`. El catálogo y todas sus mutaciones
 son exclusivos del administrador central.
 
+Al duplicar una política, el editor conserva una instantánea del origen y su
+versión, y prepara bandas, reglas y parámetros financieros independientes. La
+creación envía ese borrador como un perfil nuevo; el editor del origen permanece
+oculto durante la preparación. Cambiar de perfil, pestaña, cancelar o recargar
+requiere confirmar que se descarta la copia pendiente. Los errores de validación
+o nombre repetido conservan sus campos para corregirlos y volver a guardar.
+
+Si una mutación se confirmó pero falló la lectura posterior del catálogo, la API
+responde con el estado de éxito de esa operación y las marcas
+`operationCommitted: true`, `catalogReloadRequired: true` y
+`POLICY_CATALOG_REFRESH_FAILED`, además de su identificador. La consola muestra
+que el cambio quedó guardado, bloquea nuevos envíos y recupera el listado mediante
+`GET`. Conserva los cambios todavía pendientes del lote de aliados; nunca repite
+una asignación o un cupo ya confirmado para reconstruir la pantalla.
+
 `maxFinancedAmount` es un entero en pesos colombianos y representa el saldo
 máximo que DataCrédito permite financiar. No es una base sobre la cual se
 calcula el porcentaje de inicial. Primero se calcula la inicial exigida por la
@@ -310,39 +325,34 @@ venta de `$3.000.000`, cupo y tope iPhone de `$3.500.000` e inicial del `20%`,
 la inicial mínima es `$440.000 + $800.000 = $1.240.000`. El cupo superior no
 permite financiar el sobrecosto sobre el precio base del equipo.
 
-### Simulador del aliado
+### Simulador con parámetros generales
 
-El simulador Android e iPhone consulta la última revisión publicada de la política
-asignada al aliado de la sesión mediante
+El simulador Android e iPhone usa los parámetros generales de crédito, con las
+opciones de inicial del 20 % y 30 %. Crear, editar o reasignar políticas de riesgo
+a un aliado no cambia la cotización base ni sus porcentajes. La configuración se
+consulta, con una sesión autenticada, mediante
 `GET /api/creditos/datacredito/politica?purpose=simulation&platform=ANDROID|IPHONE`.
-Después de publicar o reasignar una política, se recarga el simulador para obtener
-esa revisión. Una política inactiva o sin condiciones aprobadas para la plataforma
-presenta su estado y no produce una cotización.
 
-La respuesta `simulation` conserva `simulationOnly: true`, `policyVersion` y
-`policyRevisionId`, y entrega `conditions: [{ id, offer }]`. Cada opción contiene
-una oferta aprobada completa: porcentaje de inicial, cupo máximo financiado,
-plazo máximo, cuota máxima cuando corresponde, y configuración financiera
-versionada de interés, fianza, seguro, frecuencia, cálculo y redondeo. Las ofertas
-idénticas se agrupan; dos ofertas con la misma inicial y distintos límites siguen
-siendo opciones independientes. Los identificadores `condition-1`, etc., solo
-tienen sentido dentro de la plataforma y revisión recibida. El DTO no entrega
-puntajes, rangos, identificadores de bandas ni reglas prioritarias al asesor.
+Esta lectura se resuelve antes de revisar la integración DataCrédito. No requiere
+proveedor habilitado, auditoría, política asignada, puntajes ni bandas aprobadas.
+La respuesta es `simulation: { kind: "GENERAL_CREDIT_SETTINGS", simulationOnly:
+true, platform, settings, globalSettings }`: `settings` adapta los parámetros a
+la plataforma y `globalSettings` conserva la configuración general de origen.
+No entrega una oferta aprobada, una decisión, condiciones de bandas ni una
+revisión de política.
 
-Elegir una condición sustituye la oferta completa para calcular la cotización en
-ambas plataformas; los porcentajes no se combinan con el cupo o plazo de otra
-condición. iPhone toma la inicial, cupo, plazo y cuota máxima de la opción elegida,
-en lugar de sustituirlos por los parámetros generales. Android también ajusta la
-inicial mínima según el cupo de la oferta y el precio base del equipo. El excedente
-sobre el precio base permanece en la inicial para Android e iPhone; un cupo mayor
-no habilita financiar ese excedente. El asesor puede aumentar la inicial y elegir
-un plazo disponible dentro de los límites de la condición.
+El cálculo usa la tasa, fianza, seguro, frecuencia, versión y redondeo generales.
+Cada plataforma conserva sus plazos configurados; iPhone también conserva sus
+topes generales de financiado y cuota. El precio base del modelo sigue limitando
+la financiación y el excedente permanece en la inicial para Android e iPhone.
+El asesor puede aumentar la inicial y elegir un plazo disponible dentro de las
+reglas generales. Los parámetros se vuelven a leer al abrir o recargar el simulador.
 
-Esta selección es de consulta: no consulta a Experian, no consume cupo diario, no
-crea una evaluación ni aprueba a un cliente. Las reglas prioritarias requieren la
-información real del titular y se aplican durante la precalificación existente.
-La originación conserva la banda resuelta por el servidor y sus condiciones
-aprobadas; el selector del simulador no modifica evaluaciones, créditos ni contratos.
+La simulación no consulta a Experian, no consume cupo diario, no aplica excepciones
+por cédula y no crea evaluaciones, créditos ni contratos. Durante una venta real,
+la precalificación continúa utilizando la política asignada al aliado y sus reglas
+prioritarias. La banda evaluada por el servidor conserva las condiciones autorizadas
+para originar ese crédito.
 
 ## Reutilización de consultas durante 15 días
 

@@ -230,6 +230,270 @@ const policyButton = (h, label) => h.find(node => node.type === "Button" && text
 const policyDialog = (h, title) => h.find(node => node.type === "ConfirmDialog" && node.props.title === title);
 const platformEditor = (h, platform = "ANDROID") => h.find(node => typeof node.type === "function" && node.type.name === "PlatformEditor" && node.props.platform === platform);
 
+async function beginPolicyCopy(h, name = "Recuperar cartera") {
+  policyButton(h, "Nueva política").props.onClick();
+  await h.flush();
+  byId(h, "new-policy-name").props.onChange({ target: { value: name } });
+  await h.flush();
+}
+
+test("duplicating isolates bands, finances and priorities and creates only the new profile", async () => {
+  const original = catalog(), before = JSON.stringify(original), requests = [];
+  let resolveCreate;
+  const h = mountPolicy(async (url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    requests.push({ url, options, body });
+    if (options?.method === "POST") return await new Promise(resolve => { resolveCreate = () => {
+      const updated = structuredClone(original);
+      updated.profiles.push({ ...updated.profiles[0], id: "new-copy", name: body.name, version: 1,
+        bands: body.bands, financialSettings: body.financialSettings, priorityRules: body.priorityRules, assignedAlliesCount: 0 });
+      resolve(Response.json({ ...updated, createdPolicyId: "new-copy" }));
+    }; });
+    return Response.json(original);
+  });
+  await h.flush(); await beginPolicyCopy(h);
+  assert.equal(h.all(node => node.type === "Button" && text(node).trim() === "Publicar nueva versión").length, 0,
+    "El formulario de copia no presenta la publicación del origen");
+  platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "2500000");
+  h.find(node => node.type === "Input" && node.props.value === "25.2").props.onChange({ target: { value: "24" } });
+  h.find(node => typeof node.type === "function" && node.type.name === "PriorityRuleEditor")
+    .props.onThresholdChange("telcoDelinquency", "ANDROID", "1500000");
+  await h.flush();
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").maxFinancedAmount, "2500000");
+  assert.equal(JSON.stringify(original), before, "El catálogo y los objetos del origen conservan todos sus términos");
+  assert.equal(policyButton(h, "Crear copia").props.disabled, false);
+  const create = policyButton(h, "Crear copia").props.onClick;
+  create(); create(); await h.flush();
+  assert.equal(requests.filter(request => request.options?.method === "POST").length, 1);
+  assert.equal(requests.filter(request => request.options?.method === "PATCH").length, 0);
+  const sent = requests.find(request => request.body)?.body;
+  assert.equal(sent.bands.find(band => band.id === "android-high").maxFinancedAmount, 2_500_000);
+  assert.equal(sent.financialSettings.tasaInteresEa, 24);
+  assert.equal(sent.priorityRules.telcoDelinquency.rejectAboveCopByPlatform.ANDROID, 1_500_000);
+  resolveCreate(); await h.flush();
+  assert.match(h.text(), /Recuperar cartera.*creada como versión 1.*Política general.*v10/);
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").maxFinancedAmount, "2500000");
+  assert.equal(JSON.stringify(original), before);
+});
+
+test("changing the copy source requires discard and cancel keeps its snapshot and editable values", async () => {
+  const requests = [], h = mountPolicy(async (url, options) => {
+    requests.push({ url, options }); return Response.json(catalog());
+  });
+  await h.flush(); await beginPolicyCopy(h, "Mi nueva política");
+  platformEditor(h).props.onChange("android-high", "initialPaymentPercentage", "35"); await h.flush();
+  const select = () => h.find(node => node.type === "Select" && node.props.value === "general");
+  select().props.onChange({ target: { value: "other" } }); await h.flush();
+  const discard = policyDialog(h, "Descartar borrador y cambiar de política");
+  assert.equal(discard.props.open, true);
+  discard.props.onCancel(); await h.flush();
+  assert.equal(byId(h, "new-policy-name").props.value, "Mi nueva política");
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "35");
+  assert.match(h.text(), /Copia independiente de.*Política general.*versión 10/);
+  select().props.onChange({ target: { value: "other" } }); await h.flush();
+  policyDialog(h, "Descartar borrador y cambiar de política").props.onConfirm(); await h.flush();
+  assert.equal(h.all(node => node.props?.id === "new-policy-name").length, 0);
+  assert.equal(h.find(node => node.type === "Select" && node.props.value === "other").props.value, "other");
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "20");
+  assert.equal(requests.length, 1, "Cambiar el origen no publica ni duplica perfiles");
+});
+
+test("tab navigation and reload confirm discarding the independent copy", async () => {
+  const requests = [], h = mountPolicy(async (url, options) => {
+    requests.push({ url, options }); return Response.json(catalog());
+  });
+  await h.flush(); await beginPolicyCopy(h);
+  byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+  assert.equal(policyDialog(h, "Descartar la nueva política").props.open, true);
+  assert.equal(byId(h, "datacredito-policies-tab").props["aria-selected"], true);
+  policyDialog(h, "Descartar la nueva política").props.onCancel(); await h.flush();
+  assert.equal(byId(h, "new-policy-name").props.value, "Recuperar cartera");
+  h.find(node => node.type === "Button" && node.props["aria-label"] === "Actualizar políticas").props.onClick(); await h.flush();
+  assert.equal(policyDialog(h, "Descartar cambios y recargar").props.open, true);
+  assert.equal(requests.length, 1);
+  policyDialog(h, "Descartar cambios y recargar").props.onCancel(); await h.flush();
+  assert.equal(byId(h, "new-policy-name").props.value, "Recuperar cartera");
+  byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+  policyDialog(h, "Descartar la nueva política").props.onConfirm(); await h.flush();
+  assert.equal(byId(h, "datacredito-assignments-tab").props["aria-selected"], true);
+  assert.equal(requests.length, 1);
+});
+
+test("a rejected creation retains the copy and retries its edited bands without publishing the source", async () => {
+  const requests = [], h = mountPolicy(async (url, options) => {
+    requests.push({ url, options, body: options?.body ? JSON.parse(options.body) : null });
+    return options?.method === "POST"
+      ? Response.json({ ok: false, code: "POLICY_NAME_CONFLICT", error: "Ya existe una política con ese nombre", correlationId: "COPY-409" }, { status: 409 })
+      : Response.json(catalog());
+  });
+  await h.flush(); await beginPolicyCopy(h, "Nombre repetido");
+  platformEditor(h).props.onChange("android-high", "installmentCount", "36"); await h.flush();
+  policyButton(h, "Crear copia").props.onClick(); await h.flush();
+  assert.match(h.text(), /Ya existe una política con ese nombre/);
+  assert.match(h.text(), /COPY-409/);
+  assert.equal(byId(h, "new-policy-name").props.value, "Nombre repetido");
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").installmentCount, "36");
+  byId(h, "new-policy-name").props.onChange({ target: { value: "Nombre corregido" } }); await h.flush();
+  policyButton(h, "Crear copia").props.onClick(); await h.flush();
+  const sends = requests.filter(request => request.body);
+  assert.equal(sends.length, 2);
+  assert.equal(sends[1].body.name, "Nombre corregido");
+  assert.deepEqual(sends[1].body.bands, sends[0].body.bands);
+  assert.ok(sends.every(request => request.options.method === "POST"));
+});
+
+test("copy band removal merges the isolated ranges and leaves the published source unchanged", async () => {
+  const original = catalog(), before = JSON.stringify(original);
+  const h = mountPolicy(async () => Response.json(original));
+  await h.flush(); await beginPolicyCopy(h);
+  platformEditor(h).props.onRemove("android-low"); await h.flush();
+  byId(h, "policy-band-removal-target").props.onChange({ target: { value: "android-high" } }); await h.flush();
+  policyButton(h, "Revisar eliminación").props.onClick(); await h.flush();
+  policyDialog(h, "Confirmar eliminación de banda").props.onConfirm(); await h.flush();
+  const copied = platformEditor(h).props.bands;
+  assert.equal(copied.some(band => band.id === "android-low"), false);
+  assert.equal(copied.find(band => band.id === "android-high").scoreMin, "0");
+  assert.equal(JSON.stringify(original), before);
+  policyButton(h, "Cancelar").props.onClick(); await h.flush();
+  policyDialog(h, "Descartar la nueva política").props.onConfirm(); await h.flush();
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").scoreMin, "500");
+  assert.equal(policyButton(h, "Publicar nueva versión").props.disabled, true);
+});
+
+const committedCatalogFailure = (operation, extra = {}) => ({ ok: true, operationCommitted: true,
+  catalogReloadRequired: true, committedOperation: operation, code: "POLICY_CATALOG_REFRESH_FAILED",
+  message: "El cambio quedó guardado. Actualiza el listado.", correlationId: "COMMITTED-QA", ...extra });
+const recoveryFieldset = h => h.find(node => node.type === "fieldset" && node.props["aria-label"] === "Configuración de políticas");
+
+test("a committed creation blocks resend and recovers its exact new profile through GET even after another read failure", async () => {
+  const requests = [], server = catalog();
+  let reads = 0;
+  const h = mountPolicy(async (url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    requests.push({ url, options, body });
+    if (options?.method === "POST") {
+      server.profiles.push({ ...structuredClone(server.profiles[0]), id: "saved-copy", name: body.name, version: 1,
+        bands: body.bands, financialSettings: body.financialSettings, priorityRules: body.priorityRules, assignedAlliesCount: 0 });
+      return Response.json(committedCatalogFailure("CREATE_POLICY", { createdPolicyId: "saved-copy" }), { status: 201 });
+    }
+    reads += 1;
+    return reads === 2 ? Response.json({ ok: false, error: "Lectura todavía no disponible" }, { status: 503 }) : Response.json(server);
+  });
+  await h.flush(); await beginPolicyCopy(h, "Copia guardada");
+  platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "2100000"); await h.flush();
+  const staleCreate = policyButton(h, "Crear copia").props.onClick;
+  staleCreate(); await h.flush();
+  assert.match(h.text(), /Copia guardada.*quedó creada/);
+  assert.equal(recoveryFieldset(h).props.disabled, true);
+  assert.equal(byId(h, "new-policy-name").props.value, "Copia guardada");
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").maxFinancedAmount, "2100000");
+  staleCreate(); await h.flush();
+  assert.equal(requests.filter(request => request.options?.method === "POST").length, 1);
+  policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
+  assert.match(h.text(), /Lectura todavía no disponible/);
+  assert.equal(recoveryFieldset(h).props.disabled, true);
+  policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
+  assert.equal(recoveryFieldset(h).props.disabled, false);
+  assert.equal(h.all(node => node.props?.id === "new-policy-name").length, 0);
+  assert.equal(h.find(node => node.type === "Select" && node.props.value === "saved-copy").props.value, "saved-copy");
+  assert.match(h.text(), /catálogo ya está actualizado/);
+  assert.equal(requests.filter(request => request.options?.method === "POST").length, 1);
+});
+
+test("a committed revision recovers the published version without repeating the PATCH", async () => {
+  const requests = [], server = catalog();
+  const h = mountPolicy(async (url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    requests.push({ url, options, body });
+    if (body?.action === "SAVE_REVISION") {
+      server.profiles[0] = { ...server.profiles[0], version: 11, bands: body.bands, financialSettings: body.financialSettings, priorityRules: body.priorityRules };
+      return Response.json(committedCatalogFailure("SAVE_REVISION", { updatedPolicyId: "general" }));
+    }
+    return Response.json(server);
+  });
+  await h.flush();
+  platformEditor(h).props.onChange("android-high", "initialPaymentPercentage", "35"); await h.flush();
+  policyButton(h, "Publicar nueva versión").props.onClick(); await h.flush();
+  const staleConfirm = policyDialog(h, "Publicar nueva revisión").props.onConfirm;
+  staleConfirm(); await h.flush();
+  assert.match(h.text(), /Política general.*quedó publicada/);
+  assert.equal(recoveryFieldset(h).props.disabled, true);
+  staleConfirm(); await h.flush();
+  policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
+  assert.equal(recoveryFieldset(h).props.disabled, false);
+  assert.equal(policyButton(h, "Publicar nueva versión").props.disabled, true);
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "35");
+  assert.equal(requests.filter(request => request.body?.action === "SAVE_REVISION").length, 1);
+  assert.equal(requests.find(request => request.body?.action === "SAVE_REVISION").body.expectedVersion, 10);
+});
+
+for (const committedAction of ["ASSIGN_ALLY", "SET_ALLY_DAILY_QUOTA"]) {
+  test(`committed ${committedAction} preserves the unfinished ally changes and never repeats the saved operation`, async () => {
+    const requests = [], server = catalog();
+    let returnedMarker = false;
+    const h = mountPolicy(async (url, options) => {
+      const body = options?.body ? JSON.parse(options.body) : null;
+      requests.push({ url, options, body });
+      if (body?.action === "ASSIGN_ALLY") {
+        const ally = server.allies.find(item => item.id === body.allyId);
+        ally.policyId = body.policyId; ally.policyName = "Otra política";
+      }
+      if (body?.action === "SET_ALLY_DAILY_QUOTA") {
+        const ally = server.allies.find(item => item.id === body.allyId);
+        ally.dailyQueryLimit = body.dailyQueryLimit; ally.dailyQueriesRemaining = body.dailyQueryLimit - ally.dailyQueriesUsed;
+      }
+      if (body?.action === committedAction && !returnedMarker) {
+        returnedMarker = true;
+        return Response.json(committedCatalogFailure(committedAction, committedAction === "ASSIGN_ALLY" ? { assignedAllyId: body.allyId } : { dailyQuotaUpdatedAllyId: body.allyId }));
+      }
+      return Response.json(server);
+    });
+    await h.flush(); byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+    h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Alfa QA").props.onChange({ target: { value: "other" } });
+    byId(h, "datacredito-daily-limit-1").props.onChange({ target: { value: "35" } });
+    h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Beta QA").props.onChange({ target: { value: "other" } });
+    await h.flush();
+    const save = () => h.find(node => node.type === "Button" && node.props["aria-describedby"] === "datacredito-assignment-save-help");
+    save().props.onClick(); await h.flush();
+    const staleConfirm = policyDialog(h, "Guardar políticas y cupos diarios").props.onConfirm;
+    staleConfirm(); await h.flush();
+    assert.equal(recoveryFieldset(h).props.disabled, true);
+    staleConfirm(); await h.flush();
+    policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
+    assert.equal(byId(h, "datacredito-daily-limit-1").props.value, "35");
+    assert.equal(h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Beta QA").props.value, "other");
+    save().props.onClick(); await h.flush();
+    policyDialog(h, "Guardar políticas y cupos diarios").props.onConfirm(); await h.flush();
+    assert.equal(requests.filter(request => request.body?.action === "ASSIGN_ALLY" && request.body.allyId === 1).length, 1);
+    assert.equal(requests.filter(request => request.body?.action === "SET_ALLY_DAILY_QUOTA" && request.body.allyId === 1).length, 1);
+    assert.equal(requests.filter(request => request.body?.action === "ASSIGN_ALLY" && request.body.allyId === 2).length, 1);
+    assert.equal(save().props.disabled, true);
+  });
+}
+
+test("a committed retirement is displayed as saved and recovers the default selection through GET", async () => {
+  const requests = [], server = catalog();
+  const h = mountPolicy(async (url, options) => {
+    requests.push({ url, options });
+    if (options?.method === "DELETE") {
+      server.profiles[1].active = false;
+      return Response.json(committedCatalogFailure("RETIRE_POLICY", { deletionMode: "RETIRED", policy: { id: "other", active: false } }));
+    }
+    return Response.json(server);
+  });
+  await h.flush();
+  h.find(node => node.type === "Select" && node.props.value === "general").props.onChange({ target: { value: "other" } }); await h.flush();
+  h.find(node => node.type === "Button" && node.props["aria-label"] === "Retirar política").props.onClick(); await h.flush();
+  const staleConfirm = policyDialog(h, "Retirar política").props.onConfirm;
+  staleConfirm(); await h.flush();
+  assert.match(h.text(), /Otra política.*quedó retirada/);
+  assert.equal(recoveryFieldset(h).props.disabled, true);
+  staleConfirm(); await h.flush();
+  policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
+  assert.equal(h.find(node => node.type === "Select" && node.props.value === "general").props.value, "general");
+  assert.equal(requests.filter(request => request.options?.method === "DELETE").length, 1);
+});
+
 test("policy draft survives tab navigation and failed publication without changing historical versions", async () => {
   const requests = [];
   const h = mountPolicy(async (url, options) => {
