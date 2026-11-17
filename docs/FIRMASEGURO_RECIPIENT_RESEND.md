@@ -1,9 +1,11 @@
 # Actualizar y reenviar el mismo firmante en FirmaSeguro
 
-## Flujo vigente: portal con correo y contraseña
+## Integración preparada: portal con correo y contraseña
 
-Desde el 13 de noviembre de 2026, las nuevas operaciones de **Gestionar firma**
-utilizan el portal `https://app.firmaseguro.co`. La API sigue consultando el proceso
+La integración de **Gestionar firma** usa el portal `https://app.firmaseguro.co`
+para las nuevas operaciones cuando su activación explícita está habilitada.
+Está desactivada por defecto, pendiente de validar el contenedor Linux y un
+reenvío real autorizado de una firma pendiente. La API sigue consultando el proceso
 y vinculando su identificador de firmante; la edición del contacto y el reenvío
 se realizan mediante los controles del portal. No existe retorno automático a las
 mutaciones API cuando falla el portal.
@@ -19,20 +21,37 @@ documento, el identificador del firmante, su identidad y que la firma continúe
 pendiente. Solo cambia celular y correo, conserva los demás campos y verifica
 el contacto guardado mediante una nueva lectura antes de reenviar. No crea otro
 proceso ni sustituye el PDF. Un CAPTCHA, cambio de estructura o coincidencia
-ambigua detiene la operación.
+ambigua detiene la operación. Antes de editar y antes de confirmar el reenvío
+se exige que la sección **Notificaciones** confirme WhatsApp habilitado y correo
+deshabilitado. La configuración se lee de sus indicadores explícitos, no del
+método de autenticación **OTP Whatsapp**. Una configuración desconocida, mixta
+o cambiada bloquea la operación; no se modifica para forzar el envío.
 
 El historial guarda el contacto anterior leído del portal (`PORTAL_READBACK`),
-el contacto solicitado y `afterContact.transport: "PORTAL"`. Una edición sin
+el contacto solicitado, `afterContact.transport: "PORTAL"` y
+`afterContact.configuredNotificationChannel: "WHATSAPP"`. Una edición sin
 confirmación se concilia mediante lectura antes de continuar. Un reenvío iniciado
 o incierto nunca se repite automáticamente. La confirmación **Solicitud reenviada**
-acredita la aceptación del portal; el canal, la entrega y la lectura del cliente
-permanecen sin confirmar. Los reintentos de operaciones históricas sin marcador
+acredita la aceptación del portal. La configuración WhatsApp queda separada de
+la emisión efectiva, la entrega y la lectura, que permanecen sin confirmar.
+El control del proveedor conserva el título **Reenviar correo**; no se interpreta
+como prueba de envío por ese canal ni como recibo de WhatsApp.
+Los reintentos de operaciones históricas sin marcador
 de transporte conservan su flujo API original.
 
 El contenedor incluye Chromium headless de Playwright, de la misma versión exacta
 que la dependencia de producción, bajo `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`.
 En desarrollo se instala con `npx playwright install --only-shell chromium`.
+El proceso se ejecuta sin root y exige el sandbox de Chromium, sin desactivarlo
+como alternativa si el entorno no lo admite. El navegador recibe solo variables
+del sistema necesarias para arrancar; no hereda los secretos de la aplicación.
 Cada operación cierra su contexto; no guarda perfiles, capturas ni trazas de acceso.
+Cada respuesta de red se consulta sin reintentos ni seguimiento automático de
+redirecciones. Las redirecciones de navegación admitidas se convierten en un GET
+nuevo sujeto a la misma validación; nunca se propaga el cuerpo de un POST a otro
+salto. Se bloquean POST 307/308, redirecciones AJAX, destinos desconocidos y
+cabeceras Refresh. Las pruebas sintéticas comprueban cookies y cadenas de
+redirección sin usar cuentas ni notificaciones reales.
 Las pruebas automatizadas usan un portal simulado. El 13 de noviembre de 2026 se
 comprobó además el inicio de sesión real y el listado con Chromium headless en
 Windows, usando las credenciales actuales de Railway sin mostrarlas. La consulta
@@ -43,7 +62,35 @@ sesión. La comprobación identificó la ruta canónica de contraseña
 
 Esa consulta no editó contactos ni reenvió solicitudes. Antes de activar siguen
 pendientes la comprobación del contenedor Linux y la edición/reenvío de un caso
-pendiente con destinatario autorizado.
+pendiente con destinatario autorizado. La revisión de solo lectura del 17 de
+noviembre confirmó la separación de los indicadores de notificación y OTP en
+el portal. El caso disponible ya estaba firmado y no se editó ni reenvió.
+
+### Activación y validación pendiente
+
+- `FIRMASEGURO_PORTAL_RESEND_ENABLED` debe ser exactamente `true`. Ausente,
+  `false` u otro valor bloquea nuevas operaciones y continuaciones del portal
+  antes de autenticar o mutar. Las operaciones API históricas conservan su transporte.
+- `FIRMASEGURO_PORTAL_RESEND_DRAFT_IDS` permite limitar el piloto a IDs internos
+  de solicitudes separados por coma. Ausente permite todos al activar; vacío,
+  inválido o ambiguo bloquea todos. No usar una solicitud ya firmada para el piloto.
+- Verificar primero arranque Chromium con sandbox y acceso/listado en el mismo
+  contenedor Linux, sin editar contactos ni reenviar. Un fallo de sandbox o de
+  estructura se resuelve antes de habilitar el piloto.
+- Con un caso pendiente autorizado: confirmar proceso, firmante, folio y destino;
+  realizar una única operación; verificar contacto por lectura del portal y
+  correlacionar el mensaje con enlace de firma al destinatario y hora. Un OTP
+  o el acuse genérico no sustituye esa comprobación. Si el resultado es incierto,
+  no repetir el reenvío para probar de nuevo.
+- Ampliar el alcance solo tras verificar ese resultado. Conservar credenciales,
+  PDF, UUID, identidad, autenticación y configuración de notificaciones existentes.
+
+Prueba de navegador opcional, exclusivamente con dos servidores loopback y
+credenciales ficticias: ejecutar `tests/firmaseguro-portal.test.mjs` con
+`FIRMASEGURO_PORTAL_SYNTHETIC_BROWSER_TEST=1`; se puede seleccionar el canal de
+Chrome instalado con `FIRMASEGURO_PORTAL_SYNTHETIC_BROWSER_CHANNEL=chrome`.
+Esta prueba no sustituye la comprobación del contenedor Linux ni la recepción
+del enlace de firma de un caso autorizado.
 
 ## Referencia histórica: contrato API
 

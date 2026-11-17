@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { resolveAllyPaymentPlatform } from "@/lib/ally-payments-core";
 import { getReplacementRemission } from "@/lib/credit-device-replacement-remission";
 import { readFinancingTermsSeal } from "@/lib/credit-amortization-contract";
+import { isFirmaSeguroPortalResendEnabled } from "@/lib/firmaseguro-portal-rollout";
 import { isVerifiedPendingSignatureStatus, isVerifiedTerminalDraftImeiRetry,
   isVerifiedTerminalSignatureFailure, supportsPendingSignatureRecipientDelivery } from "@/lib/approval-operations-core";
 import {
@@ -440,7 +441,8 @@ function creditCapabilities(row: CreditRow, signature: OperationalSignature, rep
     reason, signatureReason };
 }
 function draftCapabilities(row: DraftRow, signature: OperationalSignature,
-  signatures: SignatureRow[], unresolvedDispatch: boolean) {
+  signatures: SignatureRow[], unresolvedDispatch: boolean,
+  pendingDelivery: OperationalCaseDetail["pendingRecipientDelivery"]) {
   const platform = clean(row.plataforma) || clean(record(row.payload).plataformaDispositivo);
   const payload = record(row.payload);
   const open = row.estado === "ABIERTO" && [3, 4].includes(row.currentStep) &&
@@ -479,8 +481,9 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
   const redirectableSignature = signature.status === "PENDING";
   const singleRecipient = Boolean(activeSignature && hasSingleSignatureRecipient(activeSignature));
   const recipientDeliverySupported = supportsPendingSignatureRecipientDelivery(platform);
+  const recipientDeliveryEnabled = pendingDelivery?.transport === "API" || isFirmaSeguroPortalResendEnabled(row.id);
   const canRedirectPendingSignature = Boolean(open && recipientDeliverySupported && !unresolvedDispatch &&
-    redirectableSignature && signature.processUuid && activeSignatures.length === 1 && singleRecipient);
+    redirectableSignature && signature.processUuid && activeSignatures.length === 1 && singleRecipient && recipientDeliveryEnabled);
   const pendingSignatureRedirectReason = canRedirectPendingSignature ? null
     : !open ? "La solicitud ya no está abierta en Identidad y firma."
     : !recipientDeliverySupported ? "La plataforma de esta solicitud no permite gestionar el destinatario de la firma."
@@ -493,6 +496,7 @@ function draftCapabilities(row: DraftRow, signature: OperationalSignature,
     : activeSignatures.length !== 1
       ? "El expediente no tiene una única firma vigente. Requiere revisión técnica."
     : !singleRecipient ? "No se pudo identificar un único firmante para reenviar el mismo documento. Requiere revisión técnica."
+    : !recipientDeliveryEnabled ? "La actualización de celular y el reenvío desde el portal aún no están habilitados para esta solicitud. Puedes consultar el estado de la firma."
     : "La firma pendiente no se puede redirigir en este momento.";
   const reason = !open ? "La solicitud ya no está abierta en Identidad y firma."
     : !supported ? "El cambio de IMEI con nueva firma está disponible solo para iPhone."
@@ -724,6 +728,7 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
           && contactSource !== undefined && !["PROVIDER_READBACK", "PORTAL_READBACK"].includes(String(contactSource));
         pendingRecipientDelivery = { id: pending.id, status: pending.status,
           transport: contact.transport === "PORTAL" ? "PORTAL" : "API",
+          configuredNotificationChannel: contact.transport === "PORTAL" && contact.configuredNotificationChannel === "WHATSAPP" ? "WHATSAPP" : null,
           processUuid: pending.processUuid, phone: clean(contact.phone), email: clean(contact.email),
           reason: pending.reason, actorName: pending.actorName,
           retryable: !unverifiedPhoneEdit && pending.processUuid === signature.processUuid &&
@@ -753,6 +758,7 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
           if (acceptedAt && deliveries[0].resentContact) signature.lastResend = {
             acceptedAt, transport: resentContact.transport === "PORTAL" ? "PORTAL" : "API",
             channel: resentContact.transport === "PORTAL" ? "UNCONFIRMED" : "EMAIL",
+            configuredNotificationChannel: resentContact.transport === "PORTAL" && resentContact.configuredNotificationChannel === "WHATSAPP" ? "WHATSAPP" : null,
             phone: clean(resentContact.phone), email: clean(resentContact.email), deliveryStatus: "UNCONFIRMED",
           };
         }
@@ -787,7 +793,9 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
               : []);
           timeline.push({ id: `firma-destino:${event.id}`, at,
             label: event.status === "RESENT" && portal
-              ? "Reenvío solicitado desde el portal; canal y entrega sin confirmar"
+              ? after.configuredNotificationChannel === "WHATSAPP"
+                ? "Reenvío aceptado por el portal; configuración WhatsApp verificada, entrega sin confirmar"
+                : "Reenvío solicitado desde el portal; canal y entrega sin confirmar"
               : (deliveryLabels[event.status] || "Reenvío de FirmaSeguro actualizado") + (portal ? " en el portal" : ""),
             detail: [clean(event.reason), ...changes].filter(Boolean).join(" · ") || null,
             actor: clean(event.actorName), status: event.status });
@@ -885,6 +893,6 @@ export async function getOperationalCase(kindValue: unknown, idValue: unknown, d
       ? creditCapabilities(rows[0] as CreditRow, signature, replacement, pendingVersion,
           versions[0] || null, signatures, versions, originalSourceSigned, remission,
           approvalReissuePending, initialSignaturePending, historicalSignedSource)
-      : draftCapabilities(rows[0] as DraftRow, signature, signatures, unresolvedDraftDispatch),
+      : draftCapabilities(rows[0] as DraftRow, signature, signatures, unresolvedDraftDispatch, pendingRecipientDelivery),
   };
 }

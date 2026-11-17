@@ -12,12 +12,13 @@ import { openFirmaSeguroPortalRecipient, FirmaSeguroPortalError,
   type FirmaSeguroPortalRecipient } from "@/lib/firmaseguro-portal";
 import { tryAcquireSolicitudOperationLock, type FirmaSeguroProcessRow } from "@/lib/firmaseguro-storage";
 import { getUnresolvedDraftDispatch } from "@/lib/firmaseguro-draft-dispatch-ledger";
+import { isFirmaSeguroPortalResendEnabled } from "@/lib/firmaseguro-portal-rollout";
 
 export type FirmaSeguroRecipientDeliveryStatus = "PREPARING" | "EDITING" | "RECIPIENT_UPDATED" | "RESENDING"
   | "RESENT" | "EDIT_UNCERTAIN" | "RESEND_FAILED" | "RESEND_UNCERTAIN" | "FAILED_SAFE";
 type Contact = { phone: string; email: string | null;
   source?: "FROZEN_REQUEST" | "ACKNOWLEDGED_EDIT" | "PROVIDER_READBACK" | "PORTAL_READBACK";
-  transport?: "PORTAL" | "API" };
+  transport?: "PORTAL" | "API"; configuredNotificationChannel?: "WHATSAPP" };
 export type FirmaSeguroRecipientDeliveryRow = {
   id: string; draftId: number; processUuid: string; signatureId: number;
   actorUserId: number; actorName: string; reason: string; intentSha256: string;
@@ -72,11 +73,15 @@ function assertReplay(row: FirmaSeguroRecipientDeliveryRow, input: Input) {
 }
 export function publicFirmaSeguroRecipientDelivery(row: FirmaSeguroRecipientDeliveryRow) {
   const transport = row.afterContact.transport === "PORTAL" ? "PORTAL" as const : "API" as const;
+  const configuredNotificationChannel = transport === "PORTAL"
+    && row.afterContact.configuredNotificationChannel === "WHATSAPP" ? "WHATSAPP" as const : null;
   const metadataEditUncertain = ["EDIT_UNCERTAIN", "EDITING"].includes(row.status)
     && row.beforeContact.source !== undefined
     && !["PROVIDER_READBACK", "PORTAL_READBACK"].includes(row.beforeContact.source);
   const message = row.status === "RESENT" ? transport === "PORTAL"
-    ? "El portal de FirmaSeguro confirmó la solicitud de reenvío del mismo documento. El canal y la entrega al cliente no están confirmados."
+    ? configuredNotificationChannel === "WHATSAPP"
+      ? "FirmaSeguro aceptó la solicitud de reenvío del mismo documento con notificaciones por WhatsApp configuradas. La emisión y la entrega al cliente no están confirmadas."
+      : "El portal de FirmaSeguro confirmó la solicitud de reenvío del mismo documento. El canal y la entrega al cliente no están confirmados."
     : "FirmaSeguro aceptó la solicitud de reenvío por correo del mismo documento. La entrega al correo y el envío por WhatsApp no están confirmados."
     : row.status === "RESEND_FAILED" ? "El contacto quedó actualizado en FirmaSeguro. El reenvío fue rechazado; puedes reintentar este mismo documento."
     : row.status === "RESEND_UNCERTAIN" || row.status === "RESENDING"
@@ -88,6 +93,7 @@ export function publicFirmaSeguroRecipientDelivery(row: FirmaSeguroRecipientDeli
     : row.status === "FAILED_SAFE" ? "FirmaSeguro rechazó el cambio de contacto. El documento original se conservó."
     : "El contacto está preparado para reenviar el mismo documento.";
   return { id: row.id, status: row.status, message, processUuid: row.processUuid, transport,
+    configuredNotificationChannel,
     notificationChannel: row.status === "RESENT" ? transport === "PORTAL" ? "UNCONFIRMED" as const : "EMAIL" as const : null,
     deliveryStatus: "UNCONFIRMED" as const,
     sentPhone: row.editedAt ? row.afterContact.phone : undefined, sentEmail: row.editedAt ? row.afterContact.email : undefined,
@@ -142,6 +148,14 @@ function assertPortalRecipient(recipient: FirmaSeguroPortalRecipient, signatureI
     || recipient.contactSource !== "PORTAL_READBACK" || !/^3\d{9}$/.test(recipient.phone)
     || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email))
     throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El portal no confirmó el destinatario del mismo documento.");
+  if (recipient.notificationChannels?.whatsApp !== true || recipient.notificationChannels?.email !== false)
+    throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_NOTIFICATION_CHANNEL_UNVERIFIED",
+      "El proceso debe tener notificaciones por WhatsApp habilitadas y por correo deshabilitadas. Revisa su configuración en FirmaSeguro.");
+}
+function assertPortalRollout(draftId: number) {
+  if (!isFirmaSeguroPortalResendEnabled(draftId))
+    throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_PORTAL_NOT_ENABLED",
+      "El reenvío desde el portal está pendiente de validación y aún no está habilitado.");
 }
 function sameContact(recipient: { phone: string; email: string | null }, contact: Contact) {
   return recipient.phone === contact.phone && (recipient.email || null) === contact.email;
@@ -155,6 +169,7 @@ function portalDefinitiveRejection(error: unknown, stage: "EDIT" | "RESEND") {
   return error instanceof FirmaSeguroPortalError && error.stage === stage && !error.uncertain;
 }
 async function deliverThroughPortal(input: Input, existing: FirmaSeguroRecipientDeliveryRow | null, process: FirmaSeguroProcessRow) {
+  assertPortalRollout(input.draftId);
   let row = existing;
   let signatureId: number;
   let identity: { identification: string; firstName: string; firstLastName: string };
@@ -180,10 +195,11 @@ async function deliverThroughPortal(input: Input, existing: FirmaSeguroRecipient
   try {
     let recipient = await portal.inspect();
     assertPortalRecipient(recipient, signatureId);
+    await currentPendingProcess(input.draftId, input.processUuid);
     if (!row) {
       const beforeContact: Contact = { phone: recipient.phone, email: recipient.email, source: "PORTAL_READBACK" };
       const afterContact: Contact = { phone: input.hasPhone ? input.phone! : recipient.phone,
-        email: input.hasEmail ? input.email : recipient.email, transport: "PORTAL" };
+        email: input.hasEmail ? input.email : recipient.email, transport: "PORTAL", configuredNotificationChannel: "WHATSAPP" };
       if (!/^3\d{9}$/.test(afterContact.phone) || !afterContact.email
         || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(afterContact.email))
         throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_CONTACT_INVALID", "Indica un celular y correo válidos para el destinatario.", 400);
@@ -221,6 +237,8 @@ async function deliverThroughPortal(input: Input, existing: FirmaSeguroRecipient
       } else {
         if (!sameContact(recipient, row.beforeContact))
           throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El contacto del portal cambió antes de la edición. Actualiza el expediente.");
+        await currentPendingProcess(input.draftId, input.processUuid);
+        assertPortalRollout(input.draftId);
         row = (await transition(row.id, ["PREPARING"], "EDITING"))!;
         try {
           await portal.edit({ phone: row.afterContact.phone, email: row.afterContact.email! });
@@ -249,6 +267,7 @@ async function deliverThroughPortal(input: Input, existing: FirmaSeguroRecipient
       assertPortalRecipient(recipient, row.signatureId);
       if (!sameContact(recipient, row.afterContact))
         throw new FirmaSeguroRecipientDeliveryError("SIGNATURE_RECIPIENT_CHANGED", "El portal no confirmó el nuevo contacto. Revisa el expediente antes de reenviar.");
+      assertPortalRollout(input.draftId);
       row = (await transition(row.id, ["RECIPIENT_UPDATED", "RESEND_FAILED"], "RESENDING"))!;
       try { await portal.resend({ phone: row.afterContact.phone, email: row.afterContact.email }); }
       catch (error) {

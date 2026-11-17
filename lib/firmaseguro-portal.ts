@@ -4,6 +4,10 @@ import { chromium, type Browser, type BrowserContext, type Locator, type Page } 
 
 const ORIGIN = "https://app.firmaseguro.co";
 const TIMEOUT = 20_000;
+const BROWSER_ENV_KEYS = [
+  "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
+  "LANG", "LC_ALL", "DISPLAY", "PLAYWRIGHT_BROWSERS_PATH",
+] as const;
 // Exact public scripts observed on the portal, with no credentials or arbitrary CDN paths.
 const EXTERNAL_SCRIPTS = new Set([
   "https://cdn.jsdelivr.net/npm/flatpickr",
@@ -23,6 +27,7 @@ export type FirmaSeguroPortalRecipient = {
   email: string;
   contactVerification: "PROVIDER_READBACK";
   contactSource: "PORTAL_READBACK";
+  notificationChannels: { whatsApp: boolean; email: boolean };
 };
 export type FirmaSeguroPortalSession = {
   inspect(): Promise<FirmaSeguroPortalRecipient>;
@@ -120,7 +125,7 @@ async function openPortalAccess() {
     throw new FirmaSeguroPortalError("PORTAL_NOT_CONFIGURED", "Falta configurar el acceso al portal de FirmaSeguro.", 503);
   }
   let browser: Browser | undefined, context: BrowserContext | undefined, page: Page;
-  let closed = false, blockedNavigation = false;
+  let closed = false, blockedNavigation = false, networkFailed = false, navigationRedirects = 0;
   async function close() {
     if (closed) return;
     closed = true;
@@ -130,6 +135,8 @@ async function openPortalAccess() {
   async function guardPage() {
     if (blockedNavigation || !allowedNavigation(page.url()))
       failure("PORTAL_NAVIGATION_BLOCKED", "El portal intentó abrir un destino no autorizado.");
+    if (networkFailed)
+      throw new FirmaSeguroPortalError("PORTAL_NETWORK_FAILED", "No se pudo completar una solicitud del portal de FirmaSeguro.", 502);
     const captcha = page.locator('iframe[src*="captcha" i], .g-recaptcha, .h-captcha, input[name*="captcha" i]');
     for (let i = 0; i < await captcha.count(); i++) {
       if (await captcha.nth(i).isVisible()) failure("PORTAL_CHALLENGE", "El portal requiere una verificación humana.");
@@ -141,22 +148,82 @@ async function openPortalAccess() {
     await guardPage();
   }
   try {
-    browser = await chromium.launch({ headless: true });
+    const browserEnv: Record<string, string> = {};
+    for (const key of BROWSER_ENV_KEYS) {
+      const value = process.env[key];
+      if (value !== undefined) browserEnv[key] = value;
+    }
+    // The portal runs with Chromium's sandbox and receives no application/provider secrets in its environment.
+    // An unsupported sandbox is a deployment error; never fall back to an unsandboxed launch.
+    browser = await chromium.launch({ headless: true, chromiumSandbox: true, env: browserEnv });
     context = await browser.newContext({ acceptDownloads: false, ignoreHTTPSErrors: false, serviceWorkers: "block" });
     await context.route("**/*", async route => {
+      if (blockedNavigation || networkFailed) { await route.abort("blockedbyclient"); return; }
       const request = route.request();
+      const mainNavigation = request.isNavigationRequest() && request.frame() === page?.mainFrame();
       let permitted = false;
       try {
         const url = new URL(request.url());
         permitted = !url.username && !url.password && (url.origin === ORIGIN ||
           (!request.isNavigationRequest() && request.resourceType() === "script" && EXTERNAL_SCRIPTS.has(url.href)));
       } catch { /* Block unknown schemes. */ }
-      if (request.isNavigationRequest() && request.frame() === page?.mainFrame()) {
+      if (mainNavigation) {
         permitted &&= allowedNavigation(request.url());
         if (!permitted) blockedNavigation = true;
       }
-      // Same-origin AJAX emitted by portal controls is permitted; no guessed private endpoint is called here.
-      if (permitted) await route.continue(); else await route.abort("blockedbyclient");
+      if (!permitted) { await route.abort("blockedbyclient"); return; }
+      let response: Awaited<ReturnType<typeof route.fetch>> | undefined;
+      try {
+        // Routing is not invoked for later HTTP redirect hops. Fetch exactly one hop so neither a redirect
+        // nor a connection retry can forward a credential/edit/resend body before its destination is checked.
+        response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: TIMEOUT });
+        const status = response.status();
+        const headers = response.headersArray();
+        const locations = headers.filter(header => header.name.toLowerCase() === "location");
+        let destination: URL | undefined;
+        if (locations.length === 1 && locations[0].value.trim()) {
+          try { destination = new URL(locations[0].value, request.url()); } catch { /* Reject malformed redirects. */ }
+        }
+        if (headers.some(header => header.name.toLowerCase() === "refresh") ||
+          (locations.length > 0 && (!destination || destination.origin !== ORIGIN || destination.username || destination.password))) {
+          blockedNavigation = true;
+          await route.abort("blockedbyclient");
+          return;
+        }
+        if (status >= 300 && status < 400 && status !== 304) {
+          const method = request.method();
+          const safeGet = method === "GET" && [301, 302, 303, 307, 308].includes(status);
+          const postToGet = method === "POST" && [302, 303].includes(status);
+          if (!mainNavigation || (!safeGet && !postToGet) || !destination ||
+            !allowedNavigation(destination.href) || ++navigationRedirects > 10) {
+            blockedNavigation = true;
+            await route.abort("blockedbyclient");
+            return;
+          }
+          // A synthetic 200 creates a fresh GET navigation, which must pass through this handler again.
+          // Preserve login cookies but never forward the POST body, Location/Refresh headers, or redirect body.
+          const escaped = destination.href.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          const replacementHeaders: Record<string, string> = {
+            "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
+            "referrer-policy": "no-referrer", "x-content-type-options": "nosniff",
+            "content-security-policy": "default-src 'none'; base-uri 'none'; form-action 'none'",
+          };
+          const cookies = headers.filter(header => header.name.toLowerCase() === "set-cookie");
+          if (cookies.length) replacementHeaders["set-cookie"] = cookies.map(cookie => cookie.value).join("\n");
+          await route.fulfill({ status: 200, headers: replacementHeaders,
+            body: `<!doctype html><html><head><meta http-equiv="refresh" content="0;url=${escaped}"></head><body></body></html>` });
+          return;
+        }
+        if (mainNavigation) navigationRedirects = 0;
+        // Same-origin AJAX emitted by observed controls is permitted, with no redirects or guessed endpoints.
+        await route.fulfill({ response });
+      } catch {
+        networkFailed = true;
+        try { await route.abort("failed"); } catch { /* The page/context may already have closed. */ }
+      } finally {
+        await response?.dispose().catch(() => {});
+      }
     });
     page = await context.newPage();
     page.setDefaultTimeout(TIMEOUT);
@@ -258,6 +325,43 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
     }
     if (!found) failure("PORTAL_PROCESS_MISMATCH", "El documento del portal no corresponde al folio esperado.");
   }
+  async function readNotificationChannels(): Promise<FirmaSeguroPortalRecipient["notificationChannels"]> {
+    const unverifiable = () => failure("PORTAL_NOTIFICATION_CHANNELS_UNVERIFIED",
+      "No se confirmó una configuración de notificaciones exclusiva por WhatsApp en este proceso.");
+    // Observed process-level notification section. The signer's OTP/CostType is not evidence of this setting.
+    const heading = page.locator("h4").filter({ hasText: /^\s*Notificaciones\s*$/ });
+    if (await heading.count() !== 1 || !await heading.isVisible()) unverifiable();
+    const box = heading.locator("xpath=..").locator(":scope > .signature_item > .box.from");
+    if (await box.count() !== 1 || !await box.isVisible()) unverifiable();
+    const indicators = box.locator(":scope > span");
+    if (await indicators.count() !== 2 || await box.locator("i").count() !== 2) unverifiable();
+    const seen = new Set<string>();
+    const channels = { whatsApp: false, email: false };
+    for (let index = 0; index < 2; index++) {
+      const indicator = indicators.nth(index);
+      const label = normalized(await indicator.innerText());
+      if (seen.has(label) || !await indicator.isVisible()) unverifiable();
+      seen.add(label);
+      const icon = indicator.locator(":scope > i");
+      if (await icon.count() !== 1 || !await icon.isVisible()) unverifiable();
+      const title = await icon.getAttribute("title");
+      const classes = new Set((await icon.getAttribute("class") || "").split(/\s+/));
+      if (label === "NOTIFICACION POR EMAIL" && title === "No se envía Email" &&
+        classes.has("fas") && classes.has("fa-times") && classes.has("text-danger") &&
+        !classes.has("fa-check") && !classes.has("text-success")) {
+        channels.email = false;
+      } else if (label === "NOTIFICACION POR WHATSAPP" && title === "Notificaciones por WhatsApp" &&
+        classes.has("fas") && classes.has("fa-check") && classes.has("text-success") &&
+        !classes.has("fa-times") && !classes.has("text-danger")) {
+        channels.whatsApp = true;
+      } else {
+        // Positive email / disabled WhatsApp controls have not been observed. Never infer their meaning.
+        unverifiable();
+      }
+    }
+    if (!channels.whatsApp || channels.email || !seen.has("NOTIFICACION POR EMAIL")) unverifiable();
+    return channels;
+  }
   async function readCard() {
     await guardPage();
     if (page.url() !== detailUrl) failure("PORTAL_PROCESS_CHANGED", "El proceso del portal cambió.");
@@ -288,7 +392,8 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
       .map(normalized).filter(line => /^ESTADO DEL PROCESO\s*:/.test(line));
     if (unavailable.test(signerText) || processState.some(line => unavailable.test(line)))
       failure("PORTAL_SIGNATURE_NOT_PENDING", "El proceso ya no permite editar o reenviar la firma.");
-    return { card, phone: phone(read("NUMERO CELULAR")), email: email(read("EMAIL")) };
+    const notificationChannels = await readNotificationChannels();
+    return { card, phone: phone(read("NUMERO CELULAR")), email: email(read("EMAIL")), notificationChannels };
   }
   async function readForm() {
     const form = await visibleOne(page.locator("#EditSigner"));
@@ -335,7 +440,8 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
         failure("PORTAL_CONTACT_CHANGED", "El contacto del firmante cambió durante la consulta.");
     }
     return { editor, contact: { signatureId: expected.signatureId, phone: editor.phone, email: editor.email,
-      contactVerification: "PROVIDER_READBACK" as const, contactSource: "PORTAL_READBACK" as const } };
+      contactVerification: "PROVIDER_READBACK" as const, contactSource: "PORTAL_READBACK" as const,
+      notificationChannels: before.notificationChannels } };
   }
   async function operation<T>(stage: Stage, task: (markMutation: () => void) => Promise<T>) {
     if (closed || busy) throw new FirmaSeguroPortalError("PORTAL_SESSION_UNAVAILABLE", "La sesión del portal no está disponible.", 409, stage);
@@ -388,6 +494,7 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
         verified.phone !== nextPhone || verified.email !== effectiveEmail)
         failure("PORTAL_FORM_CHANGED", "El formulario del firmante cambió antes de actualizar.");
       const update = await visibleOne(verified.form.locator("button#update-signature"));
+      await readNotificationChannels();
       editAttempted = true;
       markMutation();
       await update.click();
@@ -425,6 +532,7 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
       resendAttempted = true;
       markMutation();
       await confirm.click();
+      // This ACK confirms only acceptance of the resend request, not its emitted channel or delivery.
       await visibleOne(page.getByText("Solicitud reenviada", { exact: true }));
       await guardPage();
     }),

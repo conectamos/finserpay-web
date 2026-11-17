@@ -30,6 +30,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+ENV HOME=/home/node
 
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json ./package-lock.json
@@ -132,6 +133,9 @@ COPY --from=builder \
   ./scripts/
 COPY --from=builder /app/lib/solicitudes-export-schema-statements.json ./lib/solicitudes-export-schema-statements.json
 COPY --from=builder /app/lib/firmaseguro-draft-administration-schema.json ./lib/firmaseguro-draft-administration-schema.json
+
+RUN chown -R node:node /app/.next /home/node
+USER node
 
 EXPOSE 3000
 

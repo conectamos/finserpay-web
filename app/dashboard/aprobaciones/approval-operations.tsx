@@ -940,7 +940,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
   const redirectionUsesPortal = !pendingDelivery || pendingDelivery.transport === "PORTAL";
   const redirectionActionLabel = pendingDelivery
     ? redirectionUsesPortal ? "Completar reenvío desde el portal" : "Completar reenvío por correo"
-    : "Editar destinatario y reenviar firma";
+    : "Actualizar celular y reenviar firma";
   const deliveryLocked = Boolean(pendingDelivery);
   const canSubmitRedirection = Boolean(canRedirectPendingSignature && !busy && /^3\d{9}$/.test(normalizedRedirectPhone) &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(redirectEmail.trim()) && redirectReason.trim().length >= 5 &&
@@ -1163,7 +1163,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
               : "El envío necesita revisión técnica antes de continuar.") :
               signature?.status === "SIGNED" ? "Contrato firmado. El reenvío del mismo documento para firma solo está disponible mientras esté pendiente." :
               signature?.status === "PENDING" && canRedirectPendingSignature
-                ? "Solicitud enviada y aún sin firma. Puedes editar el destinatario en FirmaSeguro y reenviar el mismo documento."
+                ? "Solicitud enviada y aún sin firma. Puedes actualizar el celular en FirmaSeguro y reenviar el mismo documento."
                 : signature?.status === "PENDING" ? "Solicitud enviada. Espera la confirmación real de FirmaSeguro." :
               canSendSignature ? "Revisa el contacto y envía el contrato. El estado cambiará cuando FirmaSeguro confirme la firma." :
               "No hay una solicitud de firma activa."}</p></div>
@@ -1182,7 +1182,9 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
           {signature?.lastResend && signature.status === "PENDING" ? <p className={styles.redirectionWarning} role="status">
             <FileClock size={18} aria-hidden="true" /><span>
               {signature.lastResend.transport === "PORTAL" ? <>
-                Reenvío solicitado desde el portal: celular {signature.lastResend.phone || "sin registro"}; correo {signature.lastResend.email || "sin registro"}. Canal y entrega no confirmados.
+                Reenvío solicitado desde el portal: celular {signature.lastResend.phone || "sin registro"}; correo {signature.lastResend.email || "sin registro"}. {signature.lastResend.configuredNotificationChannel === "WHATSAPP"
+                  ? "Configuración WhatsApp verificada. El portal aceptó el reenvío; el envío efectivo y la entrega no están confirmados."
+                  : "Canal y entrega no confirmados."}
               </> : <>
                 Reenvío por correo aceptado: {signature.lastResend.email || "correo registrado"}. Entrega no confirmada.
                 {" "}No hay confirmación de envío por WhatsApp.
@@ -1225,7 +1227,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
         {redirectingSignature && canRedirectPendingSignature ? <div className={styles.signatureRedirection}>
           <p className={styles.redirectionWarning}><FileClock size={18} aria-hidden="true" /><span>
             {redirectionUsesPortal
-              ? "Se ingresará al portal de FirmaSeguro para actualizar el destinatario y reenviar la solicitud pendiente. Se conservarán el mismo documento y proceso de firma. Esta operación no confirma el canal ni la entrega al destinatario. El cambio quedará registrado en el historial."
+              ? "Se ingresará al portal de FirmaSeguro para actualizar el celular y reenviar la solicitud pendiente. Antes de continuar se verificará que las notificaciones por WhatsApp estén activas y las de correo desactivadas. Se conservarán el mismo documento y proceso de firma. El acuse del portal no confirma el envío efectivo ni la entrega al destinatario. El cambio quedará registrado en el historial."
               : "Se completará el reenvío por correo del mismo documento pendiente en FirmaSeguro con el destinatario registrado. Esta operación no confirma un envío por WhatsApp ni la entrega. El cambio quedará registrado en el historial."}
           </span></p>
           {pendingDelivery ? <p className={styles.muted}>Responsable: {pendingDelivery.actorName}. {pendingDelivery.retryable
@@ -1296,7 +1298,7 @@ export default function ApprovalOperations({ onOpenApproval, active = true, mode
     <ConfirmDialog open={confirmation === "signature-redirection"} title={redirectionActionLabel}
       description={(redirectionUsesPortal
         ? "Se ingresará al portal de FirmaSeguro para actualizar el destinatario del mismo documento pendiente al celular " + visible(normalizedRedirectPhone) +
-          " y correo " + visible(redirectEmail) + ", y reenviar la solicitud pendiente. Esta operación no confirma el canal ni la entrega al destinatario."
+          " y correo " + visible(redirectEmail) + ", y reenviar la solicitud pendiente. Antes de continuar se verificará la configuración: WhatsApp activo y correo desactivado. El acuse del portal no confirma el envío efectivo ni la entrega al destinatario."
         : "Se completará el reenvío del mismo documento pendiente en FirmaSeguro al celular registrado " + visible(normalizedRedirectPhone) +
           " y se solicitará el reenvío al correo " + visible(redirectEmail) + ". El envío por WhatsApp no está confirmado por esta operación.") +
         " Se conservarán la solicitud de firma y el documento existentes."}

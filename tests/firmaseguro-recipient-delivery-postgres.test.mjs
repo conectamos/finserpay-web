@@ -47,12 +47,14 @@ async function fixture(t, platform = "IPHONE") {
   const provider = { phone: "3000000001", email: "old@example.invalid", signatureId: 901, status: "PENDING", editError: null,
     resendError: null, editAppliedBeforeFailure: false, lockBusy: false, unresolved: false,
     contactVerification: "PROVIDER_READBACK", afterEdit: null, openError: null,
-    portalInspectError: null, beforePortalInspect: null, portalReadbacks: [], beforeResend: null };
+    portalInspectError: null, beforePortalInspect: null, portalReadbacks: [], beforeResend: null,
+    rolloutEnabled: true, notificationChannels: { whatsApp: true, email: false } };
   const core = loadReissueModule("lib/approval-operations-core.ts");
   const ledger = loadReissueModule("lib/firmaseguro-recipient-delivery.ts", {
     "@/lib/prisma": { default: prisma },
     "@/scripts/firmaseguro-recipient-delivery-schema.mjs": { firmaSeguroRecipientDeliverySchemaStatements },
     "@/lib/approval-operations-core": core,
+    "@/lib/firmaseguro-portal-rollout": { isFirmaSeguroPortalResendEnabled: () => provider.rolloutEnabled },
     "@/lib/firmaseguro-storage": { tryAcquireSolicitudOperationLock: async () => {
       if (provider.lockBusy) return null;
       provider.lockBusy = true;
@@ -94,6 +96,7 @@ async function fixture(t, platform = "IPHONE") {
             if (provider.status !== "PENDING") throw new PortalError("FIRMASEGURO_SIGNATURE_NOT_PENDING");
             return { signatureId: provider.signatureId, phone: provider.phone, email: provider.email,
               contactVerification: "PROVIDER_READBACK", contactSource: "PORTAL_READBACK",
+              notificationChannels: provider.notificationChannels,
               ...provider.portalReadbacks.shift() };
           },
           edit: async contact => {
@@ -155,8 +158,10 @@ test("edita y reenvía el mismo firmante; conserva proceso, documento y todos lo
   assert.equal(result.status, "RESENT");
   assert.equal(result.transport, "PORTAL");
   assert.equal(result.notificationChannel, "UNCONFIRMED");
+  assert.equal(result.configuredNotificationChannel, "WHATSAPP");
   assert.equal(result.deliveryStatus, "UNCONFIRMED");
-  assert.match(result.message, /canal y la entrega al cliente no están confirmados/);
+  assert.match(result.message, /notificaciones por WhatsApp configuradas/);
+  assert.match(result.message, /emisión y la entrega al cliente no están confirmadas/);
   assert.equal(f.calls.apiEdit.length, 0); assert.equal(f.calls.apiResend.length, 0);
   assert.equal(f.calls.portalClose, 1);
   assert.equal(f.calls.portalOpen[0].folio, "FNS-22");
@@ -525,5 +530,64 @@ test("otra operación no duplica la edición del portal mientras llega su confir
   } finally { acknowledge(); }
   assert.equal((await first).status, "RESENT");
   assert.equal(f.calls.edit.length, 1); assert.deepEqual(f.calls.resend, [901]);
+  assert.equal(f.calls.portalClose, 1);
+});
+
+
+test("gate cerrado no abre el portal, autentica ni crea una operación", async t => {
+  const f = await fixture(t);
+  f.provider.rolloutEnabled = false;
+  await assert.rejects(f.run(), error => error.code === "SIGNATURE_PORTAL_NOT_ENABLED");
+  assert.equal(f.calls.auth, 0); assert.equal(f.calls.portalOpen.length, 0);
+  assert.equal(f.calls.edit.length, 0); assert.equal(f.calls.resend.length, 0);
+  assert.equal(await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id), null);
+});
+
+test("gate cerrado conserva la continuación histórica API y nunca abre portal", async t => {
+  const f = await fixture(t);
+  await f.seedHistorical();
+  f.provider.rolloutEnabled = false;
+  const result = await f.run();
+  assert.equal(result.status, "RESENT"); assert.equal(result.transport, "API");
+  assert.equal(result.configuredNotificationChannel, null);
+  assert.equal(f.calls.portalOpen.length, 0); assert.equal(f.calls.apiResend.length, 1);
+});
+
+test("configuración WhatsApp ausente o mixta bloquea antes de editar o registrar", async t => {
+  const f = await fixture(t);
+  for (const channels of [undefined, { whatsApp: false, email: true }, { whatsApp: true, email: true }]) {
+    f.provider.notificationChannels = channels;
+    await assert.rejects(f.run(), error => error.code === "SIGNATURE_NOTIFICATION_CHANNEL_UNVERIFIED");
+    assert.equal(f.calls.edit.length, 0); assert.equal(f.calls.resend.length, 0);
+    assert.equal(await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id), null);
+  }
+});
+
+test("cambio de configuración después de editar conserva incertidumbre sin reenviar", async t => {
+  const f = await fixture(t);
+  f.provider.afterEdit = () => { f.provider.notificationChannels = { whatsApp: false, email: true }; };
+  const result = await f.run();
+  assert.equal(result.status, "EDIT_UNCERTAIN");
+  assert.equal(f.calls.edit.length, 1); assert.equal(f.calls.resend.length, 0);
+});
+
+test("gate revocado antes de reenviar conserva contacto actualizado sin notificar", async t => {
+  const f = await fixture(t);
+  f.provider.afterEdit = () => { f.provider.rolloutEnabled = false; };
+  await assert.rejects(f.run(), error => error.code === "SIGNATURE_PORTAL_NOT_ENABLED");
+  const row = await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id);
+  assert.equal(row.status, "RECIPIENT_UPDATED");
+  assert.equal(f.calls.edit.length, 1); assert.equal(f.calls.resend.length, 0);
+});
+
+
+test("solicitud cerrada mientras se abre portal no edita ni crea operación", async t => {
+  const f = await fixture(t);
+  f.provider.beforePortalInspect = async count => {
+    if (count === 1) await f.database.exec(`UPDATE "CreditoBorrador" SET "estado"='CERRADO' WHERE "id"=22`);
+  };
+  await assert.rejects(f.run(), error => error.code === "DRAFT_NOT_AVAILABLE");
+  assert.equal(f.calls.edit.length, 0); assert.equal(f.calls.resend.length, 0);
+  assert.equal(await f.ledger.getFirmaSeguroRecipientDelivery(f.input.id), null);
   assert.equal(f.calls.portalClose, 1);
 });

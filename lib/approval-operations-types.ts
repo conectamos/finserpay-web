@@ -26,6 +26,7 @@ export type OperationalSignature = {
     acceptedAt: string;
     transport: "PORTAL" | "API";
     channel: "EMAIL" | "UNCONFIRMED";
+    configuredNotificationChannel?: "WHATSAPP" | null;
     phone: string | null;
     email: string | null;
     deliveryStatus: "UNCONFIRMED";
@@ -51,6 +52,7 @@ export type OperationalCaseDetail = OperationalCaseSummary & {
     id: string;
     status: string;
     transport: "PORTAL" | "API";
+    configuredNotificationChannel?: "WHATSAPP" | null;
     processUuid: string;
     phone: string | null;
     email: string | null;
