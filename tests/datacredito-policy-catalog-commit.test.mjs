@@ -35,6 +35,8 @@ class VersionConflict extends Error { currentVersion = 4; }
 class AssignmentConflict extends Error { currentPolicyId = previousPolicyId; }
 class QuotaConflict extends Error { currentDailyQueryLimit = 8; }
 class QuotaValidation extends Error {}
+class BranchQuotaConflict extends Error {}
+class BranchQuotaValidation extends Error {}
 class DeleteVersionConflict extends Error { currentVersion = 4; }
 class StorageConfiguration extends Error { code = "TEST_STORAGE_NOT_READY"; }
 class ProfileNotFound extends Error {}
@@ -95,6 +97,8 @@ function fixture({ catalogError = null, mutationError = null, providerError = nu
       },
       DataCreditoDailyQueryLimitConflictError: QuotaConflict,
       DataCreditoDailyQueryLimitValidationError: QuotaValidation,
+      DataCreditoBranchDailyQuotaConflictError: BranchQuotaConflict,
+      DataCreditoBranchDailyQuotaValidationError: BranchQuotaValidation,
       DataCreditoPolicyAssignmentConflictError: AssignmentConflict,
       DataCreditoPolicyProfileNameConflictError: NameConflict,
       DataCreditoPolicyProfileNotFoundError: ProfileNotFound,

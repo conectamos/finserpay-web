@@ -7,12 +7,16 @@ import {
   createDataCreditoPolicyProfile,
   DataCreditoDailyQueryLimitConflictError,
   DataCreditoDailyQueryLimitValidationError,
+  DataCreditoBranchDailyQuotaConflictError,
+  DataCreditoBranchDailyQuotaValidationError,
   DataCreditoPolicyAssignmentConflictError,
   DataCreditoPolicyProfileNameConflictError,
   DataCreditoPolicyProfileNotFoundError,
   listDataCreditoPolicyCatalog,
   parseDataCreditoDailyQueryLimit,
+  parseDataCreditoBranchDailyQuotas,
   setDataCreditoDailyQueryLimitForAlly,
+  setDataCreditoBranchDailyQuotas,
 } from "@/lib/datacredito/admin-storage";
 import {
   DataCreditoPolicyValidationError,
@@ -87,6 +91,7 @@ type CommittedPolicyOperation =
   | "SAVE_REVISION"
   | "ASSIGN_ALLY"
   | "SET_ALLY_DAILY_QUOTA"
+  | "SET_BRANCH_DAILY_QUOTAS"
   | "RETIRE_POLICY";
 
 // Call only after the mutation has resolved: reloading a catalog is not part of
@@ -123,6 +128,22 @@ async function committedCatalogResponse(input: {
 }
 
 function policyErrorResponse(error: unknown, correlationId: string) {
+  if (error instanceof DataCreditoBranchDailyQuotaConflictError) {
+    return NextResponse.json({
+      ok: false,
+      code: "BRANCH_DAILY_QUOTA_CONFLICT",
+      error: error.message,
+      correlationId,
+    }, { status: 409, headers: NO_STORE_HEADERS });
+  }
+  if (error instanceof DataCreditoBranchDailyQuotaValidationError) {
+    return NextResponse.json({
+      ok: false,
+      code: "BRANCH_DAILY_QUOTA_INVALID",
+      error: error.message,
+      correlationId,
+    }, { status: 400, headers: NO_STORE_HEADERS });
+  }
   if (error instanceof DataCreditoPolicyValidationError) {
     return NextResponse.json(
       {
@@ -439,6 +460,32 @@ export async function PATCH(request: Request) {
         operation: "ASSIGN_ALLY",
         correlationId,
         extra: { assignedAllyId: allyId },
+      });
+    }
+
+    if (action === "SET_BRANCH_DAILY_QUOTAS") {
+      const allyId = Number(body.allyId);
+      if (!Number.isSafeInteger(allyId) || allyId <= 0 ||
+        typeof body.enabled !== "boolean" || typeof body.expectedEnabled !== "boolean" ||
+        !("expectedDailyQueryLimit" in body) ||
+        (body.reason !== undefined && body.reason !== null && typeof body.reason !== "string")) {
+        throw new DataCreditoBranchDailyQuotaValidationError("La distribución de cupos por sede no es válida.");
+      }
+      const branches = parseDataCreditoBranchDailyQuotas(body.branches);
+      await setDataCreditoBranchDailyQuotas({
+        allyId,
+        enabled: body.enabled,
+        expectedEnabled: body.expectedEnabled,
+        expectedDailyQueryLimit: body.expectedDailyQueryLimit as number | null,
+        branches,
+        actorUserId: access.user.id,
+        requestCorrelationId: correlationId,
+        reason: typeof body.reason === "string" ? body.reason : null,
+      });
+      return committedCatalogResponse({
+        operation: "SET_BRANCH_DAILY_QUOTAS",
+        correlationId,
+        extra: { branchQuotasUpdatedAllyId: allyId },
       });
     }
 

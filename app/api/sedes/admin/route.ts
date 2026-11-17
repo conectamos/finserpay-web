@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
+import { assertDataCreditoBranchAllocation, DataCreditoBranchAllocationError } from "@/lib/datacredito/branch-quota-allocation";
 
 function esAdmin(rolNombre: string) {
   return String(rolNombre || "").trim().toUpperCase() === "ADMIN";
@@ -433,6 +434,9 @@ export async function POST(req: Request) {
 
     await prisma.$transaction(async (tx) => {
       if (sedeParaReactivar) {
+        await assertDataCreditoBranchAllocation({ database: tx,
+          branchId: sedeParaReactivar.id, expectedAllyId: aliadoId,
+          targetAllyId: aliadoId, activating: true });
         await tx.sede.update({
           where: { id: sedeParaReactivar.id },
           data: {
@@ -512,6 +516,9 @@ export async function POST(req: Request) {
       sedes,
     });
   } catch (error) {
+    if (error instanceof DataCreditoBranchAllocationError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("ERROR POST ADMIN SEDES:", error);
     return NextResponse.json(
       { error: "Error creando sede" },
@@ -681,6 +688,9 @@ export async function PATCH(req: Request) {
     }
 
     await prisma.$transaction(async (tx) => {
+      await assertDataCreditoBranchAllocation({ database: tx,
+        branchId: sedeId, expectedAllyId: sedeActual.aliadoId,
+        targetAllyId: aliadoDestinoId });
       await tx.sede.update({
         where: { id: sedeId },
         data: {
@@ -723,6 +733,9 @@ export async function PATCH(req: Request) {
       sedes,
     });
   } catch (error) {
+    if (error instanceof DataCreditoBranchAllocationError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("ERROR PATCH ADMIN SEDES:", error);
     return NextResponse.json(
       { error: "Error actualizando sede" },

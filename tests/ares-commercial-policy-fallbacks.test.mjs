@@ -43,6 +43,7 @@ test("catálogo entrega defaults V2/29.24 pero conserva revisión explícita V1/
     "@/lib/credit-settings": { getCreditSettings: async () => legacy },
     "@/lib/datacredito/storage": { ensureDataCreditoSchema: async () => {}, DEFAULT_DATACREDITO_POLICY_PROFILE_ID: "general" },
     "@/lib/datacredito/database-errors": {},
+    "@/lib/datacredito/branch-quota": { syncDataCreditoBranchDailyQuotaUsage: () => assert.fail("El catálogo no debe sincronizar consumos") },
     "@/lib/datacredito/policy": policy,
     "@/lib/datacredito/secure-record": {},
   });

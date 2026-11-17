@@ -287,7 +287,7 @@ function evaluationFixture(options = {}) {
     reserveDataCreditoAssessment: async input => {
       record("reserve", input);
       return options.reservation || { kind: "CREATED", assessment: pending,
-        dailyQuotaReservation: { allyId: 7, businessDate: "2026-10-09" } };
+        dailyQuotaReservation: { allyId: 7, branchId: 9, businessDate: "2026-10-09" } };
     },
     serializeDataCreditoAssessment: assessment => ({ assessment: { ...assessment } }),
     failDataCreditoAssessmentBeforeProviderDispatch: async input => { record("fail-before-provider", input);return options.compensate?.(input); },
@@ -558,8 +558,11 @@ async function compensationDatabase() {
   const pg = new PGlite();
   await pg.exec(`CREATE TABLE "DataCreditoAssessment" ("id" UUID PRIMARY KEY,"status" TEXT,"aliadoId" INTEGER,
     "errorCode" TEXT,"transactionCode" TEXT,"providerStatus" TEXT,"durationMs" INTEGER,
-    "updatedAt" TIMESTAMPTZ,"documentHash" TEXT,"providerEnvironment" TEXT,"expiresAt" TIMESTAMPTZ);
-    CREATE TABLE "DataCreditoDailyQuotaUsage" ("allyId" INTEGER,"businessDate" DATE,"usedCount" INTEGER,"updatedAt" TIMESTAMPTZ);`);
+    "updatedAt" TIMESTAMPTZ,"documentHash" TEXT,"providerEnvironment" TEXT,"expiresAt" TIMESTAMPTZ,
+    "sedeId" INTEGER,"dailyQuotaBusinessDate" DATE);
+    CREATE TABLE "Aliado" (id INTEGER PRIMARY KEY);INSERT INTO "Aliado" VALUES(7);
+    CREATE TABLE "DataCreditoDailyQuotaUsage" ("allyId" INTEGER,"businessDate" DATE,"usedCount" INTEGER,"updatedAt" TIMESTAMPTZ);
+    CREATE TABLE "DataCreditoBranchDailyQuotaUsage" ("allyId" INTEGER,"branchId" INTEGER,"businessDate" DATE,"usedCount" INTEGER,"updatedAt" TIMESTAMPTZ);`);
   const client = driver => ({ $queryRawUnsafe: async (sql, ...args) => (await driver.query(sql, args)).rows });
   const prisma = { ...client(pg), $transaction: callback => pg.transaction(tx => callback(client(tx))) };
   const names = ["failDataCreditoAssessmentBeforeProviderDispatch", "failDataCreditoAssessment", "hasRecentDataCreditoReviewBlock"];
@@ -568,9 +571,11 @@ async function compensationDatabase() {
   runInNewContext(ts.transpileModule(functions + `\nmodule.exports = { ${names.join(",")} };`, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { module: loaded, exports: loaded.exports, prisma, ensureDataCreditoSchema: async () => {} });
-  return { pg, database: client(pg), ...loaded.exports, reset: () => pg.exec(`TRUNCATE "DataCreditoAssessment","DataCreditoDailyQuotaUsage";
-    INSERT INTO "DataCreditoAssessment" VALUES ('c23ad54f-3f60-42f6-9941-311c2db08a26','PENDING',7,NULL,NULL,NULL,NULL,NULL,'fixture-document','prod',CURRENT_TIMESTAMP + INTERVAL '15 days');
-    INSERT INTO "DataCreditoDailyQuotaUsage" VALUES (7,'2026-10-09',1,NULL);`) };
+  return { pg, database: client(pg), ...loaded.exports, reset: () => pg.exec(`TRUNCATE "DataCreditoAssessment","DataCreditoDailyQuotaUsage","DataCreditoBranchDailyQuotaUsage";
+    INSERT INTO "DataCreditoAssessment" (id,status,"aliadoId","sedeId","dailyQuotaBusinessDate","documentHash","providerEnvironment","expiresAt")
+      VALUES ('c23ad54f-3f60-42f6-9941-311c2db08a26','PENDING',7,9,'2026-10-09','fixture-document','prod',CURRENT_TIMESTAMP + INTERVAL '15 days');
+    INSERT INTO "DataCreditoDailyQuotaUsage" VALUES (7,'2026-10-09',1,NULL);
+    INSERT INTO "DataCreditoBranchDailyQuotaUsage" VALUES (7,9,'2026-10-09',1,NULL);`) };
 }
 
 test("OAuth fallido sin despacho devuelve el cupo, deja duración NULL y no crea bloqueo de revisión de 15 días", async t => {
@@ -594,6 +599,7 @@ test("OAuth fallido sin despacho devuelve el cupo, deja duración NULL y no crea
         const saved = (await f.pg.query('SELECT "status","errorCode","durationMs","providerStatus","transactionCode" FROM "DataCreditoAssessment"')).rows[0];
         assert.deepEqual(saved, { status: "NO_EVALUADO", errorCode: code, durationMs: null, providerStatus: null, transactionCode: null });
         assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoDailyQuotaUsage"')).rows[0].usedCount, 0);
+        assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoBranchDailyQuotaUsage"')).rows[0].usedCount, 0);
         assert.equal(await f.hasRecentDataCreditoReviewBlock({ documentHash: "fixture-document", providerEnvironment: "prod" }, f.database), false);
         assert.equal(api.state.locked, false);
       });
@@ -624,6 +630,7 @@ test("timeout después del despacho real conserva ambigüedad, duración y cupo;
   assert.equal(stored.errorCode, "PROVIDER_OUTCOME_AMBIGUOUS");assert.equal(stored.durationMs, saved.durationMs);
   assert.equal(await f.hasRecentDataCreditoReviewBlock({ documentHash: "fixture-document", providerEnvironment: "prod" }, f.database), true);
   assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoDailyQuotaUsage"')).rows[0].usedCount, 1);
+  assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoBranchDailyQuotaUsage"')).rows[0].usedCount, 1);
   } finally { await f.pg.close(); }
 });
 
@@ -647,6 +654,7 @@ test("fallar OAuth al refrescar tras una consulta 401 conserva la evidencia de d
   assert.equal(tokens, 2);assert.equal(queries, 1);
   assert.equal(await f.hasRecentDataCreditoReviewBlock({ documentHash: "fixture-document", providerEnvironment: "prod" }, f.database), true);
   assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoDailyQuotaUsage"')).rows[0].usedCount, 1);
+  assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoBranchDailyQuotaUsage"')).rows[0].usedCount, 1);
   assert.equal((await f.pg.query('SELECT "durationMs" FROM "DataCreditoAssessment"')).rows[0].durationMs, saved.durationMs);
   } finally { await f.pg.close(); }
 });

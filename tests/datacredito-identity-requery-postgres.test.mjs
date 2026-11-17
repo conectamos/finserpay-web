@@ -22,10 +22,12 @@ async function createDatabase(t) {
   t.after(() => db.close());
   await db.exec(`
     CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY);
+    CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY);
     CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
     CREATE TABLE "Credito" ("id" INTEGER PRIMARY KEY, "estado" TEXT, "montoCredito" NUMERIC);
     CREATE TABLE "CreditoAbono" ("id" INTEGER PRIMARY KEY, "creditoId" INTEGER, "estado" TEXT, "valor" NUMERIC);
     INSERT INTO "Aliado" VALUES (1);
+    INSERT INTO "Sede" VALUES (1);
     INSERT INTO "Usuario" VALUES (1);
   `);
   await db.exec(setup);

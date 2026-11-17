@@ -88,10 +88,13 @@ model Aliado {
   redescuentoIphonePorcentaje     Float                              @default(10)
   dataCreditoPolicyId             String                             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   dataCreditoDailyQueryLimit      Int?
+  dataCreditoBranchQuotaEnabled   Boolean                            @default(false)
   dataCreditoPolicy               DataCreditoPolicyProfile           @relation(fields: [dataCreditoPolicyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   dataCreditoPolicyAssignmentLogs DataCreditoPolicyAssignmentAudit[]
   dataCreditoDailyQuotaUsage      DataCreditoDailyQuotaUsage[]
   dataCreditoDailyQuotaAudit      DataCreditoDailyQuotaAudit[]
+  dataCreditoBranchDailyQuotaUsage DataCreditoBranchDailyQuotaUsage[]
+  dataCreditoBranchDailyQuotaAudit DataCreditoBranchDailyQuotaAudit[]
   liquidacionesAliado             LiquidacionAliado[]
   atribucionesRecaudo             CreditoAbonoAtribucionAliado[]
   ajustesAnulacionCredito         AjusteAnulacionCreditoAliado[]
@@ -173,12 +176,42 @@ model DataCreditoDailyQuotaAudit {
   @@index([allyId, createdAt], map: "DataCreditoDailyQuotaAudit_ally_created_idx")
 }
 
+model DataCreditoBranchDailyQuotaUsage {
+  allyId       Int
+  branchId     Int
+  businessDate DateTime @db.Date
+  usedCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  ally         Aliado   @relation(fields: [allyId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "DataCreditoBranchDailyQuotaUsage_ally_fkey")
+  branch       Sede     @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "DataCreditoBranchDailyQuotaUsage_branch_fkey")
+
+  @@id([allyId, branchId, businessDate])
+}
+
+model DataCreditoBranchDailyQuotaAudit {
+  id                   String   @id @default(uuid()) @db.Uuid
+  allyId               Int
+  previousEnabled      Boolean
+  enabled              Boolean
+  previousLimits       Json
+  limits               Json
+  actorUserId          Int
+  requestCorrelationId String   @db.Uuid
+  reason               String?  @db.VarChar(240)
+  createdAt            DateTime @default(now())
+  ally                 Aliado   @relation(fields: [allyId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "DataCreditoBranchDailyQuotaAudit_ally_fkey")
+
+  @@index([allyId, createdAt], map: "DataCreditoBranchDailyQuotaAudit_ally_created_idx")
+}
+
 model Sede {
   id                       Int                     @id @default(autoincrement())
   nombre                   String
   codigo                   String?
   aliadoId                 Int?
   activa                   Boolean                 @default(true)
+  dataCreditoDailyQueryLimit Int?
   clavePanelFinancieroHash String?
   aliado                   Aliado?                 @relation(fields: [aliadoId], references: [id])
   usuarios                 Usuario[]
@@ -196,6 +229,7 @@ model Sede {
   gastosCartera            GastoCartera[]
   arqueosDiarios           ArqueoDiario[]
   capturasCredito          CapturaCreditoSession[]
+  dataCreditoBranchDailyQuotaUsage DataCreditoBranchDailyQuotaUsage[]
 
   @@unique([aliadoId, nombre])
   @@unique([aliadoId, codigo])

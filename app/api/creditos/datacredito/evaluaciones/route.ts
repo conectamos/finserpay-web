@@ -880,15 +880,18 @@ export async function POST(request: Request) {
         correlationId,
         solicitudId,
         plataforma: platform,
-        code: "ALLY_DAILY_QUERY_LIMIT_REACHED",
+        code: reservation.scope === "BRANCH"
+          ? "BRANCH_DAILY_QUERY_LIMIT_REACHED" : "ALLY_DAILY_QUERY_LIMIT_REACHED",
         error:
-          "El aliado alcanzo su cupo diario de consultas de credito. Intenta de nuevo despues del reinicio del cupo.",
+          reservation.scope === "BRANCH"
+            ? "La sede alcanzó su cupo diario de consultas de crédito. Solicita al administrador revisar la distribución o espera al reinicio del cupo."
+            : "El aliado alcanzo su cupo diario de consultas de credito. Intenta de nuevo despues del reinicio del cupo.",
         status: 429,
-        dailyQuota: serializeDataCreditoDailyQuota({
+        dailyQuota: { ...serializeDataCreditoDailyQuota({
           limit: reservation.limit,
           used: reservation.used,
           resetsAt: reservation.resetsAt,
-        }),
+        }), scope: reservation.scope },
       });
     }
 

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import { serializeDataCreditoDailyQuota } from "../lib/datacredito/daily-quota.ts";
+import { syncDataCreditoBranchDailyQuotaUsage } from "../lib/datacredito/branch-quota.ts";
 import { canActAsAllySalesAdmin, canOperateSolicitud, canOriginateSolicitud } from "../lib/solicitud-operation-access.ts";
 
 const [storage, evaluationRoute, policyRoute] = await Promise.all([
@@ -35,12 +36,14 @@ test("el contrato separa cupo de rechazo y el GET lee solo el aliado autenticado
     /if \(reservation\.kind === "DAILY_QUOTA_EXHAUSTED"\)[\s\S]*?\n    }/
   )?.[0];
   assert.ok(exhaustedBranch);
-  assert.match(exhaustedBranch, /code: "ALLY_DAILY_QUERY_LIMIT_REACHED"/);
+  assert.match(exhaustedBranch, /"ALLY_DAILY_QUERY_LIMIT_REACHED"/);
+  assert.match(exhaustedBranch, /"BRANCH_DAILY_QUERY_LIMIT_REACHED"/);
   assert.match(exhaustedBranch, /status: 429/);
-  assert.match(exhaustedBranch, /dailyQuota: serializeDataCreditoDailyQuota\(/);
+  assert.match(exhaustedBranch, /dailyQuota: \{ \.\.\.serializeDataCreditoDailyQuota\(/);
+  assert.match(exhaustedBranch, /scope: reservation\.scope/);
   assert.doesNotMatch(exhaustedBranch, /RECHAZADO|solicitudTechnicalResponse/);
   assert.match(policyRoute,
-    /const dailyQuota = await getDataCreditoDailyQuotaSnapshot\(quotaAllyId\)/);
+    /const dailyQuota = await getDataCreditoDailyQuotaSnapshot\(quotaAllyId, quotaBranchId\)/);
   assert.ok(policyRoute.indexOf('kind: "GENERAL_CREDIT_SETTINGS"') < policyRoute.indexOf("const dailyQuota ="));
   assert.doesNotMatch(policyRoute, /getDataCreditoDailyQuotaSnapshot\(.*searchParams/);
   assert.doesNotMatch(policyRoute, /getActiveSolicitudCreditContext|expireStaleSolicitudes/);
@@ -66,6 +69,7 @@ const policyGetSource = policyRoute.match(/export async function GET[\s\S]*?(?=e
 assert.ok(policyGetSource);
 async function requestQuotaPolicy({ user, seller = null, owner = null, query = "" }) {
   const quotaReads = [];
+  const branchQuotaReads = [];
   const policyReads = [];
   const ownerReads = [];
   const settingsReads = [];
@@ -88,8 +92,9 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
       return { kind: "READY", policy: { version: 1, revisionId: "test-policy",
         bands: ["ANDROID", "IPHONE"].map(platform => ({ platform, decision: "APROBADO", scoreMin: -1 })) } };
     },
-    getDataCreditoDailyQuotaSnapshot: async (id) => {
+    getDataCreditoDailyQuotaSnapshot: async (id, branchId) => {
       quotaReads.push(id);
+      branchQuotaReads.push(branchId);
       return serializeDataCreditoDailyQuota({ limit: 5, used: 5, resetsAt });
     },
     getCreditSettings: async () => { settingsReads.push("GLOBAL"); return { plazoCuotas: 16 }; },
@@ -101,13 +106,13 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
     `${stripTypeScriptTypes(policyGetSource.replace("export async", "async"))}; return GET;`
   )(...Object.values(dependencies));
   const response = await get(new Request(`https://finserpay.test/api/creditos/datacredito/politica${query}`));
-  return { status: response.status, body: await response.json(), quotaReads, policyReads, ownerReads, settingsReads };
+  return { status: response.status, body: await response.json(), quotaReads, branchQuotaReads, policyReads, ownerReads, settingsReads };
 }
 
 test("GET cuota: autenticacion, propietario autorizado y aislamiento entre aliados", async () => {
-  const central = { id: 1, aliadoId: 1, rolNombre: "ADMIN", central: true };
-  const allyUser = { id: 2, aliadoId: 2, rolNombre: "ALIADO" };
-  const owner = { aliadoId: 2, vendedorId: 7 };
+  const central = { id: 1, aliadoId: 1, sedeId: 1, rolNombre: "ADMIN", central: true };
+  const allyUser = { id: 2, aliadoId: 2, sedeId: 20, rolNombre: "ALIADO" };
+  const owner = { aliadoId: 2, vendedorId: 7, sedeId: 20 };
   const seller = { id: 7, tipoPerfil: "VENDEDOR" };
   const anonymous = await requestQuotaPolicy({ user: null, owner, query: "?solicitudId=100" });
   assert.equal(anonymous.status, 401);
@@ -116,6 +121,7 @@ test("GET cuota: autenticacion, propietario autorizado y aislamiento entre aliad
   assert.equal(crossAllyCentral.status, 200);
   assert.deepEqual(crossAllyCentral.ownerReads, [100], "Resuelve solamente el propietario solicitado");
   assert.deepEqual(crossAllyCentral.quotaReads, [2], "El central lee el cupo del propietario que reserva POST");
+  assert.deepEqual(crossAllyCentral.branchQuotaReads, [20], "El central usa la sede propietaria de la solicitud autorizada");
   assert.deepEqual(crossAllyCentral.policyReads, [1], "La asignacion de politica existente no cambia");
   const ownRequest = await requestQuotaPolicy({ user: allyUser, seller, owner, query: "?solicitudId=100" });
   assert.equal(ownRequest.status, 200);
@@ -136,9 +142,10 @@ test("GET cuota: autenticacion, propietario autorizado y aislamiento entre aliad
     assert.equal(invalid.status, 400);
     assert.deepEqual(invalid.quotaReads, []);
   }
-  const normal = await requestQuotaPolicy({ user: allyUser, query: "?aliadoId=999" });
+  const normal = await requestQuotaPolicy({ user: allyUser, query: "?aliadoId=999&sedeId=999&branchId=999" });
   assert.equal(normal.status, 200);
   assert.deepEqual(normal.quotaReads, [2], "El alta nueva solo lee su propio aliado y no acepta un aliado arbitrario");
+  assert.deepEqual(normal.branchQuotaReads, [20], "La sede de la sesión prevalece sobre cualquier sede enviada en la URL");
   const simulation = await requestQuotaPolicy({ user: allyUser, query: "?purpose=simulation&platform=ANDROID&solicitudId=100" });
   assert.equal(simulation.status, 200);
   assert.deepEqual(simulation.quotaReads, []);
@@ -156,6 +163,7 @@ test("GET cuota de una venta del admin aliado conserva el ámbito propio sin ace
   const allowed = await requestQuotaPolicy({ user, owner, query: "?solicitudId=100&aliadoId=999" });
   assert.equal(allowed.status, 200);
   assert.deepEqual(allowed.quotaReads, [2]);
+  assert.deepEqual(allowed.branchQuotaReads, [20]);
   for (const mismatch of [{ usuarioId: 3 }, { vendedorId: 7 }, { aliadoId: 3 }]) {
     const denied = await requestQuotaPolicy({ user, owner: { ...owner, ...mismatch }, query: "?solicitudId=100" });
     assert.equal(denied.status, 403);
@@ -172,13 +180,13 @@ const snapshotSource = storage.match(
   /export async function getDataCreditoDailyQuotaSnapshot[\s\S]*?(?=type DataCreditoDailyQuotaState)/
 )?.[0];
 assert.ok(reservationSource && snapshotSource);
-const reserveQuota = new Function("DataCreditoStorageConfigurationError", "schemaNotReady",
+const reserveQuota = new Function("DataCreditoStorageConfigurationError", "schemaNotReady", "syncDataCreditoBranchDailyQuotaUsage",
   `${stripTypeScriptTypes(reservationSource)}; return reserveDataCreditoDailyQuota;`
-)(Error, () => new Error("SCHEMA_NOT_READY"));
+)(Error, () => new Error("SCHEMA_NOT_READY"), syncDataCreditoBranchDailyQuotaUsage);
 function snapshotFor(database) {
-  return new Function("prisma", "ensureDataCreditoSchema", "serializeDataCreditoDailyQuota",
+  return new Function("prisma", "ensureDataCreditoSchema", "serializeDataCreditoDailyQuota", "schemaNotReady",
     `${stripTypeScriptTypes(snapshotSource.replace("export async", "async"))}; return getDataCreditoDailyQuotaSnapshot;`
-  )(database, async () => {}, serializeDataCreditoDailyQuota);
+   )(database, async () => {}, serializeDataCreditoDailyQuota, () => new Error("SCHEMA_NOT_READY"));
 }
 
 const connectionString = process.env.DATACREDITO_QUOTA_TEST_DATABASE_URL;
@@ -195,14 +203,22 @@ test("PostgreSQL: ultimo cupo concurrente, aliados y reinicio Bogota en cambios 
   try {
     await admin.query(`CREATE SCHEMA "${schema}"`);
     await admin.query(`SET search_path = "${schema}"`);
-    await admin.query(`CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY, "dataCreditoDailyQueryLimit" INTEGER);
+    await admin.query(`CREATE TABLE "Aliado" ("id" INTEGER PRIMARY KEY, "dataCreditoDailyQueryLimit" INTEGER, "dataCreditoBranchQuotaEnabled" BOOLEAN NOT NULL DEFAULT false);
+      CREATE TABLE "Sede" ("id" INTEGER PRIMARY KEY,"aliadoId" INTEGER,"nombre" TEXT DEFAULT 'Fixture',"activa" BOOLEAN NOT NULL DEFAULT true,"dataCreditoDailyQueryLimit" INTEGER);
+      CREATE TABLE "DataCreditoAssessment" (id UUID PRIMARY KEY,"aliadoId" INTEGER,"sedeId" INTEGER,status TEXT,
+        "dailyQuotaBusinessDate" DATE,"reusedFromAssessmentId" UUID,"createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "durationMs" INTEGER,"providerStatus" TEXT,"transactionCode" TEXT,"errorCode" TEXT);
+      CREATE TABLE "DataCreditoBranchDailyQuotaUsage" (
+        "allyId" INTEGER NOT NULL,"branchId" INTEGER NOT NULL,"businessDate" DATE NOT NULL,"usedCount" INTEGER NOT NULL,
+        "createdAt" TIMESTAMP NOT NULL,"updatedAt" TIMESTAMP NOT NULL,PRIMARY KEY("allyId","branchId","businessDate"));
       CREATE TABLE "DataCreditoDailyQuotaUsage" (
         "allyId" INTEGER NOT NULL REFERENCES "Aliado"("id"), "businessDate" DATE NOT NULL,
         "usedCount" INTEGER NOT NULL CHECK ("usedCount" >= 0),
         "createdAt" TIMESTAMP NOT NULL, "updatedAt" TIMESTAMP NOT NULL,
         PRIMARY KEY ("allyId", "businessDate")
       );
-      INSERT INTO "Aliado" VALUES (1, 2), (2, 5), (3, 0), (4, NULL), (5, 1)`);
+      INSERT INTO "Aliado"("id","dataCreditoDailyQueryLimit") VALUES (1, 2), (2, 5), (3, 0), (4, NULL), (5, 1);
+      INSERT INTO "Sede"("id","aliadoId") SELECT "id","id" FROM "Aliado"`);
     const adapter = (client, now) => ({
       $queryRawUnsafe: async (sql, ...values) => {
         const query = now && sql.includes("clock_timestamp()")
@@ -216,7 +232,8 @@ test("PostgreSQL: ultimo cupo concurrente, aliados y reinicio Bogota en cambios 
       try {
         await client.query("BEGIN");
         await client.query(`SET LOCAL search_path = "${schema}"`);
-        const result = await reserveQuota(allyId, adapter(client, now));
+        const result = await reserveQuota(allyId, adapter(client, now), allyId);
+        if (result.allowed) await client.query(`INSERT INTO "DataCreditoAssessment"(id,"aliadoId","sedeId",status,"dailyQuotaBusinessDate") VALUES($1,$2,$2,'PENDING',$3::date)`, [randomUUID(),allyId,result.businessDate]);
         await client.query(rollback ? "ROLLBACK" : "COMMIT");
         return result;
       } catch (error) {
@@ -271,7 +288,8 @@ test("PostgreSQL: ultimo cupo concurrente, aliados y reinicio Bogota en cambios 
       [14, "salida del dia bisiesto", "2028-02-29", "2028-03-01", "2028-03-02"],
     ];
     for (const [allyId, label, oldDate, newDate, followingDate] of calendarCases) {
-      await admin.query('INSERT INTO "Aliado" VALUES ($1, 1)', [allyId]);
+      await admin.query('INSERT INTO "Aliado"("id","dataCreditoDailyQueryLimit") VALUES ($1, 1)', [allyId]);
+      await admin.query('INSERT INTO "Sede"("id","aliadoId") VALUES ($1,$1)', [allyId]);
       const beforeUtcMidnight = `${oldDate}T23:59:59.999Z`;
       const utcMidnight = `${newDate}T00:00:00.000Z`;
       const beforeBogotaMidnight = `${newDate}T04:59:59.999Z`;

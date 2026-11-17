@@ -153,6 +153,7 @@ export async function GET(request: Request) {
     }
 
     let quotaAllyId = user.aliadoId || null;
+    let quotaBranchId = user.sedeId;
     const requestedSolicitudIdValue = requestUrl.searchParams.get("solicitudId");
     if (requestedSolicitudIdValue !== null) {
       const requestedSolicitudId = Number(requestedSolicitudIdValue);
@@ -188,10 +189,11 @@ export async function GET(request: Request) {
       // The POST charges the original solicitud owner, including when a central
       // administrator resumes another ally's request. Read that same quota.
       quotaAllyId = solicitudOwner.aliadoId;
+      quotaBranchId = solicitudOwner.sedeId;
     }
 
     const assigned = await getAssignedDataCreditoPolicy(user.aliadoId || null);
-    const dailyQuota = await getDataCreditoDailyQuotaSnapshot(quotaAllyId);
+    const dailyQuota = await getDataCreditoDailyQuotaSnapshot(quotaAllyId, quotaBranchId);
     const policy = assigned.kind === "READY" ? assigned.policy : null;
     return NextResponse.json(
       serializePolicyResponse({
