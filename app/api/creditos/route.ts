@@ -1,4 +1,5 @@
 import type { DataCreditoIdentity } from "@/lib/datacredito/identity";
+import { CREDIT_CLIENT_REDACTED_FIELDS, type CreditClientRedactedField } from "@/lib/credit-client-data-visibility";
 import type { CreditRiskAuthorization } from "@/lib/datacredito/risk-exception";
 import { FirmaSeguroFullNameIdentityError, readFirmaSeguroFullNameIdentity } from "@/lib/datacredito/firmaseguro-identity";
 import { requireDraftImeiConfirmation } from "@/lib/credit-imei-confirmation-storage";
@@ -638,6 +639,7 @@ function serializeCredit(
     clientePrimerApellido: item.clientePrimerApellido,
     clienteSegundoApellido: typeof savedSecondSurname === "string" ? savedSecondSurname : null,
     dataCreditoIdentityNameMode: savedIdentity?.nameMode === "FULL_NAME_ONLY" ? "FULL_NAME_ONLY" : null,
+    redactedClientFields: [] as CreditClientRedactedField[],
     clienteTipoDocumento: item.clienteTipoDocumento,
     clienteDireccion: item.clienteDireccion,
     clienteDocumento: item.clienteDocumento,
@@ -748,6 +750,7 @@ function serializeCredit(
 function redactCreditForNonAdmin(item: ReturnType<typeof serializeCredit>) {
   return {
     ...item,
+    redactedClientFields: [...CREDIT_CLIENT_REDACTED_FIELDS],
     clienteDireccion: null,
     clienteFechaNacimiento: null,
     clienteFechaExpedicion: null,

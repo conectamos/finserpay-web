@@ -2,6 +2,12 @@
 import {resolveSelectedPaymentAmount} from "@/lib/manual-payment-amount";
 import { creditReportSadmin, creditReportDocument } from "@/lib/credit-report-identifiers";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
+import {
+  creditClientFieldDisplay,
+  creditClientNamePartDisplay,
+  isCreditClientFieldRedacted,
+  type CreditClientRedactedField,
+} from "@/lib/credit-client-data-visibility";
 
 import Link from "next/link";
 import CustomerDetailsForm from "./customer-details-form";
@@ -614,6 +620,7 @@ type CreditItem = {
   clientePrimerApellido?: string | null;
   clienteSegundoApellido?: string | null;
   dataCreditoIdentityNameMode?: "FULL_NAME_ONLY" | null;
+  redactedClientFields?: CreditClientRedactedField[];
   clienteTipoDocumento?: string | null;
   clienteDireccion: string | null;
   clienteDocumento: string | null;
@@ -3660,6 +3667,8 @@ export default function CreditFactoryConsole({
     () => credits.find((item) => item.id === selectedId) || null,
     [credits, selectedId]
   );
+  const dossierClientField = (field: CreditClientRedactedField, formattedValue: string) =>
+    creditClientFieldDisplay(selectedCredit, field, formattedValue);
   const selectedCreditCommercialInstallment = Number(
     selectedCredit?.valorCuotaComercial ?? selectedCredit?.valorCuota ?? 0
   );
@@ -19764,20 +19773,20 @@ export default function CreditFactoryConsole({
 
                               <dl className="mt-4 grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
                                 <DossierInfoField label="Nombre completo" value={dossierText(selectedCredit.clienteNombre)} />
-                                <DossierInfoField label="Primer nombre" value={dossierText(selectedCredit.clientePrimerNombre)} />
-                                <DossierInfoField label="Primer apellido" value={dossierText(selectedCredit.clientePrimerApellido)} />
+                                <DossierInfoField label="Primer nombre" value={creditClientNamePartDisplay(selectedCredit.clientePrimerNombre, selectedCredit.dataCreditoIdentityNameMode)} />
+                                <DossierInfoField label="Primer apellido" value={creditClientNamePartDisplay(selectedCredit.clientePrimerApellido, selectedCredit.dataCreditoIdentityNameMode)} />
                                 <DossierInfoField label="Tipo de documento" value={selectedCreditDocumentTypeLabel} />
                                 <DossierInfoField label="Número de documento" value={dossierText(selectedCredit.clienteDocumento)} />
-                                <DossierInfoField label="Fecha de expedición" value={dossierDate(selectedCredit.clienteFechaExpedicion)} />
-                                <DossierInfoField label="Fecha de nacimiento" value={dossierDate(selectedCredit.clienteFechaNacimiento)} />
-                                <DossierInfoField label="Género" value={selectedCreditGenderLabel} />
-                                <DossierInfoField label="Estado civil" value={selectedCreditMaritalStatusLabel} />
-                                <DossierInfoField label="Estrato" value={selectedCredit.clienteEstrato ? `Estrato ${selectedCredit.clienteEstrato}` : "No registrado"} />
+                                <DossierInfoField label="Fecha de expedición" value={dossierClientField("clienteFechaExpedicion", dossierDate(selectedCredit.clienteFechaExpedicion))} />
+                                <DossierInfoField label="Fecha de nacimiento" value={dossierClientField("clienteFechaNacimiento", dossierDate(selectedCredit.clienteFechaNacimiento))} />
+                                <DossierInfoField label="Género" value={dossierClientField("clienteGenero", selectedCreditGenderLabel)} />
+                                <DossierInfoField label="Estado civil" value={dossierClientField("clienteEstadoCivil", selectedCreditMaritalStatusLabel)} />
+                                <DossierInfoField label="Estrato" value={dossierClientField("clienteEstrato", selectedCredit.clienteEstrato ? `Estrato ${selectedCredit.clienteEstrato}` : "No registrado")} />
                                 <DossierInfoField label="Celular / WhatsApp" value={selectedCredit.clienteTelefono ? `+57 ${selectedCredit.clienteTelefono}` : "No registrado"} />
-                                <DossierInfoField label="Correo electrónico" value={dossierText(selectedCredit.clienteCorreo)} />
+                                <DossierInfoField label="Correo electrónico" value={dossierClientField("clienteCorreo", dossierText(selectedCredit.clienteCorreo))} />
                                 <DossierInfoField label="Departamento de residencia" value={selectedCreditDepartmentLabel} />
                                 <DossierInfoField label="Ciudad de residencia" value={dossierText(selectedCredit.clienteCiudad)} />
-                                <DossierInfoField label="Dirección completa" value={dossierText(selectedCredit.clienteDireccion)} className="sm:col-span-2 lg:col-span-3" />
+                                <DossierInfoField label="Dirección completa" value={dossierClientField("clienteDireccion", dossierText(selectedCredit.clienteDireccion))} className="sm:col-span-2 lg:col-span-3" />
                               </dl>
 
                               <div className="mt-5">
@@ -19787,7 +19796,11 @@ export default function CreditFactoryConsole({
                                     Referencias familiares
                                   </h6>
                                 </div>
-                                {selectedCredit.referenciasFamiliares.length > 0 ? (
+                                {isCreditClientFieldRedacted(selectedCredit, "referenciasFamiliares") ? (
+                                  <p className="mt-3 text-sm text-[var(--fp-muted)]">
+                                    Referencias no visibles para este perfil
+                                  </p>
+                                ) : selectedCredit.referenciasFamiliares.length > 0 ? (
                                   <div role="list" className="mt-3 grid gap-5 md:grid-cols-2">
                                     {selectedCredit.referenciasFamiliares.map((reference, index) => (
                                       <div
