@@ -821,7 +821,7 @@ type LoadedManualCreditLimit = NonNullable<
 };
 
 type DataCreditoPolicySimulation = {
-  kind: "POLICY_NO_INFORMATION";
+  kind: "POLICY_APPROVED_CONDITIONS" | "POLICY_NO_INFORMATION";
   simulationOnly: true;
   platform: "ANDROID" | "IPHONE";
   decision: "APROBADO" | "RECHAZADO";
@@ -7455,7 +7455,7 @@ export default function CreditFactoryConsole({
         if (simulation.decision !== "APROBADO" || !simulation.offer) {
           setDataCreditoSimulationStatus("rejected");
           setDataCreditoSimulationMessage(
-            "La configuración actual no autoriza esta simulación."
+            "La política del aliado no tiene condiciones aprobadas para simular en esta plataforma."
           );
           return;
         }

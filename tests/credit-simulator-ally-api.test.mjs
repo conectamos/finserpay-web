@@ -49,6 +49,22 @@ function createPolicy(allyId, decision = "APROBADO") {
   };
 }
 
+function createScoredPolicy(allyId) {
+  const assignedPolicy = createPolicy(allyId, "RECHAZADO");
+  const bands = assignedPolicy.bands.flatMap((band) => [
+    band,
+    { ...band, id: `${band.id}-low`, scoreMin: 0, scoreMax: 449 },
+    { ...band, id: `${band.id}-first`, scoreMin: 450, scoreMax: 699, decision: "APROBADO",
+      initialPaymentPercentage: band.platform === "ANDROID" ? 40 : 30,
+      installmentCount: 16, maxFinancedAmount: 1_200_000 },
+    { ...band, id: `${band.id}-high`, scoreMin: 700, scoreMax: 950, decision: "APROBADO",
+      initialPaymentPercentage: band.platform === "ANDROID" ? 20 : 10,
+      installmentCount: 24, maxFinancedAmount: 2_000_000 },
+  ]);
+  return { ...assignedPolicy,
+    bands: policy.parseDataCreditoPolicyBands(bands, { requireFinancingTerms: true }).reverse() };
+}
+
 function fixture({ user = allyAdmin, enabled = true, assignedPolicy = createPolicy(user?.aliadoId || 2), dailyQuota } = {}) {
   const reads = [];
   const quotaReads = [];
@@ -109,6 +125,7 @@ test("el administrador aliado simula Android e iPhone con su política local sin
     assert.deepEqual(f.reads, [2]);
     assert.equal(result.data.simulation.platform, platform);
     assert.equal(result.data.simulation.simulationOnly, true);
+    assert.equal(result.data.simulation.kind, "POLICY_APPROVED_CONDITIONS");
     assert.equal(result.data.simulation.decision, "APROBADO");
     assert.equal(result.data.simulation.offer.maxFinancedAmount, 2_000_000);
     assert.equal(result.data.simulation.offer.initialPaymentPercentage, 30);
@@ -122,6 +139,57 @@ test("el administrador aliado simula Android e iPhone con su política local sin
       assert.equal(result.data.policy[field], undefined, field);
     }
   }
+});
+
+test("una política válida que rechaza Sin información permite simular sus condiciones aprobadas sin aprobar al cliente", async () => {
+  const assignedPolicy = createScoredPolicy(2);
+  assignedPolicy.financialSettings = { ...policy.DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
+    tasaInteresEa: 25.18, fianzaTotalPorcentaje: 68, seguroCuotaPorcentaje: 0.04, frecuenciaPago: "MENSUAL" };
+  const before = plain(assignedPolicy);
+  const f = fixture({ assignedPolicy });
+  for (const platform of ["ANDROID", "IPHONE"]) {
+    const result = await f.request(platform);
+    const simulation = result.data.simulation;
+    assert.equal(result.status, 200);
+    assert.equal(simulation.kind, "POLICY_APPROVED_CONDITIONS");
+    assert.equal(simulation.simulationOnly, true);
+    assert.equal(simulation.decision, "APROBADO");
+    assert.equal(simulation.offer.initialPaymentPercentage, platform === "ANDROID" ? 40 : 30);
+    assert.equal(simulation.offer.installmentCount, 16, "Usa la primera condición aprobada por puntaje, no el orden del JSON");
+    assert.equal(simulation.offer.maxFinancedAmount, 1_200_000);
+    assert.deepEqual(simulation.initialPaymentPercentages, platform === "ANDROID" ? [20, 40] : [10, 30]);
+    assert.deepEqual(simulation.offer.financialSettings, plain(assignedPolicy.financialSettings));
+    assert.equal(policy.resolveDataCreditoDecision({ ...assignedPolicy, priorityRules: null }, platform, -1).decision,
+      "RECHAZADO", "La decisión real de Sin información permanece rechazada");
+    for (const field of ["assessmentId", "score", "bands", "bandId", "scoreMin", "scoreMax", "priorityRules"]) {
+      assert.equal(simulation[field], undefined, field);
+      assert.equal(result.data[field], undefined, field);
+    }
+    assert.equal(result.data.offer, undefined);
+    assert.equal(result.data.policy.bands, undefined);
+  }
+  assert.deepEqual(f.reads, [2, 2]);
+  assert.deepEqual(f.quotaReads, []);
+  assert.deepEqual(plain(assignedPolicy), before);
+});
+
+test("la plataforma sin bandas aprobadas conserva el rechazo aunque la otra plataforma tenga condiciones simulables", async () => {
+  const assignedPolicy = createScoredPolicy(2);
+  assignedPolicy.bands = assignedPolicy.bands.map((band) =>
+    band.platform === "ANDROID" ? { ...band, decision: "RECHAZADO" } : band);
+  const f = fixture({ assignedPolicy });
+  const android = await f.request("ANDROID");
+  assert.equal(android.status, 200);
+  assert.equal(android.data.simulation.decision, "RECHAZADO");
+  assert.equal(android.data.simulation.offer, null);
+  assert.deepEqual(android.data.simulation.initialPaymentPercentages, []);
+  const iphone = await f.request("IPHONE");
+  assert.equal(iphone.status, 200);
+  assert.equal(iphone.data.simulation.decision, "APROBADO");
+  assert.equal(iphone.data.simulation.offer.initialPaymentPercentage, 30);
+  assert.deepEqual(iphone.data.simulation.initialPaymentPercentages, [10, 30]);
+  assert.deepEqual(f.reads, [2, 2]);
+  assert.deepEqual(f.quotaReads, []);
 });
 
 test("las iniciales de simulación vienen de bandas aprobadas de la plataforma, incluyen cero y se ordenan sin duplicados", async () => {
