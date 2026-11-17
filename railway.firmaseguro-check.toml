@@ -1,7 +1,0 @@
-# Temporary private validation service only. Never use this config for finserpay-web.
-[build]
-builder = "DOCKERFILE"
-
-[deploy]
-startCommand = "node scripts/verify-firmaseguro-portal-runtime.mjs"
-restartPolicyType = "NEVER"
