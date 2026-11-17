@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 const PROBE_TIMEOUT_MS = 120_000;
 const PROBE_ENV_KEYS = ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
   "LANG", "LC_ALL", "DISPLAY", "PLAYWRIGHT_BROWSERS_PATH", "FIRMASEGURO_EMAIL", "FIRMASEGURO_PASSWORD",
-  "FIRMASEGURO_PORTAL_EMAIL", "FIRMASEGURO_PORTAL_PASSWORD"];
+  "FIRMASEGURO_PORTAL_EMAIL", "FIRMASEGURO_PORTAL_PASSWORD", "FIRMASEGURO_BROWSER_ENDPOINT", "FIRMASEGURO_BROWSER_TOKEN"];
 function safeCode(value, fallback) {
   return typeof value === "string" && /^[A-Z][A-Z_]{1,80}$/.test(value) ? value : fallback;
 }
@@ -58,6 +58,7 @@ export async function startFinserpay({
       if (!validReceipt(receipt)) throw Object.assign(new Error("Invalid verification receipt"), { code: "PORTAL_RUNTIME_RECEIPT_INVALID" });
       report({ event: "firmaseguro_portal_runtime_verified", code: receipt.code,
         platform: receipt.platform, uid: receipt.uid, playwrightVersion: receipt.playwrightVersion,
+        browserTransport: receipt.browserTransport === "PRIVATE" ? "PRIVATE" : "LOCAL",
         resendEnabled: env.FIRMASEGURO_PORTAL_RESEND_ENABLED === "true" });
     } catch (error) {
       env.FIRMASEGURO_PORTAL_RESEND_ENABLED = "false";

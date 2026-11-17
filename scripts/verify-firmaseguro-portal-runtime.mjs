@@ -61,7 +61,8 @@ export async function verifyFirmaSeguroPortalRuntime() {
       ? error.code : "PORTAL_RUNTIME_ACCESS_FAILED";
     throw new FirmaSeguroPortalRuntimeError(code, error);
   }
-  return { ok: true, code: "PORTAL_RUNTIME_ACCESS_VERIFIED", platform: "linux", uid, playwrightVersion };
+  const browserTransport = process.env.FIRMASEGURO_BROWSER_ENDPOINT || process.env.FIRMASEGURO_BROWSER_TOKEN ? "PRIVATE" : "LOCAL";
+  return { ok: true, code: "PORTAL_RUNTIME_ACCESS_VERIFIED", platform: "linux", uid, playwrightVersion, browserTransport };
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

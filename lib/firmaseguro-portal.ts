@@ -3,6 +3,7 @@ import "server-only";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 
 const ORIGIN = "https://app.firmaseguro.co";
+const PRIVATE_BROWSER_ENDPOINT = "ws://firma-portal-browser.railway.internal:3010/connect";
 const TIMEOUT = 20_000;
 const BROWSER_ENV_KEYS = [
   "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
@@ -146,6 +147,7 @@ async function openPortalAccess() {
     if (closed) return;
     closed = true;
     try { await context?.close(); } catch { /* Never expose browser errors or credentials. */ }
+    // For chromium.connect(), close disconnects this client; it does not stop the remote BrowserServer.
     try { await browser?.close(); } catch { /* Best effort after a crashed context. */ }
   }
   async function guardPage() {
@@ -164,14 +166,24 @@ async function openPortalAccess() {
     await guardPage();
   }
   try {
-    const browserEnv: Record<string, string> = {};
-    for (const key of BROWSER_ENV_KEYS) {
-      const value = process.env[key];
-      if (value !== undefined) browserEnv[key] = value;
+    const remoteEndpoint = process.env.FIRMASEGURO_BROWSER_ENDPOINT;
+    const remoteToken = process.env.FIRMASEGURO_BROWSER_TOKEN;
+    if (remoteEndpoint !== undefined || remoteToken !== undefined) {
+      // Exact private destination only: no URL normalization, credentials, query, fragment or alternate host.
+      if (remoteEndpoint !== PRIVATE_BROWSER_ENDPOINT || !remoteToken || !/^[A-Za-z0-9_-]{32,256}$/.test(remoteToken))
+        throw new FirmaSeguroPortalError("PORTAL_NOT_CONFIGURED", "La conexión privada del navegador no está configurada correctamente.", 503);
+      browser = await chromium.connect(remoteEndpoint, {
+        headers: { Authorization: `Bearer ${remoteToken}` }, timeout: TIMEOUT,
+      });
+    } else {
+      const browserEnv: Record<string, string> = {};
+      for (const key of BROWSER_ENV_KEYS) {
+        const value = process.env[key];
+        if (value !== undefined) browserEnv[key] = value;
+      }
+      // The local browser retains its sandbox and minimal environment. A remote failure never falls back here.
+      browser = await chromium.launch({ headless: true, chromiumSandbox: true, env: browserEnv });
     }
-    // The portal runs with Chromium's sandbox and receives no application/provider secrets in its environment.
-    // An unsupported sandbox is a deployment error; never fall back to an unsandboxed launch.
-    browser = await chromium.launch({ headless: true, chromiumSandbox: true, env: browserEnv });
     readPhase = "CONTEXT";
     context = await browser.newContext({ acceptDownloads: false, ignoreHTTPSErrors: false, serviceWorkers: "block" });
     await context.route("**/*", async route => {

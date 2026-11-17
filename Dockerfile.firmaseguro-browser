@@ -1,0 +1,21 @@
+# Dedicated private browser worker. The final image contains no FINSERPAY app or database code.
+FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
+FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV HOME=/home/node
+ENV PORT=3010
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY --from=deps /app/node_modules/playwright ./node_modules/playwright
+COPY --from=deps /app/node_modules/playwright-core ./node_modules/playwright-core
+RUN node node_modules/playwright/cli.js install --with-deps --only-shell chromium \
+  && rm -rf /var/lib/apt/lists/*
+COPY scripts/firmaseguro-browser-worker.mjs ./scripts/firmaseguro-browser-worker.mjs
+RUN chown -R node:node /home/node
+USER node
+EXPOSE 3010
+CMD ["node", "scripts/firmaseguro-browser-worker.mjs"]
