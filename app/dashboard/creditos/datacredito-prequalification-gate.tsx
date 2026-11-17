@@ -126,6 +126,7 @@ type AssessmentFallback = {
 };
 
 type DailyQueryLimitReached = {
+  scope?: "ALLY" | "BRANCH";
   limit: number | null;
   used: number;
   remaining: number | null;
@@ -422,6 +423,7 @@ function normalizeDailyQueryLimitReached(
     limit, used, remaining, percentUsed,
     exhausted: source.exhausted,
     resetsAt,
+    ...(source.scope === "BRANCH" || source.scope === "ALLY" ? { scope: source.scope } : {}),
   };
 }
 
@@ -659,7 +661,7 @@ export default function DatacreditoPrequalificationGate({
       normalizedInitialDocument &&
       normalizedInitialSurname &&
       (normalizedInitialErrorCode === "RATE_LIMITED" ||
-        normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED" ||
+        ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(normalizedInitialErrorCode) ||
         normalizedInitialErrorCode === "ASSESSMENT_RETRY_AUTHORIZED")
   );
   const [view, setView] = useState<GateView>("loading");
@@ -866,7 +868,7 @@ export default function DatacreditoPrequalificationGate({
 
       try {
         const policyResponse = await fetch(
-          initialSolicitudId && !initialAssessmentId && normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED"
+          initialSolicitudId && !initialAssessmentId && ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(normalizedInitialErrorCode)
             ? `/api/creditos/datacredito/politica?solicitudId=${encodeURIComponent(initialSolicitudId)}`
             : "/api/creditos/datacredito/politica",
           {
@@ -928,7 +930,7 @@ export default function DatacreditoPrequalificationGate({
           return;
         }
         if (!initialAssessmentId) {
-          if (newQueryRetryRecovery && normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED") {
+          if (newQueryRetryRecovery && ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(normalizedInitialErrorCode)) {
             const quota = normalizeDailyQueryLimitReached(policyPayload);
             if (quota?.exhausted && quota.percentUsed === 100) {
               setDailyQueryLimitReached(quota);
@@ -1249,7 +1251,7 @@ export default function DatacreditoPrequalificationGate({
         const dailyQuota = normalizeDailyQueryLimitReached(payload);
         if (
           response.status === 429 &&
-          getResponseCode(payload) === "ALLY_DAILY_QUERY_LIMIT_REACHED" &&
+          ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(getResponseCode(payload)) &&
           dailyQuota?.exhausted === true && dailyQuota.percentUsed === 100
         ) {
           setDailyQueryLimitReached(dailyQuota);
@@ -1752,6 +1754,7 @@ export default function DatacreditoPrequalificationGate({
           {dailyQuotaBlocked ? (
             <div className={styles.statusNotice} role="status" id="datacredito-quota-status">
               <p className="font-bold">Límite diario de consultas alcanzado.</p>
+              {dailyQueryLimitReached.scope === "BRANCH" ? <p>Esta sede agotó su cupo asignado. El administrador puede revisar la distribución del aliado.</p> : null}
               <p>El cupo se restablece {formatDailyQueryLimitReset(dailyQueryLimitReached.resetsAt)} (hora de Bogotá). Las solicitudes existentes y el simulador siguen disponibles.</p>
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <Button variant="secondary" onClick={() => void checkDailyQueryQuota()} disabled={checkingDailyQuota} aria-disabled={checkingDailyQuota}>

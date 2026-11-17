@@ -93,6 +93,34 @@ export type DataCreditoPolicyAlly = {
   dailyQueriesUsed: number;
   dailyQueriesRemaining: number | null;
   dailyQuotaResetsAt: string;
+  branchQuotaEnabled: boolean;
+  branches: {
+    id: number; name: string; active: boolean; dailyQueryLimit: number | null;
+    usedToday: number; remainingToday: number;
+  }[];
+};
+
+type BranchQuotaDraft = {
+  enabled: boolean;
+  limits: Record<string, string>;
+  reason: string;
+  dirty: boolean;
+};
+
+type PendingBranchQuotaSave = {
+  allyId: number;
+  allyName: string;
+  snapshot: string;
+  body: {
+    action: "SET_BRANCH_DAILY_QUOTAS";
+    allyId: number;
+    enabled: boolean;
+    expectedEnabled: boolean;
+    expectedDailyQueryLimit: number | null;
+    branches: { branchId: number; dailyLimit: number | null; expectedDailyLimit: number | null }[];
+    reason?: string;
+  };
+  description: string;
 };
 
 type PolicyCatalogSnapshot = {
@@ -793,6 +821,29 @@ function parsePolicyAlly(value: unknown, index: number): DataCreditoPolicyAlly {
       ? null
       : readFiniteNumber(value.dailyQueriesRemaining);
   const dailyQuotaResetsAt = readString(value.dailyQuotaResetsAt);
+  if (value.branchQuotaEnabled !== undefined && typeof value.branchQuotaEnabled !== "boolean") {
+    throw new PolicyRequestError(`El modo de cupos por sede del aliado ${index + 1} no es válido.`);
+  }
+  if (value.branches !== undefined && !Array.isArray(value.branches)) {
+    throw new PolicyRequestError(`Las sedes del aliado ${index + 1} no son válidas.`);
+  }
+  const branchIds = new Set<number>();
+  const branches = (Array.isArray(value.branches) ? value.branches : []).map((entry) => {
+    if (!isRecord(entry)) throw new PolicyRequestError(`Una sede del aliado ${index + 1} no es válida.`);
+    const branchId = readFiniteNumber(entry.id);
+    const branchName = readString(entry.name);
+    const limit = entry.dailyQueryLimit === null ? null : readFiniteNumber(entry.dailyQueryLimit);
+    const used = readFiniteNumber(entry.usedToday);
+    const remaining = readFiniteNumber(entry.remainingToday);
+    if (branchId === null || !Number.isSafeInteger(branchId) || branchId <= 0 || branchIds.has(branchId) || !branchName ||
+      typeof entry.active !== "boolean" ||
+      (entry.dailyQueryLimit !== null && (limit === null || !Number.isSafeInteger(limit) || limit < 0 || limit > MAX_ALLY_DAILY_QUERY_LIMIT)) ||
+      used === null || !Number.isSafeInteger(used) || used < 0 || remaining === null || !Number.isSafeInteger(remaining) || remaining < 0) {
+      throw new PolicyRequestError(`Una sede del aliado ${index + 1} está incompleta.`);
+    }
+    branchIds.add(branchId);
+    return { id: branchId, name: branchName, active: entry.active, dailyQueryLimit: limit, usedToday: used, remainingToday: remaining };
+  });
 
   if (
     id === null ||
@@ -831,6 +882,8 @@ function parsePolicyAlly(value: unknown, index: number): DataCreditoPolicyAlly {
     dailyQueriesUsed,
     dailyQueriesRemaining,
     dailyQuotaResetsAt,
+    branchQuotaEnabled: value.branchQuotaEnabled === true,
+    branches,
   };
 }
 
@@ -1258,6 +1311,43 @@ function parseDailyQueryLimitDraft(
 
 function dailyQueryLimitDraftValue(ally: DataCreditoPolicyAlly) {
   return ally.dailyQueryLimit === null ? "" : String(ally.dailyQueryLimit);
+}
+
+function branchQuotaDraftValue(ally: DataCreditoPolicyAlly): BranchQuotaDraft {
+  return {
+    enabled: ally.branchQuotaEnabled,
+    limits: Object.fromEntries(ally.branches.filter((branch) => branch.active)
+      .map((branch) => [String(branch.id), String(branch.dailyQueryLimit ?? 0)])),
+    reason: "", dirty: false,
+  };
+}
+
+function branchQuotaDraftChanged(ally: DataCreditoPolicyAlly, draft: BranchQuotaDraft) {
+  return draft.enabled !== ally.branchQuotaEnabled || draft.reason.trim().length > 0 ||
+    ally.branches.some((branch) => branch.active && (draft.limits[String(branch.id)] ?? "0").trim() !== String(branch.dailyQueryLimit ?? 0));
+}
+
+function validateBranchQuotaDraft(ally: DataCreditoPolicyAlly, draft: BranchQuotaDraft, parentQuotaDirty: boolean) {
+  const activeBranches = ally.branches.filter((branch) => branch.active);
+  const issues: string[] = [];
+  const limits = activeBranches.map((branch) => ({ branch,
+    value: parseInteger(draft.limits[String(branch.id)] ?? "0") }));
+  const allocated = limits.reduce((sum, item) => sum + (item.value !== null && item.value >= 0 ? item.value : 0), 0);
+  if (parentQuotaDirty) issues.push("Guarda primero el cupo diario del aliado antes de distribuirlo por sedes.");
+  if (limits.some((item) => item.value === null || item.value < 0 || item.value > MAX_ALLY_DAILY_QUERY_LIMIT)) {
+    issues.push("Cada sede debe tener un número entero de consultas igual o mayor que 0.");
+  }
+  if (draft.enabled) {
+    if (ally.dailyQueryLimit === null) issues.push("Define y guarda un cupo diario total para este aliado antes de distribuirlo por sedes.");
+    if (!activeBranches.length) issues.push("Este aliado necesita al menos una sede activa para distribuir el cupo.");
+    if (ally.dailyQueryLimit !== null && allocated > ally.dailyQueryLimit) {
+      issues.push(`La distribución suma ${allocated.toLocaleString("es-CO")} y supera el cupo total de ${ally.dailyQueryLimit.toLocaleString("es-CO")}.`);
+    }
+  }
+  if (draft.reason.length > 240) issues.push("El motivo puede tener hasta 240 caracteres.");
+  return { valid: issues.length === 0, issues, allocated,
+    unallocated: ally.dailyQueryLimit === null ? null : Math.max(0, ally.dailyQueryLimit - allocated),
+    limits };
 }
 
 function formatDailyQuotaReset(value: string) {
@@ -1924,6 +2014,11 @@ export default function DatacreditoPolicyConsole() {
   const [dailyQueryLimitDrafts, setDailyQueryLimitDrafts] = useState<
     Record<string, string>
   >({});
+  const [branchQuotaDrafts, setBranchQuotaDrafts] = useState<Record<string, BranchQuotaDraft>>({});
+  const [branchQuotaAllyId, setBranchQuotaAllyId] = useState<number | null>(null);
+  const [pendingBranchQuotaSave, setPendingBranchQuotaSave] = useState<PendingBranchQuotaSave | null>(null);
+  const [savingBranchQuotas, setSavingBranchQuotas] = useState(false);
+  const [branchQuotaError, setBranchQuotaError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<PolicyConsoleTab>("POLICIES");
   const [visitedTabs, setVisitedTabs] = useState<PolicyConsoleTab[]>(["POLICIES"]);
   const mutationBusyRef = useRef(false);
@@ -1977,6 +2072,7 @@ export default function DatacreditoPolicyConsole() {
     preferredPolicyId: string | null;
     preservePolicyDraft: boolean;
     preserveAssignmentDrafts: boolean;
+    confirmedBranchAllyIds?: number[];
     message: string;
   } | null>(null);
   const catalogRecoveryRef = useRef(catalogRecovery);
@@ -1993,6 +2089,7 @@ export default function DatacreditoPolicyConsole() {
     setConfirmOpen(false);
     setAssignmentConfirmOpen(false);
     setDeleteConfirmOpen(false);
+    setPendingBranchQuotaSave(null);
     setError(null);
     setNotice(null);
     setCorrelationId(getCorrelationId(payload, response));
@@ -2138,11 +2235,46 @@ export default function DatacreditoPolicyConsole() {
   const dailyQueryLimitChangeCount = assignmentChanges.filter(
     (change) => change.dailyQueryLimitChanged
   ).length;
+  const branchQuotaAlly = allies.find((ally) => ally.id === branchQuotaAllyId) || null;
+  const branchQuotaDraft = branchQuotaAlly
+    ? branchQuotaDrafts[allyDraftKey(branchQuotaAlly.id)] || branchQuotaDraftValue(branchQuotaAlly)
+    : null;
+  const branchQuotaParentDirty = branchQuotaAlly
+    ? dailyQueryLimitValidations[allyDraftKey(branchQuotaAlly.id)]?.value !== branchQuotaAlly.dailyQueryLimit ||
+      Boolean(dailyQueryLimitValidations[allyDraftKey(branchQuotaAlly.id)]?.error)
+    : false;
+  const branchQuotaValidation = branchQuotaAlly && branchQuotaDraft
+    ? validateBranchQuotaDraft(branchQuotaAlly, branchQuotaDraft, branchQuotaParentDirty)
+    : null;
+  const branchQuotaHasChanges = Boolean(branchQuotaAlly && branchQuotaDraft && branchQuotaDraftChanged(branchQuotaAlly, branchQuotaDraft));
+  const hasBranchQuotaDraftChanges = allies.some((ally) => {
+    const draft = branchQuotaDrafts[allyDraftKey(ally.id)];
+    return Boolean(draft && branchQuotaDraftChanged(ally, draft));
+  });
+  const branchQuotaSnapshot = JSON.stringify(branchQuotaAlly && branchQuotaDraft ? {
+    allyId: branchQuotaAlly.id, enabled: branchQuotaAlly.branchQuotaEnabled, parentLimit: branchQuotaAlly.dailyQueryLimit,
+    branches: branchQuotaAlly.branches.filter((branch) => branch.active).map((branch) => ({ id: branch.id, limit: branch.dailyQueryLimit })),
+    draft: branchQuotaDraft,
+  } : null);
+  const latestBranchQuotaRef = useRef({ snapshot: branchQuotaSnapshot, pending: pendingBranchQuotaSave });
+  latestBranchQuotaRef.current = { snapshot: branchQuotaSnapshot, pending: pendingBranchQuotaSave };
+  useEffect(() => {
+    if (branchQuotaAllyId === null) return;
+    let cancelled = false;
+    window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      const heading = document.getElementById("branch-quota-editor-title");
+      heading?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      heading?.focus({ preventScroll: true });
+    });
+    return () => { cancelled = true; };
+  }, [branchQuotaAllyId]);
   const hasPendingChanges =
     createOpen ||
     hasUnsavedChanges ||
     assignmentChanges.length > 0 ||
-    hasDailyQueryLimitDraftChanges;
+    hasDailyQueryLimitDraftChanges ||
+    hasBranchQuotaDraftChanges;
   const filteredAllies = useMemo(() => {
     const query = assignmentQuery.trim().toLocaleLowerCase("es-CO");
     if (!query) return allies;
@@ -2188,7 +2320,8 @@ export default function DatacreditoPolicyConsole() {
       preferredPolicyId?: string | null,
       preservePolicyDraft = false,
       preserveAssignmentDrafts = false,
-      confirmedAllyIds: number[] = []
+      confirmedAllyIds: number[] = [],
+      confirmedBranchAllyIds: number[] = []
     ) => {
       setEnabled(catalog.provider.enabled);
       setConfigured(catalog.provider.configured);
@@ -2238,6 +2371,16 @@ export default function DatacreditoPolicyConsole() {
         }
         return next;
       });
+      setBranchQuotaDrafts((current) => {
+        const confirmed = new Set(confirmedBranchAllyIds);
+        return Object.fromEntries(catalog.allies.map((ally) => {
+          const key = allyDraftKey(ally.id), fresh = branchQuotaDraftValue(ally), previous = current[key];
+          return [key, preserveAssignmentDrafts && !confirmed.has(ally.id) && previous?.dirty
+            ? { ...previous, limits: Object.fromEntries(ally.branches.filter((branch) => branch.active)
+                .map((branch) => [String(branch.id), previous.limits[String(branch.id)] ?? fresh.limits[String(branch.id)]])) }
+            : fresh];
+        }));
+      });
 
       const nextProfile =
         catalog.profiles.find((profile) => profile.id === preferredPolicyId) ||
@@ -2267,7 +2410,9 @@ export default function DatacreditoPolicyConsole() {
           catalog,
           recovery?.preferredPolicyId || preferredPolicyId,
           recovery?.preservePolicyDraft || false,
-          recovery?.preserveAssignmentDrafts || false
+          recovery?.preserveAssignmentDrafts || false,
+          [],
+          recovery?.confirmedBranchAllyIds || []
         );
         if (recovery) {
           setCreateOpen(false);
@@ -3140,6 +3285,95 @@ export default function DatacreditoPolicyConsole() {
     }
   };
 
+  const openBranchQuotaEditor = (allyId: number) => {
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || pendingBranchQuotaSave) return;
+    const ally = allies.find((item) => item.id === allyId);
+    if (!ally) return;
+    setBranchQuotaDrafts((current) => ({ ...current,
+      [allyDraftKey(ally.id)]: current[allyDraftKey(ally.id)] || branchQuotaDraftValue(ally) }));
+    setBranchQuotaAllyId(ally.id);
+    setBranchQuotaError(null);
+    setNotice(null);
+  };
+
+  const updateBranchQuotaDraft = (update: (current: BranchQuotaDraft) => BranchQuotaDraft) => {
+    if (!branchQuotaAlly || loading || mutationBusyRef.current || catalogRecoveryRef.current || pendingBranchQuotaSave) return;
+    const key = allyDraftKey(branchQuotaAlly.id);
+    setBranchQuotaDrafts((current) => ({ ...current,
+      [key]: { ...update(current[key] || branchQuotaDraftValue(branchQuotaAlly)), dirty: true } }));
+    setBranchQuotaError(null);
+  };
+
+  const openBranchQuotaConfirmation = () => {
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || !branchQuotaAlly || !branchQuotaDraft ||
+      !branchQuotaValidation || !branchQuotaHasChanges || pendingBranchQuotaSave) return;
+    if (!branchQuotaValidation.valid) {
+      setBranchQuotaError(branchQuotaValidation.issues[0]);
+      return;
+    }
+    const description = branchQuotaDraft.enabled
+      ? `Se distribuirá el cupo diario de ${branchQuotaAlly.name} (${branchQuotaAlly.dailyQueryLimit} consultas): ${branchQuotaValidation.limits.map(({ branch, value }) => `${branch.name}: ${value}`).join("; ")}. Quedarán ${branchQuotaValidation.unallocated} consultas sin asignar. Cada sede y el aliado conservarán su uso de hoy.`
+      : `Las sedes de ${branchQuotaAlly.name} volverán a compartir el cupo diario del aliado (${branchQuotaAlly.dailyQueryLimit === null ? "sin límite" : branchQuotaAlly.dailyQueryLimit + " consultas"}). El uso de hoy se conserva.`;
+    setPendingBranchQuotaSave({
+      allyId: branchQuotaAlly.id, allyName: branchQuotaAlly.name, snapshot: branchQuotaSnapshot, description,
+      body: {
+        action: "SET_BRANCH_DAILY_QUOTAS", allyId: branchQuotaAlly.id, enabled: branchQuotaDraft.enabled,
+        expectedEnabled: branchQuotaAlly.branchQuotaEnabled, expectedDailyQueryLimit: branchQuotaAlly.dailyQueryLimit,
+        branches: branchQuotaValidation.limits.map(({ branch, value }) => ({
+          branchId: branch.id, dailyLimit: value, expectedDailyLimit: branch.dailyQueryLimit,
+        })),
+        ...(branchQuotaDraft.reason.trim() ? { reason: branchQuotaDraft.reason.trim() } : {}),
+      },
+    });
+  };
+
+  const saveBranchQuotas = async () => {
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || !pendingBranchQuotaSave) return;
+    if (latestBranchQuotaRef.current.pending !== pendingBranchQuotaSave ||
+      latestBranchQuotaRef.current.snapshot !== pendingBranchQuotaSave.snapshot) {
+      setPendingBranchQuotaSave(null);
+      setBranchQuotaError("Los datos de las sedes cambiaron. Revisa la distribución y confirma de nuevo.");
+      return;
+    }
+    mutationBusyRef.current = true;
+    setSavingBranchQuotas(true);
+    setBranchQuotaError(null);
+    setError(null);
+    setCorrelationId(null);
+    try {
+      const response = await fetch("/api/creditos/datacredito/politicas", {
+        method: "PATCH", cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(pendingBranchQuotaSave.body),
+      });
+      const payload = await readJson(response);
+      if (!response.ok || payload.ok === false) {
+        const conflict = readString(payload.code) === "BRANCH_DAILY_QUOTA_CONFLICT";
+        throw new PolicyRequestError(conflict
+          ? "El cupo del aliado o de sus sedes cambió en otra sesión. Actualiza el listado y revisa la distribución antes de guardarla de nuevo."
+          : readString(payload.error) || "No se pudo guardar la distribución por sedes.", getCorrelationId(payload, response));
+      }
+      const message = pendingBranchQuotaSave.body.enabled
+        ? `La distribución por sedes de ${pendingBranchQuotaSave.allyName} quedó guardada.`
+        : `${pendingBranchQuotaSave.allyName} volvió al cupo compartido entre sus sedes.`;
+      if (recordCommittedMutation(payload, response, {
+        preferredPolicyId: selectedPolicyId, preservePolicyDraft: hasUnsavedChanges, preserveAssignmentDrafts: true,
+        confirmedBranchAllyIds: [pendingBranchQuotaSave.allyId], message,
+      })) return;
+      const catalog = parseCatalog(payload, response);
+      applyCatalog(catalog, selectedPolicyId, hasUnsavedChanges, true, [], [pendingBranchQuotaSave.allyId]);
+      setPendingBranchQuotaSave(null);
+      setNotice(message);
+    } catch (requestError) {
+      setPendingBranchQuotaSave(null);
+      setBranchQuotaError(requestError instanceof PolicyRequestError ? requestError.message : "No se pudo guardar la distribución por sedes.");
+      setCorrelationId(requestError instanceof PolicyRequestError ? requestError.correlationId : null);
+    } finally {
+      mutationBusyRef.current = false;
+      setSavingBranchQuotas(false);
+    }
+  };
+
   if (loading && !profiles.length) {
     return (
       <Card className="p-5 sm:p-6" aria-busy="true">
@@ -3227,7 +3461,7 @@ export default function DatacreditoPolicyConsole() {
     <section
       className={styles.console}
       aria-labelledby="datacredito-policy-title"
-      aria-busy={loading}
+      aria-busy={loading || savingBranchQuotas}
     >
       <header className={styles.pageHeader}>
         <h1 id="datacredito-policy-title" className={styles.pageTitle}>Políticas DataCrédito</h1>
@@ -3820,6 +4054,86 @@ export default function DatacreditoPolicyConsole() {
               </label>
             </div>
 
+            {branchQuotaAlly && branchQuotaDraft && branchQuotaValidation ? <section className={styles.branchQuotaEditor}
+              aria-labelledby="branch-quota-editor-title" aria-busy={savingBranchQuotas}>
+              <div className={styles.contextBar}>
+                <div><span className={styles.contextMeta}>Cupo diario por sede</span>
+                  <h4 id="branch-quota-editor-title" className={styles.heading} tabIndex={-1}>{branchQuotaAlly.name}</h4>
+                  <p className={styles.muted}>Se distribuye el total guardado del aliado entre sus sedes activas.</p>
+                </div>
+                <Button variant="secondary" disabled={savingBranchQuotas || Boolean(pendingBranchQuotaSave)}
+                  onClick={() => setBranchQuotaAllyId(null)}>Cerrar</Button>
+              </div>
+              <div className={styles.branchQuotaTotals}>
+                <div><span>Total diario del aliado</span><strong>{branchQuotaAlly.dailyQueryLimit === null ? "Sin límite" : branchQuotaAlly.dailyQueryLimit}</strong></div>
+                <div><span>Usadas hoy</span><strong>{branchQuotaAlly.dailyQueriesUsed}</strong></div>
+                <div><span>Disponibles del total hoy</span><strong>{branchQuotaAlly.dailyQueriesRemaining === null ? "Sin límite" : branchQuotaAlly.dailyQueriesRemaining}</strong></div>
+                <div><span>Repartidas entre sedes</span><strong>{branchQuotaDraft.enabled ? branchQuotaValidation.allocated : "Cupo compartido"}</strong></div>
+                <div><span>Sin asignar</span><strong>{branchQuotaDraft.enabled ? branchQuotaValidation.unallocated ?? "—" : "—"}</strong></div>
+              </div>
+              <label className={styles.branchQuotaToggle}>
+                <input id="branch-quota-enabled" type="checkbox" checked={branchQuotaDraft.enabled}
+                  disabled={loading || savingBranchQuotas || Boolean(pendingBranchQuotaSave) ||
+                    (!branchQuotaDraft.enabled && (branchQuotaAlly.dailyQueryLimit === null || branchQuotaParentDirty || !branchQuotaAlly.branches.some((branch) => branch.active)))}
+                  onChange={(event) => updateBranchQuotaDraft((current) => ({ ...current, enabled: event.target.checked,
+                    limits: event.target.checked ? current.limits : Object.fromEntries(branchQuotaAlly.branches.filter((branch) => branch.active).map((branch) => {
+                      const value = current.limits[String(branch.id)] ?? "0", parsed = parseInteger(value);
+                      return [String(branch.id), parsed !== null && parsed >= 0 && parsed <= MAX_ALLY_DAILY_QUERY_LIMIT ? value : String(branch.dailyQueryLimit ?? 0)];
+                    })),
+                  }))} />
+                <span><strong>Distribuir por sedes</strong>
+                  <small>{branchQuotaDraft.enabled ? "Cada sede tendrá su propio cupo, dentro del total del aliado."
+                    : "Las sedes comparten el cupo diario del aliado."}</small></span>
+              </label>
+              {branchQuotaAlly.dailyQueryLimit === null ? <p id="branch-quota-parent-help" className={styles.warning}>
+                Define y guarda primero un cupo diario total para este aliado. Después podrás distribuirlo por sedes.
+              </p> : branchQuotaParentDirty ? <p className={styles.warning}>Guarda primero el cambio del cupo diario del aliado; luego distribuye el total actualizado.</p> : null}
+              {!branchQuotaAlly.branches.some((branch) => branch.active) ? <p className={styles.muted}>Este aliado no tiene sedes activas para distribuir el cupo.</p> : null}
+              {branchQuotaAlly.branches.length ? <div className={styles.reviewTableWrap}>
+                <table className={styles.reviewTable}>
+                  <caption>Cupos de las sedes de {branchQuotaAlly.name}</caption>
+                  <thead><tr><th scope="col">Sede</th><th scope="col">Cupo diario</th><th scope="col">Usadas hoy</th><th scope="col">Disponibles hoy</th></tr></thead>
+                  <tbody>{branchQuotaAlly.branches.map((branch) => {
+                    const draftValue = branchQuotaDraft.limits[String(branch.id)] ?? String(branch.dailyQueryLimit ?? 0);
+                    const value = parseInteger(draftValue);
+                    const invalid = branch.active && branchQuotaDraft.enabled && (value === null || value < 0 || value > MAX_ALLY_DAILY_QUERY_LIMIT);
+                    return <tr key={branch.id}>
+                      <th scope="row">{branch.name}{!branch.active ? <small className={styles.muted}> · Inactiva</small> : null}</th>
+                      <td><label className="sr-only" htmlFor={`branch-quota-limit-${branch.id}`}>Cupo diario de {branch.name}</label>
+                        <Input id={`branch-quota-limit-${branch.id}`} type="number" inputMode="numeric" min={0} max={MAX_ALLY_DAILY_QUERY_LIMIT} step={1}
+                          value={draftValue} aria-invalid={invalid}
+                          disabled={!branch.active || !branchQuotaDraft.enabled || loading || savingBranchQuotas || Boolean(pendingBranchQuotaSave)}
+                          onChange={(event) => updateBranchQuotaDraft((current) => ({ ...current,
+                            limits: { ...current.limits, [String(branch.id)]: event.target.value } }))} />
+                        {invalid ? <span className={styles.error} role="alert">Ingresa un entero igual o mayor que 0.</span> : null}
+                      </td>
+                      <td>{branch.usedToday}</td><td>{branchQuotaAlly.branchQuotaEnabled ? branch.remainingToday : "Compartido"}</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div> : null}
+              <p className={styles.muted}>El cupo 0 bloquea nuevas consultas de esa sede. El uso de hoy se conserva al guardar.</p>
+              <label className={styles.branchQuotaReason}>Motivo del cambio (opcional)
+                <Input id="branch-quota-reason" value={branchQuotaDraft.reason} maxLength={240}
+                  disabled={loading || savingBranchQuotas || Boolean(pendingBranchQuotaSave)}
+                  onChange={(event) => updateBranchQuotaDraft((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="Ej. Distribución del cupo diario entre sedes" />
+              </label>
+              {branchQuotaValidation.issues.length ? <ul className={styles.error} role="alert">
+                {branchQuotaValidation.issues.map((issue) => <li key={issue}>{issue}</li>)}
+              </ul> : null}
+              {branchQuotaError ? <p className={styles.error} role="alert">{branchQuotaError}
+                {correlationId ? <small className="block">Código de seguimiento: {correlationId}</small> : null}
+              </p> : null}
+              <div className={styles.saveBar}>
+                <p className={styles.muted}>{branchQuotaHasChanges ? "Distribución pendiente de guardar." : "La distribución coincide con lo guardado."}</p>
+                <Button id="branch-quota-save" onClick={openBranchQuotaConfirmation}
+                  disabled={loading || savingBranchQuotas || !branchQuotaHasChanges || !branchQuotaValidation.valid || Boolean(pendingBranchQuotaSave)}>
+                  {savingBranchQuotas ? "Guardando..." : "Guardar cupos por sede"}
+                </Button>
+              </div>
+            </section> : null}
+
             {filteredAllies.length ? (
               <DataTable className={styles.table}>
                 <table className="min-w-[1180px]">
@@ -3990,6 +4304,12 @@ export default function DatacreditoPolicyConsole() {
                             <span className="mt-1 block text-xs leading-5 text-[var(--fp-muted)]">
                               Reinicia {formatDailyQuotaReset(ally.dailyQuotaResetsAt)} (hora de Bogotá).
                             </span>
+                            <Button variant="secondary" className="mt-3" aria-label={`Distribuir cupo de ${ally.name} por sedes`}
+                              disabled={loading || savingAssignments || savingBranchQuotas || creating || saving || deleting || Boolean(pendingBranchQuotaSave)}
+                              onClick={() => openBranchQuotaEditor(ally.id)}>Distribuir por sedes</Button>
+                            {ally.branchQuotaEnabled ? <span className="mt-2 block text-xs font-bold text-[var(--fp-graphite)]">Distribución por sedes activa</span> : null}
+                            {branchQuotaDrafts[allyKey] && branchQuotaDraftChanged(ally, branchQuotaDrafts[allyKey])
+                              ? <span className="mt-2 block text-xs font-bold text-[var(--fp-graphite)]">Cupos de sedes pendientes</span> : null}
                           </td>
                         </tr>
                       );
@@ -4078,6 +4398,16 @@ export default function DatacreditoPolicyConsole() {
       ) : null}
 
       </fieldset>
+
+      <ConfirmDialog
+        open={Boolean(pendingBranchQuotaSave)}
+        title="Guardar cupos por sede"
+        description={pendingBranchQuotaSave?.description || "Revisa la distribución del cupo diario del aliado."}
+        confirmLabel="Confirmar distribución"
+        busy={savingBranchQuotas}
+        onCancel={() => { if (!savingBranchQuotas && !mutationBusyRef.current) setPendingBranchQuotaSave(null); }}
+        onConfirm={() => void saveBranchQuotas()}
+      />
 
       <ConfirmDialog
         open={bandRemovalConfirmOpen}
@@ -4193,7 +4523,7 @@ export default function DatacreditoPolicyConsole() {
       <ConfirmDialog
         open={reloadConfirmOpen}
         title="Descartar cambios y recargar"
-        description="El catálogo vigente reemplazará las reglas prioritarias, los parámetros financieros, las bandas y las reasignaciones pendientes. Esta acción no afecta cambios que ya se hayan publicado."
+        description="El catálogo vigente reemplazará las reglas prioritarias, los parámetros financieros, las bandas, las reasignaciones y las distribuciones por sede pendientes. Esta acción no afecta cambios que ya se hayan publicado."
         confirmLabel="Descartar y recargar"
         busy={loading || creating || saving}
         onCancel={() => setReloadConfirmOpen(false)}

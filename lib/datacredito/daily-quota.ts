@@ -1,4 +1,5 @@
 export type DataCreditoDailyQuotaSnapshot = {
+  scope?: "ALLY" | "BRANCH";
   limit: number | null;
   used: number;
   remaining: number | null;

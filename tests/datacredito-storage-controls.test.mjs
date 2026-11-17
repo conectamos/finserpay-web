@@ -87,7 +87,7 @@ test("reserva reutilizacion, rate limit e insercion bajo locks de base de datos"
   assert.match(storage, /datacredito-rate/);
   assert.match(storage, /datacredito-document/);
   assert.match(storage, /return \{ kind: "RATE_LIMITED" \}/);
-  assert.match(storage, /insertPendingDataCreditoAssessment\(input, transaction\)/);
+  assert.match(storage, /insertPendingDataCreditoAssessment\(\s*\{ \.\.\.input, dailyQuotaBusinessDate: dailyQuota\.businessDate \}, transaction/);
   assert.match(evaluationRoute, /reserveDataCreditoAssessment/);
   assert.doesNotMatch(evaluationRoute, /countRecentDataCreditoAssessments/);
 });
@@ -97,7 +97,7 @@ test("el cupo diario se reserva atomicamente con una sola fecha de Bogota", () =
     /async function reserveDataCreditoDailyQuota[\s\S]*?(?=async function insertPendingDataCreditoAssessment)/
   )?.[0];
   assert.ok(dailyQuota);
-  assert.match(dailyQuota, /FROM "Aliado"[\s\S]*?FOR SHARE/);
+  assert.match(dailyQuota, /FROM "Aliado"[\s\S]*?FOR UPDATE/);
   assert.equal(
     dailyQuota.match(/clock_timestamp\(\)/g)?.length,
     1,
@@ -109,7 +109,7 @@ test("el cupo diario se reserva atomicamente con una sola fecha de Bogota", () =
     dailyQuota,
     /ON CONFLICT \("allyId", "businessDate"\) DO UPDATE[\s\S]*?usage\."usedCount" < \$2::integer/
   );
-  assert.match(dailyQuota, /usage\."businessDate" = \$2::date/);
+  assert.match(dailyQuota, /usage\."businessDate" = \$3::date/);
 
   const reservation = storage.match(
     /export async function reserveDataCreditoAssessment[\s\S]*?(?=export async function completeDataCreditoAssessment)/
@@ -128,7 +128,7 @@ test("el cupo diario se reserva atomicamente con una sola fecha de Bogota", () =
 test("el agotamiento responde 429 y el fallo local predespacho compensa sin dejar PENDING", () => {
   assert.match(
     evaluationRoute,
-    /reservation\.kind === "DAILY_QUOTA_EXHAUSTED"[\s\S]*?code: "ALLY_DAILY_QUERY_LIMIT_REACHED"[\s\S]*?status: 429[\s\S]*?dailyQuota:/
+    /reservation\.kind === "DAILY_QUOTA_EXHAUSTED"[\s\S]*?code: reservation\.scope === "BRANCH"[\s\S]*?"BRANCH_DAILY_QUERY_LIMIT_REACHED" : "ALLY_DAILY_QUERY_LIMIT_REACHED"[\s\S]*?status: 429[\s\S]*?dailyQuota:/
   );
   const exhaustedBranch = evaluationRoute.match(
     /if \(reservation\.kind === "DAILY_QUOTA_EXHAUSTED"\)[\s\S]*?\n    }/

@@ -309,6 +309,22 @@ test("closing then attempting again reopens by read-only quota check without a p
   ]);
 });
 
+test("branch exhaustion blocks new queries and retains the branch scope on read-only recheck", async () => {
+  const branchQuota = { ...exhausted, scope: "BRANCH" };
+  const harness = createGateHarness({ responses: [
+    { status: 429, body: { ok: false, code: "BRANCH_DAILY_QUERY_LIMIT_REACHED", dailyQuota: branchQuota } },
+    { body: { ...policy, dailyQuota: branchQuota } },
+  ] });
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  assert.equal(harness.state.view, "daily-limit-reached");
+  assert.equal(harness.state.dailyQueryLimitReached.scope, "BRANCH");
+  assert.equal(harness.state.dailyQuotaModalOpen, true);
+  await harness.functions.submitAssessment({ preventDefault() {} });
+  await new Promise(setImmediate);
+  assert.deepEqual(harness.requests.map(({ method }) => method), ["POST", "GET"]);
+  assert.equal(harness.state.dailyQueryLimitReached.scope, "BRANCH");
+});
+
 test("server-confirmed next-day or increased quota releases the form without consulting automatically", async () => {
   for (const quota of [available, { ...available, used: 0, remaining: 5, percentUsed: 0 }]) {
     const harness = createGateHarness({
@@ -383,6 +399,7 @@ test("only restored quota failures show the modal during bootstrap, using curren
   for (const [initialErrorCode, quota, expected] of [
     ["ALLY_DAILY_QUERY_LIMIT_REACHED", exhausted, "daily-limit-reached"],
     ["ALLY_DAILY_QUERY_LIMIT_REACHED", available, "ready"],
+    ["BRANCH_DAILY_QUERY_LIMIT_REACHED", { ...exhausted, scope: "BRANCH" }, "daily-limit-reached"],
     ["ASSESSMENT_RETRY_AUTHORIZED", exhausted, "ready"],
   ]) {
     const harness = createGateHarness({
@@ -394,7 +411,7 @@ test("only restored quota failures show the modal during bootstrap, using curren
     assert.equal(harness.state.view, expected);
     assert.equal(harness.state.dailyQuotaModalOpen, expected === "daily-limit-reached");
     assert.deepEqual(harness.requests.map(({ method }) => method), ["GET"]);
-    assert.equal(harness.requests[0].url, initialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED"
+    assert.equal(harness.requests[0].url, ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(initialErrorCode)
       ? "/api/creditos/datacredito/politica?solicitudId=12"
       : "/api/creditos/datacredito/politica");
   }

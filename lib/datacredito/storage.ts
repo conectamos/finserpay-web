@@ -7,6 +7,7 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { buildDataCreditoAdminRiskSummary } from "@/lib/datacredito/admin-report";
 import { serializeDataCreditoDailyQuota } from "@/lib/datacredito/daily-quota";
+import { syncDataCreditoBranchDailyQuotaUsage } from "@/lib/datacredito/branch-quota";
 import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
@@ -147,6 +148,7 @@ type CreatePendingAssessmentInput = DataCreditoAssessmentReuseInput;
 
 export type DataCreditoDailyQuotaReservation = {
   allyId: number;
+  branchId: number;
   businessDate: string;
 };
 
@@ -170,6 +172,7 @@ export type DataCreditoAssessmentReservation =
   | { kind: "RATE_LIMITED" }
   | {
       kind: "DAILY_QUOTA_EXHAUSTED";
+      scope: "ALLY" | "BRANCH";
       limit: number;
       used: number;
       remaining: 0;
@@ -995,9 +998,96 @@ async function verifyDataCreditoDailyQuotaSchema() {
   }
 }
 
+async function verifyDataCreditoBranchDailyQuotaSchema() {
+  const columns = await prisma.$queryRawUnsafe<Array<{
+    tableName: string; columnName: string; typeName: string; isNotNull: boolean; defaultValue: string | null;
+  }>>(`
+    SELECT table_state.relname AS "tableName", attribute.attname AS "columnName",
+      attribute.atttypid::regtype::text AS "typeName", attribute.attnotnull AS "isNotNull",
+      pg_get_expr(column_default.adbin, column_default.adrelid) AS "defaultValue"
+    FROM pg_attribute attribute
+    INNER JOIN pg_class table_state ON table_state.oid = attribute.attrelid
+    LEFT JOIN pg_attrdef column_default ON column_default.adrelid = attribute.attrelid
+      AND column_default.adnum = attribute.attnum
+    WHERE attribute.attrelid IN (to_regclass('"Aliado"'), to_regclass('"Sede"'),
+      to_regclass('"DataCreditoAssessment"'), to_regclass('"DataCreditoBranchDailyQuotaUsage"'),
+      to_regclass('"DataCreditoBranchDailyQuotaAudit"'))
+      AND attribute.attnum > 0 AND NOT attribute.attisdropped
+  `);
+  const required: Array<[string, string, string, boolean]> = [
+    ["Aliado", "dataCreditoBranchQuotaEnabled", "boolean", true],
+    ["Sede", "dataCreditoDailyQueryLimit", "integer", false],
+    ["DataCreditoAssessment", "dailyQuotaBusinessDate", "date", false],
+    ...["allyId", "branchId", "usedCount"].map((column): [string, string, string, boolean] => ["DataCreditoBranchDailyQuotaUsage", column, "integer", true]),
+    ["DataCreditoBranchDailyQuotaUsage", "businessDate", "date", true],
+    ...["createdAt", "updatedAt"].map((column): [string, string, string, boolean] => ["DataCreditoBranchDailyQuotaUsage", column, "timestamp without time zone", true]),
+    ["DataCreditoBranchDailyQuotaAudit", "id", "uuid", true],
+    ["DataCreditoBranchDailyQuotaAudit", "allyId", "integer", true],
+    ["DataCreditoBranchDailyQuotaAudit", "actorUserId", "integer", true],
+    ["DataCreditoBranchDailyQuotaAudit", "requestCorrelationId", "uuid", true],
+    ...["previousEnabled", "enabled"].map((column): [string, string, string, boolean] => ["DataCreditoBranchDailyQuotaAudit", column, "boolean", true]),
+    ...["previousLimits", "limits"].map((column): [string, string, string, boolean] => ["DataCreditoBranchDailyQuotaAudit", column, "jsonb", true]),
+    ["DataCreditoBranchDailyQuotaAudit", "reason", "character varying", false],
+    ["DataCreditoBranchDailyQuotaAudit", "createdAt", "timestamp without time zone", true],
+  ];
+  if (required.some(([table, column, type, notNull]) => !columns.some((state) =>
+    state.tableName === table && state.columnName === column && state.typeName === type && state.isNotNull === notNull
+  )) || !columns.some((state) => state.tableName === "Aliado" && state.columnName === "dataCreditoBranchQuotaEnabled" && state.defaultValue === "false")) {
+    throw schemaNotReady();
+  }
+  const constraints = await prisma.$queryRawUnsafe<Array<{
+    tableName: string; name: string; kind: string; valid: boolean; deleteAction: string; referencedTable: string | null;
+  }>>(`
+    SELECT source.relname AS "tableName", state.conname AS name, state.contype::text AS kind,
+      state.convalidated AS valid, state.confdeltype::text AS "deleteAction", target.relname AS "referencedTable"
+    FROM pg_constraint state INNER JOIN pg_class source ON source.oid = state.conrelid
+    LEFT JOIN pg_class target ON target.oid = state.confrelid
+    WHERE state.conrelid IN (to_regclass('"Sede"'), to_regclass('"DataCreditoBranchDailyQuotaUsage"'),
+      to_regclass('"DataCreditoBranchDailyQuotaAudit"'))
+  `);
+  const checks = [
+    ["Sede", "Sede_dataCreditoDailyQueryLimit_check"],
+    ["DataCreditoBranchDailyQuotaUsage", "DataCreditoBranchDailyQuotaUsage_used_check"],
+    ["DataCreditoBranchDailyQuotaAudit", "DataCreditoBranchDailyQuotaAudit_previous_limits_check"],
+    ["DataCreditoBranchDailyQuotaAudit", "DataCreditoBranchDailyQuotaAudit_limits_check"],
+  ];
+  const foreignKeys = [
+    ["DataCreditoBranchDailyQuotaUsage", "DataCreditoBranchDailyQuotaUsage_ally_fkey", "Aliado"],
+    ["DataCreditoBranchDailyQuotaUsage", "DataCreditoBranchDailyQuotaUsage_branch_fkey", "Sede"],
+    ["DataCreditoBranchDailyQuotaAudit", "DataCreditoBranchDailyQuotaAudit_ally_fkey", "Aliado"],
+  ];
+  if (checks.some(([table, name]) => !constraints.some((state) => state.tableName === table && state.name === name && state.kind === "c" && state.valid)) ||
+    foreignKeys.some(([table, name, target]) => !constraints.some((state) => state.tableName === table && state.name === name && state.kind === "f" && state.valid && state.deleteAction === "r" && state.referencedTable === target))) {
+    throw schemaNotReady();
+  }
+  const indexes = await prisma.$queryRawUnsafe<Array<{
+    tableName: string; name: string; valid: boolean; unique: boolean; columns: string[];
+  }>>(`
+    SELECT source.relname AS "tableName", index_class.relname AS name,
+      state.indisvalid AS valid, state.indisunique AS "unique",
+      ARRAY(SELECT CASE WHEN key.attnum=0 THEN '' ELSE attribute.attname::text END
+        FROM unnest(state.indkey::smallint[]) WITH ORDINALITY AS key(attnum,position)
+        LEFT JOIN pg_attribute attribute ON attribute.attrelid=state.indrelid AND attribute.attnum=key.attnum
+        WHERE key.position<=state.indnkeyatts ORDER BY key.position) AS columns
+    FROM pg_index state INNER JOIN pg_class source ON source.oid=state.indrelid
+    INNER JOIN pg_class index_class ON index_class.oid=state.indexrelid
+    WHERE state.indrelid IN (to_regclass('"DataCreditoBranchDailyQuotaUsage"'),
+      to_regclass('"DataCreditoBranchDailyQuotaAudit"'), to_regclass('"DataCreditoAssessment"'))
+  `);
+  const indexValid = (table: string, name: string, unique: boolean, expected: string[]) => indexes.some((state) =>
+    state.tableName === table && state.name === name && state.valid && state.unique === unique && JSON.stringify(state.columns) === JSON.stringify(expected));
+  if (!indexValid("DataCreditoBranchDailyQuotaUsage", "DataCreditoBranchDailyQuotaUsage_pkey", true, ["allyId", "branchId", "businessDate"]) ||
+      !indexValid("DataCreditoBranchDailyQuotaAudit", "DataCreditoBranchDailyQuotaAudit_pkey", true, ["id"]) ||
+      !indexValid("DataCreditoBranchDailyQuotaAudit", "DataCreditoBranchDailyQuotaAudit_ally_created_idx", false, ["allyId", "createdAt"]) ||
+      !indexValid("DataCreditoAssessment", "DataCreditoAssessment_branch_quota_date_idx", false, ["aliadoId", "", "sedeId"])) {
+    throw schemaNotReady();
+  }
+}
+
 async function verifyDataCreditoSchema() {
   await verifyDataCreditoPolicyProfileSchema();
   await verifyDataCreditoDailyQuotaSchema();
+  await verifyDataCreditoBranchDailyQuotaSchema();
   const tableRows = await prisma.$queryRawUnsafe<
     Array<{
       adminAuditHasPrimaryKey: boolean;
@@ -2282,11 +2372,18 @@ export async function getDataCreditoQuotaSolicitudOwner(solicitudId: number) {
   return rows[0] || null;
 }
 
-export async function getDataCreditoDailyQuotaSnapshot(aliadoId: number | null) {
+export async function getDataCreditoDailyQuotaSnapshot(
+  aliadoId: number | null,
+  branchId: number | null = null
+) {
   if (!Number.isInteger(aliadoId) || Number(aliadoId) <= 0) return null;
   await ensureDataCreditoSchema();
   const rows = await prisma.$queryRawUnsafe<
-    Array<{ limit: number | null; used: number; resetsAt: Date }>
+    Array<{
+      limit: number | null; used: number; resetsAt: Date;
+      branchQuotaEnabled: boolean; branchId: number | null;
+      branchName: string | null; branchLimit: number | null; branchUsed: number;
+    }>
   >(
     `
       WITH quota_clock AS MATERIALIZED (
@@ -2296,6 +2393,10 @@ export async function getDataCreditoDailyQuotaSnapshot(aliadoId: number | null) 
       SELECT
         ally."dataCreditoDailyQueryLimit" AS "limit",
         COALESCE(usage."usedCount", 0)::integer AS "used",
+        ally."dataCreditoBranchQuotaEnabled" AS "branchQuotaEnabled",
+        branch."id" AS "branchId", branch."nombre" AS "branchName",
+        branch."dataCreditoDailyQueryLimit" AS "branchLimit",
+        COALESCE(branch_usage."usedCount", 0)::integer AS "branchUsed",
         ((quota_clock."businessDate" + 1)::timestamp
           AT TIME ZONE 'America/Bogota') AS "resetsAt"
       FROM "Aliado" ally
@@ -2303,11 +2404,35 @@ export async function getDataCreditoDailyQuotaSnapshot(aliadoId: number | null) 
       LEFT JOIN "DataCreditoDailyQuotaUsage" usage
         ON usage."allyId" = ally."id"
        AND usage."businessDate" = quota_clock."businessDate"
+      LEFT JOIN "Sede" branch
+        ON branch."id" = $2 AND branch."aliadoId" = ally."id"
+       AND branch."activa" = true
+      LEFT JOIN "DataCreditoBranchDailyQuotaUsage" branch_usage
+        ON branch_usage."allyId" = ally."id"
+       AND branch_usage."branchId" = branch."id"
+       AND branch_usage."businessDate" = quota_clock."businessDate"
       WHERE ally."id" = $1
     `,
-    aliadoId
+    aliadoId,
+    branchId
   );
-  return rows[0] ? serializeDataCreditoDailyQuota(rows[0]) : null;
+  const row = rows[0];
+  if (!row) return null;
+  const allyQuota = serializeDataCreditoDailyQuota(row);
+  if (!row.branchQuotaEnabled) return allyQuota;
+  if (!row.branchId || row.limit === null) throw schemaNotReady();
+  const branchQuota = serializeDataCreditoDailyQuota({
+    limit: row.branchLimit ?? 0, used: row.branchUsed, resetsAt: row.resetsAt,
+  });
+  return {
+    ...(allyQuota.exhausted ? allyQuota : branchQuota),
+    remaining: Math.min(allyQuota.remaining ?? 0, branchQuota.remaining ?? 0),
+    scope: allyQuota.exhausted ? "ALLY" as const : "BRANCH" as const,
+    branchId: row.branchId,
+    branchName: row.branchName,
+    allyQuota,
+    branchQuota,
+  };
 }
 
 type DataCreditoDailyQuotaState =
@@ -2321,6 +2446,7 @@ type DataCreditoDailyQuotaState =
     }
   | {
       allowed: false;
+      scope: "ALLY" | "BRANCH";
       limit: number;
       used: number;
       remaining: 0;
@@ -2329,7 +2455,8 @@ type DataCreditoDailyQuotaState =
 
 async function reserveDataCreditoDailyQuota(
   aliadoId: number | null,
-  database: DataCreditoQueryExecutor
+  database: DataCreditoQueryExecutor,
+  branchId: number
 ): Promise<DataCreditoDailyQuotaState> {
   if (!Number.isInteger(aliadoId) || Number(aliadoId) <= 0) {
     throw new DataCreditoStorageConfigurationError(
@@ -2339,13 +2466,14 @@ async function reserveDataCreditoDailyQuota(
   }
 
   const allyRows = await database.$queryRawUnsafe<
-    Array<{ dailyQueryLimit: number | null }>
+    Array<{ dailyQueryLimit: number | null; branchQuotaEnabled: boolean }>
   >(
     `
-      SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit"
+      SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit",
+        "dataCreditoBranchQuotaEnabled" AS "branchQuotaEnabled"
       FROM "Aliado"
       WHERE "id" = $1
-      FOR SHARE
+      FOR UPDATE
     `,
     aliadoId
   );
@@ -2363,6 +2491,22 @@ async function reserveDataCreditoDailyQuota(
   ) {
     throw schemaNotReady();
   }
+
+  // All quota writers lock the ally first. This serializes its shared total
+  // across different branches and administrative budget changes.
+  if (!Number.isInteger(branchId) || branchId <= 0) throw schemaNotReady();
+  const branchRows = await database.$queryRawUnsafe<
+    Array<{ dailyQueryLimit: number | null }>
+  >(`
+    SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit"
+    FROM "Sede"
+    WHERE "id" = $1 AND "aliadoId" = $2 AND "activa" = true
+    FOR SHARE
+  `, branchId, aliadoId);
+  if (!branchRows[0]) throw schemaNotReady();
+  const branchLimit = branchRows[0].dailyQueryLimit ?? 0;
+  if (!Number.isInteger(branchLimit) || branchLimit < 0 || branchLimit > 10_000 ||
+      (allyRows[0].branchQuotaEnabled && limit === null)) throw schemaNotReady();
 
   // Capture the Colombia date only after the ally lock was acquired. Both the
   // UPSERT and the exhaustion read reuse it, even if execution crosses midnight.
@@ -2386,6 +2530,32 @@ async function reserveDataCreditoDailyQuota(
   }
 
   const businessDate = quotaClock.businessDate;
+  await syncDataCreditoBranchDailyQuotaUsage(database, Number(aliadoId), businessDate);
+  const stateRows = await database.$queryRawUnsafe<
+    Array<{ used: number; branchUsed: number }>
+  >(`
+    SELECT COALESCE(usage."usedCount", 0)::integer AS "used",
+      COALESCE(branch_usage."usedCount", 0)::integer AS "branchUsed"
+    FROM (SELECT 1) singleton
+    LEFT JOIN "DataCreditoDailyQuotaUsage" usage
+      ON usage."allyId" = $1 AND usage."businessDate" = $3::date
+    LEFT JOIN "DataCreditoBranchDailyQuotaUsage" branch_usage
+      ON branch_usage."allyId" = $1 AND branch_usage."branchId" = $2
+     AND branch_usage."businessDate" = $3::date
+  `, aliadoId, branchId, businessDate);
+  const current = stateRows[0];
+  if (!current) throw schemaNotReady();
+  if (limit !== null && current.used >= limit) {
+    return { allowed: false, scope: "ALLY", limit, used: current.used,
+      remaining: 0, resetsAt: quotaClock.resetsAt };
+  }
+  if (allyRows[0].branchQuotaEnabled && current.branchUsed >= branchLimit) {
+    return { allowed: false, scope: "BRANCH", limit: branchLimit, used: current.branchUsed,
+      remaining: 0, resetsAt: quotaClock.resetsAt };
+  }
+
+  // Check both budgets before incrementing either; a denied branch never spends
+  // the ally's budget. Both inserts and the pending assessment commit together.
   const rows = await database.$queryRawUnsafe<Array<{ used: number }>>(
     `
       INSERT INTO "DataCreditoDailyQuotaUsage" AS usage (
@@ -2405,6 +2575,14 @@ async function reserveDataCreditoDailyQuota(
   );
   const reserved = rows[0];
   if (reserved) {
+    await database.$queryRawUnsafe(`
+      INSERT INTO "DataCreditoBranchDailyQuotaUsage" AS usage (
+        "allyId", "branchId", "businessDate", "usedCount", "createdAt", "updatedAt"
+      ) VALUES ($1, $2, $3::date, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT ("allyId", "branchId", "businessDate") DO UPDATE
+      SET "usedCount" = usage."usedCount" + 1, "updatedAt" = CURRENT_TIMESTAMP
+      RETURNING "usedCount"
+    `, aliadoId, branchId, businessDate);
     const used = Number(reserved.used);
     return {
       allowed: true,
@@ -2416,31 +2594,11 @@ async function reserveDataCreditoDailyQuota(
     };
   }
 
-  const stateRows = await database.$queryRawUnsafe<Array<{ used: number }>>(
-    `
-      SELECT COALESCE(usage."usedCount", 0)::integer AS "used"
-      FROM (SELECT 1) singleton
-      LEFT JOIN "DataCreditoDailyQuotaUsage" usage
-        ON usage."allyId" = $1
-       AND usage."businessDate" = $2::date
-    `,
-    aliadoId,
-    businessDate
-  );
-  const current = stateRows[0];
-  if (limit === null || !current) throw schemaNotReady();
-
-  return {
-    allowed: false,
-    limit,
-    used: Number(current.used),
-    remaining: 0,
-    resetsAt: quotaClock.resetsAt,
-  };
+  throw new Error("DATACREDITO_DAILY_QUOTA_RESERVATION_FAILED");
 }
 
 async function insertPendingDataCreditoAssessment(
-  input: CreatePendingAssessmentInput,
+  input: CreatePendingAssessmentInput & { dailyQuotaBusinessDate: string },
   database: DataCreditoQueryExecutor
 ) {
   const ttlMinutes = getDataCreditoAssessmentTtlMinutes();
@@ -2453,13 +2611,13 @@ async function insertPendingDataCreditoAssessment(
         "providerEnvironment", "status", "policyVersion", "policyRevisionId",
         "consentVersion", "consentHash", "consentAt",
         "userId", "sellerId", "sedeId", "aliadoId", "ipHash", "userAgentHash",
-        "correlationId", "expiresAt", "retainedUntil"
+        "correlationId", "expiresAt", "retainedUntil", "dailyQuotaBusinessDate"
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, 'PENDING', $7, $8, $9, $10, $11,
         $12, $13, $14, $15, $16, $17, $18,
         CURRENT_TIMESTAMP + ($19::integer * INTERVAL '1 minute'),
-        CURRENT_TIMESTAMP + ($20::integer * INTERVAL '1 day')
+        CURRENT_TIMESTAMP + ($20::integer * INTERVAL '1 day'), $21::date
       )
       RETURNING *
     `,
@@ -2482,7 +2640,8 @@ async function insertPendingDataCreditoAssessment(
     input.userAgentHash,
     input.correlationId,
     ttlMinutes,
-    retentionDays
+    retentionDays,
+    input.dailyQuotaBusinessDate
   );
   return rows[0] || null;
 }
@@ -2571,11 +2730,13 @@ export async function reserveDataCreditoAssessment(
       // date reservation returned here.
       const dailyQuota = await reserveDataCreditoDailyQuota(
         input.aliadoId,
-        transaction
+        transaction,
+        input.sedeId
       );
       if (!dailyQuota.allowed) {
         return {
           kind: "DAILY_QUOTA_EXHAUSTED",
+          scope: dailyQuota.scope,
           limit: dailyQuota.limit,
           used: dailyQuota.used,
           remaining: 0,
@@ -2583,7 +2744,9 @@ export async function reserveDataCreditoAssessment(
         };
       }
 
-      const assessment = await insertPendingDataCreditoAssessment(input, transaction);
+      const assessment = await insertPendingDataCreditoAssessment(
+        { ...input, dailyQuotaBusinessDate: dailyQuota.businessDate }, transaction
+      );
       if (!assessment) {
         throw new Error("DATACREDITO_ASSESSMENT_RESERVATION_FAILED");
       }
@@ -2593,6 +2756,7 @@ export async function reserveDataCreditoAssessment(
         assessment,
         dailyQuotaReservation: {
           allyId: Number(input.aliadoId),
+          branchId: input.sedeId,
           businessDate: dailyQuota.businessDate,
         },
       };
@@ -2664,10 +2828,11 @@ export async function failDataCreditoAssessmentBeforeProviderDispatch(input: {
   dailyQuotaReservation: DataCreditoDailyQuotaReservation;
 }) {
   await ensureDataCreditoSchema();
-  const { allyId, businessDate } = input.dailyQuotaReservation;
+  const { allyId, branchId, businessDate } = input.dailyQuotaReservation;
   if (
     !Number.isInteger(allyId) ||
     allyId <= 0 ||
+    !Number.isInteger(branchId) || branchId <= 0 ||
     !/^\d{4}-\d{2}-\d{2}$/.test(businessDate)
   ) {
     throw new Error("DATACREDITO_DAILY_QUOTA_RESERVATION_INVALID");
@@ -2688,14 +2853,24 @@ export async function failDataCreditoAssessmentBeforeProviderDispatch(input: {
         WHERE "id" = $1
           AND "status" = 'PENDING'
           AND "aliadoId" = $3
+          AND "sedeId" = $4
+          AND "dailyQuotaBusinessDate" = $5::date
         RETURNING *
       `,
       input.id,
       input.errorCode,
-      allyId
+      allyId,
+      branchId,
+      businessDate
     );
     const failed = failedRows[0];
     if (!failed) return null;
+
+    // Match stale-pending recovery's assessment-before-quota order. No branch
+    // or usage row is locked until the ally lock is held.
+    await transaction.$queryRawUnsafe(
+      `SELECT "id" FROM "Aliado" WHERE "id" = $1 FOR UPDATE`, allyId
+    );
 
     const compensatedRows = await transaction.$queryRawUnsafe<
       Array<{ usedCount: number }>
@@ -2714,6 +2889,16 @@ export async function failDataCreditoAssessmentBeforeProviderDispatch(input: {
     );
     if (!compensatedRows[0]) {
       throw new Error("DATACREDITO_DAILY_QUOTA_COMPENSATION_FAILED");
+    }
+    const compensatedBranchRows = await transaction.$queryRawUnsafe<Array<{ usedCount: number }>>(`
+      UPDATE "DataCreditoBranchDailyQuotaUsage"
+      SET "usedCount" = "usedCount" - 1, "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "allyId" = $1 AND "branchId" = $2 AND "businessDate" = $3::date
+        AND "usedCount" > 0
+      RETURNING "usedCount"
+    `, allyId, branchId, businessDate);
+    if (!compensatedBranchRows[0]) {
+      throw new Error("DATACREDITO_BRANCH_QUOTA_COMPENSATION_FAILED");
     }
 
     return failed;

@@ -999,6 +999,87 @@ CREATE INDEX IF NOT EXISTS "DataCreditoPolicyAssignmentAudit_policy_created_idx"
 CREATE INDEX IF NOT EXISTS "DataCreditoDailyQuotaAudit_ally_created_idx"
   ON "DataCreditoDailyQuotaAudit" ("allyId", "createdAt" DESC);
 
+-- BEGIN BRANCH DAILY QUERY QUOTAS
+-- Opt-in only. Existing allies retain their shared quota until a central
+-- administrator saves a complete distribution; no branch gets an allocation here.
+ALTER TABLE "Aliado" ADD COLUMN IF NOT EXISTS "dataCreditoBranchQuotaEnabled" BOOLEAN NOT NULL DEFAULT false;
+UPDATE "Aliado" SET "dataCreditoBranchQuotaEnabled" = false WHERE "dataCreditoBranchQuotaEnabled" IS NULL;
+ALTER TABLE "Aliado" ALTER COLUMN "dataCreditoBranchQuotaEnabled" SET DEFAULT false,
+  ALTER COLUMN "dataCreditoBranchQuotaEnabled" SET NOT NULL;
+ALTER TABLE "Sede" ADD COLUMN IF NOT EXISTS "dataCreditoDailyQueryLimit" INTEGER;
+ALTER TABLE "DataCreditoAssessment" ADD COLUMN IF NOT EXISTS "dailyQuotaBusinessDate" DATE;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='"Sede"'::regclass AND conname='Sede_dataCreditoDailyQueryLimit_check') THEN
+    ALTER TABLE "Sede" ADD CONSTRAINT "Sede_dataCreditoDailyQueryLimit_check"
+      CHECK ("dataCreditoDailyQueryLimit" IS NULL OR "dataCreditoDailyQueryLimit" BETWEEN 0 AND 10000);
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "DataCreditoBranchDailyQuotaUsage" (
+  "allyId" INTEGER NOT NULL, "branchId" INTEGER NOT NULL, "businessDate" DATE NOT NULL,
+  "usedCount" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoBranchDailyQuotaUsage_pkey" PRIMARY KEY ("allyId", "branchId", "businessDate"),
+  CONSTRAINT "DataCreditoBranchDailyQuotaUsage_ally_fkey" FOREIGN KEY ("allyId") REFERENCES "Aliado"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT "DataCreditoBranchDailyQuotaUsage_branch_fkey" FOREIGN KEY ("branchId") REFERENCES "Sede"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+CREATE TABLE IF NOT EXISTS "DataCreditoBranchDailyQuotaAudit" (
+  "id" UUID PRIMARY KEY, "allyId" INTEGER NOT NULL,
+  "previousEnabled" BOOLEAN NOT NULL, "enabled" BOOLEAN NOT NULL,
+  "previousLimits" JSONB NOT NULL, "limits" JSONB NOT NULL,
+  "actorUserId" INTEGER NOT NULL, "requestCorrelationId" UUID NOT NULL,
+  "reason" VARCHAR(240), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "DataCreditoBranchDailyQuotaAudit_ally_fkey" FOREIGN KEY ("allyId") REFERENCES "Aliado"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='"DataCreditoBranchDailyQuotaUsage"'::regclass AND conname='DataCreditoBranchDailyQuotaUsage_used_check') THEN
+    ALTER TABLE "DataCreditoBranchDailyQuotaUsage" ADD CONSTRAINT "DataCreditoBranchDailyQuotaUsage_used_check" CHECK ("usedCount" >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='"DataCreditoBranchDailyQuotaAudit"'::regclass AND conname='DataCreditoBranchDailyQuotaAudit_previous_limits_check') THEN
+    ALTER TABLE "DataCreditoBranchDailyQuotaAudit" ADD CONSTRAINT "DataCreditoBranchDailyQuotaAudit_previous_limits_check" CHECK (jsonb_typeof("previousLimits") = 'array');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='"DataCreditoBranchDailyQuotaAudit"'::regclass AND conname='DataCreditoBranchDailyQuotaAudit_limits_check') THEN
+    ALTER TABLE "DataCreditoBranchDailyQuotaAudit" ADD CONSTRAINT "DataCreditoBranchDailyQuotaAudit_limits_check" CHECK (jsonb_typeof("limits") = 'array');
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS "DataCreditoBranchDailyQuotaAudit_ally_created_idx"
+  ON "DataCreditoBranchDailyQuotaAudit" ("allyId", "createdAt" DESC);
+CREATE INDEX IF NOT EXISTS "DataCreditoAssessment_branch_quota_date_idx"
+  ON "DataCreditoAssessment" ("aliadoId", (COALESCE("dailyQuotaBusinessDate",
+    ("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date)), "sedeId")
+  WHERE "reusedFromAssessmentId" IS NULL;
+
+-- Backfill legacy roots, including outstanding reservations and ambiguous
+-- provider outcomes. Reused offers and proven pre-dispatch failures are free.
+-- Never lower an existing historical counter and never modify the parent usage.
+INSERT INTO "DataCreditoBranchDailyQuotaUsage" AS usage (
+  "allyId", "branchId", "businessDate", "usedCount", "createdAt", "updatedAt"
+)
+SELECT assessment."aliadoId", assessment."sedeId",
+  COALESCE(assessment."dailyQuotaBusinessDate",
+    (assessment."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date),
+  COUNT(*)::integer, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+FROM "DataCreditoAssessment" assessment
+INNER JOIN "Aliado" ally ON ally."id" = assessment."aliadoId"
+INNER JOIN "Sede" branch ON branch."id" = assessment."sedeId"
+WHERE assessment."reusedFromAssessmentId" IS NULL
+  AND (assessment."status" IN ('PENDING', 'APROBADO', 'RECHAZADO')
+    OR (assessment."status" = 'NO_EVALUADO' AND (
+      assessment."durationMs" IS NOT NULL
+      OR BTRIM(COALESCE(assessment."providerStatus", '')) <> ''
+      OR BTRIM(COALESCE(assessment."transactionCode", '')) <> ''
+      OR assessment."errorCode" IN ('PROVIDER_OUTCOME_AMBIGUOUS', 'STALE_PENDING')
+    )))
+GROUP BY assessment."aliadoId", assessment."sedeId",
+  COALESCE(assessment."dailyQuotaBusinessDate",
+    (assessment."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date)
+ON CONFLICT ("allyId", "branchId", "businessDate") DO UPDATE
+SET "usedCount" = GREATEST(usage."usedCount", EXCLUDED."usedCount"), "updatedAt" = CURRENT_TIMESTAMP
+WHERE usage."usedCount" < EXCLUDED."usedCount";
+-- END BRANCH DAILY QUERY QUOTAS
+
 -- Manual financed-amount caps are keyed exclusively by a deterministic HMAC.
 -- The clear document number is intentionally never persisted.
 CREATE TABLE IF NOT EXISTS "DataCreditoManualCreditLimit" (

@@ -11,6 +11,7 @@ import {
   type DataCreditoAssessmentRow,
 } from "@/lib/datacredito/storage";
 import { isDataCreditoUniqueViolation } from "@/lib/datacredito/database-errors";
+import { syncDataCreditoBranchDailyQuotaUsage } from "@/lib/datacredito/branch-quota";
 import {
   DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
   parseDataCreditoPolicyBands,
@@ -600,6 +601,14 @@ type DataCreditoPolicyAllyCatalogRow = {
   dailyQueryLimit: number | null;
   dailyQueriesUsed: number;
   dailyQuotaResetsAt: Date;
+  branchQuotaEnabled: boolean;
+  branches: Array<{
+    id: number;
+    name: string;
+    active: boolean;
+    dailyQueryLimit: number | null;
+    usedToday: number;
+  }> | null;
 };
 
 export class DataCreditoPolicyAssignmentConflictError extends Error {
@@ -640,6 +649,56 @@ export function parseDataCreditoDailyQueryLimit(value: unknown) {
     throw new DataCreditoDailyQueryLimitValidationError();
   }
   return value;
+}
+
+export class DataCreditoBranchDailyQuotaConflictError extends Error {
+  constructor(message = "La distribución de cupos o las sedes del aliado cambiaron. Recarga antes de guardar.") {
+    super(message);
+    this.name = "DataCreditoBranchDailyQuotaConflictError";
+  }
+}
+
+export class DataCreditoBranchDailyQuotaValidationError extends Error {
+  constructor(message = "Los cupos por sede deben ser enteros entre 0 y 10000 y no superar el cupo total del aliado.") {
+    super(message);
+    this.name = "DataCreditoBranchDailyQuotaValidationError";
+  }
+}
+
+export type DataCreditoBranchDailyQuotaDraft = {
+  branchId: number;
+  dailyLimit: number;
+  expectedDailyLimit: number | null;
+};
+
+function parseBranchQuotaLimit(value: unknown) {
+  try {
+    return parseDataCreditoDailyQueryLimit(value);
+  } catch {
+    throw new DataCreditoBranchDailyQuotaValidationError();
+  }
+}
+
+export function parseDataCreditoBranchDailyQuotas(value: unknown): DataCreditoBranchDailyQuotaDraft[] {
+  if (!Array.isArray(value) || value.length > 10_000) {
+    throw new DataCreditoBranchDailyQuotaValidationError("Envía la distribución completa de las sedes activas del aliado.");
+  }
+  const ids = new Set<number>();
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new DataCreditoBranchDailyQuotaValidationError();
+    }
+    const row = item as Record<string, unknown>;
+    if (typeof row.branchId !== "number" || !Number.isSafeInteger(row.branchId) || row.branchId <= 0 || ids.has(row.branchId)) {
+      throw new DataCreditoBranchDailyQuotaValidationError("Cada sede activa debe aparecer exactamente una vez en la distribución.");
+    }
+    ids.add(row.branchId);
+    return {
+      branchId: row.branchId,
+      dailyLimit: parseBranchQuotaLimit(row.dailyLimit) ?? 0,
+      expectedDailyLimit: parseBranchQuotaLimit(row.expectedDailyLimit),
+    };
+  }).sort((left, right) => left.branchId - right.branchId);
 }
 
 export class DataCreditoPolicyProfileNameConflictError extends Error {
@@ -715,8 +774,10 @@ export async function listDataCreditoPolicyCatalog() {
         ally."activo" AS "active", ally."dataCreditoPolicyId" AS "policyId",
         profile."name" AS "policyName",
         ally."dataCreditoDailyQueryLimit" AS "dailyQueryLimit",
+        ally."dataCreditoBranchQuotaEnabled" AS "branchQuotaEnabled",
         COALESCE(usage."usedCount", 0)::integer AS "dailyQueriesUsed",
-        quota_clock."resetsAt" AS "dailyQuotaResetsAt"
+        quota_clock."resetsAt" AS "dailyQuotaResetsAt",
+        branch_quotas."branches"
       FROM "Aliado" ally
       INNER JOIN "DataCreditoPolicyProfile" profile
         ON profile."id" = ally."dataCreditoPolicyId"
@@ -724,6 +785,19 @@ export async function listDataCreditoPolicyCatalog() {
       LEFT JOIN "DataCreditoDailyQuotaUsage" usage
         ON usage."allyId" = ally."id"
        AND usage."businessDate" = quota_clock."businessDate"
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+          'id', branch."id", 'name', branch."nombre", 'active', branch."activa",
+          'dailyQueryLimit', branch."dataCreditoDailyQueryLimit",
+          'usedToday', COALESCE(branch_usage."usedCount", 0)::integer
+        ) ORDER BY branch."nombre", branch."id"), '[]'::jsonb) AS "branches"
+        FROM "Sede" branch
+        LEFT JOIN "DataCreditoBranchDailyQuotaUsage" branch_usage
+          ON branch_usage."allyId" = ally."id"
+         AND branch_usage."branchId" = branch."id"
+         AND branch_usage."businessDate" = quota_clock."businessDate"
+        WHERE branch."aliadoId" = ally."id"
+      ) branch_quotas ON true
       ORDER BY ally."nombre" ASC, ally."id" ASC
     `),
     getCreditSettings(),
@@ -776,6 +850,15 @@ export async function listDataCreditoPolicyCatalog() {
           ? null
           : Math.max(0, row.dailyQueryLimit - Number(row.dailyQueriesUsed || 0)),
       dailyQuotaResetsAt: iso(row.dailyQuotaResetsAt),
+      branchQuotaEnabled: row.branchQuotaEnabled === true,
+      branches: (row.branches || []).map((branch) => ({
+        ...branch,
+        usedToday: Number(branch.usedToday || 0),
+        remainingToday: !branch.active ? 0 : Math.min(
+          Math.max(0, (branch.dailyQueryLimit ?? 0) - Number(branch.usedToday || 0)),
+          row.dailyQueryLimit === null ? 10_000 : Math.max(0, row.dailyQueryLimit - Number(row.dailyQueriesUsed || 0))
+        ),
+      })),
     })),
   };
 }
@@ -922,10 +1005,11 @@ export async function setDataCreditoDailyQueryLimitForAlly(input: {
 
   return prisma.$transaction(async (transaction) => {
     const allies = await transaction.$queryRawUnsafe<
-      Array<{ dailyQueryLimit: number | null }>
+      Array<{ dailyQueryLimit: number | null; branchQuotaEnabled: boolean }>
     >(
       `
-        SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit"
+        SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit",
+          "dataCreditoBranchQuotaEnabled" AS "branchQuotaEnabled"
         FROM "Aliado"
         WHERE "id" = $1
         FOR UPDATE
@@ -936,6 +1020,19 @@ export async function setDataCreditoDailyQueryLimitForAlly(input: {
     if (!current) throw new Error("DATACREDITO_ALLY_NOT_FOUND");
     if (current.dailyQueryLimit !== expectedDailyQueryLimit) {
       throw new DataCreditoDailyQueryLimitConflictError(current.dailyQueryLimit);
+    }
+    if (current.branchQuotaEnabled) {
+      const branches = await transaction.$queryRawUnsafe<Array<{ dailyQueryLimit: number | null }>>(`
+        SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit"
+        FROM "Sede" WHERE "aliadoId" = $1 AND "activa" = true
+        ORDER BY "id" FOR UPDATE
+      `, input.allyId);
+      const allocated = branches.reduce((sum, branch) => sum + (branch.dailyQueryLimit ?? 0), 0);
+      if (dailyQueryLimit === null || allocated > dailyQueryLimit) {
+        throw new DataCreditoDailyQueryLimitValidationError(
+          "El cupo total no puede ser ilimitado ni menor que la suma asignada a las sedes. Ajusta o desactiva primero la distribución por sede."
+        );
+      }
     }
     if (current.dailyQueryLimit === dailyQueryLimit) {
       return { allyId: input.allyId, dailyQueryLimit };
@@ -968,5 +1065,82 @@ export async function setDataCreditoDailyQueryLimitForAlly(input: {
     );
 
     return { allyId: input.allyId, dailyQueryLimit };
+  });
+}
+
+export async function setDataCreditoBranchDailyQuotas(input: {
+  allyId: number;
+  enabled: boolean;
+  expectedEnabled: boolean;
+  expectedDailyQueryLimit: number | null;
+  branches: DataCreditoBranchDailyQuotaDraft[];
+  actorUserId: number;
+  requestCorrelationId: string;
+  reason?: string | null;
+}) {
+  await ensureDataCreditoSchema();
+  if (!Number.isSafeInteger(input.allyId) || input.allyId <= 0 ||
+    typeof input.enabled !== "boolean" || typeof input.expectedEnabled !== "boolean") {
+    throw new DataCreditoBranchDailyQuotaValidationError();
+  }
+  const expectedDailyQueryLimit = parseBranchQuotaLimit(input.expectedDailyQueryLimit);
+  const drafts = parseDataCreditoBranchDailyQuotas(input.branches);
+  const reason = String(input.reason || "").replace(/\s+/g, " ").trim();
+  if (reason.length > 240) throw new DataCreditoBranchDailyQuotaValidationError("El motivo del cambio no puede superar 240 caracteres.");
+
+  return prisma.$transaction(async (transaction) => {
+    const allies = await transaction.$queryRawUnsafe<Array<{ dailyQueryLimit: number | null; branchQuotaEnabled: boolean }>>(`
+      SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit",
+        "dataCreditoBranchQuotaEnabled" AS "branchQuotaEnabled"
+      FROM "Aliado" WHERE "id" = $1 FOR UPDATE
+    `, input.allyId);
+    const current = allies[0];
+    if (!current) throw new Error("DATACREDITO_ALLY_NOT_FOUND");
+    if (current.dailyQueryLimit !== expectedDailyQueryLimit || current.branchQuotaEnabled !== input.expectedEnabled) {
+      throw new DataCreditoBranchDailyQuotaConflictError();
+    }
+    const clocks = await transaction.$queryRawUnsafe<Array<{ businessDate: string }>>(`
+      SELECT (clock_timestamp() AT TIME ZONE 'America/Bogota')::date::text AS "businessDate"
+    `);
+    if (!clocks[0]?.businessDate) throw new Error("DATACREDITO_BRANCH_QUOTA_CLOCK_UNAVAILABLE");
+    await syncDataCreditoBranchDailyQuotaUsage(transaction, input.allyId, clocks[0].businessDate);
+    const branches = await transaction.$queryRawUnsafe<Array<{ id: number; active: boolean; dailyQueryLimit: number | null }>>(`
+      SELECT "id", "activa" AS "active", "dataCreditoDailyQueryLimit" AS "dailyQueryLimit"
+      FROM "Sede" WHERE "aliadoId" = $1 ORDER BY "id" FOR UPDATE
+    `, input.allyId);
+    const activeBranches = branches.filter((branch) => branch.active);
+    if (drafts.length !== activeBranches.length || drafts.some((draft, index) =>
+      draft.branchId !== activeBranches[index].id || draft.expectedDailyLimit !== activeBranches[index].dailyQueryLimit)) {
+      throw new DataCreditoBranchDailyQuotaConflictError();
+    }
+    const allocated = drafts.reduce((sum, branch) => sum + branch.dailyLimit, 0);
+    if (input.enabled && (current.dailyQueryLimit === null || allocated > current.dailyQueryLimit)) {
+      throw new DataCreditoBranchDailyQuotaValidationError(
+        "Define un cupo total finito para el aliado y distribuye entre sus sedes un valor que no lo supere."
+      );
+    }
+    const previousLimits = activeBranches.map((branch) => ({ branchId: branch.id, dailyLimit: branch.dailyQueryLimit }));
+    const limits = drafts.map((branch) => ({ branchId: branch.branchId, dailyLimit: branch.dailyLimit }));
+    if (current.branchQuotaEnabled === input.enabled && drafts.every((draft, index) => draft.dailyLimit === activeBranches[index].dailyQueryLimit)) {
+      return { allyId: input.allyId, enabled: input.enabled, branches: limits };
+    }
+    await transaction.$executeRawUnsafe(`
+      UPDATE "Aliado" SET "dataCreditoBranchQuotaEnabled" = $2,
+        "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1
+    `, input.allyId, input.enabled);
+    for (const branch of limits) {
+      await transaction.$executeRawUnsafe(`
+        UPDATE "Sede" SET "dataCreditoDailyQueryLimit" = $2,
+          "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1 AND "aliadoId" = $3 AND "activa" = true
+      `, branch.branchId, branch.dailyLimit, input.allyId);
+    }
+    await transaction.$executeRawUnsafe(`
+      INSERT INTO "DataCreditoBranchDailyQuotaAudit" (
+        "id", "allyId", "actorUserId", "requestCorrelationId", "previousEnabled", "enabled",
+        "previousLimits", "limits", "reason"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
+    `, randomUUID(), input.allyId, input.actorUserId, input.requestCorrelationId,
+    current.branchQuotaEnabled, input.enabled, JSON.stringify(previousLimits), JSON.stringify(limits), reason || null);
+    return { allyId: input.allyId, enabled: input.enabled, branches: limits };
   });
 }

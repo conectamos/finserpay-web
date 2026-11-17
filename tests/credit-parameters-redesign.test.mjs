@@ -230,6 +230,221 @@ const policyButton = (h, label) => h.find(node => node.type === "Button" && text
 const policyDialog = (h, title) => h.find(node => node.type === "ConfirmDialog" && node.props.title === title);
 const platformEditor = (h, platform = "ANDROID") => h.find(node => typeof node.type === "function" && node.type.name === "PlatformEditor" && node.props.platform === platform);
 
+function branchCatalog() {
+  const value = catalog();
+  value.allies = value.allies.map((ally, index) => ({ ...ally, branchQuotaEnabled: false,
+    branches: index ? [{ id: 201, name: "Sede Beta", active: true, dailyQueryLimit: null, usedToday: 0, remainingToday: 0 }]
+      : [{ id: 101, name: "Sede Norte", active: true, dailyQueryLimit: null, usedToday: 1, remainingToday: 0 },
+        { id: 102, name: "Sede Sur", active: true, dailyQueryLimit: 5, usedToday: 2, remainingToday: 3 },
+        { id: 103, name: "Sede cerrada", active: false, dailyQueryLimit: 9, usedToday: 0, remainingToday: 0 }],
+  }));
+  return value;
+}
+async function openBranchEditor(h, allyName = "Aliado Alfa QA") {
+  byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+  h.find(node => node.type === "Button" && node.props["aria-label"] === `Distribuir cupo de ${allyName} por sedes`).props.onClick(); await h.flush();
+}
+async function fillBranchDistribution(h, first = "12", second = "8") {
+  byId(h, "branch-quota-enabled").props.onChange({ target: { checked: true } }); await h.flush();
+  byId(h, "branch-quota-limit-101").props.onChange({ target: { value: first } });
+  byId(h, "branch-quota-limit-102").props.onChange({ target: { value: second } }); await h.flush();
+}
+
+test("branch distribution is opt-in and only opens a contextual editor without changing the shared quota", async () => {
+  const requests = [], initial = branchCatalog();
+  const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(initial); });
+  await h.flush(); await openBranchEditor(h);
+  assert.equal(byId(h, "branch-quota-enabled").props.checked, false);
+  assert.equal(byId(h, "branch-quota-limit-101").props.disabled, true);
+  assert.equal(byId(h, "branch-quota-limit-103").props.disabled, true);
+  assert.match(h.text(), /Las sedes comparten el cupo diario del aliado/);
+  assert.equal(byId(h, "branch-quota-save").props.disabled, true);
+  assert.ok(h.focusedIds.includes("branch-quota-editor-title"));
+  assert.equal(requests.length, 1);
+  assert.equal(initial.allies[0].dailyQueryLimit, 20);
+});
+
+test("branch distribution validates integers, the saved finite total, and allocations that exceed the parent budget", async () => {
+  const h = mountPolicy(async () => Response.json(branchCatalog()));
+  await h.flush(); await openBranchEditor(h); await fillBranchDistribution(h, "12", "9");
+  assert.equal(byId(h, "branch-quota-save").props.disabled, true);
+  assert.match(h.text(), /suma 21 y supera el cupo total de 20/);
+  for (const invalid of ["-1", "1.5", "", "1000001"]) {
+    byId(h, "branch-quota-limit-101").props.onChange({ target: { value: invalid } }); await h.flush();
+    assert.equal(byId(h, "branch-quota-limit-101").props["aria-invalid"], true);
+    assert.equal(byId(h, "branch-quota-save").props.disabled, true);
+  }
+  byId(h, "branch-quota-limit-101").props.onChange({ target: { value: "12" } });
+  byId(h, "branch-quota-limit-102").props.onChange({ target: { value: "8" } }); await h.flush();
+  assert.equal(byId(h, "branch-quota-save").props.disabled, false);
+  byId(h, "datacredito-daily-limit-1").props.onChange({ target: { value: "25" } }); await h.flush();
+  assert.equal(byId(h, "branch-quota-save").props.disabled, true);
+  assert.match(h.text(), /Guarda primero.*cupo diario del aliado/);
+});
+
+test("an unlimited parent cannot activate per-branch allocation or send an invalid stale event", async () => {
+  const value = branchCatalog(), requests = [];
+  value.allies[0].dailyQueryLimit = null; value.allies[0].dailyQueriesRemaining = null;
+  const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(value); });
+  await h.flush(); await openBranchEditor(h);
+  assert.equal(byId(h, "branch-quota-enabled").props.disabled, true);
+  assert.match(h.text(), /Define y guarda primero un cupo diario total/);
+  byId(h, "branch-quota-enabled").props.onChange({ target: { checked: true } }); await h.flush();
+  byId(h, "branch-quota-save").props.onClick(); await h.flush();
+  assert.equal(policyDialog(h, "Guardar cupos por sede").props.open, false);
+  assert.equal(requests.length, 1);
+});
+
+test("branch allocation confirms the atomic snapshot, preserves inactive branches, and prevents duplicate saves", async () => {
+  const server = branchCatalog(), requests = [];
+  let resolveSave;
+  const h = mountPolicy(async (url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    requests.push({ url, options, body });
+    if (body?.action === "SET_BRANCH_DAILY_QUOTAS") return await new Promise(resolve => { resolveSave = () => {
+      const ally = server.allies[0]; ally.branchQuotaEnabled = body.enabled;
+      for (const item of body.branches) {
+        const branch = ally.branches.find(branch => branch.id === item.branchId);
+        branch.dailyQueryLimit = item.dailyLimit; branch.remainingToday = Math.max(0, item.dailyLimit - branch.usedToday);
+      }
+      resolve(Response.json({ ...server, branchQuotasUpdatedAllyId: ally.id }));
+    }; });
+    return Response.json(server);
+  });
+  await h.flush(); await openBranchEditor(h); await fillBranchDistribution(h);
+  byId(h, "branch-quota-reason").props.onChange({ target: { value: " Reparto del cupo por sedes " } }); await h.flush();
+  byId(h, "branch-quota-save").props.onClick(); await h.flush();
+  const confirm = policyDialog(h, "Guardar cupos por sede");
+  assert.equal(confirm.props.open, true);
+  assert.match(confirm.props.description, /Aliado Alfa QA.*Sede Norte: 12.*Sede Sur: 8.*0 consultas sin asignar/);
+  assert.equal(requests.length, 1);
+  const staleConfirm = confirm.props.onConfirm;
+  staleConfirm(); staleConfirm(); await h.flush();
+  const writes = requests.filter(request => request.body);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].body, { action: "SET_BRANCH_DAILY_QUOTAS", allyId: 1, enabled: true,
+    expectedEnabled: false, expectedDailyQueryLimit: 20,
+    branches: [{ branchId: 101, dailyLimit: 12, expectedDailyLimit: null }, { branchId: 102, dailyLimit: 8, expectedDailyLimit: 5 }],
+    reason: "Reparto del cupo por sedes" });
+  policyDialog(h, "Guardar cupos por sede").props.onCancel(); await h.flush();
+  assert.equal(policyDialog(h, "Guardar cupos por sede").props.open, true);
+  resolveSave(); await h.flush();
+  assert.equal(byId(h, "branch-quota-save").props.disabled, true);
+  assert.equal(server.allies[0].branches[2].dailyQueryLimit, 9);
+  assert.equal(server.allies[0].dailyQueriesUsed, 3);
+  assert.equal(server.allies[0].dailyQueryLimit, 20);
+  assert.match(h.text(), /distribución por sedes.*quedó guardada/);
+  staleConfirm(); await h.flush();
+  assert.equal(requests.filter(request => request.body).length, 1);
+});
+
+test("branch drafts survive search, tab changes and a conflict without changing any other ally", async () => {
+  const requests = [], h = mountPolicy(async (url, options) => {
+    requests.push({ url, options, body: options?.body ? JSON.parse(options.body) : null });
+    return options?.method === "PATCH" ? Response.json({ ok: false, code: "BRANCH_DAILY_QUOTA_CONFLICT", error: "Conflicto", correlationId: "BRANCH-409" }, { status: 409 }) : Response.json(branchCatalog());
+  });
+  await h.flush(); await openBranchEditor(h); await fillBranchDistribution(h, "10", "5");
+  byId(h, "policy-assignment-search").props.onChange({ target: { value: "Beta" } }); await h.flush();
+  assert.equal(byId(h, "branch-quota-limit-101").props.value, "10");
+  byId(h, "datacredito-policies-tab").props.onClick(); await h.flush();
+  byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+  byId(h, "branch-quota-save").props.onClick(); await h.flush();
+  policyDialog(h, "Guardar cupos por sede").props.onConfirm(); await h.flush();
+  assert.match(h.text(), /cambió en otra sesión/);
+  assert.match(h.text(), /BRANCH-409/);
+  assert.equal(byId(h, "branch-quota-enabled").props.checked, true);
+  assert.equal(byId(h, "branch-quota-limit-101").props.value, "10");
+  assert.equal(requests.filter(request => request.body).length, 1);
+  assert.equal(requests.find(request => request.body).body.allyId, 1);
+});
+
+test("a committed branch save recovers through GET without resending and preserves independent ally drafts", async () => {
+  const server = branchCatalog(), requests = [];
+  const h = mountPolicy(async (url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    requests.push({ url, options, body });
+    if (body?.action === "SET_BRANCH_DAILY_QUOTAS") {
+      server.allies[0].branchQuotaEnabled = true;
+      for (const item of body.branches) server.allies[0].branches.find(branch => branch.id === item.branchId).dailyQueryLimit = item.dailyLimit;
+      return Response.json(committedCatalogFailure("SET_BRANCH_DAILY_QUOTAS", { branchQuotasUpdatedAllyId: 1 }));
+    }
+    return Response.json(server);
+  });
+  await h.flush(); await openBranchEditor(h); await fillBranchDistribution(h);
+  h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Beta QA").props.onChange({ target: { value: "other" } }); await h.flush();
+  byId(h, "branch-quota-save").props.onClick(); await h.flush();
+  const staleConfirm = policyDialog(h, "Guardar cupos por sede").props.onConfirm;
+  staleConfirm(); await h.flush();
+  assert.equal(recoveryFieldset(h).props.disabled, true);
+  assert.match(h.text(), /distribución por sedes.*quedó guardada/);
+  staleConfirm(); await h.flush();
+  policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
+  assert.equal(recoveryFieldset(h).props.disabled, false);
+  assert.equal(byId(h, "branch-quota-save").props.disabled, true);
+  assert.equal(byId(h, "branch-quota-limit-101").props.value, "12");
+  assert.equal(h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Beta QA").props.value, "other");
+  assert.equal(requests.filter(request => request.body?.action === "SET_BRANCH_DAILY_QUOTAS").length, 1);
+});
+
+test("disabling branch distribution keeps the parent quota and today's usage without submitting a hidden invalid limit", async () => {
+  const server = branchCatalog(), requests = [];
+  server.allies[0].branchQuotaEnabled = true;
+  const h = mountPolicy(async (url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    requests.push({ url, options, body });
+    if (body?.action === "SET_BRANCH_DAILY_QUOTAS") {
+      server.allies[0].branchQuotaEnabled = body.enabled;
+      for (const item of body.branches) server.allies[0].branches.find(branch => branch.id === item.branchId).dailyQueryLimit = item.dailyLimit;
+    }
+    return Response.json(server);
+  });
+  await h.flush(); await openBranchEditor(h);
+  byId(h, "branch-quota-limit-101").props.onChange({ target: { value: "-1" } }); await h.flush();
+  byId(h, "branch-quota-enabled").props.onChange({ target: { checked: false } }); await h.flush();
+  assert.equal(byId(h, "branch-quota-limit-101").props.value, "0");
+  assert.equal(byId(h, "branch-quota-save").props.disabled, false);
+  byId(h, "branch-quota-save").props.onClick(); await h.flush();
+  assert.match(policyDialog(h, "Guardar cupos por sede").props.description, /volverán a compartir el cupo diario.*20 consultas.*uso de hoy se conserva/);
+  policyDialog(h, "Guardar cupos por sede").props.onConfirm(); await h.flush();
+  const saved = requests.find(request => request.body).body;
+  assert.equal(saved.enabled, false); assert.equal(saved.expectedEnabled, true);
+  assert.equal(saved.expectedDailyQueryLimit, 20);
+  assert.equal(saved.branches[0].dailyLimit, 0);
+  assert.equal(saved.branches[0].expectedDailyLimit, null);
+  assert.equal(server.allies[0].dailyQueriesUsed, 3);
+  assert.equal(server.allies[0].dailyQueryLimit, 20);
+  assert.equal(byId(h, "branch-quota-enabled").props.checked, false);
+  assert.equal(byId(h, "branch-quota-save").props.disabled, true);
+});
+
+test("recovering one branch distribution preserves the unfinished distribution of another ally", async () => {
+  const server = branchCatalog();
+  const h = mountPolicy(async (_url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    if (body?.action === "SET_BRANCH_DAILY_QUOTAS") {
+      const ally = server.allies.find(ally => ally.id === body.allyId);
+      ally.branchQuotaEnabled = body.enabled;
+      for (const item of body.branches) ally.branches.find(branch => branch.id === item.branchId).dailyQueryLimit = item.dailyLimit;
+      return Response.json(committedCatalogFailure("SET_BRANCH_DAILY_QUOTAS", { branchQuotasUpdatedAllyId: ally.id }));
+    }
+    return Response.json(server);
+  });
+  await h.flush(); await openBranchEditor(h, "Aliado Beta QA");
+  byId(h, "branch-quota-enabled").props.onChange({ target: { checked: true } }); await h.flush();
+  byId(h, "branch-quota-limit-201").props.onChange({ target: { value: "7" } });
+  byId(h, "branch-quota-reason").props.onChange({ target: { value: "Distribución Beta todavía pendiente" } }); await h.flush();
+  await openBranchEditor(h); await fillBranchDistribution(h);
+  byId(h, "branch-quota-save").props.onClick(); await h.flush();
+  policyDialog(h, "Guardar cupos por sede").props.onConfirm(); await h.flush();
+  policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
+  await openBranchEditor(h, "Aliado Beta QA");
+  assert.equal(byId(h, "branch-quota-enabled").props.checked, true);
+  assert.equal(byId(h, "branch-quota-limit-201").props.value, "7");
+  assert.equal(byId(h, "branch-quota-reason").props.value, "Distribución Beta todavía pendiente");
+  assert.equal(byId(h, "branch-quota-save").props.disabled, false);
+  assert.equal(server.allies[1].branchQuotaEnabled, false);
+});
+
 function assertCreationFocus(h) {
   assert.equal(h.all(node => node.type === "Select" && !node.props["aria-label"] && ["general", "other"].includes(node.props.value)).length, 0,
     "El selector de la política publicada no aparece dentro de la creación");
