@@ -167,6 +167,22 @@ producto documentada.
 - Un estado deshabilitado explica por que no puede continuar.
 - Los envios se bloquean mientras hay una solicitud en curso.
 
+### Políticas de crédito
+
+La vista inicial presenta la política publicada y su resumen. Editar requiere una
+acción explícita y muestra el nombre y la versión de destino. Crear una política
+usa un borrador independiente con cuatro pasos: Datos, Evaluación, Condiciones y
+Revisión. La última etapa resume los valores que se guardarán; avanzar o volver
+conserva lo ingresado. Las bandas comienzan resumidas y se abre únicamente la que
+se necesita modificar; los errores abren la sección correspondiente. El rojo se
+reserva para valores inválidos y acciones peligrosas.
+
+Crear y asignar son acciones distintas. Después de crear se ofrece el acceso a
+asignación, con el nombre de la política visible y confirmación de los aliados
+afectados. Las barras de acciones conservan un solo botón principal. El estado de
+guardado distingue cambios pendientes, guardado confirmado y actualización del
+listado pendiente, con recuperación mediante lectura.
+
 ### Expedientes
 
 - La identidad del cliente es compacta; la foto es secundaria.

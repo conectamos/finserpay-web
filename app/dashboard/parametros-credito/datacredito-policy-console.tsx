@@ -7,6 +7,7 @@ import {
   Link2,
   Server,
   CircleAlert,
+  ChevronDown,
   Copy,
   Plus,
   RotateCw,
@@ -1288,7 +1289,13 @@ function platformLabel(platform: DataCreditoPolicyPlatform) {
 
 function focusPolicyBandEditor(bandId: string) {
   window.requestAnimationFrame(() => {
-    document.getElementById(`datacredito-policy-band-${bandId}`)?.focus();
+    const editor = document.getElementById(`datacredito-policy-band-${bandId}`);
+    let container: HTMLElement | null = editor;
+    while (container) {
+      if (container.tagName === "DETAILS") (container as HTMLDetailsElement).open = true;
+      container = container.parentElement;
+    }
+    editor?.focus();
   });
 }
 
@@ -1316,6 +1323,12 @@ function PolicyBandRow({
   const maxInstallmentDescriptionId =
     `${idPrefix}-max-installment-description`;
   const invalid = errors.length > 0;
+  const [expanded, setExpanded] = useState(invalid);
+  useEffect(() => {
+    if (!invalid) return;
+    const editor = document.getElementById(`datacredito-policy-band-${band.id}`);
+    if (editor?.tagName === "DETAILS") (editor as HTMLDetailsElement).open = true;
+  }, [band.id, invalid]);
   const noInformation = isNoInformationBand(band);
   const rowLabel = noInformation
     ? "Sin información"
@@ -1340,9 +1353,11 @@ function PolicyBandRow({
     .join(" ");
 
   return (
-    <div
+    <details
       id={`datacredito-policy-band-${band.id}`}
-      className={`rounded-[var(--fp-radius-md)] border p-4 focus:outline-none focus:ring-2 focus:ring-[var(--fp-lime)] focus:ring-offset-2 sm:p-5 ${
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+      className={`rounded-[var(--fp-radius-md)] border focus:outline-none focus:ring-2 focus:ring-[var(--fp-lime)] focus:ring-offset-2 ${
         invalid
           ? "border-[var(--fp-danger)] bg-[var(--fp-danger-soft)]"
           : "border-[var(--fp-border)] bg-[var(--fp-surface)]"
@@ -1351,6 +1366,14 @@ function PolicyBandRow({
       role="group"
       aria-label={`${rowLabel} para ${platformLabel(band.platform)}`}
     >
+      <summary className={styles.bandSummary}>
+        <span><strong>{noInformation ? rowLabel : `${band.scoreMin || "…"}–${band.scoreMax || "…"}`}</strong>
+          <small>{band.decision === "APROBADO" ? "Aprobado" : band.decision === "RECHAZADO" ? "Rechazado" : "Decisión pendiente"}</small></span>
+        <span><strong>{band.initialPaymentPercentage || "0"} % de inicial</strong>
+          <small>Hasta {formatCop(readFiniteNumber(band.maxFinancedAmount))} · {band.installmentCount || "…"} cuotas</small></span>
+        <ChevronDown size={18} aria-hidden="true" />
+      </summary>
+      <div className={styles.bandDetails}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <strong className="text-sm text-[var(--fp-graphite)]">
@@ -1588,7 +1611,8 @@ function PolicyBandRow({
           ))}
         </ul>
       ) : null}
-    </div>
+      </div>
+    </details>
   );
 }
 
@@ -1854,6 +1878,24 @@ function allyDraftKey(allyId: number) {
   return String(allyId);
 }
 
+function renderPolicyBandSummary(bands: EditableBand[]) {
+  return <div className={styles.reviewTableWrap}>
+    <table className={styles.reviewTable}>
+      <caption className="sr-only">Condiciones de las bandas de Android e iPhone</caption>
+      <thead><tr><th scope="col">Plataforma</th><th scope="col">Puntaje</th><th scope="col">Decisión</th><th scope="col">Inicial</th><th scope="col">Fianza</th><th scope="col">Monto máximo</th><th scope="col">Plazo máximo</th><th scope="col">Tope por cuota</th></tr></thead>
+      <tbody>{bands.map((band) => <tr key={band.id}>
+        <th scope="row">{platformLabel(band.platform)}</th>
+        <td>{isNoInformationBand(band) ? "Sin información" : `${band.scoreMin}–${band.scoreMax}`}</td>
+        <td>{band.decision === "APROBADO" ? "Aprobado" : band.decision === "RECHAZADO" ? "Rechazado" : "Pendiente"}</td>
+        <td>{band.initialPaymentPercentage} %</td><td>{band.suretyPercentage} %</td>
+        <td>{formatCop(readFiniteNumber(band.maxFinancedAmount))}</td>
+        <td>{band.installmentCount} cuotas</td>
+        <td>{band.platform === "IPHONE" ? formatCop(readFiniteNumber(band.maxInstallmentAmount)) : "—"}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
 export default function DatacreditoPolicyConsole() {
   const [enabled, setEnabled] = useState(false);
   const [configured, setConfigured] = useState(false);
@@ -1904,6 +1946,13 @@ export default function DatacreditoPolicyConsole() {
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
   const [pendingPolicyId, setPendingPolicyId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [policyEditing, setPolicyEditing] = useState(false);
+  const [editDiscardConfirmOpen, setEditDiscardConfirmOpen] = useState(false);
+  const [createStep, setCreateStep] = useState<1 | 2 | 3 | 4>(1);
+  const [newPolicyExpandedPlatform, setNewPolicyExpandedPlatform] = useState<DataCreditoPolicyPlatform | null>("ANDROID");
+  const [newPolicyFinancialOpen, setNewPolicyFinancialOpen] = useState(false);
+  const [createdPolicyForAssignment, setCreatedPolicyForAssignment] = useState<{ id: string; name: string } | null>(null);
+  const [assignmentTargetPolicyId, setAssignmentTargetPolicyId] = useState<string | null>(null);
   const [newPolicySource, setNewPolicySource] = useState<{
     id: string; name: string; version: number; bandIds: string[];
   } | null>(null);
@@ -1970,6 +2019,22 @@ export default function DatacreditoPolicyConsole() {
     () => validatePriorityRules(newPolicyPriorityRules),
     [newPolicyPriorityRules]
   );
+  const newPolicyNameValid = newPolicyName.trim().length >= 3;
+  const createStageValid = createStep === 1 ? newPolicyNameValid
+    : createStep === 2 ? newPolicyPriorityRulesValidation.valid
+    : createStep === 3 ? newPolicyBandValidation.valid && newPolicyFinancialValidation.valid && !pendingBandRemoval
+    : newPolicyNameValid && newPolicyPriorityRulesValidation.valid && newPolicyBandValidation.valid && newPolicyFinancialValidation.valid && !pendingBandRemoval;
+  useEffect(() => {
+    if (!createOpen) return;
+    let cancelled = false;
+    window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      const heading = document.getElementById("policy-create-step-title");
+      heading?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      heading?.focus({ preventScroll: true });
+    });
+    return () => { cancelled = true; };
+  }, [createOpen, createStep]);
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.id === selectedPolicyId) || null,
     [profiles, selectedPolicyId]
@@ -2111,6 +2176,7 @@ export default function DatacreditoPolicyConsole() {
           ? toEditablePriorityRules(profile.priorityRules)
           : null
       );
+      setPolicyEditing(false);
       setHasUnsavedChanges(false);
     },
     []
@@ -2259,6 +2325,34 @@ export default function DatacreditoPolicyConsole() {
     setNewPolicyDescription("");
     setPendingBandRemoval(null);
     setBandRemovalConfirmOpen(false);
+    setCreateStep(1);
+  };
+
+  const goToCreateStep = (step: 1 | 2 | 3 | 4) => {
+    if (!createOpen || loading || mutationBusyRef.current || catalogRecoveryRef.current || step > createStep) return;
+    setError(null);
+    setPendingBandRemoval(null);
+    setBandRemovalConfirmOpen(false);
+    setCreateStep(step);
+  };
+
+  const continueNewPolicy = () => {
+    if (!createOpen || loading || mutationBusyRef.current || catalogRecoveryRef.current || createStep >= 4) return;
+    if (!createStageValid) {
+      setError(createStep === 1 ? "Escribe un nombre de al menos 3 caracteres."
+        : createStep === 2 ? "Completa los umbrales de mora de ambas plataformas."
+        : "Corrige las condiciones marcadas antes de revisar la política.");
+      return;
+    }
+    setError(null);
+    setCreateStep((current) => Math.min(4, current + 1) as 1 | 2 | 3 | 4);
+  };
+
+  const startPolicyEditing = () => {
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || createOpen || !selectedProfile?.active) return;
+    setError(null);
+    setNotice(null);
+    setPolicyEditing(true);
   };
 
   const switchTab = (tab: PolicyConsoleTab) => {
@@ -2314,6 +2408,7 @@ export default function DatacreditoPolicyConsole() {
     value: EditableBand[] | ((current: EditableBand[]) => EditableBand[])
   ) => {
     if (catalogRecoveryRef.current) return;
+    if (!createOpen && !policyEditing) return;
     if (createOpen) {
       setNewPolicyBands(value);
     } else {
@@ -2373,6 +2468,7 @@ export default function DatacreditoPolicyConsole() {
     field: keyof EditableFinancialSettings,
     value: string
   ) => {
+    if (!policyEditing || createOpen || catalogRecoveryRef.current) return;
     setNotice(null);
     setHasUnsavedChanges(true);
     setFinancialSettings((current) => ({
@@ -2392,6 +2488,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const preparePriorityRules = () => {
+    if (!policyEditing || createOpen || catalogRecoveryRef.current) return;
     setNotice(null);
     setPriorityRules(toEditablePriorityRules(DEFAULT_PRIORITY_RULES));
     setHasUnsavedChanges(true);
@@ -2402,6 +2499,7 @@ export default function DatacreditoPolicyConsole() {
     platform: DataCreditoPolicyPlatform,
     rejectAboveCop: string
   ) => {
+    if (!policyEditing || createOpen || catalogRecoveryRef.current) return;
     setNotice(null);
     setHasUnsavedChanges(true);
     setPriorityRules((current) => {
@@ -2437,6 +2535,7 @@ export default function DatacreditoPolicyConsole() {
     }));
   };
   const removeBand = (bandId: string) => {
+    if (!createOpen && !policyEditing) return;
     if (loading || mutationBusyRef.current || saving || savingAssignments || creating || deleting ||
       confirmOpen || assignmentConfirmOpen || deleteConfirmOpen || reloadConfirmOpen || switchConfirmOpen || copyDiscardConfirmOpen ||
       bandRemovalConfirmOpen || latestBandRemovalRef.current.pending) return;
@@ -2491,7 +2590,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const openSaveConfirmation = () => {
-    if (createOpen) return;
+    if (createOpen || !policyEditing) return;
     if (latestBandRemovalRef.current.pending) {
       setNotice("Confirma o cancela la eliminación de la banda antes de publicar.");
       return;
@@ -2515,7 +2614,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const savePolicy = async () => {
-    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || createOpen) return;
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || createOpen || !policyEditing) return;
     if (
       !validation.valid ||
       !financialValidation.valid ||
@@ -2621,6 +2720,11 @@ export default function DatacreditoPolicyConsole() {
       bandIds: selectedProfile.bands.map((band) => band.id),
     });
     setNewPolicyBands(selectedProfile.bands.map(toEditableBand));
+    setCreateStep(1);
+    setNewPolicyExpandedPlatform("ANDROID");
+    setNewPolicyFinancialOpen(false);
+    setPolicyEditing(false);
+    setCreatedPolicyForAssignment(null);
     setNewPolicyFinancialSettings(
       toEditableFinancialSettings(
         selectedProfile.financialSettings || financialDefaults,
@@ -2639,7 +2743,7 @@ export default function DatacreditoPolicyConsole() {
 
   const createPolicy = async () => {
     if (loading || mutationBusyRef.current || catalogRecoveryRef.current) return;
-    if (!newPolicySource || !createOpen || creating || pendingBandRemoval) return;
+    if (!newPolicySource || !createOpen || createStep !== 4 || creating || pendingBandRemoval) return;
     if (hasUnsavedChanges) {
       setError(
         "Publica o descarta el borrador antes de duplicar la última versión publicada."
@@ -2650,6 +2754,7 @@ export default function DatacreditoPolicyConsole() {
     const name = newPolicyName.trim();
     const description = newPolicyDescription.trim();
     if (name.length < 3) {
+      setCreateStep(1);
       setError("Escribe un nombre de al menos 3 caracteres para la política.");
       return;
     }
@@ -2660,6 +2765,8 @@ export default function DatacreditoPolicyConsole() {
       !newPolicyPriorityRulesValidation.valid ||
       !newPolicyPriorityRulesValidation.canonical
     ) {
+      setCreateStep(!newPolicyPriorityRulesValidation.valid ? 2 : 3);
+      if (!newPolicyFinancialValidation.valid) setNewPolicyFinancialOpen(true);
       setError(
         (!newPolicyBandValidation.valid ? "Completa las bandas de Android e iPhone sin huecos ni solapamientos." : null) ||
           newPolicyFinancialValidation.issues[0] ||
@@ -2693,6 +2800,14 @@ export default function DatacreditoPolicyConsole() {
       const payload = await readJson(response);
 
       if (!response.ok || payload.ok === false) {
+        const code = readString(payload.code);
+        const responseMessage = readString(payload.error) || "";
+        if (code === "POLICY_NAME_CONFLICT" || /nombre/i.test(responseMessage)) setCreateStep(1);
+        else if (code === "POLICY_VALIDATION_ERROR") {
+          const priorityIssue = /telcos|mora|prioritari/i.test(responseMessage);
+          setCreateStep(priorityIssue ? 2 : 3);
+          if (!priorityIssue) setNewPolicyFinancialOpen(true);
+        }
         throw new PolicyRequestError(
           readString(payload.error) || "No se pudo crear la política.",
           getCorrelationId(payload, response)
@@ -2702,7 +2817,11 @@ export default function DatacreditoPolicyConsole() {
       if (recordCommittedMutation(payload, response, {
         preferredPolicyId: readString(payload.createdPolicyId), preservePolicyDraft: false, preserveAssignmentDrafts: true,
         message: `La política “${name}” quedó creada.`,
-      })) return;
+      })) {
+        const committedId = readString(payload.createdPolicyId);
+        if (committedId) setCreatedPolicyForAssignment({ id: committedId, name });
+        return;
+      }
       const catalog = parseCatalog(payload, response);
       const createdPolicyId =
         readString(payload.createdPolicyId) ||
@@ -2718,6 +2837,7 @@ export default function DatacreditoPolicyConsole() {
       }
       applyCatalog(catalog, createdPolicyId, false, true);
       discardNewPolicyDraft();
+      setCreatedPolicyForAssignment({ id: createdPolicyId, name });
       setNewPolicyFinancialSettings(
         toEditableFinancialSettings(financialDefaults)
       );
@@ -3122,15 +3242,14 @@ export default function DatacreditoPolicyConsole() {
         </Button>
         </div>
       </header>
-      <div className={styles.statsBar} aria-label="Estado de DataCrédito">
-        <div className={styles.metric}><Link2 className={styles.metricIcon} size={30} aria-hidden="true" />
-          <div><p className={styles.metricLabel}>Integración</p><StatusPill tone={enabled ? "positive" : "warning"}>{enabled ? "Activa" : "Deshabilitada"}</StatusPill></div></div>
-        <div className={styles.metric}><Server className={styles.metricIcon} size={30} aria-hidden="true" />
-          <div><p className={styles.metricLabel}>Proveedor</p><span className={styles.providerTag}>{configured ? providerEnvironment?.toUpperCase() === "PRODUCTION" ? "Producción" : providerEnvironment?.toUpperCase() === "SANDBOX" ? "Pruebas" : providerEnvironment || "Configurado" : "Sin configurar"}</span></div></div>
-        <div className={styles.metric}><FileText className={styles.metricIcon} size={30} aria-hidden="true" />
-          <div><p className={styles.metricLabel}>Políticas</p><strong className={styles.metricValue}>{profiles.length}</strong></div></div>
-        <div className={styles.metric}><Users className={styles.metricIcon} size={30} aria-hidden="true" />
-          <div><p className={styles.metricLabel}>Aliados</p><strong className={styles.metricValue}>{allies.length}</strong></div></div>
+      <div className={styles.statusRow} aria-label="Estado de DataCrédito">
+        <StatusPill tone={enabled && configured ? "positive" : "warning"}>{enabled && configured ? "Disponible" : "Requiere configuración"}</StatusPill>
+        <span>{profiles.length} políticas</span><span>{allies.length} aliados</span>
+        <details className={styles.infrastructureDetails}><summary>Estado de la conexión</summary>
+          <div><p><Link2 size={16} aria-hidden="true" /> Integración: {enabled ? "Activa" : "Deshabilitada"}</p>
+            <p><Server size={16} aria-hidden="true" /> Proveedor: {configured ? providerEnvironment?.toUpperCase() === "PRODUCTION" ? "Producción" : providerEnvironment?.toUpperCase() === "SANDBOX" ? "Pruebas" : providerEnvironment || "Configurado" : "Sin configurar"}</p>
+            <p>{productionReady ? "Conexión lista para producción" : "Conexión pendiente para producción"}</p></div>
+        </details>
       </div>
       {!enabled || !productionReady ? <p className={styles.warning} role="status">
         {!enabled ? "La integración está deshabilitada. Puedes preparar políticas, pero no se usarán en ventas mientras continúe apagada." : "El proveedor aún no está listo para producción. Revisa la configuración antes de iniciar consultas reales."}
@@ -3239,10 +3358,19 @@ export default function DatacreditoPolicyConsole() {
           aria-labelledby="datacredito-policies-tab"
           className={styles.tabContent}
         >
+          {createdPolicyForAssignment && createdPolicyForAssignment.id === selectedPolicyId && !createOpen ? <div className={styles.successAction}>
+            <div><strong>{createdPolicyForAssignment.name} ya está creada</strong><p>Elige los aliados que usarán esta política. Cada asignación se revisa antes de guardarse.</p></div>
+            <Button disabled={loading || Boolean(catalogRecovery)} onClick={() => {
+              if (loading || mutationBusyRef.current || catalogRecoveryRef.current) return;
+              setAssignmentTargetPolicyId(createdPolicyForAssignment.id);
+              applyTab("ASSIGNMENTS");
+            }}>Asignar a aliado</Button>
+          </div> : null}
           <Card className={styles.section}>
             <div className={styles.catalogHeader}>
               <div className={styles.catalogTitle}>
-                <h3 className={styles.heading}>{selectedProfile?.name || "Catálogo de políticas"}</h3>
+                <span className={styles.contextMeta}>{policyEditing && !createOpen ? "Edición de política" : createOpen ? "Política base" : "Política seleccionada"}</span>
+                <h3 className={styles.heading}>{policyEditing && !createOpen ? `Editando ${selectedProfile?.name} · versión ${version || selectedProfileVersion}` : selectedProfile?.name || "Catálogo de políticas"}</h3>
                 {selectedProfile ? <div className={styles.actions}>
                   <StatusPill tone={selectedProfile.active ? "positive" : "warning"}>{selectedProfile.active ? "Activa" : "Inactiva"}</StatusPill>
                   {selectedProfile.id === defaultPolicyId ? <Badge>Predeterminada</Badge> : null}
@@ -3250,7 +3378,15 @@ export default function DatacreditoPolicyConsole() {
                 </div> : null}
               </div>
               <div className={styles.actions}>
-                <Button className={styles.greenButton} onClick={openCreatePolicy}
+                {selectedProfile && !createOpen ? policyEditing
+                  ? <Button variant="secondary" disabled={loading || saving} onClick={() => {
+                      if (loading || mutationBusyRef.current || catalogRecoveryRef.current) return;
+                      if (hasUnsavedChanges) setEditDiscardConfirmOpen(true); else setPolicyEditing(false);
+                    }}>Cancelar edición</Button>
+                  : <Button variant="secondary" disabled={loading || !selectedProfile.active || Boolean(catalogRecovery)} onClick={startPolicyEditing}>
+                      <Settings2 className="h-4 w-4" aria-hidden="true" />Editar política
+                    </Button> : null}
+                <Button onClick={openCreatePolicy}
                   disabled={!selectedProfile || loading || saving || creating || createOpen || hasUnsavedChanges || Boolean(pendingBandRemoval)}
                   aria-describedby={hasUnsavedChanges ? "datacredito-create-policy-help" : undefined}>
                   <Plus className="h-5 w-5" aria-hidden="true" />Nueva política
@@ -3276,224 +3412,163 @@ export default function DatacreditoPolicyConsole() {
           </Card>
 
           {createOpen && newPolicySource ? (
-            <Card className="p-5 sm:p-6" aria-labelledby="new-policy-title">
-              <div className="flex items-start gap-3">
-                <span
-                  className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--fp-radius-md)] bg-[var(--fp-navy)] text-white"
-                  aria-hidden="true"
-                >
-                  <Copy className="h-5 w-5" />
-                </span>
-                <div>
-                  <h3 id="new-policy-title" className="text-xl font-black">
-                    Duplicar política
-                  </h3>
-                  <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                    Copia independiente de “{newPolicySource.name}”, versión {newPolicySource.version}.
-                    Completa las reglas, las bandas y las condiciones de la nueva política antes de crearla.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                <label className="grid gap-2 text-sm font-bold">
-                  Nombre de la nueva política
-                  <Input
-                    id="new-policy-name"
-                    value={newPolicyName}
-                    onChange={(event) => setNewPolicyName(event.target.value)}
-                    maxLength={80}
-                    disabled={creating}
-                    autoFocus
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-bold">
-                  Descripción opcional
-                  <Input
-                    id="new-policy-description"
-                    value={newPolicyDescription}
-                    onChange={(event) =>
-                      setNewPolicyDescription(event.target.value)
-                    }
-                    maxLength={240}
-                    disabled={creating}
-                    placeholder="Ej. Condiciones para aliados premium"
-                  />
-                </label>
-              </div>
-              <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] p-4 sm:p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h4 className="font-black">
-                      Reglas prioritarias de la nueva política
-                    </h4>
-                    <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--fp-muted)]">
-                      Los umbrales TELCOS se heredan de la política origen. Los
-                      topes de mora vigente total también se copian si ya fueron
-                      publicados; en una revisión histórica aparecen vacíos para
-                      que el administrador los defina expresamente.
-                    </p>
-                  </div>
-                  <StatusPill
-                    tone={
-                      newPolicyPriorityRulesValidation.valid
-                        ? "danger"
-                        : "warning"
-                    }
-                  >
-                    {newPolicyPriorityRulesValidation.valid
-                      ? "2 reglas configuradas"
-                      : "Mora total pendiente"}
-                  </StatusPill>
-                </div>
-                <PriorityRuleEditor
-                  rules={newPolicyPriorityRules}
-                  validation={newPolicyPriorityRulesValidation}
-                  disabled={creating}
-                  idPrefix="new-policy-priority"
-                  onThresholdChange={updateNewPolicyPriorityRuleThreshold}
-                />
-              </div>
-              <div className="mt-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-surface)] p-4 sm:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h4 className="font-black">
-                      Condiciones financieras de la nueva política
-                    </h4>
-                    <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                      Se precargan desde la política origen. La fianza es total
-                      y ARES la divide entre el plazo antes de calcular la cuota.
-                    </p>
-                  </div>
-                  <Badge>ARES · cuota pactada</Badge>
-                </div>
-                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <label className="grid gap-2 text-sm font-bold">
-                    Interés E.A. (%)
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      max={100}
-                      step="0.000001"
-                      value={newPolicyFinancialSettings.tasaInteresEa}
-                      onChange={(event) =>
-                        updateNewPolicyFinancialSetting(
-                          "tasaInteresEa",
-                          event.target.value
-                        )
-                      }
-                      disabled={creating}
-                    />
+            <Card className={styles.workflow} aria-labelledby="new-policy-title">
+              <header className={styles.workflowHeader}>
+                <div><Badge>Nueva política</Badge><h2 id="new-policy-title">Crear política</h2>
+                  <p>Base: <strong>{newPolicySource.name}</strong> · versión {newPolicySource.version}. Los cambios se guardarán en una política independiente.</p></div>
+                <span className={styles.contextMeta}>Paso {createStep} de 4</span>
+              </header>
+              <ol className={styles.workflowSteps} aria-label="Etapas de creación">
+                {([
+                  { number: 1, label: "Datos", hint: "Nombre y descripción" },
+                  { number: 2, label: "Evaluación", hint: "Reglas de mora" },
+                  { number: 3, label: "Condiciones", hint: "Bandas y cuota" },
+                  { number: 4, label: "Revisar", hint: "Confirmar y crear" },
+                ] as const).map((step) => <li key={step.number}>
+                  <button type="button" className={`${styles.workflowStepButton} ${createStep === step.number ? styles.workflowCurrent : ""}`}
+                    aria-current={createStep === step.number ? "step" : undefined}
+                    disabled={step.number >= createStep || creating}
+                    onClick={() => goToCreateStep(step.number)}>
+                    <span>{step.number}</span><div><strong>{step.label}</strong><small>{step.hint}</small></div>
+                  </button>
+                </li>)}
+              </ol>
+
+              <section className={styles.workflowPanel} aria-labelledby="policy-create-step-title">
+                <h3 id="policy-create-step-title" className={styles.stepTitle} tabIndex={-1}>
+                  {createStep === 1 ? "Datos de la política" : createStep === 2 ? "Reglas de evaluación" : createStep === 3 ? "Condiciones del crédito" : "Revisar nueva política"}
+                </h3>
+                <p className={styles.stepHint}>
+                  {createStep === 1 ? "Elige un nombre que permita identificar sus condiciones al asignarla a un aliado."
+                    : createStep === 2 ? "Define los límites de mora de Android e iPhone. Se aplicarán antes de evaluar el puntaje."
+                    : createStep === 3 ? "Revisa las bandas de cada plataforma y los valores que determinan la cuota."
+                    : "Confirma los datos. Crear la política guardará su versión 1; después podrás asignarla a los aliados que elijas."}
+                </p>
+
+                {createStep === 1 ? <div className={styles.reviewGrid}>
+                  <label className="grid gap-2 text-sm font-bold">Nombre de la nueva política
+                    <Input id="new-policy-name" value={newPolicyName} onChange={(event) => setNewPolicyName(event.target.value)}
+                      maxLength={80} disabled={creating} aria-invalid={!newPolicyNameValid} aria-describedby="new-policy-name-help" />
+                    <span id="new-policy-name-help" className={styles.muted}>Entre 3 y 80 caracteres. Ejemplo: RECUPERAR.</span>
                   </label>
-                  <label className="grid gap-2 text-sm font-bold">
-                    Aval/fianza total del crédito (%)
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      max={100}
-                      step="0.000001"
-                      value={newPolicyFinancialSettings.fianzaTotalPorcentaje}
-                      onChange={(event) =>
-                        updateNewPolicyFinancialSetting(
-                          "fianzaTotalPorcentaje",
-                          event.target.value
-                        )
-                      }
-                      disabled={creating}
-                    />
+                  <label className="grid gap-2 text-sm font-bold">Descripción opcional
+                    <Input id="new-policy-description" value={newPolicyDescription} onChange={(event) => setNewPolicyDescription(event.target.value)}
+                      maxLength={240} disabled={creating} placeholder="¿Cuándo se usará esta política?" />
                   </label>
-                  <label className="grid gap-2 text-sm font-bold">
-                    Seguro por cuota (%)
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      max={100}
-                      step="0.000001"
-                      value={newPolicyFinancialSettings.seguroCuotaPorcentaje}
-                      onChange={(event) =>
-                        updateNewPolicyFinancialSetting(
-                          "seguroCuotaPorcentaje",
-                          event.target.value
-                        )
-                      }
-                      disabled={creating}
-                    />
-                  </label>
-                  <label className="grid gap-2 text-sm font-bold">
-                    Frecuencia de pago
-                    <Select
-                      value={newPolicyFinancialSettings.frecuenciaPago}
-                      onChange={(event) =>
-                        updateNewPolicyFinancialSetting(
-                          "frecuenciaPago",
-                          event.target.value
-                        )
-                      }
-                      disabled={creating}
-                    >
-                      <option value="SEMANAL">Semanal</option>
-                      <option value="QUINCENAL">Quincenal</option>
-                      <option value="MENSUAL">Mensual</option>
-                    </Select>
-                  </label>
+                </div> : null}
+
+                {createStep === 2 ? <PriorityRuleEditor rules={newPolicyPriorityRules} validation={newPolicyPriorityRulesValidation}
+                  disabled={creating} idPrefix="new-policy-priority" onThresholdChange={updateNewPolicyPriorityRuleThreshold} /> : null}
+
+                {createStep === 3 ? <div className={styles.editorSummary}>
+                  {bandRemovalPanel}
+                  {(["ANDROID", "IPHONE"] as const).map((platform) => <details key={platform}
+                    open={newPolicyExpandedPlatform === platform}
+                    onToggle={(event) => {
+                      if (event.currentTarget.open) setNewPolicyExpandedPlatform(platform);
+                      else setNewPolicyExpandedPlatform((current) => current === platform ? null : current);
+                    }}>
+                    <summary><strong>{platformLabel(platform)}</strong>
+                      <span>{newPolicyBands.filter((band) => band.platform === platform).length} bandas
+                        {newPolicyBandValidation.platformErrors[platform].length || newPolicyBands.some((band) => band.platform === platform && newPolicyBandValidation.rowErrors[band.id]?.length)
+                          ? " · Requiere revisión" : " · Cobertura completa"}</span>
+                    </summary>
+                    <PlatformEditor platform={platform} bands={newPolicyBands.filter((band) => band.platform === platform)}
+                      errors={newPolicyBandValidation.platformErrors[platform]} rowErrors={newPolicyBandValidation.rowErrors}
+                      disabled={loading || creating || Boolean(pendingBandRemoval)}
+                      onAdd={addBand} onAddNoInformation={addNoInformationBand} onChange={updateBand} onRemove={removeBand} />
+                  </details>)}
+                  <details open={newPolicyFinancialOpen} onToggle={(event) => setNewPolicyFinancialOpen(event.currentTarget.open)}>
+                    <summary><strong>Parámetros de la cuota</strong>
+                      <span>Interés {newPolicyFinancialSettings.tasaInteresEa} % E.A. · Fianza {newPolicyFinancialSettings.fianzaTotalPorcentaje} % · {newPolicyFinancialSettings.frecuenciaPago.toLocaleLowerCase("es-CO")}</span>
+                    </summary>
+                    <div className={styles.reviewGrid}>
+                      {([
+                        { field: "tasaInteresEa", label: "Interés E.A. (%)" },
+                        { field: "fianzaTotalPorcentaje", label: "Aval / fianza total (%)" },
+                        { field: "seguroCuotaPorcentaje", label: "Seguro por cuota (%)" },
+                      ] as const).map(({ field, label }) => <label key={field} className="grid gap-2 text-sm font-bold">{label}
+                        <Input id={`new-policy-${field}`} type="number" inputMode="decimal" min={0} max={100} step="0.000001"
+                          value={newPolicyFinancialSettings[field]} onChange={(event) => updateNewPolicyFinancialSetting(field, event.target.value)} disabled={creating} />
+                      </label>)}
+                      <label className="grid gap-2 text-sm font-bold">Frecuencia de pago
+                        <Select id="new-policy-frequency" value={newPolicyFinancialSettings.frecuenciaPago}
+                          onChange={(event) => updateNewPolicyFinancialSetting("frecuenciaPago", event.target.value)} disabled={creating}>
+                          <option value="SEMANAL">Semanal</option><option value="QUINCENAL">Quincenal</option><option value="MENSUAL">Mensual</option>
+                        </Select>
+                      </label>
+                    </div>
+                    {newPolicyFinancialValidation.issues.length ? <ul className={styles.error} role="alert">
+                      {newPolicyFinancialValidation.issues.map((issue) => <li key={issue}>{issue}</li>)}
+                    </ul> : null}
+                  </details>
+                </div> : null}
+
+                {createStep === 4 ? <div id="new-policy-review" className={styles.review}>
+                  <dl className={styles.reviewGrid}>
+                    <div><dt>Nombre</dt><dd>{newPolicyName.trim()}</dd></div>
+                    <div><dt>Descripción</dt><dd>{newPolicyDescription.trim() || "Sin descripción"}</dd></div>
+                    <div><dt>Política base</dt><dd>{newPolicySource.name} · versión {newPolicySource.version}</dd></div>
+                    <div><dt>Se creará</dt><dd>Nueva política · versión 1</dd></div>
+                  </dl>
+                  <h4>Reglas de evaluación</h4>
+                  <dl className={styles.reviewGrid}>
+                    {(["ANDROID", "IPHONE"] as const).map((platform) => <div key={platform}>
+                      <dt>{platformLabel(platform)}</dt><dd>Mora TELCOS superior a {formatCop(readFiniteNumber(newPolicyPriorityRules.telcoDelinquency.rejectAboveCopByPlatform[platform]))}</dd>
+                      <dd>Mora total superior a {formatCop(readFiniteNumber(newPolicyPriorityRules.totalDelinquency.rejectAboveCopByPlatform[platform]))}</dd>
+                    </div>)}
+                  </dl>
+                  <h4>Condiciones por plataforma</h4>
+                  {renderPolicyBandSummary(newPolicyBands)}
+                  <h4>Parámetros de la cuota</h4>
+                  <dl className={styles.reviewGrid}>
+                    <div><dt>Interés E.A.</dt><dd>{newPolicyFinancialSettings.tasaInteresEa} %</dd></div>
+                    <div><dt>Aval / fianza total</dt><dd>{newPolicyFinancialSettings.fianzaTotalPorcentaje} %</dd></div>
+                    <div><dt>Seguro por cuota</dt><dd>{newPolicyFinancialSettings.seguroCuotaPorcentaje} %</dd></div>
+                    <div><dt>Frecuencia</dt><dd>{newPolicyFinancialSettings.frecuenciaPago.toLocaleLowerCase("es-CO")}</dd></div>
+                  </dl>
+                </div> : null}
+              </section>
+
+              <footer className={styles.workflowActions}>
+                <Button variant="secondary" onClick={() => { setPendingCopyTab(null); setCopyDiscardConfirmOpen(true); }} disabled={creating}>Cancelar</Button>
+                <div className={styles.contextActions}>
+                  {createStep > 1 ? <Button id="new-policy-back" variant="secondary" disabled={creating}
+                    onClick={() => goToCreateStep((createStep - 1) as 1 | 2 | 3)}>Anterior</Button> : null}
+                  {createStep < 4 ? <Button id="new-policy-continue" onClick={continueNewPolicy} disabled={creating || !createStageValid}>Continuar</Button>
+                    : <Button id="new-policy-submit" onClick={() => void createPolicy()} disabled={creating || !createStageValid || hasUnsavedChanges}>
+                        {creating ? "Creando..." : "Crear política"}
+                      </Button>}
                 </div>
-                {newPolicyFinancialValidation.issues.length ? (
-                  <ul className="mt-4 list-disc space-y-1 rounded-[var(--fp-radius-md)] border border-[var(--fp-danger)] bg-[var(--fp-danger-soft)] px-5 py-4 text-sm font-semibold text-[var(--fp-danger)]">
-                    {newPolicyFinancialValidation.issues.map((issue) => (
-                      <li key={issue}>{issue}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-              <div className="mt-5" aria-labelledby="new-policy-bands-title">
-                <h4 id="new-policy-bands-title" className="font-black">Bandas de la nueva política</h4>
-                <p className="mt-1 text-sm text-[var(--fp-muted)]">Estas bandas pertenecen a la copia de “{newPolicySource.name}” v{newPolicySource.version}.</p>
-                {bandRemovalPanel}
-                {(["ANDROID", "IPHONE"] as const).map((platform) => <PlatformEditor
-                  key={platform}
-                  platform={platform}
-                  bands={newPolicyBands.filter((band) => band.platform === platform)}
-                  errors={newPolicyBandValidation.platformErrors[platform]}
-                  rowErrors={newPolicyBandValidation.rowErrors}
-                  disabled={loading || creating || Boolean(pendingBandRemoval)}
-                  onAdd={addBand} onAddNoInformation={addNoInformationBand} onChange={updateBand} onRemove={removeBand}
-                />)}
-              </div>
-              <div className="mt-5 flex flex-wrap justify-end gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={() => { setPendingCopyTab(null); setCopyDiscardConfirmOpen(true); }}
-                  disabled={creating}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  onClick={() => void createPolicy()}
-                  disabled={
-                    creating ||
-                    hasUnsavedChanges ||
-                    !newPolicyBandValidation.valid ||
-                    Boolean(pendingBandRemoval) ||
-                    newPolicyName.trim().length < 3 ||
-                    !newPolicyFinancialValidation.valid ||
-                    !newPolicyPriorityRulesValidation.valid
-                  }
-                >
-                  <Copy className="h-4 w-4" aria-hidden="true" />
-                  {creating ? "Creando..." : "Crear copia"}
-                </Button>
-              </div>
-              <p className="mt-3 text-sm text-[var(--fp-muted)]" role="status">
-                {!newPolicyBandValidation.valid || !newPolicyFinancialValidation.valid || !newPolicyPriorityRulesValidation.valid
-                  ? "Completa los valores marcados en reglas, parámetros financieros y bandas para habilitar Crear copia."
-                  : `Crear copia guardará “${newPolicyName.trim() || "la nueva política"}” como versión 1.`}
-              </p>
+                {!createStageValid ? <p className={styles.stepHint} role="status">
+                  {createStep === 1 ? "Escribe un nombre de al menos 3 caracteres para continuar."
+                    : createStep === 2 ? "Completa los límites de mora de Android e iPhone para continuar."
+                    : pendingBandRemoval ? "Confirma o cancela la eliminación de la banda para continuar."
+                    : "Revisa los campos marcados en las condiciones de la política para continuar."}
+                </p> : null}
+              </footer>
             </Card>
           ) : null}
 
-          {selectedProfile && !createOpen ? (
+          {selectedProfile && !createOpen && !policyEditing ? <Card className={styles.editorSummary} aria-labelledby="policy-summary-title">
+            <div className={styles.contextBar}><div><h3 id="policy-summary-title" className={styles.heading}>Resumen de {selectedProfile.name}</h3>
+              <p className={styles.muted}>Versión {selectedProfile.version} · Condiciones publicadas</p></div><Badge>Solo consulta</Badge></div>
+            <dl className={styles.reviewGrid}>
+              {(["ANDROID", "IPHONE"] as const).map((platform) => <div key={platform}><dt>{platformLabel(platform)}</dt>
+                <dd>{bands.filter((band) => band.platform === platform && band.decision === "APROBADO").length} bandas aprobadas · {bands.filter((band) => band.platform === platform && band.decision === "RECHAZADO").length} rechazadas</dd>
+              </div>)}
+              <div><dt>Interés E.A.</dt><dd>{selectedProfile.financialSettings ? `${selectedProfile.financialSettings.tasaInteresEa} %` : "Sin configurar"}</dd></div>
+              <div><dt>Frecuencia</dt><dd>{selectedProfile.financialSettings?.frecuenciaPago.toLocaleLowerCase("es-CO") || "Sin configurar"}</dd></div>
+            </dl>
+            <ParameterDisclosure title="Consultar reglas de mora">
+              {(["ANDROID", "IPHONE"] as const).map((platform) => <p key={platform}>{platformLabel(platform)}: TELCOS superior a {formatCop(selectedProfile.priorityRules?.telcoDelinquency.rejectAboveCopByPlatform[platform] ?? null)} · Mora total superior a {formatCop(selectedProfile.priorityRules?.totalDelinquency?.rejectAboveCopByPlatform[platform] ?? null)}</p>)}
+            </ParameterDisclosure>
+            <ParameterDisclosure title="Consultar condiciones por banda" badge={<Badge>{bands.length} bandas</Badge>}>
+              {renderPolicyBandSummary(bands)}
+            </ParameterDisclosure>
+          </Card> : null}
+
+          {selectedProfile && !createOpen && policyEditing ? (
             <>
               <Card className={styles.section} aria-labelledby="policy-priority-title">
                 <div className={styles.sectionHeader}>
@@ -3546,7 +3621,7 @@ export default function DatacreditoPolicyConsole() {
                 </ParameterDisclosure>
               </Card>
               <Card className={styles.section}>
-                <ParameterDisclosure title="Parámetros financieros" badge={<Badge>ARES</Badge>}>
+                <ParameterDisclosure title="Parámetros financieros" badge={<Badge>Cuota fija</Badge>}>
                   <ParameterHelp title="Cálculo de la cuota">Estos valores quedan congelados en cada evaluación y alimentan la cuota fija por sistema francés junto con las condiciones de la banda DataCrédito aplicable.</ParameterHelp>
                 {selectedProfile.financialSettings?.calculoVersion !==
                 "ARES_FRANCES_V2" ? (
@@ -3557,14 +3632,7 @@ export default function DatacreditoPolicyConsole() {
                   </div>
                 ) : null}
 
-                <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-                  <div className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-lime-soft)] p-4">
-                    <p className="text-xs font-bold uppercase text-[var(--fp-muted)]">
-                      Motor de cálculo
-                    </p>
-                    <p className="mt-2 font-black">Cuota fija · francés</p>
-                    <Badge className="mt-2">ARES_FRANCES_V2</Badge>
-                  </div>
+                <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <label className="grid gap-2 text-sm font-bold">
                     Interés E.A. (%)
                     <Input
@@ -3724,6 +3792,10 @@ export default function DatacreditoPolicyConsole() {
           className={styles.tabContent}
         >
           <Card className={styles.section}>
+            {assignmentTargetPolicyId ? <div className={styles.contextBar} role="status">
+              <div><strong>Asignar {profiles.find((profile) => profile.id === assignmentTargetPolicyId)?.name || "la política creada"}</strong>
+                <p className={styles.muted}>Busca el aliado y elige esta política en su fila. Los cambios se guardan después de revisar la confirmación.</p></div>
+            </div> : null}
             <div className={styles.assignmentHeader}>
               <div>
                 <h3 className={styles.heading}>
@@ -3739,6 +3811,7 @@ export default function DatacreditoPolicyConsole() {
               <label className="grid w-full gap-2 text-sm font-bold lg:max-w-sm">
                 Buscar aliado
                 <Input
+                  id="policy-assignment-search"
                   type="search"
                   value={assignmentQuery}
                   onChange={(event) => setAssignmentQuery(event.target.value)}
@@ -4050,7 +4123,7 @@ export default function DatacreditoPolicyConsole() {
         title="Guardar políticas y cupos diarios"
         description={`Se guardarán ${policyAssignmentChangeCount} cambio(s) de política y ${dailyQueryLimitChangeCount} cambio(s) de cupo en ${assignmentChanges.length} ${
           assignmentChanges.length === 1 ? "aliado" : "aliados"
-        }. El campo vacío significa sin límite y 0 bloquea nuevas consultas. Las consultas y ofertas ya emitidas conservarán sus condiciones.`}
+        }. ${assignmentChanges.filter((change) => change.policyChanged).map((change) => `${change.ally.name}: ${change.ally.policyName} → ${profiles.find((profile) => profile.id === change.policyId)?.name || "política seleccionada"}`).join(". ")}${policyAssignmentChangeCount ? ". " : ""}El campo vacío significa sin límite y 0 bloquea nuevas consultas. Las consultas y ofertas ya emitidas conservarán sus condiciones.`}
         confirmLabel="Guardar cambios"
         busy={savingAssignments}
         onCancel={() => setAssignmentConfirmOpen(false)}
@@ -4066,6 +4139,20 @@ export default function DatacreditoPolicyConsole() {
         danger
         onCancel={() => setDeleteConfirmOpen(false)}
         onConfirm={() => void retirePolicy()}
+      />
+
+      <ConfirmDialog
+        open={editDiscardConfirmOpen}
+        title="Descartar edición de política"
+        description={`Se descartarán los cambios pendientes de “${selectedProfile?.name || "la política"}”. La versión publicada y las reasignaciones de aliados pendientes se conservarán.`}
+        confirmLabel="Descartar edición"
+        busy={loading || saving || creating}
+        onCancel={() => setEditDiscardConfirmOpen(false)}
+        onConfirm={() => {
+          if (loading || mutationBusyRef.current || catalogRecoveryRef.current || !selectedProfile) return;
+          applyProfile(selectedProfile, financialDefaults);
+          setEditDiscardConfirmOpen(false);
+        }}
       />
 
       <ConfirmDialog
