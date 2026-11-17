@@ -109,6 +109,7 @@ import {
   DEFAULT_LEGAL_RATE_REFERENCE,
   DEFAULT_MAX_CREDIT_INSTALLMENTS,
   DEFAULT_PAYMENT_FREQUENCY,
+  DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
   generatePagareNumber,
   getCreditClosureReadiness,
   getDefaultFirstPaymentDate,
@@ -131,6 +132,8 @@ import {
   resolveRequiredInitialPaymentByPlatform,
   resolveInitialPaymentAfterMinimumRefresh,
   shouldPreserveIphoneFactoryInstallments,
+  SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
+  type SimulatorInitialPaymentPercentage,
   validateIphoneInstallmentLimit,
 } from "@/lib/credit-factory";
 import {
@@ -169,7 +172,6 @@ import {
   parseColombiaDate,
 } from "@/lib/colombia-date";
 import { resolveCreditPolicyFinancialSettings } from "@/lib/credit-policy-financial-settings";
-import type { DataCreditoSimulationCondition } from "@/lib/datacredito/simulation-conditions";
 import { CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, hasCurrentCreditOriginationTerms } from "@/lib/credit-current-origination-terms";
 import {
   firmaSeguroCorrectionReviewKey,
@@ -782,6 +784,11 @@ type EquipmentCatalogResponse = {
 };
 
 type CreditSettings = {
+  calculoVersion?: "FRANCES_V1" | "ARES_FRANCES_V1" | "ARES_FRANCES_V2";
+  fianzaTotalPorcentaje?: number;
+  tasaPeriodoDecimales?: number;
+  redondeoComercialModo?: "REDONDEO" | "PISO";
+  redondeoComercialMultiplo?: number;
   tasaInteresEa: number;
   fianzaPorcentaje: number;
   fianzaCuotaPorcentaje: number;
@@ -823,15 +830,11 @@ type LoadedManualCreditLimit = NonNullable<
 };
 
 type DataCreditoPolicySimulation = {
-  kind: "POLICY_APPROVED_CONDITIONS" | "POLICY_NO_INFORMATION";
+  kind: "GENERAL_CREDIT_SETTINGS";
   simulationOnly: true;
   platform: "ANDROID" | "IPHONE";
-  decision: "APROBADO" | "RECHAZADO";
-  offer: DataCreditoApprovedResult["offer"] | null;
-  conditions: DataCreditoSimulationCondition[];
-  initialPaymentPercentages?: number[];
-  policyVersion: number;
-  policyRevisionId: string;
+  settings: CreditSettings;
+  globalSettings: CreditSettings;
 };
 
 type DataCreditoPolicySimulationResponse = {
@@ -3321,7 +3324,7 @@ export default function CreditFactoryConsole({
     number | null
   >(null);
   const [equipmentCatalog, setEquipmentCatalog] = useState<EquipmentCatalogItem[]>([]);
-  const [creditSettings, setCreditSettings] = useState<CreditSettings>({
+  const [loadedCreditSettings, setCreditSettings] = useState<CreditSettings>({
     tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
     fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
     fianzaCuotaPorcentaje: DEFAULT_INSTALLMENT_SURETY_PERCENTAGE,
@@ -3337,7 +3340,7 @@ export default function CreditFactoryConsole({
     frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
     updatedAt: null,
   });
-  const [globalCreditSettings, setGlobalCreditSettings] =
+  const [loadedGlobalCreditSettings, setGlobalCreditSettings] =
     useState<CreditSettings>({
       tasaInteresEa: DEFAULT_LEGAL_CONSUMER_RATE_EA,
       fianzaPorcentaje: DEFAULT_FIANCO_SURETY_PERCENTAGE,
@@ -3354,6 +3357,14 @@ export default function CreditFactoryConsole({
       frecuenciaPago: DEFAULT_PAYMENT_FREQUENCY,
       updatedAt: null,
     });
+  const simulatorGeneralSettings = simulatorMode &&
+    dataCreditoSimulationStatus === "ready" &&
+    dataCreditoSimulation?.platform === dataCreditoPlatform &&
+    dataCreditoSimulation.kind === "GENERAL_CREDIT_SETTINGS"
+      ? dataCreditoSimulation
+      : null;
+  const creditSettings = simulatorGeneralSettings?.settings ?? loadedCreditSettings;
+  const globalCreditSettings = simulatorGeneralSettings?.globalSettings ?? loadedGlobalCreditSettings;
   const [creditSettingsDocument, setCreditSettingsDocument] = useState("");
   const [dataCreditoManualCreditLimit, setDataCreditoManualCreditLimit] =
     useState<LoadedManualCreditLimit | null>(null);
@@ -3371,9 +3382,9 @@ export default function CreditFactoryConsole({
   const currentEquipmentImeiRef = useRef("");
   const currentDraftDocumentRef = useRef("");
   const [stepTwoContinuing, setStepTwoContinuing] = useState(false);
-  const [simulatorConditionSelection, setSimulatorConditionSelection] = useState<
-    Partial<Record<"ANDROID" | "IPHONE", { revisionId: string; conditionId: string }>>
-  >({});
+  const [simulatorInitialPaymentPercentage, setSimulatorInitialPaymentPercentage] =
+    useState<SimulatorInitialPaymentPercentage>(DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE);
+  const [simulatorPlanResetGeneration, setSimulatorPlanResetGeneration] = useState(0);
   const [plazoMeses, setPlazoMeses] = useState(String(DEFAULT_CREDIT_INSTALLMENTS));
   const [tasaInteresEa, setTasaInteresEa] = useState(
     String(DEFAULT_LEGAL_CONSUMER_RATE_EA)
@@ -4028,37 +4039,16 @@ export default function CreditFactoryConsole({
   const effectiveEquipmentCatalogId =
     restoredEquipmentCatalogId || selectedEquipmentCatalogItem?.id || null;
   const precioBaseVentaCatalogo = selectedEquipmentCatalogItem?.precioBaseVenta || 0;
-  const simulatorPolicyConditions = useMemo(
-    () =>
-      simulatorMode &&
-      dataCreditoSimulationStatus === "ready" &&
-      dataCreditoSimulation?.platform === dataCreditoPlatform
-        ? dataCreditoSimulation.conditions ?? []
-        : [],
-    [simulatorMode, dataCreditoSimulationStatus, dataCreditoSimulation, dataCreditoPlatform]
-  );
-  const selectedSimulatorCondition =
-    simulatorPolicyConditions.find((condition) =>
-      simulatorConditionSelection[dataCreditoPlatform]?.revisionId === dataCreditoSimulation?.policyRevisionId &&
-      simulatorConditionSelection[dataCreditoPlatform]?.conditionId === condition.id
-    ) ?? simulatorPolicyConditions[0] ?? null;
-  const simulationPolicyOffer =
-    simulatorMode &&
-    dataCreditoSimulationStatus === "ready" &&
-    dataCreditoSimulation?.platform === dataCreditoPlatform &&
-    dataCreditoSimulation?.decision === "APROBADO"
-      ? selectedSimulatorCondition?.offer ?? null
-      : null;
   const activeDataCreditoOffer =
     dataCreditoCreditCreationMode && dataCreditoApproval
       ? dataCreditoApproval.offer
-      : simulationPolicyOffer;
+      : null;
   const activeDataCreditoPlatform =
     dataCreditoCreditCreationMode && dataCreditoApproval
       ? dataCreditoApproval.platform
-      : dataCreditoSimulation?.platform || null;
+      : null;
   const simulationPolicyReady =
-    !simulatorMode || Boolean(simulationPolicyOffer);
+    !simulatorMode || Boolean(simulatorGeneralSettings);
   const dataCreditoPolicyMaxFinancedAmount =
     activeDataCreditoOffer
       ? normalizeMoneyLimit(activeDataCreditoOffer.maxFinancedAmount, 0)
@@ -4094,10 +4084,8 @@ export default function CreditFactoryConsole({
     creditSettings.iphoneTopeFinanciado,
     IPHONE_MAX_FINANCED_AMOUNT
   );
-  const simulatorInitialPaymentPercentage =
-    selectedSimulatorCondition?.offer.initialPaymentPercentage ?? 0;
   const dataCreditoEffectiveMaxFinancedAmount =
-    dataCreditoMaxFinancedAmount;
+    simulatorMode && iphoneFactory ? iphoneMaxFinancedAmount : dataCreditoMaxFinancedAmount;
   const iphoneMaxInstallmentValue = normalizeMoneyLimit(
     activeDataCreditoPlatform === "IPHONE" &&
       activeDataCreditoOffer?.maxInstallmentAmount
@@ -4215,7 +4203,7 @@ export default function CreditFactoryConsole({
     if (
       !iphoneFactory ||
       !simulationPolicyReady ||
-      !activeDataCreditoOffer ||
+      (!simulatorMode && !activeDataCreditoOffer) ||
       valorTotalEquipoNumero <= 0 ||
       cuotaInicialNumero >= valorTotalEquipoNumero ||
       !fechaPrimerPago ||
@@ -4233,10 +4221,10 @@ export default function CreditFactoryConsole({
         );
         const candidateFinancialSettings =
           resolveCreditPolicyFinancialSettings({
-            globalSettings: globalCreditSettings,
-            policyFinancialSettings: activeDataCreditoOffer.financialSettings,
+            globalSettings: simulatorMode ? creditSettings : globalCreditSettings,
+            policyFinancialSettings: activeDataCreditoOffer?.financialSettings,
             legacyOfferSuretyPercentage:
-              activeDataCreditoOffer.suretyPercentage ?? null,
+              activeDataCreditoOffer?.suretyPercentage ?? null,
             numeroCuotas: candidateInstallments,
           });
         const candidatePlan = calculateFrenchAmortization({
@@ -4275,6 +4263,8 @@ export default function CreditFactoryConsole({
     });
   }, [
     activeDataCreditoOffer,
+    simulatorMode,
+    creditSettings,
     cuotaInicialNumero,
     dataCreditoInstallmentCount,
     fechaPrimerPago,
@@ -4290,7 +4280,7 @@ export default function CreditFactoryConsole({
   ]);
   const resolvedPolicyFinancialSettings =
     resolveCreditPolicyFinancialSettings({
-      globalSettings: globalCreditSettings,
+      globalSettings: simulatorMode ? creditSettings : globalCreditSettings,
       policyFinancialSettings: activeDataCreditoOffer?.financialSettings,
       legacyOfferSuretyPercentage:
         activeDataCreditoOffer?.suretyPercentage ?? null,
@@ -7256,23 +7246,12 @@ export default function CreditFactoryConsole({
     setCuotaInicial(String(Math.round(normalizedInitial)));
   };
 
-  const handleSimulatorConditionChange = (conditionId: string) => {
-    if (
-      conditionId === selectedSimulatorCondition?.id ||
-      !dataCreditoSimulation ||
-      !simulatorPolicyConditions.some((condition) => condition.id === conditionId)
-    ) {
-      return;
-    }
-
-    setSimulatorConditionSelection((current) => ({
-      ...current,
-      [dataCreditoPlatform]: {
-        revisionId: dataCreditoSimulation.policyRevisionId,
-        conditionId,
-      },
-    }));
+  const handleSimulatorInitialPaymentPercentageChange = (percentage: number) => {
+    const nextPercentage = SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.find((value) => value === percentage);
+    if (nextPercentage === undefined || nextPercentage === simulatorInitialPaymentPercentage) return;
+    setSimulatorInitialPaymentPercentage(nextPercentage);
     setCuotaInicial("");
+    setSimulatorPlanResetGeneration((current) => current + 1);
   };
 
   const loadCredits = async (preserveSelected = true, searchValue = activeSearch) => {
@@ -7422,7 +7401,7 @@ export default function CreditFactoryConsole({
 
         if (!result.ok) {
           throw new Error(
-            result.data?.error || "No se pudo consultar la política asignada."
+            result.data?.error || "No se pudieron consultar los parámetros generales."
           );
         }
 
@@ -7431,7 +7410,8 @@ export default function CreditFactoryConsole({
           !simulation ||
           simulation.simulationOnly !== true ||
           simulation.platform !== dataCreditoPlatform ||
-          !Array.isArray(simulation.conditions)
+          simulation.kind !== "GENERAL_CREDIT_SETTINGS" ||
+          !simulation.settings || !simulation.globalSettings
         ) {
           setDataCreditoSimulationStatus("unavailable");
           setDataCreditoSimulationMessage(
@@ -7441,14 +7421,6 @@ export default function CreditFactoryConsole({
         }
 
         setDataCreditoSimulation(simulation);
-        if (simulation.decision !== "APROBADO" || simulation.conditions.length === 0) {
-          setDataCreditoSimulationStatus("rejected");
-          setDataCreditoSimulationMessage(
-            "La política del aliado no tiene condiciones aprobadas para simular en esta plataforma."
-          );
-          return;
-        }
-
         setDataCreditoSimulationStatus("ready");
       } catch (error) {
         if (controller.signal.aborted || (error as { name?: string })?.name === "AbortError") {
@@ -7467,18 +7439,17 @@ export default function CreditFactoryConsole({
   }, [dataCreditoPlatform, simulatorMode]);
 
   useEffect(() => {
-    const offer = simulationPolicyOffer;
-    if (!offer) {
+    if (!simulatorGeneralSettings) {
       return;
     }
 
     const installmentCount = normalizeCreditInstallments(
-      offer.installmentCount,
+      simulatorGeneralSettings.settings.plazoCuotas,
       DEFAULT_CREDIT_INSTALLMENTS,
-      MAX_CREDIT_INSTALLMENTS
+      simulatorGeneralSettings.settings.plazoMaximoCuotas
     );
     setPlazoMeses(String(installmentCount));
-  }, [simulationPolicyOffer]);
+  }, [simulatorGeneralSettings, simulatorPlanResetGeneration]);
 
   useEffect(() => {
     if (
@@ -7486,7 +7457,7 @@ export default function CreditFactoryConsole({
       !iphoneFactory ||
       iphoneFactoryTermsLocked ||
       creditInstallmentOptions.length === 0 ||
-      !activeDataCreditoOffer ||
+      (!simulatorMode && !activeDataCreditoOffer) ||
       creditInstallmentOptions.includes(plazoMeses)
     ) {
       return;
@@ -7499,6 +7470,7 @@ export default function CreditFactoryConsole({
     iphoneFactory,
     iphoneFactoryTermsLocked,
     plazoMeses,
+    simulatorMode,
     stepTwoPlanEquipmentReady,
   ]);
 
@@ -7634,6 +7606,7 @@ export default function CreditFactoryConsole({
     draftResumeHydrating,
     firmaSeguroProcessExists,
     simulationPolicyReady,
+    simulatorPlanResetGeneration,
     simulatorMode,
     valorEquipoTotal,
   ]);
@@ -9980,7 +9953,10 @@ export default function CreditFactoryConsole({
     setValorEquipoTotal("");
     setCuotaInicial("");
     setPlazoMeses("");
-    setSimulatorConditionSelection({});
+    setSimulatorInitialPaymentPercentage(DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE);
+    if (simulatorMode) {
+      setSimulatorPlanResetGeneration((current) => current + 1);
+    }
     setStepTwoClearConfirmOpen(false);
     setDraftStatus("idle");
     setDraftErrorMessage("");
@@ -15691,7 +15667,7 @@ export default function CreditFactoryConsole({
                       <strong>Simulación no disponible</strong>
                       <span>
                         {dataCreditoSimulationMessage ||
-                          "La configuración actual no autoriza una simulación para esta plataforma."}
+                          "No se pudieron cargar los parámetros generales. Recarga la página para intentarlo de nuevo."}
                       </span>
                     </div>
                   ) : null}
@@ -15978,7 +15954,7 @@ export default function CreditFactoryConsole({
                               </div>
                             ) : null}
                             {simulatorMode && stepTwoPolicyAvailable ? <div className="fp-step2-policy-note">
-                              <strong>Condiciones de simulación</strong>
+                              <strong>Parámetros generales</strong>
                               <span>Inicial mínima {formatPercent(initialPaymentPercentage)}
                                 {dataCreditoEffectiveMaxFinancedAmount > 0 ? " · Monto máximo financiado " + currency(dataCreditoEffectiveMaxFinancedAmount) : ""}
                                 {" · "}Hasta {plazoMaximoCuotas} cuotas
@@ -16011,12 +15987,12 @@ export default function CreditFactoryConsole({
                         )}
                         <span>
                           {!stepTwoPolicyAvailable
-                            ? "Política no disponible"
+                            ? simulatorMode ? "Parámetros no disponibles" : "Política no disponible"
                             : firmaSeguroProcessExists || signedContractEditLocked
                               ? firmaSeguroProcessSigned ? "Contrato firmado · Edición restringida" : "Contrato enviado · Edición restringida"
                            : stepTwoPlanLocked
                               ? "Completa la marca, el modelo y el precio para configurar el plan."
-                              : "Configura el plan; ingresa el IMEI antes de continuar."}
+                              : simulatorMode ? "Compara la inicial y el plazo." : "Configura el plan; ingresa el IMEI antes de continuar."}
                         </span>
                       </div>
 
@@ -16026,32 +16002,26 @@ export default function CreditFactoryConsole({
                         className="fp-step2-plan-fields"
                       >
                         {simulatorMode ? (
-                          <div className="fp-step2-percentage fp-step2-policy-options">
-                            <span>Condiciones del plan</span>
-                            <div role="radiogroup" aria-label="Condiciones del plan">
-                              {simulatorPolicyConditions.map(
-                                (condition) => {
-                                  const selected =
-                                    selectedSimulatorCondition?.id === condition.id;
+                          <div className="fp-step2-percentage">
+                            <span>Porcentaje de cuota inicial</span>
+                            <div role="radiogroup" aria-label="Porcentaje de cuota inicial">
+                              {SIMULATOR_INITIAL_PAYMENT_PERCENTAGES.map(
+                                (percentage) => {
+                                  const selected = simulatorInitialPaymentPercentage === percentage;
                                   return (
-                                    <label key={condition.id}>
+                                    <label key={percentage}>
                                       <input
                                         type="radio"
-                                        name="simulator-policy-condition"
-                                        value={condition.id}
+                                        name="simulator-initial-payment-percentage"
+                                        value={percentage}
                                         checked={selected}
                                         onChange={() =>
-                                          handleSimulatorConditionChange(
-                                            condition.id
+                                          handleSimulatorInitialPaymentPercentageChange(
+                                            percentage
                                          )
                                         }
                                       />
-                                      <span>
-                                        <strong>{formatPercent(condition.offer.initialPaymentPercentage)} de inicial</strong>
-                                        <small>Hasta {currency(condition.offer.maxFinancedAmount)} · {condition.offer.installmentCount} cuotas
-                                          {condition.offer.maxInstallmentAmount ? <> · Cuota máxima {currency(condition.offer.maxInstallmentAmount)}</> : null}
-                                        </small>
-                                      </span>
+                                      <span>{percentage} %</span>
                                     </label>
                                   );
                                 }

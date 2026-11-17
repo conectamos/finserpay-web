@@ -67,7 +67,7 @@ function accessError(status: 401 | 403) {
 async function catalogPayload(extra: Record<string, unknown> = {}) {
   const [catalog, provider] = await Promise.all([
     listDataCreditoPolicyCatalog(),
-    Promise.resolve(getDataCreditoPublicConfig()),
+    Promise.resolve().then(() => getDataCreditoPublicConfig()),
   ]);
   return {
     ok: true,
@@ -80,6 +80,46 @@ async function catalogPayload(extra: Record<string, unknown> = {}) {
     },
     ...extra,
   };
+}
+
+type CommittedPolicyOperation =
+  | "CREATE_POLICY"
+  | "SAVE_REVISION"
+  | "ASSIGN_ALLY"
+  | "SET_ALLY_DAILY_QUOTA"
+  | "RETIRE_POLICY";
+
+// Call only after the mutation has resolved: reloading a catalog is not part of
+// the write transaction and its failure must never invite a second write.
+async function committedCatalogResponse(input: {
+  operation: CommittedPolicyOperation;
+  correlationId: string;
+  extra: Record<string, unknown>;
+  status?: 200 | 201;
+}) {
+  const responseOptions = {
+    status: input.status ?? 200,
+    headers: NO_STORE_HEADERS,
+  };
+  try {
+    return NextResponse.json(await catalogPayload(input.extra), responseOptions);
+  } catch (error) {
+    console.error("ERROR RECARGANDO CATALOGO DESPUES DE GUARDAR POLITICA:", {
+      correlationId: input.correlationId,
+      operation: input.operation,
+      errorType: error instanceof Error ? error.name : "UnknownError",
+    });
+    return NextResponse.json({
+      ok: true,
+      operationCommitted: true,
+      catalogReloadRequired: true,
+      code: "POLICY_CATALOG_REFRESH_FAILED",
+      committedOperation: input.operation,
+      message: "El cambio quedó guardado. No se pudo actualizar el listado; recárgalo antes de realizar otro cambio.",
+      correlationId: input.correlationId,
+      ...input.extra,
+    }, responseOptions);
+  }
 }
 
 function policyErrorResponse(error: unknown, correlationId: string) {
@@ -298,9 +338,11 @@ export async function POST(request: Request) {
       )!,
       actorUserId: access.user.id,
     });
-    return NextResponse.json(await catalogPayload({ createdPolicyId }), {
+    return committedCatalogResponse({
+      operation: "CREATE_POLICY",
+      correlationId,
+      extra: { createdPolicyId },
       status: 201,
-      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     return policyErrorResponse(error, correlationId);
@@ -363,8 +405,10 @@ export async function PATCH(request: Request) {
         createdByUserId: access.user.id,
         expectedVersion,
       });
-      return NextResponse.json(await catalogPayload({ updatedPolicyId }), {
-        headers: NO_STORE_HEADERS,
+      return committedCatalogResponse({
+        operation: "SAVE_REVISION",
+        correlationId,
+        extra: { updatedPolicyId },
       });
     }
 
@@ -391,8 +435,10 @@ export async function PATCH(request: Request) {
         expectedPolicyId: String(body.expectedPolicyId),
         actorUserId: access.user.id,
       });
-      return NextResponse.json(await catalogPayload({ assignedAllyId: allyId }), {
-        headers: NO_STORE_HEADERS,
+      return committedCatalogResponse({
+        operation: "ASSIGN_ALLY",
+        correlationId,
+        extra: { assignedAllyId: allyId },
       });
     }
 
@@ -430,10 +476,11 @@ export async function PATCH(request: Request) {
         requestCorrelationId: correlationId,
         reason: typeof body.reason === "string" ? body.reason : null,
       });
-      return NextResponse.json(
-        await catalogPayload({ dailyQuotaUpdatedAllyId: allyId }),
-        { headers: NO_STORE_HEADERS }
-      );
+      return committedCatalogResponse({
+        operation: "SET_ALLY_DAILY_QUOTA",
+        correlationId,
+        extra: { dailyQuotaUpdatedAllyId: allyId },
+      });
     }
 
     return NextResponse.json(
@@ -487,15 +534,15 @@ export async function DELETE(request: Request) {
       policyId: String(body.policyId),
       expectedVersion,
     });
-    return NextResponse.json(
-      {
-        ...(await catalogPayload()),
+    return committedCatalogResponse({
+      operation: "RETIRE_POLICY",
+      correlationId,
+      extra: {
         deletionMode: "RETIRED",
         policy,
         correlationId,
       },
-      { headers: NO_STORE_HEADERS }
-    );
+    });
   } catch (error) {
     return policyErrorResponse(error, correlationId);
   }

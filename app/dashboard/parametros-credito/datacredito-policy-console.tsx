@@ -1885,7 +1885,7 @@ export default function DatacreditoPolicyConsole() {
   const [activeTab, setActiveTab] = useState<PolicyConsoleTab>("POLICIES");
   const [visitedTabs, setVisitedTabs] = useState<PolicyConsoleTab[]>(["POLICIES"]);
   const mutationBusyRef = useRef(false);
-  const switchTab = (tab: PolicyConsoleTab) => {
+  const applyTab = (tab: PolicyConsoleTab) => {
     setPendingBandRemoval(null);
     setBandRemovalConfirmOpen(false);
     setVisitedTabs((current) => current.includes(tab) ? current : [...current, tab]);
@@ -1904,6 +1904,12 @@ export default function DatacreditoPolicyConsole() {
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
   const [pendingPolicyId, setPendingPolicyId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [newPolicySource, setNewPolicySource] = useState<{
+    id: string; name: string; version: number; bandIds: string[];
+  } | null>(null);
+  const [newPolicyBands, setNewPolicyBands] = useState<EditableBand[]>([]);
+  const [copyDiscardConfirmOpen, setCopyDiscardConfirmOpen] = useState(false);
+  const [pendingCopyTab, setPendingCopyTab] = useState<PolicyConsoleTab | null>(null);
   const [newPolicyName, setNewPolicyName] = useState("");
   const [newPolicyDescription, setNewPolicyDescription] = useState("");
   const [newPolicyFinancialSettings, setNewPolicyFinancialSettings] =
@@ -1918,8 +1924,36 @@ export default function DatacreditoPolicyConsole() {
   const [error, setError] = useState<string | null>(null);
   const [correlationId, setCorrelationId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [catalogRecovery, setCatalogRecovery] = useState<{
+    preferredPolicyId: string | null;
+    preservePolicyDraft: boolean;
+    preserveAssignmentDrafts: boolean;
+    message: string;
+  } | null>(null);
+  const catalogRecoveryRef = useRef(catalogRecovery);
+  catalogRecoveryRef.current = catalogRecovery;
+
+  const recordCommittedMutation = (
+    payload: JsonRecord,
+    response: Response,
+    recovery: NonNullable<typeof catalogRecovery>
+  ) => {
+    if (payload.operationCommitted !== true || payload.catalogReloadRequired !== true) return false;
+    catalogRecoveryRef.current = recovery;
+    setCatalogRecovery(recovery);
+    setConfirmOpen(false);
+    setAssignmentConfirmOpen(false);
+    setDeleteConfirmOpen(false);
+    setError(null);
+    setNotice(null);
+    setCorrelationId(getCorrelationId(payload, response));
+    return true;
+  };
 
   const validation = useMemo(() => validateDraftBands(bands), [bands]);
+  const newPolicyBandValidation = useMemo(() => validateDraftBands(newPolicyBands), [newPolicyBands]);
+  const editableBands = createOpen ? newPolicyBands : bands;
+  const editableBandValidation = createOpen ? newPolicyBandValidation : validation;
   const financialValidation = useMemo(
     () => validateFinancialSettings(financialSettings),
     [financialSettings]
@@ -1940,18 +1974,23 @@ export default function DatacreditoPolicyConsole() {
     () => profiles.find((profile) => profile.id === selectedPolicyId) || null,
     [profiles, selectedPolicyId]
   );
-  const bandRemovalSnapshot = JSON.stringify({ selectedPolicyId, version, bands });
+  const bandRemovalSnapshot = JSON.stringify({
+    selectedPolicyId: createOpen ? newPolicySource?.id : selectedPolicyId,
+    version: createOpen ? newPolicySource?.version : version,
+    creatingPolicy: createOpen,
+    bands: editableBands,
+  });
   const bandRemovalPlan = pendingBandRemoval
-    ? getPolicyBandRemovalPlan(bands, pendingBandRemoval.bandId)
+    ? getPolicyBandRemovalPlan(editableBands, pendingBandRemoval.bandId)
     : null;
-  const bandRemovalSource = bands.find((band) => band.id === pendingBandRemoval?.bandId);
-  const bandRemovalTarget = bands.find((band) => band.id === pendingBandRemoval?.targetBandId);
+  const bandRemovalSource = editableBands.find((band) => band.id === pendingBandRemoval?.bandId);
+  const bandRemovalTarget = editableBands.find((band) => band.id === pendingBandRemoval?.targetBandId);
   const bandRemovalOption = bandRemovalPlan?.kind === "MERGE"
     ? bandRemovalPlan.options.find((option) => option.targetBandId === pendingBandRemoval?.targetBandId)
     : null;
   const bandRemovalReady = Boolean(pendingBandRemoval && bandRemovalOption && bandRemovalTarget &&
     pendingBandRemoval.snapshot === bandRemovalSnapshot &&
-    !validation.rowErrors[bandRemovalTarget.id]?.length);
+    !editableBandValidation.rowErrors[bandRemovalTarget.id]?.length);
   const latestBandRemovalRef = useRef({ snapshot: bandRemovalSnapshot, pending: pendingBandRemoval });
   latestBandRemovalRef.current = { snapshot: bandRemovalSnapshot, pending: pendingBandRemoval };
   const pendingRemovalBandId = pendingBandRemoval?.bandId;
@@ -2035,6 +2074,7 @@ export default function DatacreditoPolicyConsole() {
     (change) => change.dailyQueryLimitChanged
   ).length;
   const hasPendingChanges =
+    createOpen ||
     hasUnsavedChanges ||
     assignmentChanges.length > 0 ||
     hasDailyQueryLimitDraftChanges;
@@ -2155,7 +2195,24 @@ export default function DatacreditoPolicyConsole() {
 
       try {
         const catalog = await requestCatalog(signal);
-        applyCatalog(catalog, preferredPolicyId);
+        if (signal?.aborted) return;
+        const recovery = catalogRecoveryRef.current;
+        applyCatalog(
+          catalog,
+          recovery?.preferredPolicyId || preferredPolicyId,
+          recovery?.preservePolicyDraft || false,
+          recovery?.preserveAssignmentDrafts || false
+        );
+        if (recovery) {
+          setCreateOpen(false);
+          setNewPolicySource(null);
+          setNewPolicyBands([]);
+          setNewPolicyName("");
+          setNewPolicyDescription("");
+          catalogRecoveryRef.current = null;
+          setCatalogRecovery(null);
+          setNotice(`${recovery.message} El catálogo ya está actualizado.`);
+        }
       } catch (requestError) {
         if (requestError instanceof DOMException && requestError.name === "AbortError") {
           return;
@@ -2194,20 +2251,41 @@ export default function DatacreditoPolicyConsole() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasPendingChanges]);
 
+  const discardNewPolicyDraft = () => {
+    setCreateOpen(false);
+    setNewPolicySource(null);
+    setNewPolicyBands([]);
+    setNewPolicyName("");
+    setNewPolicyDescription("");
+    setPendingBandRemoval(null);
+    setBandRemovalConfirmOpen(false);
+  };
+
+  const switchTab = (tab: PolicyConsoleTab) => {
+    if (tab === activeTab || mutationBusyRef.current || catalogRecoveryRef.current || loading) return;
+    if (createOpen) {
+      setPendingCopyTab(tab);
+      setCopyDiscardConfirmOpen(true);
+      return;
+    }
+    applyTab(tab);
+  };
+
   const selectProfile = (policyId: string) => {
     const profile = profiles.find((candidate) => candidate.id === policyId);
     if (!profile) return;
     setNotice(null);
     setError(null);
+    discardNewPolicyDraft();
     applyProfile(profile, financialDefaults);
   };
 
   const requestProfileSelection = (policyId: string) => {
-    if (loading) return;
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current) return;
     setPendingBandRemoval(null);
     setBandRemovalConfirmOpen(false);
     if (policyId === selectedPolicyId) return;
-    if (hasUnsavedChanges) {
+    if (hasUnsavedChanges || createOpen) {
       setPendingPolicyId(policyId);
       setSwitchConfirmOpen(true);
       return;
@@ -2217,7 +2295,11 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const requestReload = () => {
-    if (loading) return;
+    if (loading || mutationBusyRef.current) return;
+    if (catalogRecoveryRef.current) {
+      void loadCatalog();
+      return;
+    }
     setPendingBandRemoval(null);
     setBandRemovalConfirmOpen(false);
     if (hasPendingChanges) {
@@ -2228,17 +2310,28 @@ export default function DatacreditoPolicyConsole() {
     void loadCatalog(undefined, selectedPolicyId);
   };
 
+  const setEditableBands = (
+    value: EditableBand[] | ((current: EditableBand[]) => EditableBand[])
+  ) => {
+    if (catalogRecoveryRef.current) return;
+    if (createOpen) {
+      setNewPolicyBands(value);
+    } else {
+      setHasUnsavedChanges(true);
+      setBands(value);
+    }
+  };
+
   const addBand = (platform: DataCreditoPolicyPlatform) => {
     const nextBand = createDraftBand(platform);
     setNotice(`Nueva banda agregada para ${platformLabel(platform)}.`);
-    setHasUnsavedChanges(true);
-    setBands((current) => [...current, nextBand]);
+    setEditableBands((current) => [...current, nextBand]);
     focusPolicyBandEditor(nextBand.id);
   };
 
   const addNoInformationBand = (platform: DataCreditoPolicyPlatform) => {
     if (
-      bands.some(
+      editableBands.some(
         (band) => band.platform === platform && isNoInformationBand(band)
       )
     ) {
@@ -2249,8 +2342,7 @@ export default function DatacreditoPolicyConsole() {
     setNotice(
       `Regla Sin información agregada para ${platformLabel(platform)}. Completa la decisión y las condiciones financieras.`
     );
-    setHasUnsavedChanges(true);
-    setBands((current) => {
+    setEditableBands((current) => {
       if (
         current.some(
           (band) => band.platform === platform && isNoInformationBand(band)
@@ -2270,8 +2362,7 @@ export default function DatacreditoPolicyConsole() {
     value: string
   ) => {
     setNotice(null);
-    setHasUnsavedChanges(true);
-    setBands((current) =>
+    setEditableBands((current) =>
       current.map((band) =>
         band.id === bandId ? { ...band, [field]: value } : band
       )
@@ -2347,19 +2438,20 @@ export default function DatacreditoPolicyConsole() {
   };
   const removeBand = (bandId: string) => {
     if (loading || mutationBusyRef.current || saving || savingAssignments || creating || deleting ||
-      confirmOpen || assignmentConfirmOpen || deleteConfirmOpen || reloadConfirmOpen || switchConfirmOpen || createOpen ||
+      confirmOpen || assignmentConfirmOpen || deleteConfirmOpen || reloadConfirmOpen || switchConfirmOpen || copyDiscardConfirmOpen ||
       bandRemovalConfirmOpen || latestBandRemovalRef.current.pending) return;
     setNotice(null);
     setError(null);
-    const options = { isNewBand: !selectedProfile?.bands.some((band) => band.id === bandId) };
-    const plan = getPolicyBandRemovalPlan(bands, bandId, options);
+    const options = { isNewBand: createOpen
+      ? !newPolicySource?.bandIds.includes(bandId)
+      : !selectedProfile?.bands.some((band) => band.id === bandId) };
+    const plan = getPolicyBandRemovalPlan(editableBands, bandId, options);
     if (plan.kind === "BLOCKED") {
       setNotice(plan.message);
       return;
     }
     if (plan.kind === "DIRECT") {
-      setBands(applyPolicyBandRemoval(bands, bandId, undefined, options));
-      setHasUnsavedChanges(true);
+      setEditableBands(applyPolicyBandRemoval(editableBands, bandId, undefined, options));
       setNotice("Banda nueva retirada del borrador.");
       return;
     }
@@ -2378,11 +2470,10 @@ export default function DatacreditoPolicyConsole() {
       return;
     }
     try {
-      const next = applyPolicyBandRemoval(bands, pendingBandRemoval.bandId, pendingBandRemoval.targetBandId);
+      const next = applyPolicyBandRemoval(editableBands, pendingBandRemoval.bandId, pendingBandRemoval.targetBandId);
       latestBandRemovalRef.current = { snapshot: bandRemovalSnapshot, pending: null };
-      setBands(next);
-      setHasUnsavedChanges(true);
-      setNotice(`Banda retirada del borrador. El rango ${bandRemovalOption.scoreMin}–${bandRemovalOption.scoreMax} usará las condiciones elegidas al publicar la nueva revisión.`);
+      setEditableBands(next);
+      setNotice(`Banda retirada del borrador. El rango ${bandRemovalOption.scoreMin}–${bandRemovalOption.scoreMax} usará las condiciones elegidas al ${createOpen ? "crear la nueva política" : "publicar la nueva revisión"}.`);
       setPendingBandRemoval(null);
       setBandRemovalConfirmOpen(false);
       focusPolicyBandEditor(bandRemovalTarget.id);
@@ -2400,6 +2491,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const openSaveConfirmation = () => {
+    if (createOpen) return;
     if (latestBandRemovalRef.current.pending) {
       setNotice("Confirma o cancela la eliminación de la banda antes de publicar.");
       return;
@@ -2423,7 +2515,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const savePolicy = async () => {
-    if (loading || mutationBusyRef.current) return;
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || createOpen) return;
     if (
       !validation.valid ||
       !financialValidation.valid ||
@@ -2479,6 +2571,10 @@ export default function DatacreditoPolicyConsole() {
         );
       }
 
+      if (recordCommittedMutation(payload, response, {
+        preferredPolicyId: selectedProfile.id, preservePolicyDraft: false, preserveAssignmentDrafts: true,
+        message: `La revisión de “${selectedProfile.name}” quedó publicada.`,
+      })) return;
       const catalog = parseCatalog(payload, response);
       const updatedProfile = catalog.profiles.find(
         (profile) => profile.id === selectedProfile.id
@@ -2509,6 +2605,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const openCreatePolicy = () => {
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current || createOpen) return;
     if (latestBandRemovalRef.current.pending) return;
     if (!selectedProfile) return;
     if (hasUnsavedChanges) {
@@ -2519,6 +2616,11 @@ export default function DatacreditoPolicyConsole() {
     }
     setNewPolicyName(`Copia de ${selectedProfile.name}`.slice(0, 80));
     setNewPolicyDescription("");
+    setNewPolicySource({
+      id: selectedProfile.id, name: selectedProfile.name, version: selectedProfile.version,
+      bandIds: selectedProfile.bands.map((band) => band.id),
+    });
+    setNewPolicyBands(selectedProfile.bands.map(toEditableBand));
     setNewPolicyFinancialSettings(
       toEditableFinancialSettings(
         selectedProfile.financialSettings || financialDefaults,
@@ -2536,8 +2638,8 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const createPolicy = async () => {
-    if (loading || mutationBusyRef.current) return;
-    if (!selectedProfile || creating) return;
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current) return;
+    if (!newPolicySource || !createOpen || creating || pendingBandRemoval) return;
     if (hasUnsavedChanges) {
       setError(
         "Publica o descarta el borrador antes de duplicar la última versión publicada."
@@ -2552,13 +2654,15 @@ export default function DatacreditoPolicyConsole() {
       return;
     }
     if (
+      !newPolicyBandValidation.valid ||
       !newPolicyFinancialValidation.valid ||
       !newPolicyFinancialValidation.canonical ||
       !newPolicyPriorityRulesValidation.valid ||
       !newPolicyPriorityRulesValidation.canonical
     ) {
       setError(
-        newPolicyFinancialValidation.issues[0] ||
+        (!newPolicyBandValidation.valid ? "Completa las bandas de Android e iPhone sin huecos ni solapamientos." : null) ||
+          newPolicyFinancialValidation.issues[0] ||
           newPolicyPriorityRulesValidation.issues[0] ||
           "Revisa los parámetros de la nueva política."
       );
@@ -2581,7 +2685,7 @@ export default function DatacreditoPolicyConsole() {
         body: JSON.stringify({
           name,
           description: description || undefined,
-          bands: selectedProfile.bands,
+          bands: newPolicyBandValidation.canonicalBands,
           financialSettings: newPolicyFinancialValidation.canonical,
           priorityRules: newPolicyPriorityRulesValidation.canonical,
         }),
@@ -2595,6 +2699,10 @@ export default function DatacreditoPolicyConsole() {
         );
       }
 
+      if (recordCommittedMutation(payload, response, {
+        preferredPolicyId: readString(payload.createdPolicyId), preservePolicyDraft: false, preserveAssignmentDrafts: true,
+        message: `La política “${name}” quedó creada.`,
+      })) return;
       const catalog = parseCatalog(payload, response);
       const createdPolicyId =
         readString(payload.createdPolicyId) ||
@@ -2605,10 +2713,11 @@ export default function DatacreditoPolicyConsole() {
         )?.id ||
         null;
 
+      if (!createdPolicyId || !catalog.profiles.some((profile) => profile.id === createdPolicyId)) {
+        throw new PolicyRequestError("La creación respondió sin identificar la nueva política. Recarga el catálogo antes de reintentar.", getCorrelationId(payload, response));
+      }
       applyCatalog(catalog, createdPolicyId, false, true);
-      setCreateOpen(false);
-      setNewPolicyName("");
-      setNewPolicyDescription("");
+      discardNewPolicyDraft();
       setNewPolicyFinancialSettings(
         toEditableFinancialSettings(financialDefaults)
       );
@@ -2616,7 +2725,7 @@ export default function DatacreditoPolicyConsole() {
         toEditablePriorityRules(DEFAULT_PRIORITY_RULES)
       );
       setNotice(
-        `Política “${name}” creada como versión 1 a partir de “${selectedProfile.name}”. Aún no cambia ningún aliado.`
+        `Política “${name}” creada como versión 1 a partir de “${newPolicySource.name}” v${newPolicySource.version}. Ya puedes editarla y publicar sus siguientes versiones. Aún no cambia ningún aliado.`
       );
     } catch (requestError) {
       setError(
@@ -2636,7 +2745,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const retirePolicy = async () => {
-    if (loading || mutationBusyRef.current) return;
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current) return;
     if (
       !selectedProfile ||
       selectedProfile.id === defaultPolicyId ||
@@ -2675,6 +2784,10 @@ export default function DatacreditoPolicyConsole() {
           getCorrelationId(payload, response)
         );
       }
+      if (recordCommittedMutation(payload, response, {
+        preferredPolicyId: defaultPolicyId, preservePolicyDraft: false, preserveAssignmentDrafts: true,
+        message: `La política “${selectedProfile.name}” quedó retirada.`,
+      })) return;
       const catalog = parseCatalog(payload, response);
       applyCatalog(catalog, catalog.defaultPolicyId, false, true);
       setDeleteConfirmOpen(false);
@@ -2730,7 +2843,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const saveAssignments = async () => {
-    if (loading || mutationBusyRef.current) return;
+    if (loading || mutationBusyRef.current || catalogRecoveryRef.current) return;
     if (
       !assignmentChanges.length ||
       savingAssignments ||
@@ -2782,6 +2895,18 @@ export default function DatacreditoPolicyConsole() {
             );
           }
 
+          if (payload.operationCommitted === true && payload.catalogReloadRequired === true) {
+            if (latestCatalog) applyCatalog(latestCatalog, selectedPolicyId, hasUnsavedChanges, true, completedAllyIds);
+            setAllies((current) => current.map((ally) => ally.id === change.ally.id
+              ? { ...ally, policyId: change.policyId,
+                  policyName: profiles.find((profile) => profile.id === change.policyId)?.name || ally.policyName }
+              : ally));
+            recordCommittedMutation(payload, response, {
+              preferredPolicyId: selectedPolicyId, preservePolicyDraft: hasUnsavedChanges, preserveAssignmentDrafts: true,
+              message: `La política de ${change.ally.name} quedó asignada. Los cambios restantes se conservan pendientes.`,
+            });
+            return;
+          }
           latestCatalog = parseCatalog(payload, response);
         }
 
@@ -2818,6 +2943,18 @@ export default function DatacreditoPolicyConsole() {
             );
           }
 
+          if (payload.operationCommitted === true && payload.catalogReloadRequired === true) {
+            if (latestCatalog) applyCatalog(latestCatalog, selectedPolicyId, hasUnsavedChanges, true, completedAllyIds);
+            setAllies((current) => current.map((ally) => ally.id === change.ally.id
+              ? { ...ally, dailyQueryLimit: change.dailyQueryLimit,
+                  dailyQueriesRemaining: change.dailyQueryLimit === null ? null : Math.max(0, change.dailyQueryLimit - ally.dailyQueriesUsed) }
+              : ally));
+            recordCommittedMutation(payload, response, {
+              preferredPolicyId: selectedPolicyId, preservePolicyDraft: hasUnsavedChanges, preserveAssignmentDrafts: true,
+              message: `El cupo diario de ${change.ally.name} quedó guardado. Los cambios restantes se conservan pendientes.`,
+            });
+            return;
+          }
           latestCatalog = parseCatalog(payload, response);
         }
 
@@ -2930,6 +3067,41 @@ export default function DatacreditoPolicyConsole() {
   const androidBands = bands.filter((band) => band.platform === "ANDROID");
   const iphoneBands = bands.filter((band) => band.platform === "IPHONE");
   const selectedProfileVersion = selectedProfile?.version ?? version;
+  const bandRemovalPanel = pendingBandRemoval && bandRemovalSource ? (
+                <div id="policy-band-removal" className="mb-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4" role="region" aria-labelledby="policy-band-removal-title">
+                  <h4 id="policy-band-removal-title" className="font-bold">Quitar banda de {platformLabel(bandRemovalSource.platform)}</h4>
+                  <p className="mt-2 text-sm">Elige qué banda cubrirá los puntajes {bandRemovalSource.scoreMin}–{bandRemovalSource.scoreMax}.</p>
+                  <label className="mt-4 grid gap-2 text-sm font-bold" htmlFor="policy-band-removal-target">
+                    Condiciones que recibirán esos puntajes
+                    <Select id="policy-band-removal-target" value={pendingBandRemoval.targetBandId}
+                      disabled={loading || saving || savingAssignments || creating || deleting || bandRemovalConfirmOpen}
+                      onChange={(event) => {
+                        setBandRemovalConfirmOpen(false);
+                        setPendingBandRemoval((current) => current ? { ...current, targetBandId: event.target.value } : null);
+                      }}>
+                      <option value="">Seleccionar banda vecina</option>
+                      {bandRemovalPlan?.kind === "MERGE" ? bandRemovalPlan.options.map((option) => {
+                        const target = editableBands.find((band) => band.id === option.targetBandId)!;
+                        return <option key={target.id} value={target.id}>{target.scoreMin}–{target.scoreMax} · {target.decision} · Inicial {target.initialPaymentPercentage} % · Máximo {formatCop(readFiniteNumber(target.maxFinancedAmount))}</option>;
+                      }) : null}
+                    </Select>
+                  </label>
+                  {bandRemovalTarget && bandRemovalOption ? (
+                    <p id="policy-band-removal-preview" className="mt-3 text-sm leading-6" aria-live="polite">
+                      Los puntajes {bandRemovalSource.scoreMin}–{bandRemovalSource.scoreMax} pasarán a {bandRemovalTarget.decision}, con inicial {bandRemovalTarget.initialPaymentPercentage} %, cupo máximo {formatCop(readFiniteNumber(bandRemovalTarget.maxFinancedAmount))}, plazo máximo {bandRemovalTarget.installmentCount} cuotas{bandRemovalTarget.platform === "IPHONE" ? ` y tope por cuota de ${formatCop(readFiniteNumber(bandRemovalTarget.maxInstallmentAmount))}` : ""}. El rango resultante será {bandRemovalOption.scoreMin}–{bandRemovalOption.scoreMax}.
+                    </p>
+                  ) : null}
+                  {pendingBandRemoval.snapshot !== bandRemovalSnapshot ? <p role="alert" className="mt-3 text-sm font-bold text-[var(--fp-danger)]">Las bandas cambiaron. Cancela y vuelve a preparar la eliminación.</p> : null}
+                  {bandRemovalTarget && editableBandValidation.rowErrors[bandRemovalTarget.id]?.length ? <p role="alert" className="mt-3 text-sm font-bold text-[var(--fp-danger)]">Completa las condiciones de la banda vecina antes de continuar.</p> : null}
+                  <p className="mt-3 text-sm">{createOpen ? "Después de confirmar, crea la nueva política para guardar estas bandas en la copia." : "Después de confirmar, publica una nueva revisión para aplicar el cambio a las consultas futuras."}</p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button variant="secondary" disabled={bandRemovalConfirmOpen} onClick={cancelBandRemoval}>Cancelar eliminación</Button>
+                    <Button disabled={!bandRemovalReady || loading || saving || savingAssignments || creating || deleting || bandRemovalConfirmOpen}
+                      onClick={() => { if (bandRemovalReady) setBandRemovalConfirmOpen(true); }}>Revisar eliminación</Button>
+                  </div>
+                </div>
+              ) : null;
+
 
   return (
     <section
@@ -2988,6 +3160,14 @@ export default function DatacreditoPolicyConsole() {
         </div>
       ) : null}
 
+      {catalogRecovery ? <Card className="p-5" role="status" aria-live="polite">
+        <strong>{catalogRecovery.message}</strong>
+        <p className="mt-2 text-sm text-[var(--fp-muted)]">No se pudo actualizar el listado. Actualízalo antes de realizar otro cambio; el guardado confirmado no se enviará otra vez.</p>
+        {correlationId ? <p className="mt-2 text-xs text-[var(--fp-muted)]">Código de seguimiento: <code>{correlationId}</code></p> : null}
+        <Button className="mt-4" onClick={requestReload} disabled={loading}>Actualizar listado</Button>
+      </Card> : null}
+
+      <fieldset disabled={Boolean(catalogRecovery)} className="m-0 min-w-0 border-0 p-0" aria-label="Configuración de políticas">
       <Tabs className={styles.tabs} aria-label="Gestión de políticas DataCrédito" onKeyDown={event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
@@ -3071,12 +3251,12 @@ export default function DatacreditoPolicyConsole() {
               </div>
               <div className={styles.actions}>
                 <Button className={styles.greenButton} onClick={openCreatePolicy}
-                  disabled={!selectedProfile || loading || saving || creating || hasUnsavedChanges || Boolean(pendingBandRemoval)}
+                  disabled={!selectedProfile || loading || saving || creating || createOpen || hasUnsavedChanges || Boolean(pendingBandRemoval)}
                   aria-describedby={hasUnsavedChanges ? "datacredito-create-policy-help" : undefined}>
                   <Plus className="h-5 w-5" aria-hidden="true" />Nueva política
                 </Button>
                 <Button variant="secondary" className={styles.iconButton} onClick={() => { if (!latestBandRemovalRef.current.pending) setDeleteConfirmOpen(true); }} aria-label="Retirar política" title="Retirar política"
-                  disabled={!selectedProfile || loading || selectedProfile.id === defaultPolicyId || selectedProfile.assignedAlliesCount > 0 || !selectedProfile.active || saving || creating || deleting || hasUnsavedChanges || Boolean(pendingBandRemoval)}>
+                  disabled={!selectedProfile || loading || createOpen || selectedProfile.id === defaultPolicyId || selectedProfile.assignedAlliesCount > 0 || !selectedProfile.active || saving || creating || deleting || hasUnsavedChanges || Boolean(pendingBandRemoval)}>
                   <Trash2 className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </div>
@@ -3095,7 +3275,7 @@ export default function DatacreditoPolicyConsole() {
             </div> : <EmptyState title="No hay políticas publicadas" description="El catálogo debe tener al menos una política antes de asignar aliados." />}
           </Card>
 
-          {createOpen && selectedProfile ? (
+          {createOpen && newPolicySource ? (
             <Card className="p-5 sm:p-6" aria-labelledby="new-policy-title">
               <div className="flex items-start gap-3">
                 <span
@@ -3109,9 +3289,8 @@ export default function DatacreditoPolicyConsole() {
                     Duplicar política
                   </h3>
                   <p className="mt-1 text-sm leading-6 text-[var(--fp-muted)]">
-                    Se copiará la versión {selectedProfile.version} publicada de
-                    “{selectedProfile.name}”. El nuevo perfil no se asignará a
-                    ningún aliado automáticamente.
+                    Copia independiente de “{newPolicySource.name}”, versión {newPolicySource.version}.
+                    Completa las reglas, las bandas y las condiciones de la nueva política antes de crearla.
                   </p>
                 </div>
               </div>
@@ -3119,6 +3298,7 @@ export default function DatacreditoPolicyConsole() {
                 <label className="grid gap-2 text-sm font-bold">
                   Nombre de la nueva política
                   <Input
+                    id="new-policy-name"
                     value={newPolicyName}
                     onChange={(event) => setNewPolicyName(event.target.value)}
                     maxLength={80}
@@ -3129,6 +3309,7 @@ export default function DatacreditoPolicyConsole() {
                 <label className="grid gap-2 text-sm font-bold">
                   Descripción opcional
                   <Input
+                    id="new-policy-description"
                     value={newPolicyDescription}
                     onChange={(event) =>
                       setNewPolicyDescription(event.target.value)
@@ -3266,10 +3447,24 @@ export default function DatacreditoPolicyConsole() {
                   </ul>
                 ) : null}
               </div>
+              <div className="mt-5" aria-labelledby="new-policy-bands-title">
+                <h4 id="new-policy-bands-title" className="font-black">Bandas de la nueva política</h4>
+                <p className="mt-1 text-sm text-[var(--fp-muted)]">Estas bandas pertenecen a la copia de “{newPolicySource.name}” v{newPolicySource.version}.</p>
+                {bandRemovalPanel}
+                {(["ANDROID", "IPHONE"] as const).map((platform) => <PlatformEditor
+                  key={platform}
+                  platform={platform}
+                  bands={newPolicyBands.filter((band) => band.platform === platform)}
+                  errors={newPolicyBandValidation.platformErrors[platform]}
+                  rowErrors={newPolicyBandValidation.rowErrors}
+                  disabled={loading || creating || Boolean(pendingBandRemoval)}
+                  onAdd={addBand} onAddNoInformation={addNoInformationBand} onChange={updateBand} onRemove={removeBand}
+                />)}
+              </div>
               <div className="mt-5 flex flex-wrap justify-end gap-3">
                 <Button
                   variant="secondary"
-                  onClick={() => setCreateOpen(false)}
+                  onClick={() => { setPendingCopyTab(null); setCopyDiscardConfirmOpen(true); }}
                   disabled={creating}
                 >
                   Cancelar
@@ -3279,6 +3474,8 @@ export default function DatacreditoPolicyConsole() {
                   disabled={
                     creating ||
                     hasUnsavedChanges ||
+                    !newPolicyBandValidation.valid ||
+                    Boolean(pendingBandRemoval) ||
                     newPolicyName.trim().length < 3 ||
                     !newPolicyFinancialValidation.valid ||
                     !newPolicyPriorityRulesValidation.valid
@@ -3288,10 +3485,15 @@ export default function DatacreditoPolicyConsole() {
                   {creating ? "Creando..." : "Crear copia"}
                 </Button>
               </div>
+              <p className="mt-3 text-sm text-[var(--fp-muted)]" role="status">
+                {!newPolicyBandValidation.valid || !newPolicyFinancialValidation.valid || !newPolicyPriorityRulesValidation.valid
+                  ? "Completa los valores marcados en reglas, parámetros financieros y bandas para habilitar Crear copia."
+                  : `Crear copia guardará “${newPolicyName.trim() || "la nueva política"}” como versión 1.`}
+              </p>
             </Card>
           ) : null}
 
-          {selectedProfile ? (
+          {selectedProfile && !createOpen ? (
             <>
               <Card className={styles.section} aria-labelledby="policy-priority-title">
                 <div className={styles.sectionHeader}>
@@ -3316,40 +3518,7 @@ export default function DatacreditoPolicyConsole() {
                   </>
                 )}
                 <ParameterDisclosure title="Bandas de puntaje" number="03" badge={<Badge>{bands.length} bandas</Badge>}>
-              {pendingBandRemoval && bandRemovalSource ? (
-                <div id="policy-band-removal" className="mb-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4" role="region" aria-labelledby="policy-band-removal-title">
-                  <h4 id="policy-band-removal-title" className="font-bold">Quitar banda de {platformLabel(bandRemovalSource.platform)}</h4>
-                  <p className="mt-2 text-sm">Elige qué banda cubrirá los puntajes {bandRemovalSource.scoreMin}–{bandRemovalSource.scoreMax}.</p>
-                  <label className="mt-4 grid gap-2 text-sm font-bold" htmlFor="policy-band-removal-target">
-                    Condiciones que recibirán esos puntajes
-                    <Select id="policy-band-removal-target" value={pendingBandRemoval.targetBandId}
-                      disabled={loading || saving || savingAssignments || creating || deleting || bandRemovalConfirmOpen}
-                      onChange={(event) => {
-                        setBandRemovalConfirmOpen(false);
-                        setPendingBandRemoval((current) => current ? { ...current, targetBandId: event.target.value } : null);
-                      }}>
-                      <option value="">Seleccionar banda vecina</option>
-                      {bandRemovalPlan?.kind === "MERGE" ? bandRemovalPlan.options.map((option) => {
-                        const target = bands.find((band) => band.id === option.targetBandId)!;
-                        return <option key={target.id} value={target.id}>{target.scoreMin}–{target.scoreMax} · {target.decision} · Inicial {target.initialPaymentPercentage} % · Máximo {formatCop(readFiniteNumber(target.maxFinancedAmount))}</option>;
-                      }) : null}
-                    </Select>
-                  </label>
-                  {bandRemovalTarget && bandRemovalOption ? (
-                    <p id="policy-band-removal-preview" className="mt-3 text-sm leading-6" aria-live="polite">
-                      Los puntajes {bandRemovalSource.scoreMin}–{bandRemovalSource.scoreMax} pasarán a {bandRemovalTarget.decision}, con inicial {bandRemovalTarget.initialPaymentPercentage} %, cupo máximo {formatCop(readFiniteNumber(bandRemovalTarget.maxFinancedAmount))}, plazo máximo {bandRemovalTarget.installmentCount} cuotas{bandRemovalTarget.platform === "IPHONE" ? ` y tope por cuota de ${formatCop(readFiniteNumber(bandRemovalTarget.maxInstallmentAmount))}` : ""}. El rango resultante será {bandRemovalOption.scoreMin}–{bandRemovalOption.scoreMax}.
-                    </p>
-                  ) : null}
-                  {pendingBandRemoval.snapshot !== bandRemovalSnapshot ? <p role="alert" className="mt-3 text-sm font-bold text-[var(--fp-danger)]">Las bandas cambiaron. Cancela y vuelve a preparar la eliminación.</p> : null}
-                  {bandRemovalTarget && validation.rowErrors[bandRemovalTarget.id]?.length ? <p role="alert" className="mt-3 text-sm font-bold text-[var(--fp-danger)]">Completa las condiciones de la banda vecina antes de continuar.</p> : null}
-                  <p className="mt-3 text-sm">Después de confirmar, publica una nueva revisión para aplicar el cambio a las consultas futuras.</p>
-                  <div className="mt-4 flex flex-wrap gap-3">
-                    <Button variant="secondary" disabled={bandRemovalConfirmOpen} onClick={cancelBandRemoval}>Cancelar eliminación</Button>
-                    <Button disabled={!bandRemovalReady || loading || saving || savingAssignments || creating || deleting || bandRemovalConfirmOpen}
-                      onClick={() => { if (bandRemovalReady) setBandRemovalConfirmOpen(true); }}>Revisar eliminación</Button>
-                  </div>
-                </div>
-              ) : null}
+              {bandRemovalPanel}
               <PlatformEditor
                 platform="ANDROID"
                 bands={androidBands}
@@ -3521,7 +3690,7 @@ export default function DatacreditoPolicyConsole() {
                       !priorityRulesValidation.valid
                         ? "Completa los umbrales TELCOS y de mora vigente total, los parámetros financieros y ambas plataformas. Publicar permanecerá deshabilitado mientras falte un tope o existan valores inválidos, huecos, solapamientos o reglas Sin información ausentes o duplicadas."
                         : hasUnsavedChanges
-                          ? `La próxima publicación creará la versión ${(version || 0) + 1}; no reemplazará ni modificará revisiones históricas.`
+                          ? `Publicar guardará “${selectedProfile.name}” como versión ${(version || 0) + 1}. Las revisiones históricas se conservarán.`
                           : "No hay cambios pendientes por publicar."}
                     </p>
                   </div>
@@ -3835,6 +4004,8 @@ export default function DatacreditoPolicyConsole() {
         </div>
       ) : null}
 
+      </fieldset>
+
       <ConfirmDialog
         open={bandRemovalConfirmOpen}
         title="Confirmar eliminación de banda"
@@ -3898,15 +4069,34 @@ export default function DatacreditoPolicyConsole() {
       />
 
       <ConfirmDialog
+        open={copyDiscardConfirmOpen}
+        title="Descartar la nueva política"
+        description={`Se descartará el borrador de “${newPolicyName.trim() || "la nueva política"}”, preparado desde “${newPolicySource?.name || "la política origen"}” v${newPolicySource?.version || 1}. La política origen conservará su versión publicada.`}
+        confirmLabel={pendingCopyTab ? "Descartar y cambiar de pestaña" : "Descartar copia"}
+        busy={loading || creating}
+        danger
+        onCancel={() => { setCopyDiscardConfirmOpen(false); setPendingCopyTab(null); }}
+        onConfirm={() => {
+          if (loading || mutationBusyRef.current) return;
+          discardNewPolicyDraft();
+          if (pendingCopyTab) applyTab(pendingCopyTab);
+          setCopyDiscardConfirmOpen(false);
+          setPendingCopyTab(null);
+        }}
+      />
+
+      <ConfirmDialog
         open={switchConfirmOpen}
         title="Descartar borrador y cambiar de política"
         description="La política seleccionada reemplazará las reglas prioritarias, los parámetros financieros y las bandas editadas en este borrador. Las revisiones ya publicadas no se modifican."
         confirmLabel="Descartar y cambiar"
+        busy={loading || creating || saving}
         onCancel={() => {
           setSwitchConfirmOpen(false);
           setPendingPolicyId(null);
         }}
         onConfirm={() => {
+          if (loading || mutationBusyRef.current) return;
           if (pendingPolicyId) selectProfile(pendingPolicyId);
           setSwitchConfirmOpen(false);
           setPendingPolicyId(null);
@@ -3918,9 +4108,12 @@ export default function DatacreditoPolicyConsole() {
         title="Descartar cambios y recargar"
         description="El catálogo vigente reemplazará las reglas prioritarias, los parámetros financieros, las bandas y las reasignaciones pendientes. Esta acción no afecta cambios que ya se hayan publicado."
         confirmLabel="Descartar y recargar"
+        busy={loading || creating || saving}
         onCancel={() => setReloadConfirmOpen(false)}
         onConfirm={() => {
+          if (loading || mutationBusyRef.current) return;
           setReloadConfirmOpen(false);
+          discardNewPolicyDraft();
           void loadCatalog(undefined, selectedPolicyId);
         }}
       />

@@ -9,22 +9,13 @@ import {
 } from "@/lib/datacredito/policy-access";
 import {
   DEFAULT_ARES_POLICY_FINANCIAL_SETTINGS,
-  DATACREDITO_NO_INFORMATION_SCORE,
   DataCreditoPolicyValidationError,
   normalizeDataCreditoPlatform,
   parseDataCreditoPolicyBands,
   parseDataCreditoPolicyFinancialSettings,
   parseDataCreditoPolicyPriorityRules,
-  resolveDataCreditoDecision,
-  type DataCreditoDecision,
-  type DataCreditoOffer,
-  type DataCreditoPlatform,
 } from "@/lib/datacredito/policy";
-import {
-  getDataCreditoSimulationConditions,
-  type DataCreditoSimulationCondition,
-} from "@/lib/datacredito/simulation-conditions";
-import { getCreditSettings } from "@/lib/credit-settings";
+import { getCreditSettings, getPlatformCreditSettings } from "@/lib/credit-settings";
 import {
   createDataCreditoPolicyVersion,
   DATACREDITO_CONSENT_HASH,
@@ -56,19 +47,7 @@ function serializePolicyResponse(input: {
   centralAdmin: boolean;
   policy: Awaited<ReturnType<typeof createDataCreditoPolicyVersion>>;
   provider: ReturnType<typeof getDataCreditoPublicConfig>;
-  simulationRequested?: boolean;
   dailyQuota?: DataCreditoDailyQuotaSnapshot | null;
-  simulation?: {
-    kind: "POLICY_APPROVED_CONDITIONS";
-    simulationOnly: true;
-    platform: DataCreditoPlatform;
-    decision: DataCreditoDecision;
-    offer: DataCreditoOffer | null;
-    conditions: DataCreditoSimulationCondition[];
-    initialPaymentPercentages: number[];
-    policyVersion: number;
-    policyRevisionId: string;
-  } | null;
 }) {
   const auditConfigured = isDataCreditoAuditConfigured();
   const provider = {
@@ -91,9 +70,6 @@ function serializePolicyResponse(input: {
             createdAt: input.policy.createdAt,
           }
       : null,
-    ...(input.simulationRequested
-      ? { simulation: input.simulation || null }
-      : {}),
     ...(input.dailyQuota !== undefined ? { dailyQuota: input.dailyQuota } : {}),
     consent: {
       version: DATACREDITO_CONSENT_VERSION,
@@ -111,12 +87,6 @@ export async function GET(request: Request) {
     }
 
     const requestUrl = new URL(request.url);
-    const provider = getDataCreditoPublicConfig();
-    const centralAdmin = isCentralAdmin(user);
-    const includeDisabledPolicy =
-      requestUrl.searchParams.get(
-        DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM
-      ) === "true";
     const purpose = requestUrl.searchParams.get("purpose");
     const simulationRequested = purpose === "simulation";
     const simulationPlatform = simulationRequested
@@ -136,6 +106,36 @@ export async function GET(request: Request) {
       );
     }
 
+    if (simulationRequested && simulationPlatform) {
+      try {
+        const globalSettings = await getCreditSettings();
+        const settings = getPlatformCreditSettings(globalSettings, simulationPlatform);
+        return NextResponse.json({
+          ok: true,
+          simulation: {
+            kind: "GENERAL_CREDIT_SETTINGS",
+            simulationOnly: true,
+            platform: simulationPlatform,
+            settings,
+            globalSettings,
+          },
+        });
+      } catch (error) {
+        console.error("ERROR GET CONFIGURACION GENERAL SIMULADOR:",
+          error instanceof Error ? error.name : "UnknownError");
+        return NextResponse.json(
+          { ok: false, error: "No se pudo cargar la configuración general del simulador" },
+          { status: 500 }
+        );
+      }
+    }
+
+    const provider = getDataCreditoPublicConfig();
+    const centralAdmin = isCentralAdmin(user);
+    const includeDisabledPolicy = requestUrl.searchParams.get(
+      DATA_CREDITO_INCLUDE_DISABLED_POLICY_PARAM
+    ) === "true";
+
     if (
       !shouldLoadDataCreditoPolicy({
         enabled: provider.enabled,
@@ -148,15 +148,13 @@ export async function GET(request: Request) {
           centralAdmin: false,
           policy: null,
           provider,
-          simulationRequested,
-          simulation: null,
         })
       );
     }
 
     let quotaAllyId = user.aliadoId || null;
     const requestedSolicitudIdValue = requestUrl.searchParams.get("solicitudId");
-    if (!simulationRequested && requestedSolicitudIdValue !== null) {
+    if (requestedSolicitudIdValue !== null) {
       const requestedSolicitudId = Number(requestedSolicitudIdValue);
       if (!Number.isInteger(requestedSolicitudId) || requestedSolicitudId <= 0) {
         return NextResponse.json(
@@ -193,48 +191,13 @@ export async function GET(request: Request) {
     }
 
     const assigned = await getAssignedDataCreditoPolicy(user.aliadoId || null);
-    const dailyQuota = simulationRequested
-      ? undefined
-      : await getDataCreditoDailyQuotaSnapshot(quotaAllyId);
+    const dailyQuota = await getDataCreditoDailyQuotaSnapshot(quotaAllyId);
     const policy = assigned.kind === "READY" ? assigned.policy : null;
-    const simulationConditions = simulationRequested && simulationPlatform && policy
-      ? getDataCreditoSimulationConditions(policy, simulationPlatform)
-      : [];
-    const simulationResolution =
-      simulationRequested && simulationPlatform && policy
-        ? simulationConditions[0]
-          ? { decision: "APROBADO" as const, offer: simulationConditions[0].offer }
-          : resolveDataCreditoDecision(
-            { ...policy, priorityRules: null },
-            simulationPlatform,
-            DATACREDITO_NO_INFORMATION_SCORE
-          )
-        : null;
-    const simulation =
-      simulationRequested && simulationPlatform && policy && simulationResolution
-        ? {
-            kind: "POLICY_APPROVED_CONDITIONS" as const,
-            simulationOnly: true as const,
-            platform: simulationPlatform,
-            decision: simulationResolution.decision,
-            offer:
-              simulationResolution.decision === "APROBADO"
-                ? simulationResolution.offer
-                : null,
-            conditions: simulationConditions,
-            initialPaymentPercentages: [...new Set(simulationConditions
-              .map((condition) => condition.offer.initialPaymentPercentage))].sort((a, b) => a - b),
-            policyVersion: policy.version,
-            policyRevisionId: policy.revisionId,
-          }
-        : null;
     return NextResponse.json(
       serializePolicyResponse({
         centralAdmin,
         policy,
         provider,
-        simulationRequested,
-        simulation,
         dailyQuota,
       })
     );

@@ -8,7 +8,6 @@ import { loadApprovalModule, plain } from "./credit-approval-test-loader.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jiti = createJiti(import.meta.url, { alias: { "@": root } });
 const policy = await jiti.import("../lib/datacredito/policy.ts");
-const simulationConditions = await jiti.import("../lib/datacredito/simulation-conditions.ts");
 const legacy = {
   calculoVersion: "ARES_FRANCES_V1", tasaInteresEa: 29.66, fianzaTotalPorcentaje: 75,
   seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL", tasaPeriodoDecimales: 6,
@@ -66,7 +65,6 @@ test("PATCH usa V2 solo cuando falta configuración explícita; no reinterpreta 
     "@/lib/datacredito": { getDataCreditoPublicConfig: () => ({ enabled: true, configured: true }) },
     "@/lib/datacredito/policy-access": {},
     "@/lib/datacredito/policy": policy,
-    "@/lib/datacredito/simulation-conditions": simulationConditions,
     "@/lib/credit-settings": { getCreditSettings: async () => legacy },
     "@/lib/datacredito/storage": {
       getAssignedDataCreditoPolicy: async () => ({ kind: "READY", policy: { profileId: "profile", revisionId: "revision", version: 7, financialSettings: assignedFinancialSettings, priorityRules } }),
