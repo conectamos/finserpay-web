@@ -310,6 +310,40 @@ venta de `$3.000.000`, cupo y tope iPhone de `$3.500.000` e inicial del `20%`,
 la inicial mínima es `$440.000 + $800.000 = $1.240.000`. El cupo superior no
 permite financiar el sobrecosto sobre el precio base del equipo.
 
+### Simulador del aliado
+
+El simulador Android e iPhone consulta la última revisión publicada de la política
+asignada al aliado de la sesión mediante
+`GET /api/creditos/datacredito/politica?purpose=simulation&platform=ANDROID|IPHONE`.
+Después de publicar o reasignar una política, se recarga el simulador para obtener
+esa revisión. Una política inactiva o sin condiciones aprobadas para la plataforma
+presenta su estado y no produce una cotización.
+
+La respuesta `simulation` conserva `simulationOnly: true`, `policyVersion` y
+`policyRevisionId`, y entrega `conditions: [{ id, offer }]`. Cada opción contiene
+una oferta aprobada completa: porcentaje de inicial, cupo máximo financiado,
+plazo máximo, cuota máxima cuando corresponde, y configuración financiera
+versionada de interés, fianza, seguro, frecuencia, cálculo y redondeo. Las ofertas
+idénticas se agrupan; dos ofertas con la misma inicial y distintos límites siguen
+siendo opciones independientes. Los identificadores `condition-1`, etc., solo
+tienen sentido dentro de la plataforma y revisión recibida. El DTO no entrega
+puntajes, rangos, identificadores de bandas ni reglas prioritarias al asesor.
+
+Elegir una condición sustituye la oferta completa para calcular la cotización en
+ambas plataformas; los porcentajes no se combinan con el cupo o plazo de otra
+condición. iPhone toma la inicial, cupo, plazo y cuota máxima de la opción elegida,
+en lugar de sustituirlos por los parámetros generales. Android también ajusta la
+inicial mínima según el cupo de la oferta y el precio base del equipo. El excedente
+sobre el precio base permanece en la inicial para Android e iPhone; un cupo mayor
+no habilita financiar ese excedente. El asesor puede aumentar la inicial y elegir
+un plazo disponible dentro de los límites de la condición.
+
+Esta selección es de consulta: no consulta a Experian, no consume cupo diario, no
+crea una evaluación ni aprueba a un cliente. Las reglas prioritarias requieren la
+información real del titular y se aplican durante la precalificación existente.
+La originación conserva la banda resuelta por el servidor y sus condiciones
+aprobadas; el selector del simulador no modifica evaluaciones, créditos ni contratos.
+
 ## Reutilización de consultas durante 15 días
 
 Una respuesta terminal `APROBADO` o `RECHAZADO` se reutiliza durante 15 días

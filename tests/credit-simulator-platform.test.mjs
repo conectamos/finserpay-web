@@ -13,13 +13,15 @@ const projectRoot = path.resolve(
 );
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const {
-  ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
-  DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE,
-  SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
   calculateAndroidSimulatorInitialPayment,
   getAndroidSimulatorInitialPaymentPercentages,
+  normalizeCreditInstallmentLimit,
+  normalizeCreditInstallments,
+  normalizeMoneyLimit,
   resolveAndroidSimulatorInitialPaymentPercentage,
   resolveInitialPaymentAfterMinimumRefresh,
+  resolveRequiredInitialPaymentByPlatform,
+  validateIphoneInstallmentLimit,
 } = await jiti.import("../lib/credit-factory.ts");
 const { calculateFrenchAmortization } = await jiti.import(
   "../lib/credit-amortization.ts"
@@ -44,10 +46,6 @@ const dashboard = readFileSync(
 );
 const consoleSource = readFileSync(
   new URL("../app/dashboard/creditos/credit-factory-console.tsx", import.meta.url),
-  "utf8"
-);
-const creditFactorySource = readFileSync(
-  new URL("../lib/credit-factory.ts", import.meta.url),
   "utf8"
 );
 const consoleAst = ts.createSourceFile("credit-factory-console.tsx", consoleSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -97,69 +95,32 @@ test("el simulador aparece para administradores centrales y aliados", () => {
   );
 });
 
-test("el simulador iPhone usa el porcentaje seleccionado y conserva el plazo flexible", () => {
-  assert.match(
-    consoleSource,
-    /const simulatorIphoneRulesActive\s*=\s*simulatorMode && iphoneFactory/
-  );
-  assert.match(
-    consoleSource,
-    /const initialPaymentPercentage = simulatorMode\s*\? simulatorInitialPaymentPercentage/
-  );
-  assert.match(
-    consoleSource,
-    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? iphoneMaxFinancedAmount\s*:\s*dataCreditoMaxFinancedAmount/
-  );
-  assert.match(
-    consoleSource,
-    /resolveRequiredInitialPaymentByPlatform\([\s\S]{0,500}const cuotaInicialMinimaNumero = simulatorAndroidRulesActive[\s\S]{0,180}: initialPaymentBreakdown\.requiredInitialPayment/
-  );
-  assert.match(
-    consoleSource,
-    /const plazoMaximoCuotas = normalizeCreditInstallmentLimit\(\s*simulatorIphoneRulesActive\s*\? creditSettings\.iphonePlazoMaximoCuotas/
-  );
-  assert.doesNotMatch(
-    consoleSource,
-    /dataCreditoLocksInstallmentCount/
-  );
-  assert.match(
-    consoleSource,
-    /const policyInstallmentOptions = useMemo\([\s\S]{0,180}getCreditInstallmentOptions\(plazoMaximoCuotas\)/
-  );
-  assert.match(
-    consoleSource,
-    /const plazoMesesNumero = normalizeCreditInstallments\(\s*plazoMeses,[\s\S]{0,240}plazoMaximoCuotas/
-  );
-  assert.doesNotMatch(
-    consoleSource,
-    /const creditInstallmentOptions = useMemo\(\(\) => \{\s*if \(\s*!simulatorMode \|\|/
-  );
-  assert.match(
-    consoleSource,
-    /policyInstallmentOptions\.filter\(\(option\) => \{[\s\S]{0,1800}validateIphoneInstallmentLimit/
-  );
-  assert.match(
-    consoleSource,
-    /Puedes elegir hasta \{plazoMaximoCuotas\} cuotas\. No[\s\S]{0,120}máximo autorizado/
-  );
+test("Android e iPhone usan cupo, plazo y tope de la condición elegida frente a parámetros globales distintos", () => {
+  for (const iphoneFactory of [false, true]) {
+    const offer = { initialPaymentPercentage: 10, maxFinancedAmount: 900_000, installmentCount: 10, maxInstallmentAmount: iphoneFactory ? 115_000 : null };
+    const context = {
+      simulatorMode: true, iphoneFactory, simulatorIphoneRulesActive: iphoneFactory,
+      activeDataCreditoPlatform: iphoneFactory ? "IPHONE" : "ANDROID", activeDataCreditoOffer: offer,
+      dataCreditoMaxFinancedAmount: offer.maxFinancedAmount, dataCreditoInstallmentCount: offer.installmentCount,
+      iphoneMaxFinancedAmount: 3_500_000,
+      creditSettings: { iphoneTopeFinanciado: 3_500_000, iphoneTopeCuota: 160_000, iphonePlazoMaximoCuotas: 48, plazoMaximoCuotas: 60 },
+      IPHONE_MAX_FINANCED_AMOUNT: 3_500_000, IPHONE_MAX_INSTALLMENT_VALUE: 160_000,
+      IPHONE_MAX_CREDIT_INSTALLMENTS: 48, DEFAULT_MAX_CREDIT_INSTALLMENTS: 16,
+      normalizeMoneyLimit, normalizeCreditInstallmentLimit,
+    };
+    assert.equal(executeProduction(productionVariable("dataCreditoEffectiveMaxFinancedAmount"), context), 900_000);
+    assert.equal(executeProduction(productionVariable("plazoMaximoCuotas"), context), 10);
+    if (iphoneFactory) {
+      const maximum = executeProduction(productionVariable("iphoneMaxInstallmentValue"), context);
+      assert.equal(maximum, 115_000);
+      assert.equal(executeProduction(productionVariable("policySummaryMaxInstallmentValue"), { ...context, iphoneMaxInstallmentValue: maximum }), 115_000);
+    }
+  }
+  assert.doesNotMatch(consoleSource, /dataCreditoLocksInstallmentCount/);
+  assert.match(consoleSource, /getCreditInstallmentOptions\(plazoMaximoCuotas\)/);
 });
 
-test("iPhone conserva inicial20/30 y ambos simuladores permiten editar el importe manual", () => {
-  assert.deepEqual(SIMULATOR_INITIAL_PAYMENT_PERCENTAGES, [20, 30]);
-  assert.equal(DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, 30);
-  assert.equal(ANDROID_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, 30);
-  assert.equal(calculateAndroidSimulatorInitialPayment(1_000_000, 20), 200_000);
-  assert.equal(calculateAndroidSimulatorInitialPayment(1_000_000, 30), 300_000);
-  assert.match(
-    consoleSource,
-    /useState<SimulatorInitialPaymentPercentage>\(\s*DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE/
-  );
-  assert.match(
-    consoleSource,
-    /simulatorInitialPaymentPercentages\.map\(\s*\(percentage\)/
-  );
-  assert.match(consoleSource, /type="radio"/);
-  assert.doesNotMatch(consoleSource, /readOnly=\{simulatorMode\}/);
+test("ambos simuladores conservan una inicial manual válida y ajustan el mínimo por precio base y cupo de política", () => {
   const initialInput = productionNode(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(consoleAst) === "input" && node.attributes.properties.some(attribute => ts.isJsxAttribute(attribute) && attribute.name.getText(consoleAst) === "id" && attribute.initializer?.getText(consoleAst) === '"step-two-initial"'));
   const changeHandler = initialInput.attributes.properties.find(attribute => ts.isJsxAttribute(attribute) && attribute.name.getText(consoleAst) === "onChange").initializer.expression;
   const changedInitial = [];
@@ -169,22 +130,23 @@ test("iPhone conserva inicial20/30 y ambos simuladores permiten editar el import
     });
   }
   assert.deepEqual(changedInitial, ["400000", ""]);
-  assert.equal(
-    resolveInitialPaymentAfterMinimumRefresh({
-      currentValue: "400000",
-      totalValue: "1000000",
-      minimumValue: 300000,
-    }),
-    "400000"
-  );
-  assert.equal(
-    resolveInitialPaymentAfterMinimumRefresh({
-      currentValue: "250000",
-      totalValue: "1000000",
-      minimumValue: 300000,
-    }),
-    "300000"
-  );
+  for (const platform of ["ANDROID", "IPHONE"]) {
+    for (const [basePrice, cap, expected] of [[1_500_000, 900_000, 1_100_000], [1_500_000, 2_000_000, 800_000]]) {
+      const context = {
+        simulatorMode: true, simulatorIphoneRulesActive: platform === "IPHONE", simulatorAndroidRulesActive: platform === "ANDROID",
+        valorTotalEquipoNumero: 2_000_000, precioBaseVentaCatalogo: basePrice, initialPaymentPercentage: 20,
+        activeDataCreditoPlatform: platform, currentDevicePlatform: platform.toLowerCase(),
+        activeDataCreditoOffer: { maxFinancedAmount: cap }, dataCreditoMaxFinancedAmount: cap,
+        iphoneMaxFinancedAmount: 3_500_000, resolveRequiredInitialPaymentByPlatform,
+      };
+      const breakdown = executeProduction(productionVariable("initialPaymentBreakdown"), context);
+      assert.equal(breakdown.requiredInitialPayment, expected, `${platform}, base=${basePrice}, cupo=${cap}`);
+      const minimum = executeProduction(productionVariable("cuotaInicialMinimaNumero"), { ...context, initialPaymentBreakdown: breakdown });
+      assert.equal(minimum, expected);
+    }
+  }
+  assert.equal(resolveInitialPaymentAfterMinimumRefresh({ currentValue: "1200000", totalValue: "2000000", minimumValue: 1_100_000 }), "1200000");
+  assert.equal(resolveInitialPaymentAfterMinimumRefresh({ currentValue: "1000000", totalValue: "2000000", minimumValue: 1_100_000 }), "1100000");
 });
 
 test("Android admite inicial0/5/10 de política, normaliza opciones válidas y no convierte cero en30", () => {
@@ -203,77 +165,92 @@ test("Android admite inicial0/5/10 de política, normaliza opciones válidas y n
   assert.equal(resolveAndroidSimulatorInitialPaymentPercentage({ selectedPercentage: 5, policyPercentages: [20, 30], policyDefaultPercentage: 30 }), 30);
 });
 
-test("radios y selección reales usan la política Android y conservan estado independiente al volver a iPhone", () => {
+test("los controles eligen condiciones completas incluso con igual inicial y conservan selección por plataforma y revisión", () => {
+  const condition = (id, percentage, cap, installments, maxInstallment = null) => ({ id, offer: {
+    initialPaymentPercentage: percentage, maxFinancedAmount: cap, installmentCount: installments,
+    maxInstallmentAmount: maxInstallment, suretyPercentage: 75,
+    financialSettings: { tasaInteresEa: 29.24, fianzaTotalPorcentaje: 75, seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL" },
+  } });
+  const android = [condition("condition-1", 0, 600_000, 8), condition("condition-2", 0, 1_200_000, 16), condition("condition-3", 10, 2_000_000, 24)];
+  const iphone = [condition("condition-1", 5, 1_500_000, 12, 110_000), condition("condition-2", 10, 2_500_000, 36, 145_000)];
+  const simulation = (platform, revisionId, conditions) => ({ platform, policyRevisionId: revisionId, decision: "APROBADO", conditions, offer: conditions[0]?.offer ?? null });
   const clearedInitial = [];
   const context = {
-    DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, SIMULATOR_INITIAL_PAYMENT_PERCENTAGES,
-    getAndroidSimulatorInitialPaymentPercentages, resolveAndroidSimulatorInitialPaymentPercentage,
-    useMemo: calculate => calculate(),
-    simulatorAndroidRulesActive: true,
-    dataCreditoSimulation: { platform: "ANDROID", initialPaymentPercentages: [10, 5, 0, 5], offer: { initialPaymentPercentage: 10 } },
+    simulatorMode: true, dataCreditoSimulationStatus: "ready", dataCreditoPlatform: "ANDROID",
+    simulatorConditionSelection: {}, dataCreditoSimulation: simulation("ANDROID", "android-v1", android),
+    useMemo: calculate => calculate(), formatPercent: value => String(value), currency: value => String(value),
     setCuotaInicial: value => clearedInitial.push(value),
   };
-  for (const name of ["androidSimulatorInitialPaymentPercentage", "iphoneSimulatorInitialPaymentPercentage"]) {
-    const declaration = productionNode(node => ts.isVariableDeclaration(node) && ts.isArrayBindingPattern(node.name) && node.name.elements.some(element => ts.isBindingElement(element) && element.name.getText(consoleAst) === name));
-    context[name] = executeProduction(`(${declaration.initializer.getText(consoleAst)})[0]`, { DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE, useState: initial => [initial, () => {}] });
+  context.setSimulatorConditionSelection = update => {
+    context.simulatorConditionSelection = typeof update === "function" ? update(context.simulatorConditionSelection) : update;
+  };
+  const refresh = () => {
+    for (const name of ["simulatorPolicyConditions", "selectedSimulatorCondition", "simulationPolicyOffer", "simulatorInitialPaymentPercentage"]) {
+      context[name] = executeProduction(productionVariable(name), context);
+    }
+  };
+  const change = conditionId => {
+    executeProduction(`(${productionVariable("handleSimulatorConditionChange")})(conditionId)`, { ...context, conditionId });
+    refresh();
+  };
+  context.handleSimulatorConditionChange = change;
+  const mapExpression = productionNode(node => ts.isCallExpression(node) && node.expression.getText(consoleAst) === "simulatorPolicyConditions.map");
+  function findInput(element) {
+    if (element?.type === "input") return element.props;
+    const children = element?.props?.children;
+    for (const child of Array.isArray(children) ? children.flat(Infinity) : [children]) {
+      const input = child && typeof child === "object" ? findInput(child) : null;
+      if (input) return input;
+    }
+    return null;
   }
-  context.setAndroidSimulatorInitialPaymentPercentage = value => { context.androidSimulatorInitialPaymentPercentage = value; };
-  context.setIphoneSimulatorInitialPaymentPercentage = value => { context.iphoneSimulatorInitialPaymentPercentage = value; };
-  const refresh = android => {
-    context.simulatorAndroidRulesActive = android;
-    for (const name of ["androidSimulatorInitialPaymentPercentages", "simulatorInitialPaymentPercentages", "simulatorInitialPaymentPercentage"]) context[name] = executeProduction(productionVariable(name), context);
-  };
-  const change = value => {
-    executeProduction(`(${productionVariable("handleSimulatorInitialPaymentPercentageChange")})(percentage)`, { ...context, percentage: value });
-    refresh(context.simulatorAndroidRulesActive);
-  };
-  context.handleSimulatorInitialPaymentPercentageChange = change;
-  const mapExpression = productionNode(node => ts.isCallExpression(node) && node.expression.getText(consoleAst) === "simulatorInitialPaymentPercentages.map");
   const radios = () => {
     const jsx = (type, props) => ({ type, props });
     const result = executeProduction(`(${mapExpression.getText(consoleAst)})`, { ...context, exports: {}, require: () => ({ jsx, jsxs: jsx }) });
-    return Array.from(result, label => label.props.children.find(child => child.type === "input").props);
+    return Array.from(result, findInput);
   };
-  refresh(true);
-  assert.equal(context.simulatorInitialPaymentPercentage, 10, "Inicial por defecto aprobada, sin conservar30 fuera de la política");
-  assert.deepEqual(radios().map(radio => radio.value), [0, 5, 10]);
-  assert.deepEqual(radios().filter(radio => radio.checked).map(radio => radio.value), [10]);
-  radios().find(radio => radio.value === 0).onChange();
+  refresh();
+  assert.deepEqual(radios().map(radio => radio.value), ["condition-1", "condition-2", "condition-3"]);
+  assert.deepEqual(radios().map(radio => radio.name), Array(3).fill("simulator-policy-condition"));
+  assert.equal(context.simulatorInitialPaymentPercentage, 0, "Cero es una inicial de política válida");
+  assert.equal(context.simulationPolicyOffer, android[0].offer);
+  radios().find(radio => radio.value === "condition-2").onChange();
+  assert.equal(context.simulationPolicyOffer, android[1].offer, "Mismo porcentaje selecciona el cupo y plazo de la segunda condición completos");
   assert.equal(context.simulatorInitialPaymentPercentage, 0);
-  assert.equal(context.iphoneSimulatorInitialPaymentPercentage, 30);
-  assert.deepEqual(radios().filter(radio => radio.checked).map(radio => radio.value), [0]);
-  change(30);
-  assert.equal(context.simulatorInitialPaymentPercentage, 0, "El handler rechaza porcentajes fuera de política");
-  assert.equal(clearedInitial.length, 1);
-  refresh(false);
-  assert.equal(context.simulatorInitialPaymentPercentage, 30);
-  assert.deepEqual(radios().map(radio => radio.value), [20, 30]);
-  change(0);
-  assert.equal(context.simulatorInitialPaymentPercentage, 30);
-  assert.equal(clearedInitial.length, 1, "La selección Android no puede entrar en iPhone");
-  change(20);
-  assert.equal(context.simulatorInitialPaymentPercentage, 20);
-  refresh(true);
-  assert.equal(context.simulatorInitialPaymentPercentage, 0, "Android conserva su selección propia");
-  refresh(false);
-  assert.equal(context.simulatorInitialPaymentPercentage, 20, "iPhone conserva su selección propia");
-  assert.deepEqual(clearedInitial, ["", ""]);
-  context.dataCreditoSimulation = { platform: "ANDROID", offer: { initialPaymentPercentage: 0 } };
-  refresh(true);
-  assert.deepEqual(Array.from(context.simulatorInitialPaymentPercentages), [0], "La respuesta antigua usa sólo su inicial aprobada, incluido cero");
-  context.dataCreditoSimulation = { platform: "ANDROID", initialPaymentPercentages: [5, 10], offer: { initialPaymentPercentage: 5 } };
-  refresh(true);
-  assert.equal(context.simulatorInitialPaymentPercentage, 5, "Una nueva política retira cero y aplica su default permitido");
+  assert.deepEqual(radios().filter(radio => radio.checked).map(radio => radio.value), ["condition-2"]);
+  change("no-existe");
+  assert.equal(context.simulationPolicyOffer, android[1].offer);
+  assert.deepEqual(clearedInitial, [""]);
+
+  context.dataCreditoPlatform = "IPHONE";
+  context.dataCreditoSimulation = simulation("IPHONE", "iphone-v1", iphone);
+  refresh();
+  assert.equal(context.simulatorInitialPaymentPercentage, 5, "iPhone ya no inventa inicial20/30");
+  assert.equal(context.simulationPolicyOffer, iphone[0].offer);
+  radios().find(radio => radio.value === "condition-2").onChange();
+  assert.equal(context.simulationPolicyOffer, iphone[1].offer);
+  assert.equal(context.simulatorInitialPaymentPercentage, 10);
+  assert.equal(context.simulationPolicyOffer.maxInstallmentAmount, 145_000);
+  context.dataCreditoPlatform = "ANDROID";
+  context.dataCreditoSimulation = simulation("ANDROID", "android-v1", android);
+  refresh();
+  assert.equal(context.simulationPolicyOffer, android[1].offer, "Volver de iPhone conserva la condición Android de la misma revisión");
+  context.dataCreditoSimulation = simulation("ANDROID", "android-v2", android);
+  refresh();
+  assert.equal(context.simulationPolicyOffer, android[0].offer, "Una nueva revisión no hereda una selección antigua por coincidencia de id");
+  context.dataCreditoSimulationStatus = "loading";
+  refresh();
+  assert.deepEqual(radios(), []);
+  assert.equal(context.simulationPolicyOffer, null);
+  assert.equal(executeProduction(productionVariable("simulationPolicyReady"), context), false);
+  context.dataCreditoSimulationStatus = "ready";
+  context.dataCreditoSimulation = simulation("IPHONE", "iphone-v1", iphone);
+  refresh();
+  assert.deepEqual(radios(), [], "La respuesta de otra plataforma no genera condiciones locales");
+  assert.equal(context.simulationPolicyOffer, null);
   context.dataCreditoSimulation = null;
-  refresh(true);
-  assert.deepEqual(radios(), [], "Sin política cargada no se inventan opciones de aprobación");
-  assert.equal(executeProduction(productionVariable("simulationPolicyReady"), { simulatorMode: true, simulationPolicyOffer: null }), false);
-  context.dataCreditoSimulation = { platform: "IPHONE", initialPaymentPercentages: [0, 5, 10], offer: { initialPaymentPercentage: 0 } };
-  refresh(true);
-  assert.deepEqual(radios(), [], "Las opciones de una respuesta iPhone no se aplican a Android");
-  const mismatched = { simulatorMode: true, dataCreditoSimulationStatus: "ready", dataCreditoPlatform: "ANDROID", dataCreditoSimulation: { ...context.dataCreditoSimulation, decision: "APROBADO" } };
-  assert.equal(executeProduction(productionVariable("simulationPolicyOffer"), mismatched), null);
-  assert.equal(executeProduction(productionVariable("simulationPolicyOffer"), { ...mismatched, dataCreditoPlatform: "IPHONE" }), context.dataCreditoSimulation.offer);
+  refresh();
+  assert.deepEqual(radios(), [], "Sin política no se inventa una oferta aprobada");
 });
 
 test("cargar la política no prellena30 antes de conocer la inicial0/5/10 y preserva importes manuales o firmados", () => {
@@ -332,44 +309,40 @@ test("opciones de simulación no reemplazan la inicial de originación ni libera
   }
 });
 
-test("ambos simuladores calculan fianza, interés y seguro con la política resuelta y no con la banda", () => {
-  assert.match(
-    creditFactorySource,
-    /const DEFAULT_SIMULATOR_INITIAL_PAYMENT_PERCENTAGE[^=]*=\s*30/
-  );
-  assert.match(
-    consoleSource,
-    /const simulatorAndroidRulesActive\s*=\s*simulatorMode && !iphoneFactory/
-  );
-  assert.match(
-    consoleSource,
-    /const initialPaymentPercentage = simulatorMode\s*\? simulatorInitialPaymentPercentage/
-  );
-  assert.match(
-    consoleSource,
-    /const cuotaInicialMinimaNumero = simulatorAndroidRulesActive\s*\? calculateAndroidSimulatorInitialPayment\(\s*valorTotalEquipoNumero,\s*simulatorInitialPaymentPercentage/
-  );
-  const suretyExpression = productionNode(node => ts.isVariableDeclaration(node) && node.name.getText(consoleAst) === "effectiveFianzaCuotaPorcentaje").initializer;
+test("ambos simuladores calculan interés, fianza, seguro, frecuencia y redondeo de la política elegida", () => {
   for (const platform of ["ANDROID", "IPHONE"]) {
-    for (const totalSurety of [75, 68]) {
-      const numeroCuotas = platform === "ANDROID" ? 16 : 24;
-      const resolvedPolicyFinancialSettings = resolveCreditPolicyFinancialSettings({
-        globalSettings: { tasaInteresEa: 17.84, fianzaCuotaPorcentaje: 2.083333, seguroCuotaPorcentaje: 0.1, frecuenciaPago: "MENSUAL" },
-        policyFinancialSettings: { calculoVersion: "ARES_FRANCES_V2", tasaInteresEa: 29.24, fianzaTotalPorcentaje: totalSurety, seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL", tasaPeriodoDecimales: 6, redondeoComercial: { modo: "PISO", multiplo: 50 } },
-        legacyOfferSuretyPercentage: 60, numeroCuotas,
-      });
-      const fianzaCuotaPorcentaje = executeProduction(suretyExpression.getText(consoleAst), {
-        simulatorAndroidRulesActive: platform === "ANDROID", plazoMesesNumero: numeroCuotas, resolvedPolicyFinancialSettings,
-        calculateAndroidSimulatorInstallmentSuretyPercentage() { throw new Error("El simulador no debe sustituir la política"); },
-      });
-      assert.equal(fianzaCuotaPorcentaje, totalSurety / numeroCuotas);
-      const amortization = calculateFrenchAmortization({ ...resolvedPolicyFinancialSettings,
-        valorVenta: 1_000_000, cuotaInicial: 300_000, numeroCuotas, fianzaCuotaPorcentaje, fechaPrimerPago: "2026-11-17" });
-      assert.equal(amortization.valorFinanciado, 700_000);
-      assert.ok(Math.abs(amortization.valorFianzaTotal - 700_000 * totalSurety / 100) < 0.001);
-      assert.equal(amortization.tasaInteresEa, 29.24);
-      assert.equal(amortization.seguroCuotaPorcentaje, 0.03);
-    }
+    const numeroCuotas = platform === "ANDROID" ? 16 : 24;
+    const context = {
+      activeDataCreditoOffer: { suretyPercentage: 60, financialSettings: {
+        calculoVersion: "ARES_FRANCES_V2", tasaInteresEa: 25.18, fianzaTotalPorcentaje: 68,
+        seguroCuotaPorcentaje: 0.04, frecuenciaPago: "MENSUAL", tasaPeriodoDecimales: 6,
+        redondeoComercial: { modo: "PISO", multiplo: 50 },
+      } },
+      globalCreditSettings: { tasaInteresEa: 17.84, fianzaCuotaPorcentaje: 2.083333, seguroCuotaPorcentaje: 0.1, frecuenciaPago: "SEMANAL" },
+      plazoMesesNumero: numeroCuotas, resolveCreditPolicyFinancialSettings,
+      firmaSeguroDraftCorrectionPending: false, firmaSeguroSignedCorrectionFrequency: null,
+    };
+    const settings = executeProduction(productionVariable("resolvedPolicyFinancialSettings"), context);
+    const calculation = { ...context, resolvedPolicyFinancialSettings: settings };
+    const rate = executeProduction(productionVariable("tasaInteresEaNumero"), calculation);
+    const surety = executeProduction(productionVariable("effectiveFianzaCuotaPorcentaje"), calculation);
+    const frequency = executeProduction(productionVariable("frecuenciaPagoCredito"), calculation);
+    assert.equal(rate, 25.18);
+    assert.equal(surety, 68 / numeroCuotas);
+    assert.equal(settings.seguroCuotaPorcentaje, 0.04);
+    assert.equal(frequency, "MENSUAL");
+    const plan = executeProduction(productionVariable("amortizationPlan"), {
+      ...calculation, simulationPolicyReady: true, valorTotalEquipoNumero: 1_000_000,
+      cuotaInicialNumero: 300_000, fechaPrimerPago: "2026-11-17", tasaInteresEaNumero: rate,
+      effectiveFianzaCuotaPorcentaje: surety, frecuenciaPagoCredito: frequency,
+      useMemo: calculate => calculate(), calculateFrenchAmortization,
+    });
+    assert.equal(plan.valorFinanciado, 700_000);
+    assert.ok(Math.abs(plan.valorFianzaTotal - 476_000) < 0.001);
+    assert.equal(plan.tasaInteresEa, 25.18);
+    assert.equal(plan.seguroCuotaPorcentaje, 0.04);
+    assert.equal(plan.frecuenciaPago, "MENSUAL");
+    assert.equal(plan.cuotaCobro % 50, 0);
   }
 });
 
@@ -394,24 +367,47 @@ test("el simulador oculta la política DataCrédito y sus términos internos", (
   assert.match(consoleSource, /Hasta \{plazoMaximoCuotas\} cuotas/);
 });
 
-test("el simulador iPhone conserva el tope global configurado", () => {
-  assert.match(
-    consoleSource,
-    /!simulatorMode &&\s*activeDataCreditoPlatform === "IPHONE"/
-  );
-  assert.match(
-    consoleSource,
-    /simulatorMode && iphoneFactory\s*\? iphoneMaxInstallmentValue/
-  );
-  assert.match(
-    consoleSource,
-    /Cupo aprobado[\s\S]{0,100}currency\(dataCreditoEffectiveMaxFinancedAmount\)/
-  );
-  assert.match(
-    consoleSource,
-    /Hasta \{plazoMaximoCuotas\} cuotas/
-  );
-  assert.match(consoleSource, /IPHONE_MAX_INSTALLMENT_VALUE/);
+test("el plazo disponible respeta el tope de cuota de la política y conserva el rango exclusivo de fábrica", () => {
+  const policyFinancialSettings = { calculoVersion: "ARES_FRANCES_V2", tasaInteresEa: 29.24, fianzaTotalPorcentaje: 75, seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL", tasaPeriodoDecimales: 6, redondeoComercial: { modo: "PISO", multiplo: 50 } };
+  const context = {
+    iphoneFactory: true, iphoneFactoryTermsLocked: false, iphoneFactoryRangeActive: false,
+    simulatorMode: true, simulationPolicyReady: true, activeDataCreditoOffer: { financialSettings: policyFinancialSettings, suretyPercentage: 75 },
+    valorTotalEquipoNumero: 1_000_000, cuotaInicialNumero: 400_000, fechaPrimerPago: "2026-11-17",
+    iphoneMaxInstallmentValue: 105_000, dataCreditoInstallmentCount: 12, plazoMaximoCuotas: 12,
+    policyInstallmentOptions: Array.from({ length: 12 }, (_, index) => String(index + 1)),
+    IPHONE_DEFAULT_CREDIT_INSTALLMENTS: 24, globalCreditSettings: { tasaInteresEa: 0, fianzaCuotaPorcentaje: 0, seguroCuotaPorcentaje: 0, frecuenciaPago: "SEMANAL" },
+    useMemo: calculate => calculate(), normalizeCreditInstallments, resolveCreditPolicyFinancialSettings,
+    calculateFrenchAmortization, validateIphoneInstallmentLimit,
+  };
+  assert.deepEqual(Array.from(executeProduction(productionVariable("creditInstallmentOptions"), context)), ["11", "12"], "La política105000 retira el plazo10 cuya cuota es108750 aunque el global permita160000");
+  const lowerPrincipal = { ...context, cuotaInicialNumero: 600_000, iphoneMaxInstallmentValue: 85_000 };
+  assert.deepEqual(Array.from(executeProduction(productionVariable("creditInstallmentOptions"), lowerPrincipal)), ["9", "10", "11", "12"], "La simulación no añade un piso90000 ajeno a la política");
+  assert.deepEqual(Array.from(executeProduction(productionVariable("creditInstallmentOptions"), { ...lowerPrincipal, simulatorMode: false, iphoneFactoryRangeActive: true })), [], "La fábrica conserva la restricción operativa vigente");
+  assert.deepEqual(Array.from(executeProduction(productionVariable("creditInstallmentOptions"), { ...context, iphoneFactoryTermsLocked: true })), context.policyInstallmentOptions, "Las condiciones firmadas no se filtran de nuevo");
+});
+
+test("una configuración general tardía no sobrescribe plazo ni fecha elegidos en la simulación", () => {
+  const nextInput = { plazoMaximoCuotas: 16, plazoCuotas: 12, iphonePlazoMaximoCuotas: 48, iphonePlazoCuotas: 36,
+    frecuenciaPago: "QUINCENAL", tasaInteresEa: 29.24, fianzaPorcentaje: 75, iphoneTopeFinanciado: 3_500_000, iphoneTopeCuota: 160_000 };
+  for (const iphoneFactory of [false, true]) {
+    const updatedTerms = [];
+    const context = {
+      nextInput, simulatorMode: true, iphoneFactory, normalizeCreditInstallmentLimit, normalizeCreditInstallments, normalizeMoneyLimit,
+      normalizePaymentFrequency: value => value, getDefaultFirstPaymentDate: () => "2026-11-17",
+      IPHONE_MAX_CREDIT_INSTALLMENTS: 48, IPHONE_DEFAULT_CREDIT_INSTALLMENTS: 24, MAX_CREDIT_INSTALLMENTS: 60,
+      DEFAULT_CREDIT_INSTALLMENTS: 12, IPHONE_INITIAL_PAYMENT_PERCENTAGE: 30, IPHONE_MAX_FINANCED_AMOUNT: 3_500_000,
+      IPHONE_MAX_INSTALLMENT_VALUE: 160_000, DEFAULT_INSTALLMENT_SURETY_PERCENTAGE: 2.08, DEFAULT_INSTALLMENT_INSURANCE_PERCENTAGE: 0.03,
+      setCreditSettings() {}, setGlobalCreditSettings() {}, setCreditSettingsDocument() {}, setTasaInteresEa() {}, setFianzaPorcentaje() {},
+      setPlazoMeses: value => updatedTerms.push(["plazo", value]), setFechaPrimerPago: value => updatedTerms.push(["fecha", value]),
+      applyingDraftRef: { current: false }, cancelPendingDraftAutosave() {},
+    };
+    executeProduction(`(${productionVariable("applyCreditSettings")})(nextInput, null, "")`, context);
+    assert.deepEqual(updatedTerms, [], `La respuesta de configuración global no altera la simulación ${iphoneFactory ? "iPhone" : "Android"}`);
+    const preservedTerms = { plazoMeses: "48", fechaPrimerPago: "2026-12-02", frecuenciaPago: "MENSUAL", fianzaPorcentaje: "68", policyControlled: true, restoringDraft: true };
+    executeProduction(`(${productionVariable("applyCreditSettings")})(nextInput, null, "", preservedTerms)`, { ...context, simulatorMode: false, preservedTerms });
+    assert.deepEqual(updatedTerms, [["plazo", "48"], ["fecha", "2026-12-02"]], "La restauración de una venta conserva sus términos pactados");
+    assert.equal(context.applyingDraftRef.current, true);
+  }
 });
 
 test("el desglose interno solo se muestra al administrador central", () => {
@@ -449,7 +445,7 @@ test("el simulador consulta solo la política local por GET y cancela el guardad
     setDataCreditoSimulationStatus: (status) => statuses.push(status),
     requestJson: async (url, options) => {
       requests.push({ url, options });
-      return { ok: true, data: { simulation: { simulationOnly: true, platform: "IPHONE", decision: "APROBADO", offer: {} } } };
+      return { ok: true, data: { simulation: { simulationOnly: true, platform: "IPHONE", decision: "APROBADO", conditions: [{ id: "condition-1", offer: {} }], offer: {} } } };
     },
   });
   await new Promise(resolve => setImmediate(resolve));
@@ -483,7 +479,7 @@ test("una respuesta o error tardíos de Android abortado no sustituyen la polít
     const old = new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
     const writes = [], requests = [];
     let currentSimulation = null, currentStatus = "idle";
-    const simulation = platform => ({ simulationOnly: true, platform, decision: "APROBADO", initialPaymentPercentages: platform === "ANDROID" ? [0, 5, 10] : [20, 30], offer: { initialPaymentPercentage: platform === "ANDROID" ? 0 : 30 } });
+    const simulation = platform => ({ simulationOnly: true, platform, decision: "APROBADO", conditions: [{ id: "condition-1", offer: { initialPaymentPercentage: platform === "ANDROID" ? 0 : 30 } }], offer: { initialPaymentPercentage: platform === "ANDROID" ? 0 : 30 } });
     const context = {
       simulatorMode: true, AbortController, URLSearchParams,
       setDataCreditoSimulation: value => { currentSimulation = value; writes.push(["simulation", value]); },

@@ -91,6 +91,7 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
       return serializeDataCreditoDailyQuota({ limit: 5, used: 5, resetsAt });
     },
     resolveDataCreditoDecision: () => ({ decision: "APROBADO", offer: {} }),
+    getDataCreditoSimulationConditions: () => [{ id: "condition-1", offer: { initialPaymentPercentage: 30 } }],
     DATACREDITO_NO_INFORMATION_SCORE: -1,
     serializePolicyResponse: (input) => ({ ok: true, ...input }),
     DataCreditoStorageConfigurationError: class extends Error {},
