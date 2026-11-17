@@ -8,6 +8,7 @@ export type CreditCommunicationItem = {
 export type CreditCommunicationState = {
   capabilities: {
     phone: string | null; whatsappHref: string | null;
+    contactRestricted?: boolean;
     reminder: { available: boolean; reason: string | null; label: string };
     call: { available: boolean; reason: string | null };
   };

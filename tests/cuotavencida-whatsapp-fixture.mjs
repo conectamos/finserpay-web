@@ -20,7 +20,7 @@ export const credit = (id = 1, overrides = {}) => ({ id, clienteNombre: "CLIENTE
   fechaProximoPago: "2026-10-17", abonos: [], ...overrides });
 export const env = { DAPTA_CUOTAVENCIDA_ENABLED: "true", DAPTA_CUOTAVENCIDA_WEBHOOK_URL: "https://api.dapta.ai/synthetic-cuotavencida-test" };
 
-export async function fixture(t, { credits = [credit()], enabled = true, campaign = "CUOTAVENCIDA" } = {}) {
+export async function fixture(t, { credits = [credit()], enabled = true, campaign = "CUOTAVENCIDA", restrictionEnv = {} } = {}) {
   const db = new PGlite(); t.after(() => db.close());
   await db.exec(`CREATE TABLE "Credito" ("id" integer PRIMARY KEY,"data" jsonb NOT NULL,
     "clienteTelefono" text GENERATED ALWAYS AS ("data"->>'clienteTelefono') STORED,
@@ -70,8 +70,9 @@ export async function fixture(t, { credits = [credit()], enabled = true, campaig
   const loaded = loadReissueModule("lib/cuotavencida-whatsapp-store.ts", {
     "@/lib/prisma": { default: database }, "@/lib/colombia-date": dates, "@/lib/cuotavencida-whatsapp-policy": policy,
     "@/lib/mora-message-protection": protection, "@/lib/dapta-welcome": phone,
+    "@/lib/collection-contact-restriction": loadReissueModule("lib/collection-contact-restriction.ts"),
   });
-  const storeFor = selectedCampaign => loaded.createCuotaVencidaWhatsAppStore({ database, enabled: () => enabled, now: () => at, campaign: selectedCampaign });
+  const storeFor = selectedCampaign => loaded.createCuotaVencidaWhatsAppStore({ database, enabled: () => enabled, now: () => at, campaign: selectedCampaign, env: restrictionEnv });
   const store = storeFor(campaign);
   const dispatcher = loadReissueModule("lib/cuotavencida-whatsapp-dispatch.ts", { "@/lib/cuotavencida-whatsapp-store": loaded, "@/lib/colombia-date": dates,
     "@/lib/whatsapp-automation-provider": automation }, { AbortSignal, Buffer, process: { env: {} } });

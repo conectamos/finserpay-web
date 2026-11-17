@@ -8,6 +8,7 @@ import { hasActiveMoraMessageProtection } from "./mora-message-protection";
 import { colombiaDateKey } from "./colombia-date";
 import { documentKey } from "./cuotavencida-whatsapp-policy";
 import { attentionDocumentKey, attentionPhoneSql } from "./atencion-classification";
+import { isCollectionContactRestricted, COLLECTION_CONTACT_RESTRICTION_REASON } from "./collection-contact-restriction";
 import { attentionCollectionCandidate, attentionCollectionReview, attentionCollectionReminderKey, attentionCollectionTemplateNames,
   isAttentionCollectionTemplateName, type AttentionCollectionReview, type AttentionCollectionOption,
   type AttentionCollectionTemplateList, type AttentionCollectionTemplateName } from "./atencion-collection-template-policy";
@@ -72,8 +73,9 @@ async function contactHeld(db: AttentionDb, document: string, at: Date, own: str
 }
 
 /** Financial persistence only. No provider calls except the caller's final, bounded POST callback. */
-export function createAttentionCollectionTemplateStore(database: AttentionDatabase, settings: { now?: () => Date } = {}) {
+export function createAttentionCollectionTemplateStore(database: AttentionDatabase, settings: { now?: () => Date; env?: NodeJS.ProcessEnv } = {}) {
   const now = settings.now ?? (() => new Date());
+  const env = () => settings.env ?? process.env;
   const transact = <T>(fn: (db: AttentionDb) => Promise<T>) => database.$transaction(fn, options);
 
   async function load(db: AttentionDb, actor: AttentionActor, conversationId: string, input?: AttentionCollectionClaimInput, guarding = false) {
@@ -107,18 +109,20 @@ export function createAttentionCollectionTemplateStore(database: AttentionDataba
     for (const credit of context.credits) {
       if (await hasActiveMoraMessageProtection(credit.id, credit.clienteDocumento, db as Parameters<typeof hasActiveMoraMessageProtection>[2])) protectedIds.add(credit.id);
       const document = documentKey(credit.clienteDocumento);
-      if (document && !contactReasons.has(document)) contactReasons.set(document, await contactHeld(db, document, at, own));
+      if (document && !contactReasons.has(document)) contactReasons.set(document,
+        isCollectionContactRestricted(credit.clienteDocumento, env()) || await contactHeld(db, document, at, own));
     }
     const ids = context.credits.map(c => c.id);
     const covered = ids.length ? await db.$queryRawUnsafe<{ creditoId: number }[]>(`SELECT "creditoId" FROM "CreditOverdueDataCoverage" WHERE "creditoId"=ANY($1::int[]) AND ($2::uuid IS NULL OR "attemptId"<>$2::uuid)
       UNION SELECT "creditoId" FROM "CreditOverdueDataAttempt" WHERE "creditoId"=ANY($1::int[]) AND ($2::uuid IS NULL OR id<>$2::uuid)`, ids, own) : [];
     const alreadyCovered = new Set(covered.map(c => c.creditoId));
-    const cohort = context.credits.filter(c => !protectedIds.has(c.id) && !alreadyCovered.has(c.id) && attentionCollectionCandidate(c, "data", at));
+    const cohort = context.credits.filter(c => !isCollectionContactRestricted(c.clienteDocumento, env()) && !protectedIds.has(c.id) && !alreadyCovered.has(c.id) && attentionCollectionCandidate(c, "data", at));
     const coveredCredits = cohort.map(c => ({ id: c.id, number: context.labels.get(c.id)! }));
     const credits: AttentionCollectionTemplateList["credits"] = [];
     for (const credit of context.credits) {
       const document = documentKey(credit.clienteDocumento);
-      const common = !document ? "El documento registrado no permite verificar las protecciones de contacto."
+      const common = isCollectionContactRestricted(credit.clienteDocumento, env()) ? COLLECTION_CONTACT_RESTRICTION_REASON
+        : !document ? "El documento registrado no permite verificar las protecciones de contacto."
         : protectedIds.has(credit.id) ? "El crédito tiene una prórroga o excepción vigente; los mensajes de cartera están suspendidos."
           : contactReasons.get(document) ? "Existe un contacto, acuerdo o envío pendiente que impide repetir la gestión de cartera." : null;
       const options: AttentionCollectionOption[] = [];

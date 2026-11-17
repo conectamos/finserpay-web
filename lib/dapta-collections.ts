@@ -2,6 +2,7 @@ import "server-only";
 import { createCollectionsHandlers } from "@/lib/dapta-collections-http";
 import { createMoraManagement, getMoraManagement, parseMoraManagement } from "@/lib/analyst-mora-management";
 import { approvalErrorResponse } from "@/lib/credit-approval-http";
+import { isCollectionContactRestricted } from "@/lib/collection-contact-restriction";
 
 export const collectionsHandlers = createCollectionsHandlers({
   token: () => process.env.FINSERPAY_COBRANZA_API_TOKEN,
@@ -16,7 +17,7 @@ export const collectionsHandlers = createCollectionsHandlers({
         valorVencido: credit.valorVencido, diasMora: credit.diasMora, ultimoPago: credit.ultimoPago, enMora: credit.enMora },
       ultimaGestion: latest,
       acuerdoVigente: latest?.managementStatus === "ACUERDO_PAGO",
-      suspenderCobranza: !credit.enMora || latest?.managementStatus === "ACUERDO_PAGO" || latest?.resultCode === "PAGO_REALIZADO",
+      suspenderCobranza: isCollectionContactRestricted(credit.clienteDocumento) || !credit.enMora || latest?.managementStatus === "ACUERDO_PAGO" || latest?.resultCode === "PAGO_REALIZADO",
       // This portfolio has no authoritative legal-stage fields. Unknown is not false.
       bloqueoAplica: null, reporteHabilitado: null, reporteConfirmado: null,
       trasladoPrejuridico: null, evaluacionJudicialDecidida: null,

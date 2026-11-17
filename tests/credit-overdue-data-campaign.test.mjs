@@ -249,11 +249,12 @@ test("an overlapping HTTP dispatch and same-day replay cannot reserve or send tw
   const f = await overdueDataFixture(t, { onFetch: async () => { started(); await blocked; } });
   const first = f.run(live);
   await sending;
-  const overlapping = await f.run(live);
-  assert.equal(overlapping.summary.waiting + overlapping.summary.duplicates, 1);
+  const overlapping = f.run(live);
   assert.equal(f.counts.sends, 1);
   release();
   assert.equal((await first).summary.accepted, 1);
+  const replay = await overlapping;
+  assert.equal(replay.summary.waiting + replay.summary.duplicates, 1);
   assert.equal((await f.run(live)).summary.waiting, 1);
   assert.equal(f.counts.sends, 1);
   assert.equal((await f.rows()).length, 1);

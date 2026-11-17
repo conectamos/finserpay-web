@@ -4,6 +4,7 @@ import { createJiti } from "jiti";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 const jiti = createJiti(import.meta.url);
 const policy = await jiti.import("../lib/collection-voice-policy.ts");
+const contactRestriction = loadReissueModule("lib/collection-contact-restriction.ts");
 const key = "00000000-0000-4000-8000-000000000081";
 class FixedDate extends Date {
   constructor(...args) { super(...(args.length ? args : ["2026-10-13T17:30:00Z"])); }
@@ -34,7 +35,8 @@ function fixture(options = {}) {
   };
   const env = { DAPTA_COBRANZA_ENABLED: "true", DAPTA_COBRANZA_LIVE_READY: "true", DAPTA_COBRANZA_REFERENCES_OWNED: "true",
     DAPTA_COBRANZA_CALL_WEBHOOK_URL: "https://api.dapta.ai/api/synthetic-call-only", FINSERPAY_COBRANZA_API_TOKEN: "synthetic-selected-call-secret-32-chars",
-    FINSERPAY_COBRANZA_AGENT_ID: "synthetic-agent", FINSERPAY_COBRANZA_ACTOR_ID: "51" };
+    FINSERPAY_COBRANZA_AGENT_ID: "synthetic-agent", FINSERPAY_COBRANZA_ACTOR_ID: "51",
+    COLLECTION_CONTACT_EXCLUDED_DOCUMENTS: options.excludedDocuments };
   const modules = {
     "@/lib/prisma": { default: db },
     "@/lib/analyst-mora-management": {
@@ -53,12 +55,14 @@ function fixture(options = {}) {
     "@/lib/dapta-welcome": { normalizeColombianMobile: value => value },
     "@/lib/dapta-collections-http": { collectionCallKey: () => key },
     "@/lib/collection-voice-policy": policy,
+    "@/lib/collection-contact-restriction": { ...contactRestriction,
+      isCollectionContactRestricted: document => contactRestriction.isCollectionContactRestricted(document, env) },
   };
   const service = loadReissueModule("lib/collection-voice-runtime.ts", modules, {
     Date: FixedDate, URLSearchParams, AbortSignal, process: { env },
     fetch: async (url, init) => { sends.push({ url, body: JSON.parse(init.body) }); return new Response(JSON.stringify({ ok: true, call_id: "synthetic-call-9999" })); },
   });
-  return { ...service, sends, selected, attempts, setExtension: value => { extension = value; }, setPhone: value => { phone = value; },
+  return { ...service, sends, selected, attempts, env, setExtension: value => { extension = value; }, setPhone: value => { phone = value; },
     authorize: () => service.collectionVoiceOperation(new Request("https://example.test/voice", { method: "POST", headers: { authorization: "Bearer " + env.FINSERPAY_COBRANZA_API_TOKEN, "content-type": "application/json" },
       body: JSON.stringify({ action: "authorize", event_token: policy.collectionSessionToken(key, env.FINSERPAY_COBRANZA_API_TOKEN) }) })) };
 }
@@ -110,4 +114,43 @@ test("automatic call already dispatched cannot authorize collection after a new 
   assert.equal(f.sends.length,1);assert.equal(f.attempts[0].manualRequested,false);
   f.attempts[0].id=key;f.attempts[0].status='DISPATCHING';f.setExtension(true);
   assert.equal((await(await f.authorize()).json()).allowed,false);
+});
+
+test("restricción de contacto excluye selección automática y nominal sin crear un intento ni rotar referencias",async()=>{
+  for(const automatic of [true,false]) {
+    const f=fixture({automatic,excludedDocuments:"100.009.999"});
+    const result=await f.runCollectionVoice(automatic?{limit:1}:{immediate:true,limit:1,creditId:9999,requestId:key});
+    assert.equal(result.eligible,0);assert.equal(result.skipped,1);
+    assert.equal(f.attempts.length,0);assert.equal(f.sends.length,0);
+  }
+});
+
+test("restricción activada después de seleccionar y validar permisos impide HTTP y autorización posterior",async()=>{
+  const f=fixture();
+  const result=await f.runCollectionVoice({immediate:true,limit:1,creditId:9999,requestId:key,
+    beforeDispatch:async()=>{f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS="100009999";}});
+  assert.equal(result.accepted,0);assert.equal(result.unknown,0);assert.equal(result.skipped,1);
+  assert.equal(f.sends.length,0);assert.equal(f.attempts[0].status,"SKIPPED");
+  assert.equal(f.attempts[0].optOut,false);
+  assert.equal(f.attempts[0].outcome,undefined);
+
+  const alreadyDispatched=fixture();
+  await alreadyDispatched.runCollectionVoice({immediate:true,limit:1,creditId:9999,requestId:key});
+  alreadyDispatched.attempts[0].status="DISPATCHING";
+  alreadyDispatched.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS="100009999";
+  const response=await(await alreadyDispatched.authorize()).json();
+  assert.equal(response.allowed,false);
+  assert.equal(response.reason,contactRestriction.COLLECTION_CONTACT_RESTRICTION_REASON);
+  assert.equal(alreadyDispatched.attempts[0].status,"DISPATCHING","El callback no inventa un resultado de llamada");
+  assert.equal(alreadyDispatched.sends.length,1);
+});
+
+test("sin restricción o con otro titular restringido se conserva la llamada y su autorización",async()=>{
+  for(const excludedDocuments of [undefined,"100009998"]) {
+    const f=fixture({excludedDocuments});
+    const result=await f.runCollectionVoice({immediate:true,limit:1,creditId:9999,requestId:key});
+    assert.equal(result.accepted,1);assert.equal(f.sends.length,1);
+    f.attempts[0].status="DISPATCHING";
+    assert.equal((await(await f.authorize()).json()).allowed,true);
+  }
 });

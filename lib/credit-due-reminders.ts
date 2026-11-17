@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
+import { COLLECTION_CONTACT_RESTRICTION_REASON, isCollectionContactRestricted } from "@/lib/collection-contact-restriction";
 import { isMetaAutomationConfigured, sendMetaAutomation, whatsAppAutomationProvider, type MetaAutomationSender, type MetaAutomationTemplate } from "@/lib/whatsapp-automation-provider";
 import {
   getCreditDueReminder,
@@ -128,7 +129,14 @@ export async function sendConfiguredCreditDueReminderOnce(
 ): Promise<DispatchResult> {
   if (config.provider === "dapta") {
     await options.beforeSend?.();
-    return sendCreditDueReminderOnce(config.webhook!, reminder, options.fetcher ?? fetch);
+    const send = () => sendCreditDueReminderOnce(config.webhook!, reminder, options.fetcher ?? fetch);
+    try {
+      return options.withSendGuard ? await options.withSendGuard(send) : await send();
+    } catch (error) {
+      if (error instanceof Error && error.message === COLLECTION_CONTACT_RESTRICTION_REASON)
+        return { status: "FAILED", code: "COLLECTION_CONTACT_RESTRICTED", httpStatus: null };
+      throw error;
+    }
   }
   try {
     const result = await (options.sendMeta ?? sendMetaAutomation)({
@@ -242,6 +250,10 @@ export function createCreditDueReminderRunner(deps: {
         if (!Number.isSafeInteger(credit.id) || credit.id <= cursor) throw new Error("Invalid reminder scan cursor");
         cursor = credit.id;
         report.summary.scanned += 1;
+        if (isCollectionContactRestricted(credit.clienteDocumento, deps.env ?? process.env)) {
+          report.summary.excluded += 1;
+          continue;
+        }
         const candidate = getCreditDueReminder(credit, today, campaign);
         if (!candidate) {
           // Count invalid contacts separately only when all financial conditions qualify.
@@ -258,6 +270,7 @@ export function createCreditDueReminderRunner(deps: {
         const claim = await database.$transaction(async (tx) => {
           await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
           const current = await tx.credito.findUnique({ where: { id: credit.id }, select: creditSelect });
+          if (current && isCollectionContactRestricted(current.clienteDocumento, deps.env ?? process.env)) return "ineligible";
           const claimedAt = now();
           const reminder = current && isCreditDueReminderWindow(claimedAt, campaign) ? getCreditDueReminder(current, claimedAt, campaign) : null;
           if (!reminder || reminder.installmentNumber !== candidate.installmentNumber || reminder.dueDate !== candidate.dueDate) return "ineligible";
@@ -287,7 +300,8 @@ export function createCreditDueReminderRunner(deps: {
           const validatedAt = now();
           const reminder = current ? getCreditDueReminder(current, validatedAt, campaign) : null;
           const dispatchAt = now();
-          if (!reminder || reminder.installmentNumber !== candidate.installmentNumber || reminder.dueDate !== candidate.dueDate
+          if (!reminder || isCollectionContactRestricted(current?.clienteDocumento, deps.env ?? process.env)
+            || reminder.installmentNumber !== candidate.installmentNumber || reminder.dueDate !== candidate.dueDate
             || !isCreditDueReminderWindow(dispatchAt, campaign) || new Date(active[0].claimExpiresAt).getTime() <= dispatchAt.getTime()) {
             report.summary.revalidatedOut += 1;
             // This owner knows it never began HTTP. Release only its still-active
@@ -299,6 +313,7 @@ export function createCreditDueReminderRunner(deps: {
             if (!released) report.summary.unknown += 1;
             continue;
           }
+          let restrictedBeforeSend = false;
           result = await sendConfiguredCreditDueReminderOnce(transport!, reminder, claimId, {
             fetcher: deps.fetcher, sendMeta: deps.sendMeta,
             ...(provider === "meta" ? { withSendGuard: async <T>(send: () => Promise<T>): Promise<T> => database.$transaction(async tx => {
@@ -308,6 +323,10 @@ export function createCreditDueReminderRunner(deps: {
               const [owned] = await tx.$queryRawUnsafe<Array<{ claimExpiresAt: Date | string }>>(
                 `SELECT "claimExpiresAt" FROM "CreditDueReminder" WHERE "id"=$1::uuid AND "status"='CLAIMED' FOR UPDATE`, claimId);
               const latest = await tx.credito.findUnique({ where: { id: credit.id }, select: creditSelect });
+              if (isCollectionContactRestricted(latest?.clienteDocumento, deps.env ?? process.env)) {
+                restrictedBeforeSend = true;
+                throw new Error(COLLECTION_CONTACT_RESTRICTION_REASON);
+              }
               const protectedCredit = latest && await hasActiveMoraMessageProtection(credit.id, latest.clienteDocumento, tx);
               const at = now(); const current = latest && getCreditDueReminder(latest, at, campaign);
               if (!owned || protectedCredit || new Date(owned.claimExpiresAt).getTime() <= at.getTime() || !isCreditDueReminderWindow(at, campaign)
@@ -315,8 +334,21 @@ export function createCreditDueReminderRunner(deps: {
                 || current.installmentNumber !== reminder.installmentNumber || current.dueDate !== reminder.dueDate)
                 throw new Error("REMINDER_CHANGED_BEFORE_SEND");
               return send();
-            }, { timeout: 15_000 }) } : {}),
+            }, { timeout: 15_000 }) } : { withSendGuard: async <T>(send: () => Promise<T>): Promise<T> => database.$transaction(async tx => {
+              await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, credit.id);
+              const latest = await tx.credito.findUnique({ where: { id: credit.id }, select: creditSelect });
+              if (isCollectionContactRestricted(latest?.clienteDocumento, deps.env ?? process.env)) {
+                restrictedBeforeSend = true;
+                throw new Error(COLLECTION_CONTACT_RESTRICTION_REASON);
+              }
+              return send();
+            }, { timeout: 15_000 }) }),
           });
+          if (restrictedBeforeSend) {
+            report.summary.revalidatedOut += 1;
+            if (!await database.$executeRawUnsafe(`DELETE FROM "CreditDueReminder" WHERE "id"=$1::uuid AND "status"='CLAIMED'`, claimId)) report.summary.unknown += 1;
+            continue;
+          }
         }
         const finishedAt = now();
         // A competing restart may have expired the claim. Keep UNKNOWN conservative.

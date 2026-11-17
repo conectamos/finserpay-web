@@ -12,6 +12,7 @@ const reminderPolicy = await jiti.import("../lib/credit-due-reminder-policy.ts")
 const datePolicy = await jiti.import("../lib/colombia-date.ts");
 const collectionPolicy = await jiti.import("../lib/collection-voice-policy.ts");
 const automation = await jiti.import("../lib/whatsapp-automation-provider.ts");
+const restriction = loadReissueModule("lib/collection-contact-restriction.ts");
 const normalize = value => typeof value === "string" && /^(?:57)?3\d{9}$/.test(value) ? value.length === 10 ? "57" + value : value : null;
 class BusinessError extends Error { constructor(code, message, status = 400) { super(message); this.code = code; this.status = status; } }
 const key = "00000000-0000-4000-8000-000000000081";
@@ -58,6 +59,7 @@ async function fixture(t, options = {}) {
     "@/lib/dapta-welcome": { normalizeColombianMobile: normalize }, "@/lib/credit-due-reminder-policy": reminderPolicy,
     "@/lib/whatsapp-automation-provider": automation,
     "@/lib/mora-message-protection": automationProtectionFixture(database),
+    "@/lib/collection-contact-restriction": restriction,
   }, { AbortSignal, fetch: () => assert.fail("No real network in tests") });
   const modules = {
     "@/lib/prisma": { default: database },
@@ -78,6 +80,7 @@ async function fixture(t, options = {}) {
     "@/lib/dapta-welcome": { normalizeColombianMobile: normalize },
     "@/lib/credit-due-reminder-policy": reminderPolicy,
     "@/lib/credit-due-reminders": transport,
+    "@/lib/collection-contact-restriction": restriction,
     "@/lib/collection-voice-policy": collectionPolicy,
     "@/lib/collection-voice-runtime": { ensureCollectionVoiceSchema: async () => {}, runCollectionVoice: async input => {
       calls.push(input); await input.beforeDispatch();
@@ -86,12 +89,13 @@ async function fixture(t, options = {}) {
     } },
   };
   const loaded = loadReissueModule("lib/credit-collection-communications.ts", modules, { AbortSignal, fetch: () => assert.fail("No real network in tests") });
-  const service = loaded.createCreditCommunicationService({ database, env: { ...environment, ...options.env }, sendMeta: options.sendMeta, now: () => new Date(clock), schema: async () => {}, fetcher: async (url, init) => {
+  const runtimeEnv = { ...environment, ...options.env };
+  const service = loaded.createCreditCommunicationService({ database, env: runtimeEnv, sendMeta: options.sendMeta, now: () => new Date(clock), schema: async () => {}, fetcher: async (url, init) => {
     sends.push({ url: String(url), body: JSON.parse(init.body), assertions: assertions.length });
     if (options.networkError) throw new Error("private transport detail must not leak");
     return new Response(options.rawResponse ?? JSON.stringify(options.providerResponse ?? { ok: true }), { status: 200, headers: { "content-type": "application/json" } });
   } });
-  return { db, service, loaded, sends, calls, assertions, inTransaction: () => transactionDepth > 0, setClock: value => { clock = new Date(value); },
+  return { db, service, loaded, sends, calls, assertions, env: runtimeEnv, inTransaction: () => transactionDepth > 0, setClock: value => { clock = new Date(value); },
     update: (id, values) => db.query(`UPDATE "Credito" SET "data"="data"||$2::jsonb WHERE "id"=$1`, [id, JSON.stringify(values)]),
     rows: () => db.query(`SELECT * FROM "CreditCollectionCommunicationEvent" ORDER BY "createdAt","id"`) };
 }
@@ -100,6 +104,46 @@ const nativeEnvironment = { WHATSAPP_AUTOMATIONS_PROVIDER: "meta", WHATSAPP_ATTE
   WHATSAPP_ATTENTION_AI_CUTOVER_CONFIRMED: "true", WHATSAPP_GRAPH_API_VERSION: "v25.0",
   WHATSAPP_ATTENTION_PHONE_NUMBER_ID: "1162059967000416", WHATSAPP_ATTENTION_BUSINESS_ACCOUNT_ID: "2148284059050848",
   WHATSAPP_ATTENTION_ACCESS_TOKEN: "synthetic-not-a-real-token", DAPTA_RECORDATORIO_1_DIA_WEBHOOK_URL: "" };
+
+test("contact restriction hides manual contact links and rejects both collection actions before booking", async t => {
+  const f = await fixture(t, { overdue: true, env: { COLLECTION_CONTACT_EXCLUDED_DOCUMENTS: "100.000.081" } });
+  const state = await f.service.state(81);
+  assert.equal(state.capabilities.contactRestricted, true);
+  assert.equal(state.capabilities.phone, null);
+  assert.equal(state.capabilities.whatsappHref, null);
+  assert.equal(state.capabilities.reminder.available, false);
+  assert.equal(state.capabilities.call.available, false);
+  assert.match(state.capabilities.call.reason, /restringidos/);
+  for (const action of ["REMINDER", "CALL"]) await assert.rejects(f.service.dispatch(81, input({ action }), actor), { code: "COLLECTION_CONTACT_RESTRICTED", status: 409 });
+  assert.equal(f.sends.length, 0); assert.equal(f.calls.length, 0);
+  assert.equal((await f.rows()).rows.length, 0);
+  assert.equal((await f.service.state(82)).capabilities.contactRestricted, false);
+  const other = await f.service.dispatch(82, input({ expectedPhone: "573007654321" }), actor);
+  assert.equal(other.state.history[0].status, "ACCEPTED");
+  assert.equal(f.sends.length, 1);
+});
+
+test("a previously enabled contact button cannot bypass a newly activated document restriction", async t => {
+  const f = await fixture(t);
+  assert.equal((await f.service.state(81)).capabilities.reminder.available, true);
+  f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS = "100000081";
+  await assert.rejects(f.service.dispatch(81, input(), actor), { code: "COLLECTION_CONTACT_RESTRICTED" });
+  assert.equal(f.sends.length, 0); assert.equal((await f.rows()).rows.length, 0);
+});
+
+test("native reminder rechecks contact restriction at final HTTP guard and releases only its unsent claim", async t => {
+  let f, posts = 0;
+  f = await fixture(t, { env: nativeEnvironment, sendMeta: async (_request, options) => {
+    f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS = "100000081";
+    await options.withSendGuard(async () => { posts++; });
+    return { status: "accepted", code: "META_ACCEPTED", providerMessageId: "wamid.never-sent" };
+  } });
+  const result = await f.service.dispatch(81, input(), actor);
+  assert.equal(posts, 0); assert.equal(f.sends.length, 0);
+  assert.equal(result.state.history[0].status, "SKIPPED");
+  assert.match(result.state.history[0].message, /restringidos/);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditDueReminder"')).rows[0].n, 0);
+});
 
 test("selected-credit native reminder keeps the same ledger and guards only HTTP under finance locks", async t => {
   const native = []; let f;

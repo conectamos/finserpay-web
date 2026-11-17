@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
+import { isCollectionContactRestricted } from "@/lib/collection-contact-restriction";
 import { ensureMoraMessageProtection, getActiveMoraMessageProtectionIds, hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
 import { documentKey, getCuotaVencidaWhatsAppCandidate, groupCuotaVencidaWhatsAppCandidates,
   type CuotaVencidaWhatsAppCandidate } from "@/lib/cuotavencida-whatsapp-policy";
@@ -67,13 +68,13 @@ async function summary(db: RawReader, batchId: string | null, tables: ReturnType
 }
 
 export function createCuotaVencidaWhatsAppStore(deps: {
-  database?: typeof prisma; now?: () => Date; enabled?: () => boolean; campaign?: PortfolioWhatsAppCampaign;
+  database?: typeof prisma; now?: () => Date; enabled?: () => boolean; campaign?: PortfolioWhatsAppCampaign; env?: NodeJS.ProcessEnv;
 } = {}) {
   const campaign = deps.campaign ?? "CUOTAVENCIDA", tables = campaignTables(campaign);
   const namespace = campaign.toLowerCase();
   const digest = (value: string) => createHash("sha256").update("finserpay-" + namespace + ":" + value).digest("hex");
   const database = deps.database ?? prisma, now = deps.now ?? (() => new Date());
-  const enabled = deps.enabled ?? (() => process.env[`DAPTA_${campaign}_ENABLED`] === "true");
+  const enabled = deps.enabled ?? (() => (deps.env ?? process.env)[`DAPTA_${campaign}_ENABLED`] === "true");
   async function scan() {
     await ensureMoraMessageProtection();
     const at = now(), candidates: CuotaVencidaWhatsAppCandidate[] = [];
@@ -91,6 +92,7 @@ export function createCuotaVencidaWhatsAppStore(deps: {
           if (document) protectedDocuments.add(document);
           if (phone) protectedPhones.add(phone);
         }
+        if (isCollectionContactRestricted(credit.clienteDocumento, deps.env ?? process.env)) continue;
         const candidate = getCuotaVencidaWhatsAppCandidate(credit, at);
         if (candidate && protectedIds.has(credit.id)) { excludedActiveMoraProtection++; continue; }
         if (candidate) candidates.push(candidate);
@@ -229,10 +231,15 @@ export function createCuotaVencidaWhatsAppStore(deps: {
       const lockIds = [...new Set([...coverageIds, ...samePhone.map(item => item.id), ...sameDocument.map(item => item.id)])].sort((a, b) => a - b);
       for (const id of lockIds) await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, id);
       const candidates: CuotaVencidaWhatsAppCandidate[] = [];
+      const coveredDocuments: Array<string | null> = [];
       const currentOwners = new Set<string>();
       let protectedCoverage = false;
       for (const creditoId of lockIds) {
         const current = await tx.credito.findUnique({ where: { id: creditoId }, select: creditSelect });
+        if (current && coverageIds.has(creditoId)) {
+          coveredDocuments.push(current.clienteDocumento);
+          if (isCollectionContactRestricted(current.clienteDocumento, deps.env ?? process.env)) return cancel("COLLECTION_CONTACT_RESTRICTED");
+        }
         if (campaign === "BLOQUEO" && current && (coverageIds.has(creditoId)
           || recipientDocuments.has(documentKey(current.clienteDocumento) || "") || normalizeColombianMobile(current.clienteTelefono) === event.phone)
           && await hasActiveMoraMessageProtection(creditoId, current.clienteDocumento, tx)) return cancel("ACTIVE_MORA_PROTECTION");
@@ -256,6 +263,7 @@ export function createCuotaVencidaWhatsAppStore(deps: {
       const prepared = { eventId: event.id, batchId: event.batchId, phone: event.phone, name: group.name, campaignDate: event.campaignDate };
       // Approval and sending serialize on the same credit row. Never release its
       // lock between checking a prórroga and starting the bounded HTTP request.
+      if (coveredDocuments.some(document => isCollectionContactRestricted(document, deps.env ?? process.env))) return cancel("COLLECTION_CONTACT_RESTRICTED");
       if (dispatch) await dispatch(prepared);
       return prepared;
     }, { timeout: 30_000 });

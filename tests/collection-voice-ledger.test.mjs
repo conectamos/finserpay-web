@@ -21,6 +21,7 @@ test('libro PostgreSQL: firma, verificación limitada, exclusión y cierre idemp
     '@/lib/credit-welcome-voice-document':{parseWelcomeVoiceSpokenDocument:v=>v},
     '@/lib/dapta-welcome':{},'@/lib/dapta-collections-http':{},
     '@/lib/collection-voice-policy':policy,
+    '@/lib/collection-contact-restriction':loadApprovalModule('lib/collection-contact-restriction.ts'),
   });
   // Exercise the runtime's schema against PostgreSQL with synthetic records.
   assert.ok(runtime.ensureCollectionVoiceSchema);

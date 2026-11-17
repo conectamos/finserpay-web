@@ -82,6 +82,7 @@ export async function overdueDataFixture(t, options = {}) {
         },
         findUnique: async input => {
           counts.reads += 1;
+          await options.beforeCreditRead?.({ reads: counts.reads, inTransaction });
           return (await connection.query('SELECT "data" FROM "Credito" WHERE "id"=$1', [input.where.id])).rows[0]?.data || null;
         },
       },
@@ -119,6 +120,7 @@ export async function overdueDataFixture(t, options = {}) {
     "@/lib/credit-overdue-data-policy": policy,
     "@/lib/whatsapp-automation-provider": automation,
     "@/lib/mora-message-protection": automationProtectionFixture(client),
+    "@/lib/collection-contact-restriction": loadReissueModule("lib/collection-contact-restriction.ts"),
   }, { AbortSignal, Error, process: { env: options.env || {} }, fetch: () => assert.fail("Unexpected real network") });
   const runnerDependencies = {
     database: client, now: () => new Date(clock), env: options.env, sendMeta: options.sendMeta,

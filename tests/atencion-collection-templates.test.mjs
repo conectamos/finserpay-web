@@ -37,7 +37,8 @@ async function fixture(t,instant="2026-10-01T17:00:00Z"){
   let clock=new Date(instant),depth=0;
   const wrap=connection=>({$queryRawUnsafe:async(sql,...args)=>(await connection.query(sql,args)).rows,$transaction:run=>connection.transaction(async tx=>{depth++;try{return await run(wrap(tx));}finally{depth--;}})});
   const id=randomUUID();await db.query(`INSERT INTO "AttentionConversation"(id,phone,name,channel,"assigneeUserId","assigneeKey") VALUES($1,$2,'Contacto','whatsapp',5,'analyst:5')`,[id,phone]);
-  const store=createAttentionCollectionTemplateStore(wrap(db),{now:()=>clock});
+  const env={};
+  const store=createAttentionCollectionTemplateStore(wrap(db),{now:()=>clock,env});
   const option=async(name="1_dia_falta",creditId=77,who=actor)=>(await store.list(who,id)).credits.find(c=>c.id===creditId)?.options.find(o=>o.templateName===name);
   async function prepare(name="1_dia_falta",creditId=77){
     const selected=await option(name,creditId);assert.equal(selected?.eligible,true,selected?.reason);const review=selected.review;
@@ -49,7 +50,7 @@ async function fixture(t,instant="2026-10-01T17:00:00Z"){
   }
   const reserve=async(name="1_dia_falta",creditId=77)=>{const prepared=await prepare(name,creditId);return {...prepared,reservation:await store.claim(actor,id,prepared.input)};};
   const pay=(amount=25)=>db.query(`INSERT INTO "CreditoAbono"(id,"creditoId",valor,"fechaAbono") VALUES(1,77,$1,'2026-10-01 12:00:00')`,[amount]);
-  return {db,store,id,option,prepare,reserve,pay,setNow:value=>{clock=new Date(value);},inTransaction:()=>depth>0};
+  return {db,store,id,option,prepare,reserve,pay,env,setNow:value=>{clock=new Date(value);},inTransaction:()=>depth>0};
 }
 
 test("política reusa fechas de cuota, alias hoyvence y parámetros registrados; no habilita promesas de bloqueo",()=>{
@@ -61,6 +62,31 @@ test("política reusa fechas de cuota, alias hoyvence y parámetros registrados;
   assert.deepEqual(at("fechap","2026-10-02T17:00:00Z").review.parameters,{"body:1":"Cliente","body:2":"02/10/2026"});
   assert.equal(at("hoyvence","2026-10-01T17:00:00Z").eligible,false);assert.equal(at("hoyvence","2026-10-02T04:59:00Z").eligible,false);
   assert.equal(at("data","2026-10-22T17:00:00Z").eligible,true);assert.equal(at("data","2026-10-23T17:00:00Z").eligible,false);
+});
+
+test("restricción de contacto por cédula impide plantillas de cobro sin modificar sus datos financieros",async t=>{
+  const f=await fixture(t);
+  f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS="100.000.077";
+  const list=await f.store.list(actor,f.id);
+  assert.ok(list.credits[0].options.every(o=>!o.eligible&&/restringidos/.test(o.reason)));
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditDueReminder"')).rows[0].n,0);
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditoAbono"')).rows[0].n,0);
+  f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS="100000078";
+  assert.equal((await f.option()).eligible,true,"otro documento no cambia la elegibilidad del cliente");
+});
+
+test("restricción activada tras revisión o reserva impide el POST de una plantilla de Atención",async t=>{
+  const f=await fixture(t),prepared=await f.prepare();
+  f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS="100000077";
+  await assert.rejects(f.store.claim(actor,f.id,prepared.input),{status:409});
+  f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS="";
+  const r=await f.reserve();let sends=0;
+  f.env.COLLECTION_CONTACT_EXCLUDED_DOCUMENTS="100000077";
+  await assert.rejects(f.store.withSendGuard(actor,f.id,r.reservation,async()=>sends++),{status:409});
+  assert.equal(sends,0);
+  await f.store.finish(r.reservation,{status:"FAILED",started:false});
+  assert.equal((await f.db.query('SELECT count(*)::int n FROM "CreditDueReminder"')).rows[0].n,0);
+  assert.equal((await f.db.query(`SELECT count(*)::int n FROM "CreditCollectionCommunicationEvent" WHERE stage='SKIPPED'`)).rows[0].n,1);
 });
 
 test("alcance nominal, identidad ambigua y ausencia de controles fallan cerrados sin DDL",async t=>{

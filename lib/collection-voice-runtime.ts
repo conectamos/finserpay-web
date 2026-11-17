@@ -8,6 +8,7 @@ import { parseWelcomeVoiceSpokenDocument } from "@/lib/credit-welcome-voice-docu
 import { normalizeColombianMobile } from "@/lib/dapta-welcome";
 import { collectionCallKey } from "@/lib/dapta-collections-http";
 import { collectionCallingAllowed, collectionSlot, colombiaClock, collectionSessionToken, verifyCollectionSessionToken, nextCollectionDate, collectionPortfolioEligibility } from "@/lib/collection-voice-policy";
+import { isCollectionContactRestricted, COLLECTION_CONTACT_RESTRICTION_REASON } from "@/lib/collection-contact-restriction";
 
 type Attempt={id:string;creditoId:number;debtorKey:string;phone:string;slot:string;status:string;providerCallId:string|null;identityAttempts:number;identityVerifiedAt:Date|null;createdAt:Date;completedAt?:Date|null;contactedAt?:Date|null;managementId:string|null;followupFor:string|null;testCall:boolean;manualRequested?:boolean;optOut:boolean;outcome:Record<string,unknown>|null};
 const secret=()=>process.env.FINSERPAY_COBRANZA_API_TOKEN||"";
@@ -112,6 +113,7 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
       if(count>=(options.limit??3)) return report;
       const context=await financialContext(item.id,true); if(context.suspended){report.skipped++;continue;}
       const c=context.credit,doc=String(c.clienteDocumento||"").replace(/\D/g,"");
+      if(isCollectionContactRestricted(c.clienteDocumento)){report.skipped++;continue;}
       if(options.test&&doc!==process.env.DAPTA_COBRANZA_TEST_DOCUMENT){continue;}
       if(!/^\d{5,15}$/.test(doc)){report.skipped++;continue;}
       const phones=(options.test?[process.env.DAPTA_COBRANZA_TEST_PHONE]:[c.clienteTelefono,...(options.creditId===undefined&&process.env.DAPTA_COBRANZA_REFERENCES_OWNED==="true"?[c.referenciaFamiliar1Telefono,c.referenciaFamiliar2Telefono]:[])]).map(normalizeColombianMobile).filter((v):v is string=>!!v);
@@ -150,6 +152,13 @@ export async function runCollectionVoice(options:{immediate?:boolean;dryRun?:boo
         await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "status"='SKIPPED' WHERE "id"=$1::uuid AND "status"='DISPATCHING'`,id);
         throw error;
       }
+      // Re-read after the nominal permission hook: a queued selection is not
+      // permission to contact a debtor whose restriction has since changed.
+      const dispatchCredit=(await getMoraManagement(c.id)).credit;
+      if(isCollectionContactRestricted(dispatchCredit.clienteDocumento)) {
+        await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "status"='SKIPPED' WHERE "id"=$1::uuid AND "status"='DISPATCHING'`,id);
+        report.skipped++;continue;
+      }
       let callId:string|null=null;
       try{callId=receipt(await invoke(url!,{event_token:collectionSessionToken(id,secret()),credito_id:String(c.id),finser_agent_id:agent(),to_number:"+"+claimed.phone,customer_name:c.clienteNombre}));}catch{/* Unknown dispatch is held, never blindly retried. */}
       await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "status"=$2,"providerCallId"=COALESCE("providerCallId",$3) WHERE "id"=$1::uuid AND "status" IN ('DISPATCHING','DIALING')`,id,callId?"ACCEPTED":"UNKNOWN",callId);
@@ -169,6 +178,10 @@ export async function runCollectionMessages() {
     let messageId:string|null=null;
     try {
       const context=await getMoraManagement(a.creditoId);
+      if(isCollectionContactRestricted(context.credit.clienteDocumento)) {
+        await prisma.$executeRawUnsafe(`UPDATE "CollectionVoiceAttempt" SET "messageState"='SKIPPED' WHERE "id"=$1::uuid AND "messageState"='SENDING'`,a.id);
+        continue;
+      }
       const response=await invoke(url,{to_number:"+"+a.phone,nombre_cliente:context.credit.clienteNombre,
         template:a.outcome?.pago_informado===true?"soporte":"medios",event_id:a.id});
       let current:unknown=response;
@@ -195,6 +208,7 @@ async function auditCollectionVoice() {
       const reasons:Array<{code:string;detail:string}>=[];
       const reviews:string[]=[];
       const add=(code:string,detail:string)=>reasons.push({code,detail});
+      if(isCollectionContactRestricted(c.clienteDocumento)) add("CONTACTO_COBRANZA_RESTRINGIDO",COLLECTION_CONTACT_RESTRICTION_REASON);
       if(!context.credit.enMora) add("SIN_MORA_ACTUAL","La consulta actual ya no tiene saldo en mora.");
       else if(context.credit.prorrogaActiva) add("PRORROGA_ACTIVA",`Prórroga aprobada vigente hasta ${context.credit.prorrogaActiva.expiresOn||"fecha no determinada"}; cobranza suspendida.`);
       else if(context.suspended) {
@@ -259,6 +273,8 @@ async function operation(body:Record<string,unknown>) {
     const a=await activeSession(body);
     const testAuthorized=a.testCall&&normalizeColombianMobile(process.env.DAPTA_COBRANZA_TEST_PHONE)===a.phone;
     const context=await financialContext(a.creditoId,!!a.followupFor);
+    if(isCollectionContactRestricted(context.credit.clienteDocumento))
+      return {ok:false,allowed:false,reason:COLLECTION_CONTACT_RESTRICTION_REASON};
     if(a.status!=="DISPATCHING"||(!testAuthorized&&process.env.DAPTA_COBRANZA_ENABLED!=="true")||process.env.DAPTA_COBRANZA_LIVE_READY!=="true"||!collectionCallingAllowed(new Date())||context.suspended||
       (a.manualRequested&&(context.credit.prorrogaActiva||normalizeColombianMobile(context.credit.clienteTelefono)!==a.phone)))
       return {ok:false,allowed:false};
@@ -268,9 +284,11 @@ async function operation(body:Record<string,unknown>) {
   }
   if(body.action==="identity") {
     const a=await activeSession(body);
+    const context=await financialContext(a.creditoId,!!a.followupFor);
+    if(isCollectionContactRestricted(context.credit.clienteDocumento))
+      return {ok:false,verified:false,suspend:true,reason:COLLECTION_CONTACT_RESTRICTION_REASON};
     const counts=await prisma.$queryRawUnsafe<Array<{identityAttempts:number}>>(`UPDATE "CollectionVoiceAttempt" SET "identityAttempts"="identityAttempts"+1 WHERE "id"=$1::uuid AND "identityAttempts"<3 RETURNING "identityAttempts"`,a.id);
     if(!counts.length) return {ok:false,verified:false,review:true};
-    const context=await financialContext(a.creditoId,!!a.followupFor);
     const normalizedName=(v:unknown)=>typeof v==="string"?v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().replace(/\s+/g," ").toLowerCase():"";
     const c=context.credit;
     const authorizedPhones=[c.clienteTelefono,...(process.env.DAPTA_COBRANZA_REFERENCES_OWNED==="true"?[c.referenciaFamiliar1Telefono,c.referenciaFamiliar2Telefono]:[])].map(normalizeColombianMobile).filter(Boolean);
