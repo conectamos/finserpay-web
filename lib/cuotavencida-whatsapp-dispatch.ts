@@ -62,7 +62,7 @@ type Dependencies = {
 };
 export function createCuotaVencidaWhatsAppDispatcher(deps: Dependencies = {}) {
   const campaign = deps.campaign ?? "CUOTAVENCIDA";
-  const defaults = campaign === "BLOQUEO" ? createCuotaVencidaWhatsAppStore({ campaign }) : {
+  const defaults = campaign === "BLOQUEO" || deps.env ? createCuotaVencidaWhatsAppStore({ campaign, env: deps.env }) : {
     claimCuotaVencidaWhatsApp, prepareCuotaVencidaWhatsAppDispatch, releaseCuotaVencidaWhatsAppClaim,
     markCuotaVencidaWhatsAppAccepted, markCuotaVencidaWhatsAppFailed, markCuotaVencidaWhatsAppUnknown,
   };

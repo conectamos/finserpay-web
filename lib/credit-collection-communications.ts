@@ -14,6 +14,7 @@ import type { MetaAutomationSender } from "@/lib/whatsapp-automation-provider";
 import { collectionCallingAllowed, colombiaClock } from "@/lib/collection-voice-policy";
 import { ensureCollectionVoiceSchema, runCollectionVoice } from "@/lib/collection-voice-runtime";
 import type { CreditCommunicationInput, CreditCommunicationItem, CreditCommunicationStatus, CreditCommunicationState } from "@/lib/credit-collection-communication-types";
+import { isCollectionContactRestricted, COLLECTION_CONTACT_RESTRICTION_REASON } from "@/lib/collection-contact-restriction";
 
 const campaigns: CreditDueReminderCampaign[] = ["two_days_before_due", "before_due", "due_today"];
 const labels = { two_days_before_due: "Recordatorio: faltan 2 días", before_due: "Recordatorio: vence mañana", due_today: "Recordatorio: vence hoy" };
@@ -81,6 +82,7 @@ export function createCreditCommunicationService(deps: {
   async function reminderCandidate(id: number, date = now()) {
     const credit = await database.credito.findUnique({ where: { id }, select: moraCreditSelect });
     if (!credit) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+    if (isCollectionContactRestricted(credit.clienteDocumento, env())) return null;
     for (const campaign of campaigns) {
       const reminder = getCreditDueReminder(credit, date, campaign);
       if (reminder) return { campaign, reminder, config: creditDueReminderConfiguration(campaign, env()) };
@@ -91,20 +93,21 @@ export function createCreditCommunicationService(deps: {
     validCredit(id); await schema();
     const detail = await read(id, now());
     const candidate = await reminderCandidate(id);
+    const contactRestricted = isCollectionContactRestricted(detail.credit.clienteDocumento, env());
     const phone = normalizeColombianMobile(detail.credit.clienteTelefono);
     const open = collectionCallingAllowed(now());
     const inactive = ["PAGADO", "ANULADO"].includes(detail.credit.estadoCartera);
-    const reminderReason = !phone ? "El cliente no tiene un celular colombiano válido." : inactive ? "Este crédito está pagado o anulado." :
+    const reminderReason = contactRestricted ? COLLECTION_CONTACT_RESTRICTION_REASON : !phone ? "El cliente no tiene un celular colombiano válido." : inactive ? "Este crédito está pagado o anulado." :
       detail.credit.prorrogaActiva ? "El crédito tiene una prórroga activa; el recordatorio está suspendido." : !candidate ?
         "Las plantillas disponibles aplican 2 días antes, 1 día antes y el día del vencimiento." : !candidate.config ?
           "La plantilla de recordatorio correspondiente no está habilitada." : !open ? "Fuera del horario de contacto configurado." : null;
-    const callReason = !phone ? "El cliente no tiene un celular colombiano válido." : !detail.credit.enMora || inactive ?
+    const callReason = contactRestricted ? COLLECTION_CONTACT_RESTRICTION_REASON : !phone ? "El cliente no tiene un celular colombiano válido." : !detail.credit.enMora || inactive ?
       "La llamada automática de cobranza aplica a créditos en mora. Puedes llamar desde tu teléfono y registrar la gestión." :
       detail.credit.prorrogaActiva ? "El crédito tiene una prórroga activa; la cobranza automática está suspendida." :
       !voiceConfigured(env()) ? "El agente de llamadas no está habilitado." : !open ? "Fuera del horario de contacto configurado." : null;
     const message = `Hola ${detail.credit.clienteNombre}. Te contactamos de FINSER PAY para el seguimiento de tu crédito ${detail.credit.numeroCreditoVisible}. ¿Podemos ayudarte con tu próximo pago?`;
-    const whatsappHref = phone && !inactive ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : null;
-    return { capabilities: { phone, whatsappHref, reminder: { available: reminderReason === null, reason: reminderReason,
+    const whatsappHref = phone && !inactive && !contactRestricted ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : null;
+    return { capabilities: { phone: contactRestricted ? null : phone, whatsappHref, contactRestricted, reminder: { available: reminderReason === null, reason: reminderReason,
       label: candidate ? labels[candidate.campaign] : "Enviar recordatorio por WhatsApp" },
       call: { available: callReason === null, reason: callReason } }, history: await list(id) };
   }
@@ -117,6 +120,8 @@ export function createCreditCommunicationService(deps: {
   }
   async function validateCurrent(id: number, phone: string, actor: MoraActor) {
     const detail = await read(id, now());
+    if (isCollectionContactRestricted(detail.credit.clienteDocumento, env()))
+      throw new CreditApprovalError("COLLECTION_CONTACT_RESTRICTED", COLLECTION_CONTACT_RESTRICTION_REASON, 409);
     if (normalizeColombianMobile(detail.credit.clienteTelefono) !== phone) throw new CreditApprovalError("CONTACT_CHANGED", "El celular cambió. Actualiza el crédito antes de enviar.", 409);
     if (["PAGADO", "ANULADO"].includes(detail.credit.estadoCartera) || detail.credit.prorrogaActiva)
       throw new CreditApprovalError("CONTACT_SUSPENDED", "El crédito ya no admite este contacto automático.", 409);
@@ -136,6 +141,7 @@ export function createCreditCommunicationService(deps: {
       await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))::text`, "collections:" + createHash("sha256").update(document).digest("hex"));
       await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, request.creditoId);
       const credit = await db.credito.findUnique({ where: { id: request.creditoId }, select: moraCreditSelect });
+      if (isCollectionContactRestricted(credit?.clienteDocumento, env())) return false;
       const current = credit && getCreditDueReminder(credit, now(), candidate.campaign);
       if (!current || current.phone !== request.phone || current.installmentNumber !== candidate.reminder.installmentNumber || current.dueDate !== candidate.reminder.dueDate ||
         (await readActiveMoraExtensions([request.creditoId], now(), db)).has(request.creditoId)) return false;
@@ -162,17 +168,26 @@ export function createCreditCommunicationService(deps: {
       return rows.length > 0;
     });
     if (!claim) return { status: "SKIPPED", message: "Esta cuota ya tiene un recordatorio registrado o pendiente de conciliación; no se repitió el envío." };
-    let started = false;
+    let started = false, restrictedBeforeSend = false, sendAuthorized = false;
+    const skipRestricted = async (): Promise<Result> => {
+      await database.$executeRawUnsafe(`DELETE FROM "CreditDueReminder" WHERE "id"=$1::uuid AND "status"='CLAIMED'`, claimId);
+      return { status: "SKIPPED", message: COLLECTION_CONTACT_RESTRICTION_REASON };
+    };
     try {
       await validateCurrent(request.creditoId, request.phone, actor);
       const withCurrentCredit = async <T>(send: (current: NonNullable<ReturnType<typeof getCreditDueReminder>>) => Promise<T>) => database.$transaction(async db => {
         await assertMoraActor(db, actor);
         await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, request.creditoId);
         const credit = await db.credito.findUnique({ where: { id: request.creditoId }, select: moraCreditSelect });
+        if (isCollectionContactRestricted(credit?.clienteDocumento, env())) {
+          restrictedBeforeSend = true;
+          return null;
+        }
         const current = credit && getCreditDueReminder(credit, now(), candidate.campaign);
         if (!current || current.phone !== request.phone || current.installmentNumber !== candidate.reminder.installmentNumber || current.dueDate !== candidate.reminder.dueDate || !collectionCallingAllowed(now()) ||
           (await readActiveMoraExtensions([request.creditoId], now(), db)).has(request.creditoId)) return null;
         started = true;
+        sendAuthorized = true;
         return send(current);
       }, { timeout: 15_000 });
       let sent;
@@ -192,6 +207,7 @@ export function createCreditCommunicationService(deps: {
           },
         });
       } else sent = await withCurrentCredit(current => sendConfiguredCreditDueReminderOnce(candidate.config!, current, claimId, { fetcher: deps.fetcher }));
+      if (restrictedBeforeSend && !sendAuthorized) return skipRestricted();
       if (!sent) {
         await database.$executeRawUnsafe(`DELETE FROM "CreditDueReminder" WHERE "id"=$1::uuid AND "status"='CLAIMED'`, claimId);
         return { status: "SKIPPED", message: "El crédito cambió antes del envío. No se envió el mensaje." };
@@ -202,6 +218,7 @@ export function createCreditCommunicationService(deps: {
         `${candidate.config.provider === "meta" ? "Meta" : "Dapta"} aceptó el recordatorio por WhatsApp. La aceptación no confirma entrega ni lectura.` : sent.status === "FAILED" ?
           "El proveedor rechazó el recordatorio. El intento quedó registrado." : "No se pudo confirmar el envío por WhatsApp. Revisa el proveedor antes de repetir." };
     } catch {
+      if (restrictedBeforeSend && !sendAuthorized) return skipRestricted();
       if (!started) {
         await database.$executeRawUnsafe(`DELETE FROM "CreditDueReminder" WHERE "id"=$1::uuid AND "status"='CLAIMED'`, claimId);
         return { status: "SKIPPED", message: "El crédito o los permisos cambiaron antes del envío. No se envió el mensaje." };
@@ -234,8 +251,10 @@ export function createCreditCommunicationService(deps: {
         if (prior[0].requestHash !== hash || prior[0].creditoId !== id) throw new CreditApprovalError("IDEMPOTENCY_CONFLICT", "Este intento ya corresponde a otra acción.", 409);
         return { request: prior[0], replay: true };
       }
-      const credit = await db.credito.findUnique({ where: { id }, select: { id: true, clienteTelefono: true } });
+      const credit = await db.credito.findUnique({ where: { id }, select: { id: true, clienteTelefono: true, clienteDocumento: true } });
       if (!credit) throw new CreditApprovalError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+      if (isCollectionContactRestricted(credit.clienteDocumento, env()))
+        throw new CreditApprovalError("COLLECTION_CONTACT_RESTRICTED", COLLECTION_CONTACT_RESTRICTION_REASON, 409);
       if (normalizeColombianMobile(credit.clienteTelefono) !== input.expectedPhone) throw new CreditApprovalError("CONTACT_CHANGED", "El celular cambió. Actualiza el crédito antes de enviar.", 409);
       const rows = await db.$queryRawUnsafe<StoredEvent[]>(`INSERT INTO "CreditCollectionCommunicationEvent"
         ("id","requestId","creditoId","action","stage","phone","actorUserId","actorName","requestHash","message")

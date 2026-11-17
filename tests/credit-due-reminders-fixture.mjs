@@ -59,6 +59,7 @@ export async function reminderFixture(t, options = {}) {
         },
         findUnique: async (input) => {
           counts.reads += 1;
+          await options.beforeCreditRead?.({ reads: counts.reads, inTransaction });
           if (!inTransaction && afterClaimRead) {
             afterClaimRead = false;
             await options.afterClaim?.({ database, setClock: value => { clock = new Date(value); } });
@@ -91,6 +92,7 @@ export async function reminderFixture(t, options = {}) {
     "@/lib/credit-due-reminder-policy": policy,
     "@/lib/whatsapp-automation-provider": automation,
     "@/lib/mora-message-protection": automationProtectionFixture(client),
+    "@/lib/collection-contact-restriction": loadReissueModule("lib/collection-contact-restriction.ts"),
   }, { AbortSignal, fetch: () => assert.fail("Unexpected real network"), Error, process: { env: options.env || {} } });
   const runnerDependencies = {
     database: client, now: () => new Date(clock), env: options.env, sendMeta: options.sendMeta,

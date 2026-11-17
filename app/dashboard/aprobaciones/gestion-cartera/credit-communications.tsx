@@ -104,7 +104,9 @@ export default function CreditCommunications({ creditId, phone, disabled = false
         {capabilities.phone ? <a className="fp-ui-button is-secondary" href={`tel:+${capabilities.phone}`} aria-disabled={busy} onClick={event => { if (busy) event.preventDefault(); }}><Phone size={16} />Abrir marcador</a> : null}
         {capabilities.whatsappHref ? <a className="fp-ui-button is-secondary" href={capabilities.whatsappHref} target="_blank" rel="noopener noreferrer" aria-disabled={busy} onClick={event => { if (busy) event.preventDefault(); }}><MessageCircle size={16} />Abrir WhatsApp</a> : null}
       </div>
-      <p className={styles.help}>El marcador y WhatsApp se abren para que realices el contacto. Después registra el resultado en Registrar gestión realizada; abrirlos no confirma una llamada ni un mensaje enviado.</p>
+      {capabilities.contactRestricted
+        ? <p role="status" className={styles.help}>Restricción de cobro activa. Este cliente tiene suspendidos los contactos de cobro por WhatsApp y llamadas.</p>
+        : <p className={styles.help}>El marcador y WhatsApp se abren para que realices el contacto. Después registra el resultado en Registrar gestión realizada; abrirlos no confirma una llamada ni un mensaje enviado.</p>}
       <details className={styles.automatic}><summary>Enviar desde FINSER PAY</summary>
         <div className={styles.action}><Button variant="secondary" onClick={() => confirm("REMINDER")} disabled={busy || uncertain || !capabilities.reminder.available}><Send size={16} />{capabilities.reminder.label}</Button>
           {capabilities.reminder.reason ? <p>{capabilities.reminder.reason}</p> : <p>Se envía la plantilla de pago correspondiente a la fecha de la cuota.</p>}</div>

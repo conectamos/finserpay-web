@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { colombiaDateKey } from "@/lib/colombia-date";
 import { hasActiveMoraMessageProtection } from "@/lib/mora-message-protection";
+import { COLLECTION_CONTACT_RESTRICTION_REASON, isCollectionContactRestricted } from "@/lib/collection-contact-restriction";
 import { isMetaAutomationConfigured, sendMetaAutomation, whatsAppAutomationProvider, type MetaAutomationSender } from "@/lib/whatsapp-automation-provider";
 import {
   getCreditOverdueDataCandidate,
@@ -133,6 +134,10 @@ export function createCreditOverdueDataRunner(deps: {
         if (!Number.isSafeInteger(credit.id) || credit.id <= cursor) throw new Error("Invalid Datos scan cursor");
         cursor = credit.id;
         report.summary.scanned += 1;
+        if (isCollectionContactRestricted(credit.clienteDocumento, deps.env ?? process.env)) {
+          report.summary.excluded += 1;
+          continue;
+        }
         const candidate = getCreditOverdueDataCandidate(credit, today);
         if (!candidate) { report.summary.excluded += 1; continue; }
         report.summary.eligibleCredits += 1;
@@ -183,6 +188,7 @@ export function createCreditOverdueDataRunner(deps: {
         for (const id of ids) {
           if (covered.has(id)) continue;
           const current = await tx.credito.findUnique({ where: { id }, select: creditSelect });
+          if (current && isCollectionContactRestricted(current.clienteDocumento, deps.env ?? process.env)) continue;
           const candidate = current && getCreditOverdueDataCandidate(current, claimedAt);
           if (candidate && candidate.phone === phone) currentCandidates.push(candidate);
         }
@@ -247,6 +253,7 @@ export function createCreditOverdueDataRunner(deps: {
           for (const id of coveredIds) {
             if (blocked.has(id)) continue;
             const current = await tx.credito.findUnique({ where: { id }, select: creditSelect });
+            if (current && isCollectionContactRestricted(current.clienteDocumento, deps.env ?? process.env)) continue;
             const candidate = current && getCreditOverdueDataCandidate(current, now());
             if (candidate && candidate.phone === phone) currentCandidates.push(candidate);
           }
@@ -268,7 +275,7 @@ export function createCreditOverdueDataRunner(deps: {
             `DELETE FROM "CreditOverdueDataCoverage" WHERE "attemptId"=$1::uuid AND NOT ("creditoId"=ANY($2::int[]))`,
             claimId, currentCandidates.map(item => item.creditId),
           );
-          return { candidate, claimExpiresAt: owned.claimExpiresAt };
+          return { candidate, creditIds: currentCandidates.map(item => item.creditId), claimExpiresAt: owned.claimExpiresAt };
         }, { timeout: 30_000 });
         const dispatchAt = now();
         if (!prepared || !isSendingAllowed(dispatchAt) || colombiaDateKey(dispatchAt) !== todayKey
@@ -278,6 +285,7 @@ export function createCreditOverdueDataRunner(deps: {
           if (!await releaseKnownUnsent()) report.summary.unknown += 1;
           continue;
         }
+        let restrictedBeforeSend = false;
         if (provider === "meta") {
           try {
             const native = await (deps.sendMeta ?? sendMetaAutomation)({
@@ -294,6 +302,10 @@ export function createCreditOverdueDataRunner(deps: {
               const currentCandidates: CreditOverdueDataCandidate[] = [];
               for (const { creditoId } of coverage) {
                 const credit = await tx.credito.findUnique({ where: { id: creditoId }, select: creditSelect });
+                if (isCollectionContactRestricted(credit?.clienteDocumento, deps.env ?? process.env)) {
+                  restrictedBeforeSend = true;
+                  throw new Error(COLLECTION_CONTACT_RESTRICTION_REASON);
+                }
                 const current = credit && getCreditOverdueDataCandidate(credit, now());
                 if (!current || current.phone !== phone || await hasActiveMoraMessageProtection(creditoId, credit!.clienteDocumento, tx))
                   throw new Error("DATA_CREDIT_CHANGED_BEFORE_SEND");
@@ -309,7 +321,23 @@ export function createCreditOverdueDataRunner(deps: {
             result = { status: native.status === "accepted" ? "ACCEPTED" : native.status === "failed" ? "FAILED" : "UNKNOWN",
               code: native.code, httpStatus: native.httpStatus ?? null };
           } catch { result = { status: "UNKNOWN", code: "META_OUTCOME_UNKNOWN", httpStatus: null }; }
-        } else result = await dispatch(webhook!, prepared.candidate, deps.fetcher ?? fetch);
+        } else {
+          const outcome = await database.$transaction(async tx => {
+            for (const id of prepared.creditIds) await tx.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, id);
+            for (const id of prepared.creditIds) {
+              const current = await tx.credito.findUnique({ where: { id }, select: creditSelect });
+              if (isCollectionContactRestricted(current?.clienteDocumento, deps.env ?? process.env)) return null;
+            }
+            return dispatch(webhook!, prepared.candidate, deps.fetcher ?? fetch);
+          }, { timeout: 15_000 });
+          restrictedBeforeSend = outcome === null;
+          result = outcome ?? { status: "FAILED", code: "COLLECTION_CONTACT_RESTRICTED", httpStatus: null };
+        }
+        if (restrictedBeforeSend) {
+          report.summary.revalidatedOut += 1;
+          if (!await releaseKnownUnsent()) report.summary.unknown += 1;
+          continue;
+        }
       }
       const finalized = await database.$executeRawUnsafe(
         `UPDATE "CreditOverdueDataAttempt" SET "status"=$2,"resultCode"=$3,"httpStatus"=$4,"finishedAt"=$5
