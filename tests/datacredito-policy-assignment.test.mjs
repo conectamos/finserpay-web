@@ -137,7 +137,8 @@ test("el catalogo y PATCH administran el cupo con conflicto optimista y auditori
   assert.match(quotaAction, /body\.dailyQueryLimit/);
   assert.match(quotaAction, /body\.expectedDailyQueryLimit/);
   assert.match(quotaAction, /setDataCreditoDailyQueryLimitForAlly/);
-  assert.match(quotaAction, /catalogPayload\(\{ dailyQuotaUpdatedAllyId: allyId \}\)/);
+  assert.match(quotaAction, /committedCatalogResponse\(\{\s*operation: "SET_ALLY_DAILY_QUOTA"/);
+  assert.match(quotaAction, /extra: \{ dailyQuotaUpdatedAllyId: allyId \}/);
 });
 
 test("el endpoint legado exige la regla al publicar una revision historica que no la tiene", () => {
