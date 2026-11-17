@@ -468,6 +468,15 @@
 .infoMethodCard dl div { min-width: 0; border-radius: 12px; padding: 10px; background: #f5f6f4; }
 .infoMethodCard dt { color: var(--fp-muted); font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .infoMethodCard dd { overflow-wrap: anywhere; margin: 5px 0 0; font-size: 13px; font-weight: 850; }
+.copyablePaymentDetails > div { grid-column: 1 / -1; }
+.copyablePaymentValue { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.copyablePaymentValue > span:first-child { user-select: all; -webkit-user-select: all; }
+.copyNumberButton { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--fp-border); border-radius: var(--fp-radius-md); padding: 0 12px; color: var(--fp-graphite); background: var(--fp-surface); font-size: 12px; font-weight: 800; cursor: pointer; }
+.copyNumberButton:disabled { cursor: wait; opacity: 0.65; }
+.copyNumberStatus, .copyNumberError { flex-basis: 100%; font-size: 12px; font-weight: 500; line-height: 1.4; }
+.copyNumberStatus { color: var(--fp-client-green); }
+.copyNumberStatus:empty { display: none; }
+.copyNumberError { color: var(--fp-danger); }
 .efectyPayoffButton { display: flex; grid-column: 1 / -1; width: 100%; min-height: 48px; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--fp-graphite); border-radius: var(--fp-radius-md); color: var(--fp-graphite); font-size: 13px; font-weight: 850; background: #fff; }
 .efectyPayoffButton:disabled { opacity: 0.5; }
 .efectyPayoffDetails { display: grid; grid-column: 1 / -1; gap: 7px; border-top: 1px solid var(--fp-border); padding-top: 15px; }

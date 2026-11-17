@@ -8,6 +8,7 @@ import {
   Check,
   ChevronRight,
   CircleCheck,
+  Copy,
   FileText,
   Headphones,
   Landmark,
@@ -168,6 +169,78 @@ function DateTile({ value }: { value: string }) {
       <strong>{dayLabel(value)}</strong>
       <span>{monthLabel(value)}</span>
     </span>
+  );
+}
+
+async function copyPaymentNumber(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Some mobile WebViews only support copying a selected text field.
+  }
+
+  const previousFocus = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.readOnly = true;
+  field.tabIndex = -1;
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  try {
+    field.select();
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    field.remove();
+    previousFocus?.focus({ preventScroll: true });
+  }
+}
+
+function CopyablePaymentNumber({ label, value, copyLabel }: {
+  label: string;
+  value: string;
+  copyLabel: string;
+}) {
+  const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
+  const copyingRef = useRef(false);
+
+  async function copy() {
+    if (copyingRef.current) return;
+    copyingRef.current = true;
+    setCopyState("copying");
+    try {
+      setCopyState(await copyPaymentNumber(value) ? "copied" : "error");
+    } catch {
+      setCopyState("error");
+    } finally {
+      copyingRef.current = false;
+    }
+  }
+
+  return (
+    <dl className={styles.copyablePaymentDetails}>
+      <div>
+        <dt>{label}</dt>
+        <dd className={styles.copyablePaymentValue}>
+          <span>{value}</span>
+          <button type="button" className={styles.copyNumberButton} onClick={() => void copy()}
+            aria-label={copyLabel} disabled={copyState === "copying"}>
+            {copyState === "copied" ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+            {copyState === "copied" ? "Copiado" : copyState === "copying" ? "Copiando…" : "Copiar"}
+          </button>
+          <span role="status" className={copyState === "error" ? styles.copyNumberError : styles.copyNumberStatus}>
+            {copyState === "copied" ? "Número copiado." : copyState === "error" ? "No se pudo copiar. Selecciona el número y cópialo." : ""}
+          </span>
+        </dd>
+      </div>
+    </dl>
   );
 }
 
@@ -615,7 +688,7 @@ export default function ClientCreditPanel({
               <article className={styles.infoMethodCard}>
                 <span className={styles.bankMark}><Landmark size={25} aria-hidden="true" /></span>
                 <div><strong>Transferencia Bancolombia</strong><small>Aplicación asistida; conserva el comprobante.</small></div>
-                <dl><div><dt>Cuenta de ahorros</dt><dd>06800016173</dd></div></dl>
+                <CopyablePaymentNumber label="Cuenta de ahorros" value="06800016173" copyLabel="Copiar cuenta Bancolombia" />
                 <FinserSupportLink className={styles.supportAction}>
                   <Headphones size={19} aria-hidden="true" /> Reportar transferencia a soporte
                 </FinserSupportLink>
@@ -623,7 +696,7 @@ export default function ClientCreditPanel({
               <article className={styles.infoMethodCard}>
                 <span className={styles.bankMark}><QrCode size={25} aria-hidden="true" /></span>
                 <div><strong>BreB</strong><small>Aplicación asistida; conserva el comprobante.</small></div>
-                <dl><div><dt>Llave BreB</dt><dd>902052909</dd></div></dl>
+                <CopyablePaymentNumber label="Llave BreB" value="902052909" copyLabel="Copiar llave BreB" />
                 <FinserSupportLink className={styles.supportAction}>
                   <Headphones size={19} aria-hidden="true" /> Reportar transferencia a soporte
                 </FinserSupportLink>
