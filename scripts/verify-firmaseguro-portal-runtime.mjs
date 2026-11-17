@@ -8,12 +8,27 @@ const readErrorCodes = new Set([
   "PORTAL_CHALLENGE", "PORTAL_LOGIN_CHANGED", "PORTAL_LOGIN_FAILED",
   "PORTAL_STRUCTURE_CHANGED", "PORTAL_UNAVAILABLE",
 ]);
+const readPhases = new Set([
+  "BROWSER_LAUNCH", "CONTEXT", "FIRST_NAVIGATION", "LOGIN_EMAIL", "LOGIN_PASSWORD", "LIST_VERIFICATION",
+]);
+const runtimeCategories = new Set(["SANDBOX", "BINARY", "DEPENDENCY", "FILESYSTEM", "OTHER"]);
+
+function readDiagnostics(error) {
+  const readPhase = error?.readPhase;
+  const runtimeCategory = error?.runtimeCategory;
+  return {
+    ...(readPhases.has(readPhase) ? { readPhase } : {}),
+    ...(runtimeCategories.has(runtimeCategory) ? { runtimeCategory } : {}),
+  };
+}
 
 export class FirmaSeguroPortalRuntimeError extends Error {
-  constructor(code) {
+  constructor(code, portalError) {
     super(code);
     this.name = "FirmaSeguroPortalRuntimeError";
     this.code = code;
+    if (portalError?.name === "FirmaSeguroPortalError" && readErrorCodes.has(portalError.code))
+      Object.assign(this, readDiagnostics(portalError));
   }
 }
 
@@ -44,7 +59,7 @@ export async function verifyFirmaSeguroPortalRuntime() {
   } catch (error) {
     const code = error?.name === "FirmaSeguroPortalError" && readErrorCodes.has(error.code)
       ? error.code : "PORTAL_RUNTIME_ACCESS_FAILED";
-    throw new FirmaSeguroPortalRuntimeError(code);
+    throw new FirmaSeguroPortalRuntimeError(code, error);
   }
   return { ok: true, code: "PORTAL_RUNTIME_ACCESS_VERIFIED", platform: "linux", uid, playwrightVersion };
 }
@@ -53,7 +68,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   try { console.log(JSON.stringify(await verifyFirmaSeguroPortalRuntime())); }
   catch (error) {
     console.error(JSON.stringify({ ok: false, code: error instanceof FirmaSeguroPortalRuntimeError
-      ? error.code : "PORTAL_RUNTIME_ACCESS_FAILED" }));
+      ? error.code : "PORTAL_RUNTIME_ACCESS_FAILED",
+      ...(error instanceof FirmaSeguroPortalRuntimeError ? readDiagnostics(error) : {}) }));
     process.exitCode = 1;
   }
 }

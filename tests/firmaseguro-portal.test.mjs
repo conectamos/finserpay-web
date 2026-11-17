@@ -163,7 +163,10 @@ function fixture(options = {}) {
       const n = this.resolve()[0];
       if (!n) throw new Error("fixture missing control");
       state.clicks.push(n.kind);
-      if (n.kind === "passwordEntry") { state.phase = "password"; state.url = ORIGIN + "/Identity/Account/SignInPassword"; }
+      if (n.kind === "passwordEntry") {
+        if (options.emailLoginFailure) throw new Error("fixture email private detail");
+        state.phase = "password"; state.url = ORIGIN + "/Identity/Account/SignInPassword";
+      }
       if (n.kind === "passwordSubmit") {
         if (options.loginFailure) throw new Error("fixture portal password=fixture-secret should never escape");
         state.authenticated = true; state.phase = "list"; state.url = ORIGIN + "/Process/List";
@@ -208,6 +211,8 @@ function fixture(options = {}) {
     mainFrame: () => frame, url: () => state.url, on() {}, setDefaultTimeout() {}, setDefaultNavigationTimeout() {},
     async goto(url) {
       state.navigations.push(url);
+      if (options.firstNavigationFailure && state.navigations.length === 1)
+        throw new Error("fixture No usable sandbox: private navigation detail");
       state.url = state.authenticated ? url : ORIGIN + "/Login?ReturnUrl=%2FProcess%2FList";
       state.phase = state.authenticated ? "list" : "email";
     },
@@ -221,12 +226,18 @@ function fixture(options = {}) {
     async close() { state.contextClosed++; },
   };
   const browser = {
-    async newContext(value) { state.contextOptions = value; return context; },
+    async newContext(value) {
+      if (state.contextError) throw state.contextError;
+      if (options.contextFailure) throw new Error("fixture No usable sandbox: private context detail");
+      state.contextOptions = value; return context;
+    },
     async close() { state.browserClosed++; },
   };
   const chromium = { async launch(value) {
     state.launches.push(value);
-    if (options.browserLaunchFailure) throw new Error("fixture sandbox unavailable; private launch detail");
+    if (state.browserLaunchError) throw state.browserLaunchError;
+    if (options.browserLaunchFailure) throw new Error(typeof options.browserLaunchFailure === "string"
+      ? options.browserLaunchFailure : "fixture sandbox unavailable; private launch detail");
     return browser;
   } };
   const cleaned = source.replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "");
@@ -284,6 +295,77 @@ test("un sandbox no disponible detiene el acceso sin volver a lanzar Chromium si
   assert.deepEqual(f.state.fills, []);
   assert.deepEqual(f.state.clicks, []);
   assert.equal(f.state.edits, 0); assert.equal(f.state.resends, 0);
+});
+
+for (const [message, category] of [
+  ["No usable sandbox!", "SANDBOX"],
+  ["Failed to move to new namespace: errno = Operation not permitted", "SANDBOX"],
+  ["Running as root without --no-sandbox is not supported", "SANDBOX"],
+  ["Executable doesn't exist at /private/browser", "BINARY"],
+  ["spawn /private/browser ENOENT", "BINARY"],
+  ["error while loading shared libraries: libexample.so", "DEPENDENCY"],
+  ["Host system is missing dependencies to run browsers", "DEPENDENCY"],
+  ["EACCES: permission denied, mkdir /private/profile", "FILESYSTEM"],
+  ["ENOSPC: no space left on device", "FILESYSTEM"],
+  ["unexpected browser transport termination", "OTHER"],
+]) test(`diagnóstico de lanzamiento ${category} no conserva el error crudo`, async () => {
+  const raw = `${message}; credential=fixture-private-secret; https://private.example.test/?token=private`;
+  const f = fixture({ browserLaunchFailure: raw });
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => {
+    assert.equal(error.code, "PORTAL_UNAVAILABLE");
+    assert.equal(error.message, "No se pudo verificar la firma en el portal de FirmaSeguro.");
+    assert.equal(error.status, 502); assert.equal(error.stage, "READ"); assert.equal(error.uncertain, false);
+    assert.equal(error.readPhase, "BROWSER_LAUNCH"); assert.equal(error.runtimeCategory, category);
+    assert.equal(error.cause, undefined);
+    assert.doesNotMatch(JSON.stringify(error) + error.stack, /fixture-private-secret|private\.example|credential=|\/private\//);
+    return true;
+  });
+  assert.equal(f.state.launches.length, 1);
+  assert.equal(f.state.launches[0].chromiumSandbox, true);
+  assert.deepEqual(f.state.fills, []); assert.deepEqual(f.state.clicks, []);
+});
+
+for (const [options, phase] of [
+  [{ contextFailure: true }, "CONTEXT"],
+  [{ firstNavigationFailure: true }, "FIRST_NAVIGATION"],
+  [{ emailLoginFailure: true }, "LOGIN_EMAIL"],
+  [{ loginFailure: true }, "LOGIN_PASSWORD"],
+  [{ missingFilter: "#SearchIdentification" }, "LIST_VERIFICATION"],
+]) test(`diagnóstico ${phase} sin clasificar mensajes posteriores como fallo de lanzamiento`, async () => {
+  const f = fixture(options);
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => {
+    assert.equal(error.code, "PORTAL_UNAVAILABLE");
+    assert.equal(error.readPhase, phase); assert.equal(error.runtimeCategory, undefined);
+    assert.equal(error.stage, "READ"); assert.equal(error.uncertain, false);
+    assert.doesNotMatch(JSON.stringify(error) + error.stack, /private detail|fixture-secret|private context|private navigation/);
+    return true;
+  });
+  assert.equal(f.state.browserClosed, 1);
+  assert.equal(f.state.edits, 0); assert.equal(f.state.resends, 0);
+});
+
+test("un error conocido conserva código y diagnóstico seguro al envolverse", async () => {
+  const f = fixture();
+  f.state.contextError = new f.FirmaSeguroPortalError("PORTAL_NETWORK_FAILED", "Mensaje seguro", 502,
+    "READ", false, "FIRST_NAVIGATION", "OTHER");
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => error.code === "PORTAL_NETWORK_FAILED"
+    && error.message === "Mensaje seguro" && error.readPhase === "FIRST_NAVIGATION" && error.runtimeCategory === "OTHER"
+    && error.stage === "READ" && !error.uncertain);
+  assert.equal(f.state.browserClosed, 1);
+});
+
+test("un error conocido de lanzamiento no se categoriza por su mensaje", async () => {
+  const f = fixture();
+  f.state.browserLaunchError = new f.FirmaSeguroPortalError("PORTAL_STRUCTURE_CHANGED", "No usable sandbox", 409);
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => error.code === "PORTAL_STRUCTURE_CHANGED"
+    && error.message === "No usable sandbox" && error.readPhase === "BROWSER_LAUNCH" && error.runtimeCategory === undefined);
+});
+
+test("la configuración incompleta sigue fallando antes de atribuir una fase de navegador", async () => {
+  const f = fixture({ env: {} });
+  await assert.rejects(f.verifyFirmaSeguroPortalAccess(), error => error.code === "PORTAL_NOT_CONFIGURED"
+    && error.readPhase === undefined && error.runtimeCategory === undefined);
+  assert.equal(f.state.launches.length, 0);
 });
 
 test("edita solo celular y correo, conserva identidad/autenticación y confirma mediante recarga", async () => {

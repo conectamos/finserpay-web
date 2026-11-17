@@ -9,6 +9,14 @@ const PROBE_ENV_KEYS = ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "
 function safeCode(value, fallback) {
   return typeof value === "string" && /^[A-Z][A-Z_]{1,80}$/.test(value) ? value : fallback;
 }
+function safeFailureDetails(value) {
+  const details = {};
+  if (["BROWSER_LAUNCH", "CONTEXT", "FIRST_NAVIGATION", "LOGIN_EMAIL", "LOGIN_PASSWORD", "LIST_VERIFICATION"].includes(value?.readPhase))
+    details.readPhase = value.readPhase;
+  if (["SANDBOX", "BINARY", "DEPENDENCY", "FILESYSTEM", "OTHER"].includes(value?.runtimeCategory))
+    details.runtimeCategory = value.runtimeCategory;
+  return details;
+}
 function validReceipt(value) {
   return value?.ok === true && value.code === "PORTAL_RUNTIME_ACCESS_VERIFIED" && value.platform === "linux"
     && Number.isSafeInteger(value.uid) && value.uid > 0 && value.playwrightVersion === "1.65.0";
@@ -25,7 +33,7 @@ export function verifyPortalInChild(env = process.env, run = execFile) {
           const code = error?.killed ? "PORTAL_RUNTIME_TIMEOUT"
             : receipt?.ok === false ? safeCode(receipt.code, "PORTAL_RUNTIME_VERIFICATION_FAILED")
               : "PORTAL_RUNTIME_VERIFICATION_FAILED";
-          reject(Object.assign(new Error("Portal runtime verification failed"), { code }));
+          reject(Object.assign(new Error("Portal runtime verification failed"), { code, ...safeFailureDetails(receipt) }));
         } else fulfill(receipt);
       });
   });
@@ -54,7 +62,7 @@ export async function startFinserpay({
     } catch (error) {
       env.FIRMASEGURO_PORTAL_RESEND_ENABLED = "false";
       report({ event: "firmaseguro_portal_runtime_failed", resendEnabled: false,
-        code: safeCode(error?.code, "PORTAL_RUNTIME_VERIFICATION_FAILED") });
+        code: safeCode(error?.code, "PORTAL_RUNTIME_VERIFICATION_FAILED"), ...safeFailureDetails(error) });
     }
   }
   await start();
