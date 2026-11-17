@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 import ts from "typescript";
+import * as clientVisibility from "../lib/credit-client-data-visibility.ts";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": path.resolve(import.meta.dirname, "..") } });
 const factory = await jiti.import("../lib/credit-factory.ts");
@@ -90,6 +91,7 @@ function fixture({ protectedCredit = true, blockedForMora = false, blockedForThe
   };
   const meta = { getEqualityDeviceMeta: () => ({}), getPayloadSummary: () => ({}) };
   const dependencies = {
+    "@/lib/credit-client-data-visibility": clientVisibility,
     "next/server": { NextResponse: { json: (body, options = {}) => ({ body, status: options.status || 200 }) } },
     "@/app/generated/prisma/client": { Prisma: { DbNull: null, PrismaClientKnownRequestError: class extends Error {} } },
     "@/lib/auth": { getSessionUser: async () => ({ id: 1, sedeId: 1, rolNombre: role, aliadoAccesoCodigo: central ? "FINSERPAY" : "ALIADO", aliadoAccesoId: central ? 1 : 2 }) },

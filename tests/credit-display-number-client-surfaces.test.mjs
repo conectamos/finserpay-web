@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
+import { CREDIT_CLIENT_REDACTED_FIELDS } from "../lib/credit-client-data-visibility.ts";
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -30,6 +31,7 @@ function creditRoute({ user = { rolNombre: "ADMIN", aliadoAccesoId: 4, aliadoAcc
   const calls = { queries: [], numberIds: [], access: [] };
   const globals = {
     NextResponse,
+    CREDIT_CLIENT_REDACTED_FIELDS,
     getSessionUser: async () => user,
     getSellerSessionUser: async () => ({ id: 23, sedeId: 14, tipoPerfil: "VENDEDOR" }),
     isAdminRole: role => role === "ADMIN",
@@ -77,6 +79,7 @@ test("el vendedor recibe número visible sin perder alcance ni redacción de dat
   assert.equal(result.body.items[0].folio, "FC-ORIGINAL-81");
   assert.equal(result.body.items[0].clienteDireccion, null);
   assert.equal(result.body.items[0].clienteCorreo, null);
+  assert.deepEqual(normalize(result.body.items[0].redactedClientFields), [...CREDIT_CLIENT_REDACTED_FIELDS]);
   assert.equal(result.body.items[0].usuario.usuario, "");
   assert.equal(result.body.items[0].vendedor.documento, "");
 });
