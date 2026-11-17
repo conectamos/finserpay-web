@@ -17,6 +17,7 @@ ENV SESSION_SECRET=build-only-session-secret
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
+RUN node scripts/build-firmaseguro-portal-probe.mjs
 
 FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS runner
 WORKDIR /app
@@ -133,10 +134,13 @@ COPY --from=builder \
   ./scripts/
 COPY --from=builder /app/lib/solicitudes-export-schema-statements.json ./lib/solicitudes-export-schema-statements.json
 COPY --from=builder /app/lib/firmaseguro-draft-administration-schema.json ./lib/firmaseguro-draft-administration-schema.json
+COPY --from=builder /app/scripts/generated/firmaseguro-portal.mjs ./scripts/generated/firmaseguro-portal.mjs
+COPY --from=builder /app/scripts/verify-firmaseguro-portal-runtime.mjs ./scripts/verify-firmaseguro-portal-runtime.mjs
+COPY --from=builder /app/scripts/start-finserpay.mjs ./scripts/start-finserpay.mjs
 
 RUN chown -R node:node /app/.next /home/node
 USER node
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["node", "scripts/start-finserpay.mjs"]

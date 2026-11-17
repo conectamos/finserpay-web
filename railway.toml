@@ -5,7 +5,7 @@ builder = "DOCKERFILE"
 preDeployCommand = [
   "node scripts/railway-predeploy.mjs",
 ]
-startCommand = "node server.js"
+startCommand = "node scripts/start-finserpay.mjs"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
