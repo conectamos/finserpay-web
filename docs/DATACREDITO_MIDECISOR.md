@@ -187,6 +187,13 @@ contactar a Experian.
 
 Cada revisión contiene bandas separadas para `ANDROID` e `IPHONE`:
 
+Al quitar una banda numérica, el administrador elige una banda vecina de la
+misma plataforma que cubrirá sus puntajes. La vista previa muestra el rango
+resultante y la decisión, inicial, cupo y plazo que recibirán esos puntajes.
+La confirmación prepara el borrador y la publicación crea la nueva revisión.
+Cada plataforma conserva cobertura completa de 0 a 950 y su regla obligatoria
+`Sin información`. Una fila nueva sin rango válido puede descartarse del borrador.
+
 ```json
 {
   "id": "identificador-estable",

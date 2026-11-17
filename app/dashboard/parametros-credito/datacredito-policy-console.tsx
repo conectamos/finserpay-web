@@ -17,6 +17,7 @@ import {
   Users,
 } from "lucide-react";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
+import { applyPolicyBandRemoval, getPolicyBandRemovalPlan } from "@/lib/datacredito/policy-band-removal";
 import ManualCreditCapConsole from "@/app/dashboard/parametros-credito/manual-credit-cap-console";
 import SecondCreditAuthorizationConsole from "@/app/dashboard/parametros-credito/second-credit-authorization-console";
 import {
@@ -117,6 +118,12 @@ type EditableBand = {
   maxFinancedAmount: string;
   installmentCount: string;
   maxInstallmentAmount: string;
+};
+
+type PendingBandRemoval = {
+  bandId: string;
+  targetBandId: string;
+  snapshot: string;
 };
 
 type EditableFinancialSettings = {
@@ -1863,6 +1870,8 @@ export default function DatacreditoPolicyConsole() {
   const [version, setVersion] = useState<number | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [bands, setBands] = useState<EditableBand[]>([]);
+  const [pendingBandRemoval, setPendingBandRemoval] = useState<PendingBandRemoval | null>(null);
+  const [bandRemovalConfirmOpen, setBandRemovalConfirmOpen] = useState(false);
   const [financialSettings, setFinancialSettings] =
     useState<EditableFinancialSettings>(
       toEditableFinancialSettings(DEFAULT_FINANCIAL_SETTINGS)
@@ -1877,6 +1886,8 @@ export default function DatacreditoPolicyConsole() {
   const [visitedTabs, setVisitedTabs] = useState<PolicyConsoleTab[]>(["POLICIES"]);
   const mutationBusyRef = useRef(false);
   const switchTab = (tab: PolicyConsoleTab) => {
+    setPendingBandRemoval(null);
+    setBandRemovalConfirmOpen(false);
     setVisitedTabs((current) => current.includes(tab) ? current : [...current, tab]);
     setActiveTab(tab);
   };
@@ -1929,6 +1940,32 @@ export default function DatacreditoPolicyConsole() {
     () => profiles.find((profile) => profile.id === selectedPolicyId) || null,
     [profiles, selectedPolicyId]
   );
+  const bandRemovalSnapshot = JSON.stringify({ selectedPolicyId, version, bands });
+  const bandRemovalPlan = pendingBandRemoval
+    ? getPolicyBandRemovalPlan(bands, pendingBandRemoval.bandId)
+    : null;
+  const bandRemovalSource = bands.find((band) => band.id === pendingBandRemoval?.bandId);
+  const bandRemovalTarget = bands.find((band) => band.id === pendingBandRemoval?.targetBandId);
+  const bandRemovalOption = bandRemovalPlan?.kind === "MERGE"
+    ? bandRemovalPlan.options.find((option) => option.targetBandId === pendingBandRemoval?.targetBandId)
+    : null;
+  const bandRemovalReady = Boolean(pendingBandRemoval && bandRemovalOption && bandRemovalTarget &&
+    pendingBandRemoval.snapshot === bandRemovalSnapshot &&
+    !validation.rowErrors[bandRemovalTarget.id]?.length);
+  const latestBandRemovalRef = useRef({ snapshot: bandRemovalSnapshot, pending: pendingBandRemoval });
+  latestBandRemovalRef.current = { snapshot: bandRemovalSnapshot, pending: pendingBandRemoval };
+  const pendingRemovalBandId = pendingBandRemoval?.bandId;
+  useEffect(() => {
+    if (!pendingRemovalBandId) return;
+    let cancelled = false;
+    window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      const selector = document.getElementById("policy-band-removal-target");
+      selector?.scrollIntoView({ block: "center", behavior: "smooth" });
+      selector?.focus({ preventScroll: true });
+    });
+    return () => { cancelled = true; };
+  }, [pendingRemovalBandId]);
   const dailyQueryLimitValidations = useMemo(
     () =>
       Object.fromEntries(
@@ -2017,6 +2054,8 @@ export default function DatacreditoPolicyConsole() {
       profile: DataCreditoPolicyProfile | null,
       defaults: DataCreditoAresPolicyFinancialSettings
     ) => {
+      setPendingBandRemoval(null);
+      setBandRemovalConfirmOpen(false);
       setSelectedPolicyId(profile?.id || null);
       setVersion(profile?.version ?? null);
       setUpdatedAt(profile?.revisionCreatedAt ?? profile?.updatedAt ?? null);
@@ -2165,6 +2204,8 @@ export default function DatacreditoPolicyConsole() {
 
   const requestProfileSelection = (policyId: string) => {
     if (loading) return;
+    setPendingBandRemoval(null);
+    setBandRemovalConfirmOpen(false);
     if (policyId === selectedPolicyId) return;
     if (hasUnsavedChanges) {
       setPendingPolicyId(policyId);
@@ -2177,6 +2218,8 @@ export default function DatacreditoPolicyConsole() {
 
   const requestReload = () => {
     if (loading) return;
+    setPendingBandRemoval(null);
+    setBandRemovalConfirmOpen(false);
     if (hasPendingChanges) {
       setReloadConfirmOpen(true);
       return;
@@ -2303,12 +2346,64 @@ export default function DatacreditoPolicyConsole() {
     }));
   };
   const removeBand = (bandId: string) => {
+    if (loading || mutationBusyRef.current || saving || savingAssignments || creating || deleting ||
+      confirmOpen || assignmentConfirmOpen || deleteConfirmOpen || reloadConfirmOpen || switchConfirmOpen || createOpen ||
+      bandRemovalConfirmOpen || latestBandRemovalRef.current.pending) return;
     setNotice(null);
-    setHasUnsavedChanges(true);
-    setBands((current) => current.filter((band) => band.id !== bandId));
+    setError(null);
+    const options = { isNewBand: !selectedProfile?.bands.some((band) => band.id === bandId) };
+    const plan = getPolicyBandRemovalPlan(bands, bandId, options);
+    if (plan.kind === "BLOCKED") {
+      setNotice(plan.message);
+      return;
+    }
+    if (plan.kind === "DIRECT") {
+      setBands(applyPolicyBandRemoval(bands, bandId, undefined, options));
+      setHasUnsavedChanges(true);
+      setNotice("Banda nueva retirada del borrador.");
+      return;
+    }
+    setPendingBandRemoval({ bandId, targetBandId: "", snapshot: bandRemovalSnapshot });
+  };
+
+  const confirmBandRemoval = () => {
+    if (loading || mutationBusyRef.current || saving || savingAssignments || creating || deleting) return;
+    if (!latestBandRemovalRef.current.pending) return;
+    if (!pendingBandRemoval || latestBandRemovalRef.current.pending !== pendingBandRemoval ||
+      latestBandRemovalRef.current.snapshot !== pendingBandRemoval.snapshot ||
+      !bandRemovalReady || !bandRemovalSource || !bandRemovalTarget || !bandRemovalOption) {
+      setError("Las bandas cambiaron. Revisa el rango y vuelve a preparar la eliminación.");
+      setPendingBandRemoval(null);
+      setBandRemovalConfirmOpen(false);
+      return;
+    }
+    try {
+      const next = applyPolicyBandRemoval(bands, pendingBandRemoval.bandId, pendingBandRemoval.targetBandId);
+      latestBandRemovalRef.current = { snapshot: bandRemovalSnapshot, pending: null };
+      setBands(next);
+      setHasUnsavedChanges(true);
+      setNotice(`Banda retirada del borrador. El rango ${bandRemovalOption.scoreMin}–${bandRemovalOption.scoreMax} usará las condiciones elegidas al publicar la nueva revisión.`);
+      setPendingBandRemoval(null);
+      setBandRemovalConfirmOpen(false);
+      focusPolicyBandEditor(bandRemovalTarget.id);
+    } catch (removalError) {
+      setError(removalError instanceof Error ? removalError.message : "Revisa las bandas antes de eliminarlas.");
+      setBandRemovalConfirmOpen(false);
+    }
+  };
+
+  const cancelBandRemoval = () => {
+    const sourceBandId = pendingBandRemoval?.bandId;
+    setPendingBandRemoval(null);
+    setBandRemovalConfirmOpen(false);
+    if (sourceBandId) focusPolicyBandEditor(sourceBandId);
   };
 
   const openSaveConfirmation = () => {
+    if (latestBandRemovalRef.current.pending) {
+      setNotice("Confirma o cancela la eliminación de la banda antes de publicar.");
+      return;
+    }
     setNotice(null);
     setError(null);
 
@@ -2414,6 +2509,7 @@ export default function DatacreditoPolicyConsole() {
   };
 
   const openCreatePolicy = () => {
+    if (latestBandRemovalRef.current.pending) return;
     if (!selectedProfile) return;
     if (hasUnsavedChanges) {
       setNotice(
@@ -2615,6 +2711,7 @@ export default function DatacreditoPolicyConsole() {
 
   const openAssignmentConfirmation = () => {
     if (loading) return;
+    if (latestBandRemovalRef.current.pending) return;
     setNotice(null);
     setError(null);
     if (!dailyQueryLimitsValid) {
@@ -2974,12 +3071,12 @@ export default function DatacreditoPolicyConsole() {
               </div>
               <div className={styles.actions}>
                 <Button className={styles.greenButton} onClick={openCreatePolicy}
-                  disabled={!selectedProfile || loading || saving || creating || hasUnsavedChanges}
+                  disabled={!selectedProfile || loading || saving || creating || hasUnsavedChanges || Boolean(pendingBandRemoval)}
                   aria-describedby={hasUnsavedChanges ? "datacredito-create-policy-help" : undefined}>
                   <Plus className="h-5 w-5" aria-hidden="true" />Nueva política
                 </Button>
-                <Button variant="secondary" className={styles.iconButton} onClick={() => setDeleteConfirmOpen(true)} aria-label="Retirar política" title="Retirar política"
-                  disabled={!selectedProfile || loading || selectedProfile.id === defaultPolicyId || selectedProfile.assignedAlliesCount > 0 || !selectedProfile.active || saving || creating || deleting || hasUnsavedChanges}>
+                <Button variant="secondary" className={styles.iconButton} onClick={() => { if (!latestBandRemovalRef.current.pending) setDeleteConfirmOpen(true); }} aria-label="Retirar política" title="Retirar política"
+                  disabled={!selectedProfile || loading || selectedProfile.id === defaultPolicyId || selectedProfile.assignedAlliesCount > 0 || !selectedProfile.active || saving || creating || deleting || hasUnsavedChanges || Boolean(pendingBandRemoval)}>
                   <Trash2 className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </div>
@@ -3219,12 +3316,46 @@ export default function DatacreditoPolicyConsole() {
                   </>
                 )}
                 <ParameterDisclosure title="Bandas de puntaje" number="03" badge={<Badge>{bands.length} bandas</Badge>}>
+              {pendingBandRemoval && bandRemovalSource ? (
+                <div id="policy-band-removal" className="mb-5 rounded-[var(--fp-radius-md)] border border-[var(--fp-amber)] bg-[var(--fp-amber-soft)] p-4" role="region" aria-labelledby="policy-band-removal-title">
+                  <h4 id="policy-band-removal-title" className="font-bold">Quitar banda de {platformLabel(bandRemovalSource.platform)}</h4>
+                  <p className="mt-2 text-sm">Elige qué banda cubrirá los puntajes {bandRemovalSource.scoreMin}–{bandRemovalSource.scoreMax}.</p>
+                  <label className="mt-4 grid gap-2 text-sm font-bold" htmlFor="policy-band-removal-target">
+                    Condiciones que recibirán esos puntajes
+                    <Select id="policy-band-removal-target" value={pendingBandRemoval.targetBandId}
+                      disabled={loading || saving || savingAssignments || creating || deleting || bandRemovalConfirmOpen}
+                      onChange={(event) => {
+                        setBandRemovalConfirmOpen(false);
+                        setPendingBandRemoval((current) => current ? { ...current, targetBandId: event.target.value } : null);
+                      }}>
+                      <option value="">Seleccionar banda vecina</option>
+                      {bandRemovalPlan?.kind === "MERGE" ? bandRemovalPlan.options.map((option) => {
+                        const target = bands.find((band) => band.id === option.targetBandId)!;
+                        return <option key={target.id} value={target.id}>{target.scoreMin}–{target.scoreMax} · {target.decision} · Inicial {target.initialPaymentPercentage} % · Máximo {formatCop(readFiniteNumber(target.maxFinancedAmount))}</option>;
+                      }) : null}
+                    </Select>
+                  </label>
+                  {bandRemovalTarget && bandRemovalOption ? (
+                    <p id="policy-band-removal-preview" className="mt-3 text-sm leading-6" aria-live="polite">
+                      Los puntajes {bandRemovalSource.scoreMin}–{bandRemovalSource.scoreMax} pasarán a {bandRemovalTarget.decision}, con inicial {bandRemovalTarget.initialPaymentPercentage} %, cupo máximo {formatCop(readFiniteNumber(bandRemovalTarget.maxFinancedAmount))}, plazo máximo {bandRemovalTarget.installmentCount} cuotas{bandRemovalTarget.platform === "IPHONE" ? ` y tope por cuota de ${formatCop(readFiniteNumber(bandRemovalTarget.maxInstallmentAmount))}` : ""}. El rango resultante será {bandRemovalOption.scoreMin}–{bandRemovalOption.scoreMax}.
+                    </p>
+                  ) : null}
+                  {pendingBandRemoval.snapshot !== bandRemovalSnapshot ? <p role="alert" className="mt-3 text-sm font-bold text-[var(--fp-danger)]">Las bandas cambiaron. Cancela y vuelve a preparar la eliminación.</p> : null}
+                  {bandRemovalTarget && validation.rowErrors[bandRemovalTarget.id]?.length ? <p role="alert" className="mt-3 text-sm font-bold text-[var(--fp-danger)]">Completa las condiciones de la banda vecina antes de continuar.</p> : null}
+                  <p className="mt-3 text-sm">Después de confirmar, publica una nueva revisión para aplicar el cambio a las consultas futuras.</p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button variant="secondary" disabled={bandRemovalConfirmOpen} onClick={cancelBandRemoval}>Cancelar eliminación</Button>
+                    <Button disabled={!bandRemovalReady || loading || saving || savingAssignments || creating || deleting || bandRemovalConfirmOpen}
+                      onClick={() => { if (bandRemovalReady) setBandRemovalConfirmOpen(true); }}>Revisar eliminación</Button>
+                  </div>
+                </div>
+              ) : null}
               <PlatformEditor
                 platform="ANDROID"
                 bands={androidBands}
                 errors={validation.platformErrors.ANDROID}
                 rowErrors={validation.rowErrors}
-                disabled={loading || saving || savingAssignments || creating || deleting}
+                disabled={loading || saving || savingAssignments || creating || deleting || Boolean(pendingBandRemoval)}
                 onAdd={addBand}
                 onAddNoInformation={addNoInformationBand}
                 onChange={updateBand}
@@ -3236,7 +3367,7 @@ export default function DatacreditoPolicyConsole() {
                 bands={iphoneBands}
                 errors={validation.platformErrors.IPHONE}
                 rowErrors={validation.rowErrors}
-                disabled={loading || saving || savingAssignments || creating || deleting}
+                disabled={loading || saving || savingAssignments || creating || deleting || Boolean(pendingBandRemoval)}
                 onAdd={addBand}
                 onAddNoInformation={addNoInformationBand}
                 onChange={updateBand}
@@ -3703,6 +3834,19 @@ export default function DatacreditoPolicyConsole() {
           <SecondCreditAuthorizationConsole />
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={bandRemovalConfirmOpen}
+        title="Confirmar eliminación de banda"
+        description={bandRemovalSource && bandRemovalTarget && bandRemovalOption
+          ? `Los puntajes ${bandRemovalSource.scoreMin}–${bandRemovalSource.scoreMax} de ${platformLabel(bandRemovalSource.platform)} pasarán a ${bandRemovalTarget.decision}, con inicial ${bandRemovalTarget.initialPaymentPercentage} %, cupo máximo ${formatCop(readFiniteNumber(bandRemovalTarget.maxFinancedAmount))} y plazo máximo de ${bandRemovalTarget.installmentCount} cuotas${bandRemovalTarget.platform === "IPHONE" ? `, con tope por cuota de ${formatCop(readFiniteNumber(bandRemovalTarget.maxInstallmentAmount))}` : ""}. El rango resultante será ${bandRemovalOption.scoreMin}–${bandRemovalOption.scoreMax}. El cambio quedará preparado en el borrador para su publicación.`
+          : "Revisa las bandas y elige qué condiciones recibirán los puntajes antes de confirmar."}
+        confirmLabel="Quitar y ampliar banda elegida"
+        busy={loading || saving || savingAssignments || creating || deleting}
+        danger
+        onCancel={() => setBandRemovalConfirmOpen(false)}
+        onConfirm={confirmBandRemoval}
+      />
 
       <ConfirmDialog
         open={confirmOpen}

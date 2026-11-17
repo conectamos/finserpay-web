@@ -15,11 +15,19 @@ const nodes = (node) => Array.isArray(node) ? node.flatMap(nodes)
 const text = (node) => Array.isArray(node) ? node.map(text).join("") : typeof node === "string" || typeof node === "number"
   ? String(node) : text(node?.props?.children ?? node?.props?.title ?? "");
 const endpoint = "/api/creditos/datacredito/cupos-manuales";
+const removalModule = { exports: {} };
+runInNewContext(ts.transpileModule(readFileSync(new URL("lib/datacredito/policy-band-removal.ts", root), "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { module: removalModule, exports: removalModule.exports, require(name) {
+  assert.equal(name, "./policy");
+  return { DATACREDITO_MIN_SCORE: 0, DATACREDITO_MAX_SCORE: 950, DATACREDITO_NO_INFORMATION_SCORE: -1 };
+} });
 const savedCap = { id: "cap-1", documentLast4: "6789", maxFinancedAmount: 3_200_000,
   reason: "Revisión administrativa completa", active: true, version: 4,
   createdAt: "2026-09-20T13:00:00.000Z", updatedAt: "2026-10-14T15:00:00.000Z" };
 
 function mountConsole(sourceName, fetch, { renderTabChildren = false } = {}) {
+  const focusedIds = [], scrolledIds = [];
   let slots = [];
   const scopes = new Map();
   let seenScopes = new Set();
@@ -45,7 +53,7 @@ function mountConsole(sourceName, fetch, { renderTabChildren = false } = {}) {
     const loaded = { exports: {} }; modules.set(filename, loaded.exports);
     runInNewContext(compiled, { module: loaded, exports: loaded.exports, fetch, console, Intl, Date, Error,
     AbortController, DOMException, URLSearchParams, crypto: { randomUUID },
-    document: { getElementById: () => ({ scrollIntoView() {}, focus() {} }) },
+    document: { getElementById: id => ({ scrollIntoView() { scrolledIds.push(id); }, focus() { focusedIds.push(id); } }) },
     window: { addEventListener() {}, removeEventListener() {}, requestAnimationFrame(callback) { callback(); } },
     require(name) {
       if (name === "react") return hooks;
@@ -53,6 +61,7 @@ function mountConsole(sourceName, fetch, { renderTabChildren = false } = {}) {
       if (name === "lucide-react" || name === "@/app/_components/finser-ui" || name === "./credit-parameters-ui") return controls;
       if (name === "./credit-parameters.module.css") return { default: controls };
       if (name === "@/app/_components/finser-confirm-dialog") return { default: "ConfirmDialog" };
+      if (name === "@/lib/datacredito/policy-band-removal") return removalModule.exports;
       if (name.endsWith("/manual-credit-cap-console") || name.endsWith("/second-credit-authorization-console")) {
         const isManual = name.endsWith("/manual-credit-cap-console");
         if (!renderTabChildren) return { default: isManual ? "ManualCreditCapConsole" : "SecondCreditAuthorizationConsole" };
@@ -85,6 +94,7 @@ function mountConsole(sourceName, fetch, { renderTabChildren = false } = {}) {
     return { ...node, props: { ...node.props, children: expandChildren(node.props?.children), action: expandChildren(node.props?.action) } };
   }
   return {
+    focusedIds, scrolledIds,
     async flush() { for (let n = 0; n < 25; n++) {
       if (dirty) {
         dirty = false; pendingEffects = []; seenScopes = new Set();
@@ -466,4 +476,157 @@ test("catalog reload locks the catalog selector and ally edits until the respons
   assert.equal(allySelector().props.disabled, false);
   assert.equal(byId(h, "datacredito-daily-limit-1").props.disabled, false);
   assert.equal(requests.length, 2);
+});
+
+const removalDialog = h => policyDialog(h, "Confirmar eliminación de banda");
+async function chooseRemoval(h, source = "android-low", target = "android-high") {
+  platformEditor(h, source.startsWith("iphone") ? "IPHONE" : "ANDROID").props.onRemove(source);
+  await h.flush();
+  byId(h, "policy-band-removal-target").props.onChange({ target: { value: target } });
+  await h.flush();
+  policyButton(h, "Revisar eliminación").props.onClick();
+  await h.flush();
+}
+
+test("band removal requires a receiving rule, previews financial changes, and cancel preserves the draft", async () => {
+  const requests = [];
+  const h = mountPolicy(async (url, options) => { requests.push({url, options}); return Response.json(catalog()); });
+  await h.flush();
+  const before = JSON.stringify(platformEditor(h).props.bands);
+  platformEditor(h).props.onRemove("android-low"); await h.flush();
+  assert.equal(h.focusedIds.at(-1), "policy-band-removal-target");
+  assert.equal(h.scrolledIds.at(-1), "policy-band-removal-target");
+  const selectorFocusCount = h.focusedIds.filter(id => id === "policy-band-removal-target").length;
+  assert.equal(byId(h, "policy-band-removal-target").props.value, "");
+  assert.equal(policyButton(h, "Revisar eliminación").props.disabled, true);
+  policyButton(h, "Revisar eliminación").props.onClick(); await h.flush();
+  assert.equal(removalDialog(h).props.open, false);
+  byId(h, "policy-band-removal-target").props.onChange({target: {value: "android-high"}}); await h.flush();
+  assert.equal(h.focusedIds.filter(id => id === "policy-band-removal-target").length, selectorFocusCount,
+    "Selecting a receiving rule must not move focus back to the start of the form");
+  assert.match(text(byId(h, "policy-band-removal-preview")), /0–499 pasarán a APROBADO/);
+  assert.match(text(byId(h, "policy-band-removal-preview")), /inicial 20 %/);
+  assert.match(text(byId(h, "policy-band-removal-preview")), /3\.500\.000/);
+  assert.match(text(byId(h, "policy-band-removal-preview")), /48 cuotas/);
+  assert.match(text(byId(h, "policy-band-removal-preview")), /0–950/);
+  policyButton(h, "Revisar eliminación").props.onClick(); await h.flush();
+  assert.equal(removalDialog(h).props.open, true);
+  assert.match(removalDialog(h).props.description, /APROBADO.*inicial 20 %.*3\.500\.000.*48 cuotas.*0–950/);
+  removalDialog(h).props.onCancel(); await h.flush();
+  assert.equal(JSON.stringify(platformEditor(h).props.bands), before);
+  policyButton(h, "Cancelar eliminación").props.onClick(); await h.flush();
+  assert.equal(h.focusedIds.at(-1), "datacredito-policy-band-android-low");
+  assert.equal(h.all(n => n.props?.id === "policy-band-removal").length, 0);
+  assert.equal(JSON.stringify(platformEditor(h).props.bands), before);
+  assert.equal(requests.length, 1);
+});
+
+test("confirmed band removal keeps the chosen terms and only publishes through the existing revision confirmation", async () => {
+  const requests = [];
+  const h = mountPolicy(async (url, options) => {
+    const body = options?.body ? JSON.parse(options.body) : null;
+    requests.push({url, body});
+    const result = catalog();
+    if (body?.action === "SAVE_REVISION") {
+      result.profiles[0].bands = body.bands;
+      result.profiles[0].version = 11;
+    }
+    return Response.json(result);
+  });
+  await h.flush();
+  const iphoneBefore = JSON.stringify(platformEditor(h, "IPHONE").props.bands);
+  const targetBefore = platformEditor(h).props.bands.find(b => b.id === "android-high");
+  await chooseRemoval(h);
+  const confirm = removalDialog(h).props.onConfirm;
+  confirm(); confirm(); await h.flush();
+  const after = platformEditor(h).props.bands;
+  assert.equal(after.length, 2);
+  assert.equal(after.some(b => b.id === "android-low"), false);
+  assert.equal(JSON.stringify(after.find(b => b.id === "android-high")), JSON.stringify({...targetBefore, scoreMin: "0"}));
+  assert.equal(JSON.stringify(platformEditor(h, "IPHONE").props.bands), iphoneBefore);
+  assert.equal(requests.length, 1, "Draft confirmation never saves a policy or calls a provider");
+  policyButton(h, "Publicar nueva versión").props.onClick(); await h.flush();
+  assert.equal(policyDialog(h, "Publicar nueva revisión").props.open, true);
+  assert.equal(requests.length, 1);
+  await policyDialog(h, "Publicar nueva revisión").props.onConfirm(); await h.flush();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].body.action, "SAVE_REVISION");
+  assert.equal(requests[1].body.expectedVersion, 10);
+  assert.equal(requests[1].body.bands.length, 5);
+  assert.equal(requests[1].body.bands.find(b => b.id === "android-high").scoreMin, 0);
+});
+
+test("Sin información and the last numeric band show an explanation; blank new rows can be removed", async () => {
+  const h = mountPolicy(async () => Response.json(catalog()));
+  await h.flush();
+  platformEditor(h).props.onRemove("android-empty"); await h.flush();
+  assert.match(h.text(), /Sin información es obligatoria/);
+  assert.equal(platformEditor(h).props.bands.length, 3);
+  platformEditor(h).props.onAdd("ANDROID"); await h.flush();
+  const newBand = platformEditor(h).props.bands.find(b => !["android-empty", "android-low", "android-high"].includes(b.id));
+  platformEditor(h).props.onRemove(newBand.id); await h.flush();
+  assert.equal(platformEditor(h).props.bands.length, 3);
+  assert.equal(h.all(n => n.props?.id === "policy-band-removal").length, 0);
+  platformEditor(h).props.onAdd("ANDROID"); await h.flush();
+  const overlapping = platformEditor(h).props.bands.find(b => !["android-empty", "android-low", "android-high"].includes(b.id));
+  platformEditor(h).props.onChange(overlapping.id, "scoreMin", "0");
+  platformEditor(h).props.onChange(overlapping.id, "scoreMax", "499"); await h.flush();
+  platformEditor(h).props.onRemove(overlapping.id); await h.flush();
+  assert.equal(platformEditor(h).props.bands.length, 3, "Discarding a redundant new row restores valid coverage");
+  await chooseRemoval(h); removalDialog(h).props.onConfirm(); await h.flush();
+  platformEditor(h).props.onRemove("android-high"); await h.flush();
+  assert.match(h.text(), /al menos una banda/);
+  assert.equal(platformEditor(h).props.bands.length, 2);
+});
+
+test("published invalid ranges and stale financial previews cannot remove a band", async () => {
+  const h = mountPolicy(async () => Response.json(catalog()));
+  await h.flush();
+  platformEditor(h).props.onChange("android-low", "scoreMin", ""); await h.flush();
+  platformEditor(h).props.onRemove("android-low"); await h.flush();
+  assert.match(h.text(), /Completa o restaura/);
+  assert.equal(platformEditor(h).props.bands.length, 3);
+  platformEditor(h).props.onChange("android-low", "scoreMin", "0"); await h.flush();
+  await chooseRemoval(h);
+  const staleConfirm = removalDialog(h).props.onConfirm;
+  platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "3100000"); await h.flush();
+  staleConfirm(); await h.flush();
+  assert.match(h.text(), /Las bandas cambiaron/);
+  assert.equal(platformEditor(h).props.bands.length, 3);
+  assert.equal(platformEditor(h).props.bands.find(b => b.id === "android-high").maxFinancedAmount, "3100000");
+});
+
+test("iPhone confirmation names its installment cap and changing policy clears the pending removal", async () => {
+  const requests = [];
+  const h = mountPolicy(async (url, options) => { requests.push({url, options}); return Response.json(catalog()); });
+  await h.flush();
+  await chooseRemoval(h, "iphone-low", "iphone-high");
+  const staleConfirm = removalDialog(h).props.onConfirm;
+  assert.match(removalDialog(h).props.description, /iPhone.*APROBADO.*160\.000/);
+  removalDialog(h).props.onCancel(); await h.flush();
+  h.find(node => node.type === "Select" && node.props.value === "general").props.onChange({target: {value: "other"}});
+  await h.flush();
+  assert.equal(removalDialog(h).props.open, false);
+  assert.equal(h.all(n => n.props?.id === "policy-band-removal").length, 0);
+  staleConfirm(); await h.flush();
+  assert.equal(platformEditor(h, "IPHONE").props.bands.length, 3);
+  assert.equal(requests.length, 1);
+});
+
+
+test("pending band removal blocks other confirmations and tab navigation cancels its preparation", async () => {
+  const h = mountPolicy(async () => Response.json(catalog()));
+  await h.flush();
+  platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "3100000"); await h.flush();
+  const previousPublishClick = policyButton(h, "Publicar nueva versión").props.onClick;
+  platformEditor(h).props.onRemove("android-low"); await h.flush();
+  previousPublishClick(); await h.flush();
+  assert.equal(policyDialog(h, "Publicar nueva revisión").props.open, false);
+  assert.match(h.text(), /Confirma o cancela la eliminación/);
+  byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+  assert.equal(h.all(n => n.props?.id === "policy-band-removal").length, 0);
+  assert.equal(removalDialog(h).props.open, false);
+  byId(h, "datacredito-policies-tab").props.onClick(); await h.flush();
+  assert.equal(platformEditor(h).props.bands.length, 3);
+  assert.equal(platformEditor(h).props.bands.find(b => b.id === "android-high").maxFinancedAmount, "3100000");
 });
