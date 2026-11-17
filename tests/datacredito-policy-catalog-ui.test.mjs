@@ -264,7 +264,7 @@ test("configura cuatro umbrales de mora versionados antes de las bandas", () => 
 });
 
 test("no activa la mora total en revisiones históricas y la versiona en ambos payloads", () => {
-  assert.match(consoleSource, /Mora total pendiente/);
+  assert.match(consoleSource, /title="Mora total"[^\n]*Sin reglas publicadas/);
   assert.match(
     consoleSource,
     /No se activarán de forma silenciosa[\s\S]*completa expresamente los dos topes de mora total[\s\S]*publica una nueva revisión/

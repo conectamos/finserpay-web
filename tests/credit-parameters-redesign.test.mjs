@@ -230,12 +230,153 @@ const policyButton = (h, label) => h.find(node => node.type === "Button" && text
 const policyDialog = (h, title) => h.find(node => node.type === "ConfirmDialog" && node.props.title === title);
 const platformEditor = (h, platform = "ANDROID") => h.find(node => typeof node.type === "function" && node.type.name === "PlatformEditor" && node.props.platform === platform);
 
-async function beginPolicyCopy(h, name = "Recuperar cartera") {
+const createStepTitles = ["Datos de la política", "Reglas de evaluación", "Condiciones del crédito", "Revisar nueva política"];
+const currentCopyStep = h => createStepTitles.indexOf(text(byId(h, "policy-create-step-title")).trim()) + 1;
+async function goCopyStep(h, destination) {
+  for (let tries = 0; currentCopyStep(h) !== destination && tries < 8; tries += 1) {
+    const current = currentCopyStep(h);
+    assert.ok(current >= 1 && current <= 4, "La etapa de creación debe estar identificada");
+    const control = byId(h, current > destination ? "new-policy-back" : "new-policy-continue");
+    assert.ok(!control.props.disabled, `La etapa ${current} válida permite navegar a ${destination}`);
+    control.props.onClick(); await h.flush();
+  }
+  assert.equal(currentCopyStep(h), destination);
+}
+async function beginPolicyCopy(h, name = "Recuperar cartera", step = 3) {
   policyButton(h, "Nueva política").props.onClick();
   await h.flush();
   byId(h, "new-policy-name").props.onChange({ target: { value: name } });
   await h.flush();
+  await goCopyStep(h, step);
 }
+async function enablePolicyEditing(h) {
+  const edit = h.all(node => node.type === "Button" && text(node).trim() === "Editar política")[0];
+  if (edit) { edit.props.onClick(); await h.flush(); }
+}
+async function openCopyFinancialSettings(h) {
+  const panel = h.find(node => node.type === "details" && nodes(node.props.children).some(child => child.type === "summary" && /^Parámetros de la cuota/.test(text(child))));
+  if (!panel.props.open) { panel.props.onToggle({ currentTarget: { open: true } }); await h.flush(); }
+}
+async function assertCopyName(h, expected) {
+  const previous = currentCopyStep(h);
+  await goCopyStep(h, 1);
+  assert.equal(byId(h, "new-policy-name").props.value, expected);
+  await goCopyStep(h, previous);
+}
+
+test("creation validates each stage, preserves values backwards and keeps the source read-only", async () => {
+  const original = catalog(), before = JSON.stringify(original), requests = [];
+  const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(original); });
+  await h.flush();
+  assert.equal(h.all(node => typeof node.type === "function" && node.type.name === "PlatformEditor").length, 0);
+  policyButton(h, "Nueva política").props.onClick(); await h.flush();
+  assert.equal(currentCopyStep(h), 1);
+  byId(h, "new-policy-name").props.onChange({ target: { value: "ab" } }); await h.flush();
+  assert.equal(byId(h, "new-policy-continue").props.disabled, true);
+  byId(h, "new-policy-continue").props.onClick(); await h.flush();
+  assert.equal(currentCopyStep(h), 1);
+  assert.equal(h.all(node => node.props?.id === "new-policy-submit").length, 0);
+  const stages = h.find(node => node.type === "ol" && node.props["aria-label"] === "Etapas de creación");
+  const futureStage = nodes(stages).find(node => node.props?.onClick && /Revisar/.test(text(node)));
+  assert.ok(futureStage.props.disabled, "No se puede saltar la validación hacia el resumen");
+  futureStage.props.onClick(); await h.flush(); assert.equal(currentCopyStep(h), 1);
+  byId(h, "new-policy-name").props.onChange({ target: { value: "Política validada" } }); await h.flush();
+  await goCopyStep(h, 2);
+  const priorities = () => h.find(node => typeof node.type === "function" && node.type.name === "PriorityRuleEditor");
+  priorities().props.onThresholdChange("totalDelinquency", "ANDROID", ""); await h.flush();
+  assert.equal(byId(h, "new-policy-continue").props.disabled, true);
+  byId(h, "new-policy-continue").props.onClick(); await h.flush(); assert.equal(currentCopyStep(h), 2);
+  priorities().props.onThresholdChange("totalDelinquency", "ANDROID", "1234567"); await h.flush();
+  await goCopyStep(h, 3); await openCopyFinancialSettings(h);
+  h.find(node => node.type === "Input" && node.props.value === "25.2").props.onChange({ target: { value: "-1" } });
+  platformEditor(h).props.onChange("android-high", "scoreMin", "501"); await h.flush();
+  assert.equal(byId(h, "new-policy-continue").props.disabled, true);
+  byId(h, "new-policy-continue").props.onClick(); await h.flush(); assert.equal(currentCopyStep(h), 3);
+  h.find(node => node.type === "Input" && node.props.value === "-1").props.onChange({ target: { value: "26.5" } });
+  platformEditor(h).props.onChange("android-high", "scoreMin", "500"); await h.flush();
+  await goCopyStep(h, 1);
+  assert.equal(byId(h, "new-policy-name").props.value, "Política validada");
+  await goCopyStep(h, 2);
+  assert.equal(priorities().props.rules.totalDelinquency.rejectAboveCopByPlatform.ANDROID, "1234567");
+  await goCopyStep(h, 3);
+  assert.equal(h.find(node => node.type === "Input" && node.props.value === "26.5").props.value, "26.5");
+  await goCopyStep(h, 4);
+  assert.equal(byId(h, "new-policy-submit").props.disabled, false);
+  assert.match(text(byId(h, "new-policy-review")), /Política validada/);
+  assert.match(text(byId(h, "new-policy-review")), /26[.,]5/);
+  assert.match(text(byId(h, "new-policy-review")), /1\.234\.567/);
+  assert.equal(h.focusedIds.at(-1), "policy-create-step-title");
+  assert.equal(JSON.stringify(original), before);
+  assert.equal(requests.length, 1, "La navegación y el resumen no escriben políticas");
+});
+
+test("a historical policy without total delinquency keeps its empty thresholds during editing and copying", async () => {
+  const original = catalog();
+  delete original.profiles[0].priorityRules.totalDelinquency;
+  const before = JSON.stringify(original), requests = [];
+  const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(original); });
+  await h.flush(); await enablePolicyEditing(h);
+  const priorities = () => h.find(node => typeof node.type === "function" && node.type.name === "PriorityRuleEditor");
+  assert.equal(priorities().props.rules.totalDelinquency.rejectAboveCopByPlatform.ANDROID, "");
+  assert.equal(priorities().props.rules.totalDelinquency.rejectAboveCopByPlatform.IPHONE, "");
+  assert.equal(priorities().props.validation.valid, false);
+  assert.equal(policyButton(h, "Publicar nueva versión").props.disabled, true);
+  await beginPolicyCopy(h, "Copia histórica", 2);
+  assert.equal(priorities().props.rules.totalDelinquency.rejectAboveCopByPlatform.ANDROID, "");
+  assert.equal(priorities().props.rules.totalDelinquency.rejectAboveCopByPlatform.IPHONE, "");
+  assert.equal(byId(h, "new-policy-continue").props.disabled, true);
+  byId(h, "new-policy-continue").props.onClick(); await h.flush();
+  assert.equal(currentCopyStep(h), 2);
+  assert.equal(JSON.stringify(original), before);
+  assert.equal(requests.length, 1, "Las reglas faltantes no se rellenan ni se publican automáticamente");
+});
+
+test("editing a published policy requires an explicit action and discarding returns to its summary", async () => {
+  const original = catalog(), before = JSON.stringify(original), requests = [];
+  const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(original); });
+  await h.flush();
+  assert.equal(h.all(node => typeof node.type === "function" && node.type.name === "PlatformEditor").length, 0);
+  assert.equal(h.all(node => node.type === "Button" && text(node).trim() === "Publicar nueva versión").length, 0);
+  assert.equal(policyButton(h, "Editar política").props.disabled, false);
+  await enablePolicyEditing(h);
+  platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "2300000"); await h.flush();
+  assert.equal(policyButton(h, "Publicar nueva versión").props.disabled, false);
+  h.find(node => node.type === "Button" && node.props["aria-label"] === "Actualizar políticas").props.onClick(); await h.flush();
+  assert.equal(policyDialog(h, "Descartar cambios y recargar").props.open, true);
+  policyDialog(h, "Descartar cambios y recargar").props.onConfirm(); await h.flush();
+  assert.equal(h.all(node => typeof node.type === "function" && node.type.name === "PlatformEditor").length, 0);
+  assert.equal(policyButton(h, "Editar política").props.disabled, false);
+  assert.equal(JSON.stringify(original), before);
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(request => !request.options?.method || request.options.method === "GET"));
+});
+
+test("canceling an explicit policy edit preserves independent ally drafts without reloading the catalog", async () => {
+  const requests = [];
+  const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(catalog()); });
+  await h.flush();
+  byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+  h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Alfa QA").props.onChange({ target: { value: "other" } });
+  byId(h, "datacredito-daily-limit-1").props.onChange({ target: { value: "35" } }); await h.flush();
+  byId(h, "datacredito-policies-tab").props.onClick(); await h.flush();
+  await enablePolicyEditing(h);
+  policyButton(h, "Cancelar edición").props.onClick(); await h.flush();
+  assert.equal(policyButton(h, "Editar política").props.disabled, false, "Una edición intacta se cierra directamente");
+  await enablePolicyEditing(h);
+  platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "2300000"); await h.flush();
+  policyButton(h, "Cancelar edición").props.onClick(); await h.flush();
+  assert.equal(policyDialog(h, "Descartar edición de política").props.open, true);
+  policyDialog(h, "Descartar edición de política").props.onCancel(); await h.flush();
+  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").maxFinancedAmount, "2300000");
+  policyButton(h, "Cancelar edición").props.onClick(); await h.flush();
+  policyDialog(h, "Descartar edición de política").props.onConfirm(); await h.flush();
+  assert.equal(h.all(node => typeof node.type === "function" && node.type.name === "PlatformEditor").length, 0);
+  assert.equal(policyButton(h, "Editar política").props.disabled, false);
+  byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
+  assert.equal(h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Alfa QA").props.value, "other");
+  assert.equal(byId(h, "datacredito-daily-limit-1").props.value, "35");
+  assert.equal(requests.length, 1, "Descartar esta edición no recarga ni escribe los borradores de aliados");
+});
 
 test("duplicating isolates bands, finances and priorities and creates only the new profile", async () => {
   const original = catalog(), before = JSON.stringify(original), requests = [];
@@ -255,14 +396,22 @@ test("duplicating isolates bands, finances and priorities and creates only the n
   assert.equal(h.all(node => node.type === "Button" && text(node).trim() === "Publicar nueva versión").length, 0,
     "El formulario de copia no presenta la publicación del origen");
   platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "2500000");
+  await h.flush(); await openCopyFinancialSettings(h);
   h.find(node => node.type === "Input" && node.props.value === "25.2").props.onChange({ target: { value: "24" } });
+  await h.flush(); await goCopyStep(h, 2);
   h.find(node => typeof node.type === "function" && node.type.name === "PriorityRuleEditor")
     .props.onThresholdChange("telcoDelinquency", "ANDROID", "1500000");
-  await h.flush();
+  await h.flush(); await goCopyStep(h, 3);
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").maxFinancedAmount, "2500000");
   assert.equal(JSON.stringify(original), before, "El catálogo y los objetos del origen conservan todos sus términos");
-  assert.equal(policyButton(h, "Crear copia").props.disabled, false);
-  const create = policyButton(h, "Crear copia").props.onClick;
+  await goCopyStep(h, 4);
+  const review = text(byId(h, "new-policy-review"));
+  assert.match(review, /Recuperar cartera/);
+  assert.match(review, /2\.500\.000/);
+  assert.match(review, /1\.500\.000/);
+  assert.match(review, /24/);
+  assert.equal(policyButton(h, "Crear política").props.disabled, false);
+  const create = policyButton(h, "Crear política").props.onClick;
   create(); create(); await h.flush();
   assert.equal(requests.filter(request => request.options?.method === "POST").length, 1);
   assert.equal(requests.filter(request => request.options?.method === "PATCH").length, 0);
@@ -272,6 +421,14 @@ test("duplicating isolates bands, finances and priorities and creates only the n
   assert.equal(sent.priorityRules.telcoDelinquency.rejectAboveCopByPlatform.ANDROID, 1_500_000);
   resolveCreate(); await h.flush();
   assert.match(h.text(), /Recuperar cartera.*creada como versión 1.*Política general.*v10/);
+  const requestsBeforeAssignment = requests.length;
+  policyButton(h, "Asignar a aliado").props.onClick(); await h.flush();
+  assert.equal(byId(h, "datacredito-assignments-tab").props["aria-selected"], true);
+  assert.equal(h.find(node => node.type === "Select" && node.props["aria-label"] === "Política para Aliado Alfa QA").props.value, "general");
+  assert.equal(requests.length, requestsBeforeAssignment, "El acceso a asignación no asigna ni guarda automáticamente");
+  assert.equal(requests.filter(request => request.options?.method === "PATCH").length, 0);
+  byId(h, "datacredito-policies-tab").props.onClick(); await h.flush();
+  await enablePolicyEditing(h);
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").maxFinancedAmount, "2500000");
   assert.equal(JSON.stringify(original), before);
 });
@@ -287,13 +444,14 @@ test("changing the copy source requires discard and cancel keeps its snapshot an
   const discard = policyDialog(h, "Descartar borrador y cambiar de política");
   assert.equal(discard.props.open, true);
   discard.props.onCancel(); await h.flush();
-  assert.equal(byId(h, "new-policy-name").props.value, "Mi nueva política");
+  await assertCopyName(h, "Mi nueva política");
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "35");
-  assert.match(h.text(), /Copia independiente de.*Política general.*versión 10/);
+  assert.match(h.text(), /Base:.*Política general.*versión 10.*política independiente/);
   select().props.onChange({ target: { value: "other" } }); await h.flush();
   policyDialog(h, "Descartar borrador y cambiar de política").props.onConfirm(); await h.flush();
   assert.equal(h.all(node => node.props?.id === "new-policy-name").length, 0);
   assert.equal(h.find(node => node.type === "Select" && node.props.value === "other").props.value, "other");
+  await enablePolicyEditing(h);
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "20");
   assert.equal(requests.length, 1, "Cambiar el origen no publica ni duplica perfiles");
 });
@@ -307,12 +465,12 @@ test("tab navigation and reload confirm discarding the independent copy", async 
   assert.equal(policyDialog(h, "Descartar la nueva política").props.open, true);
   assert.equal(byId(h, "datacredito-policies-tab").props["aria-selected"], true);
   policyDialog(h, "Descartar la nueva política").props.onCancel(); await h.flush();
-  assert.equal(byId(h, "new-policy-name").props.value, "Recuperar cartera");
+  await assertCopyName(h, "Recuperar cartera");
   h.find(node => node.type === "Button" && node.props["aria-label"] === "Actualizar políticas").props.onClick(); await h.flush();
   assert.equal(policyDialog(h, "Descartar cambios y recargar").props.open, true);
   assert.equal(requests.length, 1);
   policyDialog(h, "Descartar cambios y recargar").props.onCancel(); await h.flush();
-  assert.equal(byId(h, "new-policy-name").props.value, "Recuperar cartera");
+  await assertCopyName(h, "Recuperar cartera");
   byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
   policyDialog(h, "Descartar la nueva política").props.onConfirm(); await h.flush();
   assert.equal(byId(h, "datacredito-assignments-tab").props["aria-selected"], true);
@@ -328,19 +486,50 @@ test("a rejected creation retains the copy and retries its edited bands without 
   });
   await h.flush(); await beginPolicyCopy(h, "Nombre repetido");
   platformEditor(h).props.onChange("android-high", "installmentCount", "36"); await h.flush();
-  policyButton(h, "Crear copia").props.onClick(); await h.flush();
+  await goCopyStep(h, 4);
+  policyButton(h, "Crear política").props.onClick(); await h.flush();
   assert.match(h.text(), /Ya existe una política con ese nombre/);
   assert.match(h.text(), /COPY-409/);
   assert.equal(byId(h, "new-policy-name").props.value, "Nombre repetido");
+  await goCopyStep(h, 3);
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").installmentCount, "36");
+  await goCopyStep(h, 1);
   byId(h, "new-policy-name").props.onChange({ target: { value: "Nombre corregido" } }); await h.flush();
-  policyButton(h, "Crear copia").props.onClick(); await h.flush();
+  await goCopyStep(h, 4);
+  policyButton(h, "Crear política").props.onClick(); await h.flush();
   const sends = requests.filter(request => request.body);
   assert.equal(sends.length, 2);
   assert.equal(sends[1].body.name, "Nombre corregido");
   assert.deepEqual(sends[1].body.bands, sends[0].body.bands);
   assert.ok(sends.every(request => request.options.method === "POST"));
 });
+
+for (const failure of [
+  { code: "POLICY_VALIDATION_ERROR", error: "El umbral de mora TELCOS debe ser válido", status: 400, stage: 2 },
+  { code: "POLICY_VALIDATION_ERROR", error: "La tasa efectiva anual debe ser válida", status: 400, stage: 3 },
+  { code: "POLICY_CATALOG_ERROR", error: "El servicio no está disponible", status: 503, stage: 4 },
+]) {
+  test(`a creation error returns to stage ${failure.stage} without losing its independent conditions`, async () => {
+    const requests = [];
+    const h = mountPolicy(async (url, options) => {
+      requests.push({ url, options });
+      return options?.method === "POST" ? Response.json({ ok: false, ...failure }, { status: failure.status }) : Response.json(catalog());
+    });
+    await h.flush(); await beginPolicyCopy(h, "Copia con revisión");
+    platformEditor(h).props.onChange("android-high", "initialPaymentPercentage", "35"); await h.flush();
+    await goCopyStep(h, 4);
+    byId(h, "new-policy-submit").props.onClick(); await h.flush();
+    assert.equal(currentCopyStep(h), failure.stage);
+    assert.ok(h.text().includes(failure.error));
+    assert.equal(requests.filter(request => request.options?.method === "POST").length, 1);
+    if (failure.stage === 4) assert.match(text(byId(h, "new-policy-review")), /35 %/);
+    else {
+      await goCopyStep(h, 3);
+      assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "35");
+    }
+    assert.equal(requests.filter(request => request.options?.method === "PATCH").length, 0);
+  });
+}
 
 test("copy band removal merges the isolated ranges and leaves the published source unchanged", async () => {
   const original = catalog(), before = JSON.stringify(original);
@@ -356,6 +545,7 @@ test("copy band removal merges the isolated ranges and leaves the published sour
   assert.equal(JSON.stringify(original), before);
   policyButton(h, "Cancelar").props.onClick(); await h.flush();
   policyDialog(h, "Descartar la nueva política").props.onConfirm(); await h.flush();
+  await enablePolicyEditing(h);
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").scoreMin, "500");
   assert.equal(policyButton(h, "Publicar nueva versión").props.disabled, true);
 });
@@ -381,12 +571,13 @@ test("a committed creation blocks resend and recovers its exact new profile thro
   });
   await h.flush(); await beginPolicyCopy(h, "Copia guardada");
   platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "2100000"); await h.flush();
-  const staleCreate = policyButton(h, "Crear copia").props.onClick;
+  await goCopyStep(h, 4);
+  const staleCreate = policyButton(h, "Crear política").props.onClick;
   staleCreate(); await h.flush();
   assert.match(h.text(), /Copia guardada.*quedó creada/);
   assert.equal(recoveryFieldset(h).props.disabled, true);
-  assert.equal(byId(h, "new-policy-name").props.value, "Copia guardada");
-  assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").maxFinancedAmount, "2100000");
+  assert.match(text(byId(h, "new-policy-review")), /Copia guardada/);
+  assert.match(text(byId(h, "new-policy-review")), /2\.100\.000/);
   staleCreate(); await h.flush();
   assert.equal(requests.filter(request => request.options?.method === "POST").length, 1);
   policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
@@ -411,7 +602,7 @@ test("a committed revision recovers the published version without repeating the 
     }
     return Response.json(server);
   });
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   platformEditor(h).props.onChange("android-high", "initialPaymentPercentage", "35"); await h.flush();
   policyButton(h, "Publicar nueva versión").props.onClick(); await h.flush();
   const staleConfirm = policyDialog(h, "Publicar nueva revisión").props.onConfirm;
@@ -421,6 +612,7 @@ test("a committed revision recovers the published version without repeating the 
   staleConfirm(); await h.flush();
   policyButton(h, "Actualizar listado").props.onClick(); await h.flush();
   assert.equal(recoveryFieldset(h).props.disabled, false);
+  await enablePolicyEditing(h);
   assert.equal(policyButton(h, "Publicar nueva versión").props.disabled, true);
   assert.equal(platformEditor(h).props.bands.find(band => band.id === "android-high").initialPaymentPercentage, "35");
   assert.equal(requests.filter(request => request.body?.action === "SAVE_REVISION").length, 1);
@@ -502,6 +694,7 @@ test("policy draft survives tab navigation and failed publication without changi
   });
   await h.flush();
   assert.equal(requests.length, 1);
+  await enablePolicyEditing(h);
   platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "3100000"); await h.flush();
   byId(h, "datacredito-assignments-tab").props.onClick(); await h.flush();
   byId(h, "datacredito-policies-tab").props.onClick(); await h.flush();
@@ -555,7 +748,7 @@ test("a policy publication double confirmation sends one revision and publishes 
     if (options?.method === "PATCH") return await new Promise(resolve => { resolveMutation = resolve; });
     return Response.json(catalog());
   });
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "3100000"); await h.flush();
   policyButton(h, "Publicar nueva versión").props.onClick(); await h.flush();
   const confirm = policyDialog(h, "Publicar nueva revisión").props.onConfirm;
@@ -565,6 +758,7 @@ test("a policy publication double confirmation sends one revision and publishes 
   const saved = catalog(); saved.profiles[0].version = 11; saved.profiles[0].bands.find(band => band.id === "android-high").maxFinancedAmount = 3_100_000;
   resolveMutation(Response.json(saved)); await h.flush();
   assert.match(h.text(), /Nueva revisión publicada: versión 11/);
+  await enablePolicyEditing(h);
   assert.equal(policyButton(h, "Publicar nueva versión").props.disabled, true);
 });
 
@@ -590,7 +784,7 @@ test("visited document and second-credit panels retain the same mounted componen
 test("switching a dirty policy or refreshing requires an explicit discard and cancel keeps all edits", async () => {
   const requests = [];
   const h = mountPolicy(async (url, options) => { requests.push({ url, options }); return Response.json(catalog()); });
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "3100000"); await h.flush();
   h.find(node => node.type === "Select" && node.props.value === "general").props.onChange({ target: { value: "other" } }); await h.flush();
   assert.equal(policyDialog(h, "Descartar borrador y cambiar de política").props.open, true);
@@ -744,6 +938,7 @@ test("catalog reload locks the catalog selector and ally edits until the respons
 
 const removalDialog = h => policyDialog(h, "Confirmar eliminación de banda");
 async function chooseRemoval(h, source = "android-low", target = "android-high") {
+  await enablePolicyEditing(h);
   platformEditor(h, source.startsWith("iphone") ? "IPHONE" : "ANDROID").props.onRemove(source);
   await h.flush();
   byId(h, "policy-band-removal-target").props.onChange({ target: { value: target } });
@@ -755,7 +950,7 @@ async function chooseRemoval(h, source = "android-low", target = "android-high")
 test("band removal requires a receiving rule, previews financial changes, and cancel preserves the draft", async () => {
   const requests = [];
   const h = mountPolicy(async (url, options) => { requests.push({url, options}); return Response.json(catalog()); });
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   const before = JSON.stringify(platformEditor(h).props.bands);
   platformEditor(h).props.onRemove("android-low"); await h.flush();
   assert.equal(h.focusedIds.at(-1), "policy-band-removal-target");
@@ -797,7 +992,7 @@ test("confirmed band removal keeps the chosen terms and only publishes through t
     }
     return Response.json(result);
   });
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   const iphoneBefore = JSON.stringify(platformEditor(h, "IPHONE").props.bands);
   const targetBefore = platformEditor(h).props.bands.find(b => b.id === "android-high");
   await chooseRemoval(h);
@@ -822,7 +1017,7 @@ test("confirmed band removal keeps the chosen terms and only publishes through t
 
 test("Sin información and the last numeric band show an explanation; blank new rows can be removed", async () => {
   const h = mountPolicy(async () => Response.json(catalog()));
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   platformEditor(h).props.onRemove("android-empty"); await h.flush();
   assert.match(h.text(), /Sin información es obligatoria/);
   assert.equal(platformEditor(h).props.bands.length, 3);
@@ -845,7 +1040,7 @@ test("Sin información and the last numeric band show an explanation; blank new 
 
 test("published invalid ranges and stale financial previews cannot remove a band", async () => {
   const h = mountPolicy(async () => Response.json(catalog()));
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   platformEditor(h).props.onChange("android-low", "scoreMin", ""); await h.flush();
   platformEditor(h).props.onRemove("android-low"); await h.flush();
   assert.match(h.text(), /Completa o restaura/);
@@ -873,6 +1068,7 @@ test("iPhone confirmation names its installment cap and changing policy clears t
   assert.equal(removalDialog(h).props.open, false);
   assert.equal(h.all(n => n.props?.id === "policy-band-removal").length, 0);
   staleConfirm(); await h.flush();
+  await enablePolicyEditing(h);
   assert.equal(platformEditor(h, "IPHONE").props.bands.length, 3);
   assert.equal(requests.length, 1);
 });
@@ -880,7 +1076,7 @@ test("iPhone confirmation names its installment cap and changing policy clears t
 
 test("pending band removal blocks other confirmations and tab navigation cancels its preparation", async () => {
   const h = mountPolicy(async () => Response.json(catalog()));
-  await h.flush();
+  await h.flush(); await enablePolicyEditing(h);
   platformEditor(h).props.onChange("android-high", "maxFinancedAmount", "3100000"); await h.flush();
   const previousPublishClick = policyButton(h, "Publicar nueva versión").props.onClick;
   platformEditor(h).props.onRemove("android-low"); await h.flush();
