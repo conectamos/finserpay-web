@@ -83,7 +83,8 @@ async function requestQuotaPolicy({ user, seller = null, owner = null, query = "
     canActAsAllySalesAdmin,
     getAssignedDataCreditoPolicy: async (id) => {
       policyReads.push(id);
-      return { kind: "READY", policy: { version: 1, revisionId: "test-policy" } };
+      return { kind: "READY", policy: { version: 1, revisionId: "test-policy",
+        bands: ["ANDROID", "IPHONE"].map(platform => ({ platform, decision: "APROBADO", scoreMin: -1 })) } };
     },
     getDataCreditoDailyQuotaSnapshot: async (id) => {
       quotaReads.push(id);

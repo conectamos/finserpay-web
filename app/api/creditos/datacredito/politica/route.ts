@@ -55,7 +55,7 @@ function serializePolicyResponse(input: {
   simulationRequested?: boolean;
   dailyQuota?: DataCreditoDailyQuotaSnapshot | null;
   simulation?: {
-    kind: "POLICY_NO_INFORMATION";
+    kind: "POLICY_APPROVED_CONDITIONS";
     simulationOnly: true;
     platform: DataCreditoPlatform;
     decision: DataCreditoDecision;
@@ -192,18 +192,23 @@ export async function GET(request: Request) {
       ? undefined
       : await getDataCreditoDailyQuotaSnapshot(quotaAllyId);
     const policy = assigned.kind === "READY" ? assigned.policy : null;
+    const simulationBand = simulationRequested && simulationPlatform && policy
+      ? policy.bands
+          .filter((band) => band.platform === simulationPlatform && band.decision === "APROBADO")
+          .sort((left, right) => left.scoreMin - right.scoreMin)[0]
+      : null;
     const simulationResolution =
       simulationRequested && simulationPlatform && policy
         ? resolveDataCreditoDecision(
             { ...policy, priorityRules: null },
             simulationPlatform,
-            DATACREDITO_NO_INFORMATION_SCORE
+            simulationBand?.scoreMin ?? DATACREDITO_NO_INFORMATION_SCORE
           )
         : null;
     const simulation =
       simulationRequested && simulationPlatform && policy && simulationResolution
         ? {
-            kind: "POLICY_NO_INFORMATION" as const,
+            kind: "POLICY_APPROVED_CONDITIONS" as const,
             simulationOnly: true as const,
             platform: simulationPlatform,
             decision: simulationResolution.decision,

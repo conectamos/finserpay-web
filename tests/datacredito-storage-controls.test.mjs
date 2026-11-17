@@ -590,7 +590,7 @@ test("la ausencia explicita usa politica y puede consumirse sin exponer el senti
   assert.match(policyConsole, /Sin información/);
 });
 
-test("la simulacion resuelve la banda sin informacion de la politica asignada", () => {
+test("la simulacion resuelve condiciones aprobadas de la politica asignada", () => {
   const getter = policyRoute.slice(
     policyRoute.indexOf("export async function GET"),
     policyRoute.indexOf("export async function PATCH")
@@ -600,10 +600,9 @@ test("la simulacion resuelve la banda sin informacion de la politica asignada", 
   assert.match(getter, /purpose\s*===\s*["']simulation["']/);
   assert.match(getter, /searchParams\.get\(["']platform["']\)/);
   assert.match(getter, /normalizeDataCreditoPlatform/);
-  assert.match(getter, /DATACREDITO_NO_INFORMATION_SCORE/);
   assert.match(
     getter,
-    /resolveDataCredito(?:Decision|PolicyBand)\([\s\S]{0,220}DATACREDITO_NO_INFORMATION_SCORE/
+    /resolveDataCreditoDecision\([\s\S]{0,220}simulationBand\?\.scoreMin/
   );
   assert.match(
     getter,

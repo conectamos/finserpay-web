@@ -33,6 +33,7 @@ function load(file, extra = {}, globals = {}) {
     "./central-dashboard-filters": component(Empty),
     "./logout-button": component(Empty),
     "./attention-notifications": { AttentionNotificationBell: Empty },
+    "./ally-dashboard-fpd-panel": component(Empty),
     ...extra,
   };
   execute(read(file), { module: loaded, exports: loaded.exports, ...globals, require: name => {
