@@ -13,6 +13,7 @@ import {
   Landmark,
   Minus,
   Plus,
+  QrCode,
   ReceiptText,
   RefreshCw,
   ShieldCheck,
@@ -614,7 +615,15 @@ export default function ClientCreditPanel({
               <article className={styles.infoMethodCard}>
                 <span className={styles.bankMark}><Landmark size={25} aria-hidden="true" /></span>
                 <div><strong>Transferencia Bancolombia</strong><small>Aplicación asistida; conserva el comprobante.</small></div>
-                <dl><div><dt>Cuenta de ahorros</dt><dd>71800000458</dd></div></dl>
+                <dl><div><dt>Cuenta de ahorros</dt><dd>06800016173</dd></div></dl>
+                <FinserSupportLink className={styles.supportAction}>
+                  <Headphones size={19} aria-hidden="true" /> Reportar transferencia a soporte
+                </FinserSupportLink>
+              </article>
+              <article className={styles.infoMethodCard}>
+                <span className={styles.bankMark}><QrCode size={25} aria-hidden="true" /></span>
+                <div><strong>BreB</strong><small>Aplicación asistida; conserva el comprobante.</small></div>
+                <dl><div><dt>Llave BreB</dt><dd>902052909</dd></div></dl>
                 <FinserSupportLink className={styles.supportAction}>
                   <Headphones size={19} aria-hidden="true" /> Reportar transferencia a soporte
                 </FinserSupportLink>

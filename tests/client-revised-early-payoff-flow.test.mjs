@@ -111,6 +111,7 @@ const PanelUI = compile(readFileSync(new URL("../app/clientes/client-credit-pane
   "@/lib/credit-display-number": displayNumber, "@/lib/colombia-date": colombiaDate,
   "./credit-dashboard-presentation": presentation,
   "@/app/_components/finser-support-link": { default: Empty },
+  "@/app/_components/finser-ui": { StatusPill: "span" },
   "./client-credit-panel.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
 });
 function assertPendingPayoffSummary(flow) {
@@ -170,6 +171,7 @@ function harness(initialCredit = revisedFixture()) {
     },
     "react/jsx-runtime": jsxRuntime, "lucide-react": iconStubs,
     "@/lib/credit-display-number": displayNumber, "./credit-dashboard-presentation": presentation,
+    "@/lib/colombia-date": colombiaDate,
     "@/app/clientes/client-active-credit-dashboard": { default: Active },
     "@/app/clientes/client-credit-panel": { default: Panel },
     "@/app/clientes/client-login-screen": { default: Empty },

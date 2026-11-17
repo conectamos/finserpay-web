@@ -11,6 +11,7 @@ const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const presentation = await jiti.import("../app/clientes/credit-dashboard-presentation.ts");
 const displayNumber = await jiti.import("../lib/credit-display-number.ts");
+const colombiaDate = await jiti.import("../lib/colombia-date.ts");
 const { buildCreditPaymentPlan } = await jiti.import("../lib/credit-payment-plan.ts");
 const source = readFileSync(new URL("../app/clientes/page.tsx", import.meta.url), "utf8");
 const parsed = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -97,6 +98,7 @@ function harness() {
   const dependencies = {
     react, "react/jsx-runtime": jsxRuntime,
     "@/lib/credit-display-number": displayNumber,
+    "@/lib/colombia-date": colombiaDate,
     "./credit-dashboard-presentation": presentation,
     "@/app/clientes/client-active-credit-dashboard": { default: Dashboard },
     "@/app/clientes/client-credit-panel": { default: Panel },
