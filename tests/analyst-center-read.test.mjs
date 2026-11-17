@@ -23,6 +23,7 @@ const errors = load("lib/credit-approval-errors.ts");
 const operational = load("lib/approval-operations-read.ts", {
   "@/lib/prisma": { default: {} }, "@/lib/ally-payments-core": {},
   "@/lib/credit-amortization-contract": {}, "@/lib/firmaseguro-status": {},
+  "@/lib/firmaseguro-portal-rollout": { isFirmaSeguroPortalResendEnabled: () => true },
   "@/lib/credit-device-replacement-remission": {}, "@/lib/approval-operations-core": {},
 });
 const history = load("lib/analyst-center-history.ts", {
