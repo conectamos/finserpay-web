@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CREDIT_CLIENT_REDACTED_FIELDS, type CreditClientRedactedField } from "@/lib/credit-client-data-visibility";
 import { readMassCreditComponents } from "@/lib/mass-credit-financial-components";
 import { resolveCreditSellerDisplay } from "@/lib/credit-assigned-seller";
 import { Prisma } from "@/app/generated/prisma/client";
@@ -196,6 +197,9 @@ function serializeCredit(
   );
 
   const massComponents = readMassCreditComponents(item.contratoSnapshot, item);
+  const identitySnapshot = item.contratoSnapshot && typeof item.contratoSnapshot === "object" && !Array.isArray(item.contratoSnapshot)
+    ? item.contratoSnapshot as { dataCreditoIdentity?: { effective?: { nameMode?: unknown } } }
+    : null;
 
   return {
     ...(massComponents ? { valorSeguro: massComponents.seguro, seguroCuotaPorcentaje: massComponents.seguroCuotaPorcentaje } : {}),
@@ -204,16 +208,24 @@ function serializeCredit(
     clienteNombre: item.clienteNombre,
     clientePrimerNombre: item.clientePrimerNombre,
     clientePrimerApellido: item.clientePrimerApellido,
+    dataCreditoIdentityNameMode: identitySnapshot?.dataCreditoIdentity?.effective?.nameMode === "FULL_NAME_ONLY" ? "FULL_NAME_ONLY" : null,
     clienteTipoDocumento: item.clienteTipoDocumento,
-    clienteDireccion: item.clienteDireccion,
+    redactedClientFields: canViewSensitive
+      ? [] as CreditClientRedactedField[]
+      : [...CREDIT_CLIENT_REDACTED_FIELDS],
+    clienteDireccion: canViewSensitive ? item.clienteDireccion : null,
     clienteDocumento: item.clienteDocumento,
-    clienteFechaNacimiento: item.clienteFechaNacimiento?.toISOString() || null,
-    clienteFechaExpedicion: item.clienteFechaExpedicion?.toISOString() || null,
+    clienteFechaNacimiento: canViewSensitive
+      ? item.clienteFechaNacimiento?.toISOString() || null
+      : null,
+    clienteFechaExpedicion: canViewSensitive
+      ? item.clienteFechaExpedicion?.toISOString() || null
+      : null,
     clienteTelefono: item.clienteTelefono,
-    clienteCorreo: item.clienteCorreo,
+    clienteCorreo: canViewSensitive ? item.clienteCorreo : null,
     clienteDepartamento: item.clienteDepartamento,
     clienteCiudad: item.clienteCiudad,
-    clienteGenero: item.clienteGenero,
+    clienteGenero: canViewSensitive ? item.clienteGenero : null,
     clienteEstadoCivil: canViewSensitive
       ? factorySnapshotDetails.clienteEstadoCivil
       : null,
@@ -279,7 +291,9 @@ function serializeCredit(
     contratoOtpCanal: item.contratoOtpCanal,
     contratoOtpDestino: item.contratoOtpDestino,
     contratoOtpVerificadoAt: item.contratoOtpVerificadoAt?.toISOString() || null,
-    referenciasFamiliares: extractFamilyReferences(item.contratoSnapshot),
+    referenciasFamiliares: canViewSensitive
+      ? extractFamilyReferences(item.contratoSnapshot)
+      : [],
     totalAbonado: summary.totalAbonado,
     saldoPendiente: summary.saldoPendiente,
     totalRecaudado: summary.totalRecaudado,

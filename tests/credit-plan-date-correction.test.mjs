@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { createJiti } from "jiti";
 import ts from "typescript";
+import * as clientVisibility from "../lib/credit-client-data-visibility.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -199,6 +200,7 @@ async function executePlan(current, body, {
     },
   };
   const modules = {
+    "@/lib/credit-client-data-visibility": clientVisibility,
     "next/server": require("next/server"),
     "@/lib/auth": { getSessionUser: async () => ({ id: actorId, nombre: "Admin central", usuario: "central", rolNombre: role, aliadoAccesoId: 1, aliadoAccesoCodigo: central ? "FINSERPAY" : "OTRO" }) },
     "@/lib/seller-auth": { getSellerSessionUser: async () => ({ tipoPerfil: "SUPERVISOR" }) },
