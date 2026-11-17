@@ -146,6 +146,79 @@ test("propaga solo códigos de lectura conocidos, sin mensajes ni causes ni retr
   assert.equal(fixture.state.accesses, 1);
 });
 
+test("conserva exclusivamente fases y categorías enumeradas de un error de lectura conocido", async () => {
+  const phases = ["BROWSER_LAUNCH", "CONTEXT", "FIRST_NAVIGATION", "LOGIN_EMAIL", "LOGIN_PASSWORD", "LIST_VERIFICATION"];
+  const categories = ["SANDBOX", "BINARY", "DEPENDENCY", "FILESYSTEM", "OTHER"];
+  for (const readPhase of phases) for (const runtimeCategory of categories) {
+    const fixture = await runtimeFixture({ accessError: {
+      name: "FirmaSeguroPortalError", code: "PORTAL_UNAVAILABLE", readPhase, runtimeCategory,
+      message: "private credentials", cause: new Error("private URL"), url: "https://private.example.test",
+    } });
+    await assert.rejects(fixture.api.verifyFirmaSeguroPortalRuntime(), error => {
+      assert.equal(rejectCode("PORTAL_UNAVAILABLE")(error), true);
+      assert.equal(error.readPhase, readPhase);
+      assert.equal(error.runtimeCategory, runtimeCategory);
+      assert.deepEqual(Object.keys(error).sort(), ["code", "name", "readPhase", "runtimeCategory"]);
+      assert.doesNotMatch(error.stack, /private|credentials|example\.test/);
+      return true;
+    });
+    assert.equal(fixture.state.accesses, 1);
+  }
+});
+
+test("CLI omite fases y categorías desconocidas o con datos privados sin perder el código", async () => {
+  for (const diagnostics of [
+    { readPhase: "LOGIN_PASSWORD private@example.test", runtimeCategory: "SANDBOX password=private" },
+    { readPhase: "https://private.example.test", runtimeCategory: "DATABASE_URL=private" },
+    { readPhase: "UNKNOWN", runtimeCategory: "UNKNOWN" },
+    { readPhase: "login_email", runtimeCategory: "sandbox" },
+    { readPhase: " LOGIN_EMAIL ", runtimeCategory: " SANDBOX " },
+    { readPhase: ["LOGIN_EMAIL"], runtimeCategory: { value: "SANDBOX" } },
+    { readPhase: null, runtimeCategory: 1 },
+  ]) {
+    const fixture = await runtimeFixture({ direct: true, accessError: {
+      name: "FirmaSeguroPortalError", code: "PORTAL_UNAVAILABLE", ...diagnostics,
+      message: "private raw message", stack: "private stack", env: "private environment",
+    } });
+    assert.deepEqual(fixture.state.errors.map(JSON.parse), [{ ok: false, code: "PORTAL_UNAVAILABLE" }]);
+    assert.equal(fixture.process.exitCode, 1);
+    assert.equal(fixture.state.accesses, 1);
+  }
+});
+
+test("CLI incluye cada diagnóstico opcional válido sin copiar el resto del error", async () => {
+  for (const [diagnostics, expected] of [
+    [{ readPhase: "FIRST_NAVIGATION", runtimeCategory: "DEPENDENCY" }, { readPhase: "FIRST_NAVIGATION", runtimeCategory: "DEPENDENCY" }],
+    [{ readPhase: "LOGIN_EMAIL" }, { readPhase: "LOGIN_EMAIL" }],
+    [{ runtimeCategory: "OTHER" }, { runtimeCategory: "OTHER" }],
+    [{ readPhase: "private@example.test", runtimeCategory: "FILESYSTEM" }, { runtimeCategory: "FILESYSTEM" }],
+    [{ readPhase: "CONTEXT", runtimeCategory: "private path" }, { readPhase: "CONTEXT" }],
+  ]) {
+    const fixture = await runtimeFixture({ direct: true, accessError: {
+      name: "FirmaSeguroPortalError", code: "PORTAL_UNAVAILABLE", ...diagnostics,
+      message: "password=private", url: "https://private.example.test", env: "private environment",
+    } });
+    assert.deepEqual(fixture.state.errors.map(JSON.parse), [{ ok: false, code: "PORTAL_UNAVAILABLE", ...expected }]);
+    assert.equal(fixture.process.exitCode, 1);
+    assert.deepEqual(fixture.state.logs, []);
+  }
+});
+
+test("errores de otro nombre o código no pueden publicar diagnósticos aunque sus enums sean válidos", async () => {
+  for (const identity of [
+    { name: "Error", code: "PORTAL_UNAVAILABLE" },
+    { name: "FirmaSeguroPortalError", code: "PORTAL_RESULT_UNCERTAIN" },
+    { name: "FirmaSeguroPortalError", code: "private code" },
+  ]) {
+    const fixture = await runtimeFixture({ direct: true, accessError: {
+      ...identity, readPhase: "BROWSER_LAUNCH", runtimeCategory: "SANDBOX", message: "private error",
+    } });
+    assert.deepEqual(fixture.state.errors.map(JSON.parse), [{ ok: false, code: "PORTAL_RUNTIME_ACCESS_FAILED" }]);
+    assert.equal(fixture.process.exitCode, 1);
+    assert.equal(fixture.state.accesses, 1);
+  }
+});
+
 for (const accessError of [new Error("secret raw error"),
   { name: "FirmaSeguroPortalError", code: "private value", message: "secret" },
   { name: "FirmaSeguroPortalError", code: "PORTAL_RESULT_UNCERTAIN", message: "secret" },

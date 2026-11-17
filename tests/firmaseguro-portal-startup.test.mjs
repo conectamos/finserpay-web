@@ -59,6 +59,24 @@ test("a verification-only deployment never enables the resend gate", async () =>
   assert.equal(events[0].resendEnabled, false);
   assert.equal(env.FIRMASEGURO_PORTAL_RESEND_ENABLED, "false");
 });
+test("only fixed diagnostic phases and categories reach startup logs", async () => {
+  for (const details of [
+    { readPhase: "BROWSER_LAUNCH", runtimeCategory: "BINARY" },
+    { readPhase: "private customer data", runtimeCategory: "private filesystem path" },
+  ]) {
+    let failure;
+    try {
+      await verifyPortalInChild({}, (_binary, _args, _config, callback) => callback(new Error("private error"), "",
+        JSON.stringify({ ok: false, code: "PORTAL_UNAVAILABLE", ...details })));
+    } catch (error) { failure = error; }
+    const events = [];
+    await startFinserpay({ env: { FIRMASEGURO_PORTAL_RESEND_ENABLED: "true" },
+      verify: async () => { throw failure; }, start: async () => {}, report: event => events.push(event) });
+    assert.equal(JSON.stringify(events).includes("private"), false);
+    assert.equal(events[0].readPhase, details.readPhase === "BROWSER_LAUNCH" ? "BROWSER_LAUNCH" : undefined);
+    assert.equal(events[0].runtimeCategory, details.runtimeCategory === "BINARY" ? "BINARY" : undefined);
+  }
+});
 test("an unknown verification receipt cannot open the portal gate", async () => {
   const env = { FIRMASEGURO_PORTAL_RESEND_ENABLED: "true" };
   await startFinserpay({ env, verify: async () => ({ ok: true, platform: "windows" }), start: async () => {}, report: () => {} });

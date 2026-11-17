@@ -15,6 +15,8 @@ const EXTERNAL_SCRIPTS = new Set([
   "https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js",
 ]);
 type Stage = "READ" | "EDIT" | "RESEND";
+type ReadPhase = "BROWSER_LAUNCH" | "CONTEXT" | "FIRST_NAVIGATION" | "LOGIN_EMAIL" | "LOGIN_PASSWORD" | "LIST_VERIFICATION";
+type RuntimeCategory = "SANDBOX" | "BINARY" | "DEPENDENCY" | "FILESYSTEM" | "OTHER";
 export type FirmaSeguroPortalRecipientInput = {
   processUuid: string;
   folio: string;
@@ -43,6 +45,8 @@ export class FirmaSeguroPortalError extends Error {
     readonly status = 409,
     readonly stage: Stage = "READ",
     readonly uncertain = false,
+    readonly readPhase?: ReadPhase,
+    readonly runtimeCategory?: RuntimeCategory,
   ) {
     super(message);
     this.name = "FirmaSeguroPortalError";
@@ -106,13 +110,24 @@ async function visibleOne(locator: Locator) {
   await locator.first().waitFor({ state: "visible", timeout: TIMEOUT });
   return one(locator);
 }
-function safeError(error: unknown, stage: Stage, uncertain: boolean) {
+function safeError(error: unknown, stage: Stage, uncertain: boolean, readPhase?: ReadPhase, runtimeCategory?: RuntimeCategory) {
   if (error instanceof FirmaSeguroPortalError) {
-    return new FirmaSeguroPortalError(error.code, error.message, error.status, stage, uncertain || error.uncertain);
+    return new FirmaSeguroPortalError(error.code, error.message, error.status, stage, uncertain || error.uncertain,
+      error.readPhase ?? readPhase, error.runtimeCategory ?? runtimeCategory);
   }
   return new FirmaSeguroPortalError(uncertain ? "PORTAL_RESULT_UNCERTAIN" : "PORTAL_UNAVAILABLE",
     uncertain ? "No se confirmó el resultado en FirmaSeguro. No repitas el envío; requiere revisión."
-      : "No se pudo verificar la firma en el portal de FirmaSeguro.", 502, stage, uncertain);
+      : "No se pudo verificar la firma en el portal de FirmaSeguro.", 502, stage, uncertain, readPhase, runtimeCategory);
+}
+function launchFailureCategory(error: unknown): RuntimeCategory {
+  // Match known launcher diagnostics internally; never attach their text, paths, URLs or cause.
+  const message = error !== null && typeof error === "object" && "message" in error && typeof error.message === "string"
+    ? error.message : "";
+  if (/No usable sandbox|Failed to move to new namespace|Failed to unshare|Running as root without --no-sandbox|sandbox[^\r\n]{0,80}(?:unavailable|not supported|failed|disabled)/i.test(message)) return "SANDBOX";
+  if (/Executable doesn't exist|spawn [^\r\n]+ ENOENT|browser executable[^\r\n]{0,80}(?:not found|missing)/i.test(message)) return "BINARY";
+  if (/error while loading shared libraries|Host system is missing dependencies|Missing libraries:|cannot open shared object file/i.test(message)) return "DEPENDENCY";
+  if (/\b(?:EACCES|EPERM|EROFS|ENOSPC|EDQUOT)\b|Permission denied|Read-only file system|No space left on device/i.test(message)) return "FILESYSTEM";
+  return "OTHER";
 }
 
 // Shared by recipient operations and the read-only credential check. No customer filters are applied here.
@@ -126,6 +141,7 @@ async function openPortalAccess() {
   }
   let browser: Browser | undefined, context: BrowserContext | undefined, page: Page;
   let closed = false, blockedNavigation = false, networkFailed = false, navigationRedirects = 0;
+  let readPhase: ReadPhase = "BROWSER_LAUNCH";
   async function close() {
     if (closed) return;
     closed = true;
@@ -156,6 +172,7 @@ async function openPortalAccess() {
     // The portal runs with Chromium's sandbox and receives no application/provider secrets in its environment.
     // An unsupported sandbox is a deployment error; never fall back to an unsandboxed launch.
     browser = await chromium.launch({ headless: true, chromiumSandbox: true, env: browserEnv });
+    readPhase = "CONTEXT";
     context = await browser.newContext({ acceptDownloads: false, ignoreHTTPSErrors: false, serviceWorkers: "block" });
     await context.route("**/*", async route => {
       if (blockedNavigation || networkFailed) { await route.abort("blockedbyclient"); return; }
@@ -230,8 +247,10 @@ async function openPortalAccess() {
     page.setDefaultNavigationTimeout(TIMEOUT);
     page.on("popup", popup => { void popup.close().catch(() => {}); });
     page.on("dialog", dialog => { void dialog.dismiss().catch(() => {}); });
+    readPhase = "FIRST_NAVIGATION";
     await page.goto(ORIGIN + "/Process/List", { waitUntil: "domcontentloaded" });
     await guardPage();
+    readPhase = "LOGIN_EMAIL";
     const login = await visibleOne(page.locator("input#Input_Email"));
     const passwordEntry = await visibleOne(page.locator('input[type="submit"][value="Ingresar con Contraseña"]'));
     const loginAction = await passwordEntry.getAttribute("formaction");
@@ -241,6 +260,7 @@ async function openPortalAccess() {
     await login.fill(account.trim());
     await passwordEntry.click();
     await settle();
+    readPhase = "LOGIN_PASSWORD";
     const secret = await visibleOne(page.locator('input[type="password"]'));
     const loginForm = await one(secret.locator("xpath=ancestor::form"));
     const action = await loginForm.getAttribute("action");
@@ -255,6 +275,7 @@ async function openPortalAccess() {
     await settle();
     if (/\/(?:Login|SignInPassword)\/?$/i.test(new URL(page.url()).pathname))
       failure("PORTAL_LOGIN_FAILED", "No se pudo iniciar sesión en el portal de FirmaSeguro.");
+    readPhase = "LIST_VERIFICATION";
     await page.goto(ORIGIN + "/Process/List", { waitUntil: "domcontentloaded" });
     await guardPage();
     if (!/^\/Process\/List\/?$/i.test(new URL(page.url()).pathname))
@@ -264,7 +285,8 @@ async function openPortalAccess() {
     return { page, guardPage, settle, close };
   } catch (error) {
     await close();
-    throw safeError(error, "READ", false);
+    throw safeError(error, "READ", false, readPhase,
+      readPhase === "BROWSER_LAUNCH" && !(error instanceof FirmaSeguroPortalError) ? launchFailureCategory(error) : undefined);
   }
 }
 
@@ -272,7 +294,7 @@ async function openPortalAccess() {
 export async function verifyFirmaSeguroPortalAccess(): Promise<void> {
   const access = await openPortalAccess();
   try { await access.guardPage(); }
-  catch (error) { throw safeError(error, "READ", false); }
+  catch (error) { throw safeError(error, "READ", false, "LIST_VERIFICATION"); }
   finally { await access.close(); }
 }
 
