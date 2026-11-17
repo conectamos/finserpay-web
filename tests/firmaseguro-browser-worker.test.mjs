@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { connect as connectSocket } from "node:net";
 import test from "node:test";
-import { startFirmaSeguroBrowserWorker } from "../scripts/firmaseguro-browser-worker.mjs";
+import { startFirmaSeguroBrowserWorker, FirmaSeguroBrowserWorkerError, browserWorkerFailureEvent } from "../scripts/firmaseguro-browser-worker.mjs";
 
 const TOKEN = "synthetic_worker_token_01234567890123456789";
 const HOST = "firma-portal-browser.railway.internal:3010";
@@ -60,19 +60,22 @@ function fixture(options = {}) {
   };
   const chromium = {
     launchServer: async args => {
-      state.launches.push(args); if (options.launchError) throw new Error("private launch error");
+      state.launches.push(args); if (options.launchError) throw options.launchError === true ? new Error("private launch error") : options.launchError;
       if (options.launchGate) await options.launchGate;
       return browserServer;
     },
     connect: async (endpoint, settings) => {
       state.events.push("connect"); state.connects.push({ endpoint, settings });
       assert.equal(settings.timeout, 10000);
-      if (state.connects.length === 1) assert.deepEqual({ endpoint, settings }, { endpoint: browserServer.wsEndpoint(), settings: { timeout: 10000 } });
+      if (state.connects.length === 1) {
+        assert.deepEqual({ endpoint, settings }, { endpoint: browserServer.wsEndpoint(), settings: { timeout: 10000 } });
+        if (options.directConnectError) throw options.directConnectError;
+      }
       else {
         assert.match(endpoint, /^ws:\/\/127\.0\.0\.1:[1-9]\d*\/connect$/);
         assert.deepEqual(settings.headers, { Host: HOST, Authorization: `Bearer ${TOKEN}` });
         if (options.gatewayGate) await options.gatewayGate;
-        if (options.gatewayConnectError) throw new Error("private gateway error");
+        if (options.gatewayConnectError) throw options.gatewayConnectError === true ? new Error("private gateway error") : options.gatewayConnectError;
       }
       return { newContext: async config => {
         assert.deepEqual(config, { acceptDownloads: false, serviceWorkers: "block" }); return context;
@@ -82,8 +85,11 @@ function fixture(options = {}) {
   let front;
   const input = {
     runtime, env: options.env ?? { FIRMASEGURO_BROWSER_TOKEN: TOKEN, HOME: "/home/node", PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright" },
-    readVersion: () => options.version ?? "1.65.0",
-    loadPlaywright: async () => { state.loads++; if (options.loadGate) await options.loadGate; return { chromium }; },
+    readVersion: () => { if (options.packageError) throw options.packageError; return options.version ?? "1.65.0"; },
+    loadPlaywright: async () => {
+      state.loads++; if (options.loadError) throw options.loadError;
+      if (options.loadGate) await options.loadGate; return { chromium };
+    },
     createHTTPServer: (config, handler) => {
       assert.equal(config.maxHeaderSize, 8192);
       state.events.push("createFront");
@@ -91,6 +97,7 @@ function fixture(options = {}) {
       front.address = () => ({ port: 3010 });
       front.listen = (port, host, callback) => {
         state.listen = [port, host]; state.events.push("listen");
+        if (options.listenError) { queueMicrotask(() => front.emit("error", options.listenError)); return; }
         if (options.holdListen) state.finishListen = callback; else queueMicrotask(callback);
       };
       front.close = callback => { state.events.push("frontClose"); callback?.(); };
@@ -155,6 +162,57 @@ test("rejects unsupported runtime, invalid token/version or debug before loading
     await assert.rejects(f.start(), { code: `BROWSER_WORKER_${code}`, message: `BROWSER_WORKER_${code}` });
     assert.equal(f.state.loads, 0); assert.equal(f.state.reports.length, 0);
   }
+});
+
+test("startup failures identify only fixed phases, categories and known system codes", async () => {
+  const systemError = code => Object.assign(new Error(`private endpoint ${ENDPOINT} token=${TOKEN}`), { code });
+  const cases = [
+    [{ platform: "win32" }, "PLATFORM", "OTHER"],
+    [{ env: {} }, "ENVIRONMENT", "OTHER"],
+    [{ version: "private-version" }, "PACKAGE", "DEPENDENCY"],
+    [{ packageError: systemError("MODULE_NOT_FOUND") }, "PACKAGE", "DEPENDENCY", "MODULE_NOT_FOUND"],
+    [{ loadError: systemError("ERR_MODULE_NOT_FOUND") }, "IMPORT", "DEPENDENCY", "ERR_MODULE_NOT_FOUND"],
+    [{ launchError: new Error(`No usable sandbox! ${ENDPOINT} ${TOKEN}`) }, "LAUNCH_SERVER", "SANDBOX"],
+    [{ launchError: new Error("Failed to move to new namespace: Operation not permitted") }, "LAUNCH_SERVER", "SANDBOX"],
+    [{ launchError: systemError("ENOENT") }, "LAUNCH_SERVER", "BINARY", "ENOENT"],
+    [{ launchError: new Error("error while loading shared libraries: private-library.so") }, "LAUNCH_SERVER", "DEPENDENCY"],
+    [{ launchError: systemError("EACCES") }, "LAUNCH_SERVER", "FILESYSTEM", "EACCES"],
+    [{ launchError: systemError("private-node-code") }, "LAUNCH_SERVER", "OTHER"],
+    [{ endpoint: "ws://private.example.test/private" }, "ENDPOINT", "OTHER"],
+    [{ directConnectError: systemError("ECONNREFUSED") }, "DIRECT_PROBE", "OTHER", "ECONNREFUSED"],
+    [{ listenError: systemError("EADDRINUSE") }, "LISTEN", "OTHER", "EADDRINUSE"],
+    [{ gatewayConnectError: systemError("ECONNRESET") }, "GATEWAY_PROBE", "OTHER", "ECONNRESET"],
+  ];
+  for (const [options, phase, runtimeCategory, systemCode] of cases) {
+    const f = fixture(options);
+    await assert.rejects(f.start(), error => {
+      assert.equal(error.name, "FirmaSeguroBrowserWorkerError");
+      assert.equal(error.message, error.code);
+      assert.equal(error.phase, phase); assert.equal(error.runtimeCategory, runtimeCategory);
+      assert.equal(error.systemCode, systemCode); assert.equal(error.cause, undefined);
+      const event = browserWorkerFailureEvent(error);
+      assert.deepEqual(event, { event: "firmaseguro_browser_worker_failed", code: error.code, phase, runtimeCategory,
+        ...(systemCode ? { systemCode } : {}) });
+      assert.doesNotMatch(JSON.stringify(event), /private|token=|ws:\/\/|synthetic_worker/);
+      return true;
+    });
+    assert.equal(f.state.reports.length, 0);
+  }
+});
+
+test("failure serializer rejects raw errors and unrecognized or altered diagnostic values", () => {
+  const fallback = { event: "firmaseguro_browser_worker_failed", code: "BROWSER_WORKER_START_FAILED" };
+  for (const error of [new Error(`secret=${TOKEN}`),
+    { name: "FirmaSeguroBrowserWorkerError", code: "BROWSER_WORKER_START_FAILED", phase: "LAUNCH_SERVER" },
+    new FirmaSeguroBrowserWorkerError("private-code", { phase: "LAUNCH_SERVER", runtimeCategory: "SANDBOX" })])
+    assert.deepEqual(browserWorkerFailureEvent(error), fallback);
+  const error = new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_START_FAILED", {
+    phase: `LAUNCH_SERVER ${TOKEN}`, runtimeCategory: "unknown", systemCode: "ws://private.example.test",
+  });
+  assert.deepEqual(browserWorkerFailureEvent(error), fallback);
+  Object.assign(error, { phase: "private-phase", runtimeCategory: "private-category", systemCode: "private-code",
+    message: TOKEN, cause: new Error(ENDPOINT), env: { SECRET: TOKEN }, endpoint: ENDPOINT });
+  assert.deepEqual(browserWorkerFailureEvent(error), fallback);
 });
 
 test("renderer failure closes context, client and server and never publishes readiness", async () => {

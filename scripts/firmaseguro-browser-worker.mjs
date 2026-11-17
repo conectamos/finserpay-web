@@ -10,9 +10,51 @@ const MAX_CONNECTIONS = 3;
 const ACQUIRE_TIMEOUT_MS = 10_000;
 const BROWSER_ENV_KEYS = ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
   "LANG", "LC_ALL", "DISPLAY", "PLAYWRIGHT_BROWSERS_PATH"];
+const PHASES = new Set(["PLATFORM", "ENVIRONMENT", "PACKAGE", "IMPORT", "LAUNCH_SERVER", "ENDPOINT", "DIRECT_PROBE", "LISTEN", "GATEWAY_PROBE"]);
+const CATEGORIES = new Set(["SANDBOX", "BINARY", "DEPENDENCY", "FILESYSTEM", "OTHER"]);
+const SYSTEM_CODES = new Set(["ENOENT", "EACCES", "EPERM", "EROFS", "ENOSPC", "EDQUOT", "EADDRINUSE",
+  "EADDRNOTAVAIL", "EAFNOSUPPORT", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN",
+  "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "ERR_DLOPEN_FAILED"]);
+const ERROR_CODES = new Set(["BROWSER_WORKER_LINUX_REQUIRED", "BROWSER_WORKER_NON_ROOT_REQUIRED", "BROWSER_WORKER_TOKEN_INVALID",
+  "BROWSER_WORKER_DEBUG_FORBIDDEN", "BROWSER_WORKER_PACKAGE_UNAVAILABLE", "BROWSER_WORKER_ENDPOINT_INVALID",
+  "BROWSER_WORKER_RENDERER_FAILED", "BROWSER_WORKER_GATEWAY_FAILED", "BROWSER_WORKER_START_FAILED",
+  "BROWSER_WORKER_CLOSE_TIMEOUT", "BROWSER_WORKER_KILL_TIMEOUT"]);
+
+function safeDiagnostics(value) {
+  const { phase, runtimeCategory, systemCode } = value || {};
+  return { ...(PHASES.has(phase) ? { phase } : {}), ...(CATEGORIES.has(runtimeCategory) ? { runtimeCategory } : {}),
+    ...(SYSTEM_CODES.has(systemCode) ? { systemCode } : {}) };
+}
+function failureCategory(error) {
+  // Inspect bounded text only to classify; never retain or emit it, paths, endpoints or causes.
+  const message = typeof error?.message === "string" ? error.message.slice(0, 8000) : "";
+  if (/No usable sandbox|Failed to move to new namespace|Failed to unshare|Running as root without --no-sandbox|sandbox[^\r\n]{0,80}(?:unavailable|not supported|failed|disabled)/i.test(message)) return "SANDBOX";
+  if (error?.code === "ENOENT" || /Executable doesn't exist|spawn [^\r\n]+ ENOENT|browser executable[^\r\n]{0,80}(?:not found|missing)/i.test(message)) return "BINARY";
+  if (["ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "ERR_DLOPEN_FAILED"].includes(error?.code)
+    || /error while loading shared libraries|Host system is missing dependencies|Missing libraries:|cannot open shared object file/i.test(message)) return "DEPENDENCY";
+  if (["EACCES", "EPERM", "EROFS", "ENOSPC", "EDQUOT"].includes(error?.code)
+    || /\b(?:EACCES|EPERM|EROFS|ENOSPC|EDQUOT)\b|Permission denied|Read-only file system|No space left on device/i.test(message)) return "FILESYSTEM";
+  return "OTHER";
+}
 
 export class FirmaSeguroBrowserWorkerError extends Error {
-  constructor(code) { super(code); this.name = "FirmaSeguroBrowserWorkerError"; this.code = code; }
+  constructor(code, diagnostics) {
+    super(code); this.name = "FirmaSeguroBrowserWorkerError"; this.code = code;
+    Object.assign(this, safeDiagnostics(diagnostics));
+  }
+}
+function diagnosed(error, phase, code) {
+  const existing = error instanceof FirmaSeguroBrowserWorkerError;
+  return new FirmaSeguroBrowserWorkerError(code || (existing && ERROR_CODES.has(error.code) ? error.code : "BROWSER_WORKER_START_FAILED"), {
+    phase: existing && PHASES.has(error.phase) ? error.phase : phase,
+    runtimeCategory: existing && CATEGORIES.has(error.runtimeCategory) ? error.runtimeCategory : failureCategory(error),
+    systemCode: existing ? error.systemCode : error?.code,
+  });
+}
+export function browserWorkerFailureEvent(error) {
+  const known = error instanceof FirmaSeguroBrowserWorkerError && ERROR_CODES.has(error.code);
+  return { event: "firmaseguro_browser_worker_failed", code: known ? error.code : "BROWSER_WORKER_START_FAILED",
+    ...(known ? safeDiagnostics(error) : {}) };
 }
 
 function singleHeader(request, name) {
@@ -61,20 +103,21 @@ export async function startFirmaSeguroBrowserWorker({
   loadPlaywright = () => import("playwright"), createHTTPServer = createServer, request = httpRequest,
   report = event => console.info(JSON.stringify(event)), setTimer = setTimeout, clearTimer = clearTimeout,
 } = {}) {
-  if (runtime.platform !== "linux") throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_LINUX_REQUIRED");
+  if (runtime.platform !== "linux") throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_LINUX_REQUIRED", { phase: "PLATFORM", runtimeCategory: "OTHER" });
   let uid;
   try { uid = runtime.getuid?.(); } catch { /* Stable error below. */ }
-  if (!Number.isSafeInteger(uid) || uid <= 0) throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_NON_ROOT_REQUIRED");
+  if (!Number.isSafeInteger(uid) || uid <= 0) throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_NON_ROOT_REQUIRED", { phase: "PLATFORM", runtimeCategory: "OTHER" });
   const token = env.FIRMASEGURO_BROWSER_TOKEN;
   if (typeof token !== "string" || !/^[A-Za-z0-9_-]{32,256}$/.test(token))
-    throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_TOKEN_INVALID");
-  if (env.DEBUG || env.PWDEBUG) throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_DEBUG_FORBIDDEN");
+    throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_TOKEN_INVALID", { phase: "ENVIRONMENT", runtimeCategory: "OTHER" });
+  if (env.DEBUG || env.PWDEBUG) throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_DEBUG_FORBIDDEN", { phase: "ENVIRONMENT", runtimeCategory: "OTHER" });
   let version;
-  try { version = readVersion(); } catch { /* Do not expose package paths. */ }
-  if (version !== "1.65.0") throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_PACKAGE_UNAVAILABLE");
+  try { version = readVersion(); } catch (error) { throw diagnosed(error, "PACKAGE", "BROWSER_WORKER_PACKAGE_UNAVAILABLE"); }
+  if (version !== "1.65.0") throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_PACKAGE_UNAVAILABLE", { phase: "PACKAGE", runtimeCategory: "DEPENDENCY" });
   const tokenDigest = digest(token);
   let browserServer, launchPromise, front, cancelListen, closing = false, ready = false, closePromise;
   const connections = new Set(), sockets = new Set();
+  let phase = "IMPORT";
 
   function bounded(work, milliseconds, code) {
     return new Promise((fulfill, reject) => {
@@ -123,6 +166,7 @@ export async function startFirmaSeguroBrowserWorker({
     const { chromium } = await loadPlaywright();
     if (closing) throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_START_FAILED");
     const browserEnv = Object.fromEntries(BROWSER_ENV_KEYS.filter(key => env[key] !== undefined).map(key => [key, env[key]]));
+    phase = "LAUNCH_SERVER";
     launchPromise = chromium.launchServer({ host: "127.0.0.1", port: 0, headless: true,
       chromiumSandbox: true, env: browserEnv, timeout: 30_000,
       handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false });
@@ -131,6 +175,7 @@ export async function startFirmaSeguroBrowserWorker({
       await close();
       throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_START_FAILED");
     }
+    phase = "ENDPOINT";
     const endpoint = pinnedEndpoint(browserServer.wsEndpoint());
     browserServer.once("close", unexpectedClose);
     // A connected client's close disconnects it; BrowserServer.close is reserved for worker shutdown.
@@ -148,11 +193,13 @@ export async function startFirmaSeguroBrowserWorker({
         } finally {
           try { await context?.close(); } finally { await browser?.close(); }
         }
-      }, ACQUIRE_TIMEOUT_MS, code).catch(() => { throw new FirmaSeguroBrowserWorkerError(code); });
+      }, ACQUIRE_TIMEOUT_MS, code).catch(error => { throw diagnosed(error, phase, code); });
     }
+    phase = "DIRECT_PROBE";
     await verifyRenderer(endpoint.href, { timeout: ACQUIRE_TIMEOUT_MS }, "BROWSER_WORKER_RENDERER_FAILED");
     if (closing) throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_START_FAILED");
 
+    phase = "LISTEN";
     front = createHTTPServer({ maxHeaderSize: 8192 }, (req, res) => {
       const health = req.method === "GET" && req.url === "/health";
       if (!closing && ready && health) {
@@ -236,6 +283,7 @@ export async function startFirmaSeguroBrowserWorker({
     });
     if (closing) throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_START_FAILED");
     front.on("error", unexpectedClose);
+    phase = "GATEWAY_PROBE";
     const port = front.address()?.port;
     if (!Number.isSafeInteger(port) || port <= 0 || port > 65535)
       throw new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_GATEWAY_FAILED");
@@ -247,15 +295,15 @@ export async function startFirmaSeguroBrowserWorker({
     report({ event: "firmaseguro_browser_worker_ready", sandbox: true, uid, playwrightVersion: version, renderer: true, gateway: true });
     return { close };
   } catch (error) {
+    const failure = diagnosed(error, phase);
     await close();
-    throw error instanceof FirmaSeguroBrowserWorkerError ? error : new FirmaSeguroBrowserWorkerError("BROWSER_WORKER_START_FAILED");
+    throw failure;
   }
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   startFirmaSeguroBrowserWorker().catch(error => {
-    console.error(JSON.stringify({ event: "firmaseguro_browser_worker_failed",
-      code: error instanceof FirmaSeguroBrowserWorkerError ? error.code : "BROWSER_WORKER_START_FAILED" }));
+    console.error(JSON.stringify(browserWorkerFailureEvent(error)));
     process.exitCode = 1;
   });
 }
