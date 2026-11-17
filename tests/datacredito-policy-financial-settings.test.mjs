@@ -204,9 +204,10 @@ test("retirar una politica es logico, bloqueado y conserva historia", async () =
   assert.match(ui, /Aval\/fianza total del crédito/);
   assert.match(ui, /Seguro por cuota/);
   assert.match(ui, /ARES_FRANCES_V1/);
-  assert.match(ui, /Condiciones financieras de la nueva política/);
+  assert.match(ui, /Parámetros de la cuota/);
   assert.match(ui, /newPolicyFinancialSettings/);
-  assert.match(ui, /Reglas prioritarias de la nueva política/);
+  assert.match(ui, /createStep === 2 \? <PriorityRuleEditor rules=\{newPolicyPriorityRules\}/);
+  assert.match(ui, /idPrefix="new-policy-priority"/);
   assert.match(ui, /Reglas de evaluación/);
   assert.match(ui, /newPolicyPriorityRules/);
   assert.match(
