@@ -24,6 +24,7 @@ function load(file, dependencies = {}) {
 }
 
 const policy = load("lib/datacredito/policy.ts");
+const simulationConditions = load("lib/datacredito/simulation-conditions.ts", { "./policy": policy });
 const roles = load("lib/roles.ts");
 const allies = load("lib/aliados.ts");
 const policyAccess = load("lib/datacredito/policy-access.ts");
@@ -77,6 +78,7 @@ function fixture({ user = allyAdmin, enabled = true, assignedPolicy = createPoli
     "@/lib/datacredito": { getDataCreditoPublicConfig: () => ({ enabled, configured: true }) },
     "@/lib/datacredito/policy-access": policyAccess,
     "@/lib/datacredito/policy": policy,
+    "@/lib/datacredito/simulation-conditions": simulationConditions,
     "@/lib/credit-settings": { getCreditSettings: unavailable },
     "@/lib/seller-auth": { getSellerSessionUser: unavailable },
     "@/lib/solicitud-operation-access": operationAccess,
@@ -103,6 +105,7 @@ function fixture({ user = allyAdmin, enabled = true, assignedPolicy = createPoli
   return {
     reads,
     quotaReads,
+    setAssignedPolicy(value) { assignedPolicy = value; },
     async ordinaryRequest(search = "") {
       const response = await route.GET(new Request(`https://finserpay.test/api/creditos/datacredito/politica${search}`));
       return { status: response.status, data: await response.json() };
@@ -132,6 +135,9 @@ test("el administrador aliado simula Android e iPhone con su política local sin
     assert.equal(result.data.simulation.offer.installmentCount, 24);
     assert.equal(result.data.simulation.offer.maxInstallmentAmount, platform === "IPHONE" ? 160_000 : null);
     assert.deepEqual(result.data.simulation.initialPaymentPercentages, [30]);
+    assert.deepEqual(result.data.simulation.conditions, [
+      { id: "condition-1", offer: result.data.simulation.offer },
+    ]);
     assert.deepEqual(result.data.policy, { version: 5, createdAt: "2026-10-18T05:00:00.000Z" });
     for (const field of ["dailyQuota", "assessmentId", "bands", "priorityRules"]) {
       assert.equal(result.data[field], undefined, field);
@@ -159,6 +165,21 @@ test("una política válida que rechaza Sin información permite simular sus con
     assert.equal(simulation.offer.maxFinancedAmount, 1_200_000);
     assert.deepEqual(simulation.initialPaymentPercentages, platform === "ANDROID" ? [20, 40] : [10, 30]);
     assert.deepEqual(simulation.offer.financialSettings, plain(assignedPolicy.financialSettings));
+    assert.deepEqual(simulation.conditions.map((condition) => ({
+      id: condition.id,
+      initial: condition.offer.initialPaymentPercentage,
+      financed: condition.offer.maxFinancedAmount,
+      installments: condition.offer.installmentCount,
+      maximum: condition.offer.maxInstallmentAmount,
+      financialSettings: condition.offer.financialSettings,
+    })), [
+      { id: "condition-1", initial: platform === "ANDROID" ? 40 : 30,
+        financed: 1_200_000, installments: 16, maximum: platform === "IPHONE" ? 160_000 : null,
+        financialSettings: plain(assignedPolicy.financialSettings) },
+      { id: "condition-2", initial: platform === "ANDROID" ? 20 : 10,
+        financed: 2_000_000, installments: 24, maximum: platform === "IPHONE" ? 160_000 : null,
+        financialSettings: plain(assignedPolicy.financialSettings) },
+    ]);
     assert.equal(policy.resolveDataCreditoDecision({ ...assignedPolicy, priorityRules: null }, platform, -1).decision,
       "RECHAZADO", "La decisión real de Sin información permanece rechazada");
     for (const field of ["assessmentId", "score", "bands", "bandId", "scoreMin", "scoreMax", "priorityRules"]) {
@@ -183,6 +204,7 @@ test("la plataforma sin bandas aprobadas conserva el rechazo aunque la otra plat
   assert.equal(android.data.simulation.decision, "RECHAZADO");
   assert.equal(android.data.simulation.offer, null);
   assert.deepEqual(android.data.simulation.initialPaymentPercentages, []);
+  assert.deepEqual(android.data.simulation.conditions, []);
   const iphone = await f.request("IPHONE");
   assert.equal(iphone.status, 200);
   assert.equal(iphone.data.simulation.decision, "APROBADO");
@@ -200,7 +222,7 @@ test("las iniciales de simulación vienen de bandas aprobadas de la plataforma, 
   })));
   assignedPolicy.bands.push(
     { ...base, id: "android-rejected", scoreMin: 400, scoreMax: 500, decision: "RECHAZADO", initialPaymentPercentage: 8 },
-    { ...base, id: "iphone-only", platform: "IPHONE", scoreMin: 0, scoreMax: 500, initialPaymentPercentage: 15 },
+    { ...base, id: "iphone-only", platform: "IPHONE", scoreMin: 0, scoreMax: 500, initialPaymentPercentage: 15, maxInstallmentAmount: 150_000 },
     { ...base, id: "iphone-rejected", platform: "IPHONE", scoreMin: 501, scoreMax: 950, decision: "RECHAZADO", initialPaymentPercentage: 2 },
   );
   const before = plain(assignedPolicy);
@@ -235,6 +257,67 @@ test("la consulta normal conserva su respuesta y no expone iniciales de simulaci
   assert.deepEqual(f.quotaReads, [2]);
 });
 
+test("condiciones con la misma inicial conservan su propio cupo, plazo y tope y solo se deduplican ofertas idénticas", async () => {
+  const assignedPolicy = createScoredPolicy(2);
+  assignedPolicy.bands = assignedPolicy.bands.flatMap((band) => {
+    if (band.decision !== "APROBADO") return [band];
+    const common = { ...band, initialPaymentPercentage: 30 };
+    if (band.scoreMin === 450) return [
+      { ...common, scoreMax: 599 },
+      { ...common, id: `${band.id}-duplicate`, scoreMin: 600, scoreMax: 699 },
+    ];
+    return [{ ...common, maxInstallmentAmount: band.platform === "IPHONE" ? 140_000 : null }];
+  }).reverse();
+  const before = plain(assignedPolicy);
+  const f = fixture({ assignedPolicy });
+  for (const platform of ["ANDROID", "IPHONE"]) {
+    const { data } = await f.request(platform);
+    assert.equal(data.simulation.conditions.length, 2);
+    assert.deepEqual(data.simulation.initialPaymentPercentages, [30]);
+    assert.deepEqual(data.simulation.conditions.map(({ id, offer }) => [id,
+      offer.initialPaymentPercentage, offer.maxFinancedAmount,
+      offer.installmentCount, offer.maxInstallmentAmount]), [
+      ["condition-1", 30, 1_200_000, 16, platform === "IPHONE" ? 160_000 : null],
+      ["condition-2", 30, 2_000_000, 24, platform === "IPHONE" ? 140_000 : null],
+    ]);
+    assert.deepEqual(data.simulation.offer, data.simulation.conditions[0].offer);
+    for (const condition of data.simulation.conditions) {
+      assert.deepEqual(Object.keys(condition).sort(), ["id", "offer"]);
+      assert.deepEqual(Object.keys(condition.offer).sort(), ["financialSettings", "initialPaymentPercentage",
+        "installmentCount", "maxFinancedAmount", "maxInstallmentAmount", "policyVersion", "suretyPercentage"]);
+      assert.ok(!assignedPolicy.bands.some((band) => band.id === condition.id));
+    }
+  }
+  assert.deepEqual(plain(assignedPolicy), before);
+  assert.deepEqual(f.quotaReads, []);
+});
+
+test("las condiciones de ambas plataformas se vuelven a resolver con la política vigente al reasignar el aliado", async () => {
+  const f = fixture({ assignedPolicy: createScoredPolicy(2) });
+  const first = await f.request("IPHONE");
+  assert.equal(first.data.simulation.conditions[0].offer.maxFinancedAmount, 1_200_000);
+  const replacement = createPolicy(7);
+  replacement.revisionId = "new-profile-revision";
+  replacement.bands = replacement.bands.map((band) => ({ ...band,
+    initialPaymentPercentage: 0, installmentCount: 12,
+    maxInstallmentAmount: band.platform === "IPHONE" ? 130_000 : null }));
+  f.setAssignedPolicy(replacement);
+  for (const platform of ["ANDROID", "IPHONE"]) {
+    const { data } = await f.request(platform);
+    assert.equal(data.simulation.policyRevisionId, "new-profile-revision");
+    assert.equal(data.simulation.policyVersion, 10);
+    assert.deepEqual(data.simulation.initialPaymentPercentages, [0]);
+    assert.equal(data.simulation.conditions.length, 1);
+    assert.deepEqual(data.simulation.conditions[0], { id: "condition-1", offer: {
+      initialPaymentPercentage: 0, suretyPercentage: 75, maxFinancedAmount: 7_000_000,
+      installmentCount: 12, maxInstallmentAmount: platform === "IPHONE" ? 130_000 : null,
+      policyVersion: 10, financialSettings: plain(replacement.financialSettings),
+    } });
+  }
+  assert.deepEqual(f.reads, [2, 2, 2], "Cada lectura conserva el aliado de la sesión");
+  assert.deepEqual(f.quotaReads, []);
+});
+
 test("un aliado no puede cambiar la política simulada enviando otro aliado, documento o solicitud", async () => {
   const f = fixture();
   const result = await f.request("IPHONE", "&aliadoId=1&allyId=1&documento=00112233&solicitudId=999&includeDisabledPolicy=true");
@@ -260,6 +343,7 @@ test("el simulador aliado conserva rechazo, falta de asignación e integración 
   assert.equal(denied.data.simulation.decision, "RECHAZADO");
   assert.equal(denied.data.simulation.offer, null);
   assert.deepEqual(denied.data.simulation.initialPaymentPercentages, []);
+  assert.deepEqual(denied.data.simulation.conditions, []);
   for (const f of [fixture({ assignedPolicy: null }), fixture({ enabled: false })]) {
     const result = await f.request();
     assert.equal(result.status, 200);

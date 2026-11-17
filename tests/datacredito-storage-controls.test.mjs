@@ -8,6 +8,7 @@ import { createJiti } from "jiti";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
+const simulationConditionsSource = await readProjectFile("lib/datacredito/simulation-conditions.ts");
 const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 const { isDataCreditoUniqueViolation } = await jiti.import(
   "../lib/datacredito/database-errors.ts"
@@ -602,12 +603,15 @@ test("la simulacion resuelve condiciones aprobadas de la politica asignada", () 
   assert.match(getter, /normalizeDataCreditoPlatform/);
   assert.match(
     getter,
-    /resolveDataCreditoDecision\([\s\S]{0,220}simulationBand\?\.scoreMin/
+    /getDataCreditoSimulationConditions\(policy, simulationPlatform\)/
   );
   assert.match(
     getter,
     /\{\s*\.\.\.policy,\s*priorityRules:\s*null\s*\}/
   );
+  assert.match(simulationConditionsSource, /band\.decision === "APROBADO"/);
+  assert.match(simulationConditionsSource,
+    /resolveDataCreditoDecision\([\s\S]{0,160}bands:\s*\[band\],\s*priorityRules:\s*null[\s\S]{0,80}band\.scoreMin/);
 });
 
 test("el DTO de simulacion es minimo y un rechazo nunca expone oferta", () => {
@@ -625,6 +629,7 @@ test("el DTO de simulacion es minimo y un rechazo nunca expone oferta", () => {
   assert.match(dtoSource, /\bplatform\s*:/);
   assert.match(dtoSource, /\bdecision\s*:/);
   assert.match(dtoSource, /\boffer\s*:/);
+  assert.match(dtoSource, /\bconditions\s*:\s*DataCreditoSimulationCondition\[\]/);
 
   assert.match(
     policyRoute,
@@ -666,7 +671,7 @@ test("la oferta activa conserva su plazo y nunca cae al tope global en pantalla"
   );
   assert.match(
     factoryConsole,
-    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*simulatorIphoneRulesActive\s*\? iphoneMaxFinancedAmount\s*:\s*dataCreditoMaxFinancedAmount/
+    /const dataCreditoEffectiveMaxFinancedAmount\s*=\s*dataCreditoMaxFinancedAmount/
   );
   assert.match(
     factoryConsole,

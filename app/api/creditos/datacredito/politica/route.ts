@@ -20,6 +20,10 @@ import {
   type DataCreditoOffer,
   type DataCreditoPlatform,
 } from "@/lib/datacredito/policy";
+import {
+  getDataCreditoSimulationConditions,
+  type DataCreditoSimulationCondition,
+} from "@/lib/datacredito/simulation-conditions";
 import { getCreditSettings } from "@/lib/credit-settings";
 import {
   createDataCreditoPolicyVersion,
@@ -60,6 +64,7 @@ function serializePolicyResponse(input: {
     platform: DataCreditoPlatform;
     decision: DataCreditoDecision;
     offer: DataCreditoOffer | null;
+    conditions: DataCreditoSimulationCondition[];
     initialPaymentPercentages: number[];
     policyVersion: number;
     policyRevisionId: string;
@@ -192,17 +197,17 @@ export async function GET(request: Request) {
       ? undefined
       : await getDataCreditoDailyQuotaSnapshot(quotaAllyId);
     const policy = assigned.kind === "READY" ? assigned.policy : null;
-    const simulationBand = simulationRequested && simulationPlatform && policy
-      ? policy.bands
-          .filter((band) => band.platform === simulationPlatform && band.decision === "APROBADO")
-          .sort((left, right) => left.scoreMin - right.scoreMin)[0]
-      : null;
+    const simulationConditions = simulationRequested && simulationPlatform && policy
+      ? getDataCreditoSimulationConditions(policy, simulationPlatform)
+      : [];
     const simulationResolution =
       simulationRequested && simulationPlatform && policy
-        ? resolveDataCreditoDecision(
+        ? simulationConditions[0]
+          ? { decision: "APROBADO" as const, offer: simulationConditions[0].offer }
+          : resolveDataCreditoDecision(
             { ...policy, priorityRules: null },
             simulationPlatform,
-            simulationBand?.scoreMin ?? DATACREDITO_NO_INFORMATION_SCORE
+            DATACREDITO_NO_INFORMATION_SCORE
           )
         : null;
     const simulation =
@@ -216,11 +221,9 @@ export async function GET(request: Request) {
               simulationResolution.decision === "APROBADO"
                 ? simulationResolution.offer
                 : null,
-            initialPaymentPercentages: [...new Set(policy.bands
-              .filter((band) => band.platform === simulationPlatform && band.decision === "APROBADO" &&
-                Number.isFinite(band.initialPaymentPercentage) &&
-                band.initialPaymentPercentage >= 0 && band.initialPaymentPercentage <= 100)
-              .map((band) => band.initialPaymentPercentage))].sort((a, b) => a - b),
+            conditions: simulationConditions,
+            initialPaymentPercentages: [...new Set(simulationConditions
+              .map((condition) => condition.offer.initialPaymentPercentage))].sort((a, b) => a - b),
             policyVersion: policy.version,
             policyRevisionId: policy.revisionId,
           }
