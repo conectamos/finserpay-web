@@ -8,6 +8,12 @@ import * as operationGuards from "../lib/approval-operations-core.ts";
 import * as signatureStatus from "../lib/firmaseguro-status.ts";
 
 const read = path => readFileSync(new URL("../" + path, import.meta.url), "utf8");
+const rolloutEnv = { FIRMASEGURO_PORTAL_RESEND_ENABLED: "true" };
+const rollout = { exports: {} };
+runInNewContext(ts.transpileModule(read("lib/firmaseguro-portal-rollout.ts"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: rollout, exports: rollout.exports, process: { env: rolloutEnv },
+  require(name) { if (name === "server-only") return {}; throw new Error(`Unexpected rollout import: ${name}`); } });
 
 const operationalRead = { exports: {} };
 runInNewContext(ts.transpileModule(read("lib/approval-operations-read.ts"), {
@@ -17,6 +23,7 @@ runInNewContext(ts.transpileModule(read("lib/approval-operations-read.ts"), {
   require(name) {
     if (name === "server-only") return {};
     if (name === "@/lib/prisma") return { default: {} };
+    if (name === "@/lib/firmaseguro-portal-rollout") return rollout.exports;
     if (name === "@/lib/approval-operations-core") return operationGuards;
     if (name === "@/lib/firmaseguro-status") return signatureStatus;
     if (name === "@/lib/credit-amortization-contract") return { readFinancingTermsSeal: () => null };
@@ -26,7 +33,7 @@ runInNewContext(ts.transpileModule(read("lib/approval-operations-read.ts"), {
   },
 });
 
-async function pendingCaseFromReader(platform) {
+async function pendingCaseFromReader(platform, portalEnabled = true) {
   const stamp = "2026-10-05T20:27:00.000Z";
   const row = {
     id: 22, estado: "ABIERTO", currentStep: 4, clienteNombre: "Cliente pendiente",
@@ -41,7 +48,8 @@ async function pendingCaseFromReader(platform) {
     draftPayload: { clienteTelefono: "3218928117", clienteCorreo: "cliente@example.com" },
     lastError: null, hasSignedDocument: false, createdAt: stamp, completedAt: null, supersededAt: null,
   };
-  return operationalRead.exports.getOperationalCase("DRAFT", 22, {
+  rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = String(portalEnabled);
+  try { return await operationalRead.exports.getOperationalCase("DRAFT", 22, {
     $queryRawUnsafe: async sql => {
       if (sql.includes('FROM "CreditoBorrador" draft')) return [row];
       if (sql.includes('FROM "FirmaSeguroProcess"')) return [process];
@@ -50,7 +58,7 @@ async function pendingCaseFromReader(platform) {
           sql.includes('FROM "ApprovalOperationalAction"')) return [];
       throw new Error("Unexpected pending case query: " + sql);
     },
-  });
+  }); } finally { rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "true"; }
 }
 
 for (const panel of ["imei", "signature"]) test(`el enlace contextual de ${panel} consulta el crédito sin abrir su formulario ni modificarlo`, async () => {
@@ -540,7 +548,7 @@ test("FirmaSeguro permite corregir contacto y enviar una firma inicial sin antic
   assert.equal(caseDetail.signature.status, "PENDING", "el envío no se presenta como firma aprobada");
 });
 
-for (const platform of ["IPHONE", "ANDROID"]) for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact"]) test(
+for (const platform of ["IPHONE", "ANDROID"]) for (const scenario of ["network", "RESEND_FAILED", "durable", "sameContact", "historicalApi", "disabled"]) test(
   `el mismo documento pendiente se reenvía sin cambiar UUID ni contrato (${platform}, ${scenario})`, async () => {
   const components = Object.fromEntries(["Badge", "Button", "Card", "Input", "LoadingState", "Select", "StatusPill"]
     .map(name => [name, Object.defineProperty(() => null, "name", { value: name })]));
@@ -562,23 +570,29 @@ for (const platform of ["IPHONE", "ANDROID"]) for (const scenario of ["network",
   const nextPhone = scenario === "sameContact" ? "3218928117" : "3119876543";
   const nextEmail = scenario === "sameContact" ? "cliente@example.com" : "nuevo@example.com";
   const reason = scenario === "sameContact" ? "Recordatorio del documento pendiente" : "Número anterior sin WhatsApp";
-  const caseDetail = await pendingCaseFromReader(platform);
+  const durable = ["durable", "historicalApi"].includes(scenario);
+  const transport = scenario === "historicalApi" ? "API" : "PORTAL";
+  const caseDetail = await pendingCaseFromReader(platform, scenario !== "disabled");
   assert.equal(caseDetail.signature.processUuid, previousProcessUuid);
   assert.equal(caseDetail.signature.status, "PENDING");
-  assert.equal(caseDetail.capabilities.canRedirectPendingSignature, true,
+  assert.equal(caseDetail.capabilities.canRedirectPendingSignature, scenario !== "disabled",
     "la capacidad procede del lector real y no de un permiso de UI inventado");
   if (platform === "ANDROID") {
     assert.equal(caseDetail.equipment, "HONOR X7D");
     for (const capability of ["canChangeImei", "canDispatchSignatureWithImei", "canFinalizeImei", "canConfirmReplacement",
       "canUpdateContact", "canSendSignature", "canResendSignature"]) assert.equal(caseDetail.capabilities[capability], false, capability);
   }
-  const pending = () => ({ id: operationId, status: "RESEND_FAILED", processUuid: previousProcessUuid,
+  const pending = () => ({ id: operationId, status: "RESEND_FAILED", transport, processUuid: previousProcessUuid,
     phone: nextPhone, email: nextEmail, reason, actorName: "Analista nominal", retryable: true });
-  if (scenario === "durable") {
+  if (durable) {
     caseDetail.pendingRecipientDelivery = pending();
     caseDetail.signature.sentPhone = nextPhone;
     caseDetail.signature.sentEmail = nextEmail;
   }
+  caseDetail.signature.lastResend = { acceptedAt: "2026-10-05T18:00:00Z", transport,
+    configuredNotificationChannel: transport === "PORTAL" && scenario !== "sameContact" ? "WHATSAPP" : null,
+    channel: transport === "PORTAL" ? "UNCONFIRMED" : "EMAIL", phone: "3200000000",
+    email: "acuse-anterior@example.com", deliveryStatus: "UNCONFIRMED" };
   const requests = [];
   let postAttempts = 0;
   let uuidCalls = 0;
@@ -646,49 +660,80 @@ for (const platform of ["IPHONE", "ANDROID"]) for (const scenario of ["network",
   tree = render();
   assert.equal(input(tree, "approval-signature-phone").props.readOnly, true);
   assert.equal(input(tree, "approval-signature-email").props.readOnly, true);
-  assert.ok(button(tree, "Editar destinatario y reenviar"));
+  if (scenario === "disabled") {
+    assert.equal(button(tree, "Actualizar celular y reenviar firma"), undefined);
+    assert.equal(button(tree, "Completar reenvío"), undefined);
+    assert.match(textOf(tree), /aún no están habilitados.*consultar el estado/);
+    assert.equal(button(tree, "Consultar estado en FirmaSeguro").props.disabled, false);
+    assert.equal(requests.length, 0);
+    assert.equal(uuidCalls, 0);
+    return;
+  }
+  const actionLabel = durable ? "Completar reenvío" : "Actualizar celular y reenviar firma";
+  assert.ok(button(tree, actionLabel));
   assert.equal(button(tree, "Enviar firma"), undefined, "redirigir no habilita una firma nueva");
   assert.equal(button(tree, "Guardar cambio y enviar nueva firma"), undefined);
   assert.equal(button(tree, "Actualizar contacto"), undefined, "el contacto contractual sigue protegido");
 
-  button(tree, "Editar destinatario y reenviar").props.onClick();
+  if (transport === "PORTAL") {
+    assert.match(textOf(tree), /Reenvío solicitado desde el portal: celular\s+3200000000/);
+    assert.match(textOf(tree), scenario === "sameContact" ? /Canal y entrega no confirmados/
+      : /Configuración WhatsApp verificada.*envío efectivo y la entrega no están confirmados/);
+    assert.doesNotMatch(textOf(tree), /Reenvío por correo aceptado/);
+  } else {
+    assert.match(textOf(tree), /Reenvío por correo aceptado:\s+acuse-anterior@example\.com/);
+    assert.doesNotMatch(textOf(tree), /Reenvío solicitado desde el portal/);
+  }
+  button(tree, actionLabel).props.onClick();
   tree = render();
   assert.match(textOf(tree), /correo/);
-  assert.match(textOf(tree), /no confirma un envío por WhatsApp/);
+  assert.match(textOf(tree), transport === "PORTAL"
+    ? /Se ingresará al portal de FirmaSeguro.*WhatsApp estén activas.*correo desactivadas.*no confirma el envío efectivo ni la entrega/
+    : /no confirma un envío por WhatsApp/);
   assert.equal(input(tree, "approval-signature-redirect-phone").props.value,
-    scenario === "durable" ? nextPhone : "3218928117", "el formulario parte del destinatario vigente");
+    durable ? nextPhone : "3218928117", "el formulario parte del destinatario vigente");
   assert.equal(input(tree, "approval-signature-redirect-email").props.value,
-    scenario === "durable" ? nextEmail : "cliente@example.com");
-  if (scenario === "durable") {
+    durable ? nextEmail : "cliente@example.com");
+  if (durable) {
     assert.equal(input(tree, "approval-signature-redirect-phone").props.disabled, true);
     assert.equal(input(tree, "approval-signature-redirect-email").props.disabled, true);
     assert.equal(input(tree, "approval-signature-redirect-reason").props.disabled, true);
     assert.equal(input(tree, "approval-signature-redirect-reason").props.value, reason);
   } else {
-    assert.equal(button(tree, "Editar destinatario y reenviar").props.disabled, true,
+    assert.equal(button(tree, "Actualizar celular y reenviar").props.disabled, true,
       "el motivo es obligatorio aunque el contacto esté precargado");
     input(tree, "approval-signature-redirect-reason").props.onChange({ target: { value: reason } });
     tree = render();
-    assert.equal(button(tree, "Editar destinatario y reenviar").props.disabled, false,
+    assert.equal(button(tree, "Actualizar celular y reenviar").props.disabled, false,
       "reenviar al mismo contacto válido está permitido");
     input(tree, "approval-signature-redirect-phone").props.onChange({ target: { value: nextPhone } });
     input(tree, "approval-signature-redirect-email").props.onChange({ target: { value: "correo-inválido" } });
     tree = render();
-    assert.equal(button(tree, "Editar destinatario y reenviar").props.disabled, true,
+    assert.equal(button(tree, "Actualizar celular y reenviar").props.disabled, true,
       "no se envía un destinatario con correo inválido");
     input(tree, "approval-signature-redirect-email").props.onChange({ target: { value: nextEmail.toUpperCase() } });
   }
   tree = render();
-  const submitLabel = scenario === "durable" ? "Completar reenvío" : "Editar destinatario y reenviar";
+  const submitLabel = durable ? "Completar reenvío" : "Actualizar celular y reenviar firma";
   assert.equal(button(tree, submitLabel).props.disabled, false);
   button(tree, submitLabel).props.onClick();
   tree = render();
-  let confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar por correo");
+  const confirmation = tree => find(tree, item => item.type === ConfirmDialog && item.props.open &&
+    /Actualizar celular y reenviar firma|Completar reenvío/.test(item.props.title));
+  let confirm = confirmation(tree);
   assert.ok(confirm.props.description.includes(nextPhone));
   assert.match(confirm.props.description, /mismo documento pendiente/);
   assert.match(confirm.props.description, /solicitud de firma y el documento existentes/);
-  assert.match(confirm.props.description, /reenvío al correo/);
-  assert.match(confirm.props.description, /envío por WhatsApp no está confirmado/);
+  if (transport === "PORTAL") {
+    assert.match(confirm.props.description, /Se ingresará al portal de FirmaSeguro/);
+    assert.match(confirm.props.description, /se verificará la configuración: WhatsApp activo y correo desactivado/);
+    assert.match(confirm.props.description, /no confirma el envío efectivo ni la entrega/);
+    assert.equal(confirm.props.confirmLabel, "Confirmar reenvío desde el portal");
+  } else {
+    assert.match(confirm.props.description, /reenvío al correo/);
+    assert.match(confirm.props.description, /envío por WhatsApp no está confirmado/);
+    assert.doesNotMatch(confirm.props.description, /portal/);
+  }
   assert.doesNotMatch(confirm.props.description, /nueva solicitud|archivado|reemplazada/);
   confirm.props.onConfirm();
   confirm.props.onConfirm();
@@ -703,13 +748,13 @@ for (const platform of ["IPHONE", "ANDROID"]) for (const scenario of ["network",
 
   if (["network", "RESEND_FAILED"].includes(scenario)) {
     tree = render();
-    const retryLabel = scenario === "RESEND_FAILED" ? "Completar reenvío" : "Editar destinatario y reenviar";
+    const retryLabel = scenario === "RESEND_FAILED" ? "Completar reenvío" : "Actualizar celular y reenviar";
     assert.equal(button(tree, retryLabel).props.disabled, false);
     if (scenario === "RESEND_FAILED") assert.equal(input(tree, "approval-signature-redirect-phone").props.disabled, true,
       "una entrega parcial mantiene el intento registrado para continuar con la misma llave");
     button(tree, retryLabel).props.onClick();
     tree = render();
-    confirm = find(tree, item => item.type === ConfirmDialog && item.props.title === "Editar destinatario y reenviar por correo");
+    confirm = confirmation(tree);
     confirm.props.onConfirm();
     await setImmediate();
     await setImmediate();
@@ -717,7 +762,7 @@ for (const platform of ["IPHONE", "ANDROID"]) for (const scenario of ["network",
     assert.deepEqual(requests[1].body, requests[0].body,
       "el reintento conserva contacto, motivo y clave idempotente");
   }
-  assert.equal(uuidCalls, scenario === "durable" ? 0 : 1,
+  assert.equal(uuidCalls, durable ? 0 : 1,
     "una recarga recupera la llave durable sin crear otra operación");
   assert.equal(caseDetail.signature.processUuid, previousProcessUuid);
   assert.equal(caseDetail.signature.sentPhone, nextPhone);

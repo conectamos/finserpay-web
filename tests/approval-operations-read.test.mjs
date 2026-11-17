@@ -20,12 +20,19 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const status = { isFirmaSeguroFailedStatus, isFirmaSeguroSuccessfulStatus };
 let remissionStatus = null;
+const rolloutEnv = { FIRMASEGURO_PORTAL_RESEND_ENABLED: "true" };
+const rollout = { exports: {} };
+runInNewContext(ts.transpileModule(readFileSync(new URL("../lib/firmaseguro-portal-rollout.ts", import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: rollout, exports: rollout.exports, process: { env: rolloutEnv },
+  require(name) { if (name === "server-only") return {}; throw new Error(`Unexpected rollout import: ${name}`); } });
 const loaded = { exports: {} };
 runInNewContext(compiled, {
   module: loaded, exports: loaded.exports, Date,
   require(name) {
     if (name === "server-only") return {};
     if (name === "@/lib/prisma") return { default: {} };
+    if (name === "@/lib/firmaseguro-portal-rollout") return rollout.exports;
     if (name === "@/lib/credit-amortization-contract") return {
       readFinancingTermsSeal: value => value ? { checksum: "a".repeat(64) } : null,
     };
@@ -416,7 +423,8 @@ test("una solicitud firmada en entrega se puede buscar para corregir identidad s
   assert.equal(detail.timeline.some(event => event.label === "Identidad corregida; nueva firma requerida"), true);
 });
 
-test("una única firma pendiente iPhone o Android habilita solo redirección mientras el envío sigue seguro", async () => {
+test("una única firma pendiente iPhone o Android habilita solo redirección mientras el envío sigue seguro", async t => {
+  t.after(() => { rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "true"; delete rolloutEnv.FIRMASEGURO_PORTAL_RESEND_DRAFT_IDS; });
   let unresolved = false;
   let status = "CREATED";
   let hasSignedDocument = false;
@@ -462,6 +470,19 @@ test("una única firma pendiente iPhone o Android habilita solo redirección mie
     assert.equal(ready.capabilities.canSendSignature, false);
     assert.equal(ready.capabilities.canDispatchSignatureWithImei, false);
   }
+  platform = "IPHONE";
+  const enabled = await read.getOperationalCase("DRAFT", "30", db);
+  delete rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED;
+  const disabled = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(disabled.capabilities.canRedirectPendingSignature, false);
+  assert.match(disabled.capabilities.pendingSignatureRedirectReason, /aún no están habilitados.*consultar el estado/);
+  assert.deepEqual(plain(disabled.signature), plain(enabled.signature), "el gate no cambia la consulta del estado de firma");
+  rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "true";
+  rolloutEnv.FIRMASEGURO_PORTAL_RESEND_DRAFT_IDS = "31";
+  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, false);
+  rolloutEnv.FIRMASEGURO_PORTAL_RESEND_DRAFT_IDS = "30";
+  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, true);
+  delete rolloutEnv.FIRMASEGURO_PORTAL_RESEND_DRAFT_IDS;
   platform = "DESCONOCIDA";
   assert.equal((await read.getOperationalCase("DRAFT", "30", db)).capabilities.canRedirectPendingSignature, false);
   platform = "ANDROID";
@@ -522,13 +543,16 @@ test("una única firma pendiente iPhone o Android habilita solo redirección mie
     "dos procesos activos no permiten identificar el destinatario vigente");
 });
 
-test("el reenvío conserva contacto contractual y refleja solo la entrega confirmada del mismo proceso", async () => {
+test("el reenvío conserva contacto contractual y distingue configuración, acuse y entrega del mismo proceso", async t => {
+  t.after(() => { rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "true"; });
   const calls = [];
   let deliveryPending = false;
   let deliveryStatus = "RESEND_UNCERTAIN";
   let deliveryContactSource;
   let confirmedContact = { phone: "3101234567", email: "nuevo@example.com" };
-  const acceptedResendContact = { phone: "3101234567", email: "nuevo@example.com" };
+  let acceptedResendContact = { phone: "3101234567", email: "nuevo@example.com" };
+  let eventContact = acceptedResendContact;
+  let pendingTransport;
   let resentAt = "2026-10-09T16:05:00.000Z";
   let requestPayload = { endpoint: "create-full-by-company", payload: {
     signers: [{ number: "3218928117", email: "original@example.com" }],
@@ -556,7 +580,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
       assert.match(sql, /"draftId"=\$1 AND "processUuid"=\$2/,
         "un reenvío histórico incierto no bloquea otro proceso vigente");
       return deliveryPending && deliveryProcessUuid === params[1] ? [{ id: "60000000-0000-4000-8000-000000000006",
-        status: deliveryStatus, processUuid: deliveryProcessUuid, afterContact: { phone: "3101234567", email: "nuevo@example.com" },
+        status: deliveryStatus, processUuid: deliveryProcessUuid, afterContact: { phone: "3101234567", email: "nuevo@example.com", transport: pendingTransport },
         beforeContact: deliveryContactSource ? { source: deliveryContactSource } : {},
         reason: "El número original no tiene WhatsApp", actorName: "Analista nominal" }] : [];
     }
@@ -571,7 +595,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
       id: "delivery-event", status: deliveryPending ? "RESEND_UNCERTAIN" : "RESENT",
       actorName: "Analista nominal", reason: "El número original no tiene WhatsApp",
       beforeContact: { phone: "3218928117", email: "original@example.com" },
-      afterContact: confirmedContact || {}, createdAt: "2026-10-09T16:05:00.000Z",
+      afterContact: eventContact, createdAt: "2026-10-09T16:05:00.000Z",
     }];
     return [];
   } };
@@ -583,17 +607,36 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
   assert.equal(ready.signature.sentEmail, "nuevo@example.com");
   assert.equal(ready.signature.sentAt, resentAt);
   assert.equal(ready.capabilities.canRedirectPendingSignature, true, "no se exige sello para reenviar el documento existente");
-  assert.deepEqual(plain(ready.signature.lastResend), { acceptedAt: resentAt, channel: "EMAIL",
-    email: "nuevo@example.com", deliveryStatus: "UNCONFIRMED" });
+  assert.deepEqual(plain(ready.signature.lastResend), { acceptedAt: resentAt, transport: "API", channel: "EMAIL", configuredNotificationChannel: null,
+    phone: "3101234567", email: "nuevo@example.com", deliveryStatus: "UNCONFIRMED" });
   assert.ok(ready.timeline.some(event => event.label === "Reenvío por correo aceptado; entrega sin confirmar" &&
     event.actor === "Analista nominal" && event.detail.includes("3218928117 → 3101234567")));
   assert.ok(calls.every(call => !/\b(INSERT|UPDATE|DELETE)\b/.test(call.sql)), "la consulta no altera ningún registro");
 
-  confirmedContact = { phone: "3101234568", email: "otra-edicion@example.com" };
+  confirmedContact = { phone: "3101234568", email: "otra-edicion@example.com", transport: "PORTAL" };
   const newerEdit = await read.getOperationalCase("DRAFT", "30", db);
   assert.equal(newerEdit.signature.sentEmail, "otra-edicion@example.com");
   assert.equal(newerEdit.signature.lastResend.email, "nuevo@example.com",
     "una edición posterior no atribuye a su correo un reenvío aceptado para otro destinatario");
+  assert.equal(newerEdit.signature.lastResend.phone, "3101234567");
+  assert.equal(newerEdit.signature.lastResend.transport, "API",
+    "una edición posterior en el portal no cambia el transporte del acuse histórico");
+  assert.ok(newerEdit.timeline.some(event => event.label === "Reenvío por correo aceptado; entrega sin confirmar"),
+    "cada evento conserva su transporte aunque el contacto vigente se haya editado desde el portal");
+  acceptedResendContact = { ...acceptedResendContact, transport: "PORTAL" };
+  eventContact = acceptedResendContact;
+  const portalResend = await read.getOperationalCase("DRAFT", "30", db);
+  assert.deepEqual(plain(portalResend.signature.lastResend), { acceptedAt: resentAt, transport: "PORTAL", channel: "UNCONFIRMED", configuredNotificationChannel: null,
+    phone: "3101234567", email: "nuevo@example.com", deliveryStatus: "UNCONFIRMED" });
+  assert.ok(portalResend.timeline.some(event => event.label === "Reenvío solicitado desde el portal; canal y entrega sin confirmar" &&
+    event.detail.includes("3218928117 → 3101234567")));
+  acceptedResendContact = { ...acceptedResendContact, configuredNotificationChannel: "WHATSAPP" };
+  eventContact = acceptedResendContact;
+  const configuredResend = await read.getOperationalCase("DRAFT", "30", db);
+  assert.equal(configuredResend.signature.lastResend.configuredNotificationChannel, "WHATSAPP");
+  assert.equal(configuredResend.signature.lastResend.channel, "UNCONFIRMED");
+  assert.equal(configuredResend.signature.lastResend.deliveryStatus, "UNCONFIRMED");
+  assert.ok(configuredResend.timeline.some(event => /configuración WhatsApp verificada, entrega sin confirmar/.test(event.label)));
   confirmedContact = { ...acceptedResendContact };
 
   correctionPending = true;
@@ -614,7 +657,7 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
     const resumed = await read.getOperationalCase("DRAFT", "30", db);
     assert.equal(resumed.capabilities.canRedirectPendingSignature, true, retryable);
     assert.deepEqual(plain(resumed.pendingRecipientDelivery), {
-      id: "60000000-0000-4000-8000-000000000006", status: retryable, processUuid,
+      id: "60000000-0000-4000-8000-000000000006", status: retryable, transport: "API", configuredNotificationChannel: null, processUuid,
       phone: "3101234567", email: "nuevo@example.com", reason: "El número original no tiene WhatsApp",
       actorName: "Analista nominal", retryable: true,
     }, "la recarga conserva el id durable, contacto y motivo para reintentar la misma operación");
@@ -636,12 +679,26 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
         "un teléfono no confirmado exige revisión, incluso al recargar el expediente");
     }
   }
-  deliveryContactSource = "PROVIDER_READBACK";
-  assert.equal((await read.getOperationalCase("DRAFT", "30", db)).pendingRecipientDelivery.retryable, true);
+  for (const source of ["PROVIDER_READBACK", "PORTAL_READBACK"]) {
+    deliveryContactSource = source;
+    pendingTransport = source === "PORTAL_READBACK" ? "PORTAL" : undefined;
+    const verified = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(verified.pendingRecipientDelivery.retryable, true);
+    assert.equal(verified.pendingRecipientDelivery.transport, pendingTransport || "API");
+    rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "false";
+    const gated = await read.getOperationalCase("DRAFT", "30", db);
+    assert.equal(gated.capabilities.canRedirectPendingSignature, pendingTransport !== "PORTAL",
+      "el gate bloquea el portal y conserva el replay API histórico");
+    assert.equal(gated.pendingRecipientDelivery.retryable, true,
+      "la desactivación del portal no altera el estado durable ni lo convierte en envío incierto");
+    assert.deepEqual(plain(gated.signature), plain(verified.signature));
+    rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "true";
+  }
   deliveryContactSource = undefined;
 
   deliveryStatus = "RESEND_UNCERTAIN";
   signed = true;
+  rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "false";
   const completedWithUncertainNotice = await read.getOperationalCase("DRAFT", "30", db);
   assert.equal(completedWithUncertainNotice.capabilities.canRedirectPendingSignature, false,
     "una firma completada nunca se vuelve a reenviar");
@@ -649,8 +706,10 @@ test("el reenvío conserva contacto contractual y refleja solo la entrega confir
     "la incertidumbre de la notificación no bloquea una corrección contractual tras firmar");
   assert.equal(completedWithUncertainNotice.pendingRecipientDelivery.status, "RESEND_UNCERTAIN",
     "se conserva la trazabilidad sin inventar confirmación de entrega");
+  rolloutEnv.FIRMASEGURO_PORTAL_RESEND_ENABLED = "true";
   signed = false;
   deliveryProcessUuid = "historical-superseded-process";
+  eventContact = { phone: "3101234567", email: "nuevo@example.com" };
   confirmedContact = null;
   const oldUncertain = await read.getOperationalCase("DRAFT", "30", db);
   assert.equal(oldUncertain.pendingRecipientDelivery, null);

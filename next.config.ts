@@ -23,7 +23,7 @@ function resolveAllowedDevOrigins() {
 const nextConfig: NextConfig = {
   output: "standalone",
   allowedDevOrigins: resolveAllowedDevOrigins(),
-  serverExternalPackages: ["ssh2-sftp-client", "ssh2", "pdfkit"],
+  serverExternalPackages: ["ssh2-sftp-client", "ssh2", "pdfkit", "playwright", "playwright-core"],
   async headers() {
     const noStoreHeaders = [
       {

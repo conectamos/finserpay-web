@@ -31,6 +31,7 @@ const statuses = load("lib/firmaseguro-status.ts");
 const reader = load("lib/approval-operations-read.ts", {
   "@/lib/approval-operations-core": core,
   "@/lib/firmaseguro-status": statuses,
+  "@/lib/firmaseguro-portal-rollout": { isFirmaSeguroPortalResendEnabled: () => true },
 }, true);
 const actorAccess = load("lib/analyst-mora-access.ts", {
   "@/lib/credit-approval-errors": { CreditApprovalError },

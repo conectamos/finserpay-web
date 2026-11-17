@@ -46,6 +46,7 @@ tmp-*
 next-env.d.ts
 
 /app/generated/prisma
+/scripts/generated/firmaseguro-portal.mjs
 
 # android client
 /android-client/.gradle/

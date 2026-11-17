@@ -35,6 +35,7 @@ const read = load("lib/approval-operations-read.ts", {
   "@/lib/ally-payments-core": {},
   "@/lib/credit-amortization-contract": { readFinancingTermsSeal: () => null },
   "@/lib/firmaseguro-status": {},
+  "@/lib/firmaseguro-portal-rollout": { isFirmaSeguroPortalResendEnabled: () => true },
   "@/lib/credit-device-replacement-remission": { getReplacementRemission: async () => null },
   "@/lib/approval-operations-core": { isVerifiedTerminalSignatureFailure: () => false },
 });

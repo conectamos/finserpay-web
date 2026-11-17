@@ -1,0 +1,100 @@
+name: FirmaSeguro portal
+
+on:
+  pull_request:
+    paths:
+      - "app/api/aprobaciones/operativo/**"
+      - "app/dashboard/aprobaciones/approval-operations*"
+      - "lib/approval-operat*.ts"
+      - "lib/firmaseguro*.ts"
+      - "scripts/*firmaseguro*.mjs"
+      - "scripts/start-finserpay.mjs"
+      - "scripts/ensure-approval-operations-schema.mjs"
+      - "tests/firmaseguro*.test.mjs"
+      - "tests/approval-operations*.test.mjs"
+      - "tests/credit-approval-operations-ui.test.mjs"
+      - "tests/credit-approval-reissue-fixture.mjs"
+      - "tests/helpers/dockerfile-packaging.mjs"
+      - "prisma/**"
+      - "prisma.config.ts"
+      - "package*.json"
+      - "next.config.ts"
+      - "tsconfig.json"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "railway.toml"
+      - ".github/workflows/firmaseguro-portal.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app/api/aprobaciones/operativo/**"
+      - "app/dashboard/aprobaciones/approval-operations*"
+      - "lib/approval-operat*.ts"
+      - "lib/firmaseguro*.ts"
+      - "scripts/*firmaseguro*.mjs"
+      - "scripts/start-finserpay.mjs"
+      - "scripts/ensure-approval-operations-schema.mjs"
+      - "tests/firmaseguro*.test.mjs"
+      - "tests/approval-operations*.test.mjs"
+      - "tests/credit-approval-operations-ui.test.mjs"
+      - "tests/credit-approval-reissue-fixture.mjs"
+      - "tests/helpers/dockerfile-packaging.mjs"
+      - "prisma/**"
+      - "prisma.config.ts"
+      - "package*.json"
+      - "next.config.ts"
+      - "tsconfig.json"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "railway.toml"
+      - ".github/workflows/firmaseguro-portal.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmaseguro-portal-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Portal, ledger y compilación
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public
+      SESSION_SECRET: build-only-session-secret
+      NEXT_TELEMETRY_DISABLED: "1"
+      FIRMASEGURO_PORTAL_RESEND_ENABLED: "false"
+      FIRMASEGURO_PORTAL_VERIFY_ACCESS_ON_START: "false"
+      FIRMASEGURO_PORTAL_SYNTHETIC_BROWSER_TEST: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:generate
+      - name: Compilar la comprobación de acceso sin ejecutarla
+        run: node scripts/build-firmaseguro-portal-probe.mjs
+      # Local fixtures and PGlite only. No provider credentials, login or notifications.
+      - name: Verificar portal, arranque, destinatario, HTTP y pantalla
+        run: >-
+          node --experimental-strip-types --test --test-concurrency=2
+          tests/firmaseguro-portal.test.mjs
+          tests/firmaseguro-portal-runtime.test.mjs
+          tests/firmaseguro-portal-startup.test.mjs
+          tests/firmaseguro-portal-rollout.test.mjs
+          tests/firmaseguro-recipient-api.test.mjs
+          tests/firmaseguro-recipient-delivery-postgres.test.mjs
+          tests/approval-operations-http.test.mjs
+          tests/approval-operations-read.test.mjs
+          tests/approval-operations-signature-refresh.test.mjs
+          tests/approval-operations-signature-refresh-ui.test.mjs
+          tests/approval-operations-predeploy.test.mjs
+          tests/credit-approval-operations-ui.test.mjs
+      - name: Compilar producción con configuración ficticia
+        run: npm run build
