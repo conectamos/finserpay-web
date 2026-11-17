@@ -3366,7 +3366,7 @@ export default function DatacreditoPolicyConsole() {
               applyTab("ASSIGNMENTS");
             }}>Asignar a aliado</Button>
           </div> : null}
-          <Card className={styles.section}>
+          {!createOpen ? <Card className={styles.section}>
             <div className={styles.catalogHeader}>
               <div className={styles.catalogTitle}>
                 <span className={styles.contextMeta}>{policyEditing && !createOpen ? "Edición de política" : createOpen ? "Política base" : "Política seleccionada"}</span>
@@ -3409,7 +3409,7 @@ export default function DatacreditoPolicyConsole() {
               <div>{selectedProfile.assignedAlliesCount} {selectedProfile.assignedAlliesCount === 1 ? "aliado" : "aliados"}</div>
               <div>{formatDate(updatedAt)}</div>
             </div> : <EmptyState title="No hay políticas publicadas" description="El catálogo debe tener al menos una política antes de asignar aliados." />}
-          </Card>
+          </Card> : null}
 
           {createOpen && newPolicySource ? (
             <Card className={styles.workflow} aria-labelledby="new-policy-title">
