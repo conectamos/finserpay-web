@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { needsFirmaSeguroPortalVerification, startFinserpay, verifyPortalInChild } from "../scripts/start-finserpay.mjs";
 import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 const receipt = { ok: true, code: "PORTAL_RUNTIME_ACCESS_VERIFIED", platform: "linux", uid: 1000, playwrightVersion: "1.65.0" };
 
 test("startup checks portal access before serving whenever verification or resend is enabled", async () => {
@@ -38,11 +39,19 @@ test("child probe has a bounded timeout, minimal environment and no exposed stde
   });
   assert.deepEqual(result, receipt);
   assert.equal(options.timeout, 120000);
+  assert.equal(options.killSignal, "SIGKILL");
   assert.equal(options.maxBuffer, 8192);
   assert.deepEqual(Object.keys(options.env).sort(), ["FIRMASEGURO_EMAIL", "FIRMASEGURO_PASSWORD", "HOME", "PATH"]);
   await assert.rejects(verifyPortalInChild(env, (_binary, _args, _config, callback) =>
     callback(Object.assign(new Error("private stderr"), { killed: true }), "private stdout")), error =>
     error.code === "PORTAL_RUNTIME_TIMEOUT" && !error.message.includes("private"));
+});
+test("the watchdog terminates a real child that ignores SIGTERM", { timeout: 5000 }, async () => {
+  const started = Date.now();
+  await assert.rejects(verifyPortalInChild({}, (binary, _args, config, callback) => execFile(binary,
+    ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], { ...config, timeout: 250 }, callback)),
+  error => error.code === "PORTAL_RUNTIME_TIMEOUT");
+  assert.ok(Date.now() - started < 4000);
 });
 test("a verification-only deployment never enables the resend gate", async () => {
   const env = { FIRMASEGURO_PORTAL_VERIFY_ACCESS_ON_START: "true", FIRMASEGURO_PORTAL_RESEND_ENABLED: "false" }, events = [];

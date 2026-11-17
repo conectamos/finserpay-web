@@ -18,7 +18,7 @@ export function verifyPortalInChild(env = process.env, run = execFile) {
   const childEnv = Object.fromEntries(PROBE_ENV_KEYS.filter(key => env[key] !== undefined).map(key => [key, env[key]]));
   return new Promise((fulfill, reject) => {
     run(process.execPath, [fileURLToPath(new URL("./verify-firmaseguro-portal-runtime.mjs", import.meta.url))],
-      { env: childEnv, timeout: PROBE_TIMEOUT_MS, maxBuffer: 8192, windowsHide: true }, (error, stdout, stderr) => {
+      { env: childEnv, timeout: PROBE_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: 8192, windowsHide: true }, (error, stdout, stderr) => {
         let receipt;
         try { receipt = JSON.parse(String(stdout || "").trim() || String(stderr || "").trim()); } catch { /* Never expose child output. */ }
         if (error || !validReceipt(receipt)) {
