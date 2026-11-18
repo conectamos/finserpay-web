@@ -4,10 +4,12 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { createJiti } from "jiti";
 import ts from "typescript";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (file) => readFile(path.join(projectRoot, file), "utf8");
+const jiti = createJiti(import.meta.url, { alias: { "@": projectRoot } });
 
 function sourceBlock(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -24,6 +26,105 @@ function autosaveBlock(source) {
   assert.ok(fingerprint >= 0 && start >= 0 && end > fingerprint);
   return source.slice(start, end);
 }
+
+async function restoredApprovalFixture(snapshotOverrides = {}) {
+  const source = await readProjectFile("app/dashboard/creditos/credit-factory-console.tsx");
+  const handler = sourceBlock(source, "const handleDataCreditoApproved = async", "const openLookupCredit =");
+  const factory = jiti("../lib/credit-factory.ts");
+  const { resolveCreditPolicyFinancialSettings } = jiti("../lib/credit-policy-financial-settings.ts");
+  const { hasCurrentCreditOriginationTerms } = jiti("../lib/credit-current-origination-terms.ts");
+  const financialSettings = { calculoVersion: "ARES_FRANCES_V1", tasaInteresEa: 29.66,
+    fianzaTotalPorcentaje: 60, seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL",
+    tasaPeriodoDecimales: 6, redondeoComercial: { modo: "PISO", multiplo: 50 } };
+  const result = { solicitudId: 92, assessmentId: "approved-original", platform: "IPHONE",
+    documentNumber: "123456789", firstSurname: "PRUEBA",
+    offer: { installmentCount: 24, suretyPercentage: 60, initialPaymentPercentage: 20,
+      maxFinancedAmount: 3000000, maxInstallmentAmount: 250000, policyVersion: 3, financialSettings },
+    identity: { effective: { nameMode: "STRUCTURED", names: "CLIENTE", firstSurname: "PRUEBA", secondSurname: "FICTICIO" } } };
+  const snapshot = { draftId: 92, assessmentId: "approved-original", plazoMeses: "10",
+    frecuenciaPago: "MENSUAL", fechaPrimerPago: "2026-12-10", fianzaPorcentaje: "60",
+    wizardStep: 3, veriffValidationId: null, ...snapshotOverrides };
+  const calls = { currentTerms: 0, cancelAutosave: [], hydration: [], state: {} };
+  const context = {
+    module: { exports: {} },
+    normalizeCreditInstallments: factory.normalizeCreditInstallments,
+    parseCreditInstallmentSelection: factory.parseCreditInstallmentSelection,
+    normalizePaymentFrequency: factory.normalizePaymentFrequency,
+    DEFAULT_CREDIT_INSTALLMENTS: factory.DEFAULT_CREDIT_INSTALLMENTS,
+    MAX_CREDIT_INSTALLMENTS: factory.MAX_CREDIT_INSTALLMENTS,
+    resolveCreditPolicyFinancialSettings,
+    hasCurrentCreditOriginationTerms: settings => {
+      calls.currentTerms += 1;
+      return hasCurrentCreditOriginationTerms(settings);
+    },
+    dataCreditoFinancialTermsRecovery: true,
+    restoredDraftSnapshotRef: { current: snapshot },
+    applyingDraftRef: { current: false }, pendingDraftFinancialTermsRef: { current: null },
+    auditedIdentityCorrectionRef: { current: null }, preservedCanonicalClientNameRef: { current: null },
+    draftId: 92, dataCreditoAssessmentId: "approved-original", editingDataCreditoNames: false,
+    dataCreditoCreditCreationMode: true, wizardStep: 1,
+    plazoMeses: "24", frecuenciaPagoCredito: "QUINCENAL", fechaPrimerPago: "2027-01-01",
+    globalCreditSettings: { ...financialSettings, calculoVersion: "ARES_FRANCES_V2",
+      tasaInteresEa: 29.24, fianzaTotalPorcentaje: 75, fianzaCuotaPorcentaje: 5 },
+    cancelPendingDraftAutosave: value => calls.cancelAutosave.push(value),
+    updateDraftResumeHydration: value => calls.hydration.push(value),
+  };
+  for (const name of ["DataCreditoAssessmentId", "DataCreditoResumeErrorCode", "DataCreditoApproval",
+    "DataCreditoBypassed", "ClienteTipoDocumento", "ClienteDocumento", "ClientePrimerApellido",
+    "ClientePrimerNombre", "ClienteSegundoApellido", "EditingDataCreditoNames", "FianzaPorcentaje",
+    "PlazoMeses", "FechaPrimerPago", "WizardStep", "Notice"]) {
+    calls.state[name] = [];
+    context[`set${name}`] = value => calls.state[name].push(value);
+  }
+  runInNewContext(ts.transpileModule(handler + "\nmodule.exports = handleDataCreditoApproved;", {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, context);
+  return { submit: () => context.module.exports(result), result, snapshot, calls, context };
+}
+
+test("retomar el mismo assessment conserva la oferta y el paso guardados aunque quede una marca de renovación", async () => {
+  const fixture = await restoredApprovalFixture();
+  const originalResult = structuredClone(fixture.result);
+  const originalSnapshot = structuredClone(fixture.snapshot);
+  await fixture.submit();
+  const { calls, context } = fixture;
+  assert.equal(calls.currentTerms, 0, "rehidratar la aprobación vinculada no exige términos de una nueva oferta");
+  assert.deepEqual(calls.cancelAutosave, [true]);
+  assert.deepEqual(calls.state.DataCreditoAssessmentId, ["approved-original"]);
+  assert.deepEqual(calls.state.DataCreditoResumeErrorCode, [null]);
+  assert.deepEqual(calls.state.WizardStep, [3], "debe restaurar el paso previo, no tomar la rama de renovación");
+  assert.deepEqual(calls.state.PlazoMeses, ["10"]);
+  assert.deepEqual(calls.state.FechaPrimerPago, ["2026-12-10"]);
+  assert.deepEqual(calls.state.FianzaPorcentaje, ["60"]);
+  assert.deepEqual(calls.state.Notice, [], "no debe presentar la aprobación histórica como oferta renovada");
+  assert.equal(calls.state.DataCreditoApproval.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.state.DataCreditoApproval[0])), {
+    ...originalResult, offer: { ...originalResult.offer,
+      financialSettings: { ...originalResult.offer.financialSettings, frecuenciaPago: "MENSUAL" } },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(context.pendingDraftFinancialTermsRef.current)), {
+    documento: "123456789", plazoMeses: "10", fechaPrimerPago: "2026-12-10",
+    frecuenciaPago: "MENSUAL", fianzaPorcentaje: "60", policyControlled: true, restoringDraft: true,
+  });
+  assert.deepEqual(fixture.result, originalResult);
+  assert.deepEqual(fixture.snapshot, originalSnapshot, "la hidratación no modifica el snapshot original");
+  assert.equal(context.restoredDraftSnapshotRef.current, null, "el snapshot temporal se consume al completar la restauración");
+  assert.deepEqual(calls.hydration, [false]);
+});
+
+test("la marca de renovación sigue exigiendo términos vigentes si cambia la solicitud o el assessment", async () => {
+  for (const snapshot of [{ draftId: 93 }, { assessmentId: "another-assessment" }]) {
+    const fixture = await restoredApprovalFixture(snapshot);
+    await fixture.submit();
+    assert.equal(fixture.calls.currentTerms, 1);
+    assert.deepEqual(fixture.calls.state.DataCreditoApproval, []);
+    assert.deepEqual(fixture.calls.state.WizardStep, []);
+    assert.equal(fixture.context.restoredDraftSnapshotRef.current, fixture.snapshot);
+    assert.deepEqual(fixture.calls.hydration, []);
+    assert.equal(fixture.calls.state.Notice.length, 1);
+    assert.match(fixture.calls.state.Notice[0].text, /condiciones anteriores/);
+  }
+});
 
 test("la expiración conserva el assessment canónico hasta que el gate la confirme", async () => {
   const factory = await readProjectFile(

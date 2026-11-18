@@ -18,7 +18,7 @@ import { normalizeSolicitudFilters, resolveSolicitudStage, SOLICITUD_STATE_LABEL
 import { formatQuotaRehabilitationDate } from "../lib/datacredito/quota-rehabilitation-date.ts";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("..", import.meta.url)) } });
-const { hasCurrentCreditOriginationTerms } = jiti("../lib/credit-current-origination-terms.ts");
+const { hasCurrentCreditOriginationTerms, CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE } = jiti("../lib/credit-current-origination-terms.ts");
 
 const readSource = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const [gate, factory, creditPage, wall, modal, sharedUi] = await Promise.all([
@@ -382,17 +382,77 @@ test("approved assessments retain their existing authorization path even with ex
       initialAssessmentId: approved.assessment.assessmentId,
       normalizedInitialErrorCode: "ALLY_DAILY_QUERY_LIMIT_REACHED",
     },
-    responses: [{ body: policy }, { body: approved }],
+    responses: [{ body: approved }],
   });
   await harness.functions.loadInitialState();
   assert.equal(harness.state.view, "bypassing");
   assert.equal(harness.state.dailyQuotaModalOpen, false);
   assert.equal(harness.approvals.length, 1);
   assert.equal(harness.approvals[0].solicitudId, 12);
-  assert.deepEqual(harness.requests.map(({ method }) => method), ["GET", "GET"]);
-  assert.equal(harness.requests[0].url, "/api/creditos/datacredito/politica",
-    "restoring an existing approval must not impose the new-query owner's policy scope");
-  assert.match(harness.requests[1].url, /\/evaluaciones\/b13a8110-bd5c-4307-9d0e-deed918fdbe5\?/);
+  assert.deepEqual(harness.requests.map(({ method }) => method), ["GET"]);
+  assert.match(harness.requests[0].url, /\/evaluaciones\/b13a8110-bd5c-4307-9d0e-deed918fdbe5\?/);
+  assert.ok(!harness.requests.some(request => request.url.includes("/politica")),
+    "restoring an existing approval does not depend on the current policy or quota");
+});
+
+test("retomar conserva la oferta original y consulta primero su assessment, incluso con marcador financiero antiguo y apellido display vacío", async () => {
+  const originalOffer = { ...approved.assessment.offer, policyVersion: 3,
+    financialSettings: { calculoVersion: "ARES_FRANCES_V1", tasaInteresEa: 29.66, frecuenciaPago: "QUINCENAL", fianzaTotalPorcentaje: 12 } };
+  for (const financialTermsRecovery of [false, true]) {
+    const payload = { ...approved, assessment: { ...approved.assessment, offer: originalOffer,
+      identity: { querySurname: "PRUEBA", effective: { nameMode: "FULL_NAME_ONLY", firstSurname: "", fullName: "Nombre completo de prueba" } } } };
+    const harness = createGateHarness({ callbacks: ["loadInitialState"], responses: [{ body: payload }],
+      overrides: { initialSolicitudId: 12, initialAssessmentId: approved.assessment.assessmentId,
+        normalizedInitialSurname: "", financialTermsRecovery,
+        normalizedInitialErrorCode: financialTermsRecovery ? CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE : "" } });
+    await harness.functions.loadInitialState();
+    assert.equal(harness.state.view, "bypassing");
+    assert.equal(harness.requests.length, 1, "no policy lookup, reassignment or POST is allowed during resume");
+    assert.match(harness.requests[0].url, /\/evaluaciones\/.+draftId=12/);
+    assert.equal(harness.requests[0].method, "GET");
+    assert.equal(harness.approvals.length, 1);
+    assert.equal(harness.approvals[0].assessmentId, approved.assessment.assessmentId);
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.approvals[0].offer)), originalOffer);
+    assert.equal(harness.approvals[0].identity.effective.firstSurname, "", "query surname must not be invented as a display component");
+  }
+});
+
+for (const code of ["ASSESSMENT_IDENTITY_MISMATCH", "ASSESSMENT_PLATFORM_MISMATCH", "ASSESSMENT_CONSUMED", "ASSESSMENT_CONSUMED_ELSEWHERE", "ASSESSMENT_ENVIRONMENT_MISMATCH"]) {
+  test(`retomar rechaza ${code} sin consultar política ni volver a evaluar`, async () => {
+    const harness = createGateHarness({ callbacks: ["loadInitialState"], responses: [{ status: 409, body: { ok: false, code } }],
+      overrides: { initialSolicitudId: 12, initialAssessmentId: approved.assessment.assessmentId, financialTermsRecovery: true } });
+    await harness.functions.loadInitialState();
+    assert.equal(harness.state.view, "technical-error");
+    assert.equal(harness.approvals.length, 0);
+    assert.equal(harness.requests.length, 1);
+    assert.match(harness.requests[0].url, /\/evaluaciones\//);
+  });
+}
+
+test("solo vencimiento confirmado por servidor prepara política nueva, sin consulta automática ni aprobación", async () => {
+  let invalidated = 0;
+  const harness = createGateHarness({ callbacks: ["loadInitialState"],
+    responses: [{ status: 410, body: { ok: false, code: "ASSESSMENT_EXPIRED" } }, { body: policy }],
+    overrides: { initialSolicitudId: 12, initialAssessmentId: approved.assessment.assessmentId,
+      onAssessmentInvalidatedRef: { current: () => { invalidated++; } } } });
+  await harness.functions.loadInitialState();
+  assert.equal(invalidated, 1);
+  assert.equal(harness.approvals.length, 0);
+  assert.equal(harness.state.view, "ready");
+  assert.equal(harness.state.consentAccepted, false);
+  assert.deepEqual(harness.requests.map(request => request.method), ["GET", "GET"]);
+  assert.match(harness.requests[0].url, /\/evaluaciones\//);
+  assert.equal(harness.requests[1].url, "/api/creditos/datacredito/politica");
+});
+
+test("un assessment vencido no permite bypass si la configuración actual deshabilita consultas", async () => {
+  const harness = createGateHarness({ callbacks: ["loadInitialState"],
+    responses: [{ status: 410, body: { ok: false, code: "ASSESSMENT_EXPIRED" } }, { body: { ...policy, enabled: false } }],
+    overrides: { initialSolicitudId: 12, initialAssessmentId: approved.assessment.assessmentId } });
+  await harness.functions.loadInitialState();
+  assert.equal(harness.state.view, "unavailable");
+  assert.equal(harness.approvals.length, 0);
+  assert.equal(harness.requests.length, 2);
 });
 
 test("only restored quota failures show the modal during bootstrap, using current server quota", async () => {
@@ -650,7 +710,7 @@ test("409 business conflicts preserve the server explanation and do not trigger 
 test("restoring a saved assessment preserves a business conflict using reads only", async () => {
   const error = "La consulta guardada está en revisión administrativa.";
   const harness = createGateHarness({
-    responses: [{ body: policy }, { status: 409, body: { ok: false, code: "ASSESSMENT_REQUIRES_REVIEW", error, correlationId: "tracking-read" } }],
+    responses: [{ status: 409, body: { ok: false, code: "ASSESSMENT_REQUIRES_REVIEW", error, correlationId: "tracking-read" } }],
     callbacks: ["loadInitialState"],
     overrides: { initialAssessmentId: approved.assessment.assessmentId, initialSolicitudId: 12, conflictMessage: "Mensaje anterior" },
   });
@@ -658,7 +718,7 @@ test("restoring a saved assessment preserves a business conflict using reads onl
   assert.equal(harness.state.view, "technical-error");
   assert.equal(harness.state.conflictMessage, error);
   assert.equal(harness.state.correlationId, "tracking-read");
-  assert.equal(harness.requests.length, 2);
+  assert.equal(harness.requests.length, 1);
   assert.ok(harness.requests.every(request => request.method === "GET"));
 });
 
@@ -908,7 +968,7 @@ function assertSavedResponseReviewPanel(harness) {
 
 test("GET 422 NO_EVALUABLE_INFORMATION conserva un motivo seguro y no ofrece otra consulta ni un bucle de disponibilidad", async () => {
   const harness = createGateHarness({
-    responses: [{ body: policy }, { status: 422, body: {
+    responses: [{ status: 422, body: {
       ok: false, code: "NO_EVALUABLE_INFORMATION", error: "Sensitive provider detail", correlationId: "retained-response-get",
     } }],
     callbacks: ["loadInitialState", "retryTechnicalFailure", "submitAssessment"],
@@ -918,11 +978,11 @@ test("GET 422 NO_EVALUABLE_INFORMATION conserva un motivo seguro y no ofrece otr
   assert.equal(harness.state.view, "technical-error");assert.equal(harness.state.retryMode, "bootstrap");
   assert.equal(harness.state.conflictCode, "NO_EVALUABLE_INFORMATION");assert.equal(harness.state.conflictMessage, safeNoEvaluableMessage);
   assert.equal(harness.state.correlationId, "retained-response-get");assert.equal(harness.approvals.length, 0);
-  assert.deepEqual(harness.requests.map(request => request.method), ["GET", "GET"]);
+  assert.deepEqual(harness.requests.map(request => request.method), ["GET"]);
   assertSavedResponseReviewPanel(harness);
   await harness.functions.retryTechnicalFailure();
   await harness.functions.submitAssessment({ preventDefault() {} });
-  assert.equal(harness.requests.length, 2, "Reviewing a retained response never starts a POST or repeats bootstrap");
+  assert.equal(harness.requests.length, 1, "Reviewing a retained response never starts a POST or repeats bootstrap");
   assert.equal(harness.state.view, "technical-error");assert.equal(harness.approvals.length, 0);
 });
 
@@ -968,11 +1028,11 @@ test("restores a scoped internal risk authorization by GET without changing the 
   const harness = createGateHarness({
     callbacks: ["loadInitialState"],
     overrides: { initialSolicitudId: 12, initialAssessmentId: payload.assessmentId },
-    responses: [{ body: policy }, { body: payload }],
+    responses: [{ body: payload }],
   });
   await harness.functions.loadInitialState();
-  assert.deepEqual(harness.requests.map(request => request.method), ["GET", "GET"]);
-  assert.match(harness.requests[1].url, /draftId=12/);
+  assert.deepEqual(harness.requests.map(request => request.method), ["GET"]);
+  assert.match(harness.requests[0].url, /draftId=12/);
   assert.equal(harness.approvals.length, 1);
   assert.equal(harness.approvals[0].creditAuthorizationSource, "INTERNAL_EXCEPTION");
   assert.equal(harness.approvals[0].creditRiskExceptionId, payload.creditAuthorization.exceptionId);

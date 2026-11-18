@@ -243,7 +243,7 @@ test("los límites recuperables reabren el mismo borrador para un reintento norm
 
   assert.match(
     gate,
-    /const newQueryRetryRecovery = Boolean\([\s\S]*initialSolicitudId[\s\S]*!initialAssessmentId[\s\S]*normalizedInitialDocument[\s\S]*normalizedInitialSurname[\s\S]*normalizedInitialErrorCode === "RATE_LIMITED"[\s\S]*normalizedInitialErrorCode === "ALLY_DAILY_QUERY_LIMIT_REACHED"/
+    /const newQueryRetryRecovery = Boolean\([\s\S]*initialSolicitudId[\s\S]*!initialAssessmentId[\s\S]*normalizedInitialDocument[\s\S]*normalizedInitialSurname[\s\S]*normalizedInitialErrorCode === "RATE_LIMITED"[\s\S]*\["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"\]\.includes\(normalizedInitialErrorCode\)/
   );
   assert.match(
     bootstrap,

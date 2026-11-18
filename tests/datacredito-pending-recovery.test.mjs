@@ -73,6 +73,7 @@ function fixture(overrides = {}) {
       buildDataCreditoIdentityHashes: input => ({ documentHash: input.documentNumber, surnameHash: input.firstSurname }),
       hashDataCreditoRequestMetadata: () => "hash",
       getAssignedDataCreditoPolicy: async () => ({ kind: "READY", policy: { version: 8, revisionId: "current-revision" } }),
+      getDataCreditoAssessmentById: async () => ({ status: "NO_EVALUADO" }),
       reuseDataCreditoAssessment: async () => { events.reuse++; return Object.hasOwn(overrides, "cached") ? overrides.cached : { kind: "REUSED", assessment }; },
       reserveDataCreditoAssessment: async () => { events.reservation++; throw new Error("Paid reservation must not run"); },
       serializeDataCreditoAssessment: value => ({ assessmentId: value.id, status: value.status, offer: value.offer }),

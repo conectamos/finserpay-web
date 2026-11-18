@@ -479,6 +479,8 @@ BEGIN
       AND assessment."providerEnvironment" = NEW."providerEnvironment"
       AND (
         assessment."status" = 'PENDING'
+        OR (assessment."status" = 'APROBADO' AND assessment."claimTokenHash" IS NOT NULL
+          AND assessment."claimExpiresAt" > CURRENT_TIMESTAMP)
         OR (
           assessment."status" IN ('APROBADO', 'RECHAZADO')
           AND assessment."expiresAt" > CURRENT_TIMESTAMP
@@ -554,7 +556,6 @@ BEGIN
     SELECT 1
     FROM "DataCreditoAssessment" assessment
     WHERE assessment."status" = 'APROBADO'
-      AND assessment."expiresAt" > CURRENT_TIMESTAMP
       AND assessment."claimTokenHash" IS NOT NULL
       AND assessment."claimExpiresAt" > CURRENT_TIMESTAMP
     GROUP BY assessment."documentHash", assessment."providerEnvironment"
@@ -566,6 +567,51 @@ BEGIN
 END
 $$;
 
+-- The inquiry TTL is never extended to keep an approved draft usable. Resolve
+-- that draft independently and fail closed when the optional draft schema is
+-- not installed. This helper does not grant authority to another assessment.
+CREATE OR REPLACE FUNCTION "finser_has_bound_datacredito_draft_v1"(
+  assessment_id UUID,
+  finalized_credit_id INTEGER DEFAULT NULL
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+  IF to_regclass('"CreditoBorrador"') IS NULL OR to_regclass('"Sede"') IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  RETURN EXISTS (
+    SELECT 1
+    FROM "DataCreditoAssessment" assessment
+    JOIN "CreditoBorrador" draft ON
+      COALESCE(draft."dataCreditoAssessmentId"::text,
+        NULLIF(draft."payload"->>'dataCreditoAssessmentId', '')) = assessment."id"::text
+    JOIN "Sede" sede ON sede."id" = draft."sedeId"
+    WHERE assessment."id" = assessment_id
+      AND assessment."status" = 'APROBADO'
+      AND assessment."retainedUntil" > clock_timestamp()
+      AND assessment."consumedAt" IS NULL AND assessment."creditId" IS NULL
+      AND COALESCE(draft."expiresAt", draft."createdAt" + INTERVAL '15 days') > clock_timestamp()
+      AND (
+        (finalized_credit_id IS NULL AND draft."estado" = 'ABIERTO' AND draft."creditoId" IS NULL)
+        OR (finalized_credit_id > 0 AND draft."estado" = 'CERRADO'
+          AND draft."closedReason" = 'FINALIZADA' AND draft."creditoId" = finalized_credit_id)
+      )
+      AND (NULLIF(draft."payload"->>'dataCreditoAssessmentId', '') IS NULL
+        OR draft."payload"->>'dataCreditoAssessmentId' = assessment."id"::text)
+      AND REGEXP_REPLACE(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') ~ '^[0-9]{3,13}$'
+      AND REGEXP_REPLACE(COALESCE(draft."clienteDocumento", ''), '[^0-9]', '', 'g') =
+        REGEXP_REPLACE(COALESCE(draft."payload"->>'clienteDocumento', ''), '[^0-9]', '', 'g')
+      AND RIGHT(REGEXP_REPLACE(draft."clienteDocumento", '[^0-9]', '', 'g'), 4) = assessment."documentLast4"
+      AND UPPER(COALESCE(NULLIF(draft."plataforma", ''), draft."payload"->>'plataformaDispositivo')) = assessment."platform"
+      AND draft."usuarioId" = assessment."userId"
+      AND draft."vendedorId" IS NOT DISTINCT FROM assessment."sellerId"
+      AND draft."sedeId" = assessment."sedeId"
+      AND sede."aliadoId" IS NOT DISTINCT FROM assessment."aliadoId"
+  );
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -574,6 +620,15 @@ BEGIN
   THEN
     RAISE EXCEPTION
       'La llave global de una consulta DataCredito es inmutable'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- Claim/consume must never renew the original inquiry as a side effect.
+  IF OLD."status" = 'APROBADO'
+    AND NEW."expiresAt" IS DISTINCT FROM OLD."expiresAt"
+  THEN
+    RAISE EXCEPTION
+      'La vigencia original de DataCredito no puede modificarse al reservar o consumir'
       USING ERRCODE = '23514';
   END IF;
 
@@ -599,7 +654,8 @@ BEGIN
   -- active claim turns that legacy statement into an exact one-row consume.
   IF OLD."consumedAt" IS NULL AND NEW."consumedAt" IS NOT NULL THEN
     IF OLD."status" <> 'APROBADO'
-      OR OLD."expiresAt" <= CURRENT_TIMESTAMP
+      OR (OLD."expiresAt" <= CURRENT_TIMESTAMP AND NOT
+        "finser_has_bound_datacredito_draft_v1"(OLD."id", NEW."creditId"))
       OR OLD."claimTokenHash" IS NULL
       OR OLD."claimExpiresAt" IS NULL
       OR OLD."claimExpiresAt" <= CURRENT_TIMESTAMP
@@ -616,7 +672,9 @@ BEGIN
         AND other."documentHash" = OLD."documentHash"
         AND other."providerEnvironment" = OLD."providerEnvironment"
         AND other."status" IN ('APROBADO', 'RECHAZADO')
-        AND other."expiresAt" > CURRENT_TIMESTAMP
+        AND (other."expiresAt" > CURRENT_TIMESTAMP OR
+          COALESCE(other."reusedFromAssessmentId", other."id") =
+            COALESCE(OLD."reusedFromAssessmentId", OLD."id"))
         AND other."consumedAt" IS NOT NULL
         AND (
           COALESCE(other."reusedFromAssessmentId", other."id") =
@@ -641,7 +699,6 @@ BEGIN
         AND other."documentHash" = OLD."documentHash"
         AND other."providerEnvironment" = OLD."providerEnvironment"
         AND other."status" = 'APROBADO'
-        AND other."expiresAt" > CURRENT_TIMESTAMP
         AND other."claimTokenHash" IS NOT NULL
         AND other."claimExpiresAt" > CURRENT_TIMESTAMP
     ) THEN
@@ -667,7 +724,8 @@ BEGIN
         AND OLD."claimExpiresAt" > CURRENT_TIMESTAMP
       )
       OR NEW."status" <> 'APROBADO'
-      OR NEW."expiresAt" <= CURRENT_TIMESTAMP
+      OR (NEW."expiresAt" <= CURRENT_TIMESTAMP AND NOT
+        "finser_has_bound_datacredito_draft_v1"(OLD."id"))
       OR NEW."consumedAt" IS NOT NULL
       OR EXISTS (
         SELECT 1
@@ -675,7 +733,9 @@ BEGIN
         WHERE other."documentHash" = NEW."documentHash"
           AND other."providerEnvironment" = NEW."providerEnvironment"
           AND other."status" IN ('APROBADO', 'RECHAZADO')
-          AND other."expiresAt" > CURRENT_TIMESTAMP
+          AND (other."expiresAt" > CURRENT_TIMESTAMP OR
+            COALESCE(other."reusedFromAssessmentId", other."id") =
+              COALESCE(NEW."reusedFromAssessmentId", NEW."id"))
           AND other."consumedAt" IS NOT NULL
           AND (
             COALESCE(other."reusedFromAssessmentId", other."id") =
@@ -701,7 +761,6 @@ BEGIN
           AND other."documentHash" = NEW."documentHash"
           AND other."providerEnvironment" = NEW."providerEnvironment"
           AND other."status" = 'APROBADO'
-          AND other."expiresAt" > CURRENT_TIMESTAMP
           AND other."claimTokenHash" IS NOT NULL
           AND other."claimExpiresAt" > CURRENT_TIMESTAMP
       )

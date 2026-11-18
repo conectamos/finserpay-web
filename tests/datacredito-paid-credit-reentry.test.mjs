@@ -5,6 +5,9 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
+import { createJiti } from "jiti";
+
+const { boundDataCreditoDraftExpirySql, dataCreditoApprovalDraftId } = await createJiti(import.meta.url).import("../lib/datacredito/draft-approval.ts");
 
 const storage = readFileSync(new URL("../lib/datacredito/storage.ts", import.meta.url), "utf8");
 const setup = readFileSync(new URL("../scripts/setup-datacredito.sql", import.meta.url), "utf8");
@@ -26,6 +29,8 @@ function functions(database) {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
   } }).outputText, { module: loaded, exports: loaded.exports, prisma: database,
     randomBytes, Date, Number, String, ensureDataCreditoSchema: async () => {},
+    boundDataCreditoDraftExpirySql, dataCreditoApprovalDraftId,
+    normalizeDataCreditoDocument: value => String(value || "").replace(/\D/g, ""),
     buildDataCreditoIdentityHashes: () => ({ documentHash: "paid-client", surnameHash: "surname", documentLast4: "3090" }),
     hmacDataCreditoValue: (label, value) => `${label}:${value}`,
   });
@@ -46,11 +51,17 @@ async function fixture() {
       "sedeId" integer, "usuarioId" integer, "pazYSalvoEmitidoAt" timestamp);
     CREATE TABLE "CreditoAbono" ("creditoId" integer NOT NULL, "valor" double precision NOT NULL,
       "estado" text NOT NULL);
+    CREATE TABLE "Sede" ("id" integer PRIMARY KEY, "aliadoId" integer);
+    CREATE TABLE "CreditoBorrador" ("id" integer PRIMARY KEY, "estado" text, "closedReason" text,
+      "creditoId" integer, "expiresAt" timestamp, "createdAt" timestamp,
+      "dataCreditoAssessmentId" uuid, "payload" jsonb, "clienteDocumento" text, "plataforma" text,
+      "usuarioId" integer, "vendedorId" integer, "sedeId" integer);
     CREATE TABLE "DataCreditoAssessment" (
       "id" uuid PRIMARY KEY, "documentHash" text NOT NULL, "surnameHash" text DEFAULT 'surname',
       "documentLast4" text DEFAULT '3090', "providerEnvironment" text DEFAULT 'production',
       "platform" text DEFAULT 'IPHONE', "status" text NOT NULL,
       "expiresAt" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP + INTERVAL '2 days',
+      "retainedUntil" timestamp DEFAULT CURRENT_TIMESTAMP + INTERVAL '90 days',
       "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP, "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP,
       "durationMs" integer, "errorCode" text, "consumedAt" timestamp, "creditId" integer,
       "reusedFromAssessmentId" uuid, "claimTokenHash" text, "claimExpiresAt" timestamp, "claimedAt" timestamp,
@@ -66,7 +77,7 @@ async function fixture() {
   await pg.exec(setup.slice(exceptionStart, exceptionEnd));
   await pg.exec(sqlSection('CREATE OR REPLACE FUNCTION "finser_guard_datacredito_pending_global"()',
     'EXECUTE FUNCTION "finser_guard_datacredito_pending_global"();'));
-  await pg.exec(sqlSection('CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()',
+  await pg.exec(sqlSection('CREATE OR REPLACE FUNCTION "finser_has_bound_datacredito_draft_v1"(',
     'EXECUTE FUNCTION "finser_guard_datacredito_global_usage_v1"();'));
   const database = {
     $executeRawUnsafe: async (sql, ...params) => (await pg.query(sql, params)).affectedRows,

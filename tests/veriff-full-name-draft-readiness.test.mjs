@@ -141,7 +141,22 @@ test("FULL_NAME_ONLY llega a Veriff con identidad real recuperada y reutiliza el
   assert.equal(f.draft.payload.clienteNombre, fullName);assert.equal(f.draft.payload.clientePrimerNombre, "");
   assert.equal(f.draft.payload.clientePrimerApellido, "");assert.equal(f.draft.payload.clienteSegundoApellido, "");
   assert.equal(f.calls.assessment[0].documentNumber, "123456789");assert.equal(f.calls.assessment[0].firstSurname, "APELLIDO DIGITADO");
+  assert.equal(f.calls.assessment[0].solicitudId, f.draft.id);
   assert.equal(f.calls.source, 1);assert.equal(f.calls.audit, 0);assert.equal(f.calls.provider, 0);assert.equal(f.calls.reservation, 0);assert.equal(f.calls.release, 1);
+});
+
+test("Veriff vincula la aprobación al borrador leído por el servidor y no a un solicitudId adicional del navegador", async () => {
+  const f = fixture();
+  const request = f.request();
+  const submitted = await request.json();
+  const response = await f.route.POST(new Request(request.url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...submitted, solicitudId: 999999 }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(f.calls.assessment.length, 1);
+  assert.equal(f.calls.assessment[0].solicitudId, f.draft.id);
+  assert.equal(f.calls.provider, 0);assert.equal(f.calls.reservation, 0);
 });
 
 test("documento distinto o nombre completo alterado fallan antes de consultar o reservar Veriff", async () => {

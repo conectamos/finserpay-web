@@ -16,6 +16,28 @@ No forman parte de este alcance:
 
 ## Flujo operativo
 
+### Continuación de una solicitud aprobada
+
+Una solicitud abierta y vigente conserva la evaluación aprobada y la oferta
+financiera completa que tiene vinculadas en el servidor. Retomarla no aplica la
+política actual del aliado, no clona la evaluación ni consulta otra vez al
+proveedor. La ventana de reutilización de la consulta para solicitudes nuevas
+sigue siendo independiente: su vencimiento original no se modifica.
+
+La aprobación de esa misma solicitud puede usarse hasta el vencimiento del
+borrador. La respuesta distingue `expiresAt` (vigencia de la aprobación del
+borrador) de `assessmentExpiresAt` (vencimiento original de la consulta). Se
+mantienen identidad consultada, documento, plataforma, propietario, aliado,
+retención de evidencia y uso único. Un apellido de presentación ausente no se
+rellena con el apellido usado en la consulta: se verifica la identidad original
+contra su expediente cifrado y sus hashes.
+
+Veriff, firma y cierre comprueban el mismo vínculo en el servidor. La reserva
+requiere el borrador abierto; el consumo de una consulta vencida requiere que la
+misma transacción haya finalizado ese borrador para ese crédito exacto. Los
+borradores cerrados, vencidos, ajenos o con datos inconsistentes no obtienen esta
+continuidad. Las solicitudes nuevas usan la política vigente del aliado.
+
 1. El asesor elige Android o iPhone.
 2. Registra cedula y primer apellido.
 3. Confirma que el titular autorizo la consulta antes de ejecutarla.

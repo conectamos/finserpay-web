@@ -27,10 +27,10 @@ function serverModule(relativePath, dependencies) {
   const code = ts.transpileModule(source, { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
   } }).outputText;
-  const module = { exports: {} };
-  runInNewContext(code, { module, exports: module.exports, Error, Date,
+  const testModule = { exports: {} };
+  runInNewContext(code, { module: testModule, exports: testModule.exports, Error, Date,
     process: { env: { NODE_ENV: "test" } }, ...dependencies });
-  return module.exports;
+  return testModule.exports;
 }
 
 const { buildInternalExceptionOffer } = serverModule("lib/datacredito/risk-exception.ts", {
@@ -51,7 +51,8 @@ function approvedPolicy(platform, bandSurety, settings = policyFinancialSettings
   }] };
 }
 
-function draftFixture(platform, { bandSurety = 60, settings = policyFinancialSettings, exception = false } = {}) {
+function draftFixture(platform, { bandSurety = 60, settings = policyFinancialSettings, exception = false,
+  approvalAvailable = true, globalSettings = {} } = {}) {
   const revision = approvedPolicy(platform, bandSurety, settings, exception);
   const offer = exception ? buildInternalExceptionOffer(revision, platform)
     : policy.resolveDataCreditoDecision(revision, platform, 700).offer;
@@ -63,6 +64,7 @@ function draftFixture(platform, { bandSurety = 60, settings = policyFinancialSet
     assert.equal(input.userId, 23); assert.equal(input.sellerId, 45);
     assert.equal(input.sedeId, 1); assert.equal(input.aliadoId, 7);
     assert.equal(input.documentNumber, "123456789");
+    assert.equal(input.solicitudId, 530, "La aprobación debe verificarse contra el borrador servidor");
   };
   const operations = serverModule("lib/firmaseguro-draft-credit-builder.ts", {
     ...factory, ...amortization, ...phones, ...policy, ...currentTerms, ...financial,
@@ -71,7 +73,7 @@ function draftFixture(platform, { bandSurety = 60, settings = policyFinancialSet
     getDataCreditoPublicConfig: () => ({ enabled: true, configured: true, environment: "test" }),
     isDataCreditoAuditConfigured: () => true,
     getApprovedDataCreditoAssessmentForCredit: async input => {
-      assert.equal(exception, false); checkScope(input); authorizationCalls++; return assessment;
+      assert.equal(exception, false); checkScope(input); authorizationCalls++; return approvalAvailable ? assessment : null;
     },
     require: name => {
       assert.equal(name, "@/lib/datacredito/risk-exception");
@@ -91,6 +93,7 @@ function draftFixture(platform, { bandSurety = 60, settings = policyFinancialSet
         fianzaCuotaPorcentaje: 0, seguroCuotaPorcentaje: 0.5, frecuenciaPago: "MENSUAL",
         cuotaInicialPorcentaje: 20, iphoneTopeFinanciado: 3_500_000, iphoneTopeCuota: 160_000,
         plazoCuotas: 12, plazoMaximoCuotas: 48,
+        ...globalSettings,
       } };
     },
     findEquipmentCatalogItem: async identity => ({ ...identity, activo: true, precioBaseVenta: 2_600_000 }),
@@ -169,17 +172,69 @@ for (const platform of ["ANDROID", "IPHONE"]) {
     assert.equal(restored.checksum, seal.checksum);
   });
 
-  test(`${platform}: condiciones viejas no se rescatan con valores vigentes enviados por el cliente`, async () => {
-    for (const settings of [null,
+  test(`${platform}: conserva el snapshot histórico aprobado aunque los valores actuales y del cliente difieran`, async () => {
+    for (const settings of [
       { ...policyFinancialSettings, fianzaTotalPorcentaje: 60 },
       { ...policyFinancialSettings, tasaInteresEa: 29.66 },
       { ...policyFinancialSettings, seguroCuotaPorcentaje: 0.04 },
+      { ...policyFinancialSettings, calculoVersion: "ARES_FRANCES_V1", tasaInteresEa: 29.66 },
+      { calculoVersion: "FRANCES_V1", tasaInteresEa: 20, fianzaCuotaPorcentaje: 1.5,
+        seguroCuotaPorcentaje: 0.03, frecuenciaPago: "QUINCENAL" },
     ]) {
       const f = draftFixture(platform, { settings });
       Object.assign(f.row.payload, policyFinancialSettings, { financialSettings: policyFinancialSettings });
-      await assert.rejects(f.buildDraftCredit(f.row), error => error.status === 409 &&
-        error.code === "DATACREDITO_FINANCIAL_TERMS_OUTDATED");
-      assert.equal(f.calculationCalls(), 0, "Se rechaza antes de producir el plan para firma");
+      f.row.payload.plazoMeses = "30";
+      const before = JSON.stringify(f.offer);
+      const built = await f.buildDraftCredit(f.row);
+      assert.equal(built.amortizationPlan.version, settings.calculoVersion);
+      assert.equal(built.credit.tasaInteresEa, settings.tasaInteresEa);
+      assert.equal(built.credit.seguroCuotaPorcentaje, settings.seguroCuotaPorcentaje);
+      assert.equal(built.credit.frecuenciaPago, settings.frecuenciaPago);
+      assert.equal(built.credit.fianzaCuotaPorcentaje,
+        settings.calculoVersion === "FRANCES_V1" ? settings.fianzaCuotaPorcentaje : settings.fianzaTotalPorcentaje / 30);
+      assert.equal(built.financingParameters.policyRevisionId, "revision-policy");
+      assert.equal(built.financingParameters.policyVersion, 8);
+      assert.equal(built.financingParameters.fianzaFuente, "POLITICA");
+      assert.equal(JSON.stringify(f.offer), before, "La aprobación original permanece intacta");
+      assert.equal(f.authorizationCalls(), 1); assert.equal(f.calculationCalls(), 1);
+    }
+  });
+
+  test(`${platform}: el payload no reemplaza un snapshot ausente ni una aprobación no autorizada`, async () => {
+    const missing = draftFixture(platform, { settings: null });
+    Object.assign(missing.row.payload, policyFinancialSettings, { financialSettings: policyFinancialSettings });
+    await assert.rejects(missing.buildDraftCredit(missing.row), error => error.status === 409 &&
+      error.code === "DATACREDITO_FINANCIAL_SNAPSHOT_REQUIRED");
+    assert.equal(missing.calculationCalls(), 0);
+    const unavailable = draftFixture(platform, {
+      settings: { ...policyFinancialSettings, tasaInteresEa: 29.66 }, approvalAvailable: false,
+    });
+    await assert.rejects(unavailable.buildDraftCredit(unavailable.row), error => error.status === 409 &&
+      error.code === "DATACREDITO_ASSESSMENT_INVALID");
+    assert.equal(unavailable.calculationCalls(), 0);
+  });
+
+  test(`${platform}: aprobación sin snapshot no adopta los globales aunque ya sean los vigentes`, async () => {
+    const f = draftFixture(platform, { settings: null, bandSurety: 75, globalSettings: policyFinancialSettings });
+    Object.assign(f.row.payload, policyFinancialSettings, { financialSettings: policyFinancialSettings });
+    const fallback = financial.resolveCreditPolicyFinancialSettings({
+      globalSettings: policyFinancialSettings, legacyOfferSuretyPercentage: 75, numeroCuotas: 40,
+    });
+    assert.equal(currentTerms.hasCurrentCreditOriginationTerms(fallback), true,
+      "El caso reproduce un fallback que antes superaba el guard de vigencia");
+    await assert.rejects(f.buildDraftCredit(f.row), error => error.status === 409 &&
+      error.code === "DATACREDITO_FINANCIAL_SNAPSHOT_REQUIRED" && /oferta original/.test(error.message));
+    assert.equal(f.calculationCalls(), 0);
+  });
+
+  test(`${platform}: un snapshot servidor incompleto o inválido no produce plan histórico`, async () => {
+    for (const invalid of [{}, { ...policyFinancialSettings, tasaInteresEa: -1 },
+      { ...policyFinancialSettings, frecuenciaPago: "DIARIA" },
+      { ...policyFinancialSettings, redondeoComercial: { modo: "PISO", multiplo: 100 } }]) {
+      const f = draftFixture(platform);
+      f.offer.financialSettings = invalid;
+      await assert.rejects(f.buildDraftCredit(f.row), error => error.name === "DataCreditoPolicyValidationError");
+      assert.equal(f.calculationCalls(), 0);
     }
   });
 

@@ -14,6 +14,7 @@ import {
   getDataCreditoAssessmentById,
   getDataCreditoAssessmentDocumentState,
   getDataCreditoAssessmentResumeIdentity,
+  getApprovedDataCreditoAssessmentForCredit,
   normalizeDataCreditoDocument,
   normalizeDataCreditoSurname,
   serializeDataCreditoAssessment,
@@ -274,8 +275,23 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
-    const expiresAt =
-      row.expiresAt instanceof Date ? row.expiresAt : new Date(row.expiresAt);
+    // A query's reuse window and an already approved draft's lifetime are
+    // different. Only the same live, server-bound draft keeps its original offer.
+    const draftApproval = row.status === "APROBADO" && draftId
+      ? await getApprovedDataCreditoAssessmentForCredit({
+          assessmentId: row.id, solicitudId: draftId,
+          documentNumber: normalizeDataCreditoDocument(identityDocument),
+          firstSurname: normalizeDataCreditoSurname(identitySurname),
+          platform: row.platform, providerEnvironment: provider.environment, ...scope,
+        })
+      : null;
+    if (row.status === "APROBADO" && draftId && !draftApproval) {
+      return NextResponse.json({ ok: false, status: "NO_EVALUADO", code: "ASSESSMENT_DRAFT_NOT_AVAILABLE",
+        error: "La aprobación ya no está disponible para esta solicitud. Actualiza el expediente.",
+        correlationId: row.correlationId }, { status: 409 });
+    }
+    const approval = draftApproval || row;
+    const expiresAt = new Date(approval.draftApprovalExpiresAt || approval.expiresAt);
     if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date()) {
       return NextResponse.json(
         {
@@ -355,7 +371,7 @@ export async function GET(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       ok: true,
-      ...serializeDataCreditoAssessment(row), identity: await getDataCreditoCustomerIdentityForDisplay(row),
+      ...serializeDataCreditoAssessment(approval), identity: await getDataCreditoCustomerIdentityForDisplay(row),
       ...(draftId
         ? {
             documentNumber: normalizeDataCreditoDocument(identityDocument),

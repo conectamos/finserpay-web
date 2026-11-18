@@ -151,6 +151,7 @@ async function validateDraftReadyForVeriff(
   const identity = await enforceDataCreditoCustomerIdentityForVeriff(payload, { userId: draft.usuarioId, sellerId: draft.vendedorId, sedeId: draft.sedeId, aliadoId: draft.aliadoId }, draft.id);
   const assessmentMatch = {
     assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
+    solicitudId: draft.id,
     documentNumber: String(draft.clienteDocumento || "").replace(/\D/g, ""),
     firstSurname: identity?.querySurname || sanitizeText(payload.clientePrimerApellido),
     platform,

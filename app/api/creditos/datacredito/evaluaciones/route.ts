@@ -46,6 +46,8 @@ import {
   failDataCreditoAssessmentBeforeProviderDispatch,
   getAssignedDataCreditoPolicy,
   getDataCreditoAssessmentById,
+  getApprovedDataCreditoAssessmentForCredit,
+  dataCreditoAssessmentMatchesScope,
   hashDataCreditoRequestMetadata,
   isDataCreditoAuditConfigured,
   normalizeDataCreditoDocument,
@@ -418,6 +420,34 @@ export async function POST(request: Request) {
         error: "La plataforma consultada no coincide con la solicitud retomada",
         status: 409,
       });
+    }
+    // Older clients can submit a re-evaluation when resuming. An existing
+    // approval belongs to this draft: never replace it with today's policy.
+    if (solicitudContext?.dataCreditoAssessmentId) {
+      const linked = await getDataCreditoAssessmentById(solicitudContext.dataCreditoAssessmentId);
+      if (linked?.status === "APROBADO") {
+        const originalScope: DataCreditoAssessmentScope = {
+          userId: solicitudContext.usuarioId, sellerId: solicitudContext.vendedorId,
+          sedeId: solicitudContext.sedeId, aliadoId: solicitudContext.aliadoId,
+        };
+        const identity = buildDataCreditoIdentityHashes({ documentNumber, firstSurname });
+        if (normalizeDataCreditoDocument(solicitudContext.clienteDocumento) !== documentNumber ||
+            linked.documentHash !== identity.documentHash || linked.surnameHash !== identity.surnameHash ||
+            linked.platform !== platform || linked.providerEnvironment !== provider.environment ||
+            !dataCreditoAssessmentMatchesScope(linked, originalScope)) {
+          return technicalResponse({ correlationId, code: "SOLICITUD_IDENTITY_MISMATCH", status: 409,
+            error: "La identidad consultada no coincide con la aprobación de esta solicitud" });
+        }
+        const original = await getApprovedDataCreditoAssessmentForCredit({
+          assessmentId: linked.id, solicitudId: solicitudContext.id, documentNumber, firstSurname,
+          platform, providerEnvironment: provider.environment, ...originalScope,
+        });
+        if (!original) return technicalResponse({ correlationId, code: "ASSESSMENT_DRAFT_NOT_AVAILABLE", status: 409,
+          error: "La aprobación ya no está disponible para esta solicitud. Actualiza el expediente." });
+        return NextResponse.json({ ok: true, reused: true, preserved: true, solicitudId: solicitudContext.id,
+          ...serializeDataCreditoAssessment(original), documentNumber, firstSurname,
+          identity: await getDataCreditoCustomerIdentityForDisplay(original), correlationId });
+      }
     }
     const identityMismatchRecovery = solicitudContext
       ? canRecoverAssessmentIdentityMismatch({

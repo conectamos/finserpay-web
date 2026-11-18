@@ -867,69 +867,76 @@ export default function DatacreditoPrequalificationGate({
       setRetryMode("bootstrap");
 
       try {
-        const policyResponse = await fetch(
-          initialSolicitudId && !initialAssessmentId && ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(normalizedInitialErrorCode)
-            ? `/api/creditos/datacredito/politica?solicitudId=${encodeURIComponent(initialSolicitudId)}`
-            : "/api/creditos/datacredito/politica",
-          {
-            cache: "no-store",
-            headers: { Accept: "application/json" },
-            signal,
+        // An existing assessment is the authority for its saved offer. Only a genuinely
+        // new evaluation/recovery needs today's policy or provider configuration.
+        const loadCurrentPolicy = async () => {
+          const policyResponse = await fetch(
+            initialSolicitudId && !initialAssessmentId && ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(normalizedInitialErrorCode)
+              ? `/api/creditos/datacredito/politica?solicitudId=${encodeURIComponent(initialSolicitudId)}`
+              : "/api/creditos/datacredito/politica",
+            {
+              cache: "no-store",
+              headers: { Accept: "application/json" },
+              signal,
+            }
+          );
+          const policyPayload = (await readJson(
+            policyResponse
+          )) as PolicyResponse & JsonRecord;
+
+          setConsentText(
+            readString(policyPayload.consent?.text) || CONSENT_ATTESTATION
+          );
+
+          if (!policyResponse.ok || policyPayload.ok === false) {
+            setCorrelationId(getCorrelationId(policyPayload, policyResponse));
+            setView("technical-error");
+            return null;
           }
-        );
-        const policyPayload = (await readJson(
-          policyResponse
-        )) as PolicyResponse & JsonRecord;
 
-        setConsentText(
-          readString(policyPayload.consent?.text) || CONSENT_ATTESTATION
-        );
+          if (policyPayload.enabled === false) {
+            if (financialTermsRecovery || initialAssessmentId) {
+              setView("unavailable");
+              return null;
+            }
+            finishBypass();
+            return null;
+          }
 
-        if (!policyResponse.ok || policyPayload.ok === false) {
-          setCorrelationId(getCorrelationId(policyPayload, policyResponse));
-          setView("technical-error");
-          return;
-        }
+          const configured =
+            policyPayload.configured ?? policyPayload.provider?.configured;
+          const hasPolicy =
+            policyPayload.hasPolicy ?? Boolean(policyPayload.policy);
 
-        if (policyPayload.enabled === false) {
-          if (financialTermsRecovery) {
+          if (
+            policyPayload.enabled !== true ||
+            configured !== true ||
+            hasPolicy !== true ||
+            !policyPayload.policy
+          ) {
+            setCorrelationId(getCorrelationId(policyPayload, policyResponse));
             setView("unavailable");
-            return;
+            return null;
           }
-          finishBypass();
-          return;
-        }
+          return policyPayload;
+        };
 
-        const configured =
-          policyPayload.configured ?? policyPayload.provider?.configured;
-        const hasPolicy =
-          policyPayload.hasPolicy ?? Boolean(policyPayload.policy);
-
-        if (
-          policyPayload.enabled !== true ||
-          configured !== true ||
-          hasPolicy !== true ||
-          !policyPayload.policy
-        ) {
-          setCorrelationId(getCorrelationId(policyPayload, policyResponse));
-          setView("unavailable");
-          return;
-        }
-
-        // Renovar nunca reacepta el GET de la evaluación anterior ni consulta al proveedor.
-        if (financialTermsRecovery) {
-          if (!initialSolicitudId || !normalizedInitialDocument || !normalizedInitialSurname) {
-            setView("unavailable");
-            return;
-          }
-          setApprovedResult(null);
-          setConsentAccepted(false);
-          setFormErrors({});
-          setRetryMode("form");
-          setView("ready");
-          return;
-        }
         if (!initialAssessmentId) {
+          const policyPayload = await loadCurrentPolicy();
+          if (!policyPayload) return;
+          // Recovery without a linked assessment still requires its existing eligibility gates.
+          if (financialTermsRecovery) {
+            if (!initialSolicitudId || !normalizedInitialDocument || !normalizedInitialSurname) {
+              setView("unavailable");
+              return;
+            }
+            setApprovedResult(null);
+            setConsentAccepted(false);
+            setFormErrors({});
+            setRetryMode("form");
+            setView("ready");
+            return;
+          }
           if (newQueryRetryRecovery && ["ALLY_DAILY_QUERY_LIMIT_REACHED", "BRANCH_DAILY_QUERY_LIMIT_REACHED"].includes(normalizedInitialErrorCode)) {
             const quota = normalizeDailyQueryLimitReached(policyPayload);
             if (quota?.exhausted && quota.percentUsed === 100) {
@@ -1003,6 +1010,7 @@ export default function DatacreditoPrequalificationGate({
               assessmentPayload
             )
           ) {
+            if (!await loadCurrentPolicy()) return;
             expiredRequerySolicitudIdRef.current = initialSolicitudId;
             onAssessmentInvalidatedRef.current?.();
             setConsentAccepted(false);

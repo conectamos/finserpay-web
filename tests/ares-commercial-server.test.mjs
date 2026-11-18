@@ -98,28 +98,41 @@ function actualRouteGuard(relativePath) {
     : routeSource;
   const file = ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const found = [];
+  let approvalDeclaration;
+  let snapshotGuard;
   function walk(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(file) === "hasApprovedDraftFinancialSnapshot") {
+      approvalDeclaration = `const ${node.getText(file)};`;
+    }
     if (ts.isIfStatement(node) &&
         node.expression.getText(file).includes("!hasCurrentCreditOriginationTerms(resolvedPolicyFinancialSettings)")) {
       found.push(node);
     }
+    if (ts.isIfStatement(node) && node.expression.getText(file).includes("!hasApprovedDraftFinancialSnapshot") &&
+        node.thenStatement.getText(file).includes('"DATACREDITO_FINANCIAL_SNAPSHOT_REQUIRED"')) snapshotGuard = node.getText(file);
     ts.forEachChild(node, walk);
   }
   walk(file);
   assert.equal(found.length, 1, "Exactly one origination guard per route");
   const guard = found[0];
+  assert.ok(approvalDeclaration);
+  assert.ok(snapshotGuard);
   const execute = new Function("signedTermsSnapshot", "resolvedPolicyFinancialSettings",
     "hasCurrentCreditOriginationTerms", "NextResponse", "CreditValidationError",
     "CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE", "CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE",
-    guard.getText(file));
+    "dataCreditoOffer", "dataCreditoAssessment", "solicitudContext", "creditRiskAuthorization",
+    `${approvalDeclaration}\n${snapshotGuard}\n${guard.getText(file)}`);
   class ValidationError extends Error {
     constructor(message, status, code) { super(message); this.status = status; this.code = code; }
   }
   return {
     source, routeSource, guard,
-    run: (settings, signed = null) => execute(signed, settings, hasCurrentCreditOriginationTerms,
+    run: (settings, signed = null, { approval = false, exception = false, draft = true } = {}) => execute(signed, settings, hasCurrentCreditOriginationTerms,
       { json: (body, options) => ({ body, status: options.status }) }, ValidationError,
-      CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE),
+      CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE, CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
+      approval ? { authorizationSource: exception ? "INTERNAL_EXCEPTION" : "DATACREDITO" } : null,
+      approval ? { id: "approved-server-assessment" } : null, draft ? { id: 90 } : null,
+      exception ? { source: "INTERNAL_EXCEPTION" } : null),
   };
 }
 
@@ -144,6 +157,31 @@ test("el guard real de firma falla 409 antes de calcular y reutiliza procesos ac
   assert.ok(post.indexOf("canReuseFirmaSeguroProcess(lockedCurrent)") < post.indexOf("await buildDraftCredit"));
   assert.ok(guard.source.indexOf("async function buildDraftCredit") < guard.guard.pos);
   assert.ok(guard.source.indexOf("const amortizationPlan = calculateFrenchAmortization", guard.guard.pos) > guard.guard.pos);
+});
+
+test("ambos guards conservan el snapshot validado de la aprobación y rechazan fallbacks y excepciones", () => {
+  const historical = { ...current, tasaInteresEa: 29.66, fianzaSource: "POLITICA" };
+  for (const relativePath of Object.values(routes)) {
+    const guard = actualRouteGuard(relativePath);
+    assert.equal(guard.run(historical, null, { approval: true }), undefined);
+    const rejected = (options, code = CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_CODE) => {
+      if (relativePath === routes.sign) assert.throws(() => guard.run(options.settings || historical, null, options),
+        error => error.code === code);
+      else assert.equal(guard.run(options.settings || historical, null, options).body.code,
+        code);
+    };
+    rejected({ approval: false });
+    rejected({ approval: true, exception: true });
+    for (const fianzaSource of ["GLOBAL", "OFERTA_LEGACY_TOTAL"]) {
+      rejected({ approval: true, settings: { ...historical, fianzaSource } }, "DATACREDITO_FINANCIAL_SNAPSHOT_REQUIRED");
+      rejected({ approval: true, settings: { ...current, fianzaSource } }, "DATACREDITO_FINANCIAL_SNAPSHOT_REQUIRED");
+      assert.equal(guard.run({ ...current, fianzaSource }), undefined, "Las solicitudes sin aprobación conservan su guard vigente");
+      assert.equal(guard.run({ ...current, fianzaSource }, null, { approval: true, exception: true }), undefined);
+      if (relativePath === routes.create) assert.equal(guard.run({ ...current, fianzaSource },
+        { calculoVersion: "ARES_FRANCES_V1" }, { approval: true }), undefined, "El cierre conserva el sello firmado");
+    }
+    if (relativePath === routes.create) rejected({ approval: true, draft: false });
+  }
 });
 
 test("firma y creacion usan la cuota cobrable para el importe y para validar limites", () => {

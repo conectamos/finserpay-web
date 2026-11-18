@@ -20,12 +20,14 @@ const consoleSource = readFileSync(new URL("../app/dashboard/creditos/credit-fac
 const transpile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
 
 function routeFixture(overrides = {}) {
-  const events = { provider: 0, reservation: 0, reuse: 0, released: 0, attached: [], marked: [] };
+  const events = { provider: 0, reservation: 0, reuse: 0, policy: 0, approvalReads: 0,
+    draftReservations: 0, signatureReads: 0, locks: 0, released: 0, attached: [], marked: [] };
   const context = { id: 392, currentStep: 4, usuarioId: 1, vendedorId: null, sedeId: 3, aliadoId: 7,
     clienteDocumento: "12345678", clientePrimerApellido: "PEREZ", plataforma: "IPHONE", imei: "350000000000001",
     dataCreditoAssessmentId: "old-assessment", dataCreditoErrorCode: null, ...overrides.context };
   const assessment = { id: "old-assessment", status: "APROBADO", documentHash: "12345678", surnameHash: "PEREZ",
     platform: "IPHONE", userId: 1, sellerId: null, sedeId: 3, aliadoId: 7,
+    providerEnvironment: "PRODUCTION", policyVersion: 2, policyRevisionId: "original-revision",
     offer: { financialSettings: { ...settings, calculoVersion: "ARES_FRANCES_V1", tasaInteresEa: 29.66 } },
     ...overrides.assessment };
   let signatureReads = 0;
@@ -50,12 +52,29 @@ function routeFixture(overrides = {}) {
       normalizeDataCreditoSurname: value => String(value || "").trim().toUpperCase(),
       isDataCreditoAuditConfigured: () => true,
       getDataCreditoAssessmentById: async () => assessment,
+      dataCreditoAssessmentMatchesScope: (row, scope) => row.userId === scope.userId &&
+        row.sellerId === scope.sellerId && row.sedeId === scope.sedeId && row.aliadoId === scope.aliadoId,
+      getApprovedDataCreditoAssessmentForCredit: async input => {
+        events.approvalReads++;
+        assert.equal(input.assessmentId, assessment.id);
+        assert.equal(input.solicitudId, context.id);
+        assert.equal(input.documentNumber, assessment.documentHash);
+        assert.equal(input.firstSurname, assessment.surnameHash);
+        assert.equal(input.platform, assessment.platform);
+        assert.equal(input.providerEnvironment, assessment.providerEnvironment);
+        assert.equal(input.userId, context.usuarioId);
+        assert.equal(input.sellerId, context.vendedorId);
+        assert.equal(input.sedeId, context.sedeId);
+        assert.equal(input.aliadoId, context.aliadoId);
+        return overrides.approvalAvailable === false ? null : assessment;
+      },
       buildDataCreditoIdentityHashes: input => ({ documentHash: input.documentNumber, surnameHash: input.firstSurname }),
       hashDataCreditoRequestMetadata: () => "hash",
-      getAssignedDataCreditoPolicy: async () => ({ kind: "READY", policy: { version: 8, revisionId: "new-revision", financialSettings: settings } }),
+      getAssignedDataCreditoPolicy: async () => { events.policy++; return { kind: "READY", policy: { version: 8, revisionId: "new-revision", financialSettings: settings } }; },
       reuseDataCreditoAssessment: async () => { events.reuse++; return Object.hasOwn(overrides, "cached") ? overrides.cached : { kind: "REUSED", assessment: { ...assessment, id: "new-assessment", offer: { financialSettings: settings } } }; },
       reserveDataCreditoAssessment: async () => { events.reservation++; throw new Error("Paid reservation must not run"); },
-      serializeDataCreditoAssessment: value => ({ assessmentId: value.id, decision: value.status, offer: value.offer }),
+      serializeDataCreditoAssessment: value => ({ assessmentId: value.id, decision: value.status, offer: value.offer,
+        policyVersion: value.policyVersion, policyRevisionId: value.policyRevisionId }),
       DataCreditoStorageConfigurationError: StubError,
     },
     "@/lib/datacredito/resume-gate": { canRecoverAssessmentIdentityMismatch: () => false, canRecoverPendingAssessment: () => false },
@@ -63,12 +82,12 @@ function routeFixture(overrides = {}) {
     "@/lib/datacredito/customer-identity": { getDataCreditoCustomerIdentityForDisplay: async () => null },
     "@/lib/datacredito/secure-record": { DataCreditoSecureRecordConfigurationError: StubError, DataCreditoSecureRecordValidationError: StubError },
     "@/lib/firmaseguro-storage": {
-      getLatestFirmaSeguroProcessByDraft: async () => { signatureReads++; return overrides.signatureAfterLock && signatureReads > 1 ? overrides.signatureAfterLock : overrides.signature || null; },
-      tryAcquireSolicitudOperationLock: async () => ({ release: async () => { events.released++; } }),
+      getLatestFirmaSeguroProcessByDraft: async () => { signatureReads++; events.signatureReads++; return overrides.signatureAfterLock && signatureReads > 1 ? overrides.signatureAfterLock : overrides.signature || null; },
+      tryAcquireSolicitudOperationLock: async () => { events.locks++; return { release: async () => { events.released++; } }; },
     },
     "@/lib/solicitudes-storage": {
-      getActiveSolicitudCreditContext: async () => context,
-      reserveSolicitudForIdentity: async () => ({ id: context.id }),
+      getActiveSolicitudCreditContext: async () => overrides.draftAvailable === false ? null : context,
+      reserveSolicitudForIdentity: async () => { events.draftReservations++; return { id: context.id }; },
       attachDataCreditoToSolicitud: async input => events.attached.push(input),
       markSolicitudDataCreditoTechnicalError: async input => events.marked.push(input),
       markSolicitudDataCreditoRecoverablePending: async input => events.marked.push(input),
@@ -78,55 +97,77 @@ function routeFixture(overrides = {}) {
   const exports = {};
   runInNewContext(transpile(routeSource), { exports, require: name => modules[name] || {}, Response, process: { env: { NODE_ENV: "test" } }, console });
   const body = { solicitudId: 392, documentNumber: "12345678", firstSurname: "PEREZ", platform: "IPHONE", consentAccepted: true, reuseOnly: true, refreshFinancialTerms: true, ...overrides.body };
-  return { events, context, async submit() { const response = await exports.POST(new Request("http://localhost/api/creditos/datacredito/evaluaciones", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } })); return { status: response.status, body: await response.json() }; } };
+  return { events, context, assessment, async submit() { const response = await exports.POST(new Request("http://localhost/api/creditos/datacredito/evaluaciones", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } })); return { status: response.status, body: await response.json() }; } };
 }
 
-test("renovar oferta usa revisión vigente y nunca reserva ni consulta al proveedor", async () => {
-  const fixture = routeFixture();
-  const before = JSON.stringify(fixture.context);
-  const result = await fixture.submit();
-  assert.equal(result.status, 200);
-  assert.equal(result.body.reused, true);
-  assert.equal(result.body.assessmentId, "new-assessment");
-  assert.equal(fixture.events.reuse, 1);
+function assertNoReevaluation(fixture) {
+  assert.equal(fixture.events.policy, 0, "No se consulta la política actual del aliado");
+  assert.equal(fixture.events.reuse, 0, "No se clona la evaluación con otra revisión");
   assert.equal(fixture.events.provider, 0);
   assert.equal(fixture.events.reservation, 0);
-  assert.equal(fixture.events.attached.length, 1);
-  assert.equal(fixture.events.attached[0].clientePrimerApellido, null);
-  assert.equal(JSON.stringify(fixture.context), before);
-  assert.deepEqual(fixture.events.marked, []);
-});
-
-test("consulta vencida conserva solicitud y retorna sin un fallback pagado", async () => {
-  const fixture = routeFixture({ cached: null });
-  const result = await fixture.submit();
-  assert.equal(result.status, 409);
-  assert.equal(result.body.code, "ASSESSMENT_REUSE_NOT_FOUND");
-  assert.equal(fixture.events.provider, 0);
-  assert.equal(fixture.events.reservation, 0);
+  assert.equal(fixture.events.draftReservations, 0);
+  assert.equal(fixture.events.locks, 0);
   assert.deepEqual(fixture.events.attached, []);
   assert.deepEqual(fixture.events.marked, []);
+}
+
+test("POST conserva aprobación, oferta y revisión originales aunque el cliente solicite renovar condiciones", async () => {
+  for (const body of [{}, { reuseOnly: false, refreshFinancialTerms: false }]) {
+    const fixture = routeFixture({ body });
+    const before = JSON.stringify({ context: fixture.context, assessment: fixture.assessment });
+    const result = await fixture.submit();
+    assert.equal(result.status, 200);
+    assert.equal(result.body.reused, true);
+    assert.equal(result.body.preserved, true);
+    assert.equal(result.body.assessmentId, fixture.assessment.id);
+    assert.equal(result.body.policyVersion, 2);
+    assert.equal(result.body.policyRevisionId, "original-revision");
+    assert.deepEqual(result.body.offer, fixture.assessment.offer);
+    assert.equal(fixture.events.approvalReads, 1);
+    assertNoReevaluation(fixture);
+    assert.equal(JSON.stringify({ context: fixture.context, assessment: fixture.assessment }), before);
+  }
 });
 
-test("consentimiento, propietario, identidad, plataforma y términos antiguos son obligatorios", async () => {
+test("una aprobación que el servidor ya no autoriza retorna conflicto sin reemplazarla ni generar consulta", async () => {
+  const fixture = routeFixture({ approvalAvailable: false });
+  const result = await fixture.submit();
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, "ASSESSMENT_DRAFT_NOT_AVAILABLE");
+  assert.equal(fixture.events.approvalReads, 1);
+  assertNoReevaluation(fixture);
+});
+
+test("consentimiento, borrador activo, propietario, identidad, ambiente y plataforma siguen siendo obligatorios", async () => {
   for (const invalid of [
-    { body: { consentAccepted: false } }, { body: { reuseOnly: false } }, { body: { solicitudId: null } },
+    { body: { consentAccepted: false } }, { body: { solicitudId: null } }, { draftAvailable: false },
+    { body: { reuseOnly: false, refreshFinancialTerms: true } },
     { authorized: false }, { body: { documentNumber: "87654321" } }, { body: { firstSurname: "GOMEZ" } },
-    { body: { platform: "ANDROID" } }, { assessment: { consumedAt: new Date() } },
-    { assessment: { creditId: 1 } }, { assessment: { claimTokenHash: "claim" } },
-    { assessment: { userId: 99 } }, { assessment: { offer: { financialSettings: settings } } },
+    { body: { platform: "ANDROID" } }, { assessment: { platform: "ANDROID" } },
+    { assessment: { userId: 99 } }, { assessment: { sellerId: 99 } },
+    { assessment: { sedeId: 99 } }, { assessment: { aliadoId: 99 } },
+    { assessment: { providerEnvironment: "TEST" } },
   ]) {
     const fixture = routeFixture(invalid);
     const result = await fixture.submit();
     assert.ok(result.status >= 400, JSON.stringify(invalid));
-    assert.equal(fixture.events.reuse, 0);
-    assert.equal(fixture.events.provider, 0);
-    assert.equal(fixture.events.reservation, 0);
-    assert.deepEqual(fixture.events.attached, []);
+    assert.equal(fixture.events.approvalReads, 0);
+    assertNoReevaluation(fixture);
   }
 });
 
-test("firmas pendientes, exitosas y carrera de envío bajo lock no se renuevan", async () => {
+test("apellido ausente o distinto en payload no reemplaza la identidad consultada de la aprobación vinculada", async () => {
+  for (const clientePrimerApellido of [null, "", "OTRO"]) {
+    const fixture = routeFixture({ context: { clientePrimerApellido } });
+    const result = await fixture.submit();
+    assert.equal(result.status, 200);
+    assert.equal(result.body.firstSurname, "PEREZ");
+    assert.deepEqual(result.body.offer, fixture.assessment.offer);
+    assertNoReevaluation(fixture);
+  }
+});
+
+test("devolver la aprobación original no modifica ni consulta firmas pendientes o exitosas", async () => {
   for (const state of [
     { signature: { status: "PENDING" } }, { signature: { status: "COMPLETED", completedAt: new Date() } },
     { signature: { status: "FAILED", signedDocumentBase64: "signed" } },
@@ -134,9 +175,11 @@ test("firmas pendientes, exitosas y carrera de envío bajo lock no se renuevan",
   ]) {
     const fixture = routeFixture(state);
     const result = await fixture.submit();
-    assert.equal(result.status, 409);
-    assert.equal(fixture.events.reuse, 0);
-    assert.deepEqual(fixture.events.attached, []);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.preserved, true);
+    assert.equal(result.body.assessmentId, fixture.assessment.id);
+    assert.equal(fixture.events.signatureReads, 0);
+    assertNoReevaluation(fixture);
   }
 });
 
@@ -151,27 +194,35 @@ function declarations(source, names) {
   }).join("\n");
 }
 
-test("gate de recuperación no carga ni reacepta el GET de una oferta antigua", async () => {
+test("un marcador financiero antiguo retoma primero la aprobación vinculada con su oferta original", async () => {
   const calls = [];
   const views = [];
+  const approvals = [];
   const noop = () => {};
+  const original = { assessmentId: "old", solicitudId: 392, status: "APROBADO", platform: "IPHONE",
+    documentNumber: "12345678", firstSurname: "PEREZ", offer: { policyVersion: 2,
+      financialSettings: { ...settings, calculoVersion: "ARES_FRANCES_V1", tasaInteresEa: 29.66 } } };
   const context = { useCallback: fn => fn, financialTermsRecovery: true, initialAssessmentId: "old", initialSolicitudId: 392,
     normalizedInitialDocument: "12345678", normalizedInitialSurname: "PEREZ", normalizedInitialErrorCode: code,
     identityMismatchRecovery: false, newQueryRetryRecovery: false, pendingAssessmentRecovery: false, platform: "IPHONE",
-    fetch: async url => { calls.push(url); return { ok: true, json: async () => ({ ok: true, enabled: true, configured: true, hasPolicy: true, policy: { version: 8 } }) }; },
+    fetch: async url => { calls.push(url); assert.match(url, /\/evaluaciones\/old\?/); return { ok: true, json: async () => ({ ok: true, ...original }) }; },
     readJson: response => response.json(), readString: value => typeof value === "string" ? value : null,
     CONSENT_ATTESTATION: "consent", setView: value => views.push(value), setCorrelationId: noop, setConsumedCreditId: noop,
     setConflictMessage: noop, setConflictCode: noop, setConflictSolicitudId: noop, setDailyQueryLimitReached: noop, setRetryMode: noop, setConsentText: noop,
     setDailyQuotaModalOpen: noop, setDailyQuotaCheckError: noop, setCheckingDailyQuota: noop,
+    setDocumentNumber: noop, setFirstSurname: noop, URLSearchParams, DOMException,
+    normalizeDecision: value => value.status, normalizeApprovedAssessment: value => value,
     quotaRefreshAbortRef: { current: null },
     setApprovedResult: noop, setConsentAccepted: noop, setFormErrors: noop, finishBypass: () => assert.fail("No bypass"),
-    showApproved: () => assert.fail("No old approval"), onApprovedRef: { current: () => assert.fail("No auto approval") },
+    showApproved: () => assert.fail("Linked approval resumes its existing draft"), onApprovedRef: { current: value => approvals.push(value) },
     expiredRequerySolicitudIdRef: { current: null }, approvedAssessmentIdsRef: { current: new Set() },
   };
   await runInNewContext(transpile(declarations(gateSource, ["loadInitialState"]) + "\nloadInitialState();"), context);
   assert.equal(calls.length, 1);
-  assert.match(calls[0], /politica/);
-  assert.equal(views.at(-1), "ready");
+  assert.match(calls[0], /\/evaluaciones\/old\?.*draftId=392/);
+  assert.equal(views.at(-1), "bypassing");
+  assert.equal(approvals.length, 1);
+  assert.deepEqual(approvals[0].offer, original.offer);
 });
 
 test("UI recovery conserva validación/equipo y recupera exactamente la cuota elegida", () => {
